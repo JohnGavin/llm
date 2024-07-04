@@ -26,6 +26,47 @@ R content for the second tab goes here.
 ```{r chunky_1}
 R.version.string
 ```
+```{r}
+library(quantmod)
+library(dygraphs)
+
+get_stock_data <- function(ticker, start_date, end_date) {
+  data <- getSymbols(ticker, src = "yahoo", from = start_date, to = end_date, auto.assign = FALSE)
+  # Removes the ticker name from column names
+  colnames(data) <- gsub(paste0(ticker, "\\."), "", colnames(data))
+  data <- data[, c("Volume", "Adjusted")]
+  return(data)
+}
+
+aapl <- get_stock_data(ticker = "AAPL", start_date = "2023-01-01", end_date = "2024-01-01")
+tail(aapl, 10)
+
+dygraph(
+  aapl$Adjusted,
+  main = "Apple Stock Price (AAPL)",
+  xlab = "Time period",
+  ylab = "Adjusted price (USD)",
+  width = 1200,
+  height = 800
+)
+
+dygraph(aapl$Adjusted, main = "Apple Stock Price (AAPL)", xlab = "Time period", ylab = "Adjusted price (USD)") %>%
+  dySeries(color = "#0198f9", drawPoints = TRUE, pointSize = 3, pointShape = "square")
+
+aapl$VolumeScaled <- aapl[, "Volume"] / 1000000
+
+dygraph(aapl[, c("Adjusted", "VolumeScaled")], main = "Apple Stock Price (AAPL) and Trade Volume") %>%
+  dySeries("Adjusted", label = "Adjusted Price (USD)", color = "#0198f9", drawPoints = TRUE, pointSize = 3, pointShape = "square") %>%
+  dySeries("VolumeScaled", label = "Trade Volume (M)", stepPlot = TRUE, fillGraph = TRUE, color = "#FF9900")
+
+
+aapl <- get_stock_data(ticker = "AAPL", start_date = "2023-01-01", end_date = "2024-01-01")
+
+dygraph(aapl) %>%
+  dySeries("Adjusted", label = "Adjusted Price (USD)", color = "#0198f9", drawPoints = TRUE, pointSize = 3, pointShape = "square") %>%
+  dySeries("Volume", label = "Trade Volume (M)", stepPlot = TRUE, fillGraph = TRUE, color = "#FF9900", axis = "y2")
+
+```
 :::
 
 # Row {height=30%}
