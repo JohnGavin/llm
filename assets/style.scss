@@ -1,6 +1,9 @@
 ---
-# Front matter comment to ensure Jekyll properly reads file.
 ---
 
-// Imports
-@import "";
+@import "{{ site.theme }}";
+
+// Hide “This site is open source. Improve this page.”
+.footer {
+  display: none;
+}
