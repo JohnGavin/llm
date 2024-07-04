@@ -1,0 +1,33 @@
+---
+title: "Palmer Penguins"
+format: 
+    dashboard
+    # html
+---
+# My Dashboard
+first page
+
+## Row {height=20%}
+::: {.panel-tabset group="language"}
+### python 
+<!-- {width=20%,height=10%} -->
+python content for the first tab goes here.
+```{python}
+# Your content for the first page goes here
+import sys
+sys.version_info
+print("Python version:", sys.version_info.major, ".", sys.version_info.minor)
+```
+:::
+::: {.panel-tabset group="language"}
+### R 
+<!-- {width=40%,height=10%}-->
+R content for the second tab goes here.
+```{r chunky_1}
+R.version.string
+```
+:::
+
+# Row {height=30%}
+content for the NEXT page goes here
+
