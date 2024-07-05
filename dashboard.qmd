@@ -1,9 +1,20 @@
 ---
 title: "Palmer Penguins"
+date: today
 format: 
     dashboard
     # html
+knitr:
+  opts_chunk: 
+    echo: false
 ---
+```{r}
+gha::knitr_time_chunks()
+gha::gha_notice("Found {nrow(mtcars)} packages with deadlines")
+# Useful to record a "change" date so we (a) see it in our commit history
+
+```
+
 # My Dashboard
 first page
 
@@ -17,6 +28,41 @@ python content for the first tab goes here.
 import sys
 sys.version_info
 print("Python version:", sys.version_info.major, ".", sys.version_info.minor)
+```
+```{python}
+#| eval: false
+import pip
+installed_packages = pip.get_installed_distributions()
+for package in installed_packages:
+    print(f"{package.project_name} ({package.version})")
+
+```
+```{python md, eval=FALSE}
+#| eval: false
+
+# # pyenv install -l  all py versiosn
+# # pyenv install # latest known version
+# !pyenv version # 3.10.9
+# !pyenv global 3.10.9 # select vers
+# !pyenv local 3.10.9 # current dir/subdir
+# !pyenv which python
+# !pyenv exec pip list 
+# !pyenv exec pip list all
+# !pyenv exec pip install duckdb==1.0.0
+# !pyenv exec pip install distro --upgrade duckdb-engine
+# !pyenv exec python helloworld.py
+import regex
+import pandas as pd
+import distro
+from sqlalchemy import create_engine, text
+eng = create_engine("duckdb:///md:my_db")
+```
+```{python import duckdb}
+#| eval: false
+import duckdb
+# connect to MotherDuck using 'md:' or 'motherduck:'
+con = duckdb.connect('md:')
+
 ```
 :::
 ::: {.panel-tabset group="language"}
@@ -72,3 +118,7 @@ dygraph(aapl) %>%
 # Row {height=30%}
 content for the NEXT page goes here
 
+
+
++ Source code: <https://github.com/johngavin/{repo}> 
++ last updated run: <https://github.com/johngavin/{repo}/actions/workflows/render.yaml>
