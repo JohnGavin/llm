@@ -1,0 +1,91 @@
+---
+params:
+    source_url: "https://www.quantitativo.com/p/robustness-of-the-211-sharpe-mean"
+title: "trading multiple instruments in parallel"
+format: html
+---
+
+
+```{r}
+# Load required packages
+pacman::p_load(
+  tidyverse,
+  lubridate,
+  tidyquant,
+  RcppRoll
+)
+
+# Load data
+
+# Set the start and end dates for the data
+start_date <-
+  today() - years(30)
+end_date <- today()
+
+# Download the daily OHLC data for SPY
+data_raw <- tq_get(
+  "SPY",
+  get = "stock.prices",
+  from = start_date,
+  to = end_date,
+  complete_cases = TRUE
+)
+#   |> mutate(Date = dmy(Date))
+
+# Convert the data to a tibble
+spy_data <- as_tibble(data_raw)
+glimpse(spy_data)
+
+# Compute rolling mean of High - Low over last 25 days
+spy_data <- spy_data %>%
+  mutate(HML_rolling_mean = roll_mean(high - low, n = 25, fill = NA))
+# Compute IBS indicator
+spy_data <- spy_data %>%
+  mutate(IBS = (close - low) / (high - low))
+
+# Compute lower band
+spy_data <- spy_data %>%
+  mutate(
+    HML_rolling_10 = 
+        roll_max(high, n = 10, fill = NA) - 
+        roll_min(low, n = 10, fill = NA),
+    lower_band = roll_max(high, n = 10, fill = NA) - 2.5 * HML_rolling_mean
+  )
+
+# Initialize strategy variables
+spy_data <- spy_data %>%
+  mutate(
+    signal = 0,
+    position = 0,
+    `300_sma` = roll_mean(close, n = 300, fill = NA)
+  )
+
+# Apply strategy rules
+spy_data <- spy_data %>%
+  mutate(
+    signal = case_when(
+      close < lower_band & IBS < 0.3 ~ 1, # Go long
+      close > lag(high, 1) ~ 0, # Close trade
+      close < `300_sma` ~ 0, # Close trade
+      TRUE ~ lag(signal, 1)
+    ),
+    position = lag(position, 1, 0) + signal - lag(signal, 1, 0),
+    strategy_returns = log(close / lag(close, 1)) * lag(position, 1)
+  )
+
+# Calculate strategy performance
+total_return <- prod(1 + spy_data$strategy_returns, na.rm = TRUE)
+annual_return <- total_return^(1 / as.numeric(max(spy_data$date) - min(spy_data$date), units = "days") / 365) - 1
+
+print(paste("Total Return:", total_return))
+print(paste("Annual Return:", annual_return))
+
+# Parameter exploration
+# ... (code for running experiments with varying parameters)
+
+# Statistical analysis
+# ... (code for analyzing statistical properties of the edge)
+
+# Multi-instrument strategy
+# ... (code for trading multiple instruments in parallel)
+```
