@@ -122,6 +122,5 @@ content for the NEXT page goes here
 
 + Source code: <https://github.com/johngavin/{repo}> 
 + last updated run: <https://github.com/johngavin/{repo}/actions/workflows/render.yaml>
-
-### GH worflow
+w### GH worflow
 + https://github.com/hadley/cran-deadlines/blob/main/.github/workflows/render.yaml

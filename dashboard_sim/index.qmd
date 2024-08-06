@@ -1,6 +1,6 @@
 ---
 title: "Monte Carlo Simulation: Normal Distribution"
-format: 
+format:
   dashboard:
     orientation: columns
 server: shiny
@@ -31,16 +31,16 @@ actionButton("run", "Run Simulation")
 #| context: server
 output$histogram <- renderPlot({
   input$run  # Re-run when button is clicked
-  
+
   sim_data <- tibble(
     value = rnorm(input$sample_size, mean = input$mean, sd = input$sd)
   )
-  
+
   ggplot(sim_data, aes(x = value)) +
     geom_histogram(aes(y = ..density..), bins = input$bins, fill = "skyblue", color = "black") +
     geom_density(color = "red") +
     stat_function(
-      fun = dnorm, 
+      fun = dnorm,
       args = list(mean = input$mean, sd = input$sd),
       color = "blue", linetype = "dashed"
     ) +
@@ -63,11 +63,11 @@ plotOutput("histogram")
 #| context: server
 output$summary <- renderPrint({
   input$run  # Re-run when button is clicked
-  
+
   sim_data <- tibble(
     value = rnorm(input$sample_size, mean = input$mean, sd = input$sd)
   )
-  
+
   data_summary <- sim_data %>%
     summarise(
       sample_mean = mean(value),
@@ -76,7 +76,7 @@ output$summary <- renderPrint({
       within_2sd = mean(abs(value - input$mean) <= 2*input$sd),
       within_3sd = mean(abs(value - input$mean) <= 3*input$sd)
     )
-  
+
   cat("Summary Statistics:\n")
   cat("Sample Mean:", data_summary$sample_mean, "\n")
   cat("Sample Standard Deviation:", data_summary$sample_sd, "\n")
