@@ -275,20 +275,33 @@ jobs:
 
 ## Cross-References
 
-**From randomwalk/AGENTS.md:**
-- Section "GitHub Actions Workflows"
-- Section "Testing Vignettes After Push"
+### To randomwalk Repository (Example Implementation)
 
-**From randomwalk/.github/workflows/build-wasm.yaml:**
-- Full workflow implementation
-- Deployment configuration
+**AGENTS.md:**
+- [GitHub Actions Workflows](https://github.com/JohnGavin/randomwalk/blob/main/AGENTS.md#github-actions-workflows) - Step 7 in 9-step workflow
+- [Testing Vignettes After Push](https://github.com/JohnGavin/randomwalk/blob/main/AGENTS.md#testing-vignettes-after-push) - Fast feedback loop documentation
 
-**From randomwalk/vignettes/*.qmd:**
-- `webr::install()` repository configuration
-- Package loading examples
+**GitHub Actions:**
+- [build-wasm.yaml](https://github.com/JohnGavin/randomwalk/blob/main/.github/workflows/build-wasm.yaml) - Full workflow implementation with rwasm
+- Deployment to `https://johngavin.github.io/randomwalk/wasm/`
+
+**Vignettes (Usage Examples):**
+- [dashboard.qmd](https://github.com/JohnGavin/randomwalk/blob/main/vignettes/dashboard.qmd) - Shinylive with randomwalk package
+- [dashboard_async.qmd](https://github.com/JohnGavin/randomwalk/blob/main/vignettes/dashboard_async.qmd) - Async parallel with mirai
+- [dynamic_broadcasting.qmd](https://github.com/JohnGavin/randomwalk/blob/main/vignettes/dynamic_broadcasting.qmd) - Dynamic broadcasting demo
+- All vignettes use `webr::install()` with three-tier repos
+
+### From randomwalk → This Guide
+
+**randomwalk/AGENTS.md** links back to:
+- This comprehensive R-WASM workflow guide
+- General agent development guidelines
+- Deployment documentation
+
+See [randomwalk/AGENTS.md § Related Documentation](https://github.com/JohnGavin/randomwalk/blob/main/AGENTS.md#related-documentation)
 
 ---
 
 **Last Updated**: 2025-12-16
 **Maintainer**: JohnGavin
-**Status**: Active - To be migrated to wiki (see issue)
+**Status**: Active - To be migrated to wiki ([llm#1](https://github.com/JohnGavin/llm/issues/1))
