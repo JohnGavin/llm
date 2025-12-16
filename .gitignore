@@ -1,0 +1,23 @@
+# R
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Quarto
+.quarto/
+_site/
+_freeze/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+my_new_md_database
+
+# Temp files
+*.log
+
