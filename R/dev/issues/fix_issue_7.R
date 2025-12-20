@@ -32,6 +32,9 @@ if (FALSE) {
 # 6. Push to cachix (not applicable: no build artifacts for this repo)
 
 # 7. Push PR
+# env <- asNamespace("usethis")
+# unlockBinding("ui_yep", env)
+# assign("ui_yep", function(...) TRUE, envir = env)
 # usethis::pr_push()
 
 # 8. Merge PR
