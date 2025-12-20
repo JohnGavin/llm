@@ -31,12 +31,18 @@ if (FALSE) {
 
 # 6. Push to cachix (not applicable: no build artifacts for this repo)
 
-# 7. Push PR
+# 7. Create PR
+# gh::gh(
+#   "POST /repos/JohnGavin/llm/pulls",
+#   title = "Fix issue 7: codex PATH wrapper",
+#   head = "JohnGavin:fix-issue-7-codex-path",
+#   base = "main",
+#   body = "Fixes #7. Adds repo bin/codex wrapper and updates nix shellHook PATH."
+# )
+
+# 8. Merge PR
 # env <- asNamespace("usethis")
 # unlockBinding("ui_yep", env)
 # assign("ui_yep", function(...) TRUE, envir = env)
-# usethis::pr_push()
-
-# 8. Merge PR
 # usethis::pr_merge_main()
 # usethis::pr_finish()
