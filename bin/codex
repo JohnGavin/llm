@@ -1,0 +1,7 @@
+#!/bin/sh
+
+self_dir=$(cd "$(dirname "$0")" && pwd)
+PATH=$(printf "%s" "$PATH" | tr ':' '\n' | awk -v dir="$self_dir" '$0 != dir' | paste -sd ':' -)
+export PATH
+
+exec codex "$@"
