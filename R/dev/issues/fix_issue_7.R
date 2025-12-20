@@ -46,3 +46,4 @@ if (FALSE) {
 # assign("ui_yep", function(...) TRUE, envir = env)
 # usethis::pr_merge_main()
 # usethis::pr_finish()
+# gh::gh("PUT /repos/JohnGavin/llm/pulls/8/merge")
