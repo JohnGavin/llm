@@ -59,6 +59,10 @@ At the start of each session, review the list of installed R packages. Identify 
     - ✅ `R --quiet --no-save -e 'some_command()'`
     - ❌ `R -e 'some_command()'` (due to verbose startup)
 
+**README Example Standard:**
+- Include a Nix-shell example that works without `R CMD INSTALL`, e.g. `devtools::load_all("pkg")`.
+- Provide an explicit `R_LIBS_USER` example when using a custom library path.
+
 ## 4. The 9-Step Mandatory Workflow
 
 **⚠️ CRITICAL: THIS IS NOT OPTIONAL - ALL CHANGES MUST FOLLOW THIS WORKFLOW ⚠️**
@@ -201,6 +205,22 @@ maintain_env()
 - Visualize targets pipeline (`tar_viznetwork`).
 - Track compilation time, memory, git history.
 
+### Code Coverage in Nix
+**Guide:** [`WIKI_CONTENT/Code_Coverage_with_Nix.md`](./WIKI_CONTENT/Code_Coverage_with_Nix.md)
+
+`covr::package_coverage()` fails in Nix with "error reading from connection". Use pre-computed coverage:
+
+1. **Generate outside Nix**: Run `source("R/dev/coverage/generate_coverage.R")` in R/RStudio
+2. **Cache results**: Saves to `inst/extdata/coverage.rds`
+3. **Load in vignettes**: Use `readRDS()` to display cached coverage
+
+```r
+# Quick generation (run in R/RStudio, NOT Nix)
+setwd("path/to/package")
+source("R/dev/coverage/generate_coverage.R")
+git add inst/extdata/coverage.rds && git commit -m "UPDATE: Coverage"
+```
+
 ### Isolated Shell
 - LLMs should run in `--pure` nix shell/container for security.
 - Limit write access.
@@ -231,4 +251,5 @@ maintain_env()
     ```{r session-info}
     sessionInfo()
     ```
-    ```
+
+* Ditto for the github hash sha for this version of the vignette.
