@@ -105,6 +105,8 @@ If you commit directly to main or skip steps, you must create a retrospective is
 ❌ `git add .`, `git commit`, `git push`
 ❌ `gh pr create`, `gh issue create`
 
+**One-time Setup:** Run `usethis::git_vaccinate()` to add common temp files to global `.gitignore`.
+
 ## 5. Nix Environment Management
 
 **Detailed Guide:** [`NIX_PACKAGE_DEVELOPMENT.md`](/Users/johngavin/docs_gh/rix.setup/NIX_PACKAGE_DEVELOPMENT.md)
@@ -193,7 +195,28 @@ maintain_env()
 - Use `resources: - shinylive-sw.js` in YAML.
 - Prefer `library()` calls or `webr::install()` with custom repos.
 - Avoid `webr::mount()` from GitHub Releases (CORS issues).
-- **Testing:** Mandatory browser testing (Console check) per protocol.
+
+**⚠️ MANDATORY Browser Testing:**
+Before committing Shinylive vignettes:
+1. Open built HTML in browser, wait for app to load (10-30s)
+2. Open DevTools (F12) → Console tab
+3. **Check for errors** (404s, WASM failures, Service Worker issues)
+4. **DO NOT PROCEED** if ANY console errors appear
+See [wiki](https://github.com/JohnGavin/llm/wiki) for detailed checklist.
+
+### Version Bumping
+Always bump version when making changes: `usethis::use_version("patch"|"minor"|"major")`
+- **patch**: Bug fixes (2.0.0 → 2.0.1)
+- **minor**: New features (2.0.1 → 2.1.0)
+- **major**: Breaking changes (2.1.0 → 3.0.0)
+
+### GitHub API via CLI
+```bash
+export GH_TOKEN=$GITHUB_PAT
+gh issue list --state open --json number,title
+gh pr view 123 --json state,mergeable
+```
+Always query API for ground truth (don't trust old docs).
 
 ### Gemini CLI for Large Codebases
 **Guide:** [`WIKI_CONTENT/Gemini-CLI-Guide.md`](./WIKI_CONTENT/Gemini-CLI-Guide.md)
@@ -208,18 +231,20 @@ maintain_env()
 ### Code Coverage in Nix
 **Guide:** [`WIKI_CONTENT/Code_Coverage_with_Nix.md`](./WIKI_CONTENT/Code_Coverage_with_Nix.md)
 
-`covr::package_coverage()` fails in Nix with "error reading from connection". Use pre-computed coverage:
+`covr::package_coverage()` fails in Nix with "error reading from connection". Solution: **automated CI workflow**.
 
-1. **Generate outside Nix**: Run `source("R/dev/coverage/generate_coverage.R")` in R/RStudio
-2. **Cache results**: Saves to `inst/extdata/coverage.rds`
-3. **Load in vignettes**: Use `readRDS()` to display cached coverage
+**How it works:**
+1. `.github/workflows/coverage.yaml` runs on push to main (when R/ or tests/ change)
+2. Uses standard R (r-lib/actions/setup-r), NOT Nix
+3. Generates coverage and commits `inst/extdata/coverage.rds` back to repo
+4. Telemetry vignette loads cached coverage via `readRDS()`
 
-```r
-# Quick generation (run in R/RStudio, NOT Nix)
-setwd("path/to/package")
-source("R/dev/coverage/generate_coverage.R")
-git add inst/extdata/coverage.rds && git commit -m "UPDATE: Coverage"
-```
+**No manual action required** - coverage updates automatically when code changes.
+
+**To add to a new project:**
+1. Copy `.github/workflows/coverage.yaml` from randomwalk
+2. Add `inst/extdata/` to `.gitignore` exceptions
+3. Update telemetry vignette to load from `inst/extdata/coverage.rds`
 
 ### Isolated Shell
 - LLMs should run in `--pure` nix shell/container for security.
