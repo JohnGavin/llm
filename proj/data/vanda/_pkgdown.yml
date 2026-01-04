@@ -1,0 +1,7 @@
+url: https://JohnGavin.github.io/llm/vanda/
+
+template:
+  bootstrap: 5
+
+development:
+  mode: auto
