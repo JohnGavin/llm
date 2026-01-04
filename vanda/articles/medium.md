@@ -141,7 +141,7 @@ sessionInfo()
 #> [1] stats     graphics  grDevices utils     datasets  methods   base     
 #> 
 #> other attached packages:
-#> [1] knitr_1.51       tibble_3.3.0     dplyr_1.1.4      vanda_0.0.0.9000
+#> [1] knitr_1.51   tibble_3.3.0 dplyr_1.1.4  vanda_0.1.0 
 #> 
 #> loaded via a namespace (and not attached):
 #>  [1] vctrs_0.6.5       cli_3.6.5         rlang_1.1.6       xfun_0.55        

@@ -7,11 +7,11 @@
 ## Citation
 
 Gavin J (2026). *vanda: Interface to V&A Museum MCP Server*. R package
-version 0.0.0.9000.
+version 0.1.0.
 
     @Manual{,
       title = {vanda: Interface to V&A Museum MCP Server},
       author = {John Gavin},
       year = {2026},
-      note = {R package version 0.0.0.9000},
+      note = {R package version 0.1.0},
     }

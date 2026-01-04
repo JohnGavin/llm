@@ -29,7 +29,7 @@ print(client)
 #> [1] "https://mcp.vam.ac.uk/mcp/"
 #> 
 #> $session_start
-#> [1] "2026-01-04 22:25:02 UTC"
+#> [1] "2026-01-04 22:44:45 UTC"
 #> 
 #> attr(,"class")
 #> [1] "vanda_client"
@@ -82,7 +82,7 @@ sessionInfo()
 #> [1] stats     graphics  grDevices utils     datasets  methods   base     
 #> 
 #> other attached packages:
-#> [1] dplyr_1.1.4      vanda_0.0.0.9000
+#> [1] dplyr_1.1.4 vanda_0.1.0
 #> 
 #> loaded via a namespace (and not attached):
 #>  [1] vctrs_0.6.5       cli_3.6.5         knitr_1.51        rlang_1.1.6      
