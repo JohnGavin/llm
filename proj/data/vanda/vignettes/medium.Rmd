@@ -1,0 +1,69 @@
+---
+title: "Medium: Data Extraction"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Medium: Data Extraction}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(vanda)
+library(dplyr)
+library(tibble)
+```
+
+## Data Extraction
+
+This vignette shows how to extract detailed information for specific objects found in a search.
+
+```{r search}
+client <- mcp_connect()
+results <- mcp_search(client, "Textile")
+```
+
+## Extracting Details
+
+Let's extract details for the top 3 most popular items.
+
+```{r extract}
+top_items <- results |>
+  arrange(desc(popularity)) |>
+  head(3)
+
+details_list <- lapply(top_items$id, function(id) {
+  mcp_extract(client, id)
+})
+
+# Convert list to data frame for display
+details_df <- bind_rows(details_list)
+print(details_df)
+```
+
+## Tabulating by Period
+
+We can also summarize the search results by period.
+
+```{r tabulate}
+period_summary <- results |>
+  group_by(period) |>
+  summarise(
+    count = n(),
+    avg_popularity = mean(popularity)
+  )
+
+print(period_summary)
+```
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

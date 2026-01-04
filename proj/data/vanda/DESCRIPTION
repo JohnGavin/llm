@@ -1,0 +1,22 @@
+Package: vanda
+Title: Interface to V&A Museum MCP Server
+Version: 0.0.0.9000
+Authors@R: 
+    person("John", "Gavin", , "john@example.com", role = c("aut", "cre"))
+Description: Interacts with the remote MCP server at https://mcp.vam.ac.uk/mcp/
+    to search, extract, and visualise data from the V&A museum.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports: 
+    ggplot2,
+    httr2,
+    jsonlite,
+    rlang,
+    tibble
+Suggests: 
+    dplyr,
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
