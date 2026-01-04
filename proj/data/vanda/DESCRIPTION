@@ -1,6 +1,6 @@
 Package: vanda
 Title: Interface to V&A Museum MCP Server
-Version: 0.0.0.9000
+Version: 0.1.0
 Authors@R: 
     person("John", "Gavin", , "john@example.com", role = c("aut", "cre"))
 Description: Interacts with the remote MCP server at https://mcp.vam.ac.uk/mcp/
