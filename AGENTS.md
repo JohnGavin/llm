@@ -29,9 +29,27 @@ At the start of each session, review the list of installed R packages. Identify 
 - **Shinylive Lessons:** [`WIKI_SHINYLIVE_LESSONS_LEARNED.md`](./WIKI_SHINYLIVE_LESSONS_LEARNED.md)
 - **Targets & Pkgdown:** [`TARGETS_PKGDOWN_OVERVIEW.md`](./TARGETS_PKGDOWN_OVERVIEW.md)
 
-**Skills:**
-- **Nix Environment:** `.claude/skills/nix-rix-r-environment/SKILL.md`
-- **Workflow Skill:** `.claude/skills/r-package-workflow/SKILL.md`
+**Skills (14 available):**
+
+*Core Workflow:*
+- `.claude/skills/architecture-planning/SKILL.md` - Step 0: Design validation before coding
+- `.claude/skills/writing-plans/SKILL.md` - Pre-Step 2: Detailed task breakdown
+- `.claude/skills/executing-plans/SKILL.md` - Step 3: Systematic batch execution
+- `.claude/skills/test-driven-development/SKILL.md` - Step 3: RED-GREEN-REFACTOR
+- `.claude/skills/verification-before-completion/SKILL.md` - Steps 4,5,7: Evidence before claims
+- `.claude/skills/code-review-workflow/SKILL.md` - Steps 6-7: PR review process
+- `.claude/skills/r-package-workflow/SKILL.md` - Complete 9-step workflow
+
+*Environment & Tools:*
+- `.claude/skills/nix-rix-r-environment/SKILL.md` - Reproducible Nix/R environments
+- `.claude/skills/pkgdown-deployment/SKILL.md` - Hybrid deployment workflow
+- `.claude/skills/targets-vignettes/SKILL.md` - Pre-calculate vignette objects
+- `.claude/skills/shinylive-quarto/SKILL.md` - WebAssembly Shiny apps
+
+*Diagnostics & Analysis:*
+- `.claude/skills/systematic-debugging/SKILL.md` - Scientific debugging protocol
+- `.claude/skills/project-telemetry/SKILL.md` - Logging and statistics
+- `.claude/skills/gemini-cli-codebase-analysis/SKILL.md` - Large codebase analysis
 
 ## 3. Critical Workflow Principles
 
@@ -71,18 +89,40 @@ At the start of each session, review the list of installed R packages. Identify 
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
+│ 0. Design & Plan                                              │
+│    └─→ architecture-planning skill                            │
+│    └─→ writing-plans skill                                    │
+│                                                                │
 │ 1. Create GitHub Issue (#123)                                 │
 │ 2. Create dev branch (usethis::pr_init())                     │
 │ 3. Make changes locally                                       │
+│    └─→ executing-plans skill (batch execution)                │
+│    └─→ test-driven-development skill (RED-GREEN-REFACTOR)     │
+│                                                                │
 │ 4. Run all checks (devtools::check(), etc.)                   │
+│    └─→ verification-before-completion skill                   │
+│                                                                │
 │ 5. ⚠️ MANDATORY: Push to johngavin cachix ⚠️                   │
 │    └─→ nix-store ... | cachix push johngavin                  │
+│    └─→ verification-before-completion skill                   │
+│                                                                │
 │ 6. Push to GitHub (usethis::pr_push())                        │
+│    └─→ code-review-workflow skill                             │
+│                                                                │
 │ 7. Wait for GitHub Actions (pulls from cachix - fast!)        │
+│    └─→ verification-before-completion skill                   │
+│    └─→ code-review-workflow skill (handle feedback)           │
+│                                                                │
 │ 8. Merge PR (usethis::pr_merge_main())                        │
-│ 9. Log everything (R/dev/issue/fix_issue_123.R)                   │
+│ 9. Log everything (R/dev/issue/fix_issue_123.R)               │
 └────────────────────────────────────────────────────────────────┘
 ```
+
+**Key Skill Integration:**
+- **Step 0**: Use `architecture-planning` to validate design, then `writing-plans` to create bite-sized tasks
+- **Step 3**: Use `test-driven-development` (write test first!) and `executing-plans` for systematic progress
+- **Steps 4,5,7**: Use `verification-before-completion` - NO claims without fresh evidence
+- **Steps 6-7**: Use `code-review-workflow` for PRs and handling feedback
 
 **Step Details:**
 

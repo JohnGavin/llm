@@ -167,18 +167,125 @@ Skills are composable, portable bundles of instructions and resources that Claud
 **Key files**:
 - `SKILL.md` - Debugging protocol with common R failure patterns
 
+### ✅ verification-before-completion
+
+**Purpose**: Enforce "evidence before claims" - no completion claims without fresh verification output.
+
+**Use when**:
+- About to claim "tests pass" or "check succeeds"
+- Before committing or creating PRs
+- Before saying "Done!" or expressing satisfaction
+- After any fix, before claiming it works
+
+**Key concepts**:
+- Run verification command in THIS message, not earlier
+- Quote actual output as evidence
+- Never use "should", "probably", "seems to"
+- Applies at Steps 4, 5, 7 of 9-step workflow
+
+**Key files**:
+- `SKILL.md` - R package verification commands and patterns
+
+### 🧪 test-driven-development
+
+**Purpose**: Write the test first, watch it fail, write minimal code to pass. RED-GREEN-REFACTOR for R packages.
+
+**Use when**:
+- Implementing new functions
+- Fixing bugs (write test that reproduces bug first)
+- Adding features to existing functions
+- Refactoring (tests protect against regressions)
+
+**Key concepts**:
+- Write failing test FIRST (RED)
+- Watch it fail for the RIGHT reason
+- Write MINIMAL code to pass (GREEN)
+- Refactor with test protection
+- Delete code written before tests
+
+**Key files**:
+- `SKILL.md` - TDD workflow with testthat patterns
+
+### 📝 writing-plans
+
+**Purpose**: Write comprehensive implementation plans with bite-sized tasks (2-5 minutes each) before touching code.
+
+**Use when**:
+- After `architecture-planning` approves design
+- Before `usethis::pr_init()` (Step 2)
+- For multi-file changes
+- To enable parallel work or session continuity
+
+**Key concepts**:
+- Each task is ONE action (2-5 minutes)
+- Explicit file paths and code snippets
+- Verification step for every task
+- YAGNI, DRY, TDD throughout
+
+**Key files**:
+- `SKILL.md` - Plan structure and task templates
+
+### ⚡ executing-plans
+
+**Purpose**: Load plan, execute tasks in batches with checkpoints, report progress.
+
+**Use when**:
+- Have a written implementation plan
+- Implementing multi-task features
+- Want structured progress with verification
+- Need pause/resume across sessions
+
+**Key concepts**:
+- Execute 3 tasks per batch (adjustable)
+- Verify after each task
+- Report and get feedback between batches
+- Stop immediately if blocked or unclear
+
+**Key files**:
+- `SKILL.md` - Execution workflow and session continuity
+
+### 👥 code-review-workflow
+
+**Purpose**: Request and receive code reviews using R packages (gh, gert) with technical rigor.
+
+**Use when**:
+- Completing a PR (Steps 6-7)
+- After major implementation milestones
+- Before merging to main
+- Receiving feedback on PRs
+
+**Key concepts**:
+- Technical evaluation, not performative agreement
+- Never say "You're absolutely right!"
+- Push back with reasoning if feedback is wrong
+- Address comments with commit references
+
+**Key files**:
+- `SKILL.md` - PR workflow and review response patterns
+
 ## Skill Count
 
-Currently **9 skills** available:
-1. nix-rix-r-environment
-2. r-package-workflow
-3. targets-vignettes
-4. shinylive-quarto
-5. project-telemetry
-6. pkgdown-deployment
-7. gemini-cli-codebase-analysis
-8. architecture-planning
-9. systematic-debugging
+Currently **14 skills** available:
+
+### Core Workflow (9-Step)
+1. architecture-planning - Step 0: Design validation
+2. writing-plans - Pre-Step 2: Detailed task breakdown
+3. executing-plans - Step 3: Systematic execution
+4. test-driven-development - Step 3: TDD discipline
+5. verification-before-completion - Steps 4, 5, 7: Evidence before claims
+6. code-review-workflow - Steps 6-7: PR review process
+7. r-package-workflow - Complete 9-step workflow
+
+### Environment & Tools
+8. nix-rix-r-environment - Reproducible Nix/R environments
+9. pkgdown-deployment - Hybrid deployment workflow
+10. targets-vignettes - Pre-calculate vignette objects
+11. shinylive-quarto - WebAssembly Shiny apps
+
+### Diagnostics & Analysis
+12. systematic-debugging - Scientific debugging protocol
+13. project-telemetry - Logging and statistics
+14. gemini-cli-codebase-analysis - Large codebase analysis
 
 ## How to Use Skills
 
