@@ -1,0 +1,55 @@
+{
+  "env": {
+    "MAX_THINKING_TOKENS": "1024"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(quarto:*)",
+      "Bash(R :*)",
+      "Bash(Rscript:*)",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(find:*)",
+      "Bash(done:*)",
+      "Bash(sed:*)",
+      "Bash(while:*)",
+      "Bash(if:*)",
+      "Bash(then:*)",
+      "Bash(else:*)",
+      "Bash(fi:*)",
+      "Bash(export:*)",
+      "Bash(claude:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(mkdir:*)",
+      "mcp__r-btw__btw_tool_files_list_files",
+      "Read",
+      "Write",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:*.github.io)",
+      "WebFetch(domain:*.r-universe.dev)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/startup_check.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "alwaysThinkingEnabled": true,
+  "model": "opus"
+}
