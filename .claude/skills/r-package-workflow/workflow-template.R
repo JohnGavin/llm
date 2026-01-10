@@ -1,11 +1,9 @@
-# Complete R Package Development Workflow Template
-# Copy and customize this for your development tasks
+# R Package Development Workflow Template (Revised)
 # Save as: R/setup/dev_log_issue_XXX.R
 
 # =============================================================================
 # SETUP: Issue #XXX - [Brief Description]
-# Date: YYYY-MM-DD
-# Author: Your Name
+# Author: [Your Name]
 # =============================================================================
 
 library(usethis)
@@ -14,223 +12,100 @@ library(gh)
 library(devtools)
 library(logger)
 
-# Setup logging
+# Logging
 log_file <- "R/setup/dev_log_issue_XXX.log"
 logger::log_appender(logger::appender_file(log_file))
 logger::log_info("Starting work on Issue #XXX")
 
 # =============================================================================
-# STEP 1: Create GitHub Issue (if not already created via web)
+# STEP 1: Architecture & Planning (MANDATORY)
 # =============================================================================
 
-# issue <- gh::gh("POST /repos/{owner}/{repo}/issues",
-#                 owner = "yourusername",
-#                 repo = "yourrepo",
-#                 title = "Brief description",
-#                 body = "Detailed description of what needs to be done")
-#
-# issue_number <- issue$number
-# logger::log_info("Created issue #{issue_number}")
+# [ ] Run "Brainstorming" session
+# [ ] Check DESCRIPTION for dependencies
+# [ ] Check default.nix for system libs
+# [ ] Generate Implementation Plan (Paste below)
 
-issue_number <- XXX  # Or get from gh response above
+# PLAN:
+# 1. ...
+# 2. ...
 
 # =============================================================================
-# STEP 2: Create Development Branch
+# STEP 2: Create Issue & Branch
 # =============================================================================
 
-branch_name <- paste0("fix-issue-", issue_number, "-short-description")
-logger::log_info("Creating branch: {branch_name}")
+# issue <- gh::gh("POST /repos/{owner}/{repo}/issues", ...)
+issue_number <- XXX
+branch_name <- paste0("fix-issue-", issue_number, "-feature")
 
-# Using usethis (recommended)
 usethis::pr_init(branch_name)
-
-# OR using gert
-# gert::git_branch_create(branch_name)
-# gert::git_branch_checkout(branch_name)
-
-# Verify
-current_branch <- gert::git_branch()
-logger::log_info("Now on branch: {current_branch}")
+logger::log_info("Branch created: {branch_name}")
 
 # =============================================================================
-# STEP 3: Make Code Changes
+# STEP 3: Create Session Log (You are here)
 # =============================================================================
-
-# TODO: Edit your R files here
-# - R/your_function.R
-# - tests/testthat/test-your_function.R
-# - Update DESCRIPTION if adding dependencies
-# - Add roxygen documentation
-
-logger::log_info("Made code changes (describe what you changed)")
+# Ensure this file is saved and ready to be committed later.
 
 # =============================================================================
-# STEP 4: Commit Changes Locally (DO NOT PUSH YET)
+# STEP 4: TDD Implementation Loop (Red-Green-Refactor)
 # =============================================================================
 
-# Check status
-status <- gert::git_status()
-logger::log_info("Files changed: {nrow(status)}")
-print(status)
+# --- Cycle 1: [Task Name] ---
 
-# Stage files
-files_to_add <- c(
-  "R/your_function.R",
-  "tests/testthat/test-your_function.R",
-  "DESCRIPTION"  # if you changed dependencies
-)
+# 1. RED: Write failing test
+usethis::use_test("feature_x")
+# Edit tests/testthat/test-feature_x.R
+devtools::test_file("tests/testthat/test-feature_x.R") # Expect FAILURE
 
-gert::git_add(files_to_add)
-logger::log_info("Staged files")
+# 2. GREEN: Implement code
+usethis::use_r("feature_x")
+# Edit R/feature_x.R
+devtools::test_file("tests/testthat/test-feature_x.R") # Expect PASS
 
-# Commit
-commit_msg <- "Add feature X for issue #XXX
-
-Detailed description of what this commit does.
-
-References #XXX"
-
-commit_sha <- gert::git_commit(commit_msg)
-logger::log_info("Committed: {commit_sha}")
-
-# =============================================================================
-# STEP 5: Run ALL Local Checks (CRITICAL - Must pass before pushing)
-# =============================================================================
-
-logger::log_info("Starting local checks")
-
-# 5.1 Update documentation
-logger::log_info("Updating documentation...")
+# 3. REFACTOR & Document
 devtools::document()
-logger::log_info("Documentation updated")
 
-# 5.2 Run tests
-logger::log_info("Running tests...")
+# 4. COMMIT
+gert::git_add(c("R/feature_x.R", "tests/testthat/test-feature_x.R"))
+gert::git_commit("Feat: Implement feature X (Verified)")
+
+# --- Cycle 2: [Next Task] ---
+# ... repeat ...
+
+# =============================================================================
+# STEP 5: Full Local Checks
+# =============================================================================
+
+devtools::document()
 test_results <- devtools::test()
-logger::log_info("Tests: {sum(test_results$passed)} passed, {sum(test_results$failed)} failed")
 
-if (sum(test_results$failed) > 0) {
-  logger::log_error("Tests failed! Fix before proceeding")
-  stop("Tests failed")
+if (any(as.data.frame(test_results)$failed > 0)) {
+  stop("Tests failed! See systematic-debugging protocol.")
 }
 
-# 5.3 Run R CMD check
-logger::log_info("Running R CMD check...")
 check_results <- devtools::check(error_on = "warning")
-logger::log_info("Check complete")
-
-# If check fails, fix issues and commit again
-# Then re-run checks before proceeding
-
-# 5.4 Build pkgdown site (optional but recommended)
-logger::log_info("Building pkgdown site...")
-pkgdown::build_site()
-logger::log_info("Pkgdown site built")
-
-logger::log_info("All local checks passed!")
+# If failed: Isolate -> Hypothesize -> Experiment -> Fix
 
 # =============================================================================
-# STEP 6: Push to Remote
+# STEP 6: Push & PR
 # =============================================================================
 
-logger::log_info("Pushing to remote...")
+# Commit this log file
+gert::git_add("R/setup/dev_log_issue_XXX.R")
+gert::git_commit("Docs: Add session log")
 
-# Using usethis (creates PR automatically if needed)
 usethis::pr_push()
 
-# OR using gert
-# gert::git_push()
-
-logger::log_info("Pushed to remote")
+# =============================================================================
+# STEP 7: Monitor CI/CD
+# =============================================================================
+# Check https://github.com/user/repo/actions
 
 # =============================================================================
-# STEP 7: Monitor GitHub Actions
+# STEP 8: Merge
 # =============================================================================
-
-logger::log_info("Monitoring GitHub Actions...")
-
-# Wait a moment for workflows to start
-Sys.sleep(10)
-
-# Check workflow status
-runs <- gh::gh("/repos/{owner}/{repo}/actions/runs",
-               owner = "yourusername",
-               repo = "yourrepo",
-               branch = branch_name,
-               per_page = 5)
-
-cat("\n=== GitHub Actions Status ===\n")
-for (run in runs$workflow_runs) {
-  cat(sprintf("%-30s | Status: %-12s | Conclusion: %s\n",
-              run$name, run$status,
-              ifelse(is.null(run$conclusion), "pending", run$conclusion)))
-}
-
-logger::log_info("Check status at: https://github.com/yourusername/yourrepo/actions")
-
-# Note: Wait for all workflows to pass before merging!
-# You can run this check script multiple times to monitor progress
-
-# =============================================================================
-# STEP 8: Merge PR (Only after all checks pass)
-# =============================================================================
-
-# WAIT! Only proceed when all GitHub Actions show: Status: completed | Conclusion: success
-
-# Check if all workflows passed
-all_complete <- all(sapply(runs$workflow_runs, function(r) r$status == "completed"))
-all_success <- all(sapply(runs$workflow_runs, function(r)
-  !is.null(r$conclusion) && r$conclusion == "success"))
-
-if (!all_complete) {
-  logger::log_warn("Workflows still running - wait before merging")
-  stop("Workflows not complete")
-}
-
-if (!all_success) {
-  logger::log_error("Some workflows failed - fix issues before merging")
-  stop("Workflows failed")
-}
-
-logger::log_info("All workflows passed - ready to merge!")
-
-# Merge using usethis
+# ONLY if CI passed
 usethis::pr_merge_main()
-
-# Clean up local branch
 usethis::pr_finish()
 
-# OR merge using gh API
-# pr_number <- XXX  # Get from usethis output or gh
-# gh::gh("PUT /repos/{owner}/{repo}/pulls/{number}/merge",
-#        owner = "yourusername",
-#        repo = "yourrepo",
-#        number = pr_number,
-#        merge_method = "merge")
-
-logger::log_info("PR merged successfully!")
-
-# =============================================================================
-# STEP 9: Verify Issue Closed
-# =============================================================================
-
-# Check if issue was automatically closed
-issue <- gh::gh("/repos/{owner}/{repo}/issues/{number}",
-                owner = "yourusername",
-                repo = "yourrepo",
-                number = issue_number)
-
-logger::log_info("Issue #{issue_number} status: {issue$state}")
-
-if (issue$state == "closed") {
-  logger::log_info("Issue closed successfully!")
-} else {
-  logger::log_warn("Issue not closed - check PR message included 'Fixes #XXX'")
-}
-
-# =============================================================================
-# COMPLETE!
-# =============================================================================
-
-logger::log_info("Workflow complete for Issue #{issue_number}")
-cat("\n✅ All done!\n")
+logger::log_info("Workflow complete.")
