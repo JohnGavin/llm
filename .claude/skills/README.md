@@ -126,9 +126,50 @@ Skills are composable, portable bundles of instructions and resources that Claud
 **Key files**:
 - `SKILL.md` - Complete Gemini CLI workflow for R package analysis
 
+### 🏗️ architecture-planning
+
+**Purpose**: Mandatory "Planning Phase" that prevents hallucination-driven development by forcing validation against DESCRIPTION and default.nix before coding.
+
+**Use when**:
+- Starting work on a new GitHub issue
+- Planning complex refactoring
+- Adding new features to an R package
+- You need to prevent introducing unlisted dependencies
+- You want to ensure the solution fits the existing architecture
+
+**Key concepts**:
+- **Step 0** of the r-package-workflow (before `usethis::pr_init()`)
+- Phase 1: Brainstorming - validate dependencies, propose solution
+- Phase 2: Detailed Planning - create actionable checklist
+- Prevents "Phantom Dependencies" (using packages not in DESCRIPTION)
+
+**Key files**:
+- `SKILL.md` - Complete planning protocol with examples
+
+### 🐛 systematic-debugging
+
+**Purpose**: Rigorous scientific method for resolving R CMD check failures, test failures, and Nix environment issues using Hypothesis → Experiment → Conclusion loops.
+
+**Use when**:
+- `devtools::check()` fails
+- `devtools::test()` reports failures
+- CI/CD workflows fail
+- "Object not found" errors occur in nix-shell
+- You are stuck in a cycle of repeated error messages
+
+**Key concepts**:
+- **STOP** before editing code
+- Phase 1: Isolate (reproduce with minimal code)
+- Phase 2: Hypothesize (state *why* it's failing)
+- Phase 3: Experiment (test hypothesis without changing source)
+- Phase 4: Implement & Verify (permanent fix + regression check)
+
+**Key files**:
+- `SKILL.md` - Debugging protocol with common R failure patterns
+
 ## Skill Count
 
-Currently **7 skills** available:
+Currently **9 skills** available:
 1. nix-rix-r-environment
 2. r-package-workflow
 3. targets-vignettes
@@ -136,6 +177,8 @@ Currently **7 skills** available:
 5. project-telemetry
 6. pkgdown-deployment
 7. gemini-cli-codebase-analysis
+8. architecture-planning
+9. systematic-debugging
 
 ## How to Use Skills
 
