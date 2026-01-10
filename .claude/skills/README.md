@@ -263,9 +263,47 @@ Skills are composable, portable bundles of instructions and resources that Claud
 **Key files**:
 - `SKILL.md` - PR workflow and review response patterns
 
+### 🦆 data-wrangling-duckdb
+
+**Purpose**: Use DuckDB as primary data wrangling tool - query JSON/CSV/Parquet directly with SQL, avoiding traditional ETL pipelines.
+
+**Use when**:
+- Processing JSON from APIs (RSS feeds, curl output)
+- Querying log files or CSV exports
+- Joining data across formats
+- Data larger than memory (with Arrow)
+
+**Key concepts**:
+- `read_json_auto()`, `read_csv_auto()` - query files directly
+- dplyr + dbplyr for tidy SQL generation
+- Arrow integration for large data
+- Export to any format with `COPY ... TO`
+
+**Key files**:
+- `SKILL.md` - DuckDB patterns and anti-patterns
+
+### ⚡ parallel-processing
+
+**Purpose**: Use nanonext → mirai → crew stack for parallel processing, replacing future/furrr with more efficient alternatives.
+
+**Use when**:
+- Running parallel computations
+- Integrating parallel workers with targets
+- Building async/concurrent applications
+- Python ↔ R interop via sockets
+
+**Key concepts**:
+- `mirai::mirai_map()` - simple parallel map
+- `crew::crew_controller_local()` - managed worker pools
+- `targets` + `crew` - production pipelines
+- `nanonext` - low-level async sockets
+
+**Key files**:
+- `SKILL.md` - Stack overview and patterns
+
 ## Skill Count
 
-Currently **14 skills** available:
+Currently **16 skills** available:
 
 ### Core Workflow (9-Step)
 1. architecture-planning - Step 0: Design validation
@@ -286,6 +324,10 @@ Currently **14 skills** available:
 12. systematic-debugging - Scientific debugging protocol
 13. project-telemetry - Logging and statistics
 14. gemini-cli-codebase-analysis - Large codebase analysis
+
+### Data & Parallel Processing
+15. data-wrangling-duckdb - SQL on files (JSON/CSV/Parquet), avoid ETL
+16. parallel-processing - nanonext → mirai → crew → targets stack
 
 ## How to Use Skills
 

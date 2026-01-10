@@ -198,6 +198,67 @@ maintain_env()
 - Use `air` for formatting (`air format ...`).
 - Use `typst` for formulas.
 
+## 7a. Tool Preferences
+
+**Parallel Processing Stack** (prefer in this order):
+```
+nanonext → mirai → crew → targets
+   ↓         ↓       ↓        ↓
+ sockets   async   workers  pipelines
+```
+- **nanonext**: Low-level async sockets (NNG bindings) - use for custom protocols
+- **mirai**: Async evaluation built on nanonext - use for simple parallel tasks
+- **crew**: Worker pools built on mirai - use with targets for pipeline parallelism
+- **targets + crew**: Production pipelines with `tar_option_set(controller = crew_controller_local())`
+
+**Data Wrangling Stack** (prefer over base R):
+```r
+# ✅ PREFERRED: duckdb for data wrangling
+library(duckdb)
+library(dplyr)
+library(dbplyr)
+
+con <- dbConnect(duckdb())
+
+# Read JSON from API, process with SQL
+result <- con |>
+  tbl(sql("SELECT * FROM read_json_auto('data.json')")) |>
+  filter(status == "active") |>
+  collect()
+
+# Query Parquet files directly
+tbl(con, sql("SELECT * FROM 'data/*.parquet'")) |>
+  summarise(n = n())
+
+# ❌ AVOID: Traditional ETL pipelines when duckdb can handle directly
+```
+
+**DuckDB Use Cases:**
+- RSS feed wrangling: `read_json_auto()` for feed parsing
+- Shell command output: `shellfs` extension for CLI → SQL
+- Log analysis: Query CSV/JSON/Parquet without loading into R
+- Cross-format joins: Join CSV with Parquet with JSON in one query
+
+**Arrow for Large Data:**
+```r
+library(arrow)
+# Use Arrow for:
+# - Data larger than memory
+# - Parquet/Feather file I/O
+# - Zero-copy data sharing with Python (via reticulate)
+```
+
+**Decision Matrix:**
+
+| Task | Tool |
+|------|------|
+| Simple parallel map | `mirai::mirai_map()` |
+| Worker pool for targets | `crew::crew_controller_local()` |
+| SQL on files (JSON/CSV/Parquet) | `duckdb` |
+| Large data I/O | `arrow` |
+| Tidy data manipulation | `dplyr` (on duckdb or arrow backend) |
+| Pipeline orchestration | `targets` + `crew` |
+
 **File Structure:**
 - `R/`: Package code.
 - `R/dev/` with subfolder by topic e.g. 
