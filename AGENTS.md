@@ -29,7 +29,14 @@ At the start of each session, review the list of installed R packages. Identify 
 - **Shinylive Lessons:** [`WIKI_SHINYLIVE_LESSONS_LEARNED.md`](./WIKI_SHINYLIVE_LESSONS_LEARNED.md)
 - **Targets & Pkgdown:** [`TARGETS_PKGDOWN_OVERVIEW.md`](./TARGETS_PKGDOWN_OVERVIEW.md)
 
-**Skills (14 available):**
+**Agents (5 available):**
+- `.claude/agents/r-debugger.md` - Debug R CMD check/test failures with scientific method
+- `.claude/agents/reviewer.md` - Code review specialist for PRs
+- `.claude/agents/nix-env.md` - Diagnose/fix Nix shell and environment issues
+- `.claude/agents/targets-runner.md` - Run and debug targets pipelines
+- `.claude/agents/shinylive-builder.md` - Build and test Shinylive/WASM vignettes
+
+**Skills (24 available):**
 
 *Core Workflow:*
 - `.claude/skills/architecture-planning/SKILL.md` - Step 0: Design validation before coding
@@ -46,10 +53,68 @@ At the start of each session, review the list of installed R packages. Identify 
 - `.claude/skills/targets-vignettes/SKILL.md` - Pre-calculate vignette objects
 - `.claude/skills/shinylive-quarto/SKILL.md` - WebAssembly Shiny apps
 
+*CI/CD & Deployment:*
+- `.claude/skills/ci-workflows-github-actions/SKILL.md` - GitHub Actions patterns
+
 *Diagnostics & Analysis:*
 - `.claude/skills/systematic-debugging/SKILL.md` - Scientific debugging protocol
 - `.claude/skills/project-telemetry/SKILL.md` - Logging and statistics
 - `.claude/skills/gemini-cli-codebase-analysis/SKILL.md` - Large codebase analysis
+
+*Data & Parallel Processing:*
+- `.claude/skills/data-wrangling-duckdb/SKILL.md` - SQL on files (JSON/CSV/Parquet)
+- `.claude/skills/parallel-processing/SKILL.md` - nanonext → mirai → crew stack
+
+*Statistical Analysis Workflow:*
+- `.claude/skills/eda-workflow/SKILL.md` - Systematic EDA checklist
+- `.claude/skills/analysis-rationale-logging/SKILL.md` - Document why decisions were made
+- `.claude/skills/ai-assisted-analysis/SKILL.md` - LLM collaboration with human validation
+- `.claude/skills/tidyverse-style/SKILL.md` - Package recommendations and style guide
+
+*Claude Code Features:*
+- `.claude/skills/hooks-automation/SKILL.md` - Pre/post tool execution hooks
+- `.claude/skills/mcp-servers/SKILL.md` - MCP server integration (r-btw, browser)
+- `.claude/skills/context-control/SKILL.md` - Context management (/compact, /clear, checkpoints)
+
+
+*New Skills (Added via CLI):*
+- **Nix Environment**: Defining and using reproducible development environments with `rix`.
+- **R Targets Pipeline**: creating and running data analysis pipelines with the `targets` package.
+- **GitHub Actions CI/CD**: Automating tests, analysis, and documentation deployment.
+- **Pkgdown Documentation**: Building and deploying static websites for R projects.
+- **Gert/Git**: Programmatic git operations from within R.
+- **CLI & Shell Automation**: Robust shell scripting and CLI tool usage.
+
+## 2a. Agents vs Skills
+
+**Skills** = Context/instructions loaded into main Claude session
+**Agents** = Isolated subagents with restricted tools for specific tasks
+
+| When to Use | Skills | Agents |
+|-------------|--------|--------|
+| General guidance | ✅ | |
+| Complex multi-step tasks | ✅ | |
+| Isolated high-output tasks | | ✅ |
+| Strict tool restrictions needed | | ✅ |
+| Debugging R errors | | ✅ `r-debugger` |
+| Code reviews | | ✅ `reviewer` |
+| Nix environment issues | | ✅ `nix-env` |
+| Targets pipeline debugging | | ✅ `targets-runner` |
+| Shinylive/WASM builds | | ✅ `shinylive-builder` |
+
+**Invoke agents:**
+```
+# In Claude Code
+"Use the r-debugger agent to investigate this test failure"
+"Use the reviewer agent to review PR #123"
+```
+
+**Custom Commands (5 available):**
+- `/session-start` - Initialize session (nix check, git status, open issues)
+- `/session-end` - End session (commit, update CURRENT_WORK.md, push)
+- `/check` - Run devtools::document(), test(), check()
+- `/pr-status` - Check PR and CI workflow status
+- `/new-issue` - Create issue + branch + log file
 
 ## 3. Critical Workflow Principles
 
@@ -372,6 +437,8 @@ Always query API for ground truth (don't trust old docs).
 
 *   **Session Info**: Always include `sessionInfo()` at the bottom of each vignette (`.qmd` file) to aid in reproducibility and debugging.
     ```r
+
+*   **Git Commit Info**: Include a table showing the latest git hash/SHA commits in a subsection after `sessionInfo()`.
     ## Session Info
 
     ```{r session-info}
