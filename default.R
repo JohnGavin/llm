@@ -206,6 +206,7 @@ r_pkgs = c(
   #"bench", "future", "data.table", "dtplyr", "duckplyr", "RSQLite",
   # https://borkar.substack.com/p/r-workflows-with-duckdb?r=2qg9ny
   "arrow", "duckdb", "dplyr", "dbplyr", 
+  # "gt", "blastula", # email
   "ggraph", "igraph", # https://discindo.org/posts/2025-09-20-r-ducklake/
   # # https://github.com/jcheng5/pharma-sidebot
   # # "DBI", "duckdb", "fastmap", "fontawesome", "ggridges", "here", "plotly", "reactable", "shiny", # "hadley/elmer", "jcheng5/shinychat",
@@ -517,18 +518,26 @@ shell_hook <- r"(
 
 # 1. Create the temporary wrapper script in a stable location
 # Use inline expansion to avoid creating literal $WRAPPER_* files
+# NOTE: Avoid using empty string pattern in case (breaks Nix multi-line strings)
 valid_home=1
-case $HOME in
-  ''|*'$'*) valid_home=0 ;;
+if [ -z "$HOME" ]; then
+  valid_home=0
+fi
+case "$HOME" in
+  *'$'*) valid_home=0 ;;
   /*) ;;
   *) valid_home=0 ;;
 esac
 
 user_ok=0
-case $USER in
-  ''|*'$'*) user_ok=0 ;;
-  *) if [ -d /Users/$USER ]; then user_ok=1; fi ;;
-esac
+if [ -z "$USER" ]; then
+  user_ok=0
+else
+  case "$USER" in
+    *'$'*) user_ok=0 ;;
+    *) if [ -d /Users/$USER ]; then user_ok=1; fi ;;
+  esac
+fi
 
 if [ $valid_home -ne 1 ] && [ $user_ok -eq 1 ]; then
   HOME=/Users/$USER
@@ -586,7 +595,7 @@ echo 'bind \"\\e[A\": history-search-backward\"' >> ~/.nix-shell-bashrc
 echo 'bind \"\\e[B\": history-search-forward\"' >> ~/.nix-shell-bashrc
 echo 'bind \"\\e[C\": forward-char\"' >> ~/.nix-shell-bashrc
 echo 'bind \"\\e[D\": backward-char\"' >> ~/.nix-shell-bashrc
-echo '' >> ~/.nix-shell-bashrc
+echo >> ~/.nix-shell-bashrc
 echo '# Source user bashrc if it exists' >> ~/.nix-shell-bashrc
 echo 'if [ -f ~/.bashrc ]; then source ~/.bashrc; fi' >> ~/.nix-shell-bashrc
 
