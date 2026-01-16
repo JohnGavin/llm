@@ -6,7 +6,6 @@ name: Daily LLM Report
 
 on:
   push:
-    branches: [main]
     paths:
       - '.github/workflows/daily-llm-report.yaml'
       - 'R/ccusage.R'
