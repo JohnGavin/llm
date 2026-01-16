@@ -1,0 +1,743 @@
+---
+title: "Project Telemetry and Statistics"
+author: "John Gavin"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+## Overview
+This vignette provides comprehensive telemetry and statistics for the project, including:
+
+- GitHub CI workflow run time distributions
+- Git commit history and contributors
+- Package/project structure
+- **LLM Usage Statistics** (Claude Code via `ccusage`)
+- Session information
+
+This serves as a **template** for telemetry vignettes in all future projects.
+
+## GitHub CI Workflow Statistics
+
+### Fetch Workflow Runs
+
+```{r ci-setup}
+library(gh)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(knitr)
+
+# Repository info
+owner <- "JohnGavin"
+repo <- "llm"
+
+# Fetch workflow runs (last 100)
+get_workflow_runs <- function(owner, repo, per_page = 100) {
+  tryCatch({
+    runs <- gh::gh(
+      "/repos/{owner}/{repo}/actions/runs",
+      owner = owner,
+      repo = repo,
+      per_page = per_page,
+      .limit = per_page
+    )
+
+    if (length(runs$workflow_runs) == 0) {
+      return(NULL)
+    }
+
+    tibble(
+      id = sapply(runs$workflow_runs, `[[`, "id"),
+      name = sapply(runs$workflow_runs, `[[`, "name"),
+      status = sapply(runs$workflow_runs, `[[`, "status"),
+      conclusion = sapply(runs$workflow_runs, function(x) x$conclusion %||% NA_character_),
+      created_at = sapply(runs$workflow_runs, `[[`, "created_at"),
+      updated_at = sapply(runs$workflow_runs, `[[`, "updated_at"),
+      run_started_at = sapply(runs$workflow_runs, function(x) x$run_started_at %||% NA_character_),
+      head_branch = sapply(runs$workflow_runs, `[[`, "head_branch"),
+      event = sapply(runs$workflow_runs, `[[`, "event")
+    ) |>
+      mutate(
+        created_at = ymd_hms(created_at),
+        updated_at = ymd_hms(updated_at),
+        run_started_at = ymd_hms(run_started_at),
+        duration_seconds = as.numeric(difftime(updated_at, run_started_at, units = "secs")),
+        duration_minutes = duration_seconds / 60
+      )
+  }, error = function(e) {
+    message("Could not fetch workflow runs: ", e$message)
+    NULL
+  })
+}
+
+workflow_runs <- get_workflow_runs(owner, repo)
+```
+
+### Workflow Run Time Distributions
+
+```{r ci-distributions}
+#| fig-cap: "Distribution of CI workflow run times (last 10 runs per workflow)"
+
+if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
+  # Get last 10 runs per workflow
+  recent_runs <- workflow_runs |>
+    filter(!is.na(duration_minutes), conclusion == "success") |>
+    group_by(name) |>
+    slice_head(n = 10) |>
+    ungroup()
+
+  if (nrow(recent_runs) > 0) {
+    # Summary statistics
+    run_stats <- recent_runs |>
+      group_by(name) |>
+      summarise(
+        n_runs = n(),
+        mean_minutes = round(mean(duration_minutes, na.rm = TRUE), 2),
+        median_minutes = round(median(duration_minutes, na.rm = TRUE), 2),
+        min_minutes = round(min(duration_minutes, na.rm = TRUE), 2),
+        max_minutes = round(max(duration_minutes, na.rm = TRUE), 2),
+        sd_minutes = round(sd(duration_minutes, na.rm = TRUE), 2),
+        .groups = "drop"
+      )
+
+    cat("### Summary Statistics (Last 10 Runs per Workflow)\n\n")
+    kable(run_stats, col.names = c(
+      "Workflow", "Runs", "Mean (min)", "Median (min)",
+      "Min (min)", "Max (min)", "SD (min)"
+    ))
+  }
+} else {
+  cat("No workflow runs found for this repository.\n")
+}
+```
+
+```{r ci-boxplot}
+#| fig-cap: "Box plot of run times by workflow"
+
+if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
+  recent_runs <- workflow_runs |>
+    filter(!is.na(duration_minutes), conclusion == "success") |>
+    group_by(name) |>
+    slice_head(n = 10) |>
+    ungroup()
+
+  if (nrow(recent_runs) > 0) {
+    ggplot(recent_runs, aes(x = reorder(name, duration_minutes), y = duration_minutes)) +
+      geom_boxplot(fill = "steelblue", alpha = 0.7) +
+      geom_jitter(width = 0.2, alpha = 0.5, color = "darkblue") +
+      coord_flip() +
+      labs(
+        title = "CI Workflow Run Time Distribution",
+        subtitle = paste("Last 10 successful runs per workflow |", owner, "/", repo),
+        x = NULL,
+        y = "Duration (minutes)"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold"),
+        axis.text.y = element_text(size = 10)
+      )
+  }
+}
+```
+
+```{r ci-histogram}
+#| fig-cap: "Histogram of run times by workflow"
+
+if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
+  recent_runs <- workflow_runs |>
+    filter(!is.na(duration_minutes), conclusion == "success") |>
+    group_by(name) |>
+    slice_head(n = 10) |>
+    ungroup()
+
+  if (nrow(recent_runs) > 0 && n_distinct(recent_runs$name) > 0) {
+    ggplot(recent_runs, aes(x = duration_minutes, fill = name)) +
+      geom_histogram(bins = 15, alpha = 0.7, position = "identity") +
+      facet_wrap(~name, scales = "free_y", ncol = 2) +
+      labs(
+        title = "Run Time Histograms by Workflow",
+        x = "Duration (minutes)",
+        y = "Count"
+      ) +
+      theme_minimal() +
+      theme(legend.position = "none")
+  }
+}
+```
+
+### Run Time Trends
+
+```{r ci-trends}
+#| fig-cap: "Run time trends over time"
+
+if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
+  trend_data <- workflow_runs |>
+    filter(!is.na(duration_minutes), conclusion == "success")
+
+  if (nrow(trend_data) > 0) {
+    ggplot(trend_data, aes(x = created_at, y = duration_minutes, color = name)) +
+      geom_point(alpha = 0.6) +
+      geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+      labs(
+        title = "CI Run Time Trends",
+        subtitle = "Are workflows getting faster or slower?",
+        x = "Date",
+        y = "Duration (minutes)",
+        color = "Workflow"
+      ) +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+  }
+}
+```
+
+### Workflow Success Rate
+
+```{r ci-success-rate}
+if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
+  success_stats <- workflow_runs |>
+    filter(!is.na(conclusion)) |>
+    group_by(name, conclusion) |>
+    summarise(count = n(), .groups = "drop") |>
+    pivot_wider(names_from = conclusion, values_from = count, values_fill = 0) |>
+    mutate(
+      total = rowSums(across(where(is.numeric))),
+      success_rate = if ("success" %in% names(.)) round(success / total * 100, 1) else 0
+    ) |>
+    select(name, total, success_rate, everything())
+
+  cat("### Success Rates by Workflow\n\n")
+  kable(success_stats)
+}
+```
+
+## Git History
+
+### Commit History
+
+```{r git-history}
+library(gert)
+
+# Get git log
+git_history <- tryCatch({
+  gert::git_log(max = 100) |>
+    mutate(
+      date = as.Date(time),
+      hour = hour(time),
+      weekday = wday(time, label = TRUE),
+      week = week(time)
+    )
+}, error = function(e) {
+  message("Could not fetch git history: ", e$message)
+  NULL
+})
+
+if (!is.null(git_history)) {
+  cat("Total commits (last 100):", nrow(git_history), "\n")
+  cat("Date range:", as.character(min(git_history$date)), "to", as.character(max(git_history$date)), "\n")
+}
+```
+
+### Contributors
+
+```{r git-contributors}
+if (!is.null(git_history)) {
+  contributors <- git_history |>
+    group_by(author) |>
+    summarise(
+      commits = n(),
+      first_commit = min(time),
+      last_commit = max(time),
+      .groups = "drop"
+    ) |>
+    arrange(desc(commits))
+
+  kable(contributors, col.names = c("Author", "Commits", "First Commit", "Last Commit"))
+}
+```
+
+### Commit Activity
+
+```{r git-activity}
+#| fig-cap: "Commit activity over time"
+
+if (!is.null(git_history)) {
+  commits_by_date <- git_history |>
+    count(date, name = "commits")
+
+  ggplot(commits_by_date, aes(x = date, y = commits)) +
+    geom_col(fill = "steelblue", alpha = 0.7) +
+    geom_smooth(method = "loess", se = FALSE, color = "darkred", linewidth = 1) +
+    labs(
+      title = "Commit Activity Over Time",
+      x = "Date",
+      y = "Commits per Day"
+    ) +
+    theme_minimal()
+}
+```
+
+### Commits by Day of Week
+
+```{r git-weekday}
+#| fig-cap: "Commits by day of week"
+
+if (!is.null(git_history)) {
+  commits_by_weekday <- git_history |>
+    count(weekday, name = "commits")
+
+  ggplot(commits_by_weekday, aes(x = weekday, y = commits)) +
+    geom_col(fill = "steelblue", alpha = 0.7) +
+    labs(
+      title = "Commits by Day of Week",
+      x = NULL,
+      y = "Total Commits"
+    ) +
+    theme_minimal()
+}
+```
+
+## Project Structure
+
+### File Counts by Type
+
+```{r file-counts}
+library(fs)
+
+# Get all files (excluding .git, _targets, etc.)
+all_files <- tryCatch({
+  fs::dir_ls(recurse = TRUE, type = "file") |>
+    as.character() |>
+    {\(x) x[!grepl("(\\.git|_targets|renv|node_modules)", x)]}()
+}, error = function(e) character(0))
+
+if (length(all_files) > 0) {
+  file_counts <- tibble(path = all_files) |>
+    mutate(
+      extension = tools::file_ext(path),
+      extension = ifelse(extension == "", "(no extension)", extension)
+    ) |>
+    count(extension, name = "count") |>
+    arrange(desc(count))
+
+  kable(head(file_counts, 20), col.names = c("Extension", "Count"))
+}
+```
+
+### Directory Structure
+
+```{r dir-tree}
+#| comment: ""
+
+# Show directory tree (limited depth)
+tryCatch({
+  tree_output <- capture.output(
+    fs::dir_tree(
+      recurse = 2,
+      regexp = "^(?!.*(\\.git|_targets|renv|node_modules|__pycache__)).*$"
+    )
+  )
+  cat(paste(head(tree_output, 50), collapse = "\n"))
+  if (length(tree_output) > 50) {
+    cat("\n... (truncated)")
+  }
+}, error = function(e) {
+  cat("Could not generate directory tree\n")
+})
+```
+
+## GitHub Repository Statistics
+
+```{r github-stats}
+repo_stats <- tryCatch({
+  gh::gh("/repos/{owner}/{repo}", owner = owner, repo = repo)
+}, error = function(e) NULL)
+
+if (!is.null(repo_stats)) {
+  stats_table <- tibble(
+    Metric = c("Stars", "Forks", "Open Issues", "Watchers", "Size (KB)", "Default Branch"),
+    Value = c(
+      repo_stats$stargazers_count,
+      repo_stats$forks_count,
+      repo_stats$open_issues_count,
+      repo_stats$watchers_count,
+      repo_stats$size,
+      repo_stats$default_branch
+    )
+  )
+  kable(stats_table)
+}
+```
+
+## Open Issues
+
+```{r open-issues}
+open_issues <- tryCatch({
+  gh::gh(
+    "/repos/{owner}/{repo}/issues",
+    owner = owner,
+    repo = repo,
+    state = "open",
+    .limit = 20
+  )
+}, error = function(e) list())
+
+if (length(open_issues) > 0) {
+  issues_table <- tibble(
+    Number = sapply(open_issues, `[[`, "number"),
+    Title = sapply(open_issues, `[[`, "title"),
+    Created = sapply(open_issues, `[[`, "created_at") |> ymd_hms() |> as.Date()
+  )
+  kable(issues_table)
+} else {
+  cat("No open issues.\n")
+}
+```
+
+## LLM Usage Statistics
+
+This section tracks Claude Code usage via the `ccusage` CLI tool, providing insights into token consumption, costs, and model usage patterns.
+
+### Load Usage Data
+
+```{r llm-setup}
+library(here)
+library(gt)
+library(gtExtras)
+library(scales)
+
+# Source ccusage helper functions
+source(here::here("R/ccusage.R"))
+
+# Load cached data
+daily_data <- load_cached_ccusage("daily", project_filter = NULL)
+session_data <- load_cached_ccusage("session", project_filter = NULL)
+```
+
+### Summary Statistics
+
+```{r llm-summary}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  summary_stats <- summarize_llm_usage(daily_data)
+
+  summary_stats |>
+    gt() |>
+    tab_header(
+      title = "LLM Usage Summary",
+      subtitle = "Aggregated statistics across all tracked usage"
+    ) |>
+    cols_label(
+      metric = "Metric",
+      value = "Value"
+    ) |>
+    tab_options(
+      table.font.size = px(14),
+      heading.title.font.size = px(18)
+    )
+} else {
+  cat("No daily usage data available.\n")
+}
+```
+
+### Cost Trends Over Time
+
+```{r llm-cost-trend}
+#| fig-cap: "Daily LLM costs over time"
+#| fig-height: 5
+
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  cost_trend <- daily_data |>
+    mutate(date = as.Date(date)) |>
+    group_by(date) |>
+    summarise(
+      daily_cost = sum(totalCost, na.rm = TRUE),
+      daily_tokens = sum(totalTokens, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    arrange(date)
+
+  ggplot(cost_trend, aes(x = date, y = daily_cost)) +
+    geom_col(fill = "steelblue", alpha = 0.7) +
+    geom_smooth(method = "loess", se = FALSE, color = "darkred", linewidth = 1) +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(
+      title = "Daily LLM Costs",
+      subtitle = "Cost trend with smoothed average",
+      x = "Date",
+      y = "Cost (USD)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+```
+
+### Token Usage by Type
+
+```{r llm-token-breakdown}
+#| fig-cap: "Token usage breakdown by type"
+#| fig-height: 5
+
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  token_data <- daily_data |>
+    mutate(date = as.Date(date)) |>
+    group_by(date) |>
+    summarise(
+      Input = sum(inputTokens, na.rm = TRUE),
+      Output = sum(outputTokens, na.rm = TRUE),
+      `Cache Creation` = sum(cacheCreationTokens, na.rm = TRUE),
+      `Cache Read` = sum(cacheReadTokens, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    arrange(date) |>
+    pivot_longer(
+      cols = c(Input, Output, `Cache Creation`, `Cache Read`),
+      names_to = "token_type",
+      values_to = "tokens"
+    )
+
+  ggplot(token_data, aes(x = date, y = tokens / 1e6, fill = token_type)) +
+    geom_col(position = "stack", alpha = 0.8) +
+    scale_fill_brewer(palette = "Set2") +
+    scale_y_continuous(labels = label_comma(suffix = "M")) +
+    labs(
+      title = "Token Usage by Type",
+      subtitle = "Stacked bar chart of token consumption",
+      x = "Date",
+      y = "Tokens (millions)",
+      fill = "Token Type"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold"),
+      legend.position = "bottom",
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+```
+
+### Model Cost Breakdown
+
+```{r llm-model-breakdown}
+#| fig-cap: "Cost distribution by model"
+#| fig-height: 5
+
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  model_costs <- get_model_breakdown(daily_data)
+
+  if (!is.null(model_costs) && nrow(model_costs) > 0) {
+    # Bar chart of model costs
+    ggplot(model_costs, aes(x = reorder(modelName, total_cost), y = total_cost)) +
+      geom_col(fill = "steelblue", alpha = 0.8) +
+      geom_text(aes(label = dollar(total_cost)), hjust = -0.1, size = 3.5) +
+      coord_flip() +
+      scale_y_continuous(labels = dollar_format(), expand = expansion(mult = c(0, 0.15))) +
+      labs(
+        title = "Total Cost by Model",
+        subtitle = "Which models consume the most budget?",
+        x = NULL,
+        y = "Total Cost (USD)"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold"),
+        axis.text.y = element_text(size = 9)
+      )
+  }
+}
+```
+
+### Model Usage Table
+
+```{r llm-model-table}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  model_costs <- get_model_breakdown(daily_data)
+
+  if (!is.null(model_costs) && nrow(model_costs) > 0) {
+    model_costs |>
+      arrange(desc(total_cost)) |>
+      gt() |>
+      tab_header(
+        title = "Model Usage Breakdown",
+        subtitle = "Token and cost statistics by model"
+      ) |>
+      cols_label(
+        modelName = "Model",
+        total_cost = "Total Cost",
+        total_input = "Input Tokens",
+        total_output = "Output Tokens",
+        total_cache_creation = "Cache Creation",
+        total_cache_read = "Cache Read",
+        days_used = "Days Used"
+      ) |>
+      fmt_currency(columns = total_cost, currency = "USD") |>
+      fmt_number(
+        columns = c(total_input, total_output, total_cache_creation, total_cache_read),
+        suffixing = TRUE
+      ) |>
+      gt_color_rows(total_cost, palette = "Blues") |>
+      tab_options(
+        table.font.size = px(12),
+        heading.title.font.size = px(16)
+      )
+  }
+}
+```
+
+### Session Usage Details
+
+```{r llm-session-table}
+if (!is.null(session_data) && nrow(session_data) > 0) {
+  session_data |>
+    arrange(desc(lastActivity)) |>
+    select(sessionId, totalCost, totalTokens, lastActivity, modelsUsed) |>
+    mutate(
+      modelsUsed = sapply(modelsUsed, function(x) {
+        if (length(x) == 0) return("-")
+        paste(gsub("claude-|-\\d{8}", "", x), collapse = ", ")
+      })
+    ) |>
+    gt() |>
+    tab_header(
+      title = "Session Usage",
+      subtitle = "Most recent sessions first"
+    ) |>
+    cols_label(
+      sessionId = "Session",
+      totalCost = "Cost",
+      totalTokens = "Tokens",
+      lastActivity = "Last Active",
+      modelsUsed = "Models"
+    ) |>
+    fmt_currency(columns = totalCost, currency = "USD") |>
+    fmt_number(columns = totalTokens, suffixing = TRUE) |>
+    gt_color_rows(totalCost, palette = "Oranges") |>
+    tab_options(
+      table.font.size = px(11),
+      heading.title.font.size = px(16)
+    )
+} else {
+  cat("No session data available.\n")
+}
+```
+
+### Activity Gaps
+
+```{r llm-gaps}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  gaps <- find_activity_gaps(daily_data)
+
+  if (!is.null(gaps) && nrow(gaps) > 0) {
+    gaps |>
+      arrange(desc(gap_start)) |>
+      gt() |>
+      tab_header(
+        title = "Activity Gaps",
+        subtitle = "Periods with no recorded LLM usage"
+      ) |>
+      cols_label(
+        gap_start = "Start",
+        gap_end = "End",
+        gap_days = "Days"
+      ) |>
+      gt_color_rows(gap_days, palette = "Reds") |>
+      tab_options(
+        table.font.size = px(12)
+      )
+  } else {
+    cat("No significant activity gaps detected.\n")
+  }
+} else {
+  cat("Insufficient data for gap analysis.\n")
+}
+```
+
+### Cumulative Cost Over Time
+
+```{r llm-cumulative}
+#| fig-cap: "Cumulative LLM spending over time"
+#| fig-height: 5
+
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  cumulative_cost <- daily_data |>
+    mutate(date = as.Date(date)) |>
+    group_by(date) |>
+    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |>
+    arrange(date) |>
+    mutate(cumulative_cost = cumsum(daily_cost))
+
+  ggplot(cumulative_cost, aes(x = date, y = cumulative_cost)) +
+    geom_area(fill = "steelblue", alpha = 0.3) +
+    geom_line(color = "steelblue", linewidth = 1) +
+    geom_point(color = "darkblue", size = 2) +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(
+      title = "Cumulative LLM Spending",
+      subtitle = "Total spend over time",
+      x = "Date",
+      y = "Cumulative Cost (USD)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+```
+
+## Session Information
+```{r session-info}
+sessionInfo()
+```
+
+## Git Commit Info
+
+```{r git-commit-info}
+# Current commit
+current_commit <- tryCatch({
+  gert::git_log(max = 1)
+}, error = function(e) NULL)
+
+if (!is.null(current_commit)) {
+  commit_table <- tibble(
+    Field = c("Commit SHA", "Author", "Date", "Message"),
+    Value = c(
+      substr(current_commit$commit, 1, 7),
+      current_commit$author,
+      as.character(current_commit$time),
+      substr(current_commit$message, 1, 80)
+    )
+  )
+  kable(commit_table)
+}
+```
+
+## Build Information
+
+- **Built on:** `r Sys.time()`
+- **R version:** `r R.version.string`
+- **Platform:** `r R.version$platform`
+
+---
+
+*This telemetry vignette serves as a template for all projects. See [AGENTS.md](../AGENTS.md) for requirements.*

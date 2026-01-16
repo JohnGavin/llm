@@ -742,8 +742,65 @@ pkgdown::build_site()
 - **Example demos**: https://github.com/coatless-quarto/r-shinylive-demo
 - **Blog tutorial**: https://nrennie.rbind.io/blog/webr-shiny-tidytuesday/
 
+## Quarto Execution Contexts (Shiny Documents)
+
+For Quarto documents with Shiny components (NOT Shinylive), use execution contexts:
+
+```yaml
+```{r}
+#| context: setup
+# Runs in BOTH render and serve phases
+library(shiny)
+library(ggplot2)
+```
+
+```{r}
+#| context: server
+# Runs ONLY when document is served
+output$plot <- renderPlot({ ... })
+```
+
+```{r}
+#| context: data
+# Runs at render time, saves to .RData for server
+expensive_data <- readRDS("big_file.rds")
+```
+
+```{r}
+#| context: server-start
+# Runs ONCE when Shiny document starts
+db_connection <- DBI::dbConnect(...)
+```
+```
+
+**Note:** These contexts are for server-side Shiny in Quarto, NOT for Shinylive (which runs entirely in browser).
+
+## WASM Limitations
+
+Shinylive runs in WebAssembly, which has restrictions:
+
+```r
+# ❌ These DON'T WORK in Shinylive:
+crew::crew_controller_local()  # No background processes
+future::plan(multisession)     # No multiprocessing
+DBI::dbConnect(...)            # No database connections
+httr::GET(...)                 # Limited HTTP (CORS)
+Rcpp with system libs          # Limited C++ support
+
+# ✅ These WORK in Shinylive:
+dplyr::mutate(), filter()      # Pure R computation
+ggplot2::ggplot()              # Visualization
+stats::lm(), t.test()          # Statistics
+shiny::reactive()              # Reactive programming
+```
+
+For long-running computations in Shinylive, keep calculations simple or pre-compute in your package.
+
 ## Related Skills
 
 - r-package-workflow
 - nix-rix-r-environment
 - targets-vignettes
+- shinylive-deployment (GitHub Actions automation)
+- shiny-async-patterns (for server-side Shiny, not WASM)
+- quarto-dynamic-content (dynamic tabsets, parameterized reports)

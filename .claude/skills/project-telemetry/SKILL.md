@@ -695,6 +695,72 @@ pkgdown::build_site()
 log_info("Release preparation complete")
 ```
 
+## GitHub CI Workflow Run Time Analysis (MANDATORY)
+
+Every telemetry vignette MUST include CI run time distributions. This helps identify:
+- Slow workflows that need optimization
+- Regressions in CI performance
+- Success/failure patterns
+
+### Implementation
+
+```r
+library(gh)
+library(dplyr)
+library(ggplot2)
+
+# Fetch workflow runs
+get_workflow_runs <- function(owner, repo, per_page = 100) {
+  runs <- gh::gh(
+    "/repos/{owner}/{repo}/actions/runs",
+    owner = owner, repo = repo,
+    per_page = per_page
+  )
+
+  tibble(
+    name = sapply(runs$workflow_runs, `[[`, "name"),
+    conclusion = sapply(runs$workflow_runs, function(x) x$conclusion %||% NA),
+    run_started_at = sapply(runs$workflow_runs, `[[`, "run_started_at"),
+    updated_at = sapply(runs$workflow_runs, `[[`, "updated_at")
+  ) |>
+    mutate(
+      run_started_at = lubridate::ymd_hms(run_started_at),
+      updated_at = lubridate::ymd_hms(updated_at),
+      duration_minutes = as.numeric(difftime(updated_at, run_started_at, units = "mins"))
+    )
+}
+
+# Get last 10 runs per workflow
+runs <- get_workflow_runs("owner", "repo") |>
+  filter(conclusion == "success") |>
+  group_by(name) |>
+  slice_head(n = 10)
+
+# Summary statistics
+runs |>
+  summarise(
+    mean_min = mean(duration_minutes),
+    median_min = median(duration_minutes),
+    sd_min = sd(duration_minutes)
+  )
+
+# Box plot
+ggplot(runs, aes(x = name, y = duration_minutes)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(title = "CI Run Time Distribution")
+```
+
+### Required Visualizations
+
+1. **Summary table**: Mean, median, min, max, SD per workflow
+2. **Box plot**: Distribution comparison across workflows
+3. **Histogram**: Run time frequency per workflow
+4. **Trend plot**: Run times over time (detect regressions)
+5. **Success rate table**: Percentage by workflow
+
+**Template:** See `vignettes/telemetry.qmd` in the llm project.
+
 ## Resources
 
 - **logger package**: https://daroczig.github.io/logger/
@@ -702,6 +768,7 @@ log_info("Release preparation complete")
 - **targets telemetry**: https://books.ropensci.org/targets/debugging.html
 - **gert package**: https://docs.ropensci.org/gert/
 - **gh package**: https://gh.r-lib.org/
+- **Template vignette**: https://github.com/JohnGavin/llm/blob/main/vignettes/telemetry.qmd
 
 ## Related Skills
 

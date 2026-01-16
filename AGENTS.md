@@ -36,7 +36,7 @@ At the start of each session, review the list of installed R packages. Identify 
 - `.claude/agents/targets-runner.md` - Run and debug targets pipelines
 - `.claude/agents/shinylive-builder.md` - Build and test Shinylive/WASM vignettes
 
-**Skills (24 available):**
+**Skills (30 available):**
 
 *Core Workflow:*
 - `.claude/skills/architecture-planning/SKILL.md` - Step 0: Design validation before coding
@@ -51,7 +51,8 @@ At the start of each session, review the list of installed R packages. Identify 
 - `.claude/skills/nix-rix-r-environment/SKILL.md` - Reproducible Nix/R environments
 - `.claude/skills/pkgdown-deployment/SKILL.md` - Hybrid deployment workflow
 - `.claude/skills/targets-vignettes/SKILL.md` - Pre-calculate vignette objects
-- `.claude/skills/shinylive-quarto/SKILL.md` - WebAssembly Shiny apps
+- `.claude/skills/shinylive-quarto/SKILL.md` - WebAssembly Shiny apps in Quarto
+- `.claude/skills/shinylive-deployment/SKILL.md` - **NEW**: GitHub Actions Shinylive automation
 
 *CI/CD & Deployment:*
 - `.claude/skills/ci-workflows-github-actions/SKILL.md` - GitHub Actions patterns
@@ -63,7 +64,18 @@ At the start of each session, review the list of installed R packages. Identify 
 
 *Data & Parallel Processing:*
 - `.claude/skills/data-wrangling-duckdb/SKILL.md` - SQL on files (JSON/CSV/Parquet)
-- `.claude/skills/parallel-processing/SKILL.md` - nanonext → mirai → crew stack
+- `.claude/skills/parallel-processing/SKILL.md` - nanonext → mirai → crew stack (event-driven)
+- `.claude/skills/crew-operations/SKILL.md` - **NEW**: Logging, auto-scaling, monitoring
+
+*Shiny & Async:*
+- `.claude/skills/shiny-async-patterns/SKILL.md` - **NEW**: ExtendedTask, crew+Shiny, non-blocking
+- `.claude/skills/lazy-evaluation-guide/SKILL.md` - **NEW**: 6 meanings of "lazy" in R
+
+*Quarto & Dynamic Content:*
+- `.claude/skills/quarto-dynamic-content/SKILL.md` - **NEW**: Dynamic tabsets, knitr::knit_child()
+
+*ML/AI:*
+- `.claude/skills/huggingface-r/SKILL.md` - **NEW**: hfhub, tok, safetensors for HF Hub models
 
 *Statistical Analysis Workflow:*
 - `.claude/skills/eda-workflow/SKILL.md` - Systematic EDA checklist
@@ -195,6 +207,7 @@ At the start of each session, review the list of installed R packages. Identify 
 2.  **🌿 Create Development Branch**: `usethis::pr_init("fix-issue-123-description")`.
 3.  **✏️ Make Changes**: Edit code on dev branch. Commit using `gert` (NOT bash).
 4.  **✅ Run Checks**: `devtools::document()`, `test()`, `check()`, `pkgdown::build_site()`. Fix ALL errors/notes.
+    - **Test Coverage**: Run `covr::package_coverage()` locally (or rely on CI - see Code Coverage section below).
 5.  **🚀 Push to Cachix (MANDATORY)**:
     - Run: `../push_to_cachix.sh` (or `nix-store ... | cachix push johngavin`)
     - **Why?** GitHub Actions pulls from cachix. Saves time/resources. Ensures consistency.
@@ -247,8 +260,9 @@ maintain_env()
 **End-of-Session Checklist:**
 1. Commit/Stash work (`gert`).
 2. Update `.claude/CURRENT_WORK.md`.
-3. Push to remote.
-4. Exit.
+3. If `WIKI_CONTENT/` changed: run `Rscript R/dev/wiki/sync_wiki.R` (syncs wiki + README).
+4. Push to remote.
+5. Exit.
 
 ## 7. R Code Standards
 
@@ -390,27 +404,95 @@ Always query API for ground truth (don't trust old docs).
 - Use `@path` syntax to include files/directories.
 
 ### Telemetry
-- Create `telemetry.qmd` vignette.
-- Visualize targets pipeline (`tar_viznetwork`).
-- Track compilation time, memory, git history.
 
-### Code Coverage in Nix
+**Template:** [`vignettes/telemetry.qmd`](./vignettes/telemetry.qmd) (use as reference for all projects)
+
+**Required Content for All Projects:**
+
+1. **GitHub CI Workflow Run Time Distributions** (MANDATORY)
+   - Fetch last 10 runs per workflow via `gh::gh("/repos/{owner}/{repo}/actions/runs")`
+   - Show summary statistics: mean, median, min, max, SD
+   - Create box plots and histograms of run times
+   - Plot trends over time (are workflows getting faster/slower?)
+   - Show success rates by workflow
+
+2. **Git History & Contributors**
+   - Commit activity over time
+   - Contributors table with commit counts
+   - Commits by day of week
+
+3. **Project Structure**
+   - File counts by extension
+   - Directory tree (limited depth)
+
+4. **GitHub Repository Statistics**
+   - Stars, forks, open issues, watchers
+   - List of open issues
+
+5. **Session Info** (at bottom of vignette)
+   - `sessionInfo()` output
+
+6. **Git Commit Info** (after sessionInfo)
+   - Current commit SHA, author, date, message
+
+**Implementation Pattern:**
+```r
+# Fetch workflow runs
+runs <- gh::gh(
+"/repos/{owner}/{repo}/actions/runs",
+  owner = owner, repo = repo,
+  per_page = 100
+)
+
+# Calculate durations
+tibble(
+  name = sapply(runs$workflow_runs, `[[`, "name"),
+  run_started_at = sapply(runs$workflow_runs, `[[`, "run_started_at"),
+  updated_at = sapply(runs$workflow_runs, `[[`, "updated_at")
+) |>
+  mutate(duration_minutes = as.numeric(difftime(updated_at, run_started_at, units = "mins")))
+```
+
+**Optional Additions:**
+- `tar_viznetwork()` for targets pipeline visualization
+- Test coverage metrics (from `inst/extdata/coverage.rds`)
+- Package dependency graph
+- Memory/timing statistics from targets metadata
+
+### Code Coverage
+
 **Guide:** [`WIKI_CONTENT/Code_Coverage_with_Nix.md`](./WIKI_CONTENT/Code_Coverage_with_Nix.md)
 
-`covr::package_coverage()` fails in Nix with "error reading from connection". Solution: **automated CI workflow**.
+**Local Testing (non-Nix):**
+```r
+covr::package_coverage()           # Full coverage report
+covr::report()                     # Interactive HTML report
+```
+
+**Note:** `covr::package_coverage()` fails in Nix with "error reading from connection". Use CI workflow instead.
+
+**CI Setup (Recommended):**
+```r
+# Add test-coverage GitHub Action
+usethis::use_github_action("test-coverage")
+```
 
 **How it works:**
-1. `.github/workflows/coverage.yaml` runs on push to main (when R/ or tests/ change)
+1. `.github/workflows/test-coverage.yaml` runs on push/PR to main
 2. Uses standard R (r-lib/actions/setup-r), NOT Nix
-3. Generates coverage and commits `inst/extdata/coverage.rds` back to repo
-4. Telemetry vignette loads cached coverage via `readRDS()`
+3. Uploads coverage to [Codecov](https://codecov.io) for PR badges/checks
+4. Optionally commits `inst/extdata/coverage.rds` for telemetry vignette
 
-**No manual action required** - coverage updates automatically when code changes.
+**Codecov Setup:**
+1. Sign in to [codecov.io](https://codecov.io) with GitHub
+2. Enable the repository (public repos: tokenless, private: add `CODECOV_TOKEN` secret)
+3. Add badge to README: `[![codecov](https://codecov.io/gh/USER/REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/USER/REPO)`
 
 **To add to a new project:**
-1. Copy `.github/workflows/coverage.yaml` from randomwalk
-2. Add `inst/extdata/` to `.gitignore` exceptions
-3. Update telemetry vignette to load from `inst/extdata/coverage.rds`
+1. Run `usethis::use_github_action("test-coverage")`
+2. Enable repo on codecov.io
+3. Add badge to README
+4. (Optional) Update telemetry vignette to load from `inst/extdata/coverage.rds`
 
 ### Isolated Shell
 - LLMs should run in `--pure` nix shell/container for security.
