@@ -1,6 +1,6 @@
 # Daily LLM Usage Report
 # Sends a daily email with Claude Code usage statistics via Gmail
-# Uses Nix environment from default.nix
+# Uses r-lib/actions (Native R) - NOT Nix - per CI skill Decision Matrix
 
 name: Daily LLM Report
 
@@ -9,7 +9,6 @@ on:
     paths:
       - '.github/workflows/daily-llm-report.yaml'
       - 'R/ccusage.R'
-      - 'default.nix'
   schedule:
     # Run daily at 8am UTC (8am GMT / 9am BST)
     - cron: '0 8 * * *'
@@ -24,13 +23,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v30
+      - uses: r-lib/actions/setup-r@v2
         with:
-          nix_path: nixpkgs=channel:nixos-unstable
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::blastula
+            any::dplyr
+            any::tibble
+            any::jsonlite
+            any::purrr
 
       - name: Install Node.js (for ccusage)
         uses: actions/setup-node@v4
@@ -39,20 +45,11 @@ jobs:
 
       - name: Fetch ccusage data and send email
         run: |
-          # Enter nix-shell and run R script
-          nix-shell default.nix --attr shell --run 'R --quiet --no-save << "RSCRIPT"
-
-          # Install blastula (not in default.nix)
-          if (!requireNamespace("blastula", quietly = TRUE)) {
-            install.packages("blastula", repos = "https://cloud.r-project.org")
-          }
-
-          # Load packages (these are in default.nix)
+          Rscript -e '
           library(blastula)
           library(dplyr)
           library(tibble)
           library(jsonlite)
-          library(ggplot2)
           library(purrr)
 
           # Get ccusage data
@@ -203,5 +200,4 @@ jobs:
             message("Failed to send email: ", e$message)
             quit(status = 1)
           })
-
-          RSCRIPT'
+          '
