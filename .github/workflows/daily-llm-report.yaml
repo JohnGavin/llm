@@ -1,0 +1,192 @@
+# Daily LLM Usage Report
+# Sends a daily email with Claude Code usage statistics via Gmail
+
+name: Daily LLM Report
+
+on:
+  schedule:
+    # Run daily at 8am UTC (8am GMT / 9am BST)
+    - cron: '0 8 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+  GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Install Node.js (for ccusage)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch ccusage data and send email
+        run: |
+          nix develop --command R --quiet --no-save << 'RSCRIPT'
+
+          # Load required packages
+          library(blastula)
+          library(dplyr)
+          library(tibble)
+          library(jsonlite)
+          library(scales)
+          library(ggplot2)
+          library(gt)
+          library(glue)
+
+          # Get ccusage data
+          fetch_ccusage <- function(type) {
+            cmd <- sprintf("npx ccusage %s --json --instances", type)
+            tryCatch({
+              output <- system(cmd, intern = TRUE, ignore.stderr = TRUE)
+              fromJSON(paste(output, collapse = "\n"))
+            }, error = function(e) {
+              message("ccusage failed: ", e$message)
+              NULL
+            })
+          }
+
+          daily_raw <- fetch_ccusage("daily")
+          session_raw <- fetch_ccusage("session")
+
+          # Parse daily data
+          parse_daily <- function(json) {
+            if (is.null(json$projects)) return(NULL)
+            projects <- names(json$projects)
+            purrr::map_dfr(projects, function(p) {
+              d <- json$projects[[p]]
+              if (is.null(d) || length(d) == 0) return(NULL)
+              as_tibble(d) |> mutate(project = p)
+            })
+          }
+
+          daily_data <- parse_daily(daily_raw)
+          session_data <- if (!is.null(session_raw$sessions)) {
+            as_tibble(session_raw$sessions)
+          } else NULL
+
+          # Generate email content
+          today <- Sys.Date()
+
+          # Summary stats
+          total_cost <- if (!is.null(daily_data)) sum(daily_data$totalCost, na.rm = TRUE) else 0
+          total_tokens <- if (!is.null(daily_data)) sum(daily_data$totalTokens, na.rm = TRUE) else 0
+          n_sessions <- if (!is.null(session_data)) nrow(session_data) else 0
+
+          # Recent activity (last 7 days)
+          recent_cost <- if (!is.null(daily_data)) {
+            daily_data |>
+              filter(as.Date(date) >= today - 7) |>
+              summarise(cost = sum(totalCost, na.rm = TRUE)) |>
+              pull(cost)
+          } else 0
+
+          # Build email body
+          email_body <- glue("
+          <h2>LLM Usage Report - {today}</h2>
+
+          <h3>Summary Statistics</h3>
+          <table style='border-collapse: collapse; width: 100%; max-width: 500px;'>
+            <tr style='background-color: #f2f2f2;'>
+              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Total Cost (All Time)</strong></td>
+              <td style='padding: 10px; border: 1px solid #ddd;'>{dollar(total_cost)}</td>
+            </tr>
+            <tr>
+              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Last 7 Days Cost</strong></td>
+              <td style='padding: 10px; border: 1px solid #ddd;'>{dollar(recent_cost)}</td>
+            </tr>
+            <tr style='background-color: #f2f2f2;'>
+              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Total Tokens</strong></td>
+              <td style='padding: 10px; border: 1px solid #ddd;'>{comma(total_tokens)}</td>
+            </tr>
+            <tr>
+              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Active Sessions</strong></td>
+              <td style='padding: 10px; border: 1px solid #ddd;'>{n_sessions}</td>
+            </tr>
+          </table>
+
+          <h3>Top Sessions by Cost</h3>
+          ")
+
+          if (!is.null(session_data) && nrow(session_data) > 0) {
+            top_sessions <- session_data |>
+              arrange(desc(totalCost)) |>
+              head(5) |>
+              mutate(
+                cost_fmt = dollar(totalCost),
+                tokens_fmt = comma(totalTokens)
+              )
+
+            session_table <- "<table style='border-collapse: collapse; width: 100%;'>
+              <tr style='background-color: #4CAF50; color: white;'>
+                <th style='padding: 10px; border: 1px solid #ddd;'>Session</th>
+                <th style='padding: 10px; border: 1px solid #ddd;'>Cost</th>
+                <th style='padding: 10px; border: 1px solid #ddd;'>Tokens</th>
+                <th style='padding: 10px; border: 1px solid #ddd;'>Last Active</th>
+              </tr>"
+
+            for (i in seq_len(nrow(top_sessions))) {
+              bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
+              session_table <- paste0(session_table, glue("
+                <tr style='{bg}'>
+                  <td style='padding: 10px; border: 1px solid #ddd;'>{substr(top_sessions$sessionId[i], 1, 40)}</td>
+                  <td style='padding: 10px; border: 1px solid #ddd;'>{top_sessions$cost_fmt[i]}</td>
+                  <td style='padding: 10px; border: 1px solid #ddd;'>{top_sessions$tokens_fmt[i]}</td>
+                  <td style='padding: 10px; border: 1px solid #ddd;'>{top_sessions$lastActivity[i]}</td>
+                </tr>"))
+            }
+            session_table <- paste0(session_table, "</table>")
+            email_body <- paste0(email_body, session_table)
+          }
+
+          email_body <- paste0(email_body, "
+          <hr style='margin-top: 20px;'>
+          <p style='color: #666; font-size: 12px;'>
+            Generated by <a href='https://github.com/JohnGavin/llm'>llm project</a> telemetry.
+            <br>View full dashboard: <a href='https://johngavin.github.io/llm/articles/telemetry.html'>Telemetry Vignette</a>
+          </p>
+          ")
+
+          # Create and send email
+          email <- compose_email(
+            body = md(email_body),
+            footer = md(glue("Report generated: {Sys.time()} UTC"))
+          )
+
+          # Gmail SMTP settings
+          smtp_creds <- creds_envvar(
+            user = Sys.getenv("GMAIL_USERNAME"),
+            pass_envvar = "GMAIL_APP_PASSWORD",
+            host = "smtp.gmail.com",
+            port = 465,
+            use_ssl = TRUE
+          )
+
+          # Send email
+          tryCatch({
+            smtp_send(
+              email = email,
+              to = Sys.getenv("GMAIL_USERNAME"),
+              from = Sys.getenv("GMAIL_USERNAME"),
+              subject = glue("LLM Usage Report - {today}"),
+              credentials = smtp_creds
+            )
+            message("Email sent successfully!")
+          }, error = function(e) {
+            message("Failed to send email: ", e$message)
+            quit(status = 1)
+          })
+
+          RSCRIPT

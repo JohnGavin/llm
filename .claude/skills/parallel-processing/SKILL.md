@@ -249,16 +249,83 @@ data <- recv(s)
 | targets with parallelism | `tar_option_set(controller = crew_controller_local())` |
 | Custom networking | `nanonext::socket()` |
 
+## Event-Driven vs Polling
+
+A critical distinction for Shiny and async applications:
+
+```
+Polling (future/promises):
+┌─────────────────────────────────────────┐
+│ Task completes → Wait up to Xms →       │
+│ Next poll detects completion → Callback │
+│ Latency: milliseconds                   │
+└─────────────────────────────────────────┘
+
+Event-Driven (mirai/crew):
+┌─────────────────────────────────────────┐
+│ Task completes → Immediate callback →   │
+│ Zero polling overhead                   │
+│ Latency: microseconds                   │
+└─────────────────────────────────────────┘
+```
+
+**Why this matters:**
+- mirai has "first-class" async support for Shiny/Plumber
+- Native promise integration with zero-latency callbacks
+- No busy-waiting or polling loops consuming resources
+- Better UX in Shiny apps (snappier responses)
+
+```r
+# mirai objects ARE promises (event-driven)
+library(mirai)
+library(promises)
+
+m <- mirai({ expensive_computation() })
+
+# Callback fires IMMEDIATELY when complete
+m %...>% function(result) {
+  # No polling delay!
+  update_ui(result)
+}
+```
+
+## crew Controller Lifecycle
+
+Always manage controller lifecycle properly:
+
+```r
+# In Shiny apps
+server <- function(input, output, session) {
+  controller <- crew_controller_local(workers = 4)
+  controller$start()
+
+  # CRITICAL: Clean up on session end
+  onStop(function() {
+    controller$terminate()
+  })
+
+  # ... use controller ...
+}
+
+# In scripts
+controller <- crew_controller_local(workers = 4)
+controller$start()
+tryCatch(
+  { # ... use controller ... },
+  finally = controller$terminate()
+)
+```
+
 ## Comparison with future/furrr
 
 ```r
-# ❌ OLD: future/furrr (heavier, more overhead)
+# ❌ OLD: future/furrr (heavier, polling-based)
 library(future)
 library(furrr)
 plan(multisession, workers = 4)
 results <- future_map(items, process)
 
-# ✅ NEW: mirai (lighter, faster startup)
+# ✅ NEW: mirai (lighter, event-driven)
 library(mirai)
 results <- mirai_map(items, process)
 
