@@ -1,5 +1,6 @@
 # Daily LLM Usage Report
 # Sends a daily email with Claude Code usage statistics via Gmail
+# Uses Nix environment from default.nix
 
 name: Daily LLM Report
 
@@ -22,10 +23,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Setup Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Install Node.js (for ccusage)
         uses: actions/setup-node@v4
@@ -34,17 +34,21 @@ jobs:
 
       - name: Fetch ccusage data and send email
         run: |
-          nix develop --command R --quiet --no-save << 'RSCRIPT'
+          # Enter nix-shell and run R script
+          nix-shell default.nix --attr shell --run 'R --quiet --no-save << "RSCRIPT"
 
-          # Load required packages
+          # Install blastula (not in default.nix)
+          if (!requireNamespace("blastula", quietly = TRUE)) {
+            install.packages("blastula", repos = "https://cloud.r-project.org")
+          }
+
+          # Load packages (these are in default.nix)
           library(blastula)
           library(dplyr)
           library(tibble)
           library(jsonlite)
-          library(scales)
           library(ggplot2)
-          library(gt)
-          library(glue)
+          library(purrr)
 
           # Get ccusage data
           fetch_ccusage <- function(type) {
@@ -65,7 +69,7 @@ jobs:
           parse_daily <- function(json) {
             if (is.null(json$projects)) return(NULL)
             projects <- names(json$projects)
-            purrr::map_dfr(projects, function(p) {
+            map_dfr(projects, function(p) {
               d <- json$projects[[p]]
               if (is.null(d) || length(d) == 0) return(NULL)
               as_tibble(d) |> mutate(project = p)
@@ -79,6 +83,10 @@ jobs:
 
           # Generate email content
           today <- Sys.Date()
+
+          # Helper for formatting
+          dollar <- function(x) sprintf("$%.2f", x)
+          comma <- function(x) format(x, big.mark = ",", scientific = FALSE)
 
           # Summary stats
           total_cost <- if (!is.null(daily_data)) sum(daily_data$totalCost, na.rm = TRUE) else 0
@@ -94,75 +102,77 @@ jobs:
           } else 0
 
           # Build email body
-          email_body <- glue("
-          <h2>LLM Usage Report - {today}</h2>
+          email_body <- sprintf("
+          <h2>LLM Usage Report - %s</h2>
 
           <h3>Summary Statistics</h3>
-          <table style='border-collapse: collapse; width: 100%; max-width: 500px;'>
-            <tr style='background-color: #f2f2f2;'>
-              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Total Cost (All Time)</strong></td>
-              <td style='padding: 10px; border: 1px solid #ddd;'>{dollar(total_cost)}</td>
+          <table style=\"border-collapse: collapse; width: 100%%; max-width: 500px;\">
+            <tr style=\"background-color: #f2f2f2;\">
+              <td style=\"padding: 10px; border: 1px solid #ddd;\"><strong>Total Cost (All Time)</strong></td>
+              <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
             </tr>
             <tr>
-              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Last 7 Days Cost</strong></td>
-              <td style='padding: 10px; border: 1px solid #ddd;'>{dollar(recent_cost)}</td>
+              <td style=\"padding: 10px; border: 1px solid #ddd;\"><strong>Last 7 Days Cost</strong></td>
+              <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
             </tr>
-            <tr style='background-color: #f2f2f2;'>
-              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Total Tokens</strong></td>
-              <td style='padding: 10px; border: 1px solid #ddd;'>{comma(total_tokens)}</td>
+            <tr style=\"background-color: #f2f2f2;\">
+              <td style=\"padding: 10px; border: 1px solid #ddd;\"><strong>Total Tokens</strong></td>
+              <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
             </tr>
             <tr>
-              <td style='padding: 10px; border: 1px solid #ddd;'><strong>Active Sessions</strong></td>
-              <td style='padding: 10px; border: 1px solid #ddd;'>{n_sessions}</td>
+              <td style=\"padding: 10px; border: 1px solid #ddd;\"><strong>Active Sessions</strong></td>
+              <td style=\"padding: 10px; border: 1px solid #ddd;\">%d</td>
             </tr>
           </table>
 
           <h3>Top Sessions by Cost</h3>
-          ")
+          ", today, dollar(total_cost), dollar(recent_cost), comma(total_tokens), n_sessions)
 
           if (!is.null(session_data) && nrow(session_data) > 0) {
             top_sessions <- session_data |>
               arrange(desc(totalCost)) |>
-              head(5) |>
-              mutate(
-                cost_fmt = dollar(totalCost),
-                tokens_fmt = comma(totalTokens)
-              )
+              head(5)
 
-            session_table <- "<table style='border-collapse: collapse; width: 100%;'>
-              <tr style='background-color: #4CAF50; color: white;'>
-                <th style='padding: 10px; border: 1px solid #ddd;'>Session</th>
-                <th style='padding: 10px; border: 1px solid #ddd;'>Cost</th>
-                <th style='padding: 10px; border: 1px solid #ddd;'>Tokens</th>
-                <th style='padding: 10px; border: 1px solid #ddd;'>Last Active</th>
+            session_table <- "<table style=\"border-collapse: collapse; width: 100%;\">
+              <tr style=\"background-color: #4CAF50; color: white;\">
+                <th style=\"padding: 10px; border: 1px solid #ddd;\">Session</th>
+                <th style=\"padding: 10px; border: 1px solid #ddd;\">Cost</th>
+                <th style=\"padding: 10px; border: 1px solid #ddd;\">Tokens</th>
+                <th style=\"padding: 10px; border: 1px solid #ddd;\">Last Active</th>
               </tr>"
 
             for (i in seq_len(nrow(top_sessions))) {
               bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
-              session_table <- paste0(session_table, glue("
-                <tr style='{bg}'>
-                  <td style='padding: 10px; border: 1px solid #ddd;'>{substr(top_sessions$sessionId[i], 1, 40)}</td>
-                  <td style='padding: 10px; border: 1px solid #ddd;'>{top_sessions$cost_fmt[i]}</td>
-                  <td style='padding: 10px; border: 1px solid #ddd;'>{top_sessions$tokens_fmt[i]}</td>
-                  <td style='padding: 10px; border: 1px solid #ddd;'>{top_sessions$lastActivity[i]}</td>
-                </tr>"))
+              session_table <- paste0(session_table, sprintf("
+                <tr style=\"%s\">
+                  <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
+                  <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
+                  <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
+                  <td style=\"padding: 10px; border: 1px solid #ddd;\">%s</td>
+                </tr>",
+                bg,
+                substr(top_sessions$sessionId[i], 1, 40),
+                dollar(top_sessions$totalCost[i]),
+                comma(top_sessions$totalTokens[i]),
+                top_sessions$lastActivity[i]
+              ))
             }
             session_table <- paste0(session_table, "</table>")
             email_body <- paste0(email_body, session_table)
           }
 
           email_body <- paste0(email_body, "
-          <hr style='margin-top: 20px;'>
-          <p style='color: #666; font-size: 12px;'>
-            Generated by <a href='https://github.com/JohnGavin/llm'>llm project</a> telemetry.
-            <br>View full dashboard: <a href='https://johngavin.github.io/llm/articles/telemetry.html'>Telemetry Vignette</a>
+          <hr style=\"margin-top: 20px;\">
+          <p style=\"color: #666; font-size: 12px;\">
+            Generated by <a href=\"https://github.com/JohnGavin/llm\">llm project</a> telemetry.
+            <br>View full dashboard: <a href=\"https://johngavin.github.io/llm/articles/telemetry.html\">Telemetry Vignette</a>
           </p>
           ")
 
           # Create and send email
           email <- compose_email(
             body = md(email_body),
-            footer = md(glue("Report generated: {Sys.time()} UTC"))
+            footer = md(sprintf("Report generated: %s UTC", Sys.time()))
           )
 
           # Gmail SMTP settings
@@ -180,7 +190,7 @@ jobs:
               email = email,
               to = Sys.getenv("GMAIL_USERNAME"),
               from = Sys.getenv("GMAIL_USERNAME"),
-              subject = glue("LLM Usage Report - {today}"),
+              subject = sprintf("LLM Usage Report - %s", today),
               credentials = smtp_creds
             )
             message("Email sent successfully!")
@@ -189,4 +199,4 @@ jobs:
             quit(status = 1)
           })
 
-          RSCRIPT
+          RSCRIPT'
