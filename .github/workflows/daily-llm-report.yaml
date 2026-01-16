@@ -5,6 +5,12 @@
 name: Daily LLM Report
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/daily-llm-report.yaml'
+      - 'R/ccusage.R'
+      - 'default.nix'
   schedule:
     # Run daily at 8am UTC (8am GMT / 9am BST)
     - cron: '0 8 * * *'
