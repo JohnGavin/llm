@@ -36,6 +36,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          cache-version: 2
           packages: |
             any::gh
             any::dplyr
@@ -54,8 +55,23 @@ jobs:
             any::htmltools
             any::tibble
             any::purrr
+            any::rmarkdown
 
       - uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Verify R packages
+        run: |
+          Rscript -e "
+            required <- c('gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
+                          'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
+                          'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr')
+            for (pkg in required) {
+              if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+                stop(sprintf('Package %s not available', pkg))
+              }
+            }
+            cat('All required packages available\n')
+          "
 
       - name: Render Quarto site
         run: quarto render
