@@ -1,0 +1,44 @@
+[
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html",
+    "title": "ETF Data Analysis",
+    "section": "",
+    "text": "We start by defining the universe of European UCITS ETFs.\nNote: The data displayed in this vignette is a subset (Top 5 by AUM) generated during the build process to ensure reproducibility and performance.\n\n\nShow Code\n# The function used to generate the full universe:\nget_etf_universe\n\n\n\n\n[1] \"Universe data not available in this build.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#etf-universe",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#etf-universe",
+    "title": "ETF Data Analysis",
+    "section": "",
+    "text": "We start by defining the universe of European UCITS ETFs.\nNote: The data displayed in this vignette is a subset (Top 5 by AUM) generated during the build process to ensure reproducibility and performance.\n\n\nShow Code\n# The function used to generate the full universe:\nget_etf_universe\n\n\n\n\n[1] \"Universe data not available in this build.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#metadata-justetf",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#metadata-justetf",
+    "title": "ETF Data Analysis",
+    "section": "Metadata (JustETF)",
+    "text": "Metadata (JustETF)\nWe scraped JustETF for metadata including AUM and TER.\n\n\nShow Code\n# Code used:\nfetch_etf_metadata(universe$isin)\n\n\n\n\n[1] \"Metadata not available.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#price-history-yahoo-finance",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#price-history-yahoo-finance",
+    "title": "ETF Data Analysis",
+    "section": "Price History (Yahoo Finance)",
+    "text": "Price History (Yahoo Finance)\nWe fetched daily price history.\n\n\nShow Code\nif (data_loaded && !is.null(history) && requireNamespace(\"ggplot2\", quietly = TRUE)) {\n  # Visualize Close Prices with Facets\n  history %&gt;%\n    ggplot(aes(x = date, y = close, color = ticker)) +\n    geom_line() +\n    facet_wrap(~ticker, scales = \"free_y\") +\n    labs(title = \"ETF Price History (LSE)\", y = \"Close Price (GBP)\") +\n    theme_minimal() +\n    theme(legend.position = \"none\")\n} else {\n  print(\"History plot not available.\")\n}\n\n\n[1] \"History plot not available.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#combined-analysis",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#combined-analysis",
+    "title": "ETF Data Analysis",
+    "section": "Combined Analysis",
+    "text": "Combined Analysis\nRelationship between AUM and Liquidity (Volume)?\n\n\nShow Code\nif (data_loaded && !is.null(history) && !is.null(metadata)) {\n  # Join data\n  avg_vol &lt;- history %&gt;%\n    group_by(ticker) %&gt;%\n    summarise(avg_daily_vol = mean(volume, na.rm = TRUE))\n  \n  if (\"isin\" %in% colnames(universe) && \"isin\" %in% colnames(metadata)) {\n    combined &lt;- universe %&gt;%\n      inner_join(metadata, by = \"isin\") %&gt;%\n      inner_join(avg_vol, by = \"ticker\")\n    \n    # Parse AUM\n    if (requireNamespace(\"stringr\", quietly = TRUE) && requireNamespace(\"dplyr\", quietly = TRUE)) {\n       combined &lt;- bind_cols(combined, parse_aum(combined$aum_text))\n    }\n\n    knitr::kable(head(combined %&gt;% select(ticker, name, currency, aum_amount, aum_units, avg_daily_vol)))\n  }\n}"
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#metadata",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#metadata",
+    "title": "ETF Data Analysis",
+    "section": "Metadata",
+    "text": "Metadata\n\n\nShow Code\nsessionInfo()\n\n\nR version 4.5.2 (2025-10-31)\nPlatform: aarch64-apple-darwin24.6.0\nRunning under: macOS Sequoia 15.7.1\n\nMatrix products: default\nBLAS:   /nix/store/jammm5gz621n7dkzfzc1c43gs6xv9a10-blas-3/lib/libblas.dylib \nLAPACK: /nix/store/30ypx3jnyq4r1z4nv742j1csfflsd66v-openblas-0.3.30/lib/libopenblasp-r0.3.30.dylib;  LAPACK version 3.12.0\n\nlocale:\n[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8\n\ntime zone: Europe/Belfast\ntzcode source: internal\n\nattached base packages:\n[1] stats     graphics  grDevices utils     datasets  methods   base     \n\nloaded via a namespace (and not attached):\n [1] digest_0.6.37     fastmap_1.2.0     xfun_0.54         gert_2.1.5       \n [5] magrittr_2.0.4    glue_1.8.0        knitr_1.50        htmltools_0.5.8.1\n [9] rmarkdown_2.30    lifecycle_1.0.4   cli_3.6.5         askpass_1.2.1    \n[13] openssl_2.3.4     vctrs_0.6.5       compiler_4.5.2    tools_4.5.2      \n[17] purrr_1.1.0       sys_3.4.3         credentials_2.0.3 evaluate_1.0.5   \n[21] yaml_2.3.10       htmlwidgets_1.6.4 jsonlite_2.0.0    rlang_1.1.6      \n[25] fs_1.6.6          usethis_3.2.1    \n\n\n\nData Sizes\n\n\nShow Code\nif (data_loaded) {\n  print(\"Universe:\")\n  str(universe)\n  print(\"Metadata:\")\n  str(metadata)\n  print(\"History:\")\n  str(history)\n}"
+  }
+]

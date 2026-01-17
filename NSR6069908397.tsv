@@ -1,0 +1,806 @@
+start	end	text
+0	4720	Deepen your subject knowledge, exchange innovative ideas and augment your existing income.
+4720	7840	There are so many reasons to become a Pearson Examiner.
+7840	11040	In addition to enriching your expertise and progressing your career,
+11040	15200	you'll be better prepared to help your learners achieve future success in their exams.
+15200	17920	With flexible working options and full training provided,
+17920	22080	becoming a Pearson Examiner will open opportunities for both you and your students.
+22080	24560	It's a bonafide win-win situation.
+24640	30320	Discover more by visiting home.edxlgateway.com forward slash pages forward slash search.
+31600	33920	Hi, just leaving work now. Sorry it's a bit loud.
+33920	36400	Um, basically, so I was thinking we could get mackeys tonight.
+36400	40480	Had a Big Mac on my mind all day and delivery fee on the app is now from 99p.
+40480	41600	So, you in?
+41600	42400	Of course you are.
+42400	43120	Love you. Bye.
+43760	45280	Exclusively on the McDonald's app.
+46640	48640	18 plus, service fee and small order fee may apply.
+48640	50800	Participating in restaurants, serving times and C's and C's apply.
+50800	53600	Hello, I'm a National Lottery scratch card.
+53600	56240	Over five people a second win with me.
+56240	58880	That's like 30 winners since I started talking.
+58880	61440	Oh, 12 more, 14.
+61440	62480	21!
+63120	64880	Is there a win in store for you?
+64880	67280	Play a National Lottery scratch card today.
+67280	68320	Winners is an average search.
+68320	69120	Dream big, play small.
+69120	70800	Rules apply, players must be 18 or over.
+75600	80160	Hello and welcome to Incident Genius, a bite-sized masterclass in podcast form.
+80160	83200	Every Monday and Friday, you'll hear world-leading scientists and experts
+83200	86560	talking about the most fascinating ideas in science and technology today.
+87200	90320	I'm Jason Goodger, Commissioning Editor at BBC Science Focus.
+91440	94640	In the world of games, scoring systems establish a framework
+94640	97600	that provides us with clear challenges, motivation
+97600	101040	and ultimately delivers a huge amount of fun and pleasure.
+101040	106000	However, on the flip side, the increasing tendency to apply rankings and metrics
+106000	109200	to almost every area of our personal and professional lives
+109200	112640	can have a dehumanising effect, reducing our actions,
+112640	116240	performance and even ourselves to a simple string of numbers.
+116880	120880	In today's episode, we're joined by C.T. Nguyen, a games researcher
+120880	124480	and associate professor of philosophy based at the University of Utah,
+124480	129360	to talk about his latest book, The Score, How to Stop Playing Someone Else's Game.
+130080	134800	He explains how in the real world, scoring systems typically fail to provide meaning
+134800	137200	by focusing on the simplest to measure outcomes.
+137840	142160	How purely numerical data is, by definition, lacking in nuance.
+142800	145520	How, by concentrating on what we truly value,
+145520	148640	we can all break free from the tyranny of rankings and metrics.
+150480	153120	T, welcome to the podcast. Thanks so much for joining us.
+153680	155360	Thank you. I'm happy to be here.
+156080	159040	Today, we're talking about your latest book, The Score,
+159040	160960	How to Stop Playing Someone Else's Game.
+161760	164000	That's quite a provocative title, I'd say.
+164640	167920	It's all about the notion of games and gamification.
+168640	171120	First off, to get us all on the same page,
+171680	176880	you hear the term bandied around a lot, but what exactly do we mean by gamification?
+177680	184000	I started writing this book because I became obsessed with a question
+184000	188800	that came up from two different streams of what I was thinking about.
+188800	195920	One stream was about how games and scoring systems often lead to such delightful play,
+196000	202240	and the other half was about how gamification's rankings and metrics,
+202240	207120	my experience of them in education, institution, online, on social media,
+207120	212560	seem to drain the life out of everything and ruin my experience of communication,
+212560	216080	of education, of being a researcher, of being a person.
+216080	217600	I wanted to understand that.
+220160	222080	Gamification is a really complicated term.
+222080	227520	The first thing to say about gamification is that gamification is taking the kind of
+227520	233520	superficial trappings of a game, the leveling experience, the scoring experience,
+233520	240080	the fact that you're getting points, and applying it to a non-game context,
+240880	243280	applying it to work, applying it to education.
+243920	246800	Underneath and more deep down, I think one way to put it,
+246800	251040	and this is maybe my own quirky usage, is that games are things,
+251040	254240	they're kind of artificial activities that you create and invent,
+254240	256400	and to do that you use a scoring system.
+256400	260400	And gamifications are taking something that we're actually already doing
+260400	262400	with an actually extant goal, right?
+262400	265360	We're already trying to learn things, we're already trying to get healthier,
+265360	268560	we're already trying to increase our scientific product,
+268560	273120	and then applying the appearance and mechanics of a scoring system
+273120	278240	and slapping that onto a real-life activity, and I think substantively transforming it.
+278800	283520	Yeah, so let's start with scoring systems, and I think while it might not necessarily always
+283520	287600	be in the forefront of our minds, if we stop and think for just a few seconds,
+288240	292720	scoring systems or ranking systems are everywhere, grades at school, sports leagues,
+292720	296720	movie reviews, and even in things like artistic pursuits.
+296720	302080	So I play classical guitar, and I've forgotten the amount of times I've played a piece for somebody,
+302080	303440	and the first thing they say is,
+303680	305760	Oof, that looks tricky, what grade is it?
+305760	308000	You know, they want to know what level it's at.
+308000	311040	It's really, really interesting, isn't it? Like psychologically.
+311040	315680	So first off, is there a sort of quick and dirty definition of what a scoring system is?
+315680	317600	You know, how can we define it?
+317600	322320	A scoring system, I think it's a particular kind of social technology.
+322320	323840	It's a way of doing things.
+323840	325360	I worked some in the philosophy of technology,
+325360	328080	and I have a really broad definition of a technology.
+328080	329920	A technology is a way of doing things.
+330000	334720	Sometimes it's material, but sometimes it's like an idea or a way of organizing an institution.
+334720	337680	Like for a lot of people in the space, like the idea of a factory,
+337680	340640	the idea of an assembly line is a kind of technology.
+340640	343120	It's a new way of doing things that changes the world.
+343120	345440	I think the scoring system is something similar.
+345440	347840	A scoring system is a social technology.
+347840	351840	It's a method for guaranteeing a convergence of judgments.
+352400	358800	It's some way of specifying in an official way how we're going to judge things so we all get on board.
+358800	361920	And I think one thing, so the book we're talking about,
+361920	364000	it's my first popular book, but it's my second book.
+364000	367360	My first book was an academic book about games.
+367360	370160	And that first book, one of the things I really wanted to talk about
+370160	373440	was the beauty of games as this designed art form
+373440	375840	that weren't just stories or narratives or worlds,
+376480	380400	but were specifying alternate selves.
+380400	382960	So I was really inspired while I was reading this stuff
+382960	386400	by a lecture at the Game Developers Conference
+386400	388960	by Reiner Knizia, who's my favorite board game designer.
+388960	392240	He's a German genius of board game design.
+392240	395280	And he says in this moment that the scoring system
+396400	400080	is the most important design tool in his toolbox
+400080	402400	because it tells the players what to care about.
+402400	404000	It sets their motivations in the game.
+404000	406240	Like you open up a game, you open up a board game,
+406240	408160	and you find out what you're trying to do.
+408160	412720	You find out whether your cares are going to be aligned with other people
+412720	415520	or aligned with team or whether you're completely individualistic.
+415520	418000	You find out whether you're getting points for killing people
+418000	419680	or collecting resources, right?
+419680	421040	They tell you what to do.
+421680	425120	But one thing I missed, and I kind of can't believe I missed it,
+425760	428240	I think it's because I was obsessed with board games
+428800	430480	when I was writing the first book.
+430480	433200	I thought that every game had to have a scoring system.
+433760	435520	And now I realize that they don't.
+435520	437840	And it's actually really valuable to look at the difference
+437840	440080	between unscored and scored games.
+440080	443600	So there are a lot of games and a lot of even competitive games
+443600	445040	that don't have a scoring system.
+445040	446640	And a lot of these look like aesthetic games.
+446640	449040	So my favorite example is like skateboarding.
+449040	453280	When people go to the skate park, I'm not a skateboarder.
+453280	455440	I'm a rock climber, I'm a fisher, but I'm not a skateboarder.
+455440	457200	So all of this is secondhand knowledge.
+457200	460960	They're often, they are competing and they're competing for cool.
+460960	463920	By the way, I should confess, in my first draft of this book,
+463920	467760	I said that skateboarders were competing for the coolest trick.
+467760	472080	And a 20 something year old editor, Penguin, who's a skateboarder,
+472080	473440	she wrote me a note and said,
+473440	476640	you sound old and out of touch with her misdeeds.
+476640	478480	It turned out to mean stylish ease, which I love.
+478480	480160	I didn't know. I feel like a poser saying this.
+480160	483920	But like, so there's often an aesthetic competition
+483920	488960	and you don't have a pre-established way of figuring out who won.
+488960	491360	And in fact, you can go and come out with a,
+491360	493040	A, you don't need to have a single conclusion.
+493040	494720	You can be like, oh, I wanted to skate park
+494720	496240	and this person did the most explosive trick
+496240	497840	and this person did the most beautiful trick.
+497840	500240	That's fine. You don't need to see a single conclusion.
+500240	502160	And you also don't need a bunch of people
+502720	504400	to come to the same conclusion, right?
+504400	506560	You can have the competition, right?
+506560	508240	I mean, I think in a very casual sense,
+508240	509760	if you're sitting around your friends
+509760	513040	and like casually competing to tell the funniest joke,
+513040	516240	it's clear that it's a competition and it's clear that it's a game,
+516240	519840	but you don't need a method to settle who won officially.
+520720	522000	And you see these transitions.
+522720	525280	There's a transition in skateboarding
+526000	527520	when skateboarding went official,
+527520	529600	when it went to ESPNX games and the Olympics.
+531040	533840	They needed a clearer way to produce something
+533840	535760	that looked like an objective score.
+535760	538240	And so the practice shifted
+538240	540880	from a kind of more aesthetic, stylish practice
+540880	546640	to one centered on more mechanistic, easier to measure,
+546640	552640	easier to publicly validate goals, height, and number of flips.
+552640	555680	The entire practice shifted in order to make it easy
+555680	557920	for everyone to agree on the same judgment.
+557920	561520	And I think in some sense, what this book is about
+561520	563680	is worrying on the smaller scale.
+563680	566000	Maybe this kind of scoring system change
+566000	568480	robs us of something in skateboarding, maybe.
+569200	571120	But I'm worried about this in the large scale
+571120	574000	that this is happening everywhere, globally,
+574000	577840	that we are shifting consistently from subtler, richer,
+577840	583120	but still real targets to easier to measure, easier to count,
+583120	585200	easier to agree on targets,
+585200	587280	and that this is shifting what we care about.
+587280	589760	Part of what I say in the book is that the thing that
+589760	591840	I'm really worried about is what I'm calling the gap.
+591840	596480	And the gap is the distance between what actually matters
+597440	602880	and what's easy to measure and easy to count in a public manner.
+602880	603840	And those aren't the same.
+603840	605200	And I think it's really easy to think.
+605200	607840	I mean, I don't know how technical you want to get,
+607840	610240	but one way for me to put it is it's really easy
+610240	612480	for us to make this slide into thinking
+612480	615520	that what's easy to count together is all that's real.
+615520	616880	It's all that's objective.
+617680	620480	Actually, no, there are plenty of things that are real
+620480	622800	and really important, that are very subtle
+622800	624880	and require a lot of experience to understand.
+625680	630960	But the demand of scoring systems that we count in unison easily,
+630960	633680	that the counting rules be accessible to everyone
+633680	635280	and that everyone can count in the same way,
+635920	640160	they shift what we target in a profound and systematic way.
+640960	643120	Yeah, so in the book, you write something
+643120	644400	that I thought was really fascinating,
+644400	646880	something that I've actually thought myself
+647360	648400	that's fly fishing.
+648400	650400	I've never actually been fly fishing myself,
+650400	652960	but when I was younger, I was a keen course angler.
+653680	655760	I often go with my dad and my twin.
+655760	659840	And of course, you naturally enter into a competition
+659840	662560	without even trying to, who can catch the biggest fish,
+662560	666080	who can catch the most different species or whatever.
+666080	669680	But if you were to ask me now, 20, well, blind me,
+669680	672640	30 odd years later, what do I remember from that?
+672640	674800	I don't remember the day that I caught the most fish.
+674800	676960	I don't remember the biggest fish that I caught.
+676960	680960	I just remember spending time with my family outdoors,
+680960	682320	having a really good time.
+683040	685920	So in the book, you have a sentence
+685920	689360	that while catching fish may be the goal of fishing,
+689360	690640	it's not the purpose.
+691280	693280	And I think that's a really key point.
+693280	695600	So can you unpack that idea for us, please?
+695600	697760	Yeah, this is one of the central ideas, I think.
+697760	701040	And one of the things why, I know some people think it's weird
+701040	703680	that I'm a philosopher and I think a lot about games.
+703680	707040	I think games teach us something really important about,
+707600	709280	I mean, maybe this sounds pretentious,
+709280	710480	but the meaning of life.
+710480	713360	And it's there in what you just said.
+713360	716000	I started thinking about this because I think a moment,
+716000	719680	I was in graduate school and my mentor, Barbara Herman,
+719680	722480	the esteemed Kantian ethicist who terrified everyone,
+722480	723600	she was saying something.
+723600	725200	And all the graduate students are always trying
+725200	726400	to catch out the professors.
+726400	728240	And we were like, oh, that doesn't make sense.
+728240	730560	And we tried to, I can't even remember what the point was.
+730560	733520	And she was like, oh, you're all making a mistake.
+733520	736160	You're just failing to distinguish between a goal
+736160	737040	and a purpose.
+737040	738720	And all those were like, ah, there's no such thing
+738720	739280	as a difference.
+739280	740400	And those are the same thing.
+740400	742960	And she says, no, when you invite your friends over
+743520	746800	for a night of cards, the goal is to win,
+746800	748400	but the purpose is to have fun.
+749200	751200	And these are really different, right?
+751200	753760	I think one way to put it is that the goal of a game
+753760	755920	is what you formally pursue in the game.
+755920	757440	It's the stated goal of the game.
+757440	758720	It's the victory condition.
+758720	760800	And the purpose is why you play.
+760800	762480	And there are different reasons to play.
+762480	765120	For some people, I call them achievement players.
+765840	768560	Some people play the game in order to win.
+768560	770000	That's the value for them, right?
+770000	771600	Either because it gets them something they want,
+771600	773680	like status or money, or because they just want to win.
+773680	774640	That's achievement play.
+775840	778720	Another kind of player is a striving player.
+779600	785520	And a striving player is somebody who tries to win
+786480	790720	in order to have a process of interesting or beautiful
+790720	792320	or satisfying struggle.
+792320	794320	What they care about is the struggle.
+794320	796560	And the interesting thing for me about games
+796560	799120	is that in the posture of striving play,
+799840	801920	what you care about is the process,
+801920	805840	but you can't get that process without trying to win.
+805840	808000	One of the interesting things for me about fly fishing
+808000	810160	is I find it very meditative, actually.
+810160	812960	I'm out in Utah, and I know a lot of dudes
+812960	816320	that have this very intense relationship to fly fishing.
+816320	819520	And my theory is that what they actually need is meditation,
+819520	823840	but they're too doodly to actually do that explicitly.
+824480	826480	But fly fishing is like cover, right?
+826480	827600	You're like, oh, I'm fly fishing.
+827600	829280	But it can't just be like a superficial cover.
+829280	831200	You just can't go pretend to yourself
+831200	832880	and then go out there and try to meditate.
+832880	836240	The whole point is that meditation doesn't happen
+836240	837520	when you aim at meditating.
+837520	839840	Meditating happens for me on the river
+839840	841840	when I'm trying to catch fish,
+841840	844080	which means I'm trying to look at my surroundings
+844080	845520	to find signs of fish.
+845520	848880	And so that goal forces me to pay much more attention
+848880	851440	than I would ever pay to the fine details
+851440	852560	of the surface of the water.
+853360	858640	And then I achieve meditation, kind of accidentally.
+858640	861360	There's a philosophy term for this, a self-effacing end.
+861360	864240	A self-effacing end is an end you can't aim at directly.
+864240	866480	My favorite version of this is relaxation.
+867360	869760	You can't relax just by being like, I'm going to relax.
+869760	872000	You can't relax by trying harder to relax.
+872000	874320	I relax by trying to climb rocks.
+874320	876720	So there's a place where the goal is to go up,
+876720	880400	but the purpose is to cleanse my mind and relax.
+885200	886720	Deepen your subject knowledge,
+886720	889920	exchange innovative ideas and augment your existing income.
+889920	893040	There are so many reasons to become a Pearson Examiner.
+893040	895120	In addition to enriching your expertise
+895120	896240	and progressing your career,
+896240	898320	you'll be better prepared to help your learners
+898320	900400	achieve future success in their exams.
+900400	903200	With flexible working options and full training provided,
+903200	905760	becoming a Pearson Examiner will open opportunities
+905760	907280	for both you and your students.
+907280	909760	It's a bona fide win-win situation.
+909760	911120	Discover more by visiting
+911120	915520	home.edXLgateway.com forward slash pages forward slash search.
+916480	918000	AI is incredible.
+918000	920000	It can teach you how to fry an egg
+920000	922560	and even write a poem, pirate style.
+924000	926240	But it knows nothing about your work.
+926880	928320	Slackbot is different.
+928320	930240	It doesn't just know the facts.
+930240	931760	It knows your schedule.
+931760	934240	It can turn a brainstorm into a brief.
+934320	936480	And it doesn't need to be taught
+936480	939200	because Slackbot isn't just another AI.
+939200	941600	It's AI that knows your work as well as you do.
+942240	945520	Visit slack.com forward slash meet Slackbot to learn more.
+948880	951040	So sort of running through the book as well,
+951040	953520	that's sort of veering over the whole thing
+953520	956720	is perhaps the evil sibling of the story,
+956720	958000	if I can call it that.
+958000	959200	And that's metrics.
+960560	962000	So what do we mean by metric?
+962640	963520	What is a metric?
+964080	966000	A metric, one way to put it is a metric
+966000	968800	is a scoring system for reality, right?
+968800	970960	A game is a scoring system imposed
+970960	973200	on an artificial separate universe.
+973200	975920	It's this old idea that games happen in a magic circle
+975920	978080	and you go in and you try to, you know,
+978080	980000	destroy your spouse and then you step back and you're like,
+980000	981120	ah, everything's fine again.
+982000	986320	Metrics are what happens when you use quantitative data
+987280	990160	about the real world and you transform that
+990160	991920	into a target or a scoring system.
+991920	994880	It's when you target something that can be easily measured.
+995680	996640	In the game's half of the book,
+996640	998720	the core concept is striving play, which we've talked about.
+999520	1001440	On the metric side, the core concept for me
+1001440	1003200	is the idea of value capture.
+1003840	1009200	Value capture is what happens when your values
+1009200	1010800	are kind of rich and subtle
+1011360	1013440	and then you enter an institution or a social setting
+1013440	1014720	that feeds you simplified,
+1014720	1017200	typically quantified renditions of those values
+1017200	1018880	and the simplified ones take over.
+1018880	1022640	So for me, it was going to philosophy graduate school
+1022640	1024000	out of a love of philosophy
+1024000	1026560	and then coming out obsessed with citation rates
+1026560	1028160	in highly ranked journals.
+1028160	1029680	For a lot of scientists I know,
+1029680	1030960	they go into the love of wisdom
+1030960	1033040	and they come out obsessed with like grant numbers
+1033040	1034880	and how big your grants are.
+1034880	1037440	For journalists, it becomes page views.
+1037440	1039040	For a lot of us on social media,
+1039040	1041440	you start wanting communication
+1041440	1044160	and you start ending up wanting likes.
+1044160	1047200	And so the important thing for me about a metric
+1047200	1049280	is that a metric presents you a target
+1049280	1050560	and a target that's limited
+1050560	1052160	in the way we talked about before.
+1052160	1054480	It's limited because of the need
+1054480	1056160	for everyone to count together.
+1056160	1058400	So it's limited to touching on the kind of features
+1058400	1061760	that everyone can count easily, height, number of flips.
+1061760	1065440	And then if what's actually valuable
+1066160	1068000	is not what's easily counted,
+1068000	1072800	then value capture will tend to push your values away
+1073840	1075280	from what actually matters.
+1075280	1077920	By the way, maybe this will entertain you.
+1077920	1081920	I have a favorite example of this in normal life
+1081920	1083200	that got cut from the book
+1083200	1085840	because it seemed gross,
+1085840	1087920	but I think you'll find it interesting.
+1087920	1089440	So while I was reading this,
+1089440	1092480	I started researching pickup artist culture.
+1093200	1095120	And interestingly, pickup artists
+1095120	1096080	have been really well studied
+1096080	1098160	by sociologists and anthropologists.
+1098160	1099920	There's a sociologist, Eric Hendricks,
+1099920	1102000	who embedded with pickup artists for a while.
+1102000	1103520	So pickup artist culture is people,
+1103520	1104720	mostly but not always men,
+1104720	1106720	who compete for sexual success.
+1106720	1110560	And one of the interesting things that he discovered
+1111120	1114960	was that pickup artists are uninterested in happiness.
+1114960	1116400	In fact, one of the standard mottoes is
+1116400	1117920	you have to sacrifice any interest
+1117920	1120080	in happiness or pleasure in order to win.
+1120640	1122320	So what pickup artists typically compete for,
+1122320	1124320	and I think this is like one of my favorite examples,
+1124320	1127760	is number of phone numbers you get in the night,
+1127760	1130080	number of sexual acts you get in a month,
+1130080	1131440	speed from meeting someone
+1131440	1133600	to some kind of sexual interaction.
+1133600	1134880	Here's what they don't compete for,
+1135600	1138000	romance, quality relationships,
+1138000	1139680	or even pleasure, right?
+1139680	1141920	This is one of the things that blew my mind.
+1141920	1145520	I thought pickup artists would be evil,
+1146560	1149200	but at least enjoys themselves.
+1149200	1150640	But I think something else has happened
+1150640	1151920	that's even worse.
+1151920	1153280	And hopefully it's clear.
+1153280	1157120	The whole point is that pickup artistry
+1157680	1161120	has shifted the need for competition
+1161120	1162960	and accountability about your competition
+1163680	1165920	and transparency about your wins
+1165920	1168560	has led to a shift of the behavior
+1168560	1171440	towards targeting things that are so far,
+1171440	1172400	at least for me,
+1172400	1174800	from what most of us would think is valuable
+1174800	1176240	in a romantic relationship,
+1176240	1178000	even a short-term one.
+1178000	1180560	And that's an example of value capture,
+1180560	1183920	where they've sacrificed any amount of pleasure
+1183920	1186800	or happiness purely just for essentially,
+1187120	1188080	for a number.
+1188080	1189200	Bragging rights, I suppose,
+1189200	1192240	they can say, you're 10, I'm 12,
+1192240	1193920	I'm better than you sort of thing.
+1193920	1194640	Exactly.
+1194640	1196880	And this is the part where I want to caution,
+1196880	1197520	and I want to be like,
+1197520	1200080	it's really easy to point at other people and laugh,
+1200080	1202400	but I think it's very easy
+1202400	1205280	to find value capture cases in your own life.
+1205280	1208480	I've been value captured by the quest for lower weight,
+1208480	1211760	the quest for optimizing my macronutrients,
+1211760	1214400	the quest to get higher on the philosophy rankings.
+1215120	1217600	Each of these things has for some period of time
+1217600	1220080	consumed me, and it's really wild
+1220080	1223200	because it's so miserable a lot of the times.
+1225840	1227600	The thing that I find really fascinating
+1227600	1229600	is how easy it is to lose your grip
+1229600	1230800	on what really matters
+1230800	1233200	when you're presented with a simple, clear number,
+1233200	1234720	both institutionally,
+1234720	1236800	like in my academic life,
+1236800	1239360	I'm in large-scale institutions that have,
+1239360	1242000	to my mind, stopped targeting things
+1242000	1244560	like teaching curiosity, teaching reflection,
+1244560	1246320	teaching any kind of intellectual virtue,
+1246320	1247520	and started targeting things
+1247520	1250080	like graduation rate and graduation speed.
+1250080	1253440	Again, easy measurables that capture people's attention
+1254000	1257120	because they are easy to express.
+1257840	1260240	Yeah, so I think you mentioned there
+1260240	1263040	one, as you say, slightly gross example,
+1263040	1264480	and then a more serious one,
+1264480	1266960	but the first thing that perhaps came to my mind
+1266960	1268160	when I was thinking about this
+1268160	1270720	is where the emphasis is placed
+1270720	1272880	on the incorrect metric
+1272880	1274720	would be something like GP appointments.
+1274720	1276320	Like there's a lot of talk about this
+1276320	1277840	at the moment over here in the UK,
+1278560	1282400	and you can reach a point where sort of GP practices,
+1282400	1284240	let's say hypothetically,
+1284240	1286720	we're rating these practices
+1286720	1288480	on the number of patients that they're seeing.
+1289120	1290640	So if we're concentrating on that,
+1290640	1292160	obviously what we're going to do
+1292880	1294480	is reduce the appointment time
+1294480	1296480	so we can fit in more appointments per day.
+1297120	1300160	And the only logical conclusion to that
+1300720	1303520	to me seems that the quality of care is going to go down.
+1304080	1307920	But if we're using this metric to rate them on,
+1307920	1311120	it will go up while the quality,
+1311120	1312320	the sort of rating goes up,
+1312320	1314320	while the quality of care goes down.
+1314320	1318000	So is that the kind of example that you're talking about?
+1318000	1320800	Right, that's exactly the kind of example I'm talking about.
+1320800	1323040	Actually, that example is a great one.
+1323040	1324400	I think whenever I talk about this stuff,
+1324400	1325120	everyone wants to tell me
+1325120	1326640	about the terrible metric in their life,
+1326640	1329120	but I think it's actually more unnerving
+1329200	1331040	for me to think about subtler examples.
+1331040	1332560	I think it's going to be really obvious.
+1333280	1335920	I mean, so I'm a professor.
+1335920	1337280	I'm rated on student evaluations.
+1337280	1338960	We all know the way to get high student evaluations
+1338960	1340560	is to make an easy class.
+1340560	1341840	Students don't learn as much,
+1341840	1343360	but you get higher evaluations.
+1343920	1347840	Lousy metrics are really, really obvious.
+1347840	1350960	I think some of the most nauseating cases for me
+1350960	1352720	are cases where the metrics are pretty good,
+1353840	1354960	but imperfect.
+1354960	1357200	And the one that this is perhaps
+1357200	1359200	a politically dangerous view,
+1359200	1362160	but a worrisome one for me that I've been obsessed with
+1362160	1364400	since the COVID pandemic is the degree
+1364400	1366960	to which easy public health metrics
+1366960	1370560	like lives saved and life expectancy
+1371440	1373840	tend to trump other considerations
+1373840	1376160	like life quality, cultural quality,
+1376160	1377840	community, mental health.
+1378480	1382160	And I'm not saying that it's not important to save lives,
+1382960	1386000	but I'm saying maybe a less controversial example for me
+1386000	1389200	is like saturated fats, like cheese, right?
+1389200	1393520	It's very easy to track heart attack rates,
+1393520	1396880	longer lifespans, very hard to track culinary joy.
+1397440	1399120	The claim here isn't anti-scientific.
+1399120	1401200	There is a genuine real correlation
+1401200	1403280	between saturated fats and heart attack rates.
+1403280	1405440	The claim is certain kinds of things
+1405440	1408080	that are easier to measure tend to beat out automatically
+1408080	1410960	and unthinkingly other harder to measure values.
+1411680	1412800	And try to understand this.
+1412800	1415280	So there's one common response here,
+1415280	1416800	which is, oh, that's just a bad metric.
+1416800	1418560	We need to find better metrics.
+1418560	1420320	And I had this gut, a lot of the time
+1420320	1421040	when I was thinking about this,
+1421040	1423840	I had this gut response that you wouldn't be able
+1423840	1426640	to find better metrics for certain kinds of things,
+1426640	1428480	especially central human values.
+1428480	1429760	And I was trying to understand why.
+1429760	1431520	And I found some answers,
+1431520	1434560	especially from some philosophers like Elizabeth Barnes
+1434560	1436000	who works on the notion of health
+1436000	1437440	and then a bunch of historians
+1437440	1439920	in a field called science and technology studies.
+1440480	1442960	So Theodore Porter unlocked a huge amount
+1442960	1443680	of this stuff for me.
+1443680	1446880	And this is a thing I am literally dying to talk about
+1446880	1448480	on the BBC science podcast.
+1448480	1449680	Because this, okay.
+1450480	1452480	So Theodore Porter was a historian
+1452480	1454880	who was inspired by actually by a bunch of philosophers
+1454880	1457520	I have to claim like Ian Hacking and Bruno Latour.
+1457520	1461360	And he was really interested in why politicians
+1461360	1463760	and administrators tended to unthinking
+1463760	1467440	kind of automatically reach for quantitative justification,
+1467440	1469040	even when the metrics were bad.
+1470080	1472640	So the theory he developed was that
+1472640	1475200	there were two kinds of ways of knowing about the world,
+1475200	1476640	qualitative and quantitative.
+1477440	1479920	And it's not that quantitative is bad.
+1479920	1481760	It's that each of them is a tool designed
+1481760	1483120	for a different purpose
+1483120	1485040	with different strengths and weaknesses.
+1485040	1486560	And the problem is compulsively reaching
+1486560	1487440	for the quantitative.
+1488000	1491200	So qualitative justification, written words,
+1491200	1493760	is open-ended, dynamic, subtle, rich,
+1493760	1496320	but it travels badly between contexts
+1496320	1498720	because it requires a huge amount of shared background.
+1499600	1502000	So one way for me, my example is as a professor,
+1502000	1504800	when I write qualitative evaluations of my students,
+1504800	1506960	I can respond along multiple dimensions.
+1506960	1509360	I don't have to declare a single overall score.
+1509360	1510640	I can be like, well, you're really creative,
+1510640	1511440	but it wasn't as rigorous.
+1511440	1512640	I didn't have to settle that up.
+1512640	1514880	And I can also use all the rich language,
+1514880	1516480	a philosophy of my class.
+1517360	1520480	But one, those things don't travel well.
+1520480	1521840	Like people from the business school
+1521840	1522960	will not understand my comments
+1522960	1525360	and I won't understand their student comments.
+1525360	1527280	And two, they do not aggregate well.
+1527280	1531040	Like thousands of student evaluations don't aggregate.
+1531920	1536720	So what Porter says is quantitative information
+1536720	1538880	is a kind of instrument that's designed
+1538880	1540640	to get around this problem.
+1540640	1543600	When we create quantitative information in an institution,
+1544480	1547440	we identify a context-invariant kernel.
+1547440	1550640	We find something that's stable across all contexts,
+1550640	1553360	that everyone from different backgrounds can understand.
+1553360	1555440	We agree on it, we rigidify it,
+1555440	1559280	and then we can all understand and connect and collect into it.
+1559280	1561600	So in the US, this is GPA, grade point average.
+1561600	1563120	If you get an A, that's a four.
+1563120	1564400	If you get a B, that's a three.
+1565040	1568640	Every student work can be pushed into a single spectrum
+1568640	1570160	that can be quickly averaged
+1570160	1571440	and get a grade point average.
+1572240	1578240	So Porter's insight is that data has been designed to travel.
+1578240	1579760	His term is that it's portable.
+1579760	1581760	It's been made to be portable.
+1581760	1584000	And the way it's made to be portable
+1584000	1587440	is it has context and subtlety stripped out.
+1588400	1591040	It's been designed to be understood across contexts.
+1591760	1594640	So I think the thing that Porter identifies for me
+1594640	1596720	is that the kind of what I would call
+1596720	1599360	the insensitivity and inhumanity of metrics
+1599360	1600800	is an essential design feature.
+1601680	1604320	In order to communicate readily at scale,
+1604320	1606800	we have to strip off things that require
+1606800	1608640	high context and nuance to understand.
+1609600	1613120	So the thing that makes metrics powerful,
+1613120	1615920	that is the quick aggregation, the easy comprehensibility,
+1616000	1621120	is achieved precisely at the cost of loss of nuance.
+1621120	1622800	And I'm not saying this is bad in every case.
+1622800	1624880	Like this is also, this is not just metrics.
+1624880	1626000	This is science, right?
+1626000	1628960	The reason why it's really easy to optimize
+1628960	1631440	for certain things like antibiotics
+1631440	1633680	is that having an antibiotic stop your infection
+1633680	1635680	is really easy for everyone to see.
+1635680	1638080	Having a lifesaving measure save on someone's life,
+1638080	1639360	that's easy to count.
+1639360	1640480	So those are the kinds of things
+1640480	1642720	that are very easy to collect large scale data for.
+1643680	1647040	Things that are highly variable require high sensitivity
+1647040	1648880	or that are subtle are very hard.
+1648880	1651360	And this is not saying they're not real, right?
+1651920	1654000	It's just saying that they're hard for everyone
+1654000	1656080	to assess quickly and easily.
+1656880	1659120	One of my favorite examples of here is like,
+1659120	1663120	so there are a lot of legal rights that we connect to age.
+1664160	1667120	And what we actually don't, we don't actually care about age.
+1667120	1668320	What we actually care about is intellectual
+1668320	1672480	and emotional maturity, but it would be a disaster
+1672560	1675440	if we granted voting rights based on intellectual
+1675440	1676480	and emotional maturity, right?
+1676480	1678080	You would need a particular judge.
+1678080	1680880	So there's a case where we make a trade-off
+1680880	1683280	and instead of exactly tracking the thing,
+1683280	1685920	we find a mechanical line in the U.S.
+1685920	1687760	You get to vote if you're 18, right?
+1688480	1690400	And that mechanical line is inarguable.
+1690400	1692320	Everyone assesses it at the same place.
+1692320	1694000	And that's a case where I think it's great.
+1694000	1695840	It is fantastic that for voting,
+1695840	1698240	we have a clear mechanical line that everyone can replicate.
+1699120	1701600	But for other things, like, I don't know,
+1701600	1706000	choosing your arts grants or choosing your fitness routine
+1706000	1708000	or choosing what your career is.
+1708960	1712480	These things, it's less important that our decision procedure
+1712480	1715920	and our targeting procedure are bound by the standard
+1715920	1721600	of absolute context-crossing decontextualization.
+1721600	1725520	I mean, the quick way to put it is that for Porter,
+1726480	1732080	data and therefore metrics are a designed engineer technology
+1732080	1736400	that gets us fast, portable aggregability
+1736400	1737520	at the cost of context.
+1738400	1743440	Yeah, so another thing that you talk about is the appeal of metrics.
+1743440	1746640	And I don't think it's just their tidiness.
+1746640	1748480	It's kind of the kind of authority
+1748480	1750000	that they seem to carry within them.
+1750000	1753280	You know, that's the final verdict on this issue.
+1753360	1756080	This such and such is five out of 10.
+1756080	1758800	That's it, you know, and so we're kind of,
+1758800	1760640	do you think we're less likely to challenge that
+1760640	1763600	because it seems like it is so black and white?
+1763600	1767760	Yeah, I mean, there are a lot of, this has been this puzzle for me
+1767760	1770480	for the longest time of why these things are so seductive.
+1771120	1773520	One of the early explanations I had was that
+1773520	1775760	there's this kind of like existential soothingness,
+1775760	1779520	like it's really painful to be exposed to the complexity of real values
+1779520	1780800	and this makes things easy.
+1780800	1782000	That's one explanation.
+1782000	1785280	Another explanation is that it's just easier to communicate.
+1785280	1786240	And Porter tells us why.
+1786240	1787920	It's been designed to be easier to communicate.
+1788800	1791440	Lately, I've been thinking, I even came up with a term for it
+1791440	1793760	literally yesterday in my graduate seminar,
+1793760	1795280	talking to my students about this.
+1795280	1798400	A lot of the times, the way we say that something is objective
+1798400	1802240	versus subjective is that we get someone else's confirmation.
+1802240	1804400	They see it too, right?
+1804400	1807440	That is literally the basic, if you go back to like
+1807440	1811600	old Hume classics of empiricist philosophy,
+1812400	1816640	you know that the feeling of warmth is subjective
+1816640	1819200	because different people experience it differently in the same place
+1819200	1821280	and you know that temperature is objective
+1821280	1824240	because different people will come up with the same measurement, right?
+1824240	1828560	But I kind of think metrics do a kind of objectivity hacking, right?
+1828560	1833520	They create a quick, easy shortcut to agreement and convergence
+1834320	1838960	by zeroing in on features that are highly accessible.
+1839760	1845280	And so this is, I feel like we're headed into like weirdo technical philosophy,
+1845280	1847200	but the thing that's really interesting to me
+1847200	1851360	is the difference between what's real and what's important
+1852080	1854880	and what's easily observable by anybody,
+1854880	1857520	especially under conditions of quickness and speed.
+1858480	1864800	And metrics are designed to create easy convergence at speed among everybody.
+1864800	1867280	They're a shortcut to the appearance of objectivity.
+1868240	1870560	So we've talked about quite a lot there,
+1870560	1873440	a lot of different pitfalls that are in this.
+1873440	1876960	So sort of for someone who's listening, he's thinking, you know,
+1876960	1881520	how can they avoid falling foul of these pitfalls?
+1881520	1884240	You know, what can we learn from games?
+1884240	1888640	And you talk about the notion of play, which is really interesting,
+1888640	1891600	that we can actually apply in our own lives,
+1891600	1893600	because often it can feel like a lot of these things
+1893600	1895440	are just completely out of our own control.
+1896080	1900400	Yeah, I mean, not only A, a lot of these systems are out of our control
+1900400	1902640	and a lot of the fixes here are structural.
+1902640	1906320	I'm not going to sit here and say like, we can fix this through individual grit.
+1906320	1908720	Like a lot of this is because of the way the institutions work.
+1909520	1913840	Even there, you can find different relationships to external scoring systems.
+1914720	1918480	And it's important to remember that we do use them all the time.
+1918480	1922720	Even I think even the best relationship to scoring systems in the world
+1922720	1925600	is going to constantly use them because scoring systems
+1925600	1929040	are a response to real needs to understand other people,
+1930240	1936000	to make them transparent to us, to get information quickly.
+1936000	1940400	Like I use rankings when I buy household gadgets.
+1940400	1942560	I don't have the time to research every dishwasher.
+1942560	1943760	I use rankings, right?
+1943760	1945760	They're summarized compressed information.
+1946320	1950000	What you want to do is realize that they're highly lossy,
+1950560	1954800	highly information devoid, highly thin packages
+1955680	1959200	that are useful, maybe a starting point that are not complete.
+1959840	1964480	And I think games offer us a really good glimpse of what we can do
+1964480	1967280	because I think the life that games,
+1967280	1968960	it's not that they automatically give this to you,
+1968960	1972080	but the life they encourage is a life in which
+1972080	1975520	you enter scoring systems voluntarily
+1976080	1979360	and you choose which ones you want to have
+1980080	1982640	and you can modify them, right?
+1982640	1984720	Like the difference in games, I mean, this is,
+1984720	1987120	and this is in many ways, it's a structural difference, right?
+1987120	1992480	You can house rule your poker game or your Dungeons and Dragons game.
+1992480	1995200	You can't house rule GPA because of the way that metrics function.
+1995840	1998640	But the closest you can approximate to that is something like,
+1999360	2002640	I think games encourage something that I want to call reflective control.
+2002640	2005520	So games encourage trying a scoring system
+2005520	2009600	and then not just assuming that we have to play this particular board game forever,
+2009600	2012480	but thinking afterwards, was it worth it?
+2012480	2013120	Was it fun?
+2013120	2015840	And what you're doing is transitioning between
+2015840	2018240	being absorbed in a particular game goal
+2018240	2020480	and reflecting more deeply on its purpose
+2020480	2022880	and whether that purpose was rich or meaningful to you.
+2022880	2024880	And you can just decide, now that game sucked,
+2024880	2025760	I'm not going to play it again.
+2025760	2028000	Or that game was kind of good, but I'm going to modify it.
+2028000	2031680	You have some degree of control and games make that easy
+2031680	2033680	because there are so many and they're so disconnected.
+2034400	2035520	I think that's the right attitude.
+2035520	2037120	It's much harder to apply in the world
+2037120	2041520	because you don't have these isolated, easily movable between packages
+2041520	2042320	like you do with games.
+2042320	2044800	You get these massive world-spanning systems.
+2044800	2049200	But still, there's a difference between treating your subscriber count
+2049200	2053200	or your likes or your page views as a rough proxy
+2053200	2054800	that gives you some information
+2054800	2057360	versus treating it, taking on as your core value.
+2058960	2061680	I think one crucial part of that is,
+2062480	2063920	if you take it on as your core value,
+2063920	2066320	you don't have a standpoint from which to reflect
+2066320	2067760	on whether it's working out for you.
+2067760	2069920	If you think the point of your life is just to make the most money
+2069920	2072880	or get the most followers, then that's it.
+2072880	2074240	That's just what you're doing.
+2074240	2075520	But if you're thinking to yourself,
+2075520	2079120	I'm trying to get followers in order to communicate
+2079120	2082320	and connect with people, then you have a stance
+2082320	2085040	from which you can limit your devotion to that simple metric.
+2086000	2088480	Thank you for listening to this episode of Instant Genius,
+2088480	2091360	brought to you from the team behind BBC Science Focus.
+2091360	2093120	That was C.T. Newman.
+2093120	2095520	To discover more about the topics we've just discussed,
+2095520	2097600	check out his book, The Score,
+2097600	2100000	How to Stop Playing Someone Else's Game.
+2100000	2101360	If you liked what you just heard,
+2101360	2103840	then please do consider subscribing to Instant Genius
+2103840	2106000	on your preferred podcast platform.
+2106000	2108160	If you'd like to see our guests and hosts in person,
+2108160	2110160	then why not check out our YouTube channel,
+2110160	2111920	at Science Focus.
+2111920	2114000	The current issue of BBC Science Focus
+2114000	2115440	magazine is out now.
+2115440	2117920	Pick up a copy wherever you buy your favourite magazines
+2117920	2120320	or download us on your app store of choice.
+2120320	2123280	You can also find us on Apple News or online
+2123280	2124800	at sciencefocus.com.
+2124800	2127760	Deepen your subject knowledge, exchange innovative ideas,
+2127760	2129520	and augment your existing income.
+2129520	2132720	There are so many reasons to become a Pearson Examiner.
+2132720	2134640	In addition to enriching your expertise
+2134640	2136720	and progressing your career, you'll be better prepared
+2136720	2140080	to help your learners achieve future success in their exams.
+2140080	2142560	With flexible working options and full training,
+2142560	2144560	you'll be able to make the most of your time
+2144560	2146560	and make the most of your time.
+2146560	2148560	You'll be able to make the most of your time
+2148560	2150560	and make the most of your time.
+2150560	2152560	You'll be able to make the most of your time
+2152720	2155440	With flexible working options and full training provided,
+2155440	2158080	becoming a Pearson Examiner will open opportunities
+2158080	2159600	for both you and your students.
+2159600	2162080	It's a bonafide win-win situation.
+2162080	2165600	Discover more by visiting home.edXLgateway.com
+2165600	2168160	forward slash pages forward slash search.
+2168160	2170960	Hello, I'm a National Lottery scratch card.
+2170960	2173680	Over five people a second win with me.
+2173680	2176240	That's like 30 winners since I started talking.
+2176240	2177840	Oh, 12 more.
+2177840	2178880	14.
+2178880	2180480	21.
+2180480	2182320	Is there a winning star for you?
+2182320	2184720	Play a National Lottery scratch card today.
+2184720	2185760	Winners is an average search.
+2185760	2186560	Dream big, play small.
+2186560	2188560	Rules apply, players must be 18 or over.

@@ -1,0 +1,805 @@
+Deepen your subject knowledge, exchange innovative ideas and augment your existing income.
+There are so many reasons to become a Pearson Examiner.
+In addition to enriching your expertise and progressing your career,
+you'll be better prepared to help your learners achieve future success in their exams.
+With flexible working options and full training provided,
+becoming a Pearson Examiner will open opportunities for both you and your students.
+It's a bonafide win-win situation.
+Discover more by visiting home.edxlgateway.com forward slash pages forward slash search.
+Hi, just leaving work now. Sorry it's a bit loud.
+Um, basically, so I was thinking we could get mackeys tonight.
+Had a Big Mac on my mind all day and delivery fee on the app is now from 99p.
+So, you in?
+Of course you are.
+Love you. Bye.
+Exclusively on the McDonald's app.
+18 plus, service fee and small order fee may apply.
+Participating in restaurants, serving times and C's and C's apply.
+Hello, I'm a National Lottery scratch card.
+Over five people a second win with me.
+That's like 30 winners since I started talking.
+Oh, 12 more, 14.
+21!
+Is there a win in store for you?
+Play a National Lottery scratch card today.
+Winners is an average search.
+Dream big, play small.
+Rules apply, players must be 18 or over.
+Hello and welcome to Incident Genius, a bite-sized masterclass in podcast form.
+Every Monday and Friday, you'll hear world-leading scientists and experts
+talking about the most fascinating ideas in science and technology today.
+I'm Jason Goodger, Commissioning Editor at BBC Science Focus.
+In the world of games, scoring systems establish a framework
+that provides us with clear challenges, motivation
+and ultimately delivers a huge amount of fun and pleasure.
+However, on the flip side, the increasing tendency to apply rankings and metrics
+to almost every area of our personal and professional lives
+can have a dehumanising effect, reducing our actions,
+performance and even ourselves to a simple string of numbers.
+In today's episode, we're joined by C.T. Nguyen, a games researcher
+and associate professor of philosophy based at the University of Utah,
+to talk about his latest book, The Score, How to Stop Playing Someone Else's Game.
+He explains how in the real world, scoring systems typically fail to provide meaning
+by focusing on the simplest to measure outcomes.
+How purely numerical data is, by definition, lacking in nuance.
+How, by concentrating on what we truly value,
+we can all break free from the tyranny of rankings and metrics.
+T, welcome to the podcast. Thanks so much for joining us.
+Thank you. I'm happy to be here.
+Today, we're talking about your latest book, The Score,
+How to Stop Playing Someone Else's Game.
+That's quite a provocative title, I'd say.
+It's all about the notion of games and gamification.
+First off, to get us all on the same page,
+you hear the term bandied around a lot, but what exactly do we mean by gamification?
+I started writing this book because I became obsessed with a question
+that came up from two different streams of what I was thinking about.
+One stream was about how games and scoring systems often lead to such delightful play,
+and the other half was about how gamification's rankings and metrics,
+my experience of them in education, institution, online, on social media,
+seem to drain the life out of everything and ruin my experience of communication,
+of education, of being a researcher, of being a person.
+I wanted to understand that.
+Gamification is a really complicated term.
+The first thing to say about gamification is that gamification is taking the kind of
+superficial trappings of a game, the leveling experience, the scoring experience,
+the fact that you're getting points, and applying it to a non-game context,
+applying it to work, applying it to education.
+Underneath and more deep down, I think one way to put it,
+and this is maybe my own quirky usage, is that games are things,
+they're kind of artificial activities that you create and invent,
+and to do that you use a scoring system.
+And gamifications are taking something that we're actually already doing
+with an actually extant goal, right?
+We're already trying to learn things, we're already trying to get healthier,
+we're already trying to increase our scientific product,
+and then applying the appearance and mechanics of a scoring system
+and slapping that onto a real-life activity, and I think substantively transforming it.
+Yeah, so let's start with scoring systems, and I think while it might not necessarily always
+be in the forefront of our minds, if we stop and think for just a few seconds,
+scoring systems or ranking systems are everywhere, grades at school, sports leagues,
+movie reviews, and even in things like artistic pursuits.
+So I play classical guitar, and I've forgotten the amount of times I've played a piece for somebody,
+and the first thing they say is,
+Oof, that looks tricky, what grade is it?
+You know, they want to know what level it's at.
+It's really, really interesting, isn't it? Like psychologically.
+So first off, is there a sort of quick and dirty definition of what a scoring system is?
+You know, how can we define it?
+A scoring system, I think it's a particular kind of social technology.
+It's a way of doing things.
+I worked some in the philosophy of technology,
+and I have a really broad definition of a technology.
+A technology is a way of doing things.
+Sometimes it's material, but sometimes it's like an idea or a way of organizing an institution.
+Like for a lot of people in the space, like the idea of a factory,
+the idea of an assembly line is a kind of technology.
+It's a new way of doing things that changes the world.
+I think the scoring system is something similar.
+A scoring system is a social technology.
+It's a method for guaranteeing a convergence of judgments.
+It's some way of specifying in an official way how we're going to judge things so we all get on board.
+And I think one thing, so the book we're talking about,
+it's my first popular book, but it's my second book.
+My first book was an academic book about games.
+And that first book, one of the things I really wanted to talk about
+was the beauty of games as this designed art form
+that weren't just stories or narratives or worlds,
+but were specifying alternate selves.
+So I was really inspired while I was reading this stuff
+by a lecture at the Game Developers Conference
+by Reiner Knizia, who's my favorite board game designer.
+He's a German genius of board game design.
+And he says in this moment that the scoring system
+is the most important design tool in his toolbox
+because it tells the players what to care about.
+It sets their motivations in the game.
+Like you open up a game, you open up a board game,
+and you find out what you're trying to do.
+You find out whether your cares are going to be aligned with other people
+or aligned with team or whether you're completely individualistic.
+You find out whether you're getting points for killing people
+or collecting resources, right?
+They tell you what to do.
+But one thing I missed, and I kind of can't believe I missed it,
+I think it's because I was obsessed with board games
+when I was writing the first book.
+I thought that every game had to have a scoring system.
+And now I realize that they don't.
+And it's actually really valuable to look at the difference
+between unscored and scored games.
+So there are a lot of games and a lot of even competitive games
+that don't have a scoring system.
+And a lot of these look like aesthetic games.
+So my favorite example is like skateboarding.
+When people go to the skate park, I'm not a skateboarder.
+I'm a rock climber, I'm a fisher, but I'm not a skateboarder.
+So all of this is secondhand knowledge.
+They're often, they are competing and they're competing for cool.
+By the way, I should confess, in my first draft of this book,
+I said that skateboarders were competing for the coolest trick.
+And a 20 something year old editor, Penguin, who's a skateboarder,
+she wrote me a note and said,
+you sound old and out of touch with her misdeeds.
+It turned out to mean stylish ease, which I love.
+I didn't know. I feel like a poser saying this.
+But like, so there's often an aesthetic competition
+and you don't have a pre-established way of figuring out who won.
+And in fact, you can go and come out with a,
+A, you don't need to have a single conclusion.
+You can be like, oh, I wanted to skate park
+and this person did the most explosive trick
+and this person did the most beautiful trick.
+That's fine. You don't need to see a single conclusion.
+And you also don't need a bunch of people
+to come to the same conclusion, right?
+You can have the competition, right?
+I mean, I think in a very casual sense,
+if you're sitting around your friends
+and like casually competing to tell the funniest joke,
+it's clear that it's a competition and it's clear that it's a game,
+but you don't need a method to settle who won officially.
+And you see these transitions.
+There's a transition in skateboarding
+when skateboarding went official,
+when it went to ESPNX games and the Olympics.
+They needed a clearer way to produce something
+that looked like an objective score.
+And so the practice shifted
+from a kind of more aesthetic, stylish practice
+to one centered on more mechanistic, easier to measure,
+easier to publicly validate goals, height, and number of flips.
+The entire practice shifted in order to make it easy
+for everyone to agree on the same judgment.
+And I think in some sense, what this book is about
+is worrying on the smaller scale.
+Maybe this kind of scoring system change
+robs us of something in skateboarding, maybe.
+But I'm worried about this in the large scale
+that this is happening everywhere, globally,
+that we are shifting consistently from subtler, richer,
+but still real targets to easier to measure, easier to count,
+easier to agree on targets,
+and that this is shifting what we care about.
+Part of what I say in the book is that the thing that
+I'm really worried about is what I'm calling the gap.
+And the gap is the distance between what actually matters
+and what's easy to measure and easy to count in a public manner.
+And those aren't the same.
+And I think it's really easy to think.
+I mean, I don't know how technical you want to get,
+but one way for me to put it is it's really easy
+for us to make this slide into thinking
+that what's easy to count together is all that's real.
+It's all that's objective.
+Actually, no, there are plenty of things that are real
+and really important, that are very subtle
+and require a lot of experience to understand.
+But the demand of scoring systems that we count in unison easily,
+that the counting rules be accessible to everyone
+and that everyone can count in the same way,
+they shift what we target in a profound and systematic way.
+Yeah, so in the book, you write something
+that I thought was really fascinating,
+something that I've actually thought myself
+that's fly fishing.
+I've never actually been fly fishing myself,
+but when I was younger, I was a keen course angler.
+I often go with my dad and my twin.
+And of course, you naturally enter into a competition
+without even trying to, who can catch the biggest fish,
+who can catch the most different species or whatever.
+But if you were to ask me now, 20, well, blind me,
+30 odd years later, what do I remember from that?
+I don't remember the day that I caught the most fish.
+I don't remember the biggest fish that I caught.
+I just remember spending time with my family outdoors,
+having a really good time.
+So in the book, you have a sentence
+that while catching fish may be the goal of fishing,
+it's not the purpose.
+And I think that's a really key point.
+So can you unpack that idea for us, please?
+Yeah, this is one of the central ideas, I think.
+And one of the things why, I know some people think it's weird
+that I'm a philosopher and I think a lot about games.
+I think games teach us something really important about,
+I mean, maybe this sounds pretentious,
+but the meaning of life.
+And it's there in what you just said.
+I started thinking about this because I think a moment,
+I was in graduate school and my mentor, Barbara Herman,
+the esteemed Kantian ethicist who terrified everyone,
+she was saying something.
+And all the graduate students are always trying
+to catch out the professors.
+And we were like, oh, that doesn't make sense.
+And we tried to, I can't even remember what the point was.
+And she was like, oh, you're all making a mistake.
+You're just failing to distinguish between a goal
+and a purpose.
+And all those were like, ah, there's no such thing
+as a difference.
+And those are the same thing.
+And she says, no, when you invite your friends over
+for a night of cards, the goal is to win,
+but the purpose is to have fun.
+And these are really different, right?
+I think one way to put it is that the goal of a game
+is what you formally pursue in the game.
+It's the stated goal of the game.
+It's the victory condition.
+And the purpose is why you play.
+And there are different reasons to play.
+For some people, I call them achievement players.
+Some people play the game in order to win.
+That's the value for them, right?
+Either because it gets them something they want,
+like status or money, or because they just want to win.
+That's achievement play.
+Another kind of player is a striving player.
+And a striving player is somebody who tries to win
+in order to have a process of interesting or beautiful
+or satisfying struggle.
+What they care about is the struggle.
+And the interesting thing for me about games
+is that in the posture of striving play,
+what you care about is the process,
+but you can't get that process without trying to win.
+One of the interesting things for me about fly fishing
+is I find it very meditative, actually.
+I'm out in Utah, and I know a lot of dudes
+that have this very intense relationship to fly fishing.
+And my theory is that what they actually need is meditation,
+but they're too doodly to actually do that explicitly.
+But fly fishing is like cover, right?
+You're like, oh, I'm fly fishing.
+But it can't just be like a superficial cover.
+You just can't go pretend to yourself
+and then go out there and try to meditate.
+The whole point is that meditation doesn't happen
+when you aim at meditating.
+Meditating happens for me on the river
+when I'm trying to catch fish,
+which means I'm trying to look at my surroundings
+to find signs of fish.
+And so that goal forces me to pay much more attention
+than I would ever pay to the fine details
+of the surface of the water.
+And then I achieve meditation, kind of accidentally.
+There's a philosophy term for this, a self-effacing end.
+A self-effacing end is an end you can't aim at directly.
+My favorite version of this is relaxation.
+You can't relax just by being like, I'm going to relax.
+You can't relax by trying harder to relax.
+I relax by trying to climb rocks.
+So there's a place where the goal is to go up,
+but the purpose is to cleanse my mind and relax.
+Deepen your subject knowledge,
+exchange innovative ideas and augment your existing income.
+There are so many reasons to become a Pearson Examiner.
+In addition to enriching your expertise
+and progressing your career,
+you'll be better prepared to help your learners
+achieve future success in their exams.
+With flexible working options and full training provided,
+becoming a Pearson Examiner will open opportunities
+for both you and your students.
+It's a bona fide win-win situation.
+Discover more by visiting
+home.edXLgateway.com forward slash pages forward slash search.
+AI is incredible.
+It can teach you how to fry an egg
+and even write a poem, pirate style.
+But it knows nothing about your work.
+Slackbot is different.
+It doesn't just know the facts.
+It knows your schedule.
+It can turn a brainstorm into a brief.
+And it doesn't need to be taught
+because Slackbot isn't just another AI.
+It's AI that knows your work as well as you do.
+Visit slack.com forward slash meet Slackbot to learn more.
+So sort of running through the book as well,
+that's sort of veering over the whole thing
+is perhaps the evil sibling of the story,
+if I can call it that.
+And that's metrics.
+So what do we mean by metric?
+What is a metric?
+A metric, one way to put it is a metric
+is a scoring system for reality, right?
+A game is a scoring system imposed
+on an artificial separate universe.
+It's this old idea that games happen in a magic circle
+and you go in and you try to, you know,
+destroy your spouse and then you step back and you're like,
+ah, everything's fine again.
+Metrics are what happens when you use quantitative data
+about the real world and you transform that
+into a target or a scoring system.
+It's when you target something that can be easily measured.
+In the game's half of the book,
+the core concept is striving play, which we've talked about.
+On the metric side, the core concept for me
+is the idea of value capture.
+Value capture is what happens when your values
+are kind of rich and subtle
+and then you enter an institution or a social setting
+that feeds you simplified,
+typically quantified renditions of those values
+and the simplified ones take over.
+So for me, it was going to philosophy graduate school
+out of a love of philosophy
+and then coming out obsessed with citation rates
+in highly ranked journals.
+For a lot of scientists I know,
+they go into the love of wisdom
+and they come out obsessed with like grant numbers
+and how big your grants are.
+For journalists, it becomes page views.
+For a lot of us on social media,
+you start wanting communication
+and you start ending up wanting likes.
+And so the important thing for me about a metric
+is that a metric presents you a target
+and a target that's limited
+in the way we talked about before.
+It's limited because of the need
+for everyone to count together.
+So it's limited to touching on the kind of features
+that everyone can count easily, height, number of flips.
+And then if what's actually valuable
+is not what's easily counted,
+then value capture will tend to push your values away
+from what actually matters.
+By the way, maybe this will entertain you.
+I have a favorite example of this in normal life
+that got cut from the book
+because it seemed gross,
+but I think you'll find it interesting.
+So while I was reading this,
+I started researching pickup artist culture.
+And interestingly, pickup artists
+have been really well studied
+by sociologists and anthropologists.
+There's a sociologist, Eric Hendricks,
+who embedded with pickup artists for a while.
+So pickup artist culture is people,
+mostly but not always men,
+who compete for sexual success.
+And one of the interesting things that he discovered
+was that pickup artists are uninterested in happiness.
+In fact, one of the standard mottoes is
+you have to sacrifice any interest
+in happiness or pleasure in order to win.
+So what pickup artists typically compete for,
+and I think this is like one of my favorite examples,
+is number of phone numbers you get in the night,
+number of sexual acts you get in a month,
+speed from meeting someone
+to some kind of sexual interaction.
+Here's what they don't compete for,
+romance, quality relationships,
+or even pleasure, right?
+This is one of the things that blew my mind.
+I thought pickup artists would be evil,
+but at least enjoys themselves.
+But I think something else has happened
+that's even worse.
+And hopefully it's clear.
+The whole point is that pickup artistry
+has shifted the need for competition
+and accountability about your competition
+and transparency about your wins
+has led to a shift of the behavior
+towards targeting things that are so far,
+at least for me,
+from what most of us would think is valuable
+in a romantic relationship,
+even a short-term one.
+And that's an example of value capture,
+where they've sacrificed any amount of pleasure
+or happiness purely just for essentially,
+for a number.
+Bragging rights, I suppose,
+they can say, you're 10, I'm 12,
+I'm better than you sort of thing.
+Exactly.
+And this is the part where I want to caution,
+and I want to be like,
+it's really easy to point at other people and laugh,
+but I think it's very easy
+to find value capture cases in your own life.
+I've been value captured by the quest for lower weight,
+the quest for optimizing my macronutrients,
+the quest to get higher on the philosophy rankings.
+Each of these things has for some period of time
+consumed me, and it's really wild
+because it's so miserable a lot of the times.
+The thing that I find really fascinating
+is how easy it is to lose your grip
+on what really matters
+when you're presented with a simple, clear number,
+both institutionally,
+like in my academic life,
+I'm in large-scale institutions that have,
+to my mind, stopped targeting things
+like teaching curiosity, teaching reflection,
+teaching any kind of intellectual virtue,
+and started targeting things
+like graduation rate and graduation speed.
+Again, easy measurables that capture people's attention
+because they are easy to express.
+Yeah, so I think you mentioned there
+one, as you say, slightly gross example,
+and then a more serious one,
+but the first thing that perhaps came to my mind
+when I was thinking about this
+is where the emphasis is placed
+on the incorrect metric
+would be something like GP appointments.
+Like there's a lot of talk about this
+at the moment over here in the UK,
+and you can reach a point where sort of GP practices,
+let's say hypothetically,
+we're rating these practices
+on the number of patients that they're seeing.
+So if we're concentrating on that,
+obviously what we're going to do
+is reduce the appointment time
+so we can fit in more appointments per day.
+And the only logical conclusion to that
+to me seems that the quality of care is going to go down.
+But if we're using this metric to rate them on,
+it will go up while the quality,
+the sort of rating goes up,
+while the quality of care goes down.
+So is that the kind of example that you're talking about?
+Right, that's exactly the kind of example I'm talking about.
+Actually, that example is a great one.
+I think whenever I talk about this stuff,
+everyone wants to tell me
+about the terrible metric in their life,
+but I think it's actually more unnerving
+for me to think about subtler examples.
+I think it's going to be really obvious.
+I mean, so I'm a professor.
+I'm rated on student evaluations.
+We all know the way to get high student evaluations
+is to make an easy class.
+Students don't learn as much,
+but you get higher evaluations.
+Lousy metrics are really, really obvious.
+I think some of the most nauseating cases for me
+are cases where the metrics are pretty good,
+but imperfect.
+And the one that this is perhaps
+a politically dangerous view,
+but a worrisome one for me that I've been obsessed with
+since the COVID pandemic is the degree
+to which easy public health metrics
+like lives saved and life expectancy
+tend to trump other considerations
+like life quality, cultural quality,
+community, mental health.
+And I'm not saying that it's not important to save lives,
+but I'm saying maybe a less controversial example for me
+is like saturated fats, like cheese, right?
+It's very easy to track heart attack rates,
+longer lifespans, very hard to track culinary joy.
+The claim here isn't anti-scientific.
+There is a genuine real correlation
+between saturated fats and heart attack rates.
+The claim is certain kinds of things
+that are easier to measure tend to beat out automatically
+and unthinkingly other harder to measure values.
+And try to understand this.
+So there's one common response here,
+which is, oh, that's just a bad metric.
+We need to find better metrics.
+And I had this gut, a lot of the time
+when I was thinking about this,
+I had this gut response that you wouldn't be able
+to find better metrics for certain kinds of things,
+especially central human values.
+And I was trying to understand why.
+And I found some answers,
+especially from some philosophers like Elizabeth Barnes
+who works on the notion of health
+and then a bunch of historians
+in a field called science and technology studies.
+So Theodore Porter unlocked a huge amount
+of this stuff for me.
+And this is a thing I am literally dying to talk about
+on the BBC science podcast.
+Because this, okay.
+So Theodore Porter was a historian
+who was inspired by actually by a bunch of philosophers
+I have to claim like Ian Hacking and Bruno Latour.
+And he was really interested in why politicians
+and administrators tended to unthinking
+kind of automatically reach for quantitative justification,
+even when the metrics were bad.
+So the theory he developed was that
+there were two kinds of ways of knowing about the world,
+qualitative and quantitative.
+And it's not that quantitative is bad.
+It's that each of them is a tool designed
+for a different purpose
+with different strengths and weaknesses.
+And the problem is compulsively reaching
+for the quantitative.
+So qualitative justification, written words,
+is open-ended, dynamic, subtle, rich,
+but it travels badly between contexts
+because it requires a huge amount of shared background.
+So one way for me, my example is as a professor,
+when I write qualitative evaluations of my students,
+I can respond along multiple dimensions.
+I don't have to declare a single overall score.
+I can be like, well, you're really creative,
+but it wasn't as rigorous.
+I didn't have to settle that up.
+And I can also use all the rich language,
+a philosophy of my class.
+But one, those things don't travel well.
+Like people from the business school
+will not understand my comments
+and I won't understand their student comments.
+And two, they do not aggregate well.
+Like thousands of student evaluations don't aggregate.
+So what Porter says is quantitative information
+is a kind of instrument that's designed
+to get around this problem.
+When we create quantitative information in an institution,
+we identify a context-invariant kernel.
+We find something that's stable across all contexts,
+that everyone from different backgrounds can understand.
+We agree on it, we rigidify it,
+and then we can all understand and connect and collect into it.
+So in the US, this is GPA, grade point average.
+If you get an A, that's a four.
+If you get a B, that's a three.
+Every student work can be pushed into a single spectrum
+that can be quickly averaged
+and get a grade point average.
+So Porter's insight is that data has been designed to travel.
+His term is that it's portable.
+It's been made to be portable.
+And the way it's made to be portable
+is it has context and subtlety stripped out.
+It's been designed to be understood across contexts.
+So I think the thing that Porter identifies for me
+is that the kind of what I would call
+the insensitivity and inhumanity of metrics
+is an essential design feature.
+In order to communicate readily at scale,
+we have to strip off things that require
+high context and nuance to understand.
+So the thing that makes metrics powerful,
+that is the quick aggregation, the easy comprehensibility,
+is achieved precisely at the cost of loss of nuance.
+And I'm not saying this is bad in every case.
+Like this is also, this is not just metrics.
+This is science, right?
+The reason why it's really easy to optimize
+for certain things like antibiotics
+is that having an antibiotic stop your infection
+is really easy for everyone to see.
+Having a lifesaving measure save on someone's life,
+that's easy to count.
+So those are the kinds of things
+that are very easy to collect large scale data for.
+Things that are highly variable require high sensitivity
+or that are subtle are very hard.
+And this is not saying they're not real, right?
+It's just saying that they're hard for everyone
+to assess quickly and easily.
+One of my favorite examples of here is like,
+so there are a lot of legal rights that we connect to age.
+And what we actually don't, we don't actually care about age.
+What we actually care about is intellectual
+and emotional maturity, but it would be a disaster
+if we granted voting rights based on intellectual
+and emotional maturity, right?
+You would need a particular judge.
+So there's a case where we make a trade-off
+and instead of exactly tracking the thing,
+we find a mechanical line in the U.S.
+You get to vote if you're 18, right?
+And that mechanical line is inarguable.
+Everyone assesses it at the same place.
+And that's a case where I think it's great.
+It is fantastic that for voting,
+we have a clear mechanical line that everyone can replicate.
+But for other things, like, I don't know,
+choosing your arts grants or choosing your fitness routine
+or choosing what your career is.
+These things, it's less important that our decision procedure
+and our targeting procedure are bound by the standard
+of absolute context-crossing decontextualization.
+I mean, the quick way to put it is that for Porter,
+data and therefore metrics are a designed engineer technology
+that gets us fast, portable aggregability
+at the cost of context.
+Yeah, so another thing that you talk about is the appeal of metrics.
+And I don't think it's just their tidiness.
+It's kind of the kind of authority
+that they seem to carry within them.
+You know, that's the final verdict on this issue.
+This such and such is five out of 10.
+That's it, you know, and so we're kind of,
+do you think we're less likely to challenge that
+because it seems like it is so black and white?
+Yeah, I mean, there are a lot of, this has been this puzzle for me
+for the longest time of why these things are so seductive.
+One of the early explanations I had was that
+there's this kind of like existential soothingness,
+like it's really painful to be exposed to the complexity of real values
+and this makes things easy.
+That's one explanation.
+Another explanation is that it's just easier to communicate.
+And Porter tells us why.
+It's been designed to be easier to communicate.
+Lately, I've been thinking, I even came up with a term for it
+literally yesterday in my graduate seminar,
+talking to my students about this.
+A lot of the times, the way we say that something is objective
+versus subjective is that we get someone else's confirmation.
+They see it too, right?
+That is literally the basic, if you go back to like
+old Hume classics of empiricist philosophy,
+you know that the feeling of warmth is subjective
+because different people experience it differently in the same place
+and you know that temperature is objective
+because different people will come up with the same measurement, right?
+But I kind of think metrics do a kind of objectivity hacking, right?
+They create a quick, easy shortcut to agreement and convergence
+by zeroing in on features that are highly accessible.
+And so this is, I feel like we're headed into like weirdo technical philosophy,
+but the thing that's really interesting to me
+is the difference between what's real and what's important
+and what's easily observable by anybody,
+especially under conditions of quickness and speed.
+And metrics are designed to create easy convergence at speed among everybody.
+They're a shortcut to the appearance of objectivity.
+So we've talked about quite a lot there,
+a lot of different pitfalls that are in this.
+So sort of for someone who's listening, he's thinking, you know,
+how can they avoid falling foul of these pitfalls?
+You know, what can we learn from games?
+And you talk about the notion of play, which is really interesting,
+that we can actually apply in our own lives,
+because often it can feel like a lot of these things
+are just completely out of our own control.
+Yeah, I mean, not only A, a lot of these systems are out of our control
+and a lot of the fixes here are structural.
+I'm not going to sit here and say like, we can fix this through individual grit.
+Like a lot of this is because of the way the institutions work.
+Even there, you can find different relationships to external scoring systems.
+And it's important to remember that we do use them all the time.
+Even I think even the best relationship to scoring systems in the world
+is going to constantly use them because scoring systems
+are a response to real needs to understand other people,
+to make them transparent to us, to get information quickly.
+Like I use rankings when I buy household gadgets.
+I don't have the time to research every dishwasher.
+I use rankings, right?
+They're summarized compressed information.
+What you want to do is realize that they're highly lossy,
+highly information devoid, highly thin packages
+that are useful, maybe a starting point that are not complete.
+And I think games offer us a really good glimpse of what we can do
+because I think the life that games,
+it's not that they automatically give this to you,
+but the life they encourage is a life in which
+you enter scoring systems voluntarily
+and you choose which ones you want to have
+and you can modify them, right?
+Like the difference in games, I mean, this is,
+and this is in many ways, it's a structural difference, right?
+You can house rule your poker game or your Dungeons and Dragons game.
+You can't house rule GPA because of the way that metrics function.
+But the closest you can approximate to that is something like,
+I think games encourage something that I want to call reflective control.
+So games encourage trying a scoring system
+and then not just assuming that we have to play this particular board game forever,
+but thinking afterwards, was it worth it?
+Was it fun?
+And what you're doing is transitioning between
+being absorbed in a particular game goal
+and reflecting more deeply on its purpose
+and whether that purpose was rich or meaningful to you.
+And you can just decide, now that game sucked,
+I'm not going to play it again.
+Or that game was kind of good, but I'm going to modify it.
+You have some degree of control and games make that easy
+because there are so many and they're so disconnected.
+I think that's the right attitude.
+It's much harder to apply in the world
+because you don't have these isolated, easily movable between packages
+like you do with games.
+You get these massive world-spanning systems.
+But still, there's a difference between treating your subscriber count
+or your likes or your page views as a rough proxy
+that gives you some information
+versus treating it, taking on as your core value.
+I think one crucial part of that is,
+if you take it on as your core value,
+you don't have a standpoint from which to reflect
+on whether it's working out for you.
+If you think the point of your life is just to make the most money
+or get the most followers, then that's it.
+That's just what you're doing.
+But if you're thinking to yourself,
+I'm trying to get followers in order to communicate
+and connect with people, then you have a stance
+from which you can limit your devotion to that simple metric.
+Thank you for listening to this episode of Instant Genius,
+brought to you from the team behind BBC Science Focus.
+That was C.T. Newman.
+To discover more about the topics we've just discussed,
+check out his book, The Score,
+How to Stop Playing Someone Else's Game.
+If you liked what you just heard,
+then please do consider subscribing to Instant Genius
+on your preferred podcast platform.
+If you'd like to see our guests and hosts in person,
+then why not check out our YouTube channel,
+at Science Focus.
+The current issue of BBC Science Focus
+magazine is out now.
+Pick up a copy wherever you buy your favourite magazines
+or download us on your app store of choice.
+You can also find us on Apple News or online
+at sciencefocus.com.
+Deepen your subject knowledge, exchange innovative ideas,
+and augment your existing income.
+There are so many reasons to become a Pearson Examiner.
+In addition to enriching your expertise
+and progressing your career, you'll be better prepared
+to help your learners achieve future success in their exams.
+With flexible working options and full training,
+you'll be able to make the most of your time
+and make the most of your time.
+You'll be able to make the most of your time
+and make the most of your time.
+You'll be able to make the most of your time
+With flexible working options and full training provided,
+becoming a Pearson Examiner will open opportunities
+for both you and your students.
+It's a bonafide win-win situation.
+Discover more by visiting home.edXLgateway.com
+forward slash pages forward slash search.
+Hello, I'm a National Lottery scratch card.
+Over five people a second win with me.
+That's like 30 winners since I started talking.
+Oh, 12 more.
+14.
+21.
+Is there a winning star for you?
+Play a National Lottery scratch card today.
+Winners is an average search.
+Dream big, play small.
+Rules apply, players must be 18 or over.

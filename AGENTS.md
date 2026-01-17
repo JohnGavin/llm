@@ -62,6 +62,7 @@ At the start of each session, review the list of installed R packages. Identify 
 - `.claude/skills/systematic-debugging/SKILL.md` - Scientific debugging protocol
 - `.claude/skills/project-telemetry/SKILL.md` - Logging and statistics
 - `.claude/skills/gemini-cli-codebase-analysis/SKILL.md` - Large codebase analysis
+- `.claude/skills/project-review/SKILL.md` - **NEW**: Technical debt assessment and cleanup
 
 *Data & Parallel Processing:*
 - `.claude/skills/data-wrangling-duckdb/SKILL.md` - SQL on files (JSON/CSV/Parquet)
@@ -122,12 +123,13 @@ At the start of each session, review the list of installed R packages. Identify 
 "Use the reviewer agent to review PR #123"
 ```
 
-**Custom Commands (5 available):**
+**Custom Commands (6 available):**
 - `/session-start` - Initialize session (nix check, git status, open issues)
 - `/session-end` - End session (commit, update CURRENT_WORK.md, push)
 - `/check` - Run devtools::document(), test(), check()
 - `/pr-status` - Check PR and CI workflow status
 - `/new-issue` - Create issue + branch + log file
+- `/cleanup` - Review and simplify current session's work
 
 ## 3. Critical Workflow Principles
 
