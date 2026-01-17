@@ -176,6 +176,15 @@ project:
 - Create `R/dev/issue/fix_issue_123.R` files documenting all R commands
 - Include log files IN the PR, not after merge (prevents duplicate CI/CD runs)
 
+**MAINTAIN planning documents in `./plans/`:**
+- Create `plans/PLAN_[feature_name].md` for major features spanning multiple sessions
+- Update plans as implementation progresses across sessions
+- **Link to implementation scripts**: Replace completed plan sections with references to `R/dev/` scripts
+  - ❌ Verbose: "Step 3: Parse JSON response, extract fields X, Y, Z, transform..."
+  - ✅ Concise: "Step 3: See `R/dev/features/parse_response.R`"
+- Include in `/cleanup` review: Prune completed sections, archive finished plans
+- Plans are ephemeral working documents - details move to code, not vice versa
+
 **ALWAYS work in Nix environment:**
 - Use ONE persistent shell per session
 - Don't launch new shells for individual commands
