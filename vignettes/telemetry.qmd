@@ -430,9 +430,18 @@ This section tracks Claude Code usage via the `ccusage` CLI tool, providing insi
 
 ```{r llm-setup}
 library(here)
-library(gt)
-library(gtExtras)
 library(scales)
+
+# Check if gt packages are available
+has_gt <- requireNamespace("gt", quietly = TRUE) &&
+          requireNamespace("gtExtras", quietly = TRUE)
+
+if (has_gt) {
+  library(gt)
+  library(gtExtras)
+} else {
+  message("gt/gtExtras not available - using basic tables")
+}
 
 # Source ccusage helper functions
 source(here::here("R/ccusage.R"))
@@ -448,20 +457,24 @@ session_data <- load_cached_ccusage("session", project_filter = NULL)
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   summary_stats <- summarize_llm_usage(daily_data)
 
-  summary_stats |>
-    gt() |>
-    tab_header(
-      title = "LLM Usage Summary",
-      subtitle = "Aggregated statistics across all tracked usage"
-    ) |>
-    cols_label(
-      metric = "Metric",
-      value = "Value"
-    ) |>
-    tab_options(
-      table.font.size = px(14),
-      heading.title.font.size = px(18)
-    )
+  if (has_gt) {
+    summary_stats |>
+      gt() |>
+      tab_header(
+        title = "LLM Usage Summary",
+        subtitle = "Aggregated statistics across all tracked usage"
+      ) |>
+      cols_label(
+        metric = "Metric",
+        value = "Value"
+      ) |>
+      tab_options(
+        table.font.size = px(14),
+        heading.title.font.size = px(18)
+      )
+  } else {
+    knitr::kable(summary_stats, caption = "LLM Usage Summary")
+  }
 } else {
   cat("No daily usage data available.\n")
 }
