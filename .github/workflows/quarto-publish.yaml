@@ -34,28 +34,16 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          cache-version: 2
-          packages: |
-            any::gh
-            any::dplyr
-            any::tidyr
-            any::ggplot2
-            any::lubridate
-            any::knitr
-            any::gert
-            any::fs
-            any::gt
-            any::gtExtras
-            any::scales
-            any::here
-            any::jsonlite
-            any::DT
-            any::htmltools
-            any::tibble
-            any::purrr
-            any::rmarkdown
+      - name: Install R packages
+        run: |
+          Rscript -e "
+            install.packages('pak', repos = 'https://r-lib.github.io/p/pak/stable/')
+            pak::pkg_install(c(
+              'gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
+              'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
+              'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr', 'rmarkdown'
+            ))
+          "
 
       - uses: quarto-dev/quarto-actions/setup@v2
 
