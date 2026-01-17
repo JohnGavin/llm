@@ -429,6 +429,8 @@ This section tracks Claude Code usage via the `ccusage` CLI tool, providing insi
 ### Load Usage Data
 
 ```{r llm-setup}
+#| eval: false
+
 library(here)
 library(scales)
 
@@ -451,9 +453,13 @@ daily_data <- load_cached_ccusage("daily", project_filter = NULL)
 session_data <- load_cached_ccusage("session", project_filter = NULL)
 ```
 
+*Note: LLM Usage section is temporarily disabled.*
+
 ### Summary Statistics
 
 ```{r llm-summary}
+#| eval: false
+
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   summary_stats <- summarize_llm_usage(daily_data)
 
@@ -483,6 +489,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### Cost Trends Over Time
 
 ```{r llm-cost-trend}
+#| eval: false
 #| fig-cap: "Daily LLM costs over time"
 #| fig-height: 5
 
@@ -518,6 +525,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### Token Usage by Type
 
 ```{r llm-token-breakdown}
+#| eval: false
 #| fig-cap: "Token usage breakdown by type"
 #| fig-height: 5
 
@@ -562,6 +570,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### Model Cost Breakdown
 
 ```{r llm-model-breakdown}
+#| eval: false
 #| fig-cap: "Cost distribution by model"
 #| fig-height: 5
 
@@ -593,6 +602,8 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### Model Usage Table
 
 ```{r llm-model-table}
+#| eval: false
+
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   model_costs <- get_model_breakdown(daily_data)
 
@@ -630,6 +641,8 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### Session Usage Details
 
 ```{r llm-session-table}
+#| eval: false
+
 if (!is.null(session_data) && nrow(session_data) > 0) {
   session_data |>
     arrange(desc(lastActivity)) |>
@@ -667,6 +680,8 @@ if (!is.null(session_data) && nrow(session_data) > 0) {
 ### Activity Gaps
 
 ```{r llm-gaps}
+#| eval: false
+
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   gaps <- find_activity_gaps(daily_data)
 
@@ -698,6 +713,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### Cumulative Cost Over Time
 
 ```{r llm-cumulative}
+#| eval: false
 #| fig-cap: "Cumulative LLM spending over time"
 #| fig-height: 5
 
@@ -733,6 +749,8 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 This interactive table shows session start/end times, duration, cost, and tokens for the last 3 non-empty days. Click column headers to sort, use the search box to filter.
 
 ```{r llm-session-activity}
+#| eval: false
+
 library(DT)
 library(lubridate)
 
