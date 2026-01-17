@@ -59,7 +59,12 @@ jobs:
       - uses: quarto-dev/quarto-actions/setup@v2
 
       - name: Render Quarto site
-        run: quarto render
+        run: |
+          # Show R paths for debugging
+          Rscript -e "cat('R_LIBS:', Sys.getenv('R_LIBS'), '\n')"
+          Rscript -e "cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')"
+          Rscript -e "cat('gt available:', requireNamespace('gt', quietly = TRUE), '\n')"
+          quarto render
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
