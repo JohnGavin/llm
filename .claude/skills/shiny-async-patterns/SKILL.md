@@ -414,6 +414,105 @@ task$invoke(params) %...>% function(result) {
 - **ExtendedTask**: Requires Shiny >= 1.8.1
 - **input_task_button**: Requires bslib >= 0.6.0
 - **crew promise integration**: Requires crew >= 0.9.0
+- **promises v1.5.0**: Native mirai integration (event-driven)
+- **Shiny 1.12+**: OpenTelemetry support for observability
+
+## OpenTelemetry Integration (Shiny 1.12+)
+
+OpenTelemetry is an industry standard for collecting telemetry data (traces, metrics) to understand how your code behaves in production.
+
+### Supported Packages
+
+As of 2025, these packages support OpenTelemetry:
+- **Shiny for R v1.12** - Trace request handling, reactive invalidations
+- **mirai v2.5.0** - Trace async task execution
+- **promises v1.5.0** - Trace promise chains
+- **httr2 v1.2.2** - Trace HTTP requests
+- **Coming soon**: ellmer, testthat
+
+### Basic Setup
+
+```r
+library(shiny)
+library(otel)  # OpenTelemetry for R
+
+# Configure exporter (e.g., to Jaeger, Zipkin, or OTLP)
+otel::otel_init(
+  service_name = "my_shiny_app",
+  exporter = "otlp",
+  endpoint = "http://localhost:4317"
+)
+
+# Your Shiny app now automatically traces:
+# - Request lifecycle
+# - Reactive graph updates
+# - Async task completion times
+```
+
+### What You Can Trace
+
+```r
+# Trace custom spans in your app
+server <- function(input, output, session) {
+  output$result <- renderPlot({
+    otel::with_span("compute_plot", {
+      # Your computation here
+      data <- expensive_query()
+      plot(data)
+    })
+  })
+}
+```
+
+### Benefits for Production
+
+- **Find bottlenecks**: See which reactive chains are slow
+- **Debug async issues**: Trace mirai/crew task execution
+- **Monitor HTTP calls**: httr2 traces external API latency
+- **Distributed tracing**: Connect Shiny traces with backend services
+
+## promises v1.5.0 - Native mirai Integration
+
+**promises v1.5.0** is the engine behind asynchronous Shiny. It now has native mirai integration for event-driven (zero-polling) async.
+
+### Native mirai Support
+
+```r
+library(promises)
+library(mirai)
+
+# mirai objects work directly as promises (no adapter needed)
+m <- mirai({
+  expensive_computation()
+})
+
+# Event-driven resolution - fires IMMEDIATELY when complete
+m %...>% function(result) {
+  update_ui(result)
+}
+
+# Chain promises
+mirai({ step1() }) %...>%
+  function(x) mirai({ step2(x) }) %...>%
+  function(y) final_result(y)
+```
+
+### Why This Matters
+
+```
+Before (polling-based):
+┌─────────────────────────────────────────┐
+│ Task completes → Wait up to Xms →       │
+│ Next poll detects completion → Callback │
+│ Latency: milliseconds, CPU waste        │
+└─────────────────────────────────────────┘
+
+After (event-driven with mirai):
+┌─────────────────────────────────────────┐
+│ Task completes → Immediate callback →   │
+│ Zero polling, zero latency              │
+└─────────────────────────────────────────┘
+```
 
 ## Debugging Async Issues
 

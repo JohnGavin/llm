@@ -17,12 +17,58 @@ Use this skill when:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
+│  duckplyr   - dplyr backend using DuckDB (PREFERRED)       │
 │  duckdb     - SQL engine, reads any format directly        │
 │  arrow      - Large data I/O, Parquet/Feather, zero-copy   │
 │  dbplyr     - dplyr verbs → SQL translation                │
 │  dplyr      - Tidy data manipulation                        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## duckplyr - The Recommended Approach
+
+**duckplyr** is a drop-in replacement for dplyr that uses DuckDB as its backend. This is the PREFERRED approach for new projects.
+
+### Basic Usage
+
+```r
+library(duckplyr)
+
+# dplyr verbs now execute on DuckDB automatically
+mtcars |>
+  filter(mpg > 20) |>
+  group_by(cyl) |>
+  summarise(mean_hp = mean(hp))
+# Runs on DuckDB, not R!
+
+# Read files directly
+read_csv_duckdb("large_file.csv") |>
+  filter(value > 100) |>
+  summarise(total = sum(amount))
+```
+
+### Enable Globally
+
+```r
+# Option 1: For entire session
+library(duckplyr)
+duckplyr::methods_overwrite()  # dplyr verbs now use DuckDB
+
+# Option 2: Per-pipe (explicit)
+mtcars |>
+  duckplyr::as_duckplyr_df() |>
+  filter(mpg > 20) |>
+  collect()
+```
+
+### duckplyr vs duckdb Direct
+
+| Use Case | Approach |
+|----------|----------|
+| Standard dplyr workflows | `duckplyr` (drop-in replacement) |
+| Complex SQL, window functions | `duckdb` + `tbl()` + SQL |
+| Remote file queries (httpfs) | `duckdb` with extensions |
+| Python/R interop | `duckdb` directly |
 
 ## Core Patterns
 

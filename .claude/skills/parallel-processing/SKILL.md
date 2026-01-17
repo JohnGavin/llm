@@ -16,11 +16,14 @@ Use this skill when:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Level 4: targets + crew                                    │
+│  Level 5: targets + crew                                    │
 │           Production pipelines with parallel workers        │
 │                          ↑                                  │
-│  Level 3: crew                                              │
+│  Level 4: crew                                              │
 │           Managed worker pools, auto-scaling                │
+│                          ↑                                  │
+│  Level 3: purrr (1.1.0+)                                    │
+│           Native parallel map via mirai backend             │
 │                          ↑                                  │
 │  Level 2: mirai                                             │
 │           Async evaluation, simple parallel tasks           │
@@ -30,10 +33,60 @@ Use this skill when:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## purrr 1.1.0+ Parallel Processing
+
+**purrr 1.1.0** added native parallel processing powered by mirai. This is the SIMPLEST way to parallelize existing purrr code.
+
+### Basic Parallel Map
+
+```r
+library(purrr)
+library(mirai)
+
+# Sequential (traditional)
+results <- map(items, slow_function)
+
+# Parallel (new in purrr 1.1.0+) - just add .parallel = TRUE!
+results <- map(items, slow_function, .parallel = TRUE)
+
+# Works with all map variants
+map_dfr(items, process_item, .parallel = TRUE)
+map_chr(items, extract_name, .parallel = TRUE)
+map2(x, y, combine_fn, .parallel = TRUE)
+pmap(list(a, b, c), multi_fn, .parallel = TRUE)
+```
+
+### Configure Workers
+
+```r
+# Default: uses all available cores
+map(items, fn, .parallel = TRUE)
+
+# Specify worker count
+map(items, fn, .parallel = list(workers = 4))
+
+# With progress bar
+map(items, fn, .parallel = TRUE, .progress = TRUE)
+```
+
+### Migration from furrr
+
+```r
+# ❌ OLD: furrr (heavier, polling-based)
+library(furrr)
+plan(multisession, workers = 4)
+results <- future_map(items, process)
+
+# ✅ NEW: purrr + mirai (lighter, event-driven)
+library(purrr)
+results <- map(items, process, .parallel = TRUE)
+```
+
 ## When to Use Each Level
 
 | Need | Use This |
 |------|----------|
+| Drop-in parallel purrr | `purrr::map(..., .parallel = TRUE)` (1.1.0+) |
 | Simple parallel map over list | `mirai::mirai_map()` |
 | Async evaluation (fire and forget) | `mirai::mirai()` |
 | Managed worker pool | `crew::crew_controller_local()` |
