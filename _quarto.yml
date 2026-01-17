@@ -1,6 +1,9 @@
 project:
   type: website
   output-dir: docs
+  render:
+    - "index.qmd"
+    - "vignettes/*.qmd"
 
 website:
   title: "LLM Project"
