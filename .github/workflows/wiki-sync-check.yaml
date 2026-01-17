@@ -13,12 +13,15 @@ on:
       - 'WIKI_CONTENT/**'
       - 'README.md'
       - 'R/dev/wiki/sync_wiki.R'
+      - '.github/workflows/wiki-sync-check.yaml'
   pull_request:
     branches: [main]
     paths:
       - 'WIKI_CONTENT/**'
       - 'README.md'
       - 'R/dev/wiki/sync_wiki.R'
+      - '.github/workflows/wiki-sync-check.yaml'
+  workflow_dispatch:
 
 jobs:
   check-sync:
