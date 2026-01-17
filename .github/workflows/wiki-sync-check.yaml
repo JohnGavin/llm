@@ -32,10 +32,11 @@ jobs:
           r-version: 'release'
           use-public-rspm: true
 
-      - name: Install gert
-        run: |
-          install.packages("gert")
-        shell: Rscript {0}
+      - name: Install R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::gert
 
       - name: Check README sync status
         run: |
