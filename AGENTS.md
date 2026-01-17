@@ -131,6 +131,18 @@ At the start of each session, review the list of installed R packages. Identify 
 
 ## 3. Critical Workflow Principles
 
+**⚠️ MANDATORY: Always Read Actual Errors - NEVER Speculate:**
+When debugging CI/workflow failures:
+1. **READ THE ACTUAL ERROR MESSAGE** from the workflow logs
+2. **NEVER speculate** about what the error "might be"
+3. If you cannot access or read the error:
+   - **STOP immediately**
+   - Tell the user which URL you cannot access
+   - Explain WHY you cannot access it
+   - **ASK the user to look up the error for you**
+4. Only proceed with fixes after you have the EXACT error message
+5. Quote the actual error in your response before proposing solutions
+
 **⚠️ BEFORE writing ANY GitHub Actions workflow:**
 → MUST read `.claude/skills/ci-workflows-github-actions/SKILL.md`
 → Use the Decision Matrix: Simple tasks (email, coverage) → Native R via `r-lib/actions`, NOT Nix
