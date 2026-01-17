@@ -294,6 +294,8 @@ These skills are valuable but used outside the per-change workflow:
 | `lazy-evaluation-guide` | R concept reference | Understanding lazy evaluation |
 | `project-review` | Technical debt | Periodic cleanup (weekly/monthly) |
 
+> **Note (2026-01-17):** This is a sample list. Check `.claude/skills/*/SKILL.md` for the current complete list of available skills. New skills are added regularly.
+
 ---
 
 **Consequences of Skipping:**
