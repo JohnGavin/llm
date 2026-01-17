@@ -705,6 +705,76 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 }
 ```
 
+### Session Activity Table (Last 3 Days)
+
+This interactive table shows session start/end times, duration, cost, and tokens for the last 3 non-empty days. Click column headers to sort, use the search box to filter.
+
+```{r llm-session-activity}
+library(DT)
+library(lubridate)
+
+# Load blocks data for detailed session info
+blocks_data <- tryCatch({
+  jsonlite::fromJSON(here::here("inst/extdata/ccusage_blocks_all.json"))
+}, error = function(e) NULL)
+
+if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
+  blocks_df <- as_tibble(blocks_data$blocks) |>
+    mutate(
+      start = ymd_hms(startTime),
+      end = ymd_hms(actualEndTime),
+      duration_mins = as.numeric(difftime(end, start, units = "mins")),
+      date = as.Date(start)
+    ) |>
+    filter(!is.na(end), costUSD > 0) |>
+    select(date, start, end, duration_mins, costUSD, totalTokens)
+
+  # Get last 3 non-empty days
+  recent_days <- blocks_df |>
+    group_by(date) |>
+    summarise(n = n(), .groups = "drop") |>
+    arrange(desc(date)) |>
+    head(3) |>
+    pull(date)
+
+  # Filter to those days and format for display
+  session_table <- blocks_df |>
+    filter(date %in% recent_days) |>
+    arrange(desc(end)) |>
+    mutate(
+      `Session Start` = format(start, "%Y-%m-%d %H:%M"),
+      `Session End` = format(end, "%Y-%m-%d %H:%M"),
+      `Duration (hh:mm)` = sprintf("%02d:%02d",
+                                    as.integer(duration_mins %/% 60),
+                                    as.integer(duration_mins %% 60)),
+      Cost = sprintf("$%.2f", costUSD),
+      Tokens = format(totalTokens, big.mark = ",", scientific = FALSE)
+    ) |>
+    select(`Session Start`, `Session End`, `Duration (hh:mm)`, Cost, Tokens)
+
+  datatable(
+    session_table,
+    options = list(
+      pageLength = 15,
+      order = list(list(1, 'desc')),  # Sort by Session End descending
+      dom = 'frtip',  # filter, table, info, pagination
+      language = list(
+        search = "Filter:",
+        info = "Showing _START_ to _END_ of _TOTAL_ sessions"
+      )
+    ),
+    rownames = FALSE,
+    class = 'cell-border stripe hover',
+    caption = htmltools::tags$caption(
+      style = 'caption-side: top; text-align: left; font-weight: bold;',
+      'Session Activity - Last 3 Non-Empty Days (sorted by end time, most recent first)'
+    )
+  )
+} else {
+  cat("No blocks data available for session activity table.\n")
+}
+```
+
 ## Session Information
 ```{r session-info}
 sessionInfo()
