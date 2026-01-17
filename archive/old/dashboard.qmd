@@ -1,0 +1,126 @@
+---
+title: "Palmer Penguins"
+date: today
+format: 
+    dashboard
+    # html
+knitr:
+  opts_chunk: 
+    echo: false
+---
+```{r}
+gha::knitr_time_chunks()
+gha::gha_notice("Found {nrow(mtcars)} packages with deadlines")
+# Useful to record a "change" date so we (a) see it in our commit history
+
+```
+
+# My Dashboard
+first page
+
+## Row {height=20%}
+::: {.panel-tabset group="language"}
+### python 
+<!-- {width=20%,height=10%} -->
+python content for the first tab goes here.
+```{python}
+# Your content for the first page goes here
+import sys
+sys.version_info
+print("Python version:", sys.version_info.major, ".", sys.version_info.minor)
+```
+```{python}
+#| eval: false
+import pip
+installed_packages = pip.get_installed_distributions()
+for package in installed_packages:
+    print(f"{package.project_name} ({package.version})")
+
+```
+```{python md, eval=FALSE}
+#| eval: false
+
+# # pyenv install -l  all py versiosn
+# # pyenv install # latest known version
+# !pyenv version # 3.10.9
+# !pyenv global 3.10.9 # select vers
+# !pyenv local 3.10.9 # current dir/subdir
+# !pyenv which python
+# !pyenv exec pip list 
+# !pyenv exec pip list all
+# !pyenv exec pip install duckdb==1.0.0
+# !pyenv exec pip install distro --upgrade duckdb-engine
+# !pyenv exec python helloworld.py
+import regex
+import pandas as pd
+import distro
+from sqlalchemy import create_engine, text
+eng = create_engine("duckdb:///md:my_db")
+```
+```{python import duckdb}
+#| eval: false
+import duckdb
+# connect to MotherDuck using 'md:' or 'motherduck:'
+con = duckdb.connect('md:')
+
+```
+:::
+::: {.panel-tabset group="language"}
+### R 
+<!-- {width=40%,height=10%}-->
+R content for the second tab goes here.
+```{r chunky_1}
+R.version.string
+```
+```{r}
+library(quantmod)
+library(dygraphs)
+
+get_stock_data <- function(ticker, start_date, end_date) {
+  data <- getSymbols(ticker, src = "yahoo", from = start_date, to = end_date, auto.assign = FALSE)
+  # Removes the ticker name from column names
+  colnames(data) <- gsub(paste0(ticker, "\\."), "", colnames(data))
+  data <- data[, c("Volume", "Adjusted")]
+  return(data)
+}
+
+aapl <- get_stock_data(ticker = "AAPL", start_date = "2023-01-01", end_date = "2024-01-01")
+tail(aapl, 10)
+
+dygraph(
+  aapl$Adjusted,
+  main = "Apple Stock Price (AAPL)",
+  xlab = "Time period",
+  ylab = "Adjusted price (USD)",
+  width = 1200,
+  height = 800
+)
+
+dygraph(aapl$Adjusted, main = "Apple Stock Price (AAPL)", xlab = "Time period", ylab = "Adjusted price (USD)") %>%
+  dySeries(color = "#0198f9", drawPoints = TRUE, pointSize = 3, pointShape = "square")
+
+aapl$VolumeScaled <- aapl[, "Volume"] / 1000000
+
+dygraph(aapl[, c("Adjusted", "VolumeScaled")], main = "Apple Stock Price (AAPL) and Trade Volume") %>%
+  dySeries("Adjusted", label = "Adjusted Price (USD)", color = "#0198f9", drawPoints = TRUE, pointSize = 3, pointShape = "square") %>%
+  dySeries("VolumeScaled", label = "Trade Volume (M)", stepPlot = TRUE, fillGraph = TRUE, color = "#FF9900")
+
+
+aapl <- get_stock_data(ticker = "AAPL", start_date = "2023-01-01", end_date = "2024-01-01")
+
+dygraph(aapl) %>%
+  dySeries("Adjusted", label = "Adjusted Price (USD)", color = "#0198f9", drawPoints = TRUE, pointSize = 3, pointShape = "square") %>%
+  dySeries("Volume", label = "Trade Volume (M)", stepPlot = TRUE, fillGraph = TRUE, color = "#FF9900", axis = "y2")
+
+```
+:::
+
+# Row {height=30%}
+content for the NEXT page goes here
+
+
+
++ Source code: <https://github.com/johngavin/{repo}> 
++ last updated run: <https://github.com/johngavin/{repo}/actions/workflows/render.yaml>
+w### GH worflow
++ https://github.com/hadley/cran-deadlines/blob/main/.github/workflows/render.yaml

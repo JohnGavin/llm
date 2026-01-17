@@ -1,0 +1,2 @@
+main:
+  store: finance/data/etfs/etfdata/_targets

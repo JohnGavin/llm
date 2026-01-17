@@ -1,0 +1,61 @@
+---
+params:
+    url_source: "https://nrennie.rbind.io/blog/combining-r-and-python-with-reticulate-and-quarto/"
+title: "Modelling lemur weights with R and Python"
+author: "Nicola Rennie"
+format:
+  revealjs:
+    embed-resources: true
+  pdf: default
+---
+## read data
+```{r}
+#| label: read-data
+#| echo: true
+#| message: false
+#| cache: true
+lemurs <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-08-24/lemur_data.csv")
+```
+
+## data wrangling
+```{r}
+#| label: wrangling
+#| echo: true
+#| message: false
+# output-location: slide generate table onto  following slide (cos code uses the space on this slide).
+#| output-location: slide
+library(dplyr)
+library(knitr)
+lemur_data <- lemurs %>%
+  filter(
+    taxon == "ECOL",
+    sex == "M",
+    age_category == "adult"
+  ) %>%
+  select(c(age_at_wt_mo, weight_g)) %>%
+  rename(
+    Age = age_at_wt_mo,
+    Weight = weight_g
+  )
+kable(head(lemur_data))
+```
++ only adult male collared brown lemurs
++ chosen only the columns we want to model:
+    + age and
+    + weight
+
+## fit Python model
+```{python}
+#| label: modelling
+#| echo: true
+#| message: false
+lemur_data_py = r.lemur_data
+
+import statsmodels.api as sm
+y = lemur_data_py[["Weight"]]
+x = lemur_data_py[["Age"]]
+x = sm.add_constant(x)
+mod = sm.OLS(y, x).fit()
+lemur_data_py["Predicted"] = mod.predict(x)
+lemur_data_py["Residuals"] = mod.resid
+```

@@ -1,0 +1,65 @@
+[
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html",
+    "title": "ETF Data Analysis",
+    "section": "",
+    "text": "We start by defining the universe of European UCITS ETFs listed on the LSE. This universe is precomputed during CI to avoid browser CORS restrictions.\nThe logic used to retrieve the universe list is:\n\n\nShow Code\nget_etf_universe &lt;- function(n = 20) {\n  path &lt;- system.file(\"extdata\", \"etf_universe.csv\", package = \"etfdata\")\n  if (path == \"\") {\n    path &lt;- \"inst/extdata/etf_universe.csv\"\n  }\n  if (file.exists(path)) {\n    res &lt;- readr::read_csv(path, show_col_types = FALSE)\n    return(utils::head(res, n))\n  }\n\n  seed_path &lt;- system.file(\"extdata\", \"seed_universe.csv\", package = \"etfdata\")\n  if (seed_path == \"\") {\n    seed_path &lt;- \"inst/extdata/seed_universe.csv\"\n  }\n  res &lt;- readr::read_csv(seed_path, show_col_types = FALSE)\n  utils::head(res, n)\n}\n\n\n\n\n[1] \"Universe data not available in this build.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#etf-universe",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#etf-universe",
+    "title": "ETF Data Analysis",
+    "section": "",
+    "text": "We start by defining the universe of European UCITS ETFs listed on the LSE. This universe is precomputed during CI to avoid browser CORS restrictions.\nThe logic used to retrieve the universe list is:\n\n\nShow Code\nget_etf_universe &lt;- function(n = 20) {\n  path &lt;- system.file(\"extdata\", \"etf_universe.csv\", package = \"etfdata\")\n  if (path == \"\") {\n    path &lt;- \"inst/extdata/etf_universe.csv\"\n  }\n  if (file.exists(path)) {\n    res &lt;- readr::read_csv(path, show_col_types = FALSE)\n    return(utils::head(res, n))\n  }\n\n  seed_path &lt;- system.file(\"extdata\", \"seed_universe.csv\", package = \"etfdata\")\n  if (seed_path == \"\") {\n    seed_path &lt;- \"inst/extdata/seed_universe.csv\"\n  }\n  res &lt;- readr::read_csv(seed_path, show_col_types = FALSE)\n  utils::head(res, n)\n}\n\n\n\n\n[1] \"Universe data not available in this build.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#metadata-justetf",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#metadata-justetf",
+    "title": "ETF Data Analysis",
+    "section": "Metadata (JustETF)",
+    "text": "Metadata (JustETF)\nMetadata comes from the JustETF screener table (full universe), which includes fund size and TER for LSE-listed UCITS. The pipeline uses the screener result as the cached metadata snapshot.\n\n\nShow Code\nmetadata &lt;- fetch_justetf_screener(min_aum_gbp = 0, max_ter = Inf)\n\n\n\n\n[1] \"Metadata not available.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#justetf-screener-api",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#justetf-screener-api",
+    "title": "ETF Data Analysis",
+    "section": "JustETF Screener API",
+    "text": "JustETF Screener API\nIn addition to the cached snapshot, we can query the JustETF screener directly to find ETFs meeting specific criteria (e.g., AUM &gt; £200m, TER &lt; 0.75%). Browser builds use the cached snapshot because cross-site requests are blocked by CORS. The snapshot is built from a curated ETF universe list and incremental Yahoo price downloads (only missing dates are fetched). See docs/wiki/ETF_Data_Sources.md for details.\n\n\nShow Code\nscreener_results &lt;- fetch_justetf_screener(min_aum_gbp = 200, max_ter = 0.75)\nprint(head(screener_results))"
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#price-history-yahoo-finance",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#price-history-yahoo-finance",
+    "title": "ETF Data Analysis",
+    "section": "Price History (Yahoo Finance)",
+    "text": "Price History (Yahoo Finance)\nWe fetch daily price history from Yahoo Finance using quantmod. For the snapshot, we attempt a single download per ticker with a short timeout and store the results for use in WebR/Shinylive.\n\n\nShow Code\nfetch_price_history(\"VUSA.L\")\n\n\n\n\nShow Code\nis_ci &lt;- isTRUE(get0(\"is_ci\", ifnotfound = FALSE))\nif (is_ci) {\n  message(\"Skipping history plot in CI.\")\n} else if (data_loaded && !is.null(history) && requireNamespace(\"ggplot2\", quietly = TRUE)) {\n  # Visualize Close Prices with Facets\n  print(\n    history %&gt;%\n      ggplot(aes(x = date, y = close, color = ticker)) +\n      geom_line() +\n      facet_wrap(~ticker, scales = \"free_y\") +\n      labs(title = \"ETF Price History (LSE)\", y = \"Close Price (GBP)\") +\n      theme_minimal() +\n      theme(legend.position = \"none\")\n  )\n  print(history)\n  if (!is.null(history_summary)) {\n    print(head(history_summary, 10))\n  }\n}"
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#combined-analysis",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#combined-analysis",
+    "title": "ETF Data Analysis",
+    "section": "Combined Analysis",
+    "text": "Combined Analysis\nWe join the datasets and parse the AUM strings to analyze the relationship between Fund Size, Liquidity, and Fees.\n\n\nShow Code\nif (data_loaded && !is.null(history) && !is.null(metadata)) {\n  avg_vol &lt;- history %&gt;%\n    group_by(ticker) %&gt;%\n    summarise(avg_daily_vol = mean(volume, na.rm = TRUE))\n  \n  if (\"isin\" %in% colnames(universe) && \"isin\" %in% colnames(metadata)) {\n    combined &lt;- universe %&gt;%\n      inner_join(metadata, by = \"isin\") \n\n    if (!\"ticker\" %in% names(combined)) {\n      ticker_cols &lt;- intersect(c(\"ticker\", \"ticker.x\", \"ticker.y\", \"ticker_meta\"), names(combined))\n      if (length(ticker_cols) &gt; 0) {\n        combined &lt;- combined %&gt;%\n          dplyr::mutate(\n            ticker = dplyr::coalesce(!!!rlang::syms(ticker_cols))\n          ) %&gt;%\n          dplyr::select(-dplyr::any_of(setdiff(ticker_cols, \"ticker\")))\n      }\n    }\n\n    combined &lt;- combined %&gt;%\n      inner_join(avg_vol, by = \"ticker\")\n    \n    if (requireNamespace(\"stringr\", quietly = TRUE) && requireNamespace(\"dplyr\", quietly = TRUE)) {\n      if (\"aum_text\" %in% names(combined) && any(!is.na(combined$aum_text))) {\n        combined &lt;- bind_cols(combined, parse_aum(combined$aum_text))\n      } else {\n        combined &lt;- combined %&gt;%\n          dplyr::mutate(\n            aum_amount = NA_real_,\n            aum_units = NA_character_,\n            total_amount = NA_real_\n          )\n      }\n    }\n\n    if (requireNamespace(\"readr\", quietly = TRUE) && requireNamespace(\"stringr\", quietly = TRUE)) {\n      if (\"ter_text\" %in% names(combined)) {\n        combined &lt;- combined %&gt;%\n          mutate(\n            ter_val = readr::parse_number(ter_text),\n            ter_units = stringr::str_extract(ter_text, \"[%]\") \n          )\n      } else {\n        combined &lt;- combined %&gt;%\n          mutate(\n            ter_val = NA_real_,\n            ter_units = NA_character_\n          )\n      }\n    }\n\n    cols_to_show &lt;- c(\"ticker\", \"name\", \"currency\", \"aum_amount\", \"aum_units\", \"avg_daily_vol\", \"ter_val\")\n    cols_to_show &lt;- intersect(cols_to_show, colnames(combined))\n    knitr::kable(head(combined %&gt;% select(all_of(cols_to_show))))\n  }\n} else {\n  print(\"Combined data not available for this build.\")\n}\n\n\n[1] \"Combined data not available for this build.\"\n\n\n\n\nShow Code\nif (exists(\"combined\") && requireNamespace(\"ggplot2\", quietly = TRUE)) {\n  print(\n    ggplot(combined, aes(x = total_amount, y = avg_daily_vol)) +\n      geom_point() +\n      scale_x_log10(labels = scales::label_currency(prefix = \"£\", scale_cut = scales::cut_short_scale())) +\n      scale_y_log10(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +\n      labs(title = \"ETF Size vs Liquidity\",\n           x = \"Assets Under Management (AUM in GBP)\",\n           y = \"Average Daily Volume\") +\n      theme_minimal()\n  )\n}\n\n\n\n\nShow Code\nif (exists(\"combined\") && \"ter_val\" %in% colnames(combined) && requireNamespace(\"ggplot2\", quietly = TRUE)) {\n  print(\n    ggplot(combined, aes(x = total_amount, y = ter_val)) +\n      geom_point() +\n      scale_x_log10(labels = scales::label_currency(prefix = \"£\", scale_cut = scales::cut_short_scale())) +\n      labs(title = \"ETF Size vs Cost (TER)\",\n           x = \"Assets Under Management (AUM in GBP)\",\n           y = \"Total Expense Ratio (%)\") +\n      theme_minimal()\n  )\n} else if (exists(\"combined\")) {\n  print(\"TER data not available for plotting (ter_val column missing).\")\n} else {\n  print(\"Combined data not available for plotting.\")\n}\n\n\n[1] \"Combined data not available for plotting.\""
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#session-info",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#session-info",
+    "title": "ETF Data Analysis",
+    "section": "Session Info",
+    "text": "Session Info\n\n\nClick to expand Session Info\n\n\n\nShow Code\nsessionInfo()\n\n\nR version 4.5.2 (2025-10-31)\nPlatform: aarch64-apple-darwin24.6.0\nRunning under: macOS Sequoia 15.7.1\n\nMatrix products: default\nBLAS:   /nix/store/jammm5gz621n7dkzfzc1c43gs6xv9a10-blas-3/lib/libblas.dylib \nLAPACK: /nix/store/30ypx3jnyq4r1z4nv742j1csfflsd66v-openblas-0.3.30/lib/libopenblasp-r0.3.30.dylib;  LAPACK version 3.12.0\n\nlocale:\n[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8\n\ntime zone: Europe/Dublin\ntzcode source: internal\n\nattached base packages:\n[1] stats     graphics  grDevices utils     datasets  methods   base     \n\nloaded via a namespace (and not attached):\n [1] htmlwidgets_1.6.4 compiler_4.5.2    fastmap_1.2.0     cli_3.6.5        \n [5] tools_4.5.2       htmltools_0.5.8.1 yaml_2.3.10       rmarkdown_2.30   \n [9] knitr_1.50        jsonlite_2.0.0    xfun_0.54         digest_0.6.37    \n[13] rlang_1.1.6       png_0.1-8         evaluate_1.0.5"
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#data-structures",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#data-structures",
+    "title": "ETF Data Analysis",
+    "section": "Data Structures",
+    "text": "Data Structures\n\n\nClick to expand Data Structures\n\n\n\nShow Code\nif (data_loaded) {\n  print(\"Universe:\")\n  print(head(universe, 10))\n  print(\"Metadata:\")\n  print(head(metadata, 10))\n  print(\"History:\")\n  print(head(history, 10))\n}"
+  },
+  {
+    "objectID": "finance/data/etfs/etfdata/vignettes/analysis.html#targets-metadata",
+    "href": "finance/data/etfs/etfdata/vignettes/analysis.html#targets-metadata",
+    "title": "ETF Data Analysis",
+    "section": "Targets Metadata",
+    "text": "Targets Metadata\n\n\nClick to expand Targets Metadata\n\n\nPipeline Network"
+  }
+]
