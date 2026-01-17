@@ -37,30 +37,26 @@ jobs:
       - name: Install R packages
         run: |
           Rscript -e "
-            options(repos = c(CRAN = 'https://cloud.r-project.org'))
-            install.packages(c(
-              'gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
-              'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
-              'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr', 'rmarkdown'
-            ), Ncpus = 2)
-            cat('Installed packages:', paste(.packages(all.available = TRUE), collapse = ', '), '\n')
+            # Show library paths
+            cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')
+
+            # Install packages
+            options(repos = c(RSPM = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest', CRAN = 'https://cloud.r-project.org'))
+            pkgs <- c('gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
+                      'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
+                      'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr', 'rmarkdown')
+            install.packages(pkgs, Ncpus = 2)
+
+            # Verify installation
+            for (pkg in pkgs) {
+              if (!requireNamespace(pkg, quietly = TRUE)) {
+                stop(sprintf('Failed to install: %s', pkg))
+              }
+            }
+            cat('All packages installed successfully\n')
           "
 
       - uses: quarto-dev/quarto-actions/setup@v2
-
-      - name: Verify R packages
-        run: |
-          Rscript -e "
-            required <- c('gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
-                          'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
-                          'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr')
-            for (pkg in required) {
-              if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-                stop(sprintf('Package %s not available', pkg))
-              }
-            }
-            cat('All required packages available\n')
-          "
 
       - name: Render Quarto site
         run: quarto render
