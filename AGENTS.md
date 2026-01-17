@@ -56,6 +56,7 @@ At the start of each session, review the list of installed R packages. Identify 
 
 *CI/CD & Deployment:*
 - `.claude/skills/ci-workflows-github-actions/SKILL.md` - GitHub Actions patterns
+  **⚠️ MANDATORY: Read this skill BEFORE writing ANY GitHub Actions workflow!**
 
 *Diagnostics & Analysis:*
 - `.claude/skills/systematic-debugging/SKILL.md` - Scientific debugging protocol
@@ -129,6 +130,11 @@ At the start of each session, review the list of installed R packages. Identify 
 - `/new-issue` - Create issue + branch + log file
 
 ## 3. Critical Workflow Principles
+
+**⚠️ BEFORE writing ANY GitHub Actions workflow:**
+→ MUST read `.claude/skills/ci-workflows-github-actions/SKILL.md`
+→ Use the Decision Matrix: Simple tasks (email, coverage) → Native R via `r-lib/actions`, NOT Nix
+→ Skills are NOT automatically triggered - you must proactively consult them
 
 **NEVER use bash git/gh commands** - Always use R packages:
 - ✅ `gert::git_add()`, `gert::git_commit()`, `gert::git_push()`

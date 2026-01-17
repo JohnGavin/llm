@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.johngavin.ccusage-refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/refresh_ccusage_and_commit.sh</string>
+    </array>
+
+    <!-- Run every hour -->
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <!-- Also run at load (startup) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Environment variables needed for the script -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Log stdout/stderr -->
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/docs_gh/llm/inst/logs/ccusage_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/docs_gh/llm/inst/logs/ccusage_launchd_error.log</string>
+
+    <!-- Don't run if on battery (optional, remove if you want it always) -->
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
