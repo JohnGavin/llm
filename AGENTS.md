@@ -148,6 +148,23 @@ When debugging CI/workflow failures:
 → Use the Decision Matrix: Simple tasks (email, coverage) → Native R via `r-lib/actions`, NOT Nix
 → Skills are NOT automatically triggered - you must proactively consult them
 
+**⚠️ MANDATORY: Quarto Project Configuration:**
+When setting up ANY Quarto project (website, book, etc.):
+1. **ALWAYS configure `_quarto.yml` to explicitly specify which files to render**
+2. Use the `render:` section to list only `.qmd` files
+3. **NEVER let Quarto auto-discover files** - it will try to render ALL `.md` files
+4. `.md` files with R code blocks (like documentation) will fail with: "You must use the .qmd extension for documents with executable code"
+
+**Required `_quarto.yml` pattern:**
+```yaml
+project:
+  type: website
+  output-dir: docs
+  render:
+    - "index.qmd"
+    - "vignettes/*.qmd"
+```
+
 **NEVER use bash git/gh commands** - Always use R packages:
 - ✅ `gert::git_add()`, `gert::git_commit()`, `gert::git_push()`
 - ✅ `usethis::pr_init()`, `usethis::pr_push()`, `usethis::pr_merge_main()`

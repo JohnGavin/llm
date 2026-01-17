@@ -13,6 +13,67 @@ Use this skill when:
 - Creating slides or sections that vary by input
 - Rendering computed content that includes R code
 
+## ⚠️ MANDATORY: Project Configuration
+
+**CRITICAL:** When setting up ANY Quarto project, you MUST explicitly specify which files to render.
+
+### Why This Is Mandatory
+
+By default, Quarto auto-discovers and attempts to render ALL `.md` and `.qmd` files in your project. This causes failures when:
+- `.md` documentation files (like `AGENTS.md`, `README.md`) contain R code blocks (examples)
+- Quarto tries to execute code in `.md` files and fails with:
+  ```
+  ERROR: You must use the .qmd extension for documents with executable code.
+  ```
+
+### Required `_quarto.yml` Pattern
+
+**ALWAYS include an explicit `render:` section:**
+
+```yaml
+project:
+  type: website
+  output-dir: docs
+  render:
+    - "index.qmd"
+    - "vignettes/*.qmd"
+
+website:
+  title: "My Project"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+```
+
+### What Gets Rendered
+
+| File Pattern | Default Behavior | With explicit `render:` |
+|--------------|-----------------|-------------------------|
+| `*.qmd` | ✅ Rendered | Only if listed |
+| `*.md` | ✅ Rendered (may fail) | ❌ Ignored |
+| `README.md` | ⚠️ Tries to render | ❌ Ignored |
+| `AGENTS.md` | ⚠️ Fails if has code | ❌ Ignored |
+
+### Common Patterns
+
+```yaml
+# Website with vignettes
+render:
+  - "index.qmd"
+  - "vignettes/*.qmd"
+
+# Book project
+render:
+  - "index.qmd"
+  - "chapters/*.qmd"
+
+# Exclude specific files
+render:
+  - "*.qmd"
+  - "!_draft-*.qmd"  # Exclude drafts
+```
+
 ## Key Concepts
 
 ### Why Standard Approaches Fail
