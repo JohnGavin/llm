@@ -54,6 +54,18 @@ comma <- function(x) format(x, big.mark = ",", scientific = FALSE)
 millions <- function(x) sprintf("%.1fM", x / 1e6)
 format_hhmm <- function(mins) sprintf("%02d:%02d", as.integer(mins %/% 60), as.integer(mins %% 60))
 
+# Dark mode color palette
+dark_bg <- "#1a1a2e"
+dark_card <- "#16213e"
+dark_row_alt <- "#0f3460"
+dark_text <- "#e8e8e8"
+dark_muted <- "#a0a0a0"
+dark_border <- "#2a2a4a"
+accent_green <- "#00d26a"
+accent_blue <- "#4fc3f7"
+accent_purple <- "#bb86fc"
+accent_orange <- "#ff9800"
+
 # Get cache timestamp
 cache_time <- if (!is.null(session_raw$generatedAt)) {
   session_raw$generatedAt
@@ -65,12 +77,14 @@ cache_time <- if (!is.null(session_raw$generatedAt)) {
 
 if (!has_data) {
   email_body <- sprintf('
-  <h2>LLM Usage Report - %s</h2>
-  <div style="background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 5px;">
+  <div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+  <h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
+  <div style="background-color: #3d2c00; border: 1px solid #ffc107; padding: 15px; border-radius: 5px; color: #ffd54f;">
     <strong>No cached data available</strong>
-    <p>Run locally: <code>Rscript R/scripts/refresh_ccusage_cache.R</code></p>
+    <p>Run locally: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px;">Rscript R/scripts/refresh_ccusage_cache.R</code></p>
   </div>
-  ', today)
+  </div>
+  ', dark_bg, dark_text, accent_orange, today, dark_card)
 } else {
   # Calculate weekly stats (1-4 weeks back)
   calc_weekly <- function(weeks_back) {
@@ -94,80 +108,93 @@ if (!has_data) {
   total_tokens <- if (!is.null(daily_data)) sum(daily_data$totalTokens, na.rm = TRUE) else 0
   n_sessions <- if (!is.null(session_data)) nrow(session_data) else 0
 
-  # Build email - Summary and Weekly tables first
+  # Build email - Dark mode with Summary and Weekly tables first
   email_body <- sprintf('
-  <h2>LLM Usage Report - %s</h2>
-  <p style="color: #666; font-size: 12px;">Data cached: %s</p>
+  <div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+  <h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
+  <p style="color: %s; font-size: 12px; margin-top: 0;">Data cached: %s</p>
 
-  <h3>Summary</h3>
+  <h3 style="color: %s;">Summary</h3>
   <table style="border-collapse: collapse; max-width: 400px;">
-    <tr style="background-color: #f2f2f2;">
-      <td style="padding: 8px; border: 1px solid #ddd;"><strong>Total Cost</strong></td>
-      <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;"><strong>Total Cost</strong></td>
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">%s</td>
     </tr>
-    <tr>
-      <td style="padding: 8px; border: 1px solid #ddd;"><strong>Total Tokens</strong></td>
-      <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;"><strong>Total Tokens</strong></td>
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">%s</td>
     </tr>
-    <tr style="background-color: #f2f2f2;">
-      <td style="padding: 8px; border: 1px solid #ddd;"><strong>Sessions</strong></td>
-      <td style="padding: 8px; border: 1px solid #ddd;">%d</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;"><strong>Sessions</strong></td>
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">%d</td>
     </tr>
   </table>
 
-  <h3>Weekly Cost</h3>
+  <h3 style="color: %s;">Weekly Cost</h3>
   <table style="border-collapse: collapse; max-width: 400px;">
-    <tr style="background-color: #4CAF50; color: white;">
-      <th style="padding: 8px; border: 1px solid #ddd;">Period</th>
-      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Cost</th>
+    <tr style="background-color: %s;">
+      <th style="padding: 8px; border: 1px solid %s; color: white;">Period</th>
+      <th style="padding: 8px; border: 1px solid %s; text-align: right; color: white;">Cost</th>
     </tr>
-    <tr>
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 1 (current)</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 1 (current)</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
-    <tr style="background-color: #f2f2f2;">
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 2</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 2</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
-    <tr>
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 3</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 3</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
-    <tr style="background-color: #f2f2f2;">
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 4</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 4</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
   </table>
 
-  <h3>Weekly Tokens</h3>
+  <h3 style="color: %s;">Weekly Tokens</h3>
   <table style="border-collapse: collapse; max-width: 400px;">
-    <tr style="background-color: #2196F3; color: white;">
-      <th style="padding: 8px; border: 1px solid #ddd;">Period</th>
-      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Tokens</th>
+    <tr style="background-color: %s;">
+      <th style="padding: 8px; border: 1px solid %s; color: white;">Period</th>
+      <th style="padding: 8px; border: 1px solid %s; text-align: right; color: white;">Tokens</th>
     </tr>
-    <tr>
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 1 (current)</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 1 (current)</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
-    <tr style="background-color: #f2f2f2;">
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 2</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 2</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
-    <tr>
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 3</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 3</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
-    <tr style="background-color: #f2f2f2;">
-      <td style="padding: 8px; border: 1px solid #ddd;">Week 4</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 4</td>
+      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     </tr>
   </table>
-  ', today, cache_time,
-     dollar(total_cost), millions(total_tokens), n_sessions,
-     dollar(week1$cost), dollar(week2$cost), dollar(week3$cost), dollar(week4$cost),
-     millions(week1$tokens), millions(week2$tokens), millions(week3$tokens), millions(week4$tokens))
+  ',
+     dark_bg, dark_text, accent_orange, today, dark_muted, cache_time,
+     accent_green,
+     dark_row_alt, dark_border, dark_text, dark_border, accent_green, dollar(total_cost),
+     dark_card, dark_border, dark_text, dark_border, dark_text, millions(total_tokens),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, n_sessions,
+     accent_green, accent_green, dark_border, dark_border,
+     dark_card, dark_border, dark_text, dark_border, accent_green, dollar(week1$cost),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, dollar(week2$cost),
+     dark_card, dark_border, dark_text, dark_border, dark_text, dollar(week3$cost),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, dollar(week4$cost),
+     accent_blue, accent_blue, dark_border, dark_border,
+     dark_card, dark_border, dark_text, dark_border, accent_blue, millions(week1$tokens),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, millions(week2$tokens),
+     dark_card, dark_border, dark_text, dark_border, dark_text, millions(week3$tokens),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, millions(week4$tokens))
 
-  # Session Activity Table (last 3 non-empty days) - BEFORE Top Sessions
+  # Time Block Activity Table (last 3 non-empty days) - BEFORE Top Sessions
   if (!is.null(blocks_raw) && !is.null(blocks_raw$blocks)) {
     blocks_df <- as_tibble(blocks_raw$blocks) |>
       mutate(
@@ -196,44 +223,48 @@ if (!has_data) {
         arrange(desc(end))
 
       if (nrow(activity_df) > 0) {
-        email_body <- paste0(email_body, '
-  <h3>Session Activity (Last 3 Days)</h3>
-  <table style="border-collapse: collapse; width: 100%;">
-    <tr style="background-color: #607D8B; color: white;">
-      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Session</th>
-      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Start</th>
-      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">End</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Duration</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Cost</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">$/hr</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Tokens</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Tok/hr</th>
-    </tr>')
+        email_body <- paste0(email_body, sprintf('
+  <h3 style="color: %s;">Time Block Activity (Last 3 Days)</h3>
+  <table style="border-collapse: collapse; width: 100%%;">
+    <tr style="background-color: %s;">
+      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Time Block</th>
+      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Start</th>
+      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">End</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Duration</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">$/hr</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tok/hr</th>
+    </tr>', accent_orange, "#607D8B",
+            dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border))
 
         for (i in seq_len(nrow(activity_df))) {
-          bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
-          # Extract session name from id (format: YYYY-MM-DDTHH:MM:SS.sssZ)
-          session_name <- substr(activity_df$id[i], 1, 16)
+          bg <- if (i %% 2 == 0) dark_row_alt else dark_card
+          # Format time block as readable range (e.g., "Jan 16 10:00-15:00")
+          time_block <- sprintf("%s %s-%s",
+            format(activity_df$start[i], "%b %d"),
+            format(activity_df$start[i], "%H:%M"),
+            format(activity_df$end[i], "%H:%M"))
           email_body <- paste0(email_body, sprintf('
-    <tr style="%s">
-      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
     </tr>',
             bg,
-            session_name,
-            format(activity_df$start[i], "%Y-%m-%d %H:%M"),
-            format(activity_df$end[i], "%Y-%m-%d %H:%M"),
-            format_hhmm(activity_df$duration_mins[i]),
-            dollar(activity_df$costUSD[i]),
-            dollar(activity_df$cost_per_hr[i]),
-            comma(activity_df$totalTokens[i]),
-            comma(round(activity_df$tokens_per_hr[i]))
+            dark_border, dark_text, time_block,
+            dark_border, dark_muted, format(activity_df$start[i], "%Y-%m-%d %H:%M"),
+            dark_border, dark_muted, format(activity_df$end[i], "%Y-%m-%d %H:%M"),
+            dark_border, dark_text, format_hhmm(activity_df$duration_mins[i]),
+            dark_border, accent_green, dollar(activity_df$costUSD[i]),
+            dark_border, dark_text, dollar(activity_df$cost_per_hr[i]),
+            dark_border, accent_blue, comma(activity_df$totalTokens[i]),
+            dark_border, dark_text, comma(round(activity_df$tokens_per_hr[i]))
           ))
         }
         email_body <- paste0(email_body, "</table>")
@@ -247,53 +278,58 @@ if (!has_data) {
       arrange(desc(totalCost)) |>
       head(5)
 
-    email_body <- paste0(email_body, '
-  <h3>Top Sessions by Cost</h3>
-  <table style="border-collapse: collapse; width: 100%;">
-    <tr style="background-color: #9C27B0; color: white;">
-      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Session</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Cost</th>
-      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Tokens</th>
-      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Last Active</th>
-    </tr>')
+    email_body <- paste0(email_body, sprintf('
+  <h3 style="color: %s;">Top Sessions by Cost</h3>
+  <table style="border-collapse: collapse; width: 100%%;">
+    <tr style="background-color: %s;">
+      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Session</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
+      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
+      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Last Active</th>
+    </tr>', accent_purple, accent_purple, dark_border, dark_border, dark_border, dark_border))
 
     for (i in seq_len(nrow(top_sessions))) {
-      bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
-      # Parse lastActivity as date and format with time if available
+      bg <- if (i %% 2 == 0) dark_row_alt else dark_card
       last_active <- top_sessions$lastActivity[i]
-      # lastActivity is typically just a date like "2026-01-16", show as-is
+      # Clean up session name: remove leading dashes and path separators, show last 2 components
+      session_name <- top_sessions$sessionId[i]
+      session_parts <- strsplit(gsub("^-", "", session_name), "-")[[1]]
+      if (length(session_parts) > 2) {
+        session_name <- paste(tail(session_parts, 2), collapse = "/")
+      }
       email_body <- paste0(email_body, sprintf('
-    <tr style="%s">
-      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
-      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
+    <tr style="background-color: %s;">
+      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
     </tr>',
         bg,
-        substr(top_sessions$sessionId[i], 1, 40),
-        dollar(top_sessions$totalCost[i]),
-        millions(top_sessions$totalTokens[i]),
-        last_active
+        dark_border, dark_text, session_name,
+        dark_border, accent_green, dollar(top_sessions$totalCost[i]),
+        dark_border, accent_blue, millions(top_sessions$totalTokens[i]),
+        dark_border, dark_muted, last_active
       ))
     }
     email_body <- paste0(email_body, "</table>")
   }
 
-  email_body <- paste0(email_body, '
-  <hr style="margin-top: 20px;">
-  <p style="color: #666; font-size: 12px;">
-    <a href="https://github.com/JohnGavin/llm">llm project</a> |
-    <a href="https://johngavin.github.io/llm/vignettes/telemetry.html">Dashboard</a> |
-    Refresh: <code>Rscript R/scripts/refresh_ccusage_cache.R</code>
+  email_body <- paste0(email_body, sprintf('
+  <hr style="margin-top: 20px; border-color: %s;">
+  <p style="color: %s; font-size: 12px;">
+    <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
+    <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
+    Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
   </p>
-  ')
+  </div>
+  ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text))
 }
 
 # Create and send email
 london_time <- format(Sys.time(), tz = "Europe/London", "%Y-%m-%d %H:%M")
 email <- compose_email(
   body = md(email_body),
-  footer = md(sprintf("Report generated: %s (London)", london_time))
+  footer = md(sprintf("<span style='color: %s;'>Report generated: %s (London)</span>", dark_muted, london_time))
 )
 
 smtp_creds <- creds_envvar(
