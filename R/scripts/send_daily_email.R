@@ -7,6 +7,7 @@ library(dplyr)
 library(tibble)
 library(jsonlite)
 library(purrr)
+library(lubridate)
 
 # Load cached ccusage data from inst/extdata/
 load_cached <- function(type) {
@@ -25,6 +26,7 @@ load_cached <- function(type) {
 
 daily_raw <- load_cached("daily")
 session_raw <- load_cached("session")
+blocks_raw <- load_cached("blocks")
 
 has_data <- !is.null(daily_raw) || !is.null(session_raw)
 
@@ -199,11 +201,74 @@ if (!has_data) {
     email_body <- paste0(email_body, session_table)
   }
 
+  # Session Activity Table (last 3 non-empty days)
+  if (!is.null(blocks_raw) && !is.null(blocks_raw$blocks)) {
+    blocks_df <- as_tibble(blocks_raw$blocks) |>
+      mutate(
+        start = ymd_hms(startTime),
+        end = ymd_hms(actualEndTime),
+        duration_mins = as.numeric(difftime(end, start, units = "mins")),
+        date = as.Date(start)
+      ) |>
+      filter(!is.na(end), costUSD > 0) |>
+      select(date, start, end, duration_mins, costUSD, totalTokens)
+
+    # Get last 3 non-empty days
+    recent_days <- blocks_df |>
+      group_by(date) |>
+      summarise(n = n(), .groups = "drop") |>
+      arrange(desc(date)) |>
+      head(3) |>
+      pull(date)
+
+    if (length(recent_days) > 0) {
+      activity_df <- blocks_df |>
+        filter(date %in% recent_days) |>
+        arrange(desc(end))
+
+      if (nrow(activity_df) > 0) {
+        email_body <- paste0(email_body, '
+  <h3>Session Activity (Last 3 Days)</h3>
+  <table style="border-collapse: collapse; width: 100%;">
+    <tr style="background-color: #607D8B; color: white;">
+      <th style="padding: 8px; border: 1px solid #ddd;">Session Start</th>
+      <th style="padding: 8px; border: 1px solid #ddd;">Session End</th>
+      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Duration</th>
+      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Cost</th>
+      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Tokens</th>
+    </tr>')
+
+        for (i in seq_len(nrow(activity_df))) {
+          bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
+          duration_hhmm <- sprintf("%02d:%02d",
+                                    as.integer(activity_df$duration_mins[i] %/% 60),
+                                    as.integer(activity_df$duration_mins[i] %% 60))
+          email_body <- paste0(email_body, sprintf('
+    <tr style="%s">
+      <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
+      <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
+      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+    </tr>',
+            bg,
+            format(activity_df$start[i], "%Y-%m-%d %H:%M"),
+            format(activity_df$end[i], "%Y-%m-%d %H:%M"),
+            duration_hhmm,
+            dollar(activity_df$costUSD[i]),
+            comma(activity_df$totalTokens[i])
+          ))
+        }
+        email_body <- paste0(email_body, "</table>")
+      }
+    }
+  }
+
   email_body <- paste0(email_body, '
   <hr style="margin-top: 20px;">
   <p style="color: #666; font-size: 12px;">
     <a href="https://github.com/JohnGavin/llm">llm project</a> |
-    <a href="https://johngavin.github.io/llm/articles/telemetry.html">Dashboard</a> |
+    <a href="https://johngavin.github.io/llm/vignettes/telemetry.html">Dashboard</a> |
     Refresh: <code>Rscript R/scripts/refresh_ccusage_cache.R</code>
   </p>
   ')

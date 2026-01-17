@@ -43,6 +43,7 @@ jobs:
             any::tibble
             any::jsonlite
             any::purrr
+            any::lubridate
 
       - name: Send daily email report
         run: Rscript R/scripts/send_daily_email.R

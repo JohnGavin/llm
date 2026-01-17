@@ -1,0 +1,9 @@
+---
+title: "LLM Project"
+---
+
+Welcome to the LLM project documentation.
+
+## Navigation
+
+- [Telemetry Dashboard](vignettes/telemetry.qmd) - Project statistics and LLM usage tracking
