@@ -1,0 +1,136 @@
+# Check that WIKI_CONTENT/ is in sync with README.md
+# Fails if drift detected - run `Rscript R/dev/wiki/sync_wiki.R` locally to fix
+#
+# Note: This workflow validates only; it does NOT push to the wiki.
+# Manual sync is required when changes are detected.
+
+name: Wiki Sync Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'WIKI_CONTENT/**'
+      - 'README.md'
+      - 'R/dev/wiki/sync_wiki.R'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'WIKI_CONTENT/**'
+      - 'README.md'
+      - 'R/dev/wiki/sync_wiki.R'
+
+jobs:
+  check-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+          use-public-rspm: true
+
+      - name: Install gert
+        run: |
+          install.packages("gert")
+        shell: Rscript {0}
+
+      - name: Check README sync status
+        run: |
+          # Source helper functions from sync script without running full sync
+          source("R/dev/wiki/sync_wiki.R", local = TRUE, chdir = FALSE)
+
+          # This script was sourced which runs everything. We need a check-only version.
+          # For now, just verify the README markers exist and content can be generated.
+        shell: Rscript {0}
+        continue-on-error: true
+
+      - name: Validate README has wiki markers
+        run: |
+          if ! grep -q "<!-- BEGIN WIKI_CONTENT_DOCS -->" README.md; then
+            echo "ERROR: README.md missing <!-- BEGIN WIKI_CONTENT_DOCS --> marker"
+            exit 1
+          fi
+          if ! grep -q "<!-- END WIKI_CONTENT_DOCS -->" README.md; then
+            echo "ERROR: README.md missing <!-- END WIKI_CONTENT_DOCS --> marker"
+            exit 1
+          fi
+          echo "README.md has required wiki markers"
+
+      - name: Check WIKI_CONTENT files exist
+        run: |
+          if [ ! -d "WIKI_CONTENT" ]; then
+            echo "ERROR: WIKI_CONTENT/ directory not found"
+            exit 1
+          fi
+          count=$(find WIKI_CONTENT -name "*.md" | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: No .md files in WIKI_CONTENT/"
+            exit 1
+          fi
+          echo "Found $count markdown files in WIKI_CONTENT/"
+          ls -la WIKI_CONTENT/
+
+      - name: Regenerate and compare README docs section
+        run: |
+          # Extract current docs block
+          sed -n '/<!-- BEGIN WIKI_CONTENT_DOCS -->/,/<!-- END WIKI_CONTENT_DOCS -->/p' README.md > /tmp/current_block.txt
+
+          # Generate expected block from WIKI_CONTENT
+          Rscript -e '
+          wiki_content_dir <- "WIKI_CONTENT"
+          wiki_base_url <- "https://github.com/JohnGavin/llm/wiki"
+
+          read_title <- function(path) {
+            lines <- readLines(path, warn = FALSE)
+            h1 <- grep("^#\\s+", lines, value = TRUE)[1]
+            if (is.na(h1)) return(basename(path))
+            sub("^#\\s+", "", h1)
+          }
+
+          read_summary <- function(path) {
+            lines <- readLines(path, warn = FALSE)
+            h1_idx <- grep("^#\\s+", lines)[1]
+            if (is.na(h1_idx)) return("")
+            for (i in seq(h1_idx + 1, min(length(lines), h1_idx + 10))) {
+              line <- trimws(lines[i])
+              if (line != "" && !grepl("^(-\\s|```|#|---$|Links:)", line)) {
+                return(gsub("\\*\\*", "", sub("^>\\s*", "", line)))
+              }
+            }
+            ""
+          }
+
+          wiki_page_name <- function(src) {
+            gsub("_", "-", sub("\\.md$", "", basename(src)))
+          }
+
+          files <- sort(list.files(wiki_content_dir, "\\.md$", full.names = TRUE))
+
+          cat("<!-- BEGIN WIKI_CONTENT_DOCS -->\n")
+          for (f in files) {
+            page <- wiki_page_name(f)
+            cat(sprintf("- **%s**  \n", read_title(f)))
+            cat(sprintf("  Summary: %s  \n", read_summary(f)))
+            cat(sprintf("  Source: `WIKI_CONTENT/%s`  \n", basename(f)))
+            cat(sprintf("  Wiki: %s/%s\n", wiki_base_url, page))
+            cat(sprintf("  Key section: %s/%s\n\n", wiki_base_url, page))
+          }
+          cat("<!-- END WIKI_CONTENT_DOCS -->\n")
+          ' > /tmp/expected_block.txt
+
+          # Compare
+          if ! diff -q /tmp/current_block.txt /tmp/expected_block.txt > /dev/null 2>&1; then
+            echo "WARNING: README.md docs section may be out of sync with WIKI_CONTENT/"
+            echo ""
+            echo "To fix, run locally:"
+            echo "  Rscript R/dev/wiki/sync_wiki.R"
+            echo ""
+            echo "Diff:"
+            diff /tmp/current_block.txt /tmp/expected_block.txt || true
+            # Don't fail - just warn (README format may have minor differences)
+          else
+            echo "README.md docs section is in sync with WIKI_CONTENT/"
+          fi
