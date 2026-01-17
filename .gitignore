@@ -4,16 +4,17 @@
 .RData
 .Ruserdata
 *.Rproj
+.Rprofile
 
-# Quarto
+# Quarto - output built by CI
 .quarto/
 _site/
 _freeze/
+docs/
 
 # OS
 .DS_Store
 Thumbs.db
-* symlink
 
 # Database files
 *.db
@@ -22,6 +23,27 @@ my_new_md_database
 # Temp files
 *.log
 
+# Large data files
+*.vtt
+*.srt
+*.tsv
 
-/.quarto/
+# Sensitive/personal files
+*.pdf
+
+# Embedded git repositories (separate projects)
+proj/data/coMMpass/
+proj/data/guardian/
+proj/data/statues_named_john/
+proj/data/stratford_events/
 proj/data/vanda/
+proj/finance/cts_gbm_stoc_vol/
+proj/finance/data/etfs/
+proj/finance/quantitiativo.com/
+proj/stats/simulations/randomwalk/
+
+# Claude local settings (user-specific)
+.claude/settings.local.json
+
+# Symlinks
+nix-shell-root
