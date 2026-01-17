@@ -210,57 +210,91 @@ project:
 
 **NO EXCEPTIONS. NO SHORTCUTS. NO "SIMPLE FIXES".**
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│ 0. Design & Plan                                              │
-│    └─→ architecture-planning skill                            │
-│    └─→ writing-plans skill                                    │
-│                                                                │
-│ 1. Create GitHub Issue (#123)                                 │
-│ 2. Create dev branch (usethis::pr_init())                     │
-│ 3. Make changes locally                                       │
-│    └─→ executing-plans skill (batch execution)                │
-│    └─→ test-driven-development skill (RED-GREEN-REFACTOR)     │
-│                                                                │
-│ 4. Run all checks (devtools::check(), etc.)                   │
-│    └─→ verification-before-completion skill                   │
-│                                                                │
-│ 5. ⚠️ MANDATORY: Push to johngavin cachix ⚠️                   │
-│    └─→ nix-store ... | cachix push johngavin                  │
-│    └─→ verification-before-completion skill                   │
-│                                                                │
-│ 6. Push to GitHub (usethis::pr_push())                        │
-│    └─→ code-review-workflow skill                             │
-│                                                                │
-│ 7. Wait for GitHub Actions (pulls from cachix - fast!)        │
-│    └─→ verification-before-completion skill                   │
-│    └─→ code-review-workflow skill (handle feedback)           │
-│                                                                │
-│ 8. Merge PR (usethis::pr_merge_main())                        │
-│ 9. Log everything (R/dev/issue/fix_issue_123.R)               │
-└────────────────────────────────────────────────────────────────┘
-```
+### Step 0: Design & Plan
+**Skills:** `architecture-planning`, `writing-plans`, `r-package-workflow`
+- Validate design before coding
+- Create bite-sized tasks in `plans/PLAN_*.md`
+- Reference: `.claude/skills/architecture-planning/SKILL.md`
 
-**Key Skill Integration:**
-- **Step 0**: Use `architecture-planning` to validate design, then `writing-plans` to create bite-sized tasks
-- **Step 3**: Use `test-driven-development` (write test first!) and `executing-plans` for systematic progress
-- **Steps 4,5,7**: Use `verification-before-completion` - NO claims without fresh evidence
-- **Steps 6-7**: Use `code-review-workflow` for PRs and handling feedback
+### Step 1: Create GitHub Issue (#123)
+**Skills:** (none - use `gh::gh()` or GitHub website)
+- Document the problem/feature
+- Link to related issues
 
-**Step Details:**
+### Step 2: Create dev branch
+**Skills:** `r-package-workflow`
+- `usethis::pr_init("fix-issue-123-description")`
+- Never work directly on main
 
-1.  **📝 Create GitHub Issue**: Use `gh` package or GitHub website.
-2.  **🌿 Create Development Branch**: `usethis::pr_init("fix-issue-123-description")`.
-3.  **✏️ Make Changes**: Edit code on dev branch. Commit using `gert` (NOT bash).
-4.  **✅ Run Checks**: `devtools::document()`, `test()`, `check()`, `pkgdown::build_site()`. Fix ALL errors/notes.
-    - **Test Coverage**: Run `covr::package_coverage()` locally (or rely on CI - see Code Coverage section below).
-5.  **🚀 Push to Cachix (MANDATORY)**:
-    - Run: `../push_to_cachix.sh` (or `nix-store ... | cachix push johngavin`)
-    - **Why?** GitHub Actions pulls from cachix. Saves time/resources. Ensures consistency.
-6.  **🚀 Push to Remote**: `usethis::pr_push()` (Only after cachix push succeeds).
-7.  **⏳ Wait for GitHub Actions**: Monitor all workflows. All must pass.
-8.  **🔀 Merge via PR**: `usethis::pr_merge_main()`, `usethis::pr_finish()`.
-9.  **📋 Log Everything**: Ensure session log (e.g., `R/dev/issue/fix_issue_123.R`) was included in the PR.
+### Step 3: Make changes locally
+**Skills (Core):** `executing-plans`, `test-driven-development`, `tidyverse-style`, `systematic-debugging`
+**Skills (Domain-specific, use if applicable):**
+- Data: `data-wrangling-duckdb`, `parallel-processing`, `crew-operations`
+- Shiny: `shiny-async-patterns`, `shinylive-quarto`
+- Targets: `targets-vignettes`
+- Quarto: `quarto-dynamic-content`
+- ML: `huggingface-r`
+- API: `plumber2-web-api`
+
+**Actions:**
+- Edit code on dev branch
+- Commit using `gert` (NOT bash)
+- Write tests FIRST (RED-GREEN-REFACTOR)
+
+### Step 4: Run all checks
+**Skills:** `verification-before-completion`, `r-package-workflow`, `nix-rix-r-environment`
+- `devtools::document()`, `test()`, `check()`
+- `pkgdown::build_site()` if applicable
+- Fix ALL errors/notes
+- **Test Coverage**: `covr::package_coverage()` locally or via CI
+
+### Step 5: Push to Cachix (MANDATORY)
+**Skills:** `nix-rix-r-environment`, `verification-before-completion`
+- Run: `../push_to_cachix.sh` (or `nix-store ... | cachix push johngavin`)
+- **Why?** GitHub Actions pulls from cachix. Saves time/resources. Ensures consistency.
+- VERIFY push succeeded before proceeding
+
+### Step 6: Push to GitHub
+**Skills:** `code-review-workflow`, `ci-workflows-github-actions`
+- `usethis::pr_push()` (Only after cachix push succeeds)
+- PR description follows template
+
+### Step 7: Wait for GitHub Actions
+**Skills:** `verification-before-completion`, `code-review-workflow`, `ci-workflows-github-actions`
+**Skills (if applicable):** `pkgdown-deployment`, `shinylive-deployment`
+- Monitor ALL workflows - all must pass
+- Handle feedback from reviewers
+- NO claims without fresh evidence from CI logs
+
+### Step 8: Merge PR
+**Skills:** `code-review-workflow`, `r-package-workflow`
+- `usethis::pr_merge_main()`, `usethis::pr_finish()`
+- Verify merge succeeded
+
+### Step 9: Log everything
+**Skills:** `analysis-rationale-logging`, `project-telemetry`
+- Ensure `R/dev/issue/fix_issue_123.R` was included in the PR
+- Document decisions and rationale
+
+---
+
+### Skills NOT in 9-Step Workflow (Auxiliary/Periodic)
+
+These skills are valuable but used outside the per-change workflow:
+
+| Skill | Purpose | When to Use |
+|-------|---------|-------------|
+| `gemini-cli-codebase-analysis` | Large context analysis | Research, understanding new codebases |
+| `eda-workflow` | Exploratory data analysis | Data investigation phase |
+| `ai-assisted-analysis` | LLM collaboration | Analysis tasks with human validation |
+| `hooks-automation` | Claude Code hooks | Setting up automation |
+| `mcp-servers` | MCP integration | Configuring r-btw, browser tools |
+| `context-control` | Context management | /compact, /clear, checkpoints |
+| `browser-user-testing` | Browser testing | Shinylive manual verification |
+| `lazy-evaluation-guide` | R concept reference | Understanding lazy evaluation |
+| `project-review` | Technical debt | Periodic cleanup (weekly/monthly) |
+
+---
 
 **Consequences of Skipping:**
 If you commit directly to main or skip steps, you must create a retrospective issue and log file explaining the violation.
