@@ -37,12 +37,13 @@ jobs:
       - name: Install R packages
         run: |
           Rscript -e "
-            install.packages('pak', repos = 'https://r-lib.github.io/p/pak/stable/')
-            pak::pkg_install(c(
+            options(repos = c(CRAN = 'https://cloud.r-project.org'))
+            install.packages(c(
               'gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
               'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
               'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr', 'rmarkdown'
-            ))
+            ), Ncpus = 2)
+            cat('Installed packages:', paste(.packages(all.available = TRUE), collapse = ', '), '\n')
           "
 
       - uses: quarto-dev/quarto-actions/setup@v2
