@@ -90,6 +90,25 @@ jobs:
             as_tibble(session_raw$sessions)
           } else NULL
 
+          # Parse model breakdowns from daily data (last 7 days, most recent first)
+          parse_model_breakdowns <- function(json) {
+            if (is.null(json$projects)) return(NULL)
+            projects <- names(json$projects)
+            map_dfr(projects, function(p) {
+              d <- json$projects[[p]]
+              if (is.null(d) || length(d) == 0) return(NULL)
+              # Each row has modelBreakdowns as a list
+              map2_dfr(d$date, d$modelBreakdowns, function(dt, mb) {
+                if (is.null(mb) || nrow(mb) == 0) return(NULL)
+                mb |>
+                  as_tibble() |>
+                  mutate(date = dt, project = basename(p))
+              })
+            })
+          }
+
+          model_data <- parse_model_breakdowns(daily_raw)
+
           # Generate email content
           today <- Sys.Date()
 
@@ -200,6 +219,55 @@ jobs:
               email_body <- paste0(email_body, session_table)
             } else {
               email_body <- paste0(email_body, "<p><em>No session data available</em></p>")
+            }
+
+            # Add daily breakdown by model (last 7 days, most recent first)
+            email_body <- paste0(email_body, "<h3>Daily Breakdown by Model (Last 7 Days)</h3>")
+
+            if (!is.null(model_data) && nrow(model_data) > 0) {
+              # Filter to last 7 days, sort by date desc, then cost desc within each day
+              recent_models <- model_data |>
+                filter(as.Date(date) >= today - 7) |>
+                arrange(desc(date), desc(cost))
+
+              if (nrow(recent_models) > 0) {
+                # Get unique dates (most recent first)
+                dates <- unique(recent_models$date)
+
+                for (dt in dates) {
+                  day_data <- recent_models |> filter(date == dt)
+                  day_total <- sum(day_data$cost, na.rm = TRUE)
+
+                  email_body <- paste0(email_body, sprintf("
+                  <h4 style=\"margin-top: 15px; margin-bottom: 5px;\">%s (Total: %s)</h4>
+                  <table style=\"border-collapse: collapse; width: 100%%; max-width: 600px;\">
+                    <tr style=\"background-color: #2196F3; color: white;\">
+                      <th style=\"padding: 8px; border: 1px solid #ddd; text-align: left;\">Model</th>
+                      <th style=\"padding: 8px; border: 1px solid #ddd; text-align: right;\">Cost</th>
+                      <th style=\"padding: 8px; border: 1px solid #ddd; text-align: right;\">Tokens</th>
+                    </tr>", dt, dollar(day_total)))
+
+                  for (i in seq_len(nrow(day_data))) {
+                    bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
+                    model_name <- gsub("claude-", "", day_data$modelName[i])  # Shorten model names
+                    total_tokens <- day_data$inputTokens[i] + day_data$outputTokens[i] +
+                                   day_data$cacheCreationTokens[i] + day_data$cacheReadTokens[i]
+                    email_body <- paste0(email_body, sprintf("
+                      <tr style=\"%s\">
+                        <td style=\"padding: 8px; border: 1px solid #ddd;\">%s</td>
+                        <td style=\"padding: 8px; border: 1px solid #ddd; text-align: right;\">%s</td>
+                        <td style=\"padding: 8px; border: 1px solid #ddd; text-align: right;\">%s</td>
+                      </tr>",
+                      bg, model_name, dollar(day_data$cost[i]), comma(total_tokens)
+                    ))
+                  }
+                  email_body <- paste0(email_body, "</table>")
+                }
+              } else {
+                email_body <- paste0(email_body, "<p><em>No data for last 7 days</em></p>")
+              }
+            } else {
+              email_body <- paste0(email_body, "<p><em>No model breakdown data available</em></p>")
             }
 
             email_body <- paste0(email_body, "
