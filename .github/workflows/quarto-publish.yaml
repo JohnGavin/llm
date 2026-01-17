@@ -28,8 +28,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Set R_LIBS globally so all R processes (including Quarto's) use the same path
-      R_LIBS: ${{ github.workspace }}/rlib
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,50 +36,38 @@ jobs:
         with:
           use-public-rspm: true
 
-      - name: Create R library directory
-        run: mkdir -p ${{ github.workspace }}/rlib
+      - uses: r-lib/actions/setup-pandoc@v2
 
-      - name: Install R packages
-        run: |
-          Rscript -e "
-            # Create library dir if needed
-            lib <- Sys.getenv('R_LIBS')
-            dir.create(lib, showWarnings = FALSE, recursive = TRUE)
-
-            # Show library paths
-            cat('R_LIBS:', lib, '\n')
-            cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')
-
-            # Install packages to our library
-            options(repos = c(RSPM = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest', CRAN = 'https://cloud.r-project.org'))
-            pkgs <- c('gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
-                      'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
-                      'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr', 'rmarkdown')
-            install.packages(pkgs, lib = lib, Ncpus = 2)
-
-            # Verify installation
-            for (pkg in pkgs) {
-              if (!requireNamespace(pkg, quietly = TRUE)) {
-                stop(sprintf('Failed to install: %s', pkg))
-              }
-            }
-            cat('All packages installed successfully\n')
-          "
+      - name: Install R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::gh
+            any::dplyr
+            any::tidyr
+            any::ggplot2
+            any::lubridate
+            any::knitr
+            any::gert
+            any::fs
+            any::gt
+            any::gtExtras
+            any::scales
+            any::here
+            any::jsonlite
+            any::DT
+            any::htmltools
+            any::tibble
+            any::purrr
+            any::rmarkdown
 
       - uses: quarto-dev/quarto-actions/setup@v2
 
       - name: Render Quarto site
         run: |
-          # Create .Renviron so knitr R processes find packages
-          echo "R_LIBS=${{ github.workspace }}/rlib" > .Renviron
-          cat .Renviron
-
-          # Show R paths for debugging (now using .Renviron)
-          Rscript -e "cat('R_LIBS:', Sys.getenv('R_LIBS'), '\n')"
+          # Show R paths for debugging
           Rscript -e "cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')"
           Rscript -e "cat('gh available:', requireNamespace('gh', quietly = TRUE), '\n')"
-
-          # Render
           quarto render
 
       - name: Upload artifact
