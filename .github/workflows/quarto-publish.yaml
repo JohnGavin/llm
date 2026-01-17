@@ -71,10 +71,16 @@ jobs:
 
       - name: Render Quarto site
         run: |
-          # Show R paths for debugging
+          # Create .Renviron so knitr R processes find packages
+          echo "R_LIBS=${{ github.workspace }}/rlib" > .Renviron
+          cat .Renviron
+
+          # Show R paths for debugging (now using .Renviron)
           Rscript -e "cat('R_LIBS:', Sys.getenv('R_LIBS'), '\n')"
           Rscript -e "cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')"
-          Rscript -e "cat('gt available:', requireNamespace('gt', quietly = TRUE), '\n')"
+          Rscript -e "cat('gh available:', requireNamespace('gh', quietly = TRUE), '\n')"
+
+          # Render
           quarto render
 
       - name: Upload artifact
