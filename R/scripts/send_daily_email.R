@@ -52,6 +52,7 @@ today <- Sys.Date()
 dollar <- function(x) sprintf("$%.2f", x)
 comma <- function(x) format(x, big.mark = ",", scientific = FALSE)
 millions <- function(x) sprintf("%.1fM", x / 1e6)
+format_hhmm <- function(mins) sprintf("%02d:%02d", as.integer(mins %/% 60), as.integer(mins %% 60))
 
 # Get cache timestamp
 cache_time <- if (!is.null(session_raw$generatedAt)) {
@@ -93,7 +94,7 @@ if (!has_data) {
   total_tokens <- if (!is.null(daily_data)) sum(daily_data$totalTokens, na.rm = TRUE) else 0
   n_sessions <- if (!is.null(session_data)) nrow(session_data) else 0
 
-  # Build email
+  # Build email - Summary and Weekly tables first
   email_body <- sprintf('
   <h2>LLM Usage Report - %s</h2>
   <p style="color: #666; font-size: 12px;">Data cached: %s</p>
@@ -161,57 +162,25 @@ if (!has_data) {
       <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
     </tr>
   </table>
-
-  <h3>Top Sessions by Cost</h3>
   ', today, cache_time,
      dollar(total_cost), millions(total_tokens), n_sessions,
      dollar(week1$cost), dollar(week2$cost), dollar(week3$cost), dollar(week4$cost),
      millions(week1$tokens), millions(week2$tokens), millions(week3$tokens), millions(week4$tokens))
 
-  if (!is.null(session_data) && nrow(session_data) > 0) {
-    top_sessions <- session_data |>
-      arrange(desc(totalCost)) |>
-      head(5)
-
-    session_table <- '<table style="border-collapse: collapse; width: 100%;">
-      <tr style="background-color: #9C27B0; color: white;">
-        <th style="padding: 8px; border: 1px solid #ddd;">Session</th>
-        <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Cost</th>
-        <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Tokens</th>
-        <th style="padding: 8px; border: 1px solid #ddd;">Last Active</th>
-      </tr>'
-
-    for (i in seq_len(nrow(top_sessions))) {
-      bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
-      session_table <- paste0(session_table, sprintf('
-        <tr style="%s">
-          <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-          <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
-          <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
-          <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-        </tr>',
-        bg,
-        substr(top_sessions$sessionId[i], 1, 40),
-        dollar(top_sessions$totalCost[i]),
-        millions(top_sessions$totalTokens[i]),
-        top_sessions$lastActivity[i]
-      ))
-    }
-    session_table <- paste0(session_table, "</table>")
-    email_body <- paste0(email_body, session_table)
-  }
-
-  # Session Activity Table (last 3 non-empty days)
+  # Session Activity Table (last 3 non-empty days) - BEFORE Top Sessions
   if (!is.null(blocks_raw) && !is.null(blocks_raw$blocks)) {
     blocks_df <- as_tibble(blocks_raw$blocks) |>
       mutate(
         start = ymd_hms(startTime),
         end = ymd_hms(actualEndTime),
         duration_mins = as.numeric(difftime(end, start, units = "mins")),
-        date = as.Date(start)
+        duration_hrs = duration_mins / 60,
+        date = as.Date(start),
+        cost_per_hr = ifelse(duration_hrs > 0, costUSD / duration_hrs, 0),
+        tokens_per_hr = ifelse(duration_hrs > 0, totalTokens / duration_hrs, 0)
       ) |>
       filter(!is.na(end), costUSD > 0) |>
-      select(date, start, end, duration_mins, costUSD, totalTokens)
+      select(id, date, start, end, duration_mins, duration_hrs, costUSD, totalTokens, cost_per_hr, tokens_per_hr)
 
     # Get last 3 non-empty days
     recent_days <- blocks_df |>
@@ -231,37 +200,83 @@ if (!has_data) {
   <h3>Session Activity (Last 3 Days)</h3>
   <table style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #607D8B; color: white;">
-      <th style="padding: 8px; border: 1px solid #ddd;">Session Start</th>
-      <th style="padding: 8px; border: 1px solid #ddd;">Session End</th>
-      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Duration</th>
-      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Cost</th>
-      <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Tokens</th>
+      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Session</th>
+      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Start</th>
+      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">End</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Duration</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Cost</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">$/hr</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Tokens</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Tok/hr</th>
     </tr>')
 
         for (i in seq_len(nrow(activity_df))) {
           bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
-          duration_hhmm <- sprintf("%02d:%02d",
-                                    as.integer(activity_df$duration_mins[i] %/% 60),
-                                    as.integer(activity_df$duration_mins[i] %% 60))
+          # Extract session name from id (format: YYYY-MM-DDTHH:MM:SS.sssZ)
+          session_name <- substr(activity_df$id[i], 1, 16)
           email_body <- paste0(email_body, sprintf('
     <tr style="%s">
-      <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-      <td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
-      <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
     </tr>',
             bg,
+            session_name,
             format(activity_df$start[i], "%Y-%m-%d %H:%M"),
             format(activity_df$end[i], "%Y-%m-%d %H:%M"),
-            duration_hhmm,
+            format_hhmm(activity_df$duration_mins[i]),
             dollar(activity_df$costUSD[i]),
-            comma(activity_df$totalTokens[i])
+            dollar(activity_df$cost_per_hr[i]),
+            comma(activity_df$totalTokens[i]),
+            comma(round(activity_df$tokens_per_hr[i]))
           ))
         }
         email_body <- paste0(email_body, "</table>")
       }
     }
+  }
+
+  # Top Sessions by Cost - NOW AT THE END
+  if (!is.null(session_data) && nrow(session_data) > 0) {
+    top_sessions <- session_data |>
+      arrange(desc(totalCost)) |>
+      head(5)
+
+    email_body <- paste0(email_body, '
+  <h3>Top Sessions by Cost</h3>
+  <table style="border-collapse: collapse; width: 100%;">
+    <tr style="background-color: #9C27B0; color: white;">
+      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Session</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Cost</th>
+      <th style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">Tokens</th>
+      <th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">Last Active</th>
+    </tr>')
+
+    for (i in seq_len(nrow(top_sessions))) {
+      bg <- if (i %% 2 == 0) "background-color: #f2f2f2;" else ""
+      # Parse lastActivity as date and format with time if available
+      last_active <- top_sessions$lastActivity[i]
+      # lastActivity is typically just a date like "2026-01-16", show as-is
+      email_body <- paste0(email_body, sprintf('
+    <tr style="%s">
+      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; text-align: right; font-size: 11px;">%s</td>
+      <td style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">%s</td>
+    </tr>',
+        bg,
+        substr(top_sessions$sessionId[i], 1, 40),
+        dollar(top_sessions$totalCost[i]),
+        millions(top_sessions$totalTokens[i]),
+        last_active
+      ))
+    }
+    email_body <- paste0(email_body, "</table>")
   }
 
   email_body <- paste0(email_body, '
