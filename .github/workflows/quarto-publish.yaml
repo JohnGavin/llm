@@ -27,6 +27,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Set R_LIBS globally so all R processes (including Quarto's) use the same path
+      R_LIBS: ${{ github.workspace }}/rlib
     steps:
       - uses: actions/checkout@v4
 
@@ -34,20 +37,26 @@ jobs:
         with:
           use-public-rspm: true
 
+      - name: Create R library directory
+        run: mkdir -p ${{ github.workspace }}/rlib
+
       - name: Install R packages
-        env:
-          R_LIBS_USER: ${{ runner.temp }}/Library
         run: |
           Rscript -e "
+            # Create library dir if needed
+            lib <- Sys.getenv('R_LIBS')
+            dir.create(lib, showWarnings = FALSE, recursive = TRUE)
+
             # Show library paths
+            cat('R_LIBS:', lib, '\n')
             cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')
 
-            # Install packages
+            # Install packages to our library
             options(repos = c(RSPM = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest', CRAN = 'https://cloud.r-project.org'))
             pkgs <- c('gh', 'dplyr', 'tidyr', 'ggplot2', 'lubridate',
                       'knitr', 'gert', 'fs', 'gt', 'gtExtras', 'scales',
                       'here', 'jsonlite', 'DT', 'htmltools', 'tibble', 'purrr', 'rmarkdown')
-            install.packages(pkgs, Ncpus = 2)
+            install.packages(pkgs, lib = lib, Ncpus = 2)
 
             # Verify installation
             for (pkg in pkgs) {
@@ -61,11 +70,9 @@ jobs:
       - uses: quarto-dev/quarto-actions/setup@v2
 
       - name: Render Quarto site
-        env:
-          R_LIBS_USER: ${{ runner.temp }}/Library
         run: |
           # Show R paths for debugging
-          Rscript -e "cat('R_LIBS_USER:', Sys.getenv('R_LIBS_USER'), '\n')"
+          Rscript -e "cat('R_LIBS:', Sys.getenv('R_LIBS'), '\n')"
           Rscript -e "cat('Library paths:', paste(.libPaths(), collapse = ', '), '\n')"
           Rscript -e "cat('gt available:', requireNamespace('gt', quietly = TRUE), '\n')"
           quarto render
