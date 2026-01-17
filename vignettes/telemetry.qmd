@@ -217,11 +217,21 @@ if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
     filter(!is.na(conclusion)) |>
     group_by(name, conclusion) |>
     summarise(count = n(), .groups = "drop") |>
-    pivot_wider(names_from = conclusion, values_from = count, values_fill = 0) |>
-    mutate(
-      total = rowSums(across(where(is.numeric))),
-      success_rate = if ("success" %in% names(.)) round(success / total * 100, 1) else 0
-    ) |>
+    pivot_wider(names_from = conclusion, values_from = count, values_fill = 0)
+
+  # Calculate total and success rate (handle case where "success" column may not exist)
+  success_stats <- success_stats |>
+    mutate(total = rowSums(across(where(is.numeric))))
+
+  if ("success" %in% names(success_stats)) {
+    success_stats <- success_stats |>
+      mutate(success_rate = round(success / total * 100, 1))
+  } else {
+    success_stats <- success_stats |>
+      mutate(success_rate = 0)
+  }
+
+  success_stats <- success_stats |>
     select(name, total, success_rate, everything())
 
   cat("### Success Rates by Workflow\n\n")
