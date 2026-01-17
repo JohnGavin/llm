@@ -263,6 +263,26 @@ Skills are composable, portable bundles of instructions and resources that Claud
 **Key files**:
 - `SKILL.md` - PR workflow and review response patterns
 
+### 🔄 ci-workflows-github-actions
+
+**Purpose**: Comprehensive GitHub Actions workflows for R package CI/CD - covering Nix builds, r-universe testing, WASM compilation, code coverage, and Cachix integration.
+
+**Use when**:
+- Setting up CI/CD for R packages
+- Testing against r-universe build process
+- Building WebAssembly (WASM) packages for Shinylive
+- Configuring code coverage reporting
+- Using Cachix for Nix store caching
+
+**Key concepts**:
+- r-universe reusable workflows (`uses: r-universe-org/workflows/...@v3`)
+- Two-tier Cachix: public `rstats-on-nix` + project-specific
+- Hybrid workflow: Nix for logic, Native R for pkgdown/bslib
+- Path-filtered triggers to avoid unnecessary CI runs
+
+**Key files**:
+- `SKILL.md` - Complete workflow catalog and patterns
+
 ### 🦆 data-wrangling-duckdb
 
 **Purpose**: Use DuckDB as primary data wrangling tool - query JSON/CSV/Parquet directly with SQL, avoiding traditional ETL pipelines.
@@ -301,9 +321,164 @@ Skills are composable, portable bundles of instructions and resources that Claud
 **Key files**:
 - `SKILL.md` - Stack overview and patterns
 
+### 🔍 eda-workflow
+
+**Purpose**: Systematic exploratory data analysis - *what to look for* in data, not just *how to query it*. The critical human step that AI cannot automate.
+
+**Use when**:
+- Starting analysis of a new dataset
+- Preparing data for statistical modeling
+- Validating assumptions before fitting models
+- AI has executed analysis but you need to verify data understanding
+
+**Key concepts**:
+- Phase-based EDA: structure → distributions → missingness → relationships → outliers → assumptions
+- Documentation template for EDA findings
+- Integration with targets for reproducible EDA pipelines
+- Complements `data-wrangling-duckdb` (tools) with methodology (what to check)
+
+**Key files**:
+- `SKILL.md` - Complete EDA checklist and patterns
+
+### 📋 analysis-rationale-logging
+
+**Purpose**: Document *why* analysis decisions were made, not just *what* was done. Addresses the "garden of forking paths" problem with audit trails.
+
+**Use when**:
+- Making decisions during statistical analysis
+- Choosing between modeling approaches
+- Handling data issues (outliers, missingness, transformations)
+- Separating exploratory from confirmatory analysis
+
+**Key concepts**:
+- Decision log structure: alternatives considered, rationale, timing
+- "Decided BEFORE seeing" vs "Decided AFTER seeing" distinction
+- Pre-registration integration
+- `log_decision()` helper function for R workflows
+
+**Key files**:
+- `SKILL.md` - Decision templates and logging patterns
+
+### 🤖 ai-assisted-analysis
+
+**Purpose**: Effective workflow for using LLMs as analysis collaborators while maintaining scientific rigor. AI handles execution; humans verify data understanding.
+
+**Use when**:
+- Using Claude/LLMs to execute statistical analyses
+- Delegating code generation while maintaining rigor
+- Building reproducible AI-assisted workflows
+- Verifying AI-generated analysis is trustworthy
+
+**Key concepts**:
+- Human EDA → AI execution → Human validation cycle
+- Effective prompting with specific deliverables
+- Validation checklists for AI output
+- Extracting and versioning AI-generated code
+
+**Key files**:
+- `SKILL.md` - AI collaboration patterns and anti-patterns
+
+### 📚 tidyverse-style
+
+**Purpose**: Comprehensive guide to tidyverse packages, style conventions, and when to use each package. Covers recommended packages, excluded packages with rationale.
+
+**Use when**:
+- Deciding which tidyverse package to use for a task
+- Reviewing code for tidyverse style compliance
+- Choosing between tidyverse and base R approaches
+- Setting up package dependencies
+
+**Key concepts**:
+- Tier 1 (Always): dplyr, ggplot2, tidyr, purrr, stringr, readr
+- Tier 2 (When needed): lubridate, forcats, glue, tibble, cli, rlang
+- Excluded: tidyverse meta-package, plyr, reshape2, magrittr (limited)
+- Base pipe `|>` over magrittr `%>%`
+
+**Key files**:
+- `SKILL.md` - Package recommendations and style guide
+
+### ⚙️ hooks-automation
+
+**Purpose**: Configure Claude Code hooks for automatic linting, formatting, and testing on file changes.
+
+**Use when**:
+- Setting up automated quality checks
+- Configuring pre-commit style validation
+- Implementing automatic testing after edits
+- Creating custom validation pipelines
+
+**Key concepts**:
+- `preToolExecution` and `postToolExecution` hooks
+- Matcher patterns for tool filtering
+- Environment variables ($TOOL_INPUT, $FILE_PATH)
+- Fast, non-blocking hook design
+
+**Key files**:
+- `SKILL.md` - Hook configuration and R package patterns
+
+### 🔌 mcp-servers
+
+**Purpose**: Extend Claude Code with MCP (Model Context Protocol) servers for domain-specific capabilities.
+
+**Use when**:
+- Using r-btw for R documentation lookup
+- Accessing live R session data
+- Browser automation with claude-in-chrome
+- Debugging MCP connection issues
+
+**Key concepts**:
+- r-btw tools: docs, environment, files, git, GitHub API
+- claude-in-chrome: browser automation, screenshots
+- Configuration in `.claude/mcp.json`
+- When to use MCP vs built-in tools
+
+**Key files**:
+- `SKILL.md` - MCP server documentation and patterns
+
+### 🌐 browser-user-testing
+
+**Purpose**: Automated user testing of deployed websites (pkgdown, Shiny, dashboards) using browser automation with persona-based navigation and vignette report generation.
+
+**Use when**:
+- Testing newly deployed pkgdown documentation sites
+- Validating Shinylive or Shiny apps in production
+- Performing accessibility and usability reviews
+- Generating user journey documentation with GIF recordings
+- Testing responsive design across viewport sizes
+
+**Key concepts**:
+- Persona-based testing (Newcomer, Analyst, Developer, Researcher, Mobile)
+- GIF recording of user journeys for documentation
+- Console error and 404 detection
+- Accessibility audit checklists
+- Responsive design testing (mobile/tablet/desktop viewports)
+- Vignette report template for findings
+
+**Key files**:
+- `SKILL.md` - Complete browser testing workflow and report templates
+
+### 🧠 context-control
+
+**Purpose**: Manage Claude's context window effectively to prevent information loss and maintain productivity.
+
+**Use when**:
+- Sessions are getting long
+- Claude starts forgetting earlier decisions
+- Need to checkpoint work before compaction
+- Managing large codebase exploration
+
+**Key concepts**:
+- `/compact` - compress conversation history
+- `/clear` - reset context completely
+- TodoWrite for persistent state
+- External checkpoints in `.claude/CURRENT_WORK.md`
+
+**Key files**:
+- `SKILL.md` - Context commands and session strategies
+
 ## Skill Count
 
-Currently **16 skills** available:
+Currently **25 skills** available:
 
 ### Core Workflow (9-Step)
 1. architecture-planning - Step 0: Design validation
@@ -320,14 +495,31 @@ Currently **16 skills** available:
 10. targets-vignettes - Pre-calculate vignette objects
 11. shinylive-quarto - WebAssembly Shiny apps
 
+### CI/CD & Deployment
+12. ci-workflows-github-actions - GitHub Actions patterns (r-universe, WASM, coverage, Cachix)
+
 ### Diagnostics & Analysis
-12. systematic-debugging - Scientific debugging protocol
-13. project-telemetry - Logging and statistics
-14. gemini-cli-codebase-analysis - Large codebase analysis
+13. systematic-debugging - Scientific debugging protocol
+14. project-telemetry - Logging and statistics
+15. gemini-cli-codebase-analysis - Large codebase analysis
 
 ### Data & Parallel Processing
-15. data-wrangling-duckdb - SQL on files (JSON/CSV/Parquet), avoid ETL
-16. parallel-processing - nanonext → mirai → crew → targets stack
+16. data-wrangling-duckdb - SQL on files (JSON/CSV/Parquet), avoid ETL
+17. parallel-processing - nanonext → mirai → crew → targets stack
+
+### Statistical Analysis Workflow
+18. eda-workflow - Systematic EDA: what to look for, not just how to query
+19. analysis-rationale-logging - Document *why* decisions were made (garden of forking paths defense)
+20. ai-assisted-analysis - LLM collaboration with human validation
+21. tidyverse-style - Package recommendations and style guide
+
+### Claude Code Features
+22. hooks-automation - Pre/post tool execution hooks
+23. mcp-servers - MCP server integration (r-btw, browser)
+24. context-control - Context management (/compact, /clear, checkpoints)
+
+### Testing & Validation
+25. browser-user-testing - Persona-based browser testing with GIF recordings
 
 ## How to Use Skills
 

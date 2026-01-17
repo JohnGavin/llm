@@ -350,7 +350,7 @@ let
 
 # 1. Create the temporary wrapper script in a stable location
 # Use inline expansion to avoid creating literal $WRAPPER_* files
-# NOTE: Avoid empty string pattern in case (breaks Nix multi-line strings)
+# NOTE: Avoid using empty string pattern in case (breaks Nix multi-line strings)
 valid_home=1
 if [ -z "$HOME" ]; then
   valid_home=0

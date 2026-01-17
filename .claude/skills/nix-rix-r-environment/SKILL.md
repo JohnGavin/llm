@@ -75,7 +75,7 @@ echo $IN_NIX_SHELL
 
 **If ANY Verification Fails:**
 1. Exit current shell: `exit`
-2. Re-enter nix shell: `caffeinate -i ~/docs_gh/rix.setup/default.sh`
+2. Re-enter nix shell: `caffeinate -i ~/docs_gh/llm/default.sh`
    OR: `nix-shell default.nix`
 3. Re-verify all commands above before proceeding
 
