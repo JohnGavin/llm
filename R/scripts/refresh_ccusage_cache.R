@@ -23,13 +23,27 @@ for (type in types) {
   }
 
   result <- tryCatch({
-    output <- system(cmd, intern = TRUE, ignore.stderr = TRUE)
-    # Filter out non-JSON lines
-    json_lines <- output[grepl("^[{\\[]", output) | grepl("^\\s*[\"{}\\[\\]]", output)]
-    if (length(json_lines) == 0) {
-      json_lines <- output
+    # Use temp file to avoid stdout/stderr issues
+    tmp_file <- tempfile(fileext = ".json")
+    on.exit(unlink(tmp_file), add = TRUE)
+
+    # Redirect stdout to file, ignore stderr
+    exit_code <- system(paste(cmd, ">", shQuote(tmp_file), "2>/dev/null"))
+
+    if (exit_code != 0) {
+      stop(sprintf("Command failed with exit code %d", exit_code))
     }
-    fromJSON(paste(json_lines, collapse = "\n"))
+
+    # Read JSON from file
+    json_text <- paste(readLines(tmp_file, warn = FALSE), collapse = "\n")
+
+    # Find the JSON object (skip any non-JSON preamble)
+    json_start <- regexpr("\\{", json_text)
+    if (json_start > 0) {
+      json_text <- substring(json_text, json_start)
+    }
+
+    fromJSON(json_text)
   }, error = function(e) {
     message(sprintf("  Failed to fetch %s: %s", type, e$message))
     NULL
