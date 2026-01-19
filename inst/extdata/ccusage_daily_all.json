@@ -2,110 +2,22 @@
   "projects": {
     "-Users-johngavin-docs-gh-claude-rix": [
       {
-        "date": "2025-12-11",
-        "inputTokens": 2352,
-        "outputTokens": 864,
-        "cacheCreationTokens": 1773500,
-        "cacheReadTokens": 18768570,
-        "totalTokens": 20545286,
-        "totalCost": 12.3012,
-        "modelsUsed": "claude-sonnet-4-5-20250929",
-        "modelBreakdowns": [
-          {
-            "modelName": "claude-sonnet-4-5-20250929",
-            "inputTokens": 2352,
-            "outputTokens": 864,
-            "cacheCreationTokens": 1773500,
-            "cacheReadTokens": 18768570,
-            "cost": 12.3012
-          }
-        ]
-      },
-      {
-        "date": "2025-12-15",
-        "inputTokens": 2166,
-        "outputTokens": 809,
-        "cacheCreationTokens": 717199,
-        "cacheReadTokens": 5009647,
-        "totalTokens": 5729821,
-        "totalCost": 4.211,
-        "modelsUsed": "claude-sonnet-4-5-20250929",
-        "modelBreakdowns": [
-          {
-            "modelName": "claude-sonnet-4-5-20250929",
-            "inputTokens": 2166,
-            "outputTokens": 809,
-            "cacheCreationTokens": 717199,
-            "cacheReadTokens": 5009647,
-            "cost": 4.211
-          }
-        ]
-      },
-      {
-        "date": "2025-12-16",
-        "inputTokens": 3490,
-        "outputTokens": 5461,
-        "cacheCreationTokens": 2566978,
-        "cacheReadTokens": 26951516,
-        "totalTokens": 29527445,
-        "totalCost": 17.804,
-        "modelsUsed": "claude-sonnet-4-5-20250929",
-        "modelBreakdowns": [
-          {
-            "modelName": "claude-sonnet-4-5-20250929",
-            "inputTokens": 3490,
-            "outputTokens": 5461,
-            "cacheCreationTokens": 2566978,
-            "cacheReadTokens": 26951516,
-            "cost": 17.804
-          }
-        ]
-      },
-      {
-        "date": "2025-12-17",
-        "inputTokens": 904,
-        "outputTokens": 2196,
-        "cacheCreationTokens": 1014098,
-        "cacheReadTokens": 12601474,
-        "totalTokens": 13618672,
-        "totalCost": 7.619,
-        "modelsUsed": "claude-sonnet-4-5-20250929",
-        "modelBreakdowns": [
-          {
-            "modelName": "claude-sonnet-4-5-20250929",
-            "inputTokens": 904,
-            "outputTokens": 2196,
-            "cacheCreationTokens": 1014098,
-            "cacheReadTokens": 12601474,
-            "cost": 7.619
-          }
-        ]
-      },
-      {
         "date": "2025-12-18",
-        "inputTokens": 2805,
-        "outputTokens": 7073,
-        "cacheCreationTokens": 1722350,
-        "cacheReadTokens": 27302467,
-        "totalTokens": 29034695,
-        "totalCost": 14.7489,
-        "modelsUsed": ["claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001"],
+        "inputTokens": 936,
+        "outputTokens": 72,
+        "cacheCreationTokens": 92380,
+        "cacheReadTokens": 1394930,
+        "totalTokens": 1488318,
+        "totalCost": 0.7688,
+        "modelsUsed": "claude-sonnet-4-5-20250929",
         "modelBreakdowns": [
           {
             "modelName": "claude-sonnet-4-5-20250929",
-            "inputTokens": 2802,
-            "outputTokens": 6779,
-            "cacheCreationTokens": 1717482,
-            "cacheReadTokens": 27302467,
-            "cost": 14.7414
-          },
-          {
-            "modelName": "claude-haiku-4-5-20251001",
-            "inputTokens": 3,
-            "outputTokens": 294,
-            "cacheCreationTokens": 4868,
-            "cacheReadTokens": 0,
-            "cost": 0.0076
+            "inputTokens": 936,
+            "outputTokens": 72,
+            "cacheCreationTokens": 92380,
+            "cacheReadTokens": 1394930,
+            "cost": 0.7688
           }
         ]
       },
@@ -593,6 +505,26 @@
             "cost": 0.0226
           }
         ]
+      },
+      {
+        "date": "2026-01-18",
+        "inputTokens": 18,
+        "outputTokens": 9,
+        "cacheCreationTokens": 262078,
+        "cacheReadTokens": 14015,
+        "totalTokens": 276120,
+        "totalCost": 1.6453,
+        "modelsUsed": "claude-opus-4-5-20251101",
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 18,
+            "outputTokens": 9,
+            "cacheCreationTokens": 262078,
+            "cacheReadTokens": 14015,
+            "cost": 1.6453
+          }
+        ]
       }
     ],
     "-Users-johngavin-docs-gh-llm-proj-data-myeloma": [
@@ -724,32 +656,54 @@
       },
       {
         "date": "2026-01-18",
-        "inputTokens": 367,
-        "outputTokens": 68,
-        "cacheCreationTokens": 235105,
-        "cacheReadTokens": 2813997,
-        "totalTokens": 3049537,
-        "totalCost": 2.8799,
+        "inputTokens": 484,
+        "outputTokens": 114,
+        "cacheCreationTokens": 622157,
+        "cacheReadTokens": 4410990,
+        "totalTokens": 5033745,
+        "totalCost": 6.0992,
         "modelsUsed": "claude-opus-4-5-20251101",
         "modelBreakdowns": [
           {
             "modelName": "claude-opus-4-5-20251101",
-            "inputTokens": 367,
-            "outputTokens": 68,
-            "cacheCreationTokens": 235105,
-            "cacheReadTokens": 2813997,
-            "cost": 2.8799
+            "inputTokens": 484,
+            "outputTokens": 114,
+            "cacheCreationTokens": 622157,
+            "cacheReadTokens": 4410990,
+            "cost": 6.0992
+          }
+        ]
+      }
+    ],
+    "-Users-johngavin-docs-gh-llm-proj-data-coMMpass": [
+      {
+        "date": "2026-01-18",
+        "inputTokens": 3719,
+        "outputTokens": 420,
+        "cacheCreationTokens": 465964,
+        "cacheReadTokens": 18559322,
+        "totalTokens": 19029425,
+        "totalCost": 12.221,
+        "modelsUsed": "claude-opus-4-5-20251101",
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 3719,
+            "outputTokens": 420,
+            "cacheCreationTokens": 465964,
+            "cacheReadTokens": 18559322,
+            "cost": 12.221
           }
         ]
       }
     ]
   },
   "totals": {
-    "inputTokens": 155173,
-    "outputTokens": 141375,
-    "cacheCreationTokens": 44834705,
-    "cacheReadTokens": 587705456,
-    "totalCost": 438.0335,
-    "totalTokens": 632836709
+    "inputTokens": 148246,
+    "outputTokens": 125519,
+    "cacheCreationTokens": 38248054,
+    "cacheReadTokens": 518637042,
+    "totalCost": 399.2038,
+    "totalTokens": 557158861
   }
 }
