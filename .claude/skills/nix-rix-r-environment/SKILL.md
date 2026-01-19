@@ -348,6 +348,88 @@ git_pkgs = list(
 )
 ```
 
+### Pattern 2b: Using available_dates() for Version Compatibility
+
+**CRITICAL**: The `r_ver` date in rix determines which package VERSIONS you get. Using `available_dates()` shows valid snapshot dates, but:
+- **Newer ≠ better** - Latest dates may have packages still building
+- **Version conflicts** - A package may exist but not the version you need
+- **Stability** - Older, well-tested snapshots are more reliable
+
+```r
+library(rix)
+
+# List all available snapshot dates
+dates <- available_dates()
+cat("Total dates:", length(dates), "\n")
+cat("Range:", min(dates), "to", max(dates), "\n")
+
+# RECOMMENDED: Use a date 2-4 weeks before latest for stability
+stable_date <- dates[length(dates) - 14]  # 2 weeks before latest
+cat("Suggested stable date:", stable_date, "\n")
+```
+
+**Testing Version Compatibility:**
+
+```r
+# R/dev/nix/verify_date.R
+library(rix)
+
+# Your required packages
+required_pkgs <- c("targets", "dplyr", "TCGAbiolinks")
+
+# Test if a date works for all packages
+test_date <- function(date, pkgs) {
+  temp_dir <- tempdir()
+  tryCatch({
+    rix::rix(
+      r_ver = date,
+      r_pkgs = pkgs,
+      project_path = temp_dir,
+      overwrite = TRUE
+    )
+    # Try to parse the generated nix file
+    nix_file <- file.path(temp_dir, "default.nix")
+    result <- system2("nix-instantiate", c("--parse", nix_file),
+                      stdout = TRUE, stderr = TRUE)
+    return(length(attr(result, "status")) == 0)
+  }, error = function(e) FALSE)
+}
+
+# Find the most recent working date
+dates <- available_dates()
+for (date in rev(tail(dates, 30))) {  # Check last 30 dates, newest first
+  if (test_date(date, required_pkgs)) {
+    cat("✓ Working date found:", date, "\n")
+    break
+  } else {
+    cat("✗ Date", date, "missing packages\n")
+  }
+}
+```
+
+**Best Practices for Date Selection:**
+
+1. **Start conservative** - Use dates 2-4 weeks before latest
+2. **Test locally** - Build the nix environment before committing
+3. **Document rationale** - Explain why a specific date was chosen
+4. **Don't chase latest** - Only update when you need new features
+
+```r
+# default.R - with documented date rationale
+library(rix)
+
+# Date: 2026-01-12
+# Rationale: All required packages (targets 1.x, dplyr 1.1+, TCGAbiolinks)
+# confirmed available and working. Dates after 2026-01-15 have
+# TCGAbiolinks still building in rstats-on-nix.
+rix::rix(
+  r_ver = "2026-01-12",
+  r_pkgs = c("targets", "dplyr", "TCGAbiolinks"),
+  project_path = ".",
+  overwrite = TRUE
+)
+```
+
 ### Pattern 3: Project-Specific vs Global Environment
 
 ```r
@@ -718,3 +800,5 @@ exit  # or Ctrl+D
 - targets-vignettes
 - project-telemetry
 - shinylive-quarto
+- llm-package-context - Generate API context for LLMs using pkgctx
+- ci-workflows-github-actions - CI patterns including API drift detection
