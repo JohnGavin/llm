@@ -673,6 +673,46 @@
             "cost": 6.0992
           }
         ]
+      },
+      {
+        "date": "2026-01-19",
+        "inputTokens": 415,
+        "outputTokens": 106,
+        "cacheCreationTokens": 293940,
+        "cacheReadTokens": 7563558,
+        "totalTokens": 7858019,
+        "totalCost": 5.6236,
+        "modelsUsed": "claude-opus-4-5-20251101",
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 415,
+            "outputTokens": 106,
+            "cacheCreationTokens": 293940,
+            "cacheReadTokens": 7563558,
+            "cost": 5.6236
+          }
+        ]
+      },
+      {
+        "date": "2026-01-20",
+        "inputTokens": 487,
+        "outputTokens": 161,
+        "cacheCreationTokens": 681830,
+        "cacheReadTokens": 4448175,
+        "totalTokens": 5130653,
+        "totalCost": 6.492,
+        "modelsUsed": "claude-opus-4-5-20251101",
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 487,
+            "outputTokens": 161,
+            "cacheCreationTokens": 681830,
+            "cacheReadTokens": 4448175,
+            "cost": 6.492
+          }
+        ]
       }
     ],
     "-Users-johngavin-docs-gh-llm-proj-data-coMMpass": [
@@ -695,15 +735,35 @@
             "cost": 12.221
           }
         ]
+      },
+      {
+        "date": "2026-01-19",
+        "inputTokens": 941,
+        "outputTokens": 109,
+        "cacheCreationTokens": 347095,
+        "cacheReadTokens": 5673338,
+        "totalTokens": 6021483,
+        "totalCost": 5.0134,
+        "modelsUsed": "claude-opus-4-5-20251101",
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 941,
+            "outputTokens": 109,
+            "cacheCreationTokens": 347095,
+            "cacheReadTokens": 5673338,
+            "cost": 5.0134
+          }
+        ]
       }
     ]
   },
   "totals": {
-    "inputTokens": 148246,
-    "outputTokens": 125519,
-    "cacheCreationTokens": 38248054,
-    "cacheReadTokens": 518637042,
-    "totalCost": 399.2038,
-    "totalTokens": 557158861
+    "inputTokens": 150089,
+    "outputTokens": 125895,
+    "cacheCreationTokens": 39570919,
+    "cacheReadTokens": 536322113,
+    "totalCost": 416.3328,
+    "totalTokens": 576169016
   }
 }
