@@ -424,9 +424,83 @@ if (length(open_issues) > 0) {
 
 ## LLM Usage Statistics
 
-This section tracks Claude Code usage via the `ccusage` CLI tool, providing insights into token consumption, costs, and model usage patterns.
+This section tracks Claude Code usage via two complementary tools:
+- **ccusage**: Project-level historical analysis (JSON export, DuckDB-friendly)
+- **claude-monitor**: Real-time monitoring with burn rate predictions
 
-### Load Usage Data
+### Real-time Usage (claude-monitor)
+
+```{r claude-monitor-setup}
+#| cache: false
+
+# Capture claude-monitor daily view
+capture_claude_monitor <- function(view = "daily", plan = "max5") {
+  tryCatch({
+    output <- system2(
+      "claude-monitor",
+      args = c("--view", view, "--plan", plan, "--no-version"),
+      stdout = TRUE,
+      stderr = TRUE,
+      timeout = 10
+    )
+    # Remove ANSI escape codes
+    gsub("\\x1b\\[[0-9;]*m", "", output)
+  }, error = function(e) NULL)
+}
+
+monitor_output <- capture_claude_monitor("daily", "max5")
+```
+
+```{r claude-monitor-parse}
+#| message: false
+
+# Parse the summary section from claude-monitor output
+parse_monitor_summary <- function(output) {
+  if (is.null(output)) return(NULL)
+
+  # Find summary section
+  summary_lines <- output[grepl("Total Tokens:|Total Cost:|Entries:", output)]
+
+  if (length(summary_lines) == 0) return(NULL)
+
+  # Extract values using regex
+  total_tokens <- stringr::str_extract(
+    paste(output, collapse = " "),
+    "Total Tokens: ([0-9,]+)"
+  ) |> stringr::str_extract("[0-9,]+") |>
+    stringr::str_remove_all(",") |> as.numeric()
+
+
+  total_cost <- stringr::str_extract(
+    paste(output, collapse = " "),
+    "Total Cost: \\$([0-9,.]+)"
+  ) |> stringr::str_extract("[0-9.]+") |> as.numeric()
+
+  entries <- stringr::str_extract(
+    paste(output, collapse = " "),
+    "Entries: ([0-9,]+)"
+  ) |> stringr::str_extract("[0-9]+") |> as.numeric()
+
+  tibble(
+    Metric = c("Total Tokens (30 days)", "Total Cost (30 days)", "Entries"),
+    Value = c(
+      scales::comma(total_tokens),
+      scales::dollar(total_cost),
+      scales::comma(entries)
+    )
+  )
+}
+
+monitor_summary <- parse_monitor_summary(monitor_output)
+
+if (!is.null(monitor_summary)) {
+  knitr::kable(monitor_summary, caption = "claude-monitor Summary (Last 30 Days)")
+} else {
+  cat("claude-monitor not available or no data.\n")
+}
+```
+
+### Historical Usage (ccusage)
 
 ```{r llm-setup}
 library(here)
