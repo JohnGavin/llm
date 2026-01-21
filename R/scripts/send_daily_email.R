@@ -30,15 +30,28 @@ blocks_raw <- load_cached("blocks")
 
 has_data <- !is.null(daily_raw) || !is.null(session_raw)
 
+# Helper: normalize to character vector (handles NULL, list, character)
+normalize_to_char_vec <- function(x) {
+  switch(class(x)[1],
+    "NULL" = character(0),
+    "list" = as.character(unlist(x)),
+    as.character(x)
+  ) |> (\(v) if (length(v) == 0) character(0) else v)()
+}
+
 # Parse daily data
 parse_daily <- function(json) {
   if (is.null(json$projects)) return(NULL)
-  projects <- names(json$projects)
-  map_dfr(projects, function(p) {
-    d <- json$projects[[p]]
-    if (is.null(d) || length(d) == 0) return(NULL)
-    as_tibble(d) |> mutate(project = p)
-  })
+  names(json$projects) |>
+    map_dfr(\(p) {
+      d <- json$projects[[p]]
+      if (is.null(d) || length(d) == 0) return(NULL)
+      as_tibble(d) |>
+        mutate(
+          project = p,
+          across(any_of("modelsUsed"), ~ map(.x, normalize_to_char_vec))
+        )
+    })
 }
 
 daily_data <- parse_daily(daily_raw)

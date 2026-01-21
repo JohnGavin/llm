@@ -598,32 +598,36 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
   model_costs <- get_model_breakdown(daily_data)
 
   if (!is.null(model_costs) && nrow(model_costs) > 0) {
-    model_costs |>
-      arrange(desc(total_cost)) |>
-      gt() |>
-      tab_header(
-        title = "Model Usage Breakdown",
-        subtitle = "Token and cost statistics by model"
-      ) |>
-      cols_label(
-        modelName = "Model",
-        total_cost = "Total Cost",
-        total_input = "Input Tokens",
-        total_output = "Output Tokens",
-        total_cache_creation = "Cache Creation",
-        total_cache_read = "Cache Read",
-        days_used = "Days Used"
-      ) |>
-      fmt_currency(columns = total_cost, currency = "USD") |>
-      fmt_number(
-        columns = c(total_input, total_output, total_cache_creation, total_cache_read),
-        suffixing = TRUE
-      ) |>
-      gt_color_rows(total_cost, palette = "Blues") |>
-      tab_options(
-        table.font.size = px(12),
-        heading.title.font.size = px(16)
-      )
+    if (has_gt) {
+      model_costs |>
+        arrange(desc(total_cost)) |>
+        gt() |>
+        tab_header(
+          title = "Model Usage Breakdown",
+          subtitle = "Token and cost statistics by model"
+        ) |>
+        cols_label(
+          modelName = "Model",
+          total_cost = "Total Cost",
+          total_input = "Input Tokens",
+          total_output = "Output Tokens",
+          total_cache_creation = "Cache Creation",
+          total_cache_read = "Cache Read",
+          days_used = "Days Used"
+        ) |>
+        fmt_currency(columns = total_cost, currency = "USD") |>
+        fmt_number(
+          columns = c(total_input, total_output, total_cache_creation, total_cache_read),
+          suffixing = TRUE
+        ) |>
+        gt_color_rows(total_cost, palette = "Blues") |>
+        tab_options(
+          table.font.size = px(12),
+          heading.title.font.size = px(16)
+        )
+    } else {
+      knitr::kable(model_costs, caption = "Model Usage Breakdown")
+    }
   }
 }
 ```
@@ -633,7 +637,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ```{r llm-session-table}
 
 if (!is.null(session_data) && nrow(session_data) > 0) {
-  session_data |>
+  session_display <- session_data |>
     arrange(desc(lastActivity)) |>
     select(sessionId, totalCost, totalTokens, lastActivity, modelsUsed) |>
     mutate(
@@ -641,26 +645,32 @@ if (!is.null(session_data) && nrow(session_data) > 0) {
         if (length(x) == 0) return("-")
         paste(gsub("claude-|-\\d{8}", "", x), collapse = ", ")
       })
-    ) |>
-    gt() |>
-    tab_header(
-      title = "Session Usage",
-      subtitle = "Most recent sessions first"
-    ) |>
-    cols_label(
-      sessionId = "Session",
-      totalCost = "Cost",
-      totalTokens = "Tokens",
-      lastActivity = "Last Active",
-      modelsUsed = "Models"
-    ) |>
-    fmt_currency(columns = totalCost, currency = "USD") |>
-    fmt_number(columns = totalTokens, suffixing = TRUE) |>
-    gt_color_rows(totalCost, palette = "Oranges") |>
-    tab_options(
-      table.font.size = px(11),
-      heading.title.font.size = px(16)
     )
+
+  if (has_gt) {
+    session_display |>
+      gt() |>
+      tab_header(
+        title = "Session Usage",
+        subtitle = "Most recent sessions first"
+      ) |>
+      cols_label(
+        sessionId = "Session",
+        totalCost = "Cost",
+        totalTokens = "Tokens",
+        lastActivity = "Last Active",
+        modelsUsed = "Models"
+      ) |>
+      fmt_currency(columns = totalCost, currency = "USD") |>
+      fmt_number(columns = totalTokens, suffixing = TRUE) |>
+      gt_color_rows(totalCost, palette = "Oranges") |>
+      tab_options(
+        table.font.size = px(11),
+        heading.title.font.size = px(16)
+      )
+  } else {
+    knitr::kable(session_display, caption = "Session Usage")
+  }
 } else {
   cat("No session data available.\n")
 }
@@ -674,22 +684,27 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
   gaps <- find_activity_gaps(daily_data)
 
   if (!is.null(gaps) && nrow(gaps) > 0) {
-    gaps |>
-      arrange(desc(gap_start)) |>
-      gt() |>
-      tab_header(
-        title = "Activity Gaps",
-        subtitle = "Periods with no recorded LLM usage"
-      ) |>
-      cols_label(
-        gap_start = "Start",
-        gap_end = "End",
-        gap_days = "Days"
-      ) |>
-      gt_color_rows(gap_days, palette = "Reds") |>
-      tab_options(
-        table.font.size = px(12)
-      )
+    gaps_display <- gaps |> arrange(desc(gap_start))
+
+    if (has_gt) {
+      gaps_display |>
+        gt() |>
+        tab_header(
+          title = "Activity Gaps",
+          subtitle = "Periods with no recorded LLM usage"
+        ) |>
+        cols_label(
+          gap_start = "Start",
+          gap_end = "End",
+          gap_days = "Days"
+        ) |>
+        gt_color_rows(gap_days, palette = "Reds") |>
+        tab_options(
+          table.font.size = px(12)
+        )
+    } else {
+      knitr::kable(gaps_display, caption = "Activity Gaps")
+    }
   } else {
     cat("No significant activity gaps detected.\n")
   }

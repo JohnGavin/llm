@@ -32,6 +32,21 @@ fetch_ccusage <- function(type = c("daily", "weekly", "session", "blocks"),
   parse_ccusage_json(result, project_filter)
 }
 
+#' Normalize a value to character vector (helper for modelsUsed)
+#'
+#' Handles the inconsistent JSON types: NULL, empty array, single string, or array
+#' @param x A value that may be NULL, empty, list, or character
+#' @return character vector
+normalize_to_char_vec <- function(x) {
+  switch(
+    class(x)[1],
+    "NULL" = character(0),
+    "list" = as.character(unlist(x)),
+    as.character(x)
+  ) |>
+    (\(v) if (length(v) == 0) character(0) else v)()
+}
+
 #' Parse ccusage JSON output
 #'
 #' @param json_data Parsed JSON from ccusage
@@ -40,25 +55,26 @@ fetch_ccusage <- function(type = c("daily", "weekly", "session", "blocks"),
 parse_ccusage_json <- function(json_data, project_filter = NULL) {
   if (is.null(json_data$projects)) return(NULL)
 
-  projects <- names(json_data$projects)
-
-  # Filter to specific project if requested
-if (!is.null(project_filter)) {
-    projects <- projects[grepl(project_filter, projects, fixed = TRUE)]
-  }
+  projects <- names(json_data$projects) |>
+    purrr::keep(~ is.null(project_filter) || grepl(project_filter, .x, fixed = TRUE))
 
   if (length(projects) == 0) return(NULL)
 
   # Combine all project data
-  all_data <- purrr::map_dfr(projects, function(proj) {
+  # Note: modelsUsed can be string, array, or empty - normalize to list for bind_rows
+  purrr::map_dfr(projects, \(proj) {
     proj_data <- json_data$projects[[proj]]
     if (is.null(proj_data) || length(proj_data) == 0) return(NULL)
 
     tibble::as_tibble(proj_data) |>
-      dplyr::mutate(project = proj)
+      dplyr::mutate(
+        project = proj,
+        dplyr::across(
+          dplyr::any_of("modelsUsed"),
+          ~ purrr::map(.x, normalize_to_char_vec)
+        )
+      )
   })
-
-  all_data
 }
 
 #' Load cached ccusage data from JSON files

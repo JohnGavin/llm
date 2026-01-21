@@ -91,7 +91,7 @@ r_pkgs = c(
   # https://cran.r-project.org/web/packages/treasury/index.html
   "treasury", 
   # # https://b-rodrigues.github.io/rixpress_demos/rbc/index.html
-  # "rixpress",
+  "rixpress",
   # # https://brodrigues.co/posts/2025-05-13-test_rixpress.html
   "igraph", "ggdag", "visNetwork", # for rixexpress / rxp_ga / export_nix_archive 
   # # https://jebyrnes.github.io/bayesian_sem/bayesian_sem.html
@@ -230,7 +230,7 @@ r_pkgs = c(
   # "tseries", "modeltime", "modeltime.ensemble", "baguette", "modeltime.h2o", "timetk", "earth", "kernlab", "tsibble", "ggh4x", 
   # # dev stuff?
   "mcptools", 
-  "ollamar", 
+  # "ollamar", 
   "attachment", # attachment::att_amend_desc()  # Auto-detect package usage
   # https://drjohnrussell.com/posts/2025-08-20-Scottish-Munros/
   "tidytuesdayR", "sf", "rnaturalearth", "ggview", # rnaturalearthhires
@@ -312,20 +312,20 @@ gh_pkgs <- rlang::list2(
     repo_url = "https://github.com/insightsengineering/roxy.shinylive",
     commit = "c8a1967b0cb79a6bc6a0eab331bd80c57401d371"  # Latest as of 2025-12-09
   ),
-  # https://github.com/Techtonique/esgtoolkit
-  list(
-    package_name = "esgtoolkit", 
-    repo_url = "https://github.com/techtonique/esgtoolkit",
-    # branch = "main"  # rix doesn't support branch properly, use commit
-    commit = "0a9ad8ed1d52de4a66a997dc48e930aa49560a2b"  # Latest as of 2025-12-09
-  ),
-  #   # https://github.com/techtonique/ahead
-  list(
-    package_name = "ahead", 
-    repo_url = "https://github.com/techtonique/ahead",
-    # branch = "main"  # rix doesn't support branch properly, use commit
-    commit = "290c76194890faa629de57a29e17a2dce95a9cbe"  # Latest as of 2025-12-09
-  ),
+  # # https://github.com/Techtonique/esgtoolkit
+  # list(
+  #   package_name = "esgtoolkit",
+  #   repo_url = "https://github.com/techtonique/esgtoolkit",
+  #   # branch = "main"  # rix doesn't support branch properly, use commit
+  #   commit = "0a9ad8ed1d52de4a66a997dc48e930aa49560a2b"  # Latest as of 2025-12-09
+  # ),
+  # # https://github.com/techtonique/ahead
+  # list(
+  #   package_name = "ahead",
+  #   repo_url = "https://github.com/techtonique/ahead",
+  #   # branch = "main"  # rix doesn't support branch properly, use commit
+  #   commit = "290c76194890faa629de57a29e17a2dce95a9cbe"  # Latest as of 2025-12-09
+  # ),
   list(
     package_name = "btw", # requires chromote
     repo_url = "https://github.com/posit-dev/btw",
@@ -334,7 +334,7 @@ gh_pkgs <- rlang::list2(
     # 3 Nov 692db86d23d1ff9d19d32802588b91c294d01c10
     # 26 Nov c562575f01790b38a512ed199345aef695424e48
     # branch = "main"  # rix doesn't support branch properly, use commit
-    commit = "c562575f01790b38a512ed199345aef695424e48"  # Latest as of 2025-11-26
+    commit = "78379217b2328dae8d5926dd3025593a34a92545"  # Latest as of 2026-01-19
   ),
   # https://github.com/tidyverse/vitals
   # https://www.simonpcouch.com/blog/2025-05-07-gemini-2-5-pro-new/
@@ -379,6 +379,7 @@ gh_pkgs <- rlang::list2(
 # export NIXPKGS_ALLOW_UNFREE=1
 Sys.setenv("NIXPKGS_ALLOW_UNFREE"=1)
 system_pkgs <- c(
+  "claude-monitor", 
   "locale", "direnv", "jq", 
   "nodejs", 
   # "tinytex", 
@@ -400,11 +401,11 @@ system_pkgs <- c(
   "htop", "btop", 
   "typst", 
   "copilot-cli", 
-  "gemini-cli",
+  # "gemini-cli",
   #   nix search nixpkgs codex
-  "codex", # overrides $PATH (which git from /opt/homebrew does not permissions inside nix - use npm installed codex)
+  # "codex", # overrides $PATH (which git from /opt/homebrew does not permissions inside nix - use npm installed codex)
   "claude-code", # https://blog.stephenturner.us/p/positron-assistant-copilot-chat-agent
-  "ollama",
+  # "ollama",
   "cacert", # CA certs / trusted TLS/SSL root certs
   # echo $SSL_CERT_FILE ; echo $NIX_SSL_CERT_FILE
   # "radianWrapper",
@@ -701,10 +702,11 @@ tex_pkgs = c("amsmath", "ninecolors", "apa7", "scalerel", "threeparttable", "thr
   unique() |>
   sort()
 
-(latest <- available_dates() |> sort() |> tail(2) |> head(1))
+# 2nd/3rd? most recent date?
+(latest <- available_dates() |> sort() |> tail(3) |> head(1))
   # library(dplyr) ; available_df() |> tibble() |> arrange(desc(date)) |> head(5) |> glimpse()
 rix(
-  date = c(latest, "2025-11-24", "2025-11-03", "2025-11-01", "2025-08-18")[3],
+  date = c(latest, "2026-01-05", "2025-11-24", "2025-11-03", "2025-11-01")[3],
   # or  r_ver = "4.4.3" or r_ver = "latest-upstream"?
   project_path = ".",
   overwrite = TRUE,

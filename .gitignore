@@ -47,3 +47,5 @@ proj/stats/simulations/randomwalk/
 
 # Symlinks
 nix-shell-root
+
+/.quarto/

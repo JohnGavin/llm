@@ -204,6 +204,101 @@ test_that("summary output is correct", {
 # testthat::snapshot_accept("test-summary")
 ```
 
+## MANDATORY: Snapshot Testing with Real Data
+
+**As soon as a project generates real data, snapshot tests MUST be added.**
+
+This requirement exists because:
+1. Mock data often doesn't capture edge cases (e.g., mixed types in JSON)
+2. Real data evolves - snapshots catch regressions
+3. The telemetry.qmd failure (2026-01-20) was caused by untested real data patterns
+
+### When to Add Real Data Snapshots
+
+| Trigger | Action Required |
+|---------|-----------------|
+| First API response received | Save as fixture, add snapshot test |
+| First JSON data cached | Add `expect_snapshot()` for parsing |
+| First database query works | Snapshot the result structure |
+| CI generates artifacts | Test artifact parsing with snapshots |
+
+### Required Pattern: Real Data Fixtures
+
+```r
+# Step 1: Save real data as fixture (ONCE, when first available)
+# Run interactively:
+real_data <- fetch_actual_data()
+saveRDS(real_data, testthat::test_path("fixtures", "real_api_response.rds"))
+
+# Step 2: Create snapshot test
+test_that("parse_data handles real API response structure", {
+  # Load real data fixture
+  real_data <- readRDS(testthat::test_path("fixtures", "real_api_response.rds"))
+
+  # Parse it
+  result <- parse_data(real_data)
+
+  # Snapshot the structure (catches type changes, new fields, etc.)
+  expect_snapshot(str(result))
+  expect_snapshot(sapply(result, class))
+})
+```
+
+### Example: ccusage JSON Parsing (Lesson Learned)
+
+The `modelsUsed` field had three types in real data:
+- String: `"claude-opus-4-5-20251101"`
+- Array: `["claude-haiku", "claude-opus"]`
+- Empty: `[]`
+
+**A snapshot test would have caught this:**
+```r
+test_that("parse_ccusage_json handles real data types", {
+  json_data <- jsonlite::fromJSON(
+    testthat::test_path("fixtures", "ccusage_daily_real.json")
+  )
+
+  result <- parse_ccusage_json(json_data)
+
+  # Snapshot column types - catches character vs list mismatch
+  expect_snapshot(sapply(result, class))
+
+  # Snapshot a sample of modelsUsed values
+  expect_snapshot(head(result$modelsUsed, 5))
+})
+```
+
+### Fixture Update Policy
+
+```r
+# When real data format changes intentionally:
+# 1. Update the fixture
+saveRDS(new_real_data, testthat::test_path("fixtures", "real_data.rds"))
+
+# 2. Review and accept new snapshots
+testthat::snapshot_accept("test-parse_data")
+
+# 3. Commit both fixture and snapshot changes together
+gert::git_add(c(
+ "tests/testthat/fixtures/real_data.rds",
+  "tests/testthat/_snaps/test-parse_data.md"
+))
+```
+
+### CI Integration
+
+```yaml
+# In .github/workflows/test.yaml
+- name: Run tests with snapshots
+  run: |
+    Rscript -e "testthat::test_local(reporter = 'check')"
+
+- name: Fail if snapshots differ
+  run: |
+    # Snapshots should be committed - differences indicate regression
+    git diff --exit-code tests/testthat/_snaps/
+```
+
 ## Common TDD Violations (DELETE and Restart)
 
 | Violation | Why It's Wrong | Fix |
