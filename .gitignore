@@ -45,7 +45,32 @@ proj/stats/simulations/randomwalk/
 # Claude local settings (user-specific)
 .claude/settings.local.json
 
-# Symlinks
+# Symlinks (personal organization)
 nix-shell-root
+AGENTS.md
+AI+GPT4 symlink
+daily_dashboard symlink
+default.R symlink
+default.nix symlink
+default.sh symlink
+Shinylive app for Quarto dashboard.md symlink
+what to work on.md symlink
+
+# Project symlinks
+proj/data/data symlink
+proj/data/purpose->values->goals->plan/
+proj/finance/data/crypto defi symlink
+proj/finance/data/crypto/defi symlink
+proj/finance/data/crypto/Solana symlink
+proj/finance/data/crypto/TRADING symlink
+proj/finance/data/data symlink
+proj/inst/qmd/pins_download_local_board.qmd symlink
+proj/inst/qmd/rix.qmd symlink
+proj/inst/qmd/usethis_targets.qmd symlink
+proj/medicine/survival symlink
+proj/medicine/survival/survival_time-to-event analysis.md symlink
+proj/stats/ideas/ROC_brierScore symlink
+proj/stats/ideas/ROC_brierScore/PerformanceCurves_db.md symlink
+proj/stats/ideas/ROC_brierScore/survival_time-to-event analysis.md symlink
 
 /.quarto/
