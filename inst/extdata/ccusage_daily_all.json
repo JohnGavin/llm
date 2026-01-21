@@ -713,6 +713,26 @@
             "cost": 6.492
           }
         ]
+      },
+      {
+        "date": "2026-01-21",
+        "inputTokens": 142,
+        "outputTokens": 47,
+        "cacheCreationTokens": 126996,
+        "cacheReadTokens": 2243313,
+        "totalTokens": 2370498,
+        "totalCost": 1.9173,
+        "modelsUsed": "claude-opus-4-5-20251101",
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 142,
+            "outputTokens": 47,
+            "cacheCreationTokens": 126996,
+            "cacheReadTokens": 2243313,
+            "cost": 1.9173
+          }
+        ]
       }
     ],
     "-Users-johngavin-docs-gh-llm-proj-data-coMMpass": [
@@ -759,11 +779,11 @@
     ]
   },
   "totals": {
-    "inputTokens": 150089,
-    "outputTokens": 125895,
-    "cacheCreationTokens": 39570919,
-    "cacheReadTokens": 536322113,
-    "totalCost": 416.3328,
-    "totalTokens": 576169016
+    "inputTokens": 150231,
+    "outputTokens": 125942,
+    "cacheCreationTokens": 39697915,
+    "cacheReadTokens": 538565426,
+    "totalCost": 418.2501,
+    "totalTokens": 578539514
   }
 }
