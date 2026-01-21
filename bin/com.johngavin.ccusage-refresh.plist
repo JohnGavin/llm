@@ -10,9 +10,9 @@
         <string>/Users/johngavin/docs_gh/llm/bin/refresh_ccusage_and_commit.sh</string>
     </array>
 
-    <!-- Run every hour -->
+    <!-- Run every 12 hours -->
     <key>StartInterval</key>
-    <integer>3600</integer>
+    <integer>43200</integer>
 
     <!-- Also run at load (startup) -->
     <key>RunAtLoad</key>
