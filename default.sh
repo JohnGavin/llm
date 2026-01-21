@@ -56,21 +56,27 @@ PROJECT_PATH="/Users/johngavin/docs_gh/llm"
 GC_ROOT_PATH="$PROJECT_PATH/nix-shell-root"
 NIX_FILE="$PROJECT_PATH/default.nix"
 
+# Debug mode: set DEBUG=true to enable verbose output
+DEBUG=${DEBUG:-false}
+debug() { [ "$DEBUG" = "true" ] && echo "[DEBUG] $*"; }
+
+# Validate HOME path: must be non-empty, absolute, and not contain literal '$'
+is_valid_home() {
+    case "$1" in
+        "") return 1 ;;      # Empty
+        *'$'*) return 1 ;;   # Contains literal $
+        /*) return 0 ;;      # Absolute path - valid
+        *) return 1 ;;       # Relative path
+    esac
+}
+
 # Normalize HOME to avoid literal $HOME paths inside the repo.
 sanitize_home() {
-    local invalid_home=0
-    if [ -z "$HOME" ]; then
-        invalid_home=1
-    else
-        case "$HOME" in
-            *'$'*) invalid_home=1 ;;
-            /*) ;;
-            *) invalid_home=1 ;;
-        esac
-    fi
-
-    if [ "$invalid_home" -ne 0 ] && [ -n "$USER" ] && [ -d "/Users/$USER" ]; then
-        export HOME="/Users/$USER"
+    if ! is_valid_home "$HOME"; then
+        if [ -n "$USER" ] && [ -d "/Users/$USER" ]; then
+            export HOME="/Users/$USER"
+            debug "Fixed invalid HOME, set to $HOME"
+        fi
     fi
 }
 
@@ -108,7 +114,7 @@ elif /usr/bin/grep -q "bin.old" "$PROJECT_PATH/default.R" && ! /usr/bin/grep -q 
 elif /usr/bin/grep -Fq 'export PATH=/Users/johngavin/docs_gh/llm/bin:\\$PATH' "$NIX_FILE"; then
     echo "default.nix still contains escaped PATH that breaks PATH at runtime."
     NEED_REGEN=true
-# Check 5: default.nix exists but has invalid Nix syntax
+# Check 6: default.nix exists but has invalid Nix syntax
 elif ! nix-instantiate --parse "$NIX_FILE" > /dev/null 2>&1; then
     echo "default.nix has invalid Nix syntax."
     NEED_REGEN=true
@@ -118,7 +124,7 @@ fi
 
 if [ "$NEED_REGEN" = true ]; then
     echo "Regenerating default.nix from default.R..."
-    nix-shell \
+    if ! nix-shell \
         --pure \
         --keep PATH \
         --keep TMPDIR \
@@ -134,7 +140,11 @@ if [ "$NEED_REGEN" = true ]; then
             \"$PROJECT_PATH/default.R\" \
             --args GITHUB_PAT=$GITHUB_PAT" \
         --cores 4 \
-        --quiet
+        --quiet; then
+        echo "ERROR: Step 1 failed - Rscript default.R returned an error."
+        echo "Fix the error in default.R and try again."
+        exit 1
+    fi
 
     # Verify regeneration succeeded
     if [ ! -s "$NIX_FILE" ]; then
@@ -151,14 +161,12 @@ echo "cachix use rstats-on-nix # BEFORE nix-build"
 cachix use rstats-on-nix
 
 echo "Starting nix-build '$NIX_FILE' ..."
-time nix-build "$NIX_FILE" \
+if ! time nix-build "$NIX_FILE" \
     -A shell \
     -o "$GC_ROOT_PATH" \
     --cores 8 \
-    --quiet
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: nix-build failed."
+    --quiet; then
+    echo "ERROR: Step 2 failed - nix-build returned an error."
     exit 1
 fi
 
@@ -212,17 +220,8 @@ USER_SHELL="$SHELL"
 # Used later: Line 231-247 to apply correct shell configuration
 USER_ACTUAL_SHELL="$SHELL"
 
-# Guard against literal $HOME values or non-absolute HOME paths.
-is_valid_home() {
-    case "$1" in
-        "") return 1 ;;
-        *'$'*) return 1 ;;
-        /*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 # Ensure HOME is a valid absolute path before running the shellHook.
+# Note: is_valid_home() is defined at top of script
 if ! is_valid_home "$USER_HOME"; then
     fallback="/Users/$(id -un)"
     if is_valid_home "$fallback"; then
@@ -244,7 +243,10 @@ else
     echo "Skipping wrapper setup due to invalid HOME."
 fi
 
-source "$ENV_SCRIPT"
+if ! source "$ENV_SCRIPT"; then
+    echo "ERROR: Step 4 failed - could not source Nix environment script."
+    exit 1
+fi
 export IN_NIX_SHELL=impure
 
 # Generate a clean environment file using export -p to properly handle multi-line variables
@@ -362,14 +364,14 @@ export TMPDIR="$TMPDIR"
 # Export the GC root path so internal shells can source it
 export RIX_NIX_SHELL_ROOT="$GC_ROOT_PATH"
 
-echo "Debug: Git path: $(/usr/bin/which git)"
-echo "Debug: SSL_CERT_FILE: $NIX_SSL_CERT_FILE"
+debug "Git path: $(/usr/bin/which git)"
+debug "SSL_CERT_FILE: $NIX_SSL_CERT_FILE"
 
 # 5. Launch Positron (ONLY from Nix environment)
 if command -v positron &> /dev/null; then
     echo "Launching Positron from Nix environment..."
     # Log output to file for debugging
-    echo "Debug: Launching Positron with --verbose"
+    debug "Launching Positron with --verbose"
     nohup positron --verbose > "/tmp/positron.log" 2>&1 &
 else
     echo "⚠️  Positron not found in Nix environment PATH."
@@ -390,9 +392,9 @@ echo -e "==============================================\n"
 # Solution: Use USER_ACTUAL_SHELL to detect and configure correct shell
 
 # fix the TMPDIR issue.
-echo "TMPDIR: "$TMPDIR
+debug "TMPDIR before unset: $TMPDIR"
 unset TMPDIR
-echo "TMPDIR reset before nix shell: "$TMPDIR
+debug "TMPDIR after unset: $TMPDIR"
 
 # Use the shellHook-created bashrc if it exists and we're using bash
 if [[ "$USER_ACTUAL_SHELL" == *"bash"* ]] && [ -f ~/.nix-shell-bashrc ]; then
@@ -445,6 +447,5 @@ else
     exec $SHELL -i
 fi
 
-echo -e "\n=== Exited Nix shell ==="
-echo "GC root still active at: $GC_ROOT_PATH"
-echo "Environment remains protected from garbage collection."
+# NOTE: Lines below exec never execute (exec replaces the process)
+# Kept as documentation only - the shell exits when user types 'exit'

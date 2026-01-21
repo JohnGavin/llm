@@ -92,19 +92,33 @@ parse_session_data <- function(json_data) {
     dplyr::mutate(fetch_timestamp = Sys.time())
 }
 
+#' Helper: normalize to character vector (handles NULL, list, character)
+normalize_to_char_vec <- function(x) {
+  switch(class(x)[1],
+    "NULL" = character(0),
+    "list" = as.character(unlist(x)),
+    as.character(x)
+  ) |> (\(v) if (length(v) == 0) character(0) else v)()
+}
+
 #' Parse projects data from ccusage
 parse_projects_data <- function(json_data) {
   if (is.null(json_data$projects)) return(NULL)
 
-  projects <- names(json_data$projects)
+  names(json_data$projects) |>
+    purrr::map_dfr(\(proj) {
+      proj_data <- json_data$projects[[proj]]
+      if (is.null(proj_data) || length(proj_data) == 0) return(NULL)
 
-  purrr::map_dfr(projects, function(proj) {
-    proj_data <- json_data$projects[[proj]]
-    if (is.null(proj_data) || length(proj_data) == 0) return(NULL)
-
-    tibble::as_tibble(proj_data) |>
-      dplyr::mutate(project = proj)
-  }) |>
+      tibble::as_tibble(proj_data) |>
+        dplyr::mutate(
+          project = proj,
+          dplyr::across(
+            dplyr::any_of("modelsUsed"),
+            ~ purrr::map(.x, normalize_to_char_vec)
+          )
+        )
+    }) |>
     dplyr::mutate(fetch_timestamp = Sys.time())
 }
 

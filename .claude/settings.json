@@ -30,6 +30,7 @@
       "Read",
       "Write",
       "WebSearch",
+      "WebFetch(domain:www.r-bloggers.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:*.github.io)",
       "WebFetch(domain:*.r-universe.dev)",
@@ -45,6 +46,26 @@
           {
             "type": "command",
             "command": "~/.claude/startup_check.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(/usr/bin/afplay -v 0.35 /System/Library/Sounds/Ping.aiff &) 2>/dev/null; exit 0"
           }
         ]
       }
