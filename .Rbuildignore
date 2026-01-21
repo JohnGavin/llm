@@ -1,0 +1,48 @@
+# Development files
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.Rhistory$
+^\.RData$
+^\.Ruserdata$
+^\.Rprofile$
+
+# Claude/AI tooling
+^\.claude$
+^AGENTS\.md$
+^plans$
+
+# Quarto/pkgdown output
+^_site$
+^_freeze$
+^docs$
+^\.quarto$
+^_quarto\.yml$
+
+# Development scripts
+^R/dev$
+^bin$
+^default\.sh$
+^default\.nix$
+^default\.R$
+
+# CI/CD
+^\.github$
+
+# Documentation sources (keep only inst/extdata outputs)
+^vignettes/.*_files$
+
+# Symlinks (personal organization)
+^AI\+GPT4 symlink$
+^daily_dashboard symlink$
+^default\.R symlink$
+^default\.nix symlink$
+^default\.sh symlink$
+^Shinylive app for Quarto dashboard\.md symlink$
+^what to work on\.md symlink$
+^proj$
+^nix-shell-root$
+
+# Large/generated files
+.*\.db$
+.*\.log$
+.*\.pdf$
