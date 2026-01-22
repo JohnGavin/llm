@@ -39,7 +39,7 @@
 ^default\.sh symlink$
 ^Shinylive app for Quarto dashboard\.md symlink$
 ^what to work on\.md symlink$
-^proj$
+^proj
 ^nix-shell-root$
 
 # Large/generated files

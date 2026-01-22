@@ -1,8 +1,10 @@
 Type: project
 Package: llm
 Version: 0.0.0.9000
-Imports: 
-    dplyr,
-    gha (>= 0.0.0.9000),
-Remotes:  
-    r-lib/gha
+Encoding: UTF-8
+Imports:
+    dplyr
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+RoxygenNote: 7.3.3
