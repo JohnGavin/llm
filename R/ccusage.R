@@ -377,8 +377,8 @@ show_usage_progress <- function(current, limit, label = "Usage",
   empty <- bar_width - filled
 
   bar <- paste0(
-    strrep("█", filled),
-    strrep("░", empty)
+    strrep("\U00002588", filled),  # full block
+    strrep("\U00002591", empty)     # light shade
   )
 
   # Format output with color
@@ -397,8 +397,8 @@ show_usage_progress <- function(current, limit, label = "Usage",
     token_filled <- round(bar_width * token_pct / 100)
     token_empty <- bar_width - token_filled
     token_bar <- paste0(
-      strrep("█", token_filled),
-      strrep("░", token_empty)
+      strrep("\U00002588", token_filled),  # full block
+      strrep("\U00002591", token_empty)     # light shade
     )
 
     cli::cli_text(
@@ -719,6 +719,11 @@ get_current_block_window <- function(current_time = Sys.time()) {
     stop("current_time is NULL or missing - current time is required")
   }
 
+  # Check if numeric (which POSIXct would accept as seconds since epoch)
+  if (is.numeric(current_time)) {
+    stop("current_time must be a POSIXct or date/time string, not numeric")
+  }
+
   # Try to convert to POSIXct
   tryCatch({
     current_time <- as.POSIXct(current_time)
@@ -927,7 +932,7 @@ show_max5_block_status <- function(cache_dir = NULL) {
   bar_width <- 40
   filled <- round(bar_width * pct / 100)
   empty <- bar_width - filled
-  bar <- paste0(strrep("█", filled), strrep("░", empty))
+  bar <- paste0(strrep("\U00002588", filled), strrep("\U00002591", empty))  # full block and light shade
 
   cli::cli_div(theme = list(
     ".pbar" = list(color = color),
@@ -961,7 +966,7 @@ show_max5_block_status <- function(cache_dir = NULL) {
 #' Displays historical usage for recent 5-hour blocks with status indicators and
 #' completion percentages. Groups block data by date and block hour, showing up to
 #' the last 10 blocks from the requested time period. Each block is tagged with a
-#' status emoji (⚪ = low, 🟢 = moderate, 🟡 = warning, 🔴 = critical).
+#' status emoji (white = low, green = moderate, yellow = warning, red = critical).
 #'
 #' @param days Number of days of history to show (default 3). Retrieves all blocks
 #'   from the past N days.
@@ -989,10 +994,10 @@ show_max5_block_status <- function(cache_dir = NULL) {
 #'
 #' @details
 #' Block status indicators:
-#' - ⚪ = 0-49% of limit used (light usage)
-#' - 🟢 = 50-74% of limit used (normal usage)
-#' - 🟡 = 75-89% of limit used (warning)
-#' - 🔴 = 90%+ of limit used (critical)
+#' - White circle = 0-49% of limit used (light usage)
+#' - Green circle = 50-74% of limit used (normal usage)
+#' - Yellow circle = 75-89% of limit used (warning)
+#' - Red circle = 90%+ of limit used (critical)
 #'
 #' @seealso
 #' - [show_max5_block_status()] to see current block status
@@ -1029,10 +1034,10 @@ get_block_history <- function(days = 3, cache_dir = NULL) {
     dplyr::mutate(
       usage_pct = round((total_tokens / 88000) * 100),
       status = dplyr::case_when(
-        usage_pct >= 90 ~ "🔴",
-        usage_pct >= 75 ~ "🟡",
-        usage_pct >= 50 ~ "🟢",
-        TRUE ~ "⚪"
+        usage_pct >= 90 ~ "\U0001F534",  # red circle
+        usage_pct >= 75 ~ "\U0001F7E1",  # yellow circle
+        usage_pct >= 50 ~ "\U0001F7E2",  # green circle
+        TRUE ~ "\U000026AA"  # white circle
       )
     ) |>
     dplyr::arrange(desc(block_date), desc(block_hour))
