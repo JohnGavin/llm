@@ -1,0 +1,26 @@
+# Global variables for NSE
+utils::globalVariables(c(
+  "timestamp",
+  "group",
+  "gap_end",
+  "gap_start",
+  "gap_days",
+  "block_date",
+  "block_hour",
+  "block_id",
+  "total_tokens",
+  "usage_pct",
+  "totalTokens",
+  "totalCost",
+  "date",
+  "project",
+  "desc",
+  "modelName",
+  "cost",
+  "inputTokens",
+  "outputTokens",
+  "cacheCreationTokens",
+  "cacheReadTokens",
+  "total_cost",
+  "fetch_timestamp"
+))

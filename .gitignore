@@ -55,6 +55,8 @@ default.nix symlink
 default.sh symlink
 Shinylive app for Quarto dashboard.md symlink
 what to work on.md symlink
+proj
+archive
 
 # Project symlinks
 proj/data/data symlink
@@ -74,3 +76,7 @@ proj/stats/ideas/ROC_brierScore/PerformanceCurves_db.md symlink
 proj/stats/ideas/ROC_brierScore/survival_time-to-event analysis.md symlink
 
 /.quarto/
+
+# Exclude from package
+proj/
+archive/

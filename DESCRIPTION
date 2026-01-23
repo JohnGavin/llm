@@ -1,8 +1,26 @@
-Type: project
+Type: Package
 Package: llm
+Title: LLM Usage Tracking and Visualization Tools
 Version: 0.0.0.9000
-Imports: 
+Author: John Gavin
+Maintainer: John Gavin <john.gavin@example.com>
+Description: Tools for tracking and visualizing LLM usage including cost tracking,
+    token monitoring, progress bars, and Max5 5-hour block usage displays.
+    Provides functions for analyzing Claude Code usage patterns.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Imports:
+    cli,
+    DBI,
     dplyr,
-    gha (>= 0.0.0.9000),
-Remotes:  
-    r-lib/gha
+    duckdb,
+    here,
+    jsonlite,
+    purrr,
+    scales,
+    tibble
+Suggests:
+    testthat (>= 3.0.0),
+    withr
+Config/testthat/edition: 3
+RoxygenNote: 7.3.3
