@@ -679,6 +679,50 @@
             "cost": 0.0526
           }
         ]
+      },
+      {
+        "date": "2026-01-22",
+        "inputTokens": 21717,
+        "outputTokens": 831,
+        "cacheCreationTokens": 1427636,
+        "cacheReadTokens": 17089765,
+        "totalTokens": 18539949,
+        "totalCost": 40.6201,
+        "modelsUsed": ["claude-opus-4-5-20251101", "claude-opus-4-1-20250805", "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"],
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-1-20250805",
+            "inputTokens": 2437,
+            "outputTokens": 545,
+            "cacheCreationTokens": 861214,
+            "cacheReadTokens": 14000970,
+            "cost": 37.2266
+          },
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 1630,
+            "outputTokens": 88,
+            "cacheCreationTokens": 229324,
+            "cacheReadTokens": 1606448,
+            "cost": 2.2468
+          },
+          {
+            "modelName": "claude-sonnet-4-5-20250929",
+            "inputTokens": 1006,
+            "outputTokens": 79,
+            "cacheCreationTokens": 160272,
+            "cacheReadTokens": 774579,
+            "cost": 0.8376
+          },
+          {
+            "modelName": "claude-haiku-4-5-20251001",
+            "inputTokens": 16644,
+            "outputTokens": 119,
+            "cacheCreationTokens": 176826,
+            "cacheReadTokens": 707768,
+            "cost": 0.309
+          }
+        ]
       }
     ],
     "-Users-johngavin-docs-gh-llm-proj-data-coMMpass": [
@@ -721,15 +765,43 @@
             "cost": 5.0134
           }
         ]
+      },
+      {
+        "date": "2026-01-22",
+        "inputTokens": 2997,
+        "outputTokens": 2,
+        "cacheCreationTokens": 42887,
+        "cacheReadTokens": 0,
+        "totalTokens": 45886,
+        "totalCost": 0.2711,
+        "modelsUsed": ["claude-opus-4-5-20251101", "claude-haiku-4-5-20251001"],
+        "modelBreakdowns": [
+          {
+            "modelName": "claude-opus-4-5-20251101",
+            "inputTokens": 8,
+            "outputTokens": 1,
+            "cacheCreationTokens": 42887,
+            "cacheReadTokens": 0,
+            "cost": 0.2681
+          },
+          {
+            "modelName": "claude-haiku-4-5-20251001",
+            "inputTokens": 2989,
+            "outputTokens": 1,
+            "cacheCreationTokens": 0,
+            "cacheReadTokens": 0,
+            "cost": 0.003
+          }
+        ]
       }
     ]
   },
   "totals": {
-    "inputTokens": 146444,
-    "outputTokens": 125527,
-    "cacheCreationTokens": 38676537,
-    "cacheReadTokens": 533463570,
-    "totalCost": 417.7523,
-    "totalTokens": 572412078
+    "inputTokens": 171158,
+    "outputTokens": 126360,
+    "cacheCreationTokens": 40147060,
+    "cacheReadTokens": 550553335,
+    "totalCost": 458.6435,
+    "totalTokens": 590997913
   }
 }
