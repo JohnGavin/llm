@@ -47,7 +47,7 @@ proj/stats/simulations/randomwalk/
 
 # Symlinks (personal organization)
 nix-shell-root
-AGENTS.md
+# AGENTS.md - NOT a symlink, should be tracked!
 AI+GPT4 symlink
 daily_dashboard symlink
 default.R symlink
