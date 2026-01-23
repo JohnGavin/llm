@@ -1,0 +1,131 @@
+{
+  "permissions": {
+    "allow": [
+      "// === Core Tools ===",
+      "Read",
+      "Write",
+      "WebSearch",
+
+      "// === Git & GitHub ===",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh issue:*)",
+      "Bash(gh api:*)",
+      "Bash(gh run:*)",
+
+      "// === R Development ===",
+      "Bash(R:*)",
+      "Bash(Rscript:*)",
+      "Bash(R CMD:*)",
+      "Bash(/usr/local/bin/R:*)",
+      "Bash(/Library/Frameworks/R.framework/Versions/Current/Resources/bin/R:*)",
+
+      "// === Quarto & Documentation ===",
+      "Bash(quarto:*)",
+      "Bash(quarto render:*)",
+      "Bash(quarto add:*)",
+      "Bash(quarto list:*)",
+      "Bash(SHINYLIVE_ASSETS_VERSION=*:*)",
+
+      "// === Nix Environment ===",
+      "Bash(nix-env:*)",
+      "Bash(nix-shell:*)",
+      "Bash(nix-build:*)",
+      "Bash(nix-instantiate:*)",
+
+      "// === Shell Utilities ===",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(sed:*)",
+      "Bash(sort:*)",
+      "Bash(wc:*)",
+      "Bash(chmod:*)",
+      "Bash(ln:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(tar:*)",
+      "Bash(rsync:*)",
+      "Bash(curl:*)",
+      "Bash(comm:*)",
+      "Bash(md5:*)",
+
+      "// === R Package Development Domains ===",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:cran.r-project.org)",
+      "WebFetch(domain:r-universe.dev)",
+      "WebFetch(domain:johngavin.r-universe.dev)",
+      "WebFetch(domain:repo.r-wasm.org)",
+
+      "// === R Documentation Domains ===",
+      "WebFetch(domain:quarto.org)",
+      "WebFetch(domain:posit-dev.github.io)",
+      "WebFetch(domain:rstudio.github.io)",
+      "WebFetch(domain:tidyverse.github.io)",
+      "WebFetch(domain:r-lib.github.io)",
+      "WebFetch(domain:docs.ropensci.org)",
+      "WebFetch(domain:tidyverse.org)",
+
+      "// === R Community Domains ===",
+      "WebFetch(domain:www.r-bloggers.com)",
+      "WebFetch(domain:blog.r-hub.io)",
+      "WebFetch(domain:blogs.rstudio.com)",
+      "WebFetch(domain:shiny.posit.co)",
+      "WebFetch(domain:shinylive.io)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:app.codecov.io)",
+
+      "// === Specific Project Domains ===",
+      "WebFetch(domain:wlandau.github.io)",
+      "WebFetch(domain:shikokuchuo.net)",
+      "WebFetch(domain:shipyard.build)",
+      "WebFetch(domain:www.andrewheiss.com)",
+      "WebFetch(domain:quarto.thecoatlessprofessor.com)",
+      "WebFetch(domain:r-posts.com)",
+      "WebFetch(domain:johngavin.github.io)",
+      "WebFetch(domain:r-lib.r-universe.dev)",
+      "WebFetch(domain:shikokuchuo.r-universe.dev)",
+
+      "// === MCP Tools ===",
+      "mcp__r-btw__btw_tool_git_status",
+      "mcp__r-btw__btw_tool_github",
+
+      "// === Environment Variables ===",
+      "Bash(export GH_TOKEN=*)",
+      "Bash(GH_TOKEN=*:*)",
+
+      "// === Control Flow (for scripts) ===",
+      "Bash(if:*)",
+      "Bash(then:*)",
+      "Bash(else:*)",
+      "Bash(fi:*)",
+      "Bash(while:*)",
+      "Bash(done:*)",
+      "Bash(bash:*)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "_metadata": {
+    "description": "Standard permission template for R package development with Claude",
+    "created": "2026-01-23",
+    "usage": [
+      "1. Copy this file to ~/.claude/settings.local.json",
+      "2. Or merge 'permissions.allow' section with your existing settings.local.json",
+      "3. Comments (lines starting with //) are for organization - Claude will ignore them",
+      "4. Adjust domains and tools based on your specific needs"
+    ],
+    "notes": [
+      "These permissions cover typical R package development workflows",
+      "Includes git, GitHub CLI, R/Rscript, Quarto, Nix, and common shell utilities",
+      "WebFetch domains include major R documentation and community sites",
+      "MCP tools assume r-btw is installed and configured"
+    ]
+  }
+}
