@@ -2,13 +2,13 @@
   "sessions": [
     {
       "sessionId": "subagents",
-      "inputTokens": 139,
-      "outputTokens": 45,
-      "cacheCreationTokens": 163579,
-      "cacheReadTokens": 78645,
-      "totalTokens": 242408,
-      "totalCost": 0.62,
-      "lastActivity": "2026-01-21",
+      "inputTokens": 5949,
+      "outputTokens": 58,
+      "cacheCreationTokens": 241654,
+      "cacheReadTokens": 133630,
+      "totalTokens": 381291,
+      "totalCost": 0.729,
+      "lastActivity": "2026-01-22",
       "modelsUsed": ["claude-haiku-4-5-20251001", "claude-opus-4-5-20251101"],
       "modelBreakdowns": [
         {
@@ -21,55 +21,87 @@
         },
         {
           "modelName": "claude-haiku-4-5-20251001",
-          "inputTokens": 79,
-          "outputTokens": 25,
-          "cacheCreationTokens": 83049,
-          "cacheReadTokens": 68585,
-          "cost": 0.1109
+          "inputTokens": 5889,
+          "outputTokens": 38,
+          "cacheCreationTokens": 161124,
+          "cacheReadTokens": 123570,
+          "cost": 0.2198
         }
       ],
       "projectPath": "-Users-johngavin-docs-gh-llm/d8e736ce-1c76-4d6e-a3fa-161631ae3bdb"
     },
     {
       "sessionId": "-Users-johngavin-docs-gh-llm",
-      "inputTokens": 12137,
-      "outputTokens": 1901,
-      "cacheCreationTokens": 7235393,
-      "cacheReadTokens": 84759370,
-      "totalTokens": 92008801,
-      "totalCost": 87.7091,
-      "lastActivity": "2026-01-21",
-      "modelsUsed": "claude-opus-4-5-20251101",
+      "inputTokens": 28044,
+      "outputTokens": 2719,
+      "cacheCreationTokens": 8584954,
+      "cacheReadTokens": 101794150,
+      "totalTokens": 110409867,
+      "totalCost": 128.2203,
+      "lastActivity": "2026-01-22",
+      "modelsUsed": ["claude-opus-4-5-20251101", "claude-opus-4-1-20250805", "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"],
       "modelBreakdowns": [
         {
           "modelName": "claude-opus-4-5-20251101",
-          "inputTokens": 12137,
-          "outputTokens": 1901,
-          "cacheCreationTokens": 7235393,
-          "cacheReadTokens": 84759370,
-          "cost": 87.7091
+          "inputTokens": 13767,
+          "outputTokens": 1989,
+          "cacheCreationTokens": 7464717,
+          "cacheReadTokens": 86365818,
+          "cost": 89.956
+        },
+        {
+          "modelName": "claude-opus-4-1-20250805",
+          "inputTokens": 2437,
+          "outputTokens": 545,
+          "cacheCreationTokens": 861214,
+          "cacheReadTokens": 14000970,
+          "cost": 37.2266
+        },
+        {
+          "modelName": "claude-sonnet-4-5-20250929",
+          "inputTokens": 1006,
+          "outputTokens": 79,
+          "cacheCreationTokens": 160272,
+          "cacheReadTokens": 774579,
+          "cost": 0.8376
+        },
+        {
+          "modelName": "claude-haiku-4-5-20251001",
+          "inputTokens": 10834,
+          "outputTokens": 106,
+          "cacheCreationTokens": 98751,
+          "cacheReadTokens": 652783,
+          "cost": 0.2001
         }
       ],
       "projectPath": "Unknown Project"
     },
     {
       "sessionId": "-Users-johngavin-docs-gh-llm-proj-data-coMMpass",
-      "inputTokens": 4660,
-      "outputTokens": 529,
-      "cacheCreationTokens": 813059,
+      "inputTokens": 7657,
+      "outputTokens": 531,
+      "cacheCreationTokens": 855946,
       "cacheReadTokens": 24232660,
-      "totalTokens": 25050908,
-      "totalCost": 17.2345,
-      "lastActivity": "2026-01-19",
-      "modelsUsed": "claude-opus-4-5-20251101",
+      "totalTokens": 25096794,
+      "totalCost": 17.5056,
+      "lastActivity": "2026-01-22",
+      "modelsUsed": ["claude-opus-4-5-20251101", "claude-haiku-4-5-20251001"],
       "modelBreakdowns": [
         {
           "modelName": "claude-opus-4-5-20251101",
-          "inputTokens": 4660,
-          "outputTokens": 529,
-          "cacheCreationTokens": 813059,
+          "inputTokens": 4668,
+          "outputTokens": 530,
+          "cacheCreationTokens": 855946,
           "cacheReadTokens": 24232660,
-          "cost": 17.2345
+          "cost": 17.5026
+        },
+        {
+          "modelName": "claude-haiku-4-5-20251001",
+          "inputTokens": 2989,
+          "outputTokens": 1,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "cost": 0.003
         }
       ],
       "projectPath": "Unknown Project"
@@ -239,11 +271,11 @@
     }
   ],
   "totals": {
-    "inputTokens": 146444,
-    "outputTokens": 125527,
-    "cacheCreationTokens": 38676537,
-    "cacheReadTokens": 533463570,
-    "totalCost": 417.7523,
-    "totalTokens": 572412078
+    "inputTokens": 171158,
+    "outputTokens": 126360,
+    "cacheCreationTokens": 40147060,
+    "cacheReadTokens": 550553335,
+    "totalCost": 458.6435,
+    "totalTokens": 590997913
   }
 }

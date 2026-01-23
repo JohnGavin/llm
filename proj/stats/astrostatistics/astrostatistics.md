@@ -1,1 +1,0 @@
-/Users/johngavin/docs_/note_taking_atom/projects/work/Boast/courses/astrostatistics.md

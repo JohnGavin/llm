@@ -31,7 +31,7 @@
 # Documentation sources (keep only inst/extdata outputs)
 ^vignettes/.*_files$
 
-# Symlinks (personal organization)
+# Symlinks (personal organization) - must exclude these explicitly
 ^AI\+GPT4 symlink$
 ^daily_dashboard symlink$
 ^default\.R symlink$
@@ -39,7 +39,8 @@
 ^default\.sh symlink$
 ^Shinylive app for Quarto dashboard\.md symlink$
 ^what to work on\.md symlink$
-^proj$
+^proj
+^archive
 ^nix-shell-root$
 
 # Large/generated files
