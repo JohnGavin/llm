@@ -43,7 +43,7 @@ proj/finance/quantitiativo.com/
 proj/stats/simulations/randomwalk/
 
 # Claude local settings (user-specific)
-.claude/settings.local.json
+# .claude/settings.local.json - NOW TRACKED (symlinked globally for all projects)
 
 # Symlinks (personal organization)
 nix-shell-root
