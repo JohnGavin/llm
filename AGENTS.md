@@ -15,6 +15,54 @@ If not in nix: `caffeinate -i ~/docs_gh/rix.setup/default.sh`
 
 Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
 
+## Project-Specific Nix Environments (UPDATED)
+
+**For each R package project**, create a project-specific Nix environment with persistent GC root:
+
+1. **Create `default.R`** - Generates `default.nix` from DESCRIPTION:
+   ```r
+   # Reads DESCRIPTION and creates default.nix with rix()
+   source("default.R")
+   ```
+
+2. **Create `default.sh`** with GC root - Fast, persistent Nix shell:
+   ```bash
+   chmod +x default.sh
+   ./default.sh  # First run: builds and creates nix-shell-root
+   ./default.sh  # Subsequent runs: FAST (seconds, not minutes!)
+
+   # To force rebuild:
+   rm nix-shell-root && ./default.sh
+   ```
+
+3. **Key Features**:
+   - **Persistent GC root** (`nix-shell-root`) prevents garbage collection
+   - **Fast subsequent runs** - packages cached in `/nix/store/`
+   - All DESCRIPTION dependencies available
+   - No missing package errors in Shiny apps
+   - Reproducible across machines
+
+4. **Files created**:
+   ```
+   project/
+   ├── default.R          # Generates default.nix from DESCRIPTION
+   ├── default.sh         # Enters Nix shell with GC root
+   ├── default.nix        # Generated Nix configuration
+   └── nix-shell-root     # Symlink to /nix/store (GC protection)
+   ```
+
+5. **Testing examples in Nix**:
+   ```bash
+   ./default.sh  # Enter Nix environment
+   R
+   > devtools::load_all()
+   > # Run your examples here - all packages available!
+   ```
+
+**Reference implementations**:
+- Simple version: `millsratio/default.sh`
+- Advanced version: `/Users/johngavin/docs_gh/llm/default.sh`
+
 ## The 9-Step Workflow (MANDATORY)
 
 **NO EXCEPTIONS. NO SHORTCUTS.** See `r-package-workflow` skill for details.

@@ -108,7 +108,7 @@ r_pkgs = c(
   #   "ellmer", "forcats","fs", "ggplot2", "here", "leaflet", "magick", "mcptools",
   #   "purrr", "ragnar","reactable", "readr", "scales", "tidyr", "vitals", "watcher", "weathR",
   # # "shiny", # "rstudio/shiny", # remove "rstudio/" to use shiny from CRAN
-  # # "bslib", # "rstudio/bslib", # remove "rstudio/" to use bslib from CRAN
+  "bslib", # "rstudio/bslib", # remove "rstudio/" to use bslib from CRAN
   # # "posit-dev/querychat/pkg-r",
   # # "posit-dev/shinychat/pkg-r",
   # # "querychat", 
@@ -400,8 +400,8 @@ system_pkgs <- c(
   "bc", # calculator
   "htop", "btop", 
   "typst", 
-  "copilot-cli", 
-  # "gemini-cli",
+  # "copilot-cli", 
+  "gemini-cli",
   #   nix search nixpkgs codex
   # "codex", # overrides $PATH (which git from /opt/homebrew does not permissions inside nix - use npm installed codex)
   "claude-code", # https://blog.stephenturner.us/p/positron-assistant-copilot-chat-agent
