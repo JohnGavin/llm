@@ -232,7 +232,7 @@ For detailed rules → invoke `subagent-delegation` skill
 
 *Shiny:* `shiny-async-patterns`, `shinylive-quarto`, `shinylive-deployment`
 
-*Documentation:* `pkgdown-deployment`, `project-telemetry`, `project-review`
+*Documentation:* `pkgdown-deployment`, `project-telemetry`, `project-review`, `readme-qmd-standard`
 
 *Analysis:* `eda-workflow`, `tidyverse-style`, `analysis-rationale-logging`
 
@@ -288,7 +288,22 @@ R/                    # Package functions ONLY
 _targets.R            # ONLY orchestrates plans from R/tar_plans/
 vignettes/            # Quarto documentation
 plans/                # PLAN_*.md working documents
+README.qmd            # Source for README.md (NEVER edit README.md directly)
 ```
+
+## README Requirements (MANDATORY)
+
+**Every project MUST include Nix installation instructions in README:**
+
+1. **Use README.qmd as source** - Never edit README.md directly
+2. **Include THREE installation methods:**
+   - Standard R (remotes/devtools)
+   - **Nix with default.sh method (CRITICAL)**
+   - rix integration example
+3. **Auto-generate project structure** using fs::dir_tree()
+4. **Create targets plan** for auto-regenerating README on vignette changes
+
+See `readme-qmd-standard` skill for complete template.
 
 ### Targets Pipeline Structure (MANDATORY)
 
