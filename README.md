@@ -45,6 +45,24 @@ The repo also keeps “wiki source” Markdown in `WIKI_CONTENT/` so changes can
 
 <!-- END WIKI_CONTENT_DOCS -->
 
+## Critical Agent Configuration Files
+
+These files define global rules and behaviors for Claude and other AI agents:
+
+- **`AGENTS.md`** - Master guide for R package development workflow
+  - Mandatory 9-step workflow
+  - Nix environment setup
+  - Tool preferences and delegation rules
+
+- **`NIX_RULES.md`** - Critical Nix environment rules
+  - **#1 Rule: NEVER install packages inside Nix**
+  - Explains why this breaks reproducibility
+  - Shows correct workflow for adding packages
+
+- **`.claude/`** - Claude-specific configuration
+  - Skills, agents, hooks, and commands
+  - Symlinked from individual projects to this central location
+
 ## Keeping The Wiki In Sync
 
 The canonical Markdown sources live in `WIKI_CONTENT/` and are periodically synced into `llm.wiki.git` (the GitHub wiki repository).

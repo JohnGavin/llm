@@ -33,6 +33,41 @@ caffeinate -i ~/docs_gh/rix.setup/default.sh
 nix-shell default.nix
 ```
 
+## CRITICAL: Never Install Packages Inside Nix
+
+**This is the #1 mistake that breaks Nix environments!**
+
+### ✗ FORBIDDEN - These Break Everything
+```r
+install.packages("pkg")         # NO! Violates immutability
+devtools::install()             # NO! Breaks reproducibility
+pak::pkg_install()              # NO! Creates hybrid environment
+remotes::install_github()       # NO! Defeats Nix purpose
+BiocManager::install()          # NO! Use default.nix instead
+```
+
+**Why this breaks Nix:**
+- Creates a hybrid environment mixing Nix and user packages
+- Breaks reproducibility - next person won't have these packages
+- Causes version conflicts between Nix and user libraries
+- Defeats the entire purpose of immutable, declarative environments
+
+### ✓ ALLOWED - These Are Safe
+```r
+devtools::load_all()            # YES - loads code temporarily
+devtools::document()            # YES - updates documentation
+devtools::test()                # YES - runs tests
+devtools::check()               # YES - checks package
+library(pkg)                    # YES - loads Nix-installed packages
+```
+
+### Correct Way to Add Packages
+1. Edit DESCRIPTION (add to Imports/Suggests)
+2. Run `default.R` to regenerate `default.nix`
+3. Exit shell: `exit`
+4. Re-enter: `./default.sh`
+5. Package now available from Nix
+
 ## Common Issues and Fixes
 
 ### Issue: "command not found" During Long Session

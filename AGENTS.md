@@ -51,6 +51,24 @@ Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
    └── nix-shell-root     # Symlink to /nix/store (GC protection)
    ```
 
+5. **CRITICAL: Always exclude Nix files from git and R builds**:
+
+   **Add to `.gitignore`:**
+   ```
+   nix-shell-root
+   ```
+
+   **Add to `.Rbuildignore`:**
+   ```
+   ^nix-shell-root$
+   ^default\.R$
+   ^default\.nix$
+   ^default\.sh$
+   ^default-ci\.nix$
+   ```
+
+   Why: nix-shell-root is a symlink to /nix/store that doesn't exist in CI/other machines
+
 5. **Testing examples in Nix**:
    ```bash
    ./default.sh  # Enter Nix environment
@@ -62,6 +80,25 @@ Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
 **Reference implementations**:
 - Simple version: `millsratio/default.sh`
 - Advanced version: `/Users/johngavin/docs_gh/llm/default.sh`
+
+## Critical Nix Rules (MUST READ)
+
+**See `NIX_RULES.md` for detailed explanation**
+
+### NEVER Install Packages Inside Nix
+```r
+# ✗ FORBIDDEN - Breaks Nix immutability
+install.packages()       # NO!
+devtools::install()      # NO!
+pak::pkg_install()       # NO!
+
+# ✓ ALLOWED - Safe operations
+devtools::load_all()     # YES - temporary load
+devtools::document()     # YES - updates docs
+devtools::test()         # YES - runs tests
+```
+
+**To add packages:** Edit DESCRIPTION → Run `default.R` → Exit → Re-enter Nix
 
 ## The 9-Step Workflow (MANDATORY)
 
@@ -76,7 +113,7 @@ Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
 | 4 | Run Checks | `devtools::document()`, `test()`, `check()` |
 | 5 | Push Cachix | `../push_to_cachix.sh` |
 | 6 | Push GitHub | `usethis::pr_push()` |
-| 7 | Wait for CI | Monitor ALL workflows |
+| 7 | Wait for CI | Monitor Nix-based workflows ONLY |
 | 8 | Merge PR | `usethis::pr_merge_main()` |
 | 9 | Log Everything | Include `R/dev/issue/fix_*.R` in PR |
 
@@ -98,6 +135,52 @@ Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
 3. If you can't access logs, ASK the user
 
 **R Version:** Use 4.5.x (current major). Check: `R.version.string`
+
+## Testing Before Commit (MANDATORY)
+
+**NEVER commit without testing:**
+1. Enter project-specific Nix environment (./default.sh or ./default_dev.sh)
+2. Run `tar_validate()` - MUST pass
+3. Run `tar_make(names = "config")` - Test at least one target
+4. Check GitHub CI will trigger (modify .github/workflows if needed)
+5. Include R/dev/issue/fix_*.R script documenting changes
+
+**Common Testing Mistakes:**
+- ❌ Testing in wrong Nix environment (e.g., llm instead of project)
+- ❌ Not running tar_validate() before commit
+- ❌ Assuming CI will run (check workflow triggers!)
+- ✅ Always test in project-specific Nix shell
+
+## GitHub Actions CI Strategy
+
+**CRITICAL: We use Nix-based CI, NOT standard r-lib/actions**
+
+### What We DON'T Use
+- ❌ `usethis::use_github_action("check-standard")` - Tests on Windows/Mac/Linux
+- ❌ Multi-platform matrix builds (Windows, macOS, Ubuntu with different R versions)
+- ❌ r-lib/actions workflows that attempt package installation
+
+### What We DO Use
+- ✅ **Nix-based workflows** that test in reproducible Nix shells
+- ✅ **Single platform** Nix builds that guarantee reproducibility
+- ✅ Custom workflows that respect Nix immutability
+
+### Documented Exceptions
+1. **pkgdown website deployment**:
+   - Build locally with pkgdown::build_site()
+   - Push to gh-pages branch
+   - Why: bslib attempts to install packages in Nix (forbidden)
+
+2. **Documentation-only workflows**:
+   - May use r-lib/actions for non-code tasks
+   - Never for package testing or building
+
+### Codecov Token Setup
+If using test-coverage.yaml, it will fail without token:
+1. Get token from https://codecov.io
+2. Add to repo: Settings → Secrets → Actions → New repository secret
+3. Name: `CODECOV_TOKEN`
+4. Error if missing: "Token required - not valid tokenless upload"
 
 ## Tool Preferences
 
@@ -167,6 +250,22 @@ Load the skill when you encounter these situations:
 | Debugging R errors | Use `r-debugger` agent |
 | Context filling up | `context-control` |
 | Large codebase analysis | `gemini-subagent` |
+| Testing Shiny dashboards | Use `--chrome` option to launch Claude with browser |
+
+## Testing Shiny Apps
+
+**With Chrome Extension:**
+```bash
+# Launch Claude with Chrome extension
+claude --chrome
+
+# Then in R:
+launch_dashboard()  # Can interact with browser
+```
+
+**Without Chrome Extension:**
+- Only verify functions exist
+- Don't actually launch (will hang waiting for browser)
 
 ## Custom Commands
 
@@ -176,15 +275,54 @@ Load the skill when you encounter these situations:
 - `/pr-status` - Check PR and CI status
 - `/cleanup` - Review and simplify work
 
-## File Structure
+## File Structure (CRITICAL)
 
 ```
-R/              # Package code
-R/dev/issues/   # Fix scripts (include in PRs)
-R/tar_plans/    # Targets plans
-vignettes/      # Quarto files
-plans/          # PLAN_*.md working documents
+R/                    # Package functions ONLY
+├── *.R               # Analysis functions
+├── dev/              # Development tools
+│   └── issues/       # Fix scripts (MUST include in PRs)
+└── tar_plans/        # Modular pipeline components (MANDATORY)
+    └── plan_*.R      # Each returns list of tar_target()
+
+_targets.R            # ONLY orchestrates plans from R/tar_plans/
+vignettes/            # Quarto documentation
+plans/                # PLAN_*.md working documents
 ```
+
+### Targets Pipeline Structure (MANDATORY)
+
+**NEVER place pipeline definitions directly in _targets.R**
+
+**Correct Structure:**
+1. **R/tar_plans/plan_*.R**: Modular pipeline components
+   - Each file defines one logical group (e.g., plan_data_acquisition.R)
+   - Must return a list of tar_target() objects
+   - Example: plan_data_acquisition, plan_quality_control
+
+2. **_targets.R**: Orchestrator ONLY
+   ```r
+   # Set global options
+   tar_option_set(...)
+
+   # Source functions (exclude R/dev/ and R/tar_plans/)
+   for (file in list.files("R", pattern = "\\.R$", full.names = TRUE)) {
+     if (!grepl("R/(dev|tar_plans)/", file)) source(file)
+   }
+
+   # Source and combine plans
+   plan_files <- list.files("R/tar_plans", pattern = "^plan_.*\\.R$", full.names = TRUE)
+   for (plan_file in plan_files) source(plan_file)
+
+   # Combine all plans
+   c(plan_data_acquisition, plan_quality_control, ...)
+   ```
+
+**Why This Matters:**
+- **Modularity**: Plans can be reused across projects
+- **Testing**: Individual plans can be tested in isolation
+- **Collaboration**: Multiple developers can work on different plans
+- **Reproducibility**: Clear separation of concerns
 
 ## btw MCP Tool Configuration
 
@@ -201,12 +339,28 @@ plans/          # PLAN_*.md working documents
 | ✓ | session | platform info, package versions |
 
 **CRITICAL DELEGATION RULE FOR BTW TOOLS:**
-- **NEVER call btw_tool_run_r directly for:**
-  - devtools::test(), check(), build() → Use `verbose-runner` agent
-  - Any operation expecting >10 lines output → Use `verbose-runner` agent
-  - Debugging test failures → Use `r-debugger` agent
-- **NEVER call btw_tool_pkg_* directly** → Always use appropriate agent
-- **Exception:** Simple one-liners, checking values, quick calculations
+
+### ⚠️ btw_tool_run_r HAS NO TIMEOUT - IT WILL HANG FOREVER!
+
+**NEVER call btw_tool_run_r directly for:**
+- devtools::test(), check(), build() → Use `verbose-runner` agent
+- Any operation expecting >10 lines output → Use `verbose-runner` agent
+- Debugging test failures → Use `r-debugger` agent
+- shiny::runApp() or launch_dashboard() → WILL HANG (waits for browser)
+- Any function that might wait for user input → Use agent with timeout
+
+**NEVER call btw_tool_pkg_* directly** → Always use appropriate agent
+
+**ALWAYS RUN SUBAGENTS IN PARALLEL** when tasks are independent:
+```
+# GOOD - Parallel execution
+Task(test), Task(check), Task(document) in one message
+
+# BAD - Sequential execution
+Task(test) then wait, then Task(check) then wait...
+```
+
+**Exception:** Simple one-liners, checking values, quick calculations
 
 | Excluded | Why | Alternative |
 |----------|-----|-------------|

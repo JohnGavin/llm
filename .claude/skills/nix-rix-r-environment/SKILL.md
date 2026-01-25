@@ -81,8 +81,35 @@ echo $IN_NIX_SHELL
 
 **Additional Verification (from R):**
 - Check R version and package availability
-- Don't install packages locally (use nix)
+- **NEVER install packages inside Nix** (no install.packages, devtools::install, pak::pkg_install)
 - Source from nix store, not user library
+
+### CRITICAL: Package Installation Rules
+
+**✗ ABSOLUTELY FORBIDDEN inside Nix shell:**
+```r
+install.packages("pkg")         # NO! Violates immutability
+devtools::install()             # NO! Breaks reproducibility
+pak::pkg_install()              # NO! Creates hybrid environment
+remotes::install_github()       # NO! Defeats Nix purpose
+BiocManager::install()          # NO! Use default.nix instead
+```
+
+**✓ ALLOWED inside Nix shell:**
+```r
+devtools::load_all()            # YES - loads code temporarily
+devtools::document()            # YES - updates documentation
+devtools::test()                # YES - runs tests
+devtools::check()               # YES - checks package
+library(pkg)                    # YES - loads Nix-installed packages
+```
+
+**To add a package to your environment:**
+1. Edit DESCRIPTION file (add to Imports/Suggests)
+2. Run `default.R` to regenerate `default.nix`
+3. Exit Nix shell: `exit`
+4. Re-enter: `./default.sh`
+5. Package is now available from Nix
 
 ## How It Works
 
