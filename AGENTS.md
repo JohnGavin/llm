@@ -425,6 +425,84 @@ Task(test) then wait, then Task(check) then wait...
 - Add `'github'` if gh::gh() fails
 - Add `'cran'` when searching for new packages
 
+## Shinylive/WebR Critical Rules (MUST READ)
+
+### ⚠️ THE MUNSELL PROBLEM - RECURRING ISSUE
+
+**CRITICAL:** The ggplot2/munsell error in Shinylive/WebR is a **PERSISTENT RECURRING ISSUE** that keeps coming back!
+
+**The Error:**
+```
+preload error: there is no package called 'munsell'
+preload error: Error: package 'ggplot2' could not be loaded
+```
+
+### ❌ INCORRECT Documentation Claims
+
+**FALSE:** "Simple library(ggplot2) works with Shinylive 0.8.0+"
+**FALSE:** "Shinylive automatically bundles all dependencies"
+**REALITY:** As of Jan 2025, ggplot2 STILL FAILS in WebR due to missing munsell
+
+### ✅ ACTUAL Working Solutions
+
+#### Option 1: Don't Use ggplot2 (RECOMMENDED)
+```r
+# Use plotly instead - it actually works
+library(plotly)
+plot_ly(data, x = ~x, y = ~y, type = 'scatter')
+```
+
+#### Option 2: Explicitly Install Dependencies (UNRELIABLE)
+```r
+# May work, but fragile and slow
+webr::install(c("munsell", "scales", "colorspace", "farver"),
+              repos = "https://repo.r-wasm.org")
+library(ggplot2)
+```
+
+#### Option 3: Wait for WebR to Fix It (SOMEDAY)
+Track issue at: https://github.com/r-wasm/webr/issues
+
+### 📋 Shinylive Deployment Checklist
+
+**MANDATORY before EVERY deployment:**
+
+1. **Build locally**: `quarto render dashboard_shinylive.qmd`
+2. **Check service worker**: Verify `resources: - shinylive-sw.js` in YAML
+3. **Open in browser**: Not just curl - ACTUAL browser
+4. **Check F12 console** for:
+   - ❌ "munsell" errors
+   - ❌ CORS errors
+   - ❌ 404 on .wasm files
+   - ✅ "Service Worker registered"
+5. **Wait 60 seconds**: Initial load is SLOW
+6. **Test ALL tabs**: Each module must render
+
+### 🚫 Common Shinylive Mistakes to Avoid
+
+1. **Assuming documentation is correct** - Test everything
+2. **Deploying without browser testing** - Console errors only show in browser
+3. **Using GitHub Releases for WASM** - No CORS headers, use GitHub Pages
+4. **Complex webr::mount() patterns** - Gets stripped during build
+5. **Trusting "it worked before"** - WebR packages change frequently
+
+### 🔧 When Shinylive Fails
+
+If dashboard shows munsell error after deployment:
+1. Remove ggplot2 completely
+2. Use plotly for all visualizations
+3. Test in browser before committing
+4. Don't believe documentation about "automatic bundling"
+
+### 📝 Testing Command
+
+```bash
+# After building, ALWAYS test:
+open dashboard_shinylive.html
+# Press F12, check Console tab
+# Look for "munsell" or "ggplot2" errors
+```
+
 ## Package Context for LLMs (pkgctx)
 
 Generate compact API documentation for R/Python packages to provide Claude with function signatures and documentation. **Reduces token usage by ~67%** while preserving essential API information.
