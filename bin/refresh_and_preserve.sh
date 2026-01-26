@@ -47,6 +47,35 @@ error_log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S'): ERROR: $1" | tee -a "$ERROR_LOG" >&2
 }
 
+# Log rotation function
+rotate_logs() {
+    local log_file=$1
+    local max_size=5242880  # 5MB in bytes
+    local keep_count=3      # Keep 3 old versions
+
+    if [ -f "$log_file" ]; then
+        local size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0)
+
+        if [ "$size" -gt "$max_size" ]; then
+            # Rotate existing logs
+            for i in $(seq $((keep_count-1)) -1 1); do
+                if [ -f "${log_file}.${i}" ]; then
+                    mv "${log_file}.${i}" "${log_file}.$((i+1))"
+                fi
+            done
+
+            # Move current log to .1
+            mv "$log_file" "${log_file}.1"
+            touch "$log_file"
+            log "Log rotated (was $((size/1024/1024))MB)"
+        fi
+    fi
+}
+
+# Rotate logs at start if needed
+rotate_logs "$LOG_FILE"
+rotate_logs "$ERROR_LOG"
+
 log "===== Starting history-preserving refresh ====="
 
 cd "$LLM_REPO"

@@ -3,12 +3,12 @@
     "-Users-johngavin-docs-gh-llm": [
       {
         "date": "2026-01-26",
-        "inputTokens": 570,
-        "outputTokens": 114,
-        "cacheCreationTokens": 124091,
-        "cacheReadTokens": 2025697,
-        "totalTokens": 2150472,
-        "totalCost": 5.2799,
+        "inputTokens": 1229,
+        "outputTokens": 268,
+        "cacheCreationTokens": 265944,
+        "cacheReadTokens": 5935085,
+        "totalTokens": 6202526,
+        "totalCost": 13.7227,
         "dataSource": "ccusage"
       },
       {
@@ -125,12 +125,12 @@
     "-Users-johngavin-docs-gh-proj-data-coMMpass": [
       {
         "date": "2026-01-26",
-        "inputTokens": 6318,
-        "outputTokens": 89,
-        "cacheCreationTokens": 176612,
-        "cacheReadTokens": 1722912,
-        "totalTokens": 1905931,
-        "totalCost": 3.8784,
+        "inputTokens": 11443,
+        "outputTokens": 159,
+        "cacheCreationTokens": 371545,
+        "cacheReadTokens": 3207074,
+        "totalTokens": 3590221,
+        "totalCost": 7.6589,
         "dataSource": "ccusage"
       },
       {
@@ -157,12 +157,12 @@
     "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio": [
       {
         "date": "2026-01-26",
-        "inputTokens": 1549,
-        "outputTokens": 193,
-        "cacheCreationTokens": 145685,
-        "cacheReadTokens": 4198844,
-        "totalTokens": 4346271,
-        "totalCost": 7.9,
+        "inputTokens": 2295,
+        "outputTokens": 323,
+        "cacheCreationTokens": 457857,
+        "cacheReadTokens": 9332141,
+        "totalTokens": 9792616,
+        "totalCost": 20.6922,
         "dataSource": "ccusage"
       },
       {
@@ -416,14 +416,14 @@
     ]
   },
   "totals": {
-    "inputTokens": 239832,
-    "outputTokens": 43510,
-    "cacheCreationTokens": 48061732,
-    "cacheReadTokens": 654231898,
-    "totalTokens": 702576972,
-    "totalCost": 770.0702
+    "inputTokens": 246362,
+    "outputTokens": 43864,
+    "cacheCreationTokens": 48710690,
+    "cacheReadTokens": 664758745,
+    "totalTokens": 713759661,
+    "totalCost": 795.0856
   },
-  "generatedAt": "2026-01-26 10:01:55",
+  "generatedAt": "2026-01-26 10:34:50",
   "dataSource": "preserved_history",
   "recordCount": 40,
   "dateRange": {
