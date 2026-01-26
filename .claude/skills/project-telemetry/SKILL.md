@@ -24,6 +24,48 @@ Use this skill when:
 - Include timestamps and log levels
 - Make logs reproducible and parseable
 
+### Log Rotation for Automation
+
+Implement automatic log rotation to prevent unbounded growth in long-running processes:
+
+- **Size limit**: Rotate logs at 5MB to keep them manageable
+- **Version retention**: Keep 3 old versions (.1, .2, .3)
+- **Automatic cleanup**: Oldest logs are automatically removed
+- **Use cases**: Essential for launchd jobs, cron tasks, and automated scripts
+
+**Implementation for shell scripts:**
+
+```bash
+# Log rotation function
+rotate_logs() {
+    local log_file=$1
+    local max_size=5242880  # 5MB in bytes
+    local keep_count=3      # Keep 3 old versions
+
+    if [ -f "$log_file" ]; then
+        local size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0)
+
+        if [ "$size" -gt "$max_size" ]; then
+            # Rotate existing logs
+            for i in $(seq $((keep_count-1)) -1 1); do
+                if [ -f "${log_file}.${i}" ]; then
+                    mv "${log_file}.${i}" "${log_file}.$((i+1))"
+                fi
+            done
+
+            # Move current log to .1
+            mv "$log_file" "${log_file}.1"
+            touch "$log_file"
+            echo "$(date '+%Y-%m-%d %H:%M:%S'): Log rotated (was $((size/1024/1024))MB)" >> "$log_file"
+        fi
+    fi
+}
+
+# Call at script start
+rotate_logs "$LOG_FILE"
+rotate_logs "$ERROR_LOG"
+```
+
 ### Telemetry as Documentation
 
 - Create vignette showing project health
@@ -75,6 +117,44 @@ dir_create("R/setup")
 dir_create("R/log")
 
 log_info("Logging infrastructure initialized")
+```
+
+**Implement log rotation in R:**
+
+```r
+# R/utils/log_rotation.R
+rotate_log <- function(log_file, max_size_mb = 5, keep_count = 3) {
+  if (!file.exists(log_file)) return(invisible())
+
+  # Check file size
+  size_mb <- file.size(log_file) / (1024 * 1024)
+
+  if (size_mb > max_size_mb) {
+    # Rotate existing logs
+    for (i in seq(keep_count - 1, 1, -1)) {
+      old_name <- paste0(log_file, ".", i)
+      new_name <- paste0(log_file, ".", i + 1)
+      if (file.exists(old_name)) {
+        file.rename(old_name, new_name)
+      }
+    }
+
+    # Move current log to .1
+    file.rename(log_file, paste0(log_file, ".1"))
+
+    # Create new empty log file
+    file.create(log_file)
+
+    # Log the rotation
+    logger::log_info("Log rotated (was {round(size_mb, 1)}MB)",
+                     namespace = "log_rotation")
+  }
+}
+
+# Use before heavy logging operations
+rotate_log("inst/logs/package.log")
+rotate_log("inst/logs/dev_session.log")
+rotate_log("inst/logs/git_gh.log")
 ```
 
 ### 2. Use Logger Throughout Package

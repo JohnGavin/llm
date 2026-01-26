@@ -259,6 +259,66 @@ Hooks complement the 9-step workflow:
 
 For complete workflow, see: `.claude/skills/r-package-workflow/SKILL.md`
 
+## Log Management for Hooks
+
+Since hooks run frequently (on every file edit/write), they can generate substantial logs. Implement log rotation to prevent unbounded growth:
+
+### Hook Log Rotation Script
+
+Create a wrapper script for hooks that includes rotation:
+
+```bash
+#!/bin/bash
+# scripts/hook-wrapper.sh
+
+LOG_FILE="inst/logs/hooks.log"
+ERROR_LOG="inst/logs/hooks_error.log"
+
+# Log rotation function
+rotate_logs() {
+    local log_file=$1
+    local max_size=5242880  # 5MB
+    local keep_count=3
+
+    if [ -f "$log_file" ] && [ $(stat -f%z "$log_file" 2>/dev/null || echo 0) -gt $max_size ]; then
+        for i in $(seq 2 -1 1); do
+            [ -f "${log_file}.${i}" ] && mv "${log_file}.${i}" "${log_file}.$((i+1))"
+        done
+        mv "$log_file" "${log_file}.1"
+        touch "$log_file"
+    fi
+}
+
+# Rotate logs before execution
+rotate_logs "$LOG_FILE"
+rotate_logs "$ERROR_LOG"
+
+# Execute actual hook command
+echo "$(date '+%Y-%m-%d %H:%M:%S'): Running hook: $@" >> "$LOG_FILE"
+"$@" >> "$LOG_FILE" 2>> "$ERROR_LOG"
+```
+
+### Configure Hooks to Use Wrapper
+
+```json
+{
+  "hooks": {
+    "postToolExecution": [
+      {
+        "matcher": "Edit|Write",
+        "command": "./scripts/hook-wrapper.sh styler::style_file('$FILE_PATH')"
+      }
+    ]
+  }
+}
+```
+
+This ensures:
+- Logs stay under 5MB each
+- Only 3 old versions are kept
+- Disk space is preserved
+- Hook execution history is maintained
+
 ## Limitations
 
 - Hooks run synchronously (block Claude until complete)
