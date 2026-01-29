@@ -346,19 +346,73 @@ if (!has_data) {
     lines <- lines[!grepl("Setup complete|Terminal wrapper|RSTUDIO_TERM_EXEC|unpacking", lines)]
     # Strip ANSI codes (CSI sequences)
     lines <- gsub("\033\\[[0-9;]*[a-zA-Z]", "", lines)
-    # Remove empty leading/trailing lines
-    content <- paste(lines, collapse = "\n")
-    content <- trimws(content)
+    full_text <- paste(lines, collapse = "\n")
     
-    if (nchar(content) > 0) {
+    # Extract Data using Regex
+    extract <- function(pattern, text) {
+      m <- regexec(pattern, text)
+      if (m[[1]][1] == -1) return(NULL)
+      regmatches(text, m)[[1]][2]
+    }
+    
+    cost_val <- extract("Total Cost:\\s*\\$([0-9,.]+)", full_text)
+    tokens_val <- extract("Total Tokens:\\s*([0-9,]+)", full_text)
+    entries_val <- extract("Entries:\\s*([0-9,]+)", full_text)
+    period_val <- extract("Daily Usage Summary\\s*-\\s*([0-9-]+\\s*to\\s*[0-9-]+)", full_text)
+    
+    if (!is.null(cost_val) && !is.null(tokens_val)) {
+      # Valid parse - Use Dashboard Style
       email_body <- gsub("</div>\n  $", "", email_body) # Remove closing div to append inside
       email_body <- paste0(email_body, sprintf('
-      <h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor)</h3>
-      <div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
-        <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
+      <div style="background-color: %s; border: 1px solid %s; padding: 15px; border-radius: 5px; font-family: sans-serif; margin-top: 20px;">
+        <h3 style="color: %s; margin: 0 0 10px 0;">System Monitor Check (cmonitor)</h3>
+        
+        <div style="display: flex; gap: 20px; margin-bottom: 15px;">
+          <div>
+            <div style="color: %s; font-size: 11px;">TOTAL COST</div>
+            <div style="color: %s; font-size: 16px; font-weight: bold;">$%s</div>
+          </div>
+          <div>
+            <div style="color: %s; font-size: 11px;">TOTAL TOKENS</div>
+            <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
+          </div>
+          <div>
+            <div style="color: %s; font-size: 11px;">ENTRIES</div>
+            <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
+          </div>
+        </div>
+
+        <div style="color: %s; font-size: 11px; border-top: 1px solid %s; padding-top: 8px;">
+          Reporting Period: %s<br>
+          <em>Data source: Local cmonitor cache</em>
+        </div>
       </div>
       </div>
-      ', accent_orange, dark_card, dark_border, dark_text, content))
+      ', 
+      dark_card, dark_border, accent_orange, 
+      dark_muted, accent_green, cost_val,
+      dark_muted, accent_blue, tokens_val,
+      dark_muted, dark_text, ifelse(is.null(entries_val), "N/A", entries_val),
+      dark_muted, dark_border, ifelse(is.null(period_val), "Unknown", period_val)))
+      
+    } else {
+      # Fallback - Dump cleaned text but strip box characters
+      # Remove box drawing characters
+      clean_text <- gsub("[╭╮╰╯│─┏┓┗┛┫┣┳┻╋═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬]", "", full_text)
+      # Compress multiple empty lines
+      clean_text <- gsub("\n\\s*\n", "\n", clean_text)
+      clean_text <- trimws(clean_text)
+      
+      if (nchar(clean_text) > 0) {
+        email_body <- gsub("</div>\n  $", "", email_body)
+        email_body <- paste0(email_body, sprintf('
+        <h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor) - Raw</h3>
+        <div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
+          <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
+        </div>
+        </div>
+        ', accent_orange, dark_card, dark_border, dark_text, clean_text))
+      }
     }
   }
 }
