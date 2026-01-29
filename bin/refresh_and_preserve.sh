@@ -301,26 +301,33 @@ else
     error_log "Preservation script had issues (exit code: $?)"
 fi
 
-# 3. Capture cmonitor data if available
-if command -v cmonitor &> /dev/null; then
-    log "Capturing cmonitor data..."
+# 3. Capture cmonitor data via nix-shell
+log "Capturing cmonitor data..."
 
-    # Get cmonitor data in different views
-    cmonitor --view daily 2>&1 | head -100 > "$LLM_REPO/inst/extdata/cmonitor_daily.txt" || true
-    cmonitor --view monthly 2>&1 | head -50 > "$LLM_REPO/inst/extdata/cmonitor_monthly.txt" || true
+# Run cmonitor inside nix-shell
+if nix-shell "$LLM_REPO/default.nix" --attr shell --run "timeout 60 cmonitor --view daily" > "$LLM_REPO/inst/extdata/cmonitor_daily.txt" 2>&1; then
+    log "✓ cmonitor daily data captured"
+    
+    # Capture monthly data
+    nix-shell "$LLM_REPO/default.nix" --attr shell --run "timeout 60 cmonitor --view monthly" > "$LLM_REPO/inst/extdata/cmonitor_monthly.txt" 2>&1 || true
 
     # Extract total cost from cmonitor
-    CMONITOR_COST=$(cmonitor --view daily 2>&1 | grep "Total Cost:" | sed 's/.*\$\([0-9.,]*\).*/\1/' | head -1)
+    CMONITOR_COST=$(grep "Total Cost:" "$LLM_REPO/inst/extdata/cmonitor_daily.txt" | sed 's/.*\$\([0-9.,]*\).*/\1/' | head -1)
     if [ ! -z "$CMONITOR_COST" ]; then
         log "cmonitor reports total cost: \$$CMONITOR_COST"
     fi
 else
-    log "⚠ cmonitor not available (expected on macOS)"
+    log "⚠ cmonitor failed or not available in nix-shell"
+    # Ensure file exists so git add doesn't fail
+    touch "$LLM_REPO/inst/extdata/cmonitor_daily.txt"
 fi
 
 # 4. ALWAYS stage and commit changes (don't check if files changed)
 log "Staging changes..."
-git add inst/extdata/*.json inst/extdata/*.txt inst/extdata/*.duckdb* 2>&1 | tee -a "$LOG_FILE" || true
+# Split git add to handle missing file types gracefully
+git add inst/extdata/*.json 2>&1 | tee -a "$LOG_FILE" || true
+git add inst/extdata/*.txt 2>&1 | tee -a "$LOG_FILE" || true
+git add inst/extdata/*.duckdb* 2>&1 | tee -a "$LOG_FILE" || true
 
 # Check if there are staged changes
 if git diff --staged --quiet; then
