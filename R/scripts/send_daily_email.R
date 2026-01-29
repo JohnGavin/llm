@@ -336,6 +336,31 @@ if (!has_data) {
   </p>
   </div>
   ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text))
+  
+  # Add System Monitor (cmonitor) section if data exists
+  cmonitor_path <- "inst/extdata/cmonitor_daily.txt"
+  if (file.exists(cmonitor_path)) {
+    # Read and clean lines
+    lines <- readLines(cmonitor_path, warn = FALSE)
+    # Filter out Nix setup noise
+    lines <- lines[!grepl("Setup complete|Terminal wrapper|RSTUDIO_TERM_EXEC|unpacking", lines)]
+    # Strip ANSI codes (CSI sequences)
+    lines <- gsub("\033\\[[0-9;]*[a-zA-Z]", "", lines)
+    # Remove empty leading/trailing lines
+    content <- paste(lines, collapse = "\n")
+    content <- trimws(content)
+    
+    if (nchar(content) > 0) {
+      email_body <- gsub("</div>\n  $", "", email_body) # Remove closing div to append inside
+      email_body <- paste0(email_body, sprintf('
+      <h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor)</h3>
+      <div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
+        <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
+      </div>
+      </div>
+      ', accent_orange, dark_card, dark_border, dark_text, content))
+    }
+  }
 }
 
 # Create and send email
