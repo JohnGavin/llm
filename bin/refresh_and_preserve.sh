@@ -305,11 +305,11 @@ fi
 log "Capturing cmonitor data..."
 
 # Run cmonitor inside nix-shell
-if nix-shell "$LLM_REPO/default.nix" --attr shell --run "timeout 60 cmonitor --view daily" > "$LLM_REPO/inst/extdata/cmonitor_daily.txt" 2>&1; then
+if nix-shell "$LLM_REPO/default.nix" --attr shell --run "timeout 60 cmonitor --view daily" > "$LLM_REPO/inst/extdata/cmonitor_daily.txt" 2>> "$LOG_FILE"; then
     log "✓ cmonitor daily data captured"
     
     # Capture monthly data
-    nix-shell "$LLM_REPO/default.nix" --attr shell --run "timeout 60 cmonitor --view monthly" > "$LLM_REPO/inst/extdata/cmonitor_monthly.txt" 2>&1 || true
+    nix-shell "$LLM_REPO/default.nix" --attr shell --run "timeout 60 cmonitor --view monthly" > "$LLM_REPO/inst/extdata/cmonitor_monthly.txt" 2>> "$LOG_FILE" || true
 
     # Extract total cost from cmonitor
     CMONITOR_COST=$(grep "Total Cost:" "$LLM_REPO/inst/extdata/cmonitor_daily.txt" | sed 's/.*\$\([0-9.,]*\).*/\1/' | head -1)
