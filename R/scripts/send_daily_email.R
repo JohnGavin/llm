@@ -63,17 +63,23 @@ session_data <- if (!is.null(session_raw$sessions)) {
 
 today <- Sys.Date()
 
+# Helper for safe date conversion
+safe_date <- function(x) {
+  if (is.null(x) || length(x) == 0 || all(is.na(x))) return(NA)
+  tryCatch(as.Date(x), error = function(e) NA)
+}
+
 # Helper for formatting
 dollar <- function(x) {
-  if (is.na(x) || is.null(x)) return("-")
+  if (is.na(x) || is.null(x) || is.nan(x)) return("-")
   sprintf("$%.2f", x)
 }
 comma <- function(x) {
-  if (is.na(x) || is.null(x)) return("-")
+  if (is.na(x) || is.null(x) || is.nan(x)) return("-")
   format(x, big.mark = ",", scientific = FALSE)
 }
 millions <- function(x) {
-  if (is.na(x) || is.null(x)) return("-")
+  if (is.na(x) || is.null(x) || is.nan(x)) return("-")
   sprintf("%.1fM", x / 1e6)
 }
 format_hhmm <- function(mins) sprintf("%02d:%02d", as.integer(mins %/% 60), as.integer(mins %% 60))
@@ -110,17 +116,19 @@ if (!has_data) {
 ', dark_bg, dark_text, accent_orange, today, dark_card)
 } else {
   # Calculate weekly stats (1-4 weeks back)
-  calc_weekly <- function(weeks_back) {
-    if (is.null(daily_data)) return(list(cost = 0, tokens = 0))
-    end_date <- today - (weeks_back - 1) * 7
-    start_date <- end_date - 6
-    weekly <- daily_data |>
-      filter(as.Date(.data$date) >= start_date, as.Date(.data$date) <= end_date)
-    list(
-      cost = sum(weekly$totalCost, na.rm = TRUE),
-      tokens = sum(weekly$totalTokens, na.rm = TRUE)
-    )
-  }
+    calc_weekly <- function(weeks_back) {
+      if (is.null(daily_data) || nrow(daily_data) == 0 || !"date" %in% names(daily_data)) {
+        return(list(cost = 0, tokens = 0))
+      }
+      end_date <- today - (weeks_back - 1) * 7
+      start_date <- end_date - 6
+      weekly <- daily_data |>
+        filter(safe_date(.data$date) >= start_date, safe_date(.data$date) <= end_date)
+      list(
+        cost = sum(weekly$totalCost, na.rm = TRUE),
+        tokens = sum(weekly$totalTokens, na.rm = TRUE)
+      )
+    }
 
   week1 <- calc_weekly(1)
   week2 <- calc_weekly(2)
@@ -132,9 +140,9 @@ if (!has_data) {
   total_tokens <- if (!is.null(daily_data)) sum(daily_data$totalTokens, na.rm = TRUE) else 0
   n_sessions <- if (!is.null(session_data)) nrow(session_data) else 0
   
-  cc_start <- if (!is.null(daily_data)) min(as.Date(daily_data$date), na.rm=TRUE) else NA
-  cc_end <- if (!is.null(daily_data)) max(as.Date(daily_data$date), na.rm=TRUE) else NA
-  cc_days <- if (!is.na(cc_start)) as.numeric(cc_end - cc_start) + 1 else 0
+  cc_start <- if (!is.null(daily_data) && nrow(daily_data) > 0) min(safe_date(daily_data$date), na.rm=TRUE) else NA
+  cc_end <- if (!is.null(daily_data) && nrow(daily_data) > 0) max(safe_date(daily_data$date), na.rm=TRUE) else NA
+  cc_days <- if (!is.na(cc_start) && !is.na(cc_end)) as.numeric(cc_end - cc_start) + 1 else 0
   cc_entries <- if (!is.null(blocks_raw$blocks)) nrow(blocks_raw$blocks) else NA
   
   cc_cost_day <- if (cc_days > 0) total_cost / cc_days else 0
@@ -165,15 +173,20 @@ if (!has_data) {
     if (!is.null(cost_val)) cm_cost <- as.numeric(gsub("[$,]", "", cost_val))
     if (!is.null(tokens_val)) cm_tokens <- as.numeric(gsub("[,]", "", tokens_val))
     if (!is.null(entries_val)) cm_entries <- as.numeric(gsub("[,]", "", entries_val))
-    if (!is.null(period_val)) {
-       dates <- strsplit(period_val, " to ")[[1]]
-       cm_start <- as.Date(dates[1]); cm_end <- as.Date(dates[2])
-       cm_days <- as.numeric(cm_end - cm_start) + 1
-       if (cm_days > 0) {
-           cm_cost_day <- cm_cost / cm_days
-           cm_tok_day <- cm_tokens / cm_days
-       }
-    }
+      if (!is.null(period_val)) {
+        dates <- strsplit(period_val, " to ")[[1]]
+        if (length(dates) >= 2) {
+          cm_start <- safe_date(dates[1])
+          cm_end <- safe_date(dates[2])
+          if (!is.na(cm_start) && !is.na(cm_end)) {
+            cm_days <- as.numeric(cm_end - cm_start) + 1
+            if (cm_days > 0) {
+              cm_cost_day <- cm_cost / cm_days
+              cm_tok_day <- cm_tokens / cm_days
+            }
+          }
+        }
+      }
   }
 
   # --- 3. Calculate Gemini stats ---
@@ -194,19 +207,21 @@ if (!has_data) {
       FROM daily_usage
     ")
     
-    if (!is.null(gm_stats$cost)) {
-      gm_cost <- gm_stats$cost
-      gm_tokens <- gm_stats$tokens
-      gm_entries <- gm_stats$entries
-      gm_start <- gm_stats$start_date
-      gm_end <- gm_stats$end_date
-      gm_days <- as.numeric(as.Date(gm_end) - as.Date(gm_start)) + 1
-      if (gm_days > 0) {
-        gm_cost_day <- gm_cost / gm_days
-        gm_tok_day <- gm_tokens / gm_days
-      }
-    }
-    
+          if (!is.null(gm_stats$cost)) {
+            gm_cost <- gm_stats$cost
+            gm_tokens <- gm_stats$tokens
+            gm_entries <- gm_stats$entries
+            gm_start <- safe_date(gm_stats$start_date)
+            gm_end <- safe_date(gm_stats$end_date)
+            
+            if (!is.na(gm_start) && !is.na(gm_end)) {
+              gm_days <- as.numeric(gm_end - gm_start) + 1
+              if (gm_days > 0) {
+                gm_cost_day <- gm_cost / gm_days
+                gm_tok_day <- gm_tokens / gm_days
+              }
+            }
+          }    
     # Get recent Gemini sessions
     gm_sessions <- dbGetQuery(gm_con, "
       SELECT sessionId, total_cost, total_tokens, start_time 
@@ -497,8 +512,7 @@ if (!has_data) {
       last_active <- top_sessions$lastActivity[i]
       # Clean up session name: remove leading dashes and path separators, show last 2 components
       session_name <- top_sessions$sessionId[i]
-      session_parts <- strsplit(gsub("^-
-", "", session_name), "-")[[1]]
+      session_parts <- strsplit(gsub("^-", "", session_name), "-")[[1]]
       if (length(session_parts) > 2) {
         session_name <- paste(tail(session_parts, 2), collapse = "/")
       }
