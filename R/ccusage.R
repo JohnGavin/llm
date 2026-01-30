@@ -345,24 +345,14 @@ show_usage_progress <- function(current, limit, label = "Usage",
   }
 
   # Validate inputs
-  if (is.null(current)) {
-    stop("current is NULL or missing - current value is required")
-  }
-  if (!is.numeric(current)) {
-    stop("current must be numeric")
-  }
-  if (current < 0) {
-    stop("current must not be negative")
-  }
-
-  if (is.null(limit)) {
-    stop("limit is NULL or missing - limit value is required")
-  }
-  if (!is.numeric(limit)) {
-    stop("limit must be numeric")
-  }
-  if (limit <= 0) {
-    stop("limit must be greater than zero")
+  checkmate::assert_number(current, lower = 0, finite = TRUE)
+  checkmate::assert_number(limit, lower = 0.00001, finite = TRUE) # limit must be > 0
+  checkmate::assert_string(label)
+  checkmate::assert_flag(show_tokens)
+  
+  if (show_tokens) {
+    checkmate::assert_number(tokens_current, lower = 0, finite = TRUE, null.ok = TRUE)
+    checkmate::assert_number(tokens_limit, lower = 1, finite = TRUE, null.ok = TRUE)
   }
 
   # Calculate percentage
@@ -454,6 +444,11 @@ show_usage_progress <- function(current, limit, label = "Usage",
 show_daily_progress <- function(daily_limit = NULL,
                                  token_limit = NULL,
                                  cache_dir = NULL) {
+  # Validate inputs
+  checkmate::assert_number(daily_limit, lower = 0, null.ok = TRUE)
+  checkmate::assert_number(token_limit, lower = 0, null.ok = TRUE)
+  if (!is.null(cache_dir)) checkmate::assert_directory_exists(cache_dir)
+
   # Get limits from environment or defaults
   if (is.null(daily_limit)) {
     daily_limit <- as.numeric(Sys.getenv("LLM_DAILY_LIMIT", "30"))
@@ -542,6 +537,10 @@ show_daily_progress <- function(daily_limit = NULL,
 #' @keywords internal
 show_weekly_progress <- function(weekly_limit = NULL,
                                   cache_dir = NULL) {
+  # Validate inputs
+  checkmate::assert_number(weekly_limit, lower = 0, null.ok = TRUE)
+  if (!is.null(cache_dir)) checkmate::assert_directory_exists(cache_dir)
+
   # Get limit from environment or default
   if (is.null(weekly_limit)) {
     weekly_limit <- as.numeric(Sys.getenv("LLM_WEEKLY_LIMIT", "120"))
@@ -638,6 +637,13 @@ show_usage_dashboard <- function(daily_limit = NULL,
                                   token_limit = NULL,
                                   cache_dir = NULL,
                                   show_max5 = TRUE) {
+  # Validate inputs
+  checkmate::assert_number(daily_limit, lower = 0, null.ok = TRUE)
+  checkmate::assert_number(weekly_limit, lower = 0, null.ok = TRUE)
+  checkmate::assert_number(token_limit, lower = 0, null.ok = TRUE)
+  if (!is.null(cache_dir)) checkmate::assert_directory_exists(cache_dir)
+  checkmate::assert_flag(show_max5)
+
   cli::cli_h1("LLM Usage Dashboard")
 
   # Show daily progress
@@ -715,13 +721,9 @@ show_usage_dashboard <- function(daily_limit = NULL,
 #' @keywords internal
 get_current_block_window <- function(current_time = Sys.time()) {
   # Validate input
-  if (is.null(current_time)) {
-    stop("current_time is NULL or missing - current time is required")
-  }
-
-  # Check if numeric (which POSIXct would accept as seconds since epoch)
-  if (is.numeric(current_time)) {
-    stop("current_time must be a POSIXct or date/time string, not numeric")
+  # checkmate doesn't have a direct assert_posixct but we can check class or use testDate
+  if (!inherits(current_time, c("POSIXct", "POSIXlt", "Date", "character"))) {
+    stop("current_time must be a POSIXct, Date, or character string")
   }
 
   # Try to convert to POSIXct
@@ -802,21 +804,10 @@ get_current_block_window <- function(current_time = Sys.time()) {
 #'
 #' @keywords internal
 calculate_block_usage <- function(blocks_data, current_window) {
-  # Validate current_window
-  if (is.null(current_window)) {
-    stop("current_window is NULL or missing - window is required")
-  }
-
-  # Validate that current_window is a list with required fields
-  if (!is.list(current_window)) {
-    stop("current_window must be a list with block_start, block_end, and time_remaining fields")
-  }
-
-  required_fields <- c("block_start", "block_end", "time_remaining")
-  if (!all(required_fields %in% names(current_window))) {
-    missing_fields <- required_fields[!required_fields %in% names(current_window)]
-    stop("current_window must contain: ", paste(required_fields, collapse = ", "))
-  }
+  # Validate inputs
+  checkmate::assert_data_frame(blocks_data, null.ok = TRUE)
+  checkmate::assert_list(current_window, names = "named")
+  checkmate::assert_names(names(current_window), must.include = c("block_start", "block_end", "time_remaining"))
 
   if (is.null(blocks_data) || nrow(blocks_data) == 0) {
     return(list(
@@ -902,6 +893,9 @@ calculate_block_usage <- function(blocks_data, current_window) {
 #'
 #' @keywords internal
 show_max5_block_status <- function(cache_dir = NULL) {
+  # Validate input
+  if (!is.null(cache_dir)) checkmate::assert_directory_exists(cache_dir)
+
   cli::cli_h2("Max5 5-Hour Block Status")
 
   # Load blocks data
@@ -1006,6 +1000,10 @@ show_max5_block_status <- function(cache_dir = NULL) {
 #'
 #' @keywords internal
 get_block_history <- function(days = 3, cache_dir = NULL) {
+  # Validate inputs
+  checkmate::assert_count(days, positive = TRUE)
+  if (!is.null(cache_dir)) checkmate::assert_directory_exists(cache_dir)
+
   # Load blocks data
   blocks_data <- load_cached_ccusage("blocks", cache_dir = cache_dir)
 

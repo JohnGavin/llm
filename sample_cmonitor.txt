@@ -1,0 +1,1 @@
+Setup complete\nTerminal wrapper: /Users/johngavin/.config/positron/nix-terminal-wrapper.sh\nRSTUDIO_TERM_EXEC set to execute new shell with Nix environment.\n
