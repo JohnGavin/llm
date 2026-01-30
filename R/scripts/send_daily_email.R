@@ -218,7 +218,7 @@ if (!has_data) {
      dark_bg, dark_text, accent_orange, today, dark_muted, cache_time,
      accent_green,
      # Table Header
-     dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border,
+     dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border,
      # ccusage Row
      dark_card, 
      dark_border, accent_orange,
