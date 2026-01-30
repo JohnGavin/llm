@@ -327,16 +327,6 @@ if (!has_data) {
     email_body <- paste0(email_body, "</table>")
   }
 
-  email_body <- paste0(email_body, sprintf('
-  <hr style="margin-top: 20px; border-color: %s;">
-  <p style="color: %s; font-size: 12px;">
-    <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
-    <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
-    Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
-  </p>
-  </div>
-  ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text))
-  
   # Add System Monitor (cmonitor) section if data exists
   cmonitor_path <- "inst/extdata/cmonitor_daily.txt"
   if (file.exists(cmonitor_path)) {
@@ -362,7 +352,6 @@ if (!has_data) {
     
     if (!is.null(cost_val) && !is.null(tokens_val)) {
       # Valid parse - Use Dashboard Style
-      email_body <- gsub("</div>\n  $", "", email_body) # Remove closing div to append inside
       email_body <- paste0(email_body, sprintf('
       <div style="background-color: %s; border: 1px solid %s; padding: 15px; border-radius: 5px; font-family: sans-serif; margin-top: 20px;">
         <h3 style="color: %s; margin: 0 0 10px 0;">System Monitor Check (cmonitor)</h3>
@@ -387,7 +376,6 @@ if (!has_data) {
           <em>Data source: Local cmonitor cache</em>
         </div>
       </div>
-      </div>
       ', 
       dark_card, dark_border, accent_orange, 
       dark_muted, accent_green, cost_val,
@@ -404,17 +392,25 @@ if (!has_data) {
       clean_text <- trimws(clean_text)
       
       if (nchar(clean_text) > 0) {
-        email_body <- gsub("</div>\n  $", "", email_body)
         email_body <- paste0(email_body, sprintf('
         <h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor) - Raw</h3>
         <div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
           <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
         </div>
-        </div>
         ', accent_orange, dark_card, dark_border, dark_text, clean_text))
       }
     }
   }
+
+  email_body <- paste0(email_body, sprintf('
+  <hr style="margin-top: 20px; border-color: %s;">
+  <p style="color: %s; font-size: 12px;">
+    <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
+    <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
+    Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
+  </p>
+  </div>
+  ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text))
 }
 
 # Create and send email
