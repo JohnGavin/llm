@@ -8,6 +8,8 @@ library(tibble)
 library(jsonlite)
 library(purrr)
 library(lubridate)
+library(DBI)
+library(duckdb)
 
 # Load cached ccusage data from inst/extdata/
 load_cached <- function(type) {
@@ -42,11 +44,11 @@ normalize_to_char_vec <- function(x) {
 # Parse daily data
 parse_daily <- function(json) {
   if (is.null(json$projects)) return(NULL)
-  names(json$projects) |>
+  names(json$projects) |
     map_dfr(\(p) {
       d <- json$projects[[p]]
       if (is.null(d) || length(d) == 0) return(NULL)
-      as_tibble(d) |>
+      as_tibble(d) |
         mutate(
           project = p,
           across(any_of("modelsUsed"), ~ map(.x, normalize_to_char_vec))
@@ -62,9 +64,18 @@ session_data <- if (!is.null(session_raw$sessions)) {
 today <- Sys.Date()
 
 # Helper for formatting
-dollar <- function(x) sprintf("$%.2f", x)
-comma <- function(x) format(x, big.mark = ",", scientific = FALSE)
-millions <- function(x) sprintf("%.1fM", x / 1e6)
+dollar <- function(x) {
+  if (is.na(x) || is.null(x)) return("-")
+  sprintf("$%.2f", x)
+}
+comma <- function(x) {
+  if (is.na(x) || is.null(x)) return("-")
+  format(x, big.mark = ",", scientific = FALSE)
+}
+millions <- function(x) {
+  if (is.na(x) || is.null(x)) return("-")
+  sprintf("%.1fM", x / 1e6)
+}
 format_hhmm <- function(mins) sprintf("%02d:%02d", as.integer(mins %/% 60), as.integer(mins %% 60))
 
 # Dark mode color palette
@@ -89,22 +100,21 @@ cache_time <- if (!is.null(session_raw$generatedAt)) {
 }
 
 if (!has_data) {
-  email_body <- sprintf('
-  <div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
-  <h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
-  <div style="background-color: #3d2c00; border: 1px solid #ffc107; padding: 15px; border-radius: 5px; color: #ffd54f;">
-    <strong>No cached data available</strong>
-    <p>Run locally: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px;">Rscript R/scripts/refresh_ccusage_cache.R</code></p>
-  </div>
-  </div>
-  ', dark_bg, dark_text, accent_orange, today, dark_card)
+  email_body <- sprintf('\n<div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+<h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
+<div style="background-color: #3d2c00; border: 1px solid #ffc107; padding: 15px; border-radius: 5px; color: #ffd54f;">
+  <strong>No cached data available</strong>
+  <p>Run locally: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px;">Rscript R/scripts/refresh_ccusage_cache.R</code></p>
+</div>
+</div>
+', dark_bg, dark_text, accent_orange, today, dark_card)
 } else {
   # Calculate weekly stats (1-4 weeks back)
   calc_weekly <- function(weeks_back) {
     if (is.null(daily_data)) return(list(cost = 0, tokens = 0))
     end_date <- today - (weeks_back - 1) * 7
     start_date <- end_date - 6
-    weekly <- daily_data |>
+    weekly <- daily_data |
       filter(as.Date(date) >= start_date, as.Date(date) <= end_date)
     list(
       cost = sum(weekly$totalCost, na.rm = TRUE),
@@ -138,7 +148,7 @@ if (!has_data) {
   if (file.exists(cmonitor_path)) {
     lines <- readLines(cmonitor_path, warn = FALSE)
     lines <- lines[!grepl("Setup complete|Terminal wrapper|RSTUDIO_TERM_EXEC|unpacking", lines)]
-    lines <- gsub("\033\\[[0-9;]*[a-zA-Z]", "", lines)
+    lines <- gsub("\033\[[0-9;]*[a-zA-Z]", "", lines)
     full_text <- paste(lines, collapse = "\n")
     
     extract <- function(pattern, text) {
@@ -147,10 +157,10 @@ if (!has_data) {
       regmatches(text, m)[[1]][2]
     }
     
-    cost_val <- extract("Total Cost:\\s*\\$([0-9,.]+)", full_text)
-    tokens_val <- extract("Total Tokens:\\s*([0-9,]+)", full_text)
-    entries_val <- extract("Entries:\\s*([0-9,]+)", full_text)
-    period_val <- extract("Daily Usage Summary\\s*-\\s*([0-9-]+\\s*to\\s*[0-9-]+)", full_text)
+    cost_val <- extract("Total Cost:\s*\$([0-9,.]+)", full_text)
+    tokens_val <- extract("Total Tokens:\s*([0-9,]+)", full_text)
+    entries_val <- extract("Entries:\s*([0-9,]+)", full_text)
+    period_val <- extract("Daily Usage Summary\s*-\s*([0-9-]+\s*to\s*[0-9-]+)", full_text)
     
     if (!is.null(cost_val)) cm_cost <- as.numeric(gsub("[$,]", "", cost_val))
     if (!is.null(tokens_val)) cm_tokens <- as.numeric(gsub("[,]", "", tokens_val))
@@ -166,9 +176,49 @@ if (!has_data) {
     }
   }
 
+  # --- 3. Calculate Gemini stats ---
+  gm_cost <- NA; gm_tokens <- NA; gm_entries <- NA; gm_days <- NA; gm_start <- NA; gm_end <- NA
+  gm_cost_day <- NA; gm_tok_day <- NA
+  gm_sessions_count <- 0
+  
+  gm_db_path <- "inst/extdata/gemini_usage.duckdb"
+  if (file.exists(gm_db_path)) {
+    gm_con <- dbConnect(duckdb(), dbdir = gm_db_path, read_only = TRUE)
+    gm_stats <- dbGetQuery(gm_con, "
+      SELECT 
+        SUM(total_cost) as cost, 
+        SUM(total_tokens) as tokens, 
+        SUM(message_count) as entries,
+        MIN(date) as start_date,
+        MAX(date) as end_date
+      FROM daily_usage
+    ")
+    
+    if (!is.null(gm_stats$cost)) {
+      gm_cost <- gm_stats$cost
+      gm_tokens <- gm_stats$tokens
+      gm_entries <- gm_stats$entries
+      gm_start <- gm_stats$start_date
+      gm_end <- gm_stats$end_date
+      gm_days <- as.numeric(as.Date(gm_end) - as.Date(gm_start)) + 1
+      if (gm_days > 0) {
+        gm_cost_day <- gm_cost / gm_days
+        gm_tok_day <- gm_tokens / gm_days
+      }
+    }
+    
+    # Get recent Gemini sessions
+    gm_sessions <- dbGetQuery(gm_con, "
+      SELECT sessionId, total_cost, total_tokens, start_time 
+      FROM sessions_summary 
+      ORDER BY last_updated DESC LIMIT 5
+    ")
+    gm_sessions_count <- dbGetQuery(gm_con, "SELECT COUNT(*) FROM sessions_summary")[[1]]
+    dbDisconnect(gm_con, shutdown = TRUE)
+  }
+
   # Build email - Dark mode with Merged Summary Table
-  email_body <- sprintf('
-<div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+  email_body <- sprintf('\n<div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
 <h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
 <p style="color: %s; font-size: 12px; margin-top: 0;">Data cached: %s</p>
 
@@ -189,6 +239,19 @@ if (!has_data) {
   <!-- ccusage Row -->
   <tr style="background-color: %s;">
     <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>ccusage</strong></td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <!-- Gemini Row -->
+  <tr style="background-color: %s;">
+    <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>Gemini</strong></td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
@@ -231,22 +294,96 @@ if (!has_data) {
      dark_border, dark_text, ifelse(is.na(cc_entries), "-", comma(cc_entries)),
      dark_border, dark_muted, as.character(cc_start),
      dark_border, dark_muted, as.character(cc_end),
-     # cmonitor Row
+     # Gemini Row
      dark_row_alt,
      dark_border, dark_text,
-     dark_border, accent_green, ifelse(is.na(cm_cost), "-", dollar(cm_cost)),
-     dark_border, dark_text, ifelse(is.na(cm_cost_day), "-", dollar(cm_cost_day)),
-     dark_border, accent_blue, ifelse(is.na(cm_tokens), "-", millions(cm_tokens)),
-     dark_border, dark_text, ifelse(is.na(cm_tok_day), "-", millions(cm_tok_day)),
-     dark_border, dark_text, ifelse(is.na(cm_days), "-", cm_days),
+     dark_border, accent_green, dollar(gm_cost),
+     dark_border, dark_text, dollar(gm_cost_day),
+     dark_border, accent_blue, millions(gm_tokens),
+     dark_border, dark_text, millions(gm_tok_day),
+     dark_border, dark_text, gm_days,
+     dark_border, dark_text, ifelse(gm_sessions_count == 0, "-", gm_sessions_count),
+     dark_border, dark_text, comma(gm_entries),
+     dark_border, dark_muted, as.character(gm_start),
+     dark_border, dark_muted, as.character(gm_end),
+     # cmonitor Row
+     dark_card,
+     dark_border, dark_text,
+     dark_border, accent_green, dollar(cm_cost),
+     dark_border, dark_text, dollar(cm_cost_day),
+     dark_border, accent_blue, millions(cm_tokens),
+     dark_border, dark_text, millions(cm_tok_day),
+     dark_border, dark_text, cm_days,
      dark_border, dark_text, # Sessions (skipped)
-     dark_border, dark_text, ifelse(is.na(cm_entries), "-", comma(cm_entries)),
-     dark_border, dark_muted, ifelse(is.na(cm_start), "-", as.character(cm_start)),
-     dark_border, dark_muted, ifelse(is.na(cm_end), "-", as.character(cm_end)))
+     dark_border, dark_text, comma(cm_entries),
+     dark_border, dark_muted, as.character(cm_start),
+     dark_border, dark_muted, as.character(cm_end))
 
-  # Time Block Activity Table (last 3 non-empty days) - BEFORE Top Sessions
+  # Weekly Cost
+  email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s;">Weekly Cost (Claude)</h3>
+<table style="border-collapse: collapse; max-width: 400px;">
+  <tr style="background-color: %s;">
+    <th style="padding: 8px; border: 1px solid %s; color: white;">Period</th>
+    <th style="padding: 8px; border: 1px solid %s; text-align: right; color: white;">Cost</th>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 1 (current)</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 2</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 3</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 4</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+</table>
+',
+     accent_green, accent_green, dark_border, dark_border,
+     dark_card, dark_border, dark_text, dark_border, accent_green, dollar(week1$cost),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, dollar(week2$cost),
+     dark_card, dark_border, dark_text, dark_border, dark_text, dollar(week3$cost),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, dollar(week4$cost)))
+
+  # Weekly Tokens
+  email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s;">Weekly Tokens (Claude)</h3>
+<table style="border-collapse: collapse; max-width: 400px;">
+  <tr style="background-color: %s;">
+    <th style="padding: 8px; border: 1px solid %s; color: white;">Period</th>
+    <th style="padding: 8px; border: 1px solid %s; text-align: right; color: white;">Tokens</th>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 1 (current)</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 2</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 3</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <tr style="background-color: %s;">
+    <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 4</td>
+    <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+</table>
+',
+     accent_blue, accent_blue, dark_border, dark_border,
+     dark_card, dark_border, dark_text, dark_border, accent_blue, millions(week1$tokens),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, millions(week2$tokens),
+     dark_card, dark_border, dark_text, dark_border, dark_text, millions(week3$tokens),
+     dark_row_alt, dark_border, dark_text, dark_border, dark_text, millions(week4$tokens)))
+
+  # Time Block Activity Table (last 5 non-empty days)
   if (!is.null(blocks_raw) && !is.null(blocks_raw$blocks)) {
-    blocks_df <- as_tibble(blocks_raw$blocks) |>
+    blocks_df <- as_tibble(blocks_raw$blocks) |
       mutate(
         start = ymd_hms(startTime),
         end = ymd_hms(actualEndTime),
@@ -255,26 +392,24 @@ if (!has_data) {
         date = as.Date(start),
         cost_per_hr = ifelse(duration_hrs > 0, costUSD / duration_hrs, 0),
         tokens_per_hr = ifelse(duration_hrs > 0, totalTokens / duration_hrs, 0)
-      ) |>
-      filter(!is.na(end), costUSD > 0) |>
+      ) |
+      filter(!is.na(end), costUSD > 0) |
       select(id, date, start, end, duration_mins, duration_hrs, costUSD, totalTokens, cost_per_hr, tokens_per_hr)
 
-    # Get last 5 non-empty days
-    recent_days <- blocks_df |>
-      group_by(date) |>
-      summarise(n = n(), .groups = "drop") |>
-      arrange(desc(date)) |>
-      head(5) |>
+    recent_days <- blocks_df |
+      group_by(date) |
+      summarise(n = n(), .groups = "drop") |
+      arrange(desc(date)) |
+      head(5) |
       pull(date)
 
     if (length(recent_days) > 0) {
-      activity_df <- blocks_df |>
-        filter(date %in% recent_days) |>
+      activity_df <- blocks_df |
+        filter(date %in% recent_days) |
         arrange(desc(end))
 
       if (nrow(activity_df) > 0) {
-        email_body <- paste0(email_body, sprintf('
-<h3 style="color: %s;">Time Block Activity (Last 5 Days)</h3>
+        email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s;">Time Block Activity (Last 5 Days)</h3>
 <table style="border-collapse: collapse; width: 100%%;">
   <tr style="background-color: %s;">
     <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Start</th>
@@ -289,8 +424,7 @@ if (!has_data) {
 
         for (i in seq_len(nrow(activity_df))) {
           bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-          email_body <- paste0(email_body, sprintf('
-  <tr style="background-color: %s;">
+          email_body <- paste0(email_body, sprintf('\n  <tr style="background-color: %s;">
     <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
@@ -298,7 +432,7 @@ if (!has_data) {
     <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-  </tr>',
+  </tr>', 
             bg,
             dark_border, dark_muted, format(activity_df$start[i], "%Y-%m-%d %H:%M"),
             dark_border, dark_muted, format(activity_df$end[i], "%Y-%m-%d %H:%M"),
@@ -314,14 +448,42 @@ if (!has_data) {
     }
   }
 
-  # Top Sessions by Cost - NOW AT THE END
+  # Gemini Recent Sessions
+  if (exists("gm_sessions") && !is.null(gm_sessions) && nrow(gm_sessions) > 0) {
+    email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s; margin-top: 20px;">Gemini Recent Sessions</h3>
+<table style="border-collapse: collapse; width: 100%%;">
+  <tr style="background-color: %s;">
+    <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Session ID</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
+    <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Started</th>
+  </tr>', accent_blue, accent_blue, dark_border, dark_border, dark_border, dark_border))
+
+    for (i in seq_len(nrow(gm_sessions))) {
+      bg <- if (i %% 2 == 0) dark_row_alt else dark_card
+      email_body <- paste0(email_body, sprintf('\n  <tr style="background-color: %s;">
+    <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+  </tr>', 
+        bg,
+        dark_border, dark_text, gm_sessions$sessionId[i],
+        dark_border, accent_green, dollar(gm_sessions$total_cost[i]),
+        dark_border, accent_blue, millions(gm_sessions$total_tokens[i]),
+        dark_border, dark_muted, format(gm_sessions$start_time[i], "%Y-%m-%d %H:%M")
+      ))
+    }
+    email_body <- paste0(email_body, "</table>")
+  }
+
+  # Top Claude Sessions by Cost - NOW AT THE END
   if (!is.null(session_data) && nrow(session_data) > 0) {
-    top_sessions <- session_data |>
-      arrange(desc(totalCost)) |>
+    top_sessions <- session_data |
+      arrange(desc(totalCost)) |
       head(5)
 
-    email_body <- paste0(email_body, sprintf('
-<h3 style="color: %s; margin-top: 20px;">Top Sessions by Cost</h3>
+    email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s; margin-top: 20px;">Top Claude Sessions by Cost</h3>
 <table style="border-collapse: collapse; width: 100%%;">
   <tr style="background-color: %s;">
     <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Session</th>
@@ -335,17 +497,17 @@ if (!has_data) {
       last_active <- top_sessions$lastActivity[i]
       # Clean up session name: remove leading dashes and path separators, show last 2 components
       session_name <- top_sessions$sessionId[i]
-      session_parts <- strsplit(gsub("^-", "", session_name), "-")[[1]]
+      session_parts <- strsplit(gsub("^-
+", "", session_name), "-")[[1]]
       if (length(session_parts) > 2) {
         session_name <- paste(tail(session_parts, 2), collapse = "/")
       }
-      email_body <- paste0(email_body, sprintf('
-  <tr style="background-color: %s;">
+      email_body <- paste0(email_body, sprintf('\n  <tr style="background-color: %s;">
     <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
-  </tr>',
+  </tr>', 
         bg,
         dark_border, dark_text, session_name,
         dark_border, accent_green, dollar(top_sessions$totalCost[i]),
@@ -356,8 +518,7 @@ if (!has_data) {
     email_body <- paste0(email_body, "</table>")
   }
 
-    email_body <- paste0(email_body, sprintf('
-<hr style="margin-top: 20px; border-color: %s;">
+  email_body <- paste0(email_body, sprintf('\n<hr style="margin-top: 20px; border-color: %s;">
 <p style="color: %s; font-size: 12px;">
   <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
   <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
@@ -371,11 +532,12 @@ if (!has_data) {
   <sup>2</sup> <strong>Days:</strong> Number of days in the reporting period.<br>
   <sup>3</sup> <strong>Sessions:</strong> Number of distinct interactive sessions recorded.<br>
   <sup>4</sup> <strong>Entries:</strong> Total number of logged interactions/blocks.<br>
-  <strong>Source:</strong> <em>ccusage</em> (this R package) vs <em>cmonitor</em> (Rust-based system monitor).
+  <strong>Source:</strong> <em>ccusage/Gemini</em> (this R package) vs <em>cmonitor</em> (Rust-based system monitor).
 </div>
 </div>
 ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text, dark_border, dark_muted))
-  }
+}
+
 # Create and send email
 london_time <- format(Sys.time(), tz = "Europe/London", "%Y-%m-%d %H:%M")
 email <- compose_email(

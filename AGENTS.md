@@ -117,6 +117,14 @@ devtools::test()         # YES - runs tests
 | 8 | Merge PR | `usethis::pr_merge_main()` |
 | 9 | Log Everything | Include `R/dev/issue/fix_*.R` in PR |
 
+## Data Privacy & Telemetry
+
+**CRITICAL: Confidentiality Guard**
+- **Low-level telemetry** (e.g., message-level Parquet files) must **NEVER** be uploaded to a public git repository if they contain or potentially contain confidential info.
+- You must **ASK and get explicit prior approval** before uploading any such data.
+- **Approval Renewal**: This approval must be renewed with every **minor R package version upgrade** (e.g., 1.1 to 1.2).
+- Approval does **NOT** need renewal for bug fixes, new features (that don't trigger minor version jumps), or patch increments (e.g., 1.2.3 to 1.2.4).
+
 ## Critical Rules
 
 **Git/GitHub - Use R packages ONLY:**
@@ -135,6 +143,13 @@ devtools::test()         # YES - runs tests
 3. If you can't access logs, ASK the user
 
 **R Version:** Use 4.5.x (current major). Check: `R.version.string`
+
+## Versioning Policy
+
+**Strict Semantic Versioning for Project R Package**:
+- **Bug Fixes**: Increment the **patch** version (e.g., 1.2.4 to 1.2.5) for every bug fix or set of fixes.
+- **New Features**: Increment the **minor** version (e.g., 2.3 to 2.4) for every new feature or set of new features.
+- **Releases**: Every **tagged version** must trigger a **major** release increment (e.g., v2.1.3 to v3.0.0).
 
 ## Testing Before Commit (MANDATORY)
 
