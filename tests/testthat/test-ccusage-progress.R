@@ -51,30 +51,30 @@ test_that("show_usage_progress handles edge cases", {
 test_that("show_usage_progress validates inputs (TDD - will fail)", {
   skip_if_not_installed("cli")
   
-  # These should fail until we add input validation
+  # These should fail with checkmate error messages
   expect_error(
     show_usage_progress(current = NULL, limit = 100, label = "Test"),
-    "current.*NULL|missing|required"
+    "NULL|missing"
   )
   
   expect_error(
     show_usage_progress(current = 50, limit = NULL, label = "Test"),
-    "limit.*NULL|missing|required"
+    "NULL|missing"
   )
   
   expect_error(
     show_usage_progress(current = -10, limit = 100, label = "Test"),
-    "current.*negative|positive"
+    ">= 0"
   )
   
   expect_error(
     show_usage_progress(current = 50, limit = 0, label = "Test"),
-    "limit.*zero|positive"
+    ">= 1e-05"
   )
   
   expect_error(
     show_usage_progress(current = "50", limit = 100, label = "Test"),
-    "numeric"
+    "numeric|number"
   )
 })
 
@@ -431,17 +431,17 @@ test_that("get_current_block_window validates input (TDD - will fail)", {
   # These should fail until we add input validation
   expect_error(
     get_current_block_window(NULL),
-    "time|NULL|missing"
+    "POSIXct|Date|character"
   )
   
   expect_error(
     get_current_block_window("not a time"),
-    "POSIXct|time|date"
+    "convertible to POSIXct"
   )
   
   expect_error(
     get_current_block_window(12345),
-    "POSIXct|time|date"
+    "POSIXct|Date|character"
   )
 })
 
@@ -522,12 +522,12 @@ test_that("calculate_block_usage validates inputs (TDD - will fail)", {
   # Invalid window structure
   expect_error(
     calculate_block_usage(tibble::tibble(), NULL),
-    "window.*NULL|missing|required"
+    "NULL|missing"
   )
   
   expect_error(
     calculate_block_usage(tibble::tibble(), list()),
-    "block_start|block_end"
+    "names|named"
   )
 })
 
@@ -755,13 +755,15 @@ test_that("get_block_history calculates status indicators correctly", {
 test_that("get_block_history sorts by date and hour descending", {
   skip_if_not_installed("cli")
   
+  # Use relative dates to ensure they are within the 'days' cutoff
+  today <- Sys.Date()
   local_mocked_bindings(
     load_cached_ccusage = function(...) {
       tibble::tibble(
         timestamp = c(
-          as.POSIXct("2026-01-20 10:00:00"),
-          as.POSIXct("2026-01-22 05:00:00"),
-          as.POSIXct("2026-01-21 15:00:00")
+          as.POSIXct(paste(today - 4, "10:00:00")),
+          as.POSIXct(paste(today, "05:00:00")),
+          as.POSIXct(paste(today - 2, "15:00:00"))
         ),
         totalTokens = c(10000, 20000, 15000),
         project = "test"
@@ -772,9 +774,9 @@ test_that("get_block_history sorts by date and hour descending", {
   result <- get_block_history(days = 7)
   
   # Should be sorted newest first
-  expect_equal(result$block_date[1], as.Date("2026-01-22"))
-  expect_equal(result$block_date[2], as.Date("2026-01-21"))
-  expect_equal(result$block_date[3], as.Date("2026-01-20"))
+  expect_equal(result$block_date[1], today)
+  expect_equal(result$block_date[2], today - 2)
+  expect_equal(result$block_date[3], today - 4)
 })
 
 test_that("get_block_history limits display to 10 blocks", {
@@ -896,38 +898,40 @@ test_that("show_usage_progress output format is stable", {
   skip_if_not_installed("cli")
   skip_on_cran()  # Snapshot tests can be fragile on CRAN
   
-  output <- capture.output({
+  withr::local_options(list(cli.num_colors = 1, cli.dynamic = FALSE))
+  
+  expect_snapshot(
     show_usage_progress(
       current = 25,
       limit = 50,
       label = "Test Progress"
     )
-  })
-  
-  expect_snapshot(output)
+  )
 })
 
 test_that("show_daily_progress output format is stable", {
   skip_if_not_installed("cli")
   skip_on_cran()
   
+  withr::local_options(list(cli.num_colors = 1, cli.dynamic = FALSE))
+
   local_mocked_bindings(
     load_cached_ccusage = function(...) {
       create_sample_daily_data(costs = 15, tokens = 300000)
     }
   )
   
-  output <- capture.output({
+  expect_snapshot(
     show_daily_progress(daily_limit = 30, token_limit = 500000)
-  })
-  
-  expect_snapshot(output)
+  )
 })
 
 test_that("get_block_history output format is stable", {
   skip_if_not_installed("cli")
   skip_on_cran()
   
+  withr::local_options(list(cli.num_colors = 1, cli.dynamic = FALSE))
+
   local_mocked_bindings(
     load_cached_ccusage = function(...) {
       tibble::tibble(
@@ -938,9 +942,7 @@ test_that("get_block_history output format is stable", {
     }
   )
   
-  output <- capture.output({
-    get_block_history(days = 1)
-  })
-  
-  expect_snapshot(output)
+  expect_snapshot(
+    get_block_history(days = 10)
+  )
 })

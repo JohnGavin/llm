@@ -218,10 +218,10 @@ if (!has_data) {
      dark_bg, dark_text, accent_orange, today, dark_muted, cache_time,
      accent_green,
      # Table Header
-     dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border,
+     dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border,
      # ccusage Row
      dark_card, 
-     dark_border, accent_orange,
+     dark_border, dark_text,
      dark_border, accent_green, dollar(total_cost),
      dark_border, dark_text, dollar(cc_cost_day),
      dark_border, accent_blue, millions(total_tokens),
@@ -233,7 +233,7 @@ if (!has_data) {
      dark_border, dark_muted, as.character(cc_end),
      # cmonitor Row
      dark_row_alt,
-     dark_border, accent_orange,
+     dark_border, dark_text,
      dark_border, accent_green, ifelse(is.na(cm_cost), "-", dollar(cm_cost)),
      dark_border, dark_text, ifelse(is.na(cm_cost_day), "-", dollar(cm_cost_day)),
      dark_border, accent_blue, ifelse(is.na(cm_tokens), "-", millions(cm_tokens)),
@@ -259,12 +259,12 @@ if (!has_data) {
       filter(!is.na(end), costUSD > 0) |>
       select(id, date, start, end, duration_mins, duration_hrs, costUSD, totalTokens, cost_per_hr, tokens_per_hr)
 
-    # Get last 3 non-empty days
+    # Get last 5 non-empty days
     recent_days <- blocks_df |>
       group_by(date) |>
       summarise(n = n(), .groups = "drop") |>
       arrange(desc(date)) |>
-      head(3) |>
+      head(5) |>
       pull(date)
 
     if (length(recent_days) > 0) {
@@ -274,40 +274,32 @@ if (!has_data) {
 
       if (nrow(activity_df) > 0) {
         email_body <- paste0(email_body, sprintf('
-  <h3 style="color: %s;">Time Block Activity (Last 3 Days)</h3>
-  <table style="border-collapse: collapse; width: 100%%;">
-    <tr style="background-color: %s;">
-      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Time Block</th>
-      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Start</th>
-      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">End</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Duration</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">$/hr</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tok/hr</th>
-    </tr>', accent_orange, "#607D8B",
-            dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border))
+<h3 style="color: %s;">Time Block Activity (Last 5 Days)</h3>
+<table style="border-collapse: collapse; width: 100%%;">
+  <tr style="background-color: %s;">
+    <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Start</th>
+    <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">End</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Duration</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">$/hr</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tok/hr</th>
+  </tr>', accent_orange, "#607D8B",
+            dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border))
 
         for (i in seq_len(nrow(activity_df))) {
           bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-          # Format time block as readable range (e.g., "Jan 16 10:00-15:00")
-          time_block <- sprintf("%s %s-%s",
-            format(activity_df$start[i], "%b %d"),
-            format(activity_df$start[i], "%H:%M"),
-            format(activity_df$end[i], "%H:%M"))
           email_body <- paste0(email_body, sprintf('
-    <tr style="background-color: %s;">
-      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-    </tr>',
+  <tr style="background-color: %s;">
+    <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+  </tr>',
             bg,
-            dark_border, dark_text, time_block,
             dark_border, dark_muted, format(activity_df$start[i], "%Y-%m-%d %H:%M"),
             dark_border, dark_muted, format(activity_df$end[i], "%Y-%m-%d %H:%M"),
             dark_border, dark_text, format_hhmm(activity_df$duration_mins[i]),
@@ -329,14 +321,14 @@ if (!has_data) {
       head(5)
 
     email_body <- paste0(email_body, sprintf('
-  <h3 style="color: %s;">Top Sessions by Cost</h3>
-  <table style="border-collapse: collapse; width: 100%%;">
-    <tr style="background-color: %s;">
-      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Session</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
-      <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
-      <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Last Active</th>
-    </tr>', accent_purple, accent_purple, dark_border, dark_border, dark_border, dark_border))
+<h3 style="color: %s; margin-top: 20px;">Top Sessions by Cost</h3>
+<table style="border-collapse: collapse; width: 100%%;">
+  <tr style="background-color: %s;">
+    <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Session</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Cost</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: white;">Tokens</th>
+    <th style="padding: 6px; border: 1px solid %s; font-size: 11px; color: white;">Last Active</th>
+  </tr>', accent_purple, accent_purple, dark_border, dark_border, dark_border, dark_border))
 
     for (i in seq_len(nrow(top_sessions))) {
       bg <- if (i %% 2 == 0) dark_row_alt else dark_card
@@ -348,12 +340,12 @@ if (!has_data) {
         session_name <- paste(tail(session_parts, 2), collapse = "/")
       }
       email_body <- paste0(email_body, sprintf('
-    <tr style="background-color: %s;">
-      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
-      <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
-    </tr>',
+  <tr style="background-color: %s;">
+    <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; font-size: 11px; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; font-size: 11px; color: %s;">%s</td>
+  </tr>',
         bg,
         dark_border, dark_text, session_name,
         dark_border, accent_green, dollar(top_sessions$totalCost[i]),
@@ -365,24 +357,24 @@ if (!has_data) {
   }
 
     email_body <- paste0(email_body, sprintf('
-    <hr style="margin-top: 20px; border-color: %s;">
-    <p style="color: %s; font-size: 12px;">
-      <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
-      <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
-      Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
-    </p>
-  
-    <!-- Footnotes -->
-    <div style="margin-top: 30px; border-top: 1px solid %s; padding-top: 10px; color: %s; font-size: 10px;">
-      <strong>Definitions:</strong><br>
-      <sup>1</sup> <strong>Cost:</strong> Total cost in USD.<br>
-      <sup>2</sup> <strong>Days:</strong> Number of days in the reporting period.<br>
-      <sup>3</sup> <strong>Sessions:</strong> Number of distinct interactive sessions recorded.<br>
-      <sup>4</sup> <strong>Entries:</strong> Total number of logged interactions/blocks.<br>
-      <strong>Source:</strong> <em>ccusage</em> (this R package) vs <em>cmonitor</em> (Rust-based system monitor).
-    </div>
-    </div>
-    ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text, dark_border, dark_muted))
+<hr style="margin-top: 20px; border-color: %s;">
+<p style="color: %s; font-size: 12px;">
+  <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
+  <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
+  Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
+</p>
+
+<!-- Footnotes -->
+<div style="margin-top: 30px; border-top: 1px solid %s; padding-top: 10px; color: %s; font-size: 10px;">
+  <strong>Definitions:</strong><br>
+  <sup>1</sup> <strong>Cost:</strong> Total cost in USD.<br>
+  <sup>2</sup> <strong>Days:</strong> Number of days in the reporting period.<br>
+  <sup>3</sup> <strong>Sessions:</strong> Number of distinct interactive sessions recorded.<br>
+  <sup>4</sup> <strong>Entries:</strong> Total number of logged interactions/blocks.<br>
+  <strong>Source:</strong> <em>ccusage</em> (this R package) vs <em>cmonitor</em> (Rust-based system monitor).
+</div>
+</div>
+', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text, dark_border, dark_muted))
   }
 # Create and send email
 london_time <- format(Sys.time(), tz = "Europe/London", "%Y-%m-%d %H:%M")

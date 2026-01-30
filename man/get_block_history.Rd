@@ -26,17 +26,17 @@ Invisibly returns a tibble with columns:
 Displays historical usage for recent 5-hour blocks with status indicators and
 completion percentages. Groups block data by date and block hour, showing up to
 the last 10 blocks from the requested time period. Each block is tagged with a
-status emoji (⚪ = low, 🟢 = moderate, 🟡 = warning, 🔴 = critical).
+status emoji (white = low, green = moderate, yellow = warning, red = critical).
 }
 \details{
 Get Max5 block history
 
 
 Block status indicators:
-- ⚪ = 0-49% of limit used (light usage)
-- 🟢 = 50-74% of limit used (normal usage)
-- 🟡 = 75-89% of limit used (warning)
-- 🔴 = 90%+ of limit used (critical)
+- White circle = 0-49% of limit used (light usage)
+- Green circle = 50-74% of limit used (normal usage)
+- Yellow circle = 75-89% of limit used (warning)
+- Red circle = 90%+ of limit used (critical)
 }
 \examples{
 \dontrun{

@@ -1,13 +1,12 @@
 ---
 title: "Project Telemetry and Statistics"
 author: "John Gavin"
-date: today
-format:
-  html:
-    toc: true
-    toc-depth: 3
-    code-fold: true
-    code-summary: "Show code"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Project Telemetry and Statistics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include=FALSE}
@@ -424,6 +423,28 @@ if (length(open_issues) > 0) {
 
 ## LLM Usage Statistics
 
+```{r llm-setup}
+# Load llm package
+library(llm)
+library(here)
+library(scales)
+
+# Check if gt packages are available
+has_gt <- requireNamespace("gt", quietly = TRUE) &&
+          requireNamespace("gtExtras", quietly = TRUE)
+
+if (has_gt) {
+  library(gt)
+  library(gtExtras)
+} else {
+  message("gt/gtExtras not available - using basic tables")
+}
+
+# Load cached data
+daily_data <- load_cached_ccusage("daily", project_filter = NULL)
+session_data <- load_cached_ccusage("session", project_filter = NULL)
+```
+
 This section tracks Claude Code usage via two complementary tools:
 - **ccusage**: Project-level historical analysis (JSON export, DuckDB-friendly)
 - **claude-monitor**: Real-time monitoring with burn rate predictions
@@ -500,30 +521,35 @@ if (!is.null(monitor_summary)) {
 }
 ```
 
-### Historical Usage (ccusage)
+### Interactive Dashboard and Progress Bars
 
-```{r llm-setup}
-library(here)
-library(scales)
+The following dashboard provides real-time visualization of LLM consumption against daily and weekly limits, as well as Max5 block tracking.
 
-# Check if gt packages are available
-has_gt <- requireNamespace("gt", quietly = TRUE) &&
-          requireNamespace("gtExtras", quietly = TRUE)
+```{r llm-dashboard}
+#| results: "asis"
+#| comment: ""
 
-if (has_gt) {
-  library(gt)
-  library(gtExtras)
-} else {
-  message("gt/gtExtras not available - using basic tables")
-}
-
-# Source ccusage helper functions
-source(here::here("R/ccusage.R"))
-
-# Load cached data
-daily_data <- load_cached_ccusage("daily", project_filter = NULL)
-session_data <- load_cached_ccusage("session", project_filter = NULL)
+# Force cli output to be plain text for Quarto
+withr::with_options(list(cli.num_colors = 1, cli.dynamic = FALSE), {
+  show_usage_dashboard()
+})
 ```
+
+### Max5 Block History
+
+Recent history of 5-hour token usage blocks.
+
+```{r llm-block-history}
+#| results: "asis"
+#| comment: ""
+
+# Force cli output for Quarto
+withr::with_options(list(cli.num_colors = 1, cli.dynamic = FALSE), {
+  get_block_history(days = 3)
+})
+```
+
+### Historical Usage (ccusage)
 
 ### Summary Statistics
 

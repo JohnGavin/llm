@@ -50,3 +50,36 @@ The repo also keeps “wiki source” Markdown in `WIKI_CONTENT/` so changes can
 The canonical Markdown sources live in `WIKI_CONTENT/` and are periodically synced into `llm.wiki.git` (the GitHub wiki repository).
 
 Use `R/dev/wiki/sync_wiki.R` to automate the sync (clone wiki repo, copy pages, update wiki `Home.md`, and regenerate the `README.md` docs list).
+
+## LLM Usage Monitoring
+
+The `llm` package provides real-time and historical monitoring of your LLM consumption.
+
+### Usage Dashboard
+
+You can view a complete dashboard of your daily, weekly, and Max5 block usage:
+
+```r
+library(llm)
+show_usage_dashboard()
+```
+
+Example output:
+
+```text
+── LLM Usage Dashboard ─────────────────────────────────────────────────────────
+
+── Today's Usage ──
+
+Today's Usage [████████████████████░░░░░░░░░░░░░░░░░░░░] 50% ($15.00 / $30.00)
+Tokens:       [████████████████████████░░░░░░░░░░░░░░░░] 60% (300,000 / 500,000)
+
+── This Week ──
+
+This Week     [███████████████████████░░░░░░░░░░░░░░░░░] 58% ($70.00 / $120.00)
+
+── Max5 5-Hour Block Status ──
+
+Block: 10:00 - 15:00 | Remaining: 2h 45m
+Tokens        [█████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 23% (20,000 / 88,000)
+```
