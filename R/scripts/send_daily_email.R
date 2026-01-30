@@ -148,7 +148,7 @@ if (!has_data) {
   if (file.exists(cmonitor_path)) {
     lines <- readLines(cmonitor_path, warn = FALSE)
     lines <- lines[!grepl("Setup complete|Terminal wrapper|RSTUDIO_TERM_EXEC|unpacking", lines)]
-    lines <- gsub("\033\[[0-9;]*[a-zA-Z]", "", lines)
+    lines <- gsub("\033\\[[0-9;]*[a-zA-Z]", "", lines)
     full_text <- paste(lines, collapse = "\n")
     
     extract <- function(pattern, text) {
@@ -157,10 +157,10 @@ if (!has_data) {
       regmatches(text, m)[[1]][2]
     }
     
-    cost_val <- extract("Total Cost:\s*\$([0-9,.]+)", full_text)
-    tokens_val <- extract("Total Tokens:\s*([0-9,]+)", full_text)
-    entries_val <- extract("Entries:\s*([0-9,]+)", full_text)
-    period_val <- extract("Daily Usage Summary\s*-\s*([0-9-]+\s*to\s*[0-9-]+)", full_text)
+    cost_val <- extract("Total Cost:\\s*\\$([0-9,.]+)", full_text)
+    tokens_val <- extract("Total Tokens:\\s*([0-9,]+)", full_text)
+    entries_val <- extract("Entries:\\s*([0-9,]+)", full_text)
+    period_val <- extract("Daily Usage Summary\\s*-\\s*([0-9-]+\\s*to\\s*[0-9-]+)", full_text)
     
     if (!is.null(cost_val)) cm_cost <- as.numeric(gsub("[$,]", "", cost_val))
     if (!is.null(tokens_val)) cm_tokens <- as.numeric(gsub("[,]", "", tokens_val))
