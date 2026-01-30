@@ -80,3 +80,4 @@ proj/stats/ideas/ROC_brierScore/survival_time-to-event analysis.md symlink
 # Exclude from package
 proj/
 archive/
+inst/extdata/gemini/messages/
