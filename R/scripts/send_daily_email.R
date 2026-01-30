@@ -353,30 +353,30 @@ if (!has_data) {
     if (!is.null(cost_val) && !is.null(tokens_val)) {
       # Valid parse - Use Dashboard Style
       email_body <- paste0(email_body, sprintf('
-      <div style="background-color: %s; border: 1px solid %s; padding: 15px; border-radius: 5px; font-family: sans-serif; margin-top: 20px;">
-        <h3 style="color: %s; margin: 0 0 10px 0;">System Monitor Check (cmonitor)</h3>
-        
-        <div style="display: flex; gap: 20px; margin-bottom: 15px;">
-          <div>
-            <div style="color: %s; font-size: 11px;">TOTAL COST</div>
-            <div style="color: %s; font-size: 16px; font-weight: bold;">$%s</div>
-          </div>
-          <div>
-            <div style="color: %s; font-size: 11px;">TOTAL TOKENS</div>
-            <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
-          </div>
-          <div>
-            <div style="color: %s; font-size: 11px;">ENTRIES</div>
-            <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
-          </div>
-        </div>
+<div style="background-color: %s; border: 1px solid %s; padding: 15px; border-radius: 5px; font-family: sans-serif; margin-top: 20px;">
+  <h3 style="color: %s; margin: 0 0 10px 0;">System Monitor Check (cmonitor)</h3>
+  
+  <div style="display: flex; gap: 20px; margin-bottom: 15px;">
+    <div>
+      <div style="color: %s; font-size: 11px;">TOTAL COST</div>
+      <div style="color: %s; font-size: 16px; font-weight: bold;">$%s</div>
+    </div>
+    <div>
+      <div style="color: %s; font-size: 11px;">TOTAL TOKENS</div>
+      <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
+    </div>
+    <div>
+      <div style="color: %s; font-size: 11px;">ENTRIES</div>
+      <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
+    </div>
+  </div>
 
-        <div style="color: %s; font-size: 11px; border-top: 1px solid %s; padding-top: 8px;">
-          Reporting Period: %s<br>
-          <em>Data source: Local cmonitor cache</em>
-        </div>
-      </div>
-      ', 
+  <div style="color: %s; font-size: 11px; border-top: 1px solid %s; padding-top: 8px;">
+    Reporting Period: %s<br>
+    <em>Data source: Local cmonitor cache</em>
+  </div>
+</div>
+', 
       dark_card, dark_border, accent_orange, 
       dark_muted, accent_green, cost_val,
       dark_muted, accent_blue, tokens_val,
@@ -393,11 +393,11 @@ if (!has_data) {
       
       if (nchar(clean_text) > 0) {
         email_body <- paste0(email_body, sprintf('
-        <h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor) - Raw</h3>
-        <div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
-          <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
-        </div>
-        ', accent_orange, dark_card, dark_border, dark_text, clean_text))
+<h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor) - Raw</h3>
+<div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
+  <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
+</div>
+', accent_orange, dark_card, dark_border, dark_text, clean_text))
       }
     }
   }
