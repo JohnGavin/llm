@@ -295,10 +295,10 @@ message("\nRefresh complete!")
 EOF
 
 # Run the R script via nix-shell
-if nix-shell "$LLM_REPO/default.nix" --attr shell --run "cd $LLM_REPO && Rscript /tmp/refresh_preserve.R" >> "$LOG_FILE" 2>&1; then
-    log "✓ History preservation completed"
+if nix-shell "$LLM_REPO/default.nix" --attr shell --run "cd $LLM_REPO && Rscript /tmp/refresh_preserve.R && Rscript R/scripts/refresh_gemini_cache.R" >> "$LOG_FILE" 2>&1; then
+    log "✓ History preservation and Gemini refresh completed"
 else
-    error_log "Preservation script had issues (exit code: $?)"
+    error_log "Refresh scripts had issues (exit code: $?)"
 fi
 
 # 3. Capture cmonitor data via nix-shell
@@ -328,6 +328,7 @@ log "Staging changes..."
 git add inst/extdata/*.json 2>&1 | tee -a "$LOG_FILE" || true
 git add inst/extdata/*.txt 2>&1 | tee -a "$LOG_FILE" || true
 git add inst/extdata/*.duckdb* 2>&1 | tee -a "$LOG_FILE" || true
+git add inst/extdata/gemini/*.duckdb* 2>&1 | tee -a "$LOG_FILE" || true
 
 # Check if there are staged changes
 if git diff --staged --quiet; then
