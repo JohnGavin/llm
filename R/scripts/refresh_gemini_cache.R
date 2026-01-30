@@ -92,7 +92,11 @@ for (f in session_files) {
   if (is.null(session_data)) next
   
   # Process messages
-  for (msg in session_data) {
+  messages <- session_data$messages %||% session_data
+  if (!is.list(messages)) next
+  
+  for (msg in messages) {
+    # Skip non-list elements (metadata/garbage)
     if (!is.list(msg) || is.null(msg$tokens)) next
     
     # Extract data
@@ -129,10 +133,9 @@ if (length(new_messages_list) > 0) {
   # 1. Update Parquet (Partitioned) - Local only, gitignored
   message("Exporting new messages to Parquet...")
   # We use write_dataset for automatic partitioning
-  # This will append/overwrite files in the structure: year=Y/month=M/
   write_dataset(all_new_msgs, PARQUET_DIR, format = "parquet", 
                 partitioning = c("year", "month"),
-                existing_data_behavior = "overwrite_partition")
+                existing_data_behavior = "overwrite")
   
   # 2. Update DuckDB Summaries (Publicly shareable)
   message("Updating DuckDB summaries...")
