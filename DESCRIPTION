@@ -1,7 +1,7 @@
 Type: Package
 Package: llm
 Title: LLM Usage Tracking and Visualization Tools
-Version: 0.0.0.9000
+Version: 0.1.0
 Author: John Gavin
 Maintainer: John Gavin <john.gavin@example.com>
 Description: Tools for tracking and visualizing LLM usage including cost tracking,
