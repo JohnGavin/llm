@@ -44,7 +44,7 @@ normalize_to_char_vec <- function(x) {
 # Parse daily data
 parse_daily <- function(json) {
   if (is.null(json$projects)) return(NULL)
-  names(json$projects) |
+  names(json$projects) |>
     map_dfr(\(p) {
       d <- json$projects[[p]]
       if (is.null(d) || length(d) == 0) return(NULL)
