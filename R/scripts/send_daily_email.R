@@ -114,8 +114,8 @@ if (!has_data) {
     if (is.null(daily_data)) return(list(cost = 0, tokens = 0))
     end_date <- today - (weeks_back - 1) * 7
     start_date <- end_date - 6
-    weekly <- daily_data |
-      filter(as.Date(date) >= start_date, as.Date(date) <= end_date)
+    weekly <- daily_data |>
+      filter(as.Date(.data$date) >= start_date, as.Date(.data$date) <= end_date)
     list(
       cost = sum(weekly$totalCost, na.rm = TRUE),
       tokens = sum(weekly$totalTokens, na.rm = TRUE)
@@ -383,7 +383,7 @@ if (!has_data) {
 
   # Time Block Activity Table (last 5 non-empty days)
   if (!is.null(blocks_raw) && !is.null(blocks_raw$blocks)) {
-    blocks_df <- as_tibble(blocks_raw$blocks) |
+    blocks_df <- as_tibble(blocks_raw$blocks) |>
       mutate(
         start = ymd_hms(startTime),
         end = ymd_hms(actualEndTime),
@@ -392,20 +392,20 @@ if (!has_data) {
         date = as.Date(start),
         cost_per_hr = ifelse(duration_hrs > 0, costUSD / duration_hrs, 0),
         tokens_per_hr = ifelse(duration_hrs > 0, totalTokens / duration_hrs, 0)
-      ) |
-      filter(!is.na(end), costUSD > 0) |
+      ) |>
+      filter(!is.na(end), costUSD > 0) |>
       select(id, date, start, end, duration_mins, duration_hrs, costUSD, totalTokens, cost_per_hr, tokens_per_hr)
 
-    recent_days <- blocks_df |
-      group_by(date) |
-      summarise(n = n(), .groups = "drop") |
-      arrange(desc(date)) |
-      head(5) |
+    recent_days <- blocks_df |>
+      group_by(date) |>
+      summarise(n = n(), .groups = "drop") |>
+      arrange(desc(date)) |>
+      head(5) |>
       pull(date)
 
     if (length(recent_days) > 0) {
-      activity_df <- blocks_df |
-        filter(date %in% recent_days) |
+      activity_df <- blocks_df |>
+        filter(date %in% recent_days) |>
         arrange(desc(end))
 
       if (nrow(activity_df) > 0) {
@@ -479,8 +479,8 @@ if (!has_data) {
 
   # Top Claude Sessions by Cost - NOW AT THE END
   if (!is.null(session_data) && nrow(session_data) > 0) {
-    top_sessions <- session_data |
-      arrange(desc(totalCost)) |
+    top_sessions <- session_data |>
+      arrange(desc(totalCost)) |>
       head(5)
 
     email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s; margin-top: 20px;">Top Claude Sessions by Cost</h3>
