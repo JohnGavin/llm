@@ -117,95 +117,132 @@ if (!has_data) {
   week3 <- calc_weekly(3)
   week4 <- calc_weekly(4)
 
+  # --- 1. Calculate ccusage stats ---
   total_cost <- if (!is.null(daily_data)) sum(daily_data$totalCost, na.rm = TRUE) else 0
   total_tokens <- if (!is.null(daily_data)) sum(daily_data$totalTokens, na.rm = TRUE) else 0
   n_sessions <- if (!is.null(session_data)) nrow(session_data) else 0
+  
+  cc_start <- if (!is.null(daily_data)) min(as.Date(daily_data$date), na.rm=TRUE) else NA
+  cc_end <- if (!is.null(daily_data)) max(as.Date(daily_data$date), na.rm=TRUE) else NA
+  cc_days <- if (!is.na(cc_start)) as.numeric(cc_end - cc_start) + 1 else 0
+  cc_entries <- if (!is.null(blocks_raw$blocks)) nrow(blocks_raw$blocks) else NA
+  
+  cc_cost_day <- if (cc_days > 0) total_cost / cc_days else 0
+  cc_tok_day <- if (cc_days > 0) total_tokens / cc_days else 0
 
-  # Build email - Dark mode with Summary and Weekly tables first
+  # --- 2. Calculate cmonitor stats ---
+  cm_cost <- NA; cm_tokens <- NA; cm_entries <- NA; cm_days <- NA; cm_start <- NA; cm_end <- NA
+  cm_cost_day <- NA; cm_tok_day <- NA
+  
+  cmonitor_path <- "inst/extdata/cmonitor_daily.txt"
+  if (file.exists(cmonitor_path)) {
+    lines <- readLines(cmonitor_path, warn = FALSE)
+    lines <- lines[!grepl("Setup complete|Terminal wrapper|RSTUDIO_TERM_EXEC|unpacking", lines)]
+    lines <- gsub("\033\\[[0-9;]*[a-zA-Z]", "", lines)
+    full_text <- paste(lines, collapse = "\n")
+    
+    extract <- function(pattern, text) {
+      m <- regexec(pattern, text)
+      if (m[[1]][1] == -1) return(NULL)
+      regmatches(text, m)[[1]][2]
+    }
+    
+    cost_val <- extract("Total Cost:\\s*\\$([0-9,.]+)", full_text)
+    tokens_val <- extract("Total Tokens:\\s*([0-9,]+)", full_text)
+    entries_val <- extract("Entries:\\s*([0-9,]+)", full_text)
+    period_val <- extract("Daily Usage Summary\\s*-\\s*([0-9-]+\\s*to\\s*[0-9-]+)", full_text)
+    
+    if (!is.null(cost_val)) cm_cost <- as.numeric(gsub("[$,]", "", cost_val))
+    if (!is.null(tokens_val)) cm_tokens <- as.numeric(gsub("[,]", "", tokens_val))
+    if (!is.null(entries_val)) cm_entries <- as.numeric(gsub("[,]", "", entries_val))
+    if (!is.null(period_val)) {
+       dates <- strsplit(period_val, " to ")[[1]]
+       cm_start <- as.Date(dates[1]); cm_end <- as.Date(dates[2])
+       cm_days <- as.numeric(cm_end - cm_start) + 1
+       if (cm_days > 0) {
+           cm_cost_day <- cm_cost / cm_days
+           cm_tok_day <- cm_tokens / cm_days
+       }
+    }
+  }
+
+  # Build email - Dark mode with Merged Summary Table
   email_body <- sprintf('
-  <div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
-  <h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
-  <p style="color: %s; font-size: 12px; margin-top: 0;">Data cached: %s</p>
+<div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+<h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
+<p style="color: %s; font-size: 12px; margin-top: 0;">Data cached: %s</p>
 
-  <h3 style="color: %s;">Summary</h3>
-  <table style="border-collapse: collapse; max-width: 400px;">
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;"><strong>Total Cost</strong></td>
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;"><strong>Total Tokens</strong></td>
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;"><strong>Sessions</strong></td>
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">%d</td>
-    </tr>
-  </table>
-
-  <h3 style="color: %s;">Weekly Cost</h3>
-  <table style="border-collapse: collapse; max-width: 400px;">
-    <tr style="background-color: %s;">
-      <th style="padding: 8px; border: 1px solid %s; color: white;">Period</th>
-      <th style="padding: 8px; border: 1px solid %s; text-align: right; color: white;">Cost</th>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 1 (current)</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 2</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 3</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 4</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-  </table>
-
-  <h3 style="color: %s;">Weekly Tokens</h3>
-  <table style="border-collapse: collapse; max-width: 400px;">
-    <tr style="background-color: %s;">
-      <th style="padding: 8px; border: 1px solid %s; color: white;">Period</th>
-      <th style="padding: 8px; border: 1px solid %s; text-align: right; color: white;">Tokens</th>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 1 (current)</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 2</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 3</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-    <tr style="background-color: %s;">
-      <td style="padding: 8px; border: 1px solid %s; color: %s;">Week 4</td>
-      <td style="padding: 8px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-    </tr>
-  </table>
-  ',
+<h3 style="color: %s;">Summary</h3>
+<table style="border-collapse: collapse; width: 100%%; font-size: 11px;">
+  <tr style="background-color: %s; color: white;">
+    <th style="padding: 6px; border: 1px solid %s;">Source</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Cost<sup>1</sup></th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">$/Day</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Tokens</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Tok/Day</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Days<sup>2</sup></th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Sessions<sup>3</sup></th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Entries<sup>4</sup></th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">Start Date</th>
+    <th style="padding: 6px; border: 1px solid %s; text-align: right;">End Date</th>
+  </tr>
+  <!-- ccusage Row -->
+  <tr style="background-color: %s;">
+    <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>ccusage</strong></td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+  <!-- cmonitor Row -->
+  <tr style="background-color: %s;">
+    <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>cmonitor</strong></td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">-</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+    <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
+  </tr>
+</table>
+',
+     # Header
      dark_bg, dark_text, accent_orange, today, dark_muted, cache_time,
      accent_green,
-     dark_row_alt, dark_border, dark_text, dark_border, accent_green, dollar(total_cost),
-     dark_card, dark_border, dark_text, dark_border, dark_text, millions(total_tokens),
-     dark_row_alt, dark_border, dark_text, dark_border, dark_text, n_sessions,
-     accent_green, accent_green, dark_border, dark_border,
-     dark_card, dark_border, dark_text, dark_border, accent_green, dollar(week1$cost),
-     dark_row_alt, dark_border, dark_text, dark_border, dark_text, dollar(week2$cost),
-     dark_card, dark_border, dark_text, dark_border, dark_text, dollar(week3$cost),
-     dark_row_alt, dark_border, dark_text, dark_border, dark_text, dollar(week4$cost),
-     accent_blue, accent_blue, dark_border, dark_border,
-     dark_card, dark_border, dark_text, dark_border, accent_blue, millions(week1$tokens),
-     dark_row_alt, dark_border, dark_text, dark_border, dark_text, millions(week2$tokens),
-     dark_card, dark_border, dark_text, dark_border, dark_text, millions(week3$tokens),
-     dark_row_alt, dark_border, dark_text, dark_border, dark_text, millions(week4$tokens))
+     # Table Header
+     dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border,
+     # ccusage Row
+     dark_card, 
+     dark_border, accent_orange,
+     dark_border, accent_green, dollar(total_cost),
+     dark_border, dark_text, dollar(cc_cost_day),
+     dark_border, accent_blue, millions(total_tokens),
+     dark_border, dark_text, millions(cc_tok_day),
+     dark_border, dark_text, cc_days,
+     dark_border, dark_text, n_sessions,
+     dark_border, dark_text, ifelse(is.na(cc_entries), "-", comma(cc_entries)),
+     dark_border, dark_muted, as.character(cc_start),
+     dark_border, dark_muted, as.character(cc_end),
+     # cmonitor Row
+     dark_row_alt,
+     dark_border, accent_orange,
+     dark_border, accent_green, ifelse(is.na(cm_cost), "-", dollar(cm_cost)),
+     dark_border, dark_text, ifelse(is.na(cm_cost_day), "-", dollar(cm_cost_day)),
+     dark_border, accent_blue, ifelse(is.na(cm_tokens), "-", millions(cm_tokens)),
+     dark_border, dark_text, ifelse(is.na(cm_tok_day), "-", millions(cm_tok_day)),
+     dark_border, dark_text, ifelse(is.na(cm_days), "-", cm_days),
+     dark_border, dark_text, # Sessions (skipped)
+     dark_border, dark_text, ifelse(is.na(cm_entries), "-", comma(cm_entries)),
+     dark_border, dark_muted, ifelse(is.na(cm_start), "-", as.character(cm_start)),
+     dark_border, dark_muted, ifelse(is.na(cm_end), "-", as.character(cm_end)))
 
   # Time Block Activity Table (last 3 non-empty days) - BEFORE Top Sessions
   if (!is.null(blocks_raw) && !is.null(blocks_raw$blocks)) {
@@ -327,92 +364,26 @@ if (!has_data) {
     email_body <- paste0(email_body, "</table>")
   }
 
-  # Add System Monitor (cmonitor) section if data exists
-  cmonitor_path <- "inst/extdata/cmonitor_daily.txt"
-  if (file.exists(cmonitor_path)) {
-    # Read and clean lines
-    lines <- readLines(cmonitor_path, warn = FALSE)
-    # Filter out Nix setup noise
-    lines <- lines[!grepl("Setup complete|Terminal wrapper|RSTUDIO_TERM_EXEC|unpacking", lines)]
-    # Strip ANSI codes (CSI sequences)
-    lines <- gsub("\033\\[[0-9;]*[a-zA-Z]", "", lines)
-    full_text <- paste(lines, collapse = "\n")
-    
-    # Extract Data using Regex
-    extract <- function(pattern, text) {
-      m <- regexec(pattern, text)
-      if (m[[1]][1] == -1) return(NULL)
-      regmatches(text, m)[[1]][2]
-    }
-    
-    cost_val <- extract("Total Cost:\\s*\\$([0-9,.]+)", full_text)
-    tokens_val <- extract("Total Tokens:\\s*([0-9,]+)", full_text)
-    entries_val <- extract("Entries:\\s*([0-9,]+)", full_text)
-    period_val <- extract("Daily Usage Summary\\s*-\\s*([0-9-]+\\s*to\\s*[0-9-]+)", full_text)
-    
-    if (!is.null(cost_val) && !is.null(tokens_val)) {
-      # Valid parse - Use Dashboard Style
-      email_body <- paste0(email_body, sprintf('
-<div style="background-color: %s; border: 1px solid %s; padding: 15px; border-radius: 5px; font-family: sans-serif; margin-top: 20px;">
-  <h3 style="color: %s; margin: 0 0 10px 0;">System Monitor Check (cmonitor)</h3>
+    email_body <- paste0(email_body, sprintf('
+    <hr style="margin-top: 20px; border-color: %s;">
+    <p style="color: %s; font-size: 12px;">
+      <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
+      <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
+      Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
+    </p>
   
-  <div style="display: flex; gap: 20px; margin-bottom: 15px;">
-    <div>
-      <div style="color: %s; font-size: 11px;">TOTAL COST</div>
-      <div style="color: %s; font-size: 16px; font-weight: bold;">$%s</div>
+    <!-- Footnotes -->
+    <div style="margin-top: 30px; border-top: 1px solid %s; padding-top: 10px; color: %s; font-size: 10px;">
+      <strong>Definitions:</strong><br>
+      <sup>1</sup> <strong>Cost:</strong> Total cost in USD.<br>
+      <sup>2</sup> <strong>Days:</strong> Number of days in the reporting period.<br>
+      <sup>3</sup> <strong>Sessions:</strong> Number of distinct interactive sessions recorded.<br>
+      <sup>4</sup> <strong>Entries:</strong> Total number of logged interactions/blocks.<br>
+      <strong>Source:</strong> <em>ccusage</em> (this R package) vs <em>cmonitor</em> (Rust-based system monitor).
     </div>
-    <div>
-      <div style="color: %s; font-size: 11px;">TOTAL TOKENS</div>
-      <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
     </div>
-    <div>
-      <div style="color: %s; font-size: 11px;">ENTRIES</div>
-      <div style="color: %s; font-size: 16px; font-weight: bold;">%s</div>
-    </div>
-  </div>
-
-  <div style="color: %s; font-size: 11px; border-top: 1px solid %s; padding-top: 8px;">
-    Reporting Period: %s<br>
-    <em>Data source: Local cmonitor cache</em>
-  </div>
-</div>
-', 
-      dark_card, dark_border, accent_orange, 
-      dark_muted, accent_green, cost_val,
-      dark_muted, accent_blue, tokens_val,
-      dark_muted, dark_text, ifelse(is.null(entries_val), "N/A", entries_val),
-      dark_muted, dark_border, ifelse(is.null(period_val), "Unknown", period_val)))
-      
-    } else {
-      # Fallback - Dump cleaned text but strip box characters
-      # Remove box drawing characters
-      clean_text <- gsub("[╭╮╰╯│─┏┓┗┛┫┣┳┻╋═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬]", "", full_text)
-      # Compress multiple empty lines
-      clean_text <- gsub("\n\\s*\n", "\n", clean_text)
-      clean_text <- trimws(clean_text)
-      
-      if (nchar(clean_text) > 0) {
-        email_body <- paste0(email_body, sprintf('
-<h3 style="color: %s; margin-top: 20px;">System Monitor (cmonitor) - Raw</h3>
-<div style="background-color: %s; border: 1px solid %s; padding: 10px; border-radius: 5px;">
-  <pre style="color: %s; font-family: monospace; font-size: 11px; margin: 0; white-space: pre-wrap;">%s</pre>
-</div>
-', accent_orange, dark_card, dark_border, dark_text, clean_text))
-      }
-    }
+    ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text, dark_border, dark_muted))
   }
-
-  email_body <- paste0(email_body, sprintf('
-  <hr style="margin-top: 20px; border-color: %s;">
-  <p style="color: %s; font-size: 12px;">
-    <a href="https://github.com/JohnGavin/llm" style="color: %s;">llm project</a> |
-    <a href="https://johngavin.github.io/llm/vignettes/telemetry.html" style="color: %s;">Dashboard</a> |
-    Refresh: <code style="background-color: %s; padding: 2px 6px; border-radius: 3px; color: %s;">Rscript R/scripts/refresh_ccusage_cache.R</code>
-  </p>
-  </div>
-  ', dark_border, dark_muted, accent_blue, accent_blue, dark_card, dark_text))
-}
-
 # Create and send email
 london_time <- format(Sys.time(), tz = "Europe/London", "%Y-%m-%d %H:%M")
 email <- compose_email(
