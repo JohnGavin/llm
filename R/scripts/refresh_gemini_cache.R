@@ -93,7 +93,7 @@ for (f in session_files) {
   
   # Process messages
   for (msg in session_data) {
-    if (is.null(msg$tokens)) next
+    if (!is.list(msg) || is.null(msg$tokens)) next
     
     # Extract data
     timestamp <- ymd_hms(msg$timestamp)
