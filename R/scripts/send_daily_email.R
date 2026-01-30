@@ -233,7 +233,9 @@ if (!has_data) {
   }
 
   # Build email - Dark mode with Merged Summary Table
-  email_body <- sprintf('\n<div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+  # Break into chunks to avoid sprintf 100-argument limit
+  
+  email_header <- sprintf('\n<div style="background-color: %s; color: %s; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
 <h2 style="color: %s; margin-bottom: 5px;">LLM Usage Report - %s</h2>
 <p style="color: %s; font-size: 12px; margin-top: 0;">Data cached: %s</p>
 
@@ -250,7 +252,11 @@ if (!has_data) {
     <th style="padding: 6px; border: 1px solid %s; text-align: right;">Entries<sup>4</sup></th>
     <th style="padding: 6px; border: 1px solid %s; text-align: right;">Start Date</th>
     <th style="padding: 6px; border: 1px solid %s; text-align: right;">End Date</th>
-  </tr>
+  </tr>',
+  dark_bg, dark_text, accent_orange, today, dark_muted, cache_time, accent_green,
+  dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border)
+
+  row_ccusage <- sprintf('
   <!-- ccusage Row -->
   <tr style="background-color: %s;">
     <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>ccusage</strong></td>
@@ -263,7 +269,19 @@ if (!has_data) {
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-  </tr>
+  </tr>',
+  dark_card, dark_border, dark_text,
+  dark_border, accent_green, dollar(total_cost),
+  dark_border, dark_text, dollar(cc_cost_day),
+  dark_border, accent_blue, millions(total_tokens),
+  dark_border, dark_text, millions(cc_tok_day),
+  dark_border, dark_text, cc_days,
+  dark_border, dark_text, n_sessions,
+  dark_border, dark_text, ifelse(is.na(cc_entries), "-", comma(cc_entries)),
+  dark_border, dark_muted, as.character(cc_start),
+  dark_border, dark_muted, as.character(cc_end))
+
+  row_gemini <- sprintf('
   <!-- Gemini Row -->
   <tr style="background-color: %s;">
     <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>Gemini</strong></td>
@@ -276,7 +294,19 @@ if (!has_data) {
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
-  </tr>
+  </tr>',
+  dark_row_alt, dark_border, dark_text,
+  dark_border, accent_green, dollar(gm_cost),
+  dark_border, dark_text, dollar(gm_cost_day),
+  dark_border, accent_blue, millions(gm_tokens),
+  dark_border, dark_text, millions(gm_tok_day),
+  dark_border, dark_text, gm_days,
+  dark_border, dark_text, ifelse(gm_sessions_count == 0, "-", gm_sessions_count),
+  dark_border, dark_text, comma(gm_entries),
+  dark_border, dark_muted, as.character(gm_start),
+  dark_border, dark_muted, as.character(gm_end))
+
+  row_cmonitor <- sprintf('
   <!-- cmonitor Row -->
   <tr style="background-color: %s;">
     <td style="padding: 6px; border: 1px solid %s; color: %s;"><strong>cmonitor</strong></td>
@@ -290,49 +320,18 @@ if (!has_data) {
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
     <td style="padding: 6px; border: 1px solid %s; text-align: right; color: %s;">%s</td>
   </tr>
-</table>
-',
-     # Header
-     dark_bg, dark_text, accent_orange, today, dark_muted, cache_time,
-     accent_green,
-     # Table Header
-     dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border,
-     # ccusage Row
-     dark_card, 
-     dark_border, dark_text,
-     dark_border, accent_green, dollar(total_cost),
-     dark_border, dark_text, dollar(cc_cost_day),
-     dark_border, accent_blue, millions(total_tokens),
-     dark_border, dark_text, millions(cc_tok_day),
-     dark_border, dark_text, cc_days,
-     dark_border, dark_text, n_sessions,
-     dark_border, dark_text, ifelse(is.na(cc_entries), "-", comma(cc_entries)),
-     dark_border, dark_muted, as.character(cc_start),
-     dark_border, dark_muted, as.character(cc_end),
-     # Gemini Row
-     dark_row_alt,
-     dark_border, dark_text,
-     dark_border, accent_green, dollar(gm_cost),
-     dark_border, dark_text, dollar(gm_cost_day),
-     dark_border, accent_blue, millions(gm_tokens),
-     dark_border, dark_text, millions(gm_tok_day),
-     dark_border, dark_text, gm_days,
-     dark_border, dark_text, ifelse(gm_sessions_count == 0, "-", gm_sessions_count),
-     dark_border, dark_text, comma(gm_entries),
-     dark_border, dark_muted, as.character(gm_start),
-     dark_border, dark_muted, as.character(gm_end),
-     # cmonitor Row
-     dark_card,
-     dark_border, dark_text,
-     dark_border, accent_green, dollar(cm_cost),
-     dark_border, dark_text, dollar(cm_cost_day),
-     dark_border, accent_blue, millions(cm_tokens),
-     dark_border, dark_text, millions(cm_tok_day),
-     dark_border, dark_text, cm_days,
-     dark_border, dark_text, # Sessions (skipped)
-     dark_border, dark_text, comma(cm_entries),
-     dark_border, dark_muted, as.character(cm_start),
-     dark_border, dark_muted, as.character(cm_end))
+</table>',
+  dark_card, dark_border, dark_text,
+  dark_border, accent_green, dollar(cm_cost),
+  dark_border, dark_text, dollar(cm_cost_day),
+  dark_border, accent_blue, millions(cm_tokens),
+  dark_border, dark_text, millions(cm_tok_day),
+  dark_border, dark_text, cm_days,
+  dark_border, dark_text, comma(cm_entries),
+  dark_border, dark_muted, as.character(cm_start),
+  dark_border, dark_muted, as.character(cm_end))
+
+  email_body <- paste0(email_header, row_ccusage, row_gemini, row_cmonitor)
 
   # Weekly Cost
   email_body <- paste0(email_body, sprintf('\n<h3 style="color: %s;">Weekly Cost (Claude)</h3>
