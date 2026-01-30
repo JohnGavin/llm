@@ -44,6 +44,8 @@ jobs:
             any::jsonlite
             any::purrr
             any::lubridate
+            any::DBI
+            any::duckdb
 
       - name: Send daily email report
         run: Rscript R/scripts/send_daily_email.R
