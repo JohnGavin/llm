@@ -48,7 +48,7 @@ parse_daily <- function(json) {
     map_dfr(\(p) {
       d <- json$projects[[p]]
       if (is.null(d) || length(d) == 0) return(NULL)
-      as_tibble(d) |
+      as_tibble(d) |>
         mutate(
           project = p,
           across(any_of("modelsUsed"), ~ map(.x, normalize_to_char_vec))
