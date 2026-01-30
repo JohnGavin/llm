@@ -14,10 +14,18 @@ test_that("cmonitor execution inside nix-shell produces expected output", {
   # However, for automation, we usually want `nix-shell --run "command"`.
   # `default.sh` builds the shell. Let's see if we can use `nix-shell` directly if `default.nix` is built.
   
-  llm_repo <- normalizePath(file.path(getwd(), "../../.."))
-  if (basename(getwd()) == "testthat") llm_repo <- normalizePath(file.path(getwd(), "../../.."))
-  if (basename(getwd()) == "tests") llm_repo <- normalizePath(file.path(getwd(), "../.."))
-  if (basename(getwd()) == "llm") llm_repo <- getwd()
+  # Find the repo root robustly
+  find_repo_root <- function() {
+    curr <- getwd()
+    while (curr != "/" && curr != "C:/") {
+      if (file.exists(file.path(curr, "default.nix"))) return(curr)
+      curr <- dirname(curr)
+    }
+    return(NULL)
+  }
+  
+  llm_repo <- find_repo_root()
+  skip_if(is.null(llm_repo), "Could not find repo root with default.nix")
   
   # Construct the command to run cmonitor inside the shell
   # We use timeout to ensure it doesn't hang

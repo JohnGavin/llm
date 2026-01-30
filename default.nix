@@ -28,6 +28,7 @@ let
       attachment
       autometric
       available
+      checkmate
       chromote
       cli
       covr

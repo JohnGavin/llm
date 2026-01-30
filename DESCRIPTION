@@ -9,7 +9,10 @@ Description: Tools for tracking and visualizing LLM usage including cost trackin
     Provides functions for analyzing Claude Code usage patterns.
 License: MIT + file LICENSE
 Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
 Imports:
+    checkmate,
     cli,
     DBI,
     dplyr,
@@ -19,8 +22,21 @@ Imports:
     purrr,
     scales,
     tibble
+VignetteBuilder: knitr
 Suggests:
+    DT,
+    fs,
+    gert,
+    ggplot2,
+    gh,
+    gt,
+    gtExtras,
+    knitr,
+    lubridate,
+    quarto,
+    rmarkdown,
     testthat (>= 3.0.0),
+    tidyr,
     withr
 Config/testthat/edition: 3
 RoxygenNote: 7.3.3
