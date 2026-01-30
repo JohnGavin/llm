@@ -327,7 +327,7 @@ if (!has_data) {
   dark_border, accent_blue, millions(cm_tokens),
   dark_border, dark_text, millions(cm_tok_day),
   dark_border, dark_text, cm_days,
-  dark_border, dark_text, # Sessions (hardcoded - in string, needs 2 args for style)
+  dark_border, dark_text, # Sessions (2 placeholders for style, value is hardcoded '-')
   dark_border, dark_text, comma(cm_entries),
   dark_border, dark_muted, as.character(cm_start),
   dark_border, dark_muted, as.character(cm_end))
