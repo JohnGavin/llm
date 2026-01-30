@@ -220,6 +220,7 @@ If using test-coverage.yaml, it will fail without token:
 | Large data I/O | `arrow` |
 | Data manipulation | `dplyr` (duckdb/arrow backend) |
 | Pipelines | `targets` + `crew` |
+| Package API docs | `pkgctx` (via nix run) |
 
 ## Agents (8 available)
 
@@ -236,6 +237,44 @@ If using test-coverage.yaml, it will fail without token:
 | `targets-runner` | sonnet | 8k | Pipeline debugging |
 | `shinylive-builder` | sonnet | 8k | WASM builds |
 
+### MANDATORY Agent Usage Rules (CRITICAL - NO EXCEPTIONS)
+
+#### 1. Always Use Cheaper Models Where Possible
+**❌ WRONG:** Using Opus for simple tasks (wastes tokens and money)
+```python
+Task(subagent_type="general-purpose", prompt="check if file exists")  # Defaults to Opus!
+```
+
+**✅ CORRECT:** Match model to task complexity
+```python
+Task(subagent_type="general-purpose", model="haiku", prompt="check if file exists")  # Simple task
+Task(subagent_type="verbose-runner", model="sonnet", prompt="run test suite")  # Medium complexity
+Task(subagent_type="planner", model="opus", prompt="design architecture")  # Complex reasoning
+```
+
+#### 2. Always Run Independent Tasks in Parallel
+**❌ WRONG:** Sequential agent calls (slow, expensive, wastes time)
+```python
+Task(prompt="check logs")     # Waits...
+Task(prompt="check status")   # Waits...
+Task(prompt="test endpoint")  # Waits...
+```
+
+**✅ CORRECT:** Single message with multiple Tasks
+```python
+# All run simultaneously!
+Task(model="haiku", prompt="check logs"),
+Task(model="haiku", prompt="check status"),
+Task(model="haiku", prompt="test endpoint")
+```
+
+### Model Selection Guide (MANDATORY)
+| Task Type | Model | Cost | Examples |
+|-----------|-------|------|----------|
+| Simple queries | `haiku` | $ | File checks, curl, grep, counting |
+| Moderate work | `sonnet` | $$ | Tests, debugging, analysis |
+| Complex reasoning | `opus` | $$$ | Architecture, planning, multi-file |
+
 ### When to Delegate
 
 **Core rule:** Delegate when output > 10 lines OR complex reasoning needed
@@ -245,6 +284,8 @@ If using test-coverage.yaml, it will fail without token:
 - Using agents to check symlinks exist (just use `ls -la`)
 - Using btw tools directly for builds/tests (always delegate)
 - Using wrong agent for task (quick-fix for complex verification)
+- **NOT running agents in parallel when tasks are independent**
+- **Using expensive models for simple tasks**
 
 For detailed rules → invoke `subagent-delegation` skill
 
@@ -260,7 +301,7 @@ For detailed rules → invoke `subagent-delegation` skill
 
 *Shiny:* `shiny-async-patterns`, `shinylive-quarto`, `shinylive-deployment`
 
-*Documentation:* `pkgdown-deployment`, `project-telemetry`, `project-review`, `readme-qmd-standard`
+*Documentation:* `llm-package-context`, `pkgdown-deployment`, `project-telemetry`, `project-review`, `readme-qmd-standard`
 
 *Analysis:* `eda-workflow`, `tidyverse-style`, `analysis-rationale-logging`
 
@@ -272,6 +313,7 @@ Load the skill when you encounter these situations:
 
 | Situation | Load Skill |
 |-----------|------------|
+| Need package API docs for LLM | `llm-package-context` (pkgctx usage) |
 | Writing GitHub Actions | `ci-workflows-github-actions` (MANDATORY) |
 | Quarto project setup | Use `render:` section in `_quarto.yml` |
 | Shinylive vignette | `shinylive-quarto` + browser test |
@@ -407,8 +449,9 @@ See `readme-qmd-standard` skill for complete template.
 ### ⚠️ btw_tool_run_r HAS NO TIMEOUT - IT WILL HANG FOREVER!
 
 **NEVER call btw_tool_run_r directly for:**
-- devtools::test(), check(), build() → Use `verbose-runner` agent
-- Any operation expecting >10 lines output → Use `verbose-runner` agent
+- devtools::test(), check(), build() → Use agent with `model="sonnet"`
+- Any gh::gh() API calls that might hang → Use `Bash` with timeout
+- Any operation expecting >10 lines output → Use agent with `model="sonnet"`
 - Debugging test failures → Use `r-debugger` agent
 - shiny::runApp() or launch_dashboard() → WILL HANG (waits for browser)
 - Any function that might wait for user input → Use agent with timeout
@@ -416,15 +459,20 @@ See `readme-qmd-standard` skill for complete template.
 **NEVER call btw_tool_pkg_* directly** → Always use appropriate agent
 
 **ALWAYS RUN SUBAGENTS IN PARALLEL** when tasks are independent:
-```
-# GOOD - Parallel execution
-Task(test), Task(check), Task(document) in one message
+```python
+# ✅ GOOD - Parallel execution with appropriate models
+Task(model="haiku", prompt="check status"),
+Task(model="haiku", prompt="list files"),
+Task(model="sonnet", prompt="run tests")
+# All three run simultaneously!
 
-# BAD - Sequential execution
-Task(test) then wait, then Task(check) then wait...
+# ❌ BAD - Sequential execution (slow, expensive)
+Task(prompt="check status")  # Waits... uses Opus by default!
+Task(prompt="list files")     # Waits... uses Opus by default!
+Task(prompt="run tests")      # Waits... uses Opus by default!
 ```
 
-**Exception:** Simple one-liners, checking values, quick calculations
+**Exception:** Simple one-liners, checking values, quick calculations - but still use `model="haiku"` when using agents!
 
 | Excluded | Why | Alternative |
 |----------|-----|-------------|
