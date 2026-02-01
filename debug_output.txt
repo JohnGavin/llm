@@ -1,0 +1,43 @@
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+
+Attaching package: ‘lubridate’
+
+The following objects are masked from ‘package:base’:
+
+    date, intersect, setdiff, union
+
+
+Attaching package: ‘purrr’
+
+The following object is masked from ‘package:jsonlite’:
+
+    flatten
+
+
+Attaching package: ‘arrow’
+
+The following object is masked from ‘package:lubridate’:
+
+    duration
+
+The following object is masked from ‘package:utils’:
+
+    timestamp
+
+Starting Gemini usage refresh...
+[1] 0
+[1] 0
+Scanning for session files...
+Parsing session: 2026-01-04T21-28-aab98ea1
+Error in msg$tokens : $ operator is invalid for atomic vectors
+Execution halted
