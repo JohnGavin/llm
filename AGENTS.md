@@ -528,12 +528,12 @@ library(plotly)
 plot_ly(data, x = ~x, y = ~y, type = 'scatter')
 ```
 
-#### Option 2: Explicitly Install Dependencies (UNRELIABLE)
+#### Option 2: Explicitly Install Dependencies (WORKING PATTERN FROM irishbuoys)
 ```r
-# May work, but fragile and slow
-webr::install(c("munsell", "scales", "colorspace", "farver"),
-              repos = "https://repo.r-wasm.org")
-library(ggplot2)
+# Install munsell FIRST, then ggplot2 - order matters!
+webr::install("munsell", repos = "https://repo.r-wasm.org")
+webr::install("ggplot2", repos = "https://repo.r-wasm.org")
+library(ggplot2)  # Now works!
 ```
 
 #### Option 3: Wait for WebR to Fix It (SOMEDAY)

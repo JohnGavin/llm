@@ -11,8 +11,26 @@ Create interactive, multi-page vignettes with WebR for browser-based R execution
 
 ## Core Requirements
 
-### 1. Package Compilation (MANDATORY)
-**NEVER manually define functions in WebR vignettes.** Always compile packages to WebAssembly.
+### 1. Package Compilation (MANDATORY - NO EXCEPTIONS)
+
+**CRITICAL: UNIVERSAL WEBR REQUIREMENTS**
+
+These rules apply to ALL WebR implementations, NO EXCEPTIONS:
+
+1. **Packages MUST be compiled to WebAssembly** using r-wasm/actions
+2. **NEVER use manual function definitions as a workaround**
+3. **NEVER copy/paste function code into vignettes**
+4. **ALWAYS use proper package loading with `library()`**
+
+**Why This Matters:**
+- Manual definitions break when functions change
+- No access to internal package functions
+- S3/S4 methods won't work
+- Dependencies won't load correctly
+- Creates maintenance nightmare
+
+**The ONLY Correct Approach:**
+Compile your package to WebAssembly using r-wasm/actions GitHub workflow.
 
 ```yaml
 # .github/workflows/webr-build.yml
@@ -109,27 +127,105 @@ Continue to [Basic Examples](examples-basic.qmd)
 
 ## Implementation Checklist
 
-- [ ] Set up GitHub Actions for WebR compilation
-- [ ] Configure vignette YAML with WebR repos
+**MANDATORY Steps (NO shortcuts allowed):**
+
+- [ ] **Set up r-wasm/actions GitHub workflow** (REQUIRED - no manual compilation)
+- [ ] **Verify package compiles to WebAssembly** (Check workflow succeeds)
+- [ ] **Configure vignette YAML with WebR repos** (Point to your GitHub Pages)
 - [ ] Split content into logical pages (max 300 lines per page)
 - [ ] Add navigation between pages
-- [ ] Use `library()` not manual function definitions
+- [ ] **Use `library()` ONLY - NEVER manual function definitions** (FORBIDDEN)
 - [ ] Test in browser with WebR extension
 - [ ] Deploy to GitHub Pages
+- [ ] **Verify package loads with `library()` in browser** (Must work or deployment fails)
+
+**CRITICAL:** Steps marked in bold are non-negotiable. Manual function definitions are FORBIDDEN.
 
 ## Common Pitfalls
 
-### ❌ WRONG: Manual Function Definitions
+### ❌ WRONG: Manual Function Definitions (FORBIDDEN)
+
+**NEVER DO THIS:**
 ```r
-# Since package not on CRAN, define functions
-mills_ratio <- function(x) { ... }
+# Since package not on CRAN, define functions manually
+mills_ratio <- function(x) {
+  # Function body copied from source
+}
+
+# WRONG! This approach is:
+# - Unmaintainable (functions change)
+# - Incomplete (missing internals)
+# - Broken (no methods, no dependencies)
+# - FORBIDDEN in all WebR projects
 ```
 
+**Why manual definitions fail:**
+- No access to package internals (non-exported functions)
+- S3/S4 methods won't register correctly
+- Package dependencies won't load
+- Data objects unavailable
+- Namespace collisions
+- Breaks when package updates
+
 ### ✅ CORRECT: Load from WebR Repository
+
+**ALWAYS DO THIS:**
 ```r
 library(millsratio)
-# All functions available from compiled package
+# All functions available from properly compiled package
+# - Full API access
+# - All methods registered
+# - Dependencies loaded
+# - Data objects available
+# - Updates automatically with package
 ```
+
+### ❌ WRONG: Skipping r-wasm/actions
+
+**NEVER skip the compilation step:**
+- "I'll just manually define the functions for now" ← NO
+- "Let me test without the WebR build first" ← NO
+- "Can I use shinylive without compiling?" ← NO
+
+**ALWAYS use r-wasm/actions workflow:**
+- Proper WebAssembly compilation
+- CRAN-like repository structure
+- GitHub Pages deployment
+- Automatic dependency resolution
+
+## Critical: The munsell/ggplot2 Issue (MANDATORY FIX)
+
+### ⚠️ Known WebR Issue: ggplot2 Fails Due to Missing munsell
+
+**THE PROBLEM:** As of Jan 2025, ggplot2 in WebR fails with:
+```
+preload error: there is no package called 'munsell'
+preload error: Error: package 'ggplot2' could not be loaded
+```
+
+**THE FIX:** Explicitly install munsell BEFORE ggplot2:
+
+### ✅ CORRECT Pattern (from irishbuoys project):
+```r
+# In WebR/Shinylive setup:
+webr::install("munsell", repos = "https://repo.r-wasm.org")
+webr::install("ggplot2", repos = "https://repo.r-wasm.org")
+library(ggplot2)  # NOW it works!
+```
+
+### Alternative: Use Base R or Other Packages
+```r
+# Instead of ggplot2, use:
+plot()      # Base R plotting
+plotly::plot_ly()  # Interactive plots (works without munsell)
+```
+
+### ❌ WRONG Assumptions:
+- "WebR automatically bundles dependencies" ← FALSE
+- "Shinylive 0.8.0+ fixes this" ← FALSE
+- "Just library(ggplot2) works" ← FALSE
+
+**ALWAYS TEST IN BROWSER:** Deploy and check F12 console for munsell errors
 
 ### ❌ WRONG: Single Long Page
 - 1000+ line vignettes are hard to navigate
@@ -205,8 +301,21 @@ webr:
 - [r-wasm/actions](https://github.com/r-wasm/actions)
 - [Building R Packages for WebR](https://docs.r-wasm.org/webr/latest/building.html)
 
+## Standards Summary
+
+| Aspect | Requirement | NEVER Do | ALWAYS Do |
+|--------|-------------|----------|-----------|
+| Package Loading | WebAssembly compilation | Manual function definitions | r-wasm/actions workflow |
+| Function Access | library() call | Copy/paste code | Proper package import |
+| Dependencies | Automatic via WASM | Skip compilation step | Full package build |
+| Maintenance | Package updates | Hardcoded functions | Repository references |
+| Testing | Browser verification | Assume it works | Test library() loads |
+
+**REMINDER:** Manual function definitions are FORBIDDEN in WebR. NO exceptions. NO shortcuts. NO workarounds.
+
 ## Related Skills
 - `pkgdown-deployment` - For static documentation
 - `shinylive-quarto` - For Shiny apps in browser
 - `ci-workflows-github-actions` - For automation
 - `r-package-workflow` - For package development
+- `vignette-code-folding` - For code display standards (MANDATORY: code-fold: true)
