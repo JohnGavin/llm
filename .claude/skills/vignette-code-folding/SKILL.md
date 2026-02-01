@@ -15,6 +15,14 @@ Use this skill when:
 
 ## MANDATORY Code Folding Rules
 
+**CRITICAL: UNIVERSAL REQUIREMENTS FOR ALL R PACKAGE VIGNETTES**
+
+These rules apply to EVERY R package project, NO EXCEPTIONS:
+
+1. **ALL vignettes MUST have `code-fold: true`** in YAML header
+2. **ALL vignettes MUST have `code-summary: "Show code"`** in YAML header
+3. These settings are NON-NEGOTIABLE across all projects
+
 ### RULE 1: Code Folding Enabled (REQUIRED)
 
 **All code chunks in ALL vignettes must support code folding.**
@@ -26,11 +34,13 @@ Use this skill when:
 title: "Your Vignette Title"
 format:
   html:
-    code-fold: true      # MANDATORY: Hide code by default
-    code-summary: "Show code"  # Optional: Custom button text
-    code-tools: true     # Optional: Add copy/view buttons
+    code-fold: true              # MANDATORY: Hide code by default (EVERY vignette, EVERY project)
+    code-summary: "Show code"    # MANDATORY: Standard button text (EVERY vignette, EVERY project)
+    code-tools: true             # Optional: Add copy/view buttons
 ---
 ```
+
+**NO EXCEPTIONS:** Every vignette in every R package project must include both `code-fold: true` and `code-summary: "Show code"`.
 
 #### For R Markdown Vignettes (.Rmd)
 
@@ -517,14 +527,17 @@ For each vignette:
 
 ## Standards Summary
 
-| Aspect | Requirement | Default |
-|--------|-------------|---------|
-| Code Display | All code must support folding | Hidden |
-| Code Folding | MANDATORY in document YAML | `code-fold: true` |
-| Outputs | ALWAYS show | Visible by default |
-| User Experience | Hide implementation details | Click to reveal |
-| Platform Support | Works everywhere | Quarto + Rmd |
-| Accessibility | Semantic HTML | Browser controls |
+| Aspect | Requirement | Default | Applies To |
+|--------|-------------|---------|------------|
+| Code Display | All code must support folding | Hidden | EVERY vignette |
+| Code Folding | MANDATORY in document YAML | `code-fold: true` | EVERY project |
+| Code Summary | MANDATORY button text | `code-summary: "Show code"` | EVERY project |
+| Outputs | ALWAYS show | Visible by default | All vignettes |
+| User Experience | Hide implementation details | Click to reveal | Universal |
+| Platform Support | Works everywhere | Quarto + Rmd | All platforms |
+| Accessibility | Semantic HTML | Browser controls | All browsers |
+
+**REMINDER:** The code-fold and code-summary settings are UNIVERSAL requirements. NO package is exempt.
 
 ## Resources
 
