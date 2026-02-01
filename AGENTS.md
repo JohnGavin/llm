@@ -203,12 +203,25 @@ devtools::test()         # YES - runs tests
    - May use r-lib/actions for non-code tasks
    - Never for package testing or building
 
-### Codecov Token Setup
-If using test-coverage.yaml, it will fail without token:
-1. Get token from https://codecov.io
-2. Add to repo: Settings → Secrets → Actions → New repository secret
-3. Name: `CODECOV_TOKEN`
-4. Error if missing: "Token required - not valid tokenless upload"
+### Test Coverage (Local Only)
+Use `covr` for local test coverage analysis - no external service needed:
+
+```bash
+# Install covr (if not in DESCRIPTION)
+install.packages("covr")
+
+# Generate package coverage report
+covr::package_coverage()
+
+# Generate HTML report for detailed inspection
+covr::report()
+```
+
+**Why local coverage only:**
+- Nix immutability prevents external service uploads
+- Coverage reports are for development iteration, not CI gates
+- No token management overhead
+- Faster feedback during development
 
 ## Tool Preferences
 
