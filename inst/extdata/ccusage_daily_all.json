@@ -155,12 +155,12 @@
     "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network": [
       {
         "date": "2026-02-01",
-        "inputTokens": 4710,
-        "outputTokens": 482,
-        "cacheCreationTokens": 753888,
-        "cacheReadTokens": 10593580,
-        "totalTokens": 11352660,
-        "totalCost": 6.1772,
+        "inputTokens": 7909,
+        "outputTokens": 1084,
+        "cacheCreationTokens": 1966509,
+        "cacheReadTokens": 27287582,
+        "totalTokens": 29263084,
+        "totalCost": 20.5955,
         "dataSource": "ccusage"
       },
       {
@@ -187,12 +187,12 @@
     "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio": [
       {
         "date": "2026-02-01",
-        "inputTokens": 14845,
-        "outputTokens": 838,
-        "cacheCreationTokens": 1743916,
-        "cacheReadTokens": 10198185,
-        "totalTokens": 11957784,
-        "totalCost": 24.3045,
+        "inputTokens": 23369,
+        "outputTokens": 1253,
+        "cacheCreationTokens": 2912013,
+        "cacheReadTokens": 18026142,
+        "totalTokens": 20962777,
+        "totalCost": 44.9279,
         "dataSource": "ccusage"
       },
       {
@@ -572,14 +572,14 @@
     ]
   },
   "totals": {
-    "inputTokens": 336202,
-    "outputTokens": 57330,
-    "cacheCreationTokens": 62944372,
-    "cacheReadTokens": 832862065,
-    "totalTokens": 896199969,
-    "totalCost": 1165.081
+    "inputTokens": 347925,
+    "outputTokens": 58347,
+    "cacheCreationTokens": 65325090,
+    "cacheReadTokens": 857384024,
+    "totalTokens": 923115386,
+    "totalCost": 1200.1227
   },
-  "generatedAt": "2026-02-01 16:27:53",
+  "generatedAt": "2026-02-02 05:03:56",
   "dataSource": "preserved_history",
   "recordCount": 55,
   "dateRange": {
