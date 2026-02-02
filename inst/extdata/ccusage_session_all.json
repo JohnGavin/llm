@@ -1,6 +1,174 @@
 {
   "sessions": [
     {
+      "sessionId": "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio",
+      "inputTokens": 88450,
+      "outputTokens": 13405,
+      "cacheCreationTokens": 13099837,
+      "cacheReadTokens": 124733553,
+      "totalTokens": 137935245,
+      "totalCost": 318.4615085499995,
+      "lastActivity": "2026-02-02",
+      "modelsUsed": [
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-1-20250805",
+        "claude-sonnet-4-5-20250929"
+      ],
+      "modelBreakdowns": [
+        {
+          "modelName": "claude-opus-4-1-20250805",
+          "inputTokens": 16205,
+          "outputTokens": 8784,
+          "cacheCreationTokens": 8841765,
+          "cacheReadTokens": 89913817,
+          "cost": 301.55569424999965
+        },
+        {
+          "modelName": "claude-sonnet-4-5-20250929",
+          "inputTokens": 44037,
+          "outputTokens": 1958,
+          "cacheCreationTokens": 1860869,
+          "cacheReadTokens": 16230371,
+          "cost": 12.008851050000011
+        },
+        {
+          "modelName": "claude-haiku-4-5-20251001",
+          "inputTokens": 28208,
+          "outputTokens": 2663,
+          "cacheCreationTokens": 2397203,
+          "cacheReadTokens": 18589365,
+          "cost": 4.896963249999996
+        }
+      ],
+      "projectPath": "Unknown Project"
+    },
+    {
+      "sessionId": "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network",
+      "inputTokens": 15028,
+      "outputTokens": 5099,
+      "cacheCreationTokens": 3645013,
+      "cacheReadTokens": 57716746,
+      "totalTokens": 61381886,
+      "totalCost": 57.988586649999945,
+      "lastActivity": "2026-02-02",
+      "modelsUsed": [
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-5-20251101",
+        "claude-sonnet-4-5-20250929"
+      ],
+      "modelBreakdowns": [
+        {
+          "modelName": "claude-opus-4-5-20251101",
+          "inputTokens": 13374,
+          "outputTokens": 4791,
+          "cacheCreationTokens": 3241197,
+          "cacheReadTokens": 52973725,
+          "cost": 46.93098874999992
+        },
+        {
+          "modelName": "claude-opus-4-1-20250805",
+          "inputTokens": 490,
+          "outputTokens": 190,
+          "cacheCreationTokens": 267925,
+          "cacheReadTokens": 3744573,
+          "cost": 10.66205325
+        },
+        {
+          "modelName": "claude-haiku-4-5-20251001",
+          "inputTokens": 450,
+          "outputTokens": 67,
+          "cacheCreationTokens": 109980,
+          "cacheReadTokens": 711615,
+          "cost": 0.20942150000000007
+        },
+        {
+          "modelName": "claude-sonnet-4-5-20250929",
+          "inputTokens": 714,
+          "outputTokens": 51,
+          "cacheCreationTokens": 25911,
+          "cacheReadTokens": 286833,
+          "cost": 0.18612315000000001
+        }
+      ],
+      "projectPath": "Unknown Project"
+    },
+    {
+      "sessionId": "subagents",
+      "inputTokens": 15339,
+      "outputTokens": 948,
+      "cacheCreationTokens": 1198766,
+      "cacheReadTokens": 9091415,
+      "totalTokens": 10306468,
+      "totalCost": 3.7302882999999993,
+      "lastActivity": "2026-02-02",
+      "modelsUsed": [
+        "claude-sonnet-4-5-20250929",
+        "claude-haiku-4-5-20251001"
+      ],
+      "modelBreakdowns": [
+        {
+          "modelName": "claude-sonnet-4-5-20250929",
+          "inputTokens": 7258,
+          "outputTokens": 270,
+          "cacheCreationTokens": 380695,
+          "cacheReadTokens": 1668284,
+          "cost": 1.9539154499999998
+        },
+        {
+          "modelName": "claude-haiku-4-5-20251001",
+          "inputTokens": 8081,
+          "outputTokens": 678,
+          "cacheCreationTokens": 818071,
+          "cacheReadTokens": 7423131,
+          "cost": 1.7763728500000004
+        }
+      ],
+      "projectPath": "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network/a48868a2-b396-49a1-b42c-312101af45d9"
+    },
+    {
+      "sessionId": "-Users-johngavin-docs-gh-proj-stats-simulations-randomwalk",
+      "inputTokens": 23182,
+      "outputTokens": 518,
+      "cacheCreationTokens": 920720,
+      "cacheReadTokens": 14821303,
+      "totalTokens": 15765723,
+      "totalCost": 33.03810799999998,
+      "lastActivity": "2026-02-02",
+      "modelsUsed": [
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-1-20250805",
+        "claude-sonnet-4-5-20250929"
+      ],
+      "modelBreakdowns": [
+        {
+          "modelName": "claude-opus-4-1-20250805",
+          "inputTokens": 1495,
+          "outputTokens": 428,
+          "cacheCreationTokens": 627840,
+          "cacheReadTokens": 13587960,
+          "cost": 32.208465
+        },
+        {
+          "modelName": "claude-sonnet-4-5-20250929",
+          "inputTokens": 16055,
+          "outputTokens": 24,
+          "cacheCreationTokens": 95323,
+          "cacheReadTokens": 237071,
+          "cost": 0.47710755000000005
+        },
+        {
+          "modelName": "claude-haiku-4-5-20251001",
+          "inputTokens": 5632,
+          "outputTokens": 66,
+          "cacheCreationTokens": 197557,
+          "cacheReadTokens": 996272,
+          "cost": 0.3525354499999999
+        }
+      ],
+      "projectPath": "Unknown Project"
+    },
+    {
       "sessionId": "-Users-johngavin-docs-gh-llm",
       "inputTokens": 49769,
       "outputTokens": 6212,
@@ -47,174 +215,6 @@
           "cacheCreationTokens": 224502,
           "cacheReadTokens": 854239,
           "cost": 0.3882734000000001
-        }
-      ],
-      "projectPath": "Unknown Project"
-    },
-    {
-      "sessionId": "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio",
-      "inputTokens": 77234,
-      "outputTokens": 11652,
-      "cacheCreationTokens": 12038054,
-      "cacheReadTokens": 111695567,
-      "totalTokens": 123822507,
-      "totalCost": 305.1730345999996,
-      "lastActivity": "2026-02-01",
-      "modelsUsed": [
-        "claude-haiku-4-5-20251001",
-        "claude-opus-4-1-20250805",
-        "claude-sonnet-4-5-20250929"
-      ],
-      "modelBreakdowns": [
-        {
-          "modelName": "claude-opus-4-1-20250805",
-          "inputTokens": 13327,
-          "outputTokens": 8661,
-          "cacheCreationTokens": 8523042,
-          "cacheReadTokens": 86762644,
-          "cost": 290.8004834999997
-        },
-        {
-          "modelName": "claude-sonnet-4-5-20250929",
-          "inputTokens": 41030,
-          "outputTokens": 1770,
-          "cacheCreationTokens": 1743924,
-          "cacheReadTokens": 14735309,
-          "cost": 11.109947700000008
-        },
-        {
-          "modelName": "claude-haiku-4-5-20251001",
-          "inputTokens": 22877,
-          "outputTokens": 1221,
-          "cacheCreationTokens": 1771088,
-          "cacheReadTokens": 10197614,
-          "cost": 3.2626033999999993
-        }
-      ],
-      "projectPath": "Unknown Project"
-    },
-    {
-      "sessionId": "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network",
-      "inputTokens": 11698,
-      "outputTokens": 4903,
-      "cacheCreationTokens": 3073040,
-      "cacheReadTokens": 48419208,
-      "totalTokens": 51508849,
-      "totalCost": 49.743436399999986,
-      "lastActivity": "2026-02-01",
-      "modelsUsed": [
-        "claude-haiku-4-5-20251001",
-        "claude-opus-4-1-20250805",
-        "claude-opus-4-5-20251101",
-        "claude-sonnet-4-5-20250929"
-      ],
-      "modelBreakdowns": [
-        {
-          "modelName": "claude-opus-4-5-20251101",
-          "inputTokens": 10044,
-          "outputTokens": 4595,
-          "cacheCreationTokens": 2669224,
-          "cacheReadTokens": 43676187,
-          "cost": 38.68583849999996
-        },
-        {
-          "modelName": "claude-opus-4-1-20250805",
-          "inputTokens": 490,
-          "outputTokens": 190,
-          "cacheCreationTokens": 267925,
-          "cacheReadTokens": 3744573,
-          "cost": 10.66205325
-        },
-        {
-          "modelName": "claude-haiku-4-5-20251001",
-          "inputTokens": 450,
-          "outputTokens": 67,
-          "cacheCreationTokens": 109980,
-          "cacheReadTokens": 711615,
-          "cost": 0.20942150000000007
-        },
-        {
-          "modelName": "claude-sonnet-4-5-20250929",
-          "inputTokens": 714,
-          "outputTokens": 51,
-          "cacheCreationTokens": 25911,
-          "cacheReadTokens": 286833,
-          "cost": 0.18612315000000001
-        }
-      ],
-      "projectPath": "Unknown Project"
-    },
-    {
-      "sessionId": "subagents",
-      "inputTokens": 8520,
-      "outputTokens": 770,
-      "cacheCreationTokens": 887191,
-      "cacheReadTokens": 7833178,
-      "totalTokens": 8729659,
-      "totalCost": 2.5970854500000002,
-      "lastActivity": "2026-02-01",
-      "modelsUsed": [
-        "claude-sonnet-4-5-20250929",
-        "claude-haiku-4-5-20251001"
-      ],
-      "modelBreakdowns": [
-        {
-          "modelName": "claude-haiku-4-5-20251001",
-          "inputTokens": 6480,
-          "outputTokens": 575,
-          "cacheCreationTokens": 693586,
-          "cacheReadTokens": 6821346,
-          "cost": 1.5584721000000008
-        },
-        {
-          "modelName": "claude-sonnet-4-5-20250929",
-          "inputTokens": 2040,
-          "outputTokens": 195,
-          "cacheCreationTokens": 193605,
-          "cacheReadTokens": 1011832,
-          "cost": 1.03861335
-        }
-      ],
-      "projectPath": "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network/a48868a2-b396-49a1-b42c-312101af45d9"
-    },
-    {
-      "sessionId": "-Users-johngavin-docs-gh-proj-stats-simulations-randomwalk",
-      "inputTokens": 22155,
-      "outputTokens": 206,
-      "cacheCreationTokens": 446427,
-      "cacheReadTokens": 3960168,
-      "totalTokens": 4428956,
-      "totalCost": 9.328797750000001,
-      "lastActivity": "2026-02-01",
-      "modelsUsed": [
-        "claude-haiku-4-5-20251001",
-        "claude-opus-4-1-20250805",
-        "claude-sonnet-4-5-20250929"
-      ],
-      "modelBreakdowns": [
-        {
-          "modelName": "claude-opus-4-1-20250805",
-          "inputTokens": 670,
-          "outputTokens": 152,
-          "cacheCreationTokens": 191415,
-          "cacheReadTokens": 3331220,
-          "cost": 8.607311249999999
-        },
-        {
-          "modelName": "claude-sonnet-4-5-20250929",
-          "inputTokens": 16055,
-          "outputTokens": 24,
-          "cacheCreationTokens": 95323,
-          "cacheReadTokens": 237071,
-          "cost": 0.47710755000000005
-        },
-        {
-          "modelName": "claude-haiku-4-5-20251001",
-          "inputTokens": 5430,
-          "outputTokens": 30,
-          "cacheCreationTokens": 159689,
-          "cacheReadTokens": 391877,
-          "cost": 0.24437895
         }
       ],
       "projectPath": "Unknown Project"
@@ -342,42 +342,33 @@
     },
     {
       "sessionId": "-Users-johngavin-docs-gh-llm-proj-stats-simulations-randomwalk",
-      "inputTokens": 59634,
-      "outputTokens": 11445,
-      "cacheCreationTokens": 12135238,
-      "cacheReadTokens": 174198690,
-      "totalTokens": 186405007,
-      "totalCost": 163.24338409999993,
+      "inputTokens": 41219,
+      "outputTokens": 4133,
+      "cacheCreationTokens": 8712472,
+      "cacheReadTokens": 115819241,
+      "totalTokens": 124577065,
+      "totalCost": 112.61885549999994,
       "lastActivity": "2026-01-18",
       "modelsUsed": [
-        "claude-sonnet-4-5-20250929",
         "claude-opus-4-5-20251101",
         "claude-haiku-4-5-20251001"
       ],
       "modelBreakdowns": [
         {
           "modelName": "claude-opus-4-5-20251101",
-          "inputTokens": 59562,
-          "outputTokens": 11426,
-          "cacheCreationTokens": 12055000,
-          "cacheReadTokens": 173974168,
-          "cost": 162.91429399999993
-        },
-        {
-          "modelName": "claude-sonnet-4-5-20250929",
-          "inputTokens": 42,
-          "outputTokens": 8,
-          "cacheCreationTokens": 64442,
-          "cacheReadTokens": 224522,
-          "cost": 0.30926010000000004
+          "inputTokens": 41199,
+          "outputTokens": 4125,
+          "cacheCreationTokens": 8701893,
+          "cacheReadTokens": 115819241,
+          "cost": 112.60557174999992
         },
         {
           "modelName": "claude-haiku-4-5-20251001",
-          "inputTokens": 30,
-          "outputTokens": 11,
-          "cacheCreationTokens": 15796,
+          "inputTokens": 20,
+          "outputTokens": 8,
+          "cacheCreationTokens": 10579,
           "cacheReadTokens": 0,
-          "cost": 0.01983
+          "cost": 0.01328375
         }
       ],
       "projectPath": "Unknown Project"
@@ -474,11 +465,11 @@
     }
   ],
   "totals": {
-    "inputTokens": 319018,
-    "outputTokens": 41181,
-    "cacheCreationTokens": 50610022,
-    "cacheReadTokens": 633663341,
-    "totalCost": 1077.4939720000002,
-    "totalTokens": 684633562
+    "inputTokens": 322995,
+    "outputTokens": 36308,
+    "cacheCreationTokens": 49606880,
+    "cacheReadTokens": 609738788,
+    "totalCost": 1073.2455807000001,
+    "totalTokens": 659704971
   }
 }
