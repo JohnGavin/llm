@@ -101,11 +101,11 @@ if (has_gemini && nrow(gm_daily) > 0) {
 
 Historical usage data from Claude Code (`ccusage`).
 
-```{r claude-setup}
+```{r claude-setup-vignette}
 daily_data <- load_cached_ccusage("daily", project_filter = NULL)
 ```
 
-```{r llm-cost-trend}
+```{r claude-cost-trend}
 #| fig-cap: "Daily Claude Costs"
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   cost_trend <- daily_data |>
@@ -529,27 +529,12 @@ if (length(open_issues) > 0) {
 
 ## LLM Usage Statistics
 
-```{r llm-setup}
+```{r llm-setup-historical}
 # Load llm package
 library(llm)
 library(here)
 library(scales)
 
-# Check if gt packages are available
-has_gt <- requireNamespace("gt", quietly = TRUE) &&
-          requireNamespace("gtExtras", quietly = TRUE)
-
-if (has_gt) {
-  library(gt)
-  library(gtExtras)
-} else {
-  message("gt/gtExtras not available - using basic tables")
-}
-
-# Load cached data
-daily_data <- load_cached_ccusage("daily", project_filter = NULL)
-session_data <- load_cached_ccusage("session", project_filter = NULL)
-```
 
 This section tracks Claude Code usage via two complementary tools:
 - **ccusage**: Project-level historical analysis (JSON export, DuckDB-friendly)
@@ -688,7 +673,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 
 ### Cost Trends Over Time
 
-```{r llm-cost-trend}
+```{r llm-cost-trend-summary}
 #| fig-cap: "Daily LLM costs over time"
 #| fig-height: 5
 
