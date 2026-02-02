@@ -631,7 +631,7 @@ if (!is.null(monitor_summary)) {
 
 The following dashboard provides real-time visualization of LLM consumption against daily and weekly limits, as well as Max5 block tracking.
 
-```{r llm-dashboard}
+```{r llm-dashboard-interactive}
 #| results: "asis"
 #| comment: ""
 
