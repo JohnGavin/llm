@@ -48,7 +48,7 @@ tryCatch({
 all_files <- tryCatch({
   fs::dir_ls(recurse = TRUE, type = "file") |>
     as.character() |>
-    {\(x) x[!grepl("(\.git|_targets|renv)", x)]}()
+    {\(x) x[!grepl("(\\.git|_targets|renv)", x)]}()
 }, error = function(e) character(0))
 
 if (length(all_files) > 0) {
