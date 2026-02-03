@@ -534,6 +534,21 @@ if (length(open_issues) > 0) {
 library(llm)
 library(here)
 library(scales)
+
+# Check if gt packages are available
+has_gt <- requireNamespace("gt", quietly = TRUE) &&
+          requireNamespace("gtExtras", quietly = TRUE)
+
+if (has_gt) {
+  library(gt)
+  library(gtExtras)
+} else {
+  message("gt/gtExtras not available - using basic tables")
+}
+
+# Load cached data
+daily_data <- load_cached_ccusage("daily", project_filter = NULL)
+session_data <- load_cached_ccusage("session", project_filter = NULL)
 ```
 
 This section tracks Claude Code usage via two complementary tools:
