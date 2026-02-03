@@ -465,10 +465,7 @@ if (length(all_files) > 0) {
 # Show directory tree (limited depth)
 tryCatch({
   tree_output <- capture.output(
-    fs::dir_tree(
-      recurse = 2,
-      regexp = "^(?!.*(\\.git|_targets|renv|node_modules|__pycache__)).*$"
-    )
+    fs::dir_tree(recurse = 2)
   )
   cat(paste(head(tree_output, 50), collapse = "\n"))
   if (length(tree_output) > 50) {
@@ -635,10 +632,31 @@ The following dashboard provides real-time visualization of LLM consumption agai
 #| results: "asis"
 #| comment: ""
 
-# Force cli output to be plain text for Quarto
-withr::with_options(list(cli.num_colors = 1, cli.dynamic = FALSE), {
-  show_usage_dashboard()
-})
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  # Create a static summary for the report instead of the interactive CLI dashboard
+  summary_stats <- summarize_llm_usage(daily_data)
+  
+  if (has_gt) {
+    summary_stats |>
+      gt() |>
+      tab_header(
+        title = "LLM Usage Status",
+        subtitle = "Current usage against limits"
+      ) |>
+      cols_label(
+        metric = "Metric",
+        value = "Value"
+      ) |>
+      tab_options(
+        table.font.size = px(14),
+        heading.title.font.size = px(18)
+      )
+  } else {
+    knitr::kable(summary_stats, caption = "LLM Usage Status")
+  }
+} else {
+  cat("No data available for dashboard.\n")
+}
 ```
 
 ### Max5 Block History
@@ -949,6 +967,89 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
       plot.title = element_text(face = "bold"),
       axis.text.x = element_text(angle = 45, hjust = 1)
     )
+}
+```
+
+### Session Efficiency & Cost Analysis
+
+This section analyzes long-term trends in session duration and cost efficiency to investigate if sessions are becoming shorter or more expensive over time.
+
+```{r session-efficiency}
+#| fig-cap: "Trends in session duration and cost efficiency"
+#| fig-height: 10
+
+# Load blocks data
+blocks_data <- tryCatch({
+  jsonlite::fromJSON(here::here("inst/extdata/ccusage_blocks_all.json"))
+}, error = function(e) NULL)
+
+if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
+  # Process blocks to session level
+  session_metrics <- as_tibble(blocks_data$blocks) |>
+    mutate(
+      start = ymd_hms(startTime),
+      end = ymd_hms(actualEndTime),
+      duration_mins = as.numeric(difftime(end, start, units = "mins")),
+      date = as.Date(start),
+      cost_per_min = ifelse(duration_mins > 0, costUSD / duration_mins, 0)
+    ) |>
+    filter(!is.na(end), duration_mins > 0, costUSD > 0)
+
+  # Calculate daily averages
+  daily_trends <- session_metrics |>
+    group_by(date) |>
+    summarise(
+      avg_duration = mean(duration_mins, na.rm = TRUE),
+      avg_cost_per_min = mean(cost_per_min, na.rm = TRUE),
+      total_cost = sum(costUSD, na.rm = TRUE),
+      n_sessions = n(),
+      .groups = "drop"
+    )
+
+  # Plot 1: Average Session Duration
+  p1 <- ggplot(daily_trends, aes(x = date, y = avg_duration)) +
+    geom_point(alpha = 0.5, color = "steelblue") +
+    geom_smooth(method = "loess", se = FALSE, color = "darkblue") +
+    labs(
+      title = "Average Session Duration Over Time",
+      subtitle = "Are sessions getting shorter?",
+      x = NULL,
+      y = "Avg Duration (mins)"
+    ) +
+    theme_minimal()
+
+  # Plot 2: Cost Efficiency
+  p2 <- ggplot(daily_trends, aes(x = date, y = avg_cost_per_min)) +
+    geom_point(alpha = 0.5, color = "darkgreen") +
+    geom_smooth(method = "loess", se = FALSE, color = "darkolivegreen") +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(
+      title = "Cost per Minute Over Time",
+      subtitle = "Is the burn rate increasing?",
+      x = "Date",
+      y = "Avg Cost / Minute ($)"
+    ) +
+    theme_minimal()
+    
+  # Plot 3: Correlation
+  p3 <- ggplot(session_metrics, aes(x = duration_mins, y = cost_per_min)) +
+    geom_point(alpha = 0.3) +
+    scale_x_log10() +
+    scale_y_log10(labels = dollar_format()) +
+    geom_smooth(method = "lm", color = "red") +
+    labs(
+      title = "Cost Intensity vs Duration",
+      subtitle = "Do shorter sessions have higher burn rates?",
+      x = "Duration (mins, log scale)",
+      y = "Cost/Min ($, log scale)"
+    ) +
+    theme_minimal()
+
+  # Display plots
+  gridExtra::grid.arrange(p1, p2, p3, ncol = 1)
+  
+} else {
+  cat("No blocks data available for efficiency analysis.\n")
 }
 ```
 
