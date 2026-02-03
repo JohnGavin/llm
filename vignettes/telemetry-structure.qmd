@@ -65,16 +65,50 @@ if (length(all_files) > 0) {
 ## GitHub Stats
 
 ```{r github-stats}
-repo_stats <- tryCatch({
-  gh::gh("/repos/{owner}/{repo}", owner = owner, repo = repo)
+# Fetch comprehensive stats
+stats <- tryCatch({
+  repo_info <- gh::gh("/repos/{owner}/{repo}", owner = owner, repo = repo)
+  branches <- gh::gh("/repos/{owner}/{repo}/branches", owner = owner, repo = repo)
+  
+  # For commits, we check the latest from the default branch
+  commits <- gh::gh("/repos/{owner}/{repo}/commits", owner = owner, repo = repo, per_page = 1)
+  
+  # Fetch closed PRs count (merged into main)
+  merged_prs <- gh::gh("/repos/{owner}/{repo}/pulls", owner = owner, repo = repo, state = "closed", per_page = 1)
+  merged_count <- attr(merged_prs, "responseHeader") [["link"]]
+  # Simple heuristic if pagination header exists
+  merged_count_val <- if (!is.null(merged_count)) "Many" else length(merged_prs)
+
+  list(
+    info = repo_info,
+    branch_count = length(branches),
+    latest_commit = commits[[1]]$commit$committer$date,
+    merged_prs = merged_count_val
+  )
 }, error = function(e) NULL)
 
-if (!is.null(repo_stats)) {
+if (!is.null(stats)) {
   stats_table <- tibble(
-    Metric = c("Stars", "Forks", "Open Issues"),
-    Value = c(repo_stats$stargazers_count, repo_stats$forks_count, repo_stats$open_issues_count)
+    Metric = c(
+      "Stars", 
+      "Forks", 
+      "Open Issues", 
+      "Total Branches", 
+      "Last Commit",
+      "Recent Merged PRs"
+    ),
+    Value = c(
+      as.character(stats$info$stargazers_count), 
+      as.character(stats$info$forks_count), 
+      as.character(stats$info$open_issues_count),
+      as.character(stats$branch_count),
+      as.character(as.Date(ymd_hms(stats$latest_commit))),
+      as.character(stats$merged_prs)
+    )
   )
   kable(stats_table)
+} else {
+  cat("Failed to fetch GitHub stats.")
 }
 ```
 
