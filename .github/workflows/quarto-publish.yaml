@@ -60,8 +60,16 @@ jobs:
             any::tibble
             any::purrr
             any::rmarkdown
+            any::checkmate
+            any::cli
+            any::DBI
+            any::duckdb
+            any::withr
 
       - uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Install local package
+        run: R CMD INSTALL .
 
       - name: Render Quarto site
         run: |
