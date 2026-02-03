@@ -1,0 +1,122 @@
+---
+title: "CI & Git Stats"
+author: "John Gavin"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    page-layout: full
+    code-fold: true
+vignette: >
+  %\VignetteIndexEntry{CI & Git Stats}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+```{r ci-setup}
+library(gh)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(knitr)
+library(gert)
+
+# Repository info
+owner <- "JohnGavin"
+repo <- "llm"
+
+# Fetch workflow runs
+get_workflow_runs <- function(owner, repo, per_page = 100) {
+  tryCatch({
+    runs <- gh::gh(
+      "/repos/{owner}/{repo}/actions/runs",
+      owner = owner,
+      repo = repo,
+      per_page = per_page,
+      .limit = per_page
+    )
+
+    if (length(runs$workflow_runs) == 0) return(NULL)
+
+    tibble(
+      id = sapply(runs$workflow_runs, `[[`, "id"),
+      name = sapply(runs$workflow_runs, `[[`, "name"),
+      status = sapply(runs$workflow_runs, `[[`, "status"),
+      conclusion = sapply(runs$workflow_runs, function(x) x$conclusion %||% NA_character_),
+      created_at = sapply(runs$workflow_runs, `[[`, "created_at"),
+      updated_at = sapply(runs$workflow_runs, `[[`, "updated_at"),
+      run_started_at = sapply(runs$workflow_runs, function(x) x$run_started_at %||% NA_character_)
+    ) |>
+      mutate(
+        created_at = ymd_hms(created_at),
+        updated_at = ymd_hms(updated_at),
+        run_started_at = ymd_hms(run_started_at),
+        duration_seconds = as.numeric(difftime(updated_at, run_started_at, units = "secs")),
+        duration_minutes = duration_seconds / 60
+      )
+  }, error = function(e) {
+    message("Could not fetch workflow runs: ", e$message)
+    NULL
+  })
+}
+
+workflow_runs <- get_workflow_runs(owner, repo)
+```
+
+## Workflow Run Time Distributions
+
+```{r ci-boxplot}
+if (!is.null(workflow_runs) && nrow(workflow_runs) > 0) {
+  recent_runs <- workflow_runs |>
+    filter(!is.na(duration_minutes), conclusion == "success") |>
+    group_by(name) |>
+    slice_head(n = 10) |>
+    ungroup()
+
+  if (nrow(recent_runs) > 0) {
+    ggplot(recent_runs, aes(x = reorder(name, duration_minutes), y = duration_minutes)) +
+      geom_boxplot(fill = "steelblue", alpha = 0.7) +
+      coord_flip() +
+      labs(title = "CI Workflow Run Time", x = NULL, y = "Duration (minutes)") +
+      theme_minimal()
+  }
+}
+```
+
+## Git History
+
+```{r git-history}
+# Get git log
+git_history <- tryCatch({
+  gert::git_log(max = 100) |>
+    mutate(
+      date = as.Date(time),
+      weekday = wday(time, label = TRUE)
+    )
+}, error = function(e) NULL)
+```
+
+### Commit Activity
+
+```{r git-activity}
+if (!is.null(git_history)) {
+  commits_by_date <- git_history |> count(date, name = "commits")
+  ggplot(commits_by_date, aes(x = date, y = commits)) +
+    geom_col(fill = "steelblue", alpha = 0.7) +
+    labs(title = "Commit Activity Over Time", x = "Date", y = "Commits") +
+    theme_minimal()
+}
+```

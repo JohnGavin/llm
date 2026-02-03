@@ -11,8 +11,18 @@ website:
     left:
       - href: index.qmd
         text: Home
-      - href: vignettes/telemetry.qmd
-        text: Telemetry
+      - text: Telemetry
+        menu:
+          - href: vignettes/telemetry.qmd
+            text: Overview
+          - href: vignettes/telemetry-usage.qmd
+            text: Usage & Costs
+          - href: vignettes/telemetry-efficiency.qmd
+            text: Efficiency
+          - href: vignettes/telemetry-ci.qmd
+            text: CI & Git
+          - href: vignettes/telemetry-structure.qmd
+            text: Structure
 
 format:
   html:
