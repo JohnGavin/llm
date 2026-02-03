@@ -2,6 +2,16 @@
   "projects": {
     "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network": [
       {
+        "date": "2026-02-03",
+        "inputTokens": 2331,
+        "outputTokens": 926,
+        "cacheCreationTokens": 1829053,
+        "cacheReadTokens": 17995121,
+        "totalTokens": 19827431,
+        "totalCost": 17.6445,
+        "dataSource": "ccusage"
+      },
+      {
         "date": "2026-02-02",
         "inputTokens": 24865,
         "outputTokens": 516,
@@ -43,6 +53,16 @@
       }
     ],
     "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio": [
+      {
+        "date": "2026-02-03",
+        "inputTokens": 183,
+        "outputTokens": 52,
+        "cacheCreationTokens": 208921,
+        "cacheReadTokens": 779237,
+        "totalTokens": 988393,
+        "totalCost": 3.2765,
+        "dataSource": "ccusage"
+      },
       {
         "date": "2026-02-02",
         "inputTokens": 41309,
@@ -135,6 +155,16 @@
       }
     ],
     "-Users-johngavin-docs-gh-proj-stats-simulations-randomwalk": [
+      {
+        "date": "2026-02-03",
+        "inputTokens": 5690,
+        "outputTokens": 1493,
+        "cacheCreationTokens": 1980598,
+        "cacheReadTokens": 33221244,
+        "totalTokens": 35209025,
+        "totalCost": 75.6218,
+        "dataSource": "ccusage"
+      },
       {
         "date": "2026-02-02",
         "inputTokens": 6115,
@@ -497,12 +527,12 @@
       },
       {
         "date": "2026-01-03",
-        "inputTokens": 2114,
-        "outputTokens": 1084,
-        "cacheCreationTokens": 935135,
+        "inputTokens": 2094,
+        "outputTokens": 1078,
+        "cacheCreationTokens": 924103,
         "cacheReadTokens": 22581952,
-        "totalTokens": 23520285,
-        "totalCost": 17.1458,
+        "totalTokens": 23509227,
+        "totalCost": 17.104,
         "dataSource": "ccusage"
       },
       {
@@ -602,18 +632,18 @@
     ]
   },
   "totals": {
-    "inputTokens": 419510,
-    "outputTokens": 63053,
-    "cacheCreationTokens": 69327896,
-    "cacheReadTokens": 902549644,
-    "totalTokens": 972360103,
-    "totalCost": 1275.3761
+    "inputTokens": 427694,
+    "outputTokens": 65518,
+    "cacheCreationTokens": 73335436,
+    "cacheReadTokens": 954545246,
+    "totalTokens": 1028373894,
+    "totalCost": 1371.8771
   },
-  "generatedAt": "2026-02-03 06:31:42",
+  "generatedAt": "2026-02-03 20:47:27",
   "dataSource": "preserved_history",
-  "recordCount": 58,
+  "recordCount": 61,
   "dateRange": {
     "earliest": "2025-12-25",
-    "latest": "2026-02-02"
+    "latest": "2026-02-03"
   }
 }
