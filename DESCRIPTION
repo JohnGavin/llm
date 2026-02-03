@@ -29,6 +29,7 @@ Suggests:
     gert,
     ggplot2,
     gh,
+    gridExtra,
     gt,
     gtExtras,
     knitr,
