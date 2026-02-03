@@ -68,7 +68,7 @@ if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
         TRUE ~ ">4 weeks"
       ),
       time_period = factor(time_period, levels = c("Last 1 week", "Last 2 weeks", "Last 3 weeks", "Last 4 weeks", ">4 weeks"))
-    ) |>
+    ) |
     filter(!is.na(end), duration_mins > 0, costUSD > 0)
 }
 ```
@@ -108,7 +108,7 @@ if (exists("session_metrics")) {
     geom_point(aes(color = time_period), alpha = 0.7, size = 2) +
     geom_smooth(method = "loess", se = FALSE, color = "darkgreen") +
     scale_color_brewer(palette = "Set1") +
-    scale_y_continuous(labels = dollar_format())
+    scale_y_continuous(labels = dollar_format()) +
     labs(
       title = "Cost per Minute Over Time",
       y = "Avg Cost / Minute ($)"
@@ -125,7 +125,7 @@ if (exists("session_metrics")) {
     geom_point(aes(color = time_period), alpha = 0.6) +
     geom_smooth(method = "loess", color = "red") +
     scale_color_brewer(palette = "Set1") +
-    scale_y_continuous(labels = dollar_format())
+    scale_y_continuous(labels = dollar_format()) +
     labs(
       title = "Cost Intensity vs Duration",
       subtitle = "Linear scale with LOESS smoother",
@@ -142,8 +142,6 @@ if (exists("session_metrics")) {
 #| fig-height: 8
 
 if (exists("session_metrics")) {
-  # Unnest models to see usage per model
-  # Assuming 'models' column is a list of character vectors
   model_usage <- session_metrics |>
     select(date, duration_mins, cost_per_min, models) |>
     tidyr::unnest(models) |>
@@ -153,7 +151,7 @@ if (exists("session_metrics")) {
     geom_point(alpha = 0.4, color = "steelblue") +
     geom_smooth(method = "loess", se = FALSE, color = "darkred") +
     facet_wrap(~model_clean, scales = "free_y", ncol = 2) +
-    scale_y_continuous(labels = dollar_format())
+    scale_y_continuous(labels = dollar_format()) +
     labs(
       title = "Cost Efficiency by Model",
       y = "Cost/Min ($)"
@@ -162,15 +160,16 @@ if (exists("session_metrics")) {
 }
 ```
 
-:::
+### Block History (Claude Max5)
 
-## Max5 Block History
+Recent history of usage blocks. "Max5" refers to the **Claude 5-hour usage limit** window^[The "Max5" metric tracks token consumption within the rolling 5-hour window enforced by Anthropic for Claude models.].
 
-Recent history of 5-hour token usage blocks.
+<div title="Max5 refers to Claude's 5-hour usage window where token limits are strictly enforced.">
+*(Hover for info: What is Max5?)*
+</div>
 
 ```{r max5-history-static}
 if (exists("session_metrics")) {
-  # Create a static table for Max5 blocks
   max5_table <- session_metrics |>
     arrange(desc(start)) |>
     head(10) |>
@@ -187,3 +186,5 @@ if (exists("session_metrics")) {
   cat("No block history available.\n")
 }
 ```
+
+:::
