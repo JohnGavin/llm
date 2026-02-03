@@ -534,7 +534,7 @@ if (length(open_issues) > 0) {
 library(llm)
 library(here)
 library(scales)
-
+```
 
 This section tracks Claude Code usage via two complementary tools:
 - **ccusage**: Project-level historical analysis (JSON export, DuckDB-friendly)
