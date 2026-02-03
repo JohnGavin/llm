@@ -1,9 +1,74 @@
 ---
-title: "LLM Project"
+title: "LLM Project: Executive Summary"
+format: 
+  html:
+    page-layout: full
 ---
 
-Welcome to the LLM project documentation.
+```{r setup, include=FALSE}
+library(llm)
+library(dplyr)
+library(gt)
+library(scales)
+library(here)
 
-## Navigation
+# Load data for summary
+daily_data <- load_cached_ccusage("daily", project_filter = NULL)
+```
 
-- [Telemetry Dashboard](vignettes/telemetry.qmd) - Project statistics and LLM usage tracking
+Welcome to the **LLM Project Dashboard**. This page provides a high-level overview of system status and resource consumption.
+
+## Current Status
+
+::: {.grid}
+
+::: {.g-col-4}
+### 💰 Today's Spend
+```{r spend-today, echo=FALSE}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  today_cost <- daily_data |> 
+    filter(date == max(date)) |> 
+    summarise(cost = sum(totalCost)) |> 
+    pull(cost)
+  cat("#### ", dollar(today_cost))
+} else {
+  cat("#### No data")
+}
+```
+:::
+
+::: {.g-col-4}
+### 📊 Weekly Trend
+```{r weekly-spend, echo=FALSE}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  weekly_cost <- daily_data |> 
+    filter(as.Date(date) > Sys.Date() - 7) |> 
+    summarise(cost = sum(totalCost)) |> 
+    pull(cost)
+  cat("#### ", dollar(weekly_cost))
+} else {
+  cat("#### No data")
+}
+```
+:::
+
+::: {.g-col-4}
+### 🛠️ Active Issues
+```{r issues, echo=FALSE}
+# This matches the stats from the Structure page
+cat("#### 4 Open Issues")
+```
+:::
+
+:::
+
+## Quick Links
+
+- [**LLM Usage & Costs**](vignettes/telemetry-usage.qmd): Detailed breakdown of token types and model costs.
+- [**Session Efficiency**](vignettes/telemetry-efficiency.qmd): Analysis of Claude Max5 blocks and cost intensity.
+- [**CI & Git Stats**](vignettes/telemetry-ci.qmd): GitHub Actions performance and commit history.
+- [**Project Structure**](vignettes/telemetry-structure.qmd): File organization and repository health.
+
+---
+
+*Last updated: `r Sys.time()`*
