@@ -76,6 +76,8 @@ get_workflow_runs <- function(owner, repo, per_page = 100) {
 workflow_runs <- get_workflow_runs(owner, repo)
 ```
 
+::: {.panel-tabset}
+
 ## Workflow Run Time Distributions
 
 ```{r ci-boxplot}
@@ -120,3 +122,5 @@ if (!is.null(git_history)) {
     theme_minimal()
 }
 ```
+
+:::

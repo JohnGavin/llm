@@ -32,6 +32,8 @@ owner <- "JohnGavin"
 repo <- "llm"
 ```
 
+::: {.panel-tabset}
+
 ## Directory Structure
 
 ```{r dir-tree}
@@ -75,3 +77,5 @@ if (!is.null(repo_stats)) {
   kable(stats_table)
 }
 ```
+
+:::
