@@ -3,12 +3,12 @@
     "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network": [
       {
         "date": "2026-02-02",
-        "inputTokens": 10149,
-        "outputTokens": 374,
-        "cacheCreationTokens": 883548,
-        "cacheReadTokens": 10555775,
-        "totalTokens": 11449846,
-        "totalCost": 9.3784,
+        "inputTokens": 24865,
+        "outputTokens": 516,
+        "cacheCreationTokens": 1360811,
+        "cacheReadTokens": 14011259,
+        "totalTokens": 15397451,
+        "totalCost": 13.8315,
         "dataSource": "ccusage"
       },
       {
@@ -45,12 +45,12 @@
     "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio": [
       {
         "date": "2026-02-02",
-        "inputTokens": 11216,
-        "outputTokens": 1753,
-        "cacheCreationTokens": 1061783,
-        "cacheReadTokens": 13037986,
-        "totalTokens": 14112738,
-        "totalCost": 13.2885,
+        "inputTokens": 41309,
+        "outputTokens": 3152,
+        "cacheCreationTokens": 2106209,
+        "cacheReadTokens": 24491872,
+        "totalTokens": 26642542,
+        "totalCost": 28.9392,
         "dataSource": "ccusage"
       },
       {
@@ -137,12 +137,12 @@
     "-Users-johngavin-docs-gh-proj-stats-simulations-randomwalk": [
       {
         "date": "2026-02-02",
-        "inputTokens": 1027,
-        "outputTokens": 312,
-        "cacheCreationTokens": 474293,
-        "cacheReadTokens": 10861135,
-        "totalTokens": 11336767,
-        "totalCost": 23.7093,
+        "inputTokens": 6115,
+        "outputTokens": 1229,
+        "cacheCreationTokens": 1023113,
+        "cacheReadTokens": 16822366,
+        "totalTokens": 17852823,
+        "totalCost": 40.5904,
         "dataSource": "ccusage"
       },
       {
@@ -602,14 +602,14 @@
     ]
   },
   "totals": {
-    "inputTokens": 369613,
-    "outputTokens": 60595,
-    "cacheCreationTokens": 67257387,
-    "cacheReadTokens": 881679043,
-    "totalTokens": 949366638,
-    "totalCost": 1238.391
+    "inputTokens": 419510,
+    "outputTokens": 63053,
+    "cacheCreationTokens": 69327896,
+    "cacheReadTokens": 902549644,
+    "totalTokens": 972360103,
+    "totalCost": 1275.3761
   },
-  "generatedAt": "2026-02-02 17:53:52",
+  "generatedAt": "2026-02-03 06:31:42",
   "dataSource": "preserved_history",
   "recordCount": 58,
   "dateRange": {
