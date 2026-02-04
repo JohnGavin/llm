@@ -47,3 +47,4 @@
 .*\.db$
 .*\.log$
 .*\.pdf$
+^archive$

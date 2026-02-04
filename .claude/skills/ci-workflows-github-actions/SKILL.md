@@ -298,13 +298,31 @@ jobs:
 
 ### Local Push to Cachix (Step 5 of 9-Step Workflow)
 
+**⚠️ IMPORTANT: Only push PROJECT-SPECIFIC packages to johngavin cache!**
+
+- Standard R packages (dplyr, ggplot2, targets, etc.) are ALL in `rstats-on-nix`
+- Only push custom packages NOT available in rstats-on-nix
+- For development packages loaded via `load_all()`, there's nothing to push
+- Pushing standard R packages wastes limited Cachix quota
+
 ```bash
-# Push project derivation to cachix before GitHub Actions
+# Push ONLY if you have custom packages in default-ci.nix/package.nix
+# that are NOT available from rstats-on-nix
 nix-store -qR $(nix-build default-ci.nix) | cachix push johngavin
 
-# Or use helper script
-../push_to_cachix.sh
+# Or use helper script (should be project-aware)
+./push_to_cachix.sh
 ```
+
+**When to push to johngavin:**
+- Custom R packages built from GitHub (not in rstats-on-nix)
+- Modified/patched versions of packages
+- Project-specific Nix derivations
+
+**When NOT to push:**
+- Standard CRAN packages (already in rstats-on-nix)
+- Development packages loaded via `load_all()`
+- Shell environments with only standard packages
 
 ## Reusable Workflow Patterns
 
