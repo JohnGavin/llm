@@ -1,21 +1,343 @@
 ---
 title: "Project Telemetry"
+author: "John Gavin"
+date: "`r Sys.Date()`"
 format: 
   html:
     toc: true
+    toc-depth: 2
+    page-layout: full
+    code-fold: true
 vignette: >
   %\VignetteIndexEntry{Project Telemetry}
   %\VignetteEngine{quarto::html}
   %\VignetteEncoding{UTF-8}
 ---
 
-## Overview
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
 
-This section provides comprehensive telemetry and statistics for the project.
+# Global libraries
+library(llm)
+library(here)
+library(scales)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(gt)
+library(gtExtras)
+library(lubridate)
+library(jsonlite)
+library(gridExtra)
+library(DT)
+library(gh)
+library(fs)
+library(knitr)
+library(gert)
+library(DBI)
+library(duckdb)
 
--   [**Usage & Costs**](telemetry-usage.qmd): Detailed breakdown of LLM costs, token usage, and model performance.
--   [**Session Efficiency**](telemetry-efficiency.qmd): Analysis of session duration trends and cost efficiency over time.
--   [**CI & Git Stats**](telemetry-ci.qmd): GitHub Actions workflow performance and commit history.
--   [**Project Structure**](telemetry-structure.qmd): File organization and repository statistics.
+# Load shared data
+daily_data <- load_cached_ccusage("daily", project_filter = NULL)
+session_data <- load_cached_ccusage("session", project_filter = NULL)
+blocks_data <- tryCatch({
+  jsonlite::fromJSON(here::here("inst/extdata/ccusage_blocks_all.json"))
+}, error = function(e) NULL)
 
-Select a section from the navigation menu or the links above to explore the data.
+owner <- "JohnGavin"
+repo <- "llm"
+```
+
+# LLM Usage & Costs
+
+This section tracks costs, token usage, and limits.
+
+```{r dashboard-status, results="asis", echo=FALSE}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  summarize_llm_usage(daily_data) |>
+    gt() |>
+    tab_header(title = "Usage Status", subtitle = "Current usage against limits") |>
+    cols_label(metric = "Metric", value = "Value") |>
+    tab_options(table.font.size = px(14))
+} else {
+  cat("No data available.")
+}
+```
+
+::: {.panel-tabset}
+
+## Cost Trends
+
+```{r cost-trend}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  daily_data |>
+    mutate(date = as.Date(date)) |>
+    group_by(date) |>
+    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |>
+    ggplot(aes(x = date, y = daily_cost)) + 
+    geom_col(fill = "steelblue", alpha = 0.7) + 
+    geom_smooth(method = "loess", se = FALSE, color = "darkred") + 
+    scale_y_continuous(labels = dollar_format()) + 
+    labs(title = "Daily Costs", x = "Date", y = "Cost (USD)") + 
+    theme_minimal()
+}
+```
+
+## Cumulative Cost
+
+```{r cumulative-cost}
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  daily_data |>
+    mutate(date = as.Date(date)) |>
+    group_by(date) |>
+    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |>
+    arrange(date) |>
+    mutate(cumulative_cost = cumsum(daily_cost)) |>
+    ggplot(aes(x = date, y = cumulative_cost)) + 
+    geom_area(fill = "steelblue", alpha = 0.3) + 
+    geom_line(color = "steelblue") + 
+    scale_y_continuous(labels = dollar_format()) + 
+    labs(title = "Cumulative Spending", x = "Date", y = "Cumulative Cost (USD)") + 
+    theme_minimal()
+}
+```
+
+## Breakdowns
+
+```{r breakdowns-combined}
+#| fig-height: 10
+if (!is.null(daily_data) && nrow(daily_data) > 0) {
+  p1 <- get_model_breakdown(daily_data) |>
+    ggplot(aes(x = reorder(modelName, total_cost), y = total_cost)) + 
+    geom_col(fill = "steelblue") + 
+    coord_flip() + 
+    scale_y_continuous(labels = dollar_format()) + 
+    labs(title = "Cost by Model", x = NULL, y = "USD") + 
+    theme_minimal()
+
+  token_data <- daily_data |>
+    mutate(date = as.Date(date)) |>
+    group_by(date) |>
+    summarise(
+      Input = sum(inputTokens, na.rm = TRUE),
+      Output = sum(outputTokens, na.rm = TRUE),
+      Cache = sum(cacheCreationTokens + cacheReadTokens, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    pivot_longer(-date, names_to = "type", values_to = "tokens")
+
+  p2 <- ggplot(token_data, aes(x = date, y = tokens / 1e6, fill = type)) + 
+    geom_col() + 
+    scale_y_continuous(labels = label_comma(suffix = "M")) + 
+    labs(title = "Token Usage", y = "Millions") + 
+    theme_minimal()
+
+  grid.arrange(p1, p2, ncol = 1)
+}
+```
+
+## Gemini Analytics
+
+```{r gemini-analysis}
+gm_db_path <- here::here("inst/extdata/gemini_usage.duckdb")
+if (file.exists(gm_db_path)) {
+  con <- dbConnect(duckdb(), dbdir = gm_db_path, read_only = TRUE)
+  gm_daily <- dbGetQuery(con, "SELECT * FROM daily_usage ORDER BY date")
+  dbDisconnect(con, shutdown = TRUE)
+  
+  if (nrow(gm_daily) > 0) {
+    ggplot(gm_daily, aes(x = as.Date(date), y = total_cost)) + 
+      geom_col(fill = "#4fc3f7") + 
+      scale_y_continuous(labels = dollar_format()) + 
+      labs(title = "Gemini Daily Costs", x = "Date", y = "USD") + 
+      theme_minimal()
+  }
+}
+```
+
+:::
+
+# Session Efficiency
+
+Analysis of session durations and cost efficiency, including Claude Max5 blocks.
+
+```{r session-prep}
+if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
+  session_metrics <- as_tibble(blocks_data$blocks) |>
+    mutate(
+      start = ymd_hms(startTime),
+      end = ymd_hms(actualEndTime),
+      duration_mins = as.numeric(difftime(end, start, units = "mins")),
+      date = as.Date(start),
+      cost_per_min = ifelse(duration_mins > 0, costUSD / duration_mins, 0),
+      period = case_when(
+        difftime(Sys.Date(), date, units = "weeks") <= 1 ~ "Last Week",
+        TRUE ~ "Older"
+      )
+    ) |>
+    filter(duration_mins > 0)
+}
+```
+
+::: {.panel-tabset}
+
+## Duration Trends
+
+```{r duration-trend}
+if (exists("session_metrics")) {
+  session_metrics |>
+    group_by(date, period) |>
+    summarise(avg_dur = mean(duration_mins), .groups = "drop") |>
+    ggplot(aes(x = date, y = avg_dur)) + 
+    geom_point(aes(color = period)) + 
+    geom_smooth(method = "loess", se = FALSE) + 
+    labs(title = "Avg Session Duration", y = "Minutes") + 
+    theme_minimal()
+}
+```
+
+## Cost Efficiency
+
+```{r cost-eff}
+if (exists("session_metrics")) {
+  session_metrics |>
+    group_by(date, period) |>
+    summarise(avg_cost = mean(cost_per_min), .groups = "drop") |>
+    ggplot(aes(x = date, y = avg_cost)) + 
+    geom_point(aes(color = period)) + 
+    geom_smooth(method = "loess", se = FALSE) + 
+    scale_y_continuous(labels = dollar_format()) + 
+    labs(title = "Cost per Minute", y = "$/min") + 
+    theme_minimal()
+}
+```
+
+## Max5 Block History
+
+Recent history of usage blocks. "Max5" refers to the **Claude 5-hour usage limit** window^[The "Max5" metric tracks token consumption within the rolling 5-hour window enforced by Anthropic for Claude models.].
+
+<div title="Max5 refers to Claude's 5-hour usage window where token limits are strictly enforced.">
+*(Hover for info: What is Max5?)*
+</div>
+
+```{r max5-table}
+if (exists("session_metrics")) {
+  session_metrics |>
+    arrange(desc(start)) |>
+    head(10) |>
+    mutate(
+      Duration = sprintf("%02d:%02d", as.integer(duration_mins %/% 60), as.integer(duration_mins %% 60)),
+      Cost = dollar(costUSD),
+      Tokens = comma(totalTokens)
+    ) |>
+    select(Start = start, Duration, Cost, Tokens) |>
+    kable()
+}
+```
+
+:::
+
+# CI & Git Stats
+
+GitHub Actions performance and repository activity.
+
+```{r ci-prep}
+get_workflow_runs <- function(owner, repo) {
+  tryCatch({
+    runs <- gh::gh("/repos/{owner}/{repo}/actions/runs", owner = owner, repo = repo, per_page = 50)
+    if (length(runs$workflow_runs) == 0) return(NULL)
+    tibble(
+      name = sapply(runs$workflow_runs, `[[`, "name"),
+      conclusion = sapply(runs$workflow_runs, function(x) x$conclusion %||% NA),
+      start = ymd_hms(sapply(runs$workflow_runs, `[[`, "run_started_at")),
+      end = ymd_hms(sapply(runs$workflow_runs, `[[`, "updated_at"))
+    ) |> mutate(duration_mins = as.numeric(difftime(end, start, units = "mins")))
+  }, error = function(e) NULL)
+}
+workflow_runs <- get_workflow_runs(owner, repo)
+```
+
+::: {.panel-tabset}
+
+## Workflow Runtimes
+
+```{r ci-plot}
+if (!is.null(workflow_runs)) {
+  workflow_runs |>
+    filter(conclusion == "success", !is.na(duration_mins)) |>
+    ggplot(aes(x = reorder(name, duration_mins), y = duration_mins)) + 
+    geom_boxplot(fill = "steelblue", alpha = 0.7) + 
+    coord_flip() + 
+    labs(title = "Workflow Runtimes", x = NULL, y = "Minutes") + 
+    theme_minimal()
+}
+```
+
+## Git History
+
+```{r git-hist}
+git_log <- tryCatch(gert::git_log(max = 100), error = function(e) NULL)
+if (!is.null(git_log)) {
+  git_log |>
+    mutate(date = as.Date(time)) |>
+    count(date) |>
+    ggplot(aes(x = date, y = n)) + 
+    geom_col(fill = "steelblue") + 
+    labs(title = "Recent Commits", y = "Count") + 
+    theme_minimal()
+}
+```
+
+:::
+
+# Project Structure
+
+File organization and repository health.
+
+::: {.panel-tabset}
+
+## File Counts
+
+```{r file-counts}
+tryCatch({
+  files <- fs::dir_ls(recurse = TRUE, type = "file")
+  files <- files[!grepl("(\.git|_targets|renv)", files)]
+  tibble(path = files) |>
+    mutate(ext = tools::file_ext(path)) |>
+    count(ext, sort = TRUE) |>
+    head(10) |>
+    kable(caption = "Top 10 File Types")
+}, error = function(e) cat("Error reading files"))
+```
+
+## GitHub Stats
+
+```{r github-stats}
+stats <- tryCatch({
+  info <- gh::gh("/repos/{owner}/{repo}", owner = owner, repo = repo)
+  branches <- gh::gh("/repos/{owner}/{repo}/branches", owner = owner, repo = repo)
+  commits <- gh::gh("/repos/{owner}/{repo}/commits", owner = owner, repo = repo, per_page = 1)
+  
+  tibble(
+    Metric = c("Stars", "Forks", "Open Issues", "Branches", "Last Commit"),
+    Value = c(
+      as.character(info$stargazers_count),
+      as.character(info$forks_count),
+      as.character(info$open_issues_count),
+      as.character(length(branches)),
+      as.character(as.Date(ymd_hms(commits[[1]]$commit$committer$date)))
+    )
+  )
+}, error = function(e) NULL)
+
+if (!is.null(stats)) kable(stats)
+```
+
+:::

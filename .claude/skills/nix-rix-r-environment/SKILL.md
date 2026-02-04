@@ -592,12 +592,31 @@ source("default.R")
 
 **Problem:** `nix-shell` takes minutes to start
 
-**Solution:**
-```bash
-# First time is slow (downloads everything)
-# Subsequent times should be fast (cached)
+**Solution: Use Cachix Binary Cache**
 
-# If still slow, enable nix caching:
+```bash
+# Enable rstats-on-nix cache for pre-built R packages
+nix-shell -p cachix --run "cachix use rstats-on-nix"
+
+# Now nix-shell downloads pre-built packages instead of compiling!
+nix-shell default.nix  # Much faster
+```
+
+**Two-Tier Cachix Strategy:**
+| Priority | Cache | Contains |
+|----------|-------|----------|
+| 1st | `rstats-on-nix` | ALL standard R packages (public, pre-built) |
+| 2nd | `johngavin` | Project-specific custom packages ONLY |
+
+**⚠️ IMPORTANT: Never push standard R packages to personal cache!**
+- dplyr, ggplot2, targets, etc. are ALL in `rstats-on-nix`
+- Only push custom packages NOT available in rstats-on-nix
+- Pushing standard packages wastes limited Cachix quota
+
+See `ci-workflows-github-actions` skill for detailed Cachix CI configuration.
+
+**If still slow with Cachix:**
+```bash
 # Add to ~/.config/nix/nix.conf:
 experimental-features = nix-command flakes
 ```
