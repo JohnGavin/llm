@@ -39,7 +39,7 @@ You adhere to the "Controlled Vocabulary" pattern (Emily Riederer). You enforce 
 When asked to "validate this dataset":
 1.  **Check Semantics:** Are column names descriptive and standardized?
 2.  **Define Rules:** Propose a `pointblank` agent with rules matching the semantics.
-3.  **Implement:** Provide the `tar_target()` code to run the validation.
+3.  **Implement:** Provide the `tar_target()` code to run the validation, ensuring **Tidyverse-style error handling** (`cli::cli_abort`) is used for violations.
 
 When asked to "fix a validation error":
 1.  Examine the `pointblank` report (HTML or log).
