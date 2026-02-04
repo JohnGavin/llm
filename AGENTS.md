@@ -234,6 +234,14 @@ covr::report()
 | Data manipulation | `dplyr` (duckdb/arrow backend) |
 | Pipelines | `targets` + `crew` |
 | Package API docs | `pkgctx` (via nix run) |
+| Errors & Messages | `cli::cli_abort()`, `cli_alert()` |
+
+## Error Handling
+
+**Use Tidyverse Style (cli/rlang):**
+- **❌ BAD:** `stop("Error occurred")`
+- **✅ GOOD:** `cli::cli_abort(c("x" = "Error message", "i" = "Context/Hint"))`
+- **Why:** Structured errors are easier to debug and present better to users.
 
 ## Agents (10 available)
 
@@ -483,7 +491,7 @@ Task(model="sonnet", prompt="run tests")
 
 # ❌ BAD - Sequential execution (slow, expensive)
 Task(prompt="check status")  # Waits... uses Opus by default!
-Task(prompt="check status")     # Waits... uses Opus by default!
+Task(prompt="list files")     # Waits... uses Opus by default!
 Task(prompt="run tests")      # Waits... uses Opus by default!
 ```
 

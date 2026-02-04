@@ -39,7 +39,7 @@ enforce_naming_conventions <- function(agent) {
 
 ## Targets Integration (The Gatekeeper)
 
-Validation should prevent downstream steps from consuming bad data.
+Validation should prevent downstream steps from consuming bad data. Use `cli::cli_abort()` for informative error messages (Tidyverse style).
 
 ```r
 # _targets.R
@@ -63,11 +63,16 @@ list(
     command = {
       res <- interrogate(validation_agent)
       
-      # If configured to STOP, targets errors out here.
-      # If WARN, it proceeds but logs issues.
+      # Tidyverse-style error handling
       if (!all_passed(res)) {
-         # Optional: Send alert email
-         # email_blast(res) 
+         cli::cli_abort(
+           c(
+             "x" = "Data Contract Violation: Rules failed.",
+             "i" = "Inspect the validation report at {.file docs/data_quality/raw_report.html}",
+             "!" = "Pipeline stopped to prevent propagation of corrupt data."
+           ),
+           class = "pointblank_error"
+         )
       }
       res
     }
@@ -121,11 +126,27 @@ agent <- yaml_read_agent("inst/contracts/sales_data.yml") |>
   interrogate()
 ```
 
-## Metrics & Error Handling
+## Metrics & Error Handling Style
 
-*   **Adherence Score:** `res$validation_set$fraction_pass`
-*   **Drift Detection:** Compare `scan_data(new_data)` fingerprint with `scan_data(old_data)`.
+Follow [Tidyverse Error Style](https://style.tidyverse.org/errors.html):
 
-**API:**
-*   `validate_contract(data, schema)`: Returns TRUE/FALSE.
-*   `get_violation_report(agent)`: Returns tibble of failing rows.
+1.  **Use `cli::cli_abort()`**: Never use base `stop()`.
+2.  **Structured Messages**: Use bullets (`x`, `i`, `!`, `*`) to separate the error, context, and hints.
+3.  **Classes**: Assign a specific error class (e.g., `data_contract_error`) for programmatic handling.
+
+**Bad:**
+```r
+stop("Data is bad")
+```
+
+**Good:**
+```r
+cli::cli_abort(
+  c(
+    "x" = "Validation failed for table {.val {table_name}}.",
+    "i" = "{n_fail} rows violated the 'no negative costs' rule.",
+    "!" = "Check source file {.file {source_path}}."
+  ),
+  class = "data_contract_error"
+)
+```
