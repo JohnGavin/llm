@@ -72,14 +72,14 @@ create_dt <- function(data, caption = NULL) {
 }
 ```
 
-# LLM Usage & Costs
+# LLM Usage & Costs {#llm-usage-costs}
 
 This section tracks costs, token usage, and limits.
 
 ```{r dashboard-status, echo=FALSE}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   # Convert summary to plain dataframe for DT
-  summary_stats <- summarize_llm_usage(daily_data) |>
+  summary_stats <- summarize_llm_usage(daily_data) |
     as.data.frame()
   
   create_dt(summary_stats, caption = "Current Usage Status")
@@ -95,7 +95,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ```{r cost-trend}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   daily_data |
-    mutate(date = as.Date(date)) |
+    mutate(date = as.Date(as.character(date))) |
     group_by(date) |
     summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |
     ggplot(aes(x = date, y = daily_cost)) + 
@@ -112,7 +112,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ```{r cumulative-cost}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
   daily_data |
-    mutate(date = as.Date(date)) |
+    mutate(date = as.Date(as.character(date))) |
     group_by(date) |
     summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |
     arrange(date) |
@@ -140,7 +140,7 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
     theme_minimal()
 
   token_data <- daily_data |
-    mutate(date = as.Date(date)) |
+    mutate(date = as.Date(as.character(date))) |
     group_by(date) |
     summarise(
       Input = sum(inputTokens, na.rm = TRUE),
@@ -181,7 +181,7 @@ if (file.exists(gm_db_path)) {
 
 :::
 
-# Session Efficiency
+# Session Efficiency {#session-efficiency}
 
 Analysis of session durations and cost efficiency, including Claude Max5 blocks.
 
@@ -298,7 +298,7 @@ if (exists("session_metrics")) {
 
 :::
 
-# CI & Git Stats
+# CI & Git Stats {#ci-git-stats}
 
 GitHub Actions performance and repository activity.
 
@@ -351,7 +351,7 @@ if (!is.null(git_log)) {
 
 :::
 
-# Project Structure
+# Project Structure {#project-structure}
 
 File organization and repository health.
 
