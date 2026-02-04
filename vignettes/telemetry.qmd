@@ -53,19 +53,36 @@ blocks_data <- tryCatch({
 
 owner <- "JohnGavin"
 repo <- "llm"
+
+# Helper for interactive tables with download buttons
+create_dt <- function(data, caption = NULL) {
+  DT::datatable(
+    data,
+    caption = caption,
+    extensions = 'Buttons',
+    rownames = FALSE,
+    options = list(
+      dom = 'Bfrtip',
+      buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+      pageLength = 10,
+      autoWidth = TRUE,
+      scrollX = TRUE
+    )
+  )
+}
 ```
 
 # LLM Usage & Costs
 
 This section tracks costs, token usage, and limits.
 
-```{r dashboard-status, results="asis", echo=FALSE}
+```{r dashboard-status, echo=FALSE}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  summarize_llm_usage(daily_data) |>
-    gt() |>
-    tab_header(title = "Usage Status", subtitle = "Current usage against limits") |>
-    cols_label(metric = "Metric", value = "Value") |>
-    tab_options(table.font.size = px(14))
+  # Convert summary to plain dataframe for DT
+  summary_stats <- summarize_llm_usage(daily_data) |>
+    as.data.frame()
+  
+  create_dt(summary_stats, caption = "Current Usage Status")
 } else {
   cat("No data available.")
 }
@@ -77,15 +94,15 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 
 ```{r cost-trend}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  daily_data |>
-    mutate(date = as.Date(date)) |>
-    group_by(date) |>
-    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |>
+  daily_data |
+    mutate(date = as.Date(date)) |
+    group_by(date) |
+    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |
     ggplot(aes(x = date, y = daily_cost)) + 
-    geom_col(fill = "steelblue", alpha = 0.7) + 
-    geom_smooth(method = "loess", se = FALSE, color = "darkred") + 
-    scale_y_continuous(labels = dollar_format()) + 
-    labs(title = "Daily Costs", x = "Date", y = "Cost (USD)") + 
+    geom_col(fill = "steelblue", alpha = 0.7) +
+    geom_smooth(method = "loess", se = FALSE, color = "darkred") +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(title = "Daily Costs", x = "Date", y = "Cost (USD)") +
     theme_minimal()
 }
 ```
@@ -94,17 +111,17 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 
 ```{r cumulative-cost}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  daily_data |>
-    mutate(date = as.Date(date)) |>
-    group_by(date) |>
-    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |>
-    arrange(date) |>
-    mutate(cumulative_cost = cumsum(daily_cost)) |>
+  daily_data |
+    mutate(date = as.Date(date)) |
+    group_by(date) |
+    summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |
+    arrange(date) |
+    mutate(cumulative_cost = cumsum(daily_cost)) |
     ggplot(aes(x = date, y = cumulative_cost)) + 
-    geom_area(fill = "steelblue", alpha = 0.3) + 
-    geom_line(color = "steelblue") + 
-    scale_y_continuous(labels = dollar_format()) + 
-    labs(title = "Cumulative Spending", x = "Date", y = "Cumulative Cost (USD)") + 
+    geom_area(fill = "steelblue", alpha = 0.3) +
+    geom_line(color = "steelblue") +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(title = "Cumulative Spending", x = "Date", y = "Cumulative Cost (USD)") +
     theme_minimal()
 }
 ```
@@ -114,29 +131,29 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ```{r breakdowns-combined}
 #| fig-height: 10
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  p1 <- get_model_breakdown(daily_data) |>
+  p1 <- get_model_breakdown(daily_data) |
     ggplot(aes(x = reorder(modelName, total_cost), y = total_cost)) + 
-    geom_col(fill = "steelblue") + 
-    coord_flip() + 
-    scale_y_continuous(labels = dollar_format()) + 
-    labs(title = "Cost by Model", x = NULL, y = "USD") + 
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(title = "Cost by Model", x = NULL, y = "USD") +
     theme_minimal()
 
-  token_data <- daily_data |>
-    mutate(date = as.Date(date)) |>
-    group_by(date) |>
+  token_data <- daily_data |
+    mutate(date = as.Date(date)) |
+    group_by(date) |
     summarise(
       Input = sum(inputTokens, na.rm = TRUE),
       Output = sum(outputTokens, na.rm = TRUE),
       Cache = sum(cacheCreationTokens + cacheReadTokens, na.rm = TRUE),
       .groups = "drop"
-    ) |>
+    ) |
     pivot_longer(-date, names_to = "type", values_to = "tokens")
 
   p2 <- ggplot(token_data, aes(x = date, y = tokens / 1e6, fill = type)) + 
-    geom_col() + 
-    scale_y_continuous(labels = label_comma(suffix = "M")) + 
-    labs(title = "Token Usage", y = "Millions") + 
+    geom_col() +
+    scale_y_continuous(labels = label_comma(suffix = "M")) +
+    labs(title = "Token Usage", y = "Millions") +
     theme_minimal()
 
   grid.arrange(p1, p2, ncol = 1)
@@ -154,9 +171,9 @@ if (file.exists(gm_db_path)) {
   
   if (nrow(gm_daily) > 0) {
     ggplot(gm_daily, aes(x = as.Date(date), y = total_cost)) + 
-      geom_col(fill = "#4fc3f7") + 
-      scale_y_continuous(labels = dollar_format()) + 
-      labs(title = "Gemini Daily Costs", x = "Date", y = "USD") + 
+      geom_col(fill = "#4fc3f7") +
+      scale_y_continuous(labels = dollar_format()) +
+      labs(title = "Gemini Daily Costs", x = "Date", y = "USD") +
       theme_minimal()
   }
 }
@@ -170,7 +187,7 @@ Analysis of session durations and cost efficiency, including Claude Max5 blocks.
 
 ```{r session-prep}
 if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
-  session_metrics <- as_tibble(blocks_data$blocks) |>
+  session_metrics <- as_tibble(blocks_data$blocks) |
     mutate(
       start = ymd_hms(startTime),
       end = ymd_hms(actualEndTime),
@@ -181,7 +198,7 @@ if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
         difftime(Sys.Date(), date, units = "weeks") <= 1 ~ "Last Week",
         TRUE ~ "Older"
       )
-    ) |>
+    ) |
     filter(duration_mins > 0)
 }
 ```
@@ -192,13 +209,13 @@ if (!is.null(blocks_data) && !is.null(blocks_data$blocks)) {
 
 ```{r duration-trend}
 if (exists("session_metrics")) {
-  session_metrics |>
-    group_by(date, period) |>
-    summarise(avg_dur = mean(duration_mins), .groups = "drop") |>
+  session_metrics |
+    group_by(date, period) |
+    summarise(avg_dur = mean(duration_mins), .groups = "drop") |
     ggplot(aes(x = date, y = avg_dur)) + 
-    geom_point(aes(color = period)) + 
-    geom_smooth(method = "loess", se = FALSE) + 
-    labs(title = "Avg Session Duration", y = "Minutes") + 
+    geom_point(aes(color = period)) +
+    geom_smooth(method = "loess", se = FALSE) +
+    labs(title = "Avg Session Duration", y = "Minutes") +
     theme_minimal()
 }
 ```
@@ -207,14 +224,52 @@ if (exists("session_metrics")) {
 
 ```{r cost-eff}
 if (exists("session_metrics")) {
-  session_metrics |>
-    group_by(date, period) |>
-    summarise(avg_cost = mean(cost_per_min), .groups = "drop") |>
+  session_metrics |
+    group_by(date, period) |
+    summarise(avg_cost = mean(cost_per_min), .groups = "drop") |
     ggplot(aes(x = date, y = avg_cost)) + 
-    geom_point(aes(color = period)) + 
-    geom_smooth(method = "loess", se = FALSE) + 
-    scale_y_continuous(labels = dollar_format()) + 
-    labs(title = "Cost per Minute", y = "$/min") + 
+    geom_point(aes(color = period)) +
+    geom_smooth(method = "loess", se = FALSE) +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(title = "Cost per Minute", y = "$/min") +
+    theme_minimal()
+}
+```
+
+## Cost vs Duration
+
+```{r cost-duration}
+if (exists("session_metrics")) {
+  ggplot(session_metrics, aes(x = duration_mins, y = cost_per_min)) + 
+    geom_point(aes(color = period), alpha = 0.6) +
+    geom_smooth(method = "loess", color = "red") +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(
+      title = "Cost Intensity vs Duration",
+      subtitle = "Are longer sessions more cost efficient?",
+      x = "Duration (mins)",
+      y = "Cost/Min ($)"
+    ) +
+    theme_minimal()
+}
+```
+
+## Model Breakdown
+
+```{r model-breakdown}
+#| fig-height: 8
+if (exists("session_metrics")) {
+  model_usage <- session_metrics |
+    select(date, duration_mins, cost_per_min, models) |
+    tidyr::unnest(models) |
+    mutate(model_clean = gsub("claude-", "", models))
+
+  ggplot(model_usage, aes(x = date, y = cost_per_min)) + 
+    geom_point(alpha = 0.4, color = "steelblue") +
+    geom_smooth(method = "loess", se = FALSE, color = "darkred") +
+    facet_wrap(~model_clean, scales = "free_y", ncol = 2) +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(title = "Cost Efficiency by Model", y = "Cost/Min ($)") +
     theme_minimal()
 }
 ```
@@ -229,16 +284,15 @@ Recent history of usage blocks. "Max5" refers to the **Claude 5-hour usage limit
 
 ```{r max5-table}
 if (exists("session_metrics")) {
-  session_metrics |>
-    arrange(desc(start)) |>
-    head(10) |>
+  session_metrics |
+    arrange(desc(start)) |
     mutate(
       Duration = sprintf("%02d:%02d", as.integer(duration_mins %/% 60), as.integer(duration_mins %% 60)),
       Cost = dollar(costUSD),
       Tokens = comma(totalTokens)
-    ) |>
-    select(Start = start, Duration, Cost, Tokens) |>
-    kable()
+    ) |
+    select(Start = start, Duration, Cost, Tokens) |
+    create_dt(caption = "Max5 Usage Blocks")
 }
 ```
 
@@ -270,8 +324,8 @@ workflow_runs <- get_workflow_runs(owner, repo)
 
 ```{r ci-plot}
 if (!is.null(workflow_runs)) {
-  workflow_runs |>
-    filter(conclusion == "success", !is.na(duration_mins)) |>
+  workflow_runs |
+    filter(conclusion == "success", !is.na(duration_mins)) |
     ggplot(aes(x = reorder(name, duration_mins), y = duration_mins)) + 
     geom_boxplot(fill = "steelblue", alpha = 0.7) + 
     coord_flip() + 
@@ -285,9 +339,9 @@ if (!is.null(workflow_runs)) {
 ```{r git-hist}
 git_log <- tryCatch(gert::git_log(max = 100), error = function(e) NULL)
 if (!is.null(git_log)) {
-  git_log |>
-    mutate(date = as.Date(time)) |>
-    count(date) |>
+  git_log |
+    mutate(date = as.Date(time)) |
+    count(date) |
     ggplot(aes(x = date, y = n)) + 
     geom_col(fill = "steelblue") + 
     labs(title = "Recent Commits", y = "Count") + 
@@ -309,11 +363,10 @@ File organization and repository health.
 tryCatch({
   files <- fs::dir_ls(recurse = TRUE, type = "file")
   files <- files[!grepl("(\.git|_targets|renv)", files)]
-  tibble(path = files) |>
-    mutate(ext = tools::file_ext(path)) |>
-    count(ext, sort = TRUE) |>
-    head(10) |>
-    kable(caption = "Top 10 File Types")
+  tibble(path = files) |
+    mutate(ext = tools::file_ext(path)) |
+    count(ext, sort = TRUE) |
+    create_dt(caption = "File Types")
 }, error = function(e) cat("Error reading files"))
 ```
 
@@ -337,7 +390,7 @@ stats <- tryCatch({
   )
 }, error = function(e) NULL)
 
-if (!is.null(stats)) kable(stats)
+if (!is.null(stats)) create_dt(stats, caption = "GitHub Stats")
 ```
 
 :::
