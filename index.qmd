@@ -64,10 +64,10 @@ cat("#### 4 Open Issues")
 
 ## Quick Links
 
-- [**LLM Usage & Costs**](vignettes/telemetry-usage.qmd): Detailed breakdown of token types and model costs.
-- [**Session Efficiency**](vignettes/telemetry-efficiency.qmd): Analysis of Claude Max5 blocks and cost intensity.
-- [**CI & Git Stats**](vignettes/telemetry-ci.qmd): GitHub Actions performance and commit history.
-- [**Project Structure**](vignettes/telemetry-structure.qmd): File organization and repository health.
+- [**LLM Usage & Costs**](vignettes/telemetry.qmd#llm-usage-costs): Detailed breakdown of token types and model costs.
+- [**Session Efficiency**](vignettes/telemetry.qmd#session-efficiency): Analysis of Claude Max5 blocks and cost intensity.
+- [**CI & Git Stats**](vignettes/telemetry.qmd#ci-git-stats): GitHub Actions performance and commit history.
+- [**Project Structure**](vignettes/telemetry.qmd#project-structure): File organization and repository health.
 
 ---
 
