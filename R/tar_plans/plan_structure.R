@@ -29,7 +29,7 @@ plan_structure <- list(
       force(all_file_paths)
       
       tibble::tibble(path = all_file_paths) |>
-        dplyr::filter(!grepl("(\.git|_targets|renv)", path)) |>
+        dplyr::filter(!grepl("(\\.git|_targets|renv)", path)) |>
         dplyr::mutate(ext = tools::file_ext(path)) |>
         dplyr::count(ext, sort = TRUE)
     }
