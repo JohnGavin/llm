@@ -388,7 +388,7 @@ File organization and repository health.
 ```{r file-counts}
 tryCatch({
   files <- fs::dir_ls(recurse = TRUE, type = "file")
-  files <- files[!grepl("(\.git|_targets|renv)", files)]
+  files <- files[!grepl("(\\.git|_targets|renv)", files)]
   if (length(files) > 0) {
     tibble(path = as.character(files)) |>
       mutate(ext = tools::file_ext(path)) |>
