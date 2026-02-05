@@ -137,6 +137,22 @@ jobs:
 | Vignette can't find targets data | Relative path invalid in temp dir | Use `system.file()` with `inst/extdata` |
 | `library(ggplot2)` fails in vignette | Missing from Suggests | Add all vignette deps to Suggests |
 
+## Artifact vs. Branch Deployment (Important)
+
+**Modern GitHub Actions Deployment:**
+- **Mechanism:** Deploys directly from build artifacts (`actions/upload-pages-artifact`) to the GitHub Pages environment.
+- **Branch:** The `gh-pages` branch is **NOT** updated with new commits for every deployment. It may become stale or disappear entirely.
+- **Verification:** DO NOT check `git log origin/gh-pages`. Check the **Actions** tab or the live website's "Last Updated" timestamp.
+
+**To verify deployment:**
+```bash
+# Check the latest workflow run status
+gh run list --workflow "Deploy to GitHub Pages" --limit 1
+
+# Check the live site
+curl -I https://username.github.io/repo/
+```
+
 ## Related Skills
 
 - `nix-rix-r-environment` - Core Nix/rix workflow
