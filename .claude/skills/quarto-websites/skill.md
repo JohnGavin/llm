@@ -381,6 +381,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+### Deployment Strategy: Artifacts vs. Branches
+
+**Crucial Note:** Modern Quarto GitHub Actions (`quarto-dev/quarto-actions/publish@v2`) typically use the GitHub Pages API to deploy from an **artifact**, rather than pushing files to the `gh-pages` branch.
+
+-   **Do not check `git log origin/gh-pages`** to verify deployment. The branch may be stale or empty.
+-   **Check `gh run list`** to see the workflow status.
+-   **Check the live site** footer or "Last Updated" timestamp to verify changes.
+
 ### Local Publishing
 
 ```bash
