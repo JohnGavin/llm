@@ -2,6 +2,16 @@
   "projects": {
     "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network": [
       {
+        "date": "2026-02-05",
+        "inputTokens": 41042,
+        "outputTokens": 22758,
+        "cacheCreationTokens": 1396611,
+        "cacheReadTokens": 27227267,
+        "totalTokens": 28687678,
+        "totalCost": 21.6803,
+        "dataSource": "ccusage"
+      },
+      {
         "date": "2026-02-04",
         "inputTokens": 2038,
         "outputTokens": 627,
@@ -63,6 +73,16 @@
       }
     ],
     "-Users-johngavin-docs-gh-proj-stats-simulations-randomwalk": [
+      {
+        "date": "2026-02-05",
+        "inputTokens": 1800,
+        "outputTokens": 528,
+        "cacheCreationTokens": 1177392,
+        "cacheReadTokens": 19756487,
+        "totalTokens": 20936207,
+        "totalCost": 50.6191,
+        "dataSource": "ccusage"
+      },
       {
         "date": "2026-02-04",
         "inputTokens": 751,
@@ -652,18 +672,18 @@
     ]
   },
   "totals": {
-    "inputTokens": 430483,
-    "outputTokens": 66386,
-    "cacheCreationTokens": 75270703,
-    "cacheReadTokens": 987408287,
-    "totalTokens": 1063175859,
-    "totalCost": 1414.8255
+    "inputTokens": 473325,
+    "outputTokens": 89672,
+    "cacheCreationTokens": 77844706,
+    "cacheReadTokens": 1034392041,
+    "totalTokens": 1112799744,
+    "totalCost": 1487.1249
   },
-  "generatedAt": "2026-02-05 09:31:19",
+  "generatedAt": "2026-02-05 23:20:06",
   "dataSource": "preserved_history",
-  "recordCount": 63,
+  "recordCount": 65,
   "dateRange": {
     "earliest": "2025-12-25",
-    "latest": "2026-02-04"
+    "latest": "2026-02-05"
   }
 }
