@@ -621,6 +621,7 @@ export R_MAKEVARS_USER=/dev/null
 
 # === Other standard Nix shell setup ===
 export PATH=/Users/johngavin/docs_gh/llm/bin:$PATH
+alias duckdb='duckdb -unsigned'
 unset CI
 printf '%s\\n' 'Setup complete'
 printf 'Terminal wrapper: %s\\n' $RSTUDIO_TERM_EXEC
@@ -706,7 +707,7 @@ tex_pkgs = c("amsmath", "ninecolors", "apa7", "scalerel", "threeparttable", "thr
 (latest <- available_dates() |> sort() |> tail(3) |> head(1))
   # library(dplyr) ; available_df() |> tibble() |> arrange(desc(date)) |> head(5) |> glimpse()
 rix(
-  date = c(latest, "2026-01-05", "2025-11-24", "2025-11-03", "2025-11-01")[3],
+  date = latest, # Use latest date for DuckDB v1.4.4+
   # or  r_ver = "4.4.3" or r_ver = "latest-upstream"?
   project_path = ".",
   overwrite = TRUE,
