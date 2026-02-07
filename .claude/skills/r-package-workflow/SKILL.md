@@ -11,6 +11,9 @@ This skill provides a structured workflow for R package development following be
 3.  **Logging:** Document every session in `R/setup/fix_issue_XXX.R`.
 4.  **Planning First:** You MUST run the **Architecture Planning** phase before writing code.
 5.  **TDD:** You MUST write failing tests *before* implementing code.
+6.  **Unique Chunk Labels:** In ALL `.qmd` and `.Rmd` files, every code chunk must have a **unique, descriptive label**. Duplicate labels cause Quarto rendering failures.
+    *   **Bad:** ````{r setup}` (repeated), ````{r}` (unlabeled)
+    *   **Good:** ````{r usage-setup}`, ````{r ci-prep}`, ````{r cost-trend}`
 
 ## The 9-Step Workflow
 

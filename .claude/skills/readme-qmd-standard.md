@@ -70,10 +70,10 @@ project_files <- list.files(
 
 # Filter out unwanted paths
 exclude_patterns <- c(
-  "^\\./.git/", "^\\./.Rproj.user/", "^\\./renv/",
-  "^\\./_targets/", "^\\./docs/", "^\\./man/",
-  "^\\./.Rhistory$", "^\\./.RData$", "^\\./.DS_Store$",
-  "^\\./nix-shell-root$"
+  "^\\\./.git/", "^\\\./.Rproj.user/", "^\\\./renv/",
+  "^\\\./_targets/", "^\\\./docs/", "^\\\./man/",
+  "^\\\./.Rhistory$", "^\\\./.RData$", "^\\\./.DS_Store$",
+  "^\\\./nix-shell-root$"
 )
 
 project_files <- project_files[!grepl(
@@ -325,3 +325,4 @@ jobs:
 4. **Integrate with targets** - Automated updates on vignette changes
 5. **Show both installation methods** - Standard R and Nix
 6. **Include rix example** - For existing project integration
+7. **Unique Chunk Labels (Mandatory)** - Every code chunk MUST have a unique label to prevent Quarto render failures (e.g., `{r usage-demo}` not just `{r}`).

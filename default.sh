@@ -133,7 +133,7 @@ if [ "$NEED_REGEN" = true ]; then
         --keep SSL_CERT_FILE \
         --keep CURL_CA_BUNDLE \
         --keep NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM \
-        --expr "$(curl -sl https://raw.githubusercontent.com/b-rodrigues/rix/master/inst/extdata/default.nix)" \
+        --expr "let pkgs = import <nixpkgs> {}; in pkgs.mkShell { buildInputs = [ pkgs.R pkgs.rPackages.rix ]; }" \
         --command "cd \"$PROJECT_PATH\" && \
             Rscript \
             --vanilla \
