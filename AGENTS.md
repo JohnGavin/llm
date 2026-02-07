@@ -431,7 +431,15 @@ See `readme-qmd-standard` skill for complete template.
    )
    ```
 
-3. **Display verbatim in .qmd**:
+3. **Evaluate with mock data** to verify code runs:
+   ```r
+   targets::tar_target(
+     code_eval_query,
+     eval_code_with_mock_db(code_example_query)  # Returns list(success, error)
+   )
+   ```
+
+4. **Display verbatim in .qmd**:
    ````qmd
    ```{r}
    #| echo: false
@@ -441,26 +449,52 @@ See `readme-qmd-standard` skill for complete template.
    ```
    ````
 
-4. **Validation target** to fail pipeline if syntax errors:
+5. **Validation target** to fail pipeline if syntax/eval errors:
    ```r
    targets::tar_target(
      doc_examples_validation,
      {
-       results <- list(code_parsed_query, code_parsed_other)
-       all_valid <- all(sapply(results, function(x) x$valid))
-       if (!all_valid) cli::cli_abort("Code examples have syntax errors")
-       list(all_valid = all_valid, n_examples = length(results))
+       parse_ok <- all(sapply(parse_results, function(x) x$valid))
+       eval_ok <- all(sapply(eval_results, function(x) x$success))
+       if (!parse_ok || !eval_ok) cli::cli_abort("Code examples failed")
+       list(all_valid = parse_ok && eval_ok)
      }
    )
    ```
 
 **Why this pattern:**
-- **Tested examples**: Pipeline fails if code has syntax errors
+- **Tested examples**: Pipeline fails if code has syntax OR runtime errors
 - **Single source of truth**: Code defined once, displayed in multiple places
 - **DRY**: No copy-paste between README and vignettes
 - **Always provide tidyverse alternative**: After SQL examples, show dplyr/duckplyr equivalent
+- **Order extreme data by the extreme column**: e.g., `ORDER BY hmax DESC` not `ORDER BY time DESC`
 
 **Reference implementation:** `irishbuoys/R/tar_plans/plan_doc_examples.R`
+
+### README Project Structure (MANDATORY)
+
+**Always use `fs::dir_tree(recurse = 2)` in README:**
+```r
+```{r}
+#| echo: false
+#| eval: true
+fs::dir_tree(recurse = 2)
+```
+```
+
+**Why:** Full recursion shows hundreds of files in deps/, *_files/, etc. Limit to 2 levels for readability.
+
+### Data Files (MANDATORY)
+
+**Prefer compressed formats:**
+- `.parquet` over `.csv` (10-50x smaller, typed columns)
+- `.csv.gz` or `.json.gz` if text format required
+- Never commit large uncompressed data files
+
+**For dashboards fetching data:**
+- Use parquet via JavaScript fetch() for browser dashboards
+- Sample data for interactive widgets (10K rows max)
+- Pre-aggregate where possible
 
 ### Code Display Best Practices (MANDATORY)
 
