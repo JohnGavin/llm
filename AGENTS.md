@@ -407,6 +407,61 @@ See `readme-qmd-standard` skill for complete template.
 - Vignettes load pre-computed data (never compute on-the-fly)
 - This ensures CI can render docs without package installation
 
+### Code Examples as Targets (MANDATORY)
+
+**All code examples in README.qmd and vignettes MUST be stored as targets:**
+
+1. **Store code as text** in `R/tar_plans/plan_doc_examples.R`:
+   ```r
+   targets::tar_target(
+     code_example_query,
+     c(
+       "# Example: Query data",
+       "result <- query_data(con, table = 'my_table')",
+       "head(result)"
+     )
+   )
+   ```
+
+2. **Parse to validate syntax**:
+   ```r
+   targets::tar_target(
+     code_parsed_query,
+     parse_code_example(code_example_query)  # Returns list(valid, error, code)
+   )
+   ```
+
+3. **Display verbatim in .qmd**:
+   ````qmd
+   ```{r}
+   #| echo: false
+   #| results: asis
+   targets::tar_load(code_example_query)
+   cat("```r\n", paste(code_example_query, collapse = "\n"), "\n```", sep = "")
+   ```
+   ````
+
+4. **Validation target** to fail pipeline if syntax errors:
+   ```r
+   targets::tar_target(
+     doc_examples_validation,
+     {
+       results <- list(code_parsed_query, code_parsed_other)
+       all_valid <- all(sapply(results, function(x) x$valid))
+       if (!all_valid) cli::cli_abort("Code examples have syntax errors")
+       list(all_valid = all_valid, n_examples = length(results))
+     }
+   )
+   ```
+
+**Why this pattern:**
+- **Tested examples**: Pipeline fails if code has syntax errors
+- **Single source of truth**: Code defined once, displayed in multiple places
+- **DRY**: No copy-paste between README and vignettes
+- **Always provide tidyverse alternative**: After SQL examples, show dplyr/duckplyr equivalent
+
+**Reference implementation:** `irishbuoys/R/tar_plans/plan_doc_examples.R`
+
 ### Code Display Best Practices (MANDATORY)
 
 **NEVER show code with prompts or console output markers:**
