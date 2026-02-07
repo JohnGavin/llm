@@ -46,21 +46,27 @@ The project achieves **100% coverage** of the core reproducibility rules through
 *   **Evidence:** `_targets.yaml` configuration handles seed generation.
 
 ### Rule 7: Always store raw data behind plots
-*   **Requirement:** Figures must be data-driven.
-*   **Implementation:** Plots in vignettes (`telemetry.qmd`) are generated from `load_cached_ccusage()` data, which is available in `inst/extdata`.
-*   **Skill:** `project-telemetry`, `quarto-dashboards`
-*   **Evidence:** The telemetry dashboard allows drilling down into the raw data tables (`DT::datatable`).
+*   **Requirement:** Figures must be data-driven and inspectable.
+*   **Implementation:** 
+    *   **No Inline Code:** Plots are generated as `tar_target()` artifacts, never via inline `ggplot()` calls in vignettes.
+    *   **Hidden Tables:** Every plot is immediately followed by a code-folded `DT::datatable` containing the source data.
+*   **Skill:** `reproducible-visualization`, `quarto-dashboards`
+*   **Evidence:** `vignettes/*.qmd` use `tar_read()` for all visuals.
 
 ### Rule 8: Generate hierarchical analysis output
-*   **Requirement:** Layers of detail.
-*   **Implementation:** Quarto websites provide structure: Home (Summary) -> Vignettes (Detail) -> Reference (API).
-*   **Skill:** `quarto-websites`, `pkgdown-deployment`
-*   **Evidence:** The `docs/` folder structure mirrors this hierarchy.
+*   **Requirement:** Layers of detail ordered logically.
+*   **Implementation:** 
+    *   **Logical Ordering:** Tabs and pages follow factor levels (e.g., "North", "South") or chronological order, not arbitrary or alphabetical ordering.
+    *   **Structure:** Summary -> Detail -> Diagnostics.
+*   **Skill:** `reproducible-visualization`, `quarto-websites`
+*   **Evidence:** The `docs/` folder structure and navigation menus mirror this hierarchy.
 
 ### Rule 9: Connect textual statements to underlying results
-*   **Requirement:** Literate programming.
-*   **Implementation:** Usage of `.qmd` (Quarto) files embeds code execution results directly into the narrative.
-*   **Skill:** `readme-qmd-standard`, `writing-plans`
+*   **Requirement:** Literate programming with dynamic values.
+*   **Implementation:** 
+    *   **Dynamic Text:** All numbers in text use inline code (`` `r max(data)` ``) sourced from `targets`.
+    *   **Descriptive Captions:** Captions summarize the plot contents (axes, legend) and list the "Top 5" results.
+*   **Skill:** `reproducible-visualization`, `readme-qmd-standard`
 *   **Evidence:** `README.qmd` generates `README.md`, ensuring examples are always executable.
 
 ### Rule 10: Provide public access to scripts, runs, and results
