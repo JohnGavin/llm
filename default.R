@@ -903,7 +903,27 @@ if (length(fc_name_idx_fix6) == 1) {
    }
 }
 
-# --- Fix 7: Clean up stale binaries in 'ahead' package ---
+# --- Fix 7: Fix shellHook quotes for Nix multi-line strings ---
+# ISSUE: rix generates shellHook with double quotes, but shell scripts with
+# special characters need Nix's multi-line string syntax (double single quotes '')
+# Solution: Replace shellHook = " with shellHook = '' and "; with '';
+shellhook_start_idx <- grep('shellHook = "', content)
+if (length(shellhook_start_idx) == 1) {
+  content[shellhook_start_idx] <- sub('shellHook = "', "shellHook = ''", content[shellhook_start_idx])
+  cli::cli_alert_success("Fixed shellHook opening quote to use Nix multi-line string syntax.")
+
+  # Find the closing quote - it should be "; on its own line after shellHook content
+  shellhook_end_idx <- grep('^";$', content)
+  # Make sure we get the one after shellHook, not some other string
+  shellhook_end_idx <- shellhook_end_idx[shellhook_end_idx > shellhook_start_idx][1]
+
+  if (!is.na(shellhook_end_idx)) {
+    content[shellhook_end_idx] <- "'';";
+    cli::cli_alert_success("Fixed shellHook closing quote to use Nix multi-line string syntax.")
+  }
+}
+
+# --- Fix 8: Clean up stale binaries in 'ahead' package ---
 # ISSUE: 'ahead' source seems to contain pre-compiled x86_64 binaries (*.so)
 # causing "incompatible architecture" error on arm64 (Apple Silicon).
 # Solution: Remove *.so and *.o files before configuring/building.
