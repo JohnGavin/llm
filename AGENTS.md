@@ -73,9 +73,12 @@ Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
    ```bash
    ./default.sh  # Enter Nix environment
    R
+   > library(randomwalk)  # Latest version from johngavin cachix cache
+   > # Or for development:
    > devtools::load_all()
    > # Run your examples here - all packages available!
    ```
+   **Note**: Project-specific default.nix automatically uses johngavin cachix cache (second priority after rstats-on-nix cache) for pre-built packages
 
 **Reference implementations**:
 - Simple version: `millsratio/default.sh`
@@ -89,13 +92,13 @@ Check: `.claude/CURRENT_WORK.md`, `git status`, open issues.
 ```r
 # ✗ FORBIDDEN - Breaks Nix immutability
 install.packages()       # NO!
-developtools::install()      # NO!
+devtools::install()      # NO!
 pak::pkg_install()       # NO!
 
 # ✓ ALLOWED - Safe operations
-developtools::load_all()     # YES - temporary load
-developtools::document()     # YES - updates docs
-developtools::test()         # YES - runs tests
+devtools::load_all()     # YES - temporary load
+devtools::document()     # YES - updates docs
+devtools::test()         # YES - runs tests
 ```
 
 **To add packages:** Edit DESCRIPTION → Run `default.R` → Exit → Re-enter Nix
@@ -243,22 +246,23 @@ covr::report()
 - **✅ GOOD:** `cli::cli_abort(c("x" = "Error message", "i" = "Context/Hint"))`
 - **Why:** Structured errors are easier to debug and present better to users.
 
-## Agents (10 available)
+## Agents
 
 **Delegation saves context**: Subagents keep verbose output in their context, returning only summaries to the main conversation.
 
-| Agent | Model | Thinking | Use For |
-|-------|-------|----------|---------|
-| `planner` | opus | 16k | Architecture decisions, multi-file refactoring |
-| `verbose-runner` | sonnet | 4k | Tests, checks, builds (verbose output contained) |
-| `quick-fix` | haiku | 1k | Typos, simple edits, obvious fixes |
-| `r-debugger` | sonnet | 8k | R CMD check/test failures |
-| `reviewer` | sonnet | 8k | Code reviews |
-| `nix-env` | sonnet | 8k | Nix shell issues |
-| `targets-runner` | sonnet | 8k | Pipeline debugging |
-| `shinylive-builder` | sonnet | 8k | WASM builds |
-| `data-engineer` | sonnet | 8k | Pipeline building (dbt/DuckDB) |
-| `data-quality-guardian` | sonnet | 8k | Data validation & contracts (pointblank) |
+### Common Agents
+| Agent | Model | Use For |
+|-------|-------|---------|
+| `general-purpose` | opus/sonnet/haiku | General tasks (specify model based on complexity) |
+| `verbose-runner` | sonnet | Tests, checks, builds with verbose output |
+| `r-debugger` | sonnet | R CMD check/test failures |
+| `reviewer` | sonnet | Code reviews |
+| `nix-env` | sonnet | Nix shell issues |
+| `targets-runner` | sonnet | Pipeline debugging |
+| `shinylive-builder` | sonnet | WASM builds |
+| `data-engineer` | sonnet | Pipeline building (dbt/DuckDB) |
+| `data-quality-guardian` | sonnet | Data validation (pointblank) |
+| `claude-code-guide` | sonnet | Claude Code documentation lookup |
 
 ### MANDATORY Agent Usage Rules (CRITICAL - NO EXCEPTIONS)
 
@@ -275,20 +279,17 @@ Task(subagent_type="verbose-runner", model="sonnet", prompt="run test suite")  #
 Task(subagent_type="planner", model="opus", prompt="design architecture")  # Complex reasoning
 ```
 
-#### 2. Always Run Independent Tasks in Parallel
-**❌ WRONG:** Sequential agent calls (slow, expensive, wastes time)
+#### 2. Run Independent Tasks in Parallel
+Execute independent tasks simultaneously for efficiency:
 ```python
-Task(prompt="check logs")     # Waits...
-Task(prompt="check status")   # Waits...
-Task(prompt="test endpoint")  # Waits...
-```
-
-**✅ CORRECT:** Single message with multiple Tasks
-```python
-# All run simultaneously!
+# ✅ CORRECT - All run simultaneously
 Task(model="haiku", prompt="check logs"),
 Task(model="haiku", prompt="check status"),
 Task(model="haiku", prompt="test endpoint")
+
+# ❌ WRONG - Sequential (slow)
+Task(prompt="check logs")     # Waits...
+Task(prompt="check status")   # Then waits...
 ```
 
 ### Model Selection Guide (MANDATORY)
@@ -303,47 +304,33 @@ Task(model="haiku", prompt="test endpoint")
 **Core rule:** Delegate when output > 10 lines OR complex reasoning needed
 **Never delegate:** Simple file checks (ls, cat), one-line commands, reading files
 
-**Common mistakes I make:**
+**Common mistakes to avoid:**
 - Using agents to check symlinks exist (just use `ls -la`)
 - Using btw tools directly for builds/tests (always delegate)
-- Using wrong agent for task (quick-fix for complex verification)
-- **NOT running agents in parallel when tasks are independent**
-- **Using expensive models for simple tasks**
+- Using wrong agent for task (e.g., haiku for complex verification)
+- Not running independent tasks in parallel
+- Using expensive models (opus) for simple tasks
 
 For detailed rules → invoke `subagent-delegation` skill
 
-## Skills by Category
+## Skills
 
-**Invoke a skill when you need detailed guidance on that topic.**
+**Key skills available:**
+- `readme-qmd-standard` - README.qmd template and requirements
+- `subagent-delegation` - When and how to delegate to agents
 
-*Core Workflow:* `r-package-workflow`, `test-driven-development`, `verification-before-completion`
+**Note:** Additional skills may be available. Check `/Users/johngavin/.claude/skills/` for full list.
 
-*Environment:* `nix-rix-r-environment`, `ci-workflows-github-actions`
+## Common Tasks
 
-*Data:* `data-wrangling-duckdb`, `parallel-processing`, `crew-operations`
-
-*Shiny:* `shiny-async-patterns`, `shinylive-quarto`, `shinylive-deployment`
-
-*Documentation:* `llm-package-context`, `pkgdown-deployment`, `project-telemetry`, `project-review`, `readme-qmd-standard`
-
-*Analysis:* `eda-workflow`, `tidyverse-style`, `analysis-rationale-logging`
-
-*Context:* `context-control`, `gemini-subagent`
-
-## Skill Loading Triggers
-
-Load the skill when you encounter these situations:
-
-| Situation | Load Skill |
-|-----------|------------|
-| Need package API docs for LLM | `llm-package-context` (pkgctx usage) |
-| Writing GitHub Actions | `ci-workflows-github-actions` (MANDATORY) |
-| Quarto project setup | Use `render:` section in `_quarto.yml` |
-| Shinylive vignette | `shinylive-quarto` + browser test |
+| Task | Approach |
+|------|----------|
+| Need package API docs | Use `nix run github:b-rodrigues/pkgctx` |
+| Writing GitHub Actions | Check `.github/workflows/` for examples |
 | Debugging R errors | Use `r-debugger` agent |
-| Context filling up | `context-control` |
-| Large codebase analysis | `gemini-subagent` |
 | Testing Shiny dashboards | Use `--chrome` option to launch Claude with browser |
+| README requirements | Load `readme-qmd-standard` skill |
+| Agent delegation | Load `subagent-delegation` skill |
 
 ## Testing Shiny Apps
 
@@ -542,6 +529,59 @@ fs::dir_tree(recurse = 2)
 - **Collaboration**: Multiple developers can work on different plans
 - **Reproducibility**: Clear separation of concerns
 
+## Two-Tier Nix Shell Architecture (CRITICAL FOR AGENTS)
+
+Claude and its agents operate in a **two-tier Nix shell architecture**:
+
+| Shell | Purpose | Started By | Has Project Packages? |
+|-------|---------|------------|----------------------|
+| **Development shell** | Generic R dev tools for all projects | `caffeinate -i ~/docs_gh/rix.setup/default.sh` on session start | ❌ No - only base tools |
+| **Project-specific shell** | All packages from project's DESCRIPTION | `nix-shell default.nix` in project root | ✅ Yes |
+
+### How Agents Run Project-Specific Commands
+
+Agents run in the development shell by default. To run commands that need project packages (from DESCRIPTION), use `nix-shell --run`:
+
+```bash
+# Pattern: nix-shell default.nix --run "COMMAND"
+cd /path/to/project
+nix-shell default.nix --run "Rscript -e 'devtools::document()'"
+nix-shell default.nix --run "Rscript -e 'devtools::test()'"
+nix-shell default.nix --run "Rscript -e 'devtools::check()'"
+```
+
+**Why this works:**
+- `nix-shell --run` enters the project shell, runs the command, then exits
+- Non-interactive - agents can use this
+- All packages from DESCRIPTION are available
+
+**DO NOT use `./default.sh`** - it spawns an interactive shell that agents cannot control.
+
+### What Agents CAN Do
+
+| Task | Method | Notes |
+|------|--------|-------|
+| Edit/Read files | Direct tools | No R packages needed |
+| devtools::document/test/check | `nix-shell default.nix --run "..."` | All project packages available |
+| Run targets pipeline | `nix-shell default.nix --run "Rscript -e 'targets::tar_make()'"` | Needs project packages |
+| Git operations | gert/Bash | gert is in dev shell |
+| Simple R code | btw tools | Only if packages are in dev shell |
+
+### Example: Running /check
+
+```bash
+cd /path/to/project
+
+# Document
+nix-shell default.nix --run "Rscript -e 'devtools::document()'"
+
+# Test
+nix-shell default.nix --run "Rscript -e 'devtools::test()'"
+
+# Check
+nix-shell default.nix --run "Rscript -e 'devtools::check(args = \"--as-cran\")'"
+```
+
 ## btw MCP Tool Configuration
 
 **Current subset** (saves ~6k tokens vs all tools):
@@ -570,21 +610,9 @@ fs::dir_tree(recurse = 2)
 
 **NEVER call btw_tool_pkg_* directly** → Always use appropriate agent
 
-**ALWAYS RUN SUBAGENTS IN PARALLEL** when tasks are independent:
-```python
-# ✅ GOOD - Parallel execution with appropriate models
-Task(model="haiku", prompt="check status"),
-Task(model="haiku", prompt="list files"),
-Task(model="sonnet", prompt="run tests")
-# All three run simultaneously!
+**Key principle:** Run independent tasks in parallel with appropriate models (see Agent Usage Rules above)
 
-# ❌ BAD - Sequential execution (slow, expensive)
-Task(prompt="check status")  # Waits... uses Opus by default!
-Task(prompt="list files")     # Waits... uses Opus by default!
-Task(prompt="run tests")      # Waits... uses Opus by default!
-```
-
-**Exception:** Simple one-liners, checking values, quick calculations - but still use `model="haiku"` when using agents!
+**Exception:** Simple one-liners, checking values, quick calculations
 
 | Excluded | Why | Alternative |
 |----------|-----|-------------|

@@ -124,8 +124,9 @@ fi
 
 if [ "$NEED_REGEN" = true ]; then
     echo "Regenerating default.nix from default.R..."
+    # Note: Removed --pure flag to ensure nix commands remain available to rix package
+    # This is needed because rix checks for nix-shell availability when processing GitHub packages
     if ! nix-shell \
-        --pure \
         --keep PATH \
         --keep TMPDIR \
         --keep CACHIX_AUTH_TOKEN \
@@ -133,7 +134,8 @@ if [ "$NEED_REGEN" = true ]; then
         --keep SSL_CERT_FILE \
         --keep CURL_CA_BUNDLE \
         --keep NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM \
-        --expr "let pkgs = import <nixpkgs> {}; in pkgs.mkShell { buildInputs = [ pkgs.R pkgs.rPackages.rix ]; }" \
+        --keep NIXPKGS_ALLOW_UNFREE \
+        --expr "let pkgs = import <nixpkgs> {}; in pkgs.mkShell { buildInputs = [ pkgs.R pkgs.rPackages.rix pkgs.rPackages.cli pkgs.rPackages.curl pkgs.curlMinimal pkgs.cacert ]; }" \
         --command "cd \"$PROJECT_PATH\" && \
             Rscript \
             --vanilla \
