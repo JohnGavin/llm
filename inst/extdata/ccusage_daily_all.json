@@ -2,13 +2,23 @@
   "projects": {
     "-Users-johngavin-docs-gh-proj-data-weather-irish-buoy-network": [
       {
+        "date": "2026-02-08",
+        "inputTokens": 5148,
+        "outputTokens": 177,
+        "cacheCreationTokens": 803184,
+        "cacheReadTokens": 7072350,
+        "totalTokens": 7880859,
+        "totalCost": 8.2784,
+        "dataSource": "ccusage"
+      },
+      {
         "date": "2026-02-07",
-        "inputTokens": 1844,
-        "outputTokens": 559,
-        "cacheCreationTokens": 919534,
-        "cacheReadTokens": 25802161,
-        "totalTokens": 26724098,
-        "totalCost": 18.3954,
+        "inputTokens": 23745,
+        "outputTokens": 1087,
+        "cacheCreationTokens": 2096858,
+        "cacheReadTokens": 43768233,
+        "totalTokens": 45889923,
+        "totalCost": 33.1778,
         "dataSource": "ccusage"
       },
       {
@@ -84,13 +94,23 @@
     ],
     "-Users-johngavin-docs-gh-proj-stats-simulations-randomwalk": [
       {
+        "date": "2026-02-08",
+        "inputTokens": 1369,
+        "outputTokens": 316,
+        "cacheCreationTokens": 906869,
+        "cacheReadTokens": 11290375,
+        "totalTokens": 12198929,
+        "totalCost": 32.1112,
+        "dataSource": "ccusage"
+      },
+      {
         "date": "2026-02-07",
-        "inputTokens": 2077,
-        "outputTokens": 489,
-        "cacheCreationTokens": 932630,
-        "cacheReadTokens": 14511282,
-        "totalTokens": 15446478,
-        "totalCost": 36.6286,
+        "inputTokens": 2989,
+        "outputTokens": 716,
+        "cacheCreationTokens": 1597074,
+        "cacheReadTokens": 25552575,
+        "totalTokens": 27153354,
+        "totalCost": 65.5371,
         "dataSource": "ccusage"
       },
       {
@@ -141,6 +161,78 @@
         "cacheReadTokens": 3960168,
         "totalTokens": 4428956,
         "totalCost": 9.3288,
+        "dataSource": "ccusage"
+      }
+    ],
+    "-Users-johngavin-docs-gh-proj-data-coMMpass": [
+      {
+        "date": "2026-02-07",
+        "inputTokens": 451,
+        "outputTokens": 119,
+        "cacheCreationTokens": 187172,
+        "cacheReadTokens": 4795438,
+        "totalTokens": 4983180,
+        "totalCost": 9.0377,
+        "dataSource": "ccusage"
+      },
+      {
+        "date": "2026-01-31",
+        "inputTokens": 882,
+        "outputTokens": 188,
+        "cacheCreationTokens": 673291,
+        "cacheReadTokens": 6608171,
+        "totalTokens": 7282532,
+        "totalCost": 17.9314,
+        "dataSource": "ccusage"
+      },
+      {
+        "date": "2026-01-30",
+        "inputTokens": 6256,
+        "outputTokens": 330,
+        "cacheCreationTokens": 622989,
+        "cacheReadTokens": 9725780,
+        "totalTokens": 10355355,
+        "totalCost": 21.7461,
+        "dataSource": "ccusage"
+      },
+      {
+        "date": "2026-01-27",
+        "inputTokens": 1573,
+        "outputTokens": 943,
+        "cacheCreationTokens": 1649636,
+        "cacheReadTokens": 21804504,
+        "totalTokens": 23456656,
+        "totalCost": 61.647,
+        "dataSource": "ccusage"
+      },
+      {
+        "date": "2026-01-26",
+        "inputTokens": 37985,
+        "outputTokens": 1942,
+        "cacheCreationTokens": 2247468,
+        "cacheReadTokens": 28594228,
+        "totalTokens": 30881623,
+        "totalCost": 67.4414,
+        "dataSource": "ccusage"
+      },
+      {
+        "date": "2026-01-25",
+        "inputTokens": 9267,
+        "outputTokens": 773,
+        "cacheCreationTokens": 1652100,
+        "cacheReadTokens": 17906785,
+        "totalTokens": 19568925,
+        "totalCost": 49.7288,
+        "dataSource": "ccusage"
+      },
+      {
+        "date": "2026-01-24",
+        "inputTokens": 7205,
+        "outputTokens": 1013,
+        "cacheCreationTokens": 1023751,
+        "cacheReadTokens": 17148598,
+        "totalTokens": 18180567,
+        "totalCost": 42.0579,
         "dataSource": "ccusage"
       }
     ],
@@ -398,68 +490,6 @@
         "dataSource": "ccusage"
       }
     ],
-    "-Users-johngavin-docs-gh-proj-data-coMMpass": [
-      {
-        "date": "2026-01-31",
-        "inputTokens": 882,
-        "outputTokens": 188,
-        "cacheCreationTokens": 673291,
-        "cacheReadTokens": 6608171,
-        "totalTokens": 7282532,
-        "totalCost": 17.9314,
-        "dataSource": "ccusage"
-      },
-      {
-        "date": "2026-01-30",
-        "inputTokens": 6256,
-        "outputTokens": 330,
-        "cacheCreationTokens": 622989,
-        "cacheReadTokens": 9725780,
-        "totalTokens": 10355355,
-        "totalCost": 21.7461,
-        "dataSource": "ccusage"
-      },
-      {
-        "date": "2026-01-27",
-        "inputTokens": 1573,
-        "outputTokens": 943,
-        "cacheCreationTokens": 1649636,
-        "cacheReadTokens": 21804504,
-        "totalTokens": 23456656,
-        "totalCost": 61.647,
-        "dataSource": "ccusage"
-      },
-      {
-        "date": "2026-01-26",
-        "inputTokens": 37985,
-        "outputTokens": 1942,
-        "cacheCreationTokens": 2247468,
-        "cacheReadTokens": 28594228,
-        "totalTokens": 30881623,
-        "totalCost": 67.4414,
-        "dataSource": "ccusage"
-      },
-      {
-        "date": "2026-01-25",
-        "inputTokens": 9267,
-        "outputTokens": 773,
-        "cacheCreationTokens": 1652100,
-        "cacheReadTokens": 17906785,
-        "totalTokens": 19568925,
-        "totalCost": 49.7288,
-        "dataSource": "ccusage"
-      },
-      {
-        "date": "2026-01-24",
-        "inputTokens": 7205,
-        "outputTokens": 1013,
-        "cacheCreationTokens": 1023751,
-        "cacheReadTokens": 17148598,
-        "totalTokens": 18180567,
-        "totalCost": 42.0579,
-        "dataSource": "ccusage"
-      }
-    ],
     "-Users-johngavin-docs-gh-proj-stats-simulations-mills-ratio-millsratio": [
       {
         "date": "2026-01-31",
@@ -567,12 +597,12 @@
       },
       {
         "date": "2026-01-08",
-        "inputTokens": 1253,
-        "outputTokens": 358,
-        "cacheCreationTokens": 887617,
+        "inputTokens": 1233,
+        "outputTokens": 352,
+        "cacheCreationTokens": 877235,
         "cacheReadTokens": 16066997,
-        "totalTokens": 16956225,
-        "totalCost": 13.5706,
+        "totalTokens": 16945817,
+        "totalCost": 13.5312,
         "dataSource": "ccusage"
       },
       {
@@ -692,18 +722,18 @@
     ]
   },
   "totals": {
-    "inputTokens": 477246,
-    "outputTokens": 90720,
-    "cacheCreationTokens": 79696870,
-    "cacheReadTokens": 1074705484,
-    "totalTokens": 1154970320,
-    "totalCost": 1542.1489
+    "inputTokens": 507007,
+    "outputTokens": 92081,
+    "cacheCreationTokens": 83425481,
+    "cacheReadTokens": 1126871012,
+    "totalTokens": 1210895581,
+    "totalCost": 1635.2277
   },
-  "generatedAt": "2026-02-07 16:08:09",
+  "generatedAt": "2026-02-08 16:58:16",
   "dataSource": "preserved_history",
-  "recordCount": 67,
+  "recordCount": 70,
   "dateRange": {
     "earliest": "2025-12-25",
-    "latest": "2026-02-07"
+    "latest": "2026-02-08"
   }
 }
