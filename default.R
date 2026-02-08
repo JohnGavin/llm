@@ -269,7 +269,7 @@ pkgs_test <- c('usethis', 'devtools', 'gh', 'gert', 'logger', 'dplyr', 'duckdb',
 pkgs_missing <- pkgs_test[!(pkgs_test %in% r_pkgs)]
 if (length(pkgs_missing)) print(pkgs_missing)
 
-gh_pkgs <- rlang::list2(
+gh_pkgs <- list(
   # NULL
   # # https://brodrigues.co/posts/2025-03-20-announcing_rixpress.html
   # list(
@@ -335,7 +335,7 @@ gh_pkgs <- rlang::list2(
     # 26 Nov c562575f01790b38a512ed199345aef695424e48
     # branch = "main"  # rix doesn't support branch properly, use commit
     commit = "78379217b2328dae8d5926dd3025593a34a92545"  # Latest as of 2026-01-19
-  ),
+  )
   # https://github.com/tidyverse/vitals
   # https://www.simonpcouch.com/blog/2025-05-07-gemini-2-5-pro-new/
   # list(
