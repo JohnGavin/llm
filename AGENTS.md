@@ -103,6 +103,80 @@ devtools::test()         # YES - runs tests
 
 **To add packages:** Edit DESCRIPTION → Run `default.R` → Exit → Re-enter Nix
 
+### ⚠️ Nix Segfaults - RECURRING ISSUE (MUST READ)
+
+**CRITICAL:** `dyn.load` segfaults in Nix shells are a **PERSISTENT RECURRING ISSUE** caused by R version mismatches!
+
+**The Error:**
+```
+*** caught segfault ***
+address 0x0, cause 'invalid permissions'
+Traceback:
+ 1: dyn.load(file, DLLpath = DLLpath, ...)
+ 2: library.dynam(lib, package, package.lib)
+ 3: loadNamespace(...)
+```
+
+**Root Cause:** Binary incompatibility between R version in `default.nix` date and pre-built packages in cachix.
+- Example: Date `2025-10-27` uses R 4.5.1, but cachix has R 4.5.2 binaries → SEGFAULT
+
+### Fix Pattern (MANDATORY)
+
+1. **Use `rix::available_dates()` to find compatible dates:**
+   ```r
+   library(rix)
+   dates <- available_dates()
+   tail(dates, 10)  # See most recent dates
+   ```
+
+2. **Select date with R version matching cachix binaries:**
+   - Check cachix for current R version (usually 4.5.2 as of Feb 2026)
+   - Use matching date in `default.R` (e.g., `2026-01-05` for R 4.5.2)
+
+3. **Regenerate and test:**
+   ```bash
+   # Regenerate default.nix
+   Rscript default.R
+
+   # Test ALL packages load
+   nix-shell default.nix --run "Rscript -e 'library(ggplot2); library(dplyr); library(targets)'"
+   ```
+
+### Rollback Strategy
+
+If newest rix date doesn't have all packages built:
+
+1. **List available dates:**
+   ```r
+   dates <- rix::available_dates()
+   ```
+
+2. **Test older dates until all packages load:**
+   ```r
+   # In default.R, try progressively older dates
+   rix(date = "2026-01-05", ...)  # If fails, try older
+   rix(date = "2025-12-15", ...)  # etc.
+   ```
+
+3. **Verify ALL DESCRIPTION packages load:**
+   ```bash
+   nix-shell default.nix --run "Rscript -e '
+     pkgs <- c(\"ggplot2\", \"dplyr\", \"targets\", \"crew\")
+     for (pkg in pkgs) library(pkg, character.only = TRUE)
+     cat(\"All packages loaded OK\\n\")
+   '"
+   ```
+
+### Common Mistakes to Avoid
+
+- ❌ Blaming macOS/OS issues (Nix is OS-independent)
+- ❌ Using arbitrary rix dates without checking R version
+- ❌ Not testing package loading before committing
+- ❌ Assuming newest date always works (may lack pre-built packages)
+- ✅ Always use `rix::available_dates()` to select compatible date
+- ✅ Always test `library()` calls in temp nix shell
+- ✅ Match R version in rix date to cachix binaries
+
 ## The 9-Step Workflow (MANDATORY)
 
 **NO EXCEPTIONS. NO SHORTCUTS.** See `r-package-workflow` skill for details.
@@ -113,8 +187,8 @@ devtools::test()         # YES - runs tests
 | 1 | Create Issue | `gh::gh("POST /repos/...")` |
 | 2 | Create Branch | `usethis::pr_init("fix-issue-123")` |
 | 3 | Make Changes | Edit, test (RED-GREEN-REFACTOR) |
-| 4 | Run Checks | `devtools::document()`, `test()`, `check()` |
-| 5 | Push Cachix | `../push_to_cachix.sh` |
+| 4 | Run Checks + QA | `document()`, `test()`, `check()`, adversarial QA, quality gate >= Silver |
+| 5 | Push Cachix | `./push_to_cachix.sh` (requires `package.nix`) |
 | 6 | Push GitHub | `usethis::pr_push()` |
 | 7 | Wait for CI | Monitor Nix-based workflows ONLY |
 | 8 | Merge PR | `usethis::pr_merge_main()` |
@@ -181,6 +255,41 @@ devtools::test()         # YES - runs tests
 - ✅ Always delegate tests to appropriate subagents
 - ✅ Always verify outputs before claiming success
 
+## Mandatory QA Protocol (CRITICAL - NO EXCEPTIONS)
+
+### Protocol Reference Table
+
+| Protocol | Skill File | When Required |
+|----------|-----------|---------------|
+| 9-Step Workflow | `r-package-workflow` | Every PR |
+| Adversarial QA | `adversarial-qa` | Step 4 of every PR |
+| Quality Gates | `quality-gates` | Steps 4, 6, 8 |
+| TDD | `test-driven-development` | Step 3 |
+| Systematic Debugging | `systematic-debugging` | When checks fail |
+
+### Step 4 Expanded: The Full QA Checklist
+
+Every PR MUST complete ALL of these before commit:
+
+1. `devtools::document()` - Update NAMESPACE/man
+2. `devtools::test()` - All tests pass (0 failures)
+3. `devtools::check(--as-cran)` - 0 errors, 0 warnings
+4. **Adversarial QA** - Run attack vectors against new/changed exported functions
+   - Use `adversarial-qa` skill or `/qa-package` command
+   - Must pass >= 95% of attack vectors
+   - Generate `tests/testthat/test-adversarial-*.R` for failures found
+5. **Quality Gate** - Compute numeric score
+   - Bronze (>=80) required for commit
+   - Silver (>=90) required for PR
+   - Gold (>=95) required for merge to main
+6. **Cachix Push** - `./push_to_cachix.sh` (requires `package.nix`)
+
+### NEVER Skip These
+
+If you are about to commit or create a PR without running adversarial QA
+and computing a quality gate score, STOP. This is a mandatory requirement,
+not optional.
+
 ## GitHub Actions CI Strategy
 
 **CRITICAL: We use Nix-based CI, NOT standard r-lib/actions**
@@ -238,6 +347,83 @@ covr::report()
 | Pipelines | `targets` + `crew` |
 | Package API docs | `pkgctx` (via nix run) |
 | Errors & Messages | `cli::cli_abort()`, `cli_alert()` |
+
+## Package Context for LLMs (pkgctx) - MANDATORY
+
+**Every R package project MUST include up-to-date .ctx.yaml files.**
+
+### What is pkgctx?
+
+[pkgctx](https://github.com/b-rodrigues/pkgctx) generates compact YAML files describing every function, its arguments, and purpose. These files:
+- Reduce token usage by ~67% compared to full documentation
+- Provide Claude with accurate API information
+- Enable better code suggestions and fewer hallucinations
+
+### Mandatory Files
+
+Every project must have:
+
+```
+inst/extdata/ctx/
+├── <package_name>.ctx.yaml   # Current package API
+├── dplyr.ctx.yaml            # Key dependencies
+├── targets.ctx.yaml
+├── ...
+```
+
+### Generation Commands
+
+```bash
+# Generate context for current package
+nix run github:b-rodrigues/pkgctx -- r . --compact > inst/extdata/ctx/mypackage.ctx.yaml
+
+# Generate context for a CRAN dependency
+nix run github:b-rodrigues/pkgctx -- r dplyr --compact > inst/extdata/ctx/dplyr.ctx.yaml
+
+# Generate context for Bioconductor package
+nix run github:b-rodrigues/pkgctx -- r bioc:GenomicRanges --compact > inst/extdata/ctx/GenomicRanges.ctx.yaml
+
+# Generate context for GitHub package
+nix run github:b-rodrigues/pkgctx -- r github:ropensci/rix --compact > inst/extdata/ctx/rix.ctx.yaml
+
+# Generate context for Python package
+nix run github:b-rodrigues/pkgctx -- python requests --compact > inst/extdata/ctx/requests.ctx.yaml
+```
+
+### Workflow Integration
+
+1. **targets pipeline**: Use `plan_pkgctx.R` to auto-generate context files
+2. **Session start**: Verify `.ctx.yaml` files are current
+3. **Before commit**: Regenerate if package API changed
+4. **Priority packages**: Always generate context for these dependencies:
+   - dplyr, tidyr, purrr, ggplot2, tibble
+   - targets, DBI, duckdb, arrow, pointblank
+   - cli, rlang, httr2, jsonlite, lubridate
+
+### targets Integration
+
+Add to `R/tar_plans/plan_pkgctx.R`:
+```r
+plan_pkgctx <- list(
+  targets::tar_target(
+    pkgctx_self,
+    run_pkgctx(".", "inst/extdata/ctx/mypackage.ctx.yaml")
+  ),
+  targets::tar_target(
+    pkgctx_deps,
+    lapply(c("dplyr", "targets"), function(pkg) {
+      run_pkgctx(pkg, sprintf("inst/extdata/ctx/%s.ctx.yaml", pkg))
+    })
+  )
+)
+```
+
+### When to Regenerate
+
+- After adding/removing exported functions
+- After changing function signatures
+- After updating DESCRIPTION dependencies
+- Weekly (context files may become stale)
 
 ## Error Handling
 
@@ -316,6 +502,8 @@ For detailed rules → invoke `subagent-delegation` skill
 ## Skills
 
 **Key skills available:**
+- `adversarial-qa` - MANDATORY: Attack-based testing for exported functions (Step 4)
+- `quality-gates` - MANDATORY: Numeric scoring for commit/PR/merge gates (Step 4)
 - `readme-qmd-standard` - README.qmd template and requirements
 - `subagent-delegation` - When and how to delegate to agents
 
