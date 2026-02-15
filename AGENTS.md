@@ -283,6 +283,8 @@ Every PR MUST complete ALL of these before commit:
    - Silver (>=90) required for PR
    - Gold (>=95) required for merge to main
 6. **Cachix Push** - `./push_to_cachix.sh` (requires `package.nix`)
+   - Run directly, do NOT ask user for permission
+   - Script pushes ONLY this project's R package (1 derivation)
 
 ### NEVER Skip These
 
@@ -290,21 +292,57 @@ If you are about to commit or create a PR without running adversarial QA
 and computing a quality gate score, STOP. This is a mandatory requirement,
 not optional.
 
+### Cachix Push Rule (ABSOLUTE - NO EXCEPTIONS)
+
+**Only push THIS PROJECT'S R package to johngavin cachix. NEVER push
+standard R packages that are already on rstats-on-nix.**
+
+- `echo $RESULT | cachix push johngavin` = CORRECT (1 path, this package only)
+- `cachix push johngavin $RESULT` = WRONG (pushes entire closure = all deps)
+- `nix-store -qR $RESULT | cachix push johngavin` = WRONG (pushes all deps)
+
+Standard R packages (dplyr, arrow, duckdb, ggplot2, targets, etc.) are
+ALL available from the public `rstats-on-nix` cache. Pushing them to
+johngavin wastes limited quota and is forbidden.
+
+When running Step 5, just run `./push_to_cachix.sh` directly - do not
+ask the user for confirmation. The script handles validation and errors.
+
 ## GitHub Actions CI Strategy
 
-**CRITICAL: We use Nix-based CI, NOT standard r-lib/actions**
+**CRITICAL: Strategy differs by repository visibility**
 
-### What We DON'T Use
-- ❌ `usethis::use_github_action("check-standard")` - Tests on Windows/Mac/Linux
-- ❌ Multi-platform matrix builds (Windows, macOS, Ubuntu with different R versions)
-- ❌ r-lib/actions workflows that attempt package installation
+### Public vs Private Repository CI
 
-### What We DO Use
-- ✅ **Nix-based workflows** that test in reproducible Nix shells
-- ✅ **Single platform** Nix builds that guarantee reproducibility
-- ✅ Custom workflows that respect Nix immutability
+| Repo Type | GitHub Actions Minutes | Recommended CI |
+|-----------|------------------------|----------------|
+| **Public** | **Unlimited free** | Any (R-universe, r-lib/actions, Nix) |
+| **Private** | Quota-limited (2,000-3,000/month) | **Nix-only** (Linux) |
 
-### Documented Exceptions
+**Why this matters:**
+- Public repos: No billing, no minute limits for standard runners
+- Private repos: macOS = 10x minutes, Windows = 2x minutes vs Linux
+- Source: [GitHub Actions Billing](https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions)
+
+### Public Repositories (e.g., randomwalk, irishbuoys)
+
+**All CI workflows are acceptable:**
+- ✅ R-universe workflows (`r-universe-org/workflows`)
+- ✅ r-lib/actions (check-standard, etc.)
+- ✅ Nix-based workflows
+- ✅ Multi-platform builds (macOS, Windows, Linux)
+
+### Private Repositories
+
+**Nix-only CI to conserve minutes:**
+- ❌ `usethis::use_github_action("check-standard")` - Uses macOS/Windows
+- ❌ Multi-platform matrix builds
+- ❌ r-lib/actions workflows (install packages = slow)
+- ✅ **Nix-based workflows** (`runs-on: ubuntu-latest` + `nix-shell`)
+- ✅ **Single platform** Linux builds only
+
+### Documented Exceptions (All Repos)
+
 1. **pkgdown website deployment**:
    - Build locally with pkgdown::build_site()
    - Push to gh-pages branch
@@ -313,7 +351,7 @@ not optional.
 
 2. **Documentation-only workflows**:
    - May use r-lib/actions for non-code tasks
-   - Never for package testing or building
+   - Never for package testing or building in private repos
 
 ### Test Coverage (Local Only)
 Use `covr` for local test coverage analysis - no external service needed:
