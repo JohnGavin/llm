@@ -69,6 +69,24 @@ usethis::pr_init(paste0("fix-issue-", issue_num, "-feature"))
     *   `gert::git_add(c("R/feature.R", "tests/testthat/test-feature.R"))`
     *   `gert::git_commit("Feat: Implement X (Red-Green verified)")`
 
+### Step 4b: Run Targets Pipeline (MANDATORY - NEVER SKIP)
+**Goal:** Build all targets, generate precomputed data for vignettes.
+
+**YOU MUST run `targets::tar_make()` yourself. NEVER ask the user to do it.**
+
+```r
+# Run the full pipeline
+targets::tar_make()
+
+# Verify all targets built
+targets::tar_meta() |> dplyr::filter(error != "") # Should be empty
+```
+
+*   Run BEFORE committing - pipeline must succeed.
+*   If new targets were added, verify they appear in `inst/extdata/`.
+*   If the pipeline saves RDS files, commit those files.
+*   If `tar_make()` fails due to Nix segfaults, document the failure and proceed with the commit noting the pre-existing issue. Do NOT ask the user to run it manually.
+
 ### Step 5: Full Local Checks
 **Goal:** Ensure package integrity.
 

@@ -1,0 +1,88 @@
+#!/bin/bash
+# Global pre-commit hook for all R projects
+# Place in: ~/docs_gh/llm/git-hooks/pre-commit
+# Activate with: git config --global core.hooksPath ~/docs_gh/llm/git-hooks
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}Running global pre-commit checks...${NC}"
+
+# Check if we're in an R package directory
+if [ -f "DESCRIPTION" ]; then
+    echo -e "${YELLOW}Detected R package - running R-specific checks${NC}"
+
+    # Check for large files (>50MB)
+    for file in $(git diff --cached --name-only); do
+        if [ -f "$file" ]; then
+            size=$(wc -c < "$file")
+            if [ $size -gt 52428800 ]; then
+                echo -e "${RED}Error: File $file is larger than 50MB${NC}"
+                echo "Consider using Git LFS or excluding this file"
+                exit 1
+            fi
+        fi
+    done
+
+    # Check for sensitive files
+    for pattern in "\.env$" "\.Renviron$" "credentials" "token" "secret" "password"; do
+        if git diff --cached --name-only | grep -i "$pattern"; then
+            echo -e "${RED}Warning: Potentially sensitive file detected matching pattern: $pattern${NC}"
+            echo "Please review before committing. Press Enter to continue or Ctrl+C to abort..."
+            read
+        fi
+    done
+
+    # Check for test files in wrong location
+    if git diff --cached --name-only | grep -E "^test_.*\.R$" | grep -v "^tests/"; then
+        echo -e "${RED}Error: Test files found outside tests/ directory${NC}"
+        echo "Move test files to tests/testthat/"
+        exit 1
+    fi
+
+    # Check for nix-shell-root symlink (should never be committed)
+    if git diff --cached --name-only | grep "nix-shell-root"; then
+        echo -e "${RED}Error: nix-shell-root symlink cannot be committed${NC}"
+        echo "This is a local symlink that won't work on other machines"
+        echo "Add to .gitignore: echo 'nix-shell-root' >> .gitignore"
+        exit 1
+    fi
+
+    # Check for proper .Rbuildignore entries
+    if [ -f ".Rbuildignore" ]; then
+        for pattern in "^default\.R$" "^default\.sh$" "^default\.nix$" "^nix-shell-root$"; do
+            if ! grep -Fq "$pattern" .Rbuildignore; then
+                echo -e "${YELLOW}Warning: $pattern not in .Rbuildignore${NC}"
+            fi
+        done
+    fi
+fi
+
+# Universal checks for all projects
+
+# Check for merge conflict markers
+if git diff --cached --name-only | xargs grep -l "^<<<<<<<\|^=======$\|^>>>>>>>" 2>/dev/null; then
+    echo -e "${RED}Error: Merge conflict markers detected${NC}"
+    git diff --cached --name-only | xargs grep -l "^<<<<<<<\|^=======$\|^>>>>>>>"
+    exit 1
+fi
+
+# Check for debugging statements
+debug_patterns="browser()\|debugger\|console\.log\|print\(\"DEBUG\|binding\.pry"
+if git diff --cached --name-only | xargs grep -E "$debug_patterns" 2>/dev/null; then
+    echo -e "${YELLOW}Warning: Possible debug statements detected:${NC}"
+    git diff --cached --name-only | xargs grep -n -E "$debug_patterns"
+    echo "Press Enter to continue or Ctrl+C to abort..."
+    read
+fi
+
+# Check for TODO/FIXME in new code
+if git diff --cached -U0 | grep "^\+" | grep -E "TODO|FIXME|XXX|HACK"; then
+    echo -e "${YELLOW}Info: TODO/FIXME comments found in new code${NC}"
+fi
+
+echo -e "${GREEN}Pre-commit checks passed!${NC}"
+exit 0
