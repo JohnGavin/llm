@@ -704,7 +704,9 @@ tex_pkgs = c("amsmath", "ninecolors", "apa7", "scalerel", "threeparttable", "thr
   sort()
 
 # 2nd/3rd? most recent date?
-(latest <- available_dates() |> sort() |> tail(3) |> head(1))
+# (latest <- available_dates() |> sort() |> tail(3) |> head(1))
+# Hardcoded to stable date per GEMINI.md to fix Fortran/Segfault issues
+latest <- "2026-01-05"
   # library(dplyr) ; available_df() |> tibble() |> arrange(desc(date)) |> head(5) |> glimpse()
 rix(
   date = latest, # Use latest date for DuckDB v1.4.4+

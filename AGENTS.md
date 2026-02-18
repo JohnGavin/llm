@@ -187,7 +187,8 @@ If newest rix date doesn't have all packages built:
 | 1 | Create Issue | `gh::gh("POST /repos/...")` |
 | 2 | Create Branch | `usethis::pr_init("fix-issue-123")` |
 | 3 | Make Changes | Edit, test (RED-GREEN-REFACTOR) |
-| 4 | Run Checks + QA | `document()`, `test()`, `check()`, adversarial QA, quality gate >= Silver |
+| 4a | Run Checks + QA | `document()`, `test()`, `check()`, adversarial QA, quality gate >= Silver |
+| 4b | Run Pipeline | `targets::tar_make()` - **NEVER ask user, always run yourself** |
 | 5 | Push Cachix | `./push_to_cachix.sh` (requires `package.nix`) |
 | 6 | Push GitHub | `usethis::pr_push()` |
 | 7 | Wait for CI | Monitor Nix-based workflows ONLY |
@@ -233,9 +234,15 @@ If newest rix date doesn't have all packages built:
 **NEVER commit without testing:**
 1. Enter project-specific Nix environment (./default.sh or ./default_dev.sh)
 2. Run `tar_validate()` - MUST pass
-3. Run `tar_make(names = "config")` - Test at least one target
+3. Run `tar_make()` - MUST run the FULL pipeline, not just one target
 4. Check GitHub CI will trigger (modify .github/workflows if needed)
 5. Include R/dev/issue/fix_*.R script documenting changes
+
+**CRITICAL: tar_make() is YOUR job, NEVER the user's:**
+- YOU run `tar_make()` as part of every PR workflow. NEVER ask the user to run it.
+- If it fails due to Nix segfaults, document the failure in the commit message.
+- If new targets save files to `inst/extdata/`, commit those files.
+- Use `nix-shell default.nix --run "Rscript -e 'targets::tar_make()'"` or btw tools.
 
 **CRITICAL Testing Requirements:**
 1. **Always test via subagents** - Use `verbose-runner` for any test that produces output
@@ -247,11 +254,13 @@ If newest rix date doesn't have all packages built:
 **Common Testing Mistakes:**
 - ❌ Testing in wrong Nix environment (e.g., llm instead of project)
 - ❌ Not running tar_validate() before commit
+- ❌ Not running tar_make() (NEVER defer to user!)
 - ❌ Assuming CI will run (check workflow triggers!)
 - ❌ Providing untested commands in README
 - ❌ Not verifying package dependencies before use
 - ❌ Assuming GitHub Pages works without checking
 - ✅ Always test in project-specific Nix shell
+- ✅ Always run tar_make() yourself before committing
 - ✅ Always delegate tests to appropriate subagents
 - ✅ Always verify outputs before claiming success
 
@@ -297,16 +306,50 @@ not optional.
 **Only push THIS PROJECT'S R package to johngavin cachix. NEVER push
 standard R packages that are already on rstats-on-nix.**
 
-- `echo $RESULT | cachix push johngavin` = CORRECT (1 path, this package only)
-- `cachix push johngavin $RESULT` = WRONG (pushes entire closure = all deps)
-- `nix-store -qR $RESULT | cachix push johngavin` = WRONG (pushes all deps)
-
 Standard R packages (dplyr, arrow, duckdb, ggplot2, targets, etc.) are
 ALL available from the public `rstats-on-nix` cache. Pushing them to
 johngavin wastes limited quota and is forbidden.
 
 When running Step 5, just run `./push_to_cachix.sh` directly - do not
 ask the user for confirmation. The script handles validation and errors.
+
+#### Correct Method: `cachix watch-exec`
+
+The script uses `cachix watch-exec` which pushes ONLY paths that Nix
+actually **builds** during the wrapped command. Dependencies that are
+**substituted** (downloaded from rstats-on-nix) are NOT pushed.
+
+```bash
+# CORRECT - pushes only the built derivation (1 path)
+cachix watch-exec johngavin --watch-mode auto -- nix-build package.nix --no-out-link
+```
+
+#### What NOT To Do (Anti-Patterns)
+
+All of these push the **entire closure** (all runtime dependencies):
+
+```bash
+# WRONG - pushes entire closure (30+ R packages)
+cachix push johngavin $RESULT
+
+# WRONG - ALSO pushes entire closure despite common misconception
+echo $RESULT | cachix push johngavin
+
+# WRONG - explicitly pushes all transitive dependencies
+nix-store -qR $RESULT | cachix push johngavin
+```
+
+**Key fact**: `cachix push` has NO flag to prevent closure pushing.
+The `echo $PATH | cachix push` trick does NOT limit what gets pushed.
+Both `cachix push cache /path` and `echo /path | cachix push cache`
+resolve and push the full runtime closure.
+
+#### Verification
+
+After pushing, the script counts "Pushing" lines in the log.
+Expected: 0 (already cached) or 1 (this package only).
+If > 1: dependencies were built locally instead of substituted.
+Fix: ensure `cachix use rstats-on-nix` is configured.
 
 ## GitHub Actions CI Strategy
 
