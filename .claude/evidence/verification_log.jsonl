@@ -1,0 +1,2 @@
+{"timestamp":"2025-02-14T13:20:00Z","claim":"tests pass","evidence_type":"command_output","verdict":"PASS","evidence_text":"[ FAIL 0 | WARN 0 | SKIP 2 | PASS 47 ]"}
+{"timestamp":"2025-02-14T13:25:00Z","claim":"check passes","evidence_type":"command_output","verdict":"PASS","evidence_text":"0 errors | 0 warnings | 1 note"}
