@@ -42,13 +42,32 @@ Check for:
 - Overly complex workflow configurations
 - Redundant CI steps
 
-### 4. Cleanup Actions
+### 4. Branch Hygiene
+
+```bash
+# Merged branches (safe to delete)
+git branch -a --merged main | grep -v 'main\|targets-runs\|gh-pages'
+
+# Unmerged branches (check PR status first)
+git branch -a --no-merged main | grep -v 'main\|targets-runs\|gh-pages'
+
+# Prune stale remote-tracking refs
+git remote prune origin
+```
+
+For each stale branch:
+- Check PR: `gh pr list --head BRANCH --state all`
+- If PR is MERGED/CLOSED → delete local (`git branch -d`) and remote (`gh api ...git/refs/heads/BRANCH -X DELETE`)
+- **Never delete:** `main`, `targets-runs`, `gh-pages`
+
+### 5. Cleanup Actions
 
 After review, suggest:
 - Files to consolidate or remove
 - Code to simplify
 - Documentation to merge
 - Dead code to delete
+- Stale branches to delete
 
 ## Output Format
 

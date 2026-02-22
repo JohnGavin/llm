@@ -53,14 +53,37 @@
     ],
     "defaultMode": "bypassPermissions"
   },
+  "model": "opus",
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/validate-workflow-yaml.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
-        "matcher": "startup",
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
             "command": "~/.claude/startup_check.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/session_end_check.sh"
           }
         ]
       }
@@ -87,5 +110,5 @@
     ]
   },
   "alwaysThinkingEnabled": true,
-  "model": "opus"
+  "skipDangerousModePermissionPrompt": true
 }
