@@ -411,7 +411,8 @@ system_pkgs <- c(
   # "radianWrapper",
   "gh", "git", # "node", "npm", 
   "gnupg", 
-  "toybox", # coreutils-full # else 'which' etc is missing with nix-shell --pure
+  "procps", # "pgrep"
+  "toybox", # coreutils-full "pgrep",  # else 'which' etc is missing with nix-shell --pure
   # translation tools - gettext
   #   else brms 'intl' error libintl-dev
   "gettext",
@@ -517,6 +518,10 @@ shell_hook <- r"(
 #    - This bug has recurred multiple times - DO NOT add quotes back to comments!
 # =============================================================================
 
+# Suppress known nixpkgs platform warning on Apple Silicon
+# FamilyDisplayName is an M-series Mac attribute not recognized by older nixpkgs
+exec 2> >(grep -v "unhandled Platform key FamilyDisplayName" >&2)
+
 # 1. Create the temporary wrapper script in a stable location
 # Use inline expansion to avoid creating literal $WRAPPER_* files
 # NOTE: Avoid using empty string pattern in case (breaks Nix multi-line strings)
@@ -620,7 +625,8 @@ export R_MAKEVARS_USER=/dev/null
 # IMPORTANT: Removed logic to modify ~/.zshrc or ~/.bashrc to prevent infinite recursion.
 
 # === Other standard Nix shell setup ===
-export PATH=/Users/johngavin/docs_gh/llm/bin:$PATH
+# Add /usr/bin and /bin for macOS tools (pgrep, etc.) that have no Nix equivalent on Darwin
+export PATH=/Users/johngavin/docs_gh/llm/bin:/usr/bin:/bin:$PATH
 alias duckdb='duckdb -unsigned'
 unset CI
 printf '%s\\n' 'Setup complete'
