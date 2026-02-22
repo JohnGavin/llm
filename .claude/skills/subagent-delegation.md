@@ -92,6 +92,103 @@ Task(subagent_type="r-debugger",
 2. **Model efficiency** - Use haiku for simple, opus for complex
 3. **Avoid delegation chains** - Don't delegate from delegated agents
 4. **Check first, delegate second** - Simple checks don't need agents
+5. **Solve blockers, don't skip steps** - If a tool isn't on PATH, use `nix-shell -p <tool>` instead of declaring the step impossible
+6. **Parallelize from the start** - Don't wait to be asked; launch independent agents (document+test+check, tar_make, QA) concurrently at Step 4
+
+## Context Forking Pattern
+
+When spawning subagents, use `run_in_background: true` to **fork context** and prevent bloating the orchestrator conversation with verbose output.
+
+### Why Fork Context?
+
+| Approach | Orchestrator Context | Performance |
+|----------|---------------------|-------------|
+| Inline (default) | Grows with agent output | Can hit context limits |
+| Background fork | Only summary returned | Stays lean |
+
+### When to Fork
+
+```python
+# FORK - Long running, verbose output
+Task(
+  subagent_type="verbose-runner",
+  prompt="Run full test suite and check",
+  run_in_background=True  # Returns summary only
+)
+
+# FORK - Multiple parallel tasks
+Task(subagent_type="r-debugger", prompt="Fix test A", run_in_background=True)
+Task(subagent_type="r-debugger", prompt="Fix test B", run_in_background=True)
+# Later: TaskOutput to collect results
+
+# INLINE - Need immediate result for next step
+Task(
+  subagent_type="Explore",
+  prompt="Find the config file location"
+  # No background - need result immediately
+)
+```
+
+### Background Task Workflow
+
+```python
+# 1. Launch background tasks
+task1 = Task(
+  subagent_type="verbose-runner",
+  prompt="Run tests",
+  run_in_background=True
+)
+# Returns immediately with task_id
+
+task2 = Task(
+  subagent_type="verbose-runner",
+  prompt="Run check",
+  run_in_background=True
+)
+
+# 2. Continue with other work while they run
+# ...
+
+# 3. Collect results when needed
+result1 = TaskOutput(task_id=task1.id, block=True)
+result2 = TaskOutput(task_id=task2.id, block=True)
+```
+
+### Context-Heavy Operations (Always Fork)
+
+- `devtools::check()` - 100+ lines output
+- `tar_make()` - Progress updates
+- Full test suite - Many test results
+- Coverage analysis - Per-file reports
+- Any operation expecting > 50 lines
+
+### Orchestrator Pattern
+
+For multi-step workflows:
+
+```python
+# Orchestrator stays lean by forking heavy work
+def pr_pass_loop():
+    while True:
+        # Fork: Run checks in background
+        check_task = Task(
+          subagent_type="verbose-runner",
+          prompt="Run gh pr checks and report status",
+          run_in_background=True
+        )
+        result = TaskOutput(task_id=check_task.id, block=True)
+
+        if "all passed" in result:
+            break
+
+        # Fork: Fix issues in background
+        fix_task = Task(
+          subagent_type="r-debugger",
+          prompt=f"Fix these failures: {result.failures}",
+          run_in_background=True
+        )
+        TaskOutput(task_id=fix_task.id, block=True)
+```
 
 ## Red Flags (You're Over-Delegating)
 
@@ -100,3 +197,10 @@ Task(subagent_type="r-debugger",
 - Using planner for simple decisions
 - Chaining multiple agents for one task
 - Using agents to read files or check paths
+
+## Red Flags (You're Under-Forking)
+
+- Orchestrator context growing past 50k tokens
+- Full test/check output visible in main conversation
+- Hitting context limits mid-workflow
+- Slow response times due to context size
