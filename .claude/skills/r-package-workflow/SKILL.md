@@ -22,6 +22,10 @@ This skill provides a structured workflow for R package development following be
 
 *   **Action:** Run the "Brainstorming & Planning" protocol (see `architecture-planning` skill).
 *   **Check:** `DESCRIPTION` and `default.nix` for dependencies.
+*   **Sync:** DESCRIPTION is the single source of truth for Nix deps. `default.R` must
+    use `read.dcf("DESCRIPTION")` to extract packages -- NEVER maintain a separate list.
+    Include `R/tar_plans/plan_nix_sync.R` for drift detection. Use safe `import <nixpkgs> {}`
+    pattern in `default.sh` (never `curl -sl` for rix expression). See `nix-rix-r-environment` skill.
 *   **Output:** A markdown checklist of tasks.
 
 ### Step 2: Create Issue & Branch
@@ -75,6 +79,10 @@ usethis::pr_init(paste0("fix-issue-", issue_num, "-feature"))
 **YOU MUST run `targets::tar_make()` yourself. NEVER ask the user to do it.**
 
 ```r
+# Validate pipeline definition first (fast, catches syntax/dependency errors)
+targets::tar_validate()
+cat("Pipeline valid:", length(targets::tar_manifest()$name), "targets\n")
+
 # Run the full pipeline
 targets::tar_make()
 
@@ -82,10 +90,15 @@ targets::tar_make()
 targets::tar_meta() |> dplyr::filter(error != "") # Should be empty
 ```
 
+*   **`tar_validate()` runs on every push/PR** via R-CMD-check CI (catches definition errors fast).
+*   **Full `tar_make()` runs on schedule or manual trigger** via weekly-update/run-pipeline CI.
+*   Pipeline state is stored on the `targets-runs` orphan branch (not on main).
 *   Run BEFORE committing - pipeline must succeed.
 *   If new targets were added, verify they appear in `inst/extdata/`.
 *   If the pipeline saves RDS files, commit those files.
 *   If `tar_make()` fails due to Nix segfaults, document the failure and proceed with the commit noting the pre-existing issue. Do NOT ask the user to run it manually.
+
+See `targets-ci-pipeline` skill for full CI workflow patterns.
 
 ### Step 5: Full Local Checks
 **Goal:** Ensure package integrity.
@@ -117,13 +130,49 @@ usethis::pr_push()
 ### Step 8: Merge
 **Goal:** Integrate changes.
 *   Only after CI passes.
-*   `usethis::pr_merge_main()`
-*   `usethis::pr_finish()`
+*   `usethis::pr_merge_main()` — merges PR, switches to main, pulls.
+*   `usethis::pr_finish()` — deletes local branch, removes upstream tracking.
 
 ### Step 9: Verify & Cleanup
 **Goal:** Close loop.
-*   Verify issue is closed.
+*   Verify issue is closed (`gh issue view <N> --json state`).
 *   Delete log file (optional, or archive it).
+*   **Branch cleanup (MANDATORY):**
+    1.  Verify local branch was deleted by `pr_finish()`: `git branch`
+    2.  Verify remote branch was deleted: `gh api repos/OWNER/REPO/git/refs/heads/BRANCH` (should 404)
+    3.  If remote branch still exists: `gh api repos/OWNER/REPO/git/refs/heads/BRANCH -X DELETE`
+    4.  Prune stale remote-tracking refs: `git remote prune origin`
+
+### Periodic Branch Hygiene
+Run during `/cleanup` or `/session-end`:
+1.  List merged branches: `git branch -a --merged main`
+2.  List unmerged branches: `git branch -a --no-merged main`
+3.  For each unmerged branch, check PR status: `gh pr list --head BRANCH --state all`
+4.  **Safe to delete:** branches whose PRs are MERGED or CLOSED
+5.  **Never delete:** `main`, `targets-runs`, `gh-pages`
+6.  Delete local: `git branch -d BRANCH`
+7.  Delete remote: `gh api repos/OWNER/REPO/git/refs/heads/BRANCH -X DELETE`
+8.  Prune: `git remote prune origin`
+
+## CRITICAL: Never Skip or Rationalize Away Steps
+
+**Every step in the 9-step workflow is MANDATORY. No exceptions.**
+
+**Anti-pattern:** Marking a step as "N/A" or "not needed" with a rationalization.
+Example: Skipping Step 5 (cachix push) because "CI doesn't use it directly."
+
+**Rule:** If a step is blocked:
+1. Identify the specific blocker (e.g., "cachix binary not on PATH")
+2. Solve it (e.g., `nix-shell -p cachix --run './push_to_cachix.sh'`)
+3. Execute the step
+4. NEVER skip, NEVER mark as "N/A"
+
+**If a CLI tool isn't available:**
+```bash
+# Pattern: nix-shell -p <tool> --run "<command>"
+nix-shell -p cachix --run "./push_to_cachix.sh"
+nix-shell -p git-lfs --run "git lfs pull"
+```
 
 ## File Organization
 

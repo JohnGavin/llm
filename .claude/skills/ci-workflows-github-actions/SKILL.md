@@ -18,64 +18,77 @@ Use this skill when:
 
 ### 1. R-CMD-check (Nix-based)
 
-**File:** `.github/workflows/r-cmd-check.yaml`
+**File:** `.github/workflows/R-CMD-check.yml`
 
 ```yaml
 name: R-CMD-check
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
-
-permissions:
-  contents: read
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   R-CMD-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - name: Create nix folder to silence warning
-        run: mkdir -p ~/.nix-defexpr/channels
-
-      - uses: cachix/install-nix-action@v31
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
         with:
-          nix_path: nixpkgs=https://github.com/rstats-on-nix/nixpkgs/archive/refs/heads/r-daily.tar.gz
+          logger: pretty
+          log-directives: nix_installer=trace
+          backtrace: full
 
-      - uses: cachix/cachix-action@v15
-        with:
-          name: rstats-on-nix  # Public R packages cache
+      - name: Setup magic Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - uses: cachix/cachix-action@v15
+      - name: Setup Cachix (rstats-on-nix + johngavin)
+        uses: cachix/cachix-action@v15
         with:
-          name: johngavin  # Project-specific cache
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-          skipPush: true
+          name: rstats-on-nix
+          extraPullNames: johngavin
 
       - name: Build development environment
-        run: nix-shell default-ci.nix --quiet --run "Rscript -e \"sessionInfo()\""
+        run: nix-build default.nix -A shell --no-out-link
 
       - name: Run R CMD check
-        run: nix-shell default-ci.nix --quiet --run "Rscript -e \"devtools::check(error_on = 'warning', check_dir = 'check')\""
+        run: |
+          nix-shell default.nix -A shell --run "Rscript -e 'devtools::document(); devtools::check(error_on = \"error\", check_dir = \"check\")'"
 
-      - name: Upload check results
+      - name: Validate targets pipeline
+        if: hashFiles('_targets.R') != ''
+        run: |
+          nix-shell default.nix -A shell --run "Rscript -e '
+            targets::tar_validate()
+            cat(\"Pipeline valid:\", length(targets::tar_manifest()\$name), \"targets\\n\")
+          '"
+
+      - name: Upload check results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: check-results
+          name: R-CMD-check-results
           path: check/
+          retention-days: 7
 ```
 
 **Key points:**
-- Uses Nix for reproducible R environment
-- Two-tier Cachix: public `rstats-on-nix` then project-specific
-- `skipPush: true` on project cache to avoid pushing during checks
+- `GITHUB_PAT` at job level prevents GitHub API rate limits
+- `actions/checkout@v6` (latest)
+- Verbose Nix installer logging (`logger: pretty`, `log-directives`, `backtrace`)
+- `magic-nix-cache-action` for free automatic Nix binary caching (no quota)
+- Cachix `rstats-on-nix` + `johngavin` for R package binaries
+- Explicit `nix-build` step separates env build errors from check errors
+- `tar_validate()` runs when `_targets.R` exists (catches pipeline definition errors)
+- Failure artifact upload for post-mortem debugging
 
 ### 2. R-Universe Test Workflow
 
@@ -134,7 +147,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: r-lib/actions/setup-r@v2
         with:
@@ -181,7 +194,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build WASM package
         uses: r-wasm/actions/build-rwasm@v2
@@ -220,7 +233,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: r-lib/actions/setup-r@v2
       - uses: r-lib/actions/setup-pandoc@v2
@@ -254,7 +267,6 @@ on:
   push:
     paths:
       - 'default.nix'
-      - 'default-ci.nix'
       - 'package.nix'
   workflow_dispatch:
 
@@ -262,39 +274,45 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=https://github.com/rstats-on-nix/nixpkgs/archive/refs/heads/r-daily.tar.gz
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup magic Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
 
       - uses: cachix/cachix-action@v15
         with:
           name: johngavin
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-      - name: Build and push to cachix
+      - name: Build and push project package to cachix
         run: |
-          nix-build default-ci.nix
-          nix-store -qR result | cachix push johngavin
+          cachix watch-exec johngavin --watch-mode auto -- nix-build package.nix --no-out-link
 ```
 
-## Cachix Integration
+## Nix Caching Integration
 
-### Two-Tier Caching Strategy
+### Three-Tier Caching Strategy (MANDATORY)
 
 ```yaml
-# 1. Public cache FIRST (contains pre-built R packages)
+# 1. Magic Nix cache (free, automatic, CI-only — no auth token)
+- uses: DeterminateSystems/magic-nix-cache-action@main
+
+# 2. Public R packages cache (contains pre-built R packages)
 - uses: cachix/cachix-action@v15
   with:
     name: rstats-on-nix
 
-# 2. Project cache SECOND (your custom builds)
-- uses: cachix/cachix-action@v15
-  with:
-    name: johngavin
-    authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+# 3. Project cache (your custom builds — pulled via extraPullNames)
+#    Only needs authToken when PUSHING (in nix-builder workflow)
 ```
+
+**Why three tiers:**
+- `magic-nix-cache` is free with no quota — caches all Nix build artifacts
+- `rstats-on-nix` has pre-built R packages — avoids 30+ minute source builds
+- `johngavin` has project-specific packages — for downstream consumers
 
 ### Local Push to Cachix (Step 5 of 9-Step Workflow)
 
@@ -354,7 +372,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ inputs.r-version }}
@@ -388,7 +406,7 @@ jobs:
   update-context:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: DeterminateSystems/nix-installer-action@main
 
@@ -427,7 +445,7 @@ jobs:
   check-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: DeterminateSystems/nix-installer-action@main
 
@@ -472,7 +490,7 @@ jobs:
   update-deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: DeterminateSystems/nix-installer-action@main
 
@@ -496,6 +514,133 @@ jobs:
 ```
 
 **Purpose:** Keep dependency API context fresh for LLM use.
+
+### 10. Incremental Pipeline with `targets-runs` Branch (b-rodrigues Pattern)
+
+**Source:** [nix_targets_pipeline](https://github.com/b-rodrigues/nix_targets_pipeline)
+
+An alternative to committing `_targets/` to main. Stores pipeline outputs on a separate
+orphan branch (`targets-runs`), restoring them before each CI run for incremental builds.
+
+```yaml
+name: Run Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          logger: pretty
+          log-directives: nix_installer=trace
+          backtrace: full
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build development environment
+        run: nix-build
+
+      - name: Check if previous runs exist
+        id: runs-exist
+        run: git ls-remote --exit-code --heads origin targets-runs
+        continue-on-error: true
+
+      - name: Checkout previous run
+        if: steps.runs-exist.outcome == 'success'
+        uses: actions/checkout@v6
+        with:
+          ref: targets-runs
+          fetch-depth: 1
+          path: .targets-runs
+
+      - name: Restore output files from the previous run
+        if: steps.runs-exist.outcome == 'success'
+        run: |
+          nix-shell default.nix --run "Rscript -e 'for (dest in scan(\".targets-runs/.targets-files\", what = character())) {
+            source <- file.path(\".targets-runs\", dest)
+            if (!file.exists(dirname(dest))) dir.create(dirname(dest), recursive = TRUE)
+            if (file.exists(source)) file.rename(source, dest)
+          }'"
+
+      - name: Run pipeline
+        run: nix-shell default.nix --run "Rscript -e 'targets::tar_make()'"
+
+      - name: Identify pipeline output files
+        run: git ls-files -mo --exclude='*.duckdb' > .targets-files
+
+      - name: Create runs branch if needed
+        if: steps.runs-exist.outcome != 'success'
+        run: git checkout --orphan targets-runs
+
+      - name: Switch to runs branch if it exists
+        if: steps.runs-exist.outcome == 'success'
+        run: |
+          rm -r .git
+          mv .targets-runs/.git .
+          rm -r .targets-runs
+
+      - name: Upload latest run
+        run: |
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "actions@github.com"
+          rm -rf .gitignore .github/workflows
+          git add --all -- ':!*.duckdb'
+          for file in $(cat .targets-files); do
+            git add --force $file
+          done
+          git commit -am "Run pipeline"
+          git push origin targets-runs
+
+      - name: Post failure artifact
+        if: failure()
+        uses: actions/upload-artifact@main
+        with:
+          name: pipeline-failure
+          path: .
+```
+
+**Trade-offs vs committing `_targets/` to main (LFS approach):**
+
+| Aspect | `targets-runs` branch | `_targets/` on main (LFS) |
+|--------|----------------------|---------------------------|
+| Main branch cleanliness | Clean — no pipeline artifacts | Polluted with binary objects |
+| Incremental CI builds | Yes — restores previous outputs | Yes — already in checkout |
+| Local development | Must pull `targets-runs` branch separately | Available immediately |
+| LFS dependency | None | Required for large objects |
+| Workflow complexity | Higher (orphan branch management) | Lower (just commit + restore .gitignore) |
+| Repo size | main stays small | main grows with each update |
+
+**When to use which:**
+- **`targets-runs` branch**: Large pipelines, many binary artifacts, want clean main
+- **`_targets/` on main (LFS)**: Small stores (< 50 MB), vignettes need targets data, simpler workflow
+
+### DeterminateSystems/magic-nix-cache-action
+
+**Free** Nix binary cache from Determinate Systems. No auth token needed.
+Can replace or supplement cachix for CI-only caching.
+
+```yaml
+# Instead of (or in addition to) cachix:
+- uses: DeterminateSystems/magic-nix-cache-action@main
+```
+
+**Key differences from cachix:**
+- Free, no quota limits
+- Automatic — caches everything Nix builds
+- No auth token needed
+- Only works in CI (not for sharing with local devs)
+- Cannot replace johngavin cachix for publishing project packages
+
+**Recommendation:** Use `magic-nix-cache-action` for CI speed. Keep `cachix`
+for publishing project packages to johngavin cache for downstream consumers.
 
 ## Decision Matrix
 
@@ -551,22 +696,81 @@ on:
 | `CACHIX_AUTH_TOKEN` | Push to Cachix | cachix.org |
 | `CODECOV_TOKEN` | Coverage upload | codecov.io |
 
+## Mandatory CI Environment (ALL Nix Workflows)
+
+Every Nix-based workflow MUST include these three features:
+
+### 1. `GITHUB_PAT` at job level
+
+Prevents GitHub API rate limits (affects `remotes::`, `pak::`, `rix::` calls):
+
+```yaml
+jobs:
+  my-job:
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### 2. Verbose Nix installer logging
+
+Better debugging when Nix install fails in CI:
+
+```yaml
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          logger: pretty
+          log-directives: nix_installer=trace
+          backtrace: full
+```
+
+### 3. `actions/checkout@v6`
+
+Always use latest major version:
+
+```yaml
+      - uses: actions/checkout@v6
+```
+
+### 4. Pipeline validation (if `_targets.R` exists)
+
+Add after R CMD check step. Fast (< 5s), catches definition errors:
+
+```yaml
+      - name: Validate targets pipeline
+        if: hashFiles('_targets.R') != ''
+        run: |
+          nix-shell default.nix -A shell --run "Rscript -e '
+            targets::tar_validate()
+            cat(\"Pipeline valid:\", length(targets::tar_manifest()\$name), \"targets\\n\")
+          '"
+```
+
+See `targets-ci-pipeline` skill for full pipeline CI workflows.
+
 ## Best Practices
 
 1. **Use path filters** - Don't run CI on unrelated changes
-2. **Two-tier Cachix** - Public cache first, project cache second
-3. **Skip CI commits** - Use `[skip ci]` for automated commits
-4. **Artifact upload on failure** - Debug failed checks easily
-5. **Native R for web tools** - bslib/pkgdown don't work in Nix
-6. **Test r-universe locally** - Catch issues before deployment
+2. **Three-tier Nix caching** - magic-nix-cache + rstats-on-nix + project cache
+3. **DeterminateSystems installer** - Better logging and diagnostics
+4. **Explicit nix-build step** - Separates env build errors from command errors
+5. **Failure artifact upload** - Upload check results/workdir on failure
+6. **Skip CI commits** - Use `[skip ci]` for automated commits
+7. **Native R for web tools** - bslib/pkgdown don't work in Nix
+8. **Test r-universe locally** - Catch issues before deployment
+9. **targets-runs branch** - Store pipeline state on orphan branch, not main
+10. **GITHUB_PAT** - Always set at job level to avoid rate limits
+11. **Verbose Nix logging** - Always use `logger: pretty` + `log-directives`
+12. **Pipeline validation** - Add `tar_validate()` when `_targets.R` exists
 
 ## Related Skills
 
+- `targets-ci-pipeline` - Full targets pipeline CI (targets-runs branch, bootstrapping)
 - `nix-rix-r-environment` - Core Nix/rix setup, `available_dates()`
 - `pkgdown-deployment` - Hybrid deployment details
 - `verification-before-completion` - CI verification patterns
 - `r-package-workflow` - 9-step workflow with CI integration
 - `llm-package-context` - pkgctx usage, API drift detection
+- `targets-vignettes` - Pre-computed vignette pattern
 
 ## Resources
 

@@ -375,6 +375,111 @@ articles:
   run: nix-shell default.nix --run "Rscript -e 'pkgdown::build_site()'"
 ```
 
+## Code Examples as Targets
+
+Store every static code block displayed in vignettes as a `targets` target.
+This ensures code examples stay syntactically valid as APIs evolve.
+
+### Pattern: text -> parse -> validate
+
+1. **Helper function** (defined in `plan_doc_examples.R`):
+
+```r
+parse_code_example <- function(code_lines) {
+  code_text <- paste(code_lines, collapse = "\n")
+  tryCatch(
+    {
+      parsed <- parse(text = code_text)
+      list(valid = TRUE, n_expressions = length(parsed),
+           code = code_lines, error = NULL)
+    },
+    error = function(e) {
+      list(valid = FALSE, n_expressions = 0L,
+           code = code_lines, error = conditionMessage(e))
+    }
+  )
+}
+```
+
+2. **Code text target** (one per display block):
+
+```r
+targets::tar_target(
+  code_dd_load_data,
+  {
+    force(file.exists("R/database_parquet.R"))  # dependency tracking
+    c(
+      "library(coMMpass)",
+      "",
+      "clinical <- query_commpass_parquet(\"clinical\")"
+    )
+  }
+)
+```
+
+3. **Parse validation target**:
+
+```r
+targets::tar_target(
+  code_parsed_dd_load_data,
+  parse_code_example(code_dd_load_data)
+)
+```
+
+4. **Master validation gate** (fails pipeline on syntax errors):
+
+```r
+targets::tar_target(
+  doc_examples_validation,
+  {
+    parse_results <- list(
+      dd_load_data = code_parsed_dd_load_data,
+      # ... all parse targets
+    )
+    all_valid <- all(vapply(parse_results, function(x) x$valid, logical(1)))
+    if (!all_valid) {
+      failed <- names(parse_results)[!vapply(parse_results, function(x) x$valid, logical(1))]
+      cli::cli_abort(c("x" = "Code examples failed syntax validation",
+                        "i" = "Failed: {paste(failed, collapse = ', ')}"))
+    }
+    list(all_valid = all_valid, n_examples = length(parse_results))
+  }
+)
+```
+
+### Display in Rmd vignettes
+
+Use `<details>` HTML for show/hide (hidden by default):
+
+````rmd
+```{r dd-load-data-code, results='asis'}
+code <- safe_tar_read("code_dd_load_data")
+if (!is.null(code)) {
+  cat("<details>\n<summary>Show code</summary>\n\n```r\n")
+  cat(paste(code, collapse = "\n"))
+  cat("\n```\n</details>\n")
+} else {
+  cat("*Code example not available. Run `tar_make()` first.*\n")
+}
+```
+````
+
+### Display in Qmd vignettes
+
+````qmd
+```{r}
+#| echo: false
+#| results: asis
+targets::tar_load(code_dd_load_data)
+cat("```r\n", paste(code_dd_load_data, collapse = "\n"), "\n```", sep = "")
+```
+````
+
+### Reference implementations
+
+- **irishbuoys**: `irishbuoys/R/tar_plans/plan_doc_examples.R` (15 code targets, 468 LOC)
+- **coMMpass**: `coMMpass/R/tar_plans/plan_doc_examples.R` (4 code targets)
+
 ## Best Practices
 
 ### 1. Keep Functions Pure
@@ -501,9 +606,43 @@ usethis::use_package("targets")
 usethis::use_package("tarchetypes")
 ```
 
+## CI Integration
+
+### Vignettes that use `tar_load()` in CI
+
+When vignettes call `tar_load()` or `tar_read()`, CI must have `_targets/` present.
+Use the **targets-runs branch pattern** (see `targets-ci-pipeline` skill):
+
+1. Restore `_targets/` from `targets-runs` orphan branch
+2. Run `tar_make()` to update targets
+3. Render vignettes (tar_load works because `_targets/` is present)
+4. Commit rendered outputs to main
+5. Save `_targets/` state back to `targets-runs`
+
+**Key points:**
+- `_targets/` is gitignored on main — it only exists on the `targets-runs` branch
+- Vignette rendering happens AFTER pipeline run, BEFORE state save
+- `tar_validate()` runs in R-CMD-check (fast, catches definition errors on every push)
+- Full `tar_make()` runs on schedule or manual trigger
+
+### Pipeline validation in R-CMD-check
+
+Every project with `_targets.R` should include `tar_validate()` in R-CMD-check:
+
+```yaml
+      - name: Validate targets pipeline
+        if: hashFiles('_targets.R') != ''
+        run: |
+          nix-shell default.nix -A shell --run "Rscript -e '
+            targets::tar_validate()
+            cat(\"Pipeline valid:\", length(targets::tar_manifest()\$name), \"targets\\n\")
+          '"
+```
+
 ## Resources
 
 - **targets manual**: https://books.ropensci.org/targets/
 - **targets package**: https://docs.ropensci.org/targets/
 - **Example pipelines**: https://github.com/ropensci/targets/tree/main/inst/examples
 - **Best practices**: https://books.ropensci.org/targets/practice.html
+- **targets-ci-pipeline skill**: Full CI pipeline patterns
