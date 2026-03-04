@@ -128,13 +128,51 @@ safe_tar_read("vig_max5_table")
 
 :::
 
-# CI & Git Stats {#ci-git-stats}
+# Pipeline Metrics {#pipeline-metrics}
 
-GitHub Actions performance and repository activity.
+Targets pipeline composition: plans, target counts, heaviest targets by size and compute time.
 
 ::: {.panel-tabset}
 
-## Workflow Runtimes
+## Plans & Targets
+
+```{r pipeline-plans}
+safe_tar_read("vig_pipeline_plans_table")
+```
+
+## Top by Size
+
+```{r pipeline-top-size}
+safe_tar_read("vig_pipeline_top_size_table")
+```
+
+## Top by Compute Time
+
+```{r pipeline-top-time}
+safe_tar_read("vig_pipeline_top_time_table")
+```
+
+:::
+
+# GitHub Activity {#github-activity}
+
+Repository timeline, commit velocity, issues, pull requests, and CI workflows.
+
+::: {.panel-tabset}
+
+## Commit Velocity
+
+```{r commit-velocity}
+safe_tar_read("vig_commit_velocity_table")
+```
+
+## Issues & PRs
+
+```{r github-activity}
+safe_tar_read("vig_github_activity_table")
+```
+
+## CI Workflow Runtimes
 
 ```{r ci-plot, fig.cap="Box plot of successful GitHub Actions workflow runtimes by workflow name."}
 safe_tar_read("vig_workflow_plot")
@@ -150,9 +188,15 @@ safe_tar_read("vig_git_history_plot")
 
 # Project Structure {#project-structure}
 
-File organization and repository health.
+Codebase metrics, file organization, and repository health.
 
 ::: {.panel-tabset}
+
+## Codebase
+
+```{r codebase-metrics}
+safe_tar_read("vig_codebase_metrics")
+```
 
 ## File Counts
 
