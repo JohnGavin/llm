@@ -36,6 +36,7 @@ Suggests:
     lubridate,
     quarto,
     rmarkdown,
+    targets,
     testthat (>= 3.0.0),
     tidyr,
     withr
