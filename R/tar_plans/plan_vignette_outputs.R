@@ -388,6 +388,308 @@ plan_vignette_outputs <- function() {
       packages = c("DT", "dplyr", "tibble", "fs")
     ),
 
+    # === Pipeline Metrics section ===
+
+    # Pipeline summary: plans, target counts, top by size/time
+    tar_target(
+      vig_pipeline_summary,
+      {
+        tryCatch({
+          meta <- targets::tar_meta()
+          if (is.null(meta) || nrow(meta) == 0) return(NULL)
+
+          # Plan files
+          plan_files <- list.files("R/tar_plans", pattern = "^plan_.*\\.R$", full.names = TRUE)
+          plan_counts <- lapply(plan_files, function(f) {
+            code <- readLines(f, warn = FALSE)
+            n <- sum(grepl("tar_target\\(|tar_quarto\\(", code))
+            tibble::tibble(plan = basename(f), targets = n)
+          })
+          plan_tbl <- dplyr::bind_rows(plan_counts) |>
+            dplyr::arrange(dplyr::desc(targets))
+
+          # Top by size
+          top_size <- meta |>
+            dplyr::filter(!is.na(bytes), bytes > 0) |>
+            dplyr::arrange(dplyr::desc(bytes)) |>
+            dplyr::slice_head(n = 5) |>
+            dplyr::transmute(
+              target = name,
+              size = dplyr::case_when(
+                bytes >= 1e9 ~ sprintf("%.1f GB", bytes / 1e9),
+                bytes >= 1e6 ~ sprintf("%.1f MB", bytes / 1e6),
+                bytes >= 1e3 ~ sprintf("%.1f KB", bytes / 1e3),
+                TRUE ~ paste0(bytes, " B")
+              ),
+              bytes
+            )
+
+          # Top by time
+          top_time <- meta |>
+            dplyr::filter(!is.na(seconds), seconds > 0) |>
+            dplyr::arrange(dplyr::desc(seconds)) |>
+            dplyr::slice_head(n = 5) |>
+            dplyr::transmute(
+              target = name,
+              time = dplyr::case_when(
+                seconds >= 60 ~ sprintf("%.1f min", seconds / 60),
+                TRUE ~ sprintf("%.1f s", seconds)
+              ),
+              seconds
+            )
+
+          list(
+            plan_tbl = plan_tbl,
+            total_plans = nrow(plan_tbl),
+            total_targets = sum(plan_tbl$targets),
+            top_size = top_size,
+            top_time = top_time
+          )
+        }, error = function(e) NULL)
+      },
+      packages = c("dplyr", "tibble", "targets"),
+      cue = tar_cue(mode = "always")
+    ),
+
+    # Pipeline summary as DT tables
+    tar_target(
+      vig_pipeline_plans_table,
+      {
+        if (is.null(vig_pipeline_summary)) return(NULL)
+        DT::datatable(
+          vig_pipeline_summary$plan_tbl,
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf("Pipeline has %d plans with %d total targets.",
+                    vig_pipeline_summary$total_plans,
+                    vig_pipeline_summary$total_targets)
+          ),
+          rownames = FALSE,
+          options = list(dom = "t", pageLength = 20, order = list(list(1, "desc")))
+        )
+      },
+      packages = c("DT", "htmltools")
+    ),
+
+    tar_target(
+      vig_pipeline_top_size_table,
+      {
+        if (is.null(vig_pipeline_summary)) return(NULL)
+        DT::datatable(
+          vig_pipeline_summary$top_size |> dplyr::select(target, size),
+          caption = "Top 5 targets by stored size.",
+          rownames = FALSE,
+          options = list(dom = "t", pageLength = 5)
+        )
+      },
+      packages = c("DT", "dplyr")
+    ),
+
+    tar_target(
+      vig_pipeline_top_time_table,
+      {
+        if (is.null(vig_pipeline_summary)) return(NULL)
+        DT::datatable(
+          vig_pipeline_summary$top_time |> dplyr::select(target, time),
+          caption = "Top 5 targets by compute time.",
+          rownames = FALSE,
+          options = list(dom = "t", pageLength = 5)
+        )
+      },
+      packages = c("DT", "dplyr")
+    ),
+
+    # === GitHub Activity section ===
+
+    # Commit velocity: weekly commit counts with highlights
+    tar_target(
+      vig_commit_velocity,
+      {
+        tryCatch({
+          git_log <- gert::git_log(max = 500)
+          if (is.null(git_log) || nrow(git_log) == 0) return(NULL)
+
+          started <- min(as.Date(git_log$time))
+          latest <- max(as.Date(git_log$time))
+          age_days <- as.integer(difftime(latest, started, units = "days"))
+
+          weekly <- git_log |>
+            dplyr::mutate(
+              date = as.Date(time),
+              week = lubridate::floor_date(date, "week")
+            ) |>
+            dplyr::group_by(week) |>
+            dplyr::summarise(
+              commits = dplyr::n(),
+              .groups = "drop"
+            ) |>
+            dplyr::arrange(week) |>
+            dplyr::mutate(
+              week_label = format(week, "W%V (%b %d)")
+            )
+
+          list(
+            started = started,
+            latest = latest,
+            age_days = age_days,
+            total_commits = nrow(git_log),
+            weekly = weekly
+          )
+        }, error = function(e) NULL)
+      },
+      packages = c("gert", "dplyr", "lubridate"),
+      cue = tar_cue(mode = "always")
+    ),
+
+    tar_target(
+      vig_commit_velocity_table,
+      {
+        if (is.null(vig_commit_velocity)) return(NULL)
+        tbl <- vig_commit_velocity$weekly |>
+          dplyr::select(Week = week_label, Commits = commits)
+        DT::datatable(
+          tbl,
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf("Total: %d commits over %d days (started %s).",
+                    vig_commit_velocity$total_commits,
+                    vig_commit_velocity$age_days,
+                    vig_commit_velocity$started)
+          ),
+          rownames = FALSE,
+          options = list(dom = "t", pageLength = 20, order = list(list(1, "desc")))
+        )
+      },
+      packages = c("DT", "dplyr", "htmltools")
+    ),
+
+    # GitHub issues and PRs summary
+    tar_target(
+      vig_github_activity,
+      {
+        tryCatch({
+          owner <- "JohnGavin"
+          repo <- "llm"
+
+          # Issues
+          issues_open <- gh::gh("/repos/{owner}/{repo}/issues",
+            owner = owner, repo = repo, state = "open", per_page = 100)
+          issues_closed <- gh::gh("/repos/{owner}/{repo}/issues",
+            owner = owner, repo = repo, state = "closed", per_page = 100)
+          # Filter out PRs (issues endpoint includes PRs)
+          issues_open <- Filter(function(x) is.null(x$pull_request), issues_open)
+          issues_closed <- Filter(function(x) is.null(x$pull_request), issues_closed)
+
+          open_issues <- tibble::tibble(
+            number = sapply(issues_open, `[[`, "number"),
+            title = sapply(issues_open, `[[`, "title")
+          )
+
+          # PRs
+          prs_open <- gh::gh("/repos/{owner}/{repo}/pulls",
+            owner = owner, repo = repo, state = "open", per_page = 100)
+          prs_closed <- gh::gh("/repos/{owner}/{repo}/pulls",
+            owner = owner, repo = repo, state = "closed", per_page = 100)
+
+          # Workflows
+          workflows <- gh::gh("/repos/{owner}/{repo}/actions/workflows",
+            owner = owner, repo = repo)
+          active_workflows <- Filter(function(w) w$state == "active", workflows$workflows)
+
+          list(
+            issues_open = length(issues_open),
+            issues_closed = length(issues_closed),
+            issues_total = length(issues_open) + length(issues_closed),
+            open_issue_list = open_issues,
+            prs_open = length(prs_open),
+            prs_merged = sum(sapply(prs_closed, function(x) !is.null(x$merged_at))),
+            prs_total = length(prs_open) + length(prs_closed),
+            workflows_active = length(active_workflows),
+            workflow_names = sapply(active_workflows, `[[`, "name")
+          )
+        }, error = function(e) NULL)
+      },
+      packages = c("gh", "tibble"),
+      cue = tar_cue(mode = "always")
+    ),
+
+    tar_target(
+      vig_github_activity_table,
+      {
+        if (is.null(vig_github_activity)) return(NULL)
+        ga <- vig_github_activity
+        tbl <- tibble::tibble(
+          Metric = c("Issues (open/closed/total)",
+                     "Pull Requests (open/merged/total)",
+                     "Active CI Workflows"),
+          Value = c(
+            sprintf("%d / %d / %d", ga$issues_open, ga$issues_closed, ga$issues_total),
+            sprintf("%d / %d / %d", ga$prs_open, ga$prs_merged, ga$prs_total),
+            sprintf("%d (%s)", ga$workflows_active,
+                    paste(ga$workflow_names, collapse = ", "))
+          )
+        )
+        DT::datatable(
+          tbl,
+          caption = "GitHub issues, pull requests, and CI workflows.",
+          rownames = FALSE,
+          options = list(dom = "t", pageLength = 5)
+        )
+      },
+      packages = c("DT", "tibble")
+    ),
+
+    # Codebase metrics
+    tar_target(
+      vig_codebase_metrics,
+      {
+        tryCatch({
+          r_files <- list.files("R", pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+          r_files <- r_files[!grepl("R/dev/", r_files)]
+          test_files <- list.files("tests/testthat", pattern = "^test-.*\\.R$")
+          vignette_files <- list.files("vignettes", pattern = "\\.(qmd|Rmd)$")
+          plan_files <- list.files("R/tar_plans", pattern = "^plan_.*\\.R$")
+
+          # Count lines of R code
+          lines_of_code <- sum(sapply(r_files, function(f) {
+            code <- readLines(f, warn = FALSE)
+            sum(nchar(trimws(code)) > 0 & !grepl("^\\s*#", code))
+          }))
+
+          # Count exported functions from NAMESPACE
+          ns_file <- "NAMESPACE"
+          exports <- if (file.exists(ns_file)) {
+            ns <- readLines(ns_file, warn = FALSE)
+            sum(grepl("^export\\(", ns))
+          } else {
+            NA_integer_
+          }
+
+          # Package version
+          desc <- read.dcf("DESCRIPTION", fields = c("Version", "Package"))
+          version <- desc[1, "Version"]
+          pkg_name <- desc[1, "Package"]
+
+          tbl <- tibble::tibble(
+            Metric = c("R source files", "Test files", "Vignettes",
+                       "Targets plans", "Exported functions",
+                       "Lines of R code", "Version"),
+            Count = c(length(r_files), length(test_files), length(vignette_files),
+                      length(plan_files), exports,
+                      format(lines_of_code, big.mark = ","), version)
+          )
+
+          DT::datatable(
+            tbl,
+            caption = sprintf("%s codebase metrics.", pkg_name),
+            rownames = FALSE,
+            options = list(dom = "t", pageLength = 10)
+          )
+        }, error = function(e) NULL)
+      },
+      packages = c("DT", "tibble")
+    ),
+
     # GitHub stats table
     tar_target(
       vig_github_stats_table,
