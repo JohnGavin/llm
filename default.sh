@@ -393,10 +393,14 @@ echo -e "==============================================\n"
 # Impact: Using $SHELL would launch bash even if user runs zsh
 # Solution: Use USER_ACTUAL_SHELL to detect and configure correct shell
 
-# fix the TMPDIR issue.
-debug "TMPDIR before unset: $TMPDIR"
-unset TMPDIR
-debug "TMPDIR after unset: $TMPDIR"
+# fix the TMPDIR issue — reset ALL temp vars to /tmp
+# Nix sets TMP/TEMP/TMPDIR/NIX_BUILD_TOP to a build-time scratch dir
+# that gets cleaned up, leaving stale paths that break tools (e.g. Claude Code)
+debug "TMPDIR before reset: $TMPDIR"
+export TMP=/tmp
+export TEMP=/tmp
+export TMPDIR=/tmp
+debug "TMPDIR after reset: $TMPDIR"
 
 # Use the shellHook-created bashrc if it exists and we're using bash
 if [[ "$USER_ACTUAL_SHELL" == *"bash"* ]] && [ -f ~/.nix-shell-bashrc ]; then
