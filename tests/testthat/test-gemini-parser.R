@@ -4,7 +4,7 @@ test_that("Gemini sessionId extraction from filename works", {
   # Sample filename pattern
   fname <- "session-2026-01-13T12-39-ce182e3b.json"
   
-  sid_match <- regexec("session-(.*)\.json", fname)
+  sid_match <- regexec("session-(.*)\\.json", fname)
   expect_true(sid_match[[1]][1] != -1)
   
   sid <- regmatches(fname, sid_match)[[1]][2]
@@ -47,19 +47,20 @@ test_that("Gemini message parsing logic is correct", {
 
 test_that("Gemini integration with DuckDB can be initialized", {
   skip_if_not_installed("duckdb")
-  
+  skip_if_not_installed("DBI")
+
   tmp_db <- tempfile(fileext = ".duckdb")
-  con <- dbConnect(duckdb::duckdb(), dbdir = tmp_db)
-  
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = tmp_db)
+
   # Ensure we can create the summary table
-  dbExecute(con, "
+  DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS sessions_summary (
       sessionId VARCHAR PRIMARY KEY,
       total_tokens BIGINT,
       total_cost DOUBLE
     )
   ")
-  
-  expect_true("sessions_summary" %in% dbListTables(con))
-  dbDisconnect(con, shutdown = TRUE)
+
+  expect_true("sessions_summary" %in% DBI::dbListTables(con))
+  DBI::dbDisconnect(con, shutdown = TRUE)
 })
