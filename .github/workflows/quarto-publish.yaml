@@ -62,6 +62,7 @@ jobs:
             any::tibble
             any::purrr
             any::rmarkdown
+            any::targets
             any::checkmate
             any::cli
             any::DBI
