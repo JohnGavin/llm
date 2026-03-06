@@ -25,7 +25,7 @@ knitr::opts_chunk$set(
   echo = FALSE
 )
 
-library(targets)
+has_targets <- requireNamespace("targets", quietly = TRUE)
 
 # Discover target store
 tar_store <- tryCatch({
