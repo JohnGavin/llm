@@ -53,6 +53,7 @@
     ],
     "defaultMode": "bypassPermissions"
   },
+  "model": "opus",
   "hooks": {
     "SessionStart": [
       {
@@ -63,6 +64,24 @@
             "command": "~/.claude/startup_check.sh"
           }
         ]
+      },
+      {
+        "matcher": "validate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/validate_claude_md.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "size-audit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/config_size_check.sh"
+          }
+        ]
       }
     ],
     "Stop": [
@@ -71,6 +90,14 @@
           {
             "type": "command",
             "command": "(/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session_tidy.sh"
           }
         ]
       }
@@ -87,5 +114,5 @@
     ]
   },
   "alwaysThinkingEnabled": true,
-  "model": "opus"
+  "skipDangerousModePermissionPrompt": true
 }
