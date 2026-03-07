@@ -126,6 +126,110 @@ agent <- yaml_read_agent("inst/contracts/sales_data.yml") |>
   interrogate()
 ```
 
+## Integration with readr
+
+### Validating Parse Problems
+
+Combine readr's `problems()` with pointblank validation:
+
+```r
+#' Validate parse problems from readr
+#' @param df Parsed tibble (may have problems attribute)
+#' @param max_problems Maximum allowed problems before failing
+validate_parse_quality <- function(df, max_problems = 10L) {
+  probs <- readr::problems(df)
+  n_probs <- nrow(probs)
+
+  if (n_probs > max_problems) {
+    cli::cli_abort(c(
+      "x" = "Too many parse problems: {n_probs} (max: {max_problems})",
+      "i" = "Use readr::problems(df) to inspect",
+      "!" = "Fix source data or adjust column types"
+    ))
+  }
+
+  if (n_probs > 0L) {
+    cli::cli_warn("{n_probs} parse problems (within threshold)")
+  }
+
+  invisible(df)
+}
+```
+
+### Combined Pipeline
+
+```r
+# _targets.R
+list(
+  # 1. Read with explicit types
+  tar_target(raw_file, "data/raw.csv", format = "file"),
+
+  tar_target(
+    raw_data,
+    {
+      df <- readr::read_csv(
+        raw_file,
+        col_types = readr::cols(
+          id = readr::col_integer(),
+          amount = readr::col_double(),
+          date = readr::col_date(),
+          .default = readr::col_character()
+        ),
+        na = c("", "NA", "N/A", "n/a", "-", "NULL")
+      )
+
+      # Validate parse quality
+      validate_parse_quality(df, max_problems = 50L)
+    }
+  ),
+
+  # 2. pointblank validation (runs after parse validation)
+  tar_target(
+    validated_data,
+    {
+      agent <- create_agent(raw_data) |>
+        col_vals_not_null(columns = c(id, date)) |>
+        col_vals_gte(columns = amount, value = 0, na_pass = TRUE) |>
+        interrogate()
+
+      if (!all_passed(agent)) {
+        cli::cli_abort("Data contract violation")
+      }
+
+      raw_data
+    }
+  )
+)
+```
+
+### NA Rate Validation
+
+Add NA rate checks to pointblank agents:
+
+```r
+#' Check NA rates are within acceptable thresholds
+#' @param agent pointblank agent
+#' @param critical_cols Columns that must have <1% NA
+#' @param warn_threshold Threshold for warnings
+add_na_rate_checks <- function(agent, critical_cols, warn_threshold = 0.01) {
+  tbl <- agent$tbl
+  n_rows <- nrow(tbl)
+
+  for (col in critical_cols) {
+    na_rate <- sum(is.na(tbl[[col]])) / n_rows
+    if (na_rate > warn_threshold) {
+      cli::cli_warn(c(
+        "!" = "Column {.field {col}} has {.pct {round(na_rate * 100, 2)}}% NA",
+        "i" = "Threshold: {.pct {warn_threshold * 100}}%"
+      ))
+    }
+  }
+
+  agent |>
+    col_vals_not_null(columns = tidyselect::all_of(critical_cols))
+}
+```
+
 ## Metrics & Error Handling Style
 
 Follow [Tidyverse Error Style](https://style.tidyverse.org/errors.html):

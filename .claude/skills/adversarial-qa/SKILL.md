@@ -37,22 +37,83 @@ test_that("function handles extreme values", {
 
 ### 2. NA Attacks
 
-Test NA handling at every input position.
+Test NA handling at every input position. R has **typed NAs** that must be tested separately.
 
 ```r
-test_that("function handles NA inputs", {
-  expect_no_error(my_func(NA))
-  expect_no_error(my_func(NA_real_))
-  expect_no_error(my_func(NA_character_))
-  expect_no_error(my_func(NA_integer_))
+test_that("function handles all NA types", {
+  # Typed NAs - each may behave differently
+  expect_no_error(my_func(NA))            # Logical NA (default)
+  expect_no_error(my_func(NA_integer_))   # Integer NA
+  expect_no_error(my_func(NA_real_))      # Numeric/double NA
+  expect_no_error(my_func(NA_character_)) # Character NA
+  expect_no_error(my_func(NA_complex_))   # Complex NA
 
-  # Embedded NAs in vectors
-  expect_no_error(my_func(c(1, NA, 3)))
+  # Date NA (R has no NA_Date_!)
+  expect_no_error(my_func(as.Date(NA_character_)))
+})
 
-  # All-NA input
+test_that("function handles embedded NAs", {
+  # NA at different positions
+  expect_no_error(my_func(c(NA, 2, 3)))   # First
+  expect_no_error(my_func(c(1, NA, 3)))   # Middle
+  expect_no_error(my_func(c(1, 2, NA)))   # Last
+
+  # Multiple NAs
+  expect_no_error(my_func(c(1, NA, NA, 4)))
+})
+
+test_that("function handles all-NA input", {
+  expect_no_error(my_func(rep(NA_integer_, 10)))
   expect_no_error(my_func(rep(NA_real_, 10)))
+  expect_no_error(my_func(rep(NA_character_, 10)))
+})
+
+test_that("function handles NA in data frames", {
+  # Single NA column
+  df <- tibble::tibble(x = c(1, NA, 3), y = c("a", "b", "c"))
+  expect_no_error(my_func(df))
+
+  # All-NA column
+  df_na_col <- tibble::tibble(x = rep(NA_real_, 3), y = 1:3)
+  expect_no_error(my_func(df_na_col))
+
+  # NA in every column
+  df_na_all <- tibble::tibble(x = c(1, NA), y = c(NA, "b"))
+  expect_no_error(my_func(df_na_all))
+})
+
+test_that("function preserves NA type in output", {
+  # Verify output maintains input type
+  result <- my_func(c(1L, NA_integer_, 3L))
+  expect_true(is.integer(result))
+
+  result <- my_func(c(1.0, NA_real_, 3.0))
+  expect_true(is.double(result))
+})
+
+test_that("function documents NA propagation behavior", {
+  # Test expected NA propagation
+  result <- my_func(c(1, NA, 3))
+  # Document: does NA propagate? Is it removed? Replaced?
+  # expect_equal(sum(is.na(result)), 1L)  # Propagates
+  # expect_equal(length(result), 2L)       # Removed
+  # expect_false(any(is.na(result)))       # Replaced
 })
 ```
+
+**NA Attack Reference Table:**
+
+| Attack | What it tests | Example |
+|--------|---------------|---------|
+| Typed NAs | Each NA type handled | `NA_integer_` vs `NA_real_` |
+| Position NAs | First/middle/last element | `c(NA, 2, 3)` |
+| Multiple NAs | Several missing values | `c(1, NA, NA, 4)` |
+| All-NA vector | Entirely missing input | `rep(NA_real_, 10)` |
+| NA column | Column with NAs | `tibble(x = c(1, NA))` |
+| All-NA column | Entirely missing column | `tibble(x = rep(NA, 3))` |
+| Date NA | No NA_Date_ in R | `as.Date(NA_character_)` |
+| NA propagation | Does NA spread? | `sum(c(1, NA, 3))` → `NA` |
+| Type preservation | Output type matches input | Integer in → Integer out |
 
 ### 3. Type Attacks
 
