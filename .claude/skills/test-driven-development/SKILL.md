@@ -299,6 +299,30 @@ gert::git_add(c(
     git diff --exit-code tests/testthat/_snaps/
 ```
 
+### CRITICAL RULE: Real Data > Synthetic Data
+
+**Testing with ONLY synthetic data when real data exists is a BUG.**
+
+| Project State | Required Tests |
+|---|---|
+| No real data yet | Synthetic data OK |
+| Real data in targets store | Structural snapshots MANDATORY |
+| Real data + dates/IDs | Boundary snapshots MANDATORY |
+| Production data pipeline | All snapshot categories MANDATORY |
+
+### Required Snapshot Categories
+
+1. **Structural** (MANDATORY): `names()`, `sapply(class)`, `nrow()` x `ncol()`
+2. **Date boundaries** (MANDATORY for temporal): `range(date_col, na.rm = TRUE)`
+3. **ID boundaries** (MANDATORY for entity data): first/last sorted IDs, unique count
+4. **Statistical** (RECOMMENDED for analysis): significant counts, effect size ranges
+
+### Targets Store as Test Data Source
+
+For packages using targets, commit `_targets/objects/` to git.
+Tests read directly via `readRDS(here::here("_targets/objects/target_name"))`.
+No fixtures directory, no skip_if, CI always runs all snapshot tests.
+
 ## Common TDD Violations (DELETE and Restart)
 
 | Violation | Why It's Wrong | Fix |
