@@ -436,3 +436,110 @@ mean(c(1, 2, NA), na.rm = TRUE)  # 1.5
 - [readr Column Specification](https://readr.tidyverse.org/reference/cols.html)
 - [Tidyverse Design Principles: NA](https://design.tidyverse.org/cs-na.html)
 - [pointblank Documentation](https://rstudio.github.io/pointblank/)
+
+## Research Notes
+
+Answers to research questions from issue #37.
+
+### Base R vs Tidyverse NA Semantics
+
+**`is.na()` behavior:**
+- `is.na()` works identically for all NA types (`NA`, `NA_integer_`, `NA_real_`, `NA_character_`, `NA_complex_`)
+- Returns `TRUE` for any NA regardless of type — no difference in detection
+
+**Auto-coercion rules:**
+- `NA` is logical by default; R coerces it to match the vector type:
+  - `c(1L, NA)` → `NA` becomes `NA_integer_`
+  - `c(1.0, NA)` → `NA` becomes `NA_real_`
+  - `c("a", NA)` → `NA` becomes `NA_character_`
+- This is safe for vectors but can cause surprises in `tibble()` column creation
+- Best practice: always use typed NAs (`NA_integer_`, `NA_real_`, `NA_character_`)
+
+**readr/vctrs type system:**
+- readr uses `vctrs` internally (since readr 2.0), which is stricter about type coercion
+- `vctrs::vec_c(1L, NA)` works, but `vctrs::vec_c(1L, "a")` errors (no implicit coercion)
+- Column specs (`col_integer()`, etc.) enforce types at parse time, not after
+
+### readr vs vroom vs data.table NA Handling
+
+| Reader | Default NA strings | Notes |
+|--------|-------------------|-------|
+| `readr::read_csv()` | `c("", "NA")` | Shared backend with vroom since readr 2.0 |
+| `vroom::vroom()` | `c("", "NA")` | Same as readr (shared implementation) |
+| `data.table::fread()` | `"NA"` only | Does NOT treat `""` as NA by default |
+| `base::read.csv()` | `"NA"` only | Does NOT treat `""` as NA by default |
+
+**Recommendation:** Always specify `na` explicitly regardless of which reader you use:
+```r
+na_strings <- c("", "NA", "N/A", "n/a", "-", "NULL", "#N/A")
+```
+
+**Locale-specific missing values:**
+- Some datasets use locale-specific strings (e.g., `"fehlend"` in German)
+- Always document expected NA representations in data dictionaries
+- Add domain-specific strings to your `na` parameter
+
+### Database NULL vs R NA
+
+**DuckDB:**
+- `NULL` in SQL ↔ `NA` in R (round-trip safe)
+- `NULL` propagates in SQL like `NA` in R (e.g., `NULL + 1 = NULL`)
+- `COALESCE(x, default)` is the SQL equivalent of `dplyr::coalesce()`
+- JOINs: `NULL != NULL` in SQL (unlike R where `NA == NA` returns `NA`)
+- Use `IS NOT DISTINCT FROM` for NULL-safe equality in DuckDB
+
+**Arrow/Parquet:**
+- Uses a null bitmask separate from values — preserves typed NAs perfectly
+- `NA_integer_` stays integer, `NA_real_` stays double through Parquet round-trip
+- Arrow's `is_null()` compute function ≈ R's `is.na()`
+
+**SQLite:**
+- `NULL` → `NA` conversion works, but typed NA distinction is lost
+- SQLite is typeless, so `NA_integer_` vs `NA_real_` may not survive round-trip
+
+### Testing Patterns for NA Handling
+
+**Property-based testing:**
+- `hedgehog` package: generate arbitrary vectors with random NA positions
+- Pattern: define a property (e.g., "output length equals input length") and test with generated data
+
+```r
+test_that("function preserves length with random NAs", {
+  hedgehog::forall(
+    hedgehog::gen.c(hedgehog::gen.element(c(1:10, NA_integer_))),
+    function(x) {
+      result <- my_func(x)
+      expect_equal(length(result), length(x))
+    }
+  )
+})
+```
+
+**Reproducible fuzz testing:**
+```r
+test_that("function handles random NA patterns", {
+  withr::local_seed(42)
+  for (i in seq_len(100)) {
+    x <- sample(c(1:5, NA_integer_), size = 20, replace = TRUE)
+    expect_no_error(my_func(x))
+  }
+})
+```
+
+**Systematic NA position tests:**
+```r
+test_that("function handles NA at every position", {
+  base_vec <- 1:5
+  for (pos in seq_along(base_vec)) {
+    test_vec <- base_vec
+    test_vec[pos] <- NA_integer_
+    expect_no_error(my_func(test_vec))
+  }
+})
+```
+
+**Key test dimensions:**
+1. NA type (integer, real, character, complex, Date)
+2. NA position (first, last, middle, all, none)
+3. NA density (0%, 50%, 100%)
+4. Mixed types with NA (after coercion)
