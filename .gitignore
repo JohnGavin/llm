@@ -45,9 +45,13 @@ proj/stats/simulations/randomwalk/
 # Claude local settings (user-specific)
 .claude/settings.local.json
 
+# Nix build artifacts
+result
+
 # Symlinks (personal organization)
 nix-shell-root
 AGENTS.md
+AGENTS.md symlink 1
 AI+GPT4 symlink
 daily_dashboard symlink
 default.R symlink
