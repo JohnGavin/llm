@@ -81,6 +81,21 @@ devtools::check() # Must be 0 errors/warnings/notes
 *   **IF FAILURE:** Do NOT guess. Switch to `systematic-debugging` skill protocol.
     *   Isolate -> Hypothesize -> Experiment -> Fix.
 
+### Step 5b: Push to Cachix
+**Goal:** Push the package derivation to johngavin cachix.
+
+**Requires:** `package.nix` and `push_to_cachix.sh` in project root. See `nix-rix-r-environment` skill (Pattern 4) for how to create these files.
+
+```bash
+# From project root
+./push_to_cachix.sh
+```
+
+**Key distinction:** `default.nix` (dev shell via rix) ≠ `package.nix` (installable R package via buildRPackage). Both are needed — `default.nix` for development, `package.nix` for cachix.
+
+*   **IF `package.nix` doesn't exist:** Create it following Pattern 4 in the `nix-rix-r-environment` skill.
+*   **IF cachix not in PATH:** Use `~/.nix-profile/bin/cachix` or ensure it's in the dev shell.
+
 ### Step 6: Push & PR
 **Goal:** Upload changes.
 
