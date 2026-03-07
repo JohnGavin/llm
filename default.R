@@ -15,53 +15,15 @@
 # This file generates default.nix using the rix package.
 # =============================================================================
 #
-# DOCUMENTATION OF POST-PROCESSING FIXES (2025-12-09)
+# DOCUMENTATION OF POST-PROCESSING FIXES
 #
 # The following R code applies post-processing patches to the generated `default.nix`
-# to address specific build and dependency issues with the 'ahead' package and its
-# dependencies ('ForecastComb', 'misc'). These issues arise from a combination of
-# `rix` behavior, Nix's strict evaluation, and package inter-dependencies.
+# to work around rix code generation issues.
 #
-# --- Fix 4: Fix 'ahead' package attribute missing error ---
-# ISSUE: `rix` generated `inherit (pkgs.rPackages) ... ahead ...` inside the
-#        `ForecastComb` derivation in `default.nix`. However, 'ahead' is defined
-#        as a local GitHub package derivation, not within `pkgs.rPackages`.
-#        This caused a Nix evaluation error: "attribute 'ahead' missing".
-# SOLUTION: The post-processing script now comments out any occurrences of 'ahead'
-#           within `inherit (pkgs.rPackages)` blocks in `default.nix`,
-#           specifically targeting the `ForecastComb` derivation.
-#
-# --- Fix 5: Patch ForecastComb DESCRIPTION to remove 'ahead' dependency ---
-# ISSUE: Even after Fix 4, `ForecastComb` failed to build because its `DESCRIPTION`
-#        file (from its GitHub source) listed 'ahead' as a dependency. This created
-#        a circular dependency (ahead -> ForecastComb -> ahead) and also meant
-#        `ForecastComb` expected 'ahead' to be available, which it wasn't during its
-#        build phase.
-# SOLUTION: A `postPatch` attribute is injected into the `ForecastComb` derivation
-#           in `default.nix`. This `postPatch` uses `sed` to remove all mentions
-#           of 'ahead' from `ForecastComb`'s `DESCRIPTION` file during the Nix build,
-#           effectively breaking the circular dependency at the build level.
-#
-# --- Fix 6: Add 'misc' to ForecastComb dependencies ---
-# ISSUE: `ForecastComb` attempted to dynamically install the 'misc' package from
-#        GitHub during its `.onLoad` function or package startup. This violates
-#        Nix's sandboxing rules (no network access during build) and resulted in an
-#        "SSL certificate problem" error.
-# SOLUTION: 'misc' is explicitly added to `ForecastComb`'s `propagatedBuildInputs`
-#           in `default.nix`. This ensures 'misc' is present in the R library path
-#           when `ForecastComb` is built, preventing `ForecastComb` from trying to
-#           install it dynamically.
-#
-# --- Fix 7: Clean up stale binaries in 'ahead' package ---
-# ISSUE: The 'ahead' package source repository contained pre-compiled binaries
-#        (`ahead.so`) for `x86_64` architecture. When building on `arm64` (Apple Silicon),
-#        Nix's `R CMD INSTALL` tried to load this incompatible binary, leading to
-#        an "incompatible architecture" error. The `make` phase reported "nothing to do",
-#        indicating a lack of fresh compilation, suggesting old binaries were present.
-# SOLUTION: A `preConfigure` attribute is injected into the 'ahead' derivation in
-#           `default.nix`. This `preConfigure` command uses `find` to delete all
-#           `*.so` and `*.o` files from the source directory *before* the build
-#           process starts, forcing a clean compilation for the correct architecture.
+# Fix 2: buildInputs - Convert flat list to ++ concatenation
+# Fix 3: Remove sed/R_LIB_PATH lines from shellHook
+# Fix 4b: Comment out S7 if(getRversion()) conditionals (invalid Nix syntax)
+# Fix 7: Convert shellHook double quotes to Nix multi-line string syntax
 # =============================================================================
 
 # mkdir nix_setup && cd nix_setup
@@ -219,7 +181,7 @@ r_pkgs = c(
   # # https://www.jumpingrivers.com/blog/sparkline-reactable/
   # # "reactable", "sparkline",
   # # https://www.seascapemodels.org/rstats/2025/03/15/LMs-in-R-with-ellmer.html
-  "tidyfinance", "tidymodels", "tidyquant", "Quandl", "ggtext", "riingo", "ggdist", 
+  "tidyfinance", "tidymodels", "tidyquant", "ggtext", "riingo", "ggdist",  # Quandl removed: marked broken, deprecated (use tidyquant instead)
   # https://cran.r-project.org/web/packages/Riex/vignettes/iex_stocks_and_market_data.html
   # https://github.com/TheEliteAnalyst/Riex
   # "Riex", 
@@ -409,7 +371,7 @@ system_pkgs <- c(
   "cacert", # CA certs / trusted TLS/SSL root certs
   # echo $SSL_CERT_FILE ; echo $NIX_SSL_CERT_FILE
   # "radianWrapper",
-  "gh", "git", # "node", "npm", 
+  "gh", "git", "git-lfs", # "node", "npm",
   "gnupg", 
   "toybox", # coreutils-full # else 'which' etc is missing with nix-shell --pure
   # translation tools - gettext
@@ -704,7 +666,10 @@ tex_pkgs = c("amsmath", "ninecolors", "apa7", "scalerel", "threeparttable", "thr
   sort()
 
 # 2nd/3rd? most recent date?
-(latest <- available_dates() |> sort() |> tail(3) |> head(1))
+# PINNED: 2026-02-16 has broken tiledb-2.30.0 patch (gdal -> sf -> terra fails)
+# Revert to dynamic selection once upstream fixes tiledb:
+#   (latest <- available_dates() |> sort() |> tail(3) |> head(1))
+latest <- "2026-02-01"
   # library(dplyr) ; available_df() |> tibble() |> arrange(desc(date)) |> head(5) |> glimpse()
 rix(
   date = latest, # Use latest date for DuckDB v1.4.4+
@@ -737,29 +702,6 @@ cli::cli_alert_info("Generated default.nix using rix.")
 nix_file_path <- "default.nix"
 content <- readLines(nix_file_path)
 new_content <- c() # To build the modified content line by line
-
-# --- Fix 1: Comment out problematic "if (getRversion() ... S7;" lines ---
-indices_to_comment_s7 <- grep("^\\s*if\\s*\\(getRversion\\(\\)\\s*<\\s*4_3_0\\)\\s*S7;", content)
-
-if (length(indices_to_comment_s7) > 0) {
-  cli::cli_alert_info(paste("Found", length(indices_to_comment_s7), "S7 'if' lines to comment out."))
-  # This rebuilds the content list
-  processed_content_s7_fix <- character(0)
-  for(i in seq_along(content)) {
-    if (i %in% indices_to_comment_s7) {
-      original_if_line <- content[i] # Use content[i] as it's the original from readLines
-      indentation <- regmatches(original_if_line, regexpr("^\\s*", original_if_line))
-      processed_content_s7_fix <- c(processed_content_s7_fix, 
-                                    paste0(indentation, "#<- ", trimws(original_if_line))) # Commented line
-      processed_content_s7_fix <- c(processed_content_s7_fix, 
-                                    paste0(indentation, ";")) # Add the semicolon line
-    } else {
-      processed_content_s7_fix <- c(processed_content_s7_fix, content[i])
-    }
-  }
-  content <- processed_content_s7_fix # Update content with S7 fixes
-  cli::cli_alert_success("Processed S7 'if' lines (commented + added semicolon).")
-}
 
 
 # --- Fix 2: Correct buildInputs line ---
@@ -834,73 +776,26 @@ if (length(build_inputs_line_idx) == 1) {
 content <- content[!grepl("R_LIB_PATH.*sed.*Rprofile|export R_LIBS_USER.*R_LIB_PATH", content)]
 cli::cli_alert_success("Removed problematic sed and R_LIB_PATH lines.")
 
-# --- Fix 4: Fix 'ahead' package attribute missing error ---
-# ISSUE: rix generates 'inherit (pkgs.rPackages) ... ahead ...' inside ForecastComb
-# but ahead is defined locally, not in pkgs.rPackages.
-# This causes "error: attribute 'ahead' missing".
-# Solution: Comment out 'ahead' inside the inherit block. 
-# We assume ForecastComb doesn't strictly need ahead to build, or if it does, 
-# it creates a circular dependency (ahead -> ForecastComb -> ahead) which is worse.
-ahead_idx <- grep("^\\s+ahead\\s*$", content)
-# Ensure we don't comment out the definition "ahead ="
-ahead_usage_idx <- ahead_idx[!grepl("=", content[ahead_idx])]
-
-if (length(ahead_usage_idx) > 0) {
-  for (idx in ahead_usage_idx) {
-    # Check if inside an inherit block (simple heuristic: indented significantly)
-    if (grepl("^\\s{6,}", content[idx])) {
-       content[idx] <- paste0(
-         regmatches(content[idx], regexpr("^\\s*", content[idx])), 
-         "# ", 
-         trimws(content[idx])
-       )
+# --- Fix 4b: Comment out S7 conditional lines (invalid Nix syntax) ---
+# ISSUE: rix generates R-style conditionals like:
+#   if (getRversion() < 4_3_0) S7;
+# These are valid R but invalid Nix (if is a Nix keyword with different syntax).
+# Solution: Comment them out. S7 is bundled with R >= 4.3 anyway.
+s7_if_idx <- grep("if\\s*\\(getRversion\\(\\)", content)
+if (length(s7_if_idx) > 0) {
+  cli::cli_alert_info(paste("Found", length(s7_if_idx), "S7 'if' lines to comment out."))
+  for (idx in s7_if_idx) {
+    indent <- regmatches(content[idx], regexpr("^\\s*", content[idx]))
+    # The S7 if line contains the terminating ; for the inherit block.
+    # Add ; to the previous non-blank line so the inherit statement remains valid.
+    prev_idx <- idx - 1
+    while (prev_idx > 0 && grepl("^\\s*$", content[prev_idx])) prev_idx <- prev_idx - 1
+    if (prev_idx > 0 && !grepl(";\\s*$", content[prev_idx])) {
+      content[prev_idx] <- paste0(content[prev_idx], ";")
     }
+    content[idx] <- paste0(indent, "# ", trimws(content[idx]), "  # Commented: invalid Nix syntax")
   }
-  cli::cli_alert_success(paste("Commented out", length(ahead_usage_idx), "usages of 'ahead' in inherit blocks."))
-}
-
-# --- Fix 5: Patch ForecastComb DESCRIPTION to remove 'ahead' dependency ---
-# ISSUE: ForecastComb lists 'ahead' in DESCRIPTION, causing build failure 
-# ("dependency 'ahead' is not available") because we removed it from inputs 
-# to fix the circular dependency/attribute missing error.
-# Solution: Use postPatch to remove 'ahead' from DESCRIPTION file during build.
-fc_name_idx <- grep('name = "ForecastComb";', content)
-if (length(fc_name_idx) == 1) {
-  indent <- regmatches(content[fc_name_idx], regexpr("^\\s*", content[fc_name_idx]))
-  # Inject postPatch line after the name line
-  # We use a crude sed to remove 'ahead' occurrences. 
-  # Note: Nix strings need escaping for quotes.
-  post_patch_line <- paste0(indent, 'postPatch = "sed -i \'s/ahead//g\' DESCRIPTION";')
-  
-  # Insert the line
-  content <- append(content, post_patch_line, after = fc_name_idx)
-  cli::cli_alert_success("Injected postPatch to remove 'ahead' from ForecastComb DESCRIPTION.")
-}
-
-# --- Fix 6: Add 'misc' to ForecastComb dependencies ---
-# ISSUE: ForecastComb tries to install 'misc' from GitHub during .onLoad
-# causing "SSL peer certificate" error and violating sandbox.
-# Solution: Add 'misc' to ForecastComb's propagatedBuildInputs so it's present at build time.
-fc_name_idx_fix6 <- grep('name = "ForecastComb";', content)
-if (length(fc_name_idx_fix6) == 1) {
-   # Find start of propagatedBuildInputs AFTER the ForecastComb name line
-   prop_start_idx <- grep("propagatedBuildInputs =", content)
-   prop_start_idx <- prop_start_idx[prop_start_idx > fc_name_idx_fix6][1]
-   
-   if (!is.na(prop_start_idx)) {
-     # Find the closing "};" for this block
-     # It should be the first "};" after the start index
-     closing_brace_idx <- grep("^\\s*};", content)
-     closing_brace_idx <- closing_brace_idx[closing_brace_idx > prop_start_idx][1]
-     
-     if (!is.na(closing_brace_idx)) {
-       # Replace "};" with "} ++ [ misc ];"
-       if (!grepl("misc", content[closing_brace_idx])) {
-           content[closing_brace_idx] <- sub("};", "} ++ [ misc ];", content[closing_brace_idx])
-           cli::cli_alert_success("Added 'misc' to ForecastComb dependencies.")
-       }
-     }
-   }
+  cli::cli_alert_success("Processed S7 'if' lines (commented + added semicolon).")
 }
 
 # --- Fix 7: Fix shellHook quotes for Nix multi-line strings ---
@@ -921,21 +816,6 @@ if (length(shellhook_start_idx) == 1) {
     content[shellhook_end_idx] <- "'';";
     cli::cli_alert_success("Fixed shellHook closing quote to use Nix multi-line string syntax.")
   }
-}
-
-# --- Fix 8: Clean up stale binaries in 'ahead' package ---
-# ISSUE: 'ahead' source seems to contain pre-compiled x86_64 binaries (*.so)
-# causing "incompatible architecture" error on arm64 (Apple Silicon).
-# Solution: Remove *.so and *.o files before configuring/building.
-ahead_def_idx <- grep('name = "ahead";', content)
-if (length(ahead_def_idx) == 1) {
-  indent <- regmatches(content[ahead_def_idx], regexpr("^\\s*", content[ahead_def_idx]))
-  # Inject preConfigure line
-  pre_config_line <- paste0(indent, 'preConfigure = "find . -name \'*.so\' -delete; find . -name \'*.o\' -delete;";')
-  
-  # Insert the line
-  content <- append(content, pre_config_line, after = ahead_def_idx)
-  cli::cli_alert_success("Injected preConfigure to clean up binaries in 'ahead' package.")
 }
 
 # --- Write the fully modified content back to the file ---
