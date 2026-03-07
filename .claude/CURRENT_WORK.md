@@ -1,26 +1,38 @@
 # Current Work
 
-## Branch: feat/telemetry-pipeline-github-activity-35
+## Branch: main
 
-## Completed This Session
-- Restructured Claude config to best practices (PLAN_tips.md)
-- AGENTS.md: 1,123 → 209 lines (81% reduction)
-- Created 6 memory files (302 lines) in project memory directory
-- Added YAML `paths:` frontmatter to all 10 rules files
-- Created config_size_check.sh and session_tidy.sh hooks
-- Created /hi and /bye commands
-- Updated validate_claude_md.sh with memory, frontmatter, and duplicate checks
-- Registered new hooks in settings.json
+## Completed This Session (2026-03-07)
 
-## Global ~/.claude/ changes (outside this repo)
-- ~/.claude/hooks/config_size_check.sh (new)
-- ~/.claude/hooks/session_tidy.sh (new)
-- ~/.claude/validate_claude_md.sh (updated)
-- ~/.claude/rules/*.md (all 9 got YAML frontmatter)
-- ~/.claude/commands/hi.md, bye.md (new)
-- ~/.claude/projects/.../memory/ (6 new files)
+### Issue #37 (missing data handling) — plan implementation
+- Created global rule `~/.claude/rules/no-suppress-coercion.md` with path-matching YAML
+- Created hook `.claude/hooks/r_code_check.sh` for suppressWarnings/read.csv checks
+- Appended Research Notes to `~/.claude/skills/missing-data-handling/SKILL.md`
+- Created cross-project audit script `R/dev/issues/fix_37_audit.R`
+
+### Issue #38 — R_LIBS_SITE nix segfault docs
+- Added nested shell R_LIBS_SITE contamination section to `memory/nix-operations.md`
+- Updated MEMORY.md index with both segfault categories
+
+### Issue #28 — Projects page for homepage
+- Created `content/projects.md` in johngavin.github.io (irishbuoys, footbet, llm)
+- Added Projects menu entry in `config.toml`
+- Pushed to remote (deploys via Netlify)
+
+### Issue #19 — ccusage refresh frequency
+- Already resolved (plist already had 12-hour interval)
+- Note: LaunchAgent not installed in ~/Library/LaunchAgents/
+
+### Issue #13 — shiny-async-debugger agent
+- Created `.claude/agents/shiny-async-debugger.md`
+- 5-phase protocol, 5 common failure patterns, sonnet model
+
+## Status
+- All issues closed (0 open)
+- Both repos (llm, johngavin.github.io) clean and pushed
 
 ## Pending
-- 9 skills >500 lines could be slimmed (project-telemetry at 1,024 is largest)
-- AGENTS.md at 209 lines (9 over 200 target) — minor
-- quarto-files.md (315) and plots-and-tables.md (228) rules could be trimmed
+- Run `Rscript R/dev/issues/fix_37_audit.R` to audit sibling projects
+- Homepage repo has 9 Dependabot vulnerabilities
+- ccusage LaunchAgent not installed
+- 9 skills >500 lines could be slimmed
