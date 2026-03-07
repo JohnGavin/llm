@@ -1,0 +1,290 @@
+# Quality Gates Skill
+
+Numeric scoring system for commit/PR/merge gates. MANDATORY for Steps 4, 6, 8 of every PR.
+
+## When to Use
+
+- Step 4: Compute score before commit (must be >= Bronze)
+- Step 6: Verify score before PR push (must be >= Silver)
+- Step 8: Confirm score before merge to main (must be >= Gold)
+
+## Grade Thresholds
+
+| Grade | Score | Required For |
+|-------|-------|-------------|
+| Gold | >= 95 | Merge to main |
+| Silver | >= 90 | PR creation |
+| Bronze | >= 80 | Commit |
+| Below Bronze | < 80 | BLOCKED - fix issues first |
+
+## Scoring Formula
+
+Total score = weighted sum of six components:
+
+| Component | Weight | How Computed |
+|-----------|--------|-------------|
+| Coverage | 20% | `covr::percent_coverage(covr::package_coverage())` |
+| R CMD check | 30% | 98 if 0 test failures, 0 otherwise |
+| Documentation | 15% | `(man pages / exports) * 100`, capped at 100 |
+| Defensive programming | 10% | `(cli::cli_abort calls / total error calls) * 100` |
+| **Data integrity** | **20%** | `plan_data_validation` targets all pass = 100, any fail = 0 |
+| **Code style** | **5%** | 100 if 0 `DBI::dbGetQuery` in R/ (excl. DDL), 0 otherwise |
+
+### Component Details
+
+**Coverage (20%)**
+- Uses `covr::package_coverage()` to compute line-level coverage
+- Target: >= 80% for Bronze, >= 90% for Gold
+
+**R CMD check (30%)**
+- Binary: 98 if all tests pass, 0 if any fail
+- This is the heaviest weight because failing tests block everything
+
+**Documentation (15%)**
+- Counts NAMESPACE exports vs man/ .Rd files
+- 100% means every export has a help page
+- Missing docs reduce the score proportionally
+
+**Defensive programming (10%)**
+- Ratio of `cli::cli_abort()` to total error calls (`stop()` + `cli::cli_abort()`)
+- 100% if no error calls exist (no penalty for simple packages)
+- Rewards tidyverse-style structured errors over bare `stop()`
+
+**Data integrity (20%)**
+- All `plan_data_validation.R` targets pass = 100, any fail = 0
+- For projects without time-series data (no `plan_data_validation.R`): defaults to 100
+- Checks: temporal coverage, gaps, sampling frequency, duplicates, freshness, value ranges
+
+**Code style (5%)**
+- 100 if 0 `DBI::dbGetQuery()` calls in R/ (excluding `R/dev/` and DDL exceptions)
+- 0 if any raw SQL SELECT violations found
+- Prevents SQL regression after conversion to dplyr
+
+## Pipeline Integration
+
+Add `plan_qa_gates.R` to `R/tar_plans/` in every project. All targets use `cue = tar_cue(mode = "always")` so they run on every `tar_make()`.
+
+### Targets in the plan
+
+| Target | Purpose | Blocks on failure? |
+|--------|---------|-------------------|
+| `qa_test_results` | Run full test suite | Yes (aborts) |
+| `qa_adversarial` | Run adversarial tests | Yes (aborts) |
+| `qa_coverage` | Compute coverage % | No (informational) |
+| `qa_self_review` | Self-review checklist | No (warns) |
+| `qa_no_raw_sql` | Check for SQL violations | No (warns) |
+| `qa_quality_gate` | Compute weighted score (6 components) | No (reports grade) |
+
+### Self-Review Checklist Items
+
+The `qa_self_review` target checks:
+- NAMESPACE exports vs man pages count
+- `stop()` vs `cli::cli_abort()` usage ratio
+- TODO/FIXME/HACK comment count
+
+## Template: plan_qa_gates.R
+
+Copy this to `R/tar_plans/plan_qa_gates.R` for new projects:
+
+```r
+#' Targets Plan: Automated QA Gates
+#'
+#' Ensures adversarial QA, quality gates, and self-review checklist
+#' are run as part of every tar_make(). These cannot be skipped.
+
+plan_qa_gates <- list(
+  # Run all tests and capture results
+  targets::tar_target(
+    qa_test_results,
+    {
+      results <- devtools::test(pkg = ".", reporter = "summary")
+      df <- as.data.frame(results)
+      n_pass <- sum(df$passed)
+      n_fail <- sum(df$failed)
+      n_warn <- sum(df$warning)
+      n_skip <- sum(df$skipped)
+
+      if (n_fail > 0) {
+        cli::cli_abort(c(
+          "x" = "QA Gate FAILED: {n_fail} test(s) failed",
+          "i" = "Fix failing tests before proceeding"
+        ))
+      }
+
+      cli::cli_alert_success("QA: All {n_pass} tests passed ({n_skip} skipped)")
+      list(passed = n_pass, failed = n_fail, warned = n_warn,
+           skipped = n_skip, timestamp = Sys.time())
+    },
+    cue = targets::tar_cue(mode = "always")
+  ),
+
+  # Run adversarial tests specifically
+  targets::tar_target(
+    qa_adversarial,
+    {
+      results <- devtools::test(pkg = ".", filter = "adversarial", reporter = "summary")
+      df <- as.data.frame(results)
+      n_pass <- sum(df$passed)
+      n_fail <- sum(df$failed)
+
+      if (n_fail > 0) {
+        cli::cli_abort(c(
+          "x" = "Adversarial QA FAILED: {n_fail} attack(s) succeeded",
+          "i" = "Fix defensive programming before proceeding"
+        ))
+      }
+
+      cli::cli_alert_success("Adversarial QA: {n_pass} attacks defended")
+      list(passed = n_pass, failed = n_fail, timestamp = Sys.time())
+    },
+    cue = targets::tar_cue(mode = "always")
+  ),
+
+  # Compute test coverage
+  targets::tar_target(
+    qa_coverage,
+    {
+      cov <- covr::package_coverage()
+      pct <- covr::percent_coverage(cov)
+      file_cov <- as.data.frame(covr::tally_coverage(cov, by = "line"))
+
+      cli::cli_alert_info("Test coverage: {round(pct, 1)}%")
+      list(overall_pct = round(pct, 1), by_file = file_cov,
+           timestamp = Sys.time())
+    },
+    cue = targets::tar_cue(mode = "always")
+  ),
+
+  # Self-review checklist
+  targets::tar_target(
+    qa_self_review,
+    {
+      ns_lines <- readLines("NAMESPACE")
+      exports <- grep("^export\\(", ns_lines, value = TRUE)
+      n_exports <- length(exports)
+      man_files <- list.files("man", pattern = "\\.Rd$")
+      n_man <- length(man_files)
+
+      r_files <- list.files("R", pattern = "\\.R$", full.names = TRUE)
+      r_files <- r_files[!grepl("R/(dev|tar_plans)/", r_files)]
+      all_code <- unlist(lapply(r_files, readLines))
+      n_stop <- sum(grepl("\\bstop\\(", all_code))
+      n_cli_abort <- sum(grepl("cli::cli_abort\\(", all_code))
+      n_todo <- sum(grepl("TODO|FIXME|HACK|XXX", all_code, ignore.case = TRUE))
+
+      checklist <- list(
+        exports = n_exports, man_pages = n_man,
+        doc_coverage_pct = round(100 * min(n_man / max(n_exports, 1), 1), 1),
+        stop_calls = n_stop, cli_abort_calls = n_cli_abort,
+        uses_cli_style = n_cli_abort > n_stop,
+        todo_fixme_count = n_todo, timestamp = Sys.time()
+      )
+
+      if (n_stop > 0) {
+        cli::cli_warn("Self-review: {n_stop} stop() call(s) found; prefer cli::cli_abort()")
+      }
+      if (n_todo > 0) {
+        cli::cli_warn("Self-review: {n_todo} TODO/FIXME/HACK comment(s) found")
+      }
+
+      cli::cli_alert_success(
+        "Self-review: {n_exports} exports, {n_man} man pages, {checklist$doc_coverage_pct}% documented"
+      )
+      checklist
+    },
+    cue = targets::tar_cue(mode = "always")
+  ),
+
+  # Check for raw SQL violations (code style)
+  targets::tar_target(
+    qa_no_raw_sql,
+    {
+      r_files <- list.files("R", pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+      r_files <- r_files[!grepl("R/dev/", r_files)]
+      all_code <- unlist(lapply(r_files, readLines))
+      violations <- grep("DBI::dbGetQuery", all_code)
+      if (length(violations) > 0) {
+        cli::cli_warn(c(
+          "!" = "{length(violations)} DBI::dbGetQuery violation(s) found in R/",
+          "i" = "Convert to dplyr::tbl() |> dplyr::filter() |> dplyr::collect()"
+        ))
+      }
+      list(violations = length(violations), timestamp = Sys.time())
+    },
+    cue = targets::tar_cue(mode = "always")
+  ),
+
+  # Quality gate: weighted score (6 components)
+  targets::tar_target(
+    qa_quality_gate,
+    {
+      coverage_score <- qa_coverage$overall_pct
+      check_score <- if (qa_test_results$failed == 0) 98 else 0
+      doc_score <- qa_self_review$doc_coverage_pct
+
+      total_error_calls <- qa_self_review$stop_calls + qa_self_review$cli_abort_calls
+      defensive_score <- if (total_error_calls > 0) {
+        round(100 * qa_self_review$cli_abort_calls / total_error_calls, 1)
+      } else {
+        100
+      }
+
+      # Data integrity: 100 if plan_data_validation exists and passes, else 100 (default)
+      data_integrity_score <- tryCatch({
+        dv <- targets::tar_read(dv_report)
+        if (!is.null(dv)) 100 else 0
+      }, error = function(e) 100)  # Default 100 if no validation plan
+
+      # Code style: 0 violations = 100, any = 0
+      code_style_score <- if (qa_no_raw_sql$violations == 0) 100 else 0
+
+      total <- round(
+        0.20 * coverage_score + 0.30 * check_score +
+        0.15 * doc_score + 0.10 * defensive_score +
+        0.20 * data_integrity_score + 0.05 * code_style_score, 1
+      )
+
+      grade <- dplyr::case_when(
+        total >= 95 ~ "Gold",
+        total >= 90 ~ "Silver",
+        total >= 80 ~ "Bronze",
+        TRUE ~ "Below Bronze"
+      )
+
+      gate <- list(
+        total_score = total, grade = grade,
+        components = list(
+          coverage = list(score = coverage_score, weight = 0.20,
+                         weighted = round(0.20 * coverage_score, 1)),
+          check = list(score = check_score, weight = 0.30,
+                      weighted = round(0.30 * check_score, 1)),
+          documentation = list(score = doc_score, weight = 0.15,
+                              weighted = round(0.15 * doc_score, 1)),
+          defensive = list(score = defensive_score, weight = 0.10,
+                          weighted = round(0.10 * defensive_score, 1)),
+          data_integrity = list(score = data_integrity_score, weight = 0.20,
+                               weighted = round(0.20 * data_integrity_score, 1)),
+          code_style = list(score = code_style_score, weight = 0.05,
+                           weighted = round(0.05 * code_style_score, 1))
+        ),
+        timestamp = Sys.time()
+      )
+
+      cli::cli_h2("Quality Gate: {grade} ({total}/100)")
+      cli::cli_alert_info("Coverage: {coverage_score}% (weighted: {gate$components$coverage$weighted})")
+      cli::cli_alert_info("Check: {check_score} (weighted: {gate$components$check$weighted})")
+      cli::cli_alert_info("Docs: {doc_score}% (weighted: {gate$components$documentation$weighted})")
+      cli::cli_alert_info("Defensive: {defensive_score}% (weighted: {gate$components$defensive$weighted})")
+      cli::cli_alert_info("Data integrity: {data_integrity_score} (weighted: {gate$components$data_integrity$weighted})")
+      cli::cli_alert_info("Code style: {code_style_score} (weighted: {gate$components$code_style$weighted})")
+
+      gate
+    },
+    cue = targets::tar_cue(mode = "always")
+  )
+)
+```
+
+## Reference Implementation
+
+- `irishbuoys/R/tar_plans/plan_qa_gates.R` (202 lines, fully working)
