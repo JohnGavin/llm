@@ -20,8 +20,4 @@
 
     Code
       get_block_history(days = 10)
-    Message
-      
-      -- Recent Block History 
-      🟢 2026-01-22 10:00-15:00: 50% (44,000 tokens)
 
