@@ -1,0 +1,168 @@
+# Reusable workflow: Vignette validation for R packages
+# Enforces the "zero computation" rule from quarto-files.md
+#
+# Usage in your package's workflow:
+#   jobs:
+#     vignette-check:
+#       uses: johngavin/llm/.github/workflows/vignette-validation.yml@main
+
+name: Vignette Validation
+
+on:
+  workflow_call:
+    inputs:
+      vignettes-dir:
+        description: 'Directory containing vignettes'
+        required: false
+        default: 'vignettes'
+        type: string
+
+jobs:
+  validate-vignettes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for vignettes
+        id: check-vignettes
+        run: |
+          if [ -d "${{ inputs.vignettes-dir }}" ]; then
+            echo "has_vignettes=true" >> $GITHUB_OUTPUT
+            echo "Found vignettes directory"
+          else
+            echo "has_vignettes=false" >> $GITHUB_OUTPUT
+            echo "No vignettes directory found, skipping validation"
+          fi
+
+      - name: Install Nix
+        if: steps.check-vignettes.outputs.has_vignettes == 'true'
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup Cachix
+        if: steps.check-vignettes.outputs.has_vignettes == 'true'
+        uses: cachix/cachix-action@v15
+        with:
+          name: rstats-on-nix
+          extraPullNames: johngavin
+
+      - name: Build environment
+        if: steps.check-vignettes.outputs.has_vignettes == 'true' && hashFiles('default.nix') != ''
+        run: nix-build default.nix -A shell --no-out-link 2>/dev/null || true
+
+      - name: Validate vignette targets exist
+        if: steps.check-vignettes.outputs.has_vignettes == 'true' && hashFiles('_targets.R') != ''
+        run: |
+          nix-shell default.nix -A shell --run "Rscript -e '
+            manifest <- targets::tar_manifest()
+            vig_targets <- manifest[grepl(\"^vig_\", manifest\$name), ]
+
+            if (nrow(vig_targets) == 0) {
+              stop(\"VIGNETTE VALIDATION FAILED:
+              No vignette targets (vig_*) found in pipeline!
+
+              Per quarto-files.md rule, vignettes must:
+              1. Pre-compute all data/plots in R/tar_plans/plan_vignette_outputs.R
+              2. Name targets with vig_ prefix
+              3. Use tar_load()/tar_read() in vignettes
+
+              Run: tar_make() then check: tar_manifest() |> filter(grepl('^vig_', name))
+              \")
+            }
+
+            cat(\"Found\", nrow(vig_targets), \"vignette targets\\n\")
+            for (name in vig_targets\$name) {
+              cat(\"  -\", name, \"\\n\")
+            }
+          '" 2>&1 || exit 1
+
+      - name: Check for forbidden patterns
+        if: steps.check-vignettes.outputs.has_vignettes == 'true'
+        run: |
+          echo "=== Vignette Zero-Computation Validation ==="
+          echo "Per quarto-files.md: MANDATORY - Vignettes contain ZERO computation"
+          echo ""
+          echo "EXCEPTION: targets introspection functions are allowed:"
+          echo "  tar_visnetwork(), tar_meta(), tar_manifest(), tar_network()"
+          echo ""
+
+          ERRORS=0
+          WARNINGS=0
+
+          for file in ${{ inputs.vignettes-dir }}/*.Rmd ${{ inputs.vignettes-dir }}/*.qmd; do
+            [ -f "$file" ] || continue
+            filename=$(basename "$file")
+            echo "Checking: $filename"
+
+            # Check if this is a pipeline introspection vignette
+            IS_PIPELINE_VIG=false
+            if grep -q 'tar_visnetwork\|tar_meta\|tar_manifest\|tar_network' "$file" 2>/dev/null; then
+              IS_PIPELINE_VIG=true
+              echo "  (Pipeline introspection vignette - relaxed rules apply)"
+            fi
+
+            # ERROR: ggplot() construction (must be pre-computed)
+            # EXCEPTION: Allow in pipeline introspection vignettes
+            if grep -q 'ggplot(' "$file" 2>/dev/null; then
+              count=$(grep -c 'ggplot(' "$file" 2>/dev/null || echo "0")
+              if [ "$IS_PIPELINE_VIG" = true ]; then
+                echo "  INFO: $count ggplot() calls with tar_meta/tar_visnetwork (allowed)"
+              else
+                echo "  ERROR: $count ggplot() calls - plots must be pre-computed targets"
+                ERRORS=$((ERRORS + 1))
+              fi
+            fi
+
+            # ERROR: DBI queries - NO EXCEPTION
+            if grep -q 'dbGetQuery\|dbExecute\|DBI::' "$file" 2>/dev/null; then
+              echo "  ERROR: Database queries found - use targets pipeline"
+              ERRORS=$((ERRORS + 1))
+            fi
+
+            # WARNING: dplyr verbs (may be OK if on pre-loaded data or tar_meta)
+            for verb in "group_by(" "summarise(" "summarize(" "mutate("; do
+              if grep -q "$verb" "$file" 2>/dev/null; then
+                count=$(grep -c "$verb" "$file" 2>/dev/null || echo "0")
+                if [ "$IS_PIPELINE_VIG" = true ]; then
+                  echo "  INFO: $count $verb on targets metadata (allowed)"
+                else
+                  echo "  WARNING: $count $verb - verify on pre-loaded data only"
+                  WARNINGS=$((WARNINGS + 1))
+                fi
+              fi
+            done
+
+            # Check for many assignments (3+ suggests inline computation)
+            # EXCEPTION: Allow more in pipeline vignettes
+            assignment_count=$(grep -c '<-' "$file" 2>/dev/null || echo "0")
+            if [ "$IS_PIPELINE_VIG" = true ]; then
+              if [ "$assignment_count" -gt 10 ]; then
+                echo "  WARNING: $assignment_count assignments - even pipeline vignettes should minimize"
+                WARNINGS=$((WARNINGS + 1))
+              fi
+            elif [ "$assignment_count" -gt 3 ]; then
+              echo "  WARNING: $assignment_count assignments - most should be tar_load()"
+              WARNINGS=$((WARNINGS + 1))
+            fi
+          done
+
+          echo ""
+          echo "=== Summary ==="
+          echo "Errors: $ERRORS"
+          echo "Warnings: $WARNINGS"
+
+          if [ $ERRORS -gt 0 ]; then
+            echo ""
+            echo "FAILED: Fix the errors above before merging."
+            echo "See: https://github.com/johngavin/llm/blob/main/.claude/rules/quarto-files.md"
+            exit 1
+          fi
+
+          if [ $WARNINGS -gt 0 ]; then
+            echo ""
+            echo "WARNINGS: Review the warnings above. Ensure all computation uses pre-computed targets."
+          fi
+
+          echo ""
+          echo "Vignette validation passed!"
