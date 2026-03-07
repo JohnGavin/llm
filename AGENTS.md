@@ -86,6 +86,9 @@ QA gates: Bronze (>=80) = commit, Silver (>=90) = PR, Gold (>=95) = merge to mai
 `default.nix` (mkShell) != `package.nix` (buildRPackage). Both required.
 Push only THIS project's package. Never push standard R packages.
 Run `./push_to_cachix.sh` directly (no user confirmation needed).
+- CORRECT: `echo $RESULT | cachix push johngavin` (1 path only)
+- WRONG: `cachix push johngavin $RESULT` (pushes entire closure)
+- WRONG: `cachix watch-exec` (pushes all new store paths including deps)
 
 ## CI Strategy
 
