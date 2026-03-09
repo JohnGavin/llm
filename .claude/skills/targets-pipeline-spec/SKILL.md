@@ -420,11 +420,24 @@ my_pipeline <- function() {
 # Document in README or vignette how to run the pipeline
 ```
 
+## Pipeline Tool Choice: targets vs rixpress
+
+| Feature | targets | rixpress |
+|---|---|---|
+| Define steps | `tar_target()` | `rxp_r()` |
+| Build | `tar_make()` | `rxp_make()` |
+| Read output | `tar_read()` | `rxp_read()` |
+| Visualise | `tar_visnetwork()` | `rxp_ggdag()` |
+| Config file | `_targets.R` | `pipeline.R` |
+
+**Use targets** (default) when: dynamic branching, parallel execution (crew), 20+ steps, R-only, HPC.
+**Use rixpress** when: hermetic per-step isolation, mixed R+Python, <20 steps, regulatory audit.
+**Never mix both** in the same project — they manage overlapping concerns (DAG, caching).
+
 ## Related Skills
 
 - `crew-operations` - Advanced crew patterns
 - `targets-vignettes` - Pre-calculating vignette data
-- `pipeline-choice` - When to use targets vs rixpress
 
 ## Resources
 

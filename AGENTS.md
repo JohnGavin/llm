@@ -28,8 +28,9 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 **Session End:** 1. Commit with `gert` (not bash) -> 2. Update `CURRENT_WORK.md` -> 3. Push to remote.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`,
-`systematic-debugging`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`,
-`subagent-delegation`, `spec-bundled-skills`. See details: `memory/tool-preferences.md`, `memory/architecture.md`.
+`nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`.
+**Mandatory rules:** `systematic-debugging`, `verification-before-completion`.
+See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 
 ## Agents (8)
 
@@ -44,15 +45,14 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `data-engineer` | SQL transforms, dbt pipelines |
 | `shinylive-builder` | Build/test Shinylive WASM vignettes |
 
-## Skills by Category
+## Skills by Category (58)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
 - `quality-gates` — Bronze/Silver/Gold scoring
 - `r-package-workflow` — 9-step PR workflow
 - `test-driven-development` — RED-GREEN-REFACTOR
-- `systematic-debugging` — Scientific method debugging
-- `nix-rix-r-environment` — Nix/rix shell management
+- `nix-rix-r-environment` — Nix/rix shell management + drift detection
 - `llm-package-context` — pkgctx generation
 - `readme-qmd-standard` — README.qmd conventions
 - `subagent-delegation` — When/how to delegate to agents
@@ -75,18 +75,16 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 ### Data & Analysis
 - `missing-data-handling` — Missing data patterns
 - `data-validation-pointblank` — pointblank validation
-- `data-wrangling-duckdb` — DuckDB + dplyr
-- `data-engineering-dbt` — dbt pipelines
+- `data-transformation-stack` — DuckDB + Arrow + dbt stack
 - `eda-workflow` — Exploratory data analysis
-- `modeling-baselines` — Baseline model patterns
+- `modeling-baselines` — Baseline model patterns + model code checklist
 - `model-evaluation-calibration` — Model assessment
-- `reproducible-visualization` — Plot reproducibility
 - `analysis-rationale-logging` — Decision logging
 - `gdc-genomics` — GDC/genomics data
 - `erddap-ocean-data` — ERDDAP ocean data access
 
 ### Targets & Pipelines
-- `targets-pipeline-spec` — Pipeline architecture
+- `targets-pipeline-spec` — Pipeline architecture + tool choice
 - `targets-vignettes` — Vignette data pre-computation
 - `crew-operations` — crew worker patterns
 - `parallel-processing` — mirai, parallel computing
@@ -103,18 +101,14 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 ### Quarto & Documentation
 - `quarto-websites` — Quarto website structure
 - `quarto-dashboards` — Quarto dashboards
-- `quarto-dynamic-content` — Dynamic Quarto features
-- `quarto-dynamic-tabsets` — Tabset generation
+- `quarto-dynamic-content` — Dynamic Quarto features + tabsets
 - `quarto-alt-text` — Accessibility alt text
-- `vignette-code-folding` — Code folding in vignettes
 - `webr-multi-page-vignettes` — WebR multi-page vignettes
 - `describe-design` — Codebase architecture docs
 
 ### DevOps & CI
-- `ci-workflows-github-actions` — GitHub Actions workflows
-- `nix-drift-detection` — Nix environment drift
+- `ci-workflows-github-actions` — GitHub Actions + R-universe workflows
 - `pkgdown-deployment` — pkgdown site deployment
-- `r-universe-workflows` — R-universe publishing
 - `static-api-deployment` — Static API hosting
 
 ### Project Management
@@ -122,14 +116,11 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 - `project-review` — Project review workflow
 - `writing-plans` — Plan document creation
 - `executing-plans` — Plan execution
-- `architecture-planning` — Architecture decisions
 - `code-review-workflow` — PR review process
 - `context-control` — Context window management
-- `verification-before-completion` — Final checks
 
 ### AI/LLM Tools
-- `gemini-cli-codebase-analysis` — Gemini CLI integration
-- `gemini-subagent` — Gemini as subagent
+- `gemini-cli-codebase-analysis` — Gemini CLI + subagent patterns
 - `ai-assisted-analysis` — AI-assisted data analysis
 - `huggingface-r` — HuggingFace from R
 - `mcp-servers` — MCP server management
@@ -156,20 +147,20 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 
 | Rule | Enforces |
 |------|----------|
+| `architecture-planning` | Mandatory planning phase before coding |
 | `btw-timeouts` | MCP tool timeout limits |
 | `ctx-yaml-cache` | Context YAML caching |
-| `dashboard-standards` | Dashboard plot/table card standards |
 | `data-in-packages` | Data storage conventions |
 | `data-validation-timeseries` | Time series validation |
 | `duckdplyr-not-sql` | Use duckdplyr not raw SQL |
-| `model-files` | Model file conventions |
 | `module-isolation` | Module isolation patterns |
-| `pipeline-choice` | targets vs rixpress |
-| `plot-captions` | Caption standards for plots/tables |
 | `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
-| `quarto-vignette-format` | Vignette format rules (headings, tables, code-as-targets, layout) |
+| `quarto-vignette-format` | Vignette format rules (headings, tables, code-folding, dashboards) |
+| `reproducible-visualization` | Plot reproducibility via targets |
 | `suppress-warnings-antipattern` | Ban suppressWarnings(as.*) with solutions |
-| `tufte-visualization` | Tufte/Gelman visualization principles |
+| `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |
+| `verification-before-completion` | No completion claims without evidence |
+| `visualization-standards` | Tufte/Gelman principles + caption standards |
 
 ## Hooks (5)
 
