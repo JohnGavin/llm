@@ -143,7 +143,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `/triage` | Quick issue analysis |
 | `/hi` | Alias for /session-start |
 
-## Rules (14)
+## Rules (15)
 
 | Rule | Enforces |
 |------|----------|
@@ -161,6 +161,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |
 | `verification-before-completion` | No completion claims without evidence |
 | `visualization-standards` | Tufte/Gelman principles + caption standards |
+| `website-index-update` | Add project to johngavin.github.io on major version |
 
 ## Hooks (5)
 
