@@ -129,12 +129,13 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 ### Specialized
 - `mlops-deployment` — MLOps patterns
 
-## Commands (9)
+## Commands (10)
 
 | Command | Purpose |
 |---------|---------|
 | `/session-start` | Initialize session (check env, status, config audit) |
 | `/session-end` | End session (commit, push, summary) |
+| `/bye` | Alias for /session-end |
 | `/check` | Run document(), test(), check() |
 | `/pr-status` | Check PR and CI status |
 | `/cleanup` | Review and simplify work |
