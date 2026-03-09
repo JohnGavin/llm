@@ -117,8 +117,124 @@ Rules:
 - Use `#| code-fold: false` on individual chunks only for core tutorial examples
 - Must work across pkgdown, GitHub, and local HTML builds
 
+## 9. SUB-BULLET FORMATTING
+
+**MANDATORY**: When a concept has sub-components, use nested bullet points.
+
+**Required pattern:**
+```markdown
+- **DALY (Disability-Adjusted Life Years):** Disease burden combining:
+    - **YLL (Years of Life Lost):** Premature mortality component
+    - **YLD (Years Lived with Disability):** Morbidity component
+```
+
+**Forbidden pattern:**
+```markdown
+- **DALY (Disability-Adjusted Life Years):** Disease burden = YLL + YLD.
+```
+
+Rules:
+- Parent-child relationships MUST use indented sub-bullets (4 spaces)
+- Acronyms introduced in a parent bullet MUST be defined as sub-bullets
+- Never define sub-components inline when they deserve their own line
+- Applies to all markdown: vignettes, README, pkgdown articles
+
+**Check:** Review all bullet lists with `+`, `=`, `/` joining concepts.
+
+## 10. NO BROKEN LINKS (404 CHECK)
+
+**MANDATORY**: After building pkgdown articles, verify ALL internal links resolve.
+
+**Check procedure:**
+1. Extract all `href` values from `_pkgdown.yml` navbar and articles
+2. Verify each referenced file exists in `docs/`
+3. Grep built HTML for internal links and verify targets exist
+
+**Commands:**
+```bash
+# Check all article hrefs in _pkgdown.yml resolve
+grep 'href: articles/' _pkgdown.yml | sed 's/.*href: //' | while read f; do
+  [ -f "docs/$f" ] || echo "MISSING: docs/$f"
+done
+
+# Check for broken internal links in built HTML
+grep -ohP 'href="[^"]*\.html[^"]*"' docs/articles/*.html | sort -u | \
+  grep -v '^http' | while read link; do
+    target=$(echo "$link" | tr -d '"' | sed 's/href=//')
+    [ -f "docs/articles/$target" ] || [ -f "docs/$target" ] || echo "BROKEN: $link"
+  done
+```
+
+**Rules:**
+- Every `href` in `_pkgdown.yml` MUST point to an existing file in `docs/`
+- When listing website URLs to the user, ALWAYS verify the file exists first
+- Never guess vignette filenames — check `ls docs/articles/` or `_pkgdown.yml`
+
+## 11. CLAIMS REQUIRE EVIDENCE (MANDATORY)
+
+**CRITICAL**: Every claim, assertion, or "Key Finding" in a vignette MUST have
+immediately adjacent empirical evidence in the form of a plot or table.
+
+**Definition of a claim:**
+- Any statement about data patterns ("Home teams score more")
+- Any quantitative assertion ("~380 matches per season")
+- Any comparison ("Dixon-Coles outperforms GLM")
+- Any "Key Finding" callout box
+- Any statement using words like: "shows", "demonstrates", "reveals", "indicates"
+
+**Requirements:**
+1. Evidence MUST appear within 3 lines of the claim (before or after)
+2. Evidence MUST be a rendered output (plot, table, test result) — not prose
+3. `safe_tar_read()` returning NULL is NOT evidence — the target must exist
+4. Claims without evidence are FORBIDDEN — delete the claim or add evidence
+
+**Audit procedure:**
+1. Grep for "Key Finding", `::: {.callout-`, and assertion words
+2. For each match, verify an adjacent `tar_read()` or output block exists
+3. Run `tar_make()` and verify the output renders (not NULL/empty)
+4. Review rendered HTML — blank sections indicate missing evidence
+
+**Pre-publication check (MANDATORY):**
+```r
+# Verify all vignette targets exist before building
+vignette_targets <- grep("^vig_", tar_manifest()$name, value = TRUE)
+tar_make(names = all_of(vignette_targets))
+missing <- setdiff(vignette_targets, names(tar_meta())[tar_meta()$error == FALSE])
+stopifnot("Missing vignette targets" = length(missing) == 0)
+```
+
+**Forbidden patterns:**
+```markdown
+# BAD: Claim with no evidence
+Most historical league-seasons achieve 100% completeness.
+
+# BAD: Evidence block returns NULL
+```{r}
+safe_tar_read("vig_completeness_plot")  # Returns NULL - target doesn't exist!
+```
+
+# GOOD: Claim immediately followed by rendered evidence
+Most historical league-seasons achieve 100% completeness, as shown below.
+
+```{r}
+tar_read(vig_completeness_plot)  # Must render a visible heatmap
+```
+```
+
+**Build-time validation:**
+Add to `vignettes/_validate.R` or CI pipeline:
+```r
+# After rendering, check HTML for empty evidence blocks
+html <- readLines("docs/articles/vignette.html")
+empty_chunks <- grep("<!-- empty tar_read -->", html)
+if (length(empty_chunks) > 0) stop("Evidence blocks returned NULL!")
+```
+
 ## Checklist
 
+- [ ] **EVIDENCE**: Every claim/assertion has adjacent plot or table evidence
+- [ ] **EVIDENCE**: All `tar_read()` calls return non-NULL rendered output
+- [ ] **EVIDENCE**: Ran `tar_make()` before building vignettes
 - [ ] No duplicate section titles
 - [ ] Descriptive headings (no "Row", "Column")
 - [ ] Titles match pkgdown navbar
@@ -131,3 +247,5 @@ Rules:
 - [ ] Plotly plots include `config(scrollZoom = TRUE)`
 - [ ] `code-fold: true` and `code-summary: "Show code"` in YAML
 - [ ] All outputs visible (no hidden plots/tables)
+- [ ] All `_pkgdown.yml` article hrefs resolve (no 404s)
+- [ ] All internal links in built HTML verified

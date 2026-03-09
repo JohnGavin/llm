@@ -95,6 +95,28 @@ DT::datatable(
 )
 ```
 
+## Plotly Legend and Theme Contrast (MANDATORY)
+
+Every `plotly::layout()` call MUST include explicit background and font colors for readable legends:
+
+```r
+plotly::layout(
+  ...,
+  paper_bgcolor = "white",
+  plot_bgcolor = "white",
+  font = list(color = "#1a1a1a"),
+  legend = list(..., font = list(color = "#1a1a1a"),
+                bgcolor = "rgba(255,255,255,0.9)")
+) |>
+plotly::config(scrollZoom = TRUE)
+```
+
+Rules:
+- Legend text MUST have high contrast against the plot background
+- Always set `paper_bgcolor` and `plot_bgcolor` explicitly
+- Always set `font = list(color = "#1a1a1a")` for dark text on light backgrounds
+- Always add `plotly::config(scrollZoom = TRUE)` for interactive zoom
+
 ## Color Accessibility (MANDATORY)
 
 - Use colorblind-safe palettes: `viridis`, `RColorBrewer::brewer.pal(n, "Set2")`, `scale_color_brewer(palette = "Dark2")`
@@ -112,3 +134,6 @@ DT::datatable(
 - [ ] No pie charts, no dual y-axes
 - [ ] Colorblind-safe palette
 - [ ] Data points shown alongside summaries
+- [ ] Plotly: explicit `paper_bgcolor`, `plot_bgcolor`, `font` color set
+- [ ] Plotly: legend has contrasting `font` and `bgcolor`
+- [ ] Plotly: `config(scrollZoom = TRUE)` added
