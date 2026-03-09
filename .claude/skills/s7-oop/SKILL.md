@@ -28,8 +28,11 @@ R Consortium and is the recommended OOP system for new R packages.
 - Interop with existing S3/S4 generics
 - Computed/dynamic properties
 
-For full S7 vs R6 vs S4 vs S3 guidance, see
-[references/comparison-table.md](references/comparison-table.md).
+For choosing between OOP systems, see
+[references/oop-decision-tree.md](references/oop-decision-tree.md).
+For S3 patterns when S7 is overkill, see [references/s3-examples.md](references/s3-examples.md).
+For migration strategies, see [references/migration-strategies.md](references/migration-strategies.md).
+For the full comparison table, see [references/comparison-table.md](references/comparison-table.md).
 
 ## Defining Classes
 

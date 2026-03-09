@@ -139,6 +139,12 @@ Standard tidyverse patterns for data transformation pipelines, grouped summaries
 
 See [common-patterns.md](references/common-patterns.md) for detailed code examples.
 
+### Migration Reference
+
+Comprehensive tables mapping base R → tidyverse and old tidyverse → new tidyverse patterns, including minimum version requirements for modern features (.by, pick(), list_rbind(), etc.).
+
+See [migration-tables.md](references/migration-tables.md) for the complete mapping.
+
 ## Review Checklist (for reviewer agent)
 
 - [ ] Uses `|>` not `%>%` (unless legacy codebase)
