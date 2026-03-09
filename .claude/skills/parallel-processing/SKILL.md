@@ -172,6 +172,16 @@ mirai uses event-driven callbacks (microsecond latency) vs future's polling (mil
 
 See [conversion-tables.md](references/conversion-tables.md) for detailed conversion tables (future -> mirai, parallel -> mirai), event-driven vs polling architecture, controller lifecycle management, and full comparison examples.
 
+## Profiling & Optimization
+
+**Rule: Profile BEFORE parallelizing.** Most bottlenecks are I/O or algorithmic, not parallelism issues.
+
+See reference files:
+- **[references/profiling-workflow.md](references/profiling-workflow.md)** — profvis, bench::mark, when to use each
+- **[references/backend-selection.md](references/backend-selection.md)** — dplyr vs duckdb vs data.table vs arrow
+- **[references/performance-anti-patterns.md](references/performance-anti-patterns.md)** — growing objects, type instability, premature optimization
+- **[references/purrr-modern-patterns.md](references/purrr-modern-patterns.md)** — list_rbind, walk, parallel map (purrr 1.1.0+)
+
 ## Best Practices
 
 1. **Start simple**: Use `mirai_map()` first, upgrade to crew if needed

@@ -476,8 +476,13 @@ standardise_cols <- function(data, ...) {
 
 - **[references/injection-patterns.md](references/injection-patterns.md)** --
   Advanced injection and defusing patterns: dynamic tidyselect, expression
-  surgery, quosure manipulation, metaprogramming recipes, and bridging
-  base/tidy evaluation.
+  surgery, quosure manipulation, metaprogramming recipes.
+- **[references/bridge-patterns.md](references/bridge-patterns.md)** -- `across()` as tidy-select↔data-mask bridge
+- **[references/dots-forwarding.md](references/dots-forwarding.md)** -- `...` forwarding, `check_dots_*()`, dynamic dots
+- **[references/name-injection.md](references/name-injection.md)** -- `:=`, `englue()`, `.names` in `across()`
+- **[references/testing-tidyeval.md](references/testing-tidyeval.md)** -- Testing `{{ }}`, `!!`, `.data` with testthat
+- **[references/transformation-patterns.md](references/transformation-patterns.md)** -- Wrapping and augmenting tidy-eval args
+- **[references/avoid-patterns.md](references/avoid-patterns.md)** -- Anti-patterns: `eval(parse())`, `get()`, mixing styles
 
 ### Related Skills
 
