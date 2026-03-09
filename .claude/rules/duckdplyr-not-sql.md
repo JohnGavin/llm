@@ -41,6 +41,60 @@ result <- clinical_tbl |>
 - `DBI::dbWriteTable()` for bulk data loading
 - No exceptions for SELECT queries -- always use dplyr
 
+## DuckDB Non-Determinism Pitfalls
+
+DuckDB parallelizes query execution and **never guarantees row order**. These patterns silently produce different results on every run.
+
+### 1. Window functions without `window_order()`
+
+```r
+# BAD: row_number(), cumsum(), lag(), lead() without explicit order
+tbl |> group_by(id) |> mutate(rn = row_number())
+
+# GOOD: always use window_order() with a unique tiebreaker
+tbl |> group_by(id) |> window_order(date, rowid) |> mutate(rn = row_number())
+```
+
+The ordering key MUST include a column unique within each group — `group_by()` columns alone are identical for every row in the group.
+
+### 2. `distinct(.keep_all = TRUE)`
+
+```r
+# BAD: which row's extra columns are kept is arbitrary
+tbl |> distinct(id, .keep_all = TRUE)
+
+# GOOD: explicit control over which row wins
+tbl |> group_by(id) |> window_order(date) |> filter(row_number() == 1L)
+```
+
+### 3. Inequality joins creating fan-out
+
+Overlapping reference periods (e.g., rate tables with Jan-Dec and Jul-Dec) cause rows to match multiple times, silently doubling downstream counts.
+
+```r
+# GOOD: pre-resolve to one row per (key, date) before joining
+rates_resolved <- rates |>
+  group_by(key, effective_date) |>
+  window_order(desc(priority)) |>
+  filter(row_number() == 1L)
+```
+
+### 4. Synthetic duplicate rows
+
+Expansion operations (turning `qty = 3` into three rows) create identical duplicates. Window functions cannot distinguish them.
+
+```r
+# BAD: expansion index discarded
+expanded |> select(-row_idx) |> mutate(rn = row_number())
+
+# GOOD: retain expansion index as tiebreaker throughout pipeline
+expanded |> window_order(row_idx) |> mutate(rn = row_number())
+```
+
+### Detection
+
+Run pipelines multiple times comparing aggregates. If totals or row counts vary, binary-search intermediate tables to isolate where non-determinism enters.
+
 ## Enforcement (MANDATORY)
 
 Add `qa_no_raw_sql` target to `plan_qa_gates.R` in every project:
