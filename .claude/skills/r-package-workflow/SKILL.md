@@ -133,6 +133,13 @@ package/
 └── .claude/skills/          # Reference skills
 ```
 
+## Reference Files
+
+- **[references/api-design-patterns.md](references/api-design-patterns.md)** —
+  `.by` parameter, `{{ }}` forwarding, `...` patterns, internal vs exported decisions.
+- **[references/dependency-decisions.md](references/dependency-decisions.md)** —
+  When to add tidyverse deps vs use base R, DESCRIPTION placement.
+
 ## Related Skills
 
 *   **`architecture-planning`**: Step 1 instructions.

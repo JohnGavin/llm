@@ -386,8 +386,14 @@ test_that("percent formats correctly", {
 
 ## Reference
 
-See [references/custom-class-template.md](references/custom-class-template.md) for a
-complete, copy-paste template for creating a new vctrs vector class.
+- **[references/custom-class-template.md](references/custom-class-template.md)** —
+  Complete copy-paste template for a new vctrs vector class.
+- **[references/coercion-methods.md](references/coercion-methods.md)** —
+  `vec_ptype2` and `vec_cast` double-dispatch implementation patterns.
+- **[references/testing-vctrs.md](references/testing-vctrs.md)** —
+  Testing type stability, coercion, casting, arithmetic, and display.
+- **[references/type-stable-functions.md](references/type-stable-functions.md)** —
+  `vec_cast()` at output, `vec_assert()` at input, base R alternatives.
 
 ## Resources
 
