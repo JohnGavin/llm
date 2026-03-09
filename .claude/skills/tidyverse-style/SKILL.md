@@ -76,6 +76,12 @@ Quick lookup for dplyr, tidyr, stringr, and purrr verbs. For parallel operations
 
 See [verbs-reference.md](references/verbs-reference.md) for the complete verbs reference.
 
+### String Manipulation (stringr)
+
+Prefer stringr over base R string functions (`grep`, `gsub`, `substr`) for consistent API and pipe-friendly data-first syntax. Use `str_view()` to debug regexes, `fixed()` for literal strings, and `str_glue()` for interpolation. Named capture groups with `str_match()` are powerful for structured extraction.
+
+See [stringr-patterns.md](references/stringr-patterns.md) for the complete stringr reference including base R migration table, regex patterns for data cleaning, and pattern modifier details.
+
 ## Package Code vs Scripts
 
 ### In Package Code (R/)
