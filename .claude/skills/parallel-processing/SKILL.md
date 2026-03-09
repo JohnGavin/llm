@@ -2,7 +2,7 @@
 
 ## Description
 
-Use the nanonext → mirai → crew stack for parallel processing in R. This stack provides async sockets, parallel evaluation, and worker pool management - all designed to work seamlessly with targets pipelines.
+Use the nanonext -> mirai -> crew stack for parallel processing in R. This stack provides async sockets, parallel evaluation, and worker pool management - all designed to work seamlessly with targets pipelines.
 
 ## Purpose
 
@@ -15,71 +15,22 @@ Use this skill when:
 ## The Stack
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Level 5: targets + crew                                    │
-│           Production pipelines with parallel workers        │
-│                          ↑                                  │
-│  Level 4: crew                                              │
-│           Managed worker pools, auto-scaling                │
-│                          ↑                                  │
-│  Level 3: purrr (1.1.0+)                                    │
-│           Native parallel map via mirai backend             │
-│                          ↑                                  │
-│  Level 2: mirai                                             │
-│           Async evaluation, simple parallel tasks           │
-│                          ↑                                  │
-│  Level 1: nanonext                                          │
-│           Low-level NNG sockets, custom protocols           │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## purrr 1.1.0+ Parallel Processing
-
-**purrr 1.1.0** added native parallel processing powered by mirai. This is the SIMPLEST way to parallelize existing purrr code.
-
-### Basic Parallel Map
-
-```r
-library(purrr)
-library(mirai)
-
-# Sequential (traditional)
-results <- map(items, slow_function)
-
-# Parallel (new in purrr 1.1.0+) - just add .parallel = TRUE!
-results <- map(items, slow_function, .parallel = TRUE)
-
-# Works with all map variants
-map_dfr(items, process_item, .parallel = TRUE)
-map_chr(items, extract_name, .parallel = TRUE)
-map2(x, y, combine_fn, .parallel = TRUE)
-pmap(list(a, b, c), multi_fn, .parallel = TRUE)
-```
-
-### Configure Workers
-
-```r
-# Default: uses all available cores
-map(items, fn, .parallel = TRUE)
-
-# Specify worker count
-map(items, fn, .parallel = list(workers = 4))
-
-# With progress bar
-map(items, fn, .parallel = TRUE, .progress = TRUE)
-```
-
-### Migration from furrr
-
-```r
-# ❌ OLD: furrr (heavier, polling-based)
-library(furrr)
-plan(multisession, workers = 4)
-results <- future_map(items, process)
-
-# ✅ NEW: purrr + mirai (lighter, event-driven)
-library(purrr)
-results <- map(items, process, .parallel = TRUE)
++---------------------------------------------------------+
+|  Level 5: targets + crew                                |
+|           Production pipelines with parallel workers    |
+|                          ^                              |
+|  Level 4: crew                                          |
+|           Managed worker pools, auto-scaling            |
+|                          ^                              |
+|  Level 3: purrr (1.1.0+)                               |
+|           Native parallel map via mirai backend         |
+|                          ^                              |
+|  Level 2: mirai                                         |
+|           Async evaluation, simple parallel tasks       |
+|                          ^                              |
+|  Level 1: nanonext                                      |
+|           Low-level NNG sockets, custom protocols       |
++---------------------------------------------------------+
 ```
 
 ## When to Use Each Level
@@ -92,111 +43,75 @@ results <- map(items, process, .parallel = TRUE)
 | Managed worker pool | `crew::crew_controller_local()` |
 | Parallel targets pipeline | `targets` + `crew` controller |
 | Custom network protocols | `nanonext` directly |
-| Python ↔ R interop | `nanonext` + `pynng` |
+| Python <-> R interop | `nanonext` + `pynng` |
+
+## purrr 1.1.0+ Parallel Processing
+
+**purrr 1.1.0** added native parallel processing powered by mirai. This is the SIMPLEST way to parallelize existing purrr code.
+
+```r
+library(purrr)
+library(mirai)
+
+# Sequential (traditional)
+results <- map(items, slow_function)
+
+# Parallel - just add .parallel = TRUE!
+results <- map(items, slow_function, .parallel = TRUE)
+
+# Works with all map variants
+map_dfr(items, process_item, .parallel = TRUE)
+map_chr(items, extract_name, .parallel = TRUE)
+map2(x, y, combine_fn, .parallel = TRUE)
+pmap(list(a, b, c), multi_fn, .parallel = TRUE)
+
+# Configure workers
+map(items, fn, .parallel = list(workers = 4))
+map(items, fn, .parallel = TRUE, .progress = TRUE)
+```
 
 ## Level 2: mirai (Most Common)
 
-### Simple Parallel Map
+mirai evaluates expressions in a **clean environment** on a daemon process. Nothing from the calling environment is available unless explicitly passed. This is the #1 source of mistakes.
+
+**Key rule**: Always pass dependencies via `.args` (recommended) or `...` (for lexical scoping). Use `everywhere()` for persistent shared state.
 
 ```r
-library(mirai)
+# Pass dependencies explicitly
+m <- mirai(my_func(my_data), .args = list(my_func = my_func, my_data = my_data))
 
-# Parallel map (like purrr::map but parallel)
-results <- mirai_map(
-  1:10,
-  \(x) {
-    Sys.sleep(1)  # Simulate work
-    x^2
-  }
-)
+# Parallel map - collect with []
+results <- mirai_map(1:10, function(x) x^2)[]
 
-# Results collected automatically
-unlist(results)
-```
+# Always namespace-qualify package functions
+m <- mirai(dplyr::filter(df, x > 5), .args = list(df = my_df))
 
-### Async Evaluation
-
-```r
-# Fire and forget
-m <- mirai({
-  expensive_computation(data)
-})
-
-# Do other work while it runs...
-
-# Collect when ready
+# Block until resolved
 result <- m[]
 ```
 
-### With Progress
-
-```r
-library(mirai)
-library(cli)
-
-results <- mirai_map(
-  items,
-  \(x) process(x),
-  .progress = TRUE  # Built-in progress bar
-)
-```
+See [mirai-internals.md](references/mirai-internals.md) for detailed patterns: dependency passing (`.args` vs `...`), 5 common mistakes, mirai_map options, daemons setup, compute profiles, everywhere(), error handling, debugging (sync mode), remote/distributed computing, RNG, and nanonext advanced usage.
 
 ## Level 3: crew (Worker Pools)
-
-### Basic Worker Pool
 
 ```r
 library(crew)
 
-# Create controller with 4 workers
 controller <- crew_controller_local(
   workers = 4,
   seconds_idle = 10  # Workers shut down after idle
 )
-
-# Start workers
 controller$start()
 
-# Push tasks
 controller$push(name = "task1", command = expensive_function(x))
 controller$push(name = "task2", command = another_function(y))
 
-# Wait and collect
 controller$wait()
 results <- controller$collect()
-
-# Cleanup
 controller$terminate()
 ```
 
-### With targets
-
-```r
-# _targets.R
-library(targets)
-library(crew)
-
-# Configure crew controller
-tar_option_set(
-  controller = crew_controller_local(
-    workers = 4,
-    seconds_idle = 60
-  )
-)
-
-list(
-  tar_target(data, load_data()),
-  tar_target(
-    processed,
-    process_chunk(data),
-    pattern = map(data)  # Parallel over chunks
-  )
-)
-```
-
 ## Level 4: targets + crew Integration
-
-### Production Pipeline
 
 ```r
 # _targets.R
@@ -204,7 +119,6 @@ library(targets)
 library(tarchetypes)
 library(crew)
 
-# Persistent workers
 controller <- crew_controller_local(
   name = "main",
   workers = parallel::detectCores() - 1,
@@ -214,82 +128,32 @@ controller <- crew_controller_local(
 tar_option_set(
   controller = controller,
   packages = c("dplyr", "duckdb"),
-  error = "continue"  # Don't fail entire pipeline
+  error = "continue"
 )
 
 list(
-  # Data loading (single worker)
   tar_target(raw_data, load_from_duckdb()),
-
-  # Parallel processing (uses crew workers)
   tar_target(
     model_results,
     fit_model(chunk),
     pattern = map(raw_data),
     iteration = "list"
   ),
-
-  # Combine results
-  tar_target(
-    final_report,
-    combine_results(model_results)
-  )
+  tar_target(final_report, combine_results(model_results))
 )
 ```
 
 ### Monitoring
 
 ```r
-# Check worker status
 controller$summary()
-
-# View active tasks
 controller$queue
 
-# Autometric for resource monitoring
 library(autometric)
 log_start()
 tar_make()
 log <- log_read()
 log_plot(log)
-```
-
-## Level 1: nanonext (Advanced)
-
-### Custom Async Sockets
-
-```r
-library(nanonext)
-
-# Create socket pair
-s1 <- socket("pair")
-s2 <- socket("pair")
-
-# Connect
-listen(s1, "ipc:///tmp/test")
-dial(s2, "ipc:///tmp/test")
-
-# Async send/receive
-send_aio(s1, data = list(x = 1, y = 2))
-recv_aio(s2)
-```
-
-### Python ↔ R Interop
-
-```r
-# R side with nanonext
-library(nanonext)
-s <- socket("pair")
-listen(s, "tcp://127.0.0.1:5555")
-
-# Python side with pynng
-# import pynng
-# s = pynng.Pair0()
-# s.dial("tcp://127.0.0.1:5555")
-# s.send(msgpack.packb(data))
-
-# Receive in R
-data <- recv(s)
 ```
 
 ## Decision Matrix
@@ -302,91 +166,11 @@ data <- recv(s)
 | targets with parallelism | `tar_option_set(controller = crew_controller_local())` |
 | Custom networking | `nanonext::socket()` |
 
-## Event-Driven vs Polling
+## Migration from future/furrr/parallel
 
-A critical distinction for Shiny and async applications:
+mirai uses event-driven callbacks (microsecond latency) vs future's polling (millisecond latency). This means zero-latency promise integration for Shiny/Plumber and no busy-waiting.
 
-```
-Polling (future/promises):
-┌─────────────────────────────────────────┐
-│ Task completes → Wait up to Xms →       │
-│ Next poll detects completion → Callback │
-│ Latency: milliseconds                   │
-└─────────────────────────────────────────┘
-
-Event-Driven (mirai/crew):
-┌─────────────────────────────────────────┐
-│ Task completes → Immediate callback →   │
-│ Zero polling overhead                   │
-│ Latency: microseconds                   │
-└─────────────────────────────────────────┘
-```
-
-**Why this matters:**
-- mirai has "first-class" async support for Shiny/Plumber
-- Native promise integration with zero-latency callbacks
-- No busy-waiting or polling loops consuming resources
-- Better UX in Shiny apps (snappier responses)
-
-```r
-# mirai objects ARE promises (event-driven)
-library(mirai)
-library(promises)
-
-m <- mirai({ expensive_computation() })
-
-# Callback fires IMMEDIATELY when complete
-m %...>% function(result) {
-  # No polling delay!
-  update_ui(result)
-}
-```
-
-## crew Controller Lifecycle
-
-Always manage controller lifecycle properly:
-
-```r
-# In Shiny apps
-server <- function(input, output, session) {
-  controller <- crew_controller_local(workers = 4)
-  controller$start()
-
-  # CRITICAL: Clean up on session end
-  onStop(function() {
-    controller$terminate()
-  })
-
-  # ... use controller ...
-}
-
-# In scripts
-controller <- crew_controller_local(workers = 4)
-controller$start()
-tryCatch(
-  { # ... use controller ... },
-  finally = controller$terminate()
-)
-```
-
-## Comparison with future/furrr
-
-```r
-# ❌ OLD: future/furrr (heavier, polling-based)
-library(future)
-library(furrr)
-plan(multisession, workers = 4)
-results <- future_map(items, process)
-
-# ✅ NEW: mirai (lighter, event-driven)
-library(mirai)
-results <- mirai_map(items, process)
-
-# ✅ NEW: crew for managed pools
-library(crew)
-controller <- crew_controller_local(workers = 4)
-# ... (see above)
-```
+See [conversion-tables.md](references/conversion-tables.md) for detailed conversion tables (future -> mirai, parallel -> mirai), event-driven vs polling architecture, controller lifecycle management, and full comparison examples.
 
 ## Best Practices
 
@@ -395,6 +179,8 @@ controller <- crew_controller_local(workers = 4)
 3. **Worker count**: `parallel::detectCores() - 1` leaves one for main process
 4. **Idle timeout**: Set `seconds_idle` to auto-cleanup workers
 5. **Error handling**: Use `error = "continue"` in targets to not fail pipeline
+6. **Always namespace-qualify**: Use `pkg::fn()` in mirai expressions, or `everywhere(library(pkg))` first
+7. **Always terminate**: Use `tryCatch(..., finally = controller$terminate())` or `onStop()` in Shiny
 
 ## Resources
 

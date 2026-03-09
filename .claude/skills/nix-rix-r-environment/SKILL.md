@@ -55,6 +55,40 @@ exit
 nix-shell --run "Rscript ..."
 ```
 
+## 5 Common Mistakes
+
+```bash
+# MISTAKE 1: Installing packages inside Nix shell
+# WRONG:
+install.packages("dplyr")  # Breaks reproducibility!
+# RIGHT: Add to DESCRIPTION -> edit default.R -> exit -> re-enter Nix
+
+# MISTAKE 2: Nested shells causing R version mismatch
+# WRONG:
+nix-shell default.nix  # Already in a shell!
+# Check first:
+echo $IN_NIX_SHELL  # Should be empty if not in a shell
+# Symptom: Segfaults from mixed R versions
+
+# MISTAKE 3: Not using GC root (shell rebuilds every time)
+# WRONG:
+nix-shell default.nix
+# RIGHT: Use default.sh which creates a GC root
+./default.sh  # Creates result symlink, prevents garbage collection
+
+# MISTAKE 4: Editing default.nix directly
+# WRONG:
+vim default.nix  # Manual edits get overwritten
+# RIGHT: Edit default.R, then run it to regenerate default.nix
+Rscript default.R  # Regenerates default.nix from rix()
+
+# MISTAKE 5: Wrong R version causing segfaults
+# WRONG: Using a date that gives R 4.4.x when packages need R 4.5.x
+rix(r_ver = "2024-06-01", ...)
+# RIGHT: Check available dates for your R version
+rix::available_dates()  # Find dates with R 4.5.x
+```
+
 ## Reference
 
 *   [Troubleshooting](troubleshooting.md) - Fix common issues.

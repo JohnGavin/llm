@@ -73,6 +73,16 @@ for (issue in issues) {
 ### Current Work
 [Contents of CURRENT_WORK.md or "No current work file"]
 
+## Config Audit
+- Config sizes: [OK/warnings]
+- Mapping validation: [OK/mismatches]
+
 ## Recommended Next Action
 [Based on open issues and current state]
 ```
+
+## Config Audit Steps
+
+6. Run config audit (`~/.claude/hooks/config_size_check.sh`)
+7. Run mapping validation (`~/.claude/validate_claude_md.sh`)
+8. Summarize any warnings
