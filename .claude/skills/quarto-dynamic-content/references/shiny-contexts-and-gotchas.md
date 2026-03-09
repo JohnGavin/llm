@@ -99,12 +99,40 @@ cat("```{r}\nplot(1:10)\n```")
 `r knitr::knit(text = "```{r}\nplot(1:10)\n```")`
 ```
 
-### 4. IDE Syntax Highlighting
+### 4. IDE Syntax Highlighting (Triple-Backtick Splitting)
 
-Complex nested backticks confuse editors. Strategies:
-- Split templates into multiple glue() calls
-- Use child .qmd files
-- Accept broken highlighting in complex sections
+Complex nested backticks confuse RStudio/Positron parsing. The concrete fix:
+split builder output into multiple variables, each containing **at most one** code fence pair, then combine:
+
+```r
+build_section <- function(i) {
+  # Part 1: markdown only (no code fences)
+  part_header <- glue("
+  ### <<title>>
+
+  `r data$description[[<<i>>]]`
+  ", .open = "<<", .close = ">>")
+
+  # Part 2: one code fence
+  part_plot <- glue('
+  ```{r}
+  #| label: plot-<<i>>
+  #| echo: false
+  data$plot[[<<i>>]]
+  ```', .open = "<<", .close = ">>")
+
+  # Part 3: another code fence
+  part_code <- glue('
+  ```r
+  `r data$code_text[[<<i>>]]`
+  ```', .open = "<<", .close = ">>")
+
+  # Combine
+  glue("{part_header}\n\n{part_plot}\n\n{part_code}")
+}
+```
+
+Other strategies: use child `.qmd` files, or accept broken highlighting in complex sections.
 
 ## Advanced: knitr::knit_expand()
 

@@ -220,6 +220,43 @@ all_sections <- map_chr(unique(sales_data$region), \(r) {
 `r knitr::knit(text = paste(all_sections, collapse = "\n"))`
 ```
 
+## Useful Helpers
+
+### Safe Chunk Labels from Data
+
+Use `janitor::make_clean_names()` to generate valid `#| label:` values from data:
+
+```r
+build_panel <- function(title, i) {
+  chunk_label <- glue("panel-{janitor::make_clean_names(title)}")
+
+  glue("
+  ### <<title>>
+
+  ```{r}
+  #| label: <<chunk_label>>
+  #| echo: false
+  plots$plot[[<<i>>]]
+  ```
+  ", .open = "<<", .close = ">>")
+}
+```
+
+This guarantees unique, lowercase, hyphen-separated labels even from messy data values like `"North America"` or `"GDP (per capita)"`.
+
+### English-Language Lists
+
+Use `knitr::combine_words()` to turn vectors into readable prose:
+
+```r
+knitr::combine_words(c("apple", "banana", "cherry"))
+#> "apple, banana, and cherry"
+
+# In a builder function
+glue("Countries: `r knitr::combine_words(data$countries[[<<i>>]])`",
+     .open = "<<", .close = ">>")
+```
+
 ## Real-World Example: Election Results
 
 From Andrew Heiss's blog - generating 100+ race sections:
