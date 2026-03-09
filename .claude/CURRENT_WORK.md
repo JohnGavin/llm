@@ -2,37 +2,45 @@
 
 ## Branch: main
 
-## Completed This Session (2026-03-07)
+## Completed This Session (2026-03-09)
 
-### Issue #37 (missing data handling) — plan implementation
-- Created global rule `~/.claude/rules/no-suppress-coercion.md` with path-matching YAML
-- Created hook `.claude/hooks/r_code_check.sh` for suppressWarnings/read.csv checks
-- Appended Research Notes to `~/.claude/skills/missing-data-handling/SKILL.md`
-- Created cross-project audit script `R/dev/issues/fix_37_audit.R`
+### Config Migration (from plan)
+- Migrated 13 global rules from `~/.claude/rules/` to git-backed `llm/.claude/rules/` with symlink
+- Migrated `validate_claude_md.sh` and `session_end_check.sh` to git with symlinks
+- Merged CLAUDE.md into AGENTS.md (185 lines, under 200 limit), symlinked
+- Merged `/hi` into `/session-start` via symlink
+- Created `memory/tool-preferences.md` and updated `memory/architecture.md`
 
-### Issue #38 — R_LIBS_SITE nix segfault docs
-- Added nested shell R_LIBS_SITE contamination section to `memory/nix-operations.md`
-- Updated MEMORY.md index with both segfault categories
+### Skills Creation (Issues #39-#45)
+- Created 5 new skills: `dplyr-1.1-patterns`, `rlang-patterns`, `vctrs-patterns`, `s7-oop`, `data-transformation-stack`
+- Extended `tidyverse-style` with stringr patterns reference
+- Extended `static-api-deployment` with API design patterns reference
+- All 7 issues closed
 
-### Issue #28 — Projects page for homepage
-- Created `content/projects.md` in johngavin.github.io (irishbuoys, footbet, llm)
-- Added Projects menu entry in `config.toml`
-- Pushed to remote (deploys via Netlify)
+### Skills/Rules Consolidation (72 → 62 skills, 14 → 15 rules)
+- 6 skill merges (content moved to references in absorbing skill):
+  - gemini-subagent → gemini-cli-codebase-analysis
+  - quarto-dynamic-tabsets → quarto-dynamic-content
+  - data-wrangling-duckdb + data-engineering-dbt → data-transformation-stack
+  - nix-drift-detection → nix-rix-r-environment
+  - r-universe-workflows → ci-workflows-github-actions
+  - vignette-code-folding → quarto-vignette-format rule
+- 4 skills converted to rules: architecture-planning, systematic-debugging, reproducible-visualization, verification-before-completion
+- 4 rules consolidated: dashboard-standards, plot-captions + tufte-visualization → visualization-standards, pipeline-choice, model-files
+- New rule: `website-index-update` (add project to johngavin.github.io on major version)
 
-### Issue #19 — ccusage refresh frequency
-- Already resolved (plist already had 12-hour interval)
-- Note: LaunchAgent not installed in ~/Library/LaunchAgents/
-
-### Issue #13 — shiny-async-debugger agent
-- Created `.claude/agents/shiny-async-debugger.md`
-- 5-phase protocol, 5 common failure patterns, sonnet model
+### Commits
+- `d49b3c9` — config migration
+- `d6c32b9` — new skills (closes #39-#45)
+- `6db6eb0` — validator regex fix (rollback point for consolidation)
+- `0989573` — consolidation (72→62 skills)
+- `a216df4` — website-index-update rule
 
 ## Status
-- All issues closed (0 open)
-- Both repos (llm, johngavin.github.io) clean and pushed
+- Working tree clean
+- All validation passes (62 skills, 15 rules, 9 commands, all consistent)
 
 ## Pending
 - Run `Rscript R/dev/issues/fix_37_audit.R` to audit sibling projects
 - Homepage repo has 9 Dependabot vulnerabilities
 - ccusage LaunchAgent not installed
-- 9 skills >500 lines could be slimmed
