@@ -22,8 +22,8 @@ echo "============================="
 # New: ## Skills by Category ... `skill-name` — description
 referenced_skills=$(
   sed -n '/^## Skills/,/^## [^S]/p' "$CLAUDE_MD" \
-    | grep -oE '`[a-z][a-z0-9-]+`' \
-    | sed -E 's/`([a-z][a-z0-9-]+)`/\1/' \
+    | grep -oE '`[a-z][a-z0-9.-]+`' \
+    | sed -E 's/`([a-z][a-z0-9.-]+)`/\1/' \
     | sort -u
 )
 
