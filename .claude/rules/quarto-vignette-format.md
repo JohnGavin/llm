@@ -80,6 +80,43 @@ body > .container, .container {
 }
 ```
 
+## 7. DASHBOARD STANDARDS
+
+When building dashboard-format vignettes:
+1. Every plot/table card MUST have a `card_footer()` caption
+2. Every plotly plot MUST include `config(scrollZoom = TRUE)`
+3. Value boxes: `$X,XXX` format (no decimals > $100), `X.XB`/`X.XM` for tokens
+4. Every dashboard MUST have a footer with repo link and build date
+5. Minimum plot heights: 400px half-width, 500px full-width
+6. Table columns with long text must use `white-space: nowrap`
+7. Legends above plots (`y = 1.02, yanchor = "bottom"`), never use rangeslider with legend
+
+## 8. CODE FOLDING (MANDATORY)
+
+**ALL vignettes MUST have code folding enabled.** No exceptions, all projects.
+
+Quarto (.qmd):
+```yaml
+format:
+  html:
+    code-fold: true              # MANDATORY
+    code-summary: "Show code"    # MANDATORY
+    code-tools: true             # Optional
+```
+
+R Markdown (.Rmd):
+```yaml
+output:
+  html_document:
+    code_folding: hide           # MANDATORY
+```
+
+Rules:
+- Code hidden by default; users click to reveal
+- ALL outputs (plots, tables) MUST display — never hide with `results='hide'`
+- Use `#| code-fold: false` on individual chunks only for core tutorial examples
+- Must work across pkgdown, GitHub, and local HTML builds
+
 ## Checklist
 
 - [ ] No duplicate section titles
@@ -90,3 +127,7 @@ body > .container, .container {
 - [ ] Code examples stored as targets with parse validation
 - [ ] Code examples use `<details>` show/hide
 - [ ] `pkgdown/extra.css` sets 95% width
+- [ ] Dashboard cards have `card_footer()` captions
+- [ ] Plotly plots include `config(scrollZoom = TRUE)`
+- [ ] `code-fold: true` and `code-summary: "Show code"` in YAML
+- [ ] All outputs visible (no hidden plots/tables)

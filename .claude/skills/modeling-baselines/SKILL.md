@@ -243,6 +243,16 @@ xgboost(data, nrounds = 100)  # What are we optimizing?
 boost_tree() |> set_mode("classification")  # Clear intent
 ```
 
+## Model Code Checklist
+
+When editing model code, verify:
+1. **Baseline comparison**: Does this model have a GLM/GLMM baseline?
+2. **Proper scoring**: Using proper scoring rules (log loss, Brier), not just accuracy/AUC?
+3. **Calibration**: Is calibration assessed (reliability diagram, calibration slope)?
+4. **Time-aware CV**: For time data, using walk-forward splits (`rsample::sliding_period()`), not `vfold_cv()`?
+5. **Separation of concerns**: Model outputs probabilities only, business logic in separate decision layer?
+6. **Versioning**: Trained model pinned with metadata (`pins::pin_write()` or `vetiver::vetiver_pin_write()`)?
+
 ## Related Skills
 
 - `model-evaluation-calibration` - Proper scoring and backtesting

@@ -1,3 +1,8 @@
+---
+paths:
+  - "R/**"
+  - "tests/**"
+---
 # Systematic Debugging for R Packages
 
 ## Description

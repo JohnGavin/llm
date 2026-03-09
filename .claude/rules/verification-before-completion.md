@@ -1,3 +1,8 @@
+---
+paths:
+  - "R/**"
+  - "tests/**"
+---
 # Verification Before Completion
 
 ## Description
