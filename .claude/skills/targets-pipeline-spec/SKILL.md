@@ -365,6 +365,61 @@ tar_validate()  # Check for errors in _targets.R
 - [ ] `_targets/` in `.gitignore`
 - [ ] `tar_validate()` passes
 
+## 5 Common Mistakes
+
+```r
+# MISTAKE 1: Defining targets directly in _targets.R
+# WRONG:
+# _targets.R
+list(
+  tar_target(data, read_csv("data.csv")),
+  tar_target(model, lm(y ~ x, data = data))
+)
+# RIGHT: Use modular plan files
+# _targets.R
+list(plan_data(), plan_model())
+# R/tar_plans/plan_data.R returns list of tar_target()
+
+# MISTAKE 2: Using tar_load() inside a target
+# WRONG:
+tar_target(model, {
+  tar_load(data)  # NO! Creates hidden dependency
+  lm(y ~ x, data = data)
+})
+# RIGHT: Pass as function argument
+tar_target(model, lm(y ~ x, data = data))  # data is auto-detected
+
+# MISTAKE 3: Not using format = "file" for file targets
+# WRONG:
+tar_target(plot_file, {
+  ggsave("plot.png", my_plot)
+  "plot.png"
+})
+# RIGHT:
+tar_target(plot_file, {
+  path <- "plot.png"
+  ggsave(path, my_plot)
+  path
+}, format = "file")  # Tracks file hash for invalidation
+
+# MISTAKE 4: Forgetting to set crew controller
+# WRONG: No parallelism despite having crew installed
+tar_option_set(packages = c("dplyr"))
+# RIGHT:
+tar_option_set(
+  packages = c("dplyr"),
+  controller = crew::crew_controller_local(workers = 4)
+)
+
+# MISTAKE 5: Using tar_make() in package code
+# WRONG: Calling tar_make() from R/ functions
+my_pipeline <- function() {
+  targets::tar_make()  # Side effect, not testable
+}
+# RIGHT: tar_make() is a user action, not a function
+# Document in README or vignette how to run the pipeline
+```
+
 ## Related Skills
 
 - `crew-operations` - Advanced crew patterns

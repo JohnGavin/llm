@@ -44,8 +44,6 @@ format:
 
 #### For R Markdown Vignettes (.Rmd)
 
-Add to your vignette YAML header:
-
 ```yaml
 ---
 title: "Your Vignette Title"
@@ -70,460 +68,74 @@ knitr::opts_chunk$set(
 
 ### RULE 2: All Outputs Must Display (REQUIRED)
 
-**Every code chunk that produces output (graphs, tables, text) must show the output.**
+Every code chunk that produces output (graphs, tables, text) must show the output. Never use `echo=FALSE` with `results='hide'` or `include=FALSE` on output-producing chunks.
 
-#### Correct: Show Output
-
-```{r load-data}
-# This code loads data
-data <- read.csv("data.csv")
-# Output will be shown
-head(data)
-```
-
-```{r plot-example}
-# Code is hidden by default, but plot ALWAYS shows
-library(ggplot2)
-ggplot(data, aes(x = var1, y = var2)) +
-  geom_point() +
-  theme_minimal()
-# Plot is ALWAYS visible to users
-```
-
-#### Correct: Table Output Always Visible
-
-```{r summary-table}
-library(knitr)
-summary_stats <- data.frame(
-  Variable = names(data),
-  Mean = colMeans(data),
-  SD = apply(data, 2, sd)
-)
-kable(summary_table, digits = 2)
-# Table is ALWAYS visible to users
-```
-
-#### INCORRECT: Hiding Outputs
-
-```{r hidden-plot, echo=FALSE, results='hide'}
-# WRONG! Plot won't display
-plot(data)
-```
-
-```{r silent-compute, include=FALSE}
-# WRONG! Results are hidden
-x <- mean(data$var1)
-```
+See [code-examples-and-rules.md](references/code-examples-and-rules.md) for correct and incorrect examples.
 
 ### RULE 3: Default Code Hidden (REQUIRED)
 
-**Code must be hidden by default. Users click "Show code" to see implementation.**
+Code must be hidden by default. Users click "Show code" to see implementation. Use `code-fold: true` in YAML; never `code-fold: false`.
 
-#### Correct Implementation
-
-```yaml
----
-format:
-  html:
-    code-fold: true  # Code hidden by default
----
-```
-
-Result: Users see narrative and outputs first. Code is accessible via collapsible section.
-
-#### INCORRECT Implementation
-
-```yaml
----
-format:
-  html:
-    code-fold: false  # WRONG! Code always visible
----
-```
-
-Result: Code clutters the reading experience.
+See [code-examples-and-rules.md](references/code-examples-and-rules.md) for correct and incorrect YAML examples.
 
 ### RULE 4: Selective Code Display (OPTIONAL)
 
-**In specific cases, you may show code by default for a chunk:**
-
-```{r key-function, code-fold=false}
-# This is essential code users MUST see
-# Use only for critical examples
-library(package)
-essential_function()
-```
-
-**When to use `code-fold=false`:**
+Use `code-fold=false` on individual chunks only for:
 - Core tutorial examples where understanding implementation is the goal
 - Step-by-step walkthroughs with minimal code
 - API usage demonstrations
 
-**Default behavior:** All chunks should use document-level `code-fold: true` setting
+All other chunks use the document-level `code-fold: true` setting.
+
+See [code-examples-and-rules.md](references/code-examples-and-rules.md) for examples.
 
 ### RULE 5: Output Display Control (REQUIRED)
 
-**Always display outputs using correct options:**
+- **Graphs/Plots:** ALWAYS show (no `results='hide'`)
+- **Tables:** ALWAYS show (use `knitr::kable()` or similar)
+- **Console output:** Show for results, hide for intermediate calculations with `results='hide'`
 
-#### For Graphs/Plots (ALWAYS SHOW)
+See [code-examples-and-rules.md](references/code-examples-and-rules.md) for detailed examples.
 
-```{r plot-name}
-# Code: hidden by default
-# Output: ALWAYS shows
+### RULE 6: Cross-Platform Consistency (REQUIRED)
 
-library(ggplot2)
-ggplot(mtcars, aes(x = wt, y = mpg)) +
-  geom_point() +
-  labs(title = "Weight vs MPG")
-# Plot displays automatically
-```
+Code folding must work across GitHub README, pkgdown articles, local HTML builds, and Quarto Dashboards.
 
-#### For Tables (ALWAYS SHOW)
+**Verification steps:** render locally, check "Show code" button, verify outputs display, test in pkgdown, verify on GitHub.
 
-```{r table-name}
-# Code: hidden by default
-# Output: ALWAYS shows
-
-library(knitr)
-summary_table <- data.frame(
-  Metric = c("Mean", "SD", "N"),
-  Value = c(23.5, 6.0, 32)
-)
-kable(summary_table)
-# Table displays automatically
-```
-
-#### For Console Output (Show/Hide as Needed)
-
-```{r analysis-results}
-# Show console results
-mean_value <- mean(data$x)
-print(paste("Mean:", round(mean_value, 2)))
-# Output: Shows with results
-```
-
-```{r silent-calc, results='hide'}
-# Hide intermediate calculations
-temp <- complex_calculation()
-# No console output shown
-```
-
-### RULE 6: Code Folding in GitHub/pkgdown Display (REQUIRED)
-
-**Code folding works consistently across:**
-
-- GitHub README (if vignette is rendered as HTML)
-- pkgdown website articles
-- Local HTML builds
-- Quarto Dashboards
-
-#### Verification Checklist
-
-After adding code folding to a vignette:
-
-1. Render locally: `quarto render` or `devtools::build_vignettes()`
-2. Open in browser: Look for "Show code" button
-3. Click button: Code should expand/collapse smoothly
-4. Check outputs: All graphs, tables, and results display
-5. Test in pkgdown: `pkgdown::build_site()`
-6. Verify on GitHub: Rendered vignette displays correctly
+See [code-examples-and-rules.md](references/code-examples-and-rules.md) for the full verification checklist.
 
 ## Best Practices
 
-### 1. Structure Narrative First
+1. **Structure narrative first** -- users see explanations and outputs before code
+2. **Label chunks meaningfully** -- use descriptive names like `calculate-average-height`, not `chunk1`
+3. **Use code descriptions** -- Quarto `#| code-summary: "Load and explore data"` for per-chunk labels
+4. **Group related code** -- separate setup, data prep, analysis, and display into logical chunks
+5. **Separate computation from display** -- one chunk computes, next chunk renders output
 
-```yaml
----
-format:
-  html:
-    code-fold: true
----
+See [code-examples-and-rules.md](references/code-examples-and-rules.md) for detailed examples of each practice.
 
-# Users see this first
-## Introduction
+## Complete Vignette Templates
 
-This vignette demonstrates...
-
-## Key Concepts
-
-Explanation of what you'll learn.
-
-## Analysis
-
-[Visible outputs]
-
-Click "Show code" to see the implementation.
-```
-
-### 2. Label Chunks Meaningfully
-
-```{r bad-name}
-# Unclear what this does
-x <- mean(data)
-```
-
-```{r calculate-average-height}
-# Clear, descriptive name
-avg_height <- mean(data$height)
-```
-
-### 3. Use Code Descriptions
-
-Quarto supports code block titles:
-
-```{r}
-#| code-fold: true
-#| code-summary: "Load and explore data"
-
-library(readr)
-data <- read_csv("dataset.csv")
-str(data)
-```
-
-### 4. Group Related Code
-
-```{r setup-libraries}
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-```
-
-```{r prepare-data}
-clean_data <- data %>%
-  filter(!is.na(value)) %>%
-  mutate(group = factor(group))
-```
-
-### 5. Separate Computation from Display
-
-```{r compute-summary}
-# Computation code (hidden)
-summary_stats <- data %>%
-  group_by(group) %>%
-  summarise(mean = mean(value))
-```
-
-```{r display-summary}
-# Display code (hidden)
-knitr::kable(summary_stats)
-```
-
-## Complete Vignette Template
-
-### Quarto Template (.qmd)
-
-```yaml
----
-title: "Package Feature: Your Feature Name"
-description: "Describes what users will learn"
-format:
-  html:
-    code-fold: true
-    code-summary: "Show code"
-    code-tools:
-      source: https://github.com/your-repo/blob/main/vignettes/feature-name.qmd
-    toc: true
-    toc-depth: 2
-    theme: default
----
-
-# Introduction
-
-Start with narrative explanation of the feature.
-
-## Setup
-
-```{r setup}
-#| code-fold: false
-#| message: false
-
-library(yourpackage)
-library(ggplot2)
-library(dplyr)
-```
-
-## Key Concept
-
-Explain what users will learn.
-
-```{r demonstration}
-# Code for demonstration
-result <- your_function(data)
-
-# Visualization or output
-plot(result)
-```
-
-## Real-World Example
-
-```{r real-example}
-# Full working example
-# Code hidden by default
-# Output always visible
-
-data <- your_package::sample_data
-summary <- analyze_data(data)
-visualize_summary(summary)
-```
-
-## Further Reading
-
-- [Package Reference](reference.html)
-- [Other Vignettes](articles.html)
-```
-
-### R Markdown Template (.Rmd)
-
-```r
----
-title: "Package Feature: Your Feature Name"
-output: rmarkdown::html_vignette
-vignette: >
-  %\VignetteIndexEntry{Your Feature Name}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  code_folding = "hide",
-  echo = TRUE,
-  message = FALSE,
-  warning = FALSE,
-  collapse = TRUE,
-  comment = "#>",
-  fig.width = 7,
-  fig.height = 5,
-  fig.align = "center"
-)
-```
-
-# Introduction
-
-Start with narrative explanation.
-
-## Example
-
-```{r example}
-library(yourpackage)
-result <- your_function(data)
-plot(result)
-```
-
-## More Examples
-
-```{r more}
-# More demonstration code
-```
-```
+Full Quarto (.qmd) and R Markdown (.Rmd) templates are available in [templates-and-testing.md](references/templates-and-testing.md).
 
 ## Troubleshooting
 
-### Code Folding Not Working
+Common issues and solutions for code folding not working, hidden outputs, and inconsistent cross-platform display.
 
-**Problem:** "Show code" button doesn't appear
-
-**Solutions:**
-1. Verify YAML format (check for indentation)
-2. Ensure `code-fold: true` is set in format section
-3. Clear cache: `rm -rf .quarto/ _quarto_cache/`
-4. Re-render: `quarto render vignette.qmd`
-
-### Outputs Hidden
-
-**Problem:** Plots or tables don't display
-
-**Solutions:**
-1. Check for `echo=FALSE` without output specification
-2. Verify `results='hide'` not accidentally set
-3. For plots: ensure `print()` is called for ggplot objects
-4. For tables: use `knitr::kable()` or similar
-
-### Inconsistent Display Across Platforms
-
-**Problem:** Code folding works in browser but not on GitHub
-
-**Solutions:**
-1. Render HTML locally and check display
-2. Ensure Quarto version is current
-3. Use `quarto check` to verify setup
-4. For GitHub display: Use raw HTML in README
+See [templates-and-testing.md](references/templates-and-testing.md) for detailed troubleshooting guidance.
 
 ## Integration with Package Workflow
 
-### Step 1: Create Vignette with Code Folding
+Steps: (1) Create vignette with code folding using templates, (2) Build and test locally, (3) Verify display in browser, (4) Include in `_pkgdown.yml`, (5) Build website with `pkgdown::build_site()`.
 
-Use the templates above.
-
-### Step 2: Build and Test Locally
-
-```bash
-# In Nix shell
-Rscript -e "devtools::build_vignettes()"
-# OR
-quarto render vignettes/your-vignette.qmd
-```
-
-### Step 3: Verify Display
-
-```bash
-# Open in browser
-open doc/your-vignette.html
-# or
-open vignettes/your-vignette.html
-```
-
-### Step 4: Include in pkgdown
-
-Update `_pkgdown.yml`:
-
-```yaml
-articles:
-  - title: "Guides"
-    contents:
-      - your-vignette
-```
-
-### Step 5: Build Website
-
-```bash
-pkgdown::build_site()
-```
+See [templates-and-testing.md](references/templates-and-testing.md) for commands and configuration details.
 
 ## Testing Code Folding
 
-### Automated Test
+Automated tests and manual verification checklists for ensuring code folding works correctly.
 
-Create `tests/test-vignettes.R`:
-
-```r
-test_that("vignette html contains code-fold", {
-  # Build vignette
-  devtools::build_vignettes()
-
-  # Read generated HTML
-  html <- readLines("doc/your-vignette.html")
-  html_text <- paste(html, collapse = "\n")
-
-  # Check for folding indicators
-  expect_true(grepl("code-fold", html_text) ||
-              grepl("Show code", html_text))
-})
-```
-
-### Manual Verification Checklist
-
-For each vignette:
-
-- [ ] "Show code" button visible
-- [ ] Code hidden by default
-- [ ] All plots/tables display correctly
-- [ ] Click button expands code
-- [ ] Click again collapses code
-- [ ] No JavaScript errors in console
-- [ ] Works in latest Chrome/Firefox
-- [ ] pkgdown site displays correctly
-- [ ] GitHub renders HTML properly
+See [templates-and-testing.md](references/templates-and-testing.md) for the test code and checklist.
 
 ## Standards Summary
 
