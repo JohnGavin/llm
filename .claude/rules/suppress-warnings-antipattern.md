@@ -1,3 +1,9 @@
+---
+paths:
+  - "R/**/*.R"
+  - "tests/**/*.R"
+---
+
 # Anti-Pattern: suppressWarnings(as.*) for Type Coercion
 
 ## The Problem

@@ -13,18 +13,11 @@ Use this skill when:
 - Creating slides or sections that vary by input
 - Rendering computed content that includes R code
 
-## ⚠️ MANDATORY: Project Configuration
+## MANDATORY: Project Configuration
 
 **CRITICAL:** When setting up ANY Quarto project, you MUST explicitly specify which files to render.
 
-### Why This Is Mandatory
-
-By default, Quarto auto-discovers and attempts to render ALL `.md` and `.qmd` files in your project. This causes failures when:
-- `.md` documentation files (like `AGENTS.md`, `README.md`) contain R code blocks (examples)
-- Quarto tries to execute code in `.md` files and fails with:
-  ```
-  ERROR: You must use the .qmd extension for documents with executable code.
-  ```
+By default, Quarto auto-discovers and attempts to render ALL `.md` and `.qmd` files in your project. This causes failures when `.md` documentation files contain R code blocks.
 
 ### Required `_quarto.yml` Pattern
 
@@ -50,12 +43,12 @@ website:
 
 | File Pattern | Default Behavior | With explicit `render:` |
 |--------------|-----------------|-------------------------|
-| `*.qmd` | ✅ Rendered | Only if listed |
-| `*.md` | ✅ Rendered (may fail) | ❌ Ignored |
-| `README.md` | ⚠️ Tries to render | ❌ Ignored |
-| `AGENTS.md` | ⚠️ Fails if has code | ❌ Ignored |
+| `*.qmd` | Rendered | Only if listed |
+| `*.md` | Rendered (may fail) | Ignored |
+| `README.md` | Tries to render | Ignored |
+| `AGENTS.md` | Fails if has code | Ignored |
 
-### Common Patterns
+### Common Render Patterns
 
 ```yaml
 # Website with vignettes
@@ -79,409 +72,74 @@ render:
 ### Why Standard Approaches Fail
 
 ```r
-# ❌ DOESN'T WORK: results="asis" with embedded R code
-```{r}
-#| results: asis
-cat("```{r}\nplot(1:10)\n```")  # R code NOT executed
-```
-
-# Problem: Quarto renders the chunk output, then moves on.
+# results="asis" with embedded R code does NOT work:
+# cat("```{r}\nplot(1:10)\n```")  # R code NOT executed
+# Quarto renders the chunk output, then moves on.
 # Any R code in the output is treated as plain text.
 ```
 
 ### The Solution: Pre-render with knitr
 
 ```r
-# ✅ WORKS: Inline knitr::knit() forces evaluation
+# Inline knitr::knit() forces evaluation of generated R chunks:
 `r knitr::knit(text = your_generated_markdown)`
 ```
 
-## Pattern 1: Dynamic Tabsets
+## Dynamic Content Patterns
 
-### Basic Tabset Generation
+Four core patterns for generating dynamic content, plus a real-world example.
 
-Create child template `_child.qmd`:
+See [dynamic-patterns.md](references/dynamic-patterns.md) for detailed code examples.
 
-```markdown
-## `r hw`
-This section is about `r hw`.
+### Pattern Summary
 
-```{r}
-#| echo: false
-library(dplyr)
-starwars |>
-  filter(homeworld == hw) |>
-  select(name, height, mass) |>
-  knitr::kable()
-```
-```
+| Pattern | Use Case | Mechanism |
+|---------|----------|-----------|
+| 1. Dynamic Tabsets | One tab per data category | `knit_child()` with child .qmd, or inline `glue()` |
+| 2. Inline Knitting | Generated content with R chunks | `glue()` + inline `` `r knitr::knit(text=...)` `` |
+| 3. Data-Driven Sections | Sections from nested data frames | `pmap_chr()` + `nest()` + `knitr::knit()` |
+| 4. Parameterized Reports | Template function per region/group | Template function + `map_chr()` + `knitr::knit()` |
 
-Main document:
+### Key Technique: knit_child with child templates
 
-```markdown
----
-title: "Star Wars Characters by Homeworld"
----
-
-::: {.panel-tabset}
-
-```{r}
-#| results: asis
-#| echo: false
-
-library(dplyr)
-library(purrr)
-
-# Get unique homeworlds
-homeworlds <- starwars |>
-  filter(!is.na(homeworld)) |>
-  distinct(homeworld) |>
-  pull()
-
-# Generate one tab per homeworld
-res <- map_chr(homeworlds, \(hw) {
-  knitr::knit_child(
-    input = "_child.qmd",
-    envir = environment(),  # Share variables
-    quiet = TRUE
-  )
+```r
+res <- map_chr(categories, \(cat) {
+  knitr::knit_child("_child.qmd", envir = environment(), quiet = TRUE)
 })
-
 cat(res, sep = "\n")
 ```
 
-:::
-```
-
-### Inline Tabset (No Child File)
-
-```markdown
-::: {.panel-tabset}
-
-```{r}
-#| results: asis
-#| echo: false
-
-library(purrr)
-
-categories <- c("setosa", "versicolor", "virginica")
-
-res <- map_chr(categories, \(species) {
-  glue::glue("
-## {species}
-
-```{{r}}
-#| echo: false
-iris |>
-  dplyr::filter(Species == '{species}') |>
-  head() |>
-  knitr::kable()
-```
-
-", .open = "{{", .close = "}}")
-})
-
-cat(res, sep = "\n")
-```
-
-:::
-```
-
-**Note:** Use `{{` and `}}` delimiters with glue to avoid conflicts with R code fences.
-
-## Pattern 2: Inline Knitting
-
-For generated content that includes R chunks:
-
-```markdown
-```{r}
-#| include: false
-
-# Generate markdown with R chunks
-generated <- glue::glue("
-## Analysis for Group A
-
-```<<r>>
-summary(mtcars)
-```
-
-## Analysis for Group B
-
-```<<r>>
-summary(iris)
-```
-", .open = "<<", .close = ">>")
-```
-
-`r knitr::knit(text = generated)`
-```
-
-**Critical:** The inline `` `r knitr::knit(...)` `` forces Quarto to evaluate the generated R chunks.
-
-## Pattern 3: Data-Driven Sections
-
-### Using Nested Data Frames
+### Key Technique: Inline knitting for generated R chunks
 
 ```r
-```{r}
-#| include: false
+# In a hidden chunk, build markdown with R code using glue:
+generated <- glue::glue("```<<r>>\nsummary(mtcars)\n```", .open = "<<", .close = ">>")
 
-library(tidyr)
-library(purrr)
-library(ggplot2)
-
-# Create nested data with plots
-analysis_data <- mtcars |>
-  group_by(cyl) |>
-  nest() |>
-  mutate(
-    plot = map(data, \(d) {
-      ggplot(d, aes(mpg, hp)) + geom_point()
-    }),
-    summary_text = map_chr(data, \(d) {
-      paste("N =", nrow(d), "Mean MPG =", round(mean(d$mpg), 1))
-    })
-  )
-
-# Generate markdown for each group
-sections <- pmap_chr(analysis_data, \(cyl, data, plot, summary_text) {
-  # Save plot to temp file
-  plot_file <- tempfile(fileext = ".png")
-  ggsave(plot_file, plot, width = 6, height = 4)
-
-  glue::glue("
-## {cyl} Cylinder Cars
-
-{summary_text}
-
-![Plot for {cyl} cylinders]({plot_file})
-
-", .open = "{{", .close = "}}")
-})
+# Then force evaluation with inline R:
+# `r knitr::knit(text = generated)`
 ```
 
-`r knitr::knit(text = paste(sections, collapse = "\n"))`
-```
+## Execution Contexts and Gotchas
 
-## Pattern 4: Parameterized Reports
+Shiny execution contexts (`setup`, `server`, `data`, `server-start`), common delimiter/environment/ordering pitfalls, and `knitr::knit_expand()` for simple substitution.
 
-### Template Function Approach
+See [shiny-contexts-and-gotchas.md](references/shiny-contexts-and-gotchas.md) for detailed guidance.
 
-```r
-```{r}
-#| include: false
+### Context Quick Reference
 
-generate_section <- function(region, data) {
-  regional_data <- data |> filter(region == !!region)
+| Context | When it runs | Use for |
+|---------|-------------|---------|
+| `setup` | Render + serve | Libraries, shared data |
+| `server` | Serve only | Reactive logic |
+| `data` | Render (saves .RData) | Expensive data loading |
+| `server-start` | Once at startup | Shared DB connections |
 
-  glue::glue("
-## Region: {region}
+### Gotcha Quick Reference
 
-### Summary Statistics
-
-```<<r>>
-#| echo: false
-regional_summary <- data |>
-  filter(region == '{region}') |>
-  summarize(
-    total = sum(sales),
-    avg = mean(sales)
-  )
-knitr::kable(regional_summary)
-```
-
-### Trend Plot
-
-```<<r>>
-#| echo: false
-#| fig-width: 8
-data |>
-  filter(region == '{region}') |>
-  ggplot(aes(date, sales)) +
-  geom_line() +
-  labs(title = 'Sales Trend: {region}')
-```
-
----
-
-", .open = "<<", .close = ">>")
-}
-
-# Generate all sections
-all_sections <- map_chr(unique(sales_data$region), \(r) {
-  generate_section(r, sales_data)
-})
-```
-
-`r knitr::knit(text = paste(all_sections, collapse = "\n"))`
-```
-
-## Execution Contexts (Shiny in Quarto)
-
-For Quarto documents with Shiny components:
-
-### Context Types
-
-```yaml
-```{r}
-#| context: setup
-# Runs in BOTH render and serve
-# Use for: libraries, shared data loading
-library(shiny)
-library(ggplot2)
-```
-
-```{r}
-#| context: server
-# Runs ONLY when served (not during render)
-# Use for: reactive logic, server functions
-output$plot <- renderPlot({
-  plot(rnorm(input$n))
-})
-```
-
-```{r}
-#| context: data
-# Runs during render, saves to .RData for server
-# Use for: expensive data loading (load once, use in server)
-big_data <- readRDS("large_dataset.rds")
-```
-
-```{r}
-#| context: server-start
-# Runs ONCE when Shiny doc starts
-# Use for: database connections shared across sessions
-con <- DBI::dbConnect(...)
-```
-```
-
-### Context Decision Tree
-
-```
-Need to load libraries?
-  → context: setup (runs in both phases)
-
-Need reactive server logic?
-  → context: server (runs only when served)
-
-Loading large data used by server?
-  → context: data (pre-loads, saves to .RData)
-
-Opening shared connection (DB, API)?
-  → context: server-start (once at startup)
-```
-
-## Common Gotchas
-
-### 1. Delimiter Conflicts
-
-```r
-# ❌ PROBLEM: Triple backticks inside glue
-glue("```{r}\ncode\n```")  # Breaks!
-
-# ✅ SOLUTION: Change glue delimiters
-glue("
-```{r}
-code
-```
-", .open = "<<", .close = ">>")
-```
-
-### 2. Environment Isolation
-
-```r
-# ❌ PROBLEM: Variable not found in child
-hw <- "Tatooine"
-knitr::knit_child("_child.qmd")  # hw not available!
-
-# ✅ SOLUTION: Pass environment explicitly
-knitr::knit_child(
-  "_child.qmd",
-  envir = environment()  # Share current environment
-)
-```
-
-### 3. Chunk Ordering
-
-```r
-# ❌ PROBLEM: Generated chunks not executed
-```{r}
-#| results: asis
-cat("```{r}\nplot(1:10)\n```")
-```
-# Quarto already moved past this chunk!
-
-# ✅ SOLUTION: Use inline knitr::knit()
-`r knitr::knit(text = "```{r}\nplot(1:10)\n```")`
-```
-
-### 4. IDE Syntax Highlighting
-
-Complex nested backticks confuse editors. Strategies:
-- Split templates into multiple glue() calls
-- Use child .qmd files
-- Accept broken highlighting in complex sections
-
-## Advanced: knitr::knit_expand()
-
-For simple variable substitution without chunks:
-
-```markdown
-Template file `_template.qmd`:
-## Report for {{region}}
-Sales total: {{total}}
-Generated: {{Sys.Date()}}
-```
-
-```r
-```{r}
-#| results: asis
-cat(knitr::knit_expand(
-  file = "_template.qmd",
-  region = "North",
-  total = "$1.2M"
-))
-```
-```
-
-## Real-World Example: Election Results
-
-From Andrew Heiss's blog - generating 100+ race sections:
-
-```r
-```{r}
-#| include: false
-
-# Data with one row per race
-races <- tibble(
-  race_id = 1:100,
-  race_name = paste("Race", 1:100),
-  candidates = list(...)  # Nested data
-)
-
-# Template function
-generate_race_section <- function(race_id, race_name, candidates) {
-  glue::glue("
-## {race_name}
-
-```<<r>>
-#| echo: false
-#| label: fig-race-{race_id}
-candidates <- races$candidates[[{race_id}]]
-ggplot(candidates, aes(name, votes)) +
-  geom_col() +
-  labs(title = '{race_name}')
-```
-
-", .open = "<<", .close = ">>")
-}
-
-# Generate all sections
-all_races <- pmap_chr(races, generate_race_section)
-```
-
-`r knitr::knit(text = paste(all_races, collapse = "\n"))`
-```
+1. **Delimiter conflicts**: Change glue delimiters (`.open = "<<"`, `.close = ">>"`) when generating code fences
+2. **Environment isolation**: Always pass `envir = environment()` to `knit_child()`
+3. **Chunk ordering**: Use inline `` `r knitr::knit(text=...)` `` -- `results: asis` alone won't execute generated R
+4. **IDE highlighting**: Use child .qmd files or split complex templates
 
 ## Best Practices
 
