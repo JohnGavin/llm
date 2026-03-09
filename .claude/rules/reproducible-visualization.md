@@ -1,3 +1,9 @@
+---
+paths:
+  - "R/**"
+  - "vignettes/**"
+  - "*.qmd"
+---
 # Reproducible Data Visualization & Reporting
 
 This skill enforces strict adherence to the "Ten Simple Rules for Reproducible Computational Research" (Sandve et al., 2013), specifically refining Rules 7, 8, and 9 for R/Quarto projects.

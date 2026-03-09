@@ -1,3 +1,8 @@
+---
+paths:
+  - "R/**"
+  - "plans/**"
+---
 # Architecture Planning and Design
 
 ## Description

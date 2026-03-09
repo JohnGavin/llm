@@ -150,6 +150,10 @@ See [shiny-contexts-and-gotchas.md](references/shiny-contexts-and-gotchas.md) fo
 5. **Test templates individually** before scaling to full data
 6. **Use meaningful chunk labels** for cross-references
 
+## Dynamic Tabsets from Factor Variables
+
+For generating tabsets dynamically from factor levels (e.g., one tab per station/category/region), see [dynamic-tabsets.md](references/dynamic-tabsets.md). Covers `results: asis` with `cat()`, pre-compute and include patterns, explicit tabs, aggregate "All" views, and troubleshooting.
+
 ## Resources
 
 - [R Markdown Cookbook - Child Documents](https://bookdown.org/yihui/rmarkdown-cookbook/child-document.html)
@@ -157,6 +161,7 @@ See [shiny-contexts-and-gotchas.md](references/shiny-contexts-and-gotchas.md) fo
 - [Quarto Tabsets Example](https://github.com/quarto-dev/quarto-examples/blob/main/tabsets/tabsets-from-r-chunks/)
 - [Quarto Execution Contexts](https://quarto.org/docs/interactive/shiny/execution.html)
 - [knitr::knit_expand()](https://bookdown.org/yihui/rmarkdown-cookbook/knit-expand.html)
+- [Danielle Navarro: Quarto Syntax from R](https://blog.djnavarro.net/posts/2025-07-05_quarto-syntax-from-r/)
 
 ## Related Skills
 

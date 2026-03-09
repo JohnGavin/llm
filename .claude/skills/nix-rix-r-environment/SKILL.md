@@ -89,7 +89,14 @@ rix(r_ver = "2024-06-01", ...)
 rix::available_dates()  # Find dates with R 4.5.x
 ```
 
+## Drift Detection
+
+Detect when DESCRIPTION changes but default.nix hasn't been regenerated. Includes a targets plan, helper function, CI integration, and pre-commit hook.
+
+See [drift-detection.md](references/drift-detection.md) for full implementation.
+
 ## Reference
 
 *   [Troubleshooting](troubleshooting.md) - Fix common issues.
 *   [Advanced Patterns](advanced-patterns.md) - Date selection, caching, GC roots.
+*   [Drift Detection](references/drift-detection.md) - DESCRIPTION/default.nix sync check.

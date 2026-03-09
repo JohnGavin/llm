@@ -161,6 +161,12 @@ project/
 - **R package best practices**: https://nrennie.rbind.io/r-pharma-2025-r-packages
 - **Reddit discussion**: https://www.reddit.com/r/ChatGPTCoding/comments/1lm3fxq/gemini_cli_is_awesome_but_only_when_you_make/
 
+## Gemini as Subagent for Token Offloading
+
+Use Gemini as a "subagent" to offload read-heavy work from Claude, reducing token consumption. Key strategies: bulk analysis delegation, parallel analysis, second opinions, documentation generation.
+
+See [subagent-patterns.md](references/subagent-patterns.md) for full details including invocation patterns, token offloading strategies, cost comparison, and best practices.
+
 ## Related Skills
 
 - r-package-workflow (use Gemini for understanding, workflow for changes)
