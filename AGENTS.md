@@ -60,10 +60,14 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 
 ### R Package Development
 - `cli-package` — cli inline markup, conditions, progress
+- `dplyr-1.1-patterns` — .by=, pick(), reframe(), join_by(), consecutive_id()
+- `rlang-patterns` — {{}} embrace, injection, defusing, try_fetch()
+- `vctrs-patterns` — Custom vector classes, vec_cast/ptype2, vec_arith
+- `s7-oop` — Modern R OOP: new_class(), generics, S7 vs R6/S4
 - `lifecycle-management` — deprecate_soft/warn/stop workflow
 - `cran-submission` — CRAN-specific extra checks
 - `testthat-patterns` — testthat 3 BDD, snapshots, mocking
-- `tidyverse-style` — Code style + air formatter
+- `tidyverse-style` — Code style + air formatter + stringr patterns
 - `r-cmd-check-fixes` — Common R CMD check solutions
 - `lazy-evaluation-guide` — NSE, tidy eval patterns
 - `r-cli-app` — CLI apps with Rapp package
