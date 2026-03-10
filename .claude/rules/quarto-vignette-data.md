@@ -78,7 +78,35 @@ The **ONLY** exception is the setup chunk which contains:
 - FORBIDDEN: `library(<own-package>)` or any DESCRIPTION dependency
 - Enforced by: `~/.claude/hooks/vignette_check.sh`
 
-## 4. FULL DATE RANGE REQUIREMENT
+## 4. PKGDOWN/CI RENDERING GUARDS
+
+**MANDATORY**: Vignettes using `targets` store data MUST guard against missing store in CI.
+
+**Setup chunk pattern:**
+```r
+in_pkgdown <- nzchar(Sys.getenv("IN_PKGDOWN"))
+knitr::opts_chunk$set(
+  eval = !in_pkgdown,
+  echo = FALSE,
+  # ...
+)
+if (!in_pkgdown) library(targets)
+```
+
+**Callout banner** (eval ONLY in pkgdown):
+```r
+#| results: asis
+#| eval: !expr in_pkgdown
+#| echo: false
+cat("::: {.callout-note}\n## Online documentation\nRun `targets::tar_make()` locally to see full output.\n:::\n")
+```
+
+**Post-deploy verification** (CI step):
+- Grep all rendered HTML for `#> NULL`, `#> Error`, `not available`, `could not find`
+- FAIL the build if any error patterns are found
+- This catches regressions where vignettes accidentally evaluate in CI
+
+## 5. FULL DATE RANGE REQUIREMENT
 
 **MANDATORY**: Targets querying time-series data MUST use full date range.
 

@@ -230,6 +230,66 @@ empty_chunks <- grep("<!-- empty tar_read -->", html)
 if (length(empty_chunks) > 0) stop("Evidence blocks returned NULL!")
 ```
 
+## 12. POST-PUBLISH VALIDATION (MANDATORY)
+
+**CRITICAL**: After EVERY pkgdown deployment, validate published vignettes.
+
+**Validation steps (run after CI completes):**
+```bash
+# 1. Fetch published HTML and check for missing evidence
+curl -s https://<user>.github.io/<pkg>/articles/<vignette>.html | \
+  grep -c "MISSING EVIDENCE" && echo "FAIL: Missing evidence found!"
+
+# 2. Check for empty plot containers
+curl -s <url> | grep -c "plotly-graph-div.*></div></div>" | \
+  grep -v "^0$" && echo "FAIL: Empty plots found!"
+
+# 3. Verify page loads (no infinite spinners)
+curl -s -o /dev/null -w "%{time_total}" <url> | \
+  awk '{if ($1 > 10) print "WARN: Page load > 10s"}'
+```
+
+**Agent must ALWAYS run post-publish validation:**
+1. After any `pkgdown::build_site()` or pkgdown CI workflow
+2. Grep published HTML for: `[MISSING EVIDENCE]`, empty divs, broken images
+3. Report issues to user before claiming success
+4. Do NOT claim workflow complete until validation passes
+
+**Pre-computed outputs for CI:**
+When vignettes use `tar_read()`, ensure CI can build without `_targets/`:
+1. Store pre-computed outputs in `inst/extdata/vignettes/` as RDS
+2. Modify `safe_tar_read()` to fallback to RDS when targets unavailable
+3. Update CI to use pre-computed data OR run `tar_make()`
+
+```r
+# Example fallback pattern in vignette setup
+safe_tar_read <- function(name) {
+ # Try targets first
+ result <- tryCatch(targets::tar_read_raw(name), error = function(e) NULL)
+
+ # Fallback to pre-computed RDS
+ if (is.null(result)) {
+   rds_path <- system.file(
+     paste0("extdata/vignettes/", name, ".rds"),
+     package = "pkgname"
+   )
+   if (file.exists(rds_path)) {
+     result <- readRDS(rds_path)
+   }
+ }
+
+ # Return visible error if still missing
+ if (is.null(result)) {
+   htmltools::div(
+     style = "background:#dc3545;color:white;padding:1em;",
+     paste0("[MISSING EVIDENCE] Target `", name, "` not found.")
+   )
+ } else {
+   result
+ }
+}
+```
+
 ## Checklist
 
 - [ ] **EVIDENCE**: Every claim/assertion has adjacent plot or table evidence
