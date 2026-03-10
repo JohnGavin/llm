@@ -46,6 +46,7 @@ Skip any step = lying, not verifying
 
 | Claim | Required Command | Not Sufficient |
 |-------|------------------|----------------|
+| "Website deployed" | Grep published HTML for `#> NULL`, `#> Error`, `not available` | "Build succeeded" alone |
 | "Tests pass" | `devtools::test()` output: 0 failures | Previous run, "should pass" |
 | "Check passes" | `devtools::check()` output: 0 errors, 0 warnings, 0 notes | Tests passing alone |
 | "Documentation updated" | `devtools::document()` then `check()` | Just running document() |
