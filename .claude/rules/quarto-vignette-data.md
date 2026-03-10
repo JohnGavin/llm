@@ -1,10 +1,11 @@
 ---
 paths:
   - "*.qmd"
-  - "*.Rmd"
   - "vignettes/**"
 ---
 # Quarto Vignette Data Rules
+
+All vignettes use `.qmd` format exclusively. See `quarto-vignette-format.md` Rule 0.
 
 ## 1. NO SAMPLED DATA WITHOUT EXPLICIT APPROVAL
 
