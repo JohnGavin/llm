@@ -2,6 +2,108 @@
 
 Full implementations for `R/telemetry.R`.
 
+## Git Changelog (per-vignette footer)
+
+```r
+#' Parse git log with numstat for changelog display
+#' @param max_commits Maximum number of commits to parse
+#' @return tibble with date, type, summary, n_files, lines_added, lines_removed, file_categories
+parse_git_changelog <- function(max_commits = 20) {
+  if (!requireNamespace("gert", quietly = TRUE)) return(NULL)
+  log_df <- gert::git_log(max = max_commits)
+
+  numstat_raw <- system2(
+    "git",
+    c("log", paste0("-", max_commits), "--numstat", "--format=COMMIT:%H"),
+    stdout = TRUE, stderr = FALSE
+  )
+
+  current_hash <- NA_character_
+  records <- list()
+  for (line in numstat_raw) {
+    if (grepl("^COMMIT:", line)) {
+      current_hash <- sub("^COMMIT:", "", line)
+    } else if (nzchar(trimws(line)) && !is.na(current_hash)) {
+      parts <- strsplit(trimws(line), "\t")[[1]]
+      if (length(parts) == 3) {
+        records[[length(records) + 1]] <- data.frame(
+          hash = current_hash,
+          added = suppressWarnings(as.integer(parts[1])),
+          deleted = suppressWarnings(as.integer(parts[2])),
+          file = parts[3], stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+
+  numstat_df <- if (length(records) > 0) do.call(rbind, records)
+    else data.frame(hash = character(), added = integer(),
+                    deleted = integer(), file = character(),
+                    stringsAsFactors = FALSE)
+
+  # Categorize files and commits
+  categorize_file <- function(f) {
+    dplyr::case_when(
+      grepl("^R/", f) ~ "R Source", grepl("^tests/", f) ~ "Tests",
+      grepl("^vignettes/", f) ~ "Vignettes", grepl("^\\.github/", f) ~ "CI/CD",
+      grepl("^man/", f) ~ "Docs",
+      grepl("DESCRIPTION|NAMESPACE|\\.yml$|\\.yaml$", f) ~ "Config",
+      TRUE ~ "Other"
+    )
+  }
+  categorize_commit <- function(msg) {
+    msg <- trimws(msg)
+    dplyr::case_when(
+      grepl("^feat[:(]", msg, ignore.case = TRUE) ~ "New Feature",
+      grepl("^fix[:(]", msg, ignore.case = TRUE) ~ "Bug Fix",
+      grepl("^docs[:(]", msg, ignore.case = TRUE) ~ "Documentation",
+      grepl("^ci[:(]", msg, ignore.case = TRUE) ~ "CI/CD",
+      grepl("^refactor[:(]", msg, ignore.case = TRUE) ~ "Refactoring",
+      grepl("^test[:(]", msg, ignore.case = TRUE) ~ "Tests",
+      grepl("^chore[:(]", msg, ignore.case = TRUE) ~ "Maintenance",
+      grepl("^style[:(]", msg, ignore.case = TRUE) ~ "Style",
+      grepl("^perf[:(]", msg, ignore.case = TRUE) ~ "Performance",
+      TRUE ~ "Other"
+    )
+  }
+
+  if (nrow(numstat_df) > 0) {
+    numstat_df$category <- categorize_file(numstat_df$file)
+    agg <- numstat_df |>
+      dplyr::group_by(hash) |>
+      dplyr::summarise(
+        n_files = dplyr::n(),
+        lines_added = sum(added, na.rm = TRUE),
+        lines_removed = sum(deleted, na.rm = TRUE),
+        file_categories = paste(sort(unique(category)), collapse = ", "),
+        .groups = "drop"
+      )
+  } else {
+    agg <- data.frame(hash = character(), n_files = integer(),
+                      lines_added = integer(), lines_removed = integer(),
+                      file_categories = character(), stringsAsFactors = FALSE)
+  }
+
+  log_df$hash <- substr(log_df$commit, 1, 40)
+  agg$hash <- substr(agg$hash, 1, 40)
+
+  result <- dplyr::left_join(
+    tibble::tibble(date = as.Date(log_df$time), hash = log_df$hash,
+                   message = log_df$message),
+    agg, by = "hash"
+  )
+  result$type <- categorize_commit(result$message)
+  result$summary <- vapply(strsplit(result$message, "\n"), `[`, character(1), 1)
+  result$n_files[is.na(result$n_files)] <- 0L
+  result$lines_added[is.na(result$lines_added)] <- 0L
+  result$lines_removed[is.na(result$lines_removed)] <- 0L
+  result$file_categories[is.na(result$file_categories)] <- ""
+
+  result[, c("date", "type", "summary", "n_files",
+             "lines_added", "lines_removed", "file_categories")]
+}
+```
+
 ## Git History
 
 ```r

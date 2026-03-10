@@ -24,6 +24,12 @@ Each section consumes pre-computed targets via `safe_tar_read()` — zero inline
   ## Top by Size          — top 5 targets by stored bytes
   ## Top by Compute Time  — top 5 targets by execution seconds
 
+# Git Activity                        (MANDATORY)
+  ## Commit Velocity      — weekly commit bar chart by type
+  ## Changes by Type      — commits grouped by conventional-commit prefix
+  ## Changes by File Category — how often each file category was touched
+  ## Recent Commits       — full 20-commit changelog DT
+
 # GitHub Activity                     (MANDATORY)
   ## Commit Velocity      — weekly commit counts with timeline
   ## Issues & PRs         — open/closed/merged counts
@@ -53,6 +59,8 @@ Define in `plan_vignette_outputs.R` or `plan_telemetry.R`:
 | `vig_github_activity` | Issues & PRs | Fetches issues/PRs/workflows via `gh::gh()` |
 | `vig_github_activity_table` | Issues & PRs | DT summary table |
 | `vig_codebase_metrics` | Codebase | R files, tests, exports, LOC, version |
+| `vig_git_changelog` | Per-vignette footer | 20-commit DT with lines added/removed, files, types |
+| `vig_git_changelog_summary` | Git Activity | Telemetry aggregate: by_type, by_file_category, weekly_velocity |
 
 ## Implementation Patterns
 

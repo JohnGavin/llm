@@ -174,6 +174,11 @@ for file in "$VIGNETTES_DIR"/*.Rmd "$VIGNETTES_DIR"/*.qmd; do
     ERRORS=$((ERRORS + 1))
   fi
 
+  # --- Check for missing changelog footer ---
+  if ! grep -q 'vig_git_changelog' "$file" 2>/dev/null; then
+    echo -e "${YELLOW}WARNING: $filename missing vig_git_changelog footer${NC}"
+  fi
+
   # --- Check for user instructions in analysis vignettes ---
   # Exempt: README, introduction, how-to vignettes
   case "$filename" in
