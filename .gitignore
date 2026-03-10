@@ -42,8 +42,9 @@ proj/finance/data/etfs/
 proj/finance/quantitiativo.com/
 proj/stats/simulations/randomwalk/
 
-# Claude local settings (user-specific)
+# Claude local settings and ephemeral state
 .claude/settings.local.json
+.claude/CURRENT_WORK.md
 
 # Nix build artifacts
 result
