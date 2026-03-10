@@ -6,6 +6,28 @@ paths:
 ---
 # Quarto Vignette Format Rules
 
+## 0. QUARTO FORMAT ONLY (NO .Rmd)
+
+**MANDATORY**: All vignettes MUST use Quarto `.qmd` format. R Markdown `.Rmd` is FORBIDDEN for vignettes. No exceptions.
+
+**Required YAML header pattern:**
+```yaml
+---
+title: "Vignette Title"
+format: html
+---
+```
+
+**Forbidden:**
+- `.Rmd` file extension for any file in `vignettes/`
+- `output: rmarkdown::html_vignette` in YAML
+- `%\VignetteEngine{knitr::rmarkdown}` directives
+- `%\VignetteIndexEntry{}` directives (pkgdown articles don't need these)
+
+**Rationale:** Quarto is the successor to R Markdown, provides better HTML output, native mermaid support, and consistent cross-language features. Standardising on one format prevents format drift.
+
+**Check:** `ls vignettes/*.Rmd 2>/dev/null && echo "ERROR: .Rmd files found in vignettes/"`
+
 ## 1. UNIQUE SECTION TITLES
 
 **MANDATORY**: Every section and subsection MUST have a unique, descriptive title.
@@ -102,13 +124,6 @@ format:
     code-fold: true              # MANDATORY
     code-summary: "Show code"    # MANDATORY
     code-tools: true             # Optional
-```
-
-R Markdown (.Rmd):
-```yaml
-output:
-  html_document:
-    code_folding: hide           # MANDATORY
 ```
 
 Rules:
