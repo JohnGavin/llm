@@ -393,8 +393,29 @@ This renders as an empty collapsible section in pkgdown, which is confusing.
 awk '/<details>/,/<\/details>/' docs/articles/*.html | grep -B1 '</details>' | grep -v '<summary>\|</details>\|^--$'
 ```
 
+## 17. CHANGELOG FOOTER (MANDATORY)
+
+Every vignette MUST include a `## Recent Changes` section that displays
+`safe_tar_read("vig_git_changelog")`. This shows the last 20 project
+commits with lines added, files changed, and change categories.
+Place before `## Reproducibility`.
+
+**Required pattern:**
+```markdown
+## Recent Changes
+
+Recent project commits with lines added, files changed, and change categories.
+
+```{r changelog}
+safe_tar_read("vig_git_changelog")
+```
+```
+
+**Check:** `grep -L 'vig_git_changelog' vignettes/*.qmd`
+
 ## Checklist
 
+- [ ] **CHANGELOG**: Every vignette has ## Recent Changes with vig_git_changelog
 - [ ] **EVIDENCE**: Every claim/assertion has adjacent plot or table evidence
 - [ ] **EVIDENCE**: All `tar_read()` calls return non-NULL rendered output
 - [ ] **EVIDENCE**: Ran `tar_make()` before building vignettes
