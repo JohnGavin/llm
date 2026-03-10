@@ -290,6 +290,109 @@ safe_tar_read <- function(name) {
 }
 ```
 
+## 13. NO EMPTY SECTIONS (MANDATORY)
+
+**CRITICAL**: Every section (`##` or `###`) MUST contain at least one line of prose text before any code chunk. A heading followed directly by a code chunk with no explanatory text is FORBIDDEN.
+
+**Rationale:** In CI builds where `eval=FALSE`, a heading + unevaluated code chunk renders as a completely empty section with no content, confusing readers.
+
+**Required patterns:**
+```markdown
+### Forest Plot
+
+Forest plot showing hazard ratios from the multivariate Cox regression.
+Each row represents a covariate with 95% CI bars.
+
+```{r forest-plot}
+safe_tar_read("vig_forest_plot")
+```
+```
+
+**Forbidden pattern:**
+```markdown
+### Forest Plot
+
+```{r forest-plot}
+safe_tar_read("vig_forest_plot")
+```
+```
+
+**Draft placeholders:** If a section is incomplete, it MUST contain:
+```markdown
+*This section is under development. See [issue #N] for planned content.*
+```
+
+**Check:** `awk '/^#{2,4} / { h=$0; next } /^```\{r/ { if (h) print FILENAME": "h; h=""; next } /^[[:space:]]*$/ { next } { h="" }' vignettes/*.qmd`
+
+## 14. CAPTIONED TABLE OR PLOT REQUIRED (MANDATORY)
+
+**CRITICAL**: Every vignette MUST contain at least one captioned table (`DT::datatable(..., caption=)`) or captioned plot (`fig.cap=` or `fig-cap:`).
+
+Vignettes with zero visual evidence are incomplete drafts and MUST NOT be merged.
+
+**Check:** `grep -qE 'fig\.cap|fig-cap|caption\s*=' vignettes/my-vignette.qmd || echo "ERROR: no captions"`
+
+## 15. NO USER INSTRUCTIONS IN ANALYSIS VIGNETTES (MANDATORY)
+
+**CRITICAL**: Analysis vignettes are for users to understand the project and its outputs. They MUST NOT contain instructions telling users to run commands.
+
+**Forbidden patterns in analysis vignettes:**
+- "Run `targets::tar_make()` to populate the data"
+- "Run `tar_make()` locally to see full output"
+- "Execute `devtools::test()` to verify"
+- Any imperative instruction telling users to run pipeline/build commands
+
+**Allowed exceptions:**
+- `README.qmd` — may contain setup/installation instructions
+- Introduction vignette — first few sections may have "Getting Started" instructions
+- How-to vignettes — explicitly instructional by nature
+- pkgdown callout banners — may note that "Full output requires a local pipeline run" (descriptive, not imperative)
+
+**Correct pkgdown banner pattern:**
+```markdown
+::: {.callout-note}
+## Online documentation
+This vignette shows pre-computed results from the targets pipeline.
+Some outputs may appear as placeholders in the online version.
+:::
+```
+
+**Wrong pattern:**
+```markdown
+::: {.callout-note}
+Run `targets::tar_make()` locally to see full output.
+:::
+```
+
+## 16. REPRODUCIBILITY SECTIONS MUST ALWAYS RENDER (MANDATORY)
+
+**CRITICAL**: `sessionInfo()` and git commit info sections MUST always produce visible output, even in CI/pkgdown builds where most chunks have `eval=FALSE`.
+
+**Required pattern:** Use `eval=TRUE` explicitly on reproducibility chunks:
+```markdown
+```{r session-info, eval=TRUE}
+sessionInfo()
+```
+```
+
+**Forbidden pattern:** Letting `sessionInfo()` inherit `eval = !in_pkgdown`:
+```markdown
+```{r session-info}
+sessionInfo()
+```
+```
+This renders as an empty collapsible section in pkgdown, which is confusing.
+
+**Rules:**
+- `sessionInfo()` chunks MUST have `eval=TRUE` (override the global `eval = !in_pkgdown`)
+- Git commit info chunks that use `safe_tar_read()` SHOULD be wrapped with a fallback showing `Sys.time()` and `R.version.string` if the target is unavailable
+- Empty `<details>` sections with no content are an ERROR — either always render content or remove the section entirely
+
+**Check:** After pkgdown build, grep published HTML for empty `<details>` blocks:
+```bash
+awk '/<details>/,/<\/details>/' docs/articles/*.html | grep -B1 '</details>' | grep -v '<summary>\|</details>\|^--$'
+```
+
 ## Checklist
 
 - [ ] **EVIDENCE**: Every claim/assertion has adjacent plot or table evidence
@@ -309,3 +412,7 @@ safe_tar_read <- function(name) {
 - [ ] All outputs visible (no hidden plots/tables)
 - [ ] All `_pkgdown.yml` article hrefs resolve (no 404s)
 - [ ] All internal links in built HTML verified
+- [ ] **SECTIONS**: No heading followed directly by code chunk without prose
+- [ ] **CAPTIONS**: Every vignette has at least one captioned table or plot
+- [ ] **NO INSTRUCTIONS**: Analysis vignettes don't instruct users to run commands
+- [ ] **REPRODUCIBILITY**: sessionInfo() chunks use `eval=TRUE` (always render)
