@@ -16,10 +16,9 @@
 - Commit: `ffde08b`
 
 ### Rule Enhancements
-- pkgdown rendering guards, post-publish validation, deploy verification
-- Commit: `1aff356`
-- Vignette prose/caption/instruction checks, glossary rule, hook updates
-- Commit: `31858f0`
+- pkgdown rendering guards, post-publish validation, deploy verification (`1aff356`)
+- Vignette prose/caption/instruction checks, glossary rule (`31858f0`)
+- Git changelog footer, diagram generation rule, telemetry functions (`074a42d`)
 
 ## Open Issues (irishbuoys)
 - #51: Order-statistics CIs for EVT models (Medium)
