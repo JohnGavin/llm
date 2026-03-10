@@ -151,6 +151,41 @@ for file in "$VIGNETTES_DIR"/*.Rmd "$VIGNETTES_DIR"/*.qmd; do
     done <<< "$bad_libs"
   fi
 
+  # --- Check for empty sections: heading immediately followed by code chunk ---
+  empty_sections=$(awk '
+    /^#{2,4} / { heading=$0; next }
+    /^```\{r/ { if (heading != "") { print FILENAME ": " heading; } heading="" ; next }
+    /^[[:space:]]*$/ { next }
+    { heading="" }
+  ' "$file" 2>/dev/null)
+
+  if [ -n "$empty_sections" ]; then
+    while IFS= read -r line; do
+      echo -e "${RED}ERROR: Empty section (heading with no prose before code chunk)${NC}"
+      echo "       $line"
+      ERRORS=$((ERRORS + 1))
+    done <<< "$empty_sections"
+  fi
+
+  # --- Check that every vignette has at least one captioned table or plot ---
+  if ! grep -qE 'fig\.cap|fig-cap|caption\s*=' "$file" 2>/dev/null; then
+    echo -e "${RED}ERROR: $filename has no captioned tables or plots${NC}"
+    echo "       Every vignette must have at least one captioned figure or table"
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  # --- Check for user instructions in analysis vignettes ---
+  # Exempt: README, introduction, how-to vignettes
+  case "$filename" in
+    README*|*intro*|*how-to*|*getting-started*) ;;
+    *)
+      if grep -qE 'Run `?targets::tar_make|Run `?tar_make\(\)|Execute `?devtools::' "$file" 2>/dev/null; then
+        echo -e "${YELLOW}WARNING: $filename contains user instructions (e.g., 'Run tar_make()')${NC}"
+        echo "         Analysis vignettes should explain outputs, not instruct users"
+      fi
+      ;;
+  esac
+
 done
 
 if [ $ERRORS -gt 0 ]; then
