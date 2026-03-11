@@ -1,59 +1,119 @@
-# Vignette Targets CI Rule
+# Vignette CI Pattern: Pre-Computed RDS Only
 
-## Description
+## Core Principle
 
-When adding or modifying targets that are used in vignettes (targets prefixed with `vig_`), ensure the CI workflow runs `tar_make()` before building the pkgdown site.
+**CI NEVER runs `tar_make()` for data-heavy pipelines.** Vignettes MUST precompute EVERYTHING locally.
 
-## Standard Pattern (RECOMMENDED)
+## Why CI Cannot Run tar_make()
 
-CI should run `tar_make()` to build vignette targets. This is the pattern used in:
-- **etfs**: `targets::tar_make()` before `pkgdown::build_site()` (simple)
-- **irishbuoys**: Full pipeline with `targets-runs` branch for state persistence (complex)
+1. **Data downloads**: Pipelines download external data (100+ CSV files, APIs, etc.)
+2. **Timeout limits**: CI has 40-minute timeout; full pipelines exceed this
+3. **External dependencies**: APIs may rate-limit, be unavailable, or change
+4. **Reproducibility**: CI should validate pre-computed outputs, not rebuild from scratch
+5. **Cost**: Downloading/processing data on every CI run wastes resources
 
-### Minimal CI Setup
+## Correct Pattern: Pre-Computed RDS
 
-Add this step BEFORE `pkgdown::build_site()` in `.github/workflows/pkgdown.yml`:
+### Local Workflow (Developer)
+
+```r
+# 1. Build pipeline locally (downloads data, fits models, etc.)
+targets::tar_make()
+
+# 2. Export vignette targets to RDS
+out_dir <- here::here("inst", "extdata", "vignettes")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+vignette_targets <- grep("^vig_", targets::tar_manifest()$name, value = TRUE)
+for (name in vignette_targets) {
+  obj <- targets::tar_read_raw(name)
+  saveRDS(obj, file.path(out_dir, paste0(name, ".rds")))
+}
+
+# 3. Commit RDS files
+gert::git_add("inst/extdata/vignettes/*.rds")
+gert::git_commit("chore: export pre-computed vignette targets")
+gert::git_push()
+```
+
+### CI Workflow (GitHub Actions)
+
+**pkgdown.yml should NOT contain any tar_make() step:**
 
 ```yaml
-- name: Run targets pipeline
+# CORRECT: No tar_make(), just build site using pre-computed RDS
+- name: Build pkgdown site
   run: |
     nix-shell default.nix -A shell --run "Rscript -e '
-      # Build vignette targets (vig_*) required for pkgdown site
-      targets::tar_make(names = tidyselect::starts_with(\"vig_\"))
+      devtools::document()
+      pkgdown::build_site(preview = FALSE)
     '"
 ```
 
-## Fallback Pattern (LEGACY)
+### Vignette Code (safe_tar_read fallback)
 
-For projects where `tar_make()` in CI is not feasible (e.g., external API dependencies, long-running computations), use pre-computed RDS files:
+```r
+safe_tar_read <- function(name) {
+  # Try targets store first (for local development)
+  result <- tryCatch(targets::tar_read_raw(name), error = function(e) NULL)
 
-1. Export targets to `inst/extdata/vignettes/*.rds` locally
-2. Commit RDS files to the repo
-3. Use `safe_tar_read()` pattern with RDS fallback in vignettes
+  # Fallback to pre-computed RDS (for CI/pkgdown builds)
+  if (is.null(result)) {
+    # Try installed package location
+    rds_path <- system.file(
+      file.path("extdata", "vignettes", paste0(name, ".rds")),
+      package = "pkgname"
+    )
+    # Fallback to source inst/ directory (pkgdown builds from source)
+    if (!nzchar(rds_path) || !file.exists(rds_path)) {
+      rds_path <- here::here("inst", "extdata", "vignettes", paste0(name, ".rds"))
+    }
+    if (file.exists(rds_path)) {
+      result <- readRDS(rds_path)
+    }
+  }
 
-**This is NOT recommended** - prefer running `tar_make()` in CI.
+  # Return error indicator if still missing
+  if (is.null(result)) {
+    htmltools::div(
+      style = "background:#dc3545;color:white;padding:1em;border-radius:4px;",
+      paste0("[MISSING EVIDENCE] Target `", name, "` not found in _targets/ or RDS fallback.")
+    )
+  } else {
+    result
+  }
+}
+```
 
-## Why tar_make() in CI is Better
+## When tar_make() in CI IS Appropriate
 
-- **Single source of truth**: Targets code defines outputs, not duplicated RDS files
-- **Always fresh**: No stale RDS files when target code changes
-- **Less maintenance**: No manual export/commit workflow
-- **Consistent with other projects**: irishbuoys, etfs use this pattern
+Only for **lightweight pipelines** where:
+- No external data downloads (data already in repo)
+- No long-running computations (< 5 minutes total)
+- No external API dependencies
+- Example: irishbuoys uses `targets-runs` branch pattern for incremental builds
+
+For most R packages with data pipelines: **use pre-computed RDS**.
+
+## Checklist Before Merging
+
+- [ ] All `vig_*` targets built locally: `tar_make(names = starts_with("vig_"))`
+- [ ] All RDS files exported: `list.files("inst/extdata/vignettes", "\\.rds$")`
+- [ ] RDS files committed: `git status` shows no unstaged RDS
+- [ ] pkgdown.yml has NO tar_make() step (unless lightweight pipeline)
+- [ ] Vignettes use `safe_tar_read()` with RDS fallback
+- [ ] CI builds pass without timeout
 
 ## Common Violations
 
-1. **pkgdown.yml missing tar_make()** - Workflow only runs `pkgdown::build_site()` without first building targets
-2. **Relying on manual RDS export** - Developer must remember to export after changes
+1. **Adding tar_make() to CI** - Causes 40-minute timeout for data-heavy pipelines
+2. **Forgetting to export RDS** - Vignettes show [MISSING EVIDENCE] on live site
 3. **Stale RDS files** - Target code changes but RDS not re-exported
+4. **Missing here::here() fallback** - system.file() doesn't work for pkgdown source builds
 
-## Integration with Workflow
-
-Before merging PRs that modify `vig_*` targets:
-- Verify CI runs `tar_make()` before `pkgdown::build_site()`
-- Check that targets build successfully in CI logs
-
-## Related
+## Related Files
 
 - `R/tar_plans/plan_vignette_outputs.R` - defines `vig_*` targets
-- `vignettes/*.qmd` - consume targets via `tar_load()` / `tar_read()`
-- `.github/workflows/pkgdown.yml` - CI workflow that builds targets
+- `inst/extdata/vignettes/*.rds` - pre-computed outputs
+- `vignettes/*.qmd` - consume via `safe_tar_read()`
+- `.github/workflows/pkgdown.yml` - CI workflow (NO tar_make())

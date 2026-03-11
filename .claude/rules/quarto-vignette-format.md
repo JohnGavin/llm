@@ -82,25 +82,68 @@ When using `format: dashboard`:
 - Tabsets: Use `{.tabset}` on columns with descriptive tab names
 - Anchors: Always add explicit IDs (`{#data-coverage}`)
 
-## 6. FULL-WIDTH VIGNETTES
+## 6. FULL-WIDTH VIGNETTES (100% RELATIVE WIDTH)
 
-**MANDATORY**: All vignettes must fill ~95% of the browser window width.
+**MANDATORY**: All vignettes MUST use 100% of the browser window width.
+
+**Key principle:** Use RELATIVE units (percentages) not ABSOLUTE units (pixels, cm).
+This ensures full width regardless of device (desktop, tablet, mobile).
 
 Required `pkgdown/extra.css`:
 ```css
-body > .container, .container {
-  max-width: 95% !important; width: 95%;
+/* Full-width container - 100% of viewport */
+body > .container, .container, .container-fluid {
+  max-width: 100% !important;
+  width: 100% !important;
+  padding-left: 1rem;
+  padding-right: 1rem;
 }
-.col-md-9 { flex: 0 0 80%; max-width: 80%; }
-.col-md-3 { flex: 0 0 20%; max-width: 20%; }
-.contents { max-width: none; width: 100%; }
-.js-plotly-plot { width: 100% !important; }
 
+/* Content area fills available space */
+.col-md-9 {
+  flex: 0 0 85% !important;
+  max-width: 85% !important;
+}
+.col-md-3 {
+  flex: 0 0 15% !important;
+  max-width: 15% !important;
+}
+
+/* Remove arbitrary width limits */
+.contents, main, article {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* Plots and tables fill container */
+.js-plotly-plot, .plotly, .datatables {
+  width: 100% !important;
+}
+table.dataTable {
+  width: 100% !important;
+}
+
+/* Mobile: hide TOC, content takes full width */
 @media (max-width: 991.98px) {
   #toc { display: none; }
-  .col-md-9 { flex: 0 0 100%; max-width: 100%; }
+  .col-md-9 {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+  .col-md-3 { display: none; }
 }
 ```
+
+**Forbidden:**
+- `max-width: 1200px` or any fixed pixel width
+- `width: 80vw` when 100% would work
+- Bootstrap default `container` max-widths
+
+**Check:** After pkgdown build, visually verify vignettes fill browser width on:
+- Desktop (1920px+ wide)
+- Laptop (1366px)
+- Tablet (768px)
+- Mobile (375px)
 
 ## 7. DASHBOARD STANDARDS
 
