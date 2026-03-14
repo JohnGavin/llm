@@ -29,8 +29,14 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`,
 `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`.
-**Mandatory rules:** `systematic-debugging`, `verification-before-completion`.
+**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`.
 See details: `memory/tool-preferences.md`, `memory/architecture.md`.
+
+**MCP r-btw Tools — ZERO TOLERANCE:**
+- **NEVER** call `btw_tool_run_r`, `btw_tool_pkg_test`, `btw_tool_pkg_check`, `btw_tool_pkg_coverage`, `btw_tool_pkg_document`, `btw_tool_pkg_load_all` directly. They have NO timeout and WILL hang.
+- **ALL R execution** MUST go through `Bash(command = "timeout N Rscript -e '...'")`. No exceptions.
+- **ONLY safe MCP tools**: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*` (read-only, no R execution).
+- See `btw-timeouts` rule for timeout values and patterns.
 
 ## Agents (8)
 
@@ -144,7 +150,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `/triage` | Quick issue analysis |
 | `/hi` | Alias for /session-start |
 
-## Rules (15)
+## Rules (22)
 
 | Rule | Enforces |
 |------|----------|
@@ -153,14 +159,21 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `ctx-yaml-cache` | Context YAML caching |
 | `data-in-packages` | Data storage conventions |
 | `data-validation-timeseries` | Time series validation |
+| `diagram-generation` | Mermaid diagram generation patterns |
+| `duckdb-non-determinism` | DuckDB parallelism pitfalls (window order, fan-out, dedup) |
 | `duckdplyr-not-sql` | Use duckdplyr not raw SQL |
+| `glossary-management` | Glossary term management |
 | `module-isolation` | Module isolation patterns |
 | `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
-| `quarto-vignette-format` | Vignette format rules (headings, tables, code-folding, dashboards) |
+| `quarto-vignette-evidence` | Claims require evidence, post-publish validation, missing evidence |
+| `quarto-vignette-format` | Vignette format rules (headings, tables, code-as-targets, dashboards) |
+| `quarto-vignette-layout` | Full-width CSS, dashboard standards, code-folding, broken links |
 | `reproducible-visualization` | Plot reproducibility via targets |
 | `suppress-warnings-antipattern` | Ban suppressWarnings(as.*) with solutions |
 | `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |
 | `verification-before-completion` | No completion claims without evidence |
+| `vignette-targets-export` | Pre-computed RDS for CI vignette builds |
+| `visualization-diagrams` | Mermaid/flowchart diagram standards, arrow styling, Plotly theme |
 | `visualization-standards` | Tufte/Gelman principles + caption standards |
 | `website-index-update` | Add project to johngavin.github.io on major version |
 

@@ -1,81 +1,117 @@
 ---
 paths:
-  - "*.R"
-  - "_targets.R"
+  - "R/**"
+  - "tests/**"
+  - "vignettes/**"
+  - ".github/workflows/**"
 ---
-# btw MCP Tool Configuration & Timeout Rules
+# btw MCP Tool Timeout Rules (GLOBAL — ALL PROJECTS)
 
-## No Infinite Waits (MANDATORY)
+## CRITICAL: MCP r-btw Tools Have NO Timeout
 
-**Blocking indefinitely is STRICTLY FORBIDDEN.** Any operation that could run
-longer than ~30 seconds MUST either:
+The `mcp__r-btw__*` tools have **NO built-in timeout** and will block indefinitely.
+There is NO way to cancel a stuck MCP tool call — the entire session hangs.
+This rule applies to ALL projects, ALL file types, ALL contexts.
 
-1. **Use a timeout** (Bash `timeout` parameter, or wrap with `timeout` command)
-2. **Run in background** (`run_in_background: true`) and check status non-blocking
-3. **Delegate to a subagent** (which has its own `max_turns` limit)
+## MANDATORY: ALL R Execution via Bash with Timeout
 
-## Common Violations (ALL FORBIDDEN)
+**ALL R code execution MUST use Bash with `timeout` command. No exceptions.**
 
-- `gh run watch` — blocks until CI finishes (10-30+ min)
-- `btw_tool_run_r` with long-running code — has NO built-in timeout
-- `btw_tool_pkg_check` / `btw_tool_pkg_test` — can run for minutes
-- `nix-build` without timeout — can take 30+ min on cache miss
-- Any `Bash` call without explicit `timeout` on commands > 30s
-- `shiny::runApp()` or `launch_dashboard()` — blocks forever
-- Any function that waits for user input or network response
+```bash
+# CORRECT: Every R execution goes through Bash with timeout
+Bash(command = "timeout 60 Rscript -e 'pkgload::load_all(); my_function()' 2>&1")
+
+# CORRECT: Long operations in background
+Bash(
+  command = "timeout 300 Rscript -e 'devtools::test()' > /tmp/test_output.txt 2>&1",
+  run_in_background = true
+)
+```
+
+**Timeout guidelines:**
+| Operation | Timeout | Background? |
+|-----------|---------|-------------|
+| Load package / quick calc | 60s | No |
+| Single test file | 120s | No |
+| devtools::document() | 120s | No |
+| devtools::test() (all) | 300s | Yes |
+| pkgdown::build_article() | 300s | Yes |
+| devtools::check() | 600s | Yes |
+| tar_make() | 1800s | Yes |
+
+## FORBIDDEN: Direct MCP r-btw Calls That Execute R Code
+
+**NEVER call these MCP tools directly — they WILL hang:**
+
+| Tool | Why Forbidden | Bash Alternative |
+|------|---------------|------------------|
+| `btw_tool_run_r` | No timeout, blocks forever | `timeout 60 Rscript -e '...'` |
+| `btw_tool_pkg_test` | Can run 5+ minutes | `timeout 300 Rscript -e 'devtools::test()'` |
+| `btw_tool_pkg_check` | Can run 10+ minutes | `timeout 600 Rscript -e 'devtools::check()'` |
+| `btw_tool_pkg_coverage` | Can run 10+ minutes | `timeout 600 Rscript -e 'covr::...()'` |
+| `btw_tool_pkg_document` | Can hang on roxygen | `timeout 120 Rscript -e 'devtools::document()'` |
+| `btw_tool_pkg_load_all` | Can hang on compilation | `timeout 60 Rscript -e 'pkgload::load_all()'` |
+
+## ALLOWED: Read-Only MCP Tools (No R Execution)
+
+These tools query metadata only and do NOT execute arbitrary R code:
+
+| Tool | Safe? | Why |
+|------|-------|-----|
+| `btw_tool_docs_help_page` | Yes | Reads cached help |
+| `btw_tool_docs_package_news` | Yes | Reads NEWS file |
+| `btw_tool_docs_available_vignettes` | Yes | Lists vignettes |
+| `btw_tool_docs_vignette` | Yes | Reads vignette text |
+| `btw_tool_docs_package_help_topics` | Yes | Lists help topics |
+| `btw_tool_files_list` | Yes | Lists files |
+| `btw_tool_files_read` | Yes | Reads file content |
+| `btw_tool_files_search` | Yes | Searches code |
+| `btw_tool_sessioninfo_*` | Yes | Session metadata |
+| `btw_tool_env_describe_environment` | Yes | Lists objects |
+| `btw_tool_env_describe_data_frame` | Caution | May execute `skim()` |
+| `list_r_sessions` | Yes | Lists sessions |
+| `select_r_session` | Yes | Selects session |
 
 ## Correct Patterns
 
+### Pattern 1: Quick R Execution (Foreground)
+
 ```bash
-# WRONG — blocks for 10+ min
-gh run watch 12345 --exit-status
-
-# CORRECT — non-blocking status check
-gh run view 12345 --json status,conclusion
-
-# WRONG — no timeout on slow build
-nix-build default.nix
-
-# CORRECT — delegate to subagent OR use background
-Task(subagent_type="Bash", prompt="nix-build default.nix")
-
-# WRONG — btw_tool_run_r with devtools::check()
-btw_tool_run_r(code = "devtools::check()")
-
-# CORRECT — delegate to subagent
-Task(subagent_type="Bash", model="sonnet", prompt="run devtools::check()")
+Bash(
+  command = "timeout 60 Rscript -e 'pkgload::load_all(quiet=TRUE); atomic_risks()' 2>&1",
+  timeout = 90000,
+  description = "Load package and run quick query"
+)
 ```
 
-## NEVER Call Directly
+### Pattern 2: Tests/Check (Background)
 
-- `btw_tool_run_r` for: devtools::test/check/build, gh::gh() API calls, any operation >10 lines output, debugging test failures
-- `btw_tool_pkg_*` — Always use appropriate agent
+```bash
+Bash(
+  command = "timeout 300 Rscript -e 'devtools::test()' > /tmp/test_out.txt 2>&1",
+  run_in_background = true,
+  description = "Run all tests with 5min timeout"
+)
+# Check results later:
+Bash(command = "cat /tmp/test_out.txt")
+```
 
-**Exception:** Simple one-liners (<5s), checking values, quick calculations
+### Pattern 3: Delegate to Agent
+
+```
+Task(subagent_type = "r-debugger", prompt = "Run tests and report failures")
+```
+
+## Red Flags — STOP Immediately
+
+1. **Calling `btw_tool_run_r`** for ANY code → STOP, use Bash instead
+2. **Calling `btw_tool_pkg_test/check/coverage/document/load_all`** → STOP, use Bash
+3. **MCP tool running >60 seconds** → Cannot cancel, session is stuck
+4. **Multiple btw_tool_run_r calls in sequence** → Pattern violation, switch to Bash
 
 ## btw Tool Subset
 
-**Current subset** (saves ~6k tokens vs all tools):
-`btw::btw_tools(c('docs', 'pkg', 'files', 'run', 'env', 'session'))`
+**Current subset:** `btw::btw_tools(c('docs', 'pkg', 'files', 'run', 'env', 'session'))`
 
-| Loaded | Category | Purpose |
-|--------|----------|---------|
-| Yes | docs | R help pages, vignettes, NEWS |
-| Yes | pkg | check, test, document, coverage |
-| Yes | files | read, write, list, search |
-| Yes | run | execute R code |
-| Yes | env | describe data frames, environment |
-| Yes | session | platform info, package versions |
-
-## Excluded Categories
-
-| Excluded | Why | Alternative |
-|----|----|----|
-| git | Use `gert::git_*()` per 9-step workflow | gert R package |
-| github | Use `gh::gh()` per 9-step workflow | gh R package |
-| agents | Redundant - Task tool has same agents | Task tool subagents |
-| cran | Rarely needed for active dev | WebSearch |
-| web | Redundant | WebFetch tool |
-| ide | Rarely used | - |
-
-**Re-enable if needed:** Edit `~/.claude.json` mcpServers args.
+Of these, only `docs`, `files`, `env` (read-only), and `session` are safe for direct MCP calls.
+The `pkg` and `run` categories MUST go through Bash with timeout.

@@ -97,6 +97,6 @@ See [drift-detection.md](references/drift-detection.md) for full implementation.
 
 ## Reference
 
-*   [Troubleshooting](troubleshooting.md) - Fix common issues.
-*   [Advanced Patterns](advanced-patterns.md) - Date selection, caching, GC roots.
+*   [Troubleshooting](references/troubleshooting.md) - Fix common issues.
+*   [Advanced Patterns](references/advanced-patterns.md) - Date selection, caching, GC roots.
 *   [Drift Detection](references/drift-detection.md) - DESCRIPTION/default.nix sync check.
