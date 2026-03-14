@@ -8,10 +8,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 **Session Start:** `echo $IN_NIX_SHELL` (should be 1/impure), `which R` (should be /nix/store/...).
 If not in nix: `caffeinate -i ~/docs_gh/rix.setup/default.sh`. Check `.claude/CURRENT_WORK.md`, `git status`, open issues.
 
-**Git/GitHub - Use R packages ONLY:**
-- `gert::git_add()`, `git_commit()`, `git_push()`
-- `usethis::pr_init()`, `pr_push()`, `pr_merge_main()`
-- `gh::gh()` for GitHub API
+**Git/GitHub — R packages ONLY:** `gert::git_add()`, `git_commit()`, `git_push()`; `usethis::pr_init()`, `pr_push()`; `gh::gh()`.
 
 **Nix:** One persistent shell per session. Verify: `echo $IN_NIX_SHELL`. Issues: `nix-env` agent.
 **NEVER** `install.packages()` / `devtools::install()` / `pak::pkg_install()` inside Nix.
@@ -150,7 +147,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `/triage` | Quick issue analysis |
 | `/hi` | Alias for /session-start |
 
-## Rules (22)
+## Rules (23)
 
 | Rule | Enforces |
 |------|----------|
@@ -165,9 +162,10 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `glossary-management` | Glossary term management |
 | `module-isolation` | Module isolation patterns |
 | `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
-| `quarto-vignette-evidence` | Claims require evidence, post-publish validation, missing evidence |
+| `quarto-vignette-evidence` | Claims require evidence, content quality rules |
 | `quarto-vignette-format` | Vignette format rules (headings, tables, code-as-targets, dashboards) |
 | `quarto-vignette-layout` | Full-width CSS, dashboard standards, code-folding, broken links |
+| `quarto-vignette-validation` | Post-publish validation, missing evidence, dark mode |
 | `reproducible-visualization` | Plot reproducibility via targets |
 | `suppress-warnings-antipattern` | Ban suppressWarnings(as.*) with solutions |
 | `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |

@@ -17,45 +17,17 @@ This ensures full width regardless of device (desktop, tablet, mobile).
 
 Required `pkgdown/extra.css`:
 ```css
-/* Full-width container - 100% of viewport */
 body > .container, .container, .container-fluid {
-  max-width: 100% !important;
-  width: 100% !important;
-  padding-left: 1rem;
-  padding-right: 1rem;
+  max-width: 100% !important; width: 100% !important;
+  padding-left: 1rem; padding-right: 1rem;
 }
-
-/* Content area fills available space */
-.col-md-9 {
-  flex: 0 0 85% !important;
-  max-width: 85% !important;
-}
-.col-md-3 {
-  flex: 0 0 15% !important;
-  max-width: 15% !important;
-}
-
-/* Remove arbitrary width limits */
-.contents, main, article {
-  max-width: none !important;
-  width: 100% !important;
-}
-
-/* Plots and tables fill container */
-.js-plotly-plot, .plotly, .datatables {
-  width: 100% !important;
-}
-table.dataTable {
-  width: 100% !important;
-}
-
-/* Mobile: hide TOC, content takes full width */
+.col-md-9 { flex: 0 0 85% !important; max-width: 85% !important; }
+.col-md-3 { flex: 0 0 15% !important; max-width: 15% !important; }
+.contents, main, article { max-width: none !important; width: 100% !important; }
+.js-plotly-plot, .plotly, .datatables, table.dataTable { width: 100% !important; }
 @media (max-width: 991.98px) {
   #toc { display: none; }
-  .col-md-9 {
-    flex: 0 0 100% !important;
-    max-width: 100% !important;
-  }
+  .col-md-9 { flex: 0 0 100% !important; max-width: 100% !important; }
   .col-md-3 { display: none; }
 }
 ```
