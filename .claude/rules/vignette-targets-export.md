@@ -1,3 +1,10 @@
+---
+paths:
+  - "vignettes/**"
+  - "inst/extdata/vignettes/**"
+  - ".github/workflows/**"
+  - "R/tar_plans/**"
+---
 # Vignette CI Pattern: Pre-Computed RDS Only
 
 ## Core Principle
