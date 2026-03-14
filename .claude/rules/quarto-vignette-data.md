@@ -14,107 +14,75 @@ All vignettes use `.qmd` format exclusively. See `quarto-vignette-format.md` Rul
 2. **Documented justification** in the vignette itself
 3. **Clear indication** to readers that data is sampled
 
-**Violations include:**
-- Using `head()`, `sample_n()`, `slice()` to reduce data
-- Filtering date ranges without full historical coverage
-- Limiting to subset of stations/categories
-- Using "example" or "demo" datasets instead of production data
+**Violations:** `head()`, `sample_n()`, `slice()` to reduce data; filtering date ranges; using "demo" datasets.
 
-**Correct approach:**
-- Always use full production data
-- Pre-compute in targets pipeline for performance
-- If data is truly too large, ASK user for explicit approval first
+**Correct:** Always use full production data. Pre-compute in targets for performance. If truly too large, ASK user first.
 
 ## 2. PRE-COMPUTED DATA ONLY
 
 **MANDATORY**: Vignettes perform NO computation.
 
-**All data must come from:**
-- `targets::tar_load()` for targets
-- `targets::tar_read()` for inline use
-- Pre-saved RDS/parquet files in `inst/extdata/`
+**All data from:** `targets::tar_load()`, `targets::tar_read()`, or pre-saved RDS/parquet in `inst/extdata/`.
 
-**Forbidden in vignettes:**
-- Database queries (`DBI::dbGetQuery()`, `dplyr::collect()`)
-- API calls (`httr2::req_perform()`)
-- Heavy computation (`lm()`, `glm()`, aggregations)
-- File I/O that computes (`read_csv()` then summarise)
+**Forbidden:** Database queries, API calls, heavy computation (`lm()`, aggregations), file I/O that computes.
 
-**Exception: targets introspection functions**
-
-| Function | Purpose | Why allowed |
-|----------|---------|-------------|
-| `tar_visnetwork()` | Interactive DAG visualization | htmlwidget can't be serialized |
-| `tar_network()` | Network data structure | Metadata only |
-| `tar_meta()` | Pipeline metadata (timing, errors) | Metadata changes between builds |
-| `tar_manifest()` | Target listing | Metadata only |
-| `tar_progress()` | Build progress | Live status |
-| `tar_outdated()` | What needs rebuilding | Live status |
-
-For Shinylive dashboards: Pre-compute with `tar_network()` in
-`R/dev/save_dag_network.R` and embed the JSON data.
+**No exceptions**: Even pipeline metadata must be pre-computed as targets. `tar_visnetwork()` only with `eval: false`. For Shinylive: pre-compute with `tar_network()` and embed JSON.
 
 ## 3. ZERO INLINE COMPUTATION OR ASSIGNMENTS
 
-**MANDATORY**: Vignettes contain ZERO computation and ZERO assignments.
-
-Every `{r}` chunk is exactly ONE expression:
+**MANDATORY**: Every `{r}` chunk is exactly ONE expression:
 ```r
 safe_tar_read("vig_target_name")
+# OR (with code provenance):
+show_target("vig_target_name")
 ```
 
-**Forbidden** (in any non-setup chunk):
-`<-`, `=`, `print()`, `cat()`, `ggplot()`, `data.frame()`, `sprintf()`,
-`table()`, `colSums()`, `apply()`, `if`/`else`, `for`, `DBI::dbGetQuery()`
+**Forbidden** (in non-setup chunks): `<-`, `=`, `print()`, `cat()`, `ggplot()`, `data.frame()`, `sprintf()`, `table()`, `if`/`else`, `for`, `DBI::dbGetQuery()`
 
-The **ONLY** exception is the setup chunk which contains:
-- `knitr::opts_chunk$set(...)`
-- `library(targets)`
-- Target store discovery
-- `safe_tar_read` definition
+**Setup chunk exception:** `knitr::opts_chunk$set()`, `library(targets)`, target store discovery, `safe_tar_read`/`show_target` definitions.
 
-**library() in executed chunks:**
-- ALLOWED: `library(targets)` in setup chunk (for tar_read/tar_load)
-- ALLOWED: `library(DT)` (display-only rendering)
-- FORBIDDEN: `library(<own-package>)` or any DESCRIPTION dependency
-- Enforced by: `~/.claude/hooks/vignette_check.sh`
+**library() rules:** Allowed: `library(targets)`, `library(DT)`. Forbidden: `library(<own-package>)`. Enforced by `vignette_check.sh`.
+
+### Captions Are Pre-Computed in Targets
+
+Because vignettes perform ZERO computation, captions MUST be baked into target objects. Table targets return `DT::datatable(..., caption=)`, plot targets use `labs(caption=)`. See `visualization-standards` rule for the 7-point checklist.
 
 ## 4. PKGDOWN/CI RENDERING GUARDS
 
-**MANDATORY**: Vignettes using `targets` store data MUST guard against missing store in CI.
+**MANDATORY**: Vignettes MUST use `eval = TRUE` so `safe_tar_read()` runs in CI.
 
-**Setup chunk pattern:**
 ```r
 in_pkgdown <- nzchar(Sys.getenv("IN_PKGDOWN"))
-knitr::opts_chunk$set(
-  eval = !in_pkgdown,
-  echo = FALSE,
-  # ...
-)
+knitr::opts_chunk$set(eval = TRUE)  # safe_tar_read handles CI fallback
 if (!in_pkgdown) library(targets)
 ```
 
-**Callout banner** (eval ONLY in pkgdown):
-```r
-#| results: asis
-#| eval: !expr in_pkgdown
-#| echo: false
-cat("::: {.callout-note}\n## Online documentation\nRun `targets::tar_make()` locally to see full output.\n:::\n")
-```
+**WRONG:** `eval = !in_pkgdown` — renders empty vignettes in CI.
 
-**Post-deploy verification** (CI step):
-- Grep all rendered HTML for `#> NULL`, `#> Error`, `not available`, `could not find`
-- FAIL the build if any error patterns are found
-- This catches regressions where vignettes accidentally evaluate in CI
+**Post-deploy:** Grep HTML for `#> NULL`, `#> Error`, `not available`. FAIL if found.
+
+## 4a. RDS EXPORT CHECKLIST (before every merge)
+
+- [ ] All `vig_*` targets built: `tar_make(names = starts_with("vig_"))`
+- [ ] All RDS exported to `inst/extdata/vignettes/`
+- [ ] No single RDS > 2MB; total dir < 10MB
+- [ ] CI build shows content (not placeholders)
+
+## 4b. AUDIT TABLES (before every merge)
+
+Generate two audit tables as PR evidence:
+
+**Table 1 — Targets vs inline computation:** Count `safe_tar_read`/`show_target` chunks vs inline computation per vignette. **PASS:** violations == 0 for all.
+
+**Table 2 — Inline computation chunks:** List every non-exempt chunk that computes inline. Exclude: setup, pkgdown-banner, session-info, eval=false. **PASS:** zero rows.
+
+Enforced by `vignette_check.sh` hook. Violations block commit.
 
 ## 5. FULL DATE RANGE REQUIREMENT
 
-**MANDATORY**: Targets querying time-series data MUST use full date range.
+**MANDATORY**: Time-series targets MUST use full date range.
 
 ```r
-# FORBIDDEN: Arbitrary date filter
-filter(time >= Sys.Date() - 30)
-
-# REQUIRED: Full historical range
-filter(time >= as.Date("2019-01-01"))  # Or earliest available
+# FORBIDDEN: filter(time >= Sys.Date() - 30)
+# REQUIRED:  filter(time >= as.Date("2019-01-01"))  # Or earliest available
 ```
