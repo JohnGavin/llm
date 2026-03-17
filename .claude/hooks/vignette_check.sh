@@ -5,9 +5,9 @@
 # This hook checks for forbidden patterns in vignettes before commit.
 # Place in .claude/hooks/ for global enforcement or .git/hooks/pre-commit for per-project.
 #
-# EXCEPTIONS ALLOWED:
-# - targets introspection: tar_visnetwork(), tar_meta(), tar_manifest(), etc.
-# - These only read metadata, not computed data
+# NO EXCEPTIONS: All data including pipeline metadata must come from
+# pre-computed targets. tar_meta() introspection was removed 2026-03-14.
+# See plan_telemetry.R for the pre-computed metadata pattern.
 
 set -e
 
@@ -27,7 +27,7 @@ if [ ! -d "$VIGNETTES_DIR" ]; then
 fi
 
 echo "Checking vignettes for inline computation..."
-echo -e "${BLUE}Note: targets introspection functions (tar_visnetwork, tar_meta, etc.) are allowed${NC}"
+echo -e "${BLUE}Note: ZERO exceptions - all data must come from safe_tar_read/show_target${NC}"
 echo ""
 
 ERRORS=0
@@ -45,32 +45,19 @@ for file in "$VIGNETTES_DIR"/*.Rmd "$VIGNETTES_DIR"/*.qmd; do
   # Exclude lines that are comments or in setup chunk definition
   assignment_count=$(grep -c '<-' "$file" 2>/dev/null | head -1 || echo "0")
 
-  # Allow 1-2 assignments for safe_tar_read definition in setup
-  # Allow more if file contains tar_meta/tar_visnetwork (pipeline telemetry vignette)
-  if grep -q 'tar_visnetwork\|tar_meta\|tar_manifest\|tar_network' "$file" 2>/dev/null; then
-    # Pipeline introspection vignette - allow more assignments for metadata processing
-    if [ "$assignment_count" -gt 10 ]; then
-      echo -e "${RED}ERROR: $filename has $assignment_count assignments (<-)${NC}"
-      echo "       Even pipeline vignettes should minimize computation"
-      ERRORS=$((ERRORS + 1))
-    fi
-  elif [ "$assignment_count" -gt 3 ]; then
+  # Allow 1-2 assignments for safe_tar_read/show_target definition in setup
+  if [ "$assignment_count" -gt 3 ]; then
     echo -e "${RED}ERROR: $filename has $assignment_count assignments (<-)${NC}"
     echo "       Vignettes should use tar_load()/tar_read() only"
     ERRORS=$((ERRORS + 1))
   fi
 
-  # Check for ggplot() construction (should be pre-computed)
-  # EXCEPTION: Allow if paired with tar_meta() for pipeline timing plots
+  # Check for ggplot() construction (must be pre-computed in targets)
   if grep -q 'ggplot(' "$file" 2>/dev/null; then
-    if grep -q 'tar_meta\|tar_visnetwork' "$file" 2>/dev/null; then
-      echo -e "${BLUE}INFO: $filename has ggplot() with targets introspection (allowed)${NC}"
-    else
-      ggplot_count=$(grep -c 'ggplot(' "$file" 2>/dev/null || echo "0")
-      echo -e "${RED}ERROR: $filename has $ggplot_count ggplot() calls${NC}"
-      echo "       Plots should be pre-computed in targets pipeline"
-      ERRORS=$((ERRORS + 1))
-    fi
+    ggplot_count=$(grep -c 'ggplot(' "$file" 2>/dev/null || echo "0")
+    echo -e "${RED}ERROR: $filename has $ggplot_count ggplot() calls${NC}"
+    echo "       Plots must be pre-computed in targets pipeline"
+    ERRORS=$((ERRORS + 1))
   fi
 
   # Check for dplyr verbs that suggest inline computation
@@ -78,12 +65,9 @@ for file in "$VIGNETTES_DIR"/*.Rmd "$VIGNETTES_DIR"/*.qmd; do
   for verb in "group_by(" "summarise(" "summarize(" "mutate(" "filter(" "select("; do
     if grep -q "$verb" "$file" 2>/dev/null; then
       count=$(grep -c "$verb" "$file" 2>/dev/null || echo "0")
-      if grep -q 'tar_meta\|tar_manifest' "$file" 2>/dev/null; then
-        echo -e "${BLUE}INFO: $filename has $count $verb calls on targets metadata (allowed)${NC}"
-      else
-        echo -e "${YELLOW}WARNING: $filename has $count $verb calls${NC}"
-        echo "         Verify these are on pre-loaded data, not computing inline"
-      fi
+      echo -e "${RED}ERROR: $filename has $count $verb calls${NC}"
+      echo "         All computation must be in targets, not vignettes"
+      ERRORS=$((ERRORS + 1))
     fi
   done
 
@@ -191,6 +175,45 @@ for file in "$VIGNETTES_DIR"/*.Rmd "$VIGNETTES_DIR"/*.qmd; do
       ;;
   esac
 
+done
+
+# --- Check that table targets in plan files return DT (not bare data.frame) ---
+# Static analysis: vig_* targets returning data.frame() without DT::datatable()
+for plan_file in R/tar_plans/plan_vignette_outputs.R R/tar_plans/plan_telemetry.R R/tar_plans/plan_doc_examples.R; do
+  [ -f "$plan_file" ] || continue
+
+  # Use awk to find vig_* target blocks that have data.frame but not DT::datatable
+  bare_df_targets=$(awk '
+    /tar_target\(/ {
+      in_target = 1
+      has_df = 0
+      has_dt = 0
+      target_name = ""
+      brace_depth = 0
+    }
+    in_target && /vig_|glossary_table/ && target_name == "" {
+      match($0, /(vig_[A-Za-z0-9_]+|glossary_table)/, arr)
+      if (arr[0] != "") target_name = arr[0]
+    }
+    in_target {
+      gsub(/[^{]/, "", t=$0); brace_depth += length(t)
+      gsub(/[^}]/, "", t=$0); brace_depth -= length(t)
+      if ($0 ~ /data\.frame\(/) has_df = 1
+      if ($0 ~ /DT::datatable/) has_dt = 1
+      if (brace_depth <= 0 && target_name != "") {
+        if (has_df && !has_dt) print target_name
+        in_target = 0
+      }
+    }
+  ' "$plan_file" 2>/dev/null)
+
+  if [ -n "$bare_df_targets" ]; then
+    while IFS= read -r target; do
+      echo -e "${RED}ERROR: $plan_file: target '$target' returns bare data.frame without DT::datatable()${NC}"
+      echo "       Table targets MUST return DT::datatable() with caption= parameter"
+      ERRORS=$((ERRORS + 1))
+    done <<< "$bare_df_targets"
+  fi
 done
 
 if [ $ERRORS -gt 0 ]; then

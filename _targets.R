@@ -11,5 +11,6 @@ tar_source("R/tar_plans/")
 list(
   plan_structure,
   tar_llm_usage(),
-  plan_vignette_outputs()
+  plan_vignette_outputs(),
+  plan_predictions()  # Cross-project prediction calibration
 )

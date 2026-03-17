@@ -72,6 +72,11 @@ nix-shell default.nix  # Much faster
 experimental-features = nix-command flakes
 ```
 
+**If nix-build fails with "invalid character in Base64 string":**
+Corrupted signing key in `~/.config/nix/nix.conf`. Check `trusted-public-keys`
+for placeholder text like `H77X9S9H9X... (get the rest from cachix)`. Remove
+the corrupted entry, keep only valid Base64 keys ending in `=`.
+
 ## Environment Degradation During Long Sessions
 
 **Problem:** Commands like `git`, `gh`, `R` start failing with "command not found" or "No such file or directory" during a multi-hour session

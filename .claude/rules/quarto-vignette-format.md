@@ -27,6 +27,8 @@ format:
 - `%\VignetteEngine{knitr::rmarkdown}` directives
 - `%\VignetteIndexEntry{}` directives (pkgdown articles don't need these)
 
+**Exception — VignetteIndexEntry:** When `VignetteBuilder: quarto` is in DESCRIPTION and the package is distributed via CRAN or `R CMD build`, Quarto vignettes MUST include `VignetteIndexEntry` + `VignetteEngine{quarto::html}` + `VignetteEncoding{UTF-8}` in the YAML `vignette:` field. Without these, `R CMD check` reports "Vignette without VignetteBuilder". This is an R packaging requirement, not a Quarto one. For pkgdown-only articles (not in DESCRIPTION VignetteBuilder), omit them.
+
 **Rationale:** Quarto is the successor to R Markdown, provides better HTML output, native mermaid support, and consistent cross-language features. Standardising on one format prevents format drift.
 
 **Check:** `ls vignettes/*.Rmd 2>/dev/null && echo "ERROR: .Rmd files found in vignettes/"`
@@ -66,6 +68,11 @@ Store titles in a targets target, reference in vignette YAML, ensure `_pkgdown.y
 **Exception**: Only `knitr::kable()` in PDF-only output (rare).
 
 ### CRITICAL: Table Targets MUST Return DT (Not data.frame)
+
+**Note:** This subsection covers pipeline integration for tables (belongs conceptually
+with `plan_vignette_outputs.R` conventions). It is here because the symptom — missing
+captions — manifests in vignettes, but the fix is in target code. The `qa_vignette_compliance`
+target in `plan_qa_gates.R` enforces caption presence at build time.
 
 **Lesson learned (2026-03-14):** 40 of 40 tables had ZERO captions because
 targets returned plain `data.frame` objects. The `safe_tar_read()` function

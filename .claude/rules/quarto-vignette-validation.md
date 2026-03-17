@@ -25,11 +25,17 @@ After EVERY pkgdown deployment, produce a **Validation Table** with these column
 | NULLs | count of `#> NULL` in HTML |
 | Status | OK / WARN / FAIL |
 
-**Agent workflow:**
+**Agent workflow (manual — no automated enforcement yet):**
 1. After any `pkgdown::build_site()` or CI workflow
 2. Produce the validation table for every article
 3. Report issues before claiming success
 4. Print full URLs for user verification
+
+**Lesson learned (2026-03-14):** This validation step is entirely agent-driven — there is no
+hook, CI step, or target that enforces it. Agents routinely skip it because nothing blocks
+completion without it. The `qa_vignette_compliance` target in `plan_qa_gates.R` partially
+addresses this by checking source .qmd files, but does NOT check the deployed HTML output.
+Full post-publish validation remains a manual agent responsibility.
 
 Use `httr2::request(url) |> req_perform()` to fetch each article, count error patterns with `gregexpr()`, and report. See `R/dev/validate_pkgdown_deploy.R` for the reference implementation.
 

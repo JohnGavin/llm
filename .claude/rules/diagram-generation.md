@@ -65,7 +65,7 @@ mermaid.initialize({
   startOnLoad: false,
   securityLevel: 'loose',  // required for click href
   theme: 'dark',
-  themeVariables: { background: '#1a1a1a', primaryColor: '#2d5f8a' }
+  themeVariables: { background: '#000000', primaryColor: '#999999', lineColor: '#CC0000', primaryTextColor: '#000000' }
 });
 document.querySelectorAll('script[data-mermaid]').forEach(function(s) {
   var target = document.getElementById(s.getAttribute('data-mermaid'));
@@ -75,9 +75,23 @@ await mermaid.run({ querySelector: '.mermaid' });
 </script>
 ```
 
-## Dark Theme Variables
+## Dark Theme Variables (MANDATORY)
 
-Match `theme_micromort_dark()` with `#1a1a1a` background. Use `mermaid_dark_theme_header()` from `R/diagrams.R` for the `%%{init:...}%%` prefix in target-generated diagrams.
+High-contrast dark theme: black background, gray-60 box fill, black text, red arrows. Use `mermaid_dark_theme_header()` from `R/diagrams.R` for the `%%{init:...}%%` prefix.
+
+| Element | Color | Hex |
+|---------|-------|-----|
+| Background | Black | `#000000` |
+| Node fill | Gray 60% | `#999999` |
+| Node text | Black | `#000000` |
+| Borders/arrows | Red | `#CC0000` |
+| Cluster fill | Dark gray | `#333333` |
+
+All nodes: `fill:#999999,stroke:#CC0000,color:#000000`
+
+### Multiline Labels
+
+Use `<br/>` (HTML entity `&lt;br/&gt;` inside script tags) for multiline node labels. NEVER use `\n` — it renders literally in Mermaid.
 
 ## Staleness Detection
 
