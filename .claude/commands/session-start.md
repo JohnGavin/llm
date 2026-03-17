@@ -83,6 +83,7 @@ for (issue in issues) {
 
 ## Config Audit Steps
 
-6. Run config audit (`~/.claude/hooks/config_size_check.sh`)
-7. Run mapping validation (`~/.claude/validate_claude_md.sh`)
-8. Summarize any warnings
+6. Run config size audit (`~/.claude/hooks/config_size_check.sh`)
+7. Run skill token audit (`~/.claude/hooks/count_skill_tokens.sh`)
+8. Run mapping validation (`~/.claude/validate_claude_md.sh`)
+9. Summarize any warnings

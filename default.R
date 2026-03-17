@@ -341,6 +341,7 @@ gh_pkgs <- list(
 # export NIXPKGS_ALLOW_UNFREE=1
 Sys.setenv("NIXPKGS_ALLOW_UNFREE"=1)
 system_pkgs <- c(
+  "visidata", "tmux", 
   "claude-monitor", 
   "locale", "direnv", "jq", 
   "nodejs", 
@@ -669,7 +670,7 @@ tex_pkgs = c("amsmath", "ninecolors", "apa7", "scalerel", "threeparttable", "thr
 # PINNED: 2026-02-16 has broken tiledb-2.30.0 patch (gdal -> sf -> terra fails)
 # Revert to dynamic selection once upstream fixes tiledb:
 #   (latest <- available_dates() |> sort() |> tail(3) |> head(1))
-latest <- "2026-02-01"
+latest <- "2026-02-02"
   # library(dplyr) ; available_df() |> tibble() |> arrange(desc(date)) |> head(5) |> glimpse()
 rix(
   date = latest, # Use latest date for DuckDB v1.4.4+

@@ -117,8 +117,38 @@ in mypackage
 
 1. **Pin date must match** `default.nix` — otherwise binary incompatibility
 2. **Only list Imports**, not Suggests (test deps aren't needed at install time)
-3. **Nix attribute names** use underscores for dots: `data.table` → `data_table`
-4. **Test the build** before pushing: `nix-build package.nix --no-out-link`
+3. **ALL Imports must be listed** — compare `propagatedBuildInputs` against DESCRIPTION `Imports:` every time either file changes
+4. **Nix attribute names** use underscores for dots: `data.table` → `data_table`
+5. **Test the build** before pushing: `nix-build package.nix --no-out-link`
+
+### Date Pin Sync Diagnostic
+
+**Symptom:** `nix-build package.nix` takes minutes instead of seconds.
+**Cause:** Date mismatch → rstats-on-nix cache miss → source compilation.
+
+```bash
+# Check for date mismatch (MUST match)
+grep "rstats-on-nix/nixpkgs/archive" default.nix package.nix
+# If dates differ, nix-build will compile R packages from source.
+# This is FORBIDDEN — only footbet itself should compile (~5 seconds).
+
+# Verify: nix-build should report "this derivation will be built: ...r-<pkgname>.drv"
+# If it reports MULTIPLE derivations, the date pin is wrong.
+nix-build package.nix --no-out-link --dry-run 2>&1 | grep "will be built"
+# Expected: exactly 1 derivation (your package)
+```
+
+### Cachix PATH in Nix Shells
+
+`cachix` is typically at `~/.nix-profile/bin/cachix`, which is NOT on PATH inside project nix-shells. The `push_to_cachix.sh` script should fall back to this path:
+
+```bash
+if ! command -v cachix &> /dev/null; then
+  if [ -x "$HOME/.nix-profile/bin/cachix" ]; then
+    export PATH="$HOME/.nix-profile/bin:$PATH"
+  fi
+fi
+```
 
 ### Creating push_to_cachix.sh
 
