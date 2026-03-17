@@ -1,7 +1,6 @@
 ---
 paths:
   - "*.qmd"
-  - "*.Rmd"
   - "vignettes/**"
   - ".github/workflows/**"
 ---

@@ -3,9 +3,7 @@ paths:
   - "R/**"
   - "vignettes/**"
   - "*.qmd"
-  - "*.Rmd"
   - "inst/shiny/**"
-  - "shiny/**"
 ---
 # Visualization Diagram Standards
 
@@ -88,25 +86,16 @@ This replaces the previous per-role colour scheme. Rationale: uniform styling ma
 
 ## Plotly Legend and Theme Contrast (MANDATORY)
 
-Every `plotly::layout()` call MUST include explicit background and font colors for readable legends:
+Every `plotly::layout()` MUST include explicit background/font colors:
 
 ```r
-plotly::layout(
-  ...,
-  paper_bgcolor = "white",
-  plot_bgcolor = "white",
+plotly::layout(..., paper_bgcolor = "white", plot_bgcolor = "white",
   font = list(color = "#1a1a1a"),
-  legend = list(..., font = list(color = "#1a1a1a"),
-                bgcolor = "rgba(255,255,255,0.9)")
-) |>
-plotly::config(scrollZoom = TRUE)
+  legend = list(font = list(color = "#1a1a1a"), bgcolor = "rgba(255,255,255,0.9)")
+) |> plotly::config(scrollZoom = TRUE)
 ```
 
-Rules:
-- Legend text MUST have high contrast against the plot background
-- Always set `paper_bgcolor` and `plot_bgcolor` explicitly
-- Always set `font = list(color = "#1a1a1a")` for dark text on light backgrounds
-- Always add `plotly::config(scrollZoom = TRUE)` for interactive zoom
+Rules: high-contrast legend text, explicit `paper_bgcolor`/`plot_bgcolor`, `font = list(color = "#1a1a1a")`, `config(scrollZoom = TRUE)`.
 
 ## Diagram Captions (MANDATORY)
 
