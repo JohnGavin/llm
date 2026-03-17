@@ -27,12 +27,23 @@ Detailed Nix-specific CI patterns including Cachix caching strategy, local push 
 - Pushing standard R packages wastes limited Cachix quota
 
 ```bash
-# Push ONLY if you have custom packages in default-ci.nix/package.nix
-# that are NOT available from rstats-on-nix
-nix-store -qR $(nix-build default-ci.nix) | cachix push johngavin
-
-# Or use helper script (should be project-aware)
+# ALWAYS use the project helper script (has safety pre-check):
 ./push_to_cachix.sh
+
+# The script pre-checks that all closure deps are already in johngavin
+# before pushing, to avoid uploading standard R packages.
+```
+
+**WARNING about `echo $RESULT | cachix push`:**
+Even piping a SINGLE store path uploads its entire closure (all transitive deps)
+if they're not already in the TARGET cache. This means changing the date pin in
+`package.nix` without first seeding johngavin will upload 80+ R packages.
+Always use `push_to_cachix.sh` which guards against this.
+
+**NEVER do this:**
+```bash
+# Pushes entire closure including all R deps:
+nix-store -qR $(nix-build default-ci.nix) | cachix push johngavin
 ```
 
 **When to push to johngavin:**

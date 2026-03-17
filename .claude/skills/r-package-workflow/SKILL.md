@@ -42,8 +42,9 @@ usethis::pr_init(paste0("fix-issue-", issue_num, "-feature"))
 ### Step 3: Create Session Log
 **Goal:** Ensure traceability.
 
-*   Create `R/setup/fix_issue_123.R`.
-*   Initialize `logger`.
+*   Update `.claude/CURRENT_WORK.md` with session context (issue number, branch, plan summary).
+*   Alternative (legacy): Create `R/setup/fix_issue_123.R` if the project uses that convention.
+*   The session log location is `.claude/CURRENT_WORK.md` — this file persists across Claude Code sessions and is read at session start.
 
 ### Step 4: TDD Implementation Loop (The Coding Phase)
 **Goal:** Write robust, testable code.
@@ -127,10 +128,11 @@ usethis::pr_push()
 ```
 package/
 ├── R/
-│   ├── setup/
-│   │   └── fix_issue_123.R  # Session Log
+│   ├── setup/               # Legacy session logs (optional)
 ├── tests/testthat/          # TDD happens here
-└── .claude/skills/          # Reference skills
+├── .claude/
+│   ├── CURRENT_WORK.md      # Session log (primary)
+│   └── skills/              # Reference skills
 ```
 
 ## Reference Files
@@ -143,5 +145,15 @@ package/
 ## Related Skills
 
 *   **`architecture-planning`**: Step 1 instructions.
+*   **`quality-gates`**: Steps 4/6/8 scoring — Bronze (commit), Silver (PR), Gold (merge). Run `tar_make(names = starts_with("qa_"))` and check grade via `tar_read(qa_quality_gate)$grade`.
 *   **`systematic-debugging`**: Step 5 failure handling.
 *   **`nix-rix-r-environment`**: The required execution environment.
+
+## Quality Gate Integration
+
+The 9-step workflow requires quality gate checks at 3 points:
+- **Step 4 (TDD loop):** Score must be >= Bronze (80) before committing
+- **Step 6 (Push & PR):** Score must be >= Silver (90) before PR creation
+- **Step 8 (Merge):** Score must be >= Gold (95) before merging to main
+
+Run `~/.claude/hooks/qa_gate_check.sh` to verify freshness, or run the targets directly. See `quality-gates` skill for scoring formula and enforcement mechanisms.

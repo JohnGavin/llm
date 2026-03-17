@@ -150,6 +150,23 @@ Each snapshot includes:
 - Code that generated the output
 - Captured output
 
+## Snapshot Strategy by Workflow Step
+
+| Step | What to Snapshot | Target % of Tests |
+|------|-----------------|------:|
+| CLI messages (`cli_abort`, `cli_warn`) | Exact wording of user-facing messages | 1.5% |
+| Error conditions (`expect_snapshot(error=TRUE)`) | Error class, message, backtrace | 1.0% |
+| Function signatures (`args(fn)`) | API stability — params, defaults | 1.0% |
+| Target output structure (`str()`, `names()`) | DT column names, plotly trace counts | 1.5% |
+| Mermaid diagram text | Node/edge structure | 0.2% |
+| **Total** | | **~5%** |
+
+**Phase 1 (high value):** CLI messages + errors + signatures. Stable, catches breaking changes.
+**Phase 2 (medium):** Target structure with `expect_snapshot_value(style = "json2")`.
+**Phase 3 (low):** Diagrams + HTML. Only when diagram code is stable.
+
+**Rule:** Prefer `expect_snapshot()` for complex text output. Prefer `expect_equal()` for simple values. Never snapshot stochastic output (random numbers, timestamps) without `transform`.
+
 ## Common Patterns
 
 **Testing error messages:**

@@ -76,11 +76,20 @@ sessionInfo()
 ```
 ```
 
-## 17. CHANGELOG FOOTER (MANDATORY)
+## 17. CHANGELOG FOOTER (ASPIRATIONAL)
 
-Every vignette MUST include `## Recent Changes` with `safe_tar_read("vig_git_changelog")`. Place before `## Reproducibility`.
+**Status:** This rule requires a `vig_git_changelog` target that does NOT exist in most projects.
+Until a project implements this target (extracting recent git log entries into a formatted
+changelog), this rule is ASPIRATIONAL, not MANDATORY.
 
-**Check:** `grep -L 'vig_git_changelog' vignettes/*.qmd`
+**To implement:** Add a `vig_git_changelog` target to `plan_vignette_outputs.R` that uses
+`gert::git_log()` to extract the last 10 commits touching vignette files, format as a tibble,
+and return it. Then include `safe_tar_read("vig_git_changelog")` in each vignette.
+
+**For projects without vig_git_changelog:** Omit the `## Recent Changes` section entirely.
+Do NOT add a placeholder that renders as NULL.
+
+**Check:** `grep -L 'vig_git_changelog' vignettes/*.qmd` — only enforce if `vig_git_changelog` target exists in the pipeline.
 
 ## Checklist
 

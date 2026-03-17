@@ -74,6 +74,12 @@ Rules:
 - Must work across pkgdown, GitHub, and local HTML builds
 - **FORBIDDEN**: `echo = FALSE` in `knitr::opts_chunk$set()` when `code-fold: true` is active — `code-fold` handles visibility; `echo = FALSE` removes code entirely, preventing user inspection
 
+**Distinction — echo=FALSE vs code-fold:**
+- `code-fold: true` (YAML header): Code is present in HTML but collapsed. Users can click "Show code" to inspect. This is the CORRECT approach for all vignettes.
+- `echo = FALSE` (opts_chunk): Code is stripped from HTML entirely. Users cannot inspect it at all.
+- `echo = FALSE` on individual chunks via `#| echo: false` is acceptable for setup chunks (`include=FALSE` already handles these) or chunks that only produce side effects (e.g., `library()` calls).
+- The FORBIDDEN combination is `code-fold: true` in YAML + `echo = FALSE` in `opts_chunk$set()` globally — this contradicts the purpose of code-fold by removing all code before fold can act on it.
+
 ## 9. SUB-BULLET FORMATTING
 
 **MANDATORY**: When a concept has sub-components, use nested bullet points.

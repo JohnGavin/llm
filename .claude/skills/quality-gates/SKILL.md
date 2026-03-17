@@ -285,6 +285,41 @@ plan_qa_gates <- list(
 )
 ```
 
+## Enforcement Mechanisms
+
+### (a) Hook: qa_gate_check.sh
+
+Located at `~/.claude/hooks/qa_gate_check.sh`. Checks `_targets/objects/qa_quality_gate` timestamp:
+- Missing: warns that QA gates haven't been run
+- Stale (>60 min): warns to re-run before commit/PR
+- Fresh: reports OK
+
+Run this hook at Steps 4, 6, and 8 of the 9-step workflow. The hook warns but does not block — the agent is responsible for running `tar_make(names = starts_with("qa_"))` and interpreting the grade.
+
+### (b) CI Step
+
+Add to `.github/workflows/R-CMD-check.yml` after the "Validate targets pipeline" step:
+
+```yaml
+- name: Check QA quality gate
+  if: hashFiles('R/tar_plans/plan_qa_gates.R') != ''
+  run: |
+    nix-shell default.nix -A shell --run "Rscript -e '
+      targets::tar_make(names = c(\"qa_test_results\", \"qa_self_review\",
+        \"qa_no_raw_sql\", \"qa_vignette_compliance\"), callr_function = NULL)
+      gate <- targets::tar_read(qa_quality_gate)
+      cat(\"QA Grade:\", gate\$grade, \"(\", gate\$total_score, \"/100)\\n\")
+      if (gate\$total_score < 80) stop(\"Quality gate FAILED: Below Bronze\")
+    '"
+```
+
+**Note:** `qa_coverage` is omitted from CI because `covr::package_coverage()` is slow (~5 min). CI enforces Bronze (>=80) as minimum. Coverage is checked locally.
+
+### Vignette Compliance Gap (Lesson Learned 2026-03-14)
+
+The 6-component scoring system (coverage, check, docs, defensive, data integrity, code style) has **zero components addressing vignette compliance**. The `qa_vignette_compliance` target was added to bridge this gap. It checks code-fold, echo settings, sessionInfo, chunk labels, and DT captions. Its score is reported as "informational" alongside the main grade — it is not yet weighted into the total score to avoid breaking existing workflows.
+
 ## Reference Implementation
 
 - `irishbuoys/R/tar_plans/plan_qa_gates.R` (202 lines, fully working)
+- `micromort/R/tar_plans/plan_qa_gates.R` (6-component + vignette compliance)

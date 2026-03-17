@@ -211,3 +211,36 @@ safe_tar_read("vig_github_stats_table")
 ```
 
 :::
+
+# Prediction Calibration {#prediction-calibration}
+
+Cross-project calibration metrics for Claude Code probability assessments.
+Brier score: 0 = perfect, 0.25 = uninformative baseline.
+
+::: {.panel-tabset}
+
+## By Project
+
+```{r pred-by-project}
+safe_tar_read("vig_pred_by_project_table")
+```
+
+## Calibration Buckets
+
+```{r pred-calibration}
+safe_tar_read("vig_pred_global_calibration_table")
+```
+
+## Rolling Brier Score
+
+```{r pred-rolling-brier, fig.cap="Cumulative Brier score across all projects over time. Lower is better; 0.25 is the uninformative baseline."}
+safe_tar_read("vig_pred_global_brier_plot")
+```
+
+## Predicted vs Actual
+
+```{r pred-success-rate, fig.cap="Comparison of mean predicted probability vs actual success rate by project."}
+safe_tar_read("vig_pred_success_rate_plot")
+```
+
+:::

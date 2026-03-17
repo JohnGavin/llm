@@ -34,7 +34,7 @@ Every Mermaid diagram MUST:
     startOnLoad: false,
     securityLevel: 'loose',
     theme: 'dark',
-    themeVariables: { darkMode: true, background: '#1a1a2e' }
+    themeVariables: { darkMode: true, background: '#000000', primaryColor: '#999999', lineColor: '#CC0000', primaryTextColor: '#000000' }
   });
   document.querySelectorAll('pre.mermaid').forEach(async (el) => {
     const id = el.id || 'mermaid-' + Math.random().toString(36).slice(2);
@@ -56,7 +56,7 @@ Every Mermaid diagram MUST:
 graph LR
   A["Input"] --> B["Output&lt;br/&gt;Data"]
   click A "input.html" _blank
-  style A fill:#1a3a5c,stroke:#3498db,color:#fff
+  style A fill:#999999,stroke:#CC0000,color:#000
 </script>
 </pre>
 
@@ -68,16 +68,23 @@ Source: `R/file.R`.
 :::
 ```
 
-### Node Colour Palette (dark background, white text)
+### Node Colour Palette (MANDATORY high-contrast)
 
-| Role | Fill | Stroke | CSS |
-|------|------|--------|-----|
-| Acquisition | `#1a3a5c` | `#3498db` | `fill:#1a3a5c,stroke:#3498db,color:#fff` |
-| Cleaning/QC | `#4a3800` | `#f39c12` | `fill:#4a3800,stroke:#f39c12,color:#fff` |
-| Analysis | `#5c1a1a` | `#e74c3c` | `fill:#5c1a1a,stroke:#e74c3c,color:#fff` |
-| Outputs | `#1a4a2e` | `#27ae60` | `fill:#1a4a2e,stroke:#27ae60,color:#fff` |
-| Documentation | `#3a1a4a` | `#8e44ad` | `fill:#3a1a4a,stroke:#8e44ad,color:#fff` |
-| Infrastructure | `#333333` | `#7f8c8d` | `fill:#333333,stroke:#7f8c8d,color:#fff` |
+**Standard:** Black background (`#000000`), gray-60 box fill (`#999999`), black text (`#000000`), red arrows/borders (`#CC0000`).
+
+| Element | Color | Hex |
+|---------|-------|-----|
+| Background | Black | `#000000` |
+| Node fill | Gray 60% | `#999999` |
+| Node text | Black | `#000000` |
+| Node border | Red | `#CC0000` |
+| Arrows/lines | Red | `#CC0000` |
+| Cluster/subgraph fill | Dark gray | `#333333` |
+| Cluster border | Red | `#CC0000` |
+
+All nodes use the same style: `fill:#999999,stroke:#CC0000,color:#000000`
+
+This replaces the previous per-role colour scheme. Rationale: uniform styling maximizes readability and avoids colour-meaning ambiguity across projects.
 
 ## Plotly Legend and Theme Contrast (MANDATORY)
 
@@ -126,14 +133,14 @@ Source: `R/mermaid_diagrams.R::generate_data_pipeline_mermaid()`.
 
 ## Diagram Arrow Styling
 
-Use **RED (#e74c3c)** for arrow/link colors on dark backgrounds for maximum contrast.
+Use **RED (#CC0000)** for arrow/link colors on dark backgrounds for maximum contrast.
 
 **Mermaid pattern:**
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 graph LR
   A --> B
-  linkStyle default stroke:#e74c3c,stroke-width:2px
+  linkStyle default stroke:#CC0000,stroke-width:2px
 ```
 
 **Rationale:** Default grey/black arrows are invisible on dark themes. Red provides strong contrast without competing with node colors.
@@ -144,8 +151,8 @@ graph LR
 - [ ] Plotly: legend has contrasting `font` and `bgcolor`
 - [ ] Plotly: `config(scrollZoom = TRUE)` added
 - [ ] **Diagrams have captions with node meanings and conclusions**
-- [ ] **Diagram arrows use red (#e74c3c) on dark backgrounds**
+- [ ] **Diagram arrows use red (#CC0000) on dark backgrounds**
 - [ ] **Every cross-reference uses hyperlinks** (not just "See Section X")
 - [ ] Mermaid uses CDN init (not `{mermaid}` chunks)
 - [ ] Mermaid uses dark theme with `securityLevel: 'loose'`
-- [ ] Node colours follow the role palette above
+- [ ] Node colours use uniform gray-60 fill with red borders (per palette above)
