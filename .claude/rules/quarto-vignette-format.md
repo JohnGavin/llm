@@ -67,7 +67,38 @@ Store titles in a targets target, reference in vignette YAML, ensure `_pkgdown.y
 
 **Exception**: Only `knitr::kable()` in PDF-only output (rare).
 
-### CRITICAL: Table Targets MUST Return DT (Not data.frame)
+### MANDATORY: Number Formatting in Tables
+
+- **Percentages**: Round to at most 1 decimal place (`round(x, 1)`). Never show 15+ decimal places.
+- **Counts**: Show as integers with no decimals.
+- **Dates**: Use `as.character()` to avoid locale-dependent formatting.
+- **Currency/rates**: At most 2 decimal places.
+- **Ordering**: Rows ordered by the primary metric (highest first). Season/time columns in reverse chronological order (most recent left).
+
+### CRITICAL: Table Targets MUST Return data.frame (Not DT)
+
+**Lesson learned (2026-03-17):** `DT::datatable` objects contain hardcoded
+nix store paths in their `htmlDependency` attributes. When serialized to RDS
+and loaded on a different machine (CI), the paths don't exist →
+`path for html_dependency not found` error, or `$table.DataTable is not a function`.
+
+**MANDATORY pattern:** Table targets in `plan_vignette_outputs.R` MUST return
+plain `data.frame` or `tibble`. The `DT::datatable()` wrapping MUST happen in
+the vignette `.qmd` file, not in the target. This ensures DT's JS/CSS
+dependencies are resolved at render time, not serialization time.
+
+### CRITICAL: DataTables CDN Required in Vignettes
+
+**Lesson learned (2026-03-17):** Even when DT wraps tables in the QMD,
+pkgdown's Quarto rendering may fail to include `jquery.dataTables.min.js`.
+Each vignette MUST include the DataTables CDN in a `{=html}` block:
+
+```html
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+```
+
+This replaces the old subsection below:
 
 **Note:** This subsection covers pipeline integration for tables (belongs conceptually
 with `plan_vignette_outputs.R` conventions). It is here because the symptom — missing
