@@ -24,21 +24,17 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 
 **Session End:** 1. Commit with `gert` (not bash) -> 2. Update `CURRENT_WORK.md` -> 3. Push to remote.
 
-**Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`,
-`nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`.
-**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`.
-See details: `memory/tool-preferences.md`, `memory/architecture.md`.
+**Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`.
+**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`.
 
-**MCP r-btw Tools — ZERO TOLERANCE:**
-- **NEVER** call `btw_tool_run_r`, `btw_tool_pkg_test`, `btw_tool_pkg_check`, `btw_tool_pkg_coverage`, `btw_tool_pkg_document`, `btw_tool_pkg_load_all` directly. They have NO timeout and WILL hang.
-- **ALL R execution** MUST go through `Bash(command = "timeout N Rscript -e '...'")`. No exceptions.
-- **ONLY safe MCP tools**: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*` (read-only, no R execution).
-- See `btw-timeouts` rule for timeout values and patterns.
+**MCP r-btw — ZERO TOLERANCE:** NEVER call `btw_tool_run_r/pkg_test/pkg_check/pkg_coverage/pkg_document/pkg_load_all`. ALL R via `Bash("timeout N Rscript -e '...'")`. Safe: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*`. See `btw-timeouts` rule.
 
-## Agents (8)
+## Agents (10)
 
 | Agent | Use When |
 |-------|----------|
+| `critic` | Read-only adversarial review (cannot edit files) |
+| `fixer` | Apply fixes from critic reports (read-write, cannot self-approve) |
 | `r-debugger` | Debug R package issues (test failures, R CMD check) |
 | `targets-runner` | Run tar_make(), inspect pipeline state |
 | `reviewer` | Code review PRs for R package quality |
@@ -48,7 +44,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `data-engineer` | SQL transforms, dbt pipelines |
 | `shinylive-builder` | Build/test Shinylive WASM vignettes |
 
-## Skills by Category (58)
+## Skills by Category (59)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
@@ -121,6 +117,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 - `executing-plans` — Plan execution
 - `code-review-workflow` — PR review process
 - `context-control` — Context window management
+- `requirements-spec` — MUST/SHOULD/MAY requirements before complex tasks
 
 ### AI/LLM Tools
 - `gemini-cli-codebase-analysis` — Gemini CLI + subagent patterns
@@ -147,7 +144,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `/triage` | Quick issue analysis |
 | `/hi` | Alias for /session-start |
 
-## Rules (23)
+## Rules (24)
 
 | Rule | Enforces |
 |------|----------|
@@ -161,6 +158,7 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `duckdplyr-not-sql` | Use duckdplyr not raw SQL |
 | `glossary-management` | Glossary term management |
 | `module-isolation` | Module isolation patterns |
+| `orchestrator-protocol` | Auto-coordinate agents after plan approval |
 | `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
 | `quarto-vignette-evidence` | Claims require evidence, content quality rules |
 | `quarto-vignette-format` | Vignette format rules (headings, tables, code-as-targets, dashboards) |
@@ -175,15 +173,17 @@ See details: `memory/tool-preferences.md`, `memory/architecture.md`.
 | `visualization-standards` | Tufte/Gelman principles + caption standards |
 | `website-index-update` | Add project to johngavin.github.io on major version |
 
-## Hooks (5)
+## Hooks (12)
 
-| Hook | Trigger |
-|------|---------|
-| `config_size_check.sh` | Session start, config audit |
-| `count_skill_tokens.sh` | Manual audit |
-| `r_code_check.sh` | R code quality checks |
-| `session_tidy.sh` | Session end cleanup |
-| `vignette_check.sh` | Vignette validation |
+| Hook | Event |
+|------|-------|
+| `config_size_check.sh`, `count_skill_tokens.sh` | SessionStart |
+| `post_compact_restore.sh` | SessionStart(compact\|resume) |
+| `pre_compact.sh` | PreCompact — save context state |
+| `file_protection.sh` | PreToolUse(Edit\|Write) |
+| `context_monitor.sh` | PostToolUse(Bash\|Task) |
+| `session_tidy.sh`, `decision_log_reminder.sh` | Stop |
+| `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh` | Manual/CI |
 
 ## Memory Files (7)
 
