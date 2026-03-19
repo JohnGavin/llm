@@ -129,7 +129,7 @@ Use **RED (#CC0000)** for arrow/link colors on dark backgrounds for maximum cont
 %%{init: {'theme': 'dark'}}%%
 graph LR
   A --> B
-  linkStyle default stroke:#CC0000,stroke-width:2px
+  linkStyle default stroke:#CC0000,stroke-width:3px
 ```
 
 **Rationale:** Default grey/black arrows are invisible on dark themes. Red provides strong contrast without competing with node colors.
