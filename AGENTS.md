@@ -173,17 +173,18 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `visualization-standards` | Tufte/Gelman principles + caption standards |
 | `website-index-update` | Add project to johngavin.github.io on major version |
 
-## Hooks (12)
+## Hooks (8 registered, 4 scripts)
 
 | Hook | Event |
 |------|-------|
-| `config_size_check.sh`, `count_skill_tokens.sh` | SessionStart |
-| `post_compact_restore.sh` | SessionStart(compact\|resume) |
-| `pre_compact.sh` | PreCompact — save context state |
-| `file_protection.sh` | PreToolUse(Edit\|Write) |
-| `context_monitor.sh` | PostToolUse(Bash\|Task) |
-| `session_tidy.sh`, `decision_log_reminder.sh` | Stop |
-| `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh` | Manual/CI |
+| `session_init.sh` | SessionStart — env, mappings, sizes, skill audit |
+| `context_survival.sh restore` | SessionStart(compact\|resume) |
+| `context_survival.sh save` | PreCompact |
+| `file_protection.sh` | PreToolUse(Edit\|Write) — blocks NAMESPACE/man/, warns config |
+| `context_monitor.sh` | PostToolUse(Bash\|Task) — context % warnings |
+| `session_stop.sh` | Stop — memory health, uncommitted config, decision log |
+
+**Scripts** (`.claude/scripts/`, manually callable): `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh`
 
 ## Memory Files (7)
 
