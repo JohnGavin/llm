@@ -59,31 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/startup_check.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/validate_claude_md.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/config_size_check.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/count_skill_tokens.sh"
+            "command": "~/.claude/hooks/session_init.sh"
           }
         ]
       },
@@ -92,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/post_compact_restore.sh",
+            "command": "~/.claude/hooks/context_survival.sh restore",
             "timeout": 10
           }
         ]
@@ -103,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/pre_compact.sh",
+            "command": "~/.claude/hooks/context_survival.sh save",
             "timeout": 10
           }
         ]
@@ -146,16 +122,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/session_tidy.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/decision_log_reminder.sh",
-            "timeout": 5
+            "command": "~/.claude/hooks/session_stop.sh",
+            "timeout": 10
           }
         ]
       }

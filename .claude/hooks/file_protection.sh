@@ -1,39 +1,29 @@
 #!/usr/bin/env bash
-# file_protection.sh - Block accidental edits to critical files
+# file_protection.sh - Block or warn on edits to critical files
 # Hook: PreToolUse (Edit, Write)
-# Warns before overwriting protected paths; requires explicit user intent.
+# Exit 2 = BLOCK (auto-generated files). Exit 0 = WARN (config files).
 
 set -euo pipefail
 
-# Read the tool input from stdin
 INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | sed -n 's/.*"file_path":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+[ -z "$FILE_PATH" ] && exit 0
 
-# Extract file path from the tool input
-FILE_PATH=$(echo "$INPUT" | grep -oP '"file_path":\s*"\K[^"]+' 2>/dev/null || echo "")
-
-if [ -z "$FILE_PATH" ]; then
-  exit 0  # No file path found, allow
-fi
-
-# Protected path patterns (relative to project root)
-PROTECTED_PATTERNS=(
-  "inst/extdata/"
-  "default.nix"
-  "_pkgdown.yml"
-  ".github/workflows/"
-  "NAMESPACE"
-  "man/"
-)
-
-# Check if file matches any protected pattern
-for pattern in "${PROTECTED_PATTERNS[@]}"; do
+# Auto-generated files: BLOCK (exit 2) — these are overwritten by devtools::document()
+BLOCK_PATTERNS=("NAMESPACE" "man/")
+for pattern in "${BLOCK_PATTERNS[@]}"; do
   if [[ "$FILE_PATH" == *"$pattern"* ]]; then
-    echo "WARN: Editing protected path: $FILE_PATH"
-    echo "Pattern matched: $pattern"
-    echo "These files are auto-generated or critical infrastructure."
-    echo "Proceed only if this edit is explicitly requested."
-    # Exit 0 to allow (warn only, don't block)
-    # Change to exit 2 to block edits
+    echo "BLOCKED: $FILE_PATH is auto-generated (matched: $pattern)"
+    echo "Run devtools::document() instead of editing directly."
+    exit 2
+  fi
+done
+
+# Config/infrastructure files: WARN (exit 0) — allow but flag
+WARN_PATTERNS=("inst/extdata/" "default.nix" "_pkgdown.yml" ".github/workflows/")
+for pattern in "${WARN_PATTERNS[@]}"; do
+  if [[ "$FILE_PATH" == *"$pattern"* ]]; then
+    echo "WARN: Editing protected path: $FILE_PATH (matched: $pattern)"
     exit 0
   fi
 done
