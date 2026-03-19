@@ -65,13 +65,29 @@ DT::datatable(data, rownames = FALSE, filter = "top",
 
 CSS: `caption, figcaption, .figure-caption { text-align: left !important; caption-side: top !important; }`
 
+## Plotly Number Formatting (MANDATORY)
+
+**ALL numbers in plotly hovertemplates MUST be rounded.** No spurious precision.
+
+| Data type | Format | Example |
+|-----------|--------|---------|
+| Integer counts | `%{x:.0f}` or `%{customdata}` | 306, 1500 |
+| Percentages | `%{x:.1f}%` or `%{x:.1%}` | 99.7%, 45.2% |
+| Goals/rates | `%{y:.2f}` | 2.65, 1.48 |
+| Elo ratings | `%{x:.0f}` | 1523, 1487 |
+| Probabilities | `%{x:.1%}` | 45.2% |
+
+**NEVER use `%{marker.size}` for N** — it shows the scaled marker size (float), not the actual count. Use `customdata = ~as.integer(n)` and `%{customdata}`.
+
 ## Checklist
 
 - [ ] Caption has all 7 items (description, variables, labels, conclusions, source, cross-refs, glossary)
 - [ ] Caption is 3+ sentences, dynamically generated, left-justified
-- [ ] Table targets return DT::datatable with caption= (not bare data.frame)
+- [ ] Table targets return data.frame (NOT DT::datatable — nix path serialization issue)
 - [ ] Each graph makes a comparison; small multiples for 4+ groups
 - [ ] `theme_minimal()` base; y-axis at 0 for bars; no pie charts
 - [ ] Colorblind-safe palette; data points shown alongside summaries
+- [ ] ALL plotly hovertemplates use rounded format specifiers (no spurious precision)
+- [ ] Text labels in dotcharts use size >= 13 with jitter to avoid overlap
 
 See also: `visualization-diagrams` for Mermaid/Plotly diagram standards.
