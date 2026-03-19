@@ -86,6 +86,51 @@
             "command": "~/.claude/hooks/count_skill_tokens.sh"
           }
         ]
+      },
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/post_compact_restore.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/pre_compact.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/file_protection.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/context_monitor.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -102,6 +147,15 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/session_tidy.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/decision_log_reminder.sh",
+            "timeout": 5
           }
         ]
       }

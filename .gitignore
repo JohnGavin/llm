@@ -87,3 +87,4 @@ proj/
 archive/
 inst/extdata/gemini/messages/
 archive/
+.claude/.context_state.json
