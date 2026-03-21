@@ -70,29 +70,77 @@ anonymize_medical_text <- function(text, patient_patterns, doctor_patterns) {
 
 ## Automated PHI Detection (Two-Layer)
 
-Run `~/.claude/scripts/phi_scan.sh` before every commit in medical data projects.
+### Scripts Location
+- **Scanner:** `~/.claude/scripts/phi_scan.sh`
+- **Hook:** `~/.claude/hooks/phi-scan-hook.sh`
 
-**Layer 1 — Regex patterns:** NHS numbers, UK phones, emails, postcodes, dates of birth, patient names (Mr/Mrs/Dr + Name). Skips code patterns (gsub, grep, regex definitions).
+### Layer 1: Known Patterns (Regex)
+Fast, precise detection of known PHI formats:
+- NHS numbers: `\b\d{3}\s*\d{3}\s*\d{4}\b`
+- UK phones: `\b0\d{2,4}\s*\d{3,4}\s*\d{3,4}\b`
+- UK mobiles: `\b07\d{3}\s*\d{6}\b`
+- UK postcodes: `\b[A-Z]{1,2}\d[0-9A-Z]?\s*\d[A-Z]{2}\b`
+- Emails: `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`
+- Dates: UK (`\d{1,2}/\d{1,2}/\d{4}`) and ISO (`\d{4}-\d{2}-\d{2}`)
+- MRN (8-digit): `\b\d{8}\b`
 
-**Layer 2 — Statistical (Willison method):** Flags tokens >12 chars with abnormal vowel ratios + mixed digits. Catches API keys, encoded PHI, base64 data, and random identifiers that regex misses. Based on [simonw/research/string-redaction-library](https://github.com/simonw/research/tree/main/string-redaction-library).
+### Layer 2: Heuristic Detection
+Uses `detect-secrets` (if installed) to catch:
+- High-entropy strings (API keys, tokens)
+- Base64-encoded data
+- Unusual patterns that regex misses
 
-| Severity | Meaning | Action |
+Install: `pip install detect-secrets`
+
+### Severity Levels
+
+| Severity | Pattern | Action |
 |----------|---------|--------|
-| HIGH | NHS number, phone, DOB in data | BLOCK commit — must redact |
-| MEDIUM | Email, postcode, possible name | Review — may be test data or legitimate |
-| LOW | High-entropy string | Review — may be API key, token, or encoded PHI |
+| HIGH | NHS number, phone, MRN | BLOCK — must redact |
+| MEDIUM | Email, postcode | Review — may be legitimate |
+| LOW | High-entropy string | Review — may be API key |
 
-### Integration Options
+### Usage
 
-**Manual:** `~/.claude/scripts/phi_scan.sh path/to/file.R`
-
-**Git pre-commit hook** (add to medical projects):
+**Manual scan:**
 ```bash
-# .git/hooks/pre-commit
-~/.claude/scripts/phi_scan.sh || exit 1
+~/.claude/scripts/phi_scan.sh /path/to/project
+~/.claude/scripts/phi_scan.sh . --layer1-only      # Skip heuristics
+~/.claude/scripts/phi_scan.sh . --json             # JSON output
+~/.claude/scripts/phi_scan.sh . --patterns custom.txt  # Custom patterns
 ```
 
-**Agent workflow:** Run before Step 4 (commit) of the 9-step workflow for any project with PHI.
+**Custom patterns file format** (one per line):
+```
+PATIENT_NAME:John\s+Gavin
+HOSPITAL_NUM:21264224
+```
+
+**Git pre-commit hook:**
+```bash
+# .git/hooks/pre-commit
+#!/bin/bash
+~/.claude/scripts/phi_scan.sh . --layer1-only || {
+  echo "PHI detected! Run 'source R/anonymize.R; anonymize_all_files()' first"
+  exit 1
+}
+```
+
+**Claude Code hook** (add to `.claude/settings.json`):
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "~/.claude/hooks/phi-scan-hook.sh"
+      }
+    ]
+  }
+}
+```
+
+**Agent workflow:** Run before Step 4 (commit) in any project with PHI.
 
 ## Project Setup Checklist
 
