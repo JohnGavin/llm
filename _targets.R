@@ -12,5 +12,6 @@ list(
   plan_structure,
   tar_llm_usage(),
   plan_vignette_outputs(),
-  plan_predictions()  # Cross-project prediction calibration
+  plan_predictions(),  # Cross-project prediction calibration
+  plan_pkgctx()        # ctx.yaml cache audit + refresh
 )
