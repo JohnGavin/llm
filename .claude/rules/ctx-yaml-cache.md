@@ -23,23 +23,30 @@ This directory is gitignored. Files are local-only for LLM context.
 
 Central code lives in `llm/R/tar_plans/plan_pkgctx.R`. Call from any project:
 
-### Session Start — verify all deps have ctx (fast, read-only)
+### Session Start — audit + fix gaps immediately (background)
 
 ```r
 source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
 ctx_audit("DESCRIPTION")
 ```
 
-Reports OK/STALE/VERSION_MISMATCH/MISSING for every dep. Takes ~1 second.
+Reports OK/STALE/OTHER_VERSION/MISSING for every dep. Takes ~1 second.
 
-### Session End — regenerate stale + create missing
+**If any gaps found:** immediately launch `ctx_sync()` as a background subagent or `run_in_background` Bash task. Do NOT wait until session end — the ctx files are needed throughout the session.
+
+```r
+# Run in background — don't block the session
+ctx_sync("DESCRIPTION")  # ~30s per package via nix run github:b-rodrigues/pkgctx
+```
+
+### Session End — verify all ctx files are current
 
 ```r
 source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
-ctx_sync("DESCRIPTION")
+ctx_audit("DESCRIPTION")
 ```
 
-Auto-generates missing ctx files and refreshes stale ones. Takes ~30s per package via `nix run github:b-rodrigues/pkgctx`.
+Confirm 0 MISSING and 0 OTHER_VERSION. If gaps remain, run `ctx_sync()` before closing.
 
 ## Rules
 
