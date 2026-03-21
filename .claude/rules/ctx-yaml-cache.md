@@ -14,15 +14,27 @@ All dependency `.ctx.yaml` files live in ONE location:
 
 This directory is gitignored. Files are local-only for LLM context.
 
-## MANDATORY: Session-Start Sync
+## MANDATORY: Per-Project Session Triggers
 
-When starting work on ANY R package project:
+Central code lives in `llm/R/tar_plans/plan_pkgctx.R`. Call from any project:
 
-1. Read DESCRIPTION -> extract Imports + Suggests
-2. For each dependency, check if `{pkg}.ctx.yaml` exists in the cache
-3. If exists: compare `version:` line in ctx vs `packageVersion(pkg)` installed
-4. If missing or version mismatch: regenerate using `generate_ctx()`
-5. Report summary: N synced, N regenerated, N missing (not installed)
+### Session Start — verify all deps have ctx (fast, read-only)
+
+```r
+source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
+ctx_audit("DESCRIPTION")
+```
+
+Reports OK/STALE/VERSION_MISMATCH/MISSING for every dep. Takes ~1 second.
+
+### Session End — regenerate stale + create missing
+
+```r
+source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
+ctx_sync("DESCRIPTION")
+```
+
+Auto-generates missing ctx files and refreshes stale ones. Takes ~30s per package via `nix run github:b-rodrigues/pkgctx`.
 
 ## Rules
 
