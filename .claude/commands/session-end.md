@@ -37,18 +37,16 @@ cat("\n### Remote Sync\n")
 # Would need to check git_ahead_behind()
 ```
 
-## ctx.yaml Cache Sync
+## ctx.yaml Cache Verification
 
-After commit/push, sync the pkgctx cache for this project's DESCRIPTION:
+After commit/push, verify all ctx files are current:
 
 ```r
-# Source central pkgctx functions and sync
 source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
-ctx_sync("DESCRIPTION")
+audit <- ctx_audit("DESCRIPTION")
 ```
 
-This regenerates stale ctx files and creates missing ones (~30s per package).
-Run in background if many packages need generation.
+If any MISSING or OTHER_VERSION remain (background sync from session start didn't finish), run `ctx_sync("DESCRIPTION")` now.
 
 ## Prompt User
 
