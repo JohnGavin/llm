@@ -29,6 +29,10 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 
 **MCP r-btw — ZERO TOLERANCE:** NEVER call `btw_tool_run_r/pkg_test/pkg_check/pkg_coverage/pkg_document/pkg_load_all`. ALL R via `Bash("timeout N Rscript -e '...'")`. Safe: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*`. See `btw-timeouts` rule.
 
+**Shiny UI:** NEVER use `value_box()` or similar large KPI boxes - they waste space. Use compact two-column tables instead (Metric | Value). Time series plots MUST have a range slider and default to last 3 months view.
+
+**DuckDB queries:** Use `duckplyr` (tidyverse syntax) instead of raw SQL strings where possible. Reserve SQL for complex operations not expressible in dplyr.
+
 ## Agents (10)
 
 | Agent | Use When |
@@ -44,7 +48,7 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `data-engineer` | SQL transforms, dbt pipelines |
 | `shinylive-builder` | Build/test Shinylive WASM vignettes |
 
-## Skills by Category (59)
+## Skills by Category (60)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
@@ -91,6 +95,7 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 ### Shiny & Web
 - `shiny-bslib` — bslib Bootstrap 5 components
 - `shiny-async-patterns` — ExtendedTask, async
+- `shiny-module-data-sharing` — Module data-sharing patterns (reactiveValues, R6, gargoyle)
 - `shinylive-deployment` — Shinylive packaging
 - `shinylive-quarto` — Shinylive in Quarto vignettes
 - `brand-yml` — Brand styling for Shiny/Quarto
@@ -144,7 +149,7 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `/triage` | Quick issue analysis |
 | `/hi` | Alias for /session-start |
 
-## Rules (24)
+## Rules (26)
 
 | Rule | Enforces |
 |------|----------|
@@ -155,9 +160,11 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `data-validation-timeseries` | Time series validation |
 | `diagram-generation` | Mermaid diagram generation patterns |
 | `duckdb-non-determinism` | DuckDB parallelism pitfalls (window order, fan-out, dedup) |
+| `duckdb-security` | DuckDB connection hardening, file/network access, resource limits |
 | `duckdplyr-not-sql` | Use duckdplyr not raw SQL |
 | `glossary-management` | Glossary term management |
 | `module-isolation` | Module isolation patterns |
+| `shiny-module-data-sharing` | Module data-sharing patterns and anti-patterns |
 | `orchestrator-protocol` | Auto-coordinate agents after plan approval |
 | `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
 | `quarto-vignette-evidence` | Claims require evidence, content quality rules |
@@ -188,12 +195,4 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 
 ## Memory Files (7)
 
-| File | Contains |
-|------|----------|
-| `MEMORY.md` | Index + key conventions |
-| `agent-patterns.md` | Agent selection guide |
-| `architecture.md` | Two-tier Nix shell, file structure |
-| `ci-strategy.md` | CI/CD approach |
-| `nix-operations.md` | Nix troubleshooting |
-| `shinylive-issues.md` | Shinylive/WebR workarounds |
-| `tool-preferences.md` | Tool choices, cachix, common tasks |
+`MEMORY.md` (index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`
