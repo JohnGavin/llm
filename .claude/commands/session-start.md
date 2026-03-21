@@ -87,3 +87,15 @@ for (issue in issues) {
 7. Run skill token audit (`~/.claude/hooks/count_skill_tokens.sh`)
 8. Run mapping validation (`~/.claude/validate_claude_md.sh`)
 9. Summarize any warnings
+
+## ctx.yaml Cache (auto from session_init.sh hook)
+
+10. Hook reports OK/STALE/OTHER_VERSION/MISSING counts
+11. If any gaps: immediately launch background ctx_sync:
+
+```bash
+# Run as background task — don't block the session
+timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")'
+```
+
+This generates missing + refreshes stale ctx files (~30s per package) while the session continues.
