@@ -6,11 +6,16 @@ paths:
 ---
 # ctx.yaml Central Cache Management
 
-## Central Cache
+## Central Cache (Version-Stamped)
 
 All dependency `.ctx.yaml` files live in ONE location:
 
     /Users/johngavin/docs_gh/proj/data/llm/content/inst/ctx/external/
+
+**Naming:** `{pkg}@{version}.ctx.yaml` (e.g., `dplyr@1.1.4.ctx.yaml`)
+
+Different projects using different nix shells get different ctx files — no overwrites.
+Each project resolves its version via `packageVersion()` in its own nix shell.
 
 This directory is gitignored. Files are local-only for LLM context.
 
@@ -40,10 +45,11 @@ Auto-generates missing ctx files and refreshes stale ones. Takes ~30s per packag
 
 - **NEVER** copy ctx files into individual project repos
 - **NEVER** commit dependency ctx to git (only self-context in plan_pkgctx.R)
-- **ALWAYS** use the central cache path -- no per-project `.claude/context/`
-- Self-context (`mypackage.ctx.yaml`) goes in the central cache too
-- Stubs (metadata only, no signatures) are acceptable for uninstalled packages
-- See `llm-package-context` skill for `sync_ctx_cache()` and `generate_ctx()` functions
+- **ALWAYS** use the central cache path — no per-project `.claude/context/`
+- **ALWAYS** use version-stamped names: `{pkg}@{version}.ctx.yaml`
+- Self-context: `mypackage@0.1.0.ctx.yaml` goes in the central cache too
+- Old versions auto-cleaned after 90 days untouched (`ctx_cleanup()`)
+- See `llm-package-context` skill for full function reference
 
 ## Regeneration Triggers
 
