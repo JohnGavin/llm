@@ -227,6 +227,42 @@ phase_skill_tokens() {
   [ "$warn_count" -gt 0 ] && echo "ACTION: $warn_count skill(s) exceed $skill_limit line limit" || echo "All skills within limits."
 }
 
+# ── Phase 5: ctx.yaml Cache Audit ─────────────────────────────────────
+phase_ctx_audit() {
+  local ctx_cache="$HOME/docs_gh/proj/data/llm/content/inst/ctx/external"
+  [ -f "DESCRIPTION" ] || { echo "No DESCRIPTION file — skipping ctx audit"; return; }
+  [ -d "$ctx_cache" ] || { echo "No ctx cache dir — skipping"; return; }
+
+  # Use R to parse DESCRIPTION (handles multi-line format correctly)
+  local pkgs
+  pkgs=$(timeout 5 Rscript -e 'd <- read.dcf("DESCRIPTION", fields = c("Imports","Suggests","Depends")); raw <- paste(na.omit(as.character(d)), collapse = ","); p <- trimws(unlist(strsplit(raw, ","))); p <- sub("\\s*\\(.*", "", p); p <- p[nzchar(p) & p != "R"]; cat(paste(p, collapse = "\n"))' 2>/dev/null) || true
+  [ -z "$pkgs" ] && { echo "Could not parse DESCRIPTION"; return; }
+
+  local n_ok=0 n_stale=0 n_missing=0 missing_list=""
+  echo "$pkgs" | while IFS= read -r pkg; do
+    [ -z "$pkg" ] && continue
+    if [ ! -f "$ctx_cache/${pkg}.ctx.yaml" ]; then
+      echo "MISSING:$pkg" >&3
+    elif [ "$(find "$ctx_cache/${pkg}.ctx.yaml" -mtime +30 2>/dev/null)" ]; then
+      echo "STALE:$pkg" >&3
+    else
+      echo "OK:" >&3
+    fi
+  done 3>&1 | {
+    while IFS=: read -r status pkg; do
+      case "$status" in
+        OK) n_ok=$((n_ok + 1)) ;;
+        STALE) n_stale=$((n_stale + 1)) ;;
+        MISSING) n_missing=$((n_missing + 1)); missing_list="$missing_list $pkg" ;;
+      esac
+    done
+    echo "ctx cache: $n_ok OK, $n_stale stale, $n_missing missing"
+    [ "$n_missing" -gt 0 ] && echo "  Missing:$missing_list"
+    [ "$n_missing" -gt 0 ] && echo "  Fix at session end: /bye runs ctx_sync()"
+    true
+  }
+}
+
 # ── Run all phases ────────────────────────────────────────────────────
 phase_env
 echo ""
@@ -242,5 +278,8 @@ echo "=== Skill Token/Line Audit ==="
 echo "Limits: SKILL.md <= 500 lines, description <= 100 words"
 echo ""
 phase_skill_tokens
+echo ""
+echo "=== ctx.yaml Cache Audit ==="
+phase_ctx_audit
 
 exit 0
