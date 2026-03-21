@@ -108,7 +108,7 @@ generate_ctx <- function(pkg, cache_dir = CTX_CACHE) {
   )
 
   cli::cli_alert_info("Generating ctx for {pkg}...")
-  exit_code <- system(cmd, timeout = 120)
+  exit_code <- system(cmd, timeout = 300)
 
   if (exit_code != 0 || !file.exists(out_file) || file.size(out_file) < 10) {
     # Clean up failed generation
