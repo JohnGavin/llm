@@ -33,6 +33,31 @@ Build type-safe, tidyverse-compatible S3 vector classes using the vctrs package.
 **Rule of thumb:** If your type will live in a data frame, use vctrs. If it is a
 standalone object (like a model or connection), use simple S3.
 
+### Before Building a Custom Type: Check `units` First
+
+For **physical measurements, currencies, or any quantity with conversion rules**, use the
+[units](https://cran.r-project.org/package=units) package instead of building a vctrs class
+from scratch. `units` already provides: type-safe arithmetic, automatic conversion between
+compatible units, ggplot2 axis labelling, and dplyr/tibble integration.
+
+| Need | Use `units` | Build with vctrs |
+|------|-------------|-----------------|
+| Physical quantity (m, kg, s, Hz) | Yes — built-in | Unnecessary |
+| Custom measurement (micromort, microlife) | Yes — `install_unit()` | Unnecessary |
+| Quantity + uncertainty (1 ± 0.3 m/s) | Yes — `quantities` package | Unnecessary |
+| Non-numeric domain type (colour, IP address) | No | Yes |
+| Type with non-standard arithmetic | No | Yes |
+
+```r
+# Example: custom units in 3 lines, not 100+
+units::install_unit("micromort")
+units::install_unit("microlife", "30 min")
+x <- units::set_units(2.5, micromort)  # type-safe, auto-converts, ggplot-ready
+```
+
+Related packages: `errors` (uncertainty), `quantities` (units + errors combined),
+`constants` (CODATA physical constants), `clock` (type-safe dates/times).
+
 ## Creating a Custom Vector Class
 
 ### Step 1: Constructor with `new_vctr()`
