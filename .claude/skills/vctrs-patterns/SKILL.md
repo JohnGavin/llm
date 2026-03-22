@@ -55,8 +55,49 @@ units::install_unit("microlife", "30 min")
 x <- units::set_units(2.5, micromort)  # type-safe, auto-converts, ggplot-ready
 ```
 
-Related packages: `errors` (uncertainty), `quantities` (units + errors combined),
-`constants` (CODATA physical constants), `clock` (type-safe dates/times).
+### The r-quantities Ecosystem: units + errors + quantities
+
+For values that carry both a **unit and uncertainty** (e.g., lab measurements, model estimates),
+use the [r-quantities](https://github.com/r-quantities) family:
+
+| Package | What It Adds | Example |
+|---------|-------------|---------|
+| `units` | Measurement units, conversion, type safety | `set_units(9.81, m/s^2)` |
+| `errors` | Uncertainty propagation (first-order Taylor) | `set_errors(9.81, 0.02)` → `9.81 ± 0.02` |
+| `quantities` | Combined: unit + uncertainty in one object | `9.81 ± 0.02 [m/s^2]` |
+| `constants` | CODATA physical constants as `quantities` | `syms$c` → speed of light with unit + uncertainty |
+
+```r
+library(quantities)
+
+# Lab measurement: value + uncertainty + unit
+hb <- set_quantities(13.2, g/dL, 0.3)   # 13.2 ± 0.3 [g/dL]
+set_units(hb, g/L)                        # 132.0 ± 3.0 [g/L] — auto-converts
+
+# Arithmetic propagates both
+hb_low <- set_quantities(10.5, g/dL, 0.2)
+hb - hb_low                               # 2.7 ± 0.4 [g/dL] — uncertainty propagated
+
+# Model estimate with CI
+or <- set_errors(1.85, 0.23)              # odds ratio 1.85 ± 0.23
+log(or)                                    # 0.615 ± 0.124 — log-transformed with propagated error
+```
+
+**When to use which:**
+
+| Scenario | Package |
+|----------|---------|
+| Physical/custom measurements only | `units` |
+| Values with error bars, no units (odds ratios, coefficients) | `errors` |
+| Lab values with units AND uncertainty (haemoglobin g/dL ± 0.3) | `quantities` |
+| Radiation dose constants for micromort calculations | `constants` + `units` |
+
+**Project relevance:**
+- **coMMpass**: lab measurements (haemoglobin, albumin, creatinine) — `quantities` for value + unit + uncertainty
+- **football**: model estimates (odds ratios, Elo ratings) — `errors` for uncertainty propagation
+- **micromort**: risk metrics — `units` for micromort/microlife, `constants` for radiation dose
+
+Also see: `clock` (vctrs-based date-time, stricter than lubridate).
 
 ## Creating a Custom Vector Class
 
