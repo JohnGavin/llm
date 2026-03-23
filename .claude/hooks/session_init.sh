@@ -278,6 +278,29 @@ phase_ctx_audit() {
   }
 }
 
+# ── Phase 6: R-universe Build Status ──────────────────────────────────
+phase_r_universe() {
+  # Check R-universe build status for all registered packages (~2s)
+  local status
+  status=$(timeout 10 curl -s "https://johngavin.r-universe.dev/api/packages" 2>/dev/null)
+  [ -z "$status" ] && { echo "R-universe: could not reach API"; return; }
+
+  local result
+  result=$(echo "$status" | timeout 5 Rscript -e '
+    d <- jsonlite::fromJSON(readLines("stdin", warn = FALSE))
+    if (!is.data.frame(d) || nrow(d) == 0) { cat("No packages\n"); quit() }
+    fails <- d[d[["_status"]] != "success", , drop = FALSE]
+    ok <- sum(d[["_status"]] == "success")
+    cat("R-universe:", ok, "OK,", nrow(fails), "failed\n")
+    if (nrow(fails) > 0) {
+      for (i in seq_len(nrow(fails))) {
+        cat("  FAIL:", fails$Package[i], "—", fails[["_buildurl"]][i], "\n")
+      }
+    }
+  ' 2>/dev/null) || true
+  [ -n "$result" ] && echo "$result" || echo "R-universe: parse error"
+}
+
 # ── Run all phases ────────────────────────────────────────────────────
 phase_env
 echo ""
@@ -296,5 +319,8 @@ phase_skill_tokens
 echo ""
 echo "=== ctx.yaml Cache Audit ==="
 phase_ctx_audit
+echo ""
+echo "=== R-universe Build Status ==="
+phase_r_universe
 
 exit 0
