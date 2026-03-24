@@ -282,7 +282,10 @@ phase_ctx_audit() {
 phase_r_universe() {
   # Check R-universe build status for all registered packages (~2s)
   local status
-  status=$(timeout 10 curl -s "https://johngavin.r-universe.dev/api/packages" 2>/dev/null)
+  if ! status=$(timeout 10 curl -fsS "https://johngavin.r-universe.dev/api/packages" 2>/dev/null); then
+    echo "R-universe: could not reach API"
+    return
+  fi
   [ -z "$status" ] && { echo "R-universe: could not reach API"; return; }
 
   local result
