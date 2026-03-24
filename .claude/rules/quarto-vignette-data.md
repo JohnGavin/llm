@@ -26,7 +26,10 @@ All vignettes use `.qmd` format exclusively. See `quarto-vignette-format.md` Rul
 
 **Forbidden:** Database queries, API calls, heavy computation (`lm()`, aggregations), file I/O that computes.
 
-**No exceptions**: Even pipeline metadata must be pre-computed as targets. `tar_visnetwork()` only with `eval: false`. For Shinylive: pre-compute with `tar_network()` and embed JSON.
+**Exceptions — pipeline introspection only** (with `eval: false` or pre-computed):
+- `tar_visnetwork()`, `tar_meta()`, `tar_network()` — allowed in `eval: false` chunks for documentation
+- For Shinylive: pre-compute with `tar_network()` and embed JSON
+- All other pipeline metadata must be pre-computed as targets
 
 ## 3. ZERO INLINE COMPUTATION OR ASSIGNMENTS
 
