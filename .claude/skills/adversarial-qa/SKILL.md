@@ -50,6 +50,31 @@ For time-series/panel data functions. Test: temporal coverage vs expected freque
 ### 10. Data Ingestion Attacks
 For CSV/file parsers. Test: BOM prefix, encoding (latin1), NA string variants (`""`, `"NA"`, `"N/A"`, `"-"`, `"NULL"`), whitespace trimming, quoted fields with embedded commas, type coercion warnings, missing/extra columns, empty files, ambiguous date formats.
 
+### 11. Numerical Stability Attacks
+For functions performing arithmetic on floating-point values. Test:
+- **Equality traps:** `==` on doubles (use `all.equal(x, y, tolerance = 1e-8)`)
+- **Accumulation errors:** `sum()` on 1M values vs Kahan summation
+- **Catastrophic cancellation:** `(x + epsilon) - x` for large x, small epsilon
+- **Order dependence:** `sum(sort(x))` vs `sum(rev(sort(x)))` for ill-conditioned sums
+- **Tolerance propagation:** downstream functions inheriting upstream rounding
+
+```r
+test_that("function handles floating-point edge cases", {
+  # Equality trap
+  expect_true(all.equal(0.1 + 0.2, 0.3))  # NOT: expect_equal(0.1+0.2, 0.3)
+
+  # Accumulation
+  x <- rep(1e-10, 1e6)
+  expect_equal(my_sum(x), 1e-4, tolerance = 1e-8)
+
+  # Order independence
+  big <- c(1e15, 1, -1e15, 1)
+  expect_equal(my_func(big), my_func(rev(big)), tolerance = 1e-8)
+})
+```
+
+**MANDATORY** for: risk calculations (micromort), financial aggregations (crypto), model scoring (football), any pipeline producing summary statistics.
+
 ## Template Test File
 
 ```r
@@ -97,6 +122,8 @@ See [severity-tiers.md](references/severity-tiers.md) for the full severity tier
 - **Every function returning aggregated summaries MUST have aggregation arithmetic checks**
 - **Every data ingestion function MUST have data ingestion attacks (Category 10)**
 - **Every CSV/file parser MUST test: BOM, encoding, NA variants, whitespace, quoted fields**
+- **Every function doing floating-point arithmetic MUST have numerical stability attacks (Category 11)**
+- **Every function using `==` on doubles MUST be flagged — use `all.equal()` with explicit tolerance**
 
 ## Pipeline Integration
 
