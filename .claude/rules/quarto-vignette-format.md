@@ -1,7 +1,6 @@
 ---
 paths:
   - "*.qmd"
-  - "*.Rmd"
   - "vignettes/**"
 ---
 # Quarto Vignette Format Rules
@@ -24,7 +23,11 @@ Exceptions: `setup`, `pkgdown-banner`, `session-info`.
 
 ## 0c. README MUST BE README.qmd
 
-`README.md` auto-generated from `README.qmd`. Static code examples with fabricated `#>` output are FORBIDDEN.
+`README.md` auto-generated from `README.qmd`. Static code examples with fabricated `#>` output are FORBIDDEN. All code targets MUST `parse(text=code)` for R or `bash -n` for bash.
+
+## 0d. _targets.R PARSE CHECK (ALL PROJECTS)
+
+Before every commit: `parse("_targets.R")` MUST succeed. A syntax error in `_targets.R` breaks the entire pipeline — no target can run, no vignette can render, no validation can execute. This applies to ALL projects, not just coMMpass.
 
 ## 1. UNIQUE SECTION TITLES
 
@@ -79,3 +82,12 @@ User-facing code examples MUST be stored as targets:
 When using `format: dashboard`: descriptive `#` page names, `## Row` only for layout with `{.hidden}`, `{.tabset}` with descriptive tabs, explicit anchor IDs.
 
 See also: `quarto-vignette-layout`, `quarto-vignette-evidence`.
+
+## Checklist (Format)
+
+- [ ] No duplicate section titles
+- [ ] Titles match pkgdown navbar
+- [ ] No `knitr::kable()` — use `DT::datatable()` with `caption=`
+- [ ] All `DT::datatable()` have `caption=`
+- [ ] Code examples stored as targets (section 4)
+- [ ] Dashboard pages have descriptive names (section 5)

@@ -1,9 +1,6 @@
 ---
 paths:
-  - "R/**"
-  - "tests/**"
-  - "vignettes/**"
-  - ".github/workflows/**"
+  - "**"
 ---
 # btw MCP Tool Timeout Rules (GLOBAL — ALL PROJECTS)
 
