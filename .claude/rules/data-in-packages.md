@@ -107,6 +107,24 @@ data.
 
 ---
 
+## Data Versioning (MANDATORY for DuckDB/Parquet)
+
+Datasets that change over time MUST be versioned so past analyses can be reproduced.
+
+| Strategy | When | How |
+|----------|------|-----|
+| **Date-partitioned parquet** | Time-series data (irishbuoys, solwatch) | `data/raw/YYYY-MM-DD/` partitions |
+| **DuckDB snapshots** | Analytical databases (coMMpass) | `EXPORT DATABASE 'snapshots/YYYY-MM-DD'` |
+| **Content-hashed RDS** | Small derived datasets | `saveRDS(df, paste0("data/", digest::digest(df), ".rds"))` |
+| **Git tags** | Release datasets | `git tag data-v1.0` on the commit that produced the dataset |
+
+**MANDATORY:** Every project with mutable data MUST record in `data_provenance` target (see `data-validation-timeseries` rule):
+- Content hash of the dataset (`digest::digest()`)
+- Acquisition timestamp
+- Row count and date range
+
+**Anti-pattern:** Overwriting `inst/extdata/data.parquet` with no way to recover the previous version.
+
 ## Checklist
 
 - [ ] No files > 5 MB in `inst/extdata/` without justification

@@ -13,14 +13,11 @@ If not in nix: `caffeinate -i ~/docs_gh/rix.setup/default.sh`. Check `.claude/CU
 **Nix:** One persistent shell per session. Verify: `echo $IN_NIX_SHELL`. Issues: `nix-env` agent.
 **NEVER** `install.packages()` / `devtools::install()` / `pak::pkg_install()` inside Nix.
 
-**Errors:** NEVER speculate. READ the error, QUOTE it, then propose fixes.
+**Errors:** NEVER speculate. READ the error, QUOTE it, then propose fixes. **R Version:** 4.5.x.
 
-**R Version:** 4.5.x. Check: `R.version.string`
+**Data Privacy:** PHI/confidential data NEVER to public repos without approval (renews each minor version).
 
-**Data Privacy:** Telemetry with confidential info must NEVER be uploaded to public repos without explicit approval.
-Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
-
-**Versioning:** Semver. Patch = bugfix, Minor = new feature, Major = breaking. Pre-1.0: breaking = minor bump.
+**Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump.
 
 **Session End:** 1. Commit with `gert` (not bash) -> 2. Update `CURRENT_WORK.md` -> 3. Push to remote.
 
@@ -48,7 +45,7 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `data-engineer` | SQL transforms, dbt pipelines |
 | `shinylive-builder` | Build/test Shinylive WASM vignettes |
 
-## Skills by Category (60)
+## Skills by Category (61)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
@@ -110,6 +107,9 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 - `webr-multi-page-vignettes` — WebR multi-page vignettes
 - `describe-design` — Codebase architecture docs
 
+### Prose Quality
+- `deslop` — Remove AI writing patterns from prose (vignettes, emails, READMEs, captions, issues). Overrides: captions MUST have units+source+dynamic values; code quality always paramount
+
 ### DevOps & CI
 - `ci-workflows-github-actions` — GitHub Actions + R-universe workflows
 - `pkgdown-deployment` — pkgdown site deployment
@@ -149,7 +149,7 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `/triage` | Quick issue analysis |
 | `/hi` | Alias for /session-start |
 
-## Rules (26)
+## Rules (27)
 
 | Rule | Enforces |
 |------|----------|
@@ -172,6 +172,7 @@ Approval renews every minor version upgrade (e.g., 1.1 -> 1.2), not patches.
 | `quarto-vignette-layout` | Full-width CSS, dashboard standards, code-folding, broken links |
 | `quarto-vignette-validation` | Post-publish validation, missing evidence, dark mode |
 | `reproducible-visualization` | Plot reproducibility via targets |
+| `statistical-reporting` | Effect sizes, multiple comparisons, precision, exploratory vs confirmatory |
 | `suppress-warnings-antipattern` | Ban suppressWarnings(as.*) with solutions |
 | `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |
 | `verification-before-completion` | No completion claims without evidence |

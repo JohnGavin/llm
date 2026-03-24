@@ -83,6 +83,27 @@ All targets MUST use `cue = tar_cue(mode = "always")`.
 
 ---
 
+## Data Provenance (MANDATORY)
+
+Every dataset MUST have lineage metadata answering: where, when, how.
+
+Record as a `data_provenance` target with fields: source name, URL/path, acquisition timestamp, query/filter parameters, row count, date range, content hash (`digest::digest()`).
+
+**Why:** Without provenance, you cannot tell if a result changed because code changed or data changed.
+
+## External Data Source Validation (MANDATORY)
+
+When fetching from external APIs (ERDDAP, GDC, Solana RPC, football APIs), validate the response before processing:
+
+| Check | Fails? |
+|-------|--------|
+| Schema stability (column names/types match expected) | Yes — `cli::cli_abort()` |
+| Response size (0 rows or <50% of expected) | Yes / Warn |
+| Date continuity (unexpected gaps) | Warn |
+| Value ranges (numeric within physical bounds) | Warn if >5% |
+
+Validate with `setdiff(expected_cols, names(df))` immediately after fetch. **Anti-pattern:** piping API response directly into analysis without schema check.
+
 ## Anti-Patterns This Rule Prevents
 
 - Assuming row counts are "probably fine" without computing expected counts
