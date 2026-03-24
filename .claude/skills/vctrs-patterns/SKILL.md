@@ -68,19 +68,20 @@ use the [r-quantities](https://github.com/r-quantities) family:
 | `constants` | CODATA physical constants as `quantities` | `syms$c` → speed of light with unit + uncertainty |
 
 ```r
-library(quantities)
+library(quantities)  # attaches units + errors
 
 # Lab measurement: value + uncertainty + unit
 hb <- set_quantities(13.2, g/dL, 0.3)   # 13.2 ± 0.3 [g/dL]
-set_units(hb, g/L)                        # 132.0 ± 3.0 [g/L] — auto-converts
+units::set_units(hb, g/L)                # 132.0 ± 3.0 [g/L] — auto-converts
 
 # Arithmetic propagates both
 hb_low <- set_quantities(10.5, g/dL, 0.2)
 hb - hb_low                               # 2.7 ± 0.4 [g/dL] — uncertainty propagated
 
-# Model estimate with CI
-or <- set_errors(1.85, 0.23)              # odds ratio 1.85 ± 0.23
-log(or)                                    # 0.615 ± 0.124 — log-transformed with propagated error
+# Model estimate with standard error
+or <- errors::set_errors(1.85, 0.23)      # odds ratio 1.85 ± 0.23 (SE)
+log(or)                                    # 0.615 ± 0.124 — log-transformed with propagated SE
+# NOTE: if you have a 95% CI half-width instead, convert first: se <- ci_half_width / 1.96
 ```
 
 **When to use which:**
