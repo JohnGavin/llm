@@ -5,13 +5,11 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 ## Core Rules
 
-**Session Start:** `echo $IN_NIX_SHELL` (should be 1/impure), `which R` (should be /nix/store/...).
-If not in nix: `caffeinate -i ~/docs_gh/rix.setup/default.sh`. Check `.claude/CURRENT_WORK.md`, `git status`, open issues.
+**Session Start:** `echo $IN_NIX_SHELL` (1/impure), `which R` (/nix/store/...). If not: `caffeinate -i ~/docs_gh/rix.setup/default.sh`. Check `CHANGELOG.md`, `git status`, open issues.
 
 **Git/GitHub — R packages ONLY:** `gert::git_add()`, `git_commit()`, `git_push()`; `usethis::pr_init()`, `pr_push()`; `gh::gh()`.
 
-**Nix:** One persistent shell per session. Verify: `echo $IN_NIX_SHELL`. Issues: `nix-env` agent.
-**NEVER** `install.packages()` / `devtools::install()` / `pak::pkg_install()` inside Nix.
+**Nix:** One persistent shell per session. Verify: `echo $IN_NIX_SHELL`. Issues: `nix-env` agent. **NEVER** `install.packages()` / `devtools::install()` / `pak::pkg_install()` inside Nix.
 
 **Errors:** NEVER speculate. READ the error, QUOTE it, then propose fixes. **R Version:** 4.5.x.
 
@@ -19,7 +17,10 @@ If not in nix: `caffeinate -i ~/docs_gh/rix.setup/default.sh`. Check `.claude/CU
 
 **Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump.
 
-**Session End:** 1. Commit with `gert` (not bash) -> 2. Update `CURRENT_WORK.md` -> 3. Push to remote.
+**Session Start:** Read `CHANGELOG.md` — pick up next task, avoid failed approaches.
+**Session End:** Commit -> append `CHANGELOG.md` (completed, failed, metrics) -> push. **Commits:** After every meaningful unit. Never break passing tests. Git log = lab notes.
+
+**Pipeline Validation (ALL PROJECTS):** Before every commit: `parse("_targets.R")` MUST succeed. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`.
 **Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`.
