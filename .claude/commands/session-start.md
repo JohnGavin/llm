@@ -6,9 +6,10 @@ Run the session initialization checklist from AGENTS.md Section 1.
 
 1. Verify nix shell is active
 2. Check git status and current branch
-3. Read `.claude/CURRENT_WORK.md` if exists
-4. List open GitHub issues
-5. Summarize what to work on
+3. Read `CHANGELOG.md` — pick up the next task from known limitations or open issues
+4. Read `.claude/CURRENT_WORK.md` if exists (ephemeral session state)
+5. List open GitHub issues
+6. Summarize what to work on (prioritise CHANGELOG.md "Known Limitations" + failed approaches to avoid)
 
 ## Commands to Execute
 
@@ -69,6 +70,9 @@ for (issue in issues) {
 
 ### Open Issues
 - #[num] [title]
+
+### Changelog (Lab Notes)
+[Last entry from CHANGELOG.md — known limitations, failed approaches to avoid]
 
 ### Current Work
 [Contents of CURRENT_WORK.md or "No current work file"]
