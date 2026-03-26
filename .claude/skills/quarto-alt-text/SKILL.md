@@ -36,6 +36,52 @@ Unlike typical alt text scenarios, **we have access to the code that generates e
 2. **Data description** - Axes, variables, what's shown
 3. **Key insight** - The pattern or takeaway
 
+## ggplot2 Code → Alt Text Mapping
+
+Read the plotting code to extract structured descriptions:
+
+| ggplot2 Code | Alt Text Description |
+|-------------|---------------------|
+| `geom_point()` | "Scatter chart" |
+| `geom_histogram()` / `geom_bar()` | "Histogram" / "Bar chart" |
+| `geom_line()` | "Line chart" |
+| `geom_tile()` / `geom_raster()` | "Heatmap" / "Tile chart" |
+| `geom_boxplot()` / `geom_violin()` | "Box plot" / "Violin plot" |
+| `geom_smooth()` | "with overlaid fitted [method] curve" |
+| `aes(x = var1, y = var2)` | "[var1] along the x-axis, [var2] along the y-axis" |
+| `aes(color = group)` / `aes(fill = group)` | "colored by [group]" / "filled by [group]" |
+| `facet_wrap(~var, nrow = N)` | "Faceted into [N] panels, one per [var]" |
+| `facet_grid(row ~ col)` | "[N×M] grid of panels, rows by [row], columns by [col]" |
+| `scale_x_log10()` | "x-axis on log scale" |
+| `labs(x = "Label")` | Use the label text, not the variable name |
+| `coord_flip()` | Swap x/y descriptions |
+
+## Data Generation Code → Distribution Clues
+
+Read the code that creates the data to describe expected shapes:
+
+| Code Pattern | Alt Text Clue |
+|-------------|---------------|
+| `rnorm()`, `dnorm()` | "approximately bell-shaped" |
+| `rbeta(a, b)` where a < b | "right-skewed" |
+| `runif()` | "approximately uniform" |
+| `rpois()`, `rbinom()` | "discrete, right-skewed" |
+| `log()` transform | "after log transformation" |
+| `scale()` / z-score | "after standardization" |
+| `filter(x > threshold)` | "subset where [condition]" |
+
+## fig-cap / fig-alt Complementarity (MANDATORY)
+
+fig-cap and fig-alt MUST work together, not duplicate each other:
+
+| If fig-cap... | Then fig-alt should... |
+|--------------|----------------------|
+| States the key insight ("Males outnumber females 60:40") | Focus on **visual structure** (chart type, axes, encoding) |
+| Is generic ("Gender distribution") | Include the **key insight** from surrounding prose |
+| Includes data source | Skip source, focus on pattern |
+
+Together they should give a complete understanding to any reader.
+
 ## Content Rules
 
 **Include:** Chart type as first words, axis labels, specific values/ranges, number of panels, what color/size encodes, key pattern.
@@ -80,6 +126,24 @@ Faceted [chart type] with [N] panels, one per [faceting variable].
 ```
 [Line/Scatter] chart with overlaid [fits/curves]. [Axes].
 [Number] of [lines/fits] shown: [list what each represents].
+```
+
+**Tile / heatmap:**
+```
+Heatmap with [rows var] along the y-axis, [cols var] along the x-axis.
+Color intensity represents [measure]. [Pattern: diagonal, clustered, gradient].
+```
+
+**Correlation heatmap:**
+```
+Correlation heatmap of [N] variables. Color ranges from [low color] (negative)
+to [high color] (positive). [Strongest correlations: X-Y at r=0.9]. [Clusters].
+```
+
+**Before/after comparison:**
+```
+Side-by-side [chart type]. Left panel shows [before condition], right panel
+shows [after condition]. [Key difference between panels].
 ```
 
 ## Workflow
