@@ -77,22 +77,62 @@ server <- function(input, output, session) {
 shinyApp(ui, server)
 ```
 
-## Polling Pattern (Legacy, Less Responsive)
+## Polling Pattern with `walk()` (Simpler Code, Choppier UX)
+
+Complete runnable app — submit batches with `walk()`, poll for results with `invalidateLater()`. Simpler than promises but UI only updates on the poll interval.
 
 ```r
-# AVOID: Polling-based approach (sluggish UX)
-observe({
-  invalidateLater(500)  # Check every 500ms
+library(shiny)
 
-  result <- controller$pop()
-  if (!is.null(result)) {
-    # Process result...
-  }
-})
+flip_coin <- function() {
+  Sys.sleep(0.1)
+  rbinom(n = 1, size = 1, prob = 0.501)
+}
 
-# PREFER: Promise-based approach (immediate callbacks)
-# See example above
+ui <- fluidPage(
+  div("Is the coin fair?"),
+  actionButton("button", "Flip 1000 coins"),
+  textOutput("results")
+)
+
+server <- function(input, output, session) {
+  controller <- crew::crew_controller_local(workers = 10, seconds_idle = 10)
+  controller$start()
+  onStop(function() controller$terminate())
+
+  flips <- reactiveValues(heads = 0, tails = 0, total = 0)
+
+  # walk() submits a batch inside observeEvent()
+  observeEvent(input$button, {
+    controller$walk(
+      command = flip_coin(),
+      iterate = list(index = seq_len(1000)),
+      data = list(flip_coin = flip_coin)
+    )
+  })
+
+  # Poll for finished results every 500ms
+  observe({
+    invalidateLater(millis = 500)
+    results <- controller$collect(error = "stop")
+    req(results)
+    new_flips <- as.logical(results$result)
+    flips$heads <- flips$heads + sum(new_flips)
+    flips$tails <- flips$tails + sum(1 - new_flips)
+    flips$total <- flips$total + length(new_flips)
+  })
+
+  output$results <- renderText({
+    invalidateLater(millis = 500)
+    sprintf("%s | %s heads, %s tails, %s total",
+      format(Sys.time(), "%H:%M:%S"), flips$heads, flips$tails, flips$total)
+  })
+}
+
+shinyApp(ui = ui, server = server)
 ```
+
+**When to use polling:** Simpler apps, prototypes, or when you don't need sub-second UI responsiveness. See the promise-based pattern above for snappier UX.
 
 ## Debugging crew in Shiny
 
