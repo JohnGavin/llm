@@ -104,13 +104,16 @@ See [extended-task-patterns.md](references/extended-task-patterns.md) for detail
 
 ## Decision Matrix
 
-| Scenario | Solution |
-|----------|----------|
-| Single long computation | `ExtendedTask` + `future_promise()` |
-| Multiple parallel tasks | `crew` controller with promises |
-| Simple async with immediate callback | `mirai::mirai()` + promise chain |
-| Batch job submission | `crew::controller$walk()` |
-| Background workers for targets | `crew_controller_local()` in `_targets.R` |
+| Scenario | Solution | UX Feel |
+|----------|----------|---------|
+| Single long computation | `ExtendedTask` + `future_promise()` | Smooth (button disables until done) |
+| Multiple parallel tasks | `crew` controller + `push()` + `%...>%` | **Snappy** — UI updates as each task completes |
+| Multiple tasks (simpler code) | `crew` controller + `walk()` + `invalidateLater` polling | **Choppy** — UI updates on poll interval (e.g., 500ms) |
+| Simple async with immediate callback | `mirai::mirai()` + promise chain | Snappy |
+| Batch job submission | `crew::controller$walk()` in `observeEvent()` | Choppy (but simple) |
+| Background workers for targets | `crew_controller_local()` in `_targets.R` | N/A (pipeline, not interactive) |
+
+**UX rule of thumb:** Polling (`invalidateLater` + `collect`) is simpler to code but the UI feels choppy. Promise chaining (`push` + `%...>%`) requires `controller$autoscale()` but the UI updates instantly when tasks complete. **Prefer promises for user-facing apps.**
 
 ## Version Requirements
 
