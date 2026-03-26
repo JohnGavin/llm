@@ -17,8 +17,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump.
 
-**Session Start:** Read `CHANGELOG.md` — pick up next task, avoid failed approaches.
-**Session End:** Commit -> append `CHANGELOG.md` (completed, failed, metrics) -> push. **Commits:** After every meaningful unit. Never break passing tests. Git log = lab notes.
+**Session:** Start: read `CHANGELOG.md`, avoid failed approaches. End: commit -> append CHANGELOG (completed, failed, metrics) -> push. Commit after every meaningful unit. Never break tests. Git log = lab notes.
 
 **Pipeline Validation (ALL PROJECTS):** Before every commit: `parse("_targets.R")` MUST succeed. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash.
 
@@ -135,7 +134,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 ### Specialized
 - `mlops-deployment` — MLOps patterns
 
-## Commands (10)
+## Commands (11)
 
 | Command | Purpose |
 |---------|---------|
@@ -148,6 +147,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `/issue-triage` | List issues by difficulty |
 | `/new-issue` | Create issue with branch |
 | `/triage` | Quick issue analysis |
+| `/write-alt-text` | Generate fig-alt for all vignette figures |
 | `/hi` | Alias for /session-start |
 
 ## Rules (27)
