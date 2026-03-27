@@ -109,6 +109,30 @@ plan_data_acquisition <- list(
 )
 ```
 
+## Target Names Are API Contracts (MANDATORY)
+
+Target names are **durable interfaces** consumed by vignettes (`safe_tar_read("vig_X")`), Shiny apps (`tar_read(model_Y)`), cross-project references, and other pipeline plans. Renaming a target breaks all downstream consumers silently.
+
+**Rules:**
+- **NEVER rename a target** without updating all consumers (grep the entire project)
+- **Use `lifecycle::deprecate_warn()`** pattern: keep the old target as a thin wrapper for one version
+- **Prefix conventions are contracts** — `vig_*` = vignette display, `qa_*` = quality gates, `dv_*` = data validation
+- **Document breaking changes in CHANGELOG.md** under "Failed Approaches" or "Known Limitations"
+
+```r
+# Renaming a target safely
+tar_target(new_name, compute_result()),
+tar_target(old_name, {
+  cli::cli_warn("Target 'old_name' is deprecated. Use 'new_name'.")
+  tar_read(new_name)
+}),
+```
+
+**Before renaming, grep for all consumers:**
+```bash
+grep -r "old_target_name" vignettes/ R/ inst/shiny/ tests/
+```
+
 ## Plan Naming Convention
 
 | Plan File | Purpose | Typical Targets |

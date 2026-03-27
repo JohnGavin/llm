@@ -33,6 +33,29 @@ Use this skill when:
 - Include timestamps and log levels
 - Rotate logs at 5MB, keep 3 versions (essential for launchd/cron)
 
+### Grep-Parseable Error Format (MANDATORY)
+
+Every error MUST produce a single-line `ERROR:` entry that `grep` can find:
+
+```r
+# WRONG: multi-line cli message only (human-friendly but not grep-able)
+cli::cli_abort(c("x" = "Failed to fetch data", "i" = "Check API key"))
+
+# RIGHT: log a grep-able line THEN abort with structured message
+logger::log_error("ERROR: Failed to fetch data — check API key")
+cli::cli_abort(c("x" = "Failed to fetch data", "i" = "Check API key"))
+```
+
+**Rule:** `logger::log_error("ERROR: {reason}")` on a single line before every `cli::cli_abort()`. This ensures CI logs, pipeline output, and session logs are all searchable with `grep ERROR`.
+
+```bash
+# Find all errors in pipeline log
+grep "^ERROR:" inst/logs/pipeline.log
+
+# Count errors in CI output
+grep -c "ERROR:" ci-output.txt
+```
+
 ### Telemetry as Documentation
 
 - Create vignette showing project health
