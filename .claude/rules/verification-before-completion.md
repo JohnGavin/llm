@@ -36,10 +36,17 @@ If you haven't run the verification command **in this message**, you cannot clai
 ## Before Any Commit
 
 ```r
+parse("_targets.R")  # VERIFY: no parse errors (ALL PROJECTS)
 devtools::document()
 devtools::test()   # VERIFY: "[ FAIL 0 | WARN 0 | SKIP 0 | PASS n ]"
 devtools::check()  # VERIFY: "0 errors | 0 warnings | 0 notes"
+targets::tar_make()  # VERIFY: pipeline runs without errors
 ```
+
+**Why `parse("_targets.R")`:** A syntax error in `_targets.R` silently breaks the
+entire pipeline. `tar_make()` fails but may not be run until later. Parse-checking
+catches syntax errors immediately. (Learned 2026-03-24: `plan_pkgdown()` added
+without comma broke pipeline for 3 days.)
 
 ## Before PR Push
 
