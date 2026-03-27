@@ -273,7 +273,13 @@ phase_ctx_audit() {
     done
     echo "ctx cache: $n_ok OK, $n_stale stale, $n_other wrong-version, $n_missing missing"
     [ "$n_missing" -gt 0 ] && echo "  Missing:$missing_list"
-    [ "$((n_missing + n_stale + n_other))" -gt 0 ] && echo "  Fix at session end: /bye runs ctx_sync()"
+    # Auto-launch background ctx_sync if any gaps found
+    if [ "$((n_missing + n_stale + n_other))" -gt 0 ] && [ -f "DESCRIPTION" ]; then
+      echo "  Launching background ctx_sync..."
+      nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
+        > /tmp/ctx_sync_$$.log 2>&1 &
+      echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
+    fi
     true
   }
 }
