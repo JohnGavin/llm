@@ -9,9 +9,9 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Git/GitHub — R packages ONLY:** `gert::git_add()`, `git_commit()`, `git_push()`; `usethis::pr_init()`, `pr_push()`; `gh::gh()`.
 
-**Nix:** One persistent shell per session. Verify: `echo $IN_NIX_SHELL`. Issues: `nix-env` agent. **NEVER** `install.packages()` / `devtools::install()` / `pak::pkg_install()` inside Nix.
+**Nix:** One persistent shell. Verify: `echo $IN_NIX_SHELL`. **NEVER** `install.packages()`/`devtools::install()`/`pak::pkg_install()` in Nix.
 
-**Errors:** NEVER speculate. READ the error, QUOTE it, then propose fixes. **R Version:** 4.5.x.
+**Errors:** NEVER speculate. READ error, QUOTE it, propose fixes. **R:** 4.5.x. **Deletion:** NEVER rm untracked >1MB without listing, age-check, user confirm (`safe-deletion` rule).
 
 **Data Privacy:** PHI/confidential data NEVER to public repos without approval (renews each minor version).
 
@@ -150,7 +150,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `/write-alt-text` | Generate fig-alt for all vignette figures |
 | `/hi` | Alias for /session-start |
 
-## Rules (27)
+## Rules (28)
 
 | Rule | Enforces |
 |------|----------|
@@ -173,6 +173,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `quarto-vignette-layout` | Full-width CSS, dashboard standards, code-folding, broken links |
 | `quarto-vignette-validation` | Post-publish validation, missing evidence, dark mode |
 | `reproducible-visualization` | Plot reproducibility via targets |
+| `safe-deletion` | Pre-deletion verification: size, age, diff, user approval for >1MB |
 | `statistical-reporting` | Effect sizes, multiple comparisons, precision, exploratory vs confirmatory |
 | `suppress-warnings-antipattern` | Ban suppressWarnings(as.*) with solutions |
 | `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |
@@ -195,6 +196,5 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Scripts** (`.claude/scripts/`, manually callable): `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh`
 
-## Memory Files (7)
-
-`MEMORY.md` (index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`
+## Memory Files (8)
+`MEMORY.md` (index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `feedback_safe-deletion.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`
