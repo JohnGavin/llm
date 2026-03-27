@@ -1,0 +1,16 @@
+agent = "claude-code"
+review_context_count = 3
+excluded_commit_patterns = ["[skip review]", "docs: rebuild pkgdown", "chore: gitignore"]
+review_reasoning = "standard"
+fix_reasoning = "standard"
+refine_reasoning = "standard"
+fix_min_severity = "medium"
+refine_min_severity = "medium"
+review_guidelines = """
+R package (llm) — global config management project. Review for:
+- Rule/skill/agent .md files: check for contradictions with existing rules
+- Hook scripts: verify portable bash (no grep -oP, use sed)
+- AGENTS.md must stay under 200 lines
+- Rules must stay under 150 lines
+- All rules need YAML frontmatter with paths:
+"""
