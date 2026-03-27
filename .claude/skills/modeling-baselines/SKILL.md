@@ -19,6 +19,27 @@ Use this skill when:
 
 If the baseline performs comparably, prefer it for interpretability.
 
+## Eval/Experiment File Separation (MANDATORY)
+
+Separate **immutable evaluation code** from **mutable experiment code**:
+
+| File | Mutable? | Contains |
+|------|----------|---------|
+| `R/evaluate.R` | **NO** — frozen | Metric computation, cross-validation, scoring functions |
+| `R/train.R` or `R/model_*.R` | **YES** — experiment here | Model fitting, hyperparameters, architecture |
+| `tests/testthat/test-oracle.R` | **NO** — frozen | Known-correct reference values for sanity checks |
+
+**Why:** If both eval and model code change simultaneously, you can't tell whether a metric improvement came from a better model or a bug in the evaluation. Freeze eval first, then iterate on the model.
+
+**test-oracle.R pattern:** Store known-correct outputs for reference inputs:
+```r
+test_that("baseline predictions match reference", {
+  ref_preds <- readRDS(test_path("fixtures", "baseline_predictions.rds"))
+  current_preds <- predict(fit_baseline(test_data), test_data)
+  expect_equal(current_preds, ref_preds, tolerance = 1e-6)
+})
+```
+
 ## Baseline-First Workflow
 
 ### Step 1: Fit the GLM/GLMM Baseline
