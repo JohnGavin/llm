@@ -118,13 +118,50 @@ For most R packages with data pipelines: **use pre-computed RDS**.
 - [ ] CI deploy succeeds: `gh run list --workflow 04-website.yaml`
 - [ ] **NEVER trust local pkgdown builds** — `docs/` is gitignored, CI builds on Ubuntu
 
+## Code Target Validation (MANDATORY)
+
+Code stored as character strings MUST be parse-validated inside the target:
+
+```r
+# R code targets: parse() validates syntax
+tar_target(readme_install_code, {
+  code <- paste("library(targets)", "tar_make()", sep = "\n")
+  parse(text = code)  # Fails pipeline if invalid R
+  code
+})
+
+# Bash code targets: bash -n validates syntax
+tar_target(readme_nix_code, {
+  code <- paste("chmod +x default.sh", "./default.sh", sep = "\n")
+  tf <- tempfile(fileext = ".sh")
+  writeLines(code, tf)
+  system2("bash", c("-n", tf), stderr = TRUE)  # Syntax check
+  code
+})
+```
+
+**Why:** A target that creates `paste("invalid R ...")` "passes" because `paste()` succeeds.
+The code is never parsed. Without validation, broken code ships to the website.
+
+## _targets.R Parse Check (MANDATORY — ALL PROJECTS)
+
+Before every commit that touches `_targets.R` or any `R/tar_plans/*.R` file:
+```r
+parse("_targets.R")  # Must succeed or commit is blocked
+```
+
+**Why (2026-03-24):** A remote change added `plan_pkgdown()` without comma to `_targets.R`.
+`tar_make()` failed with "unexpected symbol". No target could run. The broken `_targets.R`
+was pushed and went undetected because nothing validated it.
+
 ## Common Violations
 
 1. **Saving DT widgets to RDS** — Contains Nix store paths, CI fails with `path for html_dependency not found`
 2. **Using `safe_tar_read()` instead of `show_target()`** — Shows `safe_tar_read(...)` in code fold instead of generating R code
 3. **Missing `#| echo: false`** — Quarto shows chunk source code instead of generating code
 4. **Not checking CI after push** — Local builds pass but CI fails silently
-5. **Forgetting to export `code_vig_*` RDS** — Code provenance missing in CI builds
+5. **Storing code as strings without parse validation** — Target "passes" but code is broken
+6. **Not parsing `_targets.R` before commit** — Syntax error breaks entire pipeline
 
 ## Related Files
 
