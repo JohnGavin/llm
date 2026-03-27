@@ -304,6 +304,31 @@ phase_r_universe() {
   [ -n "$result" ] && echo "$result" || echo "R-universe: parse error"
 }
 
+# ── Phase 7: Stale Worktrees ──────────────────────────────────────────
+phase_worktrees() {
+  local wt_dir=".claude/worktrees"
+  if [ ! -d "$wt_dir" ]; then
+    echo "No worktrees found"
+    return
+  fi
+  local count=0 total_mb=0
+  for d in "$wt_dir"/*/; do
+    [ -d "$d" ] || continue
+    count=$((count + 1))
+    local size_kb
+    size_kb=$(du -sk "$d" 2>/dev/null | cut -f1)
+    local size_mb=$(( (size_kb + 512) / 1024 ))
+    total_mb=$((total_mb + size_mb))
+    local name=$(basename "$d")
+    echo "  WARN: $name (${size_mb}MB) — review before deleting (see safe-deletion rule)"
+  done
+  if [ "$count" -gt 0 ]; then
+    echo "Stale worktrees: $count dirs, ${total_mb}MB total. DO NOT delete without verification."
+  else
+    echo "No worktrees found"
+  fi
+}
+
 # ── Run all phases ────────────────────────────────────────────────────
 phase_env
 echo ""
@@ -325,5 +350,8 @@ phase_ctx_audit
 echo ""
 echo "=== R-universe Build Status ==="
 phase_r_universe
+echo ""
+echo "=== Stale Worktrees ==="
+phase_worktrees
 
 exit 0
