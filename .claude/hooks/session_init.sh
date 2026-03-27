@@ -329,6 +329,30 @@ phase_worktrees() {
   fi
 }
 
+# ── Phase 8: roborev Review Status ────────────────────────────────────
+phase_roborev() {
+  if ! command -v /usr/local/bin/roborev >/dev/null 2>&1; then
+    echo "roborev: not installed"
+    return
+  fi
+  local status
+  status=$(/usr/local/bin/roborev status 2>/dev/null | head -5)
+  if echo "$status" | grep -q "not running\|connection refused" 2>/dev/null; then
+    echo "roborev: daemon not running"
+    return
+  fi
+  # Show summary
+  echo "$status" | grep -E "Jobs:|Daemon:|Recent Errors" | head -3
+  # Check for open failed reviews in this repo
+  local failed
+  failed=$(/usr/local/bin/roborev list --status failed --limit 5 2>/dev/null | head -6)
+  if [ -n "$failed" ]; then
+    echo "Failed reviews:"
+    echo "$failed"
+    echo "Fix with: /roborev-fix or roborev refine"
+  fi
+}
+
 # ── Run all phases ────────────────────────────────────────────────────
 phase_env
 echo ""
@@ -353,5 +377,8 @@ phase_r_universe
 echo ""
 echo "=== Stale Worktrees ==="
 phase_worktrees
+echo ""
+echo "=== roborev Review Status ==="
+phase_roborev
 
 exit 0
