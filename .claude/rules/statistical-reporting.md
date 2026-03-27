@@ -80,6 +80,33 @@ All reported numbers MUST come from code, never hardcoded:
 # RIGHT: paste0("The mean was ", round(mean(x), 1))
 ```
 
+## 7. Structured Experiment Commit Messages (MANDATORY for modelling)
+
+When committing model experiments, use a machine-parseable format so progress can be tracked programmatically via `git log --grep`:
+
+```
+experiment: <short description>
+
+metric: <value> +/- <std> (prev: <prev_value> +/- <std>)
+delta: <signed change>
+phase: <1-hyperparams|2-mechanism|3-architecture|4-advanced>
+changed: <param>=<new> (was <old>)
+verdict: COMMIT|REVERT
+```
+
+Example:
+```
+experiment: increase projection dim 256→512
+
+metric: mean_rank 157.4 +/- 8.2 (prev: 187.1 +/- 9.5)
+delta: -29.7
+phase: 3-architecture
+changed: PROJ_DIM=512 (was 256)
+verdict: COMMIT
+```
+
+**Parse with:** `git log --grep="^metric:" --format="%s%n%b" | grep "^metric:\|^delta:"`
+
 ## Checklist
 
 - [ ] Effect sizes reported before p-values with CIs

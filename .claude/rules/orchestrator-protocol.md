@@ -64,6 +64,20 @@ Uses `quality-gates` skill thresholds:
 - **>= 80 (Bronze)**: Safe to commit
 - **< 80**: BLOCKED — must fix before proceeding
 
+## Auto-Revert on Score Regression
+
+If the quality-gate score **drops** compared to the previous commit's score:
+
+1. `git stash` or `git checkout -- .` to revert the changes
+2. Log the failure to CHANGELOG.md under "Failed Approaches" with the score delta
+3. Report to user: "Score dropped from X to Y. Changes reverted."
+
+**Commit-or-revert rule:** Every experiment/change results in one of two outcomes:
+- Score improved or maintained → **COMMIT** with structured message
+- Score dropped → **REVERT** and log why it failed
+
+This prevents accumulation of "small regressions" that compound into large quality debt.
+
 ## Session Log Entry
 
 After each orchestrator run, append to CURRENT_WORK.md:

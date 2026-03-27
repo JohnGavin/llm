@@ -37,6 +37,20 @@ Use this skill when:
     *   Identify potential breaking changes.
     *   Ask the user: "Does this approach look correct?"
 
+### Risk-Graduated Exploration (for modelling/analysis projects)
+
+Order changes from safest to riskiest. Each phase must show improvement before advancing:
+
+| Phase | Risk | What to Change | Example |
+|-------|------|----------------|---------|
+| 1 | Low | Hyperparameters, config values | LR, batch size, thresholds |
+| 2 | Low-Med | Enable/disable existing features | Toggle flags, weight parameters |
+| 3 | Medium | Small architectural changes | Add a layer, change pooling |
+| 4 | High | Major structural changes | New model, different algorithm |
+| 5 | Moonshot | Speculative, may fail entirely | Novel approach from literature |
+
+**Rule:** Don't start Phase N+1 until Phase N shows diminishing returns. One change per experiment. Commit or revert each change before trying the next.
+
 ### Phase 2: Detailed Planning (The Checklist)
 
 **Goal:** Create a step-by-step execution list.
