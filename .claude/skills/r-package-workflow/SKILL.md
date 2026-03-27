@@ -15,6 +15,36 @@ This skill provides a structured workflow for R package development following be
     *   **Bad:** ````{r setup}` (repeated), ````{r}` (unlabeled)
     *   **Good:** ````{r usage-setup}`, ````{r ci-prep}`, ````{r cost-trend}`
 
+## Git Worktrees for Risky Changes
+
+Use `isolation: "worktree"` on subagents or manual `git worktree add` when changes are risky, multi-session, or experimental. The worktree gets an isolated copy of the repo — if the approach fails, delete it with no trace in main.
+
+| Situation | Use Worktree? |
+|-----------|--------------|
+| Risky refactor (changing >5 files) | **Yes** |
+| Experimental approach (might abandon) | **Yes** |
+| Multi-session feature (WIP across days) | **Yes** |
+| Simple bug fix (1-2 files) | No |
+| Documentation-only changes | No |
+
+```bash
+# Create worktree for a feature branch
+git worktree add .worktrees/feat-units -b feat/adopt-units
+
+# Work in the worktree (isolated from main)
+cd .worktrees/feat-units
+
+# If it works: squash-merge back to main
+git checkout main
+git merge --squash feat/adopt-units
+
+# Clean up
+git worktree remove .worktrees/feat-units
+git branch -d feat/adopt-units
+```
+
+**Agent usage:** Set `isolation: "worktree"` on any Agent tool call for risky operations. The agent works on an isolated copy and returns the branch/path if changes were made.
+
 ## The 9-Step Workflow
 
 ### Step 1: Architecture & Planning (New)

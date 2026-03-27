@@ -17,7 +17,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump.
 
-**Session:** Start: read `CHANGELOG.md`, avoid failed approaches. End: commit -> append CHANGELOG (completed, failed, metrics) -> push. Commit after every meaningful unit. Never break tests. Git log = lab notes.
+**Session:** Start: read `CHANGELOG.md`, avoid failed approaches. End: commit -> append CHANGELOG -> push. **Commits:** After every meaningful unit. Never break tests. Git log = lab notes. Speed must not silence errors.
 
 **Pipeline Validation (ALL PROJECTS):** Before every commit: `parse("_targets.R")` MUST succeed. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash.
 
