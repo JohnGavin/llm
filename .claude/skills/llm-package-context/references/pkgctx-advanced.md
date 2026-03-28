@@ -32,14 +32,14 @@ jobs:
 
       - name: Generate package context
         run: |
-          mkdir -p .claude/context
+          mkdir -p inst/ctx/external
           nix run github:b-rodrigues/pkgctx -- r . --compact > package.ctx.yaml
 
       - name: Commit updated context
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.ctx.yaml .claude/context/
+          git add package.ctx.yaml inst/ctx/external/
           git diff --staged --quiet || git commit -m "Update package API context [skip ci]"
           git push
 ```
@@ -112,19 +112,19 @@ jobs:
 
       - name: Generate context for core dependencies
         run: |
-          mkdir -p .claude/context
+          mkdir -p inst/ctx/external
 
           # Core packages (adjust list per project)
           for pkg in targets dplyr tidyr purrr gert gh usethis devtools; do
             echo "Generating context for $pkg..."
-            nix run github:b-rodrigues/pkgctx -- r "$pkg" --compact > ".claude/context/${pkg}.ctx.yaml" || true
+            nix run github:b-rodrigues/pkgctx -- r "$pkg" --compact > "inst/ctx/external/${pkg}.ctx.yaml" || true
           done
 
       - name: Commit updated context
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .claude/context/
+          git add inst/ctx/external/
           git diff --staged --quiet || git commit -m "Weekly update: dependency API context [skip ci]"
           git push
 ```
