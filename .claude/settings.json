@@ -59,7 +59,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/session_init.sh"
+            "command": "~/.claude/hooks/session_init.sh",
+            "timeout": 30
           }
         ]
       },
