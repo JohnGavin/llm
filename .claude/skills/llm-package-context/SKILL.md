@@ -95,19 +95,25 @@ nix run github:b-rodrigues/pkgctx -- python numpy --compact --emit-classes > num
 
 ## Project Integration
 
-Generate context files for project dependencies and store them in `.claude/context/`. See [pkgctx-examples.md](references/pkgctx-examples.md) for complete package lists (core tidyverse, pipeline, git/GitHub, dev tools, Bioconductor, and project-specific examples).
+**CENTRAL CACHE** — all ctx files live in ONE shared location (see `ctx-yaml-cache` rule):
+
+    ~/docs_gh/proj/data/llm/content/inst/ctx/external/
+
+Files are version-stamped: `{pkg}@{version}.ctx.yaml`. All projects share this cache. **NEVER store ctx in per-project `.claude/context/`** — that contradicts the central cache.
 
 Quick start:
 
 ```bash
 # Generate context for your own package
-nix run github:b-rodrigues/pkgctx -- r . --compact > package.ctx.yaml
+nix run github:b-rodrigues/pkgctx -- r . --compact > ~/docs_gh/proj/data/llm/content/inst/ctx/external/mypackage@0.1.0.ctx.yaml
 
-# Reference in prompts
-# "Based on the targets package API in .claude/context/targets.ctx.yaml, help me..."
+# Reference in prompts — always use the central cache path
+# cat ~/docs_gh/proj/data/llm/content/inst/ctx/external/targets@1.11.4.ctx.yaml
 
-# Combine multiple contexts
-cat .claude/context/targets.ctx.yaml .claude/context/dplyr.ctx.yaml > combined.ctx.yaml
+# Audit + sync for current project (reads DESCRIPTION, checks central cache)
+source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
+ctx_audit("DESCRIPTION")   # report gaps
+ctx_sync("DESCRIPTION")    # fix gaps (generate missing, refresh stale)
 ```
 
 ## Version Compatibility with rix
@@ -141,19 +147,19 @@ See [pkgctx-advanced.md](references/pkgctx-advanced.md#output-schema-v11) for fu
 ## File Organization
 
 ```
-project/
-├── package.ctx.yaml           # Context for THIS package (auto-generated)
-├── .claude/
-│   └── context/               # Context for DEPENDENCIES
-│       ├── dplyr.ctx.yaml
-│       ├── targets.ctx.yaml
-│       └── ...
-└── .github/
-    └── workflows/
-        ├── update-pkg-context.yaml
-        ├── api-drift-check.yaml
-        └── update-dep-context.yaml
+CENTRAL CACHE (shared by all projects):
+  ~/docs_gh/proj/data/llm/content/inst/ctx/external/
+  ├── dplyr@1.1.4.ctx.yaml      # version-stamped
+  ├── targets@1.11.4.ctx.yaml
+  ├── duckdb@1.4.4.ctx.yaml
+  └── ...                        # 70+ packages
+
+PER PROJECT (auto-managed by plan_pkgctx.R):
+  R/tar_plans/plan_pkgctx.R     # ctx_audit() + ctx_sync() functions
+  _targets.R                     # plan_pkgctx() wired in
 ```
+
+**DO NOT** create per-project `.claude/context/` directories. Use the central cache.
 
 ## Troubleshooting
 
