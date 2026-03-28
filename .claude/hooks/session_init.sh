@@ -341,20 +341,19 @@ phase_roborev() {
     echo "roborev: not installed"
     return
   fi
+  # Capture full output first, THEN truncate (avoids SIGPIPE from head)
   local status
-  status=$(/usr/local/bin/roborev status 2>/dev/null | head -5)
+  status=$(/usr/local/bin/roborev status 2>/dev/null) || true
   if echo "$status" | grep -q "not running\|connection refused" 2>/dev/null; then
     echo "roborev: daemon not running"
     return
   fi
-  # Show summary
-  echo "$status" | grep -E "Jobs:|Daemon:|Recent Errors" | head -3
-  # Check for open failed reviews in this repo
+  echo "$status" | grep -E "Jobs:|Daemon:|Recent Errors" | head -3 || true
   local failed
-  failed=$(/usr/local/bin/roborev list --status failed --limit 5 2>/dev/null | head -6)
+  failed=$(/usr/local/bin/roborev list --status failed --limit 5 2>/dev/null) || true
   if [ -n "$failed" ]; then
     echo "Failed reviews:"
-    echo "$failed"
+    echo "$failed" | head -6
     echo "Fix with: /roborev-fix or roborev refine"
   fi
 }
