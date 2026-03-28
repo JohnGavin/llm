@@ -375,11 +375,53 @@ echo "Limits: SKILL.md <= 500 lines, description <= 100 words"
 echo ""
 phase_skill_tokens
 echo ""
-echo "=== ctx.yaml Cache Audit ==="
-phase_ctx_audit
-echo ""
-echo "=== R-universe Build Status ==="
-phase_r_universe
+# Run ctx audit + R-universe in a SINGLE Rscript (saves ~3s R startup)
+echo "=== ctx + R-universe (combined) ==="
+timeout 15 Rscript -e '
+  # --- ctx audit ---
+  if (file.exists("DESCRIPTION")) {
+    tryCatch({
+      d <- read.dcf("DESCRIPTION", fields = c("Imports","Suggests","Depends"))
+      raw <- paste(na.omit(as.character(d)), collapse = ",")
+      p <- trimws(unlist(strsplit(raw, ",")))
+      p <- sub("\\s*\\(.*", "", p)
+      base_pkgs <- c("base","compiler","datasets","graphics","grDevices","grid",
+        "methods","parallel","splines","stats","stats4","tcltk","tools","utils")
+      p <- p[nzchar(p) & !p %in% c("R", base_pkgs)]
+      cache <- file.path(Sys.getenv("HOME"), "docs_gh/proj/data/llm/content/inst/ctx/external")
+      n_ok <- 0L; n_other <- 0L; n_miss <- 0L; missing <- character()
+      for (pkg in sort(unique(p))) {
+        ver <- tryCatch(as.character(packageVersion(pkg)), error = function(e) "unknown")
+        f <- file.path(cache, paste0(pkg, "@", ver, ".ctx.yaml"))
+        if (file.exists(f)) {
+          age <- as.numeric(difftime(Sys.time(), file.mtime(f), units = "days"))
+          if (age > 30) n_other <- n_other + 1L else n_ok <- n_ok + 1L
+        } else {
+          any_ver <- list.files(cache, pattern = paste0("^", gsub("\\.", "\\\\.", pkg), "@"))
+          if (length(any_ver) > 0) n_other <- n_other + 1L
+          else { n_miss <- n_miss + 1L; missing <- c(missing, pkg) }
+        }
+      }
+      cat(sprintf("ctx cache: %d OK, %d other-version, %d missing\n", n_ok, n_other, n_miss))
+      if (n_miss > 0) cat("  Missing:", paste(missing, collapse = " "), "\n")
+    }, error = function(e) cat("ctx audit: error\n"))
+  } else {
+    cat("ctx: no DESCRIPTION\n")
+  }
+
+  # --- R-universe ---
+  tryCatch({
+    resp <- readLines("https://johngavin.r-universe.dev/api/packages", warn = FALSE)
+    d <- jsonlite::fromJSON(paste(resp, collapse = ""))
+    if (is.data.frame(d) && nrow(d) > 0) {
+      fails <- d[d[["_status"]] != "success", , drop = FALSE]
+      ok <- sum(d[["_status"]] == "success")
+      cat(sprintf("R-universe: %d OK, %d failed\n", ok, nrow(fails)))
+      if (nrow(fails) > 0) for (i in seq_len(nrow(fails)))
+        cat("  FAIL:", fails$Package[i], "\n")
+    }
+  }, error = function(e) cat("R-universe: unreachable\n"))
+' 2>/dev/null || echo "R phases: timeout or error"
 echo ""
 echo "=== Stale Worktrees ==="
 phase_worktrees
