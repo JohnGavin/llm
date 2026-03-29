@@ -62,6 +62,19 @@ grep -c "ERROR:" ci-output.txt
 - Track pipeline execution statistics
 - Visualize git history and contributions
 - Show test coverage metrics
+- **Function frequency table + call network graph** (see [function-analysis.md](references/function-analysis.md))
+
+### Function Analysis (ALL PROJECTS)
+
+Every R package project SHOULD include function frequency and call network targets in its telemetry vignette. Source the reusable analysis functions from the llm project:
+
+```r
+source("~/docs_gh/llm/R/function_analysis.R")
+freq <- build_frequency_table("R")      # What functions does this project use?
+network <- build_call_network("R")      # How do our functions connect to external packages?
+```
+
+See [function-analysis.md](references/function-analysis.md) for full setup: targets, vignette chunks, performance benchmarks.
 - Document package structure
 
 ### Targets Integration
