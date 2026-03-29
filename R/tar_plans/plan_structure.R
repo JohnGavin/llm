@@ -1,5 +1,8 @@
 # R/tar_plans/plan_structure.R
 
+# Source function analysis utilities (not auto-loaded since llm isn't always load_all'd)
+source(here::here("R/function_analysis.R"), local = TRUE)
+
 plan_structure <- list(
   # 1. Track all files (trigger for structure changes)
   # using list.files directly as a trigger is inefficient for large repos if strictly "file" format
@@ -35,7 +38,69 @@ plan_structure <- list(
     }
   ),
 
-  # 4. Git Stats (Comprehensive)
+  # 4. Function Frequency Table
+  tar_target(
+    vig_function_frequency,
+    {
+      freq <- build_frequency_table("R")
+      DT::datatable(
+        freq, rownames = FALSE, filter = "top",
+        options = list(pageLength = 20, scrollX = TRUE, order = list(list(2, "desc"))),
+        caption = htmltools::tags$caption(
+          style = "caption-side: top; text-align: left;",
+          paste0(
+            "Function call frequency across R/ source files (N = ", nrow(freq),
+            " unique functions). ",
+            "Top caller: ", freq$call[1], " (", freq$n_calls[1], " calls). ",
+            "Source: static AST analysis of R/*.R files."
+          )
+        )
+      )
+    },
+    packages = c("dplyr", "DT", "htmltools")
+  ),
+
+  # 5. Call Network (one level deep)
+  tar_target(
+    vig_call_network,
+    {
+      network <- build_call_network("R")
+      if (nrow(network) == 0L) return(NULL)
+
+      # Create visNetwork graph
+      nodes_from <- unique(network$from)
+      nodes_to <- unique(network$to)
+      all_nodes <- unique(c(nodes_from, nodes_to))
+
+      nodes <- data.frame(
+        id = all_nodes,
+        label = sub(".*::", "", all_nodes),
+        group = ifelse(all_nodes %in% nodes_from, "internal", "external"),
+        title = all_nodes,
+        stringsAsFactors = FALSE
+      )
+
+      edges <- data.frame(
+        from = network$from,
+        to = network$to,
+        stringsAsFactors = FALSE
+      )
+
+      visNetwork::visNetwork(nodes, edges,
+        main = paste0("Call Network: ", length(nodes_from), " internal functions → ",
+                       length(nodes_to), " external calls"),
+        width = "100%", height = "600px"
+      ) |>
+        visNetwork::visGroups(groupname = "internal", color = list(background = "#2c3e50", border = "#1a252f")) |>
+        visNetwork::visGroups(groupname = "external", color = list(background = "#95a5a6", border = "#7f8c8d")) |>
+        visNetwork::visEdges(arrows = "to", color = list(color = "#CC0000")) |>
+        visNetwork::visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) |>
+        visNetwork::visLayout(randomSeed = 42)
+    },
+    packages = c("visNetwork")
+  ),
+
+  # 6. Git Stats (Comprehensive)
   tar_target(
     git_stats_comprehensive,
     {
