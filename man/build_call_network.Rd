@@ -10,7 +10,7 @@ build_call_network(r_dir = "R")
 \item{r_dir}{Path to R/ directory}
 }
 \value{
-data.frame with columns: from, to, to_package
+tibble with columns: from, to, to_package
 }
 \description{
 Build call network (one level deep: our functions -> what they call)
