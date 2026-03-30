@@ -358,7 +358,7 @@ system_pkgs <- c(
     # https://www.andrewheiss.com/blog/2025/07/22/positron-open-with-finder/
     # "raycast", 
   # "podman", 
-  "duckdb", "tree", 
+  "duckdb", "tree", "ast-grep", "tree-sitter",
   "awscli2",
   "bc", # calculator
   "htop", "btop", 
