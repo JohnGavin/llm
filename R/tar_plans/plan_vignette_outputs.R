@@ -28,7 +28,7 @@ plan_vignette_outputs <- function() {
       vig_blocks_data,
       tryCatch(
         jsonlite::fromJSON(here::here("inst/extdata/ccusage_blocks_all.json")),
-        error = function(e) NULL
+        error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL }
       )
     ),
 
@@ -156,7 +156,7 @@ plan_vignette_outputs <- function() {
             ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
             ggplot2::labs(title = "Gemini Daily Costs", x = "Date", y = "USD") +
             ggplot2::theme_minimal()
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("ggplot2", "dplyr", "DBI", "duckdb", "scales")
     ),
@@ -182,7 +182,7 @@ plan_vignette_outputs <- function() {
               )
             ) |>
             dplyr::filter(duration_mins > 0)
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("dplyr", "lubridate", "tibble")
     ),
@@ -261,7 +261,7 @@ plan_vignette_outputs <- function() {
             ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
             ggplot2::labs(title = "Cost Efficiency by Model", y = "Cost/Min ($)") +
             ggplot2::theme_minimal()
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("ggplot2", "dplyr", "tidyr", "scales")
     ),
@@ -315,7 +315,7 @@ plan_vignette_outputs <- function() {
             end = lubridate::ymd_hms(sapply(runs$workflow_runs, `[[`, "updated_at"))
           ) |>
             dplyr::mutate(duration_mins = as.numeric(difftime(end, start, units = "mins")))
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("gh", "lubridate", "dplyr", "tibble"),
       cue = tar_cue(mode = "always")
@@ -351,7 +351,7 @@ plan_vignette_outputs <- function() {
             ggplot2::geom_col(fill = "steelblue") +
             ggplot2::labs(title = "Recent Commits", y = "Count") +
             ggplot2::theme_minimal()
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("ggplot2", "dplyr", "gert"),
       cue = tar_cue(mode = "always")
@@ -383,7 +383,7 @@ plan_vignette_outputs <- function() {
               scrollX = TRUE
             )
           )
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("DT", "dplyr", "tibble", "fs")
     ),
@@ -445,7 +445,7 @@ plan_vignette_outputs <- function() {
             top_size = top_size,
             top_time = top_time
           )
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("dplyr", "tibble", "targets"),
       cue = tar_cue(mode = "always")
@@ -535,7 +535,7 @@ plan_vignette_outputs <- function() {
             total_commits = nrow(git_log),
             weekly = weekly
           )
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("gert", "dplyr", "lubridate"),
       cue = tar_cue(mode = "always")
@@ -607,7 +607,7 @@ plan_vignette_outputs <- function() {
             workflows_active = length(active_workflows),
             workflow_names = sapply(active_workflows, `[[`, "name")
           )
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("gh", "tibble"),
       cue = tar_cue(mode = "always")
@@ -685,7 +685,7 @@ plan_vignette_outputs <- function() {
             rownames = FALSE,
             options = list(dom = "t", pageLength = 10)
           )
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("DT", "tibble")
     ),
@@ -724,7 +724,7 @@ plan_vignette_outputs <- function() {
               scrollX = TRUE
             )
           )
-        }, error = function(e) NULL)
+        }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("DT", "gh", "lubridate", "tibble"),
       cue = tar_cue(mode = "always")

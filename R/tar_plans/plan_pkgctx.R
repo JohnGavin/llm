@@ -204,16 +204,14 @@ generate_ctx <- function(pkg, version = NULL, cache_dir = CTX_CACHE) {
 #' Audit ctx cache for a DESCRIPTION file — report only
 ctx_audit <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE) {
   deps <- extract_deps(desc_path)
-  if (length(deps) == 0) return(data.frame())
+  if (length(deps) == 0) return(tibble::tibble())
 
   statuses <- lapply(deps, check_ctx_status, cache_dir = cache_dir)
   df <- do.call(rbind, lapply(statuses, function(s) {
-    data.frame(
+    tibble::tibble(
       package = s$pkg, version = s$version, status = s$status,
       ctx_path = s$ctx_path %||% NA_character_,
-      age_days = s$age_days %||% NA_real_,
-      stringsAsFactors = FALSE
-    )
+      age_days = s$age_days %||% NA_real_    )
   }))
 
   n_ok <- sum(df$status %in% c("OK", "OK_UNVERSIONED"))
@@ -237,14 +235,14 @@ ctx_audit <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE) {
 ctx_sync <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE,
                      fix_missing = TRUE, fix_stale = TRUE) {
   audit <- ctx_audit(desc_path, cache_dir)
-  if (nrow(audit) == 0) return(data.frame())
+  if (nrow(audit) == 0) return(tibble::tibble())
 
   needs_work <- audit[!audit$status %in% c("OK", "OK_UNVERSIONED"), , drop = FALSE]
   if (nrow(needs_work) == 0) {
     proj <- basename(dirname(normalizePath(desc_path, mustWork = FALSE)))
     cli::cli_alert_success("All ctx files up-to-date for {proj}")
-    return(data.frame(package = character(0), action = character(0),
-                      result = character(0), stringsAsFactors = FALSE))
+    return(tibble::tibble(package = character(0), action = character(0),
+                      result = character(0)))
   }
 
   results <- list()
@@ -253,10 +251,8 @@ ctx_sync <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE,
     stale <- needs_work[needs_work$status == "STALE", , drop = FALSE]
     for (i in seq_len(nrow(stale))) {
       res <- generate_ctx(stale$package[i], stale$version[i], cache_dir)
-      results <- c(results, list(data.frame(
-        package = stale$package[i], action = "refresh", result = res$status,
-        stringsAsFactors = FALSE
-      )))
+      results <- c(results, list(tibble::tibble(
+        package = stale$package[i], action = "refresh", result = res$status      )))
     }
   }
 
@@ -264,16 +260,14 @@ ctx_sync <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE,
     missing <- needs_work[needs_work$status == "MISSING", , drop = FALSE]
     for (i in seq_len(nrow(missing))) {
       res <- generate_ctx(missing$package[i], missing$version[i], cache_dir)
-      results <- c(results, list(data.frame(
-        package = missing$package[i], action = "create", result = res$status,
-        stringsAsFactors = FALSE
-      )))
+      results <- c(results, list(tibble::tibble(
+        package = missing$package[i], action = "create", result = res$status      )))
     }
   }
 
   if (length(results) > 0) do.call(rbind, results)
-  else data.frame(package = character(0), action = character(0),
-                  result = character(0), stringsAsFactors = FALSE)
+  else tibble::tibble(package = character(0), action = character(0),
+                  result = character(0))
 }
 
 #' Clean up old ctx files not touched in CTX_CLEANUP_DAYS
@@ -308,8 +302,8 @@ plan_pkgctx <- function() {
         ]
         if (nrow(needs_work) == 0) {
           cli::cli_alert_success("All ctx files up-to-date")
-          return(data.frame(package = character(0), action = character(0),
-                            result = character(0), stringsAsFactors = FALSE))
+          return(tibble::tibble(package = character(0), action = character(0),
+                            result = character(0)))
         }
         ctx_sync("DESCRIPTION", CTX_CACHE, fix_missing = TRUE, fix_stale = TRUE)
       },

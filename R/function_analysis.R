@@ -11,10 +11,8 @@
 #' @export
 extract_file_calls <- function(file) {
   parsed <- tryCatch(parse(file), error = function(e) NULL)
-  if (is.null(parsed)) return(data.frame(
-    file = character(), call = character(), has_namespace = logical(),
-    stringsAsFactors = FALSE
-  ))
+  if (is.null(parsed)) return(tibble::tibble(
+    file = character(), call = character(), has_namespace = logical()  ))
 
   calls <- character()
 
@@ -43,17 +41,13 @@ extract_file_calls <- function(file) {
 
   walk_ast(parsed)
 
-  if (length(calls) == 0L) return(data.frame(
-    file = character(), call = character(), has_namespace = logical(),
-    stringsAsFactors = FALSE
-  ))
+  if (length(calls) == 0L) return(tibble::tibble(
+    file = character(), call = character(), has_namespace = logical()  ))
 
-  data.frame(
+  tibble::tibble(
     file = basename(file),
     call = calls,
-    has_namespace = grepl("::", calls, fixed = TRUE),
-    stringsAsFactors = FALSE
-  )
+    has_namespace = grepl("::", calls, fixed = TRUE)  )
 }
 
 #' Extract function definitions from R source files
@@ -113,7 +107,7 @@ classify_call <- function(call_name, our_functions = character()) {
 build_frequency_table <- function(r_dir = "R") {
   r_files <- list.files(r_dir, pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
   all_calls <- do.call(rbind, lapply(r_files, extract_file_calls))
-  if (nrow(all_calls) == 0L) return(data.frame())
+  if (nrow(all_calls) == 0L) return(tibble::tibble())
 
   our_fns <- names(extract_function_defs(r_dir))
 
@@ -139,39 +133,35 @@ build_frequency_table <- function(r_dir = "R") {
 #' @export
 build_call_network <- function(r_dir = "R") {
   defs <- extract_function_defs(r_dir)
-  if (length(defs) == 0L) return(data.frame(
-    from = character(), to = character(), to_package = character(),
-    stringsAsFactors = FALSE
-  ))
+  if (length(defs) == 0L) return(tibble::tibble(
+    from = character(), to = character(), to_package = character()  ))
 
   our_fn_names <- names(defs)
 
   edges <- lapply(names(defs), function(fn_name) {
     # Write body to temp file so we can parse it
     body_text <- tryCatch(deparse(defs[[fn_name]]$body), error = function(e) NULL)
-    if (is.null(body_text)) return(data.frame())
+    if (is.null(body_text)) return(tibble::tibble())
 
     tf <- tempfile(fileext = ".R")
     writeLines(body_text, tf)
     on.exit(unlink(tf))
 
     calls <- extract_file_calls(tf)
-    if (nrow(calls) == 0L) return(data.frame())
+    if (nrow(calls) == 0L) return(tibble::tibble())
 
     # Classify and deduplicate
     calls$package <- vapply(calls$call, classify_call,
                             character(1), our_functions = our_fn_names)
     # Keep only external calls (not internal to our package)
     external <- calls[calls$package != "internal", ]
-    if (nrow(external) == 0L) return(data.frame())
+    if (nrow(external) == 0L) return(tibble::tibble())
 
     unique_calls <- unique(external[, c("call", "package")])
-    data.frame(
+    tibble::tibble(
       from = fn_name,
       to = unique_calls$call,
-      to_package = unique_calls$package,
-      stringsAsFactors = FALSE
-    )
+      to_package = unique_calls$package    )
   })
 
   do.call(rbind, edges)
