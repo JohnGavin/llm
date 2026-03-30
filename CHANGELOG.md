@@ -4,6 +4,37 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-03-30
+
+### Completed
+- ast-grep + tree-sitter added to nix system_pkgs, R grammar setup script
+- ast-grep code sweep found: 1 dbGetQuery, 8 stop(), 19 data.frame(), 12 silent tryCatch
+- Fixed all violations: dbGetQuery→dplyr, stop→cli_abort, data.frame→tibble, silent tryCatch→cli_warn
+- 7 lessons + meta-lessons incorporated into 5 config files
+- quality-gates: qa_no_raw_sql now uses ast-grep (structural, not text grep)
+- /check command: now includes ast-grep code sweep step
+- suppress-warnings-antipattern: added silent tryCatch as banned pattern
+- verification-before-completion: line count ≠ call count section
+- systematic-debugging: never accept unverified justifications
+- roborev config fix: removed duplicate hooks=[] conflicting with [[hooks]]
+- roborev refine successfully ran and auto-fixed 2 review findings
+
+### Failed Approaches
+- ast-grep line count reported as call count (349 vs 28 tryCatch). Use --json=compact + nrow().
+- Justified data.frame() as "lightweight utilities" instead of using tibble(). Speed must not silence standards.
+- Said "349 tryCatch — expected for targets" without checking. Reality: 289 lines in ONE file, all silent error swallowing.
+- roborev config: appended [[hooks]] while hooks=[] existed — TOML parse error. Must remove empty array before adding entries.
+
+### Accuracy / Metrics
+- Banned pattern violations: dbGetQuery 0, stop() 0, suppressWarnings() 0 (all clean)
+- ast-grep: 307 unique functions, 880 call network edges in llm project
+- roborev: 192 completed reviews, daemon healthy, 2 auto-fixes applied
+
+### Known Limitations
+- vignette-targets-export.md at 171 lines (>150 limit)
+- 2 rules missing YAML frontmatter: medical-data-anonymization.md, medical-etl-quality.md
+- R-universe: micromort still failing
+
 ## 2026-03-21 – 2026-03-28 (mega session)
 
 ### Completed
