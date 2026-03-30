@@ -89,3 +89,4 @@ inst/extdata/gemini/messages/
 archive/
 .claude/.context_state.json
 finance/
+input.txt
