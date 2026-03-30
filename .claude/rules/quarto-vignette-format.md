@@ -83,6 +83,23 @@ When using `format: dashboard`: descriptive `#` page names, `## Row` only for la
 
 See also: `quarto-vignette-layout`, `quarto-vignette-evidence`.
 
+## 6. KEYBOARD NAVIGATION (MANDATORY for interactive vignettes)
+
+All interactive vignettes (quizzes, closeread, step-through presentations) MUST support arrow-key navigation:
+
+- **Left/Up arrow:** Previous step/question
+- **Right/Down arrow:** Next step/question
+- **Closeread:** Press **P** for presentation mode (built-in arrow-key navigation)
+- **Shiny quizzes:** Add `shiny::observeEvent(input$keypress, ...)` with arrow key handling
+
+```js
+// For non-Shiny HTML vignettes: add to pkgdown/extra.js
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') document.querySelector('.next-btn')?.click();
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') document.querySelector('.prev-btn')?.click();
+});
+```
+
 ## Checklist (Format)
 
 - [ ] No duplicate section titles

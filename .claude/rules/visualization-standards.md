@@ -54,6 +54,16 @@ DT::datatable(data, rownames = FALSE, filter = "top",
   ))
 ```
 
+## Interactive Plot Library Choice
+
+| Library | Best For | Size | Syntax |
+|---------|----------|------|--------|
+| **plotly** | Shiny dashboards, range sliders, 3D | ~3MB | `plot_ly()` / `ggplotly()` |
+| **ggiraph** | pkgdown, closeread, static sites | ~200KB | ggplot2 + `_interactive()` geoms |
+| **DT** | Tables with search/filter/sort | ~500KB | `datatable()` |
+
+Use **ggiraph** for pkgdown/closeread (smaller, CSS-styleable, hover/click built-in). Use **plotly** for Shiny (range sliders, linked brushing). See `quarto-dynamic-content` skill for closeread scrollytelling.
+
 ## Color Accessibility (MANDATORY)
 
 - Colorblind-safe: `viridis`, `brewer.pal(n, "Set2")`, `scale_color_brewer(palette = "Dark2")`

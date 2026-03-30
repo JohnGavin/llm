@@ -146,6 +146,23 @@ Side-by-side [chart type]. Left panel shows [before condition], right panel
 shows [after condition]. [Key difference between panels].
 ```
 
+## Closeread Sticky Alt Text
+
+Closeread stickies are pinned visuals that change with scroll. Alt text must describe **what the reader sees at each scroll state**, not just the static image.
+
+**Pattern:** Describe the initial state, then note that focus effects change the view:
+
+```
+Map showing 6 buoy positions along the Irish Atlantic coast.
+As the reader scrolls, the map zooms to each buoy in sequence,
+highlighting wave height changes during the storm event.
+Currently showing M6 with peak wave height of 14.2 metres.
+```
+
+For **progressive plots** (built up layer-by-layer), describe the final complete state in `fig-alt`, and note the progressive construction in the surrounding prose.
+
+For **ggiraph** interactive SVGs, include hover/click information: "Hovering over a point shows the station name and peak wave height."
+
 ## Workflow
 
 1. **Locate** - `grep -n "#| label: fig-" *.qmd`
