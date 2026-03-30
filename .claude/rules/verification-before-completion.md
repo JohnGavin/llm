@@ -56,6 +56,20 @@ devtools::check()           # In nix-shell
 usethis::pr_push()          # ONLY after checks pass
 ```
 
+## Verify Tool Output Counts
+
+Line count ≠ call count. Multi-line matches inflate `wc -l` output.
+
+```bash
+# WRONG: reports 349 when answer is 28
+ast-grep run -c $CFG -l r -p 'tryCatch(___)' R/ | wc -l  # 349 LINES
+
+# RIGHT: counts actual matches
+ast-grep run ... --json=compact | Rscript -e 'cat(nrow(jsonlite::fromJSON(readLines("stdin"))))'  # 28 CALLS
+```
+
+Never report tool output without verifying the count method.
+
 ## Red Flags — STOP Immediately
 
 You're about to make an unverified claim if you're:

@@ -68,6 +68,17 @@ Follow this 4-step process:
 *   **Experiment:** Check `default.R` date against the CI configuration.
 *   **Fix:** Re-run `source("default.R")` and reboot nix shell.
 
+## Never Accept Unverified Justifications
+
+**Red flag words:** "expected", "normal", "lightweight", "probably fine", "should be okay."
+
+If you catch yourself justifying why a violation is acceptable, STOP and verify:
+1. Is it documented as an explicit exception? (Not just "seems reasonable")
+2. Did you check the actual data? ("289 tryCatch in plan_vignette_outputs" — did you look at what they do?)
+3. Can you cite the rule that permits it? (Not "I think it's fine")
+
+Invented justifications are the #1 way violations survive code review.
+
 ## Checklist for Complex Bugs
 
 If stuck > 10 minutes, output this table:
