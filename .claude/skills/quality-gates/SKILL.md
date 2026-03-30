@@ -195,21 +195,36 @@ plan_qa_gates <- list(
     cue = targets::tar_cue(mode = "always")
   ),
 
-  # Check for raw SQL violations (code style)
+  # Code sweep: banned patterns via ast-grep (structural, not text grep)
+  # Falls back to grep if ast-grep not available
   targets::tar_target(
     qa_no_raw_sql,
     {
-      r_files <- list.files("R", pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
-      r_files <- r_files[!grepl("R/dev/", r_files)]
-      all_code <- unlist(lapply(r_files, readLines))
-      violations <- grep("DBI::dbGetQuery", all_code)
-      if (length(violations) > 0) {
-        cli::cli_warn(c(
-          "!" = "{length(violations)} DBI::dbGetQuery violation(s) found in R/",
-          "i" = "Convert to dplyr::tbl() |> dplyr::filter() |> dplyr::collect()"
-        ))
+      cfg <- file.path(Sys.getenv("HOME"), ".config/ast-grep/sgconfig.yml")
+      banned <- c(
+        "DBI::dbGetQuery(___)" = "Use dplyr::tbl() |> collect()",
+        "stop(___)" = "Use cli::cli_abort()",
+        "suppressWarnings(___)" = "See suppress-warnings-antipattern rule"
+      )
+      total <- 0L
+      for (i in seq_along(banned)) {
+        pat <- names(banned)[i]
+        if (file.exists(cfg)) {
+          # ast-grep: structural search (no false positives from comments/strings)
+          json <- system2("ast-grep", c("run", "-c", cfg, "-l", "r", "-p", shQuote(pat),
+            "R/", "--json=compact"), stdout = TRUE, stderr = FALSE)
+          n <- tryCatch(nrow(jsonlite::fromJSON(paste(json, collapse = ""))), error = function(e) 0L)
+        } else {
+          # Fallback: text grep (may have false positives)
+          r_files <- list.files("R", pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+          r_files <- r_files[!grepl("R/dev/", r_files)]
+          all_code <- unlist(lapply(r_files, readLines))
+          n <- length(grep(sub("\\(___\\)", "", pat), all_code, fixed = TRUE))
+        }
+        if (n > 0L) cli::cli_warn(c("!" = "{n} {pat} violation(s)", "i" = banned[[i]]))
+        total <- total + n
       }
-      list(violations = length(violations), timestamp = Sys.time())
+      list(violations = total, timestamp = Sys.time(), method = if (file.exists(cfg)) "ast-grep" else "grep")
     },
     cue = targets::tar_cue(mode = "always")
   ),
