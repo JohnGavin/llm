@@ -72,19 +72,15 @@ plan_structure <- list(
       nodes_to <- unique(network$to)
       all_nodes <- unique(c(nodes_from, nodes_to))
 
-      nodes <- data.frame(
+      nodes <- tibble::tibble(
         id = all_nodes,
         label = sub(".*::", "", all_nodes),
         group = ifelse(all_nodes %in% nodes_from, "internal", "external"),
-        title = all_nodes,
-        stringsAsFactors = FALSE
-      )
+        title = all_nodes      )
 
-      edges <- data.frame(
+      edges <- tibble::tibble(
         from = network$from,
-        to = network$to,
-        stringsAsFactors = FALSE
-      )
+        to = network$to      )
 
       visNetwork::visNetwork(nodes, edges,
         main = paste0("Call Network: ", length(nodes_from), " internal functions → ",
