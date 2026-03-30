@@ -10,7 +10,7 @@ build_frequency_table(r_dir = "R")
 \item{r_dir}{Path to R/ directory}
 }
 \value{
-data.frame with columns: call, package, n_calls, n_files
+tibble with columns: call, package, n_calls, n_files
 }
 \description{
 Build function frequency table
