@@ -109,7 +109,7 @@ classify_call <- function(call_name, our_functions = character()) {
 
 #' Build function frequency table
 #' @param r_dir Path to R/ directory
-#' @return data.frame with columns: call, package, n_calls, n_files
+#' @return tibble with columns: call, package, n_calls, n_files
 #' @export
 build_frequency_table <- function(r_dir = "R") {
   r_files <- list.files(r_dir, pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
@@ -136,7 +136,7 @@ build_frequency_table <- function(r_dir = "R") {
 
 #' Build call network (one level deep: our functions -> what they call)
 #' @param r_dir Path to R/ directory
-#' @return data.frame with columns: from, to, to_package
+#' @return tibble with columns: from, to, to_package
 #' @export
 build_call_network <- function(r_dir = "R") {
   defs <- extract_function_defs(r_dir)
