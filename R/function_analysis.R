@@ -7,10 +7,14 @@
 
 #' Extract all function calls from parsed R expressions
 #' @param file Path to an R file
-#' @return data.frame with columns: file, call, has_namespace
+#' @return tibble with columns: file, call, has_namespace
 #' @export
 extract_file_calls <- function(file) {
-  parsed <- tryCatch(parse(file), error = function(e) NULL)
+  # Top-level parse failure: warn so caller knows the file was skipped
+  parsed <- tryCatch(parse(file), error = function(e) {
+    cli::cli_warn("Failed to parse {file}: {conditionMessage(e)}")
+    NULL
+  })
   if (is.null(parsed)) return(tibble::tibble(
     file = character(), call = character(), has_namespace = logical()  ))
 
@@ -59,7 +63,10 @@ extract_function_defs <- function(r_dir = "R") {
   defs <- list()
 
   for (file in r_files) {
-    parsed <- tryCatch(parse(file), error = function(e) NULL)
+    parsed <- tryCatch(parse(file), error = function(e) {
+      cli::cli_warn("Failed to parse {file}: {conditionMessage(e)}")
+      NULL
+    })
     if (is.null(parsed)) next
 
     for (expr in parsed) {
