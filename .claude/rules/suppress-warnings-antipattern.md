@@ -105,22 +105,34 @@ suppressWarnings(as.logical(...))
 
 # Also watch for
 tryCatch(as.integer(...), warning = function(w) ...)  # May hide issues
+
+# SILENT ERROR SWALLOWING — equally dangerous
+tryCatch(expr, error = function(e) NULL)  # Error happened, nobody knows
+tryCatch(expr, error = function(e) NA)    # Same problem
 ```
+
+## Silent tryCatch Anti-Pattern
+
+`tryCatch(expr, error = function(e) NULL)` silently swallows errors. The error happened but nothing is logged — downstream code sees NULL and may fail in confusing ways.
+
+```r
+# WRONG: silent swallowing
+tryCatch(read_data(), error = function(e) NULL)
+
+# RIGHT: warn then return NULL (error is visible in logs)
+tryCatch(read_data(), error = function(e) {
+  cli::cli_warn("Target failed: {conditionMessage(e)}")
+  NULL
+})
+```
+
+**Exception:** AST walking and JSON line parsing where unparseable input is expected and frequent — logging every malformed node would be noisy. Document the exception with a comment.
 
 ## Exceptions
 
-The ONLY acceptable use is date parsing where failure is expected:
-
-```r
-# Acceptable: Date parsing where some failures are expected
-dates <- c("2024-01-15", "not-a-date", "2024-03-20")
-n_before <- sum(is.na(dates))
-parsed <- suppressWarnings(lubridate::ymd(dates))
-n_failed <- sum(is.na(parsed)) - n_before
-
-if (n_failed > 0L) {
-  cli::cli_warn("{n_failed} dates failed to parse")
-}
+The ONLY acceptable uses:
+1. Date parsing where failure is expected — but failures MUST be tracked and warned
+2. AST walking / JSON line parsing where malformed input is frequent — document with comment
 ```
 
 Even here, failures MUST be tracked and reported.
