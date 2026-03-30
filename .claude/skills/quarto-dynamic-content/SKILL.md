@@ -12,6 +12,8 @@ Use this skill when:
 - Building multi-page reports from templates
 - Creating slides or sections that vary by input
 - Rendering computed content that includes R code
+- **Scrollytelling narratives** with closeread (see [closeread-scrollytelling.md](references/closeread-scrollytelling.md))
+- **Scroll-driven animations** using OJS reactive variables
 
 ## MANDATORY: Project Configuration
 
