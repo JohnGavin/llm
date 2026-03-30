@@ -213,6 +213,7 @@ plan_qa_gates <- list(
           # ast-grep: structural search (no false positives from comments/strings)
           json <- system2("ast-grep", c("run", "-c", cfg, "-l", "r", "-p", shQuote(pat),
             "R/", "--json=compact"), stdout = TRUE, stderr = FALSE)
+          # JSON parsing exception: malformed ast-grep output is expected (see suppress-warnings-antipattern rule)
           n <- tryCatch(nrow(jsonlite::fromJSON(paste(json, collapse = ""))), error = function(e) 0L)
         } else {
           # Fallback: text grep (may have false positives)
