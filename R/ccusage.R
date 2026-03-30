@@ -723,18 +723,18 @@ get_current_block_window <- function(current_time = Sys.time()) {
   # Validate input
   # checkmate doesn't have a direct assert_posixct but we can check class or use testDate
   if (!inherits(current_time, c("POSIXct", "POSIXlt", "Date", "character"))) {
-    stop("current_time must be a POSIXct, Date, or character string")
+    cli::cli_abort(c("x" = "{.arg current_time} must be POSIXct, Date, or character", "i" = "Got: {.cls {class(current_time)}}"))
   }
 
   # Try to convert to POSIXct
   tryCatch({
     current_time <- as.POSIXct(current_time)
   }, error = function(e) {
-    stop("current_time must be convertible to POSIXct (a valid date/time)")
+    cli::cli_abort(c("x" = "{.arg current_time} must be convertible to POSIXct"))
   })
 
   if (is.na(current_time)) {
-    stop("current_time is NA - must be a valid date/time")
+    cli::cli_abort(c("x" = "{.arg current_time} is NA — must be a valid date/time"))
   }
 
   # Get hour of day (0-23)

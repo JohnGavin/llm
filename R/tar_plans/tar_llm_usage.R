@@ -150,11 +150,10 @@ store_llm_data <- function(data,
     DBI::dbWriteTable(con, table_name, data_flat)
     message(sprintf("Created table '%s' with %d rows", table_name, nrow(data_flat)))
   } else {
-    # Check for duplicates before appending
-    existing <- DBI::dbGetQuery(
-      con,
-      sprintf("SELECT DISTINCT date, project FROM %s", table_name)
-    )
+    # Check for duplicates before appending (dplyr, not raw SQL)
+    existing <- dplyr::tbl(con, table_name) |>
+      dplyr::distinct(date, project) |>
+      dplyr::collect()
 
     if ("date" %in% names(data_flat) && "project" %in% names(data_flat)) {
       new_data <- data_flat |>
