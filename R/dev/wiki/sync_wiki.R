@@ -19,12 +19,12 @@ repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 wiki_content_dir <- file.path(repo_root, "WIKI_CONTENT")
 
 if (!dir.exists(wiki_content_dir)) {
-  stop("Expected `WIKI_CONTENT/` in repo root: ", wiki_content_dir, call. = FALSE)
+  cli::cli_abort(c("x" = "Expected {.path WIKI_CONTENT/} in repo root", "i" = "Path: {wiki_content_dir}"))
 }
 
 github_pat <- Sys.getenv("GITHUB_PAT")
 if (!nzchar(github_pat)) {
-  stop("Set `GITHUB_PAT` before running this script.", call. = FALSE)
+  cli::cli_abort(c("x" = "Set {.envvar GITHUB_PAT} before running this script"))
 }
 
 wiki_git_url <- "https://JohnGavin@github.com/JohnGavin/llm.wiki.git"
@@ -42,7 +42,7 @@ slugify <- function(x) {
 read_title <- function(path) {
   lines <- readLines(path, warn = FALSE)
   h1 <- grep("^#\\s+", lines, value = TRUE)[1]
-  if (is.na(h1)) stop("No H1 found in: ", path, call. = FALSE)
+  if (is.na(h1)) cli::cli_abort(c("x" = "No H1 heading found in {.path {path}}"))
   sub("^#\\s+", "", h1)
 }
 
@@ -94,7 +94,7 @@ wiki_page_url <- function(page_name) paste0(wiki_base_url, "/", page_name)
 list_wiki_sources <- function() {
   files <- list.files(wiki_content_dir, pattern = "\\.md$", full.names = TRUE)
   files <- sort(files)
-  if (!length(files)) stop("No markdown files found under `WIKI_CONTENT/`.", call. = FALSE)
+  if (!length(files)) cli::cli_abort(c("x" = "No markdown files found under {.path WIKI_CONTENT/}"))
 
   lapply(files, function(src) {
     page_name <- wiki_page_name_from_source(src)
@@ -112,7 +112,7 @@ list_wiki_sources <- function() {
 
 update_readme_docs_block <- function(pages) {
   readme_path <- file.path(repo_root, "README.md")
-  if (!file.exists(readme_path)) stop("Missing README.md at repo root.", call. = FALSE)
+  if (!file.exists(readme_path)) cli::cli_abort(c("x" = "Missing {.path README.md} at repo root"))
 
   begin <- "<!-- BEGIN WIKI_CONTENT_DOCS -->"
   end <- "<!-- END WIKI_CONTENT_DOCS -->"
@@ -122,13 +122,11 @@ update_readme_docs_block <- function(pages) {
   end_idx <- match(end, lines)
 
   if (is.na(begin_idx) || is.na(end_idx) || end_idx <= begin_idx) {
-    stop(
-      "README.md is missing the docs markers.\n",
-      "Expected lines:\n",
-      "- ", begin, "\n",
-      "- ", end,
-      call. = FALSE
-    )
+    cli::cli_abort(c(
+      "x" = "README.md is missing the docs markers",
+      "i" = "Expected: {.code {begin}}",
+      "i" = "Expected: {.code {end}}"
+    ))
   }
 
   entry_lines <- unlist(lapply(pages, function(p) {
