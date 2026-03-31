@@ -67,6 +67,8 @@ test_that("cmonitor execution inside nix-shell produces expected output", {
   # Sanitize: remove specific paths or dates
   sanitized_output <- gsub("/Users/[^/]+", "/Users/USER", output_content)
   sanitized_output <- gsub("\\d{4}-\\d{2}-\\d{2}", "YYYY-MM-DD", sanitized_output)
+  # Strip ANSI escape codes before filtering nix lines
+  sanitized_output <- gsub("\033\\[[0-9;]*m", "", sanitized_output)
   # Filter out nix download/unpacking lines that depend on cache state
   sanitized_output <- sanitized_output[!grepl("^(unpacking |copying path |these \\d+ paths|  /nix/store/)", sanitized_output)]
 
