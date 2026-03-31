@@ -58,6 +58,19 @@ Produce a structured report as markdown:
 **Issues:** [N critical, N major, N minor]
 ```
 
+## Use Structural Diffs
+
+When reviewing changes, use `difft` (difftastic) for structural diffs instead of line-based `git diff`:
+
+```bash
+# See what actually changed (ignores formatting)
+git show --ext-diff HEAD
+# Or compare two commits
+git diff --ext-diff HEAD~3..HEAD -- R/
+```
+
+This filters out formatting-only changes (air/styler) and shows only semantic modifications. Fewer false positives in your review.
+
 ## Adversarial Mindset
 
 - Assume code is guilty until proven correct

@@ -36,6 +36,12 @@ fi
 if (file.exists("_targets.R")) parse("_targets.R")
 ```
 
+```bash
+# Structural diff summary (what actually changed semantically)
+echo "=== Structural Diff (uncommitted) ==="
+git diff --ext-diff --stat 2>/dev/null || echo "(difftastic not configured)"
+```
+
 ## Output Format
 
 ```
