@@ -13,4 +13,5 @@ R package (llm) — global config management project. Review for:
 - AGENTS.md must stay under 200 lines
 - Rules must stay under 150 lines
 - All rules need YAML frontmatter with paths:
+- Diffs are structural (difftastic/tree-sitter) — formatting changes are invisible, focus on semantic changes only
 """
