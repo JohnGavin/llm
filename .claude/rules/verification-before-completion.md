@@ -48,6 +48,17 @@ entire pipeline. `tar_make()` fails but may not be run until later. Parse-checki
 catches syntax errors immediately. (Learned 2026-03-24: `plan_pkgdown()` added
 without comma broke pipeline for 3 days.)
 
+## Verify Only Intended Changes (difftastic)
+
+Before committing, review your changes structurally to confirm only intended modifications are present:
+
+```bash
+git diff --ext-diff -- R/ tests/   # structural diff of uncommitted changes
+git diff --ext-diff HEAD~1 -- R/   # structural diff of last commit
+```
+
+difftastic ignores formatting — if you see a change, it's semantic and you made it.
+
 ## Before PR Push
 
 ```r

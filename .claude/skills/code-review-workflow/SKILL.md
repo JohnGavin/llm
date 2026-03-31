@@ -77,6 +77,20 @@ usethis::pr_push()
 # Then update body via gh if needed
 ```
 
+### Use Structural Diffs for Review
+
+Before reviewing, use `difft` (difftastic) to see only semantic changes:
+
+```bash
+# Structural diff of branch vs main (ignores formatting)
+git diff --ext-diff main...HEAD -- R/ tests/
+
+# Structural diff of specific commit
+git show --ext-diff HEAD
+```
+
+This filters out `air`/`styler` formatting changes and shows only real code modifications. Use this for both self-review and PR review.
+
 ### Self-Review Checklist
 
 Before requesting human review:
