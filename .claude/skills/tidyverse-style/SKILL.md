@@ -162,6 +162,19 @@ See [migration-tables.md](references/migration-tables.md) for the complete mappi
 - [ ] Typed NAs used (`NA_integer_`, not bare `NA`)
 - [ ] Aggregations have explicit `na.rm = TRUE` or documented NA behavior
 
+## Code Formatting + Structural Diff Tools
+
+| Tool | Purpose | Command |
+|------|---------|---------|
+| **air** | R code formatter (Posit, Rust-based) | `air format R/` |
+| **styler** | R code formatter (tidyverse) | `styler::style_pkg()` |
+| **difftastic** | Structural diff — ignores formatting, shows only semantic changes | `difft old.R new.R` |
+| **ast-grep** | Structural code search via AST | `sg -l r -p 'stop(___)' R/` |
+
+**difftastic + air workflow:** Format code with `air`, then review changes with `git diff` (which uses `difft` via git config). Formatting-only changes are invisible — only real code changes show. Configured automatically in nix shell_hook: `git config diff.external 'difft --display inline'`.
+
+**Use `git show --ext-diff`** to see structural diffs for any commit.
+
 ## Resources
 
 - [Tidyverse Style Guide](https://style.tidyverse.org/)

@@ -341,6 +341,7 @@ gh_pkgs <- list(
 # export NIXPKGS_ALLOW_UNFREE=1
 Sys.setenv("NIXPKGS_ALLOW_UNFREE"=1)
 system_pkgs <- c(
+  "orbstack", 
   "visidata", "tmux", 
   "claude-monitor", 
   "locale", "direnv", "jq", 
@@ -358,7 +359,7 @@ system_pkgs <- c(
     # https://www.andrewheiss.com/blog/2025/07/22/positron-open-with-finder/
     # "raycast", 
   # "podman", 
-  "duckdb", "tree", "ast-grep", "tree-sitter",
+  "duckdb", "tree", "ast-grep", "tree-sitter", "difftastic",
   "awscli2",
   "bc", # calculator
   "htop", "btop", 
@@ -585,7 +586,10 @@ export R_MAKEVARS_USER=/dev/null
 # === Other standard Nix shell setup ===
 export PATH=/Users/johngavin/docs_gh/llm/bin:$PATH
 alias duckdb='duckdb -unsigned'
+alias sg='ast-grep -c $HOME/.config/ast-grep/sgconfig.yml'
 unset CI
+# difftastic: structural diff for R (ignores formatting-only changes)
+git config diff.external 'difft --display inline'
 printf '%s\\n' 'Setup complete'
 printf 'Terminal wrapper: %s\\n' $RSTUDIO_TERM_EXEC
 printf 'RSTUDIO_TERM_EXEC set to execute new shell with Nix environment.\\n'
