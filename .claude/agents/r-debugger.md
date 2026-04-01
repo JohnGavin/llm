@@ -139,3 +139,14 @@ I hypothesize [X] because [evidence]
 ## Verification
 [Paste actual test output showing it passes]
 ```
+
+## CI Parity: Linux Container Debugging
+
+If a test passes locally (macOS) but fails on CI (Linux), reproduce in a container:
+
+```bash
+docker run --rm -v "$(pwd):/pkg" -w /pkg --network=none \
+  nixos/nix:latest bash -c 'nix-shell default.nix --run "Rscript -e \"devtools::test()\""'
+```
+
+This eliminates macOS-specific behaviour: different `grep`/`sed` flags, system lib versions, locale settings, font availability.
