@@ -9,15 +9,30 @@ paths:
 ---
 # Visualization Standards
 
+## Start with ggauto for Standard Charts
+
+For standard chart types (bar, line, scatter, distribution, heatmap), start with [`ggauto`](https://github.com/nrennie/ggauto) — it auto-selects chart type from data types and applies accessible defaults:
+
+```r
+library(ggauto)
+df |> ggauto(x_var)              # 1 var: raincloud plot
+df |> ggauto(x_var, y_var)       # 2 vars: scatter/line/bar (auto-detected)
+df |> ggauto(date, value, group) # 3 vars: coloured lines (≤6) or faceted (>6)
+```
+
+**What ggauto does automatically:** Paul Tol accessible palettes, direct labels for ≤6 categories, auto-faceting for >6, magnitude ordering (not alphabetical), symmetric axes about 0, text wrapping, sentence-case titles. Returns standard ggplot2 — add `+ labs(caption = ...)` for our mandatory captions.
+
+**When NOT to use:** Complex custom designs, Shiny dashboards (use plotly), interactive pkgdown (use ggiraph), or when you need precise control over every visual element.
+
 ## Core Principles (Tufte/Gelman)
 
 1. **Every graph makes a comparison** — never plot a single metric in isolation
-2. **Small multiples** — prefer `facet_wrap()`/`facet_grid()` over 5+ category legends
-3. **Maximize data-ink ratio** — remove gridlines, background fills, 3D effects; use `theme_minimal()`
+2. **Small multiples** — prefer `facet_wrap()`/`facet_grid()` over 5+ category legends; ggauto auto-facets at >6
+3. **Maximize data-ink ratio** — remove gridlines, background fills, 3D effects; use `theme_minimal()` or ggauto defaults
 4. **Show data, not just summaries** — `geom_point()` + `geom_smooth()`, never mean without spread
 5. **No pie charts** — use horizontal bar, stacked bar, small multiples (Cleveland & McGill, 1984)
 6. **Graphical integrity** — y-axis at 0 for bars, no truncated axes, no dual y-axes
-7. **Direct labels** — `ggrepel::geom_text_repel()` for <=3 groups; legend OK for >3
+7. **Direct labels** — ggauto uses direct labels for ≤6 groups; `ggrepel` for manual control
 
 ## MANDATORY: Captions on ALL Plots, Tables, and Diagrams
 

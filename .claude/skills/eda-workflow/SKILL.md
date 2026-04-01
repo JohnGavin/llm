@@ -332,12 +332,42 @@ ggplot(data, aes(x, y)) + geom_point()
 2. Should we stratify by region given heterogeneity?
 ```
 
+## Quick EDA Plots with ggauto
+
+For rapid exploratory visualisation, use [`ggauto`](https://github.com/nrennie/ggauto) — auto-selects chart type from data types with accessible defaults:
+
+```r
+library(ggauto)
+
+# Distribution
+df |> ggauto(numeric_col)                    # raincloud plot
+
+# Relationship
+df |> ggauto(x_continuous, y_continuous)      # scatter plot
+
+# Time series
+df |> ggauto(date_col, value_col)            # line chart
+
+# Grouped time series
+df |> ggauto(date_col, value_col, group_col) # coloured lines (≤6) or faceted (>6)
+
+# Counts
+df |> ggauto(category_col)                   # bar chart, ordered by magnitude
+
+# Heatmap
+df |> ggauto(cat1, cat2)                     # count heatmap
+df |> ggauto(cat1, cat2, value)              # continuous heatmap
+```
+
+**EDA workflow:** Use `ggauto()` for fast first-pass visualisation, then switch to manual `ggplot2` for publication plots that need custom design, captions, or interactivity. All final plots must go through the targets pipeline (see `reproducible-visualization` rule).
+
 ## Related Skills
 
 - `data-wrangling-duckdb` - Tools for querying data (complements this skill)
 - `analysis-rationale-logging` - Documenting decisions made during EDA
 - `systematic-debugging` - Scientific method when EDA reveals problems
 - `targets-vignettes` - Reproducible EDA pipelines
+- `visualization-standards` - ggauto for standard charts, ggplot2 for custom
 
 ## Resources
 
@@ -346,3 +376,4 @@ ggplot(data, aes(x, y)) + geom_point()
 - [naniar package](https://naniar.njtierney.com/) - Missing data visualization
 - [visdat package](https://docs.ropensci.org/visdat/) - Data structure visualization
 - [skimr package](https://docs.ropensci.org/skimr/) - Quick summaries
+- [ggauto package](https://github.com/nrennie/ggauto) - Auto chart type selection
