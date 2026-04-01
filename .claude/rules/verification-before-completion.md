@@ -32,6 +32,7 @@ If you haven't run the verification command **in this message**, you cannot clai
 | "Targets complete" | `targets::tar_make()` all green | Partial run |
 | "Website deployed" | Grep HTML for MISSING EVIDENCE, NULL, Error | "Build succeeded" |
 | "Vignettes work" | See `quarto-vignette-validation` rule | "pkgdown built" |
+| "Works on Linux" | `docker run --rm -v .:/pkg:ro nixos/nix bash -c 'nix-shell ...'` | "Passes on my Mac" |
 
 ## Before Any Commit
 

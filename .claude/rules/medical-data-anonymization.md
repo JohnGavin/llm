@@ -142,6 +142,31 @@ HOSPITAL_NUM:21264224
 
 **Agent workflow:** Run before Step 4 (commit) in any project with PHI.
 
+## Container Isolation for PHI Processing (RECOMMENDED)
+
+When processing raw PHI data, SHOULD run inside a `--network=none` container via OrbStack. This prevents data exfiltration even if code has bugs.
+
+```bash
+# Process PHI in isolated container — no network, read-only source, writable output only
+docker run --rm \
+  --network=none \
+  --memory=4g \
+  -v "$(pwd)/R:/pkg/R:ro" \
+  -v "$(pwd)/data/raw:/data/raw:ro" \
+  -v "$(pwd)/data/anonymized:/data/out" \
+  nixos/nix:latest bash -c '
+    nix-shell /pkg/default.nix --run "Rscript -e \"source(\\\"R/anonymize.R\\\"); anonymize_all_files()\""
+  '
+```
+
+**What this guarantees:**
+- `--network=none`: no outbound connections (PHI cannot be sent anywhere)
+- `:ro` mounts: container cannot modify source code or raw data
+- Writable mount only for anonymized output directory
+- `--memory=4g`: prevents runaway processes from consuming host memory
+
+**When to use:** Any script that reads raw patient data (not anonymized). Not needed for analysis of already-anonymized data.
+
 ## Project Setup Checklist
 
 When starting a new medical data project:

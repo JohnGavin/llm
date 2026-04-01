@@ -42,6 +42,25 @@ echo "=== Structural Diff (uncommitted) ==="
 git diff --ext-diff --stat 2>/dev/null || echo "(difftastic not configured)"
 ```
 
+## Optional: Linux Container Check (CI Parity)
+
+If the user says `/check --linux` or if a prior CI failure was Linux-specific, run devtools::check() inside a Linux container via OrbStack:
+
+```bash
+# Build a minimal nix-based R container from this project's default.nix
+# Then run check inside it — matches CI environment exactly
+docker run --rm \
+  -v "$(pwd):/pkg:ro" \
+  -w /pkg \
+  --network=none \
+  nixos/nix:latest \
+  bash -c 'nix-shell default.nix --run "Rscript -e \"devtools::check()\""'
+```
+
+If no Dockerfile/nix container exists yet, report: "No Linux container configured. Run native check only."
+
+This catches: macOS-specific PATH leaks, system lib differences, GNU vs BSD tool divergence, font/locale issues in vignette rendering.
+
 ## Output Format
 
 ```
