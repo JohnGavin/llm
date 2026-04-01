@@ -4,6 +4,31 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-03-31 – 2026-04-01
+
+### Completed
+- difftastic added to nix + git config + 5 config touchpoints (critic, code-review, /check, verification, roborev)
+- docker-client + orbstack added to nix system_pkgs
+- OrbStack integration: /check --linux (CI parity), PHI container isolation, Linux debugging in r-debugger
+- ggauto added to visualization-standards rule + eda-workflow skill
+- roborev config fix (TOML hooks=[] conflict with [[hooks]])
+- roborev refine successfully auto-fixed 2 review findings
+
+### Failed Approaches
+- Claimed "difftastic not in nixpkgs" without reading nix-shell output (terminal wrapper noise obscured "found"). Another instance of lesson #6: verify tool output before reporting.
+- roborev `hooks = []` + `[[hooks]]` TOML conflict — appended array-of-tables while empty array existed. Must remove empty default before adding entries.
+
+### Accuracy / Metrics
+- Nix dev toolchain: R, ast-grep, tree-sitter, difftastic, docker-client, orbstack, claude-code, copilot, duckdb
+- All 6 projects have roborev hooks + structural diff note in review_guidelines
+- Visualization ladder: ggauto (EDA) → ggplot2 (publication) → ggiraph (interactive) → plotly (Shiny)
+
+### Known Limitations
+- OrbStack Linux container check (`/check --linux`) not yet tested end-to-end
+- ggauto not yet in any project's DESCRIPTION Suggests (add when first used)
+- vignette-targets-export.md still at 171 lines (>150 limit)
+- 2 rules still missing YAML frontmatter
+
 ## 2026-03-30
 
 ### Completed
