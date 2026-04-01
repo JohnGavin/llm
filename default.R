@@ -360,6 +360,7 @@ system_pkgs <- c(
     # "raycast", 
   # "podman", 
   "duckdb", "tree", "ast-grep", "tree-sitter", "difftastic",
+  "docker-client", "orbstack",  # OrbStack provides lightweight Docker runtime on macOS
   "awscli2",
   "bc", # calculator
   "htop", "btop", 
