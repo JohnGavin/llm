@@ -127,14 +127,25 @@ devtools::check() # Must be 0 errors/warnings/notes
 *   **IF `package.nix` doesn't exist:** Create it following Pattern 4 in the `nix-rix-r-environment` skill.
 *   **IF cachix not in PATH:** Use `~/.nix-profile/bin/cachix` or ensure it's in the dev shell.
 
+### Step 5c: Linux Container Check (Optional — CI Parity)
+**Goal:** Catch platform-specific failures before pushing.
+
+Run when: prior CI failure was Linux-specific, or changing system-level code (hooks, nix config, shell scripts).
+
+```bash
+# Run devtools::check() in a Linux container via OrbStack
+docker run --rm -v "$(pwd):/pkg:ro" -w /pkg --network=none \
+  nixos/nix:latest bash -c 'nix-shell default.nix --run "Rscript -e \"devtools::check()\""'
+```
+
+Skip when: pure R code changes that don't touch shell scripts, nix config, or system tools.
+
 ### Step 6: Push & PR
 **Goal:** Upload changes.
 
 ```r
-# Log file must be included!
 gert::git_add("R/setup/fix_issue_123.R")
 gert::git_commit("Docs: Add session log")
-
 usethis::pr_push()
 ```
 
