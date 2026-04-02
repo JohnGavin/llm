@@ -151,11 +151,12 @@ When processing raw PHI data, SHOULD run inside a `--network=none` container via
 docker run --rm \
   --network=none \
   --memory=4g \
-  -v "$(pwd)/R:/pkg/R:ro" \
+  -v "$(pwd):/pkg:ro" \
   -v "$(pwd)/data/raw:/data/raw:ro" \
   -v "$(pwd)/data/anonymized:/data/out" \
+  -w /pkg \
   nixos/nix:latest bash -c '
-    nix-shell /pkg/default.nix --run "Rscript -e \"source(\\\"R/anonymize.R\\\"); anonymize_all_files()\""
+    nix-shell default.nix --run "Rscript -e \"source(\\\"R/anonymize.R\\\"); anonymize_all_files()\""
   '
 ```
 
