@@ -376,7 +376,7 @@ alias duckdb='duckdb -unsigned'
 alias sg='ast-grep -c $HOME/.config/ast-grep/sgconfig.yml'
 unset CI
 # difftastic: structural diff for R (ignores formatting-only changes)
-git config diff.external 'difft --display inline'
+export GIT_EXTERNAL_DIFF='difft --display inline'
 printf '%s\\n' 'Setup complete'
 printf 'Terminal wrapper: %s\\n' $RSTUDIO_TERM_EXEC
 printf 'RSTUDIO_TERM_EXEC set to execute new shell with Nix environment.\\n'
