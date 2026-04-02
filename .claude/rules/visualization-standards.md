@@ -32,7 +32,7 @@ df |> ggauto(date, value, group) # 3 vars: coloured lines (≤6) or faceted (>6)
 4. **Show data, not just summaries** — `geom_point()` + `geom_smooth()`, never mean without spread
 5. **No pie charts** — use horizontal bar, stacked bar, small multiples (Cleveland & McGill, 1984)
 6. **Graphical integrity** — y-axis at 0 for bars, no truncated axes, no dual y-axes
-7. **Direct labels** — ggauto uses direct labels for ≤6 groups; `ggrepel` for manual control
+7. **Direct labels** — ggauto auto-labels ≤6 groups; for manual ggplot2, use `ggrepel` for ≤3 groups, legend for >3
 
 ## MANDATORY: Captions on ALL Plots, Tables, and Diagrams
 
