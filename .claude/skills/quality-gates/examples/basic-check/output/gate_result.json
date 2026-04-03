@@ -1,0 +1,11 @@
+{
+  "package": "example-package",
+  "total_score": 92.5,
+  "grade": "Silver",
+  "components": {
+    "check": 98,
+    "documentation": 85,
+    "code_style": 100
+  },
+  "timestamp": "2026-04-03T12:00:00"
+}
