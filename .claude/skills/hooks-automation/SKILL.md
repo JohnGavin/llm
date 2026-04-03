@@ -323,6 +323,51 @@ This ensures:
 - Disk space is preserved
 - Hook execution history is maintained
 
+## Gotchas
+
+### Background processes die in pipe subshells
+
+```bash
+# WRONG: nohup inside pipe subshell — background process killed when pipe exits
+echo "$data" | {
+  while read line; do process "$line"; done
+  nohup long_running_task &    # DIES when subshell exits
+}
+
+# RIGHT: launch background OUTSIDE pipe, in main shell
+result=$(echo "$data" | while read line; do process "$line"; done)
+nohup long_running_task &      # SURVIVES — runs in main shell
+```
+
+**Learned 2026-04-03:** ctx_sync never ran because `nohup &` was inside `echo | { ... }`. The pipe creates a subshell; background jobs in subshells are killed when the subshell exits.
+
+### Variables set inside pipes are lost
+
+```bash
+# WRONG: count is always 0 after the pipe
+count=0
+echo "$lines" | while read line; do count=$((count + 1)); done
+echo $count  # 0 — assignment was in subshell
+
+# RIGHT: use heredoc (no subshell)
+count=0
+while read line; do count=$((count + 1)); done <<< "$lines"
+echo $count  # correct
+```
+
+### set -euo pipefail + head causes SIGPIPE
+
+```bash
+# WRONG: roborev status exits 141 (SIGPIPE) when head closes pipe
+status=$(roborev status | head -5)
+
+# RIGHT: capture full output, then truncate
+status=$(roborev status) || true
+echo "$status" | head -5
+```
+
+**Learned 2026-03-28:** SIGPIPE from `roborev status | head` killed session_init.sh.
+
 ## Limitations
 
 - Hooks run synchronously (block Claude until complete)
