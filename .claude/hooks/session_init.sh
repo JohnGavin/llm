@@ -261,27 +261,27 @@ phase_ctx_audit() {
   ' 2>/dev/null) || true
   [ -z "$audit_output" ] && { echo "Could not parse DESCRIPTION"; return; }
 
+  # Count statuses (avoid pipe subshell — background jobs die in subshells)
   local n_ok=0 n_stale=0 n_missing=0 n_other=0 missing_list=""
-  echo "$audit_output" | {
-    while IFS=: read -r status pkg; do
-      case "$status" in
-        OK) n_ok=$((n_ok + 1)) ;;
-        STALE) n_stale=$((n_stale + 1)) ;;
-        OTHER_VER) n_other=$((n_other + 1)) ;;
-        MISSING) n_missing=$((n_missing + 1)); missing_list="$missing_list $pkg" ;;
-      esac
-    done
-    echo "ctx cache: $n_ok OK, $n_stale stale, $n_other wrong-version, $n_missing missing"
-    [ "$n_missing" -gt 0 ] && echo "  Missing:$missing_list"
-    # Auto-launch background ctx_sync if any gaps found
-    if [ "$((n_missing + n_stale + n_other))" -gt 0 ] && [ -f "DESCRIPTION" ]; then
-      echo "  Launching background ctx_sync..."
-      nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
-        > /tmp/ctx_sync_$$.log 2>&1 &
-      echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
-    fi
-    true
-  }
+  while IFS=: read -r status pkg; do
+    case "$status" in
+      OK) n_ok=$((n_ok + 1)) ;;
+      STALE) n_stale=$((n_stale + 1)) ;;
+      OTHER_VER) n_other=$((n_other + 1)) ;;
+      MISSING) n_missing=$((n_missing + 1)); missing_list="$missing_list $pkg" ;;
+    esac
+  done <<< "$audit_output"
+
+  echo "ctx cache: $n_ok OK, $n_stale stale, $n_other wrong-version, $n_missing missing"
+  [ "$n_missing" -gt 0 ] && echo "  Missing:$missing_list"
+
+  # Auto-launch background ctx_sync (OUTSIDE pipe — survives hook exit)
+  if [ "$((n_missing + n_stale + n_other))" -gt 0 ] && [ -f "DESCRIPTION" ]; then
+    echo "  Launching background ctx_sync..."
+    nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
+      > /tmp/ctx_sync_$$.log 2>&1 &
+    echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
+  fi
 }
 
 # ── Phase 6: R-universe Build Status ──────────────────────────────────
@@ -421,6 +421,24 @@ timeout 15 Rscript -e '
     }
   }, error = function(e) cat("R-universe: unreachable\n"))
 ' 2>/dev/null || echo "R phases: timeout or error"
+
+# Launch background ctx_sync if DESCRIPTION exists and missing packages detected
+# (The R phase above reports but can't launch background processes)
+if [ -f "DESCRIPTION" ]; then
+  # Quick check: any missing ctx for this project?
+  has_missing=$(timeout 5 Rscript -e '
+    source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
+    a <- ctx_audit("DESCRIPTION")
+    cat(sum(a$status == "MISSING"))
+  ' 2>/dev/null) || true
+  if [ "${has_missing:-0}" -gt 0 ]; then
+    echo "  Launching background ctx_sync ($has_missing missing)..."
+    nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
+      > /tmp/ctx_sync_$$.log 2>&1 &
+    echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
+  fi
+fi
+
 echo ""
 echo "=== Stale Worktrees ==="
 phase_worktrees
