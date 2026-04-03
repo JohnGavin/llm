@@ -1,3 +1,7 @@
+---
+name: pkgdown-deployment
+description: Use when deploying R package documentation with pkgdown and GitHub Pages, using the hybrid Nix + native R workflow, or troubleshooting bslib/Bootstrap 5 in Nix. Triggers: pkgdown, GitHub Pages, package website, documentation site, pkgdown deploy.
+---
 # Pkgdown Deployment with Hybrid Nix + Native R
 
 ## Description

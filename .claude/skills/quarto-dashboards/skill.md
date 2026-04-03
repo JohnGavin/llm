@@ -1,4 +1,5 @@
 ---
+name: quarto-dashboards
 description: >
   Build Quarto dashboards with bslib, plotly, and optional Shiny/Shinylive
   interactivity. Use when creating dashboard-format Quarto documents,

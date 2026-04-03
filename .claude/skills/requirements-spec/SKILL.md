@@ -1,6 +1,6 @@
 ---
 name: requirements-spec
-description: Create a MUST/SHOULD/MAY requirements specification before complex tasks to catch ambiguity early
+description: Use when planning complex tasks involving 5+ files or 3+ modules to create a MUST/SHOULD/MAY requirements specification that catches ambiguity before coding begins. Triggers: requirements, spec, complex task, scope definition, ambiguity.
 argument-hint: "[task description]"
 ---
 # Requirements Specification

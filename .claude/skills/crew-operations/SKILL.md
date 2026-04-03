@@ -1,3 +1,7 @@
+---
+name: crew-operations
+description: Use when configuring crew worker pools, debugging crew auto-scaling, setting up crew logging and monitoring, or troubleshooting distributed worker issues in production. Triggers: crew, worker pools, auto-scaling, crew logging, crew monitoring, distributed workers.
+---
 # crew Operational Patterns
 
 ## Description

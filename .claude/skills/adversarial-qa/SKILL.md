@@ -1,3 +1,7 @@
+---
+name: adversarial-qa
+description: Use when performing attack-based testing on R package exported functions, running adversarial QA before PRs, or stress-testing edge cases, invalid inputs, and boundary conditions in R code. Triggers: adversarial testing, QA review, attack vectors, fuzz testing, edge cases, PR quality gate.
+---
 # Adversarial QA Skill
 
 Attack-based testing for R package exported functions. MANDATORY for Step 4 of every PR.

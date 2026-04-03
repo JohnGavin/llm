@@ -1,0 +1,1 @@
+/Users/johngavin/.claude/scripts/qa_gate_check.sh

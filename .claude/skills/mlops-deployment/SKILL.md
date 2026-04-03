@@ -1,3 +1,7 @@
+---
+name: mlops-deployment
+description: Use when deploying ML models to production using pins, vetiver, and plumber, implementing model versioning, serving APIs, monitoring, or rollback. Triggers: MLOps, model deployment, vetiver, pins, model serving, model monitoring, production ML.
+---
 # MLOps Deployment
 
 ## Description

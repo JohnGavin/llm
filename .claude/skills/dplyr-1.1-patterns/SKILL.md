@@ -1,3 +1,7 @@
+---
+name: dplyr-1.1-patterns
+description: Use when writing or modernizing dplyr code with 1.1+ features including .by= per-operation grouping, pick() for tidy-select, reframe() for multi-row summaries, join_by() for flexible joins, consecutive_id() for run-length grouping. Triggers: dplyr, .by, pick, reframe, join_by, consecutive_id.
+---
 # dplyr 1.1+ Modern Patterns
 
 ## Description

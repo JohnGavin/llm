@@ -1,3 +1,7 @@
+---
+name: huggingface-r
+description: Use when integrating Hugging Face models in R, downloading pre-trained models, loading tokenizers, working with safetensors format, or building ML/AI workflows from R. Triggers: Hugging Face, HuggingFace, transformers, safetensors, tokenizers, ML models in R.
+---
 # Hugging Face Integration for R
 
 ## Description

@@ -1,3 +1,7 @@
+---
+name: llm-package-context
+description: Use when generating compact API specifications from R/Python packages for LLM consumption, using pkgctx tool, or managing central context caches. Triggers: pkgctx, package context, API spec, LLM context, token reduction, function signatures.
+---
 # LLM Package Context with pkgctx
 
 ## Description
