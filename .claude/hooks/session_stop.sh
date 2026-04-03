@@ -44,6 +44,12 @@ if [ -d "$CLAUDE_DIR/.git" ] || git -C "$CLAUDE_DIR" rev-parse --git-dir >/dev/n
   fi
 fi
 
+# ── Skill audit (only if skills changed) ─────────────────────────────
+AUDIT_WRAPPER="$HOME/docs_gh/llm/.claude/scripts/audit_skills_if_changed.sh"
+if [ -x "$AUDIT_WRAPPER" ]; then
+  timeout 15 "$AUDIT_WRAPPER" 2>/dev/null || true
+fi
+
 # ── Decision log reminder ─────────────────────────────────────────────
 if [ -f "$CURRENT_WORK" ]; then
   if ! grep -q "### Decisions" "$CURRENT_WORK" 2>/dev/null; then
