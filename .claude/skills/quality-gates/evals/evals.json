@@ -1,0 +1,38 @@
+{
+  "skill_name": "quality-gates",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run the quality checks on this R package and tell me if it's ready to merge",
+      "expected_output": "A quality score with Bronze/Silver/Gold grade, component breakdown, and verdict on merge readiness.",
+      "assertions": [
+        "Output includes a numeric total score",
+        "Output includes Bronze, Silver, or Gold grade",
+        "Output shows component breakdown (coverage, check, docs, defensive, data integrity, code style)",
+        "Output gives a clear verdict: ready to merge or needs fixes"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I just finished implementing a feature and want to commit. What checks should I run?",
+      "expected_output": "Instructions to run devtools::document(), test(), check(), and ast-grep sweep. Minimum Bronze (80) to commit.",
+      "assertions": [
+        "Mentions devtools::document()",
+        "Mentions devtools::test()",
+        "Mentions devtools::check()",
+        "Mentions ast-grep code sweep or banned patterns",
+        "States Bronze (>=80) as minimum for commit"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "My R CMD check has 0 errors but 2 warnings. Can I create a PR?",
+      "expected_output": "Explains that Silver (>=90) is needed for PR, and warnings may reduce score. Recommends fixing warnings first.",
+      "assertions": [
+        "Mentions Silver (>=90) threshold for PR",
+        "Warns that R CMD check warnings reduce score",
+        "Recommends investigating and fixing the warnings"
+      ]
+    }
+  ]
+}

@@ -1,3 +1,7 @@
+---
+name: static-api-deployment
+description: Use when deploying derived datasets as static JSON APIs, hosting analysis results or model outputs as static files, or building serverless data APIs from R packages. Triggers: static API, JSON API, static hosting, data API, serverless API.
+---
 # Static API Deployment Skill
 
 ## When to Use

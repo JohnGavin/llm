@@ -1,3 +1,7 @@
+---
+name: browser-user-testing
+description: Use when testing deployed websites, pkgdown sites, Shiny apps, or dashboards using browser automation with user personas. Triggers: user testing, browser testing, persona testing, UX review, site walkthrough, pkgdown testing.
+---
 # Browser-Based User Testing with Personas
 
 ## Description

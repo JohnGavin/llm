@@ -1,3 +1,7 @@
+---
+name: shinylive-deployment
+description: Use when deploying Shiny apps as static websites using Shinylive/WebAssembly, targeting GitHub Pages, Netlify, or static hosts for serverless Shiny. Triggers: Shinylive, WebAssembly, WASM, static Shiny, serverless Shiny, Shinylive deploy.
+---
 # Shinylive Deployment Workflow
 
 ## Description

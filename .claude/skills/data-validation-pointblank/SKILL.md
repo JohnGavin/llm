@@ -1,3 +1,7 @@
+---
+name: data-validation-pointblank
+description: Use when implementing data contracts, automated validation with pointblank, integrating validation into targets pipelines, or setting up data quality checks with crew. Triggers: pointblank, data validation, data contracts, data quality, validation rules.
+---
 # Data Validation with pointblank
 
 This skill defines the workflow for implementing **Data Contracts** and **Automated Validation** using the `pointblank` package. It integrates closely with `targets` for orchestration and `crew` for distributed execution.

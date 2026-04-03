@@ -1,3 +1,7 @@
+---
+name: gdc-genomics
+description: Use when working with GDC (Genomic Data Commons) data, genomics pipelines, or cancer genomics analysis in R. Triggers: GDC, genomics, cancer data, genomic data commons, bioinformatics, mutation data.
+---
 # GDC Genomics Spec-Bundled Skill
 
 ## When to Activate

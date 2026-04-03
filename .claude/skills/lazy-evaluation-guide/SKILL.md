@@ -1,3 +1,7 @@
+---
+name: lazy-evaluation-guide
+description: Use when working with lazy evaluation in R, clarifying the six meanings of lazy (promises, non-standard evaluation, tidy eval, Arrow/DuckDB lazy frames, targets, R6 lazy fields). Triggers: lazy evaluation, promises, NSE, non-standard evaluation, deferred evaluation.
+---
 # Lazy Evaluation in R - A Taxonomy
 
 ## Description

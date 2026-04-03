@@ -1,3 +1,7 @@
+---
+name: analysis-rationale-logging
+description: Use when documenting why analysis decisions were made, creating audit trails for modeling choices, addressing the garden of forking paths problem, or logging scientific reasoning alongside technical execution. Triggers: rationale logging, decision audit, analysis choices, forking paths.
+---
 # Analysis Rationale Logging
 
 ## Description
