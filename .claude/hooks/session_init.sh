@@ -358,26 +358,31 @@ phase_roborev() {
   fi
 }
 
-# ── Run all phases ────────────────────────────────────────────────────
-phase_env
-echo ""
-echo "CLAUDE.md Mapping Validation"
-echo "============================="
-phase_mappings
-echo ""
-echo "Config Size Audit"
-echo "================="
-phase_sizes
-echo ""
-echo "=== Skill Token/Line Audit ==="
-echo "Limits: SKILL.md <= 500 lines, description <= 100 words"
-echo ""
-phase_skill_tokens
-echo ""
-# Run ctx audit + R-universe in a SINGLE Rscript (saves ~3s R startup)
-echo "=== ctx + R-universe (combined) ==="
-timeout 15 Rscript -e '
-  # --- ctx audit ---
+# ── Run all phases (compact output: pass=checkmark, warn/fail=detail) ──
+WARNINGS=""
+
+# Phase 1: Nix
+phase_env_result=$(phase_env 2>/dev/null | head -1)
+echo "$phase_env_result" | grep -qi "active" && nix_ok="Y" || nix_ok="N"
+
+# Phase 2: Mappings (capture warnings)
+map_output=$(phase_mappings 2>/dev/null)
+echo "$map_output" | grep -qi "mismatch\|WARN" && WARNINGS="${WARNINGS}$(echo "$map_output" | grep -i "WARN\|MISMATCH")
+"
+
+# Phase 3: Sizes (capture warnings)
+size_output=$(phase_sizes 2>/dev/null)
+echo "$size_output" | grep -qi "WARN\|FAIL" && WARNINGS="${WARNINGS}$(echo "$size_output" | grep -i "WARN\|FAIL")
+"
+
+# Phase 4: Skill tokens
+skill_output=$(phase_skill_tokens 2>/dev/null)
+echo "$skill_output" | grep -qi "WARNING\|OVER" && WARNINGS="${WARNINGS}$(echo "$skill_output" | grep -i "WARNING\|OVER")
+"
+n_skills=$(echo "$skill_output" | grep -oE '[0-9]+ skills' | head -1)
+
+# Phase 5+6: ctx + R-universe (single Rscript)
+r_output=$(timeout 15 Rscript -e '
   if (file.exists("DESCRIPTION")) {
     tryCatch({
       d <- read.dcf("DESCRIPTION", fields = c("Imports","Suggests","Depends"))
@@ -388,7 +393,7 @@ timeout 15 Rscript -e '
         "methods","parallel","splines","stats","stats4","tcltk","tools","utils")
       p <- p[nzchar(p) & !p %in% c("R", base_pkgs)]
       cache <- file.path(Sys.getenv("HOME"), "docs_gh/proj/data/llm/content/inst/ctx/external")
-      n_ok <- 0L; n_other <- 0L; n_miss <- 0L; missing <- character()
+      n_ok <- 0L; n_other <- 0L; n_miss <- 0L
       for (pkg in sort(unique(p))) {
         ver <- tryCatch(as.character(packageVersion(pkg)), error = function(e) "unknown")
         f <- file.path(cache, paste0(pkg, "@", ver, ".ctx.yaml"))
@@ -398,52 +403,68 @@ timeout 15 Rscript -e '
         } else {
           any_ver <- list.files(cache, pattern = paste0("^", gsub("\\.", "\\\\.", pkg), "@"))
           if (length(any_ver) > 0) n_other <- n_other + 1L
-          else { n_miss <- n_miss + 1L; missing <- c(missing, pkg) }
+          else n_miss <- n_miss + 1L
         }
       }
-      cat(sprintf("ctx cache: %d OK, %d other-version, %d missing\n", n_ok, n_other, n_miss))
-      if (n_miss > 0) cat("  Missing:", paste(missing, collapse = " "), "\n")
-    }, error = function(e) cat("ctx audit: error\n"))
-  } else {
-    cat("ctx: no DESCRIPTION\n")
-  }
-
-  # --- R-universe ---
+      cat(sprintf("ctx:%d/%d/%d", n_ok, n_other, n_miss))
+    }, error = function(e) cat("ctx:err"))
+  } else { cat("ctx:nodesc") }
+  cat("|")
   tryCatch({
     resp <- readLines("https://johngavin.r-universe.dev/api/packages", warn = FALSE)
     d <- jsonlite::fromJSON(paste(resp, collapse = ""))
     if (is.data.frame(d) && nrow(d) > 0) {
       fails <- d[d[["_status"]] != "success", , drop = FALSE]
-      ok <- sum(d[["_status"]] == "success")
-      cat(sprintf("R-universe: %d OK, %d failed\n", ok, nrow(fails)))
-      if (nrow(fails) > 0) for (i in seq_len(nrow(fails)))
-        cat("  FAIL:", fails$Package[i], "\n")
+      cat(sprintf("runiverse:%d/%d", sum(d[["_status"]] == "success"), nrow(fails)))
+      if (nrow(fails) > 0) cat(sprintf("(%s)", paste(fails$Package, collapse = ",")))
     }
-  }, error = function(e) cat("R-universe: unreachable\n"))
-' 2>/dev/null || echo "R phases: timeout or error"
+  }, error = function(e) cat("runiverse:err"))
+' 2>/dev/null) || r_output="R:timeout"
 
-# Launch background ctx_sync if DESCRIPTION exists and missing packages detected
-# (The R phase above reports but can't launch background processes)
-if [ -f "DESCRIPTION" ]; then
-  # Quick check: any missing ctx for this project?
-  has_missing=$(timeout 5 Rscript -e '
-    source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
-    a <- ctx_audit("DESCRIPTION")
-    cat(sum(a$status == "MISSING"))
-  ' 2>/dev/null) || true
-  if [ "${has_missing:-0}" -gt 0 ]; then
-    echo "  Launching background ctx_sync ($has_missing missing)..."
-    nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
-      > /tmp/ctx_sync_$$.log 2>&1 &
-    echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
+# Parse R output
+ctx_part=$(echo "$r_output" | cut -d'|' -f1)
+runiverse_part=$(echo "$r_output" | cut -d'|' -f2)
+
+# Phase 7: Worktrees
+wt_count=0
+if [ -d ".claude/worktrees" ]; then
+  wt_count=$(find .claude/worktrees -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+  wt_count=$((wt_count - 1))
+fi
+
+# Phase 8: roborev
+roborev_status=""
+if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
+  rv_output=$(/usr/local/bin/roborev status 2>/dev/null) || true
+  if echo "$rv_output" | grep -q "running" 2>/dev/null; then
+    n_failed=$(/usr/local/bin/roborev list --status failed --limit 1 2>/dev/null | grep -c "^Job" || true) || true
+    [ "${n_failed:-0}" -gt 0 ] && roborev_status="roborev:${n_failed}failed" || roborev_status="roborev:ok"
+  else
+    roborev_status="roborev:off"
   fi
 fi
 
-echo ""
-echo "=== Stale Worktrees ==="
-phase_worktrees
-echo ""
-echo "=== roborev Review Status ==="
-phase_roborev
+# ── Compact summary line ──
+summary=""
+[ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
+summary="$summary | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
+[ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}STALE"
+[ -n "$roborev_status" ] && summary="$summary | $roborev_status"
+echo "$summary"
+
+# Show warnings (only if any)
+if [ -n "$WARNINGS" ]; then
+  echo "WARN: $(echo "$WARNINGS" | tr '\n' ' ' | sed 's/  */ /g' | head -c 200)"
+fi
+
+# Background ctx_sync if missing packages detected
+if [ -f "DESCRIPTION" ]; then
+  ctx_miss=$(echo "$ctx_part" | grep -oE '[0-9]+$')
+  if [ "${ctx_miss:-0}" -gt 0 ]; then
+    nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
+      > /tmp/ctx_sync_$$.log 2>&1 &
+    echo "ctx_sync: $ctx_miss missing, generating in background (PID $!)"
+  fi
+fi
 
 exit 0
