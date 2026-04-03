@@ -362,23 +362,26 @@ phase_roborev() {
 WARNINGS=""
 
 # Phase 1: Nix
-phase_env_result=$(phase_env 2>/dev/null | head -1)
+phase_env_result=$(phase_env 2>/tmp/phase_env_err.log | head -1)
 echo "$phase_env_result" | grep -qi "active" && nix_ok="Y" || nix_ok="N"
 
 # Phase 2: Mappings (capture warnings)
 map_output=$(phase_mappings 2>/dev/null)
-echo "$map_output" | grep -qi "mismatch\|WARN" && WARNINGS="${WARNINGS}$(echo "$map_output" | grep -i "WARN\|MISMATCH")
-"
+if echo "$map_output" | grep -qi "mismatch\|WARN"; then
+  WARNINGS="${WARNINGS}$(echo "$map_output" | grep -i 'WARN\|MISMATCH') "
+fi
 
 # Phase 3: Sizes (capture warnings)
 size_output=$(phase_sizes 2>/dev/null)
-echo "$size_output" | grep -qi "WARN\|FAIL" && WARNINGS="${WARNINGS}$(echo "$size_output" | grep -i "WARN\|FAIL")
-"
+if echo "$size_output" | grep -qi "WARN\|FAIL"; then
+  WARNINGS="${WARNINGS}$(echo "$size_output" | grep -i 'WARN\|FAIL') "
+fi
 
 # Phase 4: Skill tokens
 skill_output=$(phase_skill_tokens 2>/dev/null)
-echo "$skill_output" | grep -qi "WARNING\|OVER" && WARNINGS="${WARNINGS}$(echo "$skill_output" | grep -i "WARNING\|OVER")
-"
+if echo "$skill_output" | grep -qi "WARNING\|OVER"; then
+  WARNINGS="${WARNINGS}$(echo "$skill_output" | grep -i 'WARNING\|OVER') "
+fi
 n_skills=$(echo "$skill_output" | grep -oE '[0-9]+ skills' | head -1)
 
 # Phase 5+6: ctx + R-universe (single Rscript)
@@ -459,7 +462,7 @@ fi
 
 # Background ctx_sync if missing packages detected
 if [ -f "DESCRIPTION" ]; then
-  ctx_miss=$(echo "$ctx_part" | grep -oE '[0-9]+$')
+  ctx_miss=$(echo "$ctx_part" | cut -d: -f2 | cut -d/ -f3)
   if [ "${ctx_miss:-0}" -gt 0 ]; then
     nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
       > /tmp/ctx_sync_$$.log 2>&1 &
