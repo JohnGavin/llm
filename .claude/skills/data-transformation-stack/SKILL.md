@@ -1,3 +1,7 @@
+---
+name: data-transformation-stack
+description: Use when building data pipelines with DuckDB, Arrow, or dbt, reading JSON/CSV/Parquet without loading into R memory, or orchestrating SQL transformations. Triggers: DuckDB, Arrow, dbt, Parquet, data pipeline, SQL transformation, data wrangling.
+---
 # Data Transformation Stack: DuckDB, Arrow, and dbt
 
 ## Description

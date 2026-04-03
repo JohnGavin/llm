@@ -1,3 +1,7 @@
+---
+name: r-cmd-check-fixes
+description: Use when fixing R CMD check errors and warnings, setting up new R packages, or resolving common check issues with standard solutions. Triggers: R CMD check, check errors, check warnings, NOTES, package check, devtools::check.
+---
 # R CMD Check Common Fixes
 
 ## Description

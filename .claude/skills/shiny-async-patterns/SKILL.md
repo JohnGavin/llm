@@ -1,3 +1,7 @@
+---
+name: shiny-async-patterns
+description: Use when implementing non-blocking async operations in Shiny apps using ExtendedTask (Shiny 1.8.1+), crew integration, or keeping UI responsive during long computations. Triggers: Shiny async, ExtendedTask, non-blocking, async Shiny, crew Shiny.
+---
 # Shiny Async Patterns
 
 ## Description

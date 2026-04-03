@@ -1,3 +1,7 @@
+---
+name: shinylive-quarto
+description: Use when embedding Shinylive apps in Quarto documents, deploying server-free Shiny dashboards via Quarto and GitHub Pages, or building interactive Quarto pages with Shiny. Triggers: Shinylive Quarto, Quarto Shiny, WebR Shiny, interactive Quarto.
+---
 # Shinylive for R with Quarto Dashboard
 
 ## Description

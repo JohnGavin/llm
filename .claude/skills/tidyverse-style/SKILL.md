@@ -1,3 +1,7 @@
+---
+name: tidyverse-style
+description: Use when applying tidyverse coding conventions, choosing between tidyverse packages, using the air formatter, or following stringr patterns in R package code. Triggers: tidyverse style, code style, air formatter, stringr, package choice, style guide.
+---
 # Tidyverse Style and Package Guide
 
 ## Description

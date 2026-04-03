@@ -1,3 +1,7 @@
+---
+name: quarto-dynamic-content
+description: Use when generating dynamic content in Quarto documents including tabsets from data, parameterized sections, or programmatically created R chunks for reports and dashboards. Triggers: dynamic Quarto, tabsets, parameterized, programmatic chunks, dynamic content.
+---
 # Quarto Dynamic Content Generation
 
 ## Description

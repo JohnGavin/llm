@@ -1,3 +1,7 @@
+---
+name: parallel-processing
+description: Use when implementing parallel processing with the nanonext/mirai/crew stack, configuring async sockets, parallel evaluation, or worker pool management for targets pipelines. Triggers: parallel, mirai, crew, nanonext, async, workers, parallel targets.
+---
 # Parallel Processing with nanonext/mirai/crew
 
 ## Description

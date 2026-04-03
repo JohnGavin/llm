@@ -1,0 +1,1 @@
+/Users/johngavin/.claude/scripts/phi_scan.sh

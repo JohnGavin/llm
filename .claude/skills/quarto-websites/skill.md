@@ -1,4 +1,5 @@
 ---
+name: quarto-websites
 description: >
   Build Quarto websites for R packages and projects. Use when creating
   package documentation sites, converting from pkgdown, setting up

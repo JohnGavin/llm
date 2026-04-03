@@ -1,3 +1,7 @@
+---
+name: test-driven-development
+description: Use when writing tests before code in R packages, following the RED-GREEN-REFACTOR cycle with testthat, or enforcing TDD discipline for new features and bug fixes. Triggers: TDD, test first, RED-GREEN-REFACTOR, test-driven, write test first.
+---
 # Test-Driven Development for R Packages
 
 ## Description

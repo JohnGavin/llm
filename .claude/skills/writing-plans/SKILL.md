@@ -1,3 +1,7 @@
+---
+name: writing-plans
+description: Use when creating implementation plans with bite-sized tasks before coding, writing plans for implementers with minimal context, or structuring multi-step development work. Triggers: write plan, implementation plan, task planning, plan before code.
+---
 # Writing Implementation Plans for R Packages
 
 ## Description

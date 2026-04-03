@@ -1,3 +1,7 @@
+---
+name: code-review-workflow
+description: Use when requesting or performing code reviews on R package PRs, using gh/gert for review workflows, or evaluating code quality in pull requests. Triggers: code review, PR review, pull request feedback, review workflow.
+---
 # Code Review Workflow for R Packages
 
 ## Description

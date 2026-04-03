@@ -1,3 +1,7 @@
+---
+name: model-evaluation-calibration
+description: Use when evaluating model performance with proper scoring rules, assessing calibration of probability estimates, or implementing time-aware backtesting. Triggers: model evaluation, calibration, scoring rules, backtesting, probability calibration, cross-validation.
+---
 # Model Evaluation & Calibration
 
 ## Description

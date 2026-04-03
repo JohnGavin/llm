@@ -1,0 +1,1 @@
+/Users/johngavin/docs_gh/llm/.claude/scripts/setup_ast_grep_r.sh

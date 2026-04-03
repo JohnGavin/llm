@@ -1,3 +1,7 @@
+---
+name: eda-workflow
+description: Use when performing systematic exploratory data analysis, assessing data quality before modeling, identifying data issues, or validating assumptions. Triggers: EDA, exploratory analysis, data exploration, data quality assessment, initial analysis.
+---
 # Exploratory Data Analysis Workflow
 
 ## Description

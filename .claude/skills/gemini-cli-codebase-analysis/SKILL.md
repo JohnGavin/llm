@@ -1,3 +1,7 @@
+---
+name: gemini-cli-codebase-analysis
+description: Use when analyzing large codebases that exceed Claude context limits, performing whole-codebase searches, or leveraging Gemini CLI for architectural understanding. Triggers: Gemini CLI, large codebase, codebase analysis, architecture review, cross-file search.
+---
 # Gemini CLI for Large Codebase Analysis
 
 ## Description

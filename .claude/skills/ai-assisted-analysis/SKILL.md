@@ -1,3 +1,7 @@
+---
+name: ai-assisted-analysis
+description: Use when collaborating with LLMs on statistical analysis, validating AI-generated code or model assumptions, or integrating Claude/GPT into a reproducible analysis workflow. Triggers: AI-assisted analysis, LLM collaboration, statistical workflow, Gelman workflow, AI code review.
+---
 # AI-Assisted Statistical Analysis
 
 ## Description

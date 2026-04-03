@@ -1,3 +1,7 @@
+---
+name: executing-plans
+description: Use when executing implementation plans created with writing-plans, running tasks in batches with checkpoints, or tracking progress through a multi-step plan. Triggers: execute plan, run plan, plan execution, task batches, checkpoints.
+---
 # Executing Implementation Plans
 
 ## Description

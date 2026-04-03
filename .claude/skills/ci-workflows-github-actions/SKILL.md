@@ -1,3 +1,7 @@
+---
+name: ci-workflows-github-actions
+description: Use when setting up or debugging GitHub Actions workflows for R packages, configuring Nix-based CI, r-universe testing, WASM compilation, code coverage, or pkgctx API documentation. Triggers: CI, GitHub Actions, workflows, r-universe, WASM, coverage, deployment.
+---
 # CI Workflows with GitHub Actions
 
 ## Description
