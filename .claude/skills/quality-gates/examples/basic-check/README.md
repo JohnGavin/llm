@@ -20,7 +20,7 @@ Produces a weighted score: Bronze (>=80), Silver (>=90), Gold (>=95).
 
 ```json
 {
-  "total_score": 92.5,
+  "total_score": 94.3,
   "grade": "Silver",
   "components": { "check": 98, "documentation": 85, "code_style": 100 }
 }

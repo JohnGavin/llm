@@ -42,15 +42,9 @@ sql_violations <- length(grep("DBI::dbGetQuery", all_code))
 style_score <- if (sql_violations == 0) 100 else 0
 cat(sprintf("DBI::dbGetQuery violations: %d | Score: %d\n", sql_violations, style_score))
 
-# Weighted total
-total <- round(0.30 * check_score + 0.15 * doc_score + 0.05 * style_score +
-               0.20 * 100 + 0.20 * 100 + 0.10 * 100, 1)  # coverage/data/defensive default 100
-grade <- dplyr::case_when(
-  total >= 95 ~ "Gold",
-  total >= 90 ~ "Silver",
-  total >= 80 ~ "Bronze",
-  TRUE ~ "Below Bronze"
-)
+# Weighted total (3 components — add coverage/data/defensive when implemented)
+total <- round(0.60 * check_score + 0.30 * doc_score + 0.10 * style_score, 1)
+grade <- if (total >= 95) "Gold" else if (total >= 90) "Silver" else if (total >= 80) "Bronze" else "Below Bronze"
 
 cat(sprintf("\n=== Quality Gate: %s (%s/100) ===\n", grade, total))
 
@@ -62,7 +56,13 @@ result <- list(
   components = list(check = check_score, documentation = doc_score, code_style = style_score),
   timestamp = as.character(Sys.time())
 )
-out_dir <- file.path(dirname(sys.frame(1)$ofile %||% "."), "output")
+script_args <- grep("--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_args) > 0) {
+  dirname(normalizePath(sub("--file=", "", script_args[1])))
+} else {
+  dirname(sys.frame(1)$ofile %||% ".")
+}
+out_dir <- file.path(script_dir, "output")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 jsonlite::write_json(result, file.path(out_dir, "gate_result.json"), auto_unbox = TRUE, pretty = TRUE)
 cat(sprintf("Result saved to: %s\n", file.path(out_dir, "gate_result.json")))
