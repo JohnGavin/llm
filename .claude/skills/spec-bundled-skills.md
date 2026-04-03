@@ -6,17 +6,54 @@ A "spec-bundled skill" packages a domain specification (API schema, data diction
 
 **Origin:** Stephen Turner's [brand.yml Claude skill](https://github.com/stephenturner/skill-brand-yml) demonstrated this pattern — bundling the full `brand-yml` specification as `references/brand-yml-spec.md` alongside `SKILL.md` instructions. Claude reads the spec at invocation time and generates valid YAML output.
 
-## Structure
+## Directory Structure Convention (agentskills.io compliant)
 
 ```
 skill-name/
-  SKILL.md            # Claude instructions: when/how to use the spec
-  references/
-    spec.md           # The actual specification (API docs, schema, standard)
-    examples.md       # Optional: worked examples
+  SKILL.md            # Required. Metadata frontmatter + instructions (<500 lines)
+  references/         # Optional. Spec files, API docs, data dictionaries
+    api_reference.md
+    gotchas.md        # Hard-won lessons (highest-value content)
+  scripts/            # Optional. Executable helper scripts (R, Python, bash)
+    check_system.sh
+    validate.R
+  examples/           # Optional. Runnable worked examples with expected output
+    basic-usage/
+      input.csv
+      run.R
+      output/         # Expected output for verification
+        result.csv
+  evals/              # Optional. Test cases for skill quality evaluation
+    evals.json        # Prompts + assertions per agentskills.io spec
+    files/            # Input files for test cases
 ```
 
-Or as a single `.skill` file (zip of the above).
+### When to Use Each Directory
+
+| Directory | Use When | Don't Use When |
+|-----------|----------|---------------|
+| `references/` | Spec files, API docs, gotchas, detailed patterns | Content fits in SKILL.md (<500 lines) |
+| `scripts/` | Reusable code the agent runs during the skill | One-off commands (put inline in SKILL.md) |
+| `examples/` | Multi-step workflows with verifiable output | Simple pattern/convention skills |
+| `evals/` | Testing whether the skill produces good outputs | Skill is too simple to need evaluation |
+
+### Progressive Disclosure
+
+1. **Metadata** (~100 tokens): `name` + `description` — loaded at startup for all skills
+2. **Instructions** (<5000 tokens): SKILL.md body — loaded when skill activates
+3. **Resources** (on demand): references/, scripts/, examples/ — loaded only when needed
+
+### SKILL.md Frontmatter (MANDATORY)
+
+```yaml
+---
+name: skill-name          # lowercase + hyphens, matches directory name
+description: >
+  Use when <imperative trigger>. Triggers: <keyword1>, <keyword2>.
+---
+```
+
+See agentskills.io/specification for full spec. Audit with `Rscript .claude/scripts/audit_skills.R`.
 
 ## Critical Review
 
