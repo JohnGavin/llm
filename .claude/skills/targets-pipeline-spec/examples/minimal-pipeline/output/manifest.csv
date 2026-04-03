@@ -1,0 +1,4 @@
+name,command,pattern
+raw_data,"data.frame(x = 1:100, y = rnorm(100, mean = 5, sd = 2), group = rep(c(""A"",     ""B""), 50))",
+result_summary,"raw_data |> dplyr::group_by(group) |> dplyr::summarise(n = dplyr::n(),     mean_y = mean(y), sd_y = sd(y), .groups = ""drop"")",
+result_model,"lm(y ~ x + group, data = raw_data)",
