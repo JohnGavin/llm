@@ -37,6 +37,12 @@ if (file.exists("_targets.R")) parse("_targets.R")
 ```
 
 ```bash
+# Skill spec compliance audit
+echo "=== Skill Audit ==="
+Rscript ~/docs_gh/llm/.claude/scripts/audit_skills.R 2>/dev/null || echo "(audit_skills.R not available)"
+```
+
+```bash
 # Structural diff summary (what actually changed semantically)
 echo "=== Structural Diff (uncommitted) ==="
 git diff --ext-diff --stat 2>/dev/null || echo "(difftastic not configured)"

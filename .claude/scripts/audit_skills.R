@@ -48,6 +48,7 @@ results <- lapply(dirs, function(d) {
   has_scripts <- dir.exists(file.path(d, "scripts"))
   has_refs <- dir.exists(file.path(d, "references"))
   has_evals <- dir.exists(file.path(d, "evals"))
+  has_examples <- dir.exists(file.path(d, "examples"))
   n_lines <- length(lines)
 
   # Description quality
@@ -63,7 +64,7 @@ results <- lapply(dirs, function(d) {
     name_matches_dir = name_matches_dir,
     desc_len = desc_len, has_use_when = has_use_when,
     has_gotchas = has_gotchas, has_scripts = has_scripts,
-    has_refs = has_refs, has_evals = has_evals,
+    has_refs = has_refs, has_evals = has_evals, has_examples = has_examples,
     n_lines = n_lines,
     stringsAsFactors = FALSE
   )
@@ -81,6 +82,7 @@ cat(sprintf("Has gotchas section: %d / %d\n", sum(df$has_gotchas), nrow(df)))
 cat(sprintf("Has scripts/ dir: %d / %d\n", sum(df$has_scripts), nrow(df)))
 cat(sprintf("Has references/ dir: %d / %d\n", sum(df$has_refs), nrow(df)))
 cat(sprintf("Has evals/ dir: %d / %d\n", sum(df$has_evals), nrow(df)))
+cat(sprintf("Has examples/ dir: %d / %d\n", sum(df$has_examples), nrow(df)))
 cat(sprintf("Under 500 lines: %d / %d\n", sum(df$n_lines <= 500), nrow(df)))
 
 cat("\n=== NEEDS WORK ===\n")
