@@ -1,60 +1,64 @@
 #!/usr/bin/env bash
-# R Code Quality Check Hook
-# Usage: bash .claude/hooks/r_code_check.sh [directory]
-# Checks for anti-patterns in R code:
-#   1. suppressWarnings(as.*) — silent type coercion
-#   2. read.csv() without na.strings — missing NA handling
+# r_code_check.sh - Run ast-grep scan on R project code
+# Called by: /check command, quality-gates skill, manual invocation
+# Requires: ast-grep 0.40+ with R grammar at ~/.config/ast-grep/
+#
+# Usage:
+#   r_code_check.sh [TARGET_DIR] [--json]
+#   r_code_check.sh R/
+#   r_code_check.sh ~/docs_gh/proj/mypackage/R/ --json
 
 set -euo pipefail
 
-DIR="${1:-.}"
-EXIT_CODE=0
+AST_GREP_DIR="$HOME/.config/ast-grep"
+SGCONFIG="$AST_GREP_DIR/sgconfig.yml"
+TARGET_DIR="${1:-.}"
+JSON_FLAG="${2:-}"
 
-# --- Check 1: suppressWarnings(as.*) pattern ---
-echo "=== Checking for suppressWarnings(as.*) anti-pattern ==="
-
-# Exclude: dev/issues/ scripts, comments (grep output has file:line: prefix)
-SUPPRESS_HITS=$(grep -rn 'suppressWarnings(as\.' "$DIR" --include='*.R' 2>/dev/null \
-  | grep -v 'lubridate::' \
-  | grep -v 'dev/issues/' \
-  | grep -v ':#' \
-  | grep -v 'pattern = ' \
-  | grep -v 'cat(' \
-  || true)
-
-if [ -n "$SUPPRESS_HITS" ]; then
-  echo "FAIL: Found suppressWarnings(as.*) anti-pattern:"
-  echo "$SUPPRESS_HITS"
-  echo ""
-  echo "Use readr col_types or explicit validation instead."
-  echo "See: missing-data-handling skill"
-  EXIT_CODE=1
-else
-  echo "OK"
+if [ ! -f "$SGCONFIG" ]; then
+  echo "ERROR: sgconfig.yml not found at $SGCONFIG"
+  exit 1
 fi
 
-echo ""
-
-# --- Check 2: read.csv() without na.strings ---
-echo "=== Checking for read.csv() without na.strings ==="
-
-BARE_CSV=$(grep -rn 'read\.csv(' "$DIR" --include='*.R' 2>/dev/null \
-  | grep -v 'na.strings' \
-  | grep -v 'na =' \
-  | grep -v 'dev/issues/' \
-  | grep -v ':#' \
-  | grep -v 'cat(' \
-  || true)
-
-if [ -n "$BARE_CSV" ]; then
-  echo "WARN: Found read.csv() without na.strings:"
-  echo "$BARE_CSV"
-  echo ""
-  echo "Consider using readr::read_csv() with explicit na parameter."
-else
-  echo "OK"
+if ! command -v ast-grep >/dev/null 2>&1; then
+  echo "ERROR: ast-grep not found in PATH"
+  echo "Ensure you are in a Nix shell with ast-grep available"
+  exit 1
 fi
 
+# Resolve TARGET_DIR to absolute path before cd
+TARGET_DIR=$(cd "$TARGET_DIR" 2>/dev/null && pwd || echo "$TARGET_DIR")
+
+# Must cd to sgconfig.yml directory for custom language discovery
+cd "$AST_GREP_DIR"
+
+echo "=== ast-grep R Code Scan ==="
+echo "Target: $TARGET_DIR"
+echo "Rules:  $(ls rules/*.yml 2>/dev/null | wc -l | tr -d ' ') rules loaded"
 echo ""
-echo "=== R Code Quality Check Complete ==="
-exit $EXIT_CODE
+
+if [ "$JSON_FLAG" = "--json" ]; then
+  ast-grep scan --json=compact "$TARGET_DIR" 2>/dev/null
+  exit 0
+fi
+
+# Run scan with all rules
+scan_output=$(ast-grep scan "$TARGET_DIR" 2>&1) || true
+
+if [ -z "$scan_output" ]; then
+  echo "No violations found."
+  exit 0
+fi
+
+echo "$scan_output"
+echo ""
+echo "--- Summary ---"
+
+# Count by parsing output lines that start with severity
+n_error=$(echo "$scan_output" | grep -ci "error\[" || true)
+n_warning=$(echo "$scan_output" | grep -ci "warning\[" || true)
+echo "Errors:   $n_error"
+echo "Warnings: $n_warning"
+
+# Exit code: 1 if any errors, 0 if only warnings or clean
+[ "$n_error" -gt 0 ] && exit 1 || exit 0
