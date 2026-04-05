@@ -21,6 +21,8 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Pipeline Validation (ALL PROJECTS):** Before every commit: `parse("_targets.R")` MUST succeed. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash.
 
+**Code Quality (ast-grep):** 8 rules at `~/.config/ast-grep/rules/`. Run `~/.claude/scripts/r_code_check.sh R/` before commit. Banned: `suppressWarnings(as.*)`, silent `tryCatch`, raw SQL, `stop()`, `install.packages()`. Use `$$$` metavar (NOT `___`). For structural search prefer `cd ~/.config/ast-grep && ast-grep run -p 'pattern' dir/` over grep.
+
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`.
 **Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`.
 
