@@ -20,8 +20,8 @@ done
 
 # ── Phase 1: Environment ──────────────────────────────────────────────
 phase_env() {
-  if [ "$IN_NIX_SHELL" = "impure" ] || [ "$IN_NIX_SHELL" = "pure" ] || [ "${IN_NIX_SHELL:-}" = "1" ]; then
-    echo "Nix Shell: active ($IN_NIX_SHELL)"
+  if [ "${IN_NIX_SHELL:-}" = "impure" ] || [ "${IN_NIX_SHELL:-}" = "pure" ] || [ "${IN_NIX_SHELL:-}" = "1" ]; then
+    echo "Nix Shell: active (${IN_NIX_SHELL:-})"
   else
     echo "Nix Shell: WARNING — not in nix shell"
   fi
