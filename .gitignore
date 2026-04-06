@@ -90,3 +90,4 @@ archive/
 .claude/.context_state.json
 finance/
 input.txt
+nohup.out
