@@ -38,7 +38,6 @@
       "Bash(tail:*)",
       "Bash(grep:*)",
       "Bash(wc:*)",
-      "Bash(rm:*)",
       "Bash(python3:*)",
       "Bash(otool:*)",
       "Read",
