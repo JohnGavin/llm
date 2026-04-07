@@ -37,6 +37,23 @@ model: sonnet
 3. Non-deterministic operations without `set.seed()`
 4. Hardcoded file paths
 
+### For knowledge-base wiki (`*/wiki/*.md` with sibling `*/raw/`)
+**Wiki validation mode** — invoked when reviewing a project with `wiki/` and `raw/` folders.
+
+1. **Provenance present** — every wiki file ends with `## Sources` section
+2. **Citation format** — every claim has inline link, block-quote citation, or footnote pointing to a `raw/` file
+3. **Cited content exists** — for each `raw/file.md#L<line>` reference, READ the raw file and verify the cited line range actually contains the claimed content (NOT a fabricated quote)
+4. **Quotes verbatim** — every block-quoted passage `> "..."` appears verbatim in the cited raw file
+5. **Confidence markers** — claims that synthesise across sources have `> ⚠ AI-inferred:` marker; speculative claims have `> 🔬 Hypothesis:`; conflicting source statements have `> ❓ Conflicting:`
+6. **No orphan claims** — every assertion can be traced to a raw file or marked as inferred
+7. **`[[wiki-link]]` resolution** — every double-bracket link points to an existing `wiki/<topic>.md`
+8. **INDEX sync** — `wiki/INDEX.md` lists every `wiki/*.md` topic
+9. **Raw integrity** — files in `raw/` are unchanged from their git-tracked state (no in-place edits)
+
+When in wiki validation mode, the critic READS files in `raw/` to verify citations. This is the adversarial review layer that prevents AI hallucinations from becoming "facts" in the wiki.
+
+Run `~/.claude/scripts/wiki_health_check.sh <wiki_dir>` first for the structural checks; the critic adds the content-verification layer (checks 3 and 4 above) which requires reading both wiki and raw files.
+
 ## Report Format
 
 Produce a structured report as markdown:
