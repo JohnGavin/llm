@@ -19,14 +19,14 @@ for pattern in "${BLOCK_PATTERNS[@]}"; do
   fi
 done
 
-# raw/ folders are append-only: BLOCK edits to existing files
+# raw/ folders are append-only: BLOCK edits/overwrites to existing files
 # New files (Write to non-existent path) are allowed.
 # See: raw-folder-readonly rule
 if [[ "$FILE_PATH" == *"/raw/"* ]] && [ -f "$FILE_PATH" ]; then
   TOOL_NAME=$(echo "$INPUT" | sed -n 's/.*"tool_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-  if [[ "$TOOL_NAME" == "Edit" ]]; then
+  if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" ]]; then
     echo "BLOCKED: $FILE_PATH is in a raw/ folder (append-only)"
-    echo "raw/ files are the source of truth and must not be edited in place."
+    echo "raw/ files are the source of truth and must not be overwritten."
     echo "See: raw-folder-readonly rule. To redact PHI, save to raw/anonymized/."
     exit 2
   fi
