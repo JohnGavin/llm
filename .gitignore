@@ -32,6 +32,8 @@ my_new_md_database
 *.pdf
 
 # Embedded git repositories (separate projects)
+knowledge/
+transcripts/
 proj/data/coMMpass/
 proj/data/guardian/
 proj/data/statues_named_john/
