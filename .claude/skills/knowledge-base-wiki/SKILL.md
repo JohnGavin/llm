@@ -16,9 +16,11 @@ walkthrough: provenance, versioning, validation, confidence tracking.
 ├── raw/        — source material (transcripts, articles, screenshots)
 │                 APPEND-ONLY (enforced by file_protection.sh hook)
 ├── wiki/       — AI-compiled organised wiki
-│                 AI maintains; mandatory ## Sources sections
+│                 AI maintains; mandatory YAML frontmatter + ## Sources
+│   ├── INDEX.md  — content catalog (per-topic one-liners)
+│   └── LOG.md    — append-only chronological record of ingests/queries/lints
 ├── outputs/    — generated reports, briefings, answers
-│                 ephemeral; never the source of truth
+│                 ephemeral; promoted to wiki/ via /wiki-promote when valuable
 └── CLAUDE.md   — schema file (focus areas, conventions, glossary)
 ```
 
@@ -114,11 +116,130 @@ Outputs are regenerable — never edit them by hand.
 | Convention | Why |
 |---|---|
 | `raw/` is append-only | Prevents AI output → AI input feedback loop |
+| Every `wiki/*.md` has YAML frontmatter (see below) | Queryable metadata, lifecycle, freshness |
 | Every `wiki/*.md` ends with `## Sources` | Auditability |
 | `[[topic]]` syntax for cross-wiki links | Tool-agnostic, Obsidian-compatible |
 | AI-inferred claims tagged `> ⚠ AI-inferred:` | Distinguishes facts from synthesis |
 | `wiki/INDEX.md` lists all topics | Discoverability |
+| `wiki/LOG.md` records every ingest, query, lint | Auditable timeline of wiki evolution |
 | `outputs/` is regenerable | Single source of truth = wiki |
+| Query answers promoted via `/wiki-promote` | Valuable explorations compound into the wiki |
+
+## YAML Frontmatter Schema
+
+Every `wiki/*.md` file MUST begin with YAML frontmatter. Required fields:
+
+```yaml
+---
+title: Curve Carry
+canonical_question: "How does commodity curve carry generate returns?"
+status: active                           # active | stale | superseded
+fresh_until: 2026-07-09                  # YYYY-MM-DD; health check flags overdue
+consensus_level: strong                  # unanimous | strong | split | divergent | direct
+sources:
+  - flirting-with-models-faheem-osman-commodity-qis.md
+  - flirting-with-models-gerald-rushton-commodity-strategies.md
+compiled_by: claude-opus-4-6
+compiled_on: 2026-04-09
+---
+```
+
+Optional fields:
+
+```yaml
+tags: [commodity, futures, qis, macquarie]  # categorisation for search
+supersedes: old-curve-carry.md               # version chain
+parent: strategy-comparison.md               # hierarchical structure
+```
+
+### Field semantics
+
+| Field | Required | Purpose |
+|---|---|---|
+| `title` | MUST | Human-readable title (may differ from filename) |
+| `canonical_question` | MUST | The definitive question this page answers; prevents duplicate pages for same concept |
+| `status` | MUST | Lifecycle: `active` (current), `stale` (past `fresh_until`), `superseded` (replaced) |
+| `fresh_until` | MUST | ISO date; health check transitions page to `stale` when this passes |
+| `consensus_level` | MUST | `unanimous` / `strong` / `split` / `divergent` across cited sources, or `direct` for single-source pages and summaries |
+| `sources` | MUST | List of `raw/` filenames cited in the `## Sources` section |
+| `compiled_by` | SHOULD | Model ID that compiled this page (lets you identify pages produced by older models) |
+| `compiled_on` | SHOULD | ISO date of last compilation |
+| `tags` | MAY | Search/filter categorisation |
+| `supersedes` | MAY | Filename of the previous version this replaces |
+| `parent` | MAY | Filename of the hierarchical parent topic |
+
+### Consensus levels
+
+Consensus describes agreement **across cited sources**, not across AI models:
+
+| Level | When to use |
+|---|---|
+| `unanimous` | All cited sources state the same thing with no disagreement |
+| `strong` | Sources agree on core claims; differ on emphasis or edge cases |
+| `split` | Sources agree on some claims, diverge substantively on others — use `> ❓ Conflicting:` markers in body |
+| `divergent` | Sources reach fundamentally different conclusions — this is valuable, not a failure |
+| `direct` | Single source, summary page, or comparison file — no cross-source consensus to measure |
+
+## LOG.md Convention
+
+Each domain's `wiki/LOG.md` is **append-only chronological**. Every ingest, query,
+lint pass, and output promotion gets one entry. Parse-friendly format:
+
+```markdown
+# Wiki Log — <domain>
+
+## [2026-04-09] ingest | Flirting with Models S7E29: Faheem Osman
+- Source: raw/flirting-with-models-faheem-osman-commodity-qis.md
+- Pages touched: curve-carry.md (new), congestion.md (new), commodity-vol-carry.md (new), INDEX.md (update), summary-faheem-osman.md (new)
+- AI-inferred markers added: 7
+- Consensus level: strong on curve carry, split on "no negative years" claim
+
+## [2026-04-09] lint | /wiki-health
+- Errors: 0, Warnings: 0
+- Stale pages: 0, Orphan raw: 0, Dead links: 0
+
+## [2026-04-09] query | "How do curve carry and congestion differ on correlation?"
+- Output: outputs/carry-vs-congestion-correlation-2026-04-09.md
+- Promoted: no (kept in outputs/)
+```
+
+The consistent `## [YYYY-MM-DD] <op> | <title>` prefix makes the log
+greppable: `grep "^## \[" LOG.md | tail -10` gives the last 10 entries.
+
+Operations:
+- `ingest` — new raw/ file processed into wiki/
+- `query` — user asked a question against the wiki
+- `lint` — /wiki-health run
+- `promote` — outputs/ file promoted to wiki/ via /wiki-promote
+- `supersede` — wiki file replaced by a new version
+
+## Search Tools
+
+At small scale (<100 wiki pages), `INDEX.md` + `grep` is enough:
+
+```bash
+# Topic lookup
+grep -l "curve carry" ~/docs_gh/llm/knowledge/qis-strategies/wiki/*.md
+
+# Full-text search with context
+grep -rn "backwardation" ~/docs_gh/llm/knowledge/qis-strategies/wiki/
+
+# Find all pages with a specific tag in frontmatter
+grep -l "tags:.*commodity" ~/docs_gh/llm/knowledge/qis-strategies/wiki/*.md
+
+# Find stale pages
+grep -l "^status: stale" ~/docs_gh/llm/knowledge/qis-strategies/wiki/*.md
+```
+
+At larger scale, consider `qmd` — a local markdown search engine with
+hybrid BM25+vector search and LLM re-ranking:
+
+- Project: `github.com/tobi/qmd`
+- CLI + MCP server
+- All on-device, no cloud
+
+Installation is optional; the `knowledge-base-wiki` pattern works without
+it. When installed, `qmd search "topic"` beats grep on ranked relevance.
 
 ## Starter `CLAUDE.md` Template
 
