@@ -18,6 +18,24 @@ become indistinguishable from facts.
 | `> 🔬 Hypothesis:` | Speculative, not in any source | When the AI is reasoning beyond the data |
 | `> ❓ Conflicting:` | Sources disagree | Flag both sides with citations |
 
+## Page-level consensus (frontmatter)
+
+In addition to inline markers, every wiki page declares a page-level
+`consensus_level` in its YAML frontmatter. This summarises agreement
+**across cited sources**, not across AI models:
+
+| `consensus_level` | Definition | When to use |
+|---|---|---|
+| `unanimous` | All cited sources state the same thing with no disagreement | Rare; genuine unanimity across independent sources |
+| `strong` | Sources agree on core claims; differ on emphasis or edge cases | Most well-sourced pages |
+| `split` | Sources agree on some claims, diverge substantively on others | Use alongside `> ❓ Conflicting:` markers in body |
+| `divergent` | Sources reach fundamentally different conclusions | Valuable — surfaces unsettled questions |
+| `direct` | Single source, summary page, or comparison file | No cross-source consensus to measure |
+
+The frontmatter `consensus_level` and the inline markers complement each
+other: `consensus_level: split` at the page level should be visible as
+`> ❓ Conflicting:` blocks in the body text.
+
 ## Examples
 
 ### Source-stated (no marker needed)
