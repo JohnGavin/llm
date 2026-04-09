@@ -1,3 +1,7 @@
+---
+paths: ["**/wiki/*.md"]
+---
+
 # Rule: Wiki Frontmatter Mandatory
 
 ## When This Applies

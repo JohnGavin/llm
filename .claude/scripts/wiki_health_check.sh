@@ -150,9 +150,12 @@ check_wiki_links() {
 count_confidence_markers() {
   local file="$1"
   local inferred hypothesis conflicting
-  inferred=$(grep -c "^> ⚠ AI-inferred:" "$file" 2>/dev/null || echo 0)
-  hypothesis=$(grep -c "^> 🔬 Hypothesis:" "$file" 2>/dev/null || echo 0)
-  conflicting=$(grep -c "^> ❓ Conflicting:" "$file" 2>/dev/null || echo 0)
+  inferred=$(grep -c "^> ⚠ AI-inferred:" "$file" 2>/dev/null) || true
+  inferred=${inferred:-0}
+  hypothesis=$(grep -c "^> 🔬 Hypothesis:" "$file" 2>/dev/null) || true
+  hypothesis=${hypothesis:-0}
+  conflicting=$(grep -c "^> ❓ Conflicting:" "$file" 2>/dev/null) || true
+  conflicting=${conflicting:-0}
   echo "$inferred $hypothesis $conflicting"
 }
 
@@ -171,7 +174,9 @@ if [ -n "$SINGLE_FILE" ]; then
       fi
       dead=$(check_wiki_links "$SINGLE_FILE")
       if [ -n "$dead" ]; then
-        log_warn "$(echo "$dead" | head -3)"
+        while IFS= read -r d; do
+          [ -n "$d" ] && log_warn "$d"
+        done <<< "$dead"
       fi
       ;;
     *) exit 0 ;;
@@ -250,7 +255,7 @@ orphans=0
 for r in "$RAW_DIR"/*.md; do
   [ -f "$r" ] || continue
   base=$(basename "$r")
-  if ! grep -rq "$base" "$WIKI_DIR" 2>/dev/null; then
+  if ! grep -rqF "raw/$base" "$WIKI_DIR" 2>/dev/null; then
     orphans=$((orphans + 1))
     log_warn "orphan raw file: $base (not referenced in any wiki)"
   fi
@@ -263,7 +268,7 @@ if [ -f "$WIKI_DIR/INDEX.md" ]; then
     base=$(basename "$f" .md)
     [ "$base" = "INDEX" ] && continue
     [ "$base" = "LOG" ] && continue
-    if ! grep -q "$base" "$WIKI_DIR/INDEX.md" 2>/dev/null; then
+    if ! grep -qE "(\[|\[\[|\()$base(\]|\.|\))" "$WIKI_DIR/INDEX.md" 2>/dev/null; then
       log_warn "INDEX.md missing entry for $base"
     fi
   done
