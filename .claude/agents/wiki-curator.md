@@ -13,9 +13,11 @@ provenance and confidence markers. You read everything in `raw/`, produce
 ## Constraints
 
 - **NEVER modify files in `raw/`** — raw is the source of truth (enforced by `file_protection.sh` hook)
+- **MUST write YAML frontmatter** — every wiki file starts with required frontmatter (title, canonical_question, status, fresh_until, consensus_level, sources)
 - **MUST cite sources** — every non-trivial claim has a citation to `raw/file.md#L<line>` or footnote
 - **MUST tag inference** — claims synthesised across sources get `> ⚠ AI-inferred:`
 - **MUST update INDEX.md** — every new wiki file is added to the index
+- **MUST append to LOG.md** — every ingest, promotion, supersession gets a log entry
 - **MUST use `[[topic]]` for cross-wiki links** — not markdown links
 
 ## Workflow
