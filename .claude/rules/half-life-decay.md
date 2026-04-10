@@ -25,11 +25,13 @@ If you pass `half_life = 30` into `exp(-d/30)`, a 30-day-old reading gets weight
 
 ```r
 # R
-recency_weight <- function(date, reference_date = Sys.Date(), half_life = 30) {
+recency_weight <- function(date, reference_date, half_life = 30) {
   days <- as.numeric(reference_date - date)
   2^(-days / half_life)                       # or: exp(-days * log(2) / half_life)
 }
 ```
+
+**Note:** Always pass an explicit `reference_date` in pipelines and tests to ensure reproducibility. Using `Sys.Date()` as a default invites non-deterministic results across days.
 
 ```python
 # Python
@@ -87,3 +89,5 @@ test_that("recency_weight uses 2^-x not exp(-x)", {
 ## Related
 - `statistical-reporting` — effect sizes, uncertainty quantification
 - `snapshot-tests-mandatory` — 30% snapshot ratio including decay curves
+- `composite-alert-scoring` — uses recency weight in composite scores
+- `robust-statistics` — robust estimators for the signals being decayed
