@@ -60,7 +60,7 @@ abnormal_mult <- ifelse(is_abnormal, 1.0, 0.1)
 
 - `×1.2` if moving further from the target (worsening)
 - `×0.8` if moving toward the target (improving / recovery)
-- `×1.0` if stable or unknown
+- `×1.0` if stable, boundary-exact (`latest == lower` or `upper`), or unknown
 
 ```r
 direction_modifier <- function(latest, baseline, lower, upper) {
@@ -76,6 +76,7 @@ direction_modifier <- function(latest, baseline, lower, upper) {
     # latest is in-range
     if (baseline < lower || baseline > upper) return(0.8)  # recovery: was out, now in
   }
+  # Fallthrough: stable (latest == baseline), boundary-exact, or both OOB but unchanged
   1.0
 }
 ```
