@@ -50,8 +50,8 @@ Default multiplier: `0.1` for in-bounds, `1.0` for out-of-bounds.
 **Why:** A CPU oscillating 40–60% is noise; a CPU at 98% is an incident. Without the gate, the oscillating CPU can outrank the stuck-hot one because its variance is higher.
 
 ```r
-is_abnormal <- !is.na(distance) && distance > 0
-abnormal_mult <- if (is_abnormal) 1.0 else 0.1
+is_abnormal <- !is.na(distance) & distance > 0
+abnormal_mult <- ifelse(is_abnormal, 1.0, 0.1)
 ```
 
 ### 2. Direction modifier (MANDATORY when trend data exists)
@@ -110,7 +110,7 @@ Disk correctly outranks CPU even though CPU has higher raw surprise.
 Multiply the whole composite by a recency weight (see `half-life-decay` rule for the correct formula). Stale alerts fade.
 
 ```r
-score <- (w_distance × distance + w_surprise × surprise_adj) * recency
+score <- (w_distance * distance + w_surprise * surprise_adj) * recency
 ```
 
 ## Interpretation Tiers

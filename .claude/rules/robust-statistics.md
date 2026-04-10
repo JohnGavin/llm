@@ -52,6 +52,8 @@ robust_zscore <- function(x, latest = tail(x, 1)) {
   if (dispersion == 0) return(0)               # avoid /0 when all identical
   abs(latest - baseline) / dispersion
 }
+# Note: this returns magnitude only. For the direction modifier in
+# composite-alert-scoring, use the signed residual (latest - baseline).
 ```
 
 ```python
