@@ -50,7 +50,8 @@ robust_zscore <- function(x, latest = tail(x, 1)) {
   baseline <- stats::median(x, na.rm = TRUE)
   dispersion <- stats::mad(x, na.rm = TRUE)
   if (dispersion == 0) {
-    return(if (latest == baseline) 0 else NA_real_)  # NA flags outlier when all prior values identical
+    # Near-equality for floats; NA means "zero-dispersion outlier", not missing input
+    return(if (abs(latest - baseline) < .Machine$double.eps * max(1, abs(baseline))) 0 else NA_real_)
   }
   abs(latest - baseline) / dispersion
 }
@@ -69,7 +70,8 @@ def robust_zscore(x, latest=None):
     baseline = np.median(x)
     dispersion = stats.median_abs_deviation(x, scale='normal')
     if dispersion == 0:
-        return 0.0 if latest == baseline else float('nan')
+        # Near-equality for floats; nan means "zero-dispersion outlier", not missing input
+        return 0.0 if np.isclose(latest, baseline) else float('nan')
     return abs(latest - baseline) / dispersion
 ```
 
