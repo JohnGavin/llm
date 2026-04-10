@@ -64,6 +64,7 @@ abnormal_mult <- ifelse(is_abnormal, 1.0, 0.1)
 
 ```r
 direction_modifier <- function(latest, baseline, lower, upper) {
+  if (length(latest) == 0 || length(baseline) == 0) return(1.0)
   if (any(is.na(c(latest, baseline, lower, upper)))) return(1.0)
   if (latest < lower) {
     if (latest < baseline) return(1.2)  # dropping further below floor
@@ -110,7 +111,7 @@ Disk correctly outranks CPU even though CPU has higher raw surprise.
 
 ## Recency
 
-Multiply the whole composite by a recency weight (see `half-life-decay` rule for the correct formula). Stale alerts fade.
+Multiply the whole composite by a recency weight (see `half-life-decay` rule for the correct formula). Stale alerts fade. If no timestamp is available, set `recency = 1.0`.
 
 ```r
 score <- (w_distance * distance + w_surprise * surprise_adj) * recency
