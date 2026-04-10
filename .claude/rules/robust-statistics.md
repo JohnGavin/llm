@@ -46,14 +46,14 @@ The SD-based approach misses the genuine crash because the spikes inflated SD. T
 
 ```r
 # R
-robust_zscore <- function(x, latest = tail(x, 1)) {
-  # When latest is not supplied separately, it is included in x (leave-one-in).
-  # This is standard for rolling windows. For small windows (< 10), consider
-  # passing latest explicitly and computing baseline on x[-length(x)].
+robust_zscore <- function(x, latest = x[length(x)]) {
   if (length(x) == 0) return(NA_real_)
   stopifnot("`latest` must be length 1" = length(latest) == 1)
-  baseline <- stats::median(x, na.rm = TRUE)
-  dispersion <- stats::mad(x, na.rm = TRUE)
+  # Exclude latest from baseline to avoid self-contamination
+  baseline_x <- x[-length(x)]
+  if (length(baseline_x) < 4) return(NA_real_)  # too few for stable median/MAD
+  baseline <- stats::median(baseline_x, na.rm = TRUE)
+  dispersion <- stats::mad(baseline_x, na.rm = TRUE)
   if (dispersion < .Machine$double.eps * max(1, abs(baseline))) {
     # Near-zero dispersion; NA means "zero-dispersion outlier", not missing input
     return(if (abs(latest - baseline) < .Machine$double.eps * max(1, abs(baseline))) 0 else NA_real_)
@@ -72,8 +72,12 @@ from scipy import stats
 def robust_zscore(x, latest=None):
     if latest is None:
         latest = x[-1]
-    baseline = np.median(x)
-    dispersion = stats.median_abs_deviation(x, scale='normal')
+    # Exclude latest from baseline to avoid self-contamination
+    baseline_x = x[:-1]
+    if len(baseline_x) < 4:
+        return float('nan')
+    baseline = np.median(baseline_x)
+    dispersion = stats.median_abs_deviation(baseline_x, scale='normal')
     if dispersion == 0:
         # Near-equality for floats; nan means "zero-dispersion outlier", not missing input
         return 0.0 if np.isclose(latest, baseline) else float('nan')
@@ -82,13 +86,13 @@ def robust_zscore(x, latest=None):
 
 ## Minimum Observations
 
-Do not compute robust statistics on fewer than **4 observations**:
-- Median of < 4 values is unstable
-- MAD of < 4 values is meaningless
+Do not compute robust statistics on fewer than **5 observations** (4 baseline + 1 latest):
+- Median of < 4 baseline values is unstable
+- MAD of < 4 baseline values is meaningless
 - Fall back to simpler signal (distance from target, last-known, etc.)
 
 ```r
-if (length(x) < 4) {
+if (length(x) < 5) {
   return(list(score = NA_real_, baseline = NA_real_, mad = NA_real_))
 }
 ```
