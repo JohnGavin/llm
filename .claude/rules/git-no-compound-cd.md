@@ -104,10 +104,7 @@ Some tools have no `-C` equivalent and require cwd to be the project root
 
 ```bash
 # Acceptable: subshell isolates the cd
-(cd ~/repo && targets::tar_make())
-
-# Also acceptable: explicit return to original cwd
-cd ~/repo && targets::tar_make() && cd -
+(cd ~/repo && Rscript -e 'targets::tar_make()')
 ```
 
 The key constraint: **never leave cwd permanently changed by a Bash call**.
