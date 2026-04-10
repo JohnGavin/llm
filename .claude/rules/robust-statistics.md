@@ -48,6 +48,7 @@ The SD-based approach misses the genuine crash because the spikes inflated SD. T
 # R
 robust_zscore <- function(x, latest = tail(x, 1)) {
   if (length(x) == 0) return(NA_real_)
+  stopifnot("`latest` must be length 1" = length(latest) == 1)
   baseline <- stats::median(x, na.rm = TRUE)
   dispersion <- stats::mad(x, na.rm = TRUE)
   if (dispersion < .Machine$double.eps * max(1, abs(baseline))) {
