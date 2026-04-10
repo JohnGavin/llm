@@ -1,8 +1,9 @@
-# Rule: No `cd && git` Compound Commands
+# Rule: No `cd &&` Compound Commands
 
 ## When This Applies
-Every time Claude calls a Bash tool that operates on a git repository in any
-directory other than the current working directory.
+Every time Claude calls a Bash tool that operates on files or repos in any
+directory other than the current working directory. Applies to git commands
+(where it is CRITICAL) and to all other tools (where it is MANDATORY).
 
 ## CRITICAL: Never Use `cd <dir> && git ...`
 
@@ -68,17 +69,48 @@ EOF
 )"
 ```
 
-## Non-git Compound Commands
+## Non-git Compound Commands (ALSO MANDATORY)
 
-The bare-repo guard targets `cd ... && git` specifically. For other compound
-commands, the same principle is cleaner:
+The bare-repo guard targets `cd ... && git` specifically, but the principle
+applies to ALL compound commands with `cd`. Reasons:
 
-| Approach | Example |
+1. **Claude Code's cwd persists** between Bash calls — a `cd` in one call
+   changes cwd for all subsequent calls, causing surprising path resolution
+2. **Readability** — `cd X && cmd` hides which directory the command runs in;
+   absolute paths or `-C` flags are self-documenting
+3. **Failure mode** — if `cd` fails silently (e.g., `cd ~/typo; rm -rf *`)
+   the subsequent command runs in the WRONG directory
+
+### Substitution table
+
+| Wrong (compound `cd`) | Right (no `cd`) |
 |---|---|
-| Tool's own `-C` / `--directory` flag | `make -C ~/repo build` |
-| Absolute paths in the command | `cat ~/repo/file.txt`, `Rscript ~/repo/script.R` |
-| Subshell (single Bash call) | `(cd ~/repo && complex_op)` — wrapped in `()` |
-| `bash -c` wrapper | `bash -c 'cd ~/repo && cmd'` |
+| `cd ~/repo && make build` | `make -C ~/repo build` |
+| `cd ~/repo && npm test` | `npm test --prefix ~/repo` |
+| `cd ~/repo && Rscript script.R` | `Rscript ~/repo/script.R` |
+| `cd ~/repo && python script.py` | `python ~/repo/script.py` |
+| `cd ~/repo && cat file.txt` | Use the `Read` tool on `~/repo/file.txt` |
+| `cd ~/repo && ls` | `ls ~/repo/` |
+| `cd ~/repo && wc -l *.R` | `wc -l ~/repo/*.R` |
+| `cd ~/repo && tar czf ../out.tgz .` | `tar czf ~/out.tgz -C ~/repo .` |
+| `cd ~/repo && nix-shell --run "cmd"` | `nix-shell ~/repo/default.nix --run "cmd"` |
+| `cd ~/repo && sqlite3 db.sqlite ".tables"` | `sqlite3 ~/repo/db.sqlite ".tables"` |
+
+### When `cd` IS needed
+
+Some tools have no `-C` equivalent and require cwd to be the project root
+(e.g., `targets::tar_make()`, some test runners). In those cases, use a
+**subshell** to prevent cwd leaking:
+
+```bash
+# Acceptable: subshell isolates the cd
+(cd ~/repo && targets::tar_make())
+
+# Also acceptable: explicit return to original cwd
+cd ~/repo && targets::tar_make() && cd -
+```
+
+The key constraint: **never leave cwd permanently changed by a Bash call**.
 
 ## Working Example
 
