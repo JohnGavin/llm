@@ -76,7 +76,10 @@ direction_modifier <- function(latest, baseline, lower, upper) {
     # latest is in-range
     if (baseline < lower || baseline > upper) return(0.8)  # recovery: was out, now in
   }
-  # Fallthrough: stable (latest == baseline), boundary-exact, or both OOB but unchanged
+  # Fallthrough: stable (latest == baseline), boundary-exact (latest == lower or upper),
+  # or both OOB but unchanged. Note: if latest is in-range and baseline is on the
+  # opposite boundary (e.g. latest near upper, baseline was below lower), the recovery
+  # branch above handles it (baseline < lower || baseline > upper).
   1.0
 }
 ```
