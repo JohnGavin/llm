@@ -31,7 +31,7 @@ recency_weight <- function(date, reference_date, half_life = 30) {
 }
 ```
 
-**Note:** Always pass an explicit `reference_date` in pipelines and tests to ensure reproducibility. Using `Sys.Date()` as a default invites non-deterministic results across days.
+**Note:** Always pass an explicit `reference_date` in pipelines and tests to ensure reproducibility. Using `Sys.Date()` as a default invites non-deterministic results across days. Future dates (where `date > reference_date`) are clamped to 0 days, receiving weight 1.0; investigate these as potential data quality issues (e.g., timezone bugs).
 
 ```python
 # Python

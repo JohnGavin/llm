@@ -64,7 +64,7 @@ abnormal_mult <- ifelse(is_abnormal, 1.0, 0.1)
 
 ```r
 direction_modifier <- function(latest, baseline, lower, upper) {
-  if (length(latest) == 0 || length(baseline) == 0) return(1.0)
+  if (length(latest) == 0 || length(baseline) == 0 || length(lower) == 0 || length(upper) == 0) return(1.0)
   if (any(is.na(c(latest, baseline, lower, upper)))) return(1.0)
   if (latest < lower) {
     if (latest < baseline) return(1.2)  # dropping further below floor
