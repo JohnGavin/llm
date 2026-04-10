@@ -49,7 +49,9 @@ The SD-based approach misses the genuine crash because the spikes inflated SD. T
 robust_zscore <- function(x, latest = tail(x, 1)) {
   baseline <- stats::median(x, na.rm = TRUE)
   dispersion <- stats::mad(x, na.rm = TRUE)
-  if (dispersion == 0) return(0)               # avoid /0 when all identical
+  if (dispersion == 0) {
+    return(if (latest == baseline) 0 else NA_real_)  # NA flags outlier when all prior values identical
+  }
   abs(latest - baseline) / dispersion
 }
 # Note: this returns magnitude only. For the direction modifier in
@@ -67,7 +69,7 @@ def robust_zscore(x, latest=None):
     baseline = np.median(x)
     dispersion = stats.median_abs_deviation(x, scale='normal')
     if dispersion == 0:
-        return 0.0
+        return 0.0 if latest == baseline else float('nan')
     return abs(latest - baseline) / dispersion
 ```
 
@@ -126,3 +128,4 @@ R's `stats::mad()` multiplies the raw MAD by 1.4826 by default, making it a cons
 - `statistical-reporting` — effect sizes, uncertainty
 - `data-validation-timeseries` — time-series quality checks
 - `half-life-decay` — time-decay weighting
+- `composite-alert-scoring` — uses robust z-score as surprise component
