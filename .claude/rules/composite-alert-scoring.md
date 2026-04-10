@@ -59,7 +59,7 @@ abnormal_mult <- ifelse(is_abnormal, 1.0, 0.1)
 **Amplify worsening trends, dampen improving trends.**
 
 - `×1.2` if moving further from the target (worsening)
-- `×0.8` if moving toward the target (improving)
+- `×0.8` if moving toward the target (improving / recovery)
 - `×1.0` if stable or unknown
 
 ```r
@@ -71,6 +71,9 @@ direction_modifier <- function(latest, baseline, lower, upper) {
   } else if (latest > upper) {
     if (latest > baseline) return(1.2)  # rising further above ceiling
     if (latest < baseline) return(0.8)  # falling toward ceiling
+  } else {
+    # latest is in-range
+    if (baseline < lower || baseline > upper) return(0.8)  # recovery: was out, now in
   }
   1.0
 }
