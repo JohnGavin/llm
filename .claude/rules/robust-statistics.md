@@ -47,6 +47,9 @@ The SD-based approach misses the genuine crash because the spikes inflated SD. T
 ```r
 # R
 robust_zscore <- function(x, latest = tail(x, 1)) {
+  # When latest is not supplied separately, it is included in x (leave-one-in).
+  # This is standard for rolling windows. For small windows (< 10), consider
+  # passing latest explicitly and computing baseline on x[-length(x)].
   if (length(x) == 0) return(NA_real_)
   stopifnot("`latest` must be length 1" = length(latest) == 1)
   baseline <- stats::median(x, na.rm = TRUE)

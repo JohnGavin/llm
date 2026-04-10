@@ -26,7 +26,9 @@ If you pass `half_life = 30` into `exp(-d/30)`, a 30-day-old reading gets weight
 ```r
 # R
 recency_weight <- function(date, reference_date, half_life = 30) {
-  days <- pmax(as.numeric(reference_date - date), 0)  # clamp: future dates get weight 1.0
+  days <- as.numeric(reference_date - date)
+  if (any(days < 0, na.rm = TRUE)) warning("Future dates detected (date > reference_date); clamped to weight 1.0. Check for timezone bugs.")
+  days <- pmax(days, 0)
   2^(-days / half_life)                       # or: exp(-days * log(2) / half_life)
 }
 ```
@@ -36,7 +38,11 @@ recency_weight <- function(date, reference_date, half_life = 30) {
 ```python
 # Python
 def recency_weight(date, reference_date, half_life_days=30):
-    days = max((reference_date - date).days, 0)  # clamp: future dates get weight 1.0
+    days = (reference_date - date).days
+    if days < 0:
+        import warnings
+        warnings.warn("Future date detected (date > reference_date); clamped to weight 1.0. Check for timezone bugs.")
+    days = max(days, 0)
     return 2 ** (-days / half_life_days)
 ```
 
