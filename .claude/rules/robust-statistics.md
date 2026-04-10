@@ -46,11 +46,15 @@ The SD-based approach misses the genuine crash because the spikes inflated SD. T
 
 ```r
 # R
-robust_zscore <- function(x, latest = x[length(x)]) {
+robust_zscore <- function(x, latest) {
   if (length(x) == 0) return(NA_real_)
-  stopifnot("`latest` must be length 1" = length(latest) == 1)
-  # Exclude latest from baseline to avoid self-contamination
-  baseline_x <- x[-length(x)]
+  if (missing(latest)) {
+    latest <- x[length(x)]
+    baseline_x <- x[-length(x)]  # exclude latest to avoid self-contamination
+  } else {
+    stopifnot("`latest` must be length 1" = length(latest) == 1)
+    baseline_x <- x              # caller-supplied latest; use all of x as baseline
+  }
   if (length(baseline_x) < 4) return(NA_real_)  # too few for stable median/MAD
   baseline <- stats::median(baseline_x, na.rm = TRUE)
   dispersion <- stats::mad(baseline_x, na.rm = TRUE)
@@ -72,8 +76,9 @@ from scipy import stats
 def robust_zscore(x, latest=None):
     if latest is None:
         latest = x[-1]
-    # Exclude latest from baseline to avoid self-contamination
-    baseline_x = x[:-1]
+        baseline_x = x[:-1]  # exclude latest to avoid self-contamination
+    else:
+        baseline_x = x       # caller-supplied latest; use all of x as baseline
     if len(baseline_x) < 4:
         return float('nan')
     baseline = np.median(baseline_x)
