@@ -107,6 +107,68 @@ verdict: COMMIT
 
 **Parse with:** `git log --grep="^metric:" --format="%s%n%b" | grep "^metric:\|^delta:"`
 
+## 8. False Positive Risk (MANDATORY when reporting p-values)
+
+A p-value is P(data | H₀). What you want is P(H₀ | data). These are NOT the same — confusing them is the "transposed conditional" error (Colquhoun 2019).
+
+**p = 0.05 does NOT mean 5% false positive risk.** At a 50/50 prior, p = 0.05 corresponds to a **26–30% false positive risk** (FPR). At a low prior (implausible hypothesis), it's **76%**.
+
+| Observed p-value | FPR (prior = 0.5) | FPR (prior = 0.1) | Likelihood ratio |
+|---|---|---|---|
+| 0.05 | 26–30% | 76% | ~3 |
+| 0.01 | ~11% | ~50% | ~10 |
+| 0.001 | ~1% | ~8% | ~100 |
+
+### Required reporting format
+
+When a p-value is reported, ALSO state the false positive risk:
+
+```r
+# RIGHT:
+# "The increase was 1.88 ± 0.85 (SEM), CI [0.06, 3.7], p = 0.043.
+#  This implies FPR ≈ 18% (prior = 0.5), so the result is suggestive
+#  rather than conclusive."
+
+# WRONG:
+# "The result was statistically significant (p < 0.05)."
+```
+
+### Tools
+
+- **Web calculator**: http://www.onemol.org.uk/?page_id=456
+- **R scripts**: provided with Colquhoun (2014, 2017, 2019) papers
+- **Formula**: FPR = 1 / (1 + likelihood_ratio × prior_odds)
+
+### References
+
+- Colquhoun D (2019). "The False Positive Risk: A Proposal Concerning What to Do About p-Values." *The American Statistician* 73(sup1).
+- Sellke T, Bayarri MJ, Berger JO (2001). "Calibration of p Values for Testing Precise Null Hypotheses." *The American Statistician* 55:62–71.
+- Benjamin D & Berger JO (2018). "Three Recommendations for Improving the Use of p-Values." *The American Statistician*.
+
+## 9. Never Say "Significant" (MANDATORY)
+
+**FORBIDDEN** in all prose (vignettes, captions, commit messages, issues, emails):
+- "statistically significant"
+- "non-significant"
+- "significant at p < 0.05"
+- Asterisks for significance levels (*, **, ***)
+
+**Required instead**: Report the p-value, effect size with CI, and FPR. Replace "significant at p < 0.05" with "p = 0.03 (FPR ≈ 22% at equipoise prior, suggestive)".
+
+**Why**: The word "significant" implies clinical/practical importance, which p-values do not measure. A significant result (p < 0.05) can have a 30% chance of being false. An insignificant result (p = 0.08) may reflect a real but underpowered effect. The word obscures both failure modes.
+
+**Exception**: When quoting another author's text verbatim (use `> "text"` blockquote format).
+
+## 10. High-Power Tests Make Borderline p-Values WEAKER Evidence (Jeffreys-Lindley)
+
+In high-power studies (large N, long time series, many observations), observing p ≈ 0.05 is actually evidence AGAINST the alternative hypothesis — because if the effect were real, high power would produce p << 0.05.
+
+This is NOT a paradox: with 99% power, nearly all real effects produce very low p-values. Observing p = 0.05 means you're in the rare tail where real effects don't land — so the observation is more consistent with noise.
+
+**Implication for backtesting**: A strategy tested on 20 years of daily data (very high power) that shows p = 0.04 provides WEAKER evidence of real alpha than the same p-value from 2 years of data. If alpha were real with that much data, you'd see p < 0.001.
+
+**Implication for large-N sports modelling**: footbet has thousands of matches. A feature that shows p = 0.03 in a dataset with N = 10,000 is less convincing than the same p-value at N = 200. Report the effect size and FPR, not just the p-value.
+
 ## Checklist
 
 - [ ] Effect sizes reported before p-values with CIs
@@ -115,3 +177,13 @@ verdict: COMMIT
 - [ ] Exploratory vs confirmatory clearly labelled
 - [ ] Model assumptions checked and reported
 - [ ] All numbers from code (no hardcoded statistics)
+- [ ] False positive risk reported alongside any p-value
+- [ ] Word "significant" not used (replaced with p-value + FPR + effect size)
+- [ ] High-power borderline-p caveat noted where applicable
+
+## Related
+
+- `half-life-decay` — time-decay weighting (common in backtesting)
+- `robust-statistics` — MAD over SD for outlier-prone data
+- `composite-alert-scoring` — uses scoring where FPR reasoning also applies
+- `deslop` — catches "significant" in prose review
