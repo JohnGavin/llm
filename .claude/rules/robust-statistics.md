@@ -55,6 +55,7 @@ robust_zscore <- function(x, latest) {
     stopifnot("`latest` must be length 1" = length(latest) == 1)
     baseline_x <- x              # caller-supplied latest; use all of x as baseline
   }
+  if (is.na(latest)) return(NA_real_)
   if (length(baseline_x) < 4) return(NA_real_)  # too few for stable median/MAD
   baseline <- stats::median(baseline_x, na.rm = TRUE)
   dispersion <- stats::mad(baseline_x, na.rm = TRUE)
@@ -74,6 +75,8 @@ import numpy as np
 from scipy import stats
 
 def robust_zscore(x, latest=None):
+    if len(x) == 0:
+        return float('nan')
     if latest is None:
         latest = x[-1]
         baseline_x = x[:-1]  # exclude latest to avoid self-contamination
