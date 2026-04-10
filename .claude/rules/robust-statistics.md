@@ -86,9 +86,10 @@ def robust_zscore(x, latest=None):
         return float('nan')
     baseline = np.median(baseline_x)
     dispersion = stats.median_abs_deviation(baseline_x, scale='normal')
-    if dispersion < np.finfo(float).eps * max(1, abs(baseline)):
+    eps_thresh = np.finfo(float).eps * max(1, min(abs(baseline), 1e15))
+    if dispersion < eps_thresh:
         # Near-zero dispersion; nan means "zero-dispersion outlier", not missing input
-        return 0.0 if np.isclose(latest, baseline) else float('nan')
+        return 0.0 if abs(latest - baseline) < eps_thresh else float('nan')
     return abs(latest - baseline) / dispersion
 ```
 
