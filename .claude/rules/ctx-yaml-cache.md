@@ -17,7 +17,22 @@ All dependency `.ctx.yaml` files live in ONE location:
 Different projects using different nix shells get different ctx files — no overwrites.
 Each project resolves its version via `packageVersion()` in its own nix shell.
 
-This directory is gitignored. Files are local-only for LLM context.
+This directory is git-tracked (not gitignored). Files are committed to the
+llm/content repo for persistence and recoverability.
+
+### NEVER delete ctx files manually
+
+The central cache is **shared across all projects**. A file like
+`rlang@1.1.6.ctx.yaml` may be needed by project A (pinned to nix date X)
+even if project B (pinned to date Y) has `rlang@1.1.7` installed. Deleting
+the old version to "fix" an OTHER_VERSION audit breaks project A.
+
+| Action | Allowed? |
+|---|---|
+| Generate a NEW versioned ctx file | Yes — always additive |
+| Delete an old versioned ctx file manually | **NEVER** — another project may need it |
+| `ctx_cleanup()` (removes files untouched >90 days) | Yes — the dedicated cleanup function |
+| `rm` / `file.remove()` on ctx files | **NEVER** unless `ctx_cleanup()` logic |
 
 ## MANDATORY: Per-Project Session Triggers
 
@@ -46,7 +61,13 @@ source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
 ctx_audit("DESCRIPTION")
 ```
 
-Confirm 0 MISSING and 0 OTHER_VERSION. If gaps remain, run `ctx_sync()` before closing.
+Confirm 0 MISSING. OTHER_VERSION entries are acceptable if `ctx_sync()` was
+run — they mean the running nix-shell pins a different version than the latest
+ctx file. The correct fix is to run `ctx_sync()` from within the project's own
+nix-shell (where `packageVersion()` matches the pin), NOT to delete the old
+version. If the project's nix-shell is not available in the current session,
+leave OTHER_VERSION entries as-is — they are usable (API signatures rarely
+change between minor versions).
 
 ## Rules
 
@@ -70,6 +91,8 @@ Regenerate a package's ctx when:
 - Storing ctx in project `inst/extdata/ctx/` (ships with install)
 - Running `nix run github:b-rodrigues/pkgctx` for every dependency (slow)
 - Generating ctx for base R packages (utils, stats, methods, graphics, grDevices, datasets, tools, parallel)
+- **Deleting ctx files to fix OTHER_VERSION** (breaks other projects sharing the cache; always additive — see "NEVER delete" section above)
+- Force-regenerating by deleting old versions and running `ctx_sync` (the new file may have a different version than the running shell's, creating a new OTHER_VERSION entry while losing the old one)
 
 ## MANDATORY: Read Context Before Using Unfamiliar APIs
 
