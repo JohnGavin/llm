@@ -32,6 +32,8 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Shiny UI:** NEVER use `value_box()` or similar large KPI boxes - they waste space. Use compact two-column tables instead (Metric | Value). Time series plots MUST have a range slider and default to last 3 months view.
 
+**Shinylive/WebR:** Long computations MUST use JS round-trip batching (NOT `invalidateLater()`). See `shinylive-webr-nonblocking` rule. `proc.time()` does not advance in WASM. Service workers cache aggressively — change port when testing.
+
 **DuckDB queries:** Use `duckplyr` (tidyverse syntax) instead of raw SQL strings where possible. Reserve SQL for complex operations not expressible in dplyr.
 
 ## Agents (10)
@@ -154,7 +156,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `/write-alt-text` | Generate fig-alt for all vignette figures |
 | `/hi` | Alias for /session-start |
 
-## Rules (28)
+## Rules (29)
 
 | Rule | Enforces |
 |------|----------|
@@ -170,6 +172,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `glossary-management` | Glossary term management |
 | `module-isolation` | Module isolation patterns |
 | `shiny-module-data-sharing` | Module data-sharing patterns and anti-patterns |
+| `shinylive-webr-nonblocking` | JS round-trip batching for non-blocking WebR/Shinylive long ops |
 | `orchestrator-protocol` | Auto-coordinate agents after plan approval |
 | `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
 | `quarto-vignette-evidence` | Claims require evidence, content quality rules |
