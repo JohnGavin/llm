@@ -125,6 +125,19 @@ See [workflow-templates.md](references/workflow-templates.md) for YAML examples 
 5. **Native R for web tools** -- bslib/pkgdown don't work in Nix
 6. **Test r-universe locally** -- Catch issues before deployment
 
+## GitHub Pages Deployment Gotcha
+
+**User sites (`username.github.io` repos) MUST serve from the default branch.**
+
+| Repo type | Pages source | Quarto deploy method |
+|---|---|---|
+| **User site** (`JohnGavin.github.io`) | `master /docs` or `main /docs` | `quarto render` + commit `docs/` + push |
+| **Project site** (`JohnGavin/micromort`) | `gh-pages` branch | `quarto publish gh-pages` |
+
+Do NOT use `quarto publish gh-pages` for user sites — the API accepts it,
+reports `status: built`, but the site silently 404s. This is a GitHub
+constraint on `*.github.io` repos that is not validated at config time.
+
 ## Related Skills
 
 - `nix-rix-r-environment` -- Core Nix/rix setup, `available_dates()`
