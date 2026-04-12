@@ -29,9 +29,31 @@ johngavin.github.io website index page if not already listed.
 - Breaking API changes warranting a major version bump
 - Project graduation from experimental to stable
 
+## Deployment: username.github.io is a Quarto site
+
+The index site at `~/docs_gh/JohnGavin.github.io/` is a Quarto website
+(migrated from Hugo 2026-04-12). To update and deploy:
+
+```bash
+# Edit index.qmd or projects.qmd
+cd ~/docs_gh/JohnGavin.github.io
+quarto render                    # builds to docs/
+git add docs/ index.qmd          # commit rendered output
+git commit -m "update index"
+git push                         # Pages serves from master /docs
+```
+
+**CRITICAL: username.github.io repos MUST serve from the default branch.**
+Do NOT use `quarto publish gh-pages` — that creates a gh-pages branch which
+silently 404s for user sites. The API accepts it and reports `status: built`
+but the content is never served. Only project repos (e.g. `user.github.io/project`)
+can use the gh-pages branch.
+
 ## Checklist
 
 - [ ] Is the version in DESCRIPTION a major milestone?
 - [ ] Is the project already listed on johngavin.github.io?
 - [ ] If not listed, add entry with name, description, and links
-- [ ] Commit to johngavin.github.io repo
+- [ ] Run `quarto render` in the johngavin.github.io repo
+- [ ] Commit `docs/` + source changes to master branch
+- [ ] Push to origin (Pages auto-deploys from master /docs)
