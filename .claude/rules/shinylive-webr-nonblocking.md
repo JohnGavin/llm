@@ -102,6 +102,115 @@ receives `next_batch` and processes the next batch.
 With 200 walkers and 10 steps/batch: ~2000 walker-step ops per batch ≈ 70ms
 at WebR speeds. With 50ms JS delay → ~120ms per cycle → ~8 UI updates/sec.
 
+## Live Progress Display Patterns (Proven in randomwalk)
+
+The JS round-trip yields control to Shiny's reactive system between batches.
+This means standard Shiny reactive outputs (renderText, renderPlot, renderUI)
+update naturally — no special progress infrastructure needed.
+
+### Pattern A: Reactive values + renderText (status text)
+
+Update reactive values at the end of each batch. Shiny renders them
+during the 50ms JS yield window.
+
+```r
+# In batch handler, after processing:
+sim_completed(n_done)
+sim_black_pixels(sum(grid == 1L))
+sim_current_step(step_count)
+
+# In server, standard renderText reads them:
+output$status <- renderText({
+  if (sim_state() == "running") {
+    paste0("Walkers: ", sim_completed(), "/", n_total,
+           " | Black: ", sim_black_pixels(),
+           " | Step: ", sim_current_step())
+  }
+})
+```
+
+**Why it works:** Between batches, Shiny's flush cycle sees changed reactive
+values, re-renders outputs, and sends the HTML to the browser — all within
+the 50ms yield window.
+
+### Pattern B: reactiveTimer + renderText (elapsed time)
+
+`reactiveTimer(500)` fires independently of batch processing. Use it for
+values that change with wall clock time (elapsed, ETA).
+
+```r
+autoInvalidate <- reactiveTimer(500)
+
+output$elapsed <- renderText({
+  autoInvalidate()
+  if (sim_state() == "running" && !is.null(sim_start_time())) {
+    elapsed <- as.numeric(difftime(Sys.time(), sim_start_time(), units = "secs"))
+    format_duration(elapsed)
+  }
+})
+```
+
+**Why it works:** `reactiveTimer` fires in the JS main thread. When the
+R Worker is idle (between batches), Shiny processes the timer invalidation.
+
+### Pattern C: renderUI for button state changes
+
+Use `renderUI` to swap button appearance (text, class, disabled state)
+based on simulation state. Reactive values trigger re-render between batches.
+
+```r
+output$run_button_ui <- renderUI({
+  if (sim_state() == "running") {
+    actionButton("btn_disabled",
+                 sprintf("Running... %d/%d", sim_completed(), n_total),
+                 class = "btn-warning", disabled = TRUE)
+  } else {
+    actionButton("run_btn", "Run Simulation", class = "btn-primary")
+  }
+})
+```
+
+### Pattern D: renderPlot for in-progress visualization
+
+Show a lightweight progress plot during simulation. Keep it simple
+(base R text, not ggplot) to minimize render time.
+
+```r
+output$main_plot <- renderPlot({
+  if (sim_state() == "running") {
+    autoInvalidate()
+    par(bg = "gray70", mar = c(2, 2, 3, 2))
+    plot.new()
+    text(0.5, 0.6, sprintf("%d%% complete", progress_pct()), cex = 3)
+    text(0.5, 0.3, format_duration(elapsed()), cex = 1.5)
+    return()
+  }
+  req(sim_result())
+  # ... full plot on completion ...
+})
+```
+
+**Caution:** Each `renderPlot` call creates a PNG device, transfers it to
+the browser. At 500ms intervals this adds ~10% overhead. For maximum speed,
+consider showing progress only in text outputs (Patterns A/B) and rendering
+the plot only on completion.
+
+### Combining Patterns
+
+The randomwalk dashboard uses all four simultaneously:
+- **A** for status block and live progress line
+- **B** for elapsed time (updates even between batches)
+- **C** for button text showing walker/pixel counts
+- **D** for a simple progress message in the plot area
+
+### Alternative: JS-Only Progress (Not Yet Tested)
+
+A potential zero-overhead alternative: piggyback progress data on the
+`batch_done` message and update DOM elements directly via JavaScript,
+bypassing Shiny's render cycle entirely. This would eliminate all R-side
+render overhead but requires JS DOM manipulation. See randomwalk #198
+for discussion.
+
 ## Anti-Patterns (FORBIDDEN in WebR/Shinylive)
 
 | Pattern | Why It Fails |
