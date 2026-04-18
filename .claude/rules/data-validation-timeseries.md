@@ -43,45 +43,11 @@ expected frequency.
 
 ### 6. Time-Based vs Count-Based Windows (MANDATORY for irregular sampling)
 
-When computing rolling statistics (median, MAD, z-score, moving average) over irregularly sampled time series, use a **time-based window**, not a count-based window.
-
-| Pattern | Correct for irregular sampling? |
-|---|---|
-| `tail(values, 30)` — last 30 readings | **NO** — silently mixes timeframes |
-| `values[dates >= (max(dates) - 90)]` — last 90 days | **YES** |
-
-**Why:** Lab results, sensor data during gaps, and any human-initiated measurement stream have non-uniform inter-arrival times. A count-based window of "last 30" might span 6 months in one patient and 3 weeks in another — the resulting statistics are incomparable.
-
-```r
-# RIGHT: time-based
-rolling_window <- function(values, dates, window_days = 90) {
-  cutoff <- max(dates, na.rm = TRUE) - window_days
-  values[dates >= cutoff]
-}
-
-# WRONG: count-based on irregular data
-tail(values, 30)
-```
-
-For truly regular sampling (e.g. 1Hz sensor, daily cron job), count-based is fine and simpler. Document the assumption. If sampling regularity ever changes, the count-based code fails silently.
+Use `values[dates >= (max(dates) - 90)]` (time-based), NOT `tail(values, 30)` (count-based). Count-based windows on irregular data silently mix timeframes — "last 30" may span 6 months for one entity and 3 weeks for another. Count-based is fine for truly regular sampling (document the assumption).
 
 ### 7. Minimum Observations Gate (MANDATORY)
 
-Any rolling statistic MUST have a minimum-observations gate below which it returns `NA` (or a simpler fallback), not a noisy partial result:
-
-```r
-if (length(window_vals) < min_obs) {
-  return(list(score = NA_real_, baseline = NA_real_, mad = NA_real_))
-}
-```
-
-Recommended minimums:
-- Median / MAD / quantiles: `≥ 4` (median of fewer is unstable)
-- Mean / SD (if you insist): `≥ 5` (SD of 2 is meaningless)
-- Regression slope: `≥ 6`
-- Percentile ≥ 0.9: `≥ 10 / (1 - p)`
-
-Downstream code MUST handle the `NA` case explicitly — usually by falling back to a simpler signal (e.g. distance from target, last-known value).
+Rolling statistics MUST return `NA` below a minimum-observations threshold: median/MAD ≥ 4, mean/SD ≥ 5, regression ≥ 6, percentile ≥ `10/(1-p)`. Downstream code MUST handle `NA` explicitly (fallback to simpler signal).
 
 ### 8. All Validation as Targets
 
@@ -93,18 +59,7 @@ when someone remembers to run tests.
 
 ## Configuration Constants
 
-Every `plan_data_validation.R` MUST define these constants at the top:
-
-```r
-EXPECTED_FREQUENCY_HOURS <- 1L        # Adjust per project
-ENTITY_ID_COLUMN <- "station_id"      # Primary entity identifier
-TIMESTAMP_COLUMN <- "time"            # Timestamp column name
-MIN_COVERAGE_ABORT <- 30              # % below which pipeline aborts
-MIN_COVERAGE_WARN <- 80               # % below which pipeline warns
-MAX_GAP_HOURS <- 6                    # Flag gaps >= this many hours
-MAX_STALE_HOURS <- 72                 # Maximum data staleness
-LOOKBACK_DAYS_VALIDATION <- 7L        # Validation window
-```
+Every `plan_data_validation.R` MUST define at the top: `EXPECTED_FREQUENCY_HOURS`, `ENTITY_ID_COLUMN`, `TIMESTAMP_COLUMN`, `MIN_COVERAGE_ABORT` (30%), `MIN_COVERAGE_WARN` (80%), `MAX_GAP_HOURS`, `MAX_STALE_HOURS`, `LOOKBACK_DAYS_VALIDATION`.
 
 ---
 
