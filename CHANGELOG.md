@@ -4,6 +4,35 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-04-17 – 2026-04-18
+
+### Completed
+- **Cost optimization:** Auto-delegation rule with mandatory model routing triggers — opus for architecture only, sonnet for all named agents, haiku for single-file edits
+- **Burn-rate alerts (#60):** `burn_rate_check.sh` tracks weekly spend vs cap ($250), fires WARN/CRITICAL at 80%/95% projected, integrated into session_init + context_monitor
+- **Worktree support (#61 steps 1-4):** session_init detects worktree context, warns about _targets/ conflicts, suggests sonnet worktree when budget critical
+- **Agent model pinning:** All 12 agents now have explicit `model:` frontmatter (was 9/10). Restored `quick-fix` haiku agent. Added `data-engineer` + `data-quality-guardian` as sonnet.
+- **Nix lock guard:** `default.sh` PID-based lockfile prevents concurrent nix-build contention (root cause of "hanging" build)
+- **GNU grep portability:** Fixed 8 `grep "foo\|bar"` → `grep -E "foo|bar"` in session_init.sh (BRE alternation fails silently in GNU grep from Nix)
+- **Backtest rules:** execution-delay-sensitivity, position-sizing-guardrails, risk-regime-evaluation, backtest-robustness
+
+### Failed Approaches
+- `grep -q "CRITICAL\|WARN"` silently failed under GNU grep (Nix) — the `\|` BRE alternation works in BSD grep but not GNU. Caused burn-rate TIP and WARN aggregation to not fire. Diagnosed via step-by-step `set -euo pipefail` debugging. Fix: always use `grep -E` for alternation.
+- `local` keyword inside top-level `if` block in session_init.sh caused unbound variable error — `local` is function-scoped only in bash.
+
+### Accuracy / Metrics
+- April 1-17 usage: opus=86% of output ($2,688), sonnet=6% ($18), haiku=8% ($9). Total $2,715.
+- Opus is 11x more expensive than sonnet, 26x more than haiku per output token
+- Estimated savings from auto-delegation: 28% ($755/month) at "moderate" mix (60/25/15)
+- 12/12 agents have model frontmatter (was 9/10)
+- AGENTS.md: 191 lines (under 200 limit)
+- Issues created: #60 (burn-rate), #61 (worktrees)
+
+### Known Limitations
+- `CLAUDE_WEEKLY_CAP_USD=250` is a guess — needs calibration after next lockout observation
+- 14 rules still missing YAML frontmatter
+- Worktree step 5 (stale worktree cleanup for `~/docs_gh/<repo>-*`) not yet implemented
+- Auto-delegation is rule-based (advisory to orchestrator), not enforced by hooks — orchestrator can still ignore it
+
 ## 2026-03-31 – 2026-04-01
 
 ### Completed
