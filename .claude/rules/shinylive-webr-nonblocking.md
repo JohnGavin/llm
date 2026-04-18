@@ -1,3 +1,7 @@
+---
+paths: ["**/shinylive/**", "**/*.qmd", "**/dashboard*"]
+---
+
 # Rule: Shinylive/WebR Non-Blocking Long Operations (CRITICAL)
 
 ## When This Applies

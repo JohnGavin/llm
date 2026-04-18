@@ -1,3 +1,7 @@
+---
+paths: ["**/raw/**"]
+---
+
 # Rule: raw/ folder is append-only
 
 ## When This Applies

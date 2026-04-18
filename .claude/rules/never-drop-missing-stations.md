@@ -1,3 +1,7 @@
+---
+paths: ["**/coverage*", "**/station*", "**/report*", "**/summary*"]
+---
+
 # Rule: Never Silently Drop Missing Stations (CRITICAL)
 
 ## When This Applies

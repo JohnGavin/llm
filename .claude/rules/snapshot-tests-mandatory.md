@@ -1,3 +1,7 @@
+---
+paths: ["**/tests/**", "**/test-*.R", "**/test_*.R"]
+---
+
 # Rule: Snapshot Tests Mandatory
 
 ## When This Applies
