@@ -268,6 +268,28 @@ xgboost(data, nrounds = 100)  # What are we optimizing?
 boost_tree() |> set_mode("classification")  # Clear intent
 ```
 
+## Position Sizing Comparison (MANDATORY)
+
+Every backtest MUST compare at least **flat** vs **fractional Kelly** staking.
+If Kelly underperforms flat, the edge estimates are unreliable.
+
+See `position-sizing-guardrails` rule for:
+- Max risk per bet (default 5% of bankroll)
+- Drawdown-constrained sizing
+- Volatility-scaled sizing
+
+## Risk Management Quality
+
+Evaluate not just prediction quality (log-loss) but also **risk management
+quality** as separate metrics:
+
+| Metric | What it measures |
+|--------|-----------------|
+| Max drawdown | Worst peak-to-trough loss |
+| Calmar ratio | Annualized return / max drawdown |
+| Time to recovery | Days from drawdown to new high |
+| Sizing impact | ROI delta between flat and Kelly |
+
 ## Model Code Checklist
 
 When editing model code, verify:
@@ -277,6 +299,10 @@ When editing model code, verify:
 4. **Time-aware CV**: For time data, using walk-forward splits (`rsample::sliding_period()`), not `vfold_cv()`?
 5. **Separation of concerns**: Model outputs probabilities only, business logic in separate decision layer?
 6. **Versioning**: Trained model pinned with metadata (`pins::pin_write()` or `vetiver::vetiver_pin_write()`)?
+7. **Sizing comparison**: Flat vs Kelly staking compared? (see `position-sizing-guardrails`)
+8. **Regime breakdown**: Metrics reported per risk regime? (see `risk-regime-evaluation`)
+9. **Execution delay**: Alpha decay measured at t+1..t+5? (see `execution-delay-sensitivity`)
+10. **Parameter robustness**: Sharpe stable at ±20% param perturbation? (see `backtest-robustness`)
 
 ## Related Skills
 

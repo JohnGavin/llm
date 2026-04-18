@@ -300,6 +300,38 @@ plan_evaluation <- function() {
 }
 ```
 
+## Regime-Conditional Evaluation
+
+Split backtest results by risk regime. A positive aggregate metric may hide
+losses in high-risk periods that cluster and compound. See `risk-regime-evaluation` rule.
+
+```r
+# Classify each test period by volatility regime
+regime_results <- backtest_results |>
+  dplyr::mutate(
+    regime = dplyr::if_else(
+      rolling_vol > median(rolling_vol, na.rm = TRUE),
+      "high_vol", "low_vol"
+    )
+  ) |>
+  dplyr::group_by(regime) |>
+  dplyr::summarise(
+    mean_log_loss = mean(log_loss),
+    mean_sharpe = mean(net) / sd(net),
+    n_periods = dplyr::n()
+  )
+```
+
+## Execution Delay Sensitivity
+
+Re-run backtest with 1-5 period execution delays. See `execution-delay-sensitivity` rule.
+If alpha disappears at t+1, the edge is speed-dependent and may be impractical.
+
+## Parameter Robustness
+
+Vary each tunable parameter ±20% and check that Sharpe doesn't drop >50%.
+See `backtest-robustness` rule. Reject strategies with isolated performance peaks.
+
 ## Reporting Template
 
 Every model evaluation report must include:
@@ -310,6 +342,9 @@ Every model evaluation report must include:
 4. **Worst-case analysis** (worst backtest window, bootstrap 5th percentile)
 5. **Drift assessment** (feature and prediction distribution stability)
 6. **Comparison to baseline** (see `modeling-baselines` skill)
+7. **Regime-conditional metrics** (see `risk-regime-evaluation` rule)
+8. **Execution delay curve** (see `execution-delay-sensitivity` rule)
+9. **Parameter sensitivity heatmap** (see `backtest-robustness` rule)
 
 ## Anti-Patterns
 
