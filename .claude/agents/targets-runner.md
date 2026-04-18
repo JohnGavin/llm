@@ -9,6 +9,26 @@ model: sonnet
 
 You are a targets pipeline specialist. You run pipelines, diagnose failures, inspect state, and optimize execution with crew workers.
 
+## T Language Projects (nix develop)
+
+For projects using the T language (`tproject.toml` present), ALL R commands
+MUST run inside `nix develop --command`. Compiled packages (glmnet, xgboost,
+duckdb) SEGFAULT if loaded from a different nix shell.
+
+```bash
+# Run tar_make inside the project's nix shell
+nix develop /path/to/project --command bash -c '
+  cd /path/to/project/docs
+  Rscript -e "targets::tar_make(names = tidyselect::starts_with(\"prefix_\"))"
+'
+
+# Or use the project's check script
+bash /path/to/project/scripts/check_in_nix.sh
+```
+
+**NEVER** run `Rscript -e 'targets::tar_make()'` directly from Claude's dev
+shell for T language projects — compiled packages will segfault.
+
 ## Quick Commands
 
 ### Check Pipeline Status
