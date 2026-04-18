@@ -14,6 +14,8 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - **Nix lock guard:** `default.sh` PID-based lockfile prevents concurrent nix-build contention (root cause of "hanging" build)
 - **GNU grep portability:** Fixed 8 `grep "foo\|bar"` → `grep -E "foo|bar"` in session_init.sh (BRE alternation fails silently in GNU grep from Nix)
 - **Backtest rules:** execution-delay-sensitivity, position-sizing-guardrails, risk-regime-evaluation, backtest-robustness
+- **YAML frontmatter:** Added to all 14 rules that were missing it (56/56 now complete)
+- **Worktree cleanup (#61 step 5):** session_init scans sibling dirs (repo-sonnet, repo-feat-*), prunable worktrees
 
 ### Failed Approaches
 - `grep -q "CRITICAL\|WARN"` silently failed under GNU grep (Nix) — the `\|` BRE alternation works in BSD grep but not GNU. Caused burn-rate TIP and WARN aggregation to not fire. Diagnosed via step-by-step `set -euo pipefail` debugging. Fix: always use `grep -E` for alternation.
