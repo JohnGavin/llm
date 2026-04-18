@@ -1,3 +1,7 @@
+---
+paths: ["**/plan_qa*.R", "**/backtest*", "**/features*.R", "**/_targets.R"]
+---
+
 # Rule: Look-Ahead Bias Prevention (MANDATORY for all backtests)
 
 ## When This Applies

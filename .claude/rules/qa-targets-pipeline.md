@@ -1,3 +1,7 @@
+---
+paths: ["**/_targets.R", "**/plan_qa*.R", "**/plan_vig*.R"]
+---
+
 # Rule: QA Targets in Every Pipeline
 
 ## When This Applies

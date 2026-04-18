@@ -1,3 +1,7 @@
+---
+paths: ["**/wiki/**", "**/knowledge/**", "**/raw/**"]
+---
+
 # Rule: Wiki Storage Policy
 
 ## When This Applies
