@@ -44,20 +44,7 @@ Use `httr2::request(url) |> req_perform()` to fetch each article, count error pa
 
 Before any pkgdown deployment, grep for `[MISSING EVIDENCE]` patterns.
 
-**Pre-deployment check:**
-```bash
-grep -r "\[MISSING EVIDENCE\]" docs/articles/*.html && exit 1
-```
-
-**CI integration:**
-```yaml
-- name: Check for missing evidence
-  run: |
-    if grep -r "\[MISSING EVIDENCE\]" docs/articles/*.html; then
-      echo "ERROR: Missing evidence found in vignettes"
-      exit 1
-    fi
-```
+See `targets-vignettes` skill reference: `post-publish-checks.md` for bash and CI YAML snippets.
 
 **Common causes:** Forgot `tar_make()`, forgot RDS export, target name typo, target returns NULL.
 
@@ -67,21 +54,7 @@ grep -r "\[MISSING EVIDENCE\]" docs/articles/*.html && exit 1
 
 All pkgdown sites MUST have a dark/light mode toggle defaulting to dark.
 
-**Required `_pkgdown.yml`:**
-```yaml
-template:
-  bootstrap: 5
-  light-switch: true
-  bslib:
-    preset: "shiny"
-```
-
-**Required `pkgdown/extra.js`:**
-```js
-if (!localStorage.getItem('theme')) {
-  document.documentElement.setAttribute('data-bs-theme', 'dark');
-}
-```
+See `targets-vignettes` skill reference: `post-publish-checks.md` for `_pkgdown.yml` and `pkgdown/extra.js` snippets.
 
 **Rules:** Dark mode default for first-time visitors. All visualizations readable in both modes. Mermaid uses dark theme (see `diagram-generation.md`).
 
@@ -108,56 +81,10 @@ Where each value is a **clickable hyperlink**:
 
 ### Required R Code (as a target or inline chunk)
 
-Store as a `vig_build_info` target in `plan_vignette.R`, or use this chunk
-directly in each vignette:
+Store as a `vig_build_info` target in `plan_vignette.R`, or use as an inline chunk.
+See `targets-vignettes` skill reference: `post-publish-checks.md` for the full R code.
 
-```r
-#| label: build-info
-#| echo: false
-#| results: asis
-
-# Discover GitHub remote URL
-gh_url <- tryCatch({
-  remote <- system("git remote get-url origin 2>/dev/null", intern = TRUE)
-  sub("\\.git$", "", sub("^git@github\\.com:", "https://github.com/", remote))
-}, error = function(e) NULL)
-
-git_sha_short <- tryCatch(
-  system("git rev-parse --short HEAD 2>/dev/null", intern = TRUE),
-  error = function(e) "N/A"
-)
-git_sha_full <- tryCatch(
-  system("git rev-parse HEAD 2>/dev/null", intern = TRUE),
-  error = function(e) git_sha_short
-)
-
-pkg_ver <- tryCatch(
-  as.character(packageVersion("PKGNAME")),
-  error = function(e) "dev"
-)
-
-r_ver <- as.character(getRversion())
-build_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-
-# Build linked markdown
-ver_link <- if (!is.null(gh_url)) {
-  sprintf("[%s](%s/releases/tag/v%s)", pkg_ver, gh_url, pkg_ver)
-} else pkg_ver
-
-sha_link <- if (!is.null(gh_url) && git_sha_short != "N/A") {
-  sprintf("[`%s`](%s/commit/%s)", git_sha_short, gh_url, git_sha_full)
-} else sprintf("`%s`", git_sha_short)
-
-r_link <- sprintf("[%s](https://cran.r-project.org/doc/manuals/r-release/NEWS.html)", r_ver)
-
-cat(sprintf(
-  "\n---\n\n**PKGNAME** %s | **Git** %s | **R** %s | **Built** %s\n",
-  ver_link, sha_link, r_link, build_time
-))
-```
-
-Replace `PKGNAME` with the actual package name. For non-package projects,
-use the project directory name and omit the version link.
+For non-package projects, use the project directory name and omit the version link.
 
 ### Fallbacks
 
@@ -170,17 +97,8 @@ use the project directory name and omit the version link.
 
 ### Pre-Computed as Target (Preferred)
 
-For the code-as-target pattern, store as `vig_build_info`:
-
-```r
-tar_target(vig_build_info, {
-  # ... same code as above, returning the markdown string ...
-  sprintf("**pkg** %s | **Git** %s | **R** %s | **Built** %s",
-          ver_link, sha_link, r_link, build_time)
-})
-```
-
-Then in the vignette: `safe_tar_read("vig_build_info")` with `results: asis`.
+Store as `vig_build_info` target; in the vignette use `safe_tar_read("vig_build_info")` with `results: asis`.
+See `targets-vignettes` skill reference: `post-publish-checks.md` for the target code.
 
 ## Pre-computed outputs for CI
 

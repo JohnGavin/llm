@@ -37,91 +37,10 @@ fails the pipeline if any check fails.
 
 ### Required checks
 
-```r
-targets::tar_target(
-  qa_look_ahead_bias,
-  {
-    checks <- list()
+See `model-evaluation-calibration` skill reference: `qa-bias-template.md` for implementation template.
 
-    # ----------------------------------------------------------------
-    # CHECK 1: Train/test temporal separation
-    # For every walk-forward fold, max(train_date) < min(test_date)
-    # ----------------------------------------------------------------
-    if (exists("wf_splits") && length(wf_splits) > 0) {
-      violations <- vapply(wf_splits, function(sp) {
-        sp$train_start >= sp$test_start  # train overlaps test
-      }, logical(1))
-      checks$temporal_separation <- list(
-        pass = !any(violations),
-        detail = paste0(sum(violations), "/", length(wf_splits),
-                        " folds have train/test overlap")
-      )
-    }
-
-    # ----------------------------------------------------------------
-    # CHECK 2: In-sample vs OOS divergence detector
-    # If in-sample ROI > 50% AND OOS ROI < 0%, flag as likely bias
-    # ----------------------------------------------------------------
-    if (exists("pnl_summary") && exists("oos_validate_summary")) {
-      is_roi <- pnl_summary$roi_pct
-      oos_roi <- oos_validate_summary$roi_pct
-      divergence <- is_roi - oos_roi
-      checks$roi_divergence <- list(
-        pass = divergence < 100,  # >100pp gap = almost certain bias
-        detail = sprintf("In-sample ROI: %.1f%%, OOS ROI: %.1f%%, gap: %.0fpp",
-                          is_roi, oos_roi, divergence)
-      )
-    }
-
-    # ----------------------------------------------------------------
-    # CHECK 3: Feature timestamp audit
-    # Every rolling feature must use dplyr::lag() or apply_asof_cutoff()
-    # ----------------------------------------------------------------
-    feature_files <- list.files("R", pattern = "features?\\.R$",
-                                 full.names = TRUE)
-    rolling_fns <- grep("rolling_|cumulative_|compute_.*features",
-                         readLines(feature_files), value = TRUE)
-    uses_lag <- grepl("dplyr::lag|lag\\(|apply_asof_cutoff", rolling_fns)
-    checks$feature_lag <- list(
-      pass = all(uses_lag) || length(rolling_fns) == 0,
-      detail = paste0(sum(!uses_lag), " rolling feature lines missing lag/cutoff")
-    )
-
-    # ----------------------------------------------------------------
-    # CHECK 4: No full-sample model used for betting decisions
-    # Any target producing value_bets or pnl must trace back to a
-    # walk-forward or temporal-split trained model, not a full-sample fit
-    # ----------------------------------------------------------------
-    # (This is a structural check — review the DAG manually.
-    #  Automated: check that pnl targets depend on oos_* or cv_* models)
-
-    # ----------------------------------------------------------------
-    # REPORT
-    # ----------------------------------------------------------------
-    n_pass <- sum(vapply(checks, function(x) x$pass, logical(1)))
-    n_total <- length(checks)
-
-    if (n_pass < n_total) {
-      failed <- names(checks)[!vapply(checks, function(x) x$pass, logical(1))]
-      details <- vapply(checks[failed], function(x) x$detail, character(1))
-      cli::cli_warn(c(
-        "!" = "Look-ahead bias checks: {n_pass}/{n_total} passed",
-        "x" = paste(failed, details, sep = ": ")
-      ))
-    } else {
-      cli::cli_alert_success("Look-ahead bias: {n_total}/{n_total} checks passed")
-    }
-
-    list(
-      checks = checks,
-      n_pass = n_pass,
-      n_total = n_total,
-      timestamp = Sys.time()
-    )
-  },
-  cue = targets::tar_cue(mode = "always")
-)
-```
+The target must run 4 checks (checks 1–4 below) and report via `cli::cli_warn` on failure,
+`cli::cli_alert_success` on pass. Use `cue = targets::tar_cue(mode = "always")`.
 
 ### Check 2 thresholds (calibrate per project)
 
@@ -157,59 +76,17 @@ Before computing ROI, Sharpe, or any P&L metric, verify:
 
 ## Structural Prevention (Pipeline Design)
 
-### Separate train and evaluate targets
+Three patterns (see `qa-bias-template.md` for full code):
 
-```r
-# WRONG: single target that trains and evaluates on same data
-tar_target(model_performance, {
-  model <- fit(all_data)
-  evaluate(model, all_data)  # LOOK-AHEAD BIAS
-})
-
-# RIGHT: separate targets with explicit temporal split
-tar_target(model_trained, fit(train_data))
-tar_target(model_oos_eval, evaluate(model_trained, validate_data))
-```
-
-### Walk-forward CV returns per-fold metrics
-
-```r
-# WRONG: aggregate metric hides per-fold variation
-tar_target(cv_result, mean(fold_metrics))
-
-# RIGHT: return per-fold, aggregate separately
-tar_target(cv_folds, evaluate_per_fold(data))  # tibble with fold, metric
-tar_target(cv_summary, summarise_cv(cv_folds))  # separate aggregation
-```
-
-### P&L targets MUST depend on OOS predictions
-
-```r
-# WRONG: pnl_glm depends on value_bets_glm which uses fit_poisson_glm(ALL data)
-tar_target(pnl_glm, simulate_pnl(value_bets_glm, ...))
-
-# RIGHT: pnl depends on oos_validate_bets which uses oos_glm_train (train-only)
-tar_target(oos_pnl, simulate_pnl(oos_validate_bets, ...))
-```
+- **Separate train/evaluate targets**: never fit and evaluate on the same target's data.
+- **Walk-forward CV per-fold**: return per-fold tibble, aggregate in a separate target.
+- **P&L depends on OOS predictions**: `pnl` target must trace to `oos_*` or `cv_*` model, not a full-sample fit.
 
 ### Execution delay sensitivity (CHECK 5)
 
 Re-run P&L with 1-5 period delays. If alpha disappears at t+1, the
 edge is speed-dependent and may be impractical. See `execution-delay-sensitivity` rule.
-
-```r
-# CHECK 5: Alpha survives execution delay
-delays <- c(0, 1, 3, 5)
-delay_results <- purrr::map_dfr(delays, function(d) {
-  pnl <- evaluate_with_delay(predictions, odds, delay_periods = d)
-  tibble::tibble(delay = d, roi = pnl$roi, sharpe = pnl$sharpe)
-})
-checks$execution_delay <- list(
-  pass = delay_results$roi[delay_results$delay == 1] > delay_results$roi[1] * 0.5,
-  detail = sprintf("t+0 ROI: %.1f%%, t+1 ROI: %.1f%%",
-                    delay_results$roi[1], delay_results$roi[delay_results$delay == 1])
-)
-```
+Full CHECK 5 snippet in `qa-bias-template.md`.
 
 ## In Commit Messages (experiment format)
 
@@ -217,7 +94,6 @@ Every experiment commit MUST include the OOS metric alongside in-sample:
 
 ```
 experiment: add SoT ratio to GLM features
-
 metric_is: log_loss 1.011 (in-sample, 5 leagues)
 metric_oos: log_loss 1.016 (walk-forward CV, same leagues)
 delta: -0.005 (IS improves, OOS unchanged)

@@ -82,68 +82,21 @@ All reported numbers MUST come from code, never hardcoded:
 
 ## 7. Structured Experiment Commit Messages (MANDATORY for modelling)
 
-When committing model experiments, use a machine-parseable format so progress can be tracked programmatically via `git log --grep`:
+Format: `experiment: <desc>` subject, body with `metric:`, `delta:`, `phase:`, `changed:`, `verdict: COMMIT|REVERT`. Parse: `git log --grep="^metric:"`.
 
-```
-experiment: <short description>
-
-metric: <value> +/- <std> (prev: <prev_value> +/- <std>)
-delta: <signed change>
-phase: <1-hyperparams|2-mechanism|3-architecture|4-advanced>
-changed: <param>=<new> (was <old>)
-verdict: COMMIT|REVERT
-```
-
-Example:
-```
-experiment: increase projection dim 256→512
-
-metric: mean_rank 157.4 +/- 8.2 (prev: 187.1 +/- 9.5)
-delta: -29.7
-phase: 3-architecture
-changed: PROJ_DIM=512 (was 256)
-verdict: COMMIT
-```
-
-**Parse with:** `git log --grep="^metric:" --format="%s%n%b" | grep "^metric:\|^delta:"`
+Example: `experiment: increase projection dim 256→512` / `metric: mean_rank 157.4 ± 8.2 (prev: 187.1)` / `verdict: COMMIT`
 
 ## 8. False Positive Risk (MANDATORY when reporting p-values)
 
-A p-value is P(data | H₀). What you want is P(H₀ | data). These are NOT the same — confusing them is the "transposed conditional" error (Colquhoun 2019).
+p = 0.05 does NOT mean 5% false positive risk. At equipoise prior, FPR ≈ 26–30% (Colquhoun 2019). When reporting any p-value, ALSO state FPR: "p = 0.043, FPR ≈ 18% at equipoise, suggestive."
 
-**p = 0.05 does NOT mean 5% false positive risk.** At a 50/50 prior, p = 0.05 corresponds to a **26–30% false positive risk** (FPR). At a low prior (implausible hypothesis), it's **76%**.
-
-| Observed p-value | FPR (prior = 0.5) | FPR (prior = 0.1) | Likelihood ratio |
+| p-value | FPR (prior=0.5) | FPR (prior=0.1) | LR |
 |---|---|---|---|
 | 0.05 | 26–30% | 76% | ~3 |
 | 0.01 | ~11% | ~50% | ~10 |
 | 0.001 | ~1% | ~8% | ~100 |
 
-### Required reporting format
-
-When a p-value is reported, ALSO state the false positive risk:
-
-```r
-# RIGHT:
-# "The increase was 1.88 ± 0.85 (SEM), CI [0.06, 3.7], p = 0.043.
-#  This implies FPR ≈ 18% (prior = 0.5), so the result is suggestive
-#  rather than conclusive."
-
-# WRONG:
-# "The result was statistically significant (p < 0.05)."
-```
-
-### Tools
-
-- **Web calculator**: http://www.onemol.org.uk/?page_id=456
-- **R scripts**: provided with Colquhoun (2014, 2017, 2019) papers
-- **Formula**: FPR = 1 / (1 + likelihood_ratio × prior_odds)
-
-### References
-
-- Colquhoun D (2019). "The False Positive Risk: A Proposal Concerning What to Do About p-Values." *The American Statistician* 73(sup1).
-- Sellke T, Bayarri MJ, Berger JO (2001). "Calibration of p Values for Testing Precise Null Hypotheses." *The American Statistician* 55:62–71.
-- Benjamin D & Berger JO (2018). "Three Recommendations for Improving the Use of p-Values." *The American Statistician*.
+Formula: FPR = 1 / (1 + LR × prior_odds). Refs: Colquhoun 2019, Sellke 2001, Benjamin 2018.
 
 ## 9. Never Say "Significant" (MANDATORY)
 
@@ -159,15 +112,9 @@ When a p-value is reported, ALSO state the false positive risk:
 
 **Exception**: When quoting another author's text verbatim (use `> "text"` blockquote format).
 
-## 10. High-Power Tests Make Borderline p-Values WEAKER Evidence (Jeffreys-Lindley)
+## 10. High-Power Borderline p-Values Are WEAKER Evidence (Jeffreys-Lindley)
 
-In high-power studies (large N, long time series, many observations), observing p ≈ 0.05 is actually evidence AGAINST the alternative hypothesis — because if the effect were real, high power would produce p << 0.05.
-
-This is NOT a paradox: with 99% power, nearly all real effects produce very low p-values. Observing p = 0.05 means you're in the rare tail where real effects don't land — so the observation is more consistent with noise.
-
-**Implication for backtesting**: A strategy tested on 20 years of daily data (very high power) that shows p = 0.04 provides WEAKER evidence of real alpha than the same p-value from 2 years of data. If alpha were real with that much data, you'd see p < 0.001.
-
-**Implication for large-N sports modelling**: footbet has thousands of matches. A feature that shows p = 0.03 in a dataset with N = 10,000 is less convincing than the same p-value at N = 200. Report the effect size and FPR, not just the p-value.
+With high power (large N), observing p ≈ 0.05 is evidence AGAINST the alternative — if the effect were real, you'd see p << 0.05. A strategy on 20 years of data showing p = 0.04 is LESS convincing than p = 0.04 from 2 years. Report effect size and FPR, not just p.
 
 ## Checklist
 

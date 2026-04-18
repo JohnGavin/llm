@@ -26,74 +26,17 @@ executes. Time-budgeted loops (`repeat until N ms elapsed`) run forever.
 
 ## Required Pattern: JS Round-Trip Batching
 
-Force a real yield to the browser by round-tripping through JavaScript:
+Force a real yield to the browser by round-tripping through JavaScript.
+The pattern has three parts: (1) a JS `addCustomMessageHandler` in the UI
+that calls `setTimeout(50ms)` then `setInputValue`, (2) an `observe` that
+kicks off the first batch, (3) an `observeEvent(input$next_batch)` that
+processes one batch then calls `session$sendCustomMessage("batch_done", ...)`.
 
-### 1. Add JS handler in UI
+The Worker yields on `sendCustomMessage`, the main thread waits 50 ms
+(browser renders, handles clicks), then posts back — giving real UI updates
+between batches.
 
-```r
-tags$script(HTML("
-  $(document).on('shiny:connected', function() {
-    Shiny.addCustomMessageHandler('batch_done', function(msg) {
-      setTimeout(function() {
-        Shiny.setInputValue('next_batch', Math.random());
-      }, 50);  // 50ms = browser renders + handles clicks
-    });
-  });
-"))
-```
-
-### 2. Kick off first batch when computation starts
-
-```r
-observe({
-  req(computation_state() == "running")
-  session$sendCustomMessage("batch_done", list(kick = TRUE))
-})
-```
-
-### 3. Process each batch via `observeEvent`
-
-```r
-observeEvent(input$next_batch, {
-  req(computation_state() == "running")
-
-  # Process a fixed number of steps
-  STEPS_PER_BATCH <- 10L
-  for (b in seq_len(STEPS_PER_BATCH)) {
-    # ... do work ...
-  }
-
-  # Update reactive values (progress displays)
-  progress_val(new_progress)
-
-  if (done) {
-    computation_state("complete")
-  } else {
-    # Request next batch via JS round-trip
-    session$sendCustomMessage("batch_done", list(step = current_step))
-  }
-}, ignoreInit = TRUE)
-```
-
-### Why This Works
-
-```
-R (Web Worker)              JS (Main Thread)
-─────────────               ────────────────
-Process batch
-  ↓
-sendCustomMessage ─────────→ Receives "batch_done"
-  (Worker yields)            setTimeout(50ms)
-                             Browser renders, handles clicks
-                             ↓
-                             setInputValue("next_batch") ───→ observeEvent fires
-                                                              Process next batch
-```
-
-The `sendCustomMessage` posts a message FROM the Worker TO the main thread.
-The Worker then returns to its event loop (idle). The main thread processes
-the message, waits 50ms (browser events!), then posts back. The Worker
-receives `next_batch` and processes the next batch.
+See `shinylive-deployment` skill reference: `progress-patterns.md`
 
 ## Tuning
 
@@ -109,111 +52,22 @@ at WebR speeds. With 50ms JS delay → ~120ms per cycle → ~8 UI updates/sec.
 ## Live Progress Display Patterns (Proven in randomwalk)
 
 The JS round-trip yields control to Shiny's reactive system between batches.
-This means standard Shiny reactive outputs (renderText, renderPlot, renderUI)
-update naturally — no special progress infrastructure needed.
+Standard reactive outputs (renderText, renderPlot, renderUI) update naturally
+— no special progress infrastructure needed.
 
-### Pattern A: Reactive values + renderText (status text)
+Four proven patterns (full code in reference file):
 
-Update reactive values at the end of each batch. Shiny renders them
-during the 50ms JS yield window.
+- **A** — Reactive values + `renderText`: update values at batch end; Shiny flushes within the 50ms window.
+- **B** — `reactiveTimer(500)` + `renderText`: fires from the JS main thread; works while the Worker is idle between batches. Use for elapsed time / ETA.
+- **C** — `renderUI` for button state: swap text/class/disabled state based on `sim_state()`.
+- **D** — `renderPlot` progress placeholder: keep it base-R (not ggplot) to minimise render time. Each call costs ~10% overhead at 500ms intervals; prefer text-only (A/B) for maximum speed.
 
-```r
-# In batch handler, after processing:
-sim_completed(n_done)
-sim_black_pixels(sum(grid == 1L))
-sim_current_step(step_count)
+The randomwalk dashboard combines all four simultaneously.
 
-# In server, standard renderText reads them:
-output$status <- renderText({
-  if (sim_state() == "running") {
-    paste0("Walkers: ", sim_completed(), "/", n_total,
-           " | Black: ", sim_black_pixels(),
-           " | Step: ", sim_current_step())
-  }
-})
-```
+Alternative (not yet tested): piggyback progress on `batch_done` and update
+DOM directly via JS, bypassing Shiny's render cycle. See randomwalk #198.
 
-**Why it works:** Between batches, Shiny's flush cycle sees changed reactive
-values, re-renders outputs, and sends the HTML to the browser — all within
-the 50ms yield window.
-
-### Pattern B: reactiveTimer + renderText (elapsed time)
-
-`reactiveTimer(500)` fires independently of batch processing. Use it for
-values that change with wall clock time (elapsed, ETA).
-
-```r
-autoInvalidate <- reactiveTimer(500)
-
-output$elapsed <- renderText({
-  autoInvalidate()
-  if (sim_state() == "running" && !is.null(sim_start_time())) {
-    elapsed <- as.numeric(difftime(Sys.time(), sim_start_time(), units = "secs"))
-    format_duration(elapsed)
-  }
-})
-```
-
-**Why it works:** `reactiveTimer` fires in the JS main thread. When the
-R Worker is idle (between batches), Shiny processes the timer invalidation.
-
-### Pattern C: renderUI for button state changes
-
-Use `renderUI` to swap button appearance (text, class, disabled state)
-based on simulation state. Reactive values trigger re-render between batches.
-
-```r
-output$run_button_ui <- renderUI({
-  if (sim_state() == "running") {
-    actionButton("btn_disabled",
-                 sprintf("Running... %d/%d", sim_completed(), n_total),
-                 class = "btn-warning", disabled = TRUE)
-  } else {
-    actionButton("run_btn", "Run Simulation", class = "btn-primary")
-  }
-})
-```
-
-### Pattern D: renderPlot for in-progress visualization
-
-Show a lightweight progress plot during simulation. Keep it simple
-(base R text, not ggplot) to minimize render time.
-
-```r
-output$main_plot <- renderPlot({
-  if (sim_state() == "running") {
-    autoInvalidate()
-    par(bg = "gray70", mar = c(2, 2, 3, 2))
-    plot.new()
-    text(0.5, 0.6, sprintf("%d%% complete", progress_pct()), cex = 3)
-    text(0.5, 0.3, format_duration(elapsed()), cex = 1.5)
-    return()
-  }
-  req(sim_result())
-  # ... full plot on completion ...
-})
-```
-
-**Caution:** Each `renderPlot` call creates a PNG device, transfers it to
-the browser. At 500ms intervals this adds ~10% overhead. For maximum speed,
-consider showing progress only in text outputs (Patterns A/B) and rendering
-the plot only on completion.
-
-### Combining Patterns
-
-The randomwalk dashboard uses all four simultaneously:
-- **A** for status block and live progress line
-- **B** for elapsed time (updates even between batches)
-- **C** for button text showing walker/pixel counts
-- **D** for a simple progress message in the plot area
-
-### Alternative: JS-Only Progress (Not Yet Tested)
-
-A potential zero-overhead alternative: piggyback progress data on the
-`batch_done` message and update DOM elements directly via JavaScript,
-bypassing Shiny's render cycle entirely. This would eliminate all R-side
-render overhead but requires JS DOM manipulation. See randomwalk #198
-for discussion.
+See `shinylive-deployment` skill reference: `progress-patterns.md`
 
 ## Anti-Patterns (FORBIDDEN in WebR/Shinylive)
 
@@ -228,13 +82,9 @@ for discussion.
 ## Dark Mode in Shinylive Apps
 
 bslib's `light-switch: true` only works for pkgdown/Quarto pages. For Shinylive
-apps embedded in iframes, add custom CSS dark mode:
-
-```r
-# CSS: body.dark-mode { background: #1e1e1e; color: #e0e0e0; }
-# JS: toggle body.dark-mode class, persist to localStorage
-# Respect prefers-color-scheme media query on first load
-```
+apps embedded in iframes, add custom CSS dark mode: toggle `body.dark-mode`
+class via JS, persist to `localStorage`, respect `prefers-color-scheme` on
+first load. See `progress-patterns.md` for the snippet.
 
 ## Service Worker Caching (Testing)
 
