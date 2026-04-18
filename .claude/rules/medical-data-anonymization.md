@@ -48,55 +48,11 @@ Any project containing Protected Health Information (PHI) or medical data.
 
 ## Implementation Pattern
 
-```r
-# Generic anonymization function template
-anonymize_medical_text <- function(text, patient_patterns, doctor_patterns) {
-  result <- text
-
-  # Apply patient-specific patterns (defined per project)
-  for (pat in patient_patterns) {
-    result <- gsub(pat$find, pat$replace, result, ignore.case = TRUE, perl = TRUE)
-  }
-
-  # Apply doctor patterns
-  for (pat in doctor_patterns) {
-    result <- gsub(pat$find, pat$replace, result, ignore.case = TRUE, perl = TRUE)
-  }
-
-  # Apply generic patterns (always)
-  result <- gsub("\\b\\d{3}\\s*\\d{3}\\s*\\d{4}\\b", "000 000 0000", result)  # NHS
-  result <- gsub("\\b0\\d{2,4}\\s*\\d{3,4}\\s*\\d{3,4}\\b", "[PHONE]", result)
-  result <- gsub("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}", "patient@example.com", result)
-
-  result
-}
-```
+Use `anonymize_medical_text()` with project-specific patient/doctor pattern lists and generic regex (NHS, phone, email). See project's `R/anonymize.R`.
 
 ## Automated PHI Detection (Two-Layer)
 
-### Scripts Location
-- **Scanner:** `~/.claude/scripts/phi_scan.sh`
-- **Hook:** `~/.claude/hooks/phi-scan-hook.sh`
-
-### Layer 1: Known Patterns (Regex)
-Fast, precise detection of known PHI formats:
-- NHS numbers: `\b\d{3}\s*\d{3}\s*\d{4}\b`
-- UK phones: `\b0\d{2,4}\s*\d{3,4}\s*\d{3,4}\b`
-- UK mobiles: `\b07\d{3}\s*\d{6}\b`
-- UK postcodes: `\b[A-Z]{1,2}\d[0-9A-Z]?\s*\d[A-Z]{2}\b`
-- Emails: `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`
-- Dates: UK (`\d{1,2}/\d{1,2}/\d{4}`) and ISO (`\d{4}-\d{2}-\d{2}`)
-- MRN (8-digit): `\b\d{8}\b`
-
-### Layer 2: Heuristic Detection
-Uses `detect-secrets` (if installed) to catch:
-- High-entropy strings (API keys, tokens)
-- Base64-encoded data
-- Unusual patterns that regex misses
-
-Install: `pip install detect-secrets`
-
-### Severity Levels
+Two-layer scan: Layer 1 regex (NHS, phone, postcode, email, MRN, dates) + Layer 2 heuristic (`detect-secrets`). Scripts at `~/.claude/scripts/phi_scan.sh`. Severity: HIGH=block (NHS, phone, MRN), MEDIUM=review (email, postcode), LOW=review (high-entropy strings).
 
 | Severity | Pattern | Action |
 |----------|---------|--------|
@@ -104,73 +60,11 @@ Install: `pip install detect-secrets`
 | MEDIUM | Email, postcode | Review — may be legitimate |
 | LOW | High-entropy string | Review — may be API key |
 
-### Usage
-
-**Manual scan:**
-```bash
-~/.claude/scripts/phi_scan.sh /path/to/project
-~/.claude/scripts/phi_scan.sh . --layer1-only      # Skip heuristics
-~/.claude/scripts/phi_scan.sh . --json             # JSON output
-~/.claude/scripts/phi_scan.sh . --patterns custom.txt  # Custom patterns
-```
-
-**Custom patterns file format** (one per line):
-```
-PATIENT_NAME:John\s+Gavin
-HOSPITAL_NUM:21264224
-```
-
-**Git pre-commit hook:**
-```bash
-# .git/hooks/pre-commit
-#!/bin/bash
-~/.claude/scripts/phi_scan.sh . --layer1-only || {
-  echo "PHI detected! Run 'source R/anonymize.R; anonymize_all_files()' first"
-  exit 1
-}
-```
-
-**Claude Code hook** (add to `.claude/settings.json`):
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "command": "~/.claude/hooks/phi-scan-hook.sh"
-      }
-    ]
-  }
-}
-```
-
-**Agent workflow:** Run before Step 4 (commit) in any project with PHI.
+Wire `phi_scan.sh` into git pre-commit hook (see Project Setup Checklist step 5).
 
 ## Container Isolation for PHI Processing (RECOMMENDED)
 
-When processing raw PHI data, SHOULD run inside a `--network=none` container via OrbStack. This prevents data exfiltration even if code has bugs.
-
-```bash
-# Process PHI in isolated container — no network, read-only source, writable output only
-docker run --rm \
-  --network=none \
-  --memory=4g \
-  -v "$(pwd):/pkg:ro" \
-  -v "$(pwd)/data/raw:/data/raw:ro" \
-  -v "$(pwd)/data/anonymized:/data/out" \
-  -w /pkg \
-  nixos/nix:latest bash -c '
-    nix-shell default.nix --run "Rscript -e \"source(\\\"R/anonymize.R\\\"); anonymize_all_files()\""
-  '
-```
-
-**What this guarantees:**
-- `--network=none`: no outbound connections (PHI cannot be sent anywhere)
-- `:ro` mounts: container cannot modify source code or raw data
-- Writable mount only for anonymized output directory
-- `--memory=4g`: prevents runaway processes from consuming host memory
-
-**When to use:** Any script that reads raw patient data (not anonymized). Not needed for analysis of already-anonymized data.
+Process raw PHI in `docker run --network=none` container: read-only source mounts, writable output only. Prevents exfiltration even if code has bugs. Use for any script that reads raw patient data.
 
 ## Project Setup Checklist
 

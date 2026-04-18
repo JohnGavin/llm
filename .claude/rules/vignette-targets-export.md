@@ -120,39 +120,11 @@ For most R packages with data pipelines: **use pre-computed RDS**.
 
 ## Code Target Validation (MANDATORY)
 
-Code stored as character strings MUST be parse-validated inside the target:
-
-```r
-# R code targets: parse() validates syntax
-tar_target(readme_install_code, {
-  code <- paste("library(targets)", "tar_make()", sep = "\n")
-  parse(text = code)  # Fails pipeline if invalid R
-  code
-})
-
-# Bash code targets: bash -n validates syntax
-tar_target(readme_nix_code, {
-  code <- paste("chmod +x default.sh", "./default.sh", sep = "\n")
-  tf <- tempfile(fileext = ".sh")
-  writeLines(code, tf)
-  system2("bash", c("-n", tf), stderr = TRUE)  # Syntax check
-  code
-})
-```
-
-**Why:** A target that creates `paste("invalid R ...")` "passes" because `paste()` succeeds.
-The code is never parsed. Without validation, broken code ships to the website.
+Code stored as character strings MUST be parse-validated: R targets call `parse(text = code)`, bash targets call `system2("bash", c("-n", tf))`. Without this, broken code ships to the website.
 
 ## _targets.R Parse Check (MANDATORY — ALL PROJECTS)
 
-Before every commit that touches `_targets.R` or any `R/tar_plans/*.R` file:
-```r
-parse("_targets.R")  # Must succeed or commit is blocked
-```
-
-**Why (2026-03-24):** A remote change added `plan_pkgdown()` without comma to `_targets.R`.
-`tar_make()` failed with "unexpected symbol". No target could run. The broken `_targets.R`
-was pushed and went undetected because nothing validated it.
+Before every commit touching `_targets.R` or `R/tar_plans/*.R`: `parse("_targets.R")` must succeed.
 
 ## Common Violations
 
