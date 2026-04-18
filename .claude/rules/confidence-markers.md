@@ -1,3 +1,7 @@
+---
+paths: ["**/wiki/**"]
+---
+
 # Rule: Confidence Markers in wiki/
 
 ## When This Applies

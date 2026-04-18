@@ -1,3 +1,7 @@
+---
+paths: ["**/*.parquet", "**/huggingface*", "**/hf_*"]
+---
+
 # Rule: HuggingFace Dataset Upload
 
 ## When This Applies

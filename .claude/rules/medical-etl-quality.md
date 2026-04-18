@@ -1,3 +1,7 @@
+---
+paths: ["**/etl*", "**/medical*", "**/lab_*"]
+---
+
 # Rule: Medical Data ETL Quality Standards
 
 ## When This Applies

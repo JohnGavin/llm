@@ -1,3 +1,7 @@
+---
+paths: ["**/anonymi*", "**/phi_*", "**/medical*", "**/patient*"]
+---
+
 # Rule: Medical Data Anonymization (Generic)
 
 ## When This Applies

@@ -1,3 +1,7 @@
+---
+description: Never use cd && git compound commands — use git -C instead
+---
+
 # Rule: No `cd &&` Compound Commands
 
 ## When This Applies

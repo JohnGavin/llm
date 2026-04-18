@@ -1,3 +1,7 @@
+---
+description: Review GitHub wiki for stale content after major sessions
+---
+
 # Rule: Wiki Staleness Check After Major Sessions
 
 ## When This Applies

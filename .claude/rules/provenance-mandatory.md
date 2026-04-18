@@ -1,3 +1,7 @@
+---
+paths: ["**/wiki/**"]
+---
+
 # Rule: Provenance Mandatory in wiki/
 
 ## When This Applies
