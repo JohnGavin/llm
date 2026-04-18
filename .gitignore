@@ -93,3 +93,4 @@ archive/
 finance/
 input.txt
 nohup.out
+.nix-build.lock

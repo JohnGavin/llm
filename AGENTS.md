@@ -15,7 +15,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Data Privacy:** PHI/confidential data NEVER to public repos without approval (renews each minor version).
 
-**Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump.
+**Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump. **NEVER ship `0.0.0.9000` to users.** Bump to `0.1.0` before first public deploy (GH Pages, pkgdown, vignette).
 
 **Session:** Start: read `CHANGELOG.md`, avoid failed approaches. End: commit -> append CHANGELOG -> push. **Commits:** After every meaningful unit. Never break tests. Git log = lab notes. Speed must not silence errors.
 
@@ -26,7 +26,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 **Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `/wiki-health` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`, `knowledge-base-wiki`.
-**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`, `provenance-mandatory`, `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`, `git-no-compound-cd`.
+**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`, `provenance-mandatory`, `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`, `git-no-compound-cd`, `look-ahead-bias-prevention`.
 
 **MCP r-btw — ZERO TOLERANCE:** NEVER call `btw_tool_run_r/pkg_test/pkg_check/pkg_coverage/pkg_document/pkg_load_all`. ALL R via `Bash("timeout N Rscript -e '...'")`. Safe: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*`. See `btw-timeouts` rule.
 
@@ -36,20 +36,21 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **DuckDB queries:** Use `duckplyr` (tidyverse syntax) instead of raw SQL strings where possible. Reserve SQL for complex operations not expressible in dplyr.
 
-## Agents (10)
+## Agents (11)
 
-| Agent | Use When |
-|-------|----------|
-| `critic` | Read-only adversarial review (cannot edit files) |
-| `fixer` | Apply fixes from critic reports (read-write, cannot self-approve) |
-| `r-debugger` | Debug R package issues (test failures, R CMD check) |
-| `targets-runner` | Run tar_make(), inspect pipeline state |
-| `reviewer` | Code review PRs for R package quality |
-| `nix-env` | Diagnose Nix shell problems, update deps |
-| `shiny-async-debugger` | Debug async/crew/ExtendedTask issues |
-| `data-quality-guardian` | Data validation, pointblank |
-| `data-engineer` | SQL transforms, dbt pipelines |
-| `shinylive-builder` | Build/test Shinylive WASM vignettes |
+| Agent | Model | Use When |
+|-------|-------|----------|
+| `quick-fix` | haiku | Typos, renames, version bumps, obvious syntax fixes |
+| `critic` | sonnet | Read-only adversarial review (cannot edit files) |
+| `fixer` | sonnet | Apply fixes from critic reports (read-write, cannot self-approve) |
+| `r-debugger` | sonnet | Debug R package issues (test failures, R CMD check) |
+| `targets-runner` | sonnet | Run tar_make(), inspect pipeline state |
+| `reviewer` | sonnet | Code review PRs for R package quality |
+| `nix-env` | sonnet | Diagnose Nix shell problems, update deps |
+| `shiny-async-debugger` | sonnet | Debug async/crew/ExtendedTask issues |
+| `data-quality-guardian` | sonnet | Data validation, pointblank |
+| `data-engineer` | sonnet | SQL transforms, dbt pipelines |
+| `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
 
 ## Skills by Category (61)
 
@@ -142,24 +143,13 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 ## Commands (11)
 
-| Command | Purpose |
-|---------|---------|
-| `/session-start` | Initialize session (check env, status, config audit) |
-| `/session-end` | End session (commit, push, summary) |
-| `/bye` | Alias for /session-end |
-| `/check` | Run document(), test(), check() |
-| `/pr-status` | Check PR and CI status |
-| `/cleanup` | Review and simplify work |
-| `/issue-triage` | List issues by difficulty |
-| `/new-issue` | Create issue with branch |
-| `/triage` | Quick issue analysis |
-| `/write-alt-text` | Generate fig-alt for all vignette figures |
-| `/hi` | Alias for /session-start |
+`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/write-alt-text`
 
-## Rules (29)
+## Rules (32)
 
 | Rule | Enforces |
 |------|----------|
+| `auto-delegation` | Route tasks to cheapest capable model tier |
 | `architecture-planning` | Mandatory planning phase before coding |
 | `btw-timeouts` | MCP tool timeout limits |
 | `ctx-yaml-cache` | Context YAML caching |
@@ -170,6 +160,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `duckdb-security` | DuckDB connection hardening, file/network access, resource limits |
 | `duckdplyr-not-sql` | Use duckdplyr not raw SQL |
 | `glossary-management` | Glossary term management |
+| `look-ahead-bias-prevention` | QA target for backtest temporal separation, IS/OOS divergence detection |
 | `module-isolation` | Module isolation patterns |
 | `shiny-module-data-sharing` | Module data-sharing patterns and anti-patterns |
 | `shinylive-webr-nonblocking` | JS round-trip batching for non-blocking WebR/Shinylive long ops |
@@ -178,7 +169,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `quarto-vignette-evidence` | Claims require evidence, content quality rules |
 | `quarto-vignette-format` | Vignette format rules (headings, tables, code-as-targets, dashboards) |
 | `quarto-vignette-layout` | Full-width CSS, dashboard standards, code-folding, broken links |
-| `quarto-vignette-validation` | Post-publish validation, missing evidence, dark mode |
+| `quarto-vignette-validation` | Post-publish validation, missing evidence, dark mode, build-info footer |
 | `reproducible-visualization` | Plot reproducibility via targets |
 | `safe-deletion` | Pre-deletion verification: size, age, diff, user approval for >1MB |
 | `statistical-reporting` | Effect sizes, multiple comparisons, precision, exploratory vs confirmatory |
@@ -189,19 +180,12 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `visualization-diagrams` | Mermaid/flowchart diagram standards, arrow styling, Plotly theme |
 | `visualization-standards` | Tufte/Gelman principles + caption standards |
 | `website-index-update` | Add project to johngavin.github.io on major version |
+| `wiki-staleness-check` | Review GitHub wiki for stale content after major sessions |
 
 ## Hooks (8 registered, 4 scripts)
 
-| Hook | Event |
-|------|-------|
-| `session_init.sh` | SessionStart — env, mappings, sizes, skill audit |
-| `context_survival.sh restore` | SessionStart(compact\|resume) |
-| `context_survival.sh save` | PreCompact |
-| `file_protection.sh` | PreToolUse(Edit\|Write) — blocks NAMESPACE/man/, warns config |
-| `context_monitor.sh` | PostToolUse(Bash\|Task) — context % warnings |
-| `session_stop.sh` | Stop — memory health, uncommitted config, decision log |
+`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Scripts: `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh`.
 
-**Scripts** (`.claude/scripts/`, manually callable): `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh`
+## Memory (8 files)
 
-## Memory Files (8)
-`MEMORY.md` (index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `feedback_safe-deletion.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`
+`MEMORY.md`(index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `feedback_safe-deletion.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`
