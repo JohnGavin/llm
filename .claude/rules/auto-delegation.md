@@ -28,7 +28,7 @@ If the task matches a named agent's trigger, MUST delegate:
 | "run tests", "fix test failure" | `r-debugger` |
 | "review this PR/code" | `reviewer` |
 | "nix shell broken", "package missing" | `nix-env` |
-| "pipeline failed", "tar_make" | `targets-runner` |
+| "pipeline failed", "tar_make", "build targets" | `targets-runner` (wraps in `nix develop --command` for T lang projects) |
 | "shinylive", "WASM build" | `shinylive-builder` |
 | "async", "ExtendedTask", "crew bug" | `shiny-async-debugger` |
 | "validate data", "pointblank" | `data-quality-guardian` |
