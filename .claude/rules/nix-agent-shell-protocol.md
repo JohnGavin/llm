@@ -60,6 +60,40 @@ Agent(subagent_type="r-debugger",
               nix-shell /Users/johngavin/.../mycare/default.nix --run 'Rscript -e devtools::test()'")
 ```
 
+## Regenerating default.nix (NEVER Manual)
+
+When a project's setup changes (new R or Python package needed), the agent
+MUST regenerate the nix environment automatically. The sequence is:
+
+```
+default.R  →  default.nix  →  nix-shell (via default.sh)
+   (rix)       (generated)       (enters shell)
+```
+
+1. **Edit `default.R`** — add the new package to `r_pkgs` or `py_pkgs`
+2. **Coordinate with DESCRIPTION** — if it's an R package project, the same
+   package must be added to `DESCRIPTION` (Imports/Suggests) AND `default.R`
+3. **Run `Rscript default.R`** — this regenerates `default.nix` via `rix::rix()`
+   Must be run from the rix.setup shell (which has `rix` installed):
+   ```bash
+   nix-shell ~/docs_gh/rix.setup/default.nix --run "Rscript /path/to/project/default.R"
+   ```
+4. **Verify** — enter the new shell and confirm the package loads:
+   ```bash
+   nix-shell /path/to/project/default.nix --run "Rscript -e 'library(newpkg)'"
+   ```
+
+**This is ALWAYS done by an agent** (typically `nix-env` agent or the
+orchestrator). The user never runs these commands manually. The agent
+delegates to an appropriate subagent with the correct skill.
+
+**Multi-language projects:** If the project also has a `pyproject.toml` or
+similar, the agent must update BOTH the nix config AND the language-specific
+config file, then regenerate the environment. Check for:
+- `DESCRIPTION` (R packages)
+- `pyproject.toml` / `requirements.txt` (Python)
+- `default.R` (nix generation source)
+
 ## Why This Architecture
 
 1. **The user never waits** for project-specific nix-shell entry (5-10s overhead)
