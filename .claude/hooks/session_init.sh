@@ -367,6 +367,39 @@ phase_worktrees() {
     wt_count=$((wt_count + 1))
   done < <(git worktree list 2>/dev/null || true)
 
+  # 7d: Scan for convention-named sibling worktree dirs
+  local repo_name parent_dir
+  repo_name=$(basename "$(pwd)")
+  parent_dir=$(dirname "$(pwd)")
+  for suffix in sonnet haiku; do
+    local sibling="$parent_dir/${repo_name}-${suffix}"
+    if [ -d "$sibling" ]; then
+      local sib_kb sib_mb sib_age
+      sib_kb=$(du -sk "$sibling" 2>/dev/null | cut -f1)
+      sib_mb=$(( (sib_kb + 512) / 1024 ))
+      # Age: newest file modification
+      sib_age=$(find "$sibling" -maxdepth 2 -type f -newer "$sibling/.git" 2>/dev/null | head -1)
+      echo "  Sibling worktree: ${repo_name}-${suffix} (${sib_mb}MB)"
+      [ -z "$sib_age" ] && echo "    No recent changes — candidate for cleanup"
+      wt_count=$((wt_count + 1))
+    fi
+  done
+  # Also check for feat-*/fix-* pattern
+  for sibling in "$parent_dir/${repo_name}"-feat-* "$parent_dir/${repo_name}"-fix-*; do
+    [ -d "$sibling" ] || continue
+    local sib_name sib_kb sib_mb
+    sib_name=$(basename "$sibling")
+    sib_kb=$(du -sk "$sibling" 2>/dev/null | cut -f1)
+    sib_mb=$(( (sib_kb + 512) / 1024 ))
+    echo "  Sibling worktree: $sib_name (${sib_mb}MB)"
+    wt_count=$((wt_count + 1))
+  done
+
+  # 7e: Check for prunable worktrees (registered but dir missing)
+  local prunable
+  prunable=$(git worktree list --porcelain 2>/dev/null | grep -c "^prunable" || echo 0)
+  [ "$prunable" -gt 0 ] && echo "  Prunable worktrees: $prunable (run: git worktree prune)"
+
   [ "$wt_count" -eq 0 ] && echo "No worktrees found"
 }
 
@@ -472,7 +505,7 @@ ctx_part=$(echo "$r_output" | cut -d'|' -f1)
 runiverse_part=$(echo "$r_output" | cut -d'|' -f2)
 
 # Phase 7: Worktrees (detect context + stale)
-wt_output=$(phase_worktrees 2>/dev/null)
+wt_output=$(phase_worktrees 2>/dev/null) || true
 wt_count=0
 is_worktree="N"
 if echo "$wt_output" | grep -q "WORKTREE SESSION"; then
@@ -480,8 +513,10 @@ if echo "$wt_output" | grep -q "WORKTREE SESSION"; then
   # Show full worktree context to user
   echo "$wt_output" | grep -E "WORKTREE|WARN|INFO|Fix" || true
 fi
-if echo "$wt_output" | grep -qE "Agent worktrees|Git worktree:"; then
-  wt_count=$(echo "$wt_output" | grep -cE "worktree|Git worktree" || echo 0)
+if echo "$wt_output" | grep -qE "Agent worktrees|Git worktree:|Sibling worktree:|Prunable"; then
+  # Show worktree details
+  echo "$wt_output" | grep -E "Sibling|Prunable|Agent|Git worktree|cleanup" || true
+  wt_count=$(echo "$wt_output" | grep -cE "worktree:|Prunable" || echo 0)
 fi
 
 # Phase 8: roborev
