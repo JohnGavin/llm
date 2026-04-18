@@ -50,6 +50,12 @@ if [ -x "$AUDIT_WRAPPER" ]; then
   timeout 15 "$AUDIT_WRAPPER" 2>/dev/null || true
 fi
 
+# ── Model mix log ────────────────────────────────────────────────────
+MIX_SCRIPT="$HOME/.claude/scripts/model_mix_log.sh"
+if [ -x "$MIX_SCRIPT" ]; then
+  timeout 35 "$MIX_SCRIPT" >/dev/null 2>&1 || true
+fi
+
 # ── Decision log reminder ─────────────────────────────────────────────
 if [ -f "$CURRENT_WORK" ]; then
   if ! grep -q "### Decisions" "$CURRENT_WORK" 2>/dev/null; then
