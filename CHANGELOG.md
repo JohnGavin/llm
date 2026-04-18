@@ -8,18 +8,22 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 ### Completed
 - **Cost optimization:** Auto-delegation rule with mandatory model routing triggers — opus for architecture only, sonnet for all named agents, haiku for single-file edits
-- **Burn-rate alerts (#60):** `burn_rate_check.sh` tracks weekly spend vs cap ($250), fires WARN/CRITICAL at 80%/95% projected, integrated into session_init + context_monitor
-- **Worktree support (#61 steps 1-4):** session_init detects worktree context, warns about _targets/ conflicts, suggests sonnet worktree when budget critical
+- **Burn-rate alerts (#60):** `burn_rate_check.sh` tracks weekly spend vs cap ($500), fires WARN/CRITICAL at 80%/95% projected, integrated into session_init + context_monitor
+- **Worktree support (#61 steps 1-5):** session_init detects worktree context, warns about _targets/ conflicts, suggests sonnet worktree when budget critical, scans sibling dirs + prunable worktrees
 - **Agent model pinning:** All 12 agents now have explicit `model:` frontmatter (was 9/10). Restored `quick-fix` haiku agent. Added `data-engineer` + `data-quality-guardian` as sonnet.
-- **Nix lock guard:** `default.sh` PID-based lockfile prevents concurrent nix-build contention (root cause of "hanging" build)
+- **Nix lock guard:** `default.sh` PID-based lockfile wraps only nix-build step — second tab waits for completion instead of erroring
 - **GNU grep portability:** Fixed 8 `grep "foo\|bar"` → `grep -E "foo|bar"` in session_init.sh (BRE alternation fails silently in GNU grep from Nix)
 - **Backtest rules:** execution-delay-sensitivity, position-sizing-guardrails, risk-regime-evaluation, backtest-robustness
 - **YAML frontmatter:** Added to all 14 rules that were missing it (56/56 now complete)
-- **Worktree cleanup (#61 step 5):** session_init scans sibling dirs (repo-sonnet, repo-feat-*), prunable worktrees
+- **Oversized rules:** Shrunk 8 of 9 rules over 150 lines (extracted code to 3 skill reference files, trimmed 5 rules). 1 remains at 151 (robust-statistics, within tolerance).
+- **Weekly cap calibration:** Analyzed 8 weeks of ccusage data — set `CLAUDE_WEEKLY_CAP_USD=500` (weeks <$700 no lockout, >$1000 always lockout)
+- **Model mix tracking:** `model_mix_log.sh` logs weekly opus/sonnet/haiku % to CSV, wired into session_stop.sh
+- **Nix lock scope fix:** Multiple iTerm tabs can now run default.sh — lock wraps only nix-build, second tab waits
 
 ### Failed Approaches
 - `grep -q "CRITICAL\|WARN"` silently failed under GNU grep (Nix) — the `\|` BRE alternation works in BSD grep but not GNU. Caused burn-rate TIP and WARN aggregation to not fire. Diagnosed via step-by-step `set -euo pipefail` debugging. Fix: always use `grep -E` for alternation.
 - `local` keyword inside top-level `if` block in session_init.sh caused unbound variable error — `local` is function-scoped only in bash.
+- Concurrent nix-build from two iTerm tabs caused store lock contention (both appeared hung). Fixed by killing duplicate, then redesigning lock to wrap only nix-build step.
 
 ### Accuracy / Metrics
 - April 1-17 usage: opus=86% of output ($2,688), sonnet=6% ($18), haiku=8% ($9). Total $2,715.
@@ -28,12 +32,12 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - 12/12 agents have model frontmatter (was 9/10)
 - AGENTS.md: 191 lines (under 200 limit)
 - Issues created: #60 (burn-rate), #61 (worktrees)
+- Rules: 55/56 under 150 lines (robust-statistics at 151)
 
 ### Known Limitations
-- `CLAUDE_WEEKLY_CAP_USD=250` is a guess — needs calibration after next lockout observation
-- 14 rules still missing YAML frontmatter
-- Worktree step 5 (stale worktree cleanup for `~/docs_gh/<repo>-*`) not yet implemented
 - Auto-delegation is rule-based (advisory to orchestrator), not enforced by hooks — orchestrator can still ignore it
+- Model mix tracking is observational — no automated alert if opus % stays high
+- Weekly cap is token-based internally, ccusage USD is an estimate
 
 ## 2026-03-31 – 2026-04-01
 
