@@ -1,102 +1,87 @@
 # Subagent Delegation Rules
 
-Detailed guidance on when and how to use subagents effectively.
+When and how to use subagents effectively, with automatic model routing.
 
-## Available Agents
+## Auto-Delegation: Mandatory Triggers
 
-### Built-in (from Task tool)
-- `general-purpose` - Multi-step research and execution
-- `Explore` - Fast codebase exploration (use thoroughness: "quick"/"medium"/"very thorough")
-- `Plan` - Fast codebase exploration
-- `claude-code-guide` - Claude Code/SDK documentation
-- `statusline-setup` - Configure status line settings
+The orchestrator MUST delegate to the specified agent when any trigger matches.
+No judgment call needed — if the pattern matches, delegate.
 
-### Custom R Package Development
-- `planner` (opus/16k) - Architecture, design decisions
-- `verbose-runner` (sonnet/4k) - Tests, builds, checks
-- `quick-fix` (haiku/1k) - Simple edits < 5 lines
-- `r-debugger` (sonnet/8k) - Debug test/check failures
-- `reviewer` (sonnet/8k) - Code review
-- `nix-env` (sonnet/8k) - Nix environment issues
-- `targets-runner` (sonnet/8k) - Targets pipeline debugging
-- `shinylive-builder` (sonnet/8k) - WASM compilation
+### Haiku tier (`quick-fix`) — MUST delegate instead of doing in opus
 
-## Delegation Decision Tree
+| Trigger | Example |
+|---------|---------|
+| Single-file typo/rename | "fix the typo in R/utils.R" |
+| Version bump | "bump to 0.2.1" |
+| Add/remove an import or export | "add dplyr to Imports" |
+| Swap a string literal | "change 'foo' to 'bar' in line 42" |
+| Add a simple comment | "add roxygen for this param" |
+| Update a URL or path | "fix the broken link in README" |
+
+**Rule:** If the change touches 1 file, affects < 5 lines, and requires no
+reasoning about correctness, use `quick-fix` (haiku).
+
+### Sonnet tier (named agents) — MUST delegate
+
+| Trigger | Agent |
+|---------|-------|
+| `devtools::test()`, `devtools::check()`, `devtools::document()` | `r-debugger` or Bash with timeout |
+| Test/check failure diagnosis | `r-debugger` |
+| PR code review | `reviewer` |
+| Nix shell won't start, package missing | `nix-env` |
+| `tar_make()` failure or pipeline design | `targets-runner` |
+| Shinylive/WASM build or browser error | `shinylive-builder` |
+| Shiny async/crew/ExtendedTask bug | `shiny-async-debugger` |
+| Data validation, pointblank rules | `data-quality-guardian` |
+| DuckDB/dbt/SQL pipeline design | `data-engineer` |
+| Read-only adversarial review | `critic` |
+| Apply fixes from critic report | `fixer` |
+| Compile raw/ into wiki/ | `wiki-curator` |
+
+### Opus tier (orchestrator) — keep in main session
+
+| Pattern | Why opus |
+|---------|---------|
+| Multi-file architectural decisions | Cross-file reasoning |
+| Plan creation and approval | User interaction needed |
+| Synthesising results from multiple agents | Coordination |
+| Ambiguous requirements needing clarification | User dialogue |
+| Memory and config file updates | Session-level state |
+
+## Decision Flowchart
 
 ```
-Is it a simple check (file exists, symlink status)?
-├─ YES → Use direct tools (ls, cat, Read)
-└─ NO → Continue...
-   │
-   Will output be > 10 lines?
-   ├─ YES → Delegate to agent
-   └─ NO → Continue...
-      │
-      Is it R package build/test/check?
-      ├─ YES → verbose-runner
-      └─ NO → Continue...
-         │
-         Needs complex reasoning?
-         ├─ YES → planner
-         └─ NO → Do it directly
+Is it a direct tool call (Read, ls, grep)?
+├─ YES → Do it directly, no agent
+└─ NO
+   Is it a single-file, < 5 line, no-reasoning edit?
+   ├─ YES → quick-fix (haiku)
+   └─ NO
+      Does it match a named agent trigger above?
+      ├─ YES → That agent (sonnet)
+      └─ NO
+         Is output likely > 20 lines or needs deep analysis?
+         ├─ YES → general-purpose (sonnet) or Explore
+         └─ NO → Do it directly in opus
 ```
 
-## Common Patterns
+## Built-in Agents (from Agent tool)
 
-### ALWAYS Delegate
-- `devtools::check()` → verbose-runner
-- `devtools::test()` → verbose-runner
-- `devtools::build()` → verbose-runner
-- `btw_tool_pkg_*` → appropriate agent
-- `btw_tool_run_r` with complex code → verbose-runner
-- Debugging failures → r-debugger
-- Architecture decisions → planner
-- Code review → reviewer
+- `general-purpose` — multi-step research, code search
+- `Explore` — fast codebase exploration (quick/medium/very thorough)
+- `Plan` — architecture and implementation planning
+- `claude-code-guide` — Claude Code/SDK documentation
 
-### NEVER Delegate
-- `ls`, `cat`, `echo`, `pwd`
-- `Read`, `Write`, `Edit` tools
-- Simple `grep` or `find`
-- Checking if file/symlink exists
-- Reading < 10 lines
-- Simple one-liners
+## NEVER Delegate
 
-## Wrong vs Right Examples
-
-```r
-# WRONG - Delegating simple checks
-Task("Check symlink", "Run ls -la to verify symlink")  # ❌
-
-# RIGHT - Direct execution
-Bash("ls -la proj")  # ✅
-
-# WRONG - Direct btw tool for builds
-mcp__r-btw__btw_tool_run_r("devtools::check()")  # ❌
-
-# RIGHT - Delegate verbose operations
-Task(subagent_type="verbose-runner",
-     prompt="Run devtools::check()")  # ✅
-
-# WRONG - Wrong agent for task
-Task(subagent_type="quick-fix",
-     prompt="Debug test failures and fix")  # ❌
-
-# RIGHT - Appropriate agent
-Task(subagent_type="r-debugger",
-     prompt="Debug test failures")  # ✅
-```
+- `ls`, `cat`, `echo`, `pwd`, file existence checks
+- `Read`, `Write`, `Edit` tool calls
+- Simple `grep` / `Glob` lookups
+- Anything < 3 lines of output
 
 ## Key Principles
 
-1. **Context preservation** - Agents contain verbose output, return summaries
-2. **Model efficiency** - Use haiku for simple, opus for complex
-3. **Avoid delegation chains** - Don't delegate from delegated agents
-4. **Check first, delegate second** - Simple checks don't need agents
-
-## Red Flags (You're Over-Delegating)
-
-- Using agents for `ls`, `cat`, or file existence checks
-- Delegating < 5 line tasks to verbose-runner
-- Using planner for simple decisions
-- Chaining multiple agents for one task
-- Using agents to read files or check paths
+1. **Context preservation** — agents contain verbose output, return summaries
+2. **Parallel when independent** — multiple Agent calls in one message
+3. **No delegation chains** — agents don't spawn sub-agents
+4. **Check first** — simple checks don't need agents

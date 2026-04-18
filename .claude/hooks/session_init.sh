@@ -310,29 +310,64 @@ phase_r_universe() {
   [ -n "$result" ] && echo "$result" || echo "R-universe: parse error"
 }
 
-# ── Phase 7: Stale Worktrees ──────────────────────────────────────────
+# ── Phase 7: Worktree Context + Stale Worktrees ─────────────────────
 phase_worktrees() {
+  # 7a: Detect if THIS session is inside a worktree
+  local git_dir common_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || true
+  common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || true
+
+  if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+    # We are inside a worktree (git-dir != git-common-dir)
+    local branch wt_path main_path
+    branch=$(git branch --show-current 2>/dev/null || echo "detached")
+    wt_path=$(pwd)
+    main_path=$(cd "$common_dir/.." 2>/dev/null && pwd)
+    echo "WORKTREE SESSION: branch=$branch path=$wt_path (main=$main_path)"
+
+    # 7b: Warn about _targets/ store isolation
+    if [ -d "_targets" ]; then
+      echo "  WARN: _targets/ store exists in worktree — may conflict with main."
+      echo "  Fix: tar_config_set(store = '_targets_${branch}') in this worktree"
+    fi
+    if [ -d "$main_path/_targets" ]; then
+      echo "  INFO: Main repo has _targets/ — do NOT run tar_make() in both simultaneously"
+    fi
+  fi
+
+  # 7c: Scan for stale worktrees (both .claude/worktrees and git worktree list)
+  local wt_count=0
+
+  # Agent worktrees (.claude/worktrees/)
   local wt_dir=".claude/worktrees"
-  if [ ! -d "$wt_dir" ]; then
-    echo "No worktrees found"
-    return
+  if [ -d "$wt_dir" ]; then
+    local total_mb=0
+    for d in "$wt_dir"/*/; do
+      [ -d "$d" ] || continue
+      wt_count=$((wt_count + 1))
+      local size_kb
+      size_kb=$(du -sk "$d" 2>/dev/null | cut -f1)
+      local size_mb=$(( (size_kb + 512) / 1024 ))
+      total_mb=$((total_mb + size_mb))
+    done
+    [ "$wt_count" -gt 0 ] && echo "Agent worktrees: $wt_count dirs, ${total_mb}MB (safe-deletion rule applies)"
   fi
-  local count=0 total_mb=0
-  for d in "$wt_dir"/*/; do
-    [ -d "$d" ] || continue
-    count=$((count + 1))
-    local size_kb
-    size_kb=$(du -sk "$d" 2>/dev/null | cut -f1)
-    local size_mb=$(( (size_kb + 512) / 1024 ))
-    total_mb=$((total_mb + size_mb))
-    local name=$(basename "$d")
-    echo "  WARN: $name (${size_mb}MB) — review before deleting (see safe-deletion rule)"
-  done
-  if [ "$count" -gt 0 ]; then
-    echo "Stale worktrees: $count dirs, ${total_mb}MB total. DO NOT delete without verification."
-  else
-    echo "No worktrees found"
-  fi
+
+  # Git worktrees (git worktree list)
+  local git_wt_count=0
+  while IFS= read -r line; do
+    # Skip the main worktree (first line)
+    git_wt_count=$((git_wt_count + 1))
+    [ "$git_wt_count" -le 1 ] && continue
+    local wt_branch
+    wt_branch=$(echo "$line" | sed 's/.*\[//' | sed 's/\]//')
+    local wt_loc
+    wt_loc=$(echo "$line" | cut -d' ' -f1)
+    echo "  Git worktree: $wt_branch at $wt_loc"
+    wt_count=$((wt_count + 1))
+  done < <(git worktree list 2>/dev/null || true)
+
+  [ "$wt_count" -eq 0 ] && echo "No worktrees found"
 }
 
 # ── Phase 8: roborev Review Status ────────────────────────────────────
@@ -358,6 +393,14 @@ phase_roborev() {
   fi
 }
 
+# ── Phase 9: Weekly Burn Rate ─────────────────────────────────────────
+phase_burn_rate() {
+  local script="$HOME/.claude/scripts/burn_rate_check.sh"
+  if [ -x "$script" ]; then
+    timeout 45 "$script" full 2>/dev/null || echo "Burn rate: check failed"
+  fi
+}
+
 # ── Run all phases (compact output: pass=checkmark, warn/fail=detail) ──
 WARNINGS=""
 
@@ -367,20 +410,20 @@ echo "$phase_env_result" | grep -qi "active" && nix_ok="Y" || nix_ok="N"
 
 # Phase 2: Mappings (capture warnings)
 map_output=$(phase_mappings 2>/dev/null)
-if echo "$map_output" | grep -qi "mismatch\|WARN"; then
-  WARNINGS="${WARNINGS}$(echo "$map_output" | grep -i 'WARN\|MISMATCH') "
+if echo "$map_output" | grep -qiE "mismatch|WARN"; then
+  WARNINGS="${WARNINGS}$(echo "$map_output" | grep -iE 'WARN|MISMATCH') "
 fi
 
 # Phase 3: Sizes (capture warnings)
 size_output=$(phase_sizes 2>/dev/null)
-if echo "$size_output" | grep -qi "WARN\|FAIL"; then
-  WARNINGS="${WARNINGS}$(echo "$size_output" | grep -i 'WARN\|FAIL') "
+if echo "$size_output" | grep -qiE "WARN|FAIL"; then
+  WARNINGS="${WARNINGS}$(echo "$size_output" | grep -iE 'WARN|FAIL') "
 fi
 
 # Phase 4: Skill tokens
 skill_output=$(phase_skill_tokens 2>/dev/null)
-if echo "$skill_output" | grep -qi "WARNING\|OVER"; then
-  WARNINGS="${WARNINGS}$(echo "$skill_output" | grep -i 'WARNING\|OVER') "
+if echo "$skill_output" | grep -qiE "WARNING|OVER"; then
+  WARNINGS="${WARNINGS}$(echo "$skill_output" | grep -iE 'WARNING|OVER') "
 fi
 n_skills=$(echo "$skill_output" | grep -oE '[0-9]+ skills' | head -1)
 
@@ -428,36 +471,62 @@ r_output=$(timeout 15 Rscript -e '
 ctx_part=$(echo "$r_output" | cut -d'|' -f1)
 runiverse_part=$(echo "$r_output" | cut -d'|' -f2)
 
-# Phase 7: Worktrees
+# Phase 7: Worktrees (detect context + stale)
+wt_output=$(phase_worktrees 2>/dev/null)
 wt_count=0
-if [ -d ".claude/worktrees" ]; then
-  wt_count=$(find .claude/worktrees -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-  wt_count=$((wt_count - 1))
+is_worktree="N"
+if echo "$wt_output" | grep -q "WORKTREE SESSION"; then
+  is_worktree="Y"
+  # Show full worktree context to user
+  echo "$wt_output" | grep -E "WORKTREE|WARN|INFO|Fix" || true
+fi
+if echo "$wt_output" | grep -qE "Agent worktrees|Git worktree:"; then
+  wt_count=$(echo "$wt_output" | grep -cE "worktree|Git worktree" || echo 0)
 fi
 
 # Phase 8: roborev
 roborev_status=""
 if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
   rv_output=$(/usr/local/bin/roborev status 2>/dev/null) || true
-  if echo "$rv_output" | grep -q "running" 2>/dev/null; then
-    n_failed=$(/usr/local/bin/roborev list --status failed --limit 1 2>/dev/null | grep -c "^Job" || true) || true
+  if echo "$rv_output" | grep -qE "running" 2>/dev/null; then
+    n_failed=$(/usr/local/bin/roborev list --status failed --limit 1 2>/dev/null | grep -cE "^Job" || true) || true
     [ "${n_failed:-0}" -gt 0 ] && roborev_status="roborev:${n_failed}failed" || roborev_status="roborev:ok"
   else
     roborev_status="roborev:off"
   fi
 fi
 
+# Phase 9: Burn rate (run in background, use cache if available)
+burn_output=""
+burn_script="$HOME/.claude/scripts/burn_rate_check.sh"
+if [ -x "$burn_script" ]; then
+  burn_output=$(timeout 45 "$burn_script" compact 2>/dev/null) || burn_output="burn:err"
+fi
+
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
 summary="$summary | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
-[ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}STALE"
+[ "$is_worktree" = "Y" ] && summary="$summary | worktree:active"
+[ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}"
 [ -n "$roborev_status" ] && summary="$summary | $roborev_status"
+[ -n "$burn_output" ] && summary="$summary | $burn_output"
 echo "$summary"
 
 # Show warnings (only if any)
 if [ -n "$WARNINGS" ]; then
   echo "WARN: $(echo "$WARNINGS" | tr '\n' ' ' | sed 's/  */ /g' | head -c 200)"
+fi
+
+# Burn-rate-aware worktree suggestion
+if echo "${burn_output:-}" | grep -qE "CRITICAL|WARN"; then
+  if [ "$is_worktree" = "N" ]; then
+    _repo_name=$(basename "$(pwd)")
+    echo ""
+    echo "TIP: Budget pressure detected. To continue work at lower cost:"
+    echo "  git worktree add ../${_repo_name}-sonnet feat/current-task"
+    echo "  cd ../${_repo_name}-sonnet && claude --model sonnet"
+  fi
 fi
 
 # Background ctx_sync if missing packages detected

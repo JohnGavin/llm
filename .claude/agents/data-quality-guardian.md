@@ -1,6 +1,7 @@
 ---
 name: data-quality-guardian
 description: Expert in data validation, schema enforcement, and pointblank implementations.
+model: sonnet
 skills:
   - data-validation-pointblank
   - r-package-workflow

@@ -55,6 +55,22 @@
 PROJECT_PATH="/Users/johngavin/docs_gh/llm"
 GC_ROOT_PATH="$PROJECT_PATH/nix-shell-root"
 NIX_FILE="$PROJECT_PATH/default.nix"
+LOCK_FILE="$PROJECT_PATH/.nix-build.lock"
+
+# Prevent concurrent builds — two nix-builds on the same output cause lock contention
+if [ -f "$LOCK_FILE" ]; then
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if kill -0 "$LOCK_PID" 2>/dev/null; then
+        echo "ERROR: Another default.sh is already running (PID $LOCK_PID)."
+        echo "  If this is stale, run: rm $LOCK_FILE"
+        exit 1
+    else
+        echo "Removing stale lock (PID $LOCK_PID no longer running)."
+        rm -f "$LOCK_FILE"
+    fi
+fi
+echo $$ > "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
 
 # Debug mode: set DEBUG=true to enable verbose output
 DEBUG=${DEBUG:-false}

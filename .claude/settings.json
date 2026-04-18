@@ -1,6 +1,9 @@
 {
   "env": {
-    "MAX_THINKING_TOKENS": "1024"
+    "MAX_THINKING_TOKENS": "1024",
+    "CLAUDE_WEEKLY_CAP_USD": "250",
+    "CLAUDE_WEEK_START_DAY": "tuesday",
+    "CLAUDE_TIMEZONE": "Europe/Dublin"
   },
   "permissions": {
     "allow": [

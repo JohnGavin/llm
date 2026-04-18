@@ -1,6 +1,7 @@
 ---
 name: data-engineer
 description: Specialist in data pipeline architecture, SQL transformations, and dbt orchestration.
+model: sonnet
 skills:
   - data-engineering-dbt
   - data-wrangling-duckdb
