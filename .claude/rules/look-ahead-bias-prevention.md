@@ -188,6 +188,25 @@ tar_target(pnl_glm, simulate_pnl(value_bets_glm, ...))
 tar_target(oos_pnl, simulate_pnl(oos_validate_bets, ...))
 ```
 
+### Execution delay sensitivity (CHECK 5)
+
+Re-run P&L with 1-5 period delays. If alpha disappears at t+1, the
+edge is speed-dependent and may be impractical. See `execution-delay-sensitivity` rule.
+
+```r
+# CHECK 5: Alpha survives execution delay
+delays <- c(0, 1, 3, 5)
+delay_results <- purrr::map_dfr(delays, function(d) {
+  pnl <- evaluate_with_delay(predictions, odds, delay_periods = d)
+  tibble::tibble(delay = d, roi = pnl$roi, sharpe = pnl$sharpe)
+})
+checks$execution_delay <- list(
+  pass = delay_results$roi[delay_results$delay == 1] > delay_results$roi[1] * 0.5,
+  detail = sprintf("t+0 ROI: %.1f%%, t+1 ROI: %.1f%%",
+                    delay_results$roi[1], delay_results$roi[delay_results$delay == 1])
+)
+```
+
 ## In Commit Messages (experiment format)
 
 Every experiment commit MUST include the OOS metric alongside in-sample:
