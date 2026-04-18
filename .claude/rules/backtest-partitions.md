@@ -68,3 +68,7 @@ bind_rows(
 - `statistical-reporting` — report partition alongside every metric
 - `look-ahead-bias-prevention` — validation prevents peek-ahead
 - `quarto-vignette-evidence` — vignettes must state which partition
+- `backtest-robustness` — parameter sensitivity & regime testing
+- `position-sizing-guardrails` — sizing comparison & max risk per bet
+- `risk-regime-evaluation` — regime-conditional metrics
+- `execution-delay-sensitivity` — alpha decay & delayed execution
