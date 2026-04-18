@@ -57,21 +57,6 @@ GC_ROOT_PATH="$PROJECT_PATH/nix-shell-root"
 NIX_FILE="$PROJECT_PATH/default.nix"
 LOCK_FILE="$PROJECT_PATH/.nix-build.lock"
 
-# Prevent concurrent builds — two nix-builds on the same output cause lock contention
-if [ -f "$LOCK_FILE" ]; then
-    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
-    if kill -0 "$LOCK_PID" 2>/dev/null; then
-        echo "ERROR: Another default.sh is already running (PID $LOCK_PID)."
-        echo "  If this is stale, run: rm $LOCK_FILE"
-        exit 1
-    else
-        echo "Removing stale lock (PID $LOCK_PID no longer running)."
-        rm -f "$LOCK_FILE"
-    fi
-fi
-echo $$ > "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
-
 # Debug mode: set DEBUG=true to enable verbose output
 DEBUG=${DEBUG:-false}
 debug() { [ "$DEBUG" = "true" ] && echo "[DEBUG] $*"; }
@@ -178,15 +163,31 @@ echo -e "\n=== STEP 2: Build shell and create persistent GC root ==="
 echo "cachix use rstats-on-nix # BEFORE nix-build"
 cachix use rstats-on-nix
 
+# Lock only the nix-build step to prevent concurrent builds
+# (multiple tabs can run default.sh to enter the shell, but only one builds)
+if [ -f "$LOCK_FILE" ]; then
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if kill -0 "$LOCK_PID" 2>/dev/null; then
+        echo "Another nix-build is running (PID $LOCK_PID). Waiting for it to finish..."
+        while kill -0 "$LOCK_PID" 2>/dev/null; do sleep 2; done
+        echo "Build finished. Continuing..."
+    else
+        rm -f "$LOCK_FILE"
+    fi
+fi
+echo $$ > "$LOCK_FILE"
+
 echo "Starting nix-build '$NIX_FILE' ..."
 if ! time nix-build "$NIX_FILE" \
     -A shell \
     -o "$GC_ROOT_PATH" \
     --cores 8 \
     --quiet; then
+    rm -f "$LOCK_FILE"
     echo "ERROR: Step 2 failed - nix-build returned an error."
     exit 1
 fi
+rm -f "$LOCK_FILE"
 
 if [ ! -L "$GC_ROOT_PATH" ]; then
     echo "ERROR: Failed to build the Nix shell or create GC root at $GC_ROOT_PATH"
