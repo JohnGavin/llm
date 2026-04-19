@@ -36,7 +36,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **DuckDB queries:** Use `duckplyr` (tidyverse syntax) instead of raw SQL strings where possible. Reserve SQL for complex operations not expressible in dplyr.
 
-## Agents (11)
+## Agents (12)
 
 | Agent | Model | Use When |
 |-------|-------|----------|
@@ -51,8 +51,9 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `data-quality-guardian` | sonnet | Data validation, pointblank |
 | `data-engineer` | sonnet | SQL transforms, dbt pipelines |
 | `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
+| `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
 
-## Skills by Category (61)
+## Skills by Category (62)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
