@@ -2,11 +2,13 @@
 title: "From Nix Shells to Project Outputs"
 format:
   html:
-    toc: true
-    toc-depth: 2
+    toc: false
     page-layout: full
     code-fold: true
     embed-resources: false
+    theme:
+      dark: darkly
+      light: cosmo
 execute:
   echo: false
   warning: false
@@ -45,23 +47,19 @@ if (is.null(counts)) {
 }
 ```
 
+
 ## Software Layers
 
-::: {.panel-tabset}
-
-### Diagram
-
 ```{mermaid}
-%%| fig-cap: "Software stack from OS through Nix to project outputs. Each layer inherits the reproducibility guarantees of the layer below. [rix](https://docs.ropensci.org/rix/){target='_blank'} translates `default.R` into `default.nix`. [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://shikokuchuo.net/mirai/){target='_blank'} orchestrate computation. Source: `plan_vignette_closeread.R`."
-graph TD
-  OS["OS: macOS / Linux"]
-  Nix["Nix + rix<br/>Reproducible shells"]
-  Pkgs["R / Python packages<br/>Project-specific"]
-  Orch["targets + crew + mirai<br/>Pipeline orchestration"]
-  LLM["LLM harness<br/>Rules + Skills + Agents"]
-  Out["Outputs<br/>Vignettes, APIs, Reports"]
-  OS --> Nix --> Pkgs --> Orch --> LLM --> Out
+%%| fig-cap: "Software stack from OS through [Nix](https://nixos.org/){target='_blank'} to project outputs. [rix](https://docs.ropensci.org/rix/){target='_blank'} translates `default.R` into `default.nix`. [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://shikokuchuo.net/mirai/){target='_blank'} orchestrate computation."
+graph LR
+  OS["OS: macOS / Linux"] --> Nix["Nix + rix"] --> Pkgs["R / Python<br/>packages"]
+  Pkgs --> Orch["targets + crew<br/>+ mirai"]
+  Orch --> LLM["LLM harness"]
+  LLM --> Out["Outputs"]
 ```
+
+::: {.panel-tabset}
 
 ### How It Works
 
@@ -85,31 +83,20 @@ At the top, `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_ag
 
 ## LLM Harness
 
-::: {.panel-tabset}
-
-### Diagram
-
 ```{mermaid}
-%%| fig-cap: "[AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md){target='_blank'} is the entry point — a compressed 200-line file that Claude Code reads at session start. Source: `plan_vignette_closeread.R`."
+%%| fig-cap: "[AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md){target='_blank'} is the entry point — indexing rules, skills, agents, hooks, commands, and memory files."
 graph LR
-  A["AGENTS.md<br/>Entry point"]
-  R["Rules"]
-  S["Skills"]
-  G["Agents"]
-  H["Hooks"]
-  C["Commands"]
-  M["Memory"]
-  A --> R
-  A --> S
-  A --> G
-  A --> H
-  A --> C
-  A --> M
+  A["AGENTS.md<br/>Entry point"] --> R["Rules"]
+  A --> S["Skills"]
+  A --> G["Agents"]
+  A --> H["Hooks"]
+  A --> C["Commands"]
+  A --> M["Memory"]
 ```
 
-### Rules
+::: {.panel-tabset}
 
-**Rules** enforce constraints automatically based on file path globs in their YAML frontmatter.
+### Rules
 
 | Rule | Enforces |
 |------|----------|
@@ -122,20 +109,16 @@ graph LR
 
 ### Skills
 
-**Skills** provide deep knowledge on demand — invoked when the task matches their domain.
-
 | Category | Count | Examples |
 |----------|------:|---------|
-| R Package Dev | 12 | <a href="https://testthat.r-lib.org/" target="_blank">testthat</a> patterns, <a href="https://lifecycle.r-lib.org/" target="_blank">lifecycle</a>, <a href="https://rlang.r-lib.org/" target="_blank">rlang</a> |
-| Data & Analysis | 8 | <a href="https://rstudio.github.io/pointblank/" target="_blank">pointblank</a> validation, EDA, modelling |
+| R Package Dev | 12 | <a href="https://testthat.r-lib.org/" target="_blank">testthat</a>, <a href="https://lifecycle.r-lib.org/" target="_blank">lifecycle</a>, <a href="https://rlang.r-lib.org/" target="_blank">rlang</a> |
+| Data & Analysis | 8 | <a href="https://rstudio.github.io/pointblank/" target="_blank">pointblank</a>, EDA, modelling |
 | Targets & Pipelines | 4 | Pipeline spec, vignettes, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> ops |
 | Shiny & Web | 7 | <a href="https://rstudio.github.io/bslib/" target="_blank">bslib</a>, async, <a href="https://posit-dev.github.io/r-shinylive/" target="_blank">Shinylive</a> |
 | Quarto & Docs | 6 | Websites, dashboards, alt text |
 | DevOps & CI | 3 | GitHub Actions, <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a> |
 
 ### Agents
-
-**Agents** are specialised subprocesses pinned to model tiers.
 
 | Agent | Model | Trigger |
 |-------|-------|---------|
@@ -172,34 +155,20 @@ graph LR
 
 ## irishbuoys Pipeline
 
-::: {.panel-tabset}
-
-### Pipeline DAG
-
 ```{mermaid}
-%%| fig-cap: "The [irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} R package monitors wave conditions at Marine Institute buoy stations. 19 plan files, ~294 [targets](https://docs.ropensci.org/targets/){target='_blank'}. Data from [ERDDAP](https://erddap.marine.ie/){target='_blank'}, stored in [DuckDB](https://duckdb.org/){target='_blank'}. Outputs: storm alerts via [blastula](https://pkgs.rstudio.com/blastula/){target='_blank'}, [bslib](https://rstudio.github.io/bslib/){target='_blank'} dashboards, static JSON API, [pkgdown](https://pkgdown.r-lib.org/){target='_blank'} vignettes."
-graph TD
-  acq["Data Acquisition<br/>ERDDAP API"]
-  val["Data Validation<br/>8 QA targets"]
-  qc["Quality Control<br/>Physical bounds"]
-  wave["Wave Analysis<br/>61 targets"]
-  joint["Joint Analysis<br/>Cross-station"]
-  sev["Spatial Extremes<br/>EVA models"]
-  pred["Predictions<br/>Forecasts"]
-  alert["Storm Alerts<br/>Threshold triggers"]
-  email["Email Report<br/>blastula"]
-  dash["Dashboard<br/>bslib + plotly"]
-  api["Static API<br/>JSON endpoints"]
-  site["pkgdown Site<br/>Vignettes"]
-  qa["QA Gates<br/>Bronze/Silver/Gold"]
-  acq --> val --> qc --> wave
-  wave --> joint --> sev
-  wave --> pred --> alert --> email
-  wave --> dash
-  wave --> api
-  joint --> site
-  qa --> site
+%%| fig-cap: "[irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} monitors wave conditions at Marine Institute buoy stations. 19 plan files, ~294 [targets](https://docs.ropensci.org/targets/){target='_blank'}. Data from [ERDDAP](https://erddap.marine.ie/){target='_blank'}, stored in [DuckDB](https://duckdb.org/){target='_blank'}. Outputs: [blastula](https://pkgs.rstudio.com/blastula/){target='_blank'} alerts, [bslib](https://rstudio.github.io/bslib/){target='_blank'} dashboards, JSON API, [pkgdown](https://pkgdown.r-lib.org/){target='_blank'} vignettes."
+graph LR
+  acq["ERDDAP<br/>API"] --> val["Validation<br/>8 targets"] --> qc["QC<br/>bounds"]
+  qc --> wave["Wave Analysis<br/>61 targets"]
+  wave --> joint["Joint<br/>Analysis"] --> sev["Spatial<br/>Extremes"]
+  wave --> pred["Predictions"] --> alert["Storm<br/>Alerts"] --> email["Email<br/>blastula"]
+  wave --> dash["Dashboard<br/>bslib"]
+  wave --> api["Static<br/>API"]
+  joint --> site["pkgdown<br/>Site"]
+  qa["QA Gates<br/>Bronze/Silver/Gold"] --> site
 ```
+
+::: {.panel-tabset}
 
 ### Plan Files
 
@@ -208,27 +177,19 @@ walkthrough <- safe_tar_read("vig_cr_pipeline_walkthrough")
 if (!is.null(walkthrough)) {
   knitr::kable(walkthrough,
     caption = paste0("irishbuoys pipeline: ", nrow(walkthrough),
-                     " plan files across data, QA, analysis, and output layers. ",
-                     "Each plan file is a modular targets plan sourced by _targets.R. ",
-                     "Source: plan_vignette_closeread.R."))
+                     " plan files across data, QA, analysis, and output layers."))
 }
 ```
 
 ### Simplified Flow
 
 ```{mermaid}
-%%| fig-cap: "Simplified view: [ERDDAP](https://erddap.marine.ie/){target='_blank'} fetch → 8 validation targets → 61 wave analysis targets → storm alerts + dashboard + [pkgdown](https://pkgdown.r-lib.org/){target='_blank'}. QA gates score Bronze/Silver/Gold before merge."
+%%| fig-cap: "Simplified view: [ERDDAP](https://erddap.marine.ie/){target='_blank'} fetch → validation → wave analysis → outputs. QA gates score Bronze/Silver/Gold before merge."
 graph LR
-  acq["ERDDAP fetch<br/>DuckDB store"]
-  val["8 validation<br/>targets"]
-  wave["61 wave<br/>analysis targets"]
-  alert["Storm alerts<br/>+ email"]
-  site["Dashboard<br/>+ pkgdown"]
-  qa["QA gates<br/>Bronze/Silver/Gold"]
-  acq --> val --> wave
-  wave --> alert
-  wave --> site
-  qa --> site
+  acq["ERDDAP"] --> val["8 validation"] --> wave["61 analysis"]
+  wave --> alert["Alerts + email"]
+  wave --> site["Dashboard + pkgdown"]
+  qa["QA gates"] --> site
 ```
 
 :::
@@ -236,20 +197,16 @@ graph LR
 
 ## FOCUS Framework
 
-::: {.panel-tabset}
-
-### Diagram
-
 ```{mermaid}
-%%| fig-cap: "FOCUS: how [Claude Code](https://claude.com/claude-code){target='_blank'} navigates a project. Find → Organize → Condense → Understand → Synthesize. Each phase maps to specific agents, rules, and skills."
+%%| fig-cap: "FOCUS: how [Claude Code](https://claude.com/claude-code){target='_blank'} navigates a project. Each phase maps to specific agents, rules, and skills."
 flowchart LR
-  F["Find<br/>Glob, Grep, Explore agent"]
-  O["Organize<br/>AGENTS.md, Plan agent"]
-  C["Condense<br/>Memory, ctx.yaml cache"]
-  U["Understand<br/>r-debugger, critic"]
-  Sy["Synthesize<br/>fixer, targets-runner"]
-  F --> O --> C --> U --> Sy
+  F["Find<br/>Glob, Grep, Explore"] --> O["Organize<br/>AGENTS.md, Plan"]
+  O --> C["Condense<br/>Memory, ctx.yaml"]
+  C --> U["Understand<br/>r-debugger, critic"]
+  U --> Sy["Synthesize<br/>fixer, targets-runner"]
 ```
+
+::: {.panel-tabset}
 
 ### Find
 
@@ -267,7 +224,6 @@ flowchart LR
 | <a href="https://github.com/JohnGavin/llm/blob/main/AGENTS.md" target="_blank">AGENTS.md</a> | Entry point — indexes all infrastructure |
 | Plan agent | Design implementation strategies |
 | `architecture-planning` rule | Mandatory brainstorming before coding |
-| `requirements-spec` skill | MUST/SHOULD/MAY for complex tasks |
 
 ### Condense
 
@@ -275,7 +231,6 @@ flowchart LR
 |-----------|------|
 | Memory files | Persist learnings across conversations |
 | `context_survival.sh` | Save state before compaction |
-| `ctx-yaml-cache` rule | Pre-compute package context |
 | CHANGELOG.md | Record completed work, failed approaches |
 
 ### Understand
@@ -285,7 +240,6 @@ flowchart LR
 | `r-debugger` agent | Hypothesis-Experiment-Conclusion loops |
 | `critic` agent | Read-only adversarial review |
 | `quality-gates` skill | Bronze/Silver/Gold scoring |
-| `systematic-debugging` rule | Scientific method for bugs |
 
 ### Synthesize
 
@@ -294,7 +248,6 @@ flowchart LR
 | `fixer` agent | Apply fixes from critic reports |
 | `targets-runner` agent | Execute pipelines |
 | `orchestrator-protocol` | Verify → review → fix → score loop |
-| `r-package-workflow` | 9-step PR workflow |
 
 :::
 
