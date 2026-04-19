@@ -429,12 +429,14 @@ controller$walk(
 
 ## Best Practices
 
-1. **Always set `seconds_idle`**: Prevents orphaned workers
-2. **Use `tasks_max` for long-running apps**: Mitigates memory leaks
-3. **Enable logging in production**: Essential for debugging
-4. **Monitor with autometric**: Catch resource issues early
-5. **Test locally first**: Before deploying to HPC/cloud
-6. **Set reasonable `crashes_max`**: Balance retries vs. giving up
+1. **MANDATORY: Always set `seconds_wall`**: Workers self-exit after this many seconds regardless of activity. Prevents orphans when controllers crash. Default: `seconds_wall = 3600` (1 hour). Without this, workers block forever in `nng_recv()` when the controller dies without graceful shutdown.
+2. **Always set `seconds_idle`**: Workers exit after N seconds of no tasks. Default: `seconds_idle = 120`.
+3. **Use `tasks_max` for long-running apps**: Mitigates memory leaks
+4. **Enable logging in production**: Essential for debugging
+5. **Monitor with autometric**: Catch resource issues early
+6. **Test locally first**: Before deploying to HPC/cloud
+7. **Set reasonable `crashes_max`**: Balance retries vs. giving up
+8. **Session cleanup**: `session_init.sh` Phase 10 auto-kills orphan crew workers at session start
 
 ## Resources
 
