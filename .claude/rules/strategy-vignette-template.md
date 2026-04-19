@@ -33,10 +33,26 @@ Explain the strategy to someone who has never seen it. Include:
 ### 3. Metrics (Table)
 
 - Transposed table (`hd_dt_wide()`) with Training / Testing / Validation / Full periods
-- Metrics: CAGR, Vol, Sharpe, Max DD, avg stocks per decile
+- **Risk metrics FIRST** (in this order): Max DD, CVaR, Vol
+- Then return metrics: CAGR, P&L (cumulative $), Sharpe (secondary)
+- Gross AND net (after 0.20% round-trip cost)
 - For stock-level: also show long-only vs long-short
 
-### 4. Pros & Cons
+### 4. Assumptions
+
+Per `backtesting-assumptions` rule:
+- Execution: close, costs, cash return, fees
+- Which defaults apply, which are overridden
+
+### 5. Robustness
+
+Per `robustness-testing` rule:
+- Alpha decay at t+1, t+2, t+5
+- Parameter sensitivity ±20%
+- Regime stress (VIX-based)
+- Bootstrap confidence interval on Sharpe
+
+### 6. Pros & Cons
 
 Table format:
 
