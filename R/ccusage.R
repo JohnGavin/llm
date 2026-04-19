@@ -962,10 +962,13 @@ show_max5_block_status <- function(cache_dir = NULL) {
 #' the last 10 blocks from the requested time period. Each block is tagged with a
 #' status emoji (white = low, green = moderate, yellow = warning, red = critical).
 #'
-#' @param days Number of days of history to show (default 3). Retrieves all blocks
+#' @param days Number of days of history to show (default 5). Retrieves all blocks
 #'   from the past N days.
 #' @param cache_dir Directory containing cached JSON files. If NULL, searches standard
 #'   package cache locations.
+#' @param grouped Logical. When TRUE (default), prints day headers with day totals
+#'   and indented blocks underneath. When FALSE, prints a flat list (legacy format).
+#'   Empty blocks (0 tokens) are always omitted.
 #'
 #' @return Invisibly returns a tibble with columns:
 #'   - `block_id`: Character, unique identifier (date_hour format)
@@ -979,11 +982,14 @@ show_max5_block_status <- function(cache_dir = NULL) {
 #'
 #' @examples
 #' \dontrun{
-#' # Show last 3 days of block history
+#' # Show last 5 days of block history (default, grouped)
 #' history <- get_block_history()
 #'
 #' # Show last 7 days of block history
 #' get_block_history(days = 7)
+#'
+#' # Show flat list (legacy format)
+#' get_block_history(grouped = FALSE)
 #' }
 #'
 #' @details
@@ -993,16 +999,24 @@ show_max5_block_status <- function(cache_dir = NULL) {
 #' - Yellow circle = 75-89% of limit used (warning)
 #' - Red circle = 90%+ of limit used (critical)
 #'
+#' When `grouped = TRUE`, each day is shown as a header line:
+#' ```
+#' 2026-04-19 (Saturday)                    Day total: 45,200 tokens (51%)
+#'   ⚪ 00:00–05:00    2,100 tokens   2%
+#'   🟢 05:00–10:00   18,400 tokens  21%
+#' ```
+#'
 #' @seealso
 #' - [show_max5_block_status()] to see current block status
 #' - [get_current_block_window()] to get the active block window
 #' - [calculate_block_usage()] for individual block calculations
 #'
 #' @keywords internal
-get_block_history <- function(days = 3, cache_dir = NULL) {
+get_block_history <- function(days = 5, cache_dir = NULL, grouped = TRUE) {
   # Validate inputs
   checkmate::assert_count(days, positive = TRUE)
   if (!is.null(cache_dir)) checkmate::assert_directory_exists(cache_dir)
+  checkmate::assert_flag(grouped)
 
   # Load blocks data
   blocks_data <- load_cached_ccusage("blocks", cache_dir = cache_dir)
@@ -1015,7 +1029,7 @@ get_block_history <- function(days = 3, cache_dir = NULL) {
   # Get cutoff time
   cutoff <- Sys.time() - days * 24 * 3600
 
-  # Filter to recent data
+  # Filter to recent data and summarise into 5-hour blocks
   recent_blocks <- blocks_data |>
     dplyr::filter(timestamp >= cutoff) |>
     dplyr::mutate(
@@ -1029,26 +1043,65 @@ get_block_history <- function(days = 3, cache_dir = NULL) {
       total_tokens = sum(totalTokens, na.rm = TRUE),
       .groups = "drop"
     ) |>
+    dplyr::filter(total_tokens > 0) |>
     dplyr::mutate(
       usage_pct = round((total_tokens / 88000) * 100),
       status = dplyr::case_when(
         usage_pct >= 90 ~ "\U0001F534",  # red circle
         usage_pct >= 75 ~ "\U0001F7E1",  # yellow circle
         usage_pct >= 50 ~ "\U0001F7E2",  # green circle
-        TRUE ~ "\U000026AA"  # white circle
+        TRUE ~ "\U000026AA"              # white circle
       )
     ) |>
-    dplyr::arrange(desc(block_date), desc(block_hour))
+    dplyr::arrange(dplyr::desc(block_date), dplyr::desc(block_hour))
 
-  if (nrow(recent_blocks) > 0) {
-    cli::cli_h3("Recent Block History")
+  if (nrow(recent_blocks) == 0) {
+    cli::cli_alert_info("No block activity in the last {days} days")
+    return(invisible(recent_blocks))
+  }
 
-    # Display as a simple table
-    for (i in seq_len(min(10, nrow(recent_blocks)))) {
+  cli::cli_h3("Recent Block History")
+
+  if (!grouped) {
+    # Legacy flat list
+    for (i in seq_len(nrow(recent_blocks))) {
       row <- recent_blocks[i, ]
       cli::cli_text(
-        "{row$status} {row$block_date} {sprintf('%02d:00', row$block_hour)}-{sprintf('%02d:00', (row$block_hour + 5) %% 24)}: {row$usage_pct}% ({scales::comma(row$total_tokens)} tokens)"
+        "{row$status} {row$block_date} {sprintf('%02d:00', row$block_hour)}-{sprintf('%02d:00', (row$block_hour + 5L) %% 24L)}: {row$usage_pct}% ({scales::comma(row$total_tokens)} tokens)"
       )
+    }
+  } else {
+    # Grouped output: day headers with subtotals, blocks indented below
+    day_totals <- recent_blocks |>
+      dplyr::group_by(block_date) |>
+      dplyr::summarise(
+        day_total = sum(total_tokens, na.rm = TRUE),
+        .groups = "drop"
+      ) |>
+      dplyr::mutate(day_pct = round((day_total / (88000 * 5)) * 100))
+
+    for (d in seq_len(nrow(day_totals))) {
+      day_row <- day_totals[d, ]
+      weekday_name <- weekdays(day_row$block_date)
+
+      # Day header line
+      cli::cli_text(
+        "{day_row$block_date} ({weekday_name})  Day total: {scales::comma(day_row$day_total)} tokens ({day_row$day_pct}%)"
+      )
+
+      # Blocks for this day, sorted ascending by hour
+      day_blocks <- recent_blocks |>
+        dplyr::filter(block_date == day_row$block_date) |>
+        dplyr::arrange(block_hour)
+
+      for (i in seq_len(nrow(day_blocks))) {
+        row <- day_blocks[i, ]
+        start_label <- sprintf("%02d:00", row$block_hour)
+        end_label <- sprintf("%02d:00", (row$block_hour + 5L) %% 24L)
+        cli::cli_text(
+          "  {row$status} {start_label}\u2013{end_label}  {format(scales::comma(row$total_tokens), width = 12)} tokens  {formatC(row$usage_pct, width = 3)}%"
+        )
+      }
     }
   }
 
