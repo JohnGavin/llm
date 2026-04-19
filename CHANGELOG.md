@@ -4,6 +4,36 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-04-19
+
+### Completed
+- **Infrastructure vignette (#64):** 5 mermaid diagrams with clickable nodes (38 click directives), 5 figcaptions, 11 tables, irishbuoys pipeline case study (19 plans, ~294 targets). Dark navbar. Live at gh-pages.
+- **Telemetry RDS export (#64):** 34 targets exported to `inst/extdata/vignettes/`. NULLs reduced 24→8. DT widgets stripped to data.frames (Nix path fix). safe_tar_read re-wraps as DT at render time.
+- **AGENTS.md sync (#68):** Counts updated (12a/62s/59r/14c/14m). `agents_md_audit.sh` wired into session_init Phase 10. Warns on drift at every session start.
+- **Day-grouped block activity (#65):** `get_block_history(days=5, grouped=TRUE)` — day headers with weekday + totals, blocks indented. 108 tests pass.
+- **Issues closed:** #46 (socviz — rules already cover it), #51 (qa_duckdb_determinism template), #52 (shiny-module rule already exists), #58 (skill examples audit), #60 (burn-rate done), #61 (worktrees done), #63 (nix skill/rule aligned), #64, #65, #66, #67, #68
+- **Link-check script:** `vignette_check.sh` extracts URLs from rendered HTML, curls each, reports 404s
+- **Broken links fixed:** duckplyr→tidyverse.org, mirai→CRAN, memory→AGENTS.md anchor
+
+### Failed Approaches
+- **Closeread format:** Mermaid diagrams failed on hidden scroll sections. Switched to dashboard format → diagrams failed on hidden pages. CSS force-visible hacks broke page navigation. Final fix: standard HTML with panel-tabset, diagrams outside tabs.
+- **Mermaid in dashboard tabs:** 7 failed attempts documented in #66. Root cause: mermaid-init.js renders on window.load, hidden elements get zero dimensions. No client-side fix works reliably. Solution: don't put diagrams in tabs.
+- **QA grep for "NULL":** Grepped for literal "NULL" but deployed HTML has `#&gt; NULL` (HTML-encoded). Also missed "unavailable" fallback text. Must grep for both patterns.
+- **DT widgets in RDS:** Exported DT::datatable objects contain hardcoded `/nix/store/` paths. CI fails with "path for html_dependency not found". Fix: strip to data.frame, re-wrap at render time.
+
+### Accuracy / Metrics
+- Issues: 11 closed this session (46,51,52,58,60,61,63,64,65,66,67,68), 6 remain open
+- Telemetry NULLs: 24→8 (remaining need arch fixes: Gemini DB, tar_meta bug, vctrs bug)
+- Infrastructure vignette: 0 NULLs, 0 broken links, 5 diagrams, 5 captions
+- AGENTS.md: fully synced with audit hook
+- Tests: 108 passing (ccusage)
+
+### Known Limitations
+- 8 telemetry NULLs remain: vig_gemini_* (no DB), vig_pipeline_* (tar_meta arch issue), vig_pred_* (vctrs bug)
+- Backtesting agent not yet created (portfolio-level design documented in #68 comment)
+- No automated post-deploy link check in CI (vignette_check.sh exists but not wired into workflow)
+- Mermaid diagrams inside panel-tabset tabs still won't render (by design — kept outside tabs)
+
 ## 2026-04-17 – 2026-04-18
 
 ### Completed
