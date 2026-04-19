@@ -94,3 +94,9 @@ finance/
 input.txt
 nohup.out
 .nix-build.lock
+
+**/*.quarto_ipynb
+
+# Explorations: track conventions doc only, not experimental content
+explorations/*
+!explorations/CONVENTIONS.md

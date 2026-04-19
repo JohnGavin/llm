@@ -52,7 +52,7 @@ safe_tar_read <- function(name) {
       return(obj)
     }
   }
-  NULL
+  invisible(NULL)
 }
 ```
 

@@ -395,7 +395,11 @@ plan_vignette_outputs <- function() {
       vig_pipeline_summary,
       {
         tryCatch({
-          meta <- targets::tar_meta()
+          # tar_meta() cannot be called inside tar_make() — use callr subprocess
+          meta <- callr::r(function() {
+            setwd(here::here())
+            targets::tar_meta()
+          }, error = "error")
           if (is.null(meta) || nrow(meta) == 0) return(NULL)
 
           # Plan files
@@ -447,7 +451,7 @@ plan_vignette_outputs <- function() {
           )
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
-      packages = c("dplyr", "tibble", "targets"),
+      packages = c("dplyr", "tibble", "targets", "callr"),
       cue = tar_cue(mode = "always")
     ),
 
