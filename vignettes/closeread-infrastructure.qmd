@@ -7,6 +7,30 @@ format:
       dark: darkly
       light: cosmo
     embed-resources: false
+    include-in-header:
+      - text: |
+          <style id="mermaid-render-fix">
+          /* Force all tab panes visible during mermaid render (hidden visually) */
+          .tab-pane { display: block !important; visibility: hidden; height: 0; overflow: hidden; }
+          </style>
+          <style>
+          /* Hide outer website navbar — dashboard has its own nav */
+          #quarto-header { display: none !important; }
+          /* Reduce dashboard title font */
+          .navbar-brand .navbar-title { font-size: 0.85em !important; }
+          /* Full-screen mode: fill entire viewport */
+          .bslib-full-screen-enter + .bslib-full-screen { z-index: 9999 !important; }
+          body.bslib-full-screen-mode .navbar { display: none !important; }
+          </style>
+          <script>
+          // Remove the CSS override after mermaid finishes rendering (2s)
+          window.addEventListener('load', function() {
+            setTimeout(function() {
+              var fix = document.getElementById('mermaid-render-fix');
+              if (fix) fix.remove();
+            }, 2000);
+          });
+          </script>
 execute:
   echo: false
   warning: false
@@ -46,59 +70,6 @@ if (is.null(counts)) {
 }
 ```
 
-<script>
-// Quarto's mermaid-init.js renders on window.load, but dashboard tabs/pages
-// hide content. SVGs rendered while hidden get zero dimensions.
-// Fix: after initial render, find any zero-width SVGs and re-render them
-// when their container becomes visible.
-window.addEventListener('load', function() {
-  // Wait for Quarto's mermaid rendering to finish
-  setTimeout(function() {
-    // Store original mermaid source before it's replaced
-    // (Quarto already replaced <pre> with <svg>, but we can re-render)
-
-    function fixMermaidSvgs() {
-      document.querySelectorAll('svg.mermaid-js').forEach(function(svg) {
-        var rect = svg.getBoundingClientRect();
-        // If SVG has zero or very small dimensions, it was rendered while hidden
-        if (rect.width < 10 || rect.height < 10) {
-          // Force a reflow by temporarily making parent visible
-          var parent = svg.closest('.tab-pane');
-          if (parent && !parent.classList.contains('active')) {
-            // Temporarily show the pane to get correct dimensions
-            parent.style.display = 'block';
-            parent.style.visibility = 'hidden';
-            parent.style.position = 'absolute';
-
-            // Get the viewBox and set explicit dimensions
-            var vb = svg.getAttribute('viewBox');
-            if (vb) {
-              var parts = vb.split(' ');
-              if (parts.length === 4) {
-                svg.setAttribute('width', parts[2] + 'px');
-                svg.setAttribute('height', parts[3] + 'px');
-                svg.style.maxWidth = '100%';
-              }
-            }
-
-            parent.style.display = '';
-            parent.style.visibility = '';
-            parent.style.position = '';
-          }
-        }
-      });
-    }
-
-    // Run fix after Quarto mermaid init completes
-    fixMermaidSvgs();
-
-    // Also fix on tab/page switch
-    document.addEventListener('shown.bs.tab', function() {
-      setTimeout(fixMermaidSvgs, 100);
-    });
-  }, 500);
-});
-</script>
 
 # Software Layers
 
