@@ -1,46 +1,12 @@
 ---
 title: "From Nix Shells to Project Outputs"
 format:
-  dashboard:
-    orientation: rows
-    theme:
-      dark: darkly
-      light: cosmo
+  html:
+    toc: true
+    toc-depth: 2
+    page-layout: full
+    code-fold: true
     embed-resources: false
-    include-in-header:
-      - text: |
-          <style id="mermaid-render-fix">
-          /* Force all tab panes to have layout during mermaid render.
-             visibility:hidden preserves layout; position:absolute + offscreen
-             prevents flash of unstyled content. height:auto ensures mermaid
-             can measure text dimensions via getBBox(). */
-          .tab-pane:not(.active) {
-            display: block !important;
-            visibility: hidden !important;
-            position: absolute !important;
-            left: -9999px !important;
-            width: 100% !important;
-            height: auto !important;
-          }
-          </style>
-          <style>
-          /* Hide outer website navbar — dashboard has its own nav */
-          #quarto-header { display: none !important; }
-          /* Reduce dashboard title font */
-          .navbar-brand .navbar-title { font-size: 0.85em !important; }
-          /* Full-screen mode: fill entire viewport */
-          .bslib-full-screen-enter + .bslib-full-screen { z-index: 9999 !important; }
-          body.bslib-full-screen-mode .navbar { display: none !important; }
-          </style>
-          <script>
-          // Remove the CSS override after mermaid finishes rendering (2s)
-          window.addEventListener('load', function() {
-            setTimeout(function() {
-              var fix = document.getElementById('mermaid-render-fix');
-              if (fix) fix.remove();
-            }, 2000);
-          });
-          </script>
 execute:
   echo: false
   warning: false
@@ -50,7 +16,6 @@ execute:
 ```{r setup}
 #| include: false
 
-# Read target with RDS fallback (CI has no targets store)
 safe_tar_read <- function(name) {
   store <- tryCatch({
     owd <- setwd(here::here())
@@ -80,16 +45,14 @@ if (is.null(counts)) {
 }
 ```
 
+## Software Layers
 
-# Software Layers
+::: {.panel-tabset}
 
-## Row
-
-### {.tabset}
-
-#### Layer Diagram
+### Diagram
 
 ```{mermaid}
+%%| fig-cap: "Software stack from OS through Nix to project outputs. Each layer inherits the reproducibility guarantees of the layer below. [rix](https://docs.ropensci.org/rix/){target='_blank'} translates `default.R` into `default.nix`. [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://shikokuchuo.net/mirai/){target='_blank'} orchestrate computation. Source: `plan_vignette_closeread.R`."
 graph TD
   OS["OS: macOS / Linux"]
   Nix["Nix + rix<br/>Reproducible shells"]
@@ -100,11 +63,7 @@ graph TD
   OS --> Nix --> Pkgs --> Orch --> LLM --> Out
 ```
 
-::: {.card-footer}
-Software stack from OS through <a href="https://nixos.org/" target="_blank">Nix</a> to project outputs. Each layer inherits the reproducibility guarantees of the layer below. <a href="https://docs.ropensci.org/rix/" target="_blank">rix</a> translates `default.R` into `default.nix`. <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a>, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a>, and <a href="https://shikokuchuo.net/mirai/" target="_blank">mirai</a> orchestrate computation. Source: `R/tar_plans/plan_vignette_closeread.R`.
-:::
-
-#### How It Works
+### How It Works
 
 ::: {.callout-note}
 ## Nix + rix
@@ -121,16 +80,17 @@ Above Nix sit the project-specific R and Python packages. <a href="https://docs.
 At the top, `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents, and `r counts$n_memory` memory files guide <a href="https://claude.com/claude-code" target="_blank">Claude Code</a> through finding, organising, and synthesising project work.
 :::
 
+:::
 
-# LLM Harness
 
-## Row
+## LLM Harness
 
-### {.tabset}
+::: {.panel-tabset}
 
-#### Harness Diagram
+### Diagram
 
 ```{mermaid}
+%%| fig-cap: "[AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md){target='_blank'} is the entry point — a compressed 200-line file that Claude Code reads at session start. Source: `plan_vignette_closeread.R`."
 graph LR
   A["AGENTS.md<br/>Entry point"]
   R["Rules"]
@@ -147,11 +107,7 @@ graph LR
   A --> M
 ```
 
-::: {.card-footer}
-<a href="https://github.com/JohnGavin/llm/blob/main/AGENTS.md" target="_blank">AGENTS.md</a> is the entry point — a compressed 200-line file indexing `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents, `r counts$n_hooks` hooks, `r counts$n_commands` commands, and `r counts$n_memory` memory files. Source: `R/tar_plans/plan_vignette_closeread.R`.
-:::
-
-#### Rules
+### Rules
 
 **Rules** enforce constraints automatically based on file path globs in their YAML frontmatter.
 
@@ -164,7 +120,7 @@ graph LR
 | `verification-before-completion` | No claims without fresh evidence |
 | `look-ahead-bias-prevention` | Temporal separation in backtests |
 
-#### Skills
+### Skills
 
 **Skills** provide deep knowledge on demand — invoked when the task matches their domain.
 
@@ -177,7 +133,7 @@ graph LR
 | Quarto & Docs | 6 | Websites, dashboards, alt text |
 | DevOps & CI | 3 | GitHub Actions, <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a> |
 
-#### Agents
+### Agents
 
 **Agents** are specialised subprocesses pinned to model tiers.
 
@@ -191,7 +147,7 @@ graph LR
 | `reviewer` | sonnet | PR code review |
 | `nix-env` | sonnet | Nix shell diagnostics |
 
-#### Hooks & Memory
+### Hooks & Memory
 
 **Hooks** — shell scripts triggered by events:
 
@@ -211,16 +167,17 @@ graph LR
 | `project` | Ongoing work, goals, deadlines |
 | `reference` | Pointers to external systems |
 
+:::
 
-# irishbuoys Pipeline
 
-## Row
+## irishbuoys Pipeline
 
-### {.tabset}
+::: {.panel-tabset}
 
-#### Pipeline DAG
+### Pipeline DAG
 
 ```{mermaid}
+%%| fig-cap: "The [irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} R package monitors wave conditions at Marine Institute buoy stations. 19 plan files, ~294 [targets](https://docs.ropensci.org/targets/){target='_blank'}. Data from [ERDDAP](https://erddap.marine.ie/){target='_blank'}, stored in [DuckDB](https://duckdb.org/){target='_blank'}. Outputs: storm alerts via [blastula](https://pkgs.rstudio.com/blastula/){target='_blank'}, [bslib](https://rstudio.github.io/bslib/){target='_blank'} dashboards, static JSON API, [pkgdown](https://pkgdown.r-lib.org/){target='_blank'} vignettes."
 graph TD
   acq["Data Acquisition<br/>ERDDAP API"]
   val["Data Validation<br/>8 QA targets"]
@@ -244,11 +201,7 @@ graph TD
   qa --> site
 ```
 
-::: {.card-footer}
-The <a href="https://github.com/JohnGavin/irishbuoys" target="_blank">irishbuoys</a> R package monitors wave conditions at Marine Institute buoy stations. 19 plan files, ~294 <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a>. Data from <a href="https://erddap.marine.ie/" target="_blank">ERDDAP</a>, stored in <a href="https://duckdb.org/" target="_blank">DuckDB</a>. Outputs: storm alerts via <a href="https://pkgs.rstudio.com/blastula/" target="_blank">blastula</a>, <a href="https://rstudio.github.io/bslib/" target="_blank">bslib</a> dashboards, static JSON API, <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a> vignettes.
-:::
-
-#### Plan Files
+### Plan Files
 
 ```{r pipeline-table}
 walkthrough <- safe_tar_read("vig_cr_pipeline_walkthrough")
@@ -261,9 +214,10 @@ if (!is.null(walkthrough)) {
 }
 ```
 
-#### Simplified Flow
+### Simplified Flow
 
 ```{mermaid}
+%%| fig-cap: "Simplified view: [ERDDAP](https://erddap.marine.ie/){target='_blank'} fetch → 8 validation targets → 61 wave analysis targets → storm alerts + dashboard + [pkgdown](https://pkgdown.r-lib.org/){target='_blank'}. QA gates score Bronze/Silver/Gold before merge."
 graph LR
   acq["ERDDAP fetch<br/>DuckDB store"]
   val["8 validation<br/>targets"]
@@ -277,20 +231,17 @@ graph LR
   qa --> site
 ```
 
-::: {.card-footer}
-Simplified view: <a href="https://erddap.marine.ie/" target="_blank">ERDDAP</a> fetch → 8 validation targets → 61 wave analysis targets → storm alerts + dashboard + <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a>. QA gates score Bronze/Silver/Gold before merge.
 :::
 
 
-# FOCUS Framework
+## FOCUS Framework
 
-## Row
+::: {.panel-tabset}
 
-### {.tabset}
-
-#### FOCUS Diagram
+### Diagram
 
 ```{mermaid}
+%%| fig-cap: "FOCUS: how [Claude Code](https://claude.com/claude-code){target='_blank'} navigates a project. Find → Organize → Condense → Understand → Synthesize. Each phase maps to specific agents, rules, and skills."
 flowchart LR
   F["Find<br/>Glob, Grep, Explore agent"]
   O["Organize<br/>AGENTS.md, Plan agent"]
@@ -300,13 +251,7 @@ flowchart LR
   F --> O --> C --> U --> Sy
 ```
 
-::: {.card-footer}
-FOCUS: how <a href="https://claude.com/claude-code" target="_blank">Claude Code</a> navigates a project. Find → Organize → Condense → Understand → Synthesize. Each phase maps to specific agents, rules, and skills.
-:::
-
-#### Find
-
-**Find** — locate relevant code, files, and patterns.
+### Find
 
 | Tool | Purpose |
 |------|---------|
@@ -315,9 +260,7 @@ FOCUS: how <a href="https://claude.com/claude-code" target="_blank">Claude Code<
 | `Explore` agent | Deep codebase exploration |
 | `ctx.yaml` cache | Pre-indexed package signatures |
 
-#### Organize
-
-**Organize** — structure work into plans and tasks.
+### Organize
 
 | Component | Role |
 |-----------|------|
@@ -326,9 +269,7 @@ FOCUS: how <a href="https://claude.com/claude-code" target="_blank">Claude Code<
 | `architecture-planning` rule | Mandatory brainstorming before coding |
 | `requirements-spec` skill | MUST/SHOULD/MAY for complex tasks |
 
-#### Condense
-
-**Condense** — compress context, cache knowledge.
+### Condense
 
 | Component | Role |
 |-----------|------|
@@ -337,9 +278,7 @@ FOCUS: how <a href="https://claude.com/claude-code" target="_blank">Claude Code<
 | `ctx-yaml-cache` rule | Pre-compute package context |
 | CHANGELOG.md | Record completed work, failed approaches |
 
-#### Understand
-
-**Understand** — debug, review, validate.
+### Understand
 
 | Component | Role |
 |-----------|------|
@@ -348,9 +287,7 @@ FOCUS: how <a href="https://claude.com/claude-code" target="_blank">Claude Code<
 | `quality-gates` skill | Bronze/Silver/Gold scoring |
 | `systematic-debugging` rule | Scientific method for bugs |
 
-#### Synthesize
-
-**Synthesize** — produce outputs.
+### Synthesize
 
 | Component | Role |
 |-----------|------|
@@ -359,10 +296,10 @@ FOCUS: how <a href="https://claude.com/claude-code" target="_blank">Claude Code<
 | `orchestrator-protocol` | Verify → review → fix → score loop |
 | `r-package-workflow` | 9-step PR workflow |
 
+:::
 
-# Build Info
 
-## Row
+## Build Info
 
 ```{r build-info}
 #| results: asis
