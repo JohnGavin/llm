@@ -6,9 +6,6 @@ format:
     page-layout: full
     code-fold: true
     embed-resources: false
-    theme:
-      dark: darkly
-      light: cosmo
 execute:
   echo: false
   warning: false
@@ -57,6 +54,12 @@ graph LR
   Pkgs --> Orch["targets + crew<br/>+ mirai"]
   Orch --> LLM["LLM harness"]
   LLM --> Out["Outputs"]
+  click OS "https://support.apple.com/macos" _blank
+  click Nix "https://nixos.org/" _blank
+  click Pkgs "https://docs.ropensci.org/rix/" _blank
+  click Orch "https://docs.ropensci.org/targets/" _blank
+  click LLM "https://github.com/JohnGavin/llm/blob/main/AGENTS.md" _blank
+  click Out "https://johngavin.github.io/llm/" _blank
 ```
 
 ::: {.panel-tabset}
@@ -92,6 +95,13 @@ graph LR
   A --> H["Hooks"]
   A --> C["Commands"]
   A --> M["Memory"]
+  click A "https://github.com/JohnGavin/llm/blob/main/AGENTS.md" _blank
+  click R "https://github.com/JohnGavin/llm/tree/main/.claude/rules" _blank
+  click S "https://github.com/JohnGavin/llm/tree/main/.claude/skills" _blank
+  click G "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
+  click H "https://github.com/JohnGavin/llm/tree/main/.claude/hooks" _blank
+  click C "https://github.com/JohnGavin/llm/tree/main/.claude/commands" _blank
+  click M "https://github.com/JohnGavin/llm/tree/main/.claude/projects/-Users-johngavin-docs-gh-llm/memory" _blank
 ```
 
 ::: {.panel-tabset}
@@ -153,10 +163,12 @@ graph LR
 :::
 
 
-## irishbuoys Pipeline
+## irishbuoys: A Real Project Pipeline
+
+The <a href="https://github.com/JohnGavin/irishbuoys" target="_blank">irishbuoys</a> R package is an independent project that monitors wave conditions at Marine Institute buoy stations around Ireland. Its <a href="https://johngavin.github.io/irishbuoys/" target="_blank">pkgdown site</a> is deployed separately. The pipeline below illustrates how the software layers described above come together in practice — from <a href="https://erddap.marine.ie/" target="_blank">ERDDAP</a> data acquisition through QA validation to multiple output formats.
 
 ```{mermaid}
-%%| fig-cap: "[irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} monitors wave conditions at Marine Institute buoy stations. 19 plan files, ~294 [targets](https://docs.ropensci.org/targets/){target='_blank'}. Data from [ERDDAP](https://erddap.marine.ie/){target='_blank'}, stored in [DuckDB](https://duckdb.org/){target='_blank'}. Outputs: [blastula](https://pkgs.rstudio.com/blastula/){target='_blank'} alerts, [bslib](https://rstudio.github.io/bslib/){target='_blank'} dashboards, JSON API, [pkgdown](https://pkgdown.r-lib.org/){target='_blank'} vignettes."
+%%| fig-cap: "[irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} pipeline ([pkgdown site](https://johngavin.github.io/irishbuoys/){target='_blank'}). 19 plan files, ~294 [targets](https://docs.ropensci.org/targets/){target='_blank'}. Data from [ERDDAP](https://erddap.marine.ie/){target='_blank'}, stored in [DuckDB](https://duckdb.org/){target='_blank'}."
 graph LR
   acq["ERDDAP<br/>API"] --> val["Validation<br/>8 targets"] --> qc["QC<br/>bounds"]
   qc --> wave["Wave Analysis<br/>61 targets"]
@@ -166,6 +178,36 @@ graph LR
   wave --> api["Static<br/>API"]
   joint --> site["pkgdown<br/>Site"]
   qa["QA Gates<br/>Bronze/Silver/Gold"] --> site
+  click acq "https://erddap.marine.ie/" _blank
+  click val "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_data_validation.R" _blank
+  click qc "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_quality_control.R" _blank
+  click wave "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_wave_analysis.R" _blank
+  click joint "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_joint_analysis.R" _blank
+  click sev "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_spatial_extreme_values.R" _blank
+  click pred "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_predictions.R" _blank
+  click alert "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_storm_alert.R" _blank
+  click email "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_email_report.R" _blank
+  click dash "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_dashboard.R" _blank
+  click api "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_api.R" _blank
+  click site "https://johngavin.github.io/irishbuoys/" _blank
+  click qa "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_qa_gates.R" _blank
+```
+
+**Simplified flow:**
+
+```{mermaid}
+%%| fig-cap: "Simplified: [ERDDAP](https://erddap.marine.ie/){target='_blank'} → validation → wave analysis → outputs. [QA gates](https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_qa_gates.R){target='_blank'} score Bronze/Silver/Gold before merge."
+graph LR
+  acq["ERDDAP"] --> val["8 validation"] --> wave["61 analysis"]
+  wave --> alert["Alerts + email"]
+  wave --> site["Dashboard + pkgdown"]
+  qa["QA gates"] --> site
+  click acq "https://erddap.marine.ie/" _blank
+  click val "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_data_validation.R" _blank
+  click wave "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_wave_analysis.R" _blank
+  click alert "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_storm_alert.R" _blank
+  click site "https://johngavin.github.io/irishbuoys/" _blank
+  click qa "https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_qa_gates.R" _blank
 ```
 
 ::: {.panel-tabset}
@@ -181,17 +223,6 @@ if (!is.null(walkthrough)) {
 }
 ```
 
-### Simplified Flow
-
-```{mermaid}
-%%| fig-cap: "Simplified view: [ERDDAP](https://erddap.marine.ie/){target='_blank'} fetch → validation → wave analysis → outputs. QA gates score Bronze/Silver/Gold before merge."
-graph LR
-  acq["ERDDAP"] --> val["8 validation"] --> wave["61 analysis"]
-  wave --> alert["Alerts + email"]
-  wave --> site["Dashboard + pkgdown"]
-  qa["QA gates"] --> site
-```
-
 :::
 
 
@@ -204,6 +235,11 @@ flowchart LR
   O --> C["Condense<br/>Memory, ctx.yaml"]
   C --> U["Understand<br/>r-debugger, critic"]
   U --> Sy["Synthesize<br/>fixer, targets-runner"]
+  click F "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
+  click O "https://github.com/JohnGavin/llm/blob/main/AGENTS.md" _blank
+  click C "https://github.com/JohnGavin/llm/tree/main/.claude/projects/-Users-johngavin-docs-gh-llm/memory" _blank
+  click U "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
+  click Sy "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
 ```
 
 ::: {.panel-tabset}
