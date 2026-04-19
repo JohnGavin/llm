@@ -1,17 +1,18 @@
 ---
-title: "LLM Infrastructure: How Claude Code Manages R Projects"
+title: "From Nix Shells to Project Outputs"
 format: closeread-html
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 
-has_targets <- requireNamespace("targets", quietly = TRUE)
-
+# Discover target store — handles non-default store in _targets.yaml
+# Must setwd to project root for tar_config_get to read _targets.yaml
 tar_store <- tryCatch({
-  if (file.exists(here::here("_targets"))) here::here("_targets")
-  else if (file.exists("_targets")) "_targets"
-  else NULL
+  owd <- setwd(here::here())
+  on.exit(setwd(owd))
+  s <- targets::tar_config_get("store")
+  normalizePath(s)
 }, error = function(e) NULL)
 
 safe_tar_read <- function(name) {
@@ -33,7 +34,12 @@ emit_mermaid <- function(target_name, fallback_msg = "Diagram unavailable") {
 }
 
 counts <- safe_tar_read("vig_cr_infra_counts")
-if (is.null(counts)) counts <- list(n_rules = 57, n_skills = 62, n_agents = 12, n_hooks = 8, n_commands = 11, n_memory = 8)
+if (is.null(counts)) {
+  counts <- list(
+    n_rules = 58, n_skills = 68, n_agents = 12,
+    n_hooks = 7, n_commands = 14, n_memory = 14
+  )
+}
 ```
 
 <script type="module">
@@ -57,7 +63,7 @@ await mermaid.run({ querySelector: '.mermaid' });
 </script>
 
 
-## Section 1: The Foundation {.cr-section}
+## The Foundation {.cr-section}
 
 :::{#cr-layers}
 
@@ -67,24 +73,24 @@ emit_mermaid("vig_cr_layer_diagram", "Software layer diagram unavailable")
 
 :::
 
-The entire stack begins with the operating system --- macOS for development, Linux via OrbStack for CI parity. Every layer above inherits the guarantees of the layer below.
+The entire stack begins with the operating system --- macOS for development, Linux via <a href="https://orbstack.dev/" target="_blank">OrbStack</a> for CI parity. Every layer above inherits the guarantees of the layer below.
 
 @cr-layers
 
-Nix provides hermetic, reproducible package management. The `rix` package translates R-flavoured declarations in `default.R` into `default.nix` derivations. Every project gets its own isolated shell with pinned package versions.
+<a href="https://nixos.org/" target="_blank">Nix</a> provides hermetic, reproducible package management. The <a href="https://docs.ropensci.org/rix/" target="_blank">rix</a> package translates R-flavoured declarations in `default.R` into `default.nix` derivations. Every project gets its own isolated shell with pinned package versions.
 
 @cr-layers
 
-Above Nix sit the R and Python packages specific to each project. The `targets` package orchestrates pipelines, `crew` manages parallel workers, and `mirai` provides the async evaluation engine. These are the workhorses of computation.
+Above <a href="https://nixos.org/" target="_blank">Nix</a> sit the R and Python packages specific to each project. <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a> orchestrates pipelines, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> manages parallel workers, and <a href="https://shikokuchuo.net/mirai/" target="_blank">mirai</a> provides the async evaluation engine. These are the workhorses of computation.
 
 @cr-layers
 
-At the top, the LLM harness --- `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents --- guides Claude Code through finding, organising, and synthesising project work. The outputs flow into vignettes, APIs, and reports.
+At the top, the LLM harness --- `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents, and `r counts$n_memory` memory files --- guides <a href="https://claude.com/claude-code" target="_blank">Claude Code</a> through finding, organising, and synthesising project work. The outputs flow into vignettes, APIs, and reports.
 
 @cr-layers
 
 
-## Section 2: The LLM Harness {.cr-section}
+## The LLM Harness {.cr-section}
 
 :::{#cr-harness}
 
@@ -94,23 +100,23 @@ emit_mermaid("vig_cr_harness_diagram", "Harness diagram unavailable")
 
 :::
 
-AGENTS.md is the entry point --- a compressed 200-line file that Claude reads at session start. It indexes `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents, `r counts$n_hooks` hooks, and `r counts$n_commands` commands.
+<a href="https://github.com/JohnGavin/llm/blob/main/AGENTS.md" target="_blank">AGENTS.md</a> is the entry point --- a compressed 200-line file that <a href="https://claude.com/claude-code" target="_blank">Claude Code</a> reads at session start. It indexes `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents, `r counts$n_hooks` hooks, `r counts$n_commands` commands, and `r counts$n_memory` memory files.
 
 @cr-harness
 
-**Rules** enforce constraints: never use raw SQL (use duckplyr), never hardcode values in prose, never delete files without checking size. They fire automatically based on file path globs in their YAML frontmatter.
+**Rules** enforce constraints: never use raw SQL (use <a href="https://duckdblabs.github.io/duckplyr/" target="_blank">duckplyr</a>), never hardcode values in prose, never delete files without checking size. They fire automatically based on file path globs in their YAML frontmatter.
 
 @cr-harness
 
-**Skills** provide deep knowledge on demand: how to set up a Nix environment, how to write testthat tests, how to build a Shinylive vignette. They are invoked when the task matches their domain.
+**Skills** provide deep knowledge on demand: how to set up a <a href="https://nixos.org/" target="_blank">Nix</a> environment, how to write <a href="https://testthat.r-lib.org/" target="_blank">testthat</a> tests, how to build a <a href="https://posit-dev.github.io/r-shinylive/" target="_blank">Shinylive</a> vignette. They are invoked when the task matches their domain.
 
 @cr-harness
 
-**Agents** are specialised subprocesses: `r-debugger` for test failures, `targets-runner` for pipelines, `critic` for read-only review. Each is pinned to a model tier --- haiku for typos, sonnet for debugging, opus for architecture.
+**Agents** are specialised subprocesses: `r-debugger` for test failures, `targets-runner` for pipelines, `critic` for read-only review. Each is pinned to a model tier --- <a href="https://docs.anthropic.com/en/docs/about-claude/models#claude-4-haiku" target="_blank">haiku</a> for typos, <a href="https://docs.anthropic.com/en/docs/about-claude/models#claude-4-sonnet" target="_blank">sonnet</a> for debugging, <a href="https://docs.anthropic.com/en/docs/about-claude/models#claude-4-opus" target="_blank">opus</a> for architecture.
 
 @cr-harness
 
-**Hooks** are shell scripts triggered by events: `session_init.sh` checks Nix and burn rate at startup, `file_protection.sh` blocks edits to `raw/` knowledge base files, `context_survival.sh` saves state before compaction.
+**Hooks** are shell scripts triggered by events: `session_init.sh` checks <a href="https://nixos.org/" target="_blank">Nix</a> and burn rate at startup, `file_protection.sh` blocks edits to `raw/` knowledge base files, `context_survival.sh` saves state before compaction.
 
 @cr-harness
 
@@ -119,38 +125,42 @@ AGENTS.md is the entry point --- a compressed 200-line file that Claude reads at
 @cr-harness
 
 
-## Section 3: T-Language Case Study {.cr-section}
+## irishbuoys: A Real Pipeline {.cr-section}
 
-:::{#cr-tlang}
+:::{#cr-pipeline}
 
-```{r tlang-diagram, results='asis'}
-emit_mermaid("vig_cr_tlang_dag", "T-language DAG unavailable")
+```{r pipeline-diagram, results='asis'}
+emit_mermaid("vig_cr_pipeline_dag", "Pipeline diagram unavailable")
 ```
 
 :::
 
-The T language defines data pipelines declaratively. Each node is a computation with typed inputs and outputs. The runtime manages dependencies, caching, and error propagation automatically.
+The <a href="https://github.com/JohnGavin/irishbuoys" target="_blank">irishbuoys</a> R package monitors wave conditions at Marine Institute buoy stations around Ireland. Its <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a> pipeline has 19 plan files and ~294 targets spanning every layer of the software stack.
 
-@cr-tlang
+@cr-pipeline
 
-The `risky` node divides by zero, producing an Error. In most languages this would crash the pipeline. T-language propagates the error as a value that downstream nodes can inspect and recover from.
+**Data acquisition** fetches hourly observations from the <a href="https://erddap.marine.ie/" target="_blank">ERDDAP</a> API and stores them in <a href="https://duckdb.org/" target="_blank">DuckDB</a>. This is the bottom of the pipeline --- raw data entering the system through the <a href="https://nixos.org/" target="_blank">Nix</a>-managed R environment.
 
-@cr-tlang
+@cr-pipeline
 
-`recovered_with_match` uses pattern matching: `match(risky) { Error{msg} => 0, default => risky }`. The error is caught and replaced with a safe fallback. This is the T equivalent of R's `tryCatch`.
+**Data validation** runs 8 targets checking temporal coverage, gaps, duplicates, freshness, and sampling frequency. If any station drops below 30% coverage, the pipeline aborts. This is where <a href="https://rstudio.github.io/pointblank/" target="_blank">pointblank</a>-style validation gates earn their keep --- catching problems before they cascade.
 
-@cr-tlang
+@cr-pipeline
 
-`recovered_with_maybe_pipe` uses the maybe-pipe operator `?|>`. If the input is an Error, the pipe short-circuits and the recovery function provides a fallback value of -1.
+**Wave analysis** is the largest plan (61 targets): rolling aggregations, extreme value analysis via <a href="https://cran.r-project.org/package=extRemes" target="_blank">extRemes</a>, spatial modelling across stations. <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> workers parallelise computation across stations.
 
-@cr-tlang
+@cr-pipeline
 
-`short_circuit_then_recover` chains a regular pipe `|>` (which short-circuits on Error) with a maybe-pipe `?|>` for recovery. This demonstrates T-language's composable error handling --- errors flow through pipes like data.
+**Outputs** fan out from analysis into multiple formats: storm alerts trigger <a href="https://pkgs.rstudio.com/blastula/" target="_blank">blastula</a> emails, <a href="https://rstudio.github.io/bslib/" target="_blank">bslib</a> dashboards with <a href="https://plotly.com/r/" target="_blank">plotly</a> charts, a static JSON API, and <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a> vignettes. A single `tar_make()` call produces all of them.
 
-@cr-tlang
+@cr-pipeline
+
+**QA gates** score the pipeline on a Bronze/Silver/Gold scale before any merge. The `qa_no_raw_sql` target enforces <a href="https://duckdblabs.github.io/duckplyr/" target="_blank">duckplyr</a> over raw SQL. The `qa_vignette_compliance` target checks every vignette chunk maps to a pipeline target. Nothing ships without passing.
+
+@cr-pipeline
 
 
-## Section 4: FOCUS in Action {.cr-section}
+## FOCUS in Action {.cr-section}
 
 :::{#cr-focus}
 
@@ -160,7 +170,7 @@ emit_mermaid("vig_cr_focus_diagram", "FOCUS diagram unavailable")
 
 :::
 
-FOCUS is how Claude Code navigates a project. Each phase maps to specific infrastructure components.
+FOCUS is how <a href="https://claude.com/claude-code" target="_blank">Claude Code</a> navigates a project. Each phase maps to specific infrastructure components.
 
 @cr-focus
 
@@ -168,7 +178,7 @@ FOCUS is how Claude Code navigates a project. Each phase maps to specific infras
 
 @cr-focus
 
-**Organize** --- AGENTS.md provides the map. The Plan agent designs implementation strategies. Rules like `architecture-planning` enforce a brainstorming phase before any coding begins. Tasks break work into trackable steps.
+**Organize** --- <a href="https://github.com/JohnGavin/llm/blob/main/AGENTS.md" target="_blank">AGENTS.md</a> provides the map. The Plan agent designs implementation strategies. Rules like `architecture-planning` enforce a brainstorming phase before any coding begins. Tasks break work into trackable steps.
 
 @cr-focus
 
@@ -185,44 +195,44 @@ FOCUS is how Claude Code navigates a project. Each phase maps to specific infras
 @cr-focus
 
 
-## Section 5: A Pipeline in Detail {.cr-section}
+## The Pipeline Layers {.cr-section}
 
-:::{#cr-pipeline}
+:::{#cr-detail}
 
-```{r pipeline-diagram, results='asis'}
-emit_mermaid("vig_cr_pipeline_dag_mermaid", "Pipeline diagram unavailable")
+```{r pipeline-detail-diagram, results='asis'}
+emit_mermaid("vig_cr_pipeline_dag_mermaid", "Pipeline detail unavailable")
 ```
 
 :::
 
-This section walks through the `error_propagation_circuit` T-language demo --- a pipeline that deliberately introduces errors to demonstrate recovery patterns.
+Each plan file in the <a href="https://github.com/JohnGavin/irishbuoys" target="_blank">irishbuoys</a> pipeline touches specific software layers. This table shows what each plan does and which packages it relies on.
 
-@cr-pipeline
+@cr-detail
 
 ```{r pipeline-table, results='asis'}
 walkthrough <- safe_tar_read("vig_cr_pipeline_walkthrough")
 if (!is.null(walkthrough)) {
   knitr::kable(walkthrough, format = "html",
-    caption = paste0("Pipeline walkthrough: ", nrow(walkthrough),
-                     " nodes demonstrating T-language error recovery patterns."))
+    caption = paste0("irishbuoys pipeline: ", nrow(walkthrough),
+                     " plan files across data, QA, analysis, and output layers."))
 }
 ```
 
-The `good_val` node is pure computation --- `100 / 5 = 20`. It touches only the T runtime layer. No error handling, no external dependencies. This is the simplest possible node.
+The pipeline starts at the **data layer**: <a href="https://erddap.marine.ie/" target="_blank">ERDDAP</a> API calls fetch raw observations into <a href="https://duckdb.org/" target="_blank">DuckDB</a>. The <a href="https://nixos.org/" target="_blank">Nix</a> shell provides both R and the system libraries needed for HTTP and database access.
 
-@cr-pipeline
+@cr-detail
 
-The `risky` node deliberately divides by zero. The T runtime catches this and wraps it as an Error value. Unlike R's `stop()`, T errors are first-class values that can be passed through pipes and matched against.
+The **QA layer** runs three plan files with validation and quality control targets. These check temporal coverage, physical bounds, and data freshness. The `qa_gates` plan scores the entire pipeline before any merge --- nothing deploys below Bronze.
 
-@cr-pipeline
+@cr-detail
 
-Each recovery node demonstrates a different pattern. `match{}` is explicit pattern matching (like R's `tryCatch`). `?|>` is the maybe-pipe (like R's `%||%` but for pipe chains). Both operate at the T runtime layer with the error handler.
+The **analysis layer** is where domain logic lives: wave statistics, cross-station correlations, spatial extreme value models. <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> workers parallelise computation, and <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a> caches results so only changed branches re-execute.
 
-@cr-pipeline
+@cr-detail
 
-The software layers visible in this pipeline: T runtime (all nodes), error handler (3 of 4 nodes), Nix (provides the T interpreter), and R (orchestrates via targets). A single pipeline touches every layer of the stack.
+The **output layer** fans results into multiple formats: <a href="https://pkgs.rstudio.com/blastula/" target="_blank">blastula</a> storm alert emails, <a href="https://rstudio.github.io/bslib/" target="_blank">bslib</a> dashboards, a static JSON API, and <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a> vignettes. A single `tar_make()` call produces all outputs from the same validated data.
 
-@cr-pipeline
+@cr-detail
 
 
 ---
