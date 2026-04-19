@@ -13,6 +13,8 @@ website:
         text: Home
       - href: vignettes/telemetry.qmd
         text: Telemetry
+      - href: vignettes/closeread-infrastructure.qmd
+        text: Infrastructure
 
 format:
   html:

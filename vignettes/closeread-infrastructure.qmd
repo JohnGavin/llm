@@ -1,0 +1,233 @@
+---
+title: "LLM Infrastructure: How Claude Code Manages R Projects"
+format: closeread-html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+has_targets <- requireNamespace("targets", quietly = TRUE)
+
+tar_store <- tryCatch({
+  if (file.exists(here::here("_targets"))) here::here("_targets")
+  else if (file.exists("_targets")) "_targets"
+  else NULL
+}, error = function(e) NULL)
+
+safe_tar_read <- function(name) {
+  if (is.null(tar_store)) return(NULL)
+  tryCatch(targets::tar_read_raw(name, store = tar_store), error = function(e) NULL)
+}
+
+emit_mermaid <- function(target_name, fallback_msg = "Diagram unavailable") {
+  diagram <- safe_tar_read(target_name)
+  if (!is.null(diagram)) {
+    id <- gsub("[^a-z0-9]", "", target_name)
+    cat(sprintf('<pre class="mermaid" id="%s"></pre>\n', id))
+    cat(sprintf('<script type="text/plain" data-mermaid="%s">\n', id))
+    cat(diagram)
+    cat("\n</script>\n")
+  } else {
+    cat(paste0("*", fallback_msg, "*\n"))
+  }
+}
+
+counts <- safe_tar_read("vig_cr_infra_counts")
+if (is.null(counts)) counts <- list(n_rules = 57, n_skills = 62, n_agents = 12, n_hooks = 8, n_commands = 11, n_memory = 8)
+```
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'loose',
+  theme: 'dark',
+  themeVariables: {
+    background: '#000000',
+    primaryColor: '#999999',
+    lineColor: '#CC0000',
+    primaryTextColor: '#000000'
+  }
+});
+document.querySelectorAll('script[data-mermaid]').forEach(function(s) {
+  var target = document.getElementById(s.getAttribute('data-mermaid'));
+  if (target) target.textContent = s.textContent;
+});
+await mermaid.run({ querySelector: '.mermaid' });
+</script>
+
+
+## Section 1: The Foundation {.cr-section}
+
+:::{#cr-layers}
+
+```{r layer-diagram, results='asis'}
+emit_mermaid("vig_cr_layer_diagram", "Software layer diagram unavailable")
+```
+
+:::
+
+The entire stack begins with the operating system --- macOS for development, Linux via OrbStack for CI parity. Every layer above inherits the guarantees of the layer below.
+
+@cr-layers
+
+Nix provides hermetic, reproducible package management. The `rix` package translates R-flavoured declarations in `default.R` into `default.nix` derivations. Every project gets its own isolated shell with pinned package versions.
+
+@cr-layers
+
+Above Nix sit the R and Python packages specific to each project. The `targets` package orchestrates pipelines, `crew` manages parallel workers, and `mirai` provides the async evaluation engine. These are the workhorses of computation.
+
+@cr-layers
+
+At the top, the LLM harness --- `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents --- guides Claude Code through finding, organising, and synthesising project work. The outputs flow into vignettes, APIs, and reports.
+
+@cr-layers
+
+
+## Section 2: The LLM Harness {.cr-section}
+
+:::{#cr-harness}
+
+```{r harness-diagram, results='asis'}
+emit_mermaid("vig_cr_harness_diagram", "Harness diagram unavailable")
+```
+
+:::
+
+AGENTS.md is the entry point --- a compressed 200-line file that Claude reads at session start. It indexes `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_agents` agents, `r counts$n_hooks` hooks, and `r counts$n_commands` commands.
+
+@cr-harness
+
+**Rules** enforce constraints: never use raw SQL (use duckplyr), never hardcode values in prose, never delete files without checking size. They fire automatically based on file path globs in their YAML frontmatter.
+
+@cr-harness
+
+**Skills** provide deep knowledge on demand: how to set up a Nix environment, how to write testthat tests, how to build a Shinylive vignette. They are invoked when the task matches their domain.
+
+@cr-harness
+
+**Agents** are specialised subprocesses: `r-debugger` for test failures, `targets-runner` for pipelines, `critic` for read-only review. Each is pinned to a model tier --- haiku for typos, sonnet for debugging, opus for architecture.
+
+@cr-harness
+
+**Hooks** are shell scripts triggered by events: `session_init.sh` checks Nix and burn rate at startup, `file_protection.sh` blocks edits to `raw/` knowledge base files, `context_survival.sh` saves state before compaction.
+
+@cr-harness
+
+**Memory** persists across conversations: user preferences, feedback corrections, project state, and reference pointers to external systems. It is file-based, indexed by `MEMORY.md`, and updated incrementally.
+
+@cr-harness
+
+
+## Section 3: T-Language Case Study {.cr-section}
+
+:::{#cr-tlang}
+
+```{r tlang-diagram, results='asis'}
+emit_mermaid("vig_cr_tlang_dag", "T-language DAG unavailable")
+```
+
+:::
+
+The T language defines data pipelines declaratively. Each node is a computation with typed inputs and outputs. The runtime manages dependencies, caching, and error propagation automatically.
+
+@cr-tlang
+
+The `risky` node divides by zero, producing an Error. In most languages this would crash the pipeline. T-language propagates the error as a value that downstream nodes can inspect and recover from.
+
+@cr-tlang
+
+`recovered_with_match` uses pattern matching: `match(risky) { Error{msg} => 0, default => risky }`. The error is caught and replaced with a safe fallback. This is the T equivalent of R's `tryCatch`.
+
+@cr-tlang
+
+`recovered_with_maybe_pipe` uses the maybe-pipe operator `?|>`. If the input is an Error, the pipe short-circuits and the recovery function provides a fallback value of -1.
+
+@cr-tlang
+
+`short_circuit_then_recover` chains a regular pipe `|>` (which short-circuits on Error) with a maybe-pipe `?|>` for recovery. This demonstrates T-language's composable error handling --- errors flow through pipes like data.
+
+@cr-tlang
+
+
+## Section 4: FOCUS in Action {.cr-section}
+
+:::{#cr-focus}
+
+```{r focus-diagram, results='asis'}
+emit_mermaid("vig_cr_focus_diagram", "FOCUS diagram unavailable")
+```
+
+:::
+
+FOCUS is how Claude Code navigates a project. Each phase maps to specific infrastructure components.
+
+@cr-focus
+
+**Find** --- Claude uses Glob, Grep, and the Explore agent to locate relevant code, files, and patterns. The `ctx.yaml` cache provides pre-indexed package signatures so Claude doesn't need to re-read documentation each session.
+
+@cr-focus
+
+**Organize** --- AGENTS.md provides the map. The Plan agent designs implementation strategies. Rules like `architecture-planning` enforce a brainstorming phase before any coding begins. Tasks break work into trackable steps.
+
+@cr-focus
+
+**Condense** --- Memory files persist key learnings across conversations. The `context_survival.sh` hook saves state before compaction. The `ctx-yaml-cache` rule ensures package context is pre-computed and cached.
+
+@cr-focus
+
+**Understand** --- The `r-debugger` agent applies scientific method debugging (Hypothesis-Experiment-Conclusion). The `critic` agent performs read-only adversarial review. The `quality-gates` skill scores work on a Bronze/Silver/Gold scale.
+
+@cr-focus
+
+**Synthesize** --- The `fixer` agent applies fixes from critic reports. The `targets-runner` executes pipelines. The `orchestrator-protocol` coordinates agents through verify-review-fix-score loops until quality gates pass.
+
+@cr-focus
+
+
+## Section 5: A Pipeline in Detail {.cr-section}
+
+:::{#cr-pipeline}
+
+```{r pipeline-diagram, results='asis'}
+emit_mermaid("vig_cr_pipeline_dag_mermaid", "Pipeline diagram unavailable")
+```
+
+:::
+
+This section walks through the `error_propagation_circuit` T-language demo --- a pipeline that deliberately introduces errors to demonstrate recovery patterns.
+
+@cr-pipeline
+
+```{r pipeline-table, results='asis'}
+walkthrough <- safe_tar_read("vig_cr_pipeline_walkthrough")
+if (!is.null(walkthrough)) {
+  knitr::kable(walkthrough, format = "html",
+    caption = paste0("Pipeline walkthrough: ", nrow(walkthrough),
+                     " nodes demonstrating T-language error recovery patterns."))
+}
+```
+
+The `good_val` node is pure computation --- `100 / 5 = 20`. It touches only the T runtime layer. No error handling, no external dependencies. This is the simplest possible node.
+
+@cr-pipeline
+
+The `risky` node deliberately divides by zero. The T runtime catches this and wraps it as an Error value. Unlike R's `stop()`, T errors are first-class values that can be passed through pipes and matched against.
+
+@cr-pipeline
+
+Each recovery node demonstrates a different pattern. `match{}` is explicit pattern matching (like R's `tryCatch`). `?|>` is the maybe-pipe (like R's `%||%` but for pipe chains). Both operate at the T runtime layer with the error handler.
+
+@cr-pipeline
+
+The software layers visible in this pipeline: T runtime (all nodes), error handler (3 of 4 nodes), Nix (provides the T interpreter), and R (orchestrates via targets). A single pipeline touches every layer of the stack.
+
+@cr-pipeline
+
+
+---
+
+```{r build-info, results='asis'}
+info <- safe_tar_read("vig_cr_build_info")
+if (!is.null(info)) cat(info) else cat("*Build info unavailable*")
+```
