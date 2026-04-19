@@ -538,6 +538,16 @@ if [ -x "$burn_script" ]; then
   burn_output=$(timeout 45 "$burn_script" compact 2>/dev/null) || burn_output="burn:err"
 fi
 
+# Phase 10: AGENTS.md audit
+audit_output=""
+audit_script="$HOME/.claude/scripts/agents_md_audit.sh"
+if [ -x "$audit_script" ]; then
+  audit_output=$("$audit_script" 2>/dev/null) || true
+  if echo "$audit_output" | grep -q "DRIFT"; then
+    WARNINGS="${WARNINGS}${audit_output} "
+  fi
+fi
+
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"

@@ -44,7 +44,7 @@ which R            # should be /nix/store/...
 
 ## Workflow
 
-**DO:** Work inside the persistent shell for everything.
+**For interactive user work:** Stay in ONE persistent shell.
 ```bash
 nix-shell default.nix
 R  # Launch R
@@ -53,10 +53,10 @@ git status
 exit
 ```
 
-**DON'T:** Launch new shells for single commands.
+**For agents/subshells (ephemeral commands):** Agents MUST use `nix-shell /absolute/path/to/project/default.nix --run "cmd"` per the nix-agent-shell-protocol rule. The user stays in the global shell.
 ```bash
-# BAD
-nix-shell --run "Rscript ..."
+# Agents MUST use this pattern (with absolute path)
+nix-shell /absolute/path/to/project/default.nix --run "Rscript -e 'library(lme4)'"
 ```
 
 ## 5 Common Mistakes
