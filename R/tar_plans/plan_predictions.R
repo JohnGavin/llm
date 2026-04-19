@@ -57,9 +57,9 @@ plan_predictions <- function() {
               NA_real_
             },
             brier_score = if (sum(!is.na(outcome)) > 0) {
-              resolved <- dplyr::cur_data() |> dplyr::filter(!is.na(outcome))
-              outcome_bin <- dplyr::if_else(resolved$outcome == TRUE, 1, 0)
-              mean((resolved$p_success - outcome_bin)^2)
+              outcome_bin <- as.integer(outcome[!is.na(outcome)] == TRUE)
+              p_sub <- p_success[!is.na(outcome)]
+              mean((p_sub - outcome_bin)^2)
             } else {
               NA_real_
             },
