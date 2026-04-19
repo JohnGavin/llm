@@ -48,7 +48,7 @@ if (is.null(counts)) {
 ## Software Layers
 
 ```{mermaid}
-%%| fig-cap: "Software stack from OS through [Nix](https://nixos.org/){target='_blank'} to project outputs. [rix](https://docs.ropensci.org/rix/){target='_blank'} translates `default.R` into `default.nix`. [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://shikokuchuo.net/mirai/){target='_blank'} orchestrate computation."
+%%| fig-cap: "Software stack from OS through [Nix](https://nixos.org/){target='_blank'} to project outputs. [rix](https://docs.ropensci.org/rix/){target='_blank'} translates `default.R` into `default.nix`. [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://cran.r-project.org/package=mirai){target='_blank'} orchestrate computation."
 graph LR
   OS["OS: macOS / Linux"] --> Nix["Nix + rix"] --> Pkgs["R / Python<br/>packages"]
   Pkgs --> Orch["targets + crew<br/>+ mirai"]
@@ -73,7 +73,7 @@ graph LR
 
 ::: {.callout-tip}
 ## Orchestration
-Above Nix sit the project-specific R and Python packages. <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a> orchestrates pipelines, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> manages parallel workers, and <a href="https://shikokuchuo.net/mirai/" target="_blank">mirai</a> provides the async evaluation engine.
+Above Nix sit the project-specific R and Python packages. <a href="https://docs.ropensci.org/targets/" target="_blank">targets</a> orchestrates pipelines, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> manages parallel workers, and <a href="https://cran.r-project.org/package=mirai" target="_blank">mirai</a> provides the async evaluation engine.
 :::
 
 ::: {.callout-important}
@@ -101,7 +101,7 @@ graph LR
   click G "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
   click H "https://github.com/JohnGavin/llm/tree/main/.claude/hooks" _blank
   click C "https://github.com/JohnGavin/llm/tree/main/.claude/commands" _blank
-  click M "https://github.com/JohnGavin/llm/tree/main/.claude/projects/-Users-johngavin-docs-gh-llm/memory" _blank
+  click M "https://github.com/JohnGavin/llm/blob/main/AGENTS.md#memory-8-files" _blank
 ```
 
 ::: {.panel-tabset}
@@ -110,7 +110,7 @@ graph LR
 
 | Rule | Enforces |
 |------|----------|
-| `duckdplyr-not-sql` | Use <a href="https://duckdblabs.github.io/duckplyr/" target="_blank">duckplyr</a>, never raw SQL |
+| `duckdplyr-not-sql` | Use <a href="https://duckplyr.tidyverse.org/" target="_blank">duckplyr</a>, never raw SQL |
 | `dynamic-prose-values` | No hardcoded numbers in prose |
 | `safe-deletion` | Check size/age before deleting files |
 | `btw-timeouts` | All R execution via `timeout` in bash |
@@ -237,7 +237,7 @@ flowchart LR
   U --> Sy["Synthesize<br/>fixer, targets-runner"]
   click F "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
   click O "https://github.com/JohnGavin/llm/blob/main/AGENTS.md" _blank
-  click C "https://github.com/JohnGavin/llm/tree/main/.claude/projects/-Users-johngavin-docs-gh-llm/memory" _blank
+  click C "https://github.com/JohnGavin/llm/blob/main/AGENTS.md#memory-8-files" _blank
   click U "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
   click Sy "https://github.com/JohnGavin/llm/tree/main/.claude/agents" _blank
 ```
