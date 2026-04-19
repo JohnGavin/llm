@@ -41,6 +41,41 @@ Vignette titles must be consistent with pkgdown navbar. Store in targets, refere
 
 All tables MUST use `DT::datatable()`, NEVER `knitr::kable()`. Every table MUST have `caption=`.
 
+### DT Dark Theme (MANDATORY)
+
+Every `DT::datatable()` call MUST include dark styling via `initComplete`:
+
+```r
+options = list(
+  initComplete = DT::JS(
+    "function(settings, json) {",
+    "  $(this.api().table().container()).css({'background-color': '#1a1a2e', 'color': '#e0e0e0'});",
+    "  $(this.api().table().header()).css({'background-color': '#16213e', 'color': '#e0e0e0'});",
+    "  $('td', this.api().table().body()).css({'background-color': '#1a1a2e', 'color': '#e0e0e0'});",
+    "}"
+  )
+)
+```
+
+Prefer defining a `dark_dt()` helper in the setup chunk and using it for all tables.
+
+### DT Precision (MANDATORY)
+
+Every DT call MUST round numeric columns. Either:
+- Round in the target code (`round(x, 3)`)
+- OR use `DT::formatRound(columns, digits)` after `datatable()`
+- OR round in a `dark_dt()` helper
+
+Both target AND DT-level rounding is preferred (defense in depth).
+
+### Post-Render Gate: No Raw Tibbles
+
+After every vignette build, grep for raw tibble HTML:
+```bash
+grep -c 'class="dataframe"' docs/articles/*.html | grep -v ':0$'
+```
+Any hits = raw tibble leaked through. Fix by wrapping in `DT::datatable()`.
+
 ### Table Targets MUST Return data.frame (Not DT)
 
 `DT::datatable` objects contain hardcoded nix store paths in `htmlDependency` attributes. When serialized to RDS and loaded on CI, paths break.
