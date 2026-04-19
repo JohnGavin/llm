@@ -25,26 +25,24 @@ knitr::opts_chunk$set(
   echo = FALSE
 )
 
-has_targets <- requireNamespace("targets", quietly = TRUE)
-
-# Discover target store
-tar_store <- tryCatch({
-  if (file.exists(here::here("_targets"))) {
-    here::here("_targets")
-  } else if (file.exists("_targets")) {
-    "_targets"
-  } else {
-    NULL
-  }
-}, error = function(e) NULL)
-
-# Safe target reader - returns NULL if target unavailable
 safe_tar_read <- function(name) {
-  if (is.null(tar_store)) return(NULL)
-  tryCatch(
-    targets::tar_read_raw(name, store = tar_store),
-    error = function(e) NULL
-  )
+  store <- tryCatch({
+    owd <- setwd(here::here())
+    on.exit(setwd(owd))
+    normalizePath(targets::tar_config_get("store"))
+  }, error = function(e) NULL)
+
+  if (!is.null(store)) {
+    obj <- tryCatch(targets::tar_read_raw(name, store = store), error = function(e) NULL)
+    if (!is.null(obj)) return(obj)
+  }
+
+  for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
+              file.path(here::here(), "inst/extdata/vignettes"))) {
+    rds <- file.path(d, paste0(name, ".rds"))
+    if (file.exists(rds)) return(readRDS(rds))
+  }
+  NULL
 }
 ```
 
