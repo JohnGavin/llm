@@ -9,7 +9,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Git/GitHub — R packages ONLY:** `gert::git_add()`, `git_commit()`, `git_push()`; `usethis::pr_init()`, `pr_push()`; `gh::gh()`. **In bash, NEVER `cd <dir> && git ...` (triggers bare-repo approval prompt that bypassPermissions does NOT bypass). ALWAYS `git -C <dir> ...`.** See `git-no-compound-cd` rule.
 
-**Nix:** One persistent shell. Verify: `echo $IN_NIX_SHELL`. **NEVER** `install.packages()`/`devtools::install()`/`pak::pkg_install()` in Nix.
+**Nix — Shell Architecture (CRITICAL):** The USER stays in the **global dev shell** at all times. The global shell does NOT have project-specific packages (e.g., pdfplumber, lme4, brms). Agents/subshells MUST enter the **project's own nix shell** for project-specific work: `nix-shell /absolute/path/to/project/default.nix --run "cmd"`. NEVER assume packages from `default.nix` are available in the outer shell. NEVER use relative paths (`nix-shell default.nix`) — always absolute. If `nix-shell` build fails (nixpkgs regression), fall back to pip venv: `/usr/bin/python3 -m venv /tmp/venv && /tmp/venv/bin/pip install pkg`. See `nix-agent-shell-protocol` rule. Verify global shell: `echo $IN_NIX_SHELL` (1/impure). **NEVER** `install.packages()`/`devtools::install()`/`pak::pkg_install()` in Nix.
 
 **Errors:** NEVER speculate. READ error, QUOTE it, propose fixes. **R:** 4.5.x. **Deletion:** NEVER rm untracked >1MB without listing, age-check, user confirm (`safe-deletion` rule).
 
@@ -26,7 +26,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 **Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `/wiki-health` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`, `knowledge-base-wiki`.
-**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`, `provenance-mandatory`, `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`, `git-no-compound-cd`, `look-ahead-bias-prevention`.
+**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`, `provenance-mandatory`, `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`, `git-no-compound-cd`, `look-ahead-bias-prevention`, `nix-agent-shell-protocol`.
 
 **MCP r-btw — ZERO TOLERANCE:** NEVER call `btw_tool_run_r/pkg_test/pkg_check/pkg_coverage/pkg_document/pkg_load_all`. ALL R via `Bash("timeout N Rscript -e '...'")`. Safe: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*`. See `btw-timeouts` rule.
 
@@ -145,7 +145,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 `/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/write-alt-text`
 
-## Rules (32)
+## Rules (33)
 
 | Rule | Enforces |
 |------|----------|
@@ -180,6 +180,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `visualization-diagrams` | Mermaid/flowchart diagram standards, arrow styling, Plotly theme |
 | `visualization-standards` | Tufte/Gelman principles + caption standards |
 | `website-index-update` | Add project to johngavin.github.io on major version |
+| `nix-agent-shell-protocol` | Agents enter project nix shell; user stays in global shell; pip venv fallback |
 | `wiki-staleness-check` | Review GitHub wiki for stale content after major sessions |
 
 ## Hooks (8 registered, 4 scripts)
