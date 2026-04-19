@@ -40,7 +40,17 @@ safe_tar_read <- function(name) {
   for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
               file.path(here::here(), "inst/extdata/vignettes"))) {
     rds <- file.path(d, paste0(name, ".rds"))
-    if (file.exists(rds)) return(readRDS(rds))
+    if (file.exists(rds)) {
+      obj <- readRDS(rds)
+      # Re-wrap data.frames as DT widgets (RDS stripped Nix paths)
+      if (is.data.frame(obj) && requireNamespace("DT", quietly = TRUE)) {
+        cap <- attr(obj, "dt_caption")
+        return(DT::datatable(obj, rownames = FALSE, filter = "top",
+          options = list(pageLength = 15, scrollX = TRUE),
+          caption = if (!is.null(cap)) htmltools::HTML(cap)))
+      }
+      return(obj)
+    }
   }
   NULL
 }
