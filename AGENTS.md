@@ -142,52 +142,18 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 ### Specialized
 - `mlops-deployment` — MLOps patterns
 
-## Commands (11)
+## Commands (14)
 
-`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/write-alt-text`
+`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`
 
-## Rules (33)
+## Rules (59)
 
-| Rule | Enforces |
-|------|----------|
-| `auto-delegation` | Route tasks to cheapest capable model tier |
-| `architecture-planning` | Mandatory planning phase before coding |
-| `btw-timeouts` | MCP tool timeout limits |
-| `ctx-yaml-cache` | Context YAML caching |
-| `data-in-packages` | Data storage conventions |
-| `data-validation-timeseries` | Time series validation |
-| `diagram-generation` | Mermaid diagram generation patterns |
-| `duckdb-non-determinism` | DuckDB parallelism pitfalls (window order, fan-out, dedup) |
-| `duckdb-security` | DuckDB connection hardening, file/network access, resource limits |
-| `duckdplyr-not-sql` | Use duckdplyr not raw SQL |
-| `glossary-management` | Glossary term management |
-| `look-ahead-bias-prevention` | QA target for backtest temporal separation, IS/OOS divergence detection |
-| `module-isolation` | Module isolation patterns |
-| `shiny-module-data-sharing` | Module data-sharing patterns and anti-patterns |
-| `shinylive-webr-nonblocking` | JS round-trip batching for non-blocking WebR/Shinylive long ops |
-| `orchestrator-protocol` | Auto-coordinate agents after plan approval |
-| `quarto-vignette-data` | Vignette data rules (no sampling, pre-compute, zero computation) |
-| `quarto-vignette-evidence` | Claims require evidence, content quality rules |
-| `quarto-vignette-format` | Vignette format rules (headings, tables, code-as-targets, dashboards) |
-| `quarto-vignette-layout` | Full-width CSS, dashboard standards, code-folding, broken links |
-| `quarto-vignette-validation` | Post-publish validation, missing evidence, dark mode, build-info footer |
-| `reproducible-visualization` | Plot reproducibility via targets |
-| `safe-deletion` | Pre-deletion verification: size, age, diff, user approval for >1MB |
-| `statistical-reporting` | Effect sizes, multiple comparisons, precision, exploratory vs confirmatory |
-| `suppress-warnings-antipattern` | Ban suppressWarnings(as.*) with solutions |
-| `systematic-debugging` | Scientific method debugging (Hypothesis-Experiment-Conclusion) |
-| `verification-before-completion` | No completion claims without evidence |
-| `vignette-targets-export` | Pre-computed RDS for CI vignette builds |
-| `visualization-diagrams` | Mermaid/flowchart diagram standards, arrow styling, Plotly theme |
-| `visualization-standards` | Tufte/Gelman principles + caption standards |
-| `website-index-update` | Add project to johngavin.github.io on major version |
-| `nix-agent-shell-protocol` | Agents enter project nix shell; user stays in global shell; pip venv fallback |
-| `wiki-staleness-check` | Review GitHub wiki for stale content after major sessions |
+Core: `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`. Nix: `nix-agent-shell-protocol`, `nix-nested-shell-isolation`. MCP: `btw-timeouts`. Git: `git-no-compound-cd`, `safe-deletion`. Data: `data-in-packages`, `data-validation-timeseries`, `duckdb-non-determinism`, `duckdb-security`, `duckdplyr-not-sql`, `never-drop-missing-stations`. Stats: `statistical-reporting`, `robust-statistics`, `half-life-decay`, `composite-alert-scoring`, `suppress-warnings-antipattern`. Backtest: `look-ahead-bias-prevention`, `backtest-robustness`, `backtest-partitions`, `backtesting-assumptions`, `execution-delay-sensitivity`, `position-sizing-guardrails`, `risk-regime-evaluation`, `robustness-testing`, `snapshot-tests-mandatory`, `strategy-vignette-template`. Viz: `diagram-generation`, `visualization-diagrams`, `visualization-standards`, `reproducible-visualization`, `dynamic-prose-values`. Quarto: `quarto-vignette-data`, `quarto-vignette-evidence`, `quarto-vignette-format`, `quarto-vignette-layout`, `quarto-vignette-validation`, `vignette-targets-export`. Shiny: `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking`. Pipeline: `qa-targets-pipeline`, `ctx-yaml-cache`. Knowledge: `glossary-management`, `wiki-staleness-check`, `wiki-frontmatter`. Medical: `medical-data-anonymization`, `medical-etl-quality`. Other: `website-index-update`, `t-lang-r-package`, `huggingface-upload`.
 
-## Hooks (8 registered, 4 scripts)
+## Hooks (7 scripts, 5 event hooks)
 
-`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Scripts: `r_code_check.sh`, `qa_gate_check.sh`, `record_prediction.sh`, `vignette_check.sh`.
+`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
 
-## Memory (8 files)
+## Memory (14 files)
 
-`MEMORY.md`(index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `feedback_safe-deletion.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`
+`MEMORY.md`(index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`, `feedback_safe-deletion.md`, `feedback_never-edit-default-nix.md`, `feedback_nix-shell-portability.md`, `feedback_no-compound-cd.md`, `feedback_knowledge-base-discipline.md`, `feedback_github-pages-user-sites.md`, `feedback_ast-grep-lessons.md`
