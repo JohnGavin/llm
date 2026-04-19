@@ -57,6 +57,8 @@ Each vignette MUST include the DataTables CDN:
 
 ### Number Formatting (ZERO TOLERANCE FOR SPURIOUS PRECISION)
 
+Displaying >4 decimal places for any metric is a CRITICAL violation equivalent to [MISSING EVIDENCE]. It actively misleads readers into believing the model distinguishes at precision it cannot achieve.
+
 15+ decimal places is FORBIDDEN. Defaults:
 
 | Type | Function | Example |
