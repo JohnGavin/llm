@@ -8,6 +8,7 @@ project:
 website:
   title: "LLM Project"
   navbar:
+    background: dark
     left:
       - href: index.qmd
         text: Home
