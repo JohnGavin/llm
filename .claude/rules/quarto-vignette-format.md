@@ -47,11 +47,12 @@ Every `DT::datatable()` call MUST include dark styling via `initComplete`:
 
 ```r
 options = list(
+  autoWidth = TRUE,
   initComplete = DT::JS(
     "function(settings, json) {",
-    "  $(this.api().table().container()).css({'background-color': '#1a1a2e', 'color': '#e0e0e0'});",
-    "  $(this.api().table().header()).css({'background-color': '#16213e', 'color': '#e0e0e0'});",
-    "  $('td', this.api().table().body()).css({'background-color': '#1a1a2e', 'color': '#e0e0e0'});",
+    "  $(this.api().table().container()).css({'background-color': '#000000', 'color': '#ffffff'});",
+    "  $(this.api().table().header()).css({'background-color': '#000000', 'color': '#ffffff', 'border-bottom': '1px solid #444'});",
+    "  $('td', this.api().table().body()).css({'background-color': '#000000', 'color': '#ffffff', 'border-bottom': '1px solid #222'});",
     "}"
   )
 )
