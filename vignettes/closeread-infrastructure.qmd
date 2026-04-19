@@ -10,8 +10,18 @@ format:
     include-in-header:
       - text: |
           <style id="mermaid-render-fix">
-          /* Force all tab panes visible during mermaid render (hidden visually) */
-          .tab-pane { display: block !important; visibility: hidden; height: 0; overflow: hidden; }
+          /* Force all tab panes to have layout during mermaid render.
+             visibility:hidden preserves layout; position:absolute + offscreen
+             prevents flash of unstyled content. height:auto ensures mermaid
+             can measure text dimensions via getBBox(). */
+          .tab-pane:not(.active) {
+            display: block !important;
+            visibility: hidden !important;
+            position: absolute !important;
+            left: -9999px !important;
+            width: 100% !important;
+            height: auto !important;
+          }
           </style>
           <style>
           /* Hide outer website navbar — dashboard has its own nav */
