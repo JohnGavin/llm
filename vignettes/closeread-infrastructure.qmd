@@ -46,6 +46,30 @@ if (is.null(counts)) {
 }
 ```
 
+<script>
+// Dashboard pages/tabs hide content; mermaid only renders visible elements.
+// Re-render all mermaid diagrams when any tab or page becomes visible.
+document.addEventListener('DOMContentLoaded', function() {
+  function reRenderMermaid() {
+    if (typeof mermaid !== 'undefined') {
+      document.querySelectorAll('pre.mermaid-js[data-processed]').forEach(function(el) {
+        el.removeAttribute('data-processed');
+      });
+      mermaid.run();
+    }
+  }
+  // Re-render on any tab switch (cards and pages)
+  document.addEventListener('shown.bs.tab', reRenderMermaid);
+  // Also catch late-loading tabs via MutationObserver
+  new MutationObserver(function(mutations) {
+    mutations.forEach(function(m) {
+      if (m.target.classList && m.target.classList.contains('active')) {
+        setTimeout(reRenderMermaid, 50);
+      }
+    });
+  }).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] });
+});
+</script>
 
 # Software Layers
 
