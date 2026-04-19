@@ -23,6 +23,8 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Code Quality (ast-grep):** 8 rules at `~/.config/ast-grep/rules/`. Run `~/.claude/scripts/r_code_check.sh R/` before commit. Banned: `suppressWarnings(as.*)`, silent `tryCatch`, raw SQL, `stop()`, `install.packages()`. Use `$$$` metavar (NOT `___`). For structural search prefer `cd ~/.config/ast-grep && ast-grep run -p 'pattern' dir/` over grep.
 
+**Explorations:** `explorations/` is a scratch area for research experiments. Minimum score 60 (vs 80 for production). Graduate to `R/` or `vignettes/` at >= 80. Archive abandoned explorations with a reason comment. See `explorations/CONVENTIONS.md`.
+
 **Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `/wiki-health` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`, `knowledge-base-wiki`.
@@ -53,11 +55,11 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
 | `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
 
-## Skills by Category (62)
+## Skills by Category (63)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
-- `quality-gates` — Bronze/Silver/Gold scoring
+- `quality-gates` — Bronze/Silver/Gold scoring with per-issue point-deduction table
 - `r-package-workflow` — 9-step PR workflow
 - `test-driven-development` — RED-GREEN-REFACTOR
 - `nix-rix-r-environment` — Nix/rix shell management + drift detection
@@ -131,6 +133,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 - `code-review-workflow` — PR review process
 - `context-control` — Context window management
 - `requirements-spec` — MUST/SHOULD/MAY requirements before complex tasks
+- `per-project-claude-md` — Slim project-level config template (overrides global CLAUDE.md)
 
 ### AI/LLM Tools
 - `gemini-cli-codebase-analysis` — Gemini CLI + subagent patterns

@@ -64,6 +64,72 @@ Total score = weighted sum of six components:
 - 0 if any raw SQL SELECT violations found
 - Prevents SQL regression after conversion to dplyr
 
+## Point-Deduction Table
+
+Specific deductions applied when computing each component score. Agents MUST report these line items when a score is below threshold.
+
+### Coverage component (20% weight)
+
+| Issue | Deduction |
+|-------|-----------|
+| < 80% line coverage | -(80 - actual_pct) points |
+| < 50% line coverage | -50 points (floor at 0) |
+| New exported function with zero tests | -15 points per function |
+
+### R CMD check component (30% weight)
+
+| Issue | Deduction |
+|-------|-----------|
+| Any test failure | -98 points (score becomes 0) |
+| NOTE in R CMD check | -5 points each |
+| WARNING in R CMD check | -20 points each |
+| ERROR in R CMD check | -98 points (score becomes 0) |
+
+### Documentation component (15% weight)
+
+| Issue | Deduction |
+|-------|-----------|
+| Export missing man page | -10 points per missing page |
+| `@param` missing for any argument | -5 points per missing param |
+| `@return` missing | -5 points per function |
+| `@export` missing on public function | -10 points per function |
+
+### Defensive programming component (10% weight)
+
+| Issue | Deduction |
+|-------|-----------|
+| Each `stop()` call (instead of `cli_abort`) | -(100/total_error_calls) points |
+| Silent `tryCatch` (no message/warning) | -20 points each |
+| `suppressWarnings(as.*)` pattern | -15 points each |
+
+### Data integrity component (20% weight)
+
+| Issue | Deduction |
+|-------|-----------|
+| Any `plan_data_validation` target fails | -100 points (score becomes 0) |
+| Temporal gap > expected frequency | -20 points per gap |
+| Duplicate rows in keyed table | -30 points |
+
+### Code style component (5% weight)
+
+| Issue | Deduction |
+|-------|-----------|
+| Any `DBI::dbGetQuery()` in R/ (non-DDL) | -100 points (score becomes 0) |
+| Raw SQL string in non-DDL context | -50 points each |
+| `T`/`F` instead of `TRUE`/`FALSE` | -5 points each |
+| `=` instead of `<-` for assignment | -3 points each |
+
+### Exploration-mode relaxed thresholds
+
+When working in `explorations/` the minimum acceptable score is **60** (not 80).
+Deductions still apply but the gate threshold is lower.
+
+| Grade | Production score | Exploration score |
+|-------|-----------------|-------------------|
+| Pass (minimum) | >= 80 (Bronze) | >= 60 |
+| Good | >= 90 (Silver) | >= 75 |
+| Excellent | >= 95 (Gold) | >= 90 |
+
 ## Pipeline Integration
 
 Add `plan_qa_gates.R` to `R/tar_plans/` in every project. All targets use `cue = tar_cue(mode = "always")` so they run on every `tar_make()`.
