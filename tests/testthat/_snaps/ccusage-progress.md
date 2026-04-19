@@ -20,4 +20,6 @@
 
     Code
       get_block_history(days = 10)
+    Message
+      i No block activity in the last 10 days
 
