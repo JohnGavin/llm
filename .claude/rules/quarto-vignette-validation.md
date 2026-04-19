@@ -50,6 +50,16 @@ See `targets-vignettes` skill reference: `post-publish-checks.md` for bash and C
 
 **Fix:** Run `tar_make(names = starts_with("vig_"))`, export RDS to `inst/extdata/vignettes/`, rebuild site, verify grep returns nothing.
 
+**MANDATORY post-build gate:**
+```bash
+# MUST return 0 hits — fails the build otherwise
+count=$(grep -c "MISSING EVIDENCE" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s}')
+if [ "$count" -gt 0 ]; then
+  echo "FAIL: $count [MISSING EVIDENCE] found in deployed HTML"
+  exit 1
+fi
+```
+
 ## 19. DARK MODE TOGGLE (MANDATORY)
 
 All pkgdown sites MUST have a dark/light mode toggle defaulting to dark.
