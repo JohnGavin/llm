@@ -62,12 +62,17 @@ cat("#### 4 Open Issues")
 
 :::
 
+## Articles
+
+- <a href="vignettes/closeread-infrastructure.html" target="_blank">**From Nix Shells to Project Outputs**</a>: Software layers, LLM harness (rules/skills/agents/hooks/memory), irishbuoys pipeline case study, FOCUS framework.
+- <a href="vignettes/telemetry.html" target="_blank">**Project Telemetry**</a>: LLM usage & costs, session efficiency, CI & Git stats, project structure.
+
 ## Quick Links
 
-- [**LLM Usage & Costs**](vignettes/telemetry.qmd#llm-usage-costs): Detailed breakdown of token types and model costs.
-- [**Session Efficiency**](vignettes/telemetry.qmd#session-efficiency): Analysis of Claude Max5 blocks and cost intensity.
-- [**CI & Git Stats**](vignettes/telemetry.qmd#ci-git-stats): GitHub Actions performance and commit history.
-- [**Project Structure**](vignettes/telemetry.qmd#project-structure): File organization and repository health.
+- <a href="vignettes/telemetry.html#llm-usage-costs" target="_blank">LLM Usage & Costs</a>: Detailed breakdown of token types and model costs.
+- <a href="vignettes/telemetry.html#session-efficiency" target="_blank">Session Efficiency</a>: Analysis of Claude Max5 blocks and cost intensity.
+- <a href="vignettes/telemetry.html#ci-git-stats" target="_blank">CI & Git Stats</a>: GitHub Actions performance and commit history.
+- <a href="vignettes/telemetry.html#project-structure" target="_blank">Project Structure</a>: File organization and repository health.
 
 ---
 
