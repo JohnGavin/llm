@@ -6,15 +6,21 @@
 
 db_path <- path.expand("~/.claude/logs/unified.duckdb")
 
-open_con <- function() {
-  DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = TRUE)
-}
-
-safe_query <- function(con, sql, fallback = data.frame()) {
-  tryCatch(
-    DBI::dbGetQuery(con, sql),
-    error = function(e) fallback
-  )
+# Open-close per query: avoids holding a persistent read-only lock on DuckDB.
+# Even read_only = TRUE blocks writers in DuckDB; releasing immediately is safer.
+query_db <- function(sql, fallback = data.frame()) {
+  con <- NULL
+  tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = TRUE)
+    result <- DBI::dbGetQuery(con, sql)
+    DBI::dbDisconnect(con, shutdown = TRUE)
+    result
+  }, error = function(e) {
+    if (!is.null(con)) {
+      tryCatch(DBI::dbDisconnect(con, shutdown = TRUE), error = function(e2) NULL)
+    }
+    fallback
+  })
 }
 
 # Compact metric table (2-col) replacing value_box
@@ -40,15 +46,19 @@ metric_table_ui <- function(metrics) {
 plotly_dark_layout <- function(p, title = NULL) {
   plotly::layout(
     p,
-    title      = if (!is.null(title)) list(text = title, font = list(color = "#fff")) else NULL,
-    paper_bgcolor = "#222",
-    plot_bgcolor  = "#222",
-    font       = list(color = "#fff"),
-    xaxis      = list(gridcolor = "#444", zerolinecolor = "#444"),
-    yaxis      = list(gridcolor = "#444", zerolinecolor = "#444"),
-    legend     = list(bgcolor = "#333", font = list(color = "#fff")),
-    margin     = list(t = 40, r = 20, b = 40, l = 50)
-  )
+    title         = if (!is.null(title)) list(text = title, font = list(color = "#fff")) else NULL,
+    paper_bgcolor = "#000000",
+    plot_bgcolor  = "#000000",
+    font          = list(color = "#ffffff"),
+    xaxis         = list(gridcolor = "#333", zerolinecolor = "#333", color = "#fff"),
+    yaxis         = list(gridcolor = "#333", zerolinecolor = "#333", color = "#fff"),
+    legend        = list(
+      orientation = "h", xanchor = "center", x = 0.5,
+      yanchor = "top", y = -0.15,
+      bgcolor = "#000000", bordercolor = "#333", font = list(color = "#ffffff", size = 12)
+    ),
+    margin        = list(t = 40, r = 20, b = 70, l = 50)
+  ) |> plotly::config(scrollZoom = TRUE)
 }
 
 # ---- UI ---------------------------------------------------------------------
@@ -62,7 +72,7 @@ ui <- bslib::page_sidebar(
     shiny::dateRangeInput(
       "date_range",
       "Date range",
-      start = Sys.Date() - 6,
+      start = Sys.Date() - 90,
       end   = Sys.Date()
     ),
     shiny::uiOutput("project_filter_ui"),
@@ -82,10 +92,7 @@ ui <- bslib::page_sidebar(
       "Overview",
 
       shiny::fluidRow(
-        shiny::column(
-          12,
-          shiny::uiOutput("overview_metrics")
-        )
+        shiny::column(12, shiny::uiOutput("overview_metrics"))
       ),
 
       shiny::fluidRow(
@@ -99,8 +106,8 @@ ui <- bslib::page_sidebar(
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::h6("Recent sessions", style = "color:#aaa; margin-top:16px;"),
-          DT::dataTableOutput("recent_sessions_tbl")
+          shiny::h6("Daily sessions by project", style = "color:#aaa; margin-top:16px;"),
+          plotly::plotlyOutput("daily_sessions_project", height = "260px")
         )
       )
     ),
@@ -112,7 +119,7 @@ ui <- bslib::page_sidebar(
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::h6("Cumulative weekly cost", style = "color:#aaa; margin-top:8px;"),
+          shiny::h6("Cumulative cost vs $500 cap", style = "color:#aaa; margin-top:8px;"),
           plotly::plotlyOutput("cumulative_cost_line", height = "260px")
         )
       ),
@@ -134,15 +141,33 @@ ui <- bslib::page_sidebar(
       )
     ),
 
-    # Tab 3: Errors ----------------------------------------------------------
+    # Tab 3: Time ------------------------------------------------------------
     bslib::nav_panel(
-      "Errors",
+      "Time",
 
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::uiOutput("error_metrics")
+          shiny::h6("Daily session time by project (last 10 days)", style = "color:#aaa; margin-top:8px;"),
+          plotly::plotlyOutput("daily_time_project", height = "280px")
         )
+      ),
+
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::h6("Recent sessions", style = "color:#aaa; margin-top:16px;"),
+          DT::dataTableOutput("recent_sessions_tbl")
+        )
+      )
+    ),
+
+    # Tab 4: Errors ----------------------------------------------------------
+    bslib::nav_panel(
+      "Errors",
+
+      shiny::fluidRow(
+        shiny::column(12, shiny::uiOutput("error_metrics"))
       ),
 
       shiny::fluidRow(
@@ -154,20 +179,15 @@ ui <- bslib::page_sidebar(
       )
     ),
 
-    # Tab 4: Brain Dumps -----------------------------------------------------
+    # Tab 5: Brain Dumps -----------------------------------------------------
     bslib::nav_panel(
       "Brain Dumps",
 
       shiny::fluidRow(
         shiny::column(
-          7,
+          12,
           shiny::h6("Brain dumps (newest first)", style = "color:#aaa; margin-top:8px;"),
           DT::dataTableOutput("braindumps_tbl")
-        ),
-        shiny::column(
-          5,
-          shiny::h6("Processed prompt", style = "color:#aaa; margin-top:8px;"),
-          shiny::verbatimTextOutput("braindump_detail")
         )
       )
     )
@@ -181,13 +201,7 @@ server <- function(input, output, session) {
   # Auto-refresh every 30 s
   shiny::observe({
     shiny::invalidateLater(30000, session)
-    input$refresh  # also manual refresh
-  })
-
-  # DB connection (read-only, closed on session end)
-  con <- open_con()
-  shiny::onSessionEnded(function() {
-    tryCatch(DBI::dbDisconnect(con), error = function(e) NULL)
+    input$refresh  # also trigger on manual refresh
   })
 
   # Reactive: filter bounds
@@ -198,8 +212,7 @@ server <- function(input, output, session) {
   projects_df <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       "SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL ORDER BY project",
       data.frame(project = character(0))
     )
@@ -207,7 +220,12 @@ server <- function(input, output, session) {
 
   output$project_filter_ui <- shiny::renderUI({
     choices <- c("All", projects_df()$project)
-    shiny::selectInput("project_filter", "Project", choices = choices, selected = "All")
+    shiny::selectInput(
+      "project_filter", "Project",
+      choices   = choices,
+      selected  = "All",
+      selectize = FALSE
+    )
   })
 
   project_clause <- shiny::reactive({
@@ -220,8 +238,7 @@ server <- function(input, output, session) {
   sessions_today <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       paste0(
         "SELECT COUNT(*) AS n FROM sessions ",
         "WHERE CAST(started_at AS DATE) = CAST(current_date AS DATE)",
@@ -234,12 +251,8 @@ server <- function(input, output, session) {
   cost_this_week <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
-      paste0(
-        "SELECT COALESCE(SUM(total_cost), 0) AS total FROM costs ",
-        "WHERE date >= CAST(current_date - INTERVAL '6 days' AS DATE)"
-      ),
+    query_db(
+      "SELECT COALESCE(SUM(total_cost), 0) AS total FROM costs WHERE date >= CAST(current_date - INTERVAL '6 days' AS DATE)",
       data.frame(total = 0)
     )$total
   })
@@ -255,22 +268,21 @@ server <- function(input, output, session) {
     metric_table_ui(metrics)
   })
 
-  # Daily cost bar chart
+  # Daily cost bar chart by model
   daily_cost_data <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       paste0(
         "SELECT date, opus_cost, sonnet_cost, haiku_cost FROM costs ",
         "WHERE date BETWEEN '", start_dt(), "' AND '", end_dt(), "' ",
         "ORDER BY date"
       ),
       data.frame(
-        date = as.Date(character(0)),
-        opus_cost = numeric(0),
+        date        = as.Date(character(0)),
+        opus_cost   = numeric(0),
         sonnet_cost = numeric(0),
-        haiku_cost = numeric(0)
+        haiku_cost  = numeric(0)
       )
     )
   })
@@ -287,48 +299,54 @@ server <- function(input, output, session) {
       return(plotly_dark_layout(p))
     }
     p <- plotly::plot_ly(df, x = ~date) |>
-      plotly::add_bars(y = ~opus_cost,    name = "Opus",    marker = list(color = "#e74c3c")) |>
-      plotly::add_bars(y = ~sonnet_cost,  name = "Sonnet",  marker = list(color = "#3498db")) |>
-      plotly::add_bars(y = ~haiku_cost,   name = "Haiku",   marker = list(color = "#2ecc71")) |>
+      plotly::add_bars(y = ~opus_cost,   name = "Opus",   marker = list(color = "#e74c3c")) |>
+      plotly::add_bars(y = ~sonnet_cost, name = "Sonnet", marker = list(color = "#3498db")) |>
+      plotly::add_bars(y = ~haiku_cost,  name = "Haiku",  marker = list(color = "#2ecc71")) |>
       plotly::layout(barmode = "stack", yaxis = list(title = "USD"))
     plotly_dark_layout(p)
   })
 
-  # Recent sessions table
-  recent_sessions_data <- shiny::reactive({
+  # Daily sessions by project (stacked bar)
+  daily_sessions_proj_data <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       paste0(
-        "SELECT project, started_at, duration_min, COALESCE(summary, '') AS summary ",
-        "FROM sessions WHERE started_at IS NOT NULL",
+        "SELECT CAST(started_at AS DATE) AS date, ",
+        "COALESCE(project, 'unknown') AS project, ",
+        "COUNT(*) AS n_sessions ",
+        "FROM sessions ",
+        "WHERE CAST(started_at AS DATE) BETWEEN '", start_dt(), "' AND '", end_dt(), "'",
         project_clause(),
-        " ORDER BY started_at DESC LIMIT 10"
+        " GROUP BY date, project ORDER BY date"
       ),
       data.frame(
-        project = character(0), started_at = character(0),
-        duration_min = numeric(0), summary = character(0)
+        date       = as.Date(character(0)),
+        project    = character(0),
+        n_sessions = integer(0)
       )
     )
   })
 
-  output$recent_sessions_tbl <- DT::renderDataTable({
-    df <- recent_sessions_data()
+  output$daily_sessions_project <- plotly::renderPlotly({
+    df <- daily_sessions_proj_data()
     if (nrow(df) == 0) {
-      df <- data.frame(message = "No sessions found")
-    }
-    DT::datatable(
-      df,
-      caption   = "Recent sessions",
-      rownames  = FALSE,
-      options   = list(
-        pageLength = 10, dom = "t", scrollX = TRUE,
-        initComplete = DT::JS(
-          "function(settings, json) { $(this.api().table().node()).css('font-size', '0.82rem'); }"
+      p <- plotly::plot_ly(type = "bar") |>
+        plotly::add_annotations(
+          text = "No session data for selected range",
+          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+          showarrow = FALSE, font = list(color = "#aaa", size = 14)
         )
-      )
-    )
+      return(plotly_dark_layout(p))
+    }
+    projects <- unique(df$project)
+    p <- plotly::plot_ly()
+    for (proj in projects) {
+      sub <- df[df$project == proj, ]
+      p <- plotly::add_bars(p, x = sub$date, y = sub$n_sessions, name = proj)
+    }
+    p <- plotly::layout(p, barmode = "stack", yaxis = list(title = "Sessions"))
+    plotly_dark_layout(p)
   })
 
   # ---- Costs tab -----------------------------------------------------------
@@ -336,8 +354,7 @@ server <- function(input, output, session) {
   costs_all <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       paste0(
         "SELECT date, total_cost, opus_cost, sonnet_cost, haiku_cost, ",
         "opus_pct, sonnet_pct, haiku_pct FROM costs ",
@@ -345,10 +362,10 @@ server <- function(input, output, session) {
         "ORDER BY date"
       ),
       data.frame(
-        date = as.Date(character(0)),
-        total_cost = numeric(0),
-        opus_cost = numeric(0), sonnet_cost = numeric(0), haiku_cost = numeric(0),
-        opus_pct = numeric(0),  sonnet_pct = numeric(0),  haiku_pct = numeric(0)
+        date        = as.Date(character(0)),
+        total_cost  = numeric(0),
+        opus_cost   = numeric(0), sonnet_cost = numeric(0), haiku_cost = numeric(0),
+        opus_pct    = numeric(0), sonnet_pct  = numeric(0), haiku_pct  = numeric(0)
       )
     )
   })
@@ -392,7 +409,7 @@ server <- function(input, output, session) {
     }
     p <- plotly::plot_ly(df, x = ~date) |>
       plotly::add_lines(
-        y = ~opus_pct,   name = "Opus %",
+        y = ~opus_pct, name = "Opus %",
         stackgroup = "one", fillcolor = "rgba(231,76,60,0.5)",
         line = list(color = "#e74c3c")
       ) |>
@@ -402,7 +419,7 @@ server <- function(input, output, session) {
         line = list(color = "#3498db")
       ) |>
       plotly::add_lines(
-        y = ~haiku_pct,  name = "Haiku %",
+        y = ~haiku_pct, name = "Haiku %",
         stackgroup = "one", fillcolor = "rgba(46,204,113,0.5)",
         line = list(color = "#2ecc71")
       ) |>
@@ -430,13 +447,92 @@ server <- function(input, output, session) {
     )
   })
 
+  # ---- Time tab ------------------------------------------------------------
+
+  # Daily session time by project (last 10 days)
+  daily_time_proj_data <- shiny::reactive({
+    shiny::invalidateLater(30000, session)
+    input$refresh
+    cutoff <- as.character(Sys.Date() - 10)
+    query_db(
+      paste0(
+        "SELECT CAST(started_at AS DATE) AS date, ",
+        "COALESCE(project, 'unknown') AS project, ",
+        "ROUND(SUM(COALESCE(duration_min, 0)), 1) AS total_min ",
+        "FROM sessions ",
+        "WHERE CAST(started_at AS DATE) >= '", cutoff, "'",
+        project_clause(),
+        " GROUP BY date, project ORDER BY date DESC"
+      ),
+      data.frame(
+        date      = as.Date(character(0)),
+        project   = character(0),
+        total_min = numeric(0)
+      )
+    )
+  })
+
+  output$daily_time_project <- plotly::renderPlotly({
+    df <- daily_time_proj_data()
+    if (nrow(df) == 0) {
+      p <- plotly::plot_ly(type = "bar") |>
+        plotly::add_annotations(
+          text = "No session time data for last 10 days",
+          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+          showarrow = FALSE, font = list(color = "#aaa", size = 14)
+        )
+      return(plotly_dark_layout(p))
+    }
+    projects <- unique(df$project)
+    p <- plotly::plot_ly()
+    for (proj in projects) {
+      sub <- df[df$project == proj, ]
+      p <- plotly::add_bars(p, x = sub$date, y = sub$total_min, name = proj)
+    }
+    p <- plotly::layout(p, barmode = "stack", yaxis = list(title = "Minutes"))
+    plotly_dark_layout(p)
+  })
+
+  # Recent sessions table (moved from Overview)
+  recent_sessions_data <- shiny::reactive({
+    shiny::invalidateLater(30000, session)
+    input$refresh
+    query_db(
+      paste0(
+        "SELECT project, started_at, ROUND(duration_min, 1) AS duration_min, COALESCE(summary, '') AS summary ",
+        "FROM sessions WHERE started_at IS NOT NULL",
+        project_clause(),
+        " ORDER BY started_at DESC LIMIT 30"
+      ),
+      data.frame(
+        project      = character(0), started_at = character(0),
+        duration_min = numeric(0),   summary    = character(0)
+      )
+    )
+  })
+
+  output$recent_sessions_tbl <- DT::renderDataTable({
+    df <- recent_sessions_data()
+    if (nrow(df) == 0) df <- data.frame(message = "No sessions found")
+    DT::datatable(
+      df,
+      caption   = "Recent sessions",
+      rownames  = FALSE,
+      options   = list(
+        pageLength = 10, dom = "t", scrollX = TRUE,
+        initComplete = DT::JS(
+          "function(settings, json) { $(this.api().table().node()).css('font-size', '0.82rem'); }"
+        )
+      )
+    )
+  })
+
   # ---- Errors tab ----------------------------------------------------------
 
   errors_data <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       paste0(
         "SELECT logged_at, source, ",
         "SUBSTRING(error_text, 1, 100) AS error_text ",
@@ -452,8 +548,7 @@ server <- function(input, output, session) {
   errors_today_n <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       "SELECT COUNT(*) AS n FROM errors WHERE CAST(logged_at AS DATE) = CAST(current_date AS DATE)",
       data.frame(n = 0L)
     )$n
@@ -462,8 +557,7 @@ server <- function(input, output, session) {
   errors_week_n <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       "SELECT COUNT(*) AS n FROM errors WHERE logged_at >= current_date - INTERVAL '6 days'",
       data.frame(n = 0L)
     )$n
@@ -496,12 +590,10 @@ server <- function(input, output, session) {
   braindumps_data <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
-    safe_query(
-      con,
+    query_db(
       paste0(
         "SELECT id, captured_at, source, ",
-        "SUBSTRING(raw_text, 1, 80) AS raw_preview, ",
-        "processed_prompt ",
+        "SUBSTRING(raw_text, 1, 200) AS raw_text ",
         "FROM braindumps ",
         "WHERE captured_at BETWEEN '", start_dt(), "' AND '",
         end_dt(), " 23:59:59' ",
@@ -509,40 +601,22 @@ server <- function(input, output, session) {
       ),
       data.frame(
         id = integer(0), captured_at = character(0),
-        source = character(0), raw_preview = character(0),
-        processed_prompt = character(0)
+        source = character(0), raw_text = character(0)
       )
     )
   })
 
   output$braindumps_tbl <- DT::renderDataTable({
     df <- braindumps_data()
-    display <- if (nrow(df) == 0) {
-      data.frame(message = "No brain dumps in selected range")
-    } else {
-      df[, c("id", "captured_at", "source", "raw_preview")]
+    if (nrow(df) == 0) {
+      df <- data.frame(message = "No brain dumps in selected range")
     }
     DT::datatable(
-      display,
+      df,
       caption   = "Brain dumps",
       rownames  = FALSE,
-      selection = "single",
       options   = list(pageLength = 15, dom = "tp", scrollX = TRUE)
     )
-  })
-
-  output$braindump_detail <- shiny::renderText({
-    sel <- input$braindumps_tbl_rows_selected
-    if (is.null(sel) || length(sel) == 0) {
-      return("Select a row to see the processed prompt.")
-    }
-    df <- braindumps_data()
-    if (nrow(df) == 0 || sel > nrow(df)) return("No data.")
-    pp <- df$processed_prompt[sel]
-    if (is.null(pp) || is.na(pp) || nchar(trimws(pp)) == 0) {
-      return("(No processed prompt for this entry.)")
-    }
-    pp
   })
 }
 

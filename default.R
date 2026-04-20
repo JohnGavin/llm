@@ -359,6 +359,7 @@ system_pkgs <- c(
     # https://www.andrewheiss.com/blog/2025/07/22/positron-open-with-finder/
     # "raycast", 
   # "podman", 
+  "openai-whisper", # Speech-to-text for Signal voice message braindumps
   "duckdb", "tree", "ast-grep", "tree-sitter", "difftastic",
   "docker-client", "orbstack",  # OrbStack provides lightweight Docker runtime on macOS
   "awscli2",
