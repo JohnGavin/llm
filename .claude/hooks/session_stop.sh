@@ -56,7 +56,14 @@ if [ -x "$MIX_SCRIPT" ]; then
   timeout 35 "$MIX_SCRIPT" >/dev/null 2>&1 || true
 fi
 
-# ── Decision log reminder ─────────────────────────────────────────────
+# ── Log session stop to unified DuckDB ───────────────────────────────
+_log_script="$HOME/.claude/scripts/log_session.sh"
+if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
+  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+  "$_log_script" stop "$_sid" "$(basename "$(pwd)")" "" 2>/dev/null || true
+fi
+
+# ── Decision log reminder ───────────────────��─────────────────────────
 if [ -f "$CURRENT_WORK" ]; then
   if ! grep -q "### Decisions" "$CURRENT_WORK" 2>/dev/null; then
     if grep -q "$TODAY" "$CURRENT_WORK" 2>/dev/null; then
