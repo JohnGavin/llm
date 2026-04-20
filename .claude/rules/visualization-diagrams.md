@@ -86,16 +86,27 @@ This replaces the previous per-role colour scheme. Rationale: uniform styling ma
 
 ## Plotly Legend and Theme Contrast (MANDATORY)
 
-Every `plotly::layout()` MUST include explicit background/font colors:
+Every `plotly::layout()` MUST include explicit background/font colors and **legend at bottom**.
 
+**Light theme (pkgdown, Quarto vignettes):**
 ```r
 plotly::layout(..., paper_bgcolor = "white", plot_bgcolor = "white",
   font = list(color = "#1a1a1a"),
-  legend = list(font = list(color = "#1a1a1a"), bgcolor = "rgba(255,255,255,0.9)")
+  legend = list(orientation = "h", xanchor = "center", x = 0.5, yanchor = "top", y = -0.15,
+    font = list(color = "#1a1a1a"), bgcolor = "rgba(255,255,255,0.9)")
 ) |> plotly::config(scrollZoom = TRUE)
 ```
 
-Rules: high-contrast legend text, explicit `paper_bgcolor`/`plot_bgcolor`, `font = list(color = "#1a1a1a")`, `config(scrollZoom = TRUE)`.
+**Dark theme (Shiny dashboards with bslib darkly):**
+```r
+plotly::layout(..., paper_bgcolor = "#000000", plot_bgcolor = "#000000",
+  font = list(color = "#ffffff"),
+  legend = list(orientation = "h", xanchor = "center", x = 0.5, yanchor = "top", y = -0.15,
+    font = list(color = "#ffffff"), bgcolor = "rgba(0,0,0,0.8)")
+) |> plotly::config(scrollZoom = TRUE)
+```
+
+**Mandatory (both themes):** `orientation="h"` at bottom (`y=-0.15`), explicit bg/fg colours, `config(scrollZoom=TRUE)`.
 
 ## Diagram Captions (MANDATORY)
 
