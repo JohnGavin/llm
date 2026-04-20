@@ -4,6 +4,45 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-04-20
+
+### Completed
+- **Unified DuckDB log store:** `~/.claude/logs/unified.duckdb` with 6 tables (sessions, costs, agent_runs, hook_events, errors, braindumps). Wired into session_init (Phase 12) and session_stop. Backfilled 112 sessions + 83 days of cost data from ccusage archives.
+- **Personal Shiny dashboard:** `inst/shiny/dashboard/app.R` — 7 tabs (Overview, Costs, Budget, Time, Reviews, Errors, Brain Dumps). bslib darkly theme, plotly charts, DT tables, auto-refresh 30s.
+- **Budget tab (#59):** Weekly spend vs $500 cap, projection, color-coded alert banner, progress bar. Tuesday-start week.
+- **Reviews tab (#55):** roborev status/list/summary integration with 60-second cache.
+- **Signal Notes → braindumps:** signal-cli linked (+447521254904), launchd job every 5 min, messages flow to DuckDB + `knowledge/raw/braindumps/`. Tested end-to-end.
+- **`/braindump` command:** Reads latest from braindumps/, organises into structured prompt.
+- **Whisper in Nix:** Added `openai-whisper` to `default.R` system_pkgs, regenerated `default.nix`.
+- **TfL tube strikes (#69):** New scraper `scrapers/tfl_strikes.py` (API + HTML fallback), wired as first item in weekly email. Tested live — found real strikes.
+- **Email subject fix:** Replaced `GITHUB_RUN_ID` (numeric) with `w/c DD Mon YYYY` date format. Merged to main.
+- **Telemetry NULLs:** 8/8 resolved. Generated `vig_gemini_plot.rds` from sibling project DB.
+- **CI post-render validation:** Added to `quarto-publish.yaml` — fails on `[MISSING EVIDENCE]`, warns on NULLs, checks internal links.
+- **Plotly legend rule:** Updated `visualization-diagrams.md` with dark-mode variant, mandatory bottom position, solid `#000000` bg.
+- **Permissions fix:** Added 44 patterns to `settings.json` allow-list (duckdb, scripts, common utils).
+- **Podcast transcript:** Captured Steve Newman / Cognitive Revolution (3858 lines) to `knowledge/raw/`.
+
+### Failed Approaches
+- **Plotly legends on darkly theme:** Set `bgcolor="#000000"` in `plotly_dark_layout()` but bslib card background bled through. Fixed with CSS `!important` override on `.plotly .main-svg`. Took 4 attempts across the session.
+- **Signal Desktop SQLite (WhatsApp trick):** DB is SQLCipher-encrypted (unlike WhatsApp). Key locked in macOS Keychain via Electron safeStorage. Fell back to signal-cli instead.
+- **DuckDB persistent connection in Shiny:** Read-only connection still blocks writers. Fixed with per-query open/close (`shutdown=TRUE`).
+- **Shiny dashboard plots missing:** bslib bootstrap JS copy failed (Nix store read-only → permission denied). Fixed by setting clean TMPDIR.
+- **signal-cli Java error:** Nix shell PATH doesn't include Java. Fixed by setting explicit `JAVA_HOME` in sync script. Also `--json` flag deprecated in 0.14.x → `--output=json`.
+
+### Accuracy / Metrics
+- Issues: #69 raised + implemented, #59 and #55 partially addressed via dashboard
+- Telemetry NULLs: 0 remaining (8/8 fixed)
+- Dashboard: 112 sessions, 83 days costs, 2 braindumps displayed
+- Signal: end-to-end tested, launchd cron running
+- 9 commits this session
+
+### Known Limitations
+- Dashboard plots may not render if bootstrap JS copy fails (Nix tmpdir permission) — workaround: set `TMPDIR` to writable dir
+- Cost data stops at Apr 19 (ccusage archive date) — needs fresh ccusage run
+- Signal voice messages need whisper installed (nix shell re-entry required)
+- roborev tab untested with live data (roborev daemon may not be running)
+- `markdown_format_rules.md` untracked file in working tree (not committed)
+
 ## 2026-04-19
 
 ### Completed
