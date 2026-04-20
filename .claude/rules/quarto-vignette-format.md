@@ -43,22 +43,38 @@ All tables MUST use `DT::datatable()`, NEVER `knitr::kable()`. Every table MUST 
 
 ### DT Dark Theme (MANDATORY)
 
-Every `DT::datatable()` call MUST include dark styling via `initComplete`:
+**Preferred: site-wide CSS in `pkgdown/extra.css`** (no per-widget JS needed):
 
-```r
-options = list(
-  autoWidth = TRUE,
-  initComplete = DT::JS(
-    "function(settings, json) {",
-    "  $(this.api().table().container()).css({'background-color': '#000000', 'color': '#ffffff'});",
-    "  $(this.api().table().header()).css({'background-color': '#000000', 'color': '#ffffff', 'border-bottom': '1px solid #444'});",
-    "  $('td', this.api().table().body()).css({'background-color': '#000000', 'color': '#ffffff', 'border-bottom': '1px solid #222'});",
-    "}"
-  )
-)
+```css
+/* DT dark mode — add to pkgdown/extra.css */
+.dataTables_wrapper, table.dataTable, table.dataTable th, table.dataTable td,
+.dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_filter,
+.dataTables_wrapper .dataTables_paginate .paginate_button {
+  color: #e0e0e0 !important;
+}
+table.dataTable, table.dataTable thead, table.dataTable tbody { background-color: #1a1a2e !important; }
+table.dataTable thead th { background-color: #16213e !important; border-bottom-color: #444 !important; }
+table.dataTable tbody tr { background-color: #1a1a2e !important; }
+table.dataTable tbody tr:hover { background-color: #252545 !important; }
+table.dataTable tbody tr.even { background-color: #1e1e3a !important; }
+.dataTables_wrapper input[type="search"], .dataTables_wrapper .form-control {
+  background-color: #16213e !important; color: #e0e0e0 !important; border-color: #444 !important;
+}
 ```
 
-Prefer defining a `dark_dt()` helper in the setup chunk and using it for all tables.
+This eliminates the need for per-widget `initComplete` JS. Every DT table on the site gets dark styling automatically.
+
+**Also required in `_pkgdown.yml`** — DataTables CDN (pkgdown/quarto may omit `dt-core` JS):
+
+```yaml
+template:
+  includes:
+    in_header: >
+      <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
+      <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+```
+
+**Fallback (if CSS approach not possible):** Per-widget JS via `initComplete` in `show_target()` or a `dark_dt()` helper.
 
 ### DT Precision (MANDATORY)
 
