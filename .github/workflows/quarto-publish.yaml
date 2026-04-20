@@ -82,6 +82,45 @@ jobs:
           Rscript -e "cat('gh available:', requireNamespace('gh', quietly = TRUE), '\n')"
           quarto render
 
+      - name: Validate rendered HTML
+        run: |
+          echo "=== Checking for [MISSING EVIDENCE] ==="
+          missing=$(grep -rl "MISSING EVIDENCE" docs/articles/*.html 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$missing" -gt 0 ]; then
+            echo "FAIL: $missing articles contain [MISSING EVIDENCE]"
+            grep -l "MISSING EVIDENCE" docs/articles/*.html
+            exit 1
+          fi
+          echo "OK: 0 [MISSING EVIDENCE]"
+
+          echo "=== Checking for NULL outputs ==="
+          null_count=$(grep -cE '#&gt; NULL|class="gt_sourcenote">NULL' docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+          if [ "$null_count" -gt 0 ]; then
+            echo "WARN: $null_count NULL outputs found in rendered HTML"
+            grep -lE '#&gt; NULL|class="gt_sourcenote">NULL' docs/articles/*.html
+          else
+            echo "OK: 0 NULLs"
+          fi
+
+          echo "=== Checking internal links ==="
+          broken=0
+          for html in docs/articles/*.html; do
+            slug=$(basename "$html")
+            # Extract href="*.html" links (internal only)
+            grep -oE 'href="[^"]*\.html[^"]*"' "$html" 2>/dev/null | \
+              sed 's/href="//;s/"//' | \
+              grep -v '^http' | \
+              while read -r link; do
+                target="docs/articles/$link"
+                # Handle relative paths
+                if [ ! -f "$target" ] && [ ! -f "docs/$link" ]; then
+                  echo "BROKEN: $slug -> $link"
+                  broken=$((broken + 1))
+                fi
+              done
+          done
+          echo "Link check complete"
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
