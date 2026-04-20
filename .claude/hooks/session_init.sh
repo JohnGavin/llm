@@ -538,7 +538,22 @@ if [ -x "$burn_script" ]; then
   burn_output=$(timeout 45 "$burn_script" compact 2>/dev/null) || burn_output="burn:err"
 fi
 
-# Phase 10: AGENTS.md audit
+# Phase 10: Kill orphan crew workers (no controller running)
+orphan_count=0
+if /bin/ps -eo pid,etime,command 2>/dev/null | grep -q "crew_worker"; then
+  # Check if any tar_make controller is running
+  if ! /bin/ps -eo command 2>/dev/null | grep -qE "tar_make|targets::tar_make"; then
+    # No controller — all crew workers are orphans
+    orphan_pids=$(/bin/ps -eo pid,command 2>/dev/null | grep "crew_worker" | grep -v grep | awk '{print $1}')
+    orphan_count=$(echo "$orphan_pids" | grep -c '[0-9]' || echo 0)
+    if [ "$orphan_count" -gt 0 ]; then
+      echo "$orphan_pids" | xargs kill 2>/dev/null || true
+      WARNINGS="${WARNINGS}Killed ${orphan_count} orphan crew workers "
+    fi
+  fi
+fi
+
+# Phase 11: AGENTS.md audit
 audit_output=""
 audit_script="$HOME/.claude/scripts/agents_md_audit.sh"
 if [ -x "$audit_script" ]; then
