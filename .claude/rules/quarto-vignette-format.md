@@ -64,15 +64,18 @@ table.dataTable tbody tr.even { background-color: #1e1e3a !important; }
 
 This eliminates the need for per-widget `initComplete` JS. Every DT table on the site gets dark styling automatically.
 
-**Also required in `_pkgdown.yml`** — DataTables CDN (pkgdown/quarto may omit `dt-core` JS):
+**Also required in `_pkgdown.yml`** — DataTables CDN JS only (pkgdown/quarto may omit `dt-core` JS):
 
 ```yaml
 template:
   includes:
     in_header: >
-      <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
       <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
 ```
+
+**CRITICAL: Do NOT include the CDN CSS.** The CDN CSS loads AFTER `extra.css` and overrides
+the dark mode styles with white backgrounds. The widget-bundled CSS (`dt-core`) is sufficient
+for base styles; dark mode overrides come from `pkgdown/extra.css`.
 
 **Fallback (if CSS approach not possible):** Per-widget JS via `initComplete` in `show_target()` or a `dark_dt()` helper.
 
@@ -99,13 +102,13 @@ Any hits = raw tibble leaked through. Fix by wrapping in `DT::datatable()`.
 
 **MANDATORY**: Table targets return plain `data.frame`/`tibble`. DT wrapping happens in the `.qmd` file at render time.
 
-### DataTables CDN Required
+### DataTables CDN JS Required (NOT CSS)
 
-Each vignette MUST include the DataTables CDN:
+The DataTables JS MUST be available (via `_pkgdown.yml` in_header or per-vignette):
 ```html
-<link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
 <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
 ```
+**Do NOT include the CDN CSS** — it overrides dark mode. Base styles come from the widget bundle.
 
 ### Number Formatting (ZERO TOLERANCE FOR SPURIOUS PRECISION)
 
