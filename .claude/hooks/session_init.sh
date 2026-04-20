@@ -563,6 +563,13 @@ if [ -x "$audit_script" ]; then
   fi
 fi
 
+# ── Phase 12: Log session start to unified DuckDB ──
+_log_script="$HOME/.claude/scripts/log_session.sh"
+_session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
+if [ -x "$_log_script" ]; then
+  "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" 2>/dev/null || true
+fi
+
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
