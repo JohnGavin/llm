@@ -22,6 +22,7 @@ After EVERY pkgdown deployment, produce a **Validation Table** with these column
 | Age | human-readable (e.g. "2 min ago") |
 | Errors | count of `#> Error` in HTML |
 | NULLs | count of `#> NULL` in HTML |
+| NotAvail | count of `not available` or `not found in targets` in HTML |
 | Status | OK / WARN / FAIL |
 
 **Agent workflow (manual — no automated enforcement yet):**
@@ -52,13 +53,25 @@ See `targets-vignettes` skill reference: `post-publish-checks.md` for bash and C
 
 **MANDATORY post-build gate:**
 ```bash
-# MUST return 0 hits — fails the build otherwise
-count=$(grep -c "MISSING EVIDENCE" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s}')
-if [ "$count" -gt 0 ]; then
-  echo "FAIL: $count [MISSING EVIDENCE] found in deployed HTML"
-  exit 1
-fi
+# MUST return 0 hits for ALL error patterns — fails the build otherwise
+for pattern in "MISSING EVIDENCE" "not available" "not found in targets" "Error in" "#> NULL"; do
+  count=$(grep -c "$pattern" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+  if [ "$count" -gt 0 ]; then
+    echo "FAIL: $count '$pattern' found in deployed HTML"
+    exit 1
+  fi
+done
 ```
+
+**Error patterns explained:**
+
+| Pattern | Source | Meaning |
+|---------|--------|---------|
+| `MISSING EVIDENCE` | Placeholder text | Target never built |
+| `not available` | `show_target()` fallback | Target missing from store AND RDS |
+| `not found in targets` | `safe_tar_read()` message | Same as above (message output) |
+| `Error in` | R error leaked to output | Unhandled exception |
+| `#> NULL` | Target returned NULL | Target exists but has no content |
 
 ## 19. DARK MODE TOGGLE (MANDATORY)
 
