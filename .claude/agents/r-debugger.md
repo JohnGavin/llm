@@ -3,6 +3,7 @@ name: r-debugger
 description: Debug R package issues using scientific method - hypothesis, experiment, conclusion loops for R CMD check failures, test failures, and Nix environment issues
 tools: Read, Grep, Glob, Bash
 model: sonnet
+authority: "Can run tests and read code. CANNOT push to remote. CANNOT modify DESCRIPTION or default.nix. CANNOT delete test files."
 ---
 
 # R Package Debugger
