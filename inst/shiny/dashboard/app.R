@@ -64,78 +64,54 @@ plotly_dark_layout <- function(p, title = NULL) {
 
 # ---- window cost helper (Max20: $140 per 5h window) ------------------------
 
-# Windows start at midnight UTC and repeat every 5 hours
-window_boundaries <- function() {
+CMONITOR_RS <- "/Users/johngavin/.cargo/bin/cmonitor-rs"
+
+# Get current window cost from cmonitor-rs (deduped, correct pricing).
+# Returns list(total, opus, sonnet, haiku, boundaries) in USD.
+window_cost_query <- function() {
   now_utc <- as.POSIXct(Sys.time(), tz = "UTC")
   hour <- as.integer(format(now_utc, "%H"))
-  window_start_hour <- (hour %/% 5L) * 5L
-  window_start <- as.POSIXct(
-    paste(format(now_utc, "%Y-%m-%d"), sprintf("%02d:00:00", window_start_hour)),
-    tz = "UTC"
+  ws_hour <- (hour %/% 5L) * 5L
+  wb <- list(
+    start = as.POSIXct(paste(format(now_utc, "%Y-%m-%d"),
+                             sprintf("%02d:00:00", ws_hour)), tz = "UTC"),
+    end   = as.POSIXct(paste(format(now_utc, "%Y-%m-%d"),
+                             sprintf("%02d:00:00", ws_hour)), tz = "UTC") + 5L * 3600L,
+    now   = now_utc
   )
-  window_end <- window_start + 5L * 3600L
-  list(start = window_start, end = window_end, now = now_utc)
-}
+  fallback <- list(total = 0, opus = 0, sonnet = 0, haiku = 0, boundaries = wb)
 
-# Query JSONL directly (not costs table) for the current 5h window.
-# Returns list(total, opus, sonnet, haiku) in USD.
-window_cost_query <- function() {
-  wb  <- window_boundaries()
-  con <- NULL
   tryCatch({
-    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = TRUE)
-    result <- DBI::dbGetQuery(con, sprintf(
-      "SELECT
-         CASE WHEN message.model LIKE '%%opus%%'  THEN 'opus'
-              WHEN message.model LIKE '%%haiku%%' THEN 'haiku'
-              ELSE 'sonnet' END AS family,
-         SUM(COALESCE(message.usage.input_tokens,                0)) AS input_tokens,
-         SUM(COALESCE(message.usage.output_tokens,               0)) AS output_tokens,
-         SUM(COALESCE(message.usage.cache_creation_input_tokens, 0)) AS cache_creation,
-         SUM(COALESCE(message.usage.cache_read_input_tokens,     0)) AS cache_read
-       FROM read_json_auto('%s', union_by_name = true, ignore_errors = true)
-       WHERE type = 'assistant'
-         AND message.usage IS NOT NULL
-         AND message.model IS NOT NULL
-         AND message.model != '<synthetic>'
-         AND timestamp >= '%s'
-         AND timestamp <  '%s'
-       GROUP BY 1",
-      path.expand("~/.claude/projects/**/*.jsonl"),
-      format(wb$start, "%Y-%m-%dT%H:%M:%S"),
-      format(wb$end,   "%Y-%m-%dT%H:%M:%S")
-    ))
-    DBI::dbDisconnect(con, shutdown = TRUE)
+    raw <- system2(CMONITOR_RS,
+      args = c("--plan", "max20", "--view", "realtime", "--output", "json"),
+      stdout = TRUE, stderr = FALSE)
+    data <- jsonlite::fromJSON(paste(raw, collapse = "\n"), simplifyVector = FALSE)
+    blocks <- data$blocks
+    if (is.null(blocks) || length(blocks) == 0) return(fallback)
 
-    if (nrow(result) == 0) {
-      return(list(total = 0, opus = 0, sonnet = 0, haiku = 0, boundaries = wb))
+    # Find the active block (current window)
+    active <- Filter(function(b) isTRUE(b$is_active), blocks)
+    if (length(active) == 0) return(fallback)
+    b <- active[[1]]
+
+    opus <- sonnet <- haiku <- 0
+    for (ms in b$model_stats) {
+      m <- tolower(ms$model)
+      cost <- as.numeric(ms$cost_usd)
+      if (grepl("opus", m))       opus   <- opus   + cost
+      else if (grepl("haiku", m)) haiku  <- haiku  + cost
+      else                        sonnet <- sonnet + cost
     }
 
-    pricing <- list(
-      opus   = c(input = 15,   output = 75,   cache_creation = 18.75, cache_read = 1.50),
-      sonnet = c(input = 3,    output = 15,   cache_creation = 3.75,  cache_read = 0.30),
-      haiku  = c(input = 0.25, output = 1.25, cache_creation = 0.30,  cache_read = 0.03)
-    )
-    costs <- vapply(seq_len(nrow(result)), function(i) {
-      fam <- result$family[i]
-      p   <- pricing[[fam]]
-      (result$input_tokens[i]   * p["input"]          +
-       result$output_tokens[i]  * p["output"]         +
-       result$cache_creation[i] * p["cache_creation"] +
-       result$cache_read[i]     * p["cache_read"]) / 1e6
-    }, numeric(1))
-    names(costs) <- result$family
-
     list(
-      total      = sum(costs),
-      opus       = if ("opus"   %in% names(costs)) costs["opus"]   else 0,
-      sonnet     = if ("sonnet" %in% names(costs)) costs["sonnet"] else 0,
-      haiku      = if ("haiku"  %in% names(costs)) costs["haiku"]  else 0,
+      total      = as.numeric(b$cost_usd),
+      opus       = opus,
+      sonnet     = sonnet,
+      haiku      = haiku,
       boundaries = wb
     )
   }, error = function(e) {
-    if (!is.null(con)) tryCatch(DBI::dbDisconnect(con, shutdown = TRUE), error = function(e2) NULL)
-    list(total = 0, opus = 0, sonnet = 0, haiku = 0, boundaries = wb)
+    fallback
   })
 }
 
