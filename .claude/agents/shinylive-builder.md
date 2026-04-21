@@ -3,6 +3,7 @@ name: shinylive-builder
 description: Build and test Shinylive/WebAssembly vignettes - compile WASM packages, test in browser, diagnose loading issues
 tools: Read, Grep, Glob, Bash
 model: sonnet
+authority: "Can build and test WASM vignettes. CANNOT modify R/ package source. CANNOT push. CANNOT delete build artifacts >10MB."
 ---
 
 # Shinylive/WASM Builder

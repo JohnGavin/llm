@@ -3,6 +3,7 @@ name: quick-fix
 description: Simple fixes, typos, and straightforward edits - minimal reasoning needed
 tools: Read, Grep, Glob, Edit
 model: haiku
+authority: "Single file only. CANNOT modify >5 lines. CANNOT create new files. CANNOT run tests. CANNOT touch DESCRIPTION or default.nix."
 ---
 
 # Quick Fix Agent

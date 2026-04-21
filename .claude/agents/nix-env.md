@@ -3,6 +3,7 @@ name: nix-env
 description: Manage Nix environment issues - diagnose shell problems, update dependencies, regenerate nix files, fix environment degradation
 tools: Read, Grep, Glob, Bash
 model: sonnet
+authority: "Can modify default.R and regenerate default.nix. CANNOT edit R/ source code. CANNOT modify DESCRIPTION Imports (only Suggests). CANNOT push."
 ---
 
 # Nix Environment Manager

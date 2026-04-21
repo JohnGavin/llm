@@ -2,6 +2,7 @@
 name: wiki-curator
 description: Compile raw/ source material into an organised wiki/ following provenance and confidence-marker conventions. Use when building a knowledge base from transcripts, articles, or notes.
 model: sonnet
+authority: "Can write to wiki/ directory only. CANNOT modify raw/ (append-only). CANNOT edit code files. CANNOT push."
 ---
 
 # Wiki Curator Agent
