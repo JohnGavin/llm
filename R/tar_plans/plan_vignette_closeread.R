@@ -217,6 +217,156 @@ plan_vignette_closeread <- function() {
       },
       packages = c("gert"),
       cue = tar_cue(mode = "always")
+    ),
+
+    # 9. Rule categories — scan ~/.claude/rules/*.md, categorize by keyword
+    tar_target(
+      vig_cr_rule_categories,
+      tryCatch({
+        rule_files <- list.files("~/.claude/rules", pattern = "\\.md$", full.names = TRUE)
+        category_keywords <- list(
+          Core       = c("orchestrator", "planning", "delegation", "debugging", "verification", "protocol", "confidence", "provenance"),
+          Nix        = c("nix", "shell"),
+          Git        = c("git", "deletion", "safe-deletion"),
+          Data       = c("data", "duckdb", "duck", "missing", "station"),
+          Stats      = c("statistic", "robust", "half-life", "composite", "suppress"),
+          Backtest   = c("backtest", "look-ahead", "execution-delay", "position", "risk", "robustness", "snapshot", "strategy"),
+          Viz        = c("visualization", "diagram", "reproducible-visualization"),
+          Quarto     = c("quarto", "vignette"),
+          Shiny      = c("shiny", "shinylive", "module"),
+          Pipeline   = c("pipeline", "targets", "qa-targets", "ctx-yaml"),
+          Knowledge  = c("wiki", "glossary"),
+          Medical    = c("medical"),
+          Other      = character(0)
+        )
+        categorize_rule <- function(fname) {
+          base <- tools::file_path_sans_ext(basename(fname))
+          for (cat in names(category_keywords)) {
+            kws <- category_keywords[[cat]]
+            if (length(kws) > 0 && any(grepl(paste(kws, collapse = "|"), base, ignore.case = TRUE)))
+              return(cat)
+          }
+          "Other"
+        }
+        cats <- vapply(rule_files, categorize_rule, character(1))
+        tbl <- tibble::tibble(
+          category    = names(category_keywords),
+          count       = vapply(names(category_keywords), function(c) sum(cats == c), integer(1)),
+          example_rule = vapply(names(category_keywords), function(c) {
+            idx <- which(cats == c)
+            if (length(idx) == 0) NA_character_
+            else tools::file_path_sans_ext(basename(rule_files[idx[[1]]]))
+          }, character(1))
+        )
+        tbl[tbl$count > 0, ]
+      }, error = function(e) {
+        cli::cli_warn("vig_cr_rule_categories fallback: {conditionMessage(e)}")
+        tibble::tibble(
+          category     = c("Core", "Nix", "Git", "Data", "Stats", "Backtest", "Viz", "Quarto", "Shiny", "Pipeline", "Knowledge", "Medical", "Other"),
+          count        = c(5L, 2L, 2L, 7L, 5L, 8L, 3L, 6L, 3L, 3L, 3L, 2L, 1L),
+          example_rule = c("orchestrator-protocol", "nix-agent-shell-protocol", "git-no-compound-cd",
+                           "data-validation-timeseries", "robust-statistics", "backtest-robustness",
+                           "visualization-standards", "quarto-vignette-format", "shiny-module-data-sharing",
+                           "qa-targets-pipeline", "wiki-frontmatter", "medical-etl-quality", "t-lang-r-package")
+        )
+      }),
+      packages = c("tibble", "cli"),
+      cue = tar_cue(mode = "always")
+    ),
+
+    # 10. Skill categories — hardcoded from CLAUDE.md table (stable)
+    tar_target(
+      vig_cr_skill_categories,
+      tryCatch({
+        tibble::tibble(
+          category  = c(
+            "Mandatory", "R Package Dev", "Data & Analysis",
+            "Targets & Pipelines", "Shiny & Web", "Quarto & Documentation",
+            "Prose Quality", "DevOps & CI", "Project Management",
+            "AI/LLM Tools", "Specialized"
+          ),
+          count     = c(8L, 15L, 10L, 4L, 8L, 6L, 1L, 3L, 8L, 5L, 1L),
+          mandatory = c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
+        )
+      }, error = function(e) {
+        cli::cli_warn("vig_cr_skill_categories fallback: {conditionMessage(e)}")
+        tibble::tibble(
+          category  = "Unknown", count = 0L, mandatory = FALSE
+        )
+      }),
+      packages = c("tibble", "cli")
+    ),
+
+    # 11. Agent tiers — parse YAML frontmatter from ~/.claude/agents/*.md
+    tar_target(
+      vig_cr_agent_tiers,
+      tryCatch({
+        agent_files <- list.files("~/.claude/agents", pattern = "\\.md$", full.names = TRUE)
+        parse_agent <- function(path) {
+          lines  <- readLines(path, warn = FALSE)
+          fm_end <- which(lines == "---")
+          if (length(fm_end) < 2L) return(NULL)
+          fm_lines <- lines[seq(fm_end[1L] + 1L, fm_end[2L] - 1L)]
+          get_field <- function(key) {
+            hit <- grep(paste0("^", key, ":"), fm_lines, value = TRUE)
+            if (length(hit) == 0L) return(NA_character_)
+            trimws(sub(paste0("^", key, ":\\s*"), "", hit[1L]), which = "both") |>
+              gsub(pattern = '^"|"$', replacement = "")
+          }
+          tibble::tibble(
+            agent       = get_field("name"),
+            model       = get_field("model"),
+            authority   = get_field("authority"),
+            description = get_field("description")
+          )
+        }
+        do.call(rbind, Filter(Negate(is.null), lapply(agent_files, parse_agent)))
+      }, error = function(e) {
+        cli::cli_warn("vig_cr_agent_tiers fallback: {conditionMessage(e)}")
+        tibble::tibble(
+          agent = NA_character_, model = NA_character_,
+          authority = NA_character_, description = NA_character_
+        )
+      }),
+      packages = c("tibble", "cli")
+    ),
+
+    # 12. Hook lifecycle — hardcoded (stable)
+    tar_target(
+      vig_cr_hook_lifecycle,
+      tibble::tibble(
+        hook = c(
+          "session_init.sh", "file_protection.sh", "context_survival.sh",
+          "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"
+        ),
+        event = c(
+          "SessionStart", "PreToolUse:Edit|Write", "PreCompact+compact/resume",
+          "PostToolUse:Bash|Task", "PostToolUse:Edit|Write", "Stop"
+        ),
+        phase_order = 1:6
+      ),
+      packages = c("tibble")
+    ),
+
+    # 13. Sample excerpts — first 15 lines of 3 representative files
+    tar_target(
+      vig_cr_sample_excerpts,
+      tryCatch({
+        read_head <- function(path, n = 15L) {
+          if (!file.exists(path)) return(character(0))
+          readLines(path, n = n, warn = FALSE)
+        }
+        list(
+          rule    = read_head("~/.claude/rules/btw-timeouts.md"),
+          agent   = read_head("~/.claude/agents/critic.md"),
+          command = read_head("~/.claude/commands/check.md")
+        )
+      }, error = function(e) {
+        cli::cli_warn("vig_cr_sample_excerpts fallback: {conditionMessage(e)}")
+        list(rule = character(0), agent = character(0), command = character(0))
+      }),
+      packages = c("cli"),
+      cue = tar_cue(mode = "always")
     )
   )
 }

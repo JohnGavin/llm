@@ -1,0 +1,358 @@
+---
+title: "The Claude Code Config Stack"
+format:
+  closeread-html:
+    toc: false
+    code-fold: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+safe_tar_read <- function(name) {
+  store <- tryCatch({
+    owd <- setwd(here::here())
+    on.exit(setwd(owd))
+    normalizePath(targets::tar_config_get("store"))
+  }, error = function(e) NULL)
+  if (!is.null(store)) {
+    obj <- tryCatch(targets::tar_read_raw(name, store = store), error = function(e) NULL)
+    if (!is.null(obj)) return(obj)
+  }
+  for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
+              file.path(here::here(), "inst/extdata/vignettes"))) {
+    rds <- file.path(d, paste0(name, ".rds"))
+    if (file.exists(rds)) return(readRDS(rds))
+  }
+  NULL
+}
+
+counts <- safe_tar_read("vig_cr_infra_counts")
+if (is.null(counts)) counts <- list(n_rules=61, n_skills=63, n_agents=12, n_hooks=7, n_commands=15, n_memory=14)
+```
+
+:::{.cr-section}
+
+:::{#cr-entry .sticky}
+```
+# ~/.claude/CLAUDE.md
+
+## Core Rules
+**Session Start:** echo $IN_NIX_SHELL
+**Git:** gert::git_add(), git_commit(), git_push()
+**Nix:** nix-shell /absolute/path/default.nix --run "cmd"
+**Errors:** NEVER speculate. READ error, QUOTE it.
+
+## Agents (12)
+## Skills (63)
+## Commands (15)
+## Rules (61)
+## Memory (14 files)
+## Hooks (7 scripts)
+```
+:::
+
+Every Claude Code session begins by loading `~/.claude/CLAUDE.md`. This file is the entry point — the first thing read before any tool is called, any file touched, any code written.
+
+It is not a README. It is a **constitution**: a concise set of constraints, pointers, and defaults that shape every decision the model makes. From the outside, Claude appears to respond to prompts. From the inside, it is navigating a graph of rules, skills, agents, and memory — all loaded from this one file.
+
+@cr-entry
+
+The config stack has six layers: rules that forbid, skills that enable, agents that specialize, memory that persists, commands that trigger, and hooks that automate. Each layer adds a dimension of control.
+
+@cr-entry
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-rules .sticky}
+```{r rules-table}
+rule_data <- safe_tar_read("vig_cr_rule_categories")
+if (!is.null(rule_data)) {
+  knitr::kable(rule_data, format = "html",
+    col.names = c("Category", "Count", "Examples"),
+    table.attr = 'class="table table-sm"')
+} else {
+  cat('<table class="table table-sm">
+<thead><tr><th>Category</th><th>Count</th><th>Examples</th></tr></thead>
+<tbody>
+<tr><td>Core workflow</td><td>5</td><td>systematic-debugging, verification-before-completion</td></tr>
+<tr><td>Nix / environment</td><td>3</td><td>nix-agent-shell-protocol, nix-nested-shell-isolation</td></tr>
+<tr><td>Data quality</td><td>7</td><td>data-validation-timeseries, duckdplyr-not-sql</td></tr>
+<tr><td>Statistics</td><td>6</td><td>statistical-reporting, look-ahead-bias-prevention</td></tr>
+<tr><td>Visualization</td><td>5</td><td>visualization-standards, diagram-generation</td></tr>
+<tr><td>Quarto / vignettes</td><td>7</td><td>quarto-vignette-format, vignette-targets-export</td></tr>
+<tr><td>Shiny / web</td><td>3</td><td>shinylive-webr-nonblocking, module-isolation</td></tr>
+<tr><td>Git / safety</td><td>2</td><td>git-no-compound-cd, safe-deletion</td></tr>
+<tr><td>Knowledge base</td><td>4</td><td>wiki-staleness-check, raw-folder-readonly</td></tr>
+<tr><td>Other</td><td>19</td><td>btw-timeouts, confidence-markers, ...</td></tr>
+</tbody>
+</table>')
+}
+```
+:::
+
+Rules are not guidelines. They are constraints — hard stops that apply regardless of context, user request, or apparent convenience. Right now there are `r counts$n_rules` of them.
+
+@cr-rules
+
+Each rule file has the same anatomy: a trigger clause ("When This Applies"), a critical violation, the correct substitution pattern, and a rationale. The trigger clause matters most — it defines precisely when the rule activates so the model doesn't apply it everywhere indiscriminately.
+
+@cr-rules
+
+Some rules exist because of a single incident: a 522 MB worktree deleted without checking size or age (`safe-deletion`). A git operation blocked by a bare-repo guard that no permission setting could bypass (`git-no-compound-cd`). Rules written in blood are the ones that stick.
+
+@cr-rules
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-skills .sticky}
+```{r skills-table}
+skill_data <- safe_tar_read("vig_cr_skill_categories")
+if (!is.null(skill_data)) {
+  knitr::kable(skill_data, format = "html",
+    col.names = c("Category", "Count", "Purpose"),
+    table.attr = 'class="table table-sm"')
+} else {
+  cat('<table class="table table-sm">
+<thead><tr><th>Category</th><th>Count</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><strong>Mandatory</strong></td><td>8</td><td>Always applied: adversarial-qa, quality-gates, r-package-workflow ...</td></tr>
+<tr><td>R package development</td><td>12</td><td>cli, dplyr, vctrs, S7, lifecycle, testthat ...</td></tr>
+<tr><td>Data &amp; analysis</td><td>9</td><td>EDA, pointblank, DuckDB, modeling, genomics ...</td></tr>
+<tr><td>Targets &amp; pipelines</td><td>4</td><td>pipeline spec, vignettes, crew, parallel</td></tr>
+<tr><td>Shiny &amp; web</td><td>8</td><td>bslib, async, modules, Shinylive, plumber2 ...</td></tr>
+<tr><td>Quarto &amp; docs</td><td>7</td><td>websites, dashboards, dynamic content, WebR ...</td></tr>
+<tr><td>DevOps &amp; CI</td><td>3</td><td>GitHub Actions, pkgdown, static API</td></tr>
+<tr><td>Project management</td><td>8</td><td>plans, review, requirements, context control ...</td></tr>
+<tr><td>AI / LLM tools</td><td>5</td><td>Gemini CLI, HuggingFace, MCP servers, hooks</td></tr>
+<tr><td>Prose quality</td><td>1</td><td>deslop — removes AI writing patterns</td></tr>
+</tbody>
+</table>')
+}
+```
+:::
+
+If rules define what not to do, skills define what to do. There are `r counts$n_skills` skill modules, each invoked by name: `adversarial-qa` for attack-based testing, `deslop` for removing AI writing patterns, `r-package-workflow` for the nine-step PR process.
+
+@cr-skills
+
+Skills come in two varieties: mandatory and situational. The eight mandatory skills load for every task — quality gates, adversarial QA, TDD, the R package workflow. They are always active. Situational skills activate when the user's request matches a trigger phrase.
+
+@cr-skills
+
+The trigger mechanism is intentionally loose. "Run tests" activates `test-driven-development`. "Shinylive" activates `shinylive-deployment`. "Make it sound human" activates `deslop`. The model pattern-matches on intent, not exact wording.
+
+@cr-skills
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-agents .sticky}
+```{r agents-table}
+agent_data <- safe_tar_read("vig_cr_agent_tiers")
+if (!is.null(agent_data)) {
+  knitr::kable(agent_data, format = "html",
+    col.names = c("Agent", "Model", "Trigger"),
+    table.attr = 'class="table table-sm"')
+} else {
+  cat('<table class="table table-sm">
+<thead><tr><th>Agent</th><th>Model</th><th>Trigger</th></tr></thead>
+<tbody>
+<tr><td>quick-fix</td><td>haiku ($)</td><td>Typos, renames, version bumps, URL fixes</td></tr>
+<tr><td>critic</td><td>sonnet ($$)</td><td>Read-only adversarial review</td></tr>
+<tr><td>fixer</td><td>sonnet ($$)</td><td>Apply fixes from critic reports</td></tr>
+<tr><td>r-debugger</td><td>sonnet ($$)</td><td>"run tests", "fix test failure"</td></tr>
+<tr><td>targets-runner</td><td>sonnet ($$)</td><td>"tar_make", "pipeline failed"</td></tr>
+<tr><td>reviewer</td><td>sonnet ($$)</td><td>"review this PR/code"</td></tr>
+<tr><td>nix-env</td><td>sonnet ($$)</td><td>"nix shell broken", "package missing"</td></tr>
+<tr><td>shiny-async-debugger</td><td>sonnet ($$)</td><td>"ExtendedTask", "crew bug"</td></tr>
+<tr><td>data-quality-guardian</td><td>sonnet ($$)</td><td>"validate data", "pointblank"</td></tr>
+<tr><td>data-engineer</td><td>sonnet ($$)</td><td>"dbt", "SQL pipeline"</td></tr>
+<tr><td>shinylive-builder</td><td>sonnet ($$)</td><td>"shinylive", "WASM build"</td></tr>
+<tr><td>wiki-curator</td><td>sonnet ($$)</td><td>"compile wiki from raw"</td></tr>
+</tbody>
+</table>')
+}
+```
+:::
+
+The twelve agents exist because not every task needs the same capability — or the same cost. The `quick-fix` agent runs on haiku for mechanical edits. Every other specialist runs on sonnet. The orchestrator runs on opus.
+
+@cr-agents
+
+Auto-delegation is mandatory. If the task involves a single file, fewer than five line changes, and no reasoning about correctness, it goes to haiku. If it matches a specialist trigger, it goes to that specialist. Only multi-file architecture decisions and synthesis tasks stay with the orchestrator.
+
+@cr-agents
+
+The critic and fixer are complementary: critic is read-only and adversarial, fixer is read-write and applies what critic finds. They run in sequence — critic first, fixer second, critic again to verify. Three rounds maximum before escalating to the user.
+
+@cr-agents
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-memory .sticky}
+```
+# ~/.claude/projects/.../memory/MEMORY.md
+
+## Architecture (see architecture.md)
+## MCP r-btw: NEVER Call Directly
+## Agent Patterns (see agent-patterns.md)
+## CI Strategy (see ci-strategy.md)
+## Nix Operations (see nix-operations.md)
+## Shinylive (see shinylive-issues.md)
+## btw MCP Tools
+## pkgctx
+## Tool Preferences (see tool-preferences.md)
+## Session Conventions
+## Safe Deletion
+## NEVER Edit default.nix Directly
+## Nix Shell Portability
+## Never `cd && git`
+## Knowledge Base Discipline
+## GitHub Pages User Sites
+## Config Migration (2026-03-09)
+```
+:::
+
+Memory persists what conversation context cannot. The `r counts$n_memory` memory files capture lessons learned, failed approaches, and standing conventions — facts that need to survive across sessions.
+
+@cr-memory
+
+There are four kinds of memory here. Architecture docs explain how the system is structured. Feedback files record incidents: what went wrong, what the fix was, why the rule now exists. Convention files capture standing decisions. The index ties them together.
+
+@cr-memory
+
+The memory system works because it is curated, not accumulated. Each feedback file covers exactly one incident. Each convention file covers exactly one domain. The index is under twenty lines. When the index gets long, something has gone wrong.
+
+@cr-memory
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-commands .sticky}
+```{r commands-table}
+cmd_data <- safe_tar_read("vig_cr_commands")
+if (!is.null(cmd_data)) {
+  knitr::kable(cmd_data, format = "html",
+    col.names = c("Command", "Alias", "What it does"),
+    table.attr = 'class="table table-sm"')
+} else {
+  cat('<table class="table table-sm">
+<thead><tr><th>Command</th><th>Alias</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td>/hi</td><td>/session-start</td><td>Read CHANGELOG, check git status, open issues</td></tr>
+<tr><td>/bye</td><td>/session-end</td><td>Commit, append CHANGELOG, push, wiki staleness check</td></tr>
+<tr><td>/check</td><td>—</td><td>R CMD check + code sweep with ast-grep rules</td></tr>
+<tr><td>/ctx-check</td><td>—</td><td>Check ctx.yaml coverage for all exported functions</td></tr>
+<tr><td>/pr-status</td><td>—</td><td>Check open PRs and CI status</td></tr>
+<tr><td>/cleanup</td><td>—</td><td>Review and simplify work (critic + fixer pass)</td></tr>
+<tr><td>/issue-triage</td><td>/triage</td><td>List GitHub issues by difficulty</td></tr>
+<tr><td>/new-issue</td><td>—</td><td>Create GitHub issue with branch</td></tr>
+<tr><td>/wiki-health</td><td>—</td><td>Validate knowledge base wiki frontmatter and links</td></tr>
+<tr><td>/wiki-promote</td><td>—</td><td>Promote an output into the wiki</td></tr>
+<tr><td>/write-alt-text</td><td>—</td><td>Generate alt text for all figures</td></tr>
+</tbody>
+</table>')
+}
+```
+:::
+
+Commands are skills with a slash in front. `/hi` triggers `session-start`, which reads CHANGELOG, checks git status, and orients the session. `/bye` triggers `session-end`, which commits, appends the CHANGELOG, and checks for stale wiki pages.
+
+@cr-commands
+
+The `/hi` to `/bye` lifecycle structures the session. Not every session follows it — sometimes the user drops in mid-task — but the pattern creates a rhythm: start with context, end with a record. The CHANGELOG is a lab notebook, not release notes.
+
+@cr-commands
+
+Some commands are diagnostic: `/check` runs the full quality gate sweep, `/ctx-check` verifies API context coverage, `/pr-status` polls GitHub Actions. These are not automated — they run when called. Automation lives in hooks.
+
+@cr-commands
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-hooks .sticky}
+```{r hooks-table}
+hook_data <- safe_tar_read("vig_cr_hook_lifecycle")
+if (!is.null(hook_data)) {
+  knitr::kable(hook_data, format = "html",
+    col.names = c("Script", "Event", "Action"),
+    table.attr = 'class="table table-sm"')
+} else {
+  cat('<table class="table table-sm">
+<thead><tr><th>Script</th><th>Event</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td>session_init.sh</td><td>SessionStart</td><td>Load context, check Nix shell, orient session</td></tr>
+<tr><td>context_survival.sh</td><td>PreCompact + compact/resume</td><td>Preserve critical state before context window compaction</td></tr>
+<tr><td>file_protection.sh</td><td>PreToolUse: Edit | Write</td><td>Block writes to raw/ (append-only), flag protected files</td></tr>
+<tr><td>context_monitor.sh</td><td>PostToolUse: Bash | Task</td><td>Track context window usage, warn at thresholds</td></tr>
+<tr><td>wiki_health_onwrite.sh</td><td>PostToolUse: Edit | Write</td><td>T1 health check on every wiki write (frontmatter, Sources)</td></tr>
+<tr><td>session_stop.sh</td><td>Stop</td><td>Commit pending changes, append CHANGELOG</td></tr>
+</tbody>
+</table>')
+}
+```
+:::
+
+Hooks fire on events. Six scripts cover the session lifecycle: initialization, context survival, file protection, context monitoring, wiki health, and session stop. They are invisible when working correctly — you notice them only when they block something.
+
+@cr-hooks
+
+`file_protection.sh` is the most important. It fires on every `Edit` or `Write` call and checks whether the target path is in `raw/`. Raw files are append-only — not deletable, not replaceable, only extendable. The hook enforces this at the filesystem level.
+
+@cr-hooks
+
+`context_survival.sh` fires before context window compaction. It writes critical session state — current task, key decisions, failed approaches — to `CURRENT_WORK.md`. When the context is rebuilt from scratch, this file is the bridge that prevents repeated mistakes.
+
+@cr-hooks
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-composition .sticky}
+```{r summary-table}
+cat('<table class="table table-sm">
+<thead><tr><th>Layer</th><th>Count</th><th>Role in a request</th></tr></thead>
+<tbody>
+<tr><td>Rules</td><td>', counts$n_rules, '</td><td>Constrain every action (what not to do)</td></tr>
+<tr><td>Skills</td><td>', counts$n_skills, '</td><td>Supply domain knowledge (what to do and how)</td></tr>
+<tr><td>Agents</td><td>', counts$n_agents, '</td><td>Delegate to specialists (who does the work)</td></tr>
+<tr><td>Memory</td><td>', counts$n_memory, '</td><td>Carry lessons from past sessions</td></tr>
+<tr><td>Commands</td><td>', counts$n_commands, '</td><td>Trigger structured workflows on demand</td></tr>
+<tr><td>Hooks</td><td>', counts$n_hooks, '</td><td>Automate enforcement on tool events</td></tr>
+</tbody>
+</table>')
+```
+:::
+
+When you type a request, all six layers activate simultaneously. Rules load as background constraints. Mandatory skills attach their protocols. The model identifies any matching specialist agents and queues delegation decisions. Memory files surface relevant past incidents. Commands check for slash-trigger patterns. Hooks arm themselves against the tool calls about to come.
+
+@cr-composition
+
+Then the work begins. A file edit trips `file_protection.sh`. A Bash call updates context usage in `context_monitor.sh`. A git operation checks the `git-no-compound-cd` rule. A quality gate scores the result against the rubric. A wiki write fires the T1 health check.
+
+@cr-composition
+
+None of these layers operates in isolation. A skill invokes an agent. An agent applies rules. A hook validates what the agent did. Memory records what went wrong. A command structures the session that started it all. The stack is not a hierarchy — it is a web.
+
+@cr-composition
+
+`r counts$n_rules` rules. `r counts$n_skills` skills. `r counts$n_agents` agents. `r counts$n_memory` memory files. `r counts$n_commands` commands. `r counts$n_hooks` hooks. This is what it takes to make a language model behave consistently.
+
+@cr-composition
+
+:::
