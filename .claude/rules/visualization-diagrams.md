@@ -23,48 +23,9 @@ Every Mermaid diagram MUST:
 6. Have a caption with: description, key conclusions, embedded definition links
 7. Use consistent node styling per layer/category using the colour palette below
 
-### CDN Init Block (once per document)
+### CDN Init & Diagram Pattern
 
-```html
-<script type="module">
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'loose',
-    theme: 'dark',
-    themeVariables: { darkMode: true, background: '#000000', primaryColor: '#999999', lineColor: '#CC0000', primaryTextColor: '#000000' }
-  });
-  document.querySelectorAll('pre.mermaid').forEach(async (el) => {
-    const id = el.id || 'mermaid-' + Math.random().toString(36).slice(2);
-    const source = el.querySelector('script[type="text/plain"]');
-    const graphDef = source ? source.textContent : el.textContent;
-    const { svg } = await mermaid.render(id + '-svg', graphDef);
-    el.innerHTML = svg;
-  });
-</script>
-```
-
-### Diagram Pattern
-
-```markdown
-::: {#fig-example}
-
-<pre class="mermaid" id="example">
-<script type="text/plain">
-graph LR
-  A["Input"] --> B["Output&lt;br/&gt;Data"]
-  click A "input.html" _blank
-  style A fill:#999999,stroke:#CC0000,color:#000
-</script>
-</pre>
-
-**Description of what this diagram shows.**
-Key conclusion 1. Key conclusion 2.
-[Term](glossary.html#term) links to definitions.
-Source: `R/file.R`.
-
-:::
-```
+Use CDN `mermaid@11` ESM module with `startOnLoad: false`, `securityLevel: 'loose'`, `theme: 'dark'`. Init once per document, then `querySelectorAll('pre.mermaid')` and render each. Wrap in `::: {#fig-id}` for Quarto cross-refs. Use `<script type="text/plain">` inside `<pre class="mermaid">` for graph definitions. Add `click` directives for navigation and `style` per node colour palette below.
 
 ### Node Colour Palette (MANDATORY high-contrast)
 
@@ -107,6 +68,16 @@ plotly::layout(..., paper_bgcolor = "#000000", plot_bgcolor = "#000000",
 ```
 
 **Mandatory (both themes):** `orientation="h"` at bottom (`y=-0.15`), explicit bg/fg colours, `config(scrollZoom=TRUE)`.
+
+### bslib Darkly: CSS Override Required (Lesson from 2026-04-20)
+
+`bgcolor`/`paper_bgcolor` in `plotly::layout()` alone is **insufficient** on bslib darkly — the `.card-body` background bleeds through the SVG container. **Must add CSS:**
+
+```css
+.bslib-card .plotly .main-svg { background: #000000 !important; }
+```
+
+`paper_bgcolor` fills the SVG `<rect>` but not the outer HTML div. CSS `!important` on `.main-svg` is the only reliable fix (4 attempts to diagnose).
 
 ## Diagram Captions (MANDATORY)
 
