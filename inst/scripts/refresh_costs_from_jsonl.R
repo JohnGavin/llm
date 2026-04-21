@@ -1,79 +1,68 @@
 #!/usr/bin/env Rscript
-# refresh_costs_from_jsonl.R — Upsert JSONL token costs into unified.duckdb
+# refresh_costs_from_jsonl.R — Upsert daily costs into unified.duckdb
 # Usage: Rscript refresh_costs_from_jsonl.R
 #
-# Costs stored are API-equivalent (pay-as-you-go pricing).
+# Source: cmonitor-rs --view daily --output json (already deduped, no double-count).
 # Primary dashboard metric is Max20 window utilisation ($140/5h cap),
 # calculated at query time from these base costs.
 
 t0 <- proc.time()
-suppressPackageStartupMessages({ library(DBI); library(duckdb) })
+suppressPackageStartupMessages({ library(DBI); library(duckdb); library(jsonlite) })
 
-JSONL_GLOB <- path.expand("~/.claude/projects/**/*.jsonl")
-DB_PATH    <- path.expand("~/.claude/logs/unified.duckdb")
+CMONITOR  <- "/Users/johngavin/.cargo/bin/cmonitor-rs"
+DB_PATH   <- path.expand("~/.claude/logs/unified.duckdb")
 
-# Per-1M-token prices (matches cmonitor v3.1.0 / Anthropic API pricing)
-# Cache reads are heavily discounted (10% of input price)
-PRICING <- list(
-  opus   = c(input = 15,   output = 75,   cache_creation = 18.75, cache_read = 1.50),
-  sonnet = c(input = 3,    output = 15,   cache_creation = 3.75,  cache_read = 0.30),
-  haiku  = c(input = 0.25, output = 1.25, cache_creation = 0.30,  cache_read = 0.03)
-)
+# ---- Fetch daily JSON from cmonitor-rs ---------------------------------------
 
-# ---- Read all JSONL in one DuckDB pass ----------------------------------------
+raw_json <- system2(CMONITOR,
+  args   = c("--plan", "max20", "--view", "daily", "--output", "json", "--since", "90d"),
+  stdout = TRUE, stderr = FALSE)
 
-con <- dbConnect(duckdb(), path = DB_PATH)
-on.exit(dbDisconnect(con, shutdown = TRUE))
+combined <- paste(raw_json, collapse = "\n")
+data <- fromJSON(combined, simplifyVector = FALSE)
+blocks <- data$blocks
+if (is.null(blocks)) stop("cmonitor-rs JSON has no 'blocks' field")
 
-raw <- dbGetQuery(con, sprintf("
-  SELECT
-    timestamp,
-    message.model                             AS model,
-    COALESCE(message.usage.input_tokens, 0)                AS input_tokens,
-    COALESCE(message.usage.output_tokens, 0)               AS output_tokens,
-    COALESCE(message.usage.cache_creation_input_tokens, 0) AS cache_creation_tokens,
-    COALESCE(message.usage.cache_read_input_tokens, 0)     AS cache_read_tokens
-  FROM read_json_auto('%s', union_by_name = true, ignore_errors = true)
-  WHERE type = 'assistant'
-    AND message.usage IS NOT NULL
-    AND message.model IS NOT NULL
-    AND message.model != '<synthetic>'
-", JSONL_GLOB))
+# ---- Parse each daily block --------------------------------------------------
 
-cat(sprintf("Read %d assistant entries\n", nrow(raw)))
+parse_block <- function(b) {
+  if (isTRUE(b$is_gap)) return(NULL)
 
-# ---- Compute costs -----------------------------------------------------------
+  # start_time: [year, day_of_year, hour, min, sec, ...]
+  st   <- b$start_time
+  date <- as.Date(st[[2]] - 1L, origin = paste0(st[[1]], "-01-01"))
 
-raw$family <- ifelse(grepl("opus",  raw$model, ignore.case = TRUE), "opus",
-              ifelse(grepl("haiku", raw$model, ignore.case = TRUE), "haiku", "sonnet"))
-raw$date   <- as.Date(substr(raw$timestamp, 1, 10))
-
-raw$cost <- mapply(function(fam, inp, out, cc, cr) {
-  p <- PRICING[[fam]]
-  (inp * p["input"] + out * p["output"] +
-   cc  * p["cache_creation"] + cr * p["cache_read"]) / 1e6
-}, raw$family, raw$input_tokens, raw$output_tokens,
-   raw$cache_creation_tokens, raw$cache_read_tokens)
-
-# ---- Aggregate and pivot to wide ---------------------------------------------
-
-agg  <- aggregate(cost ~ date + family, data = raw, FUN = sum)
-wide <- reshape(agg, idvar = "date", timevar = "family",
-                direction = "wide", v.names = "cost")
-colnames(wide) <- sub("^cost\\.", "", colnames(wide))
-
-for (fam in c("opus", "sonnet", "haiku")) {
-  if (!fam %in% colnames(wide)) wide[[fam]] <- 0
-  wide[[fam]][is.na(wide[[fam]])] <- 0
+  # model_stats is a list of {model, cost_usd, ...}
+  opus <- sonnet <- haiku <- 0
+  for (ms in b$model_stats) {
+    m <- tolower(ms$model)
+    cost <- as.numeric(ms$cost_usd)
+    if (grepl("opus",  m)) opus   <- opus   + cost
+    else if (grepl("haiku", m)) haiku  <- haiku  + cost
+    else                        sonnet <- sonnet + cost
+  }
+  data.frame(date = date, opus = opus, sonnet = sonnet, haiku = haiku,
+             stringsAsFactors = FALSE)
 }
 
-wide$total      <- wide$opus + wide$sonnet + wide$haiku
+rows <- Filter(Negate(is.null), lapply(blocks, parse_block))
+if (length(rows) == 0L) stop("cmonitor-rs returned no usable blocks")
+wide <- do.call(rbind, rows)
+
+# Aggregate in case multiple blocks share a date
+wide <- aggregate(cbind(opus, sonnet, haiku) ~ date, data = wide, FUN = sum)
+wide$total <- wide$opus + wide$sonnet + wide$haiku
 wide$opus_pct   <- ifelse(wide$total > 0, round(wide$opus   / wide$total * 100, 1), NA_real_)
 wide$sonnet_pct <- ifelse(wide$total > 0, round(wide$sonnet / wide$total * 100, 1), NA_real_)
 wide$haiku_pct  <- ifelse(wide$total > 0, round(wide$haiku  / wide$total * 100, 1), NA_real_)
 wide <- wide[order(wide$date, decreasing = TRUE), ]
 
+cat(sprintf("Parsed %d daily blocks from cmonitor-rs\n", nrow(wide)))
+
 # ---- Upsert into costs table -------------------------------------------------
+
+con <- dbConnect(duckdb(), path = DB_PATH)
+on.exit(dbDisconnect(con, shutdown = TRUE))
 
 invisible(dbExecute(con, "
   CREATE TABLE IF NOT EXISTS costs (
