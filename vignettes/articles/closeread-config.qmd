@@ -13,7 +13,10 @@ execute:
 <style>
 .cr-section.sidebar-left .cr-sidebar-col { flex: 0 0 55% !important; max-width: 55% !important; }
 .cr-section.sidebar-left .cr-narrative-col { flex: 0 0 45% !important; max-width: 45% !important; }
-.sticky pre, .sticky table { font-size: 0.8rem; }
+.sticky pre, .sticky table { font-size: 0.9rem; }
+.sticky table td, .sticky table th { padding: 4px 8px; }
+.cr-narrative-col p { font-size: 0.95rem; line-height: 1.6; }
+.sticky table td code, .sticky table td .cr-highlight { color: #e6db74; font-weight: 600; }
 </style>
 
 ```{r setup}
@@ -75,32 +78,80 @@ The config stack has six layers: rules that forbid, skills that enable, agents t
 
 :::{.cr-section}
 
+:::{#cr-tree .sticky}
+```{r tree-block}
+#| results: asis
+cat(paste0(
+'```\n',
+'~/.claude/\n',
+'\u251c\u2500\u2500 CLAUDE.md              \u2190 entry point\n',
+'\u251c\u2500\u2500 rules/                 \u2190 ', counts$n_rules, ' constraint files\n',
+'\u2502   \u251c\u2500\u2500 btw-timeouts.md\n',
+'\u2502   \u251c\u2500\u2500 git-no-compound-cd.md\n',
+'\u2502   \u2514\u2500\u2500 ...\n',
+'\u251c\u2500\u2500 skills/                \u2190 ', counts$n_skills, ' capability modules\n',
+'\u2502   \u251c\u2500\u2500 adversarial-qa/\n',
+'\u2502   \u251c\u2500\u2500 shiny-bslib/\n',
+'\u2502   \u2514\u2500\u2500 ...\n',
+'\u251c\u2500\u2500 agents/                \u2190 ', counts$n_agents, ' specialist definitions\n',
+'\u2502   \u251c\u2500\u2500 critic.md\n',
+'\u2502   \u251c\u2500\u2500 quick-fix.md\n',
+'\u2502   \u2514\u2500\u2500 ...\n',
+'\u251c\u2500\u2500 commands/              \u2190 ', counts$n_commands, ' slash commands\n',
+'\u2502   \u251c\u2500\u2500 check.md\n',
+'\u2502   \u251c\u2500\u2500 session-end.md\n',
+'\u2502   \u2514\u2500\u2500 ...\n',
+'\u251c\u2500\u2500 hooks/                 \u2190 ', counts$n_hooks, ' event scripts\n',
+'\u2502   \u251c\u2500\u2500 session_init.sh\n',
+'\u2502   \u2514\u2500\u2500 ...\n',
+'\u2514\u2500\u2500 projects/*/memory/     \u2190 ', counts$n_memory, ' persistent memory files\n',
+'    \u251c\u2500\u2500 MEMORY.md\n',
+'    \u2514\u2500\u2500 ...\n',
+'```\n'
+))
+```
+:::
+
+The file tree shows the physical layout. Every `.md` file in `rules/` is a constraint. Every directory in `skills/` is a capability module. Every `.md` in `agents/` is a specialist definition.
+
+@cr-tree
+
+The tree is shallow — one level deep for each config type. This flatness is intentional. Rules don't have sub-rules. Skills don't nest inside skills. The complexity lives in how these flat files interact, not in their directory structure.
+
+@cr-tree
+
+:::
+
+:::{.cr-section}
+
 :::{#cr-rules .sticky}
 ```{r rules-table}
 #| results: asis
 rule_data <- safe_tar_read("vig_cr_rule_categories")
-if (!is.null(rule_data)) {
-  knitr::kable(rule_data, format = "html",
-    col.names = c("Category", "Count", "Examples"),
-    table.attr = 'class="table table-sm"')
-} else {
-  cat('<!-- fallback: update if counts change -->
-<table class="table table-sm">
-<thead><tr><th>Category</th><th>Count</th><th>Examples</th></tr></thead>
-<tbody>
-<tr><td>Core workflow</td><td>5</td><td>systematic-debugging, verification-before-completion</td></tr>
-<tr><td>Nix / environment</td><td>3</td><td>nix-agent-shell-protocol, nix-nested-shell-isolation</td></tr>
-<tr><td>Data quality</td><td>7</td><td>data-validation-timeseries, duckdplyr-not-sql</td></tr>
-<tr><td>Statistics</td><td>6</td><td>statistical-reporting, look-ahead-bias-prevention</td></tr>
-<tr><td>Visualization</td><td>5</td><td>visualization-standards, diagram-generation</td></tr>
-<tr><td>Quarto / vignettes</td><td>7</td><td>quarto-vignette-format, vignette-targets-export</td></tr>
-<tr><td>Shiny / web</td><td>3</td><td>shinylive-webr-nonblocking, module-isolation</td></tr>
-<tr><td>Git / safety</td><td>2</td><td>git-no-compound-cd, safe-deletion</td></tr>
-<tr><td>Knowledge base</td><td>4</td><td>wiki-staleness-check, raw-folder-readonly</td></tr>
-<tr><td>Other</td><td>19</td><td>btw-timeouts, confidence-markers, ...</td></tr>
-</tbody>
-</table>')
+if (is.null(rule_data)) {
+  rule_data <- tibble::tibble(
+    category    = c("Core workflow", "Nix / environment", "Data quality", "Statistics",
+                    "Visualization", "Quarto / vignettes", "Shiny / web", "Git / safety",
+                    "Knowledge base", "Other"),
+    count       = c(5L, 3L, 7L, 6L, 5L, 7L, 3L, 2L, 4L, 19L),
+    example_rule = c(
+      "systematic-debugging, verification-before-completion",
+      "nix-agent-shell-protocol, nix-nested-shell-isolation",
+      "data-validation-timeseries, duckdplyr-not-sql",
+      "statistical-reporting, look-ahead-bias-prevention",
+      "visualization-standards, diagram-generation",
+      "quarto-vignette-format, vignette-targets-export",
+      "shinylive-webr-nonblocking, module-isolation",
+      "git-no-compound-cd, safe-deletion",
+      "wiki-staleness-check, raw-folder-readonly",
+      "btw-timeouts, confidence-markers, ..."
+    )
+  )
 }
+knitr::kable(rule_data, format = "html",
+  col.names = c("Category", "Count", "Examples"),
+  caption = paste0("Rule categories across ", counts$n_rules, " config files"),
+  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
 
@@ -124,28 +175,30 @@ Some rules exist because of a single incident: a 522 MB worktree deleted without
 ```{r skills-table}
 #| results: asis
 skill_data <- safe_tar_read("vig_cr_skill_categories")
-if (!is.null(skill_data)) {
-  knitr::kable(skill_data, format = "html",
-    col.names = c("Category", "Count", "Purpose"),
-    table.attr = 'class="table table-sm"')
-} else {
-  cat('<!-- fallback: update if counts change -->
-<table class="table table-sm">
-<thead><tr><th>Category</th><th>Count</th><th>Purpose</th></tr></thead>
-<tbody>
-<tr><td><strong>Mandatory</strong></td><td>8</td><td>Always applied: adversarial-qa, quality-gates, r-package-workflow ...</td></tr>
-<tr><td>R package development</td><td>12</td><td>cli, dplyr, vctrs, S7, lifecycle, testthat ...</td></tr>
-<tr><td>Data &amp; analysis</td><td>9</td><td>EDA, pointblank, DuckDB, modeling, genomics ...</td></tr>
-<tr><td>Targets &amp; pipelines</td><td>4</td><td>pipeline spec, vignettes, crew, parallel</td></tr>
-<tr><td>Shiny &amp; web</td><td>8</td><td>bslib, async, modules, Shinylive, plumber2 ...</td></tr>
-<tr><td>Quarto &amp; docs</td><td>7</td><td>websites, dashboards, dynamic content, WebR ...</td></tr>
-<tr><td>DevOps &amp; CI</td><td>3</td><td>GitHub Actions, pkgdown, static API</td></tr>
-<tr><td>Project management</td><td>8</td><td>plans, review, requirements, context control ...</td></tr>
-<tr><td>AI / LLM tools</td><td>5</td><td>Gemini CLI, HuggingFace, MCP servers, hooks</td></tr>
-<tr><td>Prose quality</td><td>1</td><td>deslop — removes AI writing patterns</td></tr>
-</tbody>
-</table>')
+if (is.null(skill_data)) {
+  skill_data <- tibble::tibble(
+    category = c("Mandatory", "R package development", "Data & analysis",
+                 "Targets & pipelines", "Shiny & web", "Quarto & docs",
+                 "DevOps & CI", "Project management", "AI / LLM tools", "Prose quality"),
+    count    = c(8L, 12L, 9L, 4L, 8L, 7L, 3L, 8L, 5L, 1L),
+    purpose  = c(
+      "Always applied: adversarial-qa, quality-gates, r-package-workflow ...",
+      "cli, dplyr, vctrs, S7, lifecycle, testthat ...",
+      "EDA, pointblank, DuckDB, modeling, genomics ...",
+      "pipeline spec, vignettes, crew, parallel",
+      "bslib, async, modules, Shinylive, plumber2 ...",
+      "websites, dashboards, dynamic content, WebR ...",
+      "GitHub Actions, pkgdown, static API",
+      "plans, review, requirements, context control ...",
+      "Gemini CLI, HuggingFace, MCP servers, hooks",
+      "deslop — removes AI writing patterns"
+    )
+  )
 }
+knitr::kable(skill_data, format = "html",
+  col.names = c("Category", "Count", "Purpose"),
+  caption = paste0("Skill modules by domain (", counts$n_skills, " total)"),
+  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
 
@@ -169,30 +222,34 @@ The trigger mechanism is intentionally loose. "Run tests" activates `test-driven
 ```{r agents-table}
 #| results: asis
 agent_data <- safe_tar_read("vig_cr_agent_tiers")
-if (!is.null(agent_data)) {
-  knitr::kable(agent_data[, c("agent", "model", "description")], format = "html",
-    col.names = c("Agent", "Model", "Trigger"),
-    table.attr = 'class="table table-sm"')
+if (is.null(agent_data)) {
+  agent_data <- tibble::tibble(
+    agent   = c("quick-fix", "critic", "fixer", "r-debugger", "targets-runner",
+                "reviewer", "nix-env", "shiny-async-debugger", "data-quality-guardian",
+                "data-engineer", "shinylive-builder", "wiki-curator"),
+    model   = c("haiku", rep("sonnet", 11L)),
+    trigger = c(
+      "Typos, renames, version bumps, URL fixes",
+      "Read-only adversarial review",
+      "Apply fixes from critic reports",
+      '"run tests", "fix test failure"',
+      '"tar_make", "pipeline failed"',
+      '"review this PR/code"',
+      '"nix shell broken", "package missing"',
+      '"ExtendedTask", "crew bug"',
+      '"validate data", "pointblank"',
+      '"dbt", "SQL pipeline"',
+      '"shinylive", "WASM build"',
+      '"compile wiki from raw"'
+    )
+  )
 } else {
-  cat('<!-- fallback: update if counts change -->
-<table class="table table-sm">
-<thead><tr><th>Agent</th><th>Model</th><th>Trigger</th></tr></thead>
-<tbody>
-<tr><td>quick-fix</td><td>haiku ($)</td><td>Typos, renames, version bumps, URL fixes</td></tr>
-<tr><td>critic</td><td>sonnet ($$)</td><td>Read-only adversarial review</td></tr>
-<tr><td>fixer</td><td>sonnet ($$)</td><td>Apply fixes from critic reports</td></tr>
-<tr><td>r-debugger</td><td>sonnet ($$)</td><td>"run tests", "fix test failure"</td></tr>
-<tr><td>targets-runner</td><td>sonnet ($$)</td><td>"tar_make", "pipeline failed"</td></tr>
-<tr><td>reviewer</td><td>sonnet ($$)</td><td>"review this PR/code"</td></tr>
-<tr><td>nix-env</td><td>sonnet ($$)</td><td>"nix shell broken", "package missing"</td></tr>
-<tr><td>shiny-async-debugger</td><td>sonnet ($$)</td><td>"ExtendedTask", "crew bug"</td></tr>
-<tr><td>data-quality-guardian</td><td>sonnet ($$)</td><td>"validate data", "pointblank"</td></tr>
-<tr><td>data-engineer</td><td>sonnet ($$)</td><td>"dbt", "SQL pipeline"</td></tr>
-<tr><td>shinylive-builder</td><td>sonnet ($$)</td><td>"shinylive", "WASM build"</td></tr>
-<tr><td>wiki-curator</td><td>sonnet ($$)</td><td>"compile wiki from raw"</td></tr>
-</tbody>
-</table>')
+  agent_data <- agent_data[, c("agent", "model", "description")]
 }
+knitr::kable(agent_data, format = "html",
+  col.names = c("Agent", "Model", "Trigger"),
+  caption = "Agent model tiers and delegation triggers",
+  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
 
@@ -256,29 +313,31 @@ The memory system works because it is curated, not accumulated. Each feedback fi
 ```{r commands-table}
 #| results: asis
 cmd_data <- safe_tar_read("vig_cr_commands")
-if (!is.null(cmd_data)) {
-  knitr::kable(cmd_data, format = "html",
-    col.names = c("Command", "Alias", "What it does"),
-    table.attr = 'class="table table-sm"')
-} else {
-  cat('<!-- fallback: update if counts change -->
-<table class="table table-sm">
-<thead><tr><th>Command</th><th>Alias</th><th>What it does</th></tr></thead>
-<tbody>
-<tr><td>/hi</td><td>/session-start</td><td>Read CHANGELOG, check git status, open issues</td></tr>
-<tr><td>/bye</td><td>/session-end</td><td>Commit, append CHANGELOG, push, wiki staleness check</td></tr>
-<tr><td>/check</td><td>—</td><td>R CMD check + code sweep with ast-grep rules</td></tr>
-<tr><td>/ctx-check</td><td>—</td><td>Check ctx.yaml coverage for all exported functions</td></tr>
-<tr><td>/pr-status</td><td>—</td><td>Check open PRs and CI status</td></tr>
-<tr><td>/cleanup</td><td>—</td><td>Review and simplify work (critic + fixer pass)</td></tr>
-<tr><td>/issue-triage</td><td>/triage</td><td>List GitHub issues by difficulty</td></tr>
-<tr><td>/new-issue</td><td>—</td><td>Create GitHub issue with branch</td></tr>
-<tr><td>/wiki-health</td><td>—</td><td>Validate knowledge base wiki frontmatter and links</td></tr>
-<tr><td>/wiki-promote</td><td>—</td><td>Promote an output into the wiki</td></tr>
-<tr><td>/write-alt-text</td><td>—</td><td>Generate alt text for all figures</td></tr>
-</tbody>
-</table>')
+if (is.null(cmd_data)) {
+  cmd_data <- tibble::tibble(
+    command  = c("/hi", "/bye", "/check", "/ctx-check", "/pr-status", "/cleanup",
+                 "/issue-triage", "/new-issue", "/wiki-health", "/wiki-promote", "/write-alt-text"),
+    alias    = c("/session-start", "/session-end", "\u2014", "\u2014", "\u2014", "\u2014",
+                 "/triage", "\u2014", "\u2014", "\u2014", "\u2014"),
+    does     = c(
+      "Read CHANGELOG, check git status, open issues",
+      "Commit, append CHANGELOG, push, wiki staleness check",
+      "R CMD check + code sweep with ast-grep rules",
+      "Check ctx.yaml coverage for all exported functions",
+      "Check open PRs and CI status",
+      "Review and simplify work (critic + fixer pass)",
+      "List GitHub issues by difficulty",
+      "Create GitHub issue with branch",
+      "Validate knowledge base wiki frontmatter and links",
+      "Promote an output into the wiki",
+      "Generate alt text for all figures"
+    )
+  )
 }
+knitr::kable(cmd_data, format = "html",
+  col.names = c("Command", "Alias", "What it does"),
+  caption = "Slash commands for session management",
+  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
 
@@ -302,24 +361,26 @@ Some commands are diagnostic: `/check` runs the full quality gate sweep, `/ctx-c
 ```{r hooks-table}
 #| results: asis
 hook_data <- safe_tar_read("vig_cr_hook_lifecycle")
-if (!is.null(hook_data)) {
-  knitr::kable(hook_data, format = "html",
-    col.names = c("Script", "Event", "Action"),
-    table.attr = 'class="table table-sm"')
-} else {
-  cat('<!-- fallback: update if counts change -->
-<table class="table table-sm">
-<thead><tr><th>Script</th><th>Event</th><th>Action</th></tr></thead>
-<tbody>
-<tr><td>session_init.sh</td><td>SessionStart</td><td>Load context, check Nix shell, orient session</td></tr>
-<tr><td>context_survival.sh</td><td>PreCompact + compact/resume</td><td>Preserve critical state before context window compaction</td></tr>
-<tr><td>file_protection.sh</td><td>PreToolUse: Edit | Write</td><td>Block writes to raw/ (append-only), flag protected files</td></tr>
-<tr><td>context_monitor.sh</td><td>PostToolUse: Bash | Task</td><td>Track context window usage, warn at thresholds</td></tr>
-<tr><td>wiki_health_onwrite.sh</td><td>PostToolUse: Edit | Write</td><td>T1 health check on every wiki write (frontmatter, Sources)</td></tr>
-<tr><td>session_stop.sh</td><td>Stop</td><td>Commit pending changes, append CHANGELOG</td></tr>
-</tbody>
-</table>')
+if (is.null(hook_data)) {
+  hook_data <- tibble::tibble(
+    script = c("session_init.sh", "context_survival.sh", "file_protection.sh",
+               "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"),
+    event  = c("SessionStart", "PreCompact + compact/resume", "PreToolUse: Edit | Write",
+               "PostToolUse: Bash | Task", "PostToolUse: Edit | Write", "Stop"),
+    action = c(
+      "Load context, check Nix shell, orient session",
+      "Preserve critical state before context window compaction",
+      "Block writes to raw/ (append-only), flag protected files",
+      "Track context window usage, warn at thresholds",
+      "T1 health check on every wiki write (frontmatter, Sources)",
+      "Commit pending changes, append CHANGELOG"
+    )
+  )
 }
+knitr::kable(hook_data, format = "html",
+  col.names = c("Script", "Event", "Action"),
+  caption = "Hook lifecycle — event-driven automation",
+  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
 
@@ -342,17 +403,23 @@ Hooks fire on events. Six scripts cover the session lifecycle: initialization, c
 :::{#cr-composition .sticky}
 ```{r summary-table}
 #| results: asis
-cat('<table class="table table-sm">
-<thead><tr><th>Layer</th><th>Count</th><th>Role in a request</th></tr></thead>
-<tbody>
-<tr><td>Rules</td><td>', counts$n_rules, '</td><td>Constrain every action (what not to do)</td></tr>
-<tr><td>Skills</td><td>', counts$n_skills, '</td><td>Supply domain knowledge (what to do and how)</td></tr>
-<tr><td>Agents</td><td>', counts$n_agents, '</td><td>Delegate to specialists (who does the work)</td></tr>
-<tr><td>Memory</td><td>', counts$n_memory, '</td><td>Carry lessons from past sessions</td></tr>
-<tr><td>Commands</td><td>', counts$n_commands, '</td><td>Trigger structured workflows on demand</td></tr>
-<tr><td>Hooks</td><td>', counts$n_hooks, '</td><td>Automate enforcement on tool events</td></tr>
-</tbody>
-</table>')
+summary_data <- tibble::tibble(
+  layer = c("Rules", "Skills", "Agents", "Memory", "Commands", "Hooks"),
+  count = c(counts$n_rules, counts$n_skills, counts$n_agents,
+            counts$n_memory, counts$n_commands, counts$n_hooks),
+  role  = c(
+    "Constrain every action (what not to do)",
+    "Supply domain knowledge (what to do and how)",
+    "Delegate to specialists (who does the work)",
+    "Carry lessons from past sessions",
+    "Trigger structured workflows on demand",
+    "Automate enforcement on tool events"
+  )
+)
+knitr::kable(summary_data, format = "html",
+  col.names = c("Layer", "Count", "Role in a request"),
+  caption = "The six layers of the config stack",
+  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
 
