@@ -8,8 +8,9 @@ Run the full R package check suite AND ast-grep code sweep.
 2. Run `devtools::test()` and report any failures
 3. Run `devtools::check()` with `--as-cran` flag
 4. Run ast-grep code sweep for banned patterns
-5. Run `parse("_targets.R")` if _targets.R exists
-6. Summarize all results and give verdict
+5. Run `roborev refine --limit 3` to auto-fix unresolved review findings (if roborev daemon is running)
+6. Run `parse("_targets.R")` if _targets.R exists
+7. Summarize all results and give verdict
 
 ## Commands to Execute
 
