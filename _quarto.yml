@@ -4,6 +4,7 @@ project:
   render:
     - "index.qmd"
     - "vignettes/*.qmd"
+    - "vignettes/articles/*.qmd"
 
 website:
   title: "LLM Project"
@@ -16,6 +17,8 @@ website:
         text: Telemetry
       - href: vignettes/closeread-infrastructure.qmd
         text: Infrastructure
+      - href: vignettes/articles/closeread-config.qmd
+        text: Config Stack
 
 format:
   html:
