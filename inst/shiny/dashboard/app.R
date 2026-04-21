@@ -62,6 +62,83 @@ plotly_dark_layout <- function(p, title = NULL) {
   ) |> plotly::config(scrollZoom = TRUE)
 }
 
+# ---- window cost helper (Max20: $140 per 5h window) ------------------------
+
+# Windows start at midnight UTC and repeat every 5 hours
+window_boundaries <- function() {
+  now_utc <- as.POSIXct(Sys.time(), tz = "UTC")
+  hour <- as.integer(format(now_utc, "%H"))
+  window_start_hour <- (hour %/% 5L) * 5L
+  window_start <- as.POSIXct(
+    paste(format(now_utc, "%Y-%m-%d"), sprintf("%02d:00:00", window_start_hour)),
+    tz = "UTC"
+  )
+  window_end <- window_start + 5L * 3600L
+  list(start = window_start, end = window_end, now = now_utc)
+}
+
+# Query JSONL directly (not costs table) for the current 5h window.
+# Returns list(total, opus, sonnet, haiku) in USD.
+window_cost_query <- function() {
+  wb  <- window_boundaries()
+  con <- NULL
+  tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = TRUE)
+    result <- DBI::dbGetQuery(con, sprintf(
+      "SELECT
+         CASE WHEN message.model LIKE '%%opus%%'  THEN 'opus'
+              WHEN message.model LIKE '%%haiku%%' THEN 'haiku'
+              ELSE 'sonnet' END AS family,
+         SUM(COALESCE(message.usage.input_tokens,                0)) AS input_tokens,
+         SUM(COALESCE(message.usage.output_tokens,               0)) AS output_tokens,
+         SUM(COALESCE(message.usage.cache_creation_input_tokens, 0)) AS cache_creation,
+         SUM(COALESCE(message.usage.cache_read_input_tokens,     0)) AS cache_read
+       FROM read_json_auto('%s', union_by_name = true, ignore_errors = true)
+       WHERE type = 'assistant'
+         AND message.usage IS NOT NULL
+         AND message.model IS NOT NULL
+         AND message.model != '<synthetic>'
+         AND timestamp >= '%s'
+         AND timestamp <  '%s'
+       GROUP BY 1",
+      path.expand("~/.claude/projects/**/*.jsonl"),
+      format(wb$start, "%Y-%m-%dT%H:%M:%S"),
+      format(wb$end,   "%Y-%m-%dT%H:%M:%S")
+    ))
+    DBI::dbDisconnect(con, shutdown = TRUE)
+
+    if (nrow(result) == 0) {
+      return(list(total = 0, opus = 0, sonnet = 0, haiku = 0, boundaries = wb))
+    }
+
+    pricing <- list(
+      opus   = c(input = 15,   output = 75,   cache_creation = 18.75, cache_read = 1.50),
+      sonnet = c(input = 3,    output = 15,   cache_creation = 3.75,  cache_read = 0.30),
+      haiku  = c(input = 0.25, output = 1.25, cache_creation = 0.30,  cache_read = 0.03)
+    )
+    costs <- vapply(seq_len(nrow(result)), function(i) {
+      fam <- result$family[i]
+      p   <- pricing[[fam]]
+      (result$input_tokens[i]   * p["input"]          +
+       result$output_tokens[i]  * p["output"]         +
+       result$cache_creation[i] * p["cache_creation"] +
+       result$cache_read[i]     * p["cache_read"]) / 1e6
+    }, numeric(1))
+    names(costs) <- result$family
+
+    list(
+      total      = sum(costs),
+      opus       = if ("opus"   %in% names(costs)) costs["opus"]   else 0,
+      sonnet     = if ("sonnet" %in% names(costs)) costs["sonnet"] else 0,
+      haiku      = if ("haiku"  %in% names(costs)) costs["haiku"]  else 0,
+      boundaries = wb
+    )
+  }, error = function(e) {
+    if (!is.null(con)) tryCatch(DBI::dbDisconnect(con, shutdown = TRUE), error = function(e2) NULL)
+    list(total = 0, opus = 0, sonnet = 0, haiku = 0, boundaries = wb)
+  })
+}
+
 # ---- roborev helpers --------------------------------------------------------
 
 roborev_data <- function() {
@@ -187,10 +264,28 @@ ui <- bslib::page_sidebar(
 
       shiny::uiOutput("budget_alert"),
 
+      # Window utilisation (primary metric)
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::h6("Weekly budget status", style = "color:#aaa; margin-top:8px;"),
+          shiny::h6("Current 5h window (Max20)", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("window_metrics")
+        )
+      ),
+
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::h6("Window cost vs $140 cap", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("window_progress_bar")
+        )
+      ),
+
+      # Weekly spend (secondary metric)
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::h6("API-equivalent weekly spend", style = "color:#aaa; margin-top:20px;"),
           shiny::uiOutput("budget_metrics")
         )
       ),
@@ -198,7 +293,7 @@ ui <- bslib::page_sidebar(
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::h6("Week spend vs cap", style = "color:#aaa; margin-top:16px;"),
+          shiny::h6("Week spend vs cap", style = "color:#aaa; margin-top:8px;"),
           shiny::uiOutput("budget_progress_bar")
         )
       )
@@ -592,13 +687,130 @@ server <- function(input, output, session) {
     )
   })
 
-  output$budget_alert <- shiny::renderUI({
-    b <- budget_projection()
-    if (b$projected > b$cap) {
+  # ---- Window utilisation (Max20: $140 / 5h) --------------------------------
+
+  # Cache window cost for 60 s (JSONL glob scan is slow)
+  window_cache <- shiny::reactiveValues(
+    data       = NULL,
+    last_fetch = NULL
+  )
+
+  window_data <- shiny::reactive({
+    shiny::invalidateLater(60000, session)
+    input$refresh
+    now <- Sys.time()
+    needs_fetch <- is.null(window_cache$last_fetch) ||
+      as.numeric(difftime(now, window_cache$last_fetch, units = "secs")) > 60
+    if (needs_fetch) {
+      window_cache$data       <- window_cost_query()
+      window_cache$last_fetch <- now
+    }
+    window_cache$data
+  })
+
+  output$window_metrics <- shiny::renderUI({
+    w       <- window_data()
+    wb      <- w$boundaries
+    cap     <- 140
+    pct     <- if (cap > 0) w$total / cap * 100 else 0
+    pct_col <- if (pct >= 80) "#e74c3c" else if (pct >= 60) "#f39c12" else "#2ecc71"
+
+    fmt_time <- function(t) format(t, "%H:%M UTC")
+
+    metrics <- data.frame(
+      metric = c(
+        "Window start", "Window end",
+        "Window cost", "Window cap", "% used",
+        "Opus", "Sonnet", "Haiku"
+      ),
+      value = c(
+        fmt_time(wb$start), fmt_time(wb$end),
+        sprintf("$%.3f", w$total),
+        "$140",
+        paste0(round(pct, 1), "%"),
+        sprintf("$%.3f", as.numeric(w$opus)),
+        sprintf("$%.3f", as.numeric(w$sonnet)),
+        sprintf("$%.3f", as.numeric(w$haiku))
+      ),
+      stringsAsFactors = FALSE
+    )
+
+    rows <- lapply(seq_len(nrow(metrics)), function(i) {
+      val_color <- if (metrics$metric[i] == "% used") pct_col else "#fff"
+      shiny::tags$tr(
+        shiny::tags$td(
+          style = "color:#aaa; padding:4px 12px 4px 4px; font-size:0.85rem;",
+          metrics$metric[i]
+        ),
+        shiny::tags$td(
+          style = paste0("color:", val_color, "; padding:4px; font-weight:600; font-size:0.95rem;"),
+          metrics$value[i]
+        )
+      )
+    })
+    shiny::tags$table(
+      style = "border-collapse:collapse; margin-bottom:8px;",
+      shiny::tags$tbody(rows)
+    )
+  })
+
+  output$window_progress_bar <- shiny::renderUI({
+    w         <- window_data()
+    cap       <- 140
+    pct       <- min(100, if (cap > 0) w$total / cap * 100 else 0)
+    bar_color <- if (pct >= 80) "#e74c3c" else if (pct >= 60) "#f39c12" else "#2ecc71"
+    shiny::div(
+      style = "margin: 4px 0 8px 0;",
       shiny::div(
         style = paste0(
+          "background:#333; border-radius:4px; height:24px; ",
+          "width:100%; position:relative;"
+        ),
+        shiny::div(
+          style = paste0(
+            "background:", bar_color, "; border-radius:4px; height:24px; ",
+            "width:", round(pct, 1), "%; position:absolute; top:0; left:0;"
+          )
+        ),
+        shiny::div(
+          style = paste0(
+            "position:absolute; top:0; left:0; width:100%; height:24px; ",
+            "display:flex; align-items:center; justify-content:center; ",
+            "color:#fff; font-size:0.85rem; font-weight:600;"
+          ),
+          paste0(round(pct, 1), "% of $140 cap")
+        )
+      )
+    )
+  })
+
+  output$budget_alert <- shiny::renderUI({
+    b <- budget_projection()
+    w <- window_data()
+    cap_window <- 140
+    pct_window <- if (cap_window > 0) w$total / cap_window * 100 else 0
+
+    alerts <- list()
+
+    if (pct_window >= 80) {
+      alerts[[length(alerts) + 1]] <- shiny::div(
+        style = paste0(
           "background:#e74c3c; color:white; padding:8px 16px; ",
-          "border-radius:4px; margin-bottom:12px;"
+          "border-radius:4px; margin-bottom:8px;"
+        ),
+        paste0(
+          "\u26a0 WINDOW ALERT: $", round(w$total, 2),
+          " of $140 window cap used (",
+          round(pct_window, 1), "%)"
+        )
+      )
+    }
+
+    if (b$projected > b$cap) {
+      alerts[[length(alerts) + 1]] <- shiny::div(
+        style = paste0(
+          "background:#e74c3c; color:white; padding:8px 16px; ",
+          "border-radius:4px; margin-bottom:8px;"
         ),
         paste0(
           "\u26a0 BUDGET ALERT: Projected $", round(b$projected, 0),
@@ -606,6 +818,8 @@ server <- function(input, output, session) {
         )
       )
     }
+
+    if (length(alerts) > 0) shiny::tagList(alerts)
   })
 
   output$budget_metrics <- shiny::renderUI({
