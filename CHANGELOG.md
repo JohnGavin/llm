@@ -4,6 +4,46 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-04-21
+
+### Completed
+- **llmtelemetry Shinylive CI fix (#23):** `engine: knitr` in frontmatter stops Quarto probing for Python/Jupyter. CI now passes.
+- **cmonitor-rs integration (#71):** Discovered cmonitor/ccusage/our ETL all read `~/.claude/projects/**/*.jsonl`. Replaced custom JSONL ETL with `cmonitor-rs --output json` (deduped, correct pricing). Fixed 5x cost inflation from missing dedup. Both daily ETL and realtime window query now via cmonitor-rs.
+- **Budget tab Max20 window utilisation (#59):** Primary metric is 5h window cost vs $140 cap (from cmonitor-rs realtime). Existing weekly view relabeled as API-equivalent.
+- **Agent authority boundaries (#59):** All 12 agents now have `authority:` field in YAML frontmatter defining what they CANNOT do.
+- **Pivot signal rule (#59):** New `pivot-signal.md` — escalate after 3/5/7 consecutive failures on same task.
+- **Roborev deeper integration (#55):** Evaluated 604 reviews (57% pass, 21s median). Wired `roborev refine` into `/check`, unresolved findings check into `/session-end`.
+- **Autoresearch evaluation (#56):** 4 implemented patterns dormant (config project, not modelling). New `single-change-experiment.md` rule for modelling discipline.
+- **Closeread vignette scaffolding (#70):** 9 cr-sections (entry, tree, rules, skills, agents, memory, commands, hooks, composition). All tables render as HTML with captions. Tree structure section shows `~/.claude/` layout. Gold highlights link scroll text to sticky content. 7 RDS exports for CI.
+- **Plotly CSS lesson:** Documented bslib darkly bleed-through fix in `visualization-diagrams.md` (trimmed to 129 lines).
+- **Cost data backfill:** Apr 20-21 costs from cmonitor-rs into unified.duckdb.
+- **Issues created:** #70 (closeread vignette), #71 (cmonitor-rs, closed), #72 (skill-focus review), #73 (Swedroe transcript), llmtelemetry#23 (closed), llmtelemetry#24 (block grouping)
+
+### Failed Approaches
+- **JSONL ETL without dedup:** Raw `read_json_auto()` glob over `~/.claude/projects/**/*.jsonl` double-counted entries shared across subagent conversations. Apr 20 showed $1,379 vs correct $287 (5x inflation). Root cause: parent messages duplicated in child conversation JSONL files. Fix: use cmonitor-rs which deduplicates by `message_id:request_id`.
+- **ccusage pricing mismatch:** ccusage reported $107/day, our JSONL ETL $1,379, cmonitor-rs $287. All read the same files but apply different token inclusion (ccusage: unknown subset, JSONL: all tokens no dedup, cmonitor-rs: all tokens with dedup). cmonitor-rs is the authoritative source.
+- **Closeread extension not found on CI:** Absolute symlink `/Users/johngavin/.../_extensions` breaks on CI. Fixed with relative `../../_extensions`.
+- **cat() HTML in closeread stickies:** `cat('<table...')` with `results: asis` gets HTML-escaped inside closeread sticky divs. `$` signs in table cells trigger LaTeX math mode. Fix: use `knitr::kable()` on tibbles instead of raw HTML strings.
+- **cmonitor TUI scraping:** Initially tried parsing cmonitor's terminal output — fragile ANSI stripping. Then discovered `cmonitor-rs --output json` exists (already installed at `~/.cargo/bin/`).
+
+### Accuracy / Metrics
+- Issues: 5 closed (#55, #56, #59, #71, llmtelemetry#23), 3 created (#72, #73, llmtelemetry#24)
+- Commits: 12 this session (11 llm + 1 llmtelemetry)
+- Cost data: unified.duckdb now has 78 dates from cmonitor-rs (deduped, correct)
+- Roborev: 604 completed reviews, 57% pass rate, 0% resolution rate (now addressed via /check integration)
+- Closeread: 9 sections, 6 captioned tables, tree structure, gold highlights, renders locally + CI
+- Budget: Max20 window showing $65/140 (46%) current session
+- Rules: 62 (added pivot-signal, single-change-experiment)
+- Agents: all 12 have authority field
+
+### Known Limitations
+- cmonitor-rs not in nix PATH (only at `~/.cargo/bin/cmonitor-rs`) — needs adding to default.R
+- Closeread vignette: `cr-highlight` spans work in narrative but not yet linked to specific lines in sticky code blocks (would need `cr-spotlight` with line ranges)
+- 1 unaddressed roborev finding (from this session's commits)
+- #72 (skill-focus review) and #73 (Swedroe transcript) not yet started
+- #70 closeread vignette needs more diagrams/plots showing config file relationships (requested but not yet implemented)
+- llmtelemetry#24 (block grouping by day) not yet implemented
+
 ## 2026-04-20
 
 ### Completed
