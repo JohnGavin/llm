@@ -159,7 +159,7 @@ The trigger mechanism is intentionally loose. "Run tests" activates `test-driven
 ```{r agents-table}
 agent_data <- safe_tar_read("vig_cr_agent_tiers")
 if (!is.null(agent_data)) {
-  knitr::kable(agent_data, format = "html",
+  knitr::kable(agent_data[, c("agent", "model", "description")], format = "html",
     col.names = c("Agent", "Model", "Trigger"),
     table.attr = 'class="table table-sm"')
 } else {
