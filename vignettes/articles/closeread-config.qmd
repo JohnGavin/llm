@@ -10,6 +10,12 @@ execute:
   message: false
 ---
 
+<style>
+.cr-section.sidebar-left .cr-sidebar-col { flex: 0 0 55% !important; max-width: 55% !important; }
+.cr-section.sidebar-left .cr-narrative-col { flex: 0 0 45% !important; max-width: 45% !important; }
+.sticky pre, .sticky table { font-size: 0.8rem; }
+</style>
+
 ```{r setup}
 #| include: false
 safe_tar_read <- function(name) {
@@ -71,13 +77,15 @@ The config stack has six layers: rules that forbid, skills that enable, agents t
 
 :::{#cr-rules .sticky}
 ```{r rules-table}
+#| results: asis
 rule_data <- safe_tar_read("vig_cr_rule_categories")
 if (!is.null(rule_data)) {
   knitr::kable(rule_data, format = "html",
     col.names = c("Category", "Count", "Examples"),
     table.attr = 'class="table table-sm"')
 } else {
-  cat('<table class="table table-sm">
+  cat('<!-- fallback: update if counts change -->
+<table class="table table-sm">
 <thead><tr><th>Category</th><th>Count</th><th>Examples</th></tr></thead>
 <tbody>
 <tr><td>Core workflow</td><td>5</td><td>systematic-debugging, verification-before-completion</td></tr>
@@ -114,13 +122,15 @@ Some rules exist because of a single incident: a 522 MB worktree deleted without
 
 :::{#cr-skills .sticky}
 ```{r skills-table}
+#| results: asis
 skill_data <- safe_tar_read("vig_cr_skill_categories")
 if (!is.null(skill_data)) {
   knitr::kable(skill_data, format = "html",
     col.names = c("Category", "Count", "Purpose"),
     table.attr = 'class="table table-sm"')
 } else {
-  cat('<table class="table table-sm">
+  cat('<!-- fallback: update if counts change -->
+<table class="table table-sm">
 <thead><tr><th>Category</th><th>Count</th><th>Purpose</th></tr></thead>
 <tbody>
 <tr><td><strong>Mandatory</strong></td><td>8</td><td>Always applied: adversarial-qa, quality-gates, r-package-workflow ...</td></tr>
@@ -157,13 +167,15 @@ The trigger mechanism is intentionally loose. "Run tests" activates `test-driven
 
 :::{#cr-agents .sticky}
 ```{r agents-table}
+#| results: asis
 agent_data <- safe_tar_read("vig_cr_agent_tiers")
 if (!is.null(agent_data)) {
   knitr::kable(agent_data[, c("agent", "model", "description")], format = "html",
     col.names = c("Agent", "Model", "Trigger"),
     table.attr = 'class="table table-sm"')
 } else {
-  cat('<table class="table table-sm">
+  cat('<!-- fallback: update if counts change -->
+<table class="table table-sm">
 <thead><tr><th>Agent</th><th>Model</th><th>Trigger</th></tr></thead>
 <tbody>
 <tr><td>quick-fix</td><td>haiku ($)</td><td>Typos, renames, version bumps, URL fixes</td></tr>
@@ -184,7 +196,7 @@ if (!is.null(agent_data)) {
 ```
 :::
 
-The twelve agents exist because not every task needs the same capability — or the same cost. The `quick-fix` agent runs on haiku for mechanical edits. Every other specialist runs on sonnet. The orchestrator runs on opus.
+The twelve agents exist because not every task needs the same capability — or the same cost. The `quick-fix` agent runs on [haiku]{.cr-highlight} for mechanical edits. Every other specialist runs on [sonnet]{.cr-highlight}. The orchestrator runs on [opus]{.cr-highlight}.
 
 @cr-agents
 
@@ -228,7 +240,7 @@ Memory persists what conversation context cannot. The `r counts$n_memory` memory
 
 @cr-memory
 
-There are four kinds of memory here. Architecture docs explain how the system is structured. Feedback files record incidents: what went wrong, what the fix was, why the rule now exists. Convention files capture standing decisions. The index ties them together.
+There are four kinds of memory here. [Architecture]{.cr-highlight} docs explain how the system is structured. [Feedback]{.cr-highlight} files record incidents: what went wrong, what the fix was, why the rule now exists. [Convention]{.cr-highlight} files capture standing decisions. The [index]{.cr-highlight} ties them together.
 
 @cr-memory
 
@@ -242,13 +254,15 @@ The memory system works because it is curated, not accumulated. Each feedback fi
 
 :::{#cr-commands .sticky}
 ```{r commands-table}
+#| results: asis
 cmd_data <- safe_tar_read("vig_cr_commands")
 if (!is.null(cmd_data)) {
   knitr::kable(cmd_data, format = "html",
     col.names = c("Command", "Alias", "What it does"),
     table.attr = 'class="table table-sm"')
 } else {
-  cat('<table class="table table-sm">
+  cat('<!-- fallback: update if counts change -->
+<table class="table table-sm">
 <thead><tr><th>Command</th><th>Alias</th><th>What it does</th></tr></thead>
 <tbody>
 <tr><td>/hi</td><td>/session-start</td><td>Read CHANGELOG, check git status, open issues</td></tr>
@@ -286,13 +300,15 @@ Some commands are diagnostic: `/check` runs the full quality gate sweep, `/ctx-c
 
 :::{#cr-hooks .sticky}
 ```{r hooks-table}
+#| results: asis
 hook_data <- safe_tar_read("vig_cr_hook_lifecycle")
 if (!is.null(hook_data)) {
   knitr::kable(hook_data, format = "html",
     col.names = c("Script", "Event", "Action"),
     table.attr = 'class="table table-sm"')
 } else {
-  cat('<table class="table table-sm">
+  cat('<!-- fallback: update if counts change -->
+<table class="table table-sm">
 <thead><tr><th>Script</th><th>Event</th><th>Action</th></tr></thead>
 <tbody>
 <tr><td>session_init.sh</td><td>SessionStart</td><td>Load context, check Nix shell, orient session</td></tr>
@@ -311,11 +327,11 @@ Hooks fire on events. Six scripts cover the session lifecycle: initialization, c
 
 @cr-hooks
 
-`file_protection.sh` is the most important. It fires on every `Edit` or `Write` call and checks whether the target path is in `raw/`. Raw files are append-only — not deletable, not replaceable, only extendable. The hook enforces this at the filesystem level.
+[`file_protection.sh`]{.cr-highlight} is the most important. It fires on every `Edit` or `Write` call and checks whether the target path is in `raw/`. Raw files are append-only — not deletable, not replaceable, only extendable. The hook enforces this at the filesystem level.
 
 @cr-hooks
 
-`context_survival.sh` fires before context window compaction. It writes critical session state — current task, key decisions, failed approaches — to `CURRENT_WORK.md`. When the context is rebuilt from scratch, this file is the bridge that prevents repeated mistakes.
+[`context_survival.sh`]{.cr-highlight} fires before context window compaction. It writes critical session state — current task, key decisions, failed approaches — to `CURRENT_WORK.md`. When the context is rebuilt from scratch, this file is the bridge that prevents repeated mistakes.
 
 @cr-hooks
 
@@ -325,6 +341,7 @@ Hooks fire on events. Six scripts cover the session lifecycle: initialization, c
 
 :::{#cr-composition .sticky}
 ```{r summary-table}
+#| results: asis
 cat('<table class="table table-sm">
 <thead><tr><th>Layer</th><th>Count</th><th>Role in a request</th></tr></thead>
 <tbody>
@@ -339,7 +356,7 @@ cat('<table class="table table-sm">
 ```
 :::
 
-When you type a request, all six layers activate simultaneously. Rules load as background constraints. Mandatory skills attach their protocols. The model identifies any matching specialist agents and queues delegation decisions. Memory files surface relevant past incidents. Commands check for slash-trigger patterns. Hooks arm themselves against the tool calls about to come.
+When you type a request, all six layers activate simultaneously. [Rules]{.cr-highlight} load as background constraints. Mandatory [skills]{.cr-highlight} attach their protocols. The model identifies any matching specialist [agents]{.cr-highlight} and queues delegation decisions. [Memory]{.cr-highlight} files surface relevant past incidents. [Commands]{.cr-highlight} check for slash-trigger patterns. [Hooks]{.cr-highlight} arm themselves against the tool calls about to come.
 
 @cr-composition
 
