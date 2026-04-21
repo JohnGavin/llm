@@ -3,6 +3,7 @@ name: targets-runner
 description: Run and debug targets pipelines - execute tar_make, diagnose failures, inspect pipeline state, manage crew workers
 tools: Read, Grep, Glob, Bash
 model: sonnet
+authority: "Can run tar_make() and inspect pipeline. CANNOT modify R/ source. CANNOT push. CANNOT delete _targets/ store without user approval."
 ---
 
 # Targets Pipeline Runner

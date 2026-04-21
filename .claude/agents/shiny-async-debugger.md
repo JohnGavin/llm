@@ -3,6 +3,7 @@ name: shiny-async-debugger
 description: Debug async issues in Shiny apps using crew/mirai/ExtendedTask - diagnose race conditions, reactive graph issues, and promise chain failures
 tools: Read, Grep, Glob, Bash
 model: sonnet
+authority: "Can read and debug Shiny code. CANNOT modify production app files without fixer handoff. CANNOT push."
 ---
 
 # Shiny Async Debugger

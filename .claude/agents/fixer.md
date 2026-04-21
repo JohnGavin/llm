@@ -2,6 +2,7 @@
 name: fixer
 description: Read-write agent that applies fixes from critic reports. Cannot approve its own work.
 model: sonnet
+authority: "Can edit files. CANNOT approve its own work (requires critic or reviewer). CANNOT push to remote. CANNOT delete files >1MB."
 ---
 # Fixer Agent
 

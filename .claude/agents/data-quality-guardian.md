@@ -6,6 +6,7 @@ skills:
   - data-validation-pointblank
   - r-package-workflow
   - data-wrangling-duckdb
+authority: "Can create validation rules and pointblank agents. CANNOT modify data source code. CANNOT push. CANNOT drop database tables."
 ---
 
 # Data Quality Guardian

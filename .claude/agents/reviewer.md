@@ -3,6 +3,7 @@ name: reviewer
 description: Code review specialist for R packages - reviews PRs for quality, style, testing, and R package best practices using gh and gert packages
 tools: Read, Grep, Glob, Bash
 model: sonnet
+authority: "Read-only review. CANNOT edit files. CANNOT push. CANNOT approve its own PRs."
 ---
 
 # R Package Code Reviewer
