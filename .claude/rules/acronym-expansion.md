@@ -11,8 +11,8 @@ Every vignette, README, caption, table header, diagram label, and issue/PR descr
 ## MANDATORY: Three Requirements Per Acronym
 
 1. **First use**: full expansion with external link — `[cardiovascular disease (CVD)](https://www.who.int/...)`
-2. **Subsequent uses**: `<abbr>` tag with tooltip — `<abbr title="Cardiovascular disease: diseases of the heart and blood vessels">CVD</abbr>`
-3. **Captions**: always expand (readers may see captions without surrounding prose) — write "cardiovascular disease (CVD)" not just "CVD"
+2. **Subsequent uses**: linked `<abbr>` tag with BOTH hover tooltip AND embedded link — `<a href="https://www.who.int/health-topics/cardiovascular-diseases"><abbr title="Cardiovascular disease: diseases of the heart and blood vessels">CVD</abbr></a>`. The `<abbr>` alone (no link) is NOT sufficient.
+3. **Captions**: always expand in full (readers may see captions without surrounding prose) — write "cardiovascular disease (CVD)" not just "CVD"
 
 ## Common Acronyms Reference
 
