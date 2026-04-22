@@ -30,9 +30,46 @@ If you haven't run the verification command **in this message**, you cannot clai
 | "Package loads" | `devtools::load_all()` succeeds | Assuming it works |
 | "Site builds" | `pkgdown::build_site()` completes | Previous build |
 | "Targets complete" | `targets::tar_make()` all green | Partial run |
-| "Website deployed" | Grep HTML for MISSING EVIDENCE, NULL, Error | "Build succeeded" |
+| "Website deployed" | curl each deployed URL, grep for all error patterns (see table below) | "Build succeeded", grep of local files, WebFetch (has 15-min cache) |
 | "Vignettes work" | See `quarto-vignette-validation` rule | "pkgdown built" |
 | "Works on Linux" | `docker run --rm -v .:/pkg:ro nixos/nix bash -c 'nix-shell ...'` | "Passes on my Mac" |
+
+## Post-Deploy Validation (MANDATORY after every push to docs/)
+
+**MUST curl deployed GitHub Pages URLs. Local `grep docs/articles/*.html` does NOT count.**
+
+WebFetch has a 15-min cache and can return stale content. Use `curl -s` directly.
+
+### Error patterns to grep (all must return 0 hits)
+
+| Pattern | Source | Meaning |
+|---------|--------|---------|
+| `not available` | `show_target()` fallback | Target missing from store AND RDS |
+| `not found in targets` | `safe_tar_read()` message | Same as above |
+| `MISSING EVIDENCE` | Placeholder text | Target never built |
+| `Error in` | R error leaked to output | Unhandled exception |
+| `Error:` | R error (alternate form) | Unhandled exception |
+| `#&gt;` | knitr `comment = "#>"` | Raw R console output prefix leaked into HTML |
+| `NULL` (in `<pre><code>`) | Target returned NULL | Target exists but has no content |
+| `NaN` (in table cells) | Division by zero | Computation error in target |
+| `NA` (bare, in table cells) | Missing data leaked | Target has incomplete data |
+| `class="dataframe"` | Raw tibble HTML | Table not wrapped in DT::datatable() |
+
+### Validation command (run after CI passes)
+
+```bash
+for article in $(grep 'href: articles/' _pkgdown.yml | sed 's/.*articles\///' | sed 's/\.html//'); do
+  url="https://OWNER.github.io/REPO/articles/${article}.html"
+  content=$(curl -s "$url")
+  size=$(echo "$content" | wc -c | tr -d ' ')
+  nulls=$(echo "$content" | grep -ci 'not available\|not found in targets\|MISSING EVIDENCE')
+  errors=$(echo "$content" | grep -ci 'Error in\|Error:')
+  hashgt=$(echo "$content" | grep -c '#&gt;')
+  printf "| %-25s | %7s | nulls:%d | err:%d | #>:%d |\n" "$article" "${size}B" "$nulls" "$errors" "$hashgt"
+done
+```
+
+All articles must show 0 for nulls, errors, and #> (except intentional #> in code examples like rest_api).
 
 ## Before Any Commit
 
