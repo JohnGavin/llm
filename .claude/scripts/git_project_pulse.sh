@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# git_project_pulse.sh - Collect git diagnostics across all active projects
+# Writes daily Parquet snapshots to ~/.claude/logs/git/
+# Read by llmtelemetry package for dashboard/analysis (via duckplyr, no raw SQL)
+#
+# Usage:
+#   git_project_pulse.sh                    # All active projects
+#   git_project_pulse.sh /path/to/repo      # Single project
+#
+# Requires: git, duckdb CLI
+# Schedule: daily via cron or launchd
+
+set -uo pipefail
+# Note: -e omitted deliberately — git log | sort | head pipelines
+# produce SIGPIPE (exit 141) when head closes early, which is expected.
+
+LOG_DIR="$HOME/.claude/logs/git"
+TODAY=$(date +%Y-%m-%d)
+OUTFILE="$LOG_DIR/$TODAY.csv"
+PARQUET="$LOG_DIR/$TODAY.parquet"
+
+mkdir -p "$LOG_DIR"
+
+# Active projects: repos with commits in the last 90 days
+# Override with a single repo argument
+if [ $# -ge 1 ]; then
+  REPOS=("$1")
+else
+  REPOS=()
+  for d in "$HOME/docs_gh"/*/; do
+    [ -d "$d.git" ] || continue
+    last_commit=$(git -C "$d" log -1 --format='%at' 2>/dev/null || echo "0")
+    ninety_days_ago=$(date -v-90d +%s 2>/dev/null || date -d '90 days ago' +%s 2>/dev/null || echo "0")
+    if [ "$last_commit" -gt "$ninety_days_ago" ]; then
+      REPOS+=("$d")
+    fi
+  done
+fi
+
+# CSV header
+echo "snapshot_date,project,period,period_label,metric,value" > "$OUTFILE"
+
+for repo in "${REPOS[@]}"; do
+  project=$(basename "$repo")
+
+  # --- Weekly commits (last 26 weeks) ---
+  git -C "$repo" log --format='%ad' --date=format:'%Y-W%V' --since="26 weeks ago" 2>/dev/null \
+    | sort | uniq -c | while read -r count week; do
+      echo "$TODAY,$project,week,$week,commits,$count"
+    done >> "$OUTFILE"
+
+  # --- Monthly commits (all time) ---
+  git -C "$repo" log --format='%ad' --date=format:'%Y-%m' 2>/dev/null \
+    | sort | uniq -c | while read -r count month; do
+      echo "$TODAY,$project,month,$month,commits,$count"
+    done >> "$OUTFILE"
+
+  # --- File churn (last 6 months, top 20) ---
+  git -C "$repo" log --format=format: --name-only --since="6 months ago" 2>/dev/null \
+    | grep -v '^$' | sort | uniq -c | sort -nr | head -20 \
+    | while read -r count filepath; do
+      echo "$TODAY,$project,6mo,$filepath,file_churn,$count"
+    done >> "$OUTFILE"
+
+  # --- Bug hotspots (last 6 months, top 10) ---
+  git -C "$repo" log -i -E --grep="fix|bug|broken" --name-only --format='' --since="6 months ago" 2>/dev/null \
+    | grep -v '^$' | sort | uniq -c | sort -nr | head -10 \
+    | while read -r count filepath; do
+      echo "$TODAY,$project,6mo,$filepath,bug_hotspot,$count"
+    done >> "$OUTFILE"
+
+  # --- Contributors ---
+  git -C "$repo" shortlog -sn --no-merges --since="6 months ago" 2>/dev/null \
+    | sed 's/^[[:space:]]*//' | while IFS=$'\t' read -r count author; do
+      # Sanitise author name: strip commas to avoid CSV field corruption
+      author_clean=$(echo "$author" | tr ',' ' ')
+      [ -n "$count" ] && [ -n "$author_clean" ] && \
+        echo "$TODAY,$project,6mo,$author_clean,contributor_commits,$count"
+    done >> "$OUTFILE"
+
+  # --- Firefighting (reverts/hotfixes, last 6 months) ---
+  n_revert=$(git -C "$repo" log --oneline --since="6 months ago" 2>/dev/null \
+    | grep -ciE 'revert|hotfix|emergency|rollback' || true)
+  echo "$TODAY,$project,6mo,firefighting,reverts_hotfixes,${n_revert:-0}" >> "$OUTFILE"
+
+  # --- Total commits (all time) ---
+  total=$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo "0")
+  echo "$TODAY,$project,all,total,total_commits,$total" >> "$OUTFILE"
+
+  # --- Last commit date ---
+  last_date=$(git -C "$repo" log -1 --format='%ad' --date=short 2>/dev/null || echo "unknown")
+  echo "$TODAY,$project,all,$last_date,last_commit_date,1" >> "$OUTFILE"
+
+done
+
+# Convert CSV to Parquet via DuckDB CLI
+if command -v duckdb >/dev/null 2>&1; then
+  duckdb -c "COPY (SELECT * FROM read_csv('$OUTFILE', sep=',', header=true, all_varchar=true)) TO '$PARQUET' (FORMAT PARQUET);" 2>/dev/null
+  if [ -f "$PARQUET" ]; then
+    n_rows=$(duckdb -c "SELECT COUNT(*) FROM read_parquet('$PARQUET');" 2>/dev/null | grep -oE '[0-9]+' | tail -1)
+    echo "Wrote $PARQUET ($n_rows rows)"
+    # Keep CSV for debugging; remove after confirming Parquet works
+  else
+    echo "WARNING: Parquet conversion failed, keeping CSV at $OUTFILE"
+  fi
+else
+  echo "WARNING: duckdb CLI not found, keeping CSV at $OUTFILE"
+fi
