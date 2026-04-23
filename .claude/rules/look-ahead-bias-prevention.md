@@ -127,3 +127,4 @@ If `metric_is` improves but `metric_oos` doesn't, the improvement is likely memo
 - `statistical-reporting` — effect sizes, FPR, never say "significant"
 - `verification-before-completion` — no claims without evidence
 - `feature-leakage-temporal` (wiki) — the three leakage types
+- `priced-in-prohibition` — information already reflected in prices
