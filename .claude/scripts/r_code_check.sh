@@ -60,5 +60,18 @@ n_warning=$(echo "$scan_output" | grep -ci "warning\[" || true)
 echo "Errors:   $n_error"
 echo "Warnings: $n_warning"
 
+# Hardcoded path check (grep-based, not ast-grep)
+echo ""
+echo "=== Hardcoded Path Check ==="
+hardcoded=$(grep -rn '/Users/[a-zA-Z]' "$TARGET_DIR" --include='*.R' --include='*.r' 2>/dev/null || true)
+if [ -n "$hardcoded" ]; then
+  n_hardcoded=$(echo "$hardcoded" | wc -l | tr -d ' ')
+  echo "WARNING: $n_hardcoded lines with hardcoded /Users/ paths:"
+  echo "$hardcoded"
+  n_warning=$((n_warning + n_hardcoded))
+else
+  echo "No hardcoded paths found."
+fi
+
 # Exit code: 1 if any errors, 0 if only warnings or clean
 [ "$n_error" -gt 0 ] && exit 1 || exit 0
