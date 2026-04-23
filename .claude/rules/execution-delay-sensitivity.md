@@ -10,22 +10,30 @@ paths:
 ## When This Applies
 Any backtest that assumes immediate execution (trade at the signal time).
 
-## CRITICAL: Alpha Decays with Delay
+## CRITICAL: t+0 Is Impossible — t+1 Is the Minimum
 
-A strategy backtested with t+0 execution may fail at t+1 or t+2.
+You cannot trade on a signal observed at market close on the same day.
+t+0 execution is physically impossible. **All alpha decay analysis MUST
+use t+1 as the baseline** (earliest feasible execution).
+
+t+0 results may be included ONLY as a clearly labelled "theoretical
+upper bound" reference — never as the primary metric.
+
+A strategy backtested with t+1 execution may fail at t+2 or t+5.
 Measuring alpha decay reveals whether the edge is real (persistent)
 or spurious (speed-dependent).
 
 ## Mandatory: Delayed-Execution Test
 
 Every backtest MUST include a `qa_execution_delay` target that re-runs
-P&L with 1-5 period delays and reports the alpha decay curve.
+P&L with 1-10 period delays and reports the alpha decay curve.
+The **primary reported metric is t+1**, not t+0.
 
 ### For Financial Strategies
 
 ```r
 tar_target(qa_execution_delay, {
-  delays <- 0:5  # t+0 through t+5
+  delays <- 1:10  # t+1 through t+10 (t+0 is impossible)
 
   purrr::map_dfr(delays, function(d) {
     # Re-run backtest with d-day execution delay

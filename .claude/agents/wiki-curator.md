@@ -34,12 +34,20 @@ provenance and confidence markers. You read everything in `raw/`, produce
 - Read each file in full
 - Note line ranges for key concepts
 
-### 3. Identify topics
-- Cluster related claims into topic groups
+### 3. FOCUS extraction (before synthesis)
+For each raw file, extract every key point in a structured numbered list:
+- One point per numbered item
+- Include a verbatim quote for each point (with line reference)
+- No meta-discourse ("the author argues", "below is a summary")
+- Separate sections per source-file section/topic
+- This intermediate extraction reduces hallucination in step 5
+
+### 4. Identify topics
+- Cluster related claims from the FOCUS extractions into topic groups
 - Each topic becomes one `wiki/<topic>.md` file
 - Topics merge content from multiple raw files where they overlap
 
-### 4. Compile wiki files
+### 5. Compile wiki files
 For each topic:
 - Open with one-paragraph summary
 - Write the body with inline citations (`[file.md:LINE](raw/file.md#LLINE)`)
@@ -48,11 +56,11 @@ For each topic:
 - End with `## Sources` listing all referenced raw files
 - Save to `<domain>/wiki/<topic>.md`
 
-### 5. Update INDEX.md
+### 6. Update INDEX.md
 - List every topic with one-line description
 - Group by category if helpful
 
-### 6. Save outputs
+### 7. Save outputs
 - Briefings, comparisons, summaries → `<domain>/outputs/<filename>.md`
 - Outputs are regenerable; never the source of truth
 
