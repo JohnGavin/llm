@@ -129,3 +129,4 @@ For sports betting, regime proxies include:
 - `position-sizing-guardrails` — exposure scaling by regime
 - `statistical-reporting` — report regime alongside every metric
 - `composite-alert-scoring` — direction modifier for worsening trends
+- `valuation-spread-threshold` — spread-based allocation triggers

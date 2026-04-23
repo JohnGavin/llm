@@ -117,3 +117,5 @@ Never skip to step 3.
 - `backtest-robustness` — sizing must be robust to parameter perturbation
 - `backtest-partitions` — sizing parameters tuned on test, not validation
 - `look-ahead-bias-prevention` — edge estimates must be OOS
+- `resulting-prohibition` — prevent outcome-driven position changes
+- `valuation-spread-threshold` — tactical tilt caps
