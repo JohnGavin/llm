@@ -113,3 +113,6 @@ optimal cell is an isolated peak surrounded by negative performance.
 - `look-ahead-bias-prevention` — temporal leakage
 - `backtest-partitions` — train/test/validation splits
 - `statistical-reporting` — FPR, effect sizes
+- `resulting-prohibition` — judge revisions by process, not outcome
+- `cross-geography-pervasiveness` — geographic replication requirement
+- `earnings-mean-reversion` — decay priors in feature construction

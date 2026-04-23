@@ -72,3 +72,4 @@ bind_rows(
 - `position-sizing-guardrails` — sizing comparison & max risk per bet
 - `risk-regime-evaluation` — regime-conditional metrics
 - `execution-delay-sensitivity` — alpha decay & delayed execution
+- `underperformance-prior` — historically normal drawdown durations
