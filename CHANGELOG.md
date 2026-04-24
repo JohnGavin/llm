@@ -4,6 +4,39 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-04-24
+
+### Completed
+- **6 Swedroe evidence-based investing rules (#74-79):** `resulting-prohibition`, `underperformance-prior`, `earnings-mean-reversion`, `valuation-spread-threshold`, `cross-geography-pervasiveness`, `priced-in-prohibition`. All cross-referenced with existing backtest rules.
+- **3 DSTT gap rules (#80-83):** `analysis-rationale-mandatory` (#80, closed), `accessibility-standards` (WCAG 2.1 AA, axe-core, PDF/UA), `analytical-review-checklist` (3-dimension review), `credential-management` (HIPAA, .Renviron). Issues filed for remaining gaps (#81 audience, #82 namespace, #83 charter, #84 portable paths).
+- **Cross-project git telemetry (#85):** `git_project_pulse.sh` — 14 metrics including change coupling (Tornhill), firefighting ratio, contributor distribution. Daily CSV → Parquet → DuckDB pipeline.
+- **llmtelemetry read functions:** `read_unified_sessions()`, `read_unified_costs()`, `read_unified_agent_runs()`, `unified_summary()`, `read_git_pulse()`, `git_weekly_commits()`, `git_churn_hotspots()`, `git_project_health()`. All via duckplyr, no raw SQL.
+- **Signal voice braindump pipeline (#87):** Whisper transcription for .aac voice messages. Daemon + event-driven architecture (signal-cli daemon on :7583, WatchPaths handler, launchd plists).
+- **Braindump closed-loop (#88, #89):** `braindump_act.sh` CLI (process/action/complete/status/pending). `braindump-closed-loop.md` rule. Session-start surfaces unprocessed braindumps, session-end warns if not acted on.
+- **Unified DuckDB wiring:** `agent_runs` and `hook_events` tables live, `log_agent_run.sh` hook, `context_monitor.sh` extended.
+- **llmtelemetry Nix fix:** `.nix-shellhook.sh` for nested-shell R_LIBS_SITE isolation (prevents segfault).
+- **Causal knowledge graph issue (#86):** Filed for dagitty/pcalg/bnlearn investigation.
+- **AGENTS.md updated:** Rules 59 → 70, new categories (Quality, Backtest Swedroe), hooks section.
+- **stratford_events scrapers:** Luma + Meetup scrapers for Claude Code Central London events.
+
+### Failed Approaches
+- **CSV column parsing in git_project_pulse.sh:** DuckDB `read_csv` with `auto_detect=true` treated entire CSV as one column. Required explicit `sep=','`, `header=true`, then `all_varchar=true` for edge cases.
+- **Change coupling awk:** `--format='---'` with `--name-only` produced blank lines. Fixed with `--pretty="format:COMMIT"`.
+- **rix shell_hook multi-line:** rix v0.17.2 stripped multi-line shellHook to first line. Workaround: source external `.nix-shellhook.sh` script.
+- **Whisper filename collision:** Two voice messages in same minute got same filename. Fixed by adding seconds + attachment ID.
+
+### Accuracy / Metrics
+- Rules: 59 → 70 (+11 new rules)
+- Issues: #80 closed, #74-79 + #81-89 created (15 new)
+- DuckDB tables: 5 → 7 (added agent_runs, hook_events)
+- Braindumps captured: 5 (including 1 real voice transcription)
+
+### Known Limitations
+- Signal daemon not yet tested with real Android → Signal Desktop → signal-cli flow
+- Braindump auto-extraction of structured actions from raw text not yet implemented (#88)
+- Weekly braindump staleness review script not yet written (#89)
+- llmtelemetry dashboard not yet updated with new read functions (#26, #27)
+
 ## 2026-04-21
 
 ### Completed
