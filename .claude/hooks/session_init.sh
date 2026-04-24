@@ -569,6 +569,8 @@ _session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
 if [ -x "$_log_script" ]; then
   "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" 2>/dev/null || true
 fi
+# Record session start time for session_stop braindump sweep
+date '+%Y-%m-%d %H:%M:%S' > "$HOME/.claude/logs/.session_start_time"
 
 # ── Phase 13: Surface unprocessed braindumps for Claude to act on ──
 _bd_db="$HOME/.claude/logs/unified.duckdb"

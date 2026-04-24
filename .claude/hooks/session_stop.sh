@@ -63,11 +63,43 @@ if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
   "$_log_script" stop "$_sid" "$(basename "$(pwd)")" "" 2>/dev/null || true
 fi
 
-# ── Decision log reminder ───────────────────��─────────────────────────
+# ── Decision log reminder ────────────────────────────────────────────
 if [ -f "$CURRENT_WORK" ]; then
   if ! grep -q "### Decisions" "$CURRENT_WORK" 2>/dev/null; then
     if grep -q "$TODAY" "$CURRENT_WORK" 2>/dev/null; then
       echo "Reminder: CURRENT_WORK.md has no ### Decisions section for today."
+    fi
+  fi
+fi
+
+# ── Braindump closed-loop check ─────────────────────────────────────
+# Safety net: warn if braindumps were surfaced but not processed this session.
+_bd_db="$HOME/.claude/logs/unified.duckdb"
+if [ -f "$_bd_db" ]; then
+  _unprocessed=$(duckdb "$_bd_db" -c "
+    SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;
+  " 2>/dev/null | grep -oE '[0-9]+' | tail -1) || _unprocessed=0
+
+  if [ "${_unprocessed:-0}" -gt 0 ]; then
+    echo "BRAINDUMP: $_unprocessed unprocessed braindump(s) — these were surfaced but not acted on."
+    echo "  Run: ~/.claude/scripts/braindump_act.sh pending"
+  fi
+
+  # Check for commits this session that aren't linked to any braindump action
+  _session_start_file="$HOME/.claude/logs/.session_start_time"
+  if [ -f "$_session_start_file" ]; then
+    _start_time=$(cat "$_session_start_file" 2>/dev/null || echo "")
+    if [ -n "$_start_time" ]; then
+      _n_commits=$(git log --oneline --since="$_start_time" 2>/dev/null | wc -l | tr -d ' ')
+      _n_actions=$(duckdb "$_bd_db" -c "
+        SELECT COUNT(*) FROM braindump_actions
+        WHERE created_at >= '$_start_time'::TIMESTAMP;
+      " 2>/dev/null | grep -oE '[0-9]+' | tail -1) || _n_actions=0
+
+      if [ "${_n_commits:-0}" -gt 0 ] && [ "${_n_actions:-0}" -eq 0 ] && [ "${_unprocessed:-0}" -gt 0 ]; then
+        echo "BRAINDUMP: $_n_commits commits this session but no braindump actions recorded."
+        echo "  If these commits address a braindump, link them with braindump_act.sh"
+      fi
     fi
   fi
 fi
