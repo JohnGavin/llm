@@ -32,6 +32,13 @@ if [ "$((_bc % BURN_INTERVAL))" -eq 0 ]; then
   fi
 fi
 
+# ── Log hook event to unified DuckDB ──────────────────────────────────
+_log_script="$HOME/.claude/scripts/log_session.sh"
+if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
+  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+  [ -n "$_sid" ] && "$_log_script" hook "$_sid" "$(basename "$(pwd)")" "ctx=${USAGE_PCT}%" "context_monitor" "PostToolUse" 2>/dev/null || true
+fi
+
 if [ "$USAGE_PCT" -ge 90 ]; then
   echo "CAUTION: Context at ${USAGE_PCT}%! Complete current task with full quality. Auto-compact imminent."
 elif [ "$USAGE_PCT" -ge 80 ]; then
