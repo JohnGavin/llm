@@ -129,6 +129,24 @@ for repo in "${REPOS[@]}"; do
     | awk '{total+=length($0); n++} END{if(n>0)printf "%d",total/n; else print 0}')
   echo "$TODAY,$project,recent,avg_msg_len,commit_msg_length,${avg_msg:-0}" >> "$OUTFILE"
 
+  # --- Files added (last 6 months) — codebase growth rate ---
+  n_added=$(git -C "$repo" log --diff-filter=A --name-only --format='' --since="6 months ago" 2>/dev/null \
+    | grep -c '[^ ]' || echo "0")
+  echo "$TODAY,$project,6mo,growth,files_added,${n_added:-0}" >> "$OUTFILE"
+
+  # --- Files deleted (last 6 months) — cleanup rate ---
+  n_deleted=$(git -C "$repo" log --diff-filter=D --name-only --format='' --since="6 months ago" 2>/dev/null \
+    | grep -c '[^ ]' || echo "0")
+  echo "$TODAY,$project,6mo,cleanup,files_deleted,${n_deleted:-0}" >> "$OUTFILE"
+
+  # --- Net file growth ---
+  echo "$TODAY,$project,6mo,net,files_net_growth,$((${n_added:-0} - ${n_deleted:-0}))" >> "$OUTFILE"
+
+  # --- Change velocity: insertions/deletions in last 30 days ---
+  velocity=$(git -C "$repo" log --shortstat --since="30 days ago" --format='' 2>/dev/null \
+    | awk '/insertions|deletions/{ins+=$4; del+=$6} END{printf "%d",ins+del}')
+  echo "$TODAY,$project,30d,velocity,lines_changed,${velocity:-0}" >> "$OUTFILE"
+
 done
 
 # Convert CSV to Parquet via DuckDB CLI
