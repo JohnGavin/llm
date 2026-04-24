@@ -37,11 +37,25 @@ else
   done
 fi
 
+# Gap detection: warn about missing days in the last 7 days
+for i in 1 2 3 4 5 6 7; do
+  gap_date=$(date -v-${i}d +%Y-%m-%d 2>/dev/null || date -d "$i days ago" +%Y-%m-%d 2>/dev/null)
+  if [ -n "$gap_date" ] && [ ! -f "$LOG_DIR/$gap_date.parquet" ] && [ ! -f "$LOG_DIR/$gap_date.csv" ]; then
+    echo "NOTE: No pulse data for $gap_date (laptop closed or cron missed)"
+  fi
+done
+
 # CSV header
 echo "snapshot_date,project,period,period_label,metric,value" > "$OUTFILE"
 
 for repo in "${REPOS[@]}"; do
   project=$(basename "$repo")
+
+  # --- Daily commits (last 90 days) ---
+  git -C "$repo" log --format='%ad' --date=format:'%Y-%m-%d' --since="90 days ago" 2>/dev/null \
+    | sort | uniq -c | while read -r count day; do
+      echo "$TODAY,$project,day,$day,commits,$count"
+    done >> "$OUTFILE"
 
   # --- Weekly commits (last 26 weeks) ---
   git -C "$repo" log --format='%ad' --date=format:'%Y-W%V' --since="26 weeks ago" 2>/dev/null \
@@ -90,6 +104,30 @@ for repo in "${REPOS[@]}"; do
   # --- Last commit date ---
   last_date=$(git -C "$repo" log -1 --format='%ad' --date=short 2>/dev/null || echo "unknown")
   echo "$TODAY,$project,all,$last_date,last_commit_date,1" >> "$OUTFILE"
+
+  # --- Change coupling: files that change together (Tornhill, "Code as Crime Scene") ---
+  # Top 10 file pairs that co-occur in commits (last 6 months)
+  git -C "$repo" log --pretty="format:COMMIT" --name-only --since="6 months ago" 2>/dev/null \
+    | awk '/^COMMIT$/{if(n>0)for(i in f)for(j in f)if(i<j)print i"|"j; delete f; n=0; next} /^$/{next} {f[$0]=1; n++}' \
+    | sort | uniq -c | sort -nr | head -10 \
+    | while read -r count pair; do
+      echo "$TODAY,$project,6mo,$pair,change_coupling,$count"
+    done >> "$OUTFILE"
+
+  # --- Lines of code (R files only) ---
+  loc=$(find "$repo" -name "*.R" -not -path "*renv*" -not -path "*packrat*" 2>/dev/null \
+    | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+  echo "$TODAY,$project,all,R_files,lines_of_code,${loc:-0}" >> "$OUTFILE"
+
+  # --- Active files: files changed in last 30 days ---
+  n_active=$(git -C "$repo" log --format=format: --name-only --since="30 days ago" 2>/dev/null \
+    | sort -u | grep -c '[^ ]' || echo "0")
+  echo "$TODAY,$project,30d,active_files,files_changed,${n_active:-0}" >> "$OUTFILE"
+
+  # --- Commit message length (avg, last 50 commits) — proxy for commit discipline ---
+  avg_msg=$(git -C "$repo" log --format='%s' -50 2>/dev/null \
+    | awk '{total+=length($0); n++} END{if(n>0)printf "%d",total/n; else print 0}')
+  echo "$TODAY,$project,recent,avg_msg_len,commit_msg_length,${avg_msg:-0}" >> "$OUTFILE"
 
 done
 
