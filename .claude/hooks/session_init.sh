@@ -570,6 +570,38 @@ if [ -x "$_log_script" ]; then
   "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" 2>/dev/null || true
 fi
 
+# ── Phase 13: Surface unprocessed braindumps for Claude to act on ──
+_bd_db="$HOME/.claude/logs/unified.duckdb"
+if [ -f "$_bd_db" ]; then
+  _bd_output=$(duckdb "$_bd_db" -c "
+    SELECT id, source, captured_at::VARCHAR as captured,
+           CASE WHEN LENGTH(raw_text) > 120 THEN SUBSTR(raw_text, 1, 120) || '...' ELSE raw_text END as preview
+    FROM braindumps
+    WHERE processed_prompt IS NULL
+    ORDER BY captured_at DESC;
+  " 2>/dev/null | grep "│" | grep -v "int32\|varchar\|─") || true
+
+  _bd_count=$(duckdb "$_bd_db" -c "SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;" 2>/dev/null | grep -oE '[0-9]+' | tail -1) || _bd_count=0
+
+  if [ "${_bd_count:-0}" -gt 0 ]; then
+    echo ""
+    echo "ACTION: $_bd_count unprocessed braindump(s) awaiting interpretation:"
+    echo "$_bd_output"
+    echo ""
+    echo "For each braindump: interpret the instruction, decide what action to take"
+    echo "(create issue, run command, update file, etc.), then mark as processed:"
+    echo "  duckdb ~/.claude/logs/unified.duckdb -c \"UPDATE braindumps SET processed_prompt='<summary>', processed_at=current_timestamp WHERE id=<N>;\""
+  fi
+
+  # Also check for actions without linked issues (stale)
+  _stale=$(duckdb "$_bd_db" -c "
+    SELECT COUNT(*) FROM braindump_actions
+    WHERE status='created' AND issue_closed_at IS NULL
+    AND created_at < current_timestamp - INTERVAL 14 DAY;
+  " 2>/dev/null | grep -oE '[0-9]+' | tail -1 2>/dev/null) || _stale=0
+  [ "${_stale:-0}" -gt 0 ] && echo "STALE: $_stale braindump-linked issues open >14 days"
+fi
+
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
