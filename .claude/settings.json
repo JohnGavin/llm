@@ -66,7 +66,60 @@
       "WebFetch(domain:cran.r-project.org)",
       "WebFetch(domain:tidyverse.org)",
       "WebFetch(domain:r-universe.dev)",
-      "WebFetch(domain:johngavin.r-universe.dev)"
+      "WebFetch(domain:johngavin.r-universe.dev)",
+      "Bash(duckdb:*)",
+      "Bash(~/.claude/scripts:*)",
+      "Bash(/Users/johngavin/.claude/scripts:*)",
+      "Bash(chmod:*)",
+      "Bash(rm:*)",
+      "Bash(du:*)",
+      "Bash(stat:*)",
+      "Bash(pip3:*)",
+      "Bash(/tmp:*)",
+      "Bash(which:*)",
+      "Bash(file:*)",
+      "Bash(xxd:*)",
+      "Bash(diff:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(cut:*)",
+      "Bash(awk:*)",
+      "Bash(tr:*)",
+      "Bash(tee:*)",
+      "Bash(touch:*)",
+      "Bash(basename:*)",
+      "Bash(dirname:*)",
+      "Bash(realpath:*)",
+      "Bash(readlink:*)",
+      "Bash(xargs:*)",
+      "Bash(kill:*)",
+      "Bash(uuidgen:*)",
+      "Bash(date:*)",
+      "Bash(sleep:*)",
+      "Bash(test:*)",
+      "Bash([:*)",
+      "Bash(true:*)",
+      "Bash(false:*)",
+      "Bash(pwd:*)",
+      "Bash(whoami:*)",
+      "Bash(id:*)",
+      "Bash(uname:*)",
+      "Bash(sw_vers:*)",
+      "Bash(open:*)",
+      "Bash(pbcopy:*)",
+      "Bash(pbpaste:*)",
+      "Bash(osascript:*)",
+      "Bash(sqlite3:*)",
+      "Bash(jq:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(pip:*)",
+      "Bash(/usr/bin:*)",
+      "Bash(/bin:*)",
+      "Bash(/nix/store:*)",
+      "Bash(caffeinate:*)",
+      "Bash(launchctl:*)",
+      "Bash(plutil:*)"
     ],
     "defaultMode": "bypassPermissions"
   },
@@ -113,6 +166,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/docs_qa_precommit.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -127,11 +190,31 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/post_push_qa.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/wiki_health_onwrite.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log_agent_run.sh",
             "timeout": 5
           }
         ]
