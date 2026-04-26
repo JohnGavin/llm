@@ -90,6 +90,37 @@ Use **ggiraph** for pkgdown/closeread (smaller, CSS-styleable, hover/click built
 
 CSS: `caption, figcaption, .figure-caption { text-align: left !important; caption-side: top !important; }`
 
+## Caption↔Table Label Consistency (MANDATORY)
+
+Every label, acronym, or term used in a caption MUST appear verbatim in the adjacent table, plot, or diagram. Conversely, do not introduce abbreviations in captions that the reader cannot find in the visual.
+
+| Violation | Fix |
+|-----------|-----|
+| Caption says "FF5+Mom" but table header says "FF Alpha" | Use the same label in both: "FF5+Mom Alpha" |
+| Caption says "2 of 5 strategies" without naming them | Name them: "DRIF and Factor MAX show genuine alpha" |
+| Caption uses "HAC Sharpe" but table column says "HAC t" | Match: use "HAC t-statistic" in both |
+
+## Percentage Column Formatting (MANDATORY)
+
+Columns containing percentages MUST:
+
+1. **Column name includes units**: append `(%)` to the header — e.g., `Alpha (%)`, `R² (%)`
+2. **Values are bare numbers**: `1.57` not `1.57%` — the unit is in the header
+3. **Precision**: whole-number `round(x, 0)` for values > 10%; one decimal `round(x, 1)` for values 0.1–10%; two decimals for values < 0.1%
+4. **Right-aligned**: numeric columns auto-align right in DT when values are numeric (not character with `%` suffix)
+
+| Wrong | Right |
+|-------|-------|
+| `FF Alpha (ann)` with value `"166.23%"` (character) | `Alpha (%)` with value `166` (numeric) |
+| `R²` with value `"5.2%"` | `R² (%)` with value `5.2` |
+
+This prevents left-alignment bugs (character columns align left) and spurious precision.
+
+## Column and Row Ordering (MANDATORY)
+
+- **Columns**: Most important column on the left. For strategy comparison tables, the verdict/conclusion column comes first, then key metrics, then detail.
+- **Rows**: Sort by the primary column. For verdict tables, use an ordered factor: genuine alpha → borderline → no alpha (beta). For metric tables, sort descending by the key metric.
+
 ## Plotly Number Formatting (MANDATORY)
 
 **ALL numbers in plotly hovertemplates MUST be rounded.** No spurious precision.
