@@ -8,12 +8,12 @@
 
 set -uo pipefail
 
-# Source Nix for whisper/PyTorch
-if [ -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]; then
-  . "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
-elif [ -e "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
-  . "$HOME/.nix-profile/etc/profile.d/nix.sh"
-fi
+# Source Nix for whisper/PyTorch — need BOTH daemon (nix-store) and user profile
+for _nix_script in \
+  "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" \
+  "$HOME/.nix-profile/etc/profile.d/nix.sh"; do
+  [ -e "$_nix_script" ] && . "$_nix_script"
+done
 
 ATTACH_DIR="$HOME/.local/share/signal-cli/attachments"
 DUMP_DIR="$HOME/docs_gh/llm/knowledge/raw/braindumps"
@@ -23,7 +23,13 @@ PROCESSED_LOG="$HOME/.claude/logs/whisper_processed.txt"
 SIGNAL_HTTP="http://localhost:7583"
 ACCOUNT="+447521254904"
 
-WHISPER_BIN=$(command -v whisper 2>/dev/null || find /nix/store -maxdepth 2 -name "whisper" -type f 2>/dev/null | head -1)
+# Find whisper: check PATH first, then known Nix store location
+WHISPER_BIN=$(command -v whisper 2>/dev/null)
+if [ -z "$WHISPER_BIN" ]; then
+  WHISPER_BIN=$(find /nix/store -maxdepth 3 -path "*/bin/whisper" -type f 2>/dev/null | head -1)
+  # Add its directory to PATH so Python subprocess can find torch etc.
+  [ -n "$WHISPER_BIN" ] && export PATH="$(dirname "$WHISPER_BIN"):$PATH"
+fi
 WHISPER_MODEL="small"
 WHISPER_PROMPT="duckplyr Nix rix dagitty targets Quarto DuckDB Parquet bslib tidyverse pkgdown Claude signal-cli whisper"
 
@@ -88,9 +94,14 @@ Audio: $base
 $text
 HEREDOC
 
-    # Insert to DuckDB (raw_text only — processing happens later per #88)
+    # Insert to DuckDB with dedup (raw_text only — processing happens later per #88)
     local escaped=$(echo "$text" | head -c 500 | sed "s/'/''/g")
-    duckdb "$DB" -c "INSERT INTO braindumps (source, raw_text, captured_at) VALUES ('signal_voice', '$escaped', current_timestamp);" 2>/dev/null || true
+    duckdb "$DB" -c "
+      INSERT INTO braindumps (source, raw_text, captured_at)
+      SELECT 'signal_voice', '$escaped', current_timestamp
+      WHERE NOT EXISTS (
+        SELECT 1 FROM braindumps WHERE source='signal_voice' AND raw_text='$escaped'
+      );" 2>/dev/null || true
 
     log "Transcribed: $base -> $out"
   fi
@@ -151,7 +162,7 @@ for line in sys.stdin:
                 f.write(body + '\n')
             escaped = body.replace(\"'\", \"''\")[:500]
             subprocess.run(['duckdb', db_path, '-c',
-                f\"INSERT INTO braindumps (source, raw_text, captured_at) VALUES ('signal_notes', '{escaped}', '{dt:%Y-%m-%d %H:%M:%S}'::TIMESTAMP);\"],
+                f\"INSERT INTO braindumps (source, raw_text, captured_at) SELECT 'signal_notes', '{escaped}', '{dt:%Y-%m-%d %H:%M:%S}'::TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM braindumps WHERE source='signal_notes' AND raw_text='{escaped}');\"],
                 capture_output=True)
             print(f'Text: {filename}')
 
