@@ -4,6 +4,41 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-04-30
+
+### Completed
+- **Dashboard WebR rlang fix**: Replaced dplyr/tidyr/echarts4r with base R + JS ECharts from CDN. WebR bundles rlang 1.1.6 and preload scanner skips re-downloading — dplyr 1.2.1 needs >= 1.1.7. No R charting package works without rlang >= 1.1.7.
+- **Data normalization**: Handle nested ccusage JSON formats (CI fallback `{"projects":{}}` vs flat arrays), `fromJSON("[]")` returning `list()` not data.frame, nested `tokenCounts` in blocks.
+- **Git-recon Repo Health tab** (llmtelemetry#30 Phase 1): 8 new JSON endpoints (bus factor, velocity, timing heatmap, crisis, churn, bugs, TODO debt, tags) + dashboard tab with 8 charts.
+- **QA validation gate**: Two-layer validation (R export script + CI Python step) fails early on empty critical data files before dashboard render.
+- **Skill governance** (from Hedgineer gap analysis): MANIFEST.md (65 skills, tier/maturity/score), skill-authoring checklist, skill_quality_onwrite.sh PostToolUse hook.
+- **No-pie-chart rule**: Updated visualization-standards rule and CLAUDE.md — dotcharts first, horizontal bars fallback, pie charts banned.
+- **Issues created**: llm#93 (jarl evaluation + tree-sitter), llm#94 (Hedgineer transcript, closed), llm#95 (.claude/ templates+recipes), llm#96 (symlink plans/scripts), llmtelemetry#30 (git-recon).
+- **Chrome tab backup/restore**: Daily launchd automation, restore script.
+- **Braindump processing**: 31 braindumps processed, 0 remaining.
+
+### Failed Approaches
+- `library(rlang)` as first call in Shinylive — preload scanner loads bundled 1.1.6 regardless. 7 attempts before identifying root cause (bundled packages not re-downloaded).
+- `webr::install("rlang")` before library() — preload runs before user code.
+- `library("plotly", character.only=TRUE)` — scanner detects function names (plotlyOutput, renderPlotly) not just library() calls.
+- echarts4r as plotly replacement — also imports dplyr, same rlang conflict.
+- QA `fromJSON(simplifyDataFrame=FALSE)` for row counting — flat arrays become list-of-lists, scalar check fails. Fix: use `simplifyDataFrame=TRUE`.
+- Inline bash+Python in YAML workflow — `#` comments break YAML parsing. Fix: Python heredoc.
+
+### Accuracy / Metrics
+- Dashboard: 7 tabs, 26 chart outputs, 8 data tables
+- Data endpoints: 16 JSON files (8 critical, 8 optional)
+- QA gate: 8 critical files validated on every deploy
+- Skills: 65 tracked in MANIFEST (16 infra, 49 workflow)
+- Open issues: 46 across 4 projects (3 closed this session)
+
+### Known Limitations
+- Sessions tab empty (unified_sessions.json `[]` on CI — no unified.duckdb). Needs local export workflow.
+- ccusage_sessions nested format not extracted for dashboard use.
+- Block Activity table may have column mismatch errors on some data formats.
+- git_tags.json empty (no release tags in llmtelemetry repo).
+- Skill scores in MANIFEST are initial estimates, not validated.
+
 ## 2026-04-24
 
 ### Completed
