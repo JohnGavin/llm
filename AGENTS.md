@@ -32,7 +32,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **MCP r-btw — ZERO TOLERANCE:** NEVER call `btw_tool_run_r/pkg_test/pkg_check/pkg_coverage/pkg_document/pkg_load_all`. ALL R via `Bash("timeout N Rscript -e '...'")`. Safe: `btw_tool_docs_*`, `btw_tool_files_*`, `btw_tool_sessioninfo_*`, `btw_tool_env_describe_*`. See `btw-timeouts` rule.
 
-**Shiny UI:** NEVER use `value_box()` or similar large KPI boxes - they waste space. Use compact two-column tables instead (Metric | Value). Time series plots MUST have a range slider and default to last 3 months view.
+**Shiny UI:** NEVER use `value_box()` or similar large KPI boxes - they waste space. Use compact two-column tables instead (Metric | Value). Time series plots MUST have a range slider and default to last 3 months view. **NEVER pie charts** — use dotcharts (Cleveland dot plots) as first choice, horizontal bars as fallback. See `visualization-standards` rule.
 
 **Shinylive/WebR:** Long computations MUST use JS round-trip batching (NOT `invalidateLater()`). See `shinylive-webr-nonblocking` rule. `proc.time()` does not advance in WASM. Service workers cache aggressively — change port when testing.
 
@@ -55,7 +55,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 | `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
 | `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
 
-## Skills by Category (63)
+## Skills by Category (64)
 
 ### Mandatory (always apply)
 - `adversarial-qa` — QA protocol with severity tiers
@@ -134,6 +134,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 - `context-control` — Context window management
 - `requirements-spec` — MUST/SHOULD/MAY requirements before complex tasks
 - `per-project-claude-md` — Slim project-level config template (overrides global CLAUDE.md)
+- `skill-authoring` — Checklist and template for creating new skills (quality gate)
 
 ### AI/LLM Tools
 - `gemini-cli-codebase-analysis` — Gemini CLI + subagent patterns
@@ -153,7 +154,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 Core: `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`. Nix: `nix-agent-shell-protocol`, `nix-nested-shell-isolation`. MCP: `btw-timeouts`. Git: `git-no-compound-cd`, `safe-deletion`. Data: `data-in-packages`, `data-validation-timeseries`, `duckdb-non-determinism`, `duckdb-security`, `duckdplyr-not-sql`, `never-drop-missing-stations`, `credential-management`. Stats: `statistical-reporting`, `robust-statistics`, `half-life-decay`, `composite-alert-scoring`, `suppress-warnings-antipattern`. Backtest: `look-ahead-bias-prevention`, `backtest-robustness`, `backtest-partitions`, `backtesting-assumptions`, `execution-delay-sensitivity`, `position-sizing-guardrails`, `risk-regime-evaluation`, `robustness-testing`, `snapshot-tests-mandatory`, `strategy-vignette-template`, `priced-in-prohibition`, `resulting-prohibition`, `underperformance-prior`, `earnings-mean-reversion`, `valuation-spread-threshold`, `cross-geography-pervasiveness`. Viz: `diagram-generation`, `visualization-diagrams`, `visualization-standards`, `reproducible-visualization`, `dynamic-prose-values`. Quarto: `quarto-vignette-data`, `quarto-vignette-evidence`, `quarto-vignette-format`, `quarto-vignette-layout`, `quarto-vignette-validation`, `vignette-targets-export`. Shiny: `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking`. Pipeline: `qa-targets-pipeline`, `ctx-yaml-cache`. Knowledge: `glossary-management`, `wiki-staleness-check`, `wiki-frontmatter`. Medical: `medical-data-anonymization`, `medical-etl-quality`. Quality: `accessibility-standards`, `analytical-review-checklist`, `analysis-rationale-mandatory`, `braindump-closed-loop`. Other: `website-index-update`, `t-lang-r-package`, `huggingface-upload`.
 
-## Hooks (7 scripts, 5 event hooks)
+## Hooks (8 scripts, 5 event hooks)
 
 `session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
 
