@@ -87,13 +87,26 @@ Append a new dated entry to `CHANGELOG.md` with:
 - [issues for next session]
 ```
 
+## Telemetry Data Export
+
+After committing and pushing, export local telemetry data to the dashboard:
+
+```bash
+~/.claude/scripts/export_and_deploy_data.sh
+```
+
+This exports predictions, unified.duckdb sessions, and cmonitor-rs data to
+`llmtelemetry/vignettes/data/`, commits, and pushes. CI then deploys the
+updated data to the live dashboard. Only runs if data actually changed.
+
 ## Prompt User
 
 After running checks, ask:
 1. "Should I commit these changes with message: [suggested message]?"
 2. "Should I append to CHANGELOG.md?" (show draft entry)
 3. "Should I push to remote?"
-4. "Should I sync ctx.yaml cache?" (if audit showed gaps)
+4. "Should I export telemetry data to dashboard?" (runs export_and_deploy_data.sh)
+5. "Should I sync ctx.yaml cache?" (if audit showed gaps)
 
 ## Output Format
 
