@@ -104,4 +104,33 @@ if [ -f "$_bd_db" ]; then
   fi
 fi
 
+# --- Prediction calibration: remind about unresolved predictions ---
+PRED_DIR="$HOME/.claude/predictions"
+if [ -d "$PRED_DIR" ]; then
+  PROJECT_SLUG=$(echo "${CLAUDE_PROJECT_DIR:-.}" | sed 's|/|-|g; s|^-||')
+  PRED_FILE="$PRED_DIR/${PROJECT_SLUG}.jsonl"
+  if [ -f "$PRED_FILE" ]; then
+    PENDING=$(/usr/bin/python3 -c "
+import json
+seen = {}
+for line in open('$PRED_FILE'):
+    line = line.strip()
+    if not line: continue
+    try:
+        d = json.loads(line)
+        seen[d['prediction_id']] = d
+    except: pass
+pending = [v for v in seen.values() if v.get('outcome') is None]
+for p in pending:
+    print(f\"  {p['prediction_id']}: \\\"{p.get('task_description','')}\\\" (p={p.get('p_success','?')})\")
+" 2>/dev/null)
+    if [ -n "$PENDING" ]; then
+      N_PENDING=$(echo "$PENDING" | wc -l | tr -d ' ')
+      echo "PREDICTION: $N_PENDING unresolved prediction(s) for this project:"
+      echo "$PENDING"
+      echo "  Record outcomes: record_prediction.sh outcome <id> true/false"
+    fi
+  fi
+fi
+
 exit 0
