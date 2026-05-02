@@ -94,6 +94,43 @@ config file, then regenerate the environment. Check for:
 - `pyproject.toml` / `requirements.txt` (Python)
 - `default.R` (nix generation source)
 
+## CRITICAL: Worktree-Isolated rix Regenerations
+
+`default.R` typically calls `rix::rix(..., project_path = ".", overwrite = TRUE)`. The `"."` resolves to the cwd of the Rscript process. **When agents run in worktrees, the orchestrator's cwd may differ from the worktree's cwd**, causing the regenerated `default.nix` to land in the wrong checkout — overwriting the orchestrator's working tree (and any manual patches like the udunits overlay or shellHook) without warning.
+
+### MANDATORY pattern when an agent regenerates a worktree's `default.nix`
+
+Use a subshell (the documented exception in `git-no-compound-cd`) to set cwd correctly:
+
+```bash
+# CORRECT: subshell isolates cd, rix sees the worktree's cwd
+(cd /private/tmp/<agent-worktree> && \
+   nix-shell ~/docs_gh/rix.setup/default.nix --run "Rscript default.R")
+
+# CORRECT: pass cwd explicitly via Rscript -e setwd()
+nix-shell ~/docs_gh/rix.setup/default.nix --run \
+  "Rscript -e 'setwd(\"/private/tmp/<agent-worktree>\"); source(\"default.R\")'"
+
+# WRONG: cwd inherits from caller, default.nix may land in orchestrator's checkout
+nix-shell ~/docs_gh/rix.setup/default.nix --run \
+  "Rscript /private/tmp/<agent-worktree>/default.R"
+```
+
+### Symptom of the bug
+
+If you see "udunits build failed" or "library(sf) segfault" after a worktree-isolated agent ran, suspect that the orchestrator's `default.nix` was overwritten. Check:
+
+```bash
+git -C <main-checkout> diff default.nix    # are the patches still there?
+grep -c gnu89 <main-checkout>/default.nix  # 0 means patches were stripped
+```
+
+Recovery: `git -C <main-checkout> checkout HEAD -- default.nix`.
+
+### Lesson logged 2026-05-02
+
+In the acd_area_climate_design project, a Stage 2 OSM agent regenerated default.nix in its worktree but the cwd resolved to the orchestrator's main checkout, stripping the udunits + shellHook patches. Detected when the orchestrator's render failed. Restored from HEAD. Filed observation issue and amended this rule.
+
 ## Why This Architecture
 
 1. **The user never waits** for project-specific nix-shell entry (5-10s overhead)
