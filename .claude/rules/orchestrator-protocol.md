@@ -105,14 +105,36 @@ The orchestrator MUST check, no later than 20 minutes after dispatch and at ever
 | Branch commits | `git -C <worktree> log --oneline -3` — has the agent committed yet? |
 | Worktree status | `git -C <worktree> status -s` — is there uncommitted work? |
 
+### Activity signal: combined process + filesystem
+
+A long network or nix-build step can produce zero filesystem activity for 5-10 min while still being live. So mtime alone is a noisy signal. **The agent is "active" if EITHER condition holds:**
+
+1. A live process (R / Rscript / nix-shell / nix-build / curl / quarto-cli) tied to the agent's worktree exists with non-zero recent CPU
+2. A file in the worktree was modified in the last 3 minutes
+
+If NEITHER condition holds, the agent is idle.
+
 ### Intervention thresholds
 
-| Elapsed since last activity | Action |
-|---|---|
-| < 15 min | Continue waiting. Do not poll proactively. |
-| 15-20 min, NO live process AND NO mtime change in last 5 min | Inspect worktree state (tabulate completed vs missing tasks). Report to user. |
-| > 20 min, no completion notification | **MANDATORY INTERVENTION.** Take over directly OR re-dispatch a fresh agent with the partial state as input. |
-| Any time, completion notification arrives late | Verify the agent's claimed output matches what landed (e.g. compare commit SHAs, file contents). |
+Calibrated against observed run times (12-13 min for clean completions; >15 min idle = stalled):
+
+| Elapsed since dispatch | Idle for | Action |
+|---|---|---|
+| < 10 min | — | Continue waiting. Do not poll proactively. |
+| 10-15 min | < 5 min idle | Wait. Likely still working. |
+| 10-15 min | ≥ 5 min idle | Inspect worktree state. Tabulate completed vs missing tasks. Report to user. |
+| > 15 min | ≥ 5 min idle | **MANDATORY INTERVENTION.** Take over directly OR re-dispatch a fresh agent with the partial state as input. |
+| > 30 min total | regardless | Hard cap — even if "active" by signal, prompt to user: "this is running long, expected duration was N min. Continue or intervene?" |
+| Any time, completion notification arrives late | — | Verify the agent's claimed output matches what landed (e.g. compare commit SHAs, file contents). |
+
+### Calibration: when to allow longer waits
+
+Some legitimate operations take longer:
+- Full WFS pull with pagination over slow API: 10-15 min of mostly-idle waiting on HTTP
+- Nix build of derivations with new dependencies: 5-15 min of nix-build process activity
+- Quarto render of a 50+ MB dashboard: 1-3 min
+
+If the agent's prompt explicitly forecasts a long step (e.g. "the Overpass call may take 10 min"), scale the idle-timeout window for that step accordingly. The hard cap (30 min total) still applies.
 
 ### Take-over protocol (when intervening)
 
