@@ -4,6 +4,19 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-03
+
+### Completed
+- **llm#93: jarl 0.5.0 evaluation** — `explorations/2026-05-03_jarl-eval/`
+  - Installed jarl 0.5.0 binary (aarch64-apple-darwin; not available via `cargo install jarl`)
+  - Ran ast-grep (8 rules) on R/: **0 violations** (codebase clean)
+  - Ran jarl (default rules) on R/: **10 issues** — 6 `redundant_equals` (auto-fixable), 2 `unused_function`, 2 `unreachable_code`
+  - Ran jarl (ALL rules, R from nix shell): **17 real issues** + ~50 `quotes` false positives (Mermaid strings need single quotes)
+  - Performance: jarl 19ms vs ast-grep ~1.5s (both exclude nix shell startup)
+  - **Recommendation: Option A** — complement ast-grep (banned patterns) with jarl (R idioms)
+  - Drafted `jarl.toml` with `quotes` disabled
+  - Gaps remaining: DPLYR rules, .qmd scanning, multi-project comparison
+
 ## 2026-05-01 to 2026-05-03
 
 ### Completed
