@@ -30,7 +30,16 @@ df |> ggauto(date, value, group) # 3 vars: coloured lines (≤6) or faceted (>6)
 2. **Small multiples** — prefer `facet_wrap()`/`facet_grid()` over 5+ category legends; ggauto auto-facets at >6
 3. **Maximize data-ink ratio** — remove gridlines, background fills, 3D effects; use `theme_minimal()` or ggauto defaults
 4. **Show data, not just summaries** — `geom_point()` + `geom_smooth()`, never mean without spread
-5. **NEVER pie charts** — use dotchart (Cleveland dot plot) as first choice, horizontal bar as fallback. Pie charts distort proportions and fail at >3 categories (Cleveland & McGill, 1984). In R: `dotchart()` or `ggplot2::geom_point() + coord_flip()`. In ECharts/JS: horizontal bar with dot markers. Stacked bars only for part-of-whole with ≤4 categories.
+5. **NEVER pie charts. NEVER bar charts. ONLY dot plots for categorical comparisons.**
+
+   Cleveland dot plots (Cleveland & McGill, 1984) are mandatory for any chart comparing magnitudes across categories. Pie charts distort proportions; bar charts waste ink and obscure the data point. Replace both with `dotchart()` / `ggplot2::geom_point() + coord_flip()` / horizontal-bar-with-dot-markers in JS.
+
+   **Exceptions (very narrow):**
+   - **2 categories or fewer** → don't use a chart at all. Use a small table with the two values + a sentence of prose.
+   - **Stacked part-of-whole with ≤4 categories AND requirement to show "100%-stacked" semantics** → stacked bar permitted only with explicit justification in the caption.
+   - **Histograms / distributions** (geom_histogram / geom_density) are NOT bar charts and remain allowed — they show distribution, not categorical comparison.
+
+   **Why this is mandatory now (2026-05-03):** an upload-page chart was published with bars and dark colours invisible on a black background, no caption, and only 2 categories. All four would have been caught if "bars forbidden" were the default. This rule is non-negotiable for new code; legacy bar-chart audits should be filed as cleanup issues.
 6. **Graphical integrity** — y-axis at 0 for bars, no truncated axes, no dual y-axes
 7. **Direct labels** — ggauto auto-labels ≤6 groups; for manual ggplot2, use `ggrepel` for ≤3 groups, legend for >3
 
