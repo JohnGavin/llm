@@ -3,6 +3,7 @@
 # Issue: https://github.com/JohnGavin/llm/issues/7
 
 # 1. Create issue (already done)
+# jarl-ignore unreachable_code: if (FALSE) is standard R idiom for dev scripts
 if (FALSE) {
   gh::gh(
     "POST /repos/JohnGavin/llm/issues",
@@ -12,6 +13,7 @@ if (FALSE) {
 }
 
 # 2. Create dev branch (already done)
+# jarl-ignore unreachable_code: if (FALSE) is standard R idiom for dev scripts
 if (FALSE) {
   options(rlang_interactive = TRUE)
   env <- asNamespace("usethis")
