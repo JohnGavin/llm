@@ -1,3 +1,9 @@
+---
+name: braindump-closed-loop
+description: Complete the full lifecycle of braindumps from capture through interpretation, action, recording, and completion
+type: rule
+---
+
 # Rule: Braindump Closed-Loop Processing
 
 ## When This Applies

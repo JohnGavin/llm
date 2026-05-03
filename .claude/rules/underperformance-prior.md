@@ -1,3 +1,9 @@
+---
+name: underperformance-prior
+description: Require evidence that current underperformance exceeds documented historical ranges before revising strategies
+type: rule
+---
+
 # Rule: Require Long-Underperformance Prior Before Strategy Revision
 
 ## Source

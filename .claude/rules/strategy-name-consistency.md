@@ -1,3 +1,9 @@
+---
+name: strategy-name-consistency
+description: Maintain a single source of truth for strategy names across tables, plots, captions, and prose with code/short/long variants
+type: rule
+---
+
 # Rule: Strategy Name Consistency (Single Source of Truth)
 
 ## When This Applies

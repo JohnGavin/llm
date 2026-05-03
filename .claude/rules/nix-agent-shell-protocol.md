@@ -1,3 +1,9 @@
+---
+name: nix-agent-shell-protocol
+description: Agents must enter project-specific nix shells with absolute paths to access project packages not in the global shell
+type: rule
+---
+
 # Rule: Nix Agent Shell Protocol
 
 ## When This Applies

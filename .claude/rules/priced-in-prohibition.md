@@ -1,3 +1,9 @@
+---
+name: priced-in-prohibition
+description: Require evidence of incremental predictive power before using signals derived from publicly available information
+type: rule
+---
+
 # Rule: Prohibit Acting on Priced-In Information
 
 ## Source
