@@ -89,6 +89,7 @@ proj/
 archive/
 inst/extdata/gemini/messages/
 archive/
+!.claude/plans/archive/
 .claude/.context_state.json
 finance/
 input.txt
