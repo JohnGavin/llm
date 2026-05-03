@@ -4,6 +4,59 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-01 to 2026-05-03
+
+### Completed
+- **Group 1 — Config & Tooling** (6 issues closed):
+  - llm#96: Symlinked plans/ + scripts/ to git-backed repo (9 plans, 6 scripts now public)
+  - llm#95: Added templates/ (5) + recipes/ (4) directories
+  - llm#84: Rule: portable-paths (here::here())
+  - llm#83: Rule: project-charter (scope management)
+  - llm#82: Rule: namespace-discipline (no library() in functions)
+  - llm#81: Rule: audience-communication (3 tiers)
+- **Group 2 — Telemetry Dashboard** (2 closed, 4 updated):
+  - llmtelemetry#24: Block Activity grouped by day with summary rows
+  - llmtelemetry#25: Unified on cmonitor-rs (already done, closed)
+  - Session-end telemetry export hook (export_and_deploy_data.sh)
+  - Preserve existing data files when CI has no local source
+- **Group 3 — Signal & Braindump** (3 closed):
+  - llm#87: Whisper transcription confirmed working (15 messages)
+  - llm#89: braindump_review.sh — weekly lifecycle check
+  - llm#91: braindump_respond.sh — Signal status replies
+- **Prediction Calibration** (llm#47):
+  - Export section 10: reads JSONL, deduplicates, computes buckets
+  - Dashboard Calibration tab: reliability diagram, Brier trend, by-type, log
+  - session_stop.sh: pending prediction reminder
+  - Designed full architecture (recording → export → dashboard → hook)
+- **Skill Governance** (from Hedgineer gap analysis):
+  - MANIFEST.md: 65 skills with tier/maturity/score
+  - skill-authoring/SKILL.md: 7-step quality gate
+  - skill_quality_onwrite.sh: PostToolUse validation hook
+- **Telemetry vignette**: Consolidated duplicates — inst/qmd/ is template, vignettes/ includes it
+- **Daily email fix**: Guard NaN, emit QA markers, split required/optional features
+- **ctx.yaml cache**: Fixed .gitignore contradiction, committed 122 ctx files
+- **Issues**: llm#93 (jarl), llm#94 (Hedgineer transcript), llm#95, #96 created; llm#86 moved to historical#80
+
+### Failed Approaches
+- Daily email QA too strict: required "MTok" and "Daily Cost by Model" which depend on local-only cmonitor-rs. Fix: split into required vs optional features.
+- QA count_json_rows with simplifyDataFrame=FALSE: flat arrays become list-of-lists, scalar check fails. Fix: use simplifyDataFrame=TRUE.
+- Inline bash+Python in YAML workflow: `#` comments break YAML parsing. Fix: Python heredoc.
+
+### Accuracy / Metrics
+- Rules: 70 → 74 (+portable-paths, namespace-discipline, audience-communication, project-charter)
+- Skills: 63 → 65 (+skill-authoring, +knowledge-base-wiki in MANIFEST)
+- Templates: 0 → 5 (new-skill, new-rule, new-plan, new-wiki-page, new-project-claude)
+- Recipes: 0 → 4 (deploy-new-project, onboard-dataset, debug-ci-failure, publish-vignette)
+- Hooks: 7 → 8 (+skill_quality_onwrite)
+- Open issues: 49 → 34 (15 closed this session)
+- Dashboard tabs: 7 → 8 (+Calibration)
+
+### Known Limitations
+- Calibration tab shows "No data" (predictions JSONL local-only, needs export_and_deploy_data.sh at session end)
+- Sessions tab shows "No data" (unified.duckdb local-only, same fix)
+- Daily email may still fail if blocks data dates don't overlap model_daily.json dates
+- orchestrator-protocol rule updated with background agent timeout protocol (from other project)
+
 ## 2026-04-30
 
 ### Completed
