@@ -1,3 +1,9 @@
+---
+name: accessibility-standards
+description: Enforce WCAG 2.1 AA accessibility standards for public-facing outputs including Shiny apps, Quarto reports, and HTML deliverables
+type: rule
+---
+
 # Rule: Accessibility Standards (WCAG 2.1 AA)
 
 ## Source

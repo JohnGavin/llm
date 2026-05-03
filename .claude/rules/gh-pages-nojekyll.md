@@ -1,3 +1,9 @@
+---
+name: gh-pages-nojekyll
+description: Add .nojekyll file to skip Jekyll processing on GitHub Pages for Quarto and static site generator projects
+type: rule
+---
+
 # Rule: `.nojekyll` for GitHub Pages projects with Quarto/static output
 
 ## When This Applies

@@ -583,7 +583,7 @@ if [ -f "$_bd_db" ]; then
     ORDER BY captured_at DESC;
   " 2>/dev/null | grep "│" | grep -v "int32\|varchar\|─") || true
 
-  _bd_count=$(duckdb "$_bd_db" -c "SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;" 2>/dev/null | grep -oE '[0-9]+' | tail -1) || _bd_count=0
+  _bd_count=$(duckdb -list -noheader "$_bd_db" -c "SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;" 2>/dev/null | grep -oE '^[0-9]+$' | head -1) || _bd_count=0
 
   if [ "${_bd_count:-0}" -gt 0 ]; then
     echo ""
@@ -596,11 +596,11 @@ if [ -f "$_bd_db" ]; then
   fi
 
   # Also check for actions without linked issues (stale)
-  _stale=$(duckdb "$_bd_db" -c "
+  _stale=$(duckdb -list -noheader "$_bd_db" -c "
     SELECT COUNT(*) FROM braindump_actions
     WHERE status='created' AND issue_closed_at IS NULL
     AND created_at < current_timestamp - INTERVAL 14 DAY;
-  " 2>/dev/null | grep -oE '[0-9]+' | tail -1 2>/dev/null) || _stale=0
+  " 2>/dev/null | grep -oE '^[0-9]+$' | head -1 2>/dev/null) || _stale=0
   [ "${_stale:-0}" -gt 0 ] && echo "STALE: $_stale braindump-linked issues open >14 days"
 fi
 

@@ -76,9 +76,9 @@ fi
 # Safety net: warn if braindumps were surfaced but not processed this session.
 _bd_db="$HOME/.claude/logs/unified.duckdb"
 if [ -f "$_bd_db" ]; then
-  _unprocessed=$(duckdb "$_bd_db" -c "
+  _unprocessed=$(duckdb -list -noheader "$_bd_db" -c "
     SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;
-  " 2>/dev/null | grep -oE '[0-9]+' | tail -1) || _unprocessed=0
+  " 2>/dev/null | grep -oE '^[0-9]+$' | head -1) || _unprocessed=0
 
   if [ "${_unprocessed:-0}" -gt 0 ]; then
     echo "BRAINDUMP: $_unprocessed unprocessed braindump(s) — these were surfaced but not acted on."
@@ -91,10 +91,10 @@ if [ -f "$_bd_db" ]; then
     _start_time=$(cat "$_session_start_file" 2>/dev/null || echo "")
     if [ -n "$_start_time" ]; then
       _n_commits=$(git log --oneline --since="$_start_time" 2>/dev/null | wc -l | tr -d ' ')
-      _n_actions=$(duckdb "$_bd_db" -c "
+      _n_actions=$(duckdb -list -noheader "$_bd_db" -c "
         SELECT COUNT(*) FROM braindump_actions
         WHERE created_at >= '$_start_time'::TIMESTAMP;
-      " 2>/dev/null | grep -oE '[0-9]+' | tail -1) || _n_actions=0
+      " 2>/dev/null | grep -oE '^[0-9]+$' | head -1) || _n_actions=0
 
       if [ "${_n_commits:-0}" -gt 0 ] && [ "${_n_actions:-0}" -eq 0 ] && [ "${_unprocessed:-0}" -gt 0 ]; then
         echo "BRAINDUMP: $_n_commits commits this session but no braindump actions recorded."
@@ -102,6 +102,13 @@ if [ -f "$_bd_db" ]; then
       fi
     fi
   fi
+fi
+
+# ── Telemetry data export + deploy (Calibration + Sessions tabs) ────
+# Auto-runs export_and_deploy_data.sh (was orphaned — header claimed it ran here).
+EXPORT_SCRIPT="$HOME/.claude/scripts/export_and_deploy_data.sh"
+if [ -x "$EXPORT_SCRIPT" ]; then
+  timeout 180 "$EXPORT_SCRIPT" 2>&1 | tail -3 || true
 fi
 
 # --- Prediction calibration: remind about unresolved predictions ---

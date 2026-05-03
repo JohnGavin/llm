@@ -1,3 +1,9 @@
+---
+name: valuation-spread-threshold
+description: Only deviate from policy weights when valuation spreads exceed 2-3 standard deviations from historical mean, capped at 5-10 percent of portfolio
+type: rule
+---
+
 # Rule: Valuation-Spread Deviation Threshold with Position Cap
 
 ## Source

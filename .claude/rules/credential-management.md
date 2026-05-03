@@ -1,3 +1,9 @@
+---
+name: credential-management
+description: Never embed credentials in code; retrieve from environment, enforce small-number suppression, and manage data use agreements
+type: rule
+---
+
 # Rule: Credential and Data Governance
 
 ## Source
