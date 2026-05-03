@@ -1,3 +1,9 @@
+---
+name: earnings-mean-reversion
+description: Apply 40-percent-per-year mean-reversion decay to abnormal earnings growth features to avoid overstating persistence
+type: rule
+---
+
 # Rule: Earnings Mean-Reversion Rate in Feature Construction
 
 ## Source

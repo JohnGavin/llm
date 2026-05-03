@@ -1,3 +1,9 @@
+---
+name: cross-geography-pervasiveness
+description: Require evidence of factor premiums across independent geographies before adopting systematic strategies
+type: rule
+---
+
 # Rule: Require Cross-Geography Pervasiveness for Factor Adoption
 
 ## Source

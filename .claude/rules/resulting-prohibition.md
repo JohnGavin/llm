@@ -1,3 +1,9 @@
+---
+name: resulting-prohibition
+description: Judge strategy decisions by process quality and evidence, not by recent outcomes or performance
+type: rule
+---
+
 # Rule: Prohibit "Resulting" — Judge Decisions by Process, Not Outcome
 
 ## Source

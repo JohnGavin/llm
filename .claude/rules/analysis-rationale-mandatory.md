@@ -1,3 +1,9 @@
+---
+name: analysis-rationale-mandatory
+description: Document analytical choices and decisions before seeing results to prevent retrospective rationalization
+type: rule
+---
+
 # Rule: Analysis Rationale Logging Is Mandatory
 
 ## Source
