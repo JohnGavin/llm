@@ -116,16 +116,51 @@ If NEITHER condition holds, the agent is idle.
 
 ### Intervention thresholds
 
-Calibrated against observed run times (12-13 min for clean completions; >15 min idle = stalled):
+Calibrated against observed run times: 12-13 min for clean completions; >15 min idle = stalled; >30 min total runtime is rare and often masks an unrecoverable issue.
 
 | Elapsed since dispatch | Idle for | Action |
 |---|---|---|
-| < 10 min | — | Continue waiting. Do not poll proactively. |
-| 10-15 min | < 5 min idle | Wait. Likely still working. |
-| 10-15 min | ≥ 5 min idle | Inspect worktree state. Tabulate completed vs missing tasks. Report to user. |
+| < 8 min | — | Continue waiting. Do not poll proactively. |
+| 8-12 min | < 3 min idle | Wait. Likely still working. |
+| 8-12 min | ≥ 3 min idle | Inspect worktree state. Tabulate completed vs missing tasks. Report to user. |
+| 12-20 min | regardless | Mandatory intermediate check-in: tabulate completed checkpoints, report progress to user, surface any failed-fetch or "unable to" patterns visible in the file system (cached HTTP error files, partial JSONL). |
+| > 20 min total | regardless | **HARD CAP.** Even if "active" by signal, prompt user explicitly: "agent has run N min vs forecast M min — intervene now, wait, or re-dispatch?" Do not silently keep waiting past this point. |
 | > 15 min | ≥ 5 min idle | **MANDATORY INTERVENTION.** Take over directly OR re-dispatch a fresh agent with the partial state as input. |
-| > 30 min total | regardless | Hard cap — even if "active" by signal, prompt to user: "this is running long, expected duration was N min. Continue or intervene?" |
 | Any time, completion notification arrives late | — | Verify the agent's claimed output matches what landed (e.g. compare commit SHAs, file contents). |
+
+### Network-failure heuristics
+
+A "network failure during a long agent run" looks like: filesystem mtime stale, no commits for >5 min, but a live R / nix-shell / curl process exists with very high cumulative time. The agent is technically "active" by process signal but is blocked on a network operation that may never return.
+
+When you see this pattern, do NOT keep waiting. Symptoms to flag (if visible):
+
+| Signal | What it suggests |
+|---|---|
+| `ps` shows R / curl / nix-build with >5 min CPU+wall but worktree mtime stale | Likely retrying a failed HTTP / package fetch |
+| `*.partial`, `*.tmp`, `*.lock` files appearing then disappearing | Download retry loop |
+| The same agent's prior turns took ≤10 min for similar scope | Current run is anomalous; intervene |
+| Notification arrives with `"API Error"`, `"ConnectionRefused"`, `"timeout"`, or `"network"` in the result | Already-failed agent — take over the worktree state immediately, do not re-dispatch the same prompt |
+
+### Take-over from a network-failed agent
+
+When the notification finally arrives with a network-error result (rare but observed in practice — e.g. 2026-05-03, an agent ran for 106 min on issue #45 before the API connection refused, after committing 4 of 5 checkpoints):
+
+1. **Do NOT re-dispatch the same prompt.** The agent already did the work locally; only the wrap-up commit is missing.
+2. Check `git log` on the agent's branch for partial commits.
+3. Check `git status` for uncommitted but rendered/edited files (the dropped final-commit material).
+4. Inspect for completeness; if the rendered output looks correct, commit the residual files yourself with a take-over message that names the skipped checkpoint.
+5. Push, PR, merge as normal.
+
+This pattern recovered ~106 min of work in about 5 min of orchestrator time. Re-dispatching would have wasted both.
+
+### Strategies to AVOID hitting the hard cap
+
+Prefer dispatching agent runs that fit within ~10-15 min:
+
+- **Smaller scope per dispatch.** A "5-checkpoint" plan with 5 small tasks (each 2-3 min) finishes faster than one 10-task agent in a single dispatch. Each checkpoint commits, so even if the run is interrupted, partial progress is preserved.
+- **Reuse existing infrastructure.** If the project already has a fetcher or helper, point the agent at it; do not have it rebuild. Saves time and reduces network calls.
+- **Delegate single-file edits to `quick-fix`** (haiku, mechanical) rather than `general-purpose` (sonnet, exploration). Faster + cheaper for narrow tasks.
+- **Front-load CDN / nix dependencies.** If a CDN library install or nix derivation rebuild is on the critical path, do it once at session start, not per-agent.
 
 ### Calibration: when to allow longer waits
 
