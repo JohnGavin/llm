@@ -22,6 +22,8 @@ devtools::check(args = "--as-cran")
 
 ```bash
 # Combined code sweep: ast-grep (structural) + jarl (R idioms)
+# Note: jarl is a laptop-local manual install (/usr/local/bin/jarl) and is
+# silently skipped when missing — including in GH Actions CI. See llm#99.
 ~/.claude/scripts/r_code_check.sh R/
 ```
 

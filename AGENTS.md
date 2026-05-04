@@ -21,7 +21,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Pipeline Validation (ALL PROJECTS):** Before every commit: `parse("_targets.R")` MUST succeed. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash.
 
-**Code Quality (ast-grep):** 8 rules at `~/.config/ast-grep/rules/`. Run `~/.claude/scripts/r_code_check.sh R/` before commit. Banned: `suppressWarnings(as.*)`, silent `tryCatch`, raw SQL, `stop()`, `install.packages()`. Use `$$$` metavar (NOT `___`). For structural search prefer `cd ~/.config/ast-grep && ast-grep run -p 'pattern' dir/` over grep.
+**Code Quality (ast-grep + jarl):** 8 ast-grep rules at `~/.config/ast-grep/rules/`; jarl R idiom linter (`jarl.toml` in project root). Run `~/.claude/scripts/r_code_check.sh R/` before commit — runs both tools. Banned patterns (ast-grep): `suppressWarnings(as.*)`, silent `tryCatch`, raw SQL, `stop()`, `install.packages()`. R idiom checks (jarl): `redundant_equals`, `nzchar`, `fixed_regex`, unused functions, unreachable code. Use `$$$` metavar (NOT `___`) for ast-grep structural search. **jarl is laptop-local only** — manual install at `/usr/local/bin/jarl`, not in nix shell PATH (script handles both), not available in GH Actions CI; skipped silently when missing. Migration to nix tracked in llm#99.
 
 **Explorations:** `explorations/` is a scratch area for research experiments. Minimum score 60 (vs 80 for production). Graduate to `R/` or `vignettes/` at >= 80. Archive abandoned explorations with a reason comment. See `explorations/CONVENTIONS.md`.
 
