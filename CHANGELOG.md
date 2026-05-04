@@ -4,6 +4,21 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-04
+
+### Completed
+- **llm#93 — jarl 0.5.0 evaluation** (PR #98 merged):
+  - Evaluated jarl as second linting layer alongside ast-grep
+  - Created `jarl.toml` with R idiom rules for the llm project
+  - Auto-fixed R files and added suppressions where warranted
+  - Fixed early-exit bug in `r_code_check.sh`: ast-grep empty output no longer `exit 0`, so jarl always runs
+  - Added jarl integration block to `r_code_check.sh` with graceful skip if jarl not in PATH
+  - Updated `/check` command (step 4, bash block, output format) to reference `r_code_check.sh` and show ast-grep + jarl results
+  - Braindump #32 (statin note): processed as informational for mycare project
+
+### Failed approaches
+- Suspected CI failure (`check-sync`) needed sync_wiki.R fix — turned out CI had already passed before session resumed
+
 ## 2026-05-03
 
 ### Completed
