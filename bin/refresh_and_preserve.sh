@@ -84,10 +84,21 @@ cd "$LLM_REPO"
 ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 log "Current branch: $ORIGINAL_BRANCH"
 
-# Stash any uncommitted changes
+# Stash any uncommitted changes (track exact ref so the post-work pop targets the
+# right stash even if user adds another stash in between, or this script races
+# itself). Restored unconditionally at the end of the script — see issue #100.
+STASH_REF=""
 if ! git diff --quiet || ! git diff --staged --quiet; then
     log "Stashing uncommitted changes..."
-    git stash push -m "Auto-stash before ccusage refresh $(date +%Y%m%d_%H%M%S)"
+    STASH_MSG="Auto-stash before ccusage refresh $(date +%Y%m%d_%H%M%S)"
+    STASH_REF=$(git stash create "$STASH_MSG")
+    if [ -n "$STASH_REF" ]; then
+        git stash store -m "$STASH_MSG" "$STASH_REF"
+        git reset --hard
+        log "Stashed as $STASH_REF"
+    else
+        log "stash create returned empty — nothing to stash after all"
+    fi
 fi
 
 # Switch to main branch
@@ -368,11 +379,26 @@ fi
 if [ "$ORIGINAL_BRANCH" != "$MAIN_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "HEAD" ]; then
     log "Returning to original branch: $ORIGINAL_BRANCH"
     git checkout "$ORIGINAL_BRANCH" 2>&1 | tee -a "$LOG_FILE"
+fi
 
-    # Restore stashed changes if any
-    if git stash list | grep -q "Auto-stash before ccusage refresh"; then
-        log "Restoring stashed changes..."
-        git stash pop 2>&1 | tee -a "$LOG_FILE" || true
+# 5b. Restore the stash created at line 87, if any. Outside the branch-switch
+# block so it ALWAYS runs when STASH_REF was set — fixes #100 (37 leaked
+# auto-stashes accumulated 2026-01 through 2026-05 because the pop was
+# previously gated on switching branches).
+if [ -n "$STASH_REF" ]; then
+    log "Restoring stashed changes from $STASH_REF..."
+    if git stash apply "$STASH_REF" >> "$LOG_FILE" 2>&1; then
+        # Drop the labelled stash entry so the list stays clean. The reflog
+        # still holds the ref for 90 days for recovery if apply silently lost
+        # something.
+        STASH_INDEX=$(git stash list | grep -n -F "$STASH_REF" | head -1 | cut -d: -f1)
+        if [ -n "$STASH_INDEX" ]; then
+            git stash drop "stash@{$((STASH_INDEX-1))}" >> "$LOG_FILE" 2>&1 || \
+                log "stash drop by index failed (harmless — reflog keeps it 90d)"
+        fi
+        log "Stash restored and entry dropped"
+    else
+        error_log "stash apply failed — keeping $STASH_REF for manual recovery"
     fi
 fi
 
