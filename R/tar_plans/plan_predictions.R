@@ -52,12 +52,12 @@ plan_predictions <- function() {
             n_predictions = dplyr::n(),
             n_resolved = sum(!is.na(outcome)),
             success_rate = if (sum(!is.na(outcome)) > 0) {
-              mean(outcome[!is.na(outcome)] == TRUE)
+              mean(outcome[!is.na(outcome)])
             } else {
               NA_real_
             },
             brier_score = if (sum(!is.na(outcome)) > 0) {
-              outcome_bin <- as.integer(outcome[!is.na(outcome)] == TRUE)
+              outcome_bin <- as.integer(outcome[!is.na(outcome)])
               p_sub <- p_success[!is.na(outcome)]
               mean((p_sub - outcome_bin)^2)
             } else {
@@ -87,7 +87,7 @@ plan_predictions <- function() {
 
         resolved |>
           dplyr::mutate(
-            outcome_binary = dplyr::if_else(outcome == TRUE, 1, 0)
+            outcome_binary = dplyr::if_else(outcome, 1, 0)
           ) |>
           dplyr::arrange(recorded_at) |>
           dplyr::mutate(
@@ -195,7 +195,7 @@ plan_predictions <- function() {
         # Create long format for actual vs predicted comparison
         plot_data <- pred_all_raw |>
           dplyr::filter(!is.na(outcome)) |>
-          dplyr::mutate(outcome_binary = dplyr::if_else(outcome == TRUE, 1, 0)) |>
+          dplyr::mutate(outcome_binary = dplyr::if_else(outcome, 1, 0)) |>
           dplyr::group_by(project_name) |>
           dplyr::summarise(
             `Mean Predicted` = mean(p_success),
