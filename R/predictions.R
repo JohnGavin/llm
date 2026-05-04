@@ -134,6 +134,7 @@ load_all_predictions <- function(dir = "~/.claude/predictions") {
 #' @param db_path Path to DuckDB file
 #' @return Invisible row count
 #' @noRd
+# jarl-ignore unused_function: internal helper, wired in future calibration targets
 store_cross_project_predictions <- function(predictions, db_path) {
   if (is.null(predictions) || nrow(predictions) == 0) return(invisible(0L))
 
@@ -161,6 +162,7 @@ store_cross_project_predictions <- function(predictions, db_path) {
 #' @return List with brier_score, accuracy, calibration_by_bucket,
 #'   rolling_brier, n_total, n_resolved
 #' @noRd
+# jarl-ignore unused_function: internal helper, wired in future calibration targets
 compute_calibration_metrics <- function(predictions) {
   empty_result <- list(
     brier_score = NA_real_,
@@ -192,7 +194,7 @@ compute_calibration_metrics <- function(predictions) {
   }
 
   resolved <- resolved |>
-    dplyr::mutate(outcome_binary = dplyr::if_else(outcome == TRUE, 1, 0))
+    dplyr::mutate(outcome_binary = dplyr::if_else(outcome, 1, 0))
 
   brier_score <- mean((resolved$p_success - resolved$outcome_binary)^2)
   accuracy <- mean((resolved$p_success >= 0.5) == (resolved$outcome_binary == 1))

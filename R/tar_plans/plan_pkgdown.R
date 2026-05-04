@@ -57,7 +57,7 @@ plan_pkgdown <- function() {
         force(pkgdown_build)
         gert::git_add("docs")
         staged <- gert::git_status()
-        staged <- staged[staged$staged == TRUE, , drop = FALSE]
+        staged <- staged[staged$staged, , drop = FALSE]
         n <- nrow(staged)
 
         if (n > 0) {

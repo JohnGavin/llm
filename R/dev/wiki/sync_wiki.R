@@ -86,7 +86,7 @@ read_summary <- function(path) {
 
 wiki_page_name_from_source <- function(src_path) {
   base <- sub("\\.md$", "", basename(src_path))
-  gsub("_", "-", base)
+  gsub("_", "-", base, fixed = TRUE)
 }
 
 wiki_page_url <- function(page_name) paste0(wiki_base_url, "/", page_name)

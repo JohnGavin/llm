@@ -252,7 +252,7 @@ plan_vignette_outputs <- function() {
           model_usage <- vig_session_metrics |>
             dplyr::select(date, duration_mins, cost_per_min, models) |>
             tidyr::unnest(models) |>
-            dplyr::mutate(model_clean = gsub("claude-", "", models))
+            dplyr::mutate(model_clean = gsub("claude-", "", models, fixed = TRUE))
 
           ggplot2::ggplot(model_usage, ggplot2::aes(x = date, y = cost_per_min)) +
             ggplot2::geom_point(alpha = 0.4, color = "steelblue") +
@@ -649,7 +649,7 @@ plan_vignette_outputs <- function() {
       {
         tryCatch({
           r_files <- list.files("R", pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
-          r_files <- r_files[!grepl("R/dev/", r_files)]
+          r_files <- r_files[!grepl("R/dev/", r_files, fixed = TRUE)]
           test_files <- list.files("tests/testthat", pattern = "^test-.*\\.R$")
           vignette_files <- list.files("vignettes", pattern = "\\.(qmd|Rmd)$")
           plan_files <- list.files("R/tar_plans", pattern = "^plan_.*\\.R$")
