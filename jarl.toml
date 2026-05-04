@@ -1,0 +1,5 @@
+[lint]
+ignore = ["quotes"]
+
+[lint.assignment]
+operator = "<-"
