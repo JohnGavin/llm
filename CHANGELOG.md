@@ -7,7 +7,18 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 ## 2026-05-04
 
 ### Completed
-- **llm#93 — jarl 0.5.0 evaluation** (PR #98 merged):
+- **jarl: laptop-local-only documentation hardening** (#99, commit bf852a2):
+  - Created `.claude/templates/new-jarl-toml.md` — template for new projects, with prerequisite section listing manual install steps and the CI caveat
+  - Updated global `~/.claude/CLAUDE.md` Code Quality line + project `AGENTS.md` to document ast-grep + jarl together AND flag jarl as laptop-local manual install (not in nix PATH, not in CI)
+  - Hardened `.claude/scripts/r_code_check.sh`: rewrote header to call out laptop-only status; runtime detection now falls back to `/usr/local/bin/jarl` so it works inside nix shell where `/usr/local/bin` is not on PATH; emits actionable message (install location, version, CI caveat) when missing instead of one-line skip
+  - Added caveat to `.claude/commands/check.md` bash block
+  - Verified detection logic finds `/usr/local/bin/jarl` 0.5.0 with bare PATH (mimics nix shell)
+  - Opened llm#99 to track migration from manual install → nix when nixpkgs ships a buildable jarl ≥ 0.5.0
+- **Housekeeping after PR #98 merge**:
+  - Pruned local branch `feat/93-jarl-eval` (was 4e23a06, content on main as 1219ee0); origin already auto-deleted on merge — fetched --prune
+  - Dropped superseded `stash@{0}` ("jarl-prep — for #93 worktree", 0cbfff9)
+  - Removed jarl install scratch from `/tmp` (jarl-aarch64-apple-darwin 7.5M, jarl.tar.gz 2.9M)
+- **llm#93 — jarl 0.5.0 evaluation** (PR #98 merged earlier today):
   - Evaluated jarl as second linting layer alongside ast-grep
   - Created `jarl.toml` with R idiom rules for the llm project
   - Auto-fixed R files and added suppressions where warranted
@@ -17,7 +28,12 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
   - Braindump #32 (statin note): processed as informational for mycare project
 
 ### Failed approaches
+- **Adding `jarl` to `default.nix` directly**: bypassed the rix workflow (`default.R` → `rix::rix()` → `default.nix`). Build failed because nixpkgs only ships jarl 0.3.0 and its `insta-1.43.1` snapshot tests fail (5 of 109): `test_assignment_wrong_value_from_toml`, `test_default_exclude_wrong_values`, `test_exclude_wrong_values`, `test_malformed_toml_syntax`, `test_unknown_toml_field`. Even if it built, 0.3.0 predates the rule set `r_code_check.sh` relies on. Manual edit also violated `feedback_never-edit-default-nix`, `nix-agent-shell-protocol`, `auto-delegation` (should have used `nix-env` agent), and `verification-before-completion` rules. **Resolution:** keep manual install at `/usr/local/bin/jarl` until nixpkgs catches up; tracked in #99.
 - Suspected CI failure (`check-sync`) needed sync_wiki.R fix — turned out CI had already passed before session resumed
+
+### Known limitations
+- jarl is silently skipped in GitHub Actions CI (no `/usr/local/bin/jarl` on runners). The R-idiom checks are a developer-laptop gate only until #99 is resolved.
+- Each new developer must manually install jarl ≥ 0.5.0 from upstream releases at `/usr/local/bin/jarl`. Onboarding doc not yet written.
 
 ## 2026-05-03
 
