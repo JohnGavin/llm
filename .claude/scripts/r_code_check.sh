@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 # r_code_check.sh - Run ast-grep + jarl scan on R project code
 # Called by: /check command, quality-gates skill, manual invocation
-# Requires: ast-grep 0.40+ with R grammar at ~/.config/ast-grep/
-#           jarl 0.5.0+ at /usr/local/bin/jarl (optional)
+#
+# Requires:
+#   ast-grep 0.40+ with R grammar at ~/.config/ast-grep/  (provided by nix shell)
+#
+# Optional (LAPTOP-LOCAL ONLY — see llm#99):
+#   jarl 0.5.0+  — currently a manual install at /usr/local/bin/jarl
+#   - NOT provided by nix-shell (nixpkgs only has 0.3.0, fails to build)
+#   - NOT available on GitHub Actions runners — jarl checks are silently skipped in CI
+#   - The script auto-detects /usr/local/bin/jarl so it works inside nix-shell
+#     even though /usr/local/bin is not on PATH there.
+#   - To install: download release from https://github.com/krlmlr/jarl/releases
+#     and place at /usr/local/bin/jarl (chmod +x).
+#   - Migration to nix tracked in llm#99.
 #
 # Usage:
 #   r_code_check.sh [TARGET_DIR] [--json]
@@ -74,11 +85,22 @@ else
 fi
 
 # jarl R idiom linter (separate tool, different rule set from ast-grep)
+# LAPTOP-LOCAL ONLY: see llm#99. Manual install at /usr/local/bin/jarl.
+# Skipped silently inside CI runners (no /usr/local/bin/jarl) — that is by design
+# until nixpkgs ships a working jarl >= 0.5.0.
 echo ""
 echo "=== jarl R Idiom Linter ==="
 jarl_errors=0
+JARL_BIN=""
 if command -v jarl >/dev/null 2>&1; then
-  jarl_output=$(jarl check "$TARGET_DIR" 2>&1) || true
+  JARL_BIN="jarl"
+elif [ -x /usr/local/bin/jarl ]; then
+  # /usr/local/bin is not on PATH inside nix-shell; reach the manual install directly
+  JARL_BIN="/usr/local/bin/jarl"
+fi
+
+if [ -n "$JARL_BIN" ]; then
+  jarl_output=$("$JARL_BIN" check "$TARGET_DIR" 2>&1) || true
   if [ -n "$jarl_output" ]; then
     echo "$jarl_output"
     jarl_errors=$(echo "$jarl_output" | grep -c "^error" || true)
@@ -86,7 +108,11 @@ if command -v jarl >/dev/null 2>&1; then
     echo "No jarl violations found."
   fi
 else
-  echo "jarl not in PATH (skipping — install from https://github.com/krlmlr/jarl)."
+  echo "jarl not found — skipping R idiom checks."
+  echo "  Laptop-local manual install required (see llm#99)."
+  echo "  Install: download https://github.com/krlmlr/jarl/releases >= 0.5.0"
+  echo "           to /usr/local/bin/jarl (chmod +x)."
+  echo "  Note: jarl is not available on GitHub Actions runners."
 fi
 
 # Exit code: 1 if any errors (ast-grep or jarl), 0 if clean or warnings only
