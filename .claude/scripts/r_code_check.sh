@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# r_code_check.sh - Run ast-grep scan on R project code
+# r_code_check.sh - Run ast-grep + jarl scan on R project code
 # Called by: /check command, quality-gates skill, manual invocation
 # Requires: ast-grep 0.40+ with R grammar at ~/.config/ast-grep/
+#           jarl 0.5.0+ at /usr/local/bin/jarl (optional)
 #
 # Usage:
 #   r_code_check.sh [TARGET_DIR] [--json]
@@ -44,21 +45,20 @@ fi
 
 # Run scan with all rules
 scan_output=$(ast-grep scan "$TARGET_DIR" 2>&1) || true
+n_error=0
+n_warning=0
 
 if [ -z "$scan_output" ]; then
-  echo "No violations found."
-  exit 0
+  echo "No ast-grep violations found."
+else
+  echo "$scan_output"
+  echo ""
+  echo "--- Summary ---"
+  n_error=$(echo "$scan_output" | grep -ci "error\[" || true)
+  n_warning=$(echo "$scan_output" | grep -ci "warning\[" || true)
+  echo "Errors:   $n_error"
+  echo "Warnings: $n_warning"
 fi
-
-echo "$scan_output"
-echo ""
-echo "--- Summary ---"
-
-# Count by parsing output lines that start with severity
-n_error=$(echo "$scan_output" | grep -ci "error\[" || true)
-n_warning=$(echo "$scan_output" | grep -ci "warning\[" || true)
-echo "Errors:   $n_error"
-echo "Warnings: $n_warning"
 
 # Hardcoded path check (grep-based, not ast-grep)
 echo ""
@@ -73,5 +73,21 @@ else
   echo "No hardcoded paths found."
 fi
 
-# Exit code: 1 if any errors, 0 if only warnings or clean
-[ "$n_error" -gt 0 ] && exit 1 || exit 0
+# jarl R idiom linter (separate tool, different rule set from ast-grep)
+echo ""
+echo "=== jarl R Idiom Linter ==="
+jarl_errors=0
+if command -v jarl >/dev/null 2>&1; then
+  jarl_output=$(jarl check "$TARGET_DIR" 2>&1) || true
+  if [ -n "$jarl_output" ]; then
+    echo "$jarl_output"
+    jarl_errors=$(echo "$jarl_output" | grep -c "^error" || true)
+  else
+    echo "No jarl violations found."
+  fi
+else
+  echo "jarl not in PATH (skipping — install from https://github.com/krlmlr/jarl)."
+fi
+
+# Exit code: 1 if any errors (ast-grep or jarl), 0 if clean or warnings only
+[ "$n_error" -gt 0 ] || [ "$jarl_errors" -gt 0 ] && exit 1 || exit 0
