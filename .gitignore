@@ -16,6 +16,10 @@ docs/
 .DS_Store
 Thumbs.db
 
+# Agent scratch / debug artefacts
+debug_output.txt
+git_status.txt
+
 # Database files
 *.db
 my_new_md_database
