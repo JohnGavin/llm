@@ -4,6 +4,38 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-05 (post-wrap continuations — RECOVERY rollout + #109 close + #103 hook follow-up)
+
+### Completed
+
+- **Permission-mode rule: mv-breaks-symlink caution added** (`02a44a9`): documented the gotcha that bit mid-session — `mv source target` replaces a symlink with a regular file. Recovery snippet inline. Cross-references `feedback_symlink-edit-vs-mv` memory.
+- **#103 hook follow-up: target extraction** (`12b4cd2`): extended `destructive_api_guard.sh` to extract the destructive op's target (volume ID, S3 URI, table name, gh api path, etc.) from the command and surface it in block messages alongside the rule's "type the target name from memory" guidance. 4 new tests; suite now 35/35 (was 31). Comment posted on the closed #103 thread.
+- **#109 resolution and close** (`9c6db34`): three carried-over uncommitted items disposed per user direction — `git rm` for `noble-humming-charm.md` (deletion intentional), tracked `inst/extdata/model_daily.json` (package-shipped data), tracked `vignettes/data/` (18 dashboard JSON exports). `llm` working tree now clean for the first time this session.
+- **RECOVERY.md rollout per #108 audit candidates**:
+  - `JohnGavin/irishbuoys` — `527c7e9` pushed; file moved INTO the package subfolder at `proj/data/weather/irish_buoy_network/irishbuoys/RECOVERY.md` (the parent path is not a git repo; the package is); paths within the file are relative to the package root.
+  - `JohnGavin/llmtelemetry` — `3f3a901` rebased over 4 origin auto-refresh commits and pushed; bundled `.claude/CLAUDE.md` (declares `Environment: prod`) + `RECOVERY.md` (predictions/duckdb/dashboard JSON) + the pre-existing `model_daily.json` refresh per user direction.
+  - `JohnGavin/JohnGavin.github.io` — `e05f9fc` (`.claude/CLAUDE.md` with `Environment: prod`, deploy notes, dark-mode + `.nojekyll` reminders); pushed by user from a non-nix terminal (nix shell has no `ssh`).
+  - `mycare` — `RECOVERY.md` written at `/Users/johngavin/docs_/pers/NHS_health/data/antigravity/mycare/RECOVERY.md`. NOT a git repo (intentional — PHI). File documents PHI-specific encryption-at-rest requirements and a no-cloud-without-DUA constraint.
+
+### Failed approaches / sharp edges
+
+- **Subagent restricted to project root**: the cross-repo agent (Environment + RECOVERY across 4 repos) reported `Bash` and `Write` denied for paths outside `~/docs_gh/llm/`. Orchestrator (this session) was NOT denied — same `permissions.allow` should apply, suggesting subagent permission inheritance differs. Worked around by drafting content in the agent and applying via direct Write tool calls. Worth investigating: are subagent permissions narrower than the orchestrator's, or did the agent misclassify a different error as "permission denied"?
+- **llmtelemetry push failed: 4 commits behind**: launchd-driven auto-refresh commits had landed on origin since the last fetch. Resolved by `git pull --rebase` (no file overlap with my changes) then push. Lesson: when committing to repos that have automated refresh commits (ccusage, model_daily exports), check `rev-list --count` before pushing.
+
+### Accuracy / metrics
+
+- **Tests**: 35/35 (was 31; +4 from #103 target-extraction)
+- **Commits this leg**: 6 (3 on `llm`, 1 each on `irishbuoys`, `llmtelemetry`, `JohnGavin.github.io`)
+- **Issues closed**: #109 (the carried-over-uncommitted-items chore)
+- **Repos all in sync**: `llm`, `llmtelemetry`, `irishbuoys`, `JohnGavin.github.io` working trees clean post-session (one model_daily.json modification appeared in llmtelemetry post-push from the next launchd refresh — that's automated, not session work).
+
+### Known limitations / follow-ups
+
+- **Subagent permission scope**: investigate whether subagents have narrower write permissions than the orchestrator. If yes, future briefs need explicit grants for cross-repo work; if no, the agent's "denied" report was a false negative on a different error. (See "Failed approaches" above.)
+- **mycare's not a git repo**: the project contains PHI and is intentionally local-only. No remote backup exists; the RECOVERY.md's "Where backups live" section is all `<TODO>`. This needs the user to set up an encrypted local target (NAS or SSD) before the recovery plan is real.
+- **irish_buoy_network parent dir is not a git repo**: only the `irishbuoys/` R package subfolder is. Things like `_targets/` cache, `docs/` rendered output, `prompt_irishbuoys.md` at the parent level have no version-control safety net. Consider whether to `git init` the parent (and untrack the child) or leave as-is.
+- **Backup destinations universally TODO**: all four RECOVERY.md files have `<TODO: configure>` for backup locations. The plans land but the infrastructure does not yet exist. Setting up an encrypted external SSD (or NAS, or B2/Wasabi for the non-PHI projects) is genuinely the next step.
+
 ## 2026-05-05 (continued — Railway-incident response: 9-issue safety path, session llm1)
 
 ### Source
