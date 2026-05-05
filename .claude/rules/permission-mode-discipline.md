@@ -78,6 +78,25 @@ cd /tmp/llm-test && ~/.claude/scripts/cc.sh --print-mode
 | Setting `defaultMode: bypassPermissions` in `~/.claude/settings.json` and relying on per-session override | The default IS the failure mode; override is forgotten |
 | Running destructive ops in `default` mode without reading prompts | Defeats the safety layer |
 
+## Cautions when editing the symlinked settings.json
+
+`~/.claude/settings.json` is a symlink to `~/docs_gh/llm/.claude/settings.json`. When you edit the live file, the change must flow through to the git-tracked target.
+
+| Form | Symlink-safe? |
+|---|---|
+| Claude Code's Edit tool | ✓ writes through the symlink |
+| Shell `>` redirect (`jq … > ~/.claude/settings.json`) | ✓ truncates and writes to the resolved target |
+| `mv source target` | ✗ removes the symlink and replaces it with a regular file. The repo target loses the edit. |
+
+**Recovery if `mv` broke the symlink:**
+```bash
+cp ~/.claude/settings.json ~/docs_gh/llm/.claude/settings.json
+rm ~/.claude/settings.json
+ln -s ~/docs_gh/llm/.claude/settings.json ~/.claude/settings.json
+```
+
+This came up mid-session 2026-05-05 (llm1) when applying jq edits via `mv`. Recovery cost ~3 tool calls; the lesson is cheap if remembered. See memory: `feedback_symlink-edit-vs-mv.md`.
+
 ## Migration
 
 The current `~/.claude/settings.json` `defaultMode` is `bypassPermissions`. To adopt this rule:
