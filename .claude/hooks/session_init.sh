@@ -27,6 +27,51 @@ phase_env() {
   fi
 }
 
+# ── Phase 1b: Permission Mode Advisory ────────────────────────────────
+# Detects workspace kind (main / worktree / scratch) and reports the
+# expected --permission-mode. Warns if settings.json defaultMode
+# disagrees with the workspace expectation.
+# See rule: permission-mode-discipline
+phase_perm_mode() {
+  local kind expected current settings
+  case "$PWD" in
+    /tmp|/tmp/*|/private/tmp|/private/tmp/*) kind="scratch" ;;
+    *)
+      local common gitdir
+      common=$(git rev-parse --git-common-dir 2>/dev/null || echo "")
+      gitdir=$(git rev-parse --git-dir 2>/dev/null || echo "")
+      if [ -n "$common" ] && [ -n "$gitdir" ]; then
+        common=$(cd "$common" 2>/dev/null && pwd) || common=""
+        gitdir=$(cd "$gitdir" 2>/dev/null && pwd) || gitdir=""
+        if [ -n "$common" ] && [ "$common" != "$gitdir" ]; then
+          kind="worktree"
+        else
+          kind="main"
+        fi
+      else
+        kind="other"
+      fi
+      ;;
+  esac
+  case "$kind" in
+    scratch|worktree) expected="bypassPermissions" ;;
+    main)             expected="default" ;;
+    *)                expected="default" ;;
+  esac
+  settings="$HOME/.claude/settings.json"
+  current="unknown"
+  if [ -f "$settings" ]; then
+    current=$(grep -oE '"defaultMode"[[:space:]]*:[[:space:]]*"[^"]+"' "$settings" \
+              | head -1 | sed -E 's/.*"([^"]+)"[[:space:]]*$/\1/')
+    [ -z "$current" ] && current="unknown"
+  fi
+  if [ "$current" = "$expected" ]; then
+    echo "Permission Mode: ok ($kind → $expected)"
+  else
+    echo "Permission Mode: WARN workspace=$kind expected=$expected actual=$current — see permission-mode-discipline rule"
+  fi
+}
+
 # ── Phase 2: Mapping Validation ───────────────────────────────────────
 phase_mappings() {
   local has_mismatch=0
@@ -441,6 +486,15 @@ WARNINGS=""
 phase_env_result=$(phase_env 2>/tmp/phase_env_err.log | head -1)
 echo "$phase_env_result" | grep -qi "active" && nix_ok="Y" || nix_ok="N"
 
+# Phase 1b: Permission Mode
+perm_output=$(phase_perm_mode 2>/dev/null)
+if echo "$perm_output" | grep -q "WARN"; then
+  WARNINGS="${WARNINGS}$(echo "$perm_output" | grep WARN) "
+  perm_ok="N"
+else
+  perm_ok="Y"
+fi
+
 # Phase 2: Mappings (capture warnings)
 map_output=$(phase_mappings 2>/dev/null)
 if echo "$map_output" | grep -qiE "mismatch|WARN"; then
@@ -617,6 +671,7 @@ fi
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
+[ "$perm_ok" = "Y" ] && summary="$summary | perm:ok" || summary="$summary | perm:WARN"
 summary="$summary | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
 [ "$is_worktree" = "Y" ] && summary="$summary | worktree:active"
 [ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}"
