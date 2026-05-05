@@ -59,6 +59,11 @@ Neither is a reason not to do this work. They're costs to acknowledge so you don
 
 Reproducibility (Nix, rix, locked dependencies) is mandatory regardless of LLM use. The rest of this site, and the [AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md) file at the repo root, document those practices in detail.
 
+## TODOs
+
+- Broaden the framing beyond R. The principles apply identically to TypeScript, Rust, Go, and C++ projects — the only thing that changes is which test framework you reach for first. Add explicit examples from a non-R project once one matures here.
+- Expand the "What's covered elsewhere" section to spell out the three load-bearing properties — reproducibility, consistency, validation — and link each to its own resource (Nix shell entry, code-review workflow, pointblank/tests).
+
 ```{r build-info}
 #| echo: false
 #| results: asis
