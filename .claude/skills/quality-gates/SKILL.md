@@ -127,7 +127,8 @@ This is a gate, not a percentage component, because contrast is a binary correct
 
 | Issue | Deduction |
 |-------|-----------|
-| `scripts/check_dark_contrast.sh` missing from project | -10 points |
+| Project copies `check_dark_contrast.sh` into its own `scripts/` directory (must be GLOBAL only at `~/docs_gh/llm/.claude/scripts/`) | -10 points |
+| Project does NOT wire `~/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh` into `_quarto.yml` post-render | -10 points |
 | `check_dark_contrast.sh` exits non-zero on any rendered `docs/**/*.html` | -5 points per uncovered element |
 | Inline `style="background:#…"` light bg with no `body.dark-mode` override | -5 points per element |
 | Dark-mode override without `!important` on element carrying inline `style=` | -3 points per element |
