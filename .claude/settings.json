@@ -12,7 +12,6 @@
       "Bash(quarto:*)",
       "Bash(R :*)",
       "Bash(Rscript:*)",
-      "Bash(curl:*)",
       "Bash(cat:*)",
       "Bash(ls:*)",
       "Bash(echo:*)",
@@ -118,9 +117,28 @@
       "Bash(/nix/store:*)",
       "Bash(caffeinate:*)",
       "Bash(launchctl:*)",
-      "Bash(plutil:*)"
+      "Bash(plutil:*)",
+      "Bash(curl -fsSL:*)",
+      "Bash(curl -s:*)",
+      "Bash(curl -sL:*)",
+      "Bash(curl -L:*)",
+      "Bash(curl -I:*)",
+      "Bash(curl -o:*)"
     ],
-    "defaultMode": "default"
+    "defaultMode": "default",
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(rm -Rf:*)",
+      "Bash(rm -fR:*)",
+      "Bash(rm -r:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh release delete:*)",
+      "Bash(gh secret delete:*)",
+      "Bash(gh workflow delete:*)",
+      "Bash(gh ssh-key delete:*)",
+      "Bash(gh gpg-key delete:*)"
+    ]
   },
   "hooks": {
     "SessionStart": [
