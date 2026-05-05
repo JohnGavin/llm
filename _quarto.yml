@@ -19,6 +19,8 @@ website:
         text: Infrastructure
       - href: vignettes/articles/closeread-config.qmd
         text: Config Stack
+      - href: vignettes/articles/llm-assisted-tips.qmd
+        text: LLM-assisted Tips
 
 format:
   html:
