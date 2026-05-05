@@ -9,6 +9,7 @@ Global config: `~/.claude/CLAUDE.md` (loaded first, all rules apply unless overr
 | Package name | `llm` |
 | Primary domain | Claude Code configuration, agent workflows, Nix + R toolchain |
 | Stage | Active development |
+| Environment | `dev` |
 | Nix shell | `/Users/johngavin/docs_gh/llm/default.nix` |
 | Targets store | `_targets/` (default) |
 | R version | 4.5.x (from `default.nix`) |
