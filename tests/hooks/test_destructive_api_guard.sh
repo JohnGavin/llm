@@ -199,6 +199,60 @@ assert_allowed \
   "empty command" \
   ""
 
+# ─── Environment surfacing tests ────────────────────────────────────────────
+# These tests verify that the block message includes the environment value.
+# We feed a forbidden command with a temp project dir wired via $PWD.
+
+echo ""
+echo "=== Environment surfacing in block messages ==="
+
+# Helper: run hook from a temp dir with optional CLAUDE.md content
+# Captures stderr (where block messages go) and checks for a string.
+assert_blocked_with_env_msg() {
+  local label="$1"
+  local cmd="$2"
+  local env_content="$3"   # Content for .claude/CLAUDE.md (empty string = no file)
+  local expected_msg="$4"  # String that must appear in stderr
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  if [ -n "$env_content" ]; then
+    mkdir -p "$tmpdir/.claude"
+    printf '%s\n' "$env_content" > "$tmpdir/.claude/CLAUDE.md"
+  fi
+
+  local stderr_out code=0
+  # Run hook with PWD set to tmpdir so it reads the temp CLAUDE.md
+  stderr_out=$(build_json "$cmd" | (cd "$tmpdir" && bash "$HOOK") 2>&1 >/dev/null) || code=$?
+
+  if [ "$code" -ne 0 ] && printf '%s' "$stderr_out" | grep -qF "$expected_msg"; then
+    echo "PASS [ENV-MSG] $label"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL [ENV-MSG] $label"
+    echo "     expected exit non-zero and stderr containing: $expected_msg"
+    echo "     got exit=$code stderr=$stderr_out"
+    FAIL=$((FAIL + 1))
+  fi
+
+  rm -rf "$tmpdir"
+  trap - EXIT
+}
+
+assert_blocked_with_env_msg \
+  "prod environment: block message contains PROD" \
+  "curl -X DELETE https://api.example.com/foo" \
+  "Environment: prod" \
+  "PROD"
+
+assert_blocked_with_env_msg \
+  "no environment declared: block message contains 'research' (the default)" \
+  "curl -X DELETE https://api.example.com/foo" \
+  "" \
+  "research"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""
