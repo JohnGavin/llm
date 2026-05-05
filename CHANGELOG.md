@@ -4,6 +4,39 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-05 (orchestrator session — hooks, plans, top-level tidy, stash leak)
+
+### Completed
+- **session_init.sh / session_stop.sh — false-positive count parsing** (a604ecc): `duckdb ... | grep -oE '[0-9]+' | tail -1` was capturing timing-string digits from `Run Time (s)` lines, producing bogus 6-digit zero-padded counts at startup ("STALE: 000700", "ACTION: 001025") that didn't match the empty result tables. Switched 4 call sites to `duckdb -list -noheader ... | grep -oE '^[0-9]+$' | head -1`.
+- **session_stop.sh — wired up `export_and_deploy_data.sh`** (a604ecc): the script's header claimed it ran from `session_stop`, but the call was missing — orphaned since it landed. Calibration + Sessions tabs of `llmtelemetry` now refresh on session end.
+- **14 rule files YAML frontmatter** (delegated to `quick-fix`/haiku, content swept into d406969 by sibling commit): added `name` / `description` / `type` to satisfy the `session_init.sh` audit (which checks `head -1 == '---'`).
+- **9 plan files archived** (d406969 + 9999c70 → d0a043c): all plans in `.claude/plans/` either described already-shipped work or targeted other projects. Moved to `.claude/plans/archive/` with README documenting target project + rollback steps. Added `!.claude/plans/archive/` negation to `.gitignore` (the blanket `archive/` ignore rule was too broad).
+- **Top-level cleanup** (17f9de3, 949397e):
+  - 7 tracked junk files removed (`debug_output.txt`, `gemini_docs.md`, `git_status.txt`, three empty `quarto_*log.txt`, `sample_cmonitor.txt`)
+  - `DEPLOYMENT_QUARTO_WEBSITE.md`, `R_WASM_WORKFLOWS.md` → `.claude/notes/`
+  - `PLAN_tips.md` content merged into `.claude/CURRENT_WORK.md`, then promoted to a public vignette (below)
+  - Deleted untracked `input.txt` (44KB podcast transcript) and empty `transcripts/`, `quality_reports/` dirs
+  - `.gitignore` extended: `debug_output.txt`, `git_status.txt`
+- **llm#100 — auto-stash leak fix** (380046e): `bin/refresh_and_preserve.sh` stashed local edits before the launchd `ccusage` refresh but only popped them inside the branch-switch conditional. Since the user is usually on `main`, 37 auto-stashes accumulated from 2026-01-26 through 2026-05-04. Two-part fix: track the exact stash ref via `git stash create` + `git stash store`, and move the restore out of the branch-switch block so it always runs. Then dropped the 37 leaked stashes (reflog keeps them ~90 days).
+- **PLAN_tips.md → public vignette** (d3651e1, 5a9e3e4): promoted the AI-workflow methodology to `vignettes/articles/llm-assisted-tips.qmd` ("LLM-assisted projects: practical tips") with framing reworked from raw bullets into a short article (planning-vs-execution ratio, declarative-not-imperative, parallel models + worktrees, an honest "what you lose" section). Linked from `_quarto.yml` Articles navbar. Added TODOs section covering non-R framing and the 3-property reproducibility/consistency/validation note.
+- **JohnGavin.github.io portfolio index** (68977e2, 260527f on the user-site repo): added `urban_planning` (TU Wien Raumplanung Reihungstest study-dashboard template) at position 5 and `llmtelemetry` at position 6. Final order: micromort → irishbuoys → randomwalk → historical → urban_planning → llmtelemetry → footbet → millsratio.
+
+### Failed approaches
+- **`quick-fix` agent (haiku) cannot run `Bash`**. Dispatched it to `git rm` 7 junk files + amend `.gitignore`; it only edited the gitignore. Had to do the `git rm` + commit myself. Lesson: `quick-fix` is `Edit`-only — for git operations, use a sonnet agent or do the work directly.
+- **Stash-apply into an active worktree** raced with a sibling Claude session. Applied my `.claude/commands/check.md` + `r_code_check.sh` jarl-prep stash to `~/docs_gh/llm-jarl-eval`, then noticed `530bf7f` already on the branch with 7 staged R files and a new `jarl.toml` from another session. Reverted via `git checkout HEAD --` to leave the sibling's state intact. Lesson: before any stash-apply into a worktree, check `git log --oneline -1` and `git status` for live work first.
+- **Concurrent commit swept staged renames**. The 9 `git mv` renames I staged for the plan archive were carried into commit `d406969` ("rule: bars forbidden, dotplots mandatory") run by a sibling session while my changes were staged. The commit's diff stat shows the renames but the message only describes the rule. Couldn't amend (already pushed); resolved via follow-up commit explaining the cross-commit history.
+
+### Accuracy / metrics
+- Stash list: 38 → 1 (only the manually-named `refactor-split-packages` WIP remains)
+- Top-level tracked files: 29 → 21 (junk deleted + 2 notes relocated to `.claude/notes/`)
+- Rule files with YAML frontmatter: now 100% (was 14 missing)
+- Issues: filed and closed `llm#100` (root-cause + fix in one cycle)
+
+### Known limitations
+- 37 dropped auto-stashes are recoverable from reflog only until ~2026-08-04 (90-day window). If anything turns up missing before then, recover via `git fsck --lost-found` + `git stash apply <sha>`. Pre-cleanup snapshot at `/tmp/stash-archive-2026-05-04.txt`.
+- `d406969` commit message understates its content (renames + rule edit); the unpushed-then-amended follow-up `d0a043c` documents the cross-commit history, but reading both is needed to reconstruct.
+- `.claude/CURRENT_WORK.md` is gitignored — content there does not survive session compactions or land in git history. Methodology content belongs in vignettes (the durable path); session state belongs there.
+
 ## 2026-05-04
 
 ### Completed
