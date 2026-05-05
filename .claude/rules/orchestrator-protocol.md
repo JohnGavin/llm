@@ -195,16 +195,16 @@ In the acd_area_climate_design Phase 3 dashboard rework, an agent stalled for ~3
 
 ## Contrast Gate (post-render, MANDATORY)
 
-After every Quarto/pkgdown render or CSS edit, the orchestrator MUST run `scripts/check_dark_contrast.sh` against every changed `.html` in `docs/`. Non-zero exit BLOCKS the commit and the PR. This is a hard gate — equivalent to `parse(_targets.R)` failing or a test suite returning red.
+After every Quarto/pkgdown render or CSS edit, the orchestrator MUST run the GLOBAL contrast script at `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh` against every changed `.html` in `docs/`. Non-zero exit BLOCKS the commit and the PR. This is a hard gate — equivalent to `parse(_targets.R)` failing or a test suite returning red.
 
 ```bash
-# Run on every changed rendered HTML
+# Run on every changed rendered HTML — uses GLOBAL canonical script
 for html in $(git diff --name-only --cached -- 'docs/**/*.html'); do
-  ./scripts/check_dark_contrast.sh "file://$(pwd)/$html" || exit 1
+  ~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh "file://$(pwd)/$html" || exit 1
 done
 ```
 
-If the script does not exist in the project, the orchestrator MUST copy the canonical implementation in (see `dark-mode-completeness` rule, Clause 5) BEFORE the next CSS or `.qmd` commit.
+The script is NOT copied per project. Projects with `_quarto.yml` should wire the wrapper into post-render so every render auto-audits — see `dark-mode-completeness` rule, Clause 5. If you find a project with a local copy at `<project>/scripts/check_dark_contrast.sh`, DELETE the local copy and update wiring to point at the global path.
 
 **When a user reports a contrast bug:** the orchestrator MUST treat it as evidence of a class of bug, run the audit script, and fix EVERY uncovered element in the same commit — not just the one named. Per-element commits for contrast are a process violation. See `dark-mode-completeness` Clause 2.
 
