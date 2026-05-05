@@ -28,3 +28,21 @@ Minimum score: 80 (production)
 ## Session Conventions
 - CHANGELOG.md append at session end is mandatory (global rule)
 - `.claude/CURRENT_WORK.md` is session-ephemeral (gitignored)
+
+## Mandatory Quarto post-render wiring (if `_quarto.yml` exists)
+
+Every Quarto project MUST wire the GLOBAL dark-mode contrast audit into
+`_quarto.yml`. The script is NEVER copied into the project. Single source
+of truth: `https://github.com/JohnGavin/llm/blob/main/.claude/scripts/`.
+
+```yaml
+project:
+  type: website
+  output-dir: docs
+  post-render:
+    - <existing post-render scripts, if any>
+    - /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh
+```
+
+Verification: `quarto render` must show `=== Dark-mode contrast audit (post-render) ===`
+followed by `PASS:` for every rendered HTML. See `dark-mode-completeness` rule.
