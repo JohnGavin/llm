@@ -69,7 +69,6 @@
       "WebFetch(domain:johngavin.r-universe.dev)",
       "Bash(duckdb:*)",
       "Bash(~/.claude/scripts:*)",
-      "Bash(/Users/johngavin/.claude/scripts:*)",
       "Bash(chmod:*)",
       "Bash(rm:*)",
       "Bash(du:*)",
@@ -121,7 +120,7 @@
       "Bash(launchctl:*)",
       "Bash(plutil:*)"
     ],
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "default"
   },
   "hooks": {
     "SessionStart": [
@@ -205,6 +204,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/wiki_health_onwrite.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/skill_quality_onwrite.sh",
             "timeout": 5
           }
         ]
