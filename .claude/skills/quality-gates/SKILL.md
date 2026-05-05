@@ -119,6 +119,27 @@ Specific deductions applied when computing each component score. Agents MUST rep
 | `T`/`F` instead of `TRUE`/`FALSE` | -5 points each |
 | `=` instead of `<-` for assignment | -3 points each |
 
+### Accessibility & contrast deductions (standalone gate — not a weighted component)
+
+Enforces `accessibility-standards` and `dark-mode-completeness` rules. Applies to every project that ships HTML output (Quarto vignettes, pkgdown sites, Shiny apps, Shinylive bundles). These deductions are subtracted from the FINAL total score after the weighted-component sum is computed. A project with high coverage and clean R CMD check can still drop below Bronze if contrast violations accumulate.
+
+This is a gate, not a percentage component, because contrast is a binary correctness property — either every pixel is readable in both modes, or the page is broken for some user. Weighting it would let high coverage compensate for an unreadable site, which is wrong.
+
+| Issue | Deduction |
+|-------|-----------|
+| `scripts/check_dark_contrast.sh` missing from project | -10 points |
+| `check_dark_contrast.sh` exits non-zero on any rendered `docs/**/*.html` | -5 points per uncovered element |
+| Inline `style="background:#…"` light bg with no `body.dark-mode` override | -5 points per element |
+| Dark-mode override without `!important` on element carrying inline `style=` | -3 points per element |
+| `axe: true` missing from `_quarto.yml` `format: html:` | -2 points |
+| Vignette missing dark/light toolbar (`#dark-btn`) | -5 points per vignette |
+| Vignette missing font-size A+/A− buttons | -3 points per vignette |
+| Vignette missing language toggle when bilingual content present | -3 points per vignette |
+| Catch-all `body.dark-mode [style*="background:#…"]` selector absent | -5 points |
+| Single contrast PR fixes < 100% of uncovered elements (per-element patching) | -10 points (process violation) |
+| `var(--card-bg)` / `#16213e` / similar dark-blue token used where user spec said "black" | -5 points per element |
+| Bootstrap utility colour (`#0dcaf0`, `#6f42c1`, `#fd7e14`, `#6c757d`, `#198754`, `#dc3545`) used as text on dark bg without dark-mode pair | -3 points per token |
+
 ### Exploration-mode relaxed thresholds
 
 When working in `explorations/` the minimum acceptable score is **60** (not 80).
