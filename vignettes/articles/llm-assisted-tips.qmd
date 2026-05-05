@@ -1,0 +1,72 @@
+---
+title: "LLM-assisted projects: practical tips"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+A short set of working principles I've converged on after a stretch of building R packages, dashboards, and analyses with Claude Code as a daily collaborator. None of these are novel — they're cribbed and consolidated from people much further along — but they're the ones that actually changed how I work.
+
+## The shape of the day
+
+**Plan more than you execute. 60% planning, 40% execution.**
+
+Counter-intuitive at first because LLMs are so fast you assume more execution = more output. In practice the opposite holds: an LLM can implement a clear spec in minutes but struggles for hours against a fuzzy one. Time spent sharpening the spec pays back several times over, because the fast part stays fast and the slow part (rework, blind alleys, conflicting context) shrinks.
+
+The pattern that works for me:
+
+1. **Sketch what you want.** WHAT, not HOW. Success criteria, not step-by-step instructions.
+2. **Hand the sketch to a fresh LLM and ask it to tear the spec apart.** Identify points that are underspecified, inconsistent, or weird. Iterate until the remaining questions are genuinely niche.
+3. **Hand the sharpened plan to a new LLM with a simple prompt.** "Implement this." If you've done step 2 well, the simple prompt is enough.
+
+The rationale for separating step 2 from step 3 is that the LLM doing the critique should not be the one doing the build — different framings, different blind spots.
+
+## Declarative beats imperative
+
+Tell the LLM what success looks like, not which buttons to press.
+
+- **Imperative:** "Read file X, parse the JSON, filter to dates after Y, write to Z."
+- **Declarative:** "Produce a CSV at Z containing only rows from X where date > Y. Tests should cover empty input, malformed JSON, and the date boundary."
+
+Declarative prompts let the LLM bring its training data to bear. Imperative prompts pin it to your particular sequence and waste that.
+
+This is also why **writing tests first** is so productive in this workflow: tests are declarative by nature. They state success, not procedure. If you can write the test, the LLM can write the implementation.
+
+## Parallel execution
+
+Multiple models, multiple worktrees, in parallel:
+
+- A cheap fast model (Haiku) handles mechanical edits — typos, renames, version bumps.
+- A mid-tier model (Sonnet) handles per-file work — debugging, single-feature implementation.
+- A larger model (Opus) handles synthesis, architecture, and conversation with you.
+
+Use `git worktree add` so two sessions can work on independent branches without stepping on each other. The orchestrator session decides what to delegate; the worker sessions just do the work.
+
+The cost gradient matters more than people expect. Doing all your work at the top tier when most of it is mechanical is the single biggest budget leak.
+
+## What you lose
+
+Worth being honest about:
+
+- **You lose the ability to write code from a cold start.** The muscle atrophies if you don't exercise it. I now find myself reaching for the LLM for things I could have typed in 30 seconds, and the cumulative effect on craft is real.
+- **You ship code you have not read.** Even with diff review, the volume eventually exceeds what you can scan attentively. The remedy is mechanical: tests, types, code review, and a willingness to revert. The remedy is not "read every diff"; that's a stage you grow out of.
+
+Neither is a reason not to do this work. They're costs to acknowledge so you don't pretend they don't exist.
+
+## What's covered elsewhere
+
+Reproducibility (Nix, rix, locked dependencies) is mandatory regardless of LLM use. The rest of this site, and the [AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md) file at the repo root, document those practices in detail.
+
+```{r build-info}
+#| echo: false
+#| results: asis
+sha <- tryCatch(substr(system("git rev-parse HEAD", intern = TRUE), 1, 7),
+                error = function(e) "N/A")
+cat(sprintf(
+  "---\n\nllm | [Git %s](https://github.com/JohnGavin/llm/commit/%s) | R %s | Built %s\n",
+  sha, sha, paste(R.version$major, R.version$minor, sep = "."),
+  format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+))
+```
