@@ -563,6 +563,16 @@ if [ -x "$audit_script" ]; then
   fi
 fi
 
+# ── Phase 11b: Quarto post-render contrast wiring check ──
+# Every Quarto project MUST wire the global dark-mode contrast audit into
+# _quarto.yml post-render. See `dark-mode-completeness` rule.
+if [ -f "_quarto.yml" ]; then
+  _wiring='/Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh'
+  if ! grep -q "$_wiring" "_quarto.yml" 2>/dev/null; then
+    WARNINGS="${WARNINGS}WARN: _quarto.yml missing global dark-mode contrast wiring. Add to post-render: $_wiring "
+  fi
+fi
+
 # ── Phase 12: Log session start to unified DuckDB ──
 _log_script="$HOME/.claude/scripts/log_session.sh"
 _session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
