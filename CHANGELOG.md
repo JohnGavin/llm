@@ -4,6 +4,56 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-05 (continued — Railway-incident response: 9-issue safety path, session llm1)
+
+### Source
+
+PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status/2048103471019434248): a Cursor agent on Claude Opus 4.6 ran a single `curl -X POST .../graphql -d 'mutation { volumeDelete(...) }'` and deleted PocketOS's production DB + same-volume backups in 9 seconds. Mapped 9 systemic gaps in this user's global config + workflows; sequenced and closed all 9 in this session.
+
+### Completed
+
+- **Permission mode discipline** (`a65e5dc`, `ea1dacd`): new rule `permission-mode-discipline.md` ties `--permission-mode` to physical workspace (`default` in main checkouts, `bypassPermissions` in worktrees / `/tmp`). New wrapper `~/.claude/scripts/cc.sh` selects the mode at session start; aliased as `claude` in `~/.zshrc`. New `session_init.sh` Phase 1b warns when `settings.json` `defaultMode` disagrees with workspace expectation. `defaultMode` flipped to `default`. `~/.claude/settings.json` symlinked to `~/docs_gh/llm/.claude/settings.json` after duplicate username path scrubbed. `permissions.allow` tightened: dropped `Bash(curl:*)`; added narrow read-only forms (`-fsSL`, `-s`, `-sL`, `-L`, `-I`, `-o`). New `permissions.deny` array (11 entries) catches recursive `rm` and known-destructive `gh` subcommands.
+- **#101 destructive-API hook** (`80885f8`): new rule + `destructive_api_guard.sh` PreToolUse:Bash hook. Blocks 11 patterns at hook level regardless of permission mode (catches the exact incident command). Uses python3 for JSON extraction (sed truncates on escaped quotes in command strings). 29/29 baseline tests; later 31/31 after #104 environment-aware extension.
+- **#102 SECRETS.md template + rule** (`1789af4`): new template at `.claude/templates/SECRETS.md` with intended-vs-actual-scope columns demonstrating the gap. New rule `secret-discovery-policy.md` — agent must name file + intended op before using any discovered token; ask user if not in SECRETS.md.
+- **#103 two-key irreversible-ops rule** (`10ec4f9`): documents the principle that confirmation phrases must contain the target name, and the agent cannot auto-complete the target. Three op classes (catastrophic + OOB / destructive-recoverable / fully-reproducible). Hook enforcement is an explicit follow-up.
+- **#104 prod/staging context guard** (`bb0887f`): per-project `.claude/CLAUDE.md` declares `Environment: research|dev|prod|mixed`. `session_init.sh` Phase 1c reads + reports it. `destructive_api_guard.sh` extended to surface environment in block messages (informational escalation only — behavioural override deferred). llm declared `Environment: dev`. Tests went 29 → 31.
+- **#105 destructive-scripts audit + rule** (`fc47387`): inventoried `~/.claude/hooks/`, `.claude/scripts/`, `bin/`. **0 MISSING** — all 7 destructive ops have either a recovery trail (the #100 stash-create+store pattern) or a reproducibility justification. New rule `script-destructive-ops.md` codifies the pattern.
+- **#106 systematic-debugging extended to ops** (`ae1bcc3`): added a credential-mismatch worked example contrasting "fix by deletion" vs "investigate first". Cross-linked `pivot-signal`, `safe-deletion`, `resulting-prohibition`, `search-all-pipeline-stages`.
+- **#107 MCP destructive-scope inventory** (`894e88f`): new rule classifying MCP tools `read | write | destructive`. Current posture documented: r-btw active (covered by `btw-timeouts`); Gmail/Cal/Drive auth stubs only (zero attack surface). Pre-install checklist for new MCPs.
+- **#108 backup architecture rule + RECOVERY.md template** (`09908d6`): new rule covers failure-domain principle (same-volume snapshots are NOT backups). Template at `.claude/templates/RECOVERY.md` with RPO/RTO/restore steps + failure-domain column. Audit candidates (need a per-project RECOVERY.md): `llmtelemetry`, `irishbuoys`, `mycare`. Most projects fully reproducible from git + pipeline.
+- **Token audit across `~/docs_gh/*`** (informational, no commit): scanned 80+ projects. 19 with `.Renviron` / `.env`; 30+ env-var names referenced; top usage hotspots `blogs`/`proj`/`datageeek.com`. Found ONE tracked `.env` in a public repo (`codespaces_rstudio_n_tidy`) with `PASSWORD=1rstudio` for a local RStudio container. Resolved via C2 split: created `.env.example` template + gitignored `.env` (commit `f8ee70e` on `JohnGavin/codespaces_rstudio_n_tidy`). Historical password remains in git history; rotate locally to retire.
+- **`.gitignore` drift fixes**: edited `.env`/`.Renviron` patterns into `nasa_app`, `quarto_blog`, `shiny-python` `.gitignore` files. `shiny-python` has no `.git/` so the edit is text-only. `nasa_app` and `quarto_blog` left edit-only (not committed) because of substantial in-flight work; bundle on next commit there.
+
+### Failed approaches / sharp edges
+
+- **`mv source target` breaks symlinks**. After symlinking `~/.claude/settings.json` → repo file, applied jq via `jq ... > /tmp/s.json && mv /tmp/s.json ~/.claude/settings.json`. The `mv` removed the symlink and replaced it with a regular file; the repo file reverted. Recovered with `cp` + `rm` + `ln -s`. Lesson: when editing through a symlink, use `>` (writes through) not `mv` (replaces). Adding to `permission-mode-discipline` rule's cautions is a follow-up.
+- **destructive-API hook self-blocks on commit messages mentioning destructive verbs**. `git commit -m "...volumeDelete..."` and `gh issue close -c "...gh api -X DELETE..."` trigger the hook because the strings appear in `command`. Workaround: heredoc-via-file (the system prompt's git-commit recipe already does this).
+- **`gh api ... -X DELETE` (flag-at-end) not caught by deny patterns or hook regex**. Pattern engine is literal-prefix; mid-glob doesn't work. Documented as a known gap; #103 hook integration is the proper backstop.
+- **nix shell has no `ssh`**. `git push` to SSH remote (`git@github.com:...`) fails with `cannot run ssh: No such file or directory`. Workaround: one-shot `git push https://github.com/.../...git <branch>`. Used for the codespaces_rstudio_n_tidy push.
+- **Token-shaped string regex over-matched**. Initial scan `(ghp_|sk-|AKIA)[A-Za-z0-9_]{16,}` flagged 25 projects; ALL were base64-encoded fonts in `_site/*.html` and `vfs_fonts.js`. No actual leaked tokens detected. Lesson: filter by file type (skip `*_site/*`, `*vfs_fonts*`) before alerting.
+
+### Accuracy / metrics
+
+- **Issues filed and closed: 9** (#101–#108 plus the permission-mode-discipline rule landed direct without an issue)
+- **Commits on `JohnGavin/llm` main: 12** in this session, all pushed
+- **Commits on other repos: 1** (`f8ee70e` on `JohnGavin/codespaces_rstudio_n_tidy`)
+- **New rule files: 9** (`permission-mode-discipline`, `destructive-api-calls`, `secret-discovery-policy`, `two-key-irreversible-ops`, `prod-staging-context-guard`, `script-destructive-ops`, `mcp-destructive-scope`, `backup-architecture`, plus extension to `systematic-debugging`)
+- **New templates: 2** (`SECRETS.md`, `RECOVERY.md`)
+- **New scripts: 1** (`cc.sh` wrapper) + **1 new hook** (`destructive_api_guard.sh`)
+- **session_init.sh phases added: 2** (1b permission-mode, 1c environment-class)
+- **Tests: 31/31 green** (was 0; #101 added 29; #104 added 2)
+- **`permissions.allow`: 113 → 117** (net +4 from curl narrowing). **`permissions.deny`: 0 → 11** (new field).
+
+### Known limitations / follow-ups
+
+- **Behavioural override mechanism for prod destructive ops** not implemented — current escalation is informational only (block message mentions PROD; behaviour unchanged). v2 needs an env var or flag to allow legitimate prod work.
+- **#103 hook enforcement** of two-key target-name match is not wired into `destructive_api_guard.sh`; rule documents the principle only.
+- **Per-project Environment declarations**: only llm itself declares. `llmtelemetry` and `JohnGavin.github.io` should declare `Environment: prod` but currently have no `.claude/CLAUDE.md` file. Per-project work, deferred.
+- **Per-project RECOVERY.md** not created for the three audit candidates (`llmtelemetry`, `irishbuoys`, `mycare`); rule + template land here, files are per-project.
+- **launchd plists not audited** in #105 — only `~/.claude/hooks/`, `.claude/scripts/`, `llm/bin/`. `~/Library/LaunchAgents/` is a separate audit.
+- **`codespaces_rstudio_n_tidy` historical password (`1rstudio`)** still in git history. Rotate locally to retire (force-push history rewrite not advised).
+- **`gh api ... -X DELETE`** (and any other flag-at-end destructive form) not caught by deny patterns or by `destructive_api_guard.sh` regex. Use #103 follow-up two-key handshake or just rely on the human eyeballing the call.
+
 ## 2026-05-05 (orchestrator session — hooks, plans, top-level tidy, stash leak)
 
 ### Completed
