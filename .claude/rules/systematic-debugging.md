@@ -79,6 +79,38 @@ If you catch yourself justifying why a violation is acceptable, STOP and verify:
 
 Invented justifications are the #1 way violations survive code review.
 
+## Ops Failures Follow the Same Protocol
+
+The Hypothesis → Experiment → Conclusion loop applies to ops contexts too:
+credential mismatches, missing volumes, broken DNS, expired tokens, environment
+variable drift. The protocol is identical; only the vocabulary changes.
+
+**The canonical ops violation is "fix by deletion":** an agent finds that
+credentials don't work, so it deletes the resource and recreates it — hoping
+a fresh copy will have different credentials. This is guessing, not debugging.
+It is destructive, irreversible, and often wrong.
+
+### Worked example: credential mismatch — investigate vs delete
+
+| Step | Wrong (fix by deletion) | Right (systematic) |
+|------|------------------------|--------------------|
+| Observe | `AUTH_FAILED` connecting to service | `AUTH_FAILED` connecting to service |
+| Hypothesize | "Volume is corrupt; recreate it" | "Token wrong, expired, or env var not loaded" |
+| Experiment | `volumeDelete` + `volumeCreate` | Check token scope; `printenv API_KEY`; check expiry date |
+| Conclude | Destructive action before understanding the cause | Identify exact mismatch, apply targeted fix |
+| Ask user? | No — just deleted | Yes — before any destructive op |
+
+**Before any destructive ops action** (delete, recreate, rotate, purge):
+1. State the hypothesis in plain language.
+2. Run the cheapest non-destructive experiment first (inspect env vars, list
+   resources, check logs, verify token expiry).
+3. Ask the user before executing any irreversible command.
+
+See also: `pivot-signal` (3 consecutive failures → pause and re-state
+hypothesis), `safe-deletion` (size/age/recoverability checks before deletion),
+`resulting-prohibition` (judge by process, not outcome),
+`search-all-pipeline-stages` (check all stages before claiming absence).
+
 ## Checklist for Complex Bugs
 
 If stuck > 10 minutes, output this table:
