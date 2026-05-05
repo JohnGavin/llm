@@ -107,6 +107,35 @@ format:
 | Focus indicators | Visible focus rings on all interactive elements |
 | Form labels | Every input must have an associated `<label>` |
 
+## Mandatory Automated Checks
+
+Rules without enforcement are decoration. Every project MUST have the following:
+
+| Check | Where it runs | What it catches |
+|---|---|---|
+| `scripts/check_dark_contrast.sh` | post-render hook + pre-commit + CI | Inline `style="background:#…"` light bgs without dark-mode override. See `dark-mode-completeness` rule for full spec |
+| `axe: true` in `_quarto.yml` `format: html:` | every Quarto render | WCAG mechanical violations (contrast ratio, heading order, missing labels) |
+| Headless browser screenshot in both modes | CI job (Playwright/Chromium) | Runtime/JS-injected DOM that static checks miss |
+| Manual visual walk in dark mode after deploy | post-deploy step | Whatever the automation missed; tabs and JS states |
+
+**Hard gate:** any of these returning a violation BLOCKS the commit/PR. Treat equivalent in severity to `parse(_targets.R)` failing.
+
+## Mandatory Vignette Toolbar (every vignette, every project)
+
+Every vignette MUST include a top-of-page toolbar with three controls. This is non-negotiable: without a toggle on every page, neither developer nor user can reach dark mode to verify it, so contrast bugs ship invisibly.
+
+| Control | Required behaviour |
+|---|---|
+| Dark / light toggle | **Default = ON (dark)** for first-time visitors. Persists to `localStorage` thereafter. Respects `prefers-color-scheme` only if no preference saved |
+| Font A− / A+ | 2px steps. Min 8px, max effectively unbounded (96px). Persists to `localStorage`. Drives `--upload-font-size` (or a project-wide CSS var with the same role) |
+| Language switch | Required only if the vignette has bilingual content (`[data-lang="…"]` blocks). Persists |
+
+**Implementation:** ONE shared partial per project (e.g. `_includes/toolbar.html` or a child chunk) included by every `.qmd`. NEVER copy-paste the toolbar JS into multiple vignettes — that produces drift, missed dark-mode bugs in vignettes the developer forgot to update, and inconsistent UX.
+
+**Reference implementation:** `acd_area_climate_design/vignettes/articles/upload.qmd` toolbar block.
+
+**Verification:** post-render check that every `.qmd` either includes the shared partial, or contains the three required controls (`#dark-btn`, `#font-up-btn`, `#font-down-btn`). Missing toolbar = quality-gate −5 deduction (see `quality-gates` skill).
+
 ## Forbidden Patterns
 
 | Pattern | Why wrong | Fix |
@@ -116,6 +145,10 @@ format:
 | Table with merged header cells | Screen readers lose context | Flatten headers, use `gt` |
 | `axe: false` or omitting axe | No automated checking | `axe: true` in all HTML outputs |
 | Pie chart with >4 slices using only color | Slices indistinguishable | Use bar chart or direct labels |
+| Project missing `scripts/check_dark_contrast.sh` | No regression detection | Copy canonical implementation; wire to hook/CI |
+| Vignette missing dark/light toggle | User cannot reach dark mode to verify | Include shared toolbar partial |
+| Per-element contrast PR (fixes only reported instance) | Leaves sibling bugs for next session | One sweep PR per audit. See `dark-mode-completeness` rule |
+| Substituting `var(--card-bg)` when user said "black" | Dark-blue ≠ black | Use literal `#000000` |
 
 ## Related
 

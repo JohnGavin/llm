@@ -193,6 +193,21 @@ This is a race condition. Resolution:
 
 In the acd_area_climate_design Phase 3 dashboard rework, an agent stalled for ~30 min with `dashboard.qmd` modified hours earlier and no `git commit`. The orchestrator took over, finished render + commit, merged. The agent's completion notification arrived ~20 min after merge, with a commit on the deleted branch (orphaned). Outcomes matched. Cost: zero data loss; ~10 min orchestrator time finishing the last 2 of 8 tasks.
 
+## Contrast Gate (post-render, MANDATORY)
+
+After every Quarto/pkgdown render or CSS edit, the orchestrator MUST run `scripts/check_dark_contrast.sh` against every changed `.html` in `docs/`. Non-zero exit BLOCKS the commit and the PR. This is a hard gate — equivalent to `parse(_targets.R)` failing or a test suite returning red.
+
+```bash
+# Run on every changed rendered HTML
+for html in $(git diff --name-only --cached -- 'docs/**/*.html'); do
+  ./scripts/check_dark_contrast.sh "file://$(pwd)/$html" || exit 1
+done
+```
+
+If the script does not exist in the project, the orchestrator MUST copy the canonical implementation in (see `dark-mode-completeness` rule, Clause 5) BEFORE the next CSS or `.qmd` commit.
+
+**When a user reports a contrast bug:** the orchestrator MUST treat it as evidence of a class of bug, run the audit script, and fix EVERY uncovered element in the same commit — not just the one named. Per-element commits for contrast are a process violation. See `dark-mode-completeness` Clause 2.
+
 ## Guardrails
 
 - NEVER skip the VERIFY step (even in "just do it" mode)
@@ -200,5 +215,8 @@ In the acd_area_climate_design Phase 3 dashboard rework, an agent stalled for ~3
 - NEVER exceed 3 orchestrator rounds — escalate to user if stuck
 - NEVER wait indefinitely on a background agent — apply the activity-timeout protocol above
 - NEVER force-remove an agent's worktree until the agent's commits are pushed OR the completion notification has arrived
+- NEVER push CSS or `.qmd` changes without `check_dark_contrast.sh` exit 0 against the rendered HTML
+- NEVER fix only the single contrast element a user names — always sweep the whole page in the same commit
 - ALWAYS save orchestrator state to CURRENT_WORK.md (survives compression)
 - ALWAYS tabulate agent progress before intervening — gives the user a clear picture and the agent's late report a place to land
+- ALWAYS use literal `#000000` / `#ffffff` when the user requirement says "black" / "white" — never substitute theme tokens like `var(--card-bg)`
