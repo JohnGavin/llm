@@ -253,6 +253,55 @@ assert_blocked_with_env_msg \
   "" \
   "research"
 
+# ─── Target extraction tests (two-key principle, follow-up to #103) ──────────
+# These tests verify that the extracted target name appears in the block message.
+# Both conditions must hold: exit non-zero (blocked) AND target string in stderr.
+
+echo ""
+echo "=== Target extraction in block messages (two-key principle) ==="
+
+# Helper: assert that a forbidden command is blocked AND that the expected
+# target string appears in the block message on stderr.
+assert_blocked_with_target() {
+  local label="$1"
+  local cmd="$2"
+  local expected_target="$3"  # String that must appear in stderr (target name)
+
+  local stderr_out code=0
+  stderr_out=$(build_json "$cmd" | bash "$HOOK" 2>&1 >/dev/null) || code=$?
+
+  if [ "$code" -ne 0 ] && printf '%s' "$stderr_out" | grep -qF "$expected_target"; then
+    echo "PASS [TARGET] $label"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL [TARGET] $label"
+    echo "     expected exit non-zero and stderr containing: $expected_target"
+    echo "     got exit=$code"
+    echo "     stderr: $stderr_out"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+assert_blocked_with_target \
+  "curl DELETE: extracted target is the URL" \
+  "curl -X DELETE https://api.example.com/foo/bar" \
+  "api.example.com"
+
+assert_blocked_with_target \
+  "aws s3 rm: extracted target is the s3:// URI" \
+  "aws s3 rm s3://my-bucket/path/file --recursive" \
+  "s3://my-bucket/path/file"
+
+assert_blocked_with_target \
+  "psql DROP TABLE: extracted target is the table name" \
+  'psql -c "DROP TABLE users"' \
+  "users"
+
+assert_blocked_with_target \
+  "flyctl volumes destroy: extracted target is the volume id" \
+  "flyctl volumes destroy vol_abcdef" \
+  "vol_abcdef"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""
