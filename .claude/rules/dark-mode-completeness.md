@@ -72,22 +72,27 @@ This is the safety net. Even if a developer adds a new inline-styled box without
 
 No commit touching CSS or `.qmd` may be pushed without `check_dark_contrast.sh` exit 0 against the rendered HTML. The script's exit code is a hard gate, equivalent in severity to `parse(_targets.R)` failing.
 
-### Clause 5 — Script is a project artefact
+### Clause 5 — Single global script, never copied per-project
 
-Every project's `scripts/` directory MUST contain `check_dark_contrast.sh`. There is one canonical implementation, copied across projects. It must be wired to:
+The script lives in **exactly one place**: `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh`. Projects DO NOT copy it. They reference it by absolute path or fetch it from the public mirror.
 
-- A `post-render.sh` Quarto hook, OR
-- A pre-commit hook, OR
-- A CI job that fails the build on non-zero exit.
+| Channel | How projects opt in |
+|---|---|
+| **Quarto post-render** (recommended for any project with `_quarto.yml`) | Append one line to `_quarto.yml`: `- /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh`. Wrapper iterates `$QUARTO_PROJECT_OUTPUT_FILES`, exits non-zero on any violation, blocks the render |
+| **Manual / slash command** | `bash ~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh <url>` |
+| **CI (GitHub Actions etc.)** | `curl -fsSL https://raw.githubusercontent.com/JohnGavin/llm/main/.claude/scripts/check_dark_contrast.sh \| bash -s -- <url>` — public mirror at `https://github.com/JohnGavin/llm/blob/main/.claude/scripts/` |
 
-Reference implementation: `acd_area_climate_design/scripts/check_dark_contrast.sh`.
+**Forbidden:** copying the script into a project's `scripts/` directory. There is exactly one canonical version. Bug fixes and improvements land in `~/docs_gh/llm/.claude/scripts/` and propagate automatically (locally on next render; on the public mirror after `git push`).
+
+**Reference wiring:** `acd_area_climate_design/_quarto.yml` `post-render:` list.
 
 ## What the script does
 
 ```bash
-./scripts/check_dark_contrast.sh https://example.com/page.html
+~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh https://example.com/page.html
 # or
-./scripts/check_dark_contrast.sh file:///absolute/path/to/docs/page.html
+~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh file:///absolute/path/to/docs/page.html
+# or via Quarto post-render — fires automatically on every render
 ```
 
 1. Fetches the URL with curl.
