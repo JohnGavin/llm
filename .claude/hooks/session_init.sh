@@ -72,6 +72,26 @@ phase_perm_mode() {
   fi
 }
 
+# ── Phase 1c: Project Environment Class ──────────────────────────────
+# Reads $PWD/.claude/CLAUDE.md for an Environment: field.
+# Reports the value and warns if prod.
+# See rule: prod-staging-context-guard
+phase_env_class() {
+  local project_claude="$PWD/.claude/CLAUDE.md"
+  local env_val=""
+  if [ -f "$project_claude" ]; then
+    env_val=$(grep -iE '^Environment:[[:space:]]*(research|dev|prod|mixed)' "$project_claude" \
+              | head -1 | sed -E 's/^[Ee]nvironment:[[:space:]]*//' | tr -d '`' | xargs)
+  fi
+  if [ -z "$env_val" ]; then
+    echo "Environment: unspecified (defaulting to research)"
+  elif [ "$env_val" = "prod" ]; then
+    echo "Environment: WARN prod — live service; destructive ops carry extra risk"
+  else
+    echo "Environment: $env_val"
+  fi
+}
+
 # ── Phase 2: Mapping Validation ───────────────────────────────────────
 phase_mappings() {
   local has_mismatch=0
@@ -495,6 +515,16 @@ else
   perm_ok="Y"
 fi
 
+# Phase 1c: Project environment class
+env_class_output=$(phase_env_class 2>/dev/null)
+env_class_val="unspecified"
+if echo "$env_class_output" | grep -qE 'Environment:[[:space:]]*(research|dev|mixed)'; then
+  env_class_val=$(echo "$env_class_output" | grep -oE '(research|dev|mixed)' | head -1)
+elif echo "$env_class_output" | grep -q "WARN prod"; then
+  env_class_val="prod"
+  WARNINGS="${WARNINGS}${env_class_output} "
+fi
+
 # Phase 2: Mappings (capture warnings)
 map_output=$(phase_mappings 2>/dev/null)
 if echo "$map_output" | grep -qiE "mismatch|WARN"; then
@@ -672,7 +702,7 @@ fi
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
 [ "$perm_ok" = "Y" ] && summary="$summary | perm:ok" || summary="$summary | perm:WARN"
-summary="$summary | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
+summary="$summary | env-class:${env_class_val} | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
 [ "$is_worktree" = "Y" ] && summary="$summary | worktree:active"
 [ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}"
 [ -n "$roborev_status" ] && summary="$summary | $roborev_status"

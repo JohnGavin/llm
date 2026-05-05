@@ -34,6 +34,20 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
+# ─── Read project environment class ─────────────────────────────────────────
+# Reads $PWD/.claude/CLAUDE.md for an Environment: field.
+# Fail open (default to "research") if the file is absent or unparseable.
+# See rule: prod-staging-context-guard
+ENV_CLASS="research"
+_project_claude="$PWD/.claude/CLAUDE.md"
+if [ -f "$_project_claude" ]; then
+  _env_raw=$(grep -iE '^Environment:[[:space:]]*(research|dev|prod|mixed)' "$_project_claude" \
+             | head -1 | sed -E 's/^[Ee]nvironment:[[:space:]]*//' | tr -d '`' | tr -d ' ') || true
+  case "$_env_raw" in
+    research|dev|prod|mixed) ENV_CLASS="$_env_raw" ;;
+  esac
+fi
+
 # ─── Pattern matching helper ─────────────────────────────────────────────────
 # Uses grep -E (POSIX ERE). grep is toybox/GNU on the nix shell — [[:space:]] works.
 
@@ -48,6 +62,12 @@ block_match() {
     printf '\nThis call has been blocked by destructive_api_guard.sh.\n' >&2
     printf 'To perform intentional destructive ops, run from a terminal (outside Claude Code).\n' >&2
     printf 'See rule: destructive-api-calls.md  |  Escape hatch: issue #103\n' >&2
+    if [ "$ENV_CLASS" = "prod" ]; then
+      printf '⚠ This is a PROD-tagged project. Verify the target carefully.\n' >&2
+      printf '  To run this manually, exit Claude Code and run from a regular shell.\n' >&2
+    else
+      printf '(environment: %s)\n' "$ENV_CLASS" >&2
+    fi
     exit 2
   fi
 }
