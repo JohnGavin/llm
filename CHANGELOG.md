@@ -4,6 +4,35 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-06
+
+### Completed
+
+- **New rule: `no-compound-commands`** (`078533a`): Universal ban on `&&` compound commands
+  in Bash tool calls. One command per Bash invocation eliminates all confirmation prompts,
+  including the hardcoded `cd && git` bare-repo guard. Supersedes `git-no-compound-cd` for
+  the `&&` aspect; that rule now covers the `-C` flag pattern specifically.
+- **randomwalk dashboard UI reorganization** (`fd86b0b`): Moved Run Simulation button to
+  top of page, parameter panels to bottom. Layout: Run button → Fractal Graph → tabs → Parameters.
+- **ctx.yaml cache refresh**: 9 stale packages regenerated (covr, ggplot2, logger, pkgdown,
+  shiny, tarchetypes, targets, usethis, visNetwork).
+
+### Failed Approaches
+
+- None this session.
+
+### Accuracy / Metrics
+
+- **Rules**: 75 (was 74; +1 `no-compound-commands`)
+- **Commits**: 3 on `randomwalk`, 2 on `llm`
+
+### Known Limitations
+
+- The `no-compound-commands` rule is currently agent-self-enforced; a PreToolUse hook
+  to reject `&&` in Bash calls is a potential future enforcement mechanism.
+
+---
+
 ## 2026-05-05 (post-wrap continuations — RECOVERY rollout + #109 close + #103 hook follow-up)
 
 ### Completed
