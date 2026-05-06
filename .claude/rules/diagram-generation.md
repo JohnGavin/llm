@@ -142,4 +142,6 @@ Quarto 1.8 dashboard format **silently strips** content. Use external files only
 
 ### QA scripts
 
-Each project provides its own `scripts/qa_mermaid_syntax.sh` (mmdc CLI + Chrome headless, run pre-deploy on mermaid changes) and `scripts/qa_deployed_url.sh` (curl + grep post-deploy). No canonical implementation in `~/docs_gh/llm/.claude/scripts/` yet; reference proven in historicaldata 2026-05-06 after 10+ failed attempts before identifying all three root causes (elk, `<br>`, hidden tabs).
+`scripts/qa_mermaid_syntax.sh` (mmdc CLI + Chrome headless, run pre-deploy on mermaid changes) and `scripts/qa_deployed_url.sh` (curl + grep post-deploy). Reference proven in historicaldata 2026-05-06 after 10+ failed attempts before identifying all three root causes (elk, `<br>`, hidden tabs).
+
+**TODO (single-canonical-script policy):** these scripts MUST be canonicalised under `~/docs_gh/llm/.claude/scripts/` and referenced by absolute path or public-mirror URL, mirroring the `check_dark_contrast.sh` pattern in `dark-mode-completeness` Clause 5. Per-project copies are a transitional state, not the target architecture — open a tracking issue in JohnGavin/llm before adopting in a new project.

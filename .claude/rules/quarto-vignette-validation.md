@@ -65,7 +65,7 @@ done
 
 ### Mermaid Diagram Validation (when diagrams present)
 
-`curl` + `grep` cannot catch client-side JS rendering errors. Use mmdc CLI (`npx @mermaid-js/mermaid-cli`) to validate offline pre-deploy, and Chrome headless (`--dump-dom`) to render and inspect deployed DOM for the patterns above. Each project provides its own `scripts/qa_mermaid_syntax.sh` and `scripts/qa_deployed_url.sh` (no canonical implementation yet — see `diagram-generation` for the full Quarto 1.8 dashboard pattern).
+`curl` + `grep` cannot catch client-side JS rendering errors. Use mmdc CLI (`npx @mermaid-js/mermaid-cli`) to validate offline pre-deploy, and Chrome headless (`--dump-dom`) to render and inspect deployed DOM for the patterns above. Per-project `scripts/qa_mermaid_syntax.sh` and `scripts/qa_deployed_url.sh` are a transitional state — TODO: canonicalise under `~/docs_gh/llm/.claude/scripts/` mirroring `check_dark_contrast.sh` (`dark-mode-completeness` Clause 5). See `diagram-generation` for the full Quarto 1.8 dashboard pattern.
 
 **Error patterns explained:**
 
