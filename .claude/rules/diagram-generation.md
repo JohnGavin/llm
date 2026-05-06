@@ -142,9 +142,4 @@ Quarto 1.8 dashboard format **silently strips** content. Use external files only
 
 ### QA scripts
 
-| Script | What | Run when |
-|--------|------|----------|
-| `scripts/qa_mermaid_syntax.sh` | mmdc CLI + Chrome headless | Before every deploy with mermaid changes |
-| `scripts/qa_deployed_url.sh` | curl + grep for error patterns | After every deploy |
-
-Lesson source: historicaldata project, 2026-05-06, 10+ failed attempts before identifying all three root causes (elk, `<br>`, hidden tabs).
+Each project provides its own `scripts/qa_mermaid_syntax.sh` (mmdc CLI + Chrome headless, run pre-deploy on mermaid changes) and `scripts/qa_deployed_url.sh` (curl + grep post-deploy). No canonical implementation in `~/docs_gh/llm/.claude/scripts/` yet; reference proven in historicaldata 2026-05-06 after 10+ failed attempts before identifying all three root causes (elk, `<br>`, hidden tabs).

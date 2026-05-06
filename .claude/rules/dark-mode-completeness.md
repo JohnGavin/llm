@@ -135,33 +135,9 @@ Direct use of light-mode utility colours against a dark background is forbidden.
 - 2026-05-04/05 acd_area_climate_design: 6 contrast PRs in 2 days, each fixing 1-3 elements, before the user demanded a sweep + script. The script (Clause 5) plus the pre-commit gate (Clause 4) close this loop. The catch-all selector (Clause 3) protects against future per-element regressions.
 - The pattern was: developer reads user message as a narrow bug report; fixes only what was named; pushes; user finds the next instance of the same architectural failure; repeat. The cure is to treat every contrast bug report as evidence of a class of bug, run the audit, and fix the class.
 
-## MANDATORY: Bootstrap CSS Variables (Not Hardcoded Colours)
+## Theme-Aware Elements (No Literal-Colour Requirement)
 
-NEVER hardcode colours for dark/light mode. Use Bootstrap 5 CSS variables that auto-switch with `data-bs-theme`.
-
-| Wrong (hardcoded) | Right (CSS variable) |
-|-------------------|---------------------|
-| `color: #e0e0e0` | `color: var(--bs-body-color)` |
-| `background-color: #1a1a2e` | `background-color: var(--bs-body-bg)` |
-| `border-color: #444` | `border-color: var(--bs-border-color)` |
-| `background: #16213e` | `background: var(--bs-tertiary-bg)` |
-
-### External CSS file (MANDATORY for Quarto dashboards)
-
-Inline `<style>` in `include-in-header` is **stripped by Quarto 1.8** when the nix shell rebuilds (the quarto binary uses a different R, causing the render to skip header processing).
-
-**Always use**: `css: filename.css` in the YAML front matter. This adds a `<link>` tag that Quarto never strips.
-
-```yaml
-format:
-  dashboard:
-    css: my-theme.css   # RELIABLE — always included
-    include-in-header:
-      - text: |
-          <style>...</style>  # UNRELIABLE — stripped intermittently
-```
-
-Lesson source: historicaldata project, 2026-05-06 — 8+ CSS patches failed because Quarto stripped inline styles. External `.css` file was the only reliable solution.
+For elements where the user has NOT specified a pure black/white requirement (the CRITICAL section above takes precedence when they have), use Bootstrap 5 CSS variables that auto-switch with `data-bs-theme`: `var(--bs-body-color)`, `var(--bs-body-bg)`, `var(--bs-border-color)`, `var(--bs-tertiary-bg)`. Hardcoded hex (e.g. `#1a1a2e`, `#e0e0e0`) does not flip with the theme toggle. For Quarto 1.8 dashboards, prefer an external `css: file.css` over inline `<style>` in `include-in-header` — inline styles were observed missing from rendered HTML in this project's nix build (historicaldata, 2026-05-06; root cause not fully diagnosed). External `.css` is the reliable workaround.
 
 ## Related
 
