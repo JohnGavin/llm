@@ -54,7 +54,7 @@ See `targets-vignettes` skill reference: `post-publish-checks.md` for bash and C
 **MANDATORY post-build gate:**
 ```bash
 # MUST return 0 hits for ALL error patterns — fails the build otherwise
-for pattern in "MISSING EVIDENCE" "not available" "not found in targets" "Error in" "#> NULL"; do
+for pattern in "MISSING EVIDENCE" "not available" "not found in targets" "Error in" "#> NULL" "Syntax error" "mermaid version"; do
   count=$(grep -c "$pattern" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
   if [ "$count" -gt 0 ]; then
     echo "FAIL: $count '$pattern' found in deployed HTML"
@@ -62,6 +62,23 @@ for pattern in "MISSING EVIDENCE" "not available" "not found in targets" "Error 
   fi
 done
 ```
+
+### Mermaid Diagram Validation (MANDATORY when diagrams present)
+
+`curl` + `grep` cannot catch client-side JS rendering errors. Mermaid errors appear only when the browser runs the JS. Use:
+
+1. **mmdc CLI** (`npx @mermaid-js/mermaid-cli`): validates diagram syntax offline
+2. **Chrome headless** (`--dump-dom`): renders page and checks DOM for "Syntax error"
+
+```bash
+# Pre-deploy: validate each diagram with mmdc
+scripts/qa_mermaid_syntax.sh
+
+# Post-deploy: check deployed URL
+scripts/qa_deployed_url.sh
+```
+
+See `diagram-generation` rule for the full Quarto 1.8 dashboard workaround pattern.
 
 **Error patterns explained:**
 

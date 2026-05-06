@@ -110,3 +110,41 @@ tar_target(diagram, {
   generate_concept_diagram()
 })
 ```
+
+## Quarto 1.8 Dashboard: External JS Only (MANDATORY)
+
+Quarto 1.8 dashboard format **silently strips** content. Use external files only.
+
+| What Quarto strips | What it preserves |
+|-------------------|-------------------|
+| Inline `<script type="module">` in include-in-header | `<script src="file.js">` |
+| `include-after-body` files (entire content) | `css: file.css` YAML key |
+| `cat()` output with `-->` (Pandoc escapes to `--&gt;`) | `<link rel="stylesheet" href="file.css">` |
+| Inline `<style>` (intermittent, when nix rebuilds) | External `.css` referenced via `css:` |
+
+### Correct Mermaid pattern (proven, historicaldata 2026-05)
+
+1. Store diagrams as **JS strings** in external `.js` file (avoids Pandoc HTML-escaping)
+2. Reference via `<script type="module" src="file.js">` in include-in-header
+3. JS creates `<pre>` elements dynamically in mount-point divs
+4. Use `mermaid.render(id, text)` per diagram individually (batch fails if one errors)
+5. Skip hidden tabs (`offsetParent === null`), re-render on `shown.bs.tab` event
+
+### Mermaid node label rules
+
+| Rule | Example | Why |
+|------|---------|-----|
+| Plain ASCII only | `HML["HML Value"]` | Multi-byte Unicode causes syntax error |
+| No HTML tags | NOT `["HML <br> Value"]` | Mermaid 11 rejects `<br>` and `<br/>` |
+| No em dash | NOT `["HML — Value"]` | UTF-8 multi-byte causes parse failure |
+| No elk renderer | NOT `defaultRenderer: "elk"` | Requires separate CDN import not in mermaid@11 bundle |
+| Descriptions in prose | Below the diagram, not in node labels | Keeps labels short and parseable |
+
+### QA scripts
+
+| Script | What | Run when |
+|--------|------|----------|
+| `scripts/qa_mermaid_syntax.sh` | mmdc CLI + Chrome headless | Before every deploy with mermaid changes |
+| `scripts/qa_deployed_url.sh` | curl + grep for error patterns | After every deploy |
+
+Lesson source: historicaldata project, 2026-05-06, 10+ failed attempts before identifying all three root causes (elk, `<br>`, hidden tabs).
