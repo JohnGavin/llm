@@ -90,7 +90,7 @@ if [ -f "$_bd_db" ]; then
   if [ -f "$_session_start_file" ]; then
     _start_time=$(cat "$_session_start_file" 2>/dev/null || echo "")
     if [ -n "$_start_time" ]; then
-      _n_commits=$(git log --oneline --since="$_start_time" 2>/dev/null | wc -l | tr -d ' ')
+      _n_commits=$(git log --oneline --since="$_start_time" 2>/dev/null | wc -l | tr -d ' ') || _n_commits=0
       _n_actions=$(duckdb -list -noheader "$_bd_db" -c "
         SELECT COUNT(*) FROM braindump_actions
         WHERE created_at >= '$_start_time'::TIMESTAMP;
