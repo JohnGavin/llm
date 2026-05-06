@@ -54,7 +54,7 @@ See `targets-vignettes` skill reference: `post-publish-checks.md` for bash and C
 **MANDATORY post-build gate:**
 ```bash
 # MUST return 0 hits for ALL error patterns — fails the build otherwise
-for pattern in "MISSING EVIDENCE" "not available" "not found in targets" "Error in" "#> NULL" "aria-roledescription=\"error\"" "Parse error on line"; do
+for pattern in "MISSING EVIDENCE" "target not available" "not found in targets" "<code>Error in" "#> NULL" "aria-roledescription=\"error\"" "Parse error on line"; do
   count=$(grep -FHc "$pattern" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$NF}END{print s+0}')
   if [ "$count" -gt 0 ]; then
     echo "FAIL: $count '$pattern' found in deployed HTML"
@@ -72,9 +72,9 @@ done
 | Pattern | Source | Meaning |
 |---------|--------|---------|
 | `MISSING EVIDENCE` | Placeholder text | Target never built |
-| `not available` | `show_target()` fallback | Target missing from store AND RDS |
+| `target not available` | `show_target()` fallback | Target missing from store AND RDS |
 | `not found in targets` | `safe_tar_read()` message | Same as above (message output) |
-| `Error in` | R error leaked to output | Unhandled exception |
+| `<code>Error in` | R error leaked to output | Unhandled exception (anchored to rendered `<code>` block to avoid prose false positives) |
 | `#> NULL` | Target returned NULL | Target exists but has no content |
 
 ## 19. DARK MODE TOGGLE (MANDATORY)
