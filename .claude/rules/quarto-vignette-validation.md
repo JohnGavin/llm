@@ -55,7 +55,7 @@ See `targets-vignettes` skill reference: `post-publish-checks.md` for bash and C
 ```bash
 # MUST return 0 hits for ALL error patterns — fails the build otherwise
 for pattern in "MISSING EVIDENCE" "not available" "not found in targets" "Error in" "#> NULL" "aria-roledescription=\"error\"" "Parse error on line"; do
-  count=$(grep -c "$pattern" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+  count=$(grep -FHc "$pattern" docs/articles/*.html 2>/dev/null | awk -F: '{s+=$NF}END{print s+0}')
   if [ "$count" -gt 0 ]; then
     echo "FAIL: $count '$pattern' found in deployed HTML"
     exit 1
