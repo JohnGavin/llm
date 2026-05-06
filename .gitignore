@@ -109,3 +109,4 @@ nohup.out
 # Explorations: track conventions doc only, not experimental content
 explorations/*
 !explorations/CONVENTIONS.md
+.claude/plans/
