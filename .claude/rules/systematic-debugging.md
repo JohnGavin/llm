@@ -5,117 +5,71 @@ paths:
 ---
 # Systematic Debugging for R Packages
 
-## Description
+Scientific method for `R CMD check` failures, test failures, and Nix issues. Replaces "try random fixes" with "Hypothesis → Experiment → Conclusion".
 
-This skill defines a rigorous scientific method for resolving `R CMD check` failures, test failures, and Nix environment issues. It replaces "try random fixes" with a "Hypothesis -> Experiment -> Conclusion" loop.
+## When to Use
 
-## Purpose
-
-Use this skill when:
-- `devtools::check()` fails
-- `devtools::test()` reports failures
+- `devtools::check()` or `devtools::test()` fails
 - CI/CD workflows fail
-- "Object not found" errors occur in `nix-shell`
-- You are stuck in a cycle of repeated error messages
+- "Object not found" in `nix-shell`
+- Stuck in repeated error cycle
 
-## The Debugging Protocol
+## The Protocol
 
 **STOP. Do not edit code immediately.**
 
-Follow this 4-step process:
-
-### Phase 1: Isolate (Reproduce)
-**Goal:** Run the smallest piece of code that fails.
-*   **Don't** run `devtools::check()` repeatedly (too slow).
-*   **Do** run the specific test file: `devtools::test_file("tests/testthat/test-fail.R")`
-*   **Do** run the specific example: `devtools::run_examples(test = "my_function")`
+### Phase 1: Isolate
+Run the smallest failing code:
+- `devtools::test_file("tests/testthat/test-fail.R")` (not full `check()`)
+- `devtools::run_examples(test = "my_function")`
 
 ### Phase 2: Hypothesize
-**Goal:** State *why* you think it's failing.
-*   **Observation:** "Error: could not find function 'ggplot'"
-*   **Hypothesis A:** `ggplot2` is not loaded in the test file.
-*   **Hypothesis B:** `ggplot2` is missing from `DESCRIPTION` Imports.
-*   **Hypothesis C:** `ggplot2` is missing from `NAMESPACE`.
+State *why* you think it's failing:
+- Observation: "Error: could not find function 'ggplot'"
+- Hypothesis A: `ggplot2` not loaded in test file
+- Hypothesis B: Missing from DESCRIPTION Imports
+- Hypothesis C: Missing from NAMESPACE
 
-### Phase 3: Experiment (Verify)
-**Goal:** Test the hypothesis without changing the source code yet.
-*   *Experiment A:* Add `library(ggplot2)` to the top of the test file and re-run.
-*   *Result:* If it passes, Hypothesis A was correct (partially). Now implement the permanent fix (add to Imports/NAMESPACE).
+### Phase 3: Experiment
+Test hypothesis WITHOUT changing source:
+- Add `library(ggplot2)` to test file, re-run
+- If passes → Hypothesis A correct, implement permanent fix
 
 ### Phase 4: Implement & Verify
-**Goal:** Apply the permanent fix and ensure no regressions.
-1.  Apply fix (e.g., `usethis::use_package("ggplot2")`).
-2.  Run the isolated test again.
-3.  Run the full suite `devtools::test()` to check for regressions.
+1. Apply fix (e.g., `usethis::use_package("ggplot2")`)
+2. Run isolated test
+3. Run full `devtools::test()` for regressions
 
-## Specific R Failure Patterns
+## Common R Failures
 
-### 1. `R CMD check` - "Namespace in Imports field not imported from"
-*   **Hypothesis:** You added `usethis::use_package("dplyr")` but didn't use `dplyr::` or `@importFrom dplyr` in any roxygen comments.
-*   **Fix:** Use the package in code or remove it from DESCRIPTION.
-
-### 2. `testthat` - "Object 'foo' not found"
-*   **Hypothesis:** The function `foo` is internal (not exported) and you are testing it from a context that doesn't see internal functions.
-*   **Fix:** Use `devtools::load_all()` before running tests interactively. In test files, use `pkg:::internal_fn` only if absolutely necessary, or test the public API that calls it.
-
-### 3. Nix - "Command not found" or Library Load Error
-*   **Hypothesis:** You are not in the `nix-shell`.
-*   **Experiment:** Run `Sys.getenv("IN_NIX_SHELL")`.
-*   **Fix:** Run `caffeinate -i ~/docs_gh/rix.setup/default.sh` to enter the shell.
-
-### 4. CI/CD - Fails on GitHub, Passes Locally
-*   **Hypothesis:** Local environment is "dirty" or Nix versions desynchronized.
-*   **Experiment:** Check `default.R` date against the CI configuration.
-*   **Fix:** Re-run `source("default.R")` and reboot nix shell.
+| Error | Hypothesis | Fix |
+|-------|-----------|-----|
+| "Namespace in Imports not imported" | Package in DESCRIPTION but unused | Use `pkg::fn()` or remove from Imports |
+| "Object 'foo' not found" | Internal function not exported | Use `devtools::load_all()` or `pkg:::fn` |
+| "Command not found" in nix | Not in nix-shell | `Sys.getenv("IN_NIX_SHELL")`, enter shell |
+| CI fails, local passes | Dirty local env or version mismatch | Re-run `source("default.R")`, reboot shell |
 
 ## Never Accept Unverified Justifications
 
-**Red flag words:** "expected", "normal", "lightweight", "probably fine", "should be okay."
+**Red flags:** "expected", "normal", "probably fine", "should be okay"
 
-If you catch yourself justifying why a violation is acceptable, STOP and verify:
-1. Is it documented as an explicit exception? (Not just "seems reasonable")
-2. Did you check the actual data? ("289 tryCatch in plan_vignette_outputs" — did you look at what they do?)
-3. Can you cite the rule that permits it? (Not "I think it's fine")
+If justifying a violation: (1) Is it documented as exception? (2) Did you check actual data? (3) Can you cite the rule?
 
-Invented justifications are the #1 way violations survive code review.
+## Ops Failures (Same Protocol)
 
-## Ops Failures Follow the Same Protocol
+Credentials, volumes, DNS, tokens — same loop. **Canonical violation: "fix by deletion"** — agent deletes and recreates hoping fresh copy works. This is guessing, not debugging.
 
-The Hypothesis → Experiment → Conclusion loop applies to ops contexts too:
-credential mismatches, missing volumes, broken DNS, expired tokens, environment
-variable drift. The protocol is identical; only the vocabulary changes.
+| Wrong | Right |
+|-------|-------|
+| `volumeDelete` + `volumeCreate` | Check token scope, `printenv API_KEY`, verify expiry |
+| No user ask | Ask before ANY destructive op |
 
-**The canonical ops violation is "fix by deletion":** an agent finds that
-credentials don't work, so it deletes the resource and recreates it — hoping
-a fresh copy will have different credentials. This is guessing, not debugging.
-It is destructive, irreversible, and often wrong.
+**Before destructive ops:** State hypothesis → cheapest non-destructive test → ask user.
 
-### Worked example: credential mismatch — investigate vs delete
+## Stuck > 10 Minutes?
 
-| Step | Wrong (fix by deletion) | Right (systematic) |
-|------|------------------------|--------------------|
-| Observe | `AUTH_FAILED` connecting to service | `AUTH_FAILED` connecting to service |
-| Hypothesize | "Volume is corrupt; recreate it" | "Token wrong, expired, or env var not loaded" |
-| Experiment | `volumeDelete` + `volumeCreate` | Check token scope; `printenv API_KEY`; check expiry date |
-| Conclude | Destructive action before understanding the cause | Identify exact mismatch, apply targeted fix |
-| Ask user? | No — just deleted | Yes — before any destructive op |
-
-**Before any destructive ops action** (delete, recreate, rotate, purge):
-1. State the hypothesis in plain language.
-2. Run the cheapest non-destructive experiment first (inspect env vars, list
-   resources, check logs, verify token expiry).
-3. Ask the user before executing any irreversible command.
-
-See also: `pivot-signal` (3 consecutive failures → pause and re-state
-hypothesis), `safe-deletion` (size/age/recoverability checks before deletion),
-`resulting-prohibition` (judge by process, not outcome),
-`search-all-pipeline-stages` (check all stages before claiming absence).
-
-## Checklist for Complex Bugs
-
-If stuck > 10 minutes, output this table:
+Output this table:
 
 | Observation | Hypothesis | Test Command | Result |
-| :--- | :--- | :--- | :--- |
+|-------------|-----------|--------------|--------|
 | Test X fails with NA | Data not cleaned | `debugonce(fn)` | `clean_data` was NULL |
-| ... | ... | ... | ... |
