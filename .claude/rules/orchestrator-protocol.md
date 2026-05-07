@@ -59,21 +59,46 @@ Plan approved
 
 Track background agents and intervene if stalled. Silence beyond threshold = signal, not wait condition.
 
-### Activity Detection
+### Detection
+
+Check no later than 20 minutes after dispatch:
+
+| Signal | How to check |
+|---|---|
+| Filesystem activity | `ls -la <worktree>/<expected-output-files>` — compare mtime to dispatch time |
+| Live process | `ps -eo pid,etime,command \| grep -E "(Rscript\|nix-shell\|quarto-cli)" \| grep <worktree>` |
+| Branch commits | `git -C <worktree> log --oneline -3` |
+| Worktree status | `git -C <worktree> status -s` |
+
+### Activity Signal
 
 Agent is "active" if EITHER:
-1. Live process (R/nix-shell/quarto-cli) with recent CPU
+1. Live process (R/nix-shell/nix-build/curl/quarto-cli) with recent CPU
 2. File in worktree modified in last 3 min
+
+If NEITHER → agent is idle.
 
 ### Intervention Thresholds
 
-| Elapsed | Condition | Action |
+| Elapsed | Idle for | Action |
 |---|---|---|
 | < 8 min | — | Wait |
-| 8-12 min | ≥ 3 min idle | Inspect worktree, report progress |
-| 12-20 min | — | Mandatory check-in, tabulate progress |
+| 8-12 min | < 3 min | Wait |
+| 8-12 min | ≥ 3 min | Inspect worktree, tabulate progress, report |
+| 12-20 min | — | Mandatory check-in, tabulate checkpoints |
 | > 20 min | — | **HARD CAP.** Prompt user: intervene/wait/re-dispatch |
-| > 15 min | ≥ 5 min idle | **MANDATORY INTERVENTION.** Take over or re-dispatch |
+| > 15 min | ≥ 5 min | **MANDATORY INTERVENTION.** Take over or re-dispatch |
+
+### Network-Failure Heuristics
+
+When mtime stale + no commits >5 min + live process with high CPU → agent blocked on network.
+
+| Signal | Meaning |
+|---|---|
+| `ps` shows R/curl/nix-build >5 min but mtime stale | Retrying failed HTTP/fetch |
+| `*.partial`, `*.tmp`, `*.lock` appearing/disappearing | Download retry loop |
+| Prior turns took ≤10 min for similar scope | Current run anomalous |
+| Notification has `"API Error"`, `"timeout"`, `"network"` | Already failed — take over immediately |
 
 ### Take-over Protocol
 

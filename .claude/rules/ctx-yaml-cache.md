@@ -55,6 +55,14 @@ OTHER_VERSION is acceptable — means nix-shell pins different version than late
 - Package added to DESCRIPTION
 - After `Rscript default.R` + nix shell re-entry
 
+## Anti-Patterns
+
+- Storing ctx in project `inst/extdata/ctx/` (ships with install)
+- Running `nix run github:b-rodrigues/pkgctx` for every dependency (slow)
+- Generating ctx for base R packages (utils, stats, methods, graphics, grDevices, datasets, tools, parallel)
+- **Deleting ctx files to fix OTHER_VERSION** (breaks other projects sharing the cache)
+- Force-regenerating by deleting old versions (new file may have different version, creating new OTHER_VERSION while losing old)
+
 ## MANDATORY: Read Context Before Unfamiliar APIs
 
 Before using a package you haven't verified this session:
