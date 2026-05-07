@@ -482,12 +482,29 @@ phase_roborev() {
     return
   fi
   echo "$status" | grep -E "Jobs:|Daemon:|Recent Errors" | head -3 || true
+
+  # Check for .roborev.toml when hook is enabled
+  if [ -f "$PWD/.git/hooks/post-commit" ] && grep -q roborev "$PWD/.git/hooks/post-commit" 2>/dev/null; then
+    if [ ! -f "$PWD/.roborev.toml" ]; then
+      echo "WARN: roborev hook enabled but .roborev.toml missing"
+      echo "  Create from: llm/.claude/templates/roborev-project-setup.md"
+    fi
+  fi
+
+  # Show top-3 high-severity findings (actionable, not just counts)
+  local high_findings
+  high_findings=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 3 2>/dev/null) || true
+  if [ -n "$high_findings" ] && echo "$high_findings" | grep -q "^Job"; then
+    echo "High-severity findings (fix these):"
+    echo "$high_findings" | head -4
+    echo "ACTION: Run /roborev-clear-backlog or roborev refine --min-severity high"
+  fi
+
   local failed
   failed=$(/usr/local/bin/roborev list --status failed --limit 5 2>/dev/null) || true
   if [ -n "$failed" ]; then
-    echo "Failed reviews:"
-    echo "$failed" | head -6
-    echo "Fix with: /roborev-fix or roborev refine"
+    n_total=$(echo "$failed" | grep -c "^Job" || echo 0)
+    [ "$n_total" -gt 0 ] && echo "Total failed reviews: $n_total"
   fi
 }
 
@@ -608,8 +625,20 @@ roborev_status=""
 if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
   rv_output=$(/usr/local/bin/roborev status 2>/dev/null) || true
   if echo "$rv_output" | grep -qE "running" 2>/dev/null; then
-    n_failed=$(/usr/local/bin/roborev list --status failed --limit 1 2>/dev/null | grep -cE "^Job" || true) || true
-    [ "${n_failed:-0}" -gt 0 ] && roborev_status="roborev:${n_failed}failed" || roborev_status="roborev:ok"
+    # Count high-severity failures specifically
+    n_high=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 100 2>/dev/null | grep -cE "^Job" || echo 0) || true
+    n_total=$(/usr/local/bin/roborev list --status failed --limit 100 2>/dev/null | grep -cE "^Job" || echo 0) || true
+    if [ "${n_high:-0}" -gt 0 ]; then
+      roborev_status="roborev:${n_high}high/${n_total}total"
+    elif [ "${n_total:-0}" -gt 0 ]; then
+      roborev_status="roborev:${n_total}failed"
+    else
+      roborev_status="roborev:ok"
+    fi
+    # Warn if hook enabled but config missing
+    if [ -f "$PWD/.git/hooks/post-commit" ] && grep -q roborev "$PWD/.git/hooks/post-commit" 2>/dev/null; then
+      [ ! -f "$PWD/.roborev.toml" ] && WARNINGS="${WARNINGS}WARN: .roborev.toml missing "
+    fi
   else
     roborev_status="roborev:off"
   fi
