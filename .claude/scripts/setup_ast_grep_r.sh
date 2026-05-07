@@ -21,7 +21,7 @@ if [ -f "$GRAMMAR_LIB" ] && [ -f "$CONFIG_FILE" ]; then
   echo "ast-grep R support already configured."
   echo "  Grammar: $GRAMMAR_LIB"
   echo "  Config:  $CONFIG_FILE"
-  echo "  Test:    ast-grep -c $CONFIG_FILE -l r -p 'library(___)' ."
+  echo "  Test:    ast-grep -c $CONFIG_FILE -l r -p 'library(\$\$\$)' ."
   exit 0
 fi
 
@@ -39,21 +39,23 @@ echo "Grammar compiled: $GRAMMAR_LIB"
 # Clean up
 rm -rf "$TMPDIR"
 
-# Create config
+# Create config — uses ast-grep default expando ($) so multi-metavar is $$$
 cat > "$CONFIG_FILE" <<EOF
 customLanguages:
   r:
     libraryPath: $GRAMMAR_LIB
     extensions: [r, R]
-    expandoChar: _
+
+ruleDirs:
+  - ./rules
 EOF
 echo "Config created: $CONFIG_FILE"
 
 echo ""
 echo "ast-grep R support ready. Usage:"
-echo "  ast-grep -c $CONFIG_FILE -l r -p 'library(___)' ."
-echo "  ast-grep -c $CONFIG_FILE -l r -p 'suppressWarnings(___)' R/"
-echo "  ast-grep -c $CONFIG_FILE -l r -p 'function(_A, _B, _C, _D, _E) _BODY' R/"
+echo "  ast-grep -c $CONFIG_FILE -l r -p 'library(\$\$\$)' ."
+echo "  ast-grep -c $CONFIG_FILE -l r -p 'suppressWarnings(\$\$\$)' R/"
+echo "  ast-grep -c $CONFIG_FILE -l r -p 'function(\$A, \$B, \$C, \$D, \$E) \$BODY' R/"
 echo ""
 echo "Alias (add to shell_hook or .zshrc):"
 echo "  alias sg='ast-grep -c $CONFIG_FILE'"
