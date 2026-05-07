@@ -45,6 +45,22 @@ Curl deployed URLs. WebFetch has 15-min cache — use `curl -s` directly.
 | `#&gt;` | Raw R output leaked to HTML |
 | `NULL`, `NaN`, bare `NA` | Computation error |
 
+### Validation command (run after CI passes)
+
+```bash
+for article in $(grep 'href: articles/' _pkgdown.yml | sed 's/.*articles\///' | sed 's/\.html//'); do
+  url="https://OWNER.github.io/REPO/articles/${article}.html"
+  content=$(curl -s "$url")
+  size=$(echo "$content" | wc -c | tr -d ' ')
+  nulls=$(echo "$content" | grep -ci 'not available\|not found in targets\|MISSING EVIDENCE')
+  errors=$(echo "$content" | grep -ci 'Error in\|Error:')
+  hashgt=$(echo "$content" | grep -c '#&gt;')
+  printf "| %-25s | %7s | nulls:%d | err:%d | #>:%d |\n" "$article" "${size}B" "$nulls" "$errors" "$hashgt"
+done
+```
+
+All articles must show 0 for nulls, errors, #> (except intentional #> in code examples).
+
 ## Before Any Commit
 
 ```r
