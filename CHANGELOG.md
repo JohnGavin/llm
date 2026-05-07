@@ -4,6 +4,37 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-07
+
+### Completed
+
+- **Rule trimming for context optimization**: 179KB → 160KB (-19KB, ~10% reduction, ~5k tokens saved)
+  - `orchestrator-protocol.md`: 13.2KB → 4.6KB (kept Detection table, Network-failure heuristics)
+  - `verification-before-completion.md`: 6.1KB → 3.4KB (kept Post-deploy bash script)
+  - `ctx-yaml-cache.md`: 5.8KB → 2.7KB (kept Anti-Patterns section)
+  - `data-in-packages.md`: 5.7KB → 2.5KB
+  - `systematic-debugging.md`: 5.6KB → 2.7KB
+- **Moved `never-drop-missing-stations.md`** to `irishbuoys/.claude/rules/` (project-specific, 3.3KB removed from global)
+- **Fixed `/roborev-clear-backlog` command** (`455bfba`): Now runs in background via `nohup`, doesn't burn Claude tokens waiting. Adds `--since` flag for main branch protection.
+- **roborev config fix**: Changed from claude-code to codex→gemini fallback chain (codex is cheapest, gemini is free tier backup)
+
+### Failed Approaches
+
+- **Codex rate-limited until May 14**: Cannot use codex agent for roborev until then. Gemini fallback works but roborev's "branch review" feature ignores `--agent` flag and still tries codex.
+
+### Accuracy / Metrics
+
+- **Rules size**: 160KB (was 179KB) — 47 rule files
+- **Context reduction**: ~5k tokens saved from rule trimming
+- **roborev status**: 12 failed (historical claude-code runs), 7 codex errors (rate limited)
+
+### Known Limitations
+
+- roborev `--agent` flag is ignored for "branch reviews" — needs roborev issue or config fix
+- Codex rate-limited until 2026-05-14
+
+---
+
 ## 2026-05-06
 
 ### Completed
