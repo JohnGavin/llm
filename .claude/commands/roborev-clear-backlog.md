@@ -1,6 +1,6 @@
 # /roborev-clear-backlog - Clear roborev Backlog for a Project
 
-Burn down all open roborev findings for the current project or a specified project.
+Burn down all open roborev findings for the current project. Runs in BACKGROUND so Claude doesn't wait.
 
 ## Arguments
 
@@ -8,12 +8,10 @@ Burn down all open roborev findings for the current project or a specified proje
 
 ## Steps
 
-1. Identify the target project
-2. Get the earliest commit to set the --since boundary
-3. Run roborev refine with codex agent (cheapest)
-4. If codex hits rate limit, fall back to gemini
-5. Push all fix commits
-6. Report summary
+1. Verify clean working tree and roborev installation
+2. Get earliest failed review commit for --since boundary
+3. Launch roborev refine in background (codex first, gemini fallback)
+4. Return immediately with status check instructions
 
 ## Commands
 
@@ -51,42 +49,63 @@ if ! git diff --quiet || ! git diff --staged --quiet; then
   exit 1
 fi
 
-# Run refine with codex (cheapest agent)
-# Note: --all-branches and --since are mutually exclusive
-echo "Running: $ROBOREV refine --agent codex --min-severity high --max-iterations 10"
-echo ""
-
-if $ROBOREV refine --agent codex --min-severity high --max-iterations 10; then
-  echo ""
-  echo "✓ Codex refine completed"
-else
-  echo ""
-  echo "⚠ Codex may have hit rate limit. Trying gemini..."
-  $ROBOREV refine --agent gemini --min-severity high --max-iterations 10 || true
+# Get earliest failed review commit for --since (needed on main branch)
+SINCE_COMMIT=$($ROBOREV list --status failed --limit 100 2>/dev/null | tail -1 | awk '{print $2}' | cut -c1-7)
+if [ -z "$SINCE_COMMIT" ]; then
+  echo "No failed reviews found. Nothing to refine."
+  exit 0
 fi
 
-# Check for unpushed commits
-unpushed=$(git log origin/$(git branch --show-current)..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
-if [ "$unpushed" -gt 0 ]; then
-  echo ""
-  echo "$unpushed unpushed fix commit(s). Push now? [y/N]"
-  read -r answer
-  if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
-    git push
-    echo "✓ Pushed"
+# Create log file
+LOGFILE="/tmp/roborev-backlog-$(basename $PROJECT)-$(date +%Y%m%d_%H%M%S).log"
+
+# Launch in background with codex, fallback to gemini
+echo "Launching roborev refine in BACKGROUND..."
+echo "  Agent: codex (fallback: gemini)"
+echo "  Since: $SINCE_COMMIT"
+echo "  Log:   $LOGFILE"
+echo ""
+
+nohup bash -c "
+  echo '=== roborev refine started: $(date) ===' > '$LOGFILE'
+  echo 'Agent: codex (fallback: gemini)' >> '$LOGFILE'
+  echo 'Since: $SINCE_COMMIT' >> '$LOGFILE'
+  echo '' >> '$LOGFILE'
+
+  cd '$PROJECT'
+  if $ROBOREV refine --agent codex --min-severity high --max-iterations 10 --since $SINCE_COMMIT >> '$LOGFILE' 2>&1; then
+    echo '' >> '$LOGFILE'
+    echo '=== Codex completed successfully ===' >> '$LOGFILE'
   else
-    echo "Skipped. Push manually with: git push"
+    echo '' >> '$LOGFILE'
+    echo '=== Codex failed/rate-limited, trying gemini ===' >> '$LOGFILE'
+    $ROBOREV refine --agent gemini --min-severity high --max-iterations 10 --since $SINCE_COMMIT >> '$LOGFILE' 2>&1 || true
   fi
-fi
 
+  echo '' >> '$LOGFILE'
+  echo '=== Finished: $(date) ===' >> '$LOGFILE'
+  echo 'Unpushed commits:' >> '$LOGFILE'
+  git log origin/\$(git branch --show-current)..HEAD --oneline 2>/dev/null >> '$LOGFILE' || echo '  (none or error)' >> '$LOGFILE'
+" > /dev/null 2>&1 &
+
+BGPID=$!
+echo "Background PID: $BGPID"
 echo ""
-echo "=== Final state ==="
-$ROBOREV summary 2>/dev/null || echo "  (no roborev data)"
+echo "Check progress:"
+echo "  tail -f $LOGFILE"
+echo ""
+echo "Check roborev status:"
+echo "  $ROBOREV summary"
+echo "  $ROBOREV list --status failed"
+echo ""
+echo "Push fixes when done:"
+echo "  git push"
 ```
 
 ## Notes
 
-- Uses `--all-branches` to capture findings across all branches
-- Starts with codex (cheapest), falls back to gemini if rate limited
-- Does NOT auto-push — prompts for confirmation
-- Run `roborev refine --agent claude-code` for stubborn findings codex can't fix
+- Runs in BACKGROUND — Claude returns immediately, no token burn
+- Uses codex (cheapest), falls back to gemini if rate limited
+- Requires --since flag on main branch (roborev protection)
+- Check log file with `tail -f` for progress
+- Push commits manually when backlog clear completes
