@@ -1,4 +1,4 @@
-agent = "claude-code"
+# agent inherited from ~/.roborev/config.toml: codex (backup: gemini)
 review_context_count = 3
 excluded_commit_patterns = ["[skip review]", "docs: rebuild pkgdown", "chore: gitignore"]
 review_reasoning = "standard"
