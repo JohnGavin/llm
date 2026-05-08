@@ -152,14 +152,33 @@ In the mycare project, regenerating default.nix to add testthat/here/withr strip
 
 **Defensive workflow when regenerating default.nix:**
 
-1. `cp default.nix default.nix.pre-regen.bak` — back up first
-2. Run rix regen
-3. `diff default.nix.pre-regen.bak default.nix` — eyeball stripped sections
-4. Re-apply any custom overlays (Twisted, udunits, …) before entering the new shell
-5. Verify by entering the shell and loading the affected packages
-6. `rm default.nix.pre-regen.bak` once verified
+Preferred — use a `default.post.sh` per project (idempotent shell script
+that re-applies the project's overlays):
 
-This is generic to ANY hand-crafted `nixpkgs.extend (...)` or `overridePythonAttrs` block. Survey via `grep -E "extend|overrideScope|overridePythonAttrs|disabledTestPaths" default.nix` before regen.
+1. `Rscript default.R` (regenerate)
+2. `./default.post.sh` (re-apply overlays — script must be idempotent and
+   detect "already applied" via a `grep -q "marker" "$NIX_FILE"` guard)
+3. Verify by entering the shell and loading affected packages
+
+Fallback — when no `default.post.sh` exists yet:
+
+1. `cp default.nix default.nix.pre-regen.bak`
+2. `Rscript default.R`
+3. `diff default.nix.pre-regen.bak default.nix` — eyeball stripped sections
+4. Re-apply overlays manually
+5. Verify
+6. `rm default.nix.pre-regen.bak`
+7. **Capture the manual steps as a `default.post.sh`** so the next regen
+   is automatic (and add `default.nix.bak` to `.gitignore`).
+
+Survey for hand-crafted overlays before regen with:
+`grep -E "extend|overrideScope|overridePythonAttrs|disabledTestPaths" default.nix`
+
+Known projects with `default.post.sh`:
+
+| Project | Overlay re-applied | Reason |
+|---|---|---|
+| `mycare` | `python312Packages.twisted.doCheck = false` | pdfplumber→pandas→ibis→twisted build cascade (JohnGavin/llm#62) |
 
 ## Why This Architecture
 
