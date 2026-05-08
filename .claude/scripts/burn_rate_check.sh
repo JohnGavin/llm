@@ -4,7 +4,8 @@
 # Uses ccusage JSON output. Week starts Tuesday, Europe/Dublin timezone.
 #
 # Usage:
-#   burn_rate_check.sh [compact]   # compact = one-line for hooks
+#   burn_rate_check.sh [compact]        # compact = one-line for hooks
+#   burn_rate_check.sh [--percent-only] # just the percentage number (for scripts)
 #
 # Env vars:
 #   CLAUDE_WEEKLY_CAP_USD  — weekly budget cap (default: 150)
@@ -95,7 +96,10 @@ print(f'{severity}|{spent:.0f}|{projected:.0f}|{cap:.0f}|{days_elapsed}|{days_re
 
 IFS='|' read -r severity spent projected cap days_elapsed days_remaining daily_rate pct_used pct_projected <<< "$result"
 
-if [ "$MODE" = "compact" ]; then
+if [ "$MODE" = "--percent-only" ]; then
+  # Just the percentage number for scripts
+  echo "$pct_used"
+elif [ "$MODE" = "compact" ]; then
   # One-line output for hooks/statusline
   case "$severity" in
     CRITICAL) echo "BURN CRITICAL: \$${spent}/\$${cap} (${pct_used}%), proj \$${projected} (${pct_projected}%), ${days_remaining}d left — THROTTLE TO HAIKU" ;;

@@ -130,7 +130,7 @@ for line in open('$PRED_FILE'):
 pending = [v for v in seen.values() if v.get('outcome') is None]
 for p in pending:
     print(f\"  {p['prediction_id']}: \\\"{p.get('task_description','')}\\\" (p={p.get('p_success','?')})\")
-" 2>/dev/null)
+" 2>/dev/null) || PENDING=""
     if [ -n "$PENDING" ]; then
       N_PENDING=$(echo "$PENDING" | wc -l | tr -d ' ')
       echo "PREDICTION: $N_PENDING unresolved prediction(s) for this project:"
