@@ -4,6 +4,29 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-08
+
+### Completed
+
+- **Roborev fully operational**: Diagnosed codex rate limits as root cause of 0% pass rate (202 failed jobs were infrastructure errors, not code issues). User upgraded codex plan and re-authenticated.
+- **10 code findings fixed via roborev compact→fix pipeline** (`5f04e1c`):
+  - High: `burn_rate_check.sh` returns numeric 0 on errors for `--percent-only`
+  - High: `qa_vignette_tabs.sh` checks `vignettes/` first, fails-closed (not fail-open)
+  - Medium: Skills frontmatter added to duckdb-patterns, robust-statistics, visualization-detailed
+  - Medium: AGENTS.md rule count corrected (75→45)
+  - Medium: huggingface-upload.md credential leak fixed (no token in URL)
+  - Medium: roborev docs/templates fixed for bash-safety compliance
+- **default.post.sh pattern documented** in `nix-agent-shell-protocol.md` for projects with hand-crafted nixpkgs overlays (mycare uses this for twisted/pdfplumber fix)
+- **Budget-aware cc.sh wrapper**: Auto-selects model based on burn rate (≥90% spawns sonnet worktree, ≥70% uses sonnet, <70% uses opus)
+
+### Metrics
+
+- **roborev**: 678 completed, 202 failed (historical), codex working post-upgrade
+- **Resolution rate**: 85% of findings addressed
+- **Commits this session**: 2 (`5f04e1c`, `b3ca66f`)
+
+---
+
 ## 2026-05-07
 
 ### Completed
