@@ -1,22 +1,17 @@
----
-description: DuckDB patterns — duckplyr (no raw SQL), security hardening, non-determinism pitfalls
-paths:
-  - "R/**"
-  - "tests/**"
-  - "_targets.R"
----
+# Skill: DuckDB Patterns
 
-# Rule: DuckDB Patterns
+Patterns for DuckDB: duckplyr (no raw SQL), security hardening, non-determinism pitfalls.
 
-Consolidated from: `duckdplyr-not-sql`, `duckdb-security`, `duckdb-non-determinism`.
+## Triggers
 
----
+- Working with DuckDB databases
+- Writing duckplyr queries
+- Setting up database connections
+- Debugging non-deterministic query results
 
 ## Part 1: Use duckplyr, Not Raw SQL
 
-### Rule
-
-Use duckplyr or `dplyr::tbl()` for ALL DuckDB queries. Never `DBI::dbGetQuery()` with SQL strings.
+**Rule:** Use duckplyr or `dplyr::tbl()` for ALL queries. Never `DBI::dbGetQuery()` with SQL strings.
 
 ```r
 # FORBIDDEN
@@ -47,8 +42,6 @@ duckplyr::read_parquet_duckdb("hf://datasets/user/repo/file.parquet") |>
 - `DBI::dbExecute()` for DDL (CREATE TABLE)
 - `DBI::dbWriteTable()` for bulk loading
 - NO exceptions for SELECT — always dplyr
-
----
 
 ## Part 2: Security Hardening (MANDATORY)
 
@@ -82,8 +75,6 @@ connect_duckdb_secure <- function(dbdir = ":memory:", read_only = FALSE,
 | SSRF via HTTP | Blocked |
 | Unbounded memory | Capped |
 | Runtime `SET` tampering | Blocked |
-
----
 
 ## Part 3: Non-Determinism Pitfalls
 
@@ -136,8 +127,6 @@ Keep expansion index throughout pipeline:
 expanded |> window_order(row_idx) |> mutate(rn = row_number())
 ```
 
----
-
 ## Checklist
 
 - [ ] No `DBI::dbGetQuery()` with raw SQL strings
@@ -148,8 +137,6 @@ expanded |> window_order(row_idx) |> mutate(rn = row_number())
 - [ ] No `distinct(.keep_all = TRUE)`
 - [ ] Inequality joins checked for fan-out
 
----
-
 ## Related
 
-- `btw-timeouts` — R execution timeout patterns
+- `btw-timeouts` rule — R execution timeout patterns
