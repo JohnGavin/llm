@@ -27,14 +27,21 @@ run_listener() {
 
     # Stream events, filter for completed reviews with findings
     "$ROBOREV" stream 2>/dev/null | while IFS= read -r line; do
-        # Parse event type and status
+        # Parse event type, status, and job kind
         event_type=$(echo "$line" | /usr/bin/jq -r '.type // empty' 2>/dev/null)
         status=$(echo "$line" | /usr/bin/jq -r '.status // empty' 2>/dev/null)
         job_id=$(echo "$line" | /usr/bin/jq -r '.job_id // empty' 2>/dev/null)
         repo=$(echo "$line" | /usr/bin/jq -r '.repo // empty' 2>/dev/null)
+        job_kind=$(echo "$line" | /usr/bin/jq -r '.kind // .job_kind // empty' 2>/dev/null)
 
-        # Trigger refine when a review completes with findings
+        # Only trigger refine for original review jobs, not for refine jobs
+        # This prevents self-induced refine loops where a failed refine triggers another refine
         if [[ "$event_type" == "job_completed" && "$status" == "failed" ]]; then
+            # Skip if this is a refine job itself (would cause infinite loop)
+            if [[ "$job_kind" == "refine" || "$job_kind" == "fix" ]]; then
+                log "Skipping refine for $job_kind job $job_id (not a review)"
+                continue
+            fi
             log "Review $job_id failed in $repo — triggering refine"
 
             # Run refine in background for that repo, max 2 iterations per trigger
