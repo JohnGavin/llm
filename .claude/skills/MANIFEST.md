@@ -40,6 +40,8 @@ Updated: 2026-04-30
 | modeling-baselines | Data & Analysis | workflow | stable | 2026-04 | 75 |
 | model-evaluation-calibration | Data & Analysis | workflow | stable | 2026-04 | 70 |
 | analysis-rationale-logging | Data & Analysis | infra | stable | 2026-04 | 80 |
+| duckdb-patterns | Data & Analysis | workflow | stable | 2026-05 | 75 |
+| robust-statistics | Data & Analysis | workflow | stable | 2026-05 | 75 |
 | gdc-genomics | Data & Analysis | workflow | beta | 2026-04 | 60 |
 | erddap-ocean-data | Data & Analysis | workflow | beta | 2026-04 | 65 |
 | targets-pipeline-spec | Targets & Pipelines | infra | stable | 2026-04 | 80 |
@@ -60,6 +62,7 @@ Updated: 2026-04-30
 | quarto-alt-text | Quarto & Docs | workflow | stable | 2026-04 | 70 |
 | webr-multi-page-vignettes | Quarto & Docs | workflow | stable | 2026-04 | 65 |
 | describe-design | Quarto & Docs | workflow | stable | 2026-04 | 70 |
+| visualization-detailed | Quarto & Docs | workflow | stable | 2026-05 | 75 |
 | deslop | Prose Quality | infra | stable | 2026-04 | 80 |
 | ci-workflows-github-actions | DevOps & CI | workflow | stable | 2026-04 | 80 |
 | pkgdown-deployment | DevOps & CI | workflow | stable | 2026-04 | 70 |
@@ -83,8 +86,8 @@ Updated: 2026-04-30
 
 ## Counts
 
-- **Total:** 65 (63 original + skill-authoring + knowledge-base-wiki)
+- **Total:** 68 (65 + duckdb-patterns + robust-statistics + visualization-detailed)
 - **Infra tier:** 16
-- **Workflow tier:** 49
-- **Stable:** 55
+- **Workflow tier:** 52
+- **Stable:** 58
 - **Beta:** 10

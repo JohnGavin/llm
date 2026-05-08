@@ -1,3 +1,7 @@
+---
+paths: ["**/.roborev.toml", ".git/hooks/post-commit"]
+---
+
 # Rule: roborev Resolution Workflow
 
 ## Source

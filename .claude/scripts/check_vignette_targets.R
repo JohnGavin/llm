@@ -42,15 +42,20 @@ find_required_targets <- function(qmd_path) {
 }
 
 # Check which targets exist
-check_targets <- function(required) {
+check_targets <- function(required, strict = FALSE) {
+
   if (length(required) == 0) {
     message("No targets referenced in file.")
     return(invisible(TRUE))
   }
 
-  # Try to load targets
+  # Try to load targets - fail-closed in strict mode
   if (!requireNamespace("targets", quietly = TRUE)) {
-    message("targets package not available")
+    if (strict) {
+      message("ERROR: targets package not available - cannot validate")
+      return(invisible(FALSE))
+    }
+    message("WARN: targets package not available - skipping validation")
     return(invisible(TRUE))
   }
 
@@ -77,18 +82,30 @@ check_targets <- function(required) {
 # Main
 if (!is.null(qmd_file)) {
   targets <- find_required_targets(qmd_file)
-  ok <- check_targets(targets)
+  ok <- check_targets(targets, strict = TRUE)
   if (!ok) quit(status = 1)
 } else {
-  # Check all .qmd files in docs/
-  qmd_files <- list.files("docs", pattern = "\\.qmd$", full.names = TRUE)
-  if (length(qmd_files) == 0) qmd_files <- list.files(".", pattern = "\\.qmd$", full.names = TRUE)
+  # Check all .qmd files: prefer vignettes/, fall back to docs/, then repo root
+  qmd_files <- list.files("vignettes", pattern = "\\.qmd$", full.names = TRUE)
+  if (length(qmd_files) == 0) {
+    qmd_files <- list.files("docs", pattern = "\\.qmd$", full.names = TRUE)
+  }
+  if (length(qmd_files) == 0) {
+    qmd_files <- list.files(".", pattern = "\\.qmd$", full.names = TRUE)
+  }
+
+  if (length(qmd_files) == 0) {
+    message("ERROR: No .qmd files found in vignettes/, docs/, or repo root")
+    quit(status = 1)
+  }
+
+  message("Found ", length(qmd_files), " .qmd file(s) to check")
 
   all_ok <- TRUE
   for (f in qmd_files) {
     message("\n=== ", basename(f), " ===")
     targets <- find_required_targets(f)
-    ok <- check_targets(targets)
+    ok <- check_targets(targets, strict = TRUE)
     if (!ok) all_ok <- FALSE
   }
 

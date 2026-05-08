@@ -18,23 +18,34 @@ The HuggingFace REST API upload endpoints are undocumented and unreliable:
 **The only reliable method is git clone + git-lfs push:**
 
 ```bash
-HF_TOKEN=$(cat ~/.cache/huggingface/token)
-TMPDIR=$(mktemp -d)
+# Use a unique variable name to avoid shadowing system $TMPDIR
+HF_WORKDIR=$(mktemp -d)
 
-# Clone (git-lfs pulls large files)
-git clone "https://username:$HF_TOKEN@huggingface.co/datasets/owner/repo" "$TMPDIR/repo"
+# Clone using git credential helper (avoids embedding token in URL)
+# Pre-configure: git config --global credential.helper store
+# Then: huggingface-cli login (stores token in ~/.cache/huggingface/token)
+GIT_ASKPASS=echo git clone "https://huggingface.co/datasets/owner/repo" "$HF_WORKDIR/repo"
+
+# Alternative if credential helper not configured:
+# git -c "http.extraHeader=Authorization: Bearer $(cat ~/.cache/huggingface/token)" \
+#     clone "https://huggingface.co/datasets/owner/repo" "$HF_WORKDIR/repo"
 
 # Copy updated parquet(s)
-cp data/dist/equity_daily.parquet "$TMPDIR/repo/"
+cp data/dist/equity_daily.parquet "$HF_WORKDIR/repo/"
 
 # Commit and push (LFS handles large files automatically)
-git -C "$TMPDIR/repo" add equity_daily.parquet
-git -C "$TMPDIR/repo" commit -m "Update equity_daily: N tickers, M rows"
-git -C "$TMPDIR/repo" push
+git -C "$HF_WORKDIR/repo" add equity_daily.parquet
+git -C "$HF_WORKDIR/repo" commit -m "Update equity_daily: N tickers, M rows"
+git -C "$HF_WORKDIR/repo" push
 
-# Clean up
-rm -rf "$TMPDIR"
+# Clean up (safe: HF_WORKDIR is a unique temp directory we created)
+rm -rf "$HF_WORKDIR"
 ```
+
+**CRITICAL:** Never embed `$HF_TOKEN` directly in a git clone URL. Tokens in URLs are:
+- Visible in `ps` output
+- Logged by some git versions
+- Persisted in `.git/config` remote URL
 
 ## Token Location
 
@@ -53,16 +64,18 @@ curl -s -H "Authorization: Bearer $HF_TOKEN" \
 DuckDB reads HuggingFace Parquet natively — no download needed:
 
 ```r
-# R (via duckdb)
-con <- DBI::dbConnect(duckdb::duckdb())
-DBI::dbGetQuery(con, "SELECT * FROM read_parquet('hf://datasets/owner/repo/file.parquet') LIMIT 5")
-
-# Or via duckplyr (zero SQL)
+# Use duckplyr for all queries (see duckdb-patterns skill)
 duckplyr::read_parquet_duckdb("hf://datasets/owner/repo/file.parquet") |>
-  filter(ticker == "AAPL") |> collect()
+  filter(ticker == "AAPL") |>
+  collect()
+
+# Preview first rows
+duckplyr::read_parquet_duckdb("hf://datasets/owner/repo/file.parquet") |>
+  head(5) |>
+  collect()
 ```
 
-The `hf://` protocol is 34% faster than resolving via `resolve/main/` URLs and supports predicate pushdown.
+The `hf://` protocol avoids the extra HTTP redirect that `resolve/main/` URLs require, and supports predicate pushdown (only reads matching row groups).
 
 ## Metadata Sync
 
@@ -72,7 +85,7 @@ After uploading OHLCV data, always upload metadata too. Tickers in OHLCV without
 
 yfinance reports incorrect volume for non-US markets (known bug: ranaroussi/yfinance#300, #1610, #2302). Do NOT use raw volume for cross-exchange liquidity comparisons. Price and return data is unaffected.
 
-## Related Rules
+## Related
 
-- `duckdplyr-not-sql` — use duckplyr for Parquet queries
-- `qa-targets-pipeline` — QA validation targets
+- `duckdb-patterns` skill — duckplyr for Parquet queries, security hardening
+- `qa-targets-pipeline` rule — QA validation targets

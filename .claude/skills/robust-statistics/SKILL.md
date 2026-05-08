@@ -1,3 +1,20 @@
+---
+name: robust-statistics
+description: >
+  Robust statistical methods for outlier-prone data. Use this skill when:
+  (1) Computing z-scores or anomaly detection,
+  (2) Analyzing clinical or lab data with potential outliers,
+  (3) Working with financial return data,
+  (4) Processing sensor or system monitoring data,
+  (5) Running A/B tests where extreme values may corrupt estimates.
+  Covers median/MAD instead of mean/SD, robust z-scores in R and Python,
+  and time-windowing patterns for irregular time series.
+metadata:
+  category: Data & Analysis
+  tier: workflow
+  maturity: stable
+---
+
 # Skill: Robust Statistics for Outlier-Prone Data
 
 Use when computing central tendency or dispersion on data where outliers are plausible:
