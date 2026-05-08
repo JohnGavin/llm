@@ -5,7 +5,10 @@
 ### 1. Install hook
 
 ```bash
-cd /path/to/project
+# Option A: Subshell (isolates the cd — see bash-safety rule)
+(cd /path/to/project && roborev install-hook)
+
+# Option B: If already in project directory
 roborev install-hook
 ```
 
@@ -59,7 +62,8 @@ Create `knowledge/LOG.md`:
 ### 5. Test the workflow
 
 ```bash
-# Make a small commit
+# Make a small commit (assumes cwd is the project root)
+# Note: For agents, use git -C /path/to/project for each command
 echo "# test" >> README.md
 git add README.md
 git commit -m "test: verify roborev hook"
@@ -71,6 +75,12 @@ roborev list --limit 1
 roborev show <job-id>
 ```
 
+**Agent note:** When scripting, use `git -C /path/to/project` instead of `cd && git`:
+```bash
+git -C /path/to/project add README.md
+git -C /path/to/project commit -m "test: verify roborev hook"
+```
+
 ### 6. Initial backlog (if existing project)
 
 ```bash
@@ -78,8 +88,9 @@ roborev show <job-id>
 roborev summary
 
 # If backlog exists, burn down high-severity
+# Note: Quoting $FIRST_COMMIT ensures --since receives the complete SHA
 FIRST_COMMIT=$(git log --oneline --reverse | head -1 | cut -d' ' -f1)
-roborev refine --agent codex --min-severity high --max-iterations 10 --since $FIRST_COMMIT --quiet
+roborev refine --agent codex --min-severity high --max-iterations 10 --since "$FIRST_COMMIT" --quiet
 
 # Push fixes
 git push

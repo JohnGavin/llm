@@ -1,3 +1,19 @@
+---
+name: visualization-detailed
+description: >
+  Detailed guidance for data visualization in R. Use this skill when:
+  (1) Creating complex visualizations with plotly or ggiraph,
+  (2) Setting up dark-mode compatible plotly theming,
+  (3) Implementing Mermaid diagrams with clickable nodes,
+  (4) Writing mandatory 7-item figure captions,
+  (5) Building reproducible visualizations backed by targets pipelines.
+  Covers interactive libraries, Mermaid CDN patterns, and caption requirements.
+metadata:
+  category: Quarto & Docs
+  tier: workflow
+  maturity: stable
+---
+
 # Skill: Detailed Visualization Guidance
 
 Detailed guidance for visualization: captions, interactive libraries, Mermaid diagrams, reproducible patterns.

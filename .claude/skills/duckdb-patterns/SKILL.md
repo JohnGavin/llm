@@ -1,3 +1,20 @@
+---
+name: duckdb-patterns
+description: >
+  Patterns for DuckDB database operations in R. Use this skill when:
+  (1) Writing duckplyr queries instead of raw SQL,
+  (2) Setting up secure database connections,
+  (3) Debugging non-deterministic query results,
+  (4) Working with DuckDB's hf:// protocol for HuggingFace datasets,
+  (5) Implementing window functions with proper ordering,
+  (6) Handling inequality joins and fan-out detection.
+  Covers security hardening, duckplyr patterns, and non-determinism pitfalls.
+metadata:
+  category: Data & Analysis
+  tier: workflow
+  maturity: stable
+---
+
 # Skill: DuckDB Patterns
 
 Patterns for DuckDB: duckplyr (no raw SQL), security hardening, non-determinism pitfalls.

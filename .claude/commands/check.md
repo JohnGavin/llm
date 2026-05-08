@@ -69,15 +69,25 @@ After any Quarto render, check for fallback/placeholder content that shouldn't s
 
 ```bash
 echo "=== Vignette Content Check ==="
-if [ -d "docs" ]; then
-  FALLBACKS=$(grep -rl "Data not available\|Run tar_make\|not found\|TODO\|FIXME" docs/*.html 2>/dev/null | wc -l | tr -d ' ')
+# Check vignettes/ first (source), then docs/ (rendered output)
+VIGNETTE_DIR=""
+if [ -d "vignettes" ] && compgen -G "vignettes/*.html" > /dev/null 2>&1; then
+  VIGNETTE_DIR="vignettes"
+elif [ -d "docs" ] && compgen -G "docs/*.html" > /dev/null 2>&1; then
+  VIGNETTE_DIR="docs"
+fi
+
+if [ -n "$VIGNETTE_DIR" ]; then
+  FALLBACKS=$(find "$VIGNETTE_DIR" -maxdepth 1 -name "*.html" -exec grep -l "Data not available\|Run tar_make\|not found\|TODO\|FIXME" {} \; 2>/dev/null | wc -l | tr -d ' ')
   if [ "$FALLBACKS" -gt 0 ]; then
     echo "ERROR: $FALLBACKS file(s) contain fallback/placeholder content:"
-    grep -l "Data not available\|Run tar_make" docs/*.html 2>/dev/null
+    find "$VIGNETTE_DIR" -maxdepth 1 -name "*.html" -exec grep -l "Data not available\|Run tar_make" {} \; 2>/dev/null
     exit 1
   else
-    echo "OK: No fallback content detected"
+    echo "OK: No fallback content detected in $VIGNETTE_DIR"
   fi
+else
+  echo "WARN: No HTML files found in vignettes/ or docs/ - skipping content check"
 fi
 ```
 

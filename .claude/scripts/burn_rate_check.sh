@@ -39,7 +39,13 @@ else
     --timezone "$TZ_NAME" \
     --since "$(date -v-7d +%Y%m%d 2>/dev/null || date -d '7 days ago' +%Y%m%d)" \
     --json --offline 2>/dev/null) || {
-    [ "$MODE" = "compact" ] && echo "burn:err" || echo "Burn rate: could not fetch usage"
+    if [ "$MODE" = "--percent-only" ]; then
+      echo "0"  # Always numeric for scripts
+    elif [ "$MODE" = "compact" ]; then
+      echo "burn:err"
+    else
+      echo "Burn rate: could not fetch usage"
+    fi
     exit 0
   }
   echo "$weekly_json" > "$CACHE_FILE"
@@ -90,9 +96,25 @@ else:
     severity = 'OK'
 
 print(f'{severity}|{spent:.0f}|{projected:.0f}|{cap:.0f}|{days_elapsed}|{days_remaining}|{daily_rate:.0f}|{pct_used:.0f}|{pct_projected:.0f}')
-" 2>/dev/null) || { echo "burn:parse_err"; exit 0; }
+" 2>/dev/null) || {
+  if [ "$MODE" = "--percent-only" ]; then
+    echo "0"  # Always numeric for scripts
+  else
+    echo "burn:parse_err"
+  fi
+  exit 0
+}
 
-[ "$result" = "no_data" ] && { [ "$MODE" = "compact" ] && echo "burn:no_data" || echo "Burn rate: no data for current week"; exit 0; }
+if [ "$result" = "no_data" ]; then
+  if [ "$MODE" = "--percent-only" ]; then
+    echo "0"  # Always numeric for scripts
+  elif [ "$MODE" = "compact" ]; then
+    echo "burn:no_data"
+  else
+    echo "Burn rate: no data for current week"
+  fi
+  exit 0
+fi
 
 IFS='|' read -r severity spent projected cap days_elapsed days_remaining daily_rate pct_used pct_projected <<< "$result"
 

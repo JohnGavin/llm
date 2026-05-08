@@ -20,27 +20,30 @@ Toggle the roborev post-commit hook on or off for a project.
 ```bash
 REPO_DIR="${PWD}"
 HOOK="${REPO_DIR}/.git/hooks/post-commit"
-ARG="${1:-status}"
+# Note: $ARGUMENTS is the documented variable for slash commands, but bash scripts receive $1
+ARG="${ARGUMENTS:-${1:-status}}"
 
 case "$ARG" in
   on)
+    # Subshell isolates cd (documented exception to no-compound-commands rule)
     (cd "$REPO_DIR" && roborev install-hook)
-    echo "roborev hook INSTALLED for $(basename $REPO_DIR)"
-    echo "Every commit will be auto-reviewed (agent: $(grep '^agent = ' ~/.roborev/config.toml))"
+    AGENT=$(grep '^default_agent = ' ~/.roborev/config.toml 2>/dev/null | cut -d"'" -f2 || echo "codex")
+    echo "roborev hook INSTALLED for $(basename "$REPO_DIR")"
+    echo "Every commit will be auto-reviewed (agent: $AGENT)"
     ;;
   off)
     (cd "$REPO_DIR" && roborev uninstall-hook)
-    echo "roborev hook REMOVED for $(basename $REPO_DIR)"
+    echo "roborev hook REMOVED for $(basename "$REPO_DIR")"
     echo "Use 'roborev review --since HEAD~1' for manual reviews"
     ;;
   status|*)
     if [ -f "$HOOK" ] && grep -q "roborev" "$HOOK" 2>/dev/null; then
-      AGENT=$(grep '^agent = ' ~/.roborev/config.toml | cut -d'"' -f2 || echo "unknown")
-      echo "roborev: ON for $(basename $REPO_DIR) (agent: $AGENT)"
+      AGENT=$(grep '^default_agent = ' ~/.roborev/config.toml 2>/dev/null | cut -d"'" -f2 || echo "unknown")
+      echo "roborev: ON for $(basename "$REPO_DIR") (agent: $AGENT)"
       echo "Last 5 reviews:"
       roborev list --limit 5 2>/dev/null || echo "  (daemon not running)"
     else
-      echo "roborev: OFF for $(basename $REPO_DIR)"
+      echo "roborev: OFF for $(basename "$REPO_DIR")"
       echo "Enable with: /roborev on"
     fi
     ;;
