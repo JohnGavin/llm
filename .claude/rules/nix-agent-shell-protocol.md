@@ -80,9 +80,18 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
 2. **Coordinate with DESCRIPTION** — if it's an R package project, the same
    package must be added to `DESCRIPTION` (Imports/Suggests) AND `default.R`
 3. **Run `Rscript default.R`** — this regenerates `default.nix` via `rix::rix()`
-   Must be run from the rix.setup shell (which has `rix` installed):
+   Must be run from a shell that has `rix` installed. The canonical name is
+   the `rix.setup` shell, but on this machine it lives at `~/docs_gh/llm/`
+   (verified 2026-05-08; `~/docs_gh/rix.setup/` does not exist as a directory
+   — only as `~/docs_gh/rix.setup.zip` whose `default.R` is a one-line
+   pointer to `~/docs_gh/llm/default.R`). Use:
    ```bash
-   nix-shell ~/docs_gh/rix.setup/default.nix --run "Rscript /path/to/project/default.R"
+   nix-shell ~/docs_gh/llm/default.nix --run "Rscript /path/to/project/default.R"
+   ```
+   Verify rix is loadable inside the shell once before relying on it:
+   ```bash
+   nix-shell ~/docs_gh/llm/default.nix --run \
+     "Rscript -e 'cat(\"rix:\", requireNamespace(\"rix\"), packageVersion(\"rix\"))'"
    ```
 4. **Verify** — enter the new shell and confirm the package loads:
    ```bash
@@ -111,14 +120,14 @@ Use a subshell (the documented exception in `git-no-compound-cd`) to set cwd cor
 ```bash
 # CORRECT: subshell isolates cd, rix sees the worktree's cwd
 (cd /private/tmp/<agent-worktree> && \
-   nix-shell ~/docs_gh/rix.setup/default.nix --run "Rscript default.R")
+   nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")
 
 # CORRECT: pass cwd explicitly via Rscript -e setwd()
-nix-shell ~/docs_gh/rix.setup/default.nix --run \
+nix-shell ~/docs_gh/llm/default.nix --run \
   "Rscript -e 'setwd(\"/private/tmp/<agent-worktree>\"); source(\"default.R\")'"
 
 # WRONG: cwd inherits from caller, default.nix may land in orchestrator's checkout
-nix-shell ~/docs_gh/rix.setup/default.nix --run \
+nix-shell ~/docs_gh/llm/default.nix --run \
   "Rscript /private/tmp/<agent-worktree>/default.R"
 ```
 
@@ -136,6 +145,21 @@ Recovery: `git -C <main-checkout> checkout HEAD -- default.nix`.
 ### Lesson logged 2026-05-02
 
 In the acd_area_climate_design project, a Stage 2 OSM agent regenerated default.nix in its worktree but the cwd resolved to the orchestrator's main checkout, stripping the udunits + shellHook patches. Detected when the orchestrator's render failed. Restored from HEAD. Filed observation issue and amended this rule.
+
+### Lesson logged 2026-05-08
+
+In the mycare project, regenerating default.nix to add testthat/here/withr stripped a manual `python312Packages.overrideScope` (`twisted.doCheck = false`) overlay needed to bypass the upstream pdfplumber → pandas → ibis → twisted test-failure cascade (JohnGavin/llm#62). The shellHook itself survived (it lives in default.R), but the nixpkgs overlay block — between the `let` keyword and the `pkgs = ...` line — does not, because rix() does not preserve hand-edited overlays.
+
+**Defensive workflow when regenerating default.nix:**
+
+1. `cp default.nix default.nix.pre-regen.bak` — back up first
+2. Run rix regen
+3. `diff default.nix.pre-regen.bak default.nix` — eyeball stripped sections
+4. Re-apply any custom overlays (Twisted, udunits, …) before entering the new shell
+5. Verify by entering the shell and loading the affected packages
+6. `rm default.nix.pre-regen.bak` once verified
+
+This is generic to ANY hand-crafted `nixpkgs.extend (...)` or `overridePythonAttrs` block. Survey via `grep -E "extend|overrideScope|overridePythonAttrs|disabledTestPaths" default.nix` before regen.
 
 ## Why This Architecture
 
