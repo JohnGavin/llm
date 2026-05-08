@@ -63,6 +63,24 @@ If no Dockerfile/nix container exists yet, report: "No Linux container configure
 
 This catches: macOS-specific PATH leaks, system lib differences, GNU vs BSD tool divergence, font/locale issues in vignette rendering.
 
+## Vignette Content Validation (Option 1)
+
+After any Quarto render, check for fallback/placeholder content that shouldn't ship:
+
+```bash
+echo "=== Vignette Content Check ==="
+if [ -d "docs" ]; then
+  FALLBACKS=$(grep -rl "Data not available\|Run tar_make\|not found\|TODO\|FIXME" docs/*.html 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$FALLBACKS" -gt 0 ]; then
+    echo "ERROR: $FALLBACKS file(s) contain fallback/placeholder content:"
+    grep -l "Data not available\|Run tar_make" docs/*.html 2>/dev/null
+    exit 1
+  else
+    echo "OK: No fallback content detected"
+  fi
+fi
+```
+
 ## Output Format
 
 ```
@@ -79,6 +97,9 @@ This catches: macOS-specific PATH leaks, system lib differences, GNU vs BSD tool
 
 ## Pipeline
 - _targets.R parse: [OK/FAIL]
+
+## Vignette Content
+- Fallback content: [None / N files with issues]
 
 ## Verdict
 [Ready to push / Needs fixes]
