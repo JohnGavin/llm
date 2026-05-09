@@ -25,15 +25,26 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 ### Metrics
 
-- **Issues closed**: #121, #122
+- **Issues closed**: #121, #122, #124
 - **Config snapshot**: 45 rules (avg 95 lines, 4 over threshold), 68 skills (avg 263 lines), ~440K tokens total
 - **Knowledge base**: 4 wiki pages, 32 raw sources, 75% provenance coverage
-- **Commits this session**: 4 (`6a7831c`, `d35b054`, `77836b2`, `11e46e9`)
+- **Commits this session**: 5 (`6a7831c`, `d35b054`, `77836b2`, `11e46e9`, `fe0679a`)
+
+### Session 2 (continuation)
+
+- **Dashboard fixes (#124)** (`fe0679a`):
+  - All vignettes now have `toc: false` (removes broken clickable "No data" links)
+  - Sections wrapped in `::: {.panel-tabset}` for cleaner navigation
+  - **Fallback file counting**: when pulse data unavailable, dashboards count files directly from `~/.claude/`
+  - Dynamic tables for rules/agents/hooks/memory in `closeread-infrastructure.qmd` (was hardcoded 6 items, now shows all)
+  - Dark mode CSS for navbar dropdown menus (white background → dark)
+- **launchd setup**: `config_pulse.sh` and `knowledge_pulse.sh` run daily at 9:00/9:05 AM via `/nix/var/nix/profiles/default/bin/nix-shell`
+- **Bug fix**: Added `-L` flag to `find` commands in pulse scripts to follow symlinks (`~/.claude/rules/` is a symlink)
 
 ### Known Limitations
 
-- Dashboards show "No data" on deployed site (data is local in `~/.claude/logs/`)
-- Need to run pulse scripts daily via launchd for time-series
+- Knowledge base pulse requires wiki pages at `~/docs_gh/llm/knowledge/` (currently 4 pages)
+- Pulse parquet files accumulate in `~/.claude/logs/{config,knowledge}/` — no rotation policy yet
 
 ---
 
