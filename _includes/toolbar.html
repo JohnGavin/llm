@@ -1,0 +1,257 @@
+<!--
+  Vignette Toolbar — Dark/Light Toggle + Font Size Controls
+  Source: ~/.claude/templates/vignette_toolbar.html
+  Include via _quarto.yml: format: html: include-in-header: path/to/vignette_toolbar.html
+
+  Features:
+  - Dark mode toggle (default: dark, persists to localStorage)
+  - Font size A-/A+ (2px steps, persists to localStorage)
+  - Respects OS preference on first visit
+  - Propagates to Shinylive iframes
+-->
+<style>
+/* ===== Toolbar Container ===== */
+#vignette-toolbar {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  z-index: 10000;
+  display: flex;
+  gap: 6px;
+  background: rgba(128, 128, 128, 0.15);
+  padding: 4px 8px;
+  border-radius: 20px;
+  backdrop-filter: blur(4px);
+}
+
+#vignette-toolbar button {
+  font-size: 16px;
+  background: none;
+  border: 1px solid #888;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 30px;
+  text-align: center;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+#vignette-toolbar button:hover {
+  background-color: rgba(128, 128, 128, 0.3);
+}
+
+#vignette-toolbar button:focus {
+  outline: 2px solid #4ea8de;
+  outline-offset: 2px;
+}
+
+/* Light mode button colors */
+body:not(.dark-mode) #vignette-toolbar button {
+  color: #333;
+  border-color: #666;
+}
+
+/* Dark mode button colors */
+body.dark-mode #vignette-toolbar button {
+  color: #eee;
+  border-color: #888;
+}
+
+/* ===== Dark Mode Styles ===== */
+body.dark-mode, html.dark-mode {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+body.dark-mode h1, body.dark-mode h2, body.dark-mode h3, body.dark-mode h4,
+body.dark-mode p, body.dark-mode li, body.dark-mode td, body.dark-mode th,
+body.dark-mode code, body.dark-mode pre, body.dark-mode blockquote,
+body.dark-mode .quarto-title, body.dark-mode #title-block-header {
+  color: #ffffff !important;
+}
+
+body.dark-mode a { color: #4ea8de !important; }
+body.dark-mode a:visited { color: #9d7cd8 !important; }
+
+body.dark-mode .callout, body.dark-mode .card, body.dark-mode .sidebar,
+body.dark-mode nav, body.dark-mode header, body.dark-mode footer {
+  background-color: #1a1a1a !important;
+  color: #ffffff !important;
+}
+
+body.dark-mode table {
+  background-color: #1a1a1a !important;
+}
+
+body.dark-mode tr:nth-child(even) {
+  background-color: #2a2a2a !important;
+}
+
+body.dark-mode code {
+  background-color: #2a2a2a !important;
+}
+
+body.dark-mode pre {
+  background-color: #1a1a1a !important;
+  border-color: #444 !important;
+}
+
+/* Override any inline light backgrounds */
+body.dark-mode [style*="background:#fff"],
+body.dark-mode [style*="background:#f8"],
+body.dark-mode [style*="background: #fff"],
+body.dark-mode [style*="background: #f8"],
+body.dark-mode [style*="background-color:#fff"],
+body.dark-mode [style*="background-color:#f8"],
+body.dark-mode [style*="background-color: #fff"],
+body.dark-mode [style*="background-color: #f8"] {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+/* Shinylive iframe dark mode */
+body.dark-mode .shinylive-wrapper,
+body.dark-mode .shinylive-container,
+body.dark-mode iframe {
+  background-color: #1a1a1a !important;
+}
+
+/* ===== Accessible Color Overrides (≥4.5:1 on #000) ===== */
+body.dark-mode .text-success, body.dark-mode .alert-success { color: #69d4a0 !important; }
+body.dark-mode .text-danger, body.dark-mode .alert-danger { color: #f08080 !important; }
+body.dark-mode .text-info, body.dark-mode .alert-info { color: #5edaff !important; }
+body.dark-mode .text-primary, body.dark-mode .alert-primary { color: #4ea8de !important; }
+</style>
+
+<script>
+(function() {
+  'use strict';
+
+  var STORAGE_THEME = 'vignette-dark-mode';
+  var STORAGE_FONT = 'vignette-font-size';
+  var BASE_FONT = 16;
+  var FONT_STEP = 2;
+  var MIN_FONT = 12;
+  var MAX_FONT = 24;
+
+  // ===== Theme Management =====
+  function getPreferredTheme() {
+    var saved = localStorage.getItem(STORAGE_THEME);
+    if (saved !== null) return saved === 'true';
+    // Default to dark, but respect OS preference if explicitly light
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      return false;
+    }
+    return true; // Default dark
+  }
+
+  function applyTheme(isDark) {
+    if (isDark) {
+      document.documentElement.classList.add('dark-mode');
+      document.body && document.body.classList.add('dark-mode');
+    } else {
+      document.documentElement.classList.remove('dark-mode');
+      document.body && document.body.classList.remove('dark-mode');
+    }
+    localStorage.setItem(STORAGE_THEME, isDark);
+    updateThemeButton(isDark);
+    propagateToIframes(isDark);
+  }
+
+  function updateThemeButton(isDark) {
+    var btn = document.getElementById('theme-toggle');
+    if (btn) {
+      btn.textContent = isDark ? '\u2600' : '\u263E'; // ☀ or ☾
+      btn.setAttribute('aria-label', isDark ? 'Switch to light mode' : 'Switch to dark mode');
+    }
+  }
+
+  function toggleTheme() {
+    var isDark = document.documentElement.classList.contains('dark-mode');
+    applyTheme(!isDark);
+  }
+
+  function propagateToIframes(isDark) {
+    document.querySelectorAll('iframe').forEach(function(f) {
+      try {
+        var doc = f.contentDocument || f.contentWindow.document;
+        if (isDark) {
+          doc.body.classList.add('dark-mode');
+          doc.documentElement.classList.add('dark-mode');
+        } else {
+          doc.body.classList.remove('dark-mode');
+          doc.documentElement.classList.remove('dark-mode');
+        }
+      } catch(e) { /* cross-origin iframe */ }
+    });
+  }
+
+  // ===== Font Size Management =====
+  function getSavedFontSize() {
+    var saved = localStorage.getItem(STORAGE_FONT);
+    return saved ? parseInt(saved, 10) : BASE_FONT;
+  }
+
+  function applyFontSize(size) {
+    size = Math.max(MIN_FONT, Math.min(MAX_FONT, size));
+    document.documentElement.style.fontSize = size + 'px';
+    localStorage.setItem(STORAGE_FONT, size);
+    return size;
+  }
+
+  function changeFontSize(delta) {
+    var current = getSavedFontSize();
+    applyFontSize(current + delta);
+  }
+
+  // ===== Apply Immediately (before DOM ready) =====
+  applyTheme(getPreferredTheme());
+  applyFontSize(getSavedFontSize());
+
+  // ===== Create Toolbar on DOM Ready =====
+  document.addEventListener('DOMContentLoaded', function() {
+    // Apply theme to body now that it exists
+    applyTheme(getPreferredTheme());
+
+    var toolbar = document.createElement('div');
+    toolbar.id = 'vignette-toolbar';
+    toolbar.setAttribute('role', 'toolbar');
+    toolbar.setAttribute('aria-label', 'Page display controls');
+
+    // Theme toggle
+    var themeBtn = document.createElement('button');
+    themeBtn.id = 'theme-toggle';
+    themeBtn.title = 'Toggle dark/light mode';
+    themeBtn.onclick = toggleTheme;
+    var isDark = document.documentElement.classList.contains('dark-mode');
+    themeBtn.textContent = isDark ? '\u2600' : '\u263E';
+    themeBtn.setAttribute('aria-label', isDark ? 'Switch to light mode' : 'Switch to dark mode');
+
+    // Font decrease
+    var fontDown = document.createElement('button');
+    fontDown.id = 'font-decrease';
+    fontDown.title = 'Decrease font size';
+    fontDown.textContent = 'A\u2212'; // A−
+    fontDown.setAttribute('aria-label', 'Decrease font size');
+    fontDown.onclick = function() { changeFontSize(-FONT_STEP); };
+
+    // Font increase
+    var fontUp = document.createElement('button');
+    fontUp.id = 'font-increase';
+    fontUp.title = 'Increase font size';
+    fontUp.textContent = 'A+';
+    fontUp.setAttribute('aria-label', 'Increase font size');
+    fontUp.onclick = function() { changeFontSize(FONT_STEP); };
+
+    toolbar.appendChild(themeBtn);
+    toolbar.appendChild(fontDown);
+    toolbar.appendChild(fontUp);
+    document.body.appendChild(toolbar);
+
+    // Re-propagate to iframes that loaded after initial apply
+    setTimeout(function() { propagateToIframes(getPreferredTheme()); }, 1000);
+  });
+})();
+</script>
