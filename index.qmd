@@ -6,7 +6,7 @@ format:
 ---
 
 ```{r setup, include=FALSE}
-pkgload::load_all(quiet = TRUE)
+library(llm)
 library(dplyr)
 library(gt)
 library(scales)
