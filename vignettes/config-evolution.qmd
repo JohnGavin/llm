@@ -1,0 +1,276 @@
+---
+title: "Global Config Evolution Dashboard"
+format:
+  html:
+    page-layout: full
+    toc: true
+execute:
+  echo: false
+  warning: false
+---
+
+```{r setup}
+#| include: false
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(gt)
+library(DBI)
+library(duckdb)
+
+# Theme for dark mode compatibility
+theme_dashboard <- theme_minimal(base_size = 14) +
+  theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    plot.title = element_text(face = "bold")
+  )
+
+# Load config pulse data
+config_dir <- path.expand("~/.claude/logs/config")
+parquet_files <- list.files(config_dir, pattern = "\\.parquet$", full.names = TRUE)
+
+if (length(parquet_files) > 0) {
+  con <- dbConnect(duckdb())
+  on.exit(dbDisconnect(con, shutdown = TRUE))
+
+  # Read all parquet files
+  config_data <- dbGetQuery(con, sprintf(
+    "SELECT * FROM read_parquet('%s/*.parquet')",
+    config_dir
+  )) |>
+    mutate(
+      snapshot_date = as.Date(snapshot_date),
+      value = as.numeric(value)
+    )
+} else {
+  config_data <- NULL
+}
+```
+
+Track the evolution of Claude Code global configuration: rules, skills, agents, hooks, and memories.
+
+## Current Snapshot
+
+::: {.grid}
+
+::: {.g-col-3}
+### Rules
+```{r}
+#| results: asis
+if (!is.null(config_data)) {
+  latest <- config_data |> filter(snapshot_date == max(snapshot_date))
+  n_rules <- latest |> filter(category == "rules", item == "all", metric == "count") |> pull(value)
+  cat("####", n_rules)
+} else {
+  cat("#### No data")
+}
+```
+:::
+
+::: {.g-col-3}
+### Skills
+```{r}
+#| results: asis
+if (!is.null(config_data)) {
+  n_skills <- latest |> filter(category == "skills", item == "all", metric == "count") |> pull(value)
+  cat("####", n_skills)
+} else {
+  cat("#### No data")
+}
+```
+:::
+
+::: {.g-col-3}
+### Hooks
+```{r}
+#| results: asis
+if (!is.null(config_data)) {
+  n_hooks <- latest |> filter(category == "hooks", item == "all", metric == "count") |> pull(value)
+  cat("####", n_hooks)
+} else {
+  cat("#### No data")
+}
+```
+:::
+
+::: {.g-col-3}
+### Total Tokens
+```{r}
+#| results: asis
+if (!is.null(config_data)) {
+  total_tokens <- latest |> filter(category == "total", metric == "tokens_estimate") |> pull(value)
+  cat("####", comma(total_tokens))
+} else {
+  cat("#### No data")
+}
+```
+:::
+
+:::
+
+## Size Distribution
+
+```{r size-distribution}
+#| fig-width: 10
+#| fig-height: 6
+#| fig-alt: "Stacked bar chart showing line counts by category: rules, skills, hooks, scripts"
+
+if (!is.null(config_data)) {
+  latest |>
+    filter(
+      item == "all",
+      metric == "total_lines",
+      category %in% c("rules", "skills", "hooks", "scripts", "memory")
+    ) |>
+    mutate(category = factor(category, levels = c("skills", "rules", "scripts", "hooks", "memory"))) |>
+    ggplot(aes(x = category, y = value, fill = category)) +
+    geom_col() +
+    geom_text(aes(label = comma(value)), vjust = -0.5, size = 4) +
+    scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+    scale_fill_viridis_d(option = "plasma", end = 0.85) +
+    labs(
+      title = "Config Size by Category",
+      subtitle = paste("Snapshot:", max(config_data$snapshot_date)),
+      x = NULL,
+      y = "Lines of Code"
+    ) +
+    theme_dashboard +
+    theme(legend.position = "none")
+}
+```
+
+## Top Rules by Size
+
+```{r top-rules}
+if (!is.null(config_data)) {
+  latest |>
+    filter(category == "rules", metric == "lines", item != "all") |>
+    arrange(desc(value)) |>
+    head(15) |>
+    mutate(
+      status = case_when(
+        value > 150 ~ "Over threshold",
+        value > 100 ~ "Warning",
+        TRUE ~ "OK"
+      )
+    ) |>
+    gt() |>
+    cols_label(
+      item = "Rule",
+      value = "Lines",
+      status = "Status"
+    ) |>
+    cols_hide(c(snapshot_date, category, metric)) |>
+    data_color(
+      columns = value,
+      palette = c("#69d4a0", "#ffd93d", "#f08080"),
+      domain = c(0, 200)
+    ) |>
+    tab_header(
+      title = "Largest Rules",
+      subtitle = "Threshold: 150 lines (per CLAUDE.md)"
+    )
+}
+```
+
+## Top Skills by Size
+
+```{r top-skills}
+if (!is.null(config_data)) {
+  latest |>
+    filter(category == "skills", metric == "lines", item != "all") |>
+    arrange(desc(value)) |>
+    head(15) |>
+    gt() |>
+    cols_label(
+      item = "Skill",
+      value = "Lines"
+    ) |>
+    cols_hide(c(snapshot_date, category, metric)) |>
+    data_color(
+      columns = value,
+      palette = "Blues"
+    ) |>
+    tab_header(
+      title = "Largest Skills"
+    )
+}
+```
+
+## Quality Metrics
+
+```{r quality-table}
+if (!is.null(config_data)) {
+  quality_metrics <- latest |>
+    filter(item == "all") |>
+    filter(
+      (category == "rules" & metric %in% c("count", "avg_lines", "over_150_lines", "with_frontmatter")) |
+      (category == "skills" & metric %in% c("count", "avg_lines")) |
+      (category == "total" & metric == "tokens_estimate")
+    ) |>
+    mutate(
+      label = case_when(
+        category == "rules" & metric == "count" ~ "Total Rules",
+        category == "rules" & metric == "avg_lines" ~ "Avg Rule Size (lines)",
+        category == "rules" & metric == "over_150_lines" ~ "Rules Over Threshold",
+        category == "rules" & metric == "with_frontmatter" ~ "Rules with Frontmatter",
+        category == "skills" & metric == "count" ~ "Total Skills",
+        category == "skills" & metric == "avg_lines" ~ "Avg Skill Size (lines)",
+        category == "total" & metric == "tokens_estimate" ~ "Total Config Tokens",
+        TRUE ~ paste(category, metric)
+      )
+    ) |>
+    select(label, value)
+
+  quality_metrics |>
+    gt() |>
+    cols_label(label = "Metric", value = "Value") |>
+    fmt_number(columns = value, decimals = 0, use_seps = TRUE)
+}
+```
+
+## Evolution Over Time
+
+```{r evolution-chart}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-alt: "Line chart showing config evolution over time with separate lines for rules, skills, hooks"
+
+if (!is.null(config_data) && n_distinct(config_data$snapshot_date) > 1) {
+  config_data |>
+    filter(
+      item == "all",
+      metric == "count",
+      category %in% c("rules", "skills", "hooks")
+    ) |>
+    ggplot(aes(x = snapshot_date, y = value, color = category)) +
+    geom_line(linewidth = 1.2) +
+    geom_point(size = 3) +
+    scale_color_viridis_d(option = "plasma", end = 0.85) +
+    labs(
+      title = "Config Growth Over Time",
+      x = NULL,
+      y = "Count",
+      color = "Category"
+    ) +
+    theme_dashboard
+} else {
+  cat("*Need multiple snapshots to show evolution. Run `config_pulse.sh` daily.*")
+}
+```
+
+---
+
+## Data Collection
+
+Run the config pulse script daily to collect snapshots:
+
+```bash
+~/.claude/scripts/config_pulse.sh
+```
+
+Data is stored in `~/.claude/logs/config/` as Parquet files.
+
+*Last updated: `r Sys.time()`*
