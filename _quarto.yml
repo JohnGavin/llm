@@ -15,6 +15,12 @@ website:
         text: Home
       - href: vignettes/telemetry.qmd
         text: Telemetry
+      - text: Dashboards
+        menu:
+          - href: vignettes/config-evolution.qmd
+            text: Config Evolution
+          - href: vignettes/knowledge-evolution.qmd
+            text: Knowledge Base
       - href: vignettes/closeread-infrastructure.qmd
         text: Infrastructure
       - href: vignettes/articles/closeread-config.qmd
