@@ -89,15 +89,21 @@ load_cached_ccusage <- function(type = c("daily", "session", "blocks"),
                                  cache_dir = NULL) {
   type <- match.arg(type)
 
-  # Find cache directory (handle being called from vignettes)
+  # Find cache directory (handle installed package and development contexts)
   if (is.null(cache_dir)) {
-    # Try multiple locations
-    candidates <- c(
-      "inst/extdata",
-      "../inst/extdata",
-      here::here("inst/extdata")
-    )
-    cache_dir <- Find(dir.exists, candidates)
+    # Try installed package location first
+    pkg_dir <- system.file("extdata", package = "llm")
+    if (nzchar(pkg_dir) && dir.exists(pkg_dir)) {
+      cache_dir <- pkg_dir
+    } else {
+      # Fall back to development locations
+      candidates <- c(
+        "inst/extdata",
+        "../inst/extdata",
+        here::here("inst/extdata")
+      )
+      cache_dir <- Find(dir.exists, candidates)
+    }
     if (is.null(cache_dir)) {
       message("Could not find cache directory")
       return(NULL)
