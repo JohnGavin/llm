@@ -25,7 +25,7 @@ Detailed guidance for visualization: captions, interactive libraries, Mermaid di
 - Mermaid diagram implementation
 - Caption writing for figures
 
-## Part 1: Mandatory Captions (7 Items)
+## Part 1: Mandatory Captions (7 Items + Links)
 
 **Minimum 3 sentences. 1-sentence = VIOLATION.**
 
@@ -38,6 +38,34 @@ Detailed guidance for visualization: captions, interactive libraries, Mermaid di
 | 5. Source | Data source, methodology |
 | 6. Cross-refs | Links to related content |
 | 7. Glossary | Domain terms linked |
+
+### Linked Caption Elements (Astrobites Pattern)
+
+**Source:** [Astrobites PTA Plus Astrometry](https://astrobites.org/2026/05/02/pta_plus_astrometry/)
+
+Caption elements SHOULD link to their sources:
+
+| Element | Link To |
+|---------|---------|
+| Title/subtitle | Source data or methodology docs |
+| Axis labels | Variable definitions or data dictionary |
+| Legend | Full legend explanation if truncated |
+| Caption text | Source file or function in repo |
+
+**Template:**
+```markdown
+**Figure N.** [Brief description](link-to-methodology).
+Data: [dataset name](link-to-data).
+Code: [`function_name()`](github-link#L123).
+```
+
+**Quarto example:**
+```yaml
+#| fig-cap: |
+#|   **Figure 3.** [Wave height distribution](methodology.html#wave-heights)
+#|   across Irish buoy network. Data: [Marine Institute ERDDAP](https://erddap.marine.ie/).
+#|   Code: [`plot_wave_distribution()`](https://github.com/user/repo/blob/main/R/plots.R#L45).
+```
 
 ### Captions Are Pre-Computed Targets
 

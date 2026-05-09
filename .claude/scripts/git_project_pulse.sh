@@ -147,6 +147,25 @@ for repo in "${REPOS[@]}"; do
     | awk '/insertions|deletions/{ins+=$4; del+=$6} END{printf "%d",ins+del}')
   echo "$TODAY,$project,30d,velocity,lines_changed,${velocity:-0}" >> "$OUTFILE"
 
+  # --- Knowledge distribution: authors per top-churn files (bus factor proxy) ---
+  # For top 10 most-changed files, count unique authors
+  git -C "$repo" log --format=format: --name-only --since="6 months ago" 2>/dev/null \
+    | grep -v '^$' | sort | uniq -c | sort -nr | head -10 \
+    | while read -r _ filepath; do
+      n_authors=$(git -C "$repo" log --format='%aN' --since="6 months ago" -- "$filepath" 2>/dev/null \
+        | sort -u | wc -l | tr -d ' ')
+      echo "$TODAY,$project,6mo,$filepath,knowledge_authors,${n_authors:-0}"
+    done >> "$OUTFILE"
+
+  # --- Language breakdown: lines by file extension ---
+  # Lightweight alternative to cloc/tokei — counts by extension
+  for ext in R py qmd md sh nix yml; do
+    loc_ext=$(find "$repo" -name "*.$ext" -not -path "*renv*" -not -path "*node_modules*" -not -path "*.git*" 2>/dev/null \
+      | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+    [ -n "$loc_ext" ] && [ "$loc_ext" -gt 0 ] && \
+      echo "$TODAY,$project,all,$ext,lines_by_ext,${loc_ext:-0}" >> "$OUTFILE"
+  done
+
 done
 
 # Convert CSV to Parquet via DuckDB CLI
