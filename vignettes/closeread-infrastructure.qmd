@@ -37,9 +37,23 @@ safe_tar_read <- function(name) {
 
 counts <- safe_tar_read("vig_cr_infra_counts")
 if (is.null(counts)) {
+  # Count files directly (reproducible, always current)
+  claude_dir <- path.expand("~/.claude")
+
+  n_rules <- length(list.files(file.path(claude_dir, "rules"), pattern = "\\.md$", recursive = TRUE))
+  n_skills <- length(list.dirs(file.path(claude_dir, "skills"), recursive = FALSE))
+  n_agents <- length(list.files(file.path(claude_dir, "agents"), pattern = "\\.md$", recursive = TRUE))
+  n_hooks <- length(list.files(file.path(claude_dir, "hooks"), pattern = "\\.sh$"))
+  n_commands <- length(list.files(file.path(claude_dir, "commands"), pattern = "\\.md$", recursive = TRUE))
+  n_memory <- length(list.files(file.path(claude_dir, "memory"), pattern = "\\.md$", recursive = TRUE))
+
   counts <- list(
-    n_rules = 58, n_skills = 68, n_agents = 12,
-    n_hooks = 7, n_commands = 14, n_memory = 14
+    n_rules = n_rules,
+    n_skills = n_skills,
+    n_agents = n_agents,
+    n_hooks = n_hooks,
+    n_commands = n_commands,
+    n_memory = n_memory
   )
 }
 ```
@@ -108,14 +122,34 @@ graph LR
 
 ### Rules
 
-| Rule | Enforces |
-|------|----------|
-| `duckdplyr-not-sql` | Use <a href="https://duckplyr.tidyverse.org/" target="_blank">duckplyr</a>, never raw SQL |
-| `dynamic-prose-values` | No hardcoded numbers in prose |
-| `safe-deletion` | Check size/age before deleting files |
-| `btw-timeouts` | All R execution via `timeout` in bash |
-| `verification-before-completion` | No claims without fresh evidence |
-| `look-ahead-bias-prevention` | Temporal separation in backtests |
+```{r rules-table}
+rules_dir <- file.path(path.expand("~/.claude"), "rules")
+if (dir.exists(rules_dir)) {
+  rule_files <- list.files(rules_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
+
+  # Extract rule name and first meaningful line as description
+  rules_df <- lapply(rule_files, function(f) {
+    lines <- readLines(f, warn = FALSE, n = 20)
+    name <- tools::file_path_sans_ext(basename(f))
+
+    # Find first non-empty, non-heading line for description
+    desc_lines <- lines[!grepl("^#|^$|^---$|^Source:|^Consolidated", lines)]
+    desc <- if (length(desc_lines) > 0) {
+      trimws(gsub("\\*\\*|\\[|\\]\\([^)]+\\)", "", desc_lines[1]))
+    } else {
+      ""
+    }
+    # Truncate long descriptions
+    if (nchar(desc) > 60) desc <- paste0(substr(desc, 1, 57), "...")
+
+    data.frame(Rule = paste0("`", name, "`"), Description = desc, stringsAsFactors = FALSE)
+  }) |> do.call(rbind, args = _)
+
+  knitr::kable(rules_df, caption = paste0("All ", nrow(rules_df), " rules in ~/.claude/rules/"))
+} else {
+  cat("*Rules directory not found*")
+}
+```
 
 ### Skills
 
@@ -130,35 +164,111 @@ graph LR
 
 ### Agents
 
-| Agent | Model | Trigger |
-|-------|-------|---------|
-| `quick-fix` | <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank">haiku</a> | Typos, renames, version bumps |
-| `r-debugger` | <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank">sonnet</a> | Test failures, R CMD check |
-| `critic` | sonnet | Read-only adversarial review |
-| `fixer` | sonnet | Apply fixes from critic reports |
-| `targets-runner` | sonnet | Pipeline execution |
-| `reviewer` | sonnet | PR code review |
-| `nix-env` | sonnet | Nix shell diagnostics |
+```{r agents-table}
+agents_dir <- file.path(path.expand("~/.claude"), "agents")
+if (dir.exists(agents_dir)) {
+  agent_files <- list.files(agents_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
+
+  agents_df <- lapply(agent_files, function(f) {
+    lines <- readLines(f, warn = FALSE, n = 30)
+    name <- tools::file_path_sans_ext(basename(f))
+
+    # Try to extract model from frontmatter or content
+    model_line <- grep("model:", lines, value = TRUE, ignore.case = TRUE)
+    model <- if (length(model_line) > 0) {
+      gsub(".*model:\\s*", "", model_line[1])
+    } else {
+      "sonnet"
+    }
+
+    # Find trigger/use-case description
+    trigger_lines <- lines[grepl("Use when|Trigger|Debug|Run|Review|Fix|Build", lines, ignore.case = TRUE)]
+    trigger <- if (length(trigger_lines) > 0) {
+      desc <- trimws(gsub("^[#*-]+\\s*|\\*\\*|Use when:?\\s*", "", trigger_lines[1]))
+      if (nchar(desc) > 50) paste0(substr(desc, 1, 47), "...") else desc
+    } else {
+      ""
+    }
+
+    data.frame(Agent = paste0("`", name, "`"), Model = model, Trigger = trigger, stringsAsFactors = FALSE)
+  }) |> do.call(rbind, args = _)
+
+  knitr::kable(agents_df, caption = paste0("All ", nrow(agents_df), " agents in ~/.claude/agents/"))
+} else {
+  cat("*Agents directory not found*")
+}
+```
 
 ### Hooks & Memory
 
 **Hooks** — shell scripts triggered by events:
 
-| Hook | Event | Purpose |
-|------|-------|---------|
-| `session_init.sh` | Session start | Check Nix, burn rate, worktrees |
-| `file_protection.sh` | Pre-edit | Block edits to `raw/` knowledge base |
-| `context_survival.sh` | Pre-compact | Save state before context compression |
-| `context_monitor.sh` | Post-tool | Periodic burn rate check |
+```{r hooks-table}
+hooks_dir <- file.path(path.expand("~/.claude"), "hooks")
+if (dir.exists(hooks_dir)) {
+  hook_files <- list.files(hooks_dir, pattern = "\\.sh$", full.names = TRUE)
+
+  hooks_df <- lapply(hook_files, function(f) {
+    lines <- readLines(f, warn = FALSE, n = 15)
+    name <- basename(f)
+
+    # Extract event from filename pattern
+    event <- dplyr::case_when(
+      grepl("init", name) ~ "Session start",
+      grepl("protection", name) ~ "Pre-edit",
+      grepl("survival|compact", name) ~ "Pre-compact",
+      grepl("monitor", name) ~ "Post-tool",
+      grepl("stop", name) ~ "Session stop",
+      grepl("health", name) ~ "Post-write",
+      TRUE ~ "Hook"
+    )
+
+    # Extract purpose from first comment line
+    comment_lines <- grep("^#[^!]", lines, value = TRUE)
+    purpose <- if (length(comment_lines) > 0) {
+      desc <- trimws(gsub("^#+\\s*", "", comment_lines[1]))
+      if (nchar(desc) > 40) paste0(substr(desc, 1, 37), "...") else desc
+    } else {
+      ""
+    }
+
+    data.frame(Hook = paste0("`", name, "`"), Event = event, Purpose = purpose, stringsAsFactors = FALSE)
+  }) |> do.call(rbind, args = _)
+
+  knitr::kable(hooks_df, caption = paste0("All ", nrow(hooks_df), " hooks"))
+} else {
+  cat("*Hooks directory not found*")
+}
+```
 
 **Memory** — file-based persistence across conversations:
 
-| Type | Purpose |
-|------|---------|
-| `user` | Role, preferences, knowledge level |
-| `feedback` | Corrections and confirmed approaches |
-| `project` | Ongoing work, goals, deadlines |
-| `reference` | Pointers to external systems |
+```{r memory-table}
+memory_dir <- file.path(path.expand("~/.claude"), "memory")
+if (dir.exists(memory_dir)) {
+  memory_files <- list.files(memory_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
+
+  memory_df <- lapply(memory_files, function(f) {
+    lines <- readLines(f, warn = FALSE, n = 10)
+    name <- tools::file_path_sans_ext(basename(f))
+
+    # Extract first meaningful line as purpose
+    desc_lines <- lines[!grepl("^#|^$|^---$", lines)]
+    purpose <- if (length(desc_lines) > 0) {
+      desc <- trimws(desc_lines[1])
+      if (nchar(desc) > 50) paste0(substr(desc, 1, 47), "...") else desc
+    } else {
+      ""
+    }
+
+    data.frame(File = paste0("`", name, "`"), Purpose = purpose, stringsAsFactors = FALSE)
+  }) |> do.call(rbind, args = _)
+
+  knitr::kable(memory_df, caption = paste0("All ", nrow(memory_df), " memory files"))
+} else {
+  cat("*Memory directory not found*")
+}
+```
 
 :::
 

@@ -3,7 +3,7 @@ title: "Knowledge Base Evolution Dashboard"
 format:
   html:
     page-layout: full
-    toc: true
+    toc: false
 execute:
   echo: false
   warning: false
@@ -15,8 +15,6 @@ library(dplyr)
 library(ggplot2)
 library(scales)
 library(gt)
-library(DBI)
-library(duckdb)
 
 theme_dashboard <- theme_minimal(base_size = 14) +
   theme(
@@ -26,33 +24,73 @@ theme_dashboard <- theme_minimal(base_size = 14) +
     plot.title = element_text(face = "bold")
   )
 
-# Load knowledge pulse data
+# Try to load from local pulse data
 kb_dir <- path.expand("~/.claude/logs/knowledge")
 parquet_files <- list.files(kb_dir, pattern = "\\.parquet$", full.names = TRUE)
 
-if (length(parquet_files) > 0) {
-  con <- dbConnect(duckdb())
-  on.exit(dbDisconnect(con, shutdown = TRUE))
-
-  kb_data <- dbGetQuery(con, sprintf(
-    "SELECT * FROM read_parquet('%s/*.parquet')",
-    kb_dir
-  )) |>
-    mutate(
-      snapshot_date = as.Date(snapshot_date),
-      value = as.numeric(value)
-    )
-} else {
-  kb_data <- NULL
+kb_data <- NULL
+if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requireNamespace("duckdb", quietly = TRUE)) {
+  tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb())
+    kb_data <- DBI::dbGetQuery(con, sprintf(
+      "SELECT * FROM read_parquet('%s/*.parquet')",
+      kb_dir
+    )) |>
+      mutate(
+        snapshot_date = as.Date(snapshot_date),
+        value = as.numeric(value)
+      )
+    DBI::dbDisconnect(con, shutdown = TRUE)
+  }, error = function(e) NULL)
 }
 
-# Load edge list for network visualization
-today <- Sys.Date()
-edge_file <- file.path(kb_dir, paste0(today, "_edges.csv"))
-if (file.exists(edge_file)) {
-  edges <- read.csv(edge_file, stringsAsFactors = FALSE)
-} else {
-  edges <- NULL
+# Fallback: count files directly
+kb_path <- path.expand("~/docs_gh/llm/knowledge")
+wiki_dir <- file.path(kb_path, "wiki")
+raw_dir <- file.path(kb_path, "raw")
+
+if (is.null(kb_data)) {
+  # Wiki pages
+  if (dir.exists(wiki_dir)) {
+    wiki_files <- list.files(wiki_dir, pattern = "\\.md$", full.names = TRUE)
+    n_pages <- length(wiki_files)
+
+    # Count words per page
+    page_words <- sapply(wiki_files, function(f) {
+      content <- paste(readLines(f, warn = FALSE), collapse = " ")
+      length(strsplit(content, "\\s+")[[1]])
+    })
+
+    # Check for sources and AI-inferred
+    with_sources <- sum(sapply(wiki_files, function(f) {
+      any(grepl("^## Sources", readLines(f, warn = FALSE)))
+    }))
+    ai_inferred <- sum(sapply(wiki_files, function(f) {
+      sum(grepl("AI-inferred", readLines(f, warn = FALSE)))
+    }))
+  } else {
+    n_pages <- 0
+    page_words <- numeric(0)
+    with_sources <- 0
+    ai_inferred <- 0
+  }
+
+  # Raw sources
+  if (dir.exists(raw_dir)) {
+    raw_files <- list.files(raw_dir, recursive = TRUE)
+    n_sources <- length(raw_files)
+  } else {
+    n_sources <- 0
+  }
+
+  fallback_kb <- list(
+    n_pages = n_pages,
+    n_sources = n_sources,
+    provenance_pct = if (n_pages > 0) round(with_sources * 100 / n_pages) else 0,
+    ai_inferred = ai_inferred,
+    page_words = page_words,
+    with_sources = with_sources
+  )
 }
 ```
 
@@ -68,10 +106,10 @@ Track the evolution of the knowledge base: wiki pages, raw sources, confidence l
 #| results: asis
 if (!is.null(kb_data)) {
   latest <- kb_data |> filter(snapshot_date == max(snapshot_date))
-  n_pages <- latest |> filter(category == "wiki", item == "all", metric == "page_count") |> pull(value)
-  cat("####", n_pages)
+  n <- latest |> filter(category == "wiki", item == "all", metric == "page_count") |> pull(value)
+  cat("####", n)
 } else {
-  cat("#### No data")
+  cat("####", fallback_kb$n_pages)
 }
 ```
 :::
@@ -81,22 +119,23 @@ if (!is.null(kb_data)) {
 ```{r}
 #| results: asis
 if (!is.null(kb_data)) {
-  n_sources <- latest |> filter(category == "raw", item == "all", metric == "source_count") |> pull(value)
-  cat("####", n_sources)
+  n <- latest |> filter(category == "raw", item == "all", metric == "source_count") |> pull(value)
+  cat("####", n)
 } else {
-  cat("#### No data")
+  cat("####", fallback_kb$n_sources)
 }
 ```
 :::
+
 ::: {.g-col-3}
 ### Provenance %
 ```{r}
 #| results: asis
 if (!is.null(kb_data)) {
-  prov_pct <- latest |> filter(category == "wiki", item == "all", metric == "provenance_pct") |> pull(value)
-  cat("####", prov_pct, "%")
+  n <- latest |> filter(category == "wiki", item == "all", metric == "provenance_pct") |> pull(value)
+  cat("####", n, "%")
 } else {
-  cat("#### No data")
+  cat("####", fallback_kb$provenance_pct, "%")
 }
 ```
 :::
@@ -106,22 +145,24 @@ if (!is.null(kb_data)) {
 ```{r}
 #| results: asis
 if (!is.null(kb_data)) {
-  n_ai <- latest |> filter(category == "wiki", item == "all", metric == "ai_inferred_markers") |> pull(value)
-  cat("####", n_ai, "markers")
+  n <- latest |> filter(category == "wiki", item == "all", metric == "ai_inferred_markers") |> pull(value)
+  cat("####", n, "markers")
 } else {
-  cat("#### No data")
+  cat("####", fallback_kb$ai_inferred, "markers")
 }
 ```
 :::
 
 :::
 
-## Confidence Distribution
+::: {.panel-tabset}
+
+## Confidence
 
 ```{r confidence-chart}
 #| fig-width: 8
 #| fig-height: 4
-#| fig-alt: "Stacked bar showing confidence distribution: fully sourced, partial, unsourced"
+#| fig-alt: "Stacked bar showing confidence distribution"
 
 if (!is.null(kb_data)) {
   confidence <- latest |>
@@ -153,14 +194,30 @@ if (!is.null(kb_data)) {
       fill = "Confidence"
     ) +
     theme_dashboard +
-    theme(
-      axis.text.y = element_blank(),
-      axis.ticks.y = element_blank()
-    )
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+} else {
+  # Fallback: categorize pages
+  n_with_src <- fallback_kb$with_sources
+  n_ai <- if (fallback_kb$ai_inferred > 0) min(fallback_kb$ai_inferred, fallback_kb$n_pages - n_with_src) else 0
+  n_unsourced <- fallback_kb$n_pages - n_with_src
+
+  tibble(
+    label = factor(c("With Sources", "Unsourced"),
+                   levels = c("With Sources", "Unsourced")),
+    value = c(n_with_src, n_unsourced)
+  ) |>
+    ggplot(aes(x = "Pages", y = value, fill = label)) +
+    geom_col(width = 0.6) +
+    geom_text(aes(label = value), position = position_stack(vjust = 0.5), size = 5, color = "white") +
+    scale_fill_manual(values = c("With Sources" = "#69d4a0", "Unsourced" = "#f08080")) +
+    coord_flip() +
+    labs(title = "Knowledge Base Quality", x = NULL, y = "Pages", fill = "Status") +
+    theme_dashboard +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
 }
 ```
 
-## Wiki Pages by Size
+## Wiki Pages
 
 ```{r wiki-pages-table}
 if (!is.null(kb_data)) {
@@ -171,26 +228,31 @@ if (!is.null(kb_data)) {
   if (nrow(wiki_pages) > 0) {
     wiki_pages |>
       gt() |>
-      cols_label(
-        item = "Page",
-        value = "Words"
-      ) |>
+      cols_label(item = "Page", value = "Words") |>
       cols_hide(c(snapshot_date, category, metric)) |>
-      data_color(
-        columns = value,
-        palette = "Blues"
-      ) |>
-      tab_header(
-        title = "Wiki Pages",
-        subtitle = "Sorted by word count"
-      )
+      data_color(columns = value, palette = "Blues") |>
+      tab_header(title = "Wiki Pages", subtitle = "Sorted by word count")
+  } else {
+    cat("*No wiki pages found*")
+  }
+} else {
+  if (length(fallback_kb$page_words) > 0) {
+    tibble(
+      page = basename(names(fallback_kb$page_words)) |> tools::file_path_sans_ext(),
+      words = as.integer(fallback_kb$page_words)
+    ) |>
+      arrange(desc(words)) |>
+      gt() |>
+      cols_label(page = "Page", words = "Words") |>
+      data_color(columns = words, palette = "Blues") |>
+      tab_header(title = "Wiki Pages", subtitle = "Sorted by word count")
   } else {
     cat("*No wiki pages found*")
   }
 }
 ```
 
-## Raw Sources Summary
+## Raw Sources
 
 ```{r raw-sources}
 if (!is.null(kb_data)) {
@@ -212,44 +274,24 @@ if (!is.null(kb_data)) {
     cols_label(label = "Metric", value = "Value") |>
     fmt_number(columns = value, decimals = 0, use_seps = TRUE) |>
     tab_header(title = "Raw Sources")
-}
-```
-
-## Topic Network
-
-```{r topic-network}
-#| fig-width: 8
-#| fig-height: 6
-#| fig-alt: "Network graph showing wiki page connections via wiki-links"
-
-if (!is.null(edges) && nrow(edges) > 1) {
-  # Simple network visualization using igraph if available
-  if (requireNamespace("igraph", quietly = TRUE) &&
-      requireNamespace("ggraph", quietly = TRUE)) {
-
-    g <- igraph::graph_from_data_frame(edges, directed = TRUE)
-
-    ggraph::ggraph(g, layout = "fr") +
-      ggraph::geom_edge_link(alpha = 0.4, arrow = arrow(length = unit(3, "mm"))) +
-      ggraph::geom_node_point(size = 8, color = "#4ea8de") +
-      ggraph::geom_node_text(aes(label = name), repel = TRUE, size = 4) +
-      labs(title = "Wiki Topic Network") +
-      theme_void() +
-      theme(plot.title = element_text(face = "bold", hjust = 0.5))
-  } else {
-    cat("*Install `igraph` and `ggraph` packages for network visualization.*")
-  }
 } else {
-  cat("*No wiki-links found. Add `[[topic]]` links between wiki pages to build the network.*")
+  tibble(
+    label = c("Total Sources"),
+    value = c(fallback_kb$n_sources)
+  ) |>
+    gt() |>
+    cols_label(label = "Metric", value = "Value") |>
+    fmt_number(columns = value, decimals = 0, use_seps = TRUE) |>
+    tab_header(title = "Raw Sources")
 }
 ```
 
-## Evolution Over Time
+## Evolution
 
 ```{r evolution-chart}
 #| fig-width: 10
 #| fig-height: 5
-#| fig-alt: "Line chart showing knowledge base growth over time"
+#| fig-alt: "Line chart showing knowledge base growth"
 
 if (!is.null(kb_data) && n_distinct(kb_data$snapshot_date) > 1) {
   kb_data |>
@@ -263,36 +305,27 @@ if (!is.null(kb_data) && n_distinct(kb_data$snapshot_date) > 1) {
         metric == "source_count" ~ "Raw Sources",
         metric == "word_count" ~ "Total Words (÷100)"
       ),
-      # Scale word count for visibility
       value = if_else(metric == "word_count", value / 100, value)
     ) |>
     ggplot(aes(x = snapshot_date, y = value, color = label)) +
     geom_line(linewidth = 1.2) +
     geom_point(size = 3) +
     scale_color_viridis_d(option = "plasma", end = 0.85) +
-    labs(
-      title = "Knowledge Base Growth",
-      x = NULL,
-      y = "Count",
-      color = "Metric"
-    ) +
+    labs(title = "Knowledge Base Growth", x = NULL, y = "Count", color = "Metric") +
     theme_dashboard
 } else {
-  cat("*Need multiple snapshots to show evolution. Run `knowledge_pulse.sh` daily.*")
+  cat("*Run `~/.claude/scripts/knowledge_pulse.sh` daily to collect time-series data.*
+
+Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw sources")
 }
 ```
 
+:::
+
 ---
 
-## Data Collection
+**Data Collection:** Run `~/.claude/scripts/knowledge_pulse.sh` daily for snapshots.
 
-Run the knowledge pulse script daily to collect snapshots:
-```bash
-~/.claude/scripts/knowledge_pulse.sh
-```
-
-Data is stored in `~/.claude/logs/knowledge/` as Parquet files.
-
-**Privacy Note:** The knowledge base is local-only. This dashboard shows metrics only, not content.
+**Privacy:** Knowledge base is local-only. This dashboard shows metrics, not content.
 
 *Last updated: `r Sys.time()`*

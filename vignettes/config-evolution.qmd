@@ -3,7 +3,7 @@ title: "Global Config Evolution Dashboard"
 format:
   html:
     page-layout: full
-    toc: true
+    toc: false
 execute:
   echo: false
   warning: false
@@ -15,8 +15,6 @@ library(dplyr)
 library(ggplot2)
 library(scales)
 library(gt)
-library(DBI)
-library(duckdb)
 
 # Theme for dark mode compatibility
 theme_dashboard <- theme_minimal(base_size = 14) +
@@ -27,25 +25,89 @@ theme_dashboard <- theme_minimal(base_size = 14) +
     plot.title = element_text(face = "bold")
   )
 
-# Load config pulse data
+# Try to load from local pulse data, otherwise count files directly
 config_dir <- path.expand("~/.claude/logs/config")
 parquet_files <- list.files(config_dir, pattern = "\\.parquet$", full.names = TRUE)
 
-if (length(parquet_files) > 0) {
-  con <- dbConnect(duckdb())
-  on.exit(dbDisconnect(con, shutdown = TRUE))
+config_data <- NULL
+if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requireNamespace("duckdb", quietly = TRUE)) {
+  tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb())
+    config_data <- DBI::dbGetQuery(con, sprintf(
+      "SELECT * FROM read_parquet('%s/*.parquet')",
+      config_dir
+    )) |>
+      mutate(
+        snapshot_date = as.Date(snapshot_date),
+        value = as.numeric(value)
+      )
+    DBI::dbDisconnect(con, shutdown = TRUE)
+  }, error = function(e) NULL)
+}
 
-  # Read all parquet files
-  config_data <- dbGetQuery(con, sprintf(
-    "SELECT * FROM read_parquet('%s/*.parquet')",
-    config_dir
-  )) |>
-    mutate(
-      snapshot_date = as.Date(snapshot_date),
-      value = as.numeric(value)
-    )
-} else {
-  config_data <- NULL
+# Fallback: count files directly (works in CI)
+if (is.null(config_data)) {
+  claude_dir <- path.expand("~/.claude")
+
+  # Count rules
+  rules_dir <- file.path(claude_dir, "rules")
+  if (dir.exists(rules_dir)) {
+    rule_files <- list.files(rules_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
+    n_rules <- length(rule_files)
+    rule_lines <- sapply(rule_files, function(f) length(readLines(f, warn = FALSE)))
+  } else {
+    n_rules <- 0
+    rule_lines <- numeric(0)
+  }
+
+ # Count skills
+  skills_dir <- file.path(claude_dir, "skills")
+  if (dir.exists(skills_dir)) {
+    skill_dirs <- list.dirs(skills_dir, recursive = FALSE)
+    n_skills <- length(skill_dirs)
+    skill_files <- list.files(skills_dir, pattern = "SKILL\\.md$", full.names = TRUE, recursive = TRUE)
+    skill_lines <- sapply(skill_files, function(f) length(readLines(f, warn = FALSE)))
+  } else {
+    n_skills <- 0
+    skill_lines <- numeric(0)
+  }
+
+  # Count hooks
+  hooks_dir <- file.path(claude_dir, "hooks")
+  if (dir.exists(hooks_dir)) {
+    hook_files <- list.files(hooks_dir, pattern = "\\.sh$", full.names = TRUE)
+    n_hooks <- length(hook_files)
+    hook_lines <- sapply(hook_files, function(f) length(readLines(f, warn = FALSE)))
+  } else {
+    n_hooks <- 0
+    hook_lines <- numeric(0)
+  }
+
+  # Estimate total tokens
+  all_files <- c(
+    list.files(claude_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE),
+    list.files(claude_dir, pattern = "\\.sh$", full.names = TRUE, recursive = TRUE)
+  )
+  all_files <- all_files[!grepl("/logs/", all_files)]
+  total_bytes <- sum(file.info(all_files)$size, na.rm = TRUE)
+  total_tokens <- round(total_bytes / 4)
+
+  # Create summary
+  fallback_counts <- list(
+    n_rules = n_rules,
+    n_skills = n_skills,
+    n_hooks = n_hooks,
+    total_tokens = total_tokens,
+    rule_lines = rule_lines,
+    skill_lines = skill_lines,
+    hook_lines = hook_lines,
+    total_rule_lines = sum(rule_lines),
+    total_skill_lines = sum(skill_lines),
+    total_hook_lines = sum(hook_lines),
+    rules_over_150 = sum(rule_lines > 150),
+    avg_rule_lines = if (n_rules > 0) round(mean(rule_lines)) else 0,
+    avg_skill_lines = if (n_skills > 0) round(mean(skill_lines)) else 0
+  )
 }
 ```
 
@@ -61,10 +123,10 @@ Track the evolution of Claude Code global configuration: rules, skills, agents, 
 #| results: asis
 if (!is.null(config_data)) {
   latest <- config_data |> filter(snapshot_date == max(snapshot_date))
-  n_rules <- latest |> filter(category == "rules", item == "all", metric == "count") |> pull(value)
-  cat("####", n_rules)
+  n <- latest |> filter(category == "rules", item == "all", metric == "count") |> pull(value)
+  cat("####", n)
 } else {
-  cat("#### No data")
+  cat("####", fallback_counts$n_rules)
 }
 ```
 :::
@@ -74,10 +136,10 @@ if (!is.null(config_data)) {
 ```{r}
 #| results: asis
 if (!is.null(config_data)) {
-  n_skills <- latest |> filter(category == "skills", item == "all", metric == "count") |> pull(value)
-  cat("####", n_skills)
+  n <- latest |> filter(category == "skills", item == "all", metric == "count") |> pull(value)
+  cat("####", n)
 } else {
-  cat("#### No data")
+  cat("####", fallback_counts$n_skills)
 }
 ```
 :::
@@ -87,10 +149,10 @@ if (!is.null(config_data)) {
 ```{r}
 #| results: asis
 if (!is.null(config_data)) {
-  n_hooks <- latest |> filter(category == "hooks", item == "all", metric == "count") |> pull(value)
-  cat("####", n_hooks)
+  n <- latest |> filter(category == "hooks", item == "all", metric == "count") |> pull(value)
+  cat("####", n)
 } else {
-  cat("#### No data")
+  cat("####", fallback_counts$n_hooks)
 }
 ```
 :::
@@ -100,22 +162,24 @@ if (!is.null(config_data)) {
 ```{r}
 #| results: asis
 if (!is.null(config_data)) {
-  total_tokens <- latest |> filter(category == "total", metric == "tokens_estimate") |> pull(value)
-  cat("####", comma(total_tokens))
+  n <- latest |> filter(category == "total", metric == "tokens_estimate") |> pull(value)
+  cat("####", comma(n))
 } else {
-  cat("#### No data")
+  cat("####", comma(fallback_counts$total_tokens))
 }
 ```
 :::
 
 :::
 
+::: {.panel-tabset}
+
 ## Size Distribution
 
 ```{r size-distribution}
 #| fig-width: 10
 #| fig-height: 6
-#| fig-alt: "Stacked bar chart showing line counts by category: rules, skills, hooks, scripts"
+#| fig-alt: "Bar chart showing line counts by category: rules, skills, hooks"
 
 if (!is.null(config_data)) {
   latest |>
@@ -138,10 +202,30 @@ if (!is.null(config_data)) {
     ) +
     theme_dashboard +
     theme(legend.position = "none")
+} else {
+  # Fallback chart
+  tibble(
+    category = c("skills", "rules", "hooks"),
+    value = c(fallback_counts$total_skill_lines, fallback_counts$total_rule_lines, fallback_counts$total_hook_lines)
+  ) |>
+    mutate(category = factor(category, levels = c("skills", "rules", "hooks"))) |>
+    ggplot(aes(x = category, y = value, fill = category)) +
+    geom_col() +
+    geom_text(aes(label = comma(value)), vjust = -0.5, size = 4) +
+    scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+    scale_fill_viridis_d(option = "plasma", end = 0.85) +
+    labs(
+      title = "Config Size by Category",
+      subtitle = paste("Live count:", Sys.Date()),
+      x = NULL,
+      y = "Lines of Code"
+    ) +
+    theme_dashboard +
+    theme(legend.position = "none")
 }
 ```
 
-## Top Rules by Size
+## Top Rules
 
 ```{r top-rules}
 if (!is.null(config_data)) {
@@ -172,10 +256,36 @@ if (!is.null(config_data)) {
       title = "Largest Rules",
       subtitle = "Threshold: 150 lines (per CLAUDE.md)"
     )
+} else {
+  # Fallback table from direct file counts
+  tibble(
+    rule = basename(names(fallback_counts$rule_lines)) |> tools::file_path_sans_ext(),
+    lines = as.integer(fallback_counts$rule_lines)
+  ) |>
+    arrange(desc(lines)) |>
+    head(15) |>
+    mutate(
+      status = case_when(
+        lines > 150 ~ "Over threshold",
+        lines > 100 ~ "Warning",
+        TRUE ~ "OK"
+      )
+    ) |>
+    gt() |>
+    cols_label(rule = "Rule", lines = "Lines", status = "Status") |>
+    data_color(
+      columns = lines,
+      palette = c("#69d4a0", "#ffd93d", "#f08080"),
+      domain = c(0, 200)
+    ) |>
+    tab_header(
+      title = "Largest Rules",
+      subtitle = "Threshold: 150 lines"
+    )
 }
 ```
 
-## Top Skills by Size
+## Top Skills
 
 ```{r top-skills}
 if (!is.null(config_data)) {
@@ -196,6 +306,17 @@ if (!is.null(config_data)) {
     tab_header(
       title = "Largest Skills"
     )
+} else {
+  tibble(
+    skill = basename(dirname(names(fallback_counts$skill_lines))),
+    lines = as.integer(fallback_counts$skill_lines)
+  ) |>
+    arrange(desc(lines)) |>
+    head(15) |>
+    gt() |>
+    cols_label(skill = "Skill", lines = "Lines") |>
+    data_color(columns = lines, palette = "Blues") |>
+    tab_header(title = "Largest Skills")
 }
 ```
 
@@ -228,15 +349,25 @@ if (!is.null(config_data)) {
     gt() |>
     cols_label(label = "Metric", value = "Value") |>
     fmt_number(columns = value, decimals = 0, use_seps = TRUE)
+} else {
+  tibble(
+    label = c("Total Rules", "Avg Rule Size (lines)", "Rules Over Threshold",
+              "Total Skills", "Avg Skill Size (lines)", "Total Config Tokens"),
+    value = c(fallback_counts$n_rules, fallback_counts$avg_rule_lines, fallback_counts$rules_over_150,
+              fallback_counts$n_skills, fallback_counts$avg_skill_lines, fallback_counts$total_tokens)
+  ) |>
+    gt() |>
+    cols_label(label = "Metric", value = "Value") |>
+    fmt_number(columns = value, decimals = 0, use_seps = TRUE)
 }
 ```
 
-## Evolution Over Time
+## Evolution
 
 ```{r evolution-chart}
 #| fig-width: 10
 #| fig-height: 5
-#| fig-alt: "Line chart showing config evolution over time with separate lines for rules, skills, hooks"
+#| fig-alt: "Line chart showing config evolution over time"
 
 if (!is.null(config_data) && n_distinct(config_data$snapshot_date) > 1) {
   config_data |>
@@ -257,20 +388,16 @@ if (!is.null(config_data) && n_distinct(config_data$snapshot_date) > 1) {
     ) +
     theme_dashboard
 } else {
-  cat("*Need multiple snapshots to show evolution. Run `config_pulse.sh` daily.*")
+  cat("*Run `~/.claude/scripts/config_pulse.sh` daily to collect time-series data.*
+
+Current counts: ", fallback_counts$n_rules, " rules, ", fallback_counts$n_skills, " skills, ", fallback_counts$n_hooks, " hooks")
 }
 ```
 
+:::
+
 ---
 
-## Data Collection
-
-Run the config pulse script daily to collect snapshots:
-
-```bash
-~/.claude/scripts/config_pulse.sh
-```
-
-Data is stored in `~/.claude/logs/config/` as Parquet files.
+**Data Collection:** Run `~/.claude/scripts/config_pulse.sh` daily to collect snapshots stored in `~/.claude/logs/config/`.
 
 *Last updated: `r Sys.time()`*
