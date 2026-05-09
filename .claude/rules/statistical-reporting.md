@@ -41,6 +41,22 @@ When testing >1 hypothesis on the same data, MUST adjust p-values:
 
 **FORBIDDEN:** Reporting unadjusted p-values from multiple tests without disclosure.
 
+### FPR vs FDR: Know the Difference
+
+| Metric | Definition | Controls | Use When |
+|--------|-----------|----------|----------|
+| **FPR** (False Positive Rate) | P(reject H₀ \| H₀ true) = α | Type I error per test | Single pre-specified test |
+| **FWER** (Family-Wise Error Rate) | P(≥1 false positive) | Any false positive across all tests | Few tests, conservative |
+| **FDR** (False Discovery Rate) | E[false positives / rejections] | Proportion of false discoveries | Many tests, discovery phase |
+
+**Decision rule:**
+- **1 test:** Report raw p-value + FPR (Section 8)
+- **2-10 tests:** Use Holm (FWER control)
+- **10+ tests:** Use BH (FDR control)
+- **Backtesting N strategies:** Effective test count = N × (parameter combinations) × (time periods). Use FDR.
+
+**Backtest trap:** Testing 50 strategies on same data = 50 tests. At α=0.05, expect ~2.5 false positives even if ALL strategies are null. BH adjustment required.
+
 ## 3. Numeric Precision (MANDATORY)
 
 | Statistic | Decimal Places | Example |

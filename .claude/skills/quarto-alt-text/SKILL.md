@@ -88,6 +88,31 @@ Together they should give a complete understanding to any reader.
 
 **Exclude:** "Image of..." or "Chart showing..." (screen readers announce this), decorative color descriptions, information already in fig-cap, implementation details.
 
+## Hover Alt Text (Astrobites Pattern)
+
+**Source:** [Secrets of Plots in Astro](https://astrobites.org/2026/04/17/secrets-of-plots-in-astro/)
+
+For sighted users, alt text can appear on hover via the `title` attribute. Use BOTH for maximum accessibility:
+
+```html
+<img src="plot.png"
+     alt="Scatter chart. X-axis shows time, Y-axis shows amplitude..."
+     title="Wave amplitude peaks at 14.2m during storm event">
+```
+
+In Quarto, add hover text via raw HTML wrapper or custom shortcode:
+
+```markdown
+::: {.hover-alt title="Peak wave height 14.2m at M6 buoy"}
+![Scatter chart showing wave heights...](plot.png){fig-alt="..."}
+:::
+```
+
+**When to use hover text:**
+- Key numeric values readers might want to copy
+- Quick summaries for sighted users who don't read full alt
+- Complementary info not in fig-cap or fig-alt
+
 ## Length Guidelines
 
 | Complexity | Sentences | When to use                                 |
