@@ -6,18 +6,32 @@ type: rule
 
 # Rule: Nix Nested Shell Isolation (All R Projects)
 
+## What R_LIBS_SITE Is (and Is Not)
+
+`R_LIBS_SITE` is R's **search path for pre-built package libraries** — it lists
+`/nix/store/.../library` directories so R can find packages. It is NOT an
+installation mechanism. All R packages are pre-built in the Nix store by
+`default.nix`; R_LIBS_SITE just tells R where to look.
+
+Nix sets this variable automatically when a shell is entered. The problem arises
+only when shells are **nested**.
+
 ## The Problem
 
 When `nix-shell default.nix --run "Rscript ..."` is called from inside an
 existing nix-shell (e.g. a global dev shell), the inner shell **inherits
-`R_LIBS_SITE`** from the outer shell. This variable contains hundreds of
-R package paths compiled against the *outer* R binary.
+`R_LIBS_SITE`** from the outer shell. That inherited value points to
+`/nix/store/` paths compiled against the **outer** R binary.
 
 The inner shell uses a *different* R binary (different nix store hash, even
 if same R version string). When R loads a compiled package (Rcpp, lme4, brms),
 the `.so` file was built for the outer R's ABI. The inner R's C runtime has
 different symbol addresses and struct layouts. Result: **segfault on first
 native call** (`dyn.load` → SIGSEGV).
+
+The shellHook fix **corrects contamination** — it discards the inherited outer
+paths and rebuilds R_LIBS_SITE from the inner shell's own closure. It does not
+install anything.
 
 This is NOT a date-pin issue. It happens even when both shells pin the same
 date, because `rix::rix()` generates a fresh derivation each time.
@@ -74,13 +88,25 @@ scratch. The inherited outer paths are discarded.
   that is already inside a nix-shell
 - Also applies when `default.sh` is called from inside another nix-shell
 
+## Fix Options (Choose One)
+
+| Option | How | Tradeoff |
+|--------|-----|----------|
+| **`--pure`** (Nix-idiomatic) | `nix-shell default.nix --pure --run "..."` | Strips ALL inherited env: clean R_LIBS_SITE but also loses `$HOME`, locale, SSH keys |
+| **Closure-rebuild shellHook** (this rule) | Add shellHook to `default.nix` | Keeps env; corrects R_LIBS_SITE; ~5s overhead on shell entry |
+| **`env -u R_LIBS_SITE`** at call site | `env -u R_LIBS_SITE nix-shell --run "..."` | Fragile — must be remembered on every call site |
+
+`--pure` is the correct Nix-idiomatic solution when the caller controls the
+call site. The shellHook is the right fix for agent invocations (where `--pure`
+can't be guaranteed) and for interactive use via `default.sh`.
+
 ## What NOT To Do
 
-- `env -u R_LIBS_SITE nix-shell --run "..."` — works but is fragile, must
-  be remembered every time, breaks when forgotten
-- `nix-shell --pure` — too aggressive, loses `$HOME`, `$PATH`, SSH keys
 - Ignoring segfaults and assuming "lme4/brms doesn't work in Nix" — it does,
-  the env var is the issue
+  the inherited env var is the issue
+- Reaching for `R_LIBS_SITE` manipulation thinking packages need to be "found"
+  at runtime — all packages are pre-built; the issue is exclusively about
+  which pre-built paths R is pointed at
 
 ## Verification
 
