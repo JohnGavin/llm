@@ -4,6 +4,39 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-09
+
+### Completed
+
+- **Fixed telemetry dashboard "No data" issue** (`6a7831c`):
+  - Root cause: ccusage files named `ccusage_daily.json` but code expected `ccusage_daily_all.json`
+  - Root cause: `load_cached_ccusage()` wasn't checking `system.file()` for installed package context
+  - Dashboard now shows: Today $34.36, Weekly $780.03
+- **Config evolution dashboard (#121)** (`11e46e9`):
+  - Created `config_pulse.sh` — captures rules (45), skills (68), hooks, agents, memory counts and sizes
+  - Created `config-evolution.qmd` — size distribution chart, top rules/skills tables, quality metrics
+  - Uses Parquet snapshots in `~/.claude/logs/config/`
+- **Knowledge base evolution dashboard (#122)** (`11e46e9`):
+  - Created `knowledge_pulse.sh` — captures wiki pages (4), raw sources (32), provenance (75%), AI-inferred markers
+  - Created `knowledge-evolution.qmd` — confidence distribution, topic network graph
+  - Extracts wiki-link graph edges for network visualization
+  - Privacy-safe: metrics only, no content
+- **Added "Dashboards" dropdown** to navbar with Config Evolution and Knowledge Base links
+
+### Metrics
+
+- **Issues closed**: #121, #122
+- **Config snapshot**: 45 rules (avg 95 lines, 4 over threshold), 68 skills (avg 263 lines), ~440K tokens total
+- **Knowledge base**: 4 wiki pages, 32 raw sources, 75% provenance coverage
+- **Commits this session**: 4 (`6a7831c`, `d35b054`, `77836b2`, `11e46e9`)
+
+### Known Limitations
+
+- Dashboards show "No data" on deployed site (data is local in `~/.claude/logs/`)
+- Need to run pulse scripts daily via launchd for time-series
+
+---
+
 ## 2026-05-08
 
 ### Completed
