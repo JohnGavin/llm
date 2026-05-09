@@ -75,27 +75,6 @@ jobs:
       - name: Install local package
         run: R CMD INSTALL .
 
-      - name: Debug ccusage data
-        run: |
-          Rscript -e "
-          cat('=== ccusage data debug ===\n')
-          pkg_dir <- system.file('extdata', package = 'llm')
-          cat('Package extdata dir:', pkg_dir, '\n')
-          cat('Dir exists:', dir.exists(pkg_dir), '\n')
-          if (dir.exists(pkg_dir)) {
-            cat('Files in extdata:\n')
-            print(list.files(pkg_dir, pattern = 'ccusage'))
-          }
-          cat('Testing load_cached_ccusage:\n')
-          data <- llm::load_cached_ccusage('daily')
-          if (is.null(data)) {
-            cat('DATA IS NULL\n')
-          } else {
-            cat('Rows:', nrow(data), '\n')
-            cat('Date range:', as.character(min(data\$date)), 'to', as.character(max(data\$date)), '\n')
-          }
-          "
-
       - name: Render Quarto site
         run: |
           # Show R paths for debugging
