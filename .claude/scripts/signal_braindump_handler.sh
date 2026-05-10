@@ -38,13 +38,13 @@ touch "$PROCESSED_LOG"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG"; }
 
-# Check daemon is running
-if ! curl -sf "$SIGNAL_HTTP/api/v1/about" >/dev/null 2>&1; then
+# Check daemon is running (check if port is listening, not HTTP API which returns 404)
+if ! /usr/sbin/lsof -i :7583 -sTCP:LISTEN >/dev/null 2>&1; then
   # Daemon not running — fall back to direct receive
-  log "Daemon not available, falling back to direct receive"
+  log "Daemon not listening on 7583, falling back to direct receive"
   export JAVA_HOME="/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
   export PATH="$JAVA_HOME/bin:/opt/homebrew/bin:$PATH"
-  SIGNAL_CLI="/opt/homebrew/Cellar/signal-cli/0.14.2/libexec/bin/signal-cli"
+  SIGNAL_CLI="/opt/homebrew/Cellar/signal-cli/0.14.3_1/bin/signal-cli"
   MESSAGES=$(timeout 30 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive 2>/dev/null || echo "")
   if [ -z "$MESSAGES" ]; then
     # Still process any unprocessed audio files
