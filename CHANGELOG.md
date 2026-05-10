@@ -4,6 +4,28 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-10
+
+### Completed
+
+- **Signal-cli daemon detection fixed**:
+  - Upgraded signal-cli 0.14.2 → 0.14.3_1 (directory structure changed)
+  - Changed daemon detection from HTTP API check (`curl /api/v1/about`) to port listening (`lsof -i :7583`) — HTTP endpoint returns 404 in single-account mode by design
+  - Updated both `signal_braindump_handler.sh` and launchd plist
+- **Braindumps processed**: Completed actions #32, #33; recovered failed transcription (WWdo0ZaZ4wkyNAguRGSC.aac)
+- **Statistical guardrails gap analysis** (#125): Documented missing probabilistic guardrails (semantic drift z-scores, Shannon entropy thresholding) vs our 45 deterministic rules
+
+### Metrics
+
+- **Issues created**: #125 (statistical guardrails)
+- **Braindump actions completed**: 2
+
+### Known Limitations
+
+- Comic→video pipeline plan discussed but not persisted to file (recreated on request)
+
+---
+
 ## 2026-05-09
 
 ### Completed
