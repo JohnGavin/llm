@@ -4,22 +4,43 @@ plan_vignette_closeread <- function() {
     tar_target(
       vig_cr_infra_counts,
       tryCatch({
+        claude_dir <- path.expand("~/.claude")
+
+        # Count skills from MANIFEST.md (authoritative source)
+        manifest_path <- file.path(claude_dir, "skills", "MANIFEST.md")
+        n_skills <- if (file.exists(manifest_path)) {
+          lines <- readLines(manifest_path, warn = FALSE)
+          skill_lines <- grep("^\\|", lines)
+          # Exclude header and separator rows
+          skill_lines <- skill_lines[!grepl("^\\| Skill|^\\|---", lines[skill_lines])]
+          length(skill_lines)
+        } else {
+          # Fallback: count directories only (exclude .md files)
+          dirs <- list.dirs(file.path(claude_dir, "skills"),
+                           recursive = FALSE, full.names = FALSE)
+          length(dirs)
+        }
+
         list(
-          n_rules    = length(list.files("~/.claude/rules", pattern = "\\.md$")),
-          n_skills   = length(list.files("~/.claude/skills", full.names = FALSE)),
-          n_agents   = length(list.files("~/.claude/agents", pattern = "\\.md$")),
-          n_hooks    = length(list.files("~/.claude/hooks", pattern = "\\.sh$")),
-          n_commands = length(list.files("~/.claude/commands", pattern = "\\.md$")),
+          n_rules    = length(list.files(file.path(claude_dir, "rules"),
+                                         pattern = "\\.md$", recursive = TRUE)),
+          n_skills   = n_skills,
+          n_agents   = length(list.files(file.path(claude_dir, "agents"),
+                                         pattern = "\\.md$", recursive = TRUE)),
+          n_hooks    = length(list.files(file.path(claude_dir, "hooks"),
+                                         pattern = "\\.sh$")),
+          n_commands = length(list.files(file.path(claude_dir, "commands"),
+                                         pattern = "\\.md$", recursive = TRUE)),
           n_memory   = length(list.files(
-            "~/.claude/projects/-Users-johngavin-docs-gh-llm/memory",
+            file.path(claude_dir, "projects", "-Users-johngavin-docs-gh-llm", "memory"),
             pattern = "\\.md$"
           ))
         )
       }, error = function(e) {
         cli::cli_warn("vig_cr_infra_counts fallback: {conditionMessage(e)}")
         list(
-          n_rules = 58L, n_skills = 68L, n_agents = 12L,
-          n_hooks = 7L, n_commands = 14L, n_memory = 14L
+          n_rules = 45L, n_skills = 72L, n_agents = 12L,
+          n_hooks = 8L, n_commands = 14L, n_memory = 14L
         )
       }),
       packages = c("cli"),
@@ -274,27 +295,43 @@ plan_vignette_closeread <- function() {
       cue = tar_cue(mode = "always")
     ),
 
-    # 10. Skill categories — hardcoded from CLAUDE.md table (stable)
+    # 10. Skill categories — parsed from MANIFEST.md
     tar_target(
       vig_cr_skill_categories,
       tryCatch({
+        manifest_path <- path.expand("~/.claude/skills/MANIFEST.md")
+        lines <- readLines(manifest_path, warn = FALSE)
+
+        # Extract table rows (excluding header and separator)
+        skill_rows <- grep("^\\|", lines, value = TRUE)
+        skill_rows <- skill_rows[!grepl("^\\| Skill|^\\|---", skill_rows)]
+
+        # Parse category from each row (3rd column)
+        categories <- vapply(skill_rows, function(row) {
+          parts <- strsplit(row, "\\|")[[1]]
+          if (length(parts) >= 3) trimws(parts[3]) else NA_character_
+        }, character(1), USE.NAMES = FALSE)
+
+        # Count by category and add mandatory flag
+        category_counts <- table(categories)
         tibble::tibble(
-          category  = c(
-            "Mandatory", "R Package Dev", "Data & Analysis",
-            "Targets & Pipelines", "Shiny & Web", "Quarto & Documentation",
-            "Prose Quality", "DevOps & CI", "Project Management",
-            "AI/LLM Tools", "Specialized"
-          ),
-          count     = c(8L, 15L, 10L, 4L, 8L, 6L, 1L, 3L, 8L, 5L, 1L),
-          mandatory = c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
-        )
+          category  = names(category_counts),
+          count     = as.integer(category_counts),
+          mandatory = category == "Mandatory"
+        ) |>
+          dplyr::arrange(dplyr::desc(mandatory), dplyr::desc(count))
       }, error = function(e) {
         cli::cli_warn("vig_cr_skill_categories fallback: {conditionMessage(e)}")
         tibble::tibble(
-          category  = "Unknown", count = 0L, mandatory = FALSE
+          category  = c("Mandatory", "R Package Dev", "Data & Analysis",
+                       "Project Mgmt", "Shiny & Web", "Quarto & Docs",
+                       "AI/LLM Tools", "Targets & Pipelines", "DevOps & CI",
+                       "Prose Quality", "Specialized"),
+          count     = c(10L, 12L, 11L, 9L, 8L, 7L, 5L, 4L, 3L, 1L, 1L),
+          mandatory = c(TRUE, rep(FALSE, 10))
         )
       }),
-      packages = c("tibble", "cli")
+      packages = c("tibble", "dplyr", "cli")
     ),
 
     # 11. Agent tiers — parse YAML frontmatter from ~/.claude/agents/*.md
