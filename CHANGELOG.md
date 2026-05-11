@@ -4,6 +4,47 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-11 (Session 3)
+
+### Completed
+
+- **Pattern detection hooks integrated** (Phase 1 validation, Option 4 Hybrid):
+  - `session_stop.sh`: detects repeated workflows via Opus API, prompts `/skillify` at session end
+  - `session_init.sh`: Phase 13b auto-runs pending skillify from previous session flag
+
+- **QA improvements #139-142**:
+  - `plan_qa_gates.R` (new): targets plan — greps all `docs/*.html` for error patterns before deploy (#139)
+  - `_targets.R`: `plan_qa_gates()` added to pipeline
+  - `closeread-infrastructure.qmd`: 4× "*X directory not found*" replaced with empty kable tables (#140)
+  - `index.qmd`: `####` markdown leaks fixed with `knitr::asis_output()`, weekly trend and issue breakdown now proper tables (#141)
+  - `closeread-config.qmd`: 6 key terms bolded with links — CLAUDE.md, Rules, Skills, Agents, Hooks, Memory (#142)
+
+### Failed Approaches
+
+None this session.
+
+### Metrics
+
+- **Commits**: 3 (hooks integration, QA fixes, cleanup)
+- **Issues addressed**: #139, #140, #141, #142 (all 4 from previous session)
+- **Files changed**: 7 (2 hooks, 3 vignettes, 1 new plan, 1 targets)
+- **Agents used**: 4 (fixer × 4) — all under BURN CRITICAL budget throttle
+
+### Known Limitations
+
+- Pattern detection requires `ANTHROPIC_API_KEY` in session environment (not tested live)
+- `plan_qa_gates.R` targets only run after pkgdown build — need to trigger on next `tar_make()`
+- Active Issues table in `index.qmd` uses static counts (141 closed, 0 reopened) — not live
+- BURN CRITICAL: $734/$500 (147%) — continued on Sonnet worktree, all code work delegated to haiku/sonnet agents
+
+### Next Session
+
+- Rebuild pkgdown site to verify #140, #141, #142 fixes render correctly
+- Continue with #70 (closeread) and #125 (statistical guardrails)
+- Check whether pattern detection fires at session end (first real test)
+
+---
+
 ## 2026-05-11 (Session 2)
 
 ### Completed
