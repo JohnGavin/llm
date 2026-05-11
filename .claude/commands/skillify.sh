@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 # skillify.sh — Extract repeatable patterns from conversation history into skills
-# Usage: skillify.sh [N] where N = number of recent tool calls to analyze (default: 20)
+# Usage: skillify.sh [N] [TRANSCRIPT]
+#   N = number of recent tool calls to analyze (default: 20)
+#   TRANSCRIPT = path to transcript file (default: most recent session)
 set -euo pipefail
 
 N="${1:-20}"
+TRANSCRIPT="${2:-}"
 SKILLS_DIR="$HOME/.claude/skills"
 MANIFEST="$SKILLS_DIR/MANIFEST.md"
 QUALITY_HOOK="$HOME/.claude/hooks/skill_quality_onwrite.sh"
 
-# Find current session transcript
-PROJECT_DIR="$HOME/.claude/projects/-Users-johngavin-docs-gh-llm"
-TRANSCRIPT=$(ls -t "$PROJECT_DIR"/*.jsonl 2>/dev/null | head -1)
+# Find transcript (use provided path or find current session)
+if [ -z "$TRANSCRIPT" ]; then
+  PROJECT_DIR="$HOME/.claude/projects/-Users-johngavin-docs-gh-llm"
+  TRANSCRIPT=$(ls -t "$PROJECT_DIR"/*.jsonl 2>/dev/null | head -1)
+fi
 
 if [ ! -f "$TRANSCRIPT" ]; then
-  echo "❌ No session transcript found at $PROJECT_DIR" >&2
+  echo "❌ No session transcript found" >&2
   exit 1
 fi
 
