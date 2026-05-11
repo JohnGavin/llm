@@ -153,14 +153,34 @@ if (dir.exists(rules_dir)) {
 
 ### Skills
 
-| Category | Count | Examples |
-|----------|------:|---------|
-| R Package Dev | 12 | <a href="https://testthat.r-lib.org/" target="_blank">testthat</a>, <a href="https://lifecycle.r-lib.org/" target="_blank">lifecycle</a>, <a href="https://rlang.r-lib.org/" target="_blank">rlang</a> |
-| Data & Analysis | 8 | <a href="https://rstudio.github.io/pointblank/" target="_blank">pointblank</a>, EDA, modelling |
-| Targets & Pipelines | 4 | Pipeline spec, vignettes, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> ops |
-| Shiny & Web | 7 | <a href="https://rstudio.github.io/bslib/" target="_blank">bslib</a>, async, <a href="https://posit-dev.github.io/r-shinylive/" target="_blank">Shinylive</a> |
-| Quarto & Docs | 6 | Websites, dashboards, alt text |
-| DevOps & CI | 3 | GitHub Actions, <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a> |
+```{r skills-table}
+skill_cats <- safe_tar_read("vig_cr_skill_categories")
+if (!is.null(skill_cats)) {
+  # Add example links for major categories
+  skill_cats$Examples <- dplyr::case_when(
+    skill_cats$category == "R Package Dev" ~
+      '<a href="https://testthat.r-lib.org/" target="_blank">testthat</a>, <a href="https://lifecycle.r-lib.org/" target="_blank">lifecycle</a>, <a href="https://rlang.r-lib.org/" target="_blank">rlang</a>',
+    skill_cats$category == "Data & Analysis" ~
+      '<a href="https://rstudio.github.io/pointblank/" target="_blank">pointblank</a>, EDA, modelling',
+    skill_cats$category == "Targets & Pipelines" ~
+      'Pipeline spec, vignettes, <a href="https://wlandau.github.io/crew/" target="_blank">crew</a> ops',
+    skill_cats$category == "Shiny & Web" ~
+      '<a href="https://rstudio.github.io/bslib/" target="_blank">bslib</a>, async, <a href="https://posit-dev.github.io/r-shinylive/" target="_blank">Shinylive</a>',
+    skill_cats$category == "Quarto & Docs" ~
+      'Websites, dashboards, alt text',
+    skill_cats$category == "DevOps & CI" ~
+      'GitHub Actions, <a href="https://pkgdown.r-lib.org/" target="_blank">pkgdown</a>',
+    TRUE ~ ""
+  )
+
+  skill_cats |>
+    dplyr::select(Category = category, Count = count, Examples) |>
+    knitr::kable(caption = paste0("All ", sum(skill_cats$count),
+                                  " skills from ~/.claude/skills/MANIFEST.md"))
+} else {
+  cat("*Run `tar_make()` locally to generate skill counts*")
+}
+```
 
 ### Agents
 
