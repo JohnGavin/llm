@@ -1,12 +1,12 @@
 ---
 name: lazy-evaluation-guide
-description: Use when working with lazy evaluation in R, clarifying the six meanings of lazy (promises, non-standard evaluation, tidy eval, Arrow/DuckDB lazy frames, targets, R6 lazy fields). Triggers: lazy evaluation, promises, NSE, non-standard evaluation, deferred evaluation.
+description: Use when working with lazy evaluation in R, clarifying the seven meanings of lazy (promises, futures, database queries, package data loading, build systems, test optimization, regex quantifiers). Triggers: lazy evaluation, promises, NSE, non-standard evaluation, deferred evaluation, lazy testing, lazytest.
 ---
 # Lazy Evaluation in R - A Taxonomy
 
 ## Description
 
-R uses the term "lazy" in multiple distinct ways, which can cause confusion. This skill clarifies the six different meanings of lazy evaluation in R and when each applies.
+R uses the term "lazy" in multiple distinct ways, which can cause confusion. This skill clarifies the seven different meanings of lazy evaluation in R and when each applies, unified by a common theme: avoiding unnecessary work.
 
 ## Purpose
 
@@ -17,7 +17,11 @@ Use this skill when:
 - Working with futures, promises, or database packages
 - Understanding package LazyData behavior
 
-## The Six Meanings of "Lazy" in R
+## Unifying Theme: "Less Waste"
+
+All uses of "lazy" in R share a common thread: **avoiding unnecessary work**. Whether by deferring computation (promises, futures), optimizing queries (dbplyr), skipping unchanged builds (pkgdown), or minimizing regex matches, "lazy" consistently means doing only what's needed when it's needed.
+
+## The Seven Meanings of "Lazy" in R
 
 ### 1. Language Lazy Evaluation (Core R)
 
@@ -106,18 +110,26 @@ result <- collect(query)
 library(duckplyr)
 
 # duckplyr is "externally eager, internally lazy"
-# Appears eager to user, but optimizes internally
+# Appears eager to user, but optimizes internally using ALTREP
+# (Alternative Representation) to defer computation
 df <- duckplyr::as_duckplyr_tibble(mtcars)
-result <- df |> filter(mpg > 20)  # Returns immediately
+result <- df |> filter(mpg > 20)  # Returns immediately (ALTREP object)
 
-# Control materialization behavior
-options(duckplyr.prudence = "lavish")   # Materialize freely
-options(duckplyr.prudence = "stingy")   # Avoid materialization
-options(duckplyr.prudence = "thrifty")  # Balanced (default)
+# Control materialization behavior with "prudence"
+options(duckplyr.prudence = "lavish")   # Materialize automatically
+options(duckplyr.prudence = "stingy")   # Avoid materialization (manual collect() needed)
+options(duckplyr.prudence = "thrifty")  # Balanced: auto-materialize up to ~1M cells (default)
 
 # Get fallback information
 options(duckplyr.fallback_info = TRUE)  # Log when falling back to dplyr
 ```
+
+**ALTREP mechanism:**
+- DuckDB-backed dplyr operations return ALTREP objects
+- ALTREP defers computation until the result is actually accessed
+- This allows duckplyr to act as a "drop-in replacement" for dplyr
+- Behind the scenes, it's lazy; to the user, it appears eager
+- "Prudence" controls when ALTREP objects materialize to real data frames
 
 ### 4. LazyData in Packages
 
@@ -162,7 +174,50 @@ tar_make()
 
 **This is "lazy" in the colloquial sense:** avoiding unnecessary work.
 
-### 6. Lazy Quantifiers (Regular Expressions)
+### 6. Test Optimization (lazytest)
+
+The `{lazytest}` package implements "lazy testing" by rerunning only previously failing tests, dramatically improving iteration speed during development.
+
+```r
+# Install from CRAN
+install.packages("lazytest")
+
+# Basic usage
+library(lazytest)
+
+# First run: all tests execute
+lazytest::test()  # Discovers 3 failures out of 50 tests
+
+# Fix one failing test, re-run
+lazytest::test()  # Runs only the 3 previously failing tests
+# Result: 2 still failing, 1 now passing
+
+# Fix another test
+lazytest::test()  # Runs only the 2 remaining failures
+```
+
+**How it works:**
+- Tracks which tests failed in previous runs
+- On subsequent runs, executes only those tests
+- When all previously-failing tests pass, falls back to full test suite
+- Saves results to `.lazytest/` directory (add to `.gitignore`)
+
+**When to use:**
+- Iterative development with large test suites
+- TDD workflow where you're fixing specific failures
+- CI pipelines where you want to fail fast on regressions
+
+**Benefits:**
+- 10-100x faster iteration when fixing known failures
+- Immediate feedback on whether your fix worked
+- Natural TDD rhythm: RED (lazytest finds failures) → GREEN (fix until lazytest passes all) → REFACTOR (run full suite)
+
+**Limitations:**
+- Only useful when some tests are failing
+- Must run full suite periodically to catch new regressions
+- State persists across R sessions (can be surprising)
+
+### 7. Lazy Quantifiers (Regular Expressions)
 
 Regex "lazy" vs. "greedy" matching.
 ```r
@@ -208,8 +263,12 @@ Question: What domain are you in?
 │  └─ Meaning 5: Frugal rebuilds
 │     (skip unnecessary work)
 │
+├─ Test iteration/TDD?
+│  └─ Meaning 6: Test optimization
+│     (lazytest reruns only failing tests)
+│
 └─ Text processing/regex?
-   └─ Meaning 6: Lazy quantifiers
+   └─ Meaning 7: Lazy quantifiers
       (minimal matching with +?, *?, etc.)
 ```
 
@@ -284,14 +343,17 @@ object.size(flights)  # Triggers load, now in memory
 
 ## Resources
 
-- [R-hub Blog: The Many Meanings of Lazy](https://blog.r-hub.io/2025/02/13/lazy-meanings/)
-- [Advanced R: Lazy Evaluation](https://adv-r.hadley.nz/functions.html#lazy-evaluation)
-- [dbplyr: Lazy Queries](https://dbplyr.tidyverse.org/articles/dbplyr.html)
-- [future Package](https://future.futureverse.org/)
-- [duckplyr Prudence](https://duckdblabs.github.io/duckplyr/)
+- [R-hub Blog: The Many Meanings of Lazy](https://blog.r-hub.io/2025/02/13/lazy-meanings/) — Primary source for this skill's taxonomy
+- [Advanced R: Lazy Evaluation](https://adv-r.hadley.nz/functions.html#lazy-evaluation) — Deep dive on promises and language-level lazy eval
+- [dbplyr: Lazy Queries](https://dbplyr.tidyverse.org/articles/dbplyr.html) — Database query optimization
+- [future Package](https://future.futureverse.org/) — Parallel computing with lazy/eager futures
+- [duckplyr Prudence](https://duckdblabs.github.io/duckplyr/) — ALTREP-based lazy evaluation
+- [lazytest Package](https://cran.r-project.org/package=lazytest) — Test optimization by rerunning only failures
 
 ## Related Skills
 
-- parallel-processing (futures, mirai)
-- data-wrangling-duckdb (lazy database queries)
-- r-package-workflow (LazyData in packages)
+- **parallel-processing** — futures and mirai for async/parallel computing
+- **data-transformation-stack** — DuckDB and duckplyr lazy query patterns
+- **r-package-workflow** — LazyData configuration in R packages
+- **test-driven-development** — TDD workflow; lazytest accelerates RED-GREEN iteration
+- **rlang-patterns** — Complementary skill covering tidy evaluation mechanics (`{{}}`, `!!`, `enquo()`) that exploit language-level lazy evaluation
