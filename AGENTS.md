@@ -152,6 +152,31 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 `/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`
 
+## Automation Features (v2.1.72+)
+
+**Loop & Schedule:** Automate recurring tasks without manual intervention.
+
+| Command | Syntax | Use Case | Example |
+|---------|--------|----------|---------|
+| `/loop` | `/loop <interval> <command>` | Repeat task at intervals | `/loop 1h /check` — R CMD check hourly |
+| `/schedule` | `/schedule '<cron>' <command>` | Cron-like scheduling | `/schedule '0 9 * * *' /cleanup` — daily 9 AM |
+| `/btw` | `/btw <question>` | Side query during work | `/btw "pipeline status?"` while tar_make() runs |
+| `/branch` | `/branch` | Fork current session | Alternative to `--fork-session` |
+| `/teleport` | `/teleport` | Pull cloud session local | Resume interrupted remote work |
+| `/remote-control` | `/remote-control` | Control local from phone/web | Mobile session access |
+
+**Loop intervals:** `30s`, `5m`, `1h`, `2d` (or trailing: `every 30 minutes`). Minimum `/schedule` interval: 1 hour.
+
+**Common loop patterns:**
+- `/loop 30m /check` — Continuous R CMD check (catch issues early)
+- `/loop 1h /ctx-check` — Verify ctx.yaml coverage
+- `/loop 5m /roborev` — Auto code review on push
+- `/schedule '0 9 * * 1-5' /pr-status` — Weekday 9 AM PR checks
+
+**Loop management:** List running loops via `/schedule list`. Stop: `/schedule stop <job-id>`.
+
+**Hooks integration:** PostToolUse hook auto-runs `styler::style_file()` on R edits, `check_dark_contrast.sh` on Quarto edits (see `~/.claude/hooks/post_tool_use_format.sh`).
+
 ## Templates (5)
 
 `new-skill.md`, `new-rule.md`, `new-plan.md`, `new-wiki-page.md`, `new-project-claude.md`
@@ -164,9 +189,9 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 Core: `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`. Nix: `nix-agent-shell-protocol`, `nix-nested-shell-isolation`. MCP: `btw-timeouts`. Bash: `bash-safety`. Data: `data-in-packages`, `data-validation-timeseries`, `credential-management`. Stats: `statistical-reporting`, `suppress-warnings-antipattern`. Viz: `visualization`, `dynamic-prose-values`. Quarto: `quarto-vignettes`, `acronym-expansion`. Shiny: `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking`. Pipeline: `qa-targets-pipeline`, `ctx-yaml-cache`. Knowledge: `wiki-conventions`. Quality: `accessibility`, `analytical-review-checklist`, `analysis-rationale-mandatory`, `braindump-closed-loop`. Security: `destructive-fs-guard`, `destructive-ops-guard`, `permission-discipline`, `backup-architecture`. Other: `website-index-update`, `t-lang-r-package`, `huggingface-upload`, `gh-pages-nojekyll`, `namespace-discipline`, `portable-paths`, `project-charter`, `roborev-resolution`, `single-change-experiment`, `snapshot-tests-mandatory`, `search-all-pipeline-stages`, `audience-communication`.
 
-## Hooks (8 scripts, 5 event hooks)
+## Hooks (9 scripts, 5 event hooks)
 
-`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
+`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `post_tool_use_format.sh`(PostToolUse:Edit|Write — auto-format), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
 
 ## Memory (14 files)
 
