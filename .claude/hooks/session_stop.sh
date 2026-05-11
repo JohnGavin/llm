@@ -140,4 +140,24 @@ for p in pending:
   fi
 fi
 
+# ── Pattern Detection (Phase 1 Validation, Option 4 Hybrid) ──────────────
+if [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
+  TRANSCRIPT=$(ls -t "${HOME}/.claude/projects/"*/*.jsonl 2>/dev/null | head -1)
+  if [ -n "$TRANSCRIPT" ]; then
+    PATTERNS=$(timeout 30 "${HOME}/.claude/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
+    if echo "$PATTERNS" | grep -q "Detected workflow patterns"; then
+      echo ""
+      echo "$PATTERNS"
+      echo ""
+      echo "▶ Run /skillify next session? [Y/n, 15s timeout]"
+      read -t 15 -n 1 -r REPLY 2>/dev/null || REPLY="n"
+      echo ""
+      if [[ "${REPLY:-n}" =~ ^[Yy]$ ]]; then
+        echo "$TRANSCRIPT" > "${HOME}/.claude/.pending_skillify"
+        echo "✓ Will auto-run /skillify on next session start"
+      fi
+    fi
+  fi
+fi
+
 exit 0

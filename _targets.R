@@ -15,5 +15,6 @@ list(
   plan_vignette_closeread(),
   plan_predictions(),  # Cross-project prediction calibration
   plan_pkgctx(),       # ctx.yaml cache audit + refresh
-  plan_pkgdown()       # pkgdown site build + stage docs/
+  plan_pkgdown(),      # pkgdown site build + stage docs/
+  plan_qa_gates()      # HTML error detection before deploy (#139)
 )

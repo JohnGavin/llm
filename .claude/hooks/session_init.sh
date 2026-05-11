@@ -727,6 +727,11 @@ if [ -f "$_bd_db" ]; then
   [ "${_stale:-0}" -gt 0 ] && echo "STALE: $_stale braindump-linked issues open >14 days"
 fi
 
+# ── Phase 13b: Process pending skillify from previous session ──
+if [ -f "${HOME}/.claude/.pending_skillify" ] && [ -x "${HOME}/.claude/scripts/process_pending_skillify.sh" ]; then
+  timeout 5 "${HOME}/.claude/scripts/process_pending_skillify.sh" 2>/dev/null || true
+fi
+
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
