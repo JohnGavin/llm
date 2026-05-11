@@ -22,7 +22,7 @@ DETAILS=""
 for html in "$DOCS_DIR"/*.html; do
   [ ! -f "$html" ] && continue
   BASENAME=$(basename "$html")
-  for ep in "not available" "not found in targets" "MISSING EVIDENCE"; do
+  for ep in "not available" "not found in targets" "MISSING EVIDENCE" "No data"; do
     COUNT=$(grep -ci "$ep" "$html" 2>/dev/null) || COUNT=0
     if [ "$COUNT" -gt 0 ]; then
       DETAILS="${DETAILS}  ${BASENAME}: ${COUNT} hits for '${ep}'\n"
