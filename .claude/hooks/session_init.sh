@@ -764,4 +764,12 @@ if [ -f "DESCRIPTION" ]; then
   fi
 fi
 
+# ── Loop Status (Claude Code v2.1.72+) ────────────────────────────────
+# Show active /loop and /schedule jobs at session start
+# Note: /schedule list command only works within an active Claude session
+# This phase documents the feature; actual list shown via /btw at runtime
+echo ""
+echo "TIP: Check active loops with: /btw 'Show running loops via /schedule list'"
+echo "     Auto-loop suggestions: /loop 1h /check | /loop 30m /ctx-check"
+
 exit 0

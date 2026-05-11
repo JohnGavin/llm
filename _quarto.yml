@@ -13,7 +13,7 @@ website:
     left:
       - href: index.qmd
         text: Home
-      - href: vignettes/telemetry.qmd
+      - href: https://johngavin.github.io/llmtelemetry/
         text: Telemetry
       - text: Dashboards
         menu:

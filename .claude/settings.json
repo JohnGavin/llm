@@ -125,7 +125,6 @@
       "Bash(curl -I:*)",
       "Bash(curl -o:*)"
     ],
-    "defaultMode": "default",
     "deny": [
       "Bash(rm -rf:*)",
       "Bash(rm -fr:*)",
@@ -138,7 +137,8 @@
       "Bash(gh workflow delete:*)",
       "Bash(gh ssh-key delete:*)",
       "Bash(gh gpg-key delete:*)"
-    ]
+    ],
+    "defaultMode": "default"
   },
   "hooks": {
     "SessionStart": [
@@ -293,5 +293,6 @@
     ]
   },
   "alwaysThinkingEnabled": true,
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "autoUpdatesChannel": "latest"
 }

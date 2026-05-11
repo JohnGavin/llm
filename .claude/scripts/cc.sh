@@ -118,4 +118,4 @@ if ! $HAS_MODEL_OVERRIDE; then
   # else: default to opus (no --model flag needed, it's the default)
 fi
 
-exec claude "${ARGS[@]}" "$@"
+exec ~/.local/bin/claude "${ARGS[@]}" "$@"
