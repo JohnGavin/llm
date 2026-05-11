@@ -4,6 +4,25 @@
 **Date:** 2026-05-11
 **Related issues:** #133, #134
 
+## Feature Availability Status
+
+| Feature | Available in v2.1.138 | Notes |
+|---------|----------------------|-------|
+| `--bare` | ✓ | Minimal mode: skips hooks, LSP, plugin sync, attribution, auto-memory |
+| `--remote-control` | ✓ | Start interactive session with Remote Control enabled (optionally named) |
+| `--effort` | ✓ | Effort levels: low, medium, high, xhigh, max |
+| `/loop` | ✗ | Not found in `--help` output; may be a skill or future feature |
+| `/schedule` | ✗ | Not found in `--help` output; may be a skill or future feature |
+| `/btw` | ✗ | Not found in `--help` output; may be a skill or future feature |
+| `/teleport` | ✗ | Not found in `--help` output; may be a skill or future feature |
+
+**Conclusion:** The Boris Cherny thread features `/loop`, `/schedule`, `/btw`, and `/teleport` are NOT available in the current public release (v2.1.138). These may be:
+- Internal/experimental features not yet released
+- Features described aspirationally rather than as existing functionality
+- Skills that need to be explicitly installed via plugins
+
+The Stephen Turner blog features (`--bare`, `--effort`, `--remote-control`, PostToolUse hooks) ARE available and validated.
+
 ## Test Plan
 
 ### Phase 1: Basic /loop Functionality
