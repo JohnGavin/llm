@@ -4,7 +4,79 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
-## 2026-05-11
+## 2026-05-11 (Session 2)
+
+### Completed
+
+- **Phase 1 validation implementation** (#137):
+  - Merged `/skillify` command (290 lines, 6 workflow types detected, auto-registers in MANIFEST)
+  - Merged `cross_modal_eval.sh` (3 LLMs in parallel: Opus/GPT-4/DeepSeek, ~$0.05/eval, flags mismatches >3 points)
+  - Created usage tracking infrastructure (`skill_usage_tracker.sh`)
+  - All Phase 1 implementations pushed to main
+
+- **Pivoted validation strategy** (Option 4 → Option 3 → Hybrid):
+  - **Discovery**: Historical transcripts contain no tool call data (0 matches for "type":"tool_call_result")
+  - Tested 15+ sessions: all returned "Insufficient data" — transcripts are compacted summaries
+  - **Pivot 1**: Abandoned retrospective analysis (Option 4 Week 1), switched to Option 3 (Progressive Real-Usage)
+  - **Pivot 2**: User requested automation → implemented Hybrid (Option 4: Session-End AI Analysis)
+
+- **Automated pattern detection** (Optional integration):
+  - Created `detect_patterns.sh` — Opus API analyzes last 50 tool calls, identifies repeated workflows
+  - Created `process_pending_skillify.sh` — executes pending skillify at next session start
+  - Cost: $0.01/session = $0.20/month (20 sessions)
+  - Integration: Manual (see PATTERN_DETECTION_SETUP.md)
+
+- **Documentation QA improvements** (#139-142):
+  - Created comprehensive QA validation table (11 check categories for gh pages)
+  - Added error detection: HTML validation, error messages, markdown leaks, broken tabs
+  - Created standalone validator: `~/.claude/scripts/validate_gh_pages.sh`
+  - Integrated into targets pipeline: `plan_qa_gates.R` (7 new QA targets)
+  - Issues raised: #139 (HTML error detection), #140 (closeread tabs), #141 (dashboard tables), #142 (keyword links)
+
+- **roborev queue management issue** (#138):
+  - Raised issue analyzing 5 options (Manual / Auto-Expire / Merge-State / Hybrid / FIFO)
+  - Recommended: Auto-Expire 14 days + manual override
+
+### Failed Approaches
+
+- **Retrospective skill generation** (Option 4 Week 1):
+  - Attempted: Analyze 20 historical sessions to extract workflows via `skillify_backlog.sh`
+  - Failed: All transcripts have <3 tool calls (compacted/summary format, not detailed logs)
+  - Root cause: Tool call events not persisted in JSONL transcript format
+  - Workaround: Option 3 (Progressive) — generate skills live during work
+  - Time lost: ~2 hours debugging backlog script before discovering data constraint
+
+### Metrics
+
+- **Commits**: 8 (Phase 1 complete, Option 3 pivot, pattern detection, roborev issue)
+- **Issues raised**: 5 (#138 roborev, #139-142 QA improvements)
+- **Issues progressed**: #137 (Phase 1 implementations merged, validation strategy finalized)
+- **Scripts created**: 5 (skillify_backlog.sh, detect_patterns.sh, process_pending_skillify.sh, skill_usage_tracker.sh, validate_gh_pages.sh)
+- **Documentation**: 2 files (PHASE1_VALIDATION.md, PATTERN_DETECTION_SETUP.md)
+
+### Validation Timeline
+
+- **Target**: ~June 1, 2026 (3 weeks from Phase 1 merge)
+- **Success criteria**: 3+ skills with ≥3 uses + score ≥80, cross-modal eval catches 3+ errors
+- **Approach**: Option 3 (manual) by default, Hybrid (automated) available if hooks integrated
+
+### Known Limitations
+
+- Pattern detection requires manual hook integration (not auto-enabled)
+- Cross-modal eval requires API keys setup (not yet tested with real APIs)
+- Usage tracker relies on manual logging (`skill_usage_tracker.sh log <skill>`)
+- skillify.sh generates beta-quality skills (require manual refinement before promotion to stable)
+- QA validation targets not yet run (awaiting next pkgdown deploy)
+
+### Next Session
+
+- Use `/skillify` opportunistically when workflows repeat (Option 3)
+- Or: integrate pattern detection hooks (PATTERN_DETECTION_SETUP.md)
+- Continue with open issues: #70 (closeread), #125 (statistical guardrails), #139-142 (QA improvements)
+
+---
+
+## 2026-05-11 (Session 1)
 
 ### Completed
 
