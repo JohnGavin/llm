@@ -4,6 +4,9 @@ format:
   closeread-html:
     toc: false
     code-fold: true
+    include-in-header:
+      - ../../_includes/toolbar.html
+      - ../../_includes/closeread-navigation.html
 execute:
   echo: false
   warning: false

@@ -1,0 +1,212 @@
+<!--
+  Closeread Navigation — Sticky Section Headers for Scrollytelling
+  Displays current section title as narrative scrolls
+  Compatible with dark mode from toolbar.html
+-->
+<style>
+/* ===== Sticky Section Header ===== */
+#section-progress {
+  position: fixed;
+  top: 60px;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  text-align: center;
+  background: rgba(128, 128, 128, 0.15);
+  backdrop-filter: blur(8px);
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+#section-progress.hidden {
+  opacity: 0;
+}
+
+/* Light mode text */
+body:not(.dark-mode) #section-progress {
+  color: #333;
+  border-bottom-color: #ccc;
+}
+
+/* Dark mode text */
+body.dark-mode #section-progress {
+  color: #ffffff;
+  border-bottom-color: #444;
+}
+
+/* ===== Back to Top Button ===== */
+#back-to-top {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9998;
+  background: rgba(128, 128, 128, 0.2);
+  backdrop-filter: blur(4px);
+  border: 1px solid #888;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 46px;
+  text-align: center;
+  transition: opacity 0.3s, background-color 0.2s;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#back-to-top.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#back-to-top:hover {
+  background-color: rgba(128, 128, 128, 0.4);
+}
+
+#back-to-top:focus {
+  outline: 2px solid #4ea8de;
+  outline-offset: 2px;
+}
+
+/* Light mode button */
+body:not(.dark-mode) #back-to-top {
+  color: #333;
+  border-color: #666;
+}
+
+/* Dark mode button */
+body.dark-mode #back-to-top {
+  color: #eee;
+  border-color: #888;
+}
+
+/* ===== Section Markers (invisible anchors for tracking) ===== */
+.section-marker {
+  position: absolute;
+  top: 100px;
+  visibility: hidden;
+  height: 1px;
+}
+</style>
+
+<script>
+(function() {
+  'use strict';
+
+  // Section titles extracted from the narrative structure
+  var sections = [
+    { id: 'cr-entry', title: 'Entry Point — CLAUDE.md' },
+    { id: 'cr-tree', title: 'Config Tree Structure' },
+    { id: 'cr-rules', title: 'Rules — Constraints' },
+    { id: 'cr-rule-anatomy', title: 'Rule Anatomy' },
+    { id: 'cr-skills', title: 'Skills — Capabilities' },
+    { id: 'cr-agents', title: 'Agents — Specialists' },
+    { id: 'cr-memory', title: 'Memory — Persistence' },
+    { id: 'cr-commands', title: 'Commands — Workflows' },
+    { id: 'cr-hooks', title: 'Hooks — Automation' },
+    { id: 'cr-hook-anatomy', title: 'Hook Anatomy' },
+    { id: 'cr-composition', title: 'Composition — The Full Stack' }
+  ];
+
+  var progressBar = null;
+  var backToTopBtn = null;
+  var currentSectionIndex = -1;
+
+  function createUI() {
+    // Create progress bar
+    progressBar = document.createElement('div');
+    progressBar.id = 'section-progress';
+    progressBar.className = 'hidden';
+    progressBar.setAttribute('role', 'status');
+    progressBar.setAttribute('aria-live', 'polite');
+    progressBar.textContent = 'Loading...';
+    document.body.appendChild(progressBar);
+
+    // Create back-to-top button
+    backToTopBtn = document.createElement('button');
+    backToTopBtn.id = 'back-to-top';
+    backToTopBtn.textContent = '↑';
+    backToTopBtn.title = 'Back to top';
+    backToTopBtn.setAttribute('aria-label', 'Scroll to top of page');
+    backToTopBtn.onclick = function() {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    document.body.appendChild(backToTopBtn);
+  }
+
+  function updateProgress() {
+    if (!progressBar) return;
+
+    var scrollPos = window.scrollY + 200; // offset for header
+    var docHeight = document.documentElement.scrollHeight;
+    var viewportHeight = window.innerHeight;
+
+    // Show back-to-top when scrolled down significantly
+    if (window.scrollY > 400) {
+      backToTopBtn.classList.add('visible');
+    } else {
+      backToTopBtn.classList.remove('visible');
+    }
+
+    // Find current section
+    var newIndex = -1;
+    for (var i = sections.length - 1; i >= 0; i--) {
+      var el = document.getElementById(sections[i].id);
+      if (el) {
+        var rect = el.getBoundingClientRect();
+        var elTop = rect.top + window.scrollY;
+        if (scrollPos >= elTop - 100) {
+          newIndex = i;
+          break;
+        }
+      }
+    }
+
+    // At very end of document, show special message
+    if (window.scrollY + viewportHeight >= docHeight - 50) {
+      if (currentSectionIndex !== 999) {
+        currentSectionIndex = 999;
+        progressBar.textContent = 'End — Tap ↑ to return to top';
+        progressBar.classList.remove('hidden');
+      }
+      return;
+    }
+
+    // Update if section changed
+    if (newIndex !== currentSectionIndex && newIndex >= 0) {
+      currentSectionIndex = newIndex;
+      progressBar.textContent = sections[newIndex].title;
+      progressBar.classList.remove('hidden');
+    } else if (newIndex === -1) {
+      // Before first section
+      progressBar.classList.add('hidden');
+    }
+  }
+
+  // Initialize on DOM ready
+  document.addEventListener('DOMContentLoaded', function() {
+    createUI();
+    updateProgress();
+
+    // Update on scroll (throttled)
+    var scrollTimer = null;
+    window.addEventListener('scroll', function() {
+      if (scrollTimer !== null) {
+        clearTimeout(scrollTimer);
+      }
+      scrollTimer = setTimeout(function() {
+        updateProgress();
+        scrollTimer = null;
+      }, 100);
+    }, { passive: true });
+
+    // Update on resize
+    window.addEventListener('resize', updateProgress);
+  });
+})();
+</script>
