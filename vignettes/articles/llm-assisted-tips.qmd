@@ -75,118 +75,127 @@ The three principles above are elaborated in detail across the project:
 - **Consistency:** Code style guides, linters, and pre-commit hooks (see `tidyverse-style`, `accessibility` rules, and `.claude/scripts/r_code_check.sh`)
 - **Validation:** Test-driven development, quality gates, and analytical review checklists (see `test-driven-development`, `quality-gates` skills and `analytical-review-checklist` rule)
 
-## Moving Beyond R: The T Language
+## Dynamic Target Generation with targets
 
-When building complex data pipelines with `{targets}`, you'll encounter a choice: write pipeline steps as R functions, or as code-as-string (what some call "T language" — targets' embedded language).
+When building complex data pipelines with `{targets}`, you need to understand how target expressions work and when you might need programmatic target generation.
 
-### What is T Language?
+### How tar_target() Works
 
-Standard targets syntax:
-```r
-tar_target(name, my_function(args))  # Calls an R function
-```
-
-T language syntax:
-```r
-tar_target(name, command = 'mean(c(1, 2, 3))')  # R code as string
-```
-
-The second form embeds R code as a literal string. Targets evaluates it at build time. This pattern appears in complex pipelines where the code itself is dynamically generated or needs special serialization.
-
-### When to Use T vs R Functions
-
-| Use R functions when | Use T language when |
-|---------------------|---------------------|
-| Code is stable and reusable | Code is generated programmatically |
-| You need IDE support (autocomplete, refactoring) | Serialization is critical (e.g., parallel workers) |
-| Debugging is important | Performance benefits from lazy evaluation |
-| The function will be tested independently | The code is a one-off transformation |
-
-**Default to R functions.** T language is an optimization for specific cases.
-
-### Validation Pattern: Parse Before Commit
-
-T language code is invisible to R's static analysis. A typo in a string won't be caught until runtime. The `qa-targets-pipeline` rule mandates validation:
+The `tar_target()` function uses **non-standard evaluation (NSE)** — it captures expressions without evaluating them immediately:
 
 ```r
-# Before commit, validate all code-as-string targets:
-code_string <- 'mean(c(1, 2, 3))'
-tryCatch(
-  parse(text = code_string),
-  error = function(e) stop("Invalid R code: ", e$message)
-)
+# Standard usage: expression is captured, not evaluated
+tar_target(name, mean(c(1, 2, 3)))
 ```
 
-This catches syntax errors at PR time, not after deployment.
+This is NOT string evaluation. The expression `mean(c(1, 2, 3))` is captured as an R expression object and evaluated later by the targets framework.
 
-### T Language Pitfalls
+**Common misconception:** Passing a string to `tar_target()` does NOT execute that string as code:
 
-**1. Quoting Hell**
-
-Nested quotes are fragile:
 ```r
-# WRONG: Unescaped quotes
-tar_target(name, command = 'filter(data, name == "value")')
-
-# RIGHT: Escape inner quotes
-tar_target(name, command = 'filter(data, name == \"value\")')
-
-# BETTER: Use R function
-filter_by_name <- function(data, value) filter(data, name == value)
-tar_target(name, filter_by_name(data, "value"))
+# This creates a target with value "1+1" (the string), not 2
+tar_target(wrong, "1+1")
 ```
 
-**2. Readability**
+### When You Need Programmatic Generation
 
-Code in strings is harder to read and maintain:
+Sometimes you need to build targets dynamically — generating target names or expressions programmatically. For this, use `tar_target_raw()`:
+
 ```r
-# Hard to parse visually
-tar_target(summary, command = 'data |> group_by(region) |> summarise(n = n(), mean_val = mean(value, na.rm = TRUE)) |> arrange(desc(n))')
-
-# Clearer: extract to function
-summarise_by_region <- function(data) {
-  data |>
-    group_by(region) |>
-    summarise(n = n(), mean_val = mean(value, na.rm = TRUE)) |>
-    arrange(desc(n))
-}
-tar_target(summary, summarise_by_region(data))
+# Generate targets programmatically
+target_names <- c("summary_a", "summary_b", "summary_c")
+target_list <- lapply(target_names, function(nm) {
+  tar_target_raw(
+    nm,
+    quote(summarise_data(data)),
+    deps = "data"
+  )
+})
 ```
 
-**3. Debugging Challenges**
+The key difference: `tar_target_raw()` expects:
+- Target name as a **string**
+- Command as a **quoted expression** (via `quote()`)
+- Dependencies as a **character vector**
 
-You can't step through string code with a debugger. When a T language target fails:
-1. Extract the string to a temporary R function
-2. Debug the function
-3. Once fixed, decide whether to keep as function or return to string
+### Variable Capture in Dynamic Targets
 
-**4. Lost Context**
+When generating targets programmatically, be careful with variable scoping:
 
-Strings don't capture their environment. Variables from the surrounding scope need explicit passing:
 ```r
 threshold <- 100
 
-# WRONG: 'threshold' is not in scope when string is evaluated
-tar_target(filtered, command = 'filter(data, value > threshold)')
+# WRONG: 'threshold' refers to the variable, not the value
+tar_target(filtered, filter(data, value > threshold))
+# If threshold changes later, target invalidates
 
-# RIGHT: Pass as argument
-tar_target(filtered, command = 'filter(data, value > 100)')
-
-# BETTER: Use function
-filter_above <- function(data, threshold) filter(data, value > threshold)
-tar_target(filtered, filter_above(data, threshold))
+# RIGHT: Use substitute() to capture the value
+tar_target_raw(
+  "filtered",
+  substitute(filter(data, value > x), list(x = threshold))
+)
 ```
+
+### When to Use Each Approach
+
+| Use tar_target() when | Use tar_target_raw() when |
+|---------------------|---------------------|
+| Writing targets by hand | Generating targets in a loop |
+| Target names are known at write time | Target names come from data/config |
+| Expressions are static | Expressions need programmatic assembly |
+| You want IDE support and refactoring | Code generation is unavoidable |
+
+**Default to tar_target().** Programmatic generation adds complexity — use it only when the alternative is repetitive manual code.
+
+### Debugging Challenges with Dynamic Targets
+
+Programmatically generated targets are harder to debug:
+
+1. The target definition is built at runtime, not visible in `_targets.R`
+2. IDE tools (go-to-definition, refactoring) don't work
+3. Errors in `substitute()` or `quote()` produce cryptic messages
+
+When a dynamic target fails:
+1. Use `tar_manifest()` to see the generated target definition
+2. Extract the expression and test it interactively
+3. Consider whether the complexity is justified
+
+### Readability Wins
+
+Even when you CAN generate targets programmatically, ask whether you SHOULD:
+
+```r
+# Programmatic but hard to scan
+datasets <- c("sales", "inventory", "customers")
+lapply(datasets, function(d) {
+  tar_target_raw(
+    paste0("summary_", d),
+    substitute(summarise_data(dat), list(dat = as.name(d)))
+  )
+})
+
+# Explicit and clear
+list(
+  tar_target(summary_sales, summarise_data(sales)),
+  tar_target(summary_inventory, summarise_data(inventory)),
+  tar_target(summary_customers, summarise_data(customers))
+)
+```
+
+If you have three targets, write them out. Save the machinery for when you have dozens.
 
 ### Examples from This Project
 
-The `llm` package's pipelines (see `R/tar_plans/plan_*.R`) primarily use R functions rather than T language. This is intentional — readability and maintainability outweigh the marginal performance gains of code-as-string.
+The `llm` package's pipelines (see `R/tar_plans/plan_*.R`) primarily use explicit `tar_target()` calls rather than programmatic generation. This is intentional — the pipelines are small enough that readability beats abstraction.
 
-When T language appears elsewhere (e.g., in generated pipelines or external examples), validation via `parse(text = code)` is mandatory before merging.
+When dynamic generation is needed (e.g., in external projects with many similar targets), the pattern is:
+1. Generate with `tar_target_raw()` and `substitute()`
+2. Validate with `tar_manifest()` before committing
+3. Document why generation is needed (repetition? config-driven?)
 
 ### Related
 
-- `t-lang-r-package` rule: How T language interacts with package development
-- `qa-targets-pipeline` rule: Validation requirements for pipeline code
+- `targets` manual on metaprogramming: <https://books.ropensci.org/targets/dynamic.html>
 - `targets` documentation: <https://books.ropensci.org/targets/>
 
 ## TODOs
