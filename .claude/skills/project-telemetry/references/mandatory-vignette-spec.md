@@ -162,7 +162,7 @@ tar_target(
 
 | Project | Plan file | Vignette |
 |---------|-----------|----------|
-| **llm** (canonical) | `R/tar_plans/plan_vignette_outputs.R` | `vignettes/telemetry.qmd` |
+| **llm** (canonical) | N/A — uses llmtelemetry | External: https://johngavin.github.io/llmtelemetry/ |
 | **irishbuoys** (most complete) | `R/tar_plans/plan_telemetry.R` | `vignettes/telemetry.qmd` |
 
 ## CI Run Time Visualizations (MANDATORY)
@@ -175,7 +175,7 @@ Every telemetry vignette MUST include these CI run time visualizations:
 4. **Trend plot**: Run times over time (detect regressions)
 5. **Success rate table**: Percentage by workflow
 
-Template: See `vignettes/telemetry.qmd` in the llm project.
+Template: See https://johngavin.github.io/llmtelemetry/ — all projects now use centralized telemetry dashboard.
 
 ## Checklist Before Commit
 
