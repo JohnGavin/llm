@@ -82,12 +82,13 @@ Updated: 2026-04-30
 | hooks-automation | AI/LLM Tools | workflow | stable | 2026-04 | 70 |
 | mlops-deployment | Specialized | workflow | beta | 2026-04 | 55 |
 | skill-authoring | Project Mgmt | infra | beta | 2026-04 | pending |
+| skillify | Project Mgmt | infra | beta | 2026-05 | pending |
 | knowledge-base-wiki | Mandatory | infra | stable | 2026-04 | 80 |
 
 ## Counts
 
-- **Total:** 68 (65 + duckdb-patterns + robust-statistics + visualization-detailed)
-- **Infra tier:** 16
+- **Total:** 69 (65 + duckdb-patterns + robust-statistics + visualization-detailed + skillify)
+- **Infra tier:** 17
 - **Workflow tier:** 52
 - **Stable:** 58
-- **Beta:** 10
+- **Beta:** 11
