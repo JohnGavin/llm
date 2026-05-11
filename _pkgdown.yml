@@ -1,0 +1,6 @@
+url: https://johngavin.github.io/llm/
+
+template:
+  bootstrap: 5
+
+destination: docs

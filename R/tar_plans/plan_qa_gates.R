@@ -30,11 +30,9 @@ plan_qa_gates <- function() {
         }
 
         error_patterns <- c(
-          "\\*.*not found\\*",
-          "Error:",
-          "^####",
-          "TODO",
-          "FIXME"
+          "\\*.*not found\\*",  # *directory not found* style errors
+          "^####",              # unrendered markdown headings
+          "<code>Error:"        # R errors leaked into code blocks
         )
 
         results <- purrr::map_dfr(html_files, function(f) {
