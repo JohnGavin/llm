@@ -261,8 +261,9 @@ if (!is.null(latest)) {
       title = "Largest Rules",
       subtitle = "Threshold: 150 lines (per CLAUDE.md)"
     )
-} else {
+} else if (length(fallback_counts$rule_lines) > 0) {
   # Fallback table from direct file counts
+
   tibble(
     rule = basename(names(fallback_counts$rule_lines)) |> tools::file_path_sans_ext(),
     lines = as.integer(fallback_counts$rule_lines)
@@ -287,6 +288,8 @@ if (!is.null(latest)) {
       title = "Largest Rules",
       subtitle = "Threshold: 150 lines"
     )
+} else {
+  cat("*No rule data available in CI environment.*")
 }
 ```
 
@@ -311,7 +314,7 @@ if (!is.null(latest)) {
     tab_header(
       title = "Largest Skills"
     )
-} else {
+} else if (length(fallback_counts$skill_lines) > 0) {
   tibble(
     skill = basename(dirname(names(fallback_counts$skill_lines))),
     lines = as.integer(fallback_counts$skill_lines)
@@ -322,6 +325,8 @@ if (!is.null(latest)) {
     cols_label(skill = "Skill", lines = "Lines") |>
     data_color(columns = lines, palette = "Blues") |>
     tab_header(title = "Largest Skills")
+} else {
+  cat("*No skill data available in CI environment.*")
 }
 ```
 
