@@ -147,7 +147,10 @@ if (dir.exists(rules_dir)) {
 
   knitr::kable(rules_df, caption = paste0("All ", nrow(rules_df), " rules in ~/.claude/rules/"))
 } else {
-  cat("*Rules directory not found*")
+  knitr::kable(
+    data.frame(Rule = character(0), Description = character(0)),
+    caption = "Rules (not available in pkgdown build — run locally to see all entries)"
+  )
 }
 ```
 
@@ -215,7 +218,10 @@ if (dir.exists(agents_dir)) {
 
   knitr::kable(agents_df, caption = paste0("All ", nrow(agents_df), " agents in ~/.claude/agents/"))
 } else {
-  cat("*Agents directory not found*")
+  knitr::kable(
+    data.frame(Agent = character(0), Model = character(0), Trigger = character(0)),
+    caption = "Agents (not available in pkgdown build — run locally to see all entries)"
+  )
 }
 ```
 
@@ -257,7 +263,10 @@ if (dir.exists(hooks_dir)) {
 
   knitr::kable(hooks_df, caption = paste0("All ", nrow(hooks_df), " hooks"))
 } else {
-  cat("*Hooks directory not found*")
+  knitr::kable(
+    data.frame(Hook = character(0), Event = character(0), Purpose = character(0)),
+    caption = "Hooks (not available in pkgdown build — run locally to see all entries)"
+  )
 }
 ```
 
@@ -286,7 +295,10 @@ if (dir.exists(memory_dir)) {
 
   knitr::kable(memory_df, caption = paste0("All ", nrow(memory_df), " memory files"))
 } else {
-  cat("*Memory directory not found*")
+  knitr::kable(
+    data.frame(File = character(0), Purpose = character(0)),
+    caption = "Memory (not available in pkgdown build — run locally to see all entries)"
+  )
 }
 ```
 
