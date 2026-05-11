@@ -200,7 +200,7 @@ r_pkgs = c(
   # https://pacha.dev/blog/2025/08/28/ukmaps/
   # https://pacha.dev/blog/2025/08/30/
   # install_github("pachadotdev/ukmaps") 
-  "mirai", "nanonext", 
+  "mirai", "nanonext",
   "targets", "gittargets", "crew", "autometric", "tarchetypes", "visNetwork", 
   "ggplot2", "tidyverse", "tidyselect", "pins", 
   "pkgdown", "rmarkdown", "knitr", # vignette rendering
@@ -233,6 +233,12 @@ pkgs_missing <- pkgs_test[!(pkgs_test %in% r_pkgs)]
 if (length(pkgs_missing)) print(pkgs_missing)
 
 gh_pkgs <- list(
+  # mori: Shared memory for R objects (announced 2026-04-23)
+  list(
+    package_name = "mori",
+    repo_url = "https://github.com/shikokuchuo/mori",
+    commit = "8f9c6591d84b24910708eabc44fe4254b1570d48"  # v0.2.0.9000 from 2026-05-09
+  ),
   # NULL
   # # https://brodrigues.co/posts/2025-03-20-announcing_rixpress.html
   # list(

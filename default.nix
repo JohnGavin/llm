@@ -135,6 +135,18 @@ let
       };
     });
 
+    mori = (pkgs.rPackages.buildRPackage {
+      name = "mori";
+      src = pkgs.fetchgit {
+        url = "https://github.com/shikokuchuo/mori";
+        rev = "8f9c6591d84b24910708eabc44fe4254b1570d48";
+        sha256 = "sha256-kibPKk2Ab0KkqZhouZzGrUI/XXhZZFt5e0ohQrB/lnQ=";
+      };
+      propagatedBuildInputs = builtins.attrValues {
+        inherit (pkgs.rPackages) ;
+      };
+    });
+
     roxy.shinylive = (pkgs.rPackages.buildRPackage {
       name = "roxy.shinylive";
       src = pkgs.fetchgit {
@@ -211,8 +223,8 @@ let
     LC_PAPER = "en_US.UTF-8";
     LC_MEASUREMENT = "en_US.UTF-8";
     
-    #<- buildInputs = [ roxy.shinylive btw rpkgs system_packages ];
-    buildInputs = [ roxy.shinylive btw ] ++ rpkgs ++ system_packages;
+    #<- buildInputs = [ mori roxy.shinylive btw rpkgs system_packages ];
+    buildInputs = [ mori roxy.shinylive btw ] ++ rpkgs ++ system_packages;
     shellHook = ''
     
 # =============================================================================
