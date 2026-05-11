@@ -4,14 +4,18 @@
 \alias{get_block_history}
 \title{Display Recent 5-Hour Block History}
 \usage{
-get_block_history(days = 3, cache_dir = NULL)
+get_block_history(days = 5, cache_dir = NULL, grouped = TRUE)
 }
 \arguments{
-\item{days}{Number of days of history to show (default 3). Retrieves all blocks
+\item{days}{Number of days of history to show (default 5). Retrieves all blocks
 from the past N days.}
 
 \item{cache_dir}{Directory containing cached JSON files. If NULL, searches standard
 package cache locations.}
+
+\item{grouped}{Logical. When TRUE (default), prints day headers with day totals
+and indented blocks underneath. When FALSE, prints a flat list (legacy format).
+Empty blocks (0 tokens) are always omitted.}
 }
 \value{
 Invisibly returns a tibble with columns:
@@ -37,14 +41,24 @@ Block status indicators:
 - Green circle = 50-74% of limit used (normal usage)
 - Yellow circle = 75-89% of limit used (warning)
 - Red circle = 90%+ of limit used (critical)
+
+When `grouped = TRUE`, each day is shown as a header line:
+```
+2026-04-19 (Saturday)                    Day total: 45,200 tokens (51%)
+  ⚪ 00:00–05:00    2,100 tokens   2%
+  🟢 05:00–10:00   18,400 tokens  21%
+```
 }
 \examples{
 \dontrun{
-# Show last 3 days of block history
+# Show last 5 days of block history (default, grouped)
 history <- get_block_history()
 
 # Show last 7 days of block history
 get_block_history(days = 7)
+
+# Show flat list (legacy format)
+get_block_history(grouped = FALSE)
 }
 
 }
