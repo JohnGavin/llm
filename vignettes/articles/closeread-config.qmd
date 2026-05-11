@@ -67,13 +67,13 @@ if (is.null(counts)) counts <- list(n_rules=61, n_skills=63, n_agents=12, n_hook
 ```
 :::
 
-Every Claude Code session begins by loading `~/.claude/CLAUDE.md`. This file is the entry point — the first thing read before any tool is called, any file touched, any code written.
+Every Claude Code session begins by loading **[`~/.claude/CLAUDE.md`](https://docs.anthropic.com/en/docs/claude-code/memory)**. This file is the entry point — the first thing read before any tool is called, any file touched, any code written.
 
-It is not a README. It is a **constitution**: a concise set of constraints, pointers, and defaults that shape every decision the model makes. From the outside, Claude appears to respond to prompts. From the inside, it is navigating a graph of rules, skills, agents, and memory — all loaded from this one file.
+It is not a README. It is a **constitution**: a concise set of constraints, pointers, and defaults that shape every decision the model makes. From the outside, Claude appears to respond to prompts. From the inside, it is navigating a graph of **[rules](#rules)**, **[skills](https://docs.anthropic.com/en/docs/claude-code/tutorials#use-slash-commands)**, **[agents](https://docs.anthropic.com/en/docs/claude-code/sub-agents)**, and **[memory](https://docs.anthropic.com/en/docs/claude-code/memory)** — all loaded from this one file.
 
 @cr-entry
 
-The config stack has six layers: rules that forbid, skills that enable, agents that specialize, memory that persists, commands that trigger, and hooks that automate. Each layer adds a dimension of control.
+The config stack has six layers: **rules** that forbid, **skills** that enable, **agents** that specialize, **memory** that persists, commands that trigger, and **[hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)** that automate. Each layer adds a dimension of control.
 
 @cr-entry
 

@@ -26,13 +26,13 @@ Welcome to the **LLM Project Dashboard**. This page provides a high-level overvi
 ### 💰 Today's Spend
 ```{r spend-today, echo=FALSE}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  today_cost <- daily_data |> 
-    filter(date == max(date)) |> 
-    summarise(cost = sum(totalCost)) |> 
+  today_cost <- daily_data |>
+    filter(date == max(date)) |>
+    summarise(cost = sum(totalCost)) |>
     pull(cost)
-  cat("#### ", dollar(today_cost))
+  knitr::asis_output(paste0("#### ", scales::dollar(today_cost)))
 } else {
-  cat("#### No data")
+  knitr::asis_output("#### No data")
 }
 ```
 :::
@@ -41,13 +41,16 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ### 📊 Weekly Trend
 ```{r weekly-spend, echo=FALSE}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  weekly_cost <- daily_data |> 
-    filter(as.Date(date) > Sys.Date() - 7) |> 
-    summarise(cost = sum(totalCost)) |> 
-    pull(cost)
-  cat("#### ", dollar(weekly_cost))
+  weekly_tbl <- daily_data |>
+    mutate(week_start = as.Date(date) - as.integer(format(as.Date(date), "%u")) + 1) |>
+    filter(week_start >= Sys.Date() - 20) |>
+    group_by(Week = week_start) |>
+    summarise(Spend = scales::dollar(sum(totalCost)), .groups = "drop") |>
+    arrange(desc(Week)) |>
+    head(3)
+  knitr::kable(weekly_tbl, align = c("l", "r"))
 } else {
-  cat("#### No data")
+  knitr::asis_output("No data")
 }
 ```
 :::
@@ -55,8 +58,11 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ::: {.g-col-4}
 ### 🛠️ Active Issues
 ```{r issues, echo=FALSE}
-# This matches the stats from the Structure page
-cat("#### 4 Open Issues")
+issues_tbl <- data.frame(
+  Status = c("Open", "Closed", "Reopened"),
+  Count  = c(4L, 141L, 0L)
+)
+knitr::kable(issues_tbl, align = c("l", "r"))
 ```
 :::
 
