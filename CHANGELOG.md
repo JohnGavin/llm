@@ -4,6 +4,37 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-11
+
+### Completed
+
+- **Claude Code automation features validated** (#133, #134):
+  - Tested v2.1.138 against features from Boris Cherny thread and Stephen Turner blog
+  - **Available**: `--bare` (minimal mode for CI), `--remote-control` (mobile access), `--effort` (5 reasoning levels)
+  - **Missing**: `/loop`, `/schedule`, `/btw`, `/teleport` (not in public release)
+  - PostToolUse hooks confirmed operational (auto-format on Edit/Write)
+  - Created comprehensive documentation:
+    - `~/.claude/docs/automation-features.md` — feature availability matrix, implementation details, workarounds
+    - Updated `~/.claude/memory/agent-patterns.md` — new "Automation Workflows" section
+    - Updated `.claude/test_loop_schedule.md` — validation findings
+  - Documented workarounds: launchd/cron for scheduling, parallel `--print` sessions for side queries
+
+### Metrics
+
+- **Issues closed**: #133, #134
+- **Documentation created**: 1 new file, 2 updated files
+- **Feature validation**: 7 features tested (3 available, 4 missing)
+
+### Key Findings
+
+- `/loop` and `/schedule` from Boris Cherny thread are NOT in public release (v2.1.138)
+- Existing launchd infrastructure (`config_pulse.sh`, `knowledge_pulse.sh`) provides adequate workaround
+- `--effort` levels can optimize burn rate (use `low` for simple tasks)
+- `--bare` mode speeds up CI/scripts by skipping hooks/LSP/plugins
+- PostToolUse hooks already provide auto-formatting Turner recommended
+
+---
+
 ## 2026-05-10
 
 ### Completed
