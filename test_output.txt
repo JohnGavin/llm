@@ -1,0 +1,8 @@
+Test content for cross-modal evaluation. This is a technical document about T language in R targets pipelines.
+
+The T language allows you to specify computational resources for targets. For example, you can set memory limits, CPU cores, and timeouts for individual targets. This is especially useful when some targets require more resources than others.
+
+Key concepts:
+1. T language is embedded in R targets
+2. Resource specifications are declarative
+3. Targets can have different resource profiles
