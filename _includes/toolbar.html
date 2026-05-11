@@ -118,33 +118,78 @@ body.dark-mode iframe {
   background-color: #1a1a1a !important;
 }
 
-/* ===== Navbar Dropdown Dark Mode ===== */
-body.dark-mode .dropdown-menu,
-body.dark-mode .navbar .dropdown-menu {
-  background-color: #000000 !important;
+/* ===== Navbar Dropdown ALWAYS Dark (navbar uses background: dark) ===== */
+/* These styles apply regardless of body dark-mode state since navbar is always dark */
+.navbar .dropdown-menu,
+nav.navbar .dropdown-menu,
+.navbar[data-bs-theme="dark"] .dropdown-menu {
+  background-color: #1a1a1a !important;
   border-color: #444 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
-body.dark-mode .dropdown-menu a,
-body.dark-mode .dropdown-item,
-body.dark-mode .navbar .dropdown-item {
+.navbar .dropdown-menu a,
+.navbar .dropdown-item,
+nav.navbar .dropdown-item {
   color: #ffffff !important;
   background-color: transparent !important;
 }
 
-body.dark-mode .dropdown-menu a:hover,
-body.dark-mode .dropdown-item:hover,
-body.dark-mode .navbar .dropdown-item:hover {
+.navbar .dropdown-menu a:hover,
+.navbar .dropdown-item:hover,
+nav.navbar .dropdown-item:hover {
   background-color: #2a2a2a !important;
   color: #4ea8de !important;
 }
 
-body.dark-mode .dropdown-menu a:focus,
-body.dark-mode .dropdown-item:focus {
+.navbar .dropdown-menu a:focus,
+.navbar .dropdown-item:focus {
   background-color: #333 !important;
+  outline: 2px solid #4ea8de;
+  outline-offset: -2px;
 }
 
-/* Navbar itself */
+.navbar .dropdown-item.active,
+.navbar .dropdown-item:active {
+  background-color: #333 !important;
+  color: #4ea8de !important;
+}
+
+/* ===== Body Dark Mode Dropdown (for dropdowns outside navbar) ===== */
+body.dark-mode .dropdown-menu:not(.navbar .dropdown-menu) {
+  background-color: #000000 !important;
+  border-color: #444 !important;
+}
+
+body.dark-mode .dropdown-menu:not(.navbar .dropdown-menu) a,
+body.dark-mode .dropdown-item:not(.navbar .dropdown-item) {
+  color: #ffffff !important;
+  background-color: transparent !important;
+}
+
+body.dark-mode .dropdown-menu:not(.navbar .dropdown-menu) a:hover,
+body.dark-mode .dropdown-item:not(.navbar .dropdown-item):hover {
+  background-color: #2a2a2a !important;
+  color: #4ea8de !important;
+}
+
+/* Navbar itself - always dark */
+.navbar,
+nav.navbar {
+  background-color: #212529 !important;
+}
+
+.navbar-brand,
+.nav-link {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.nav-link:hover,
+.nav-link:focus {
+  color: #ffffff !important;
+}
+
+/* Body dark mode navbar overrides */
 body.dark-mode .navbar,
 body.dark-mode nav.navbar {
   background-color: #1a1a1a !important;
