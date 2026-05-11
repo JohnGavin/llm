@@ -148,9 +148,9 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 ### Specialized
 - `mlops-deployment` — MLOps patterns
 
-## Commands (14)
+## Commands (15)
 
-`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`
+`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`, `/skillify`
 
 ## Automation Features (v2.1.72+)
 
