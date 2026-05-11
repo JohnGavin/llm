@@ -109,6 +109,12 @@ if (is.null(config_data)) {
     avg_skill_lines = if (n_skills > 0) round(mean(skill_lines)) else 0
   )
 }
+
+# Create latest dataset if config_data exists (used by all metric chunks)
+latest <- NULL
+if (!is.null(config_data)) {
+  latest <- config_data |> filter(snapshot_date == max(snapshot_date))
+}
 ```
 
 Track the evolution of Claude Code global configuration: rules, skills, agents, hooks, and memories.
@@ -121,8 +127,7 @@ Track the evolution of Claude Code global configuration: rules, skills, agents, 
 ### Rules
 ```{r}
 #| results: asis
-if (!is.null(config_data)) {
-  latest <- config_data |> filter(snapshot_date == max(snapshot_date))
+if (!is.null(latest)) {
   n <- latest |> filter(category == "rules", item == "all", metric == "count") |> pull(value)
   cat("####", n)
 } else {
@@ -135,7 +140,7 @@ if (!is.null(config_data)) {
 ### Skills
 ```{r}
 #| results: asis
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   n <- latest |> filter(category == "skills", item == "all", metric == "count") |> pull(value)
   cat("####", n)
 } else {
@@ -148,7 +153,7 @@ if (!is.null(config_data)) {
 ### Hooks
 ```{r}
 #| results: asis
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   n <- latest |> filter(category == "hooks", item == "all", metric == "count") |> pull(value)
   cat("####", n)
 } else {
@@ -161,7 +166,7 @@ if (!is.null(config_data)) {
 ### Total Tokens
 ```{r}
 #| results: asis
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   n <- latest |> filter(category == "total", metric == "tokens_estimate") |> pull(value)
   cat("####", comma(n))
 } else {
@@ -181,7 +186,7 @@ if (!is.null(config_data)) {
 #| fig-height: 6
 #| fig-alt: "Bar chart showing line counts by category: rules, skills, hooks"
 
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   latest |>
     filter(
       item == "all",
@@ -228,7 +233,7 @@ if (!is.null(config_data)) {
 ## Top Rules
 
 ```{r top-rules}
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   latest |>
     filter(category == "rules", metric == "lines", item != "all") |>
     arrange(desc(value)) |>
@@ -288,7 +293,7 @@ if (!is.null(config_data)) {
 ## Top Skills
 
 ```{r top-skills}
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   latest |>
     filter(category == "skills", metric == "lines", item != "all") |>
     arrange(desc(value)) |>
@@ -323,7 +328,7 @@ if (!is.null(config_data)) {
 ## Quality Metrics
 
 ```{r quality-table}
-if (!is.null(config_data)) {
+if (!is.null(latest)) {
   quality_metrics <- latest |>
     filter(item == "all") |>
     filter(
@@ -369,7 +374,7 @@ if (!is.null(config_data)) {
 #| fig-height: 5
 #| fig-alt: "Line chart showing config evolution over time"
 
-if (!is.null(config_data) && n_distinct(config_data$snapshot_date) > 1) {
+if (!is.null(latest) && n_distinct(config_data$snapshot_date) > 1) {
   config_data |>
     filter(
       item == "all",

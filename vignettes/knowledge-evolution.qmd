@@ -92,6 +92,12 @@ if (is.null(kb_data)) {
     with_sources = with_sources
   )
 }
+
+# Create latest dataset if kb_data exists (used by all metric chunks)
+latest <- NULL
+if (!is.null(kb_data)) {
+  latest <- kb_data |> filter(snapshot_date == max(snapshot_date))
+}
 ```
 
 Track the evolution of the knowledge base: wiki pages, raw sources, confidence levels, and topic connections.
@@ -104,8 +110,7 @@ Track the evolution of the knowledge base: wiki pages, raw sources, confidence l
 ### Wiki Pages
 ```{r}
 #| results: asis
-if (!is.null(kb_data)) {
-  latest <- kb_data |> filter(snapshot_date == max(snapshot_date))
+if (!is.null(latest)) {
   n <- latest |> filter(category == "wiki", item == "all", metric == "page_count") |> pull(value)
   cat("####", n)
 } else {
@@ -118,7 +123,7 @@ if (!is.null(kb_data)) {
 ### Raw Sources
 ```{r}
 #| results: asis
-if (!is.null(kb_data)) {
+if (!is.null(latest)) {
   n <- latest |> filter(category == "raw", item == "all", metric == "source_count") |> pull(value)
   cat("####", n)
 } else {
@@ -131,7 +136,7 @@ if (!is.null(kb_data)) {
 ### Provenance %
 ```{r}
 #| results: asis
-if (!is.null(kb_data)) {
+if (!is.null(latest)) {
   n <- latest |> filter(category == "wiki", item == "all", metric == "provenance_pct") |> pull(value)
   cat("####", n, "%")
 } else {
@@ -144,7 +149,7 @@ if (!is.null(kb_data)) {
 ### AI-Inferred
 ```{r}
 #| results: asis
-if (!is.null(kb_data)) {
+if (!is.null(latest)) {
   n <- latest |> filter(category == "wiki", item == "all", metric == "ai_inferred_markers") |> pull(value)
   cat("####", n, "markers")
 } else {
@@ -164,7 +169,7 @@ if (!is.null(kb_data)) {
 #| fig-height: 4
 #| fig-alt: "Stacked bar showing confidence distribution"
 
-if (!is.null(kb_data)) {
+if (!is.null(latest)) {
   confidence <- latest |>
     filter(category == "quality", item == "all") |>
     filter(metric %in% c("fully_sourced", "partial", "unsourced")) |>
@@ -220,7 +225,7 @@ if (!is.null(kb_data)) {
 ## Wiki Pages
 
 ```{r wiki-pages-table}
-if (!is.null(kb_data)) {
+if (!is.null(latest)) {
   wiki_pages <- latest |>
     filter(category == "wiki", metric == "words", item != "all") |>
     arrange(desc(value))
@@ -255,7 +260,7 @@ if (!is.null(kb_data)) {
 ## Raw Sources
 
 ```{r raw-sources}
-if (!is.null(kb_data)) {
+if (!is.null(latest)) {
   raw_summary <- latest |>
     filter(category == "raw") |>
     filter(metric == "count" | (item == "all" & metric %in% c("source_count", "bytes", "added_7d"))) |>
@@ -293,7 +298,7 @@ if (!is.null(kb_data)) {
 #| fig-height: 5
 #| fig-alt: "Line chart showing knowledge base growth"
 
-if (!is.null(kb_data) && n_distinct(kb_data$snapshot_date) > 1) {
+if (!is.null(latest) && n_distinct(kb_data$snapshot_date) > 1) {
   kb_data |>
     filter(
       item == "all",
