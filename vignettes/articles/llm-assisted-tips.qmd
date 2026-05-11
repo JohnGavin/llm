@@ -75,6 +75,120 @@ The three principles above are elaborated in detail across the project:
 - **Consistency:** Code style guides, linters, and pre-commit hooks (see `tidyverse-style`, `accessibility` rules, and `.claude/scripts/r_code_check.sh`)
 - **Validation:** Test-driven development, quality gates, and analytical review checklists (see `test-driven-development`, `quality-gates` skills and `analytical-review-checklist` rule)
 
+## Moving Beyond R: The T Language
+
+When building complex data pipelines with `{targets}`, you'll encounter a choice: write pipeline steps as R functions, or as code-as-string (what some call "T language" — targets' embedded language).
+
+### What is T Language?
+
+Standard targets syntax:
+```r
+tar_target(name, my_function(args))  # Calls an R function
+```
+
+T language syntax:
+```r
+tar_target(name, command = 'mean(c(1, 2, 3))')  # R code as string
+```
+
+The second form embeds R code as a literal string. Targets evaluates it at build time. This pattern appears in complex pipelines where the code itself is dynamically generated or needs special serialization.
+
+### When to Use T vs R Functions
+
+| Use R functions when | Use T language when |
+|---------------------|---------------------|
+| Code is stable and reusable | Code is generated programmatically |
+| You need IDE support (autocomplete, refactoring) | Serialization is critical (e.g., parallel workers) |
+| Debugging is important | Performance benefits from lazy evaluation |
+| The function will be tested independently | The code is a one-off transformation |
+
+**Default to R functions.** T language is an optimization for specific cases.
+
+### Validation Pattern: Parse Before Commit
+
+T language code is invisible to R's static analysis. A typo in a string won't be caught until runtime. The `qa-targets-pipeline` rule mandates validation:
+
+```r
+# Before commit, validate all code-as-string targets:
+code_string <- 'mean(c(1, 2, 3))'
+tryCatch(
+  parse(text = code_string),
+  error = function(e) stop("Invalid R code: ", e$message)
+)
+```
+
+This catches syntax errors at PR time, not after deployment.
+
+### T Language Pitfalls
+
+**1. Quoting Hell**
+
+Nested quotes are fragile:
+```r
+# WRONG: Unescaped quotes
+tar_target(name, command = 'filter(data, name == "value")')
+
+# RIGHT: Escape inner quotes
+tar_target(name, command = 'filter(data, name == \"value\")')
+
+# BETTER: Use R function
+filter_by_name <- function(data, value) filter(data, name == value)
+tar_target(name, filter_by_name(data, "value"))
+```
+
+**2. Readability**
+
+Code in strings is harder to read and maintain:
+```r
+# Hard to parse visually
+tar_target(summary, command = 'data |> group_by(region) |> summarise(n = n(), mean_val = mean(value, na.rm = TRUE)) |> arrange(desc(n))')
+
+# Clearer: extract to function
+summarise_by_region <- function(data) {
+  data |>
+    group_by(region) |>
+    summarise(n = n(), mean_val = mean(value, na.rm = TRUE)) |>
+    arrange(desc(n))
+}
+tar_target(summary, summarise_by_region(data))
+```
+
+**3. Debugging Challenges**
+
+You can't step through string code with a debugger. When a T language target fails:
+1. Extract the string to a temporary R function
+2. Debug the function
+3. Once fixed, decide whether to keep as function or return to string
+
+**4. Lost Context**
+
+Strings don't capture their environment. Variables from the surrounding scope need explicit passing:
+```r
+threshold <- 100
+
+# WRONG: 'threshold' is not in scope when string is evaluated
+tar_target(filtered, command = 'filter(data, value > threshold)')
+
+# RIGHT: Pass as argument
+tar_target(filtered, command = 'filter(data, value > 100)')
+
+# BETTER: Use function
+filter_above <- function(data, threshold) filter(data, value > threshold)
+tar_target(filtered, filter_above(data, threshold))
+```
+
+### Examples from This Project
+
+The `llm` package's pipelines (see `R/tar_plans/plan_*.R`) primarily use R functions rather than T language. This is intentional — readability and maintainability outweigh the marginal performance gains of code-as-string.
+
+When T language appears elsewhere (e.g., in generated pipelines or external examples), validation via `parse(text = code)` is mandatory before merging.
+
+### Related
+
+- `t-lang-r-package` rule: How T language interacts with package development
+- `qa-targets-pipeline` rule: Validation requirements for pipeline code
+- `targets` documentation: <https://books.ropensci.org/targets/>
+
 ## TODOs
 
 - Broaden the framing beyond R. The principles apply identically to TypeScript, Rust, Go, and C++ projects — the only thing that changes is which test framework you reach for first. Add explicit examples from a non-R project once one matures here.
