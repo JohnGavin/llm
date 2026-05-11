@@ -1,72 +1,72 @@
-# Phase 1 Validation Plan: Option 4 (Hybrid)
+# Phase 1 Validation Plan: Option 3 (Progressive Real-Usage Capture)
 
 **Issue**: #137 Phase 1 validation
 **Duration**: 2-3 weeks
-**Strategy**: Retrospective analysis (Week 1) + Live usage tracking (Week 2-3)
+**Strategy**: Live usage capture during normal work (no retrospective analysis)
 
-## Week 1: Retrospective Analysis
+**Why Option 3**: Historical session transcripts contain no tool call data, making retrospective analysis (Option 4 Week 1) non-viable. Pivoting to progressive capture ensures organic skill generation from actual repeated workflows.
 
-### Step 1: Generate Candidate Skills from History
+## Finding: No Historical Tool Call Data
 
-```bash
-# Analyze last 20 sessions to extract workflows
-~/.claude/scripts/skillify_backlog.sh 20
-```
+**Investigation (2026-05-11)**: Tested 15+ session transcripts in `~/.claude/projects/-Users-johngavin-docs-gh-llm/`:
+- All transcripts return "Insufficient data" (<3 tool calls)
+- `grep "type":"tool_call_result"` returns 0 matches
+- Transcripts are compacted summaries without detailed tool history
 
-**What it does**:
-- Scans last 20 session transcripts
-- Runs `/skillify` on each to detect repeatable workflows
-- Generates candidate skills in `~/.claude/skills/generated/`
-- Creates report with workflow types and quality scores
+**Impact**: Retrospective analysis (Option 4 Week 1) cannot generate skills from history.
 
-**Expected output**:
-- 10-15 candidate skills generated
-- Success rate: ~50% (not all sessions have repeatable workflows)
-- Report at: `~/.claude/skills/generated/backlog_report_YYYYMMDD_HHMMSS.md`
-
-### Step 2: Review and Filter
-
-```bash
-# Read the report
-cat ~/.claude/skills/generated/backlog_report_*.md | tail -1
-
-# List generated skills
-ls -la ~/.claude/skills/generated/
-```
-
-**Criteria**:
-- Quality score ≥80 (production threshold)
-- Non-duplicate (check workflow type distribution)
-- Actually useful (would you use this?)
-
-**Action**: Delete or archive low-quality/duplicate skills
-
-### Step 3: Initial Promotion (Optional)
-
-If any generated skills are immediately useful and score ≥80:
-
-```bash
-# Move to stable
-mv ~/.claude/skills/generated/SESSIONID_SKILLNAME ~/.claude/skills/SKILLNAME
-
-# Register in MANIFEST
-echo "- skillname (Category: X, Tier: Y, Maturity: stable)" >> ~/.claude/skills/MANIFEST.md
-```
+**Pivot**: Use Option 3 — generate skills live during Weeks 1-3 as patterns emerge naturally.
 
 ---
 
-## Week 2-3: Live Usage Tracking
+## Weeks 1-3: Progressive Skill Capture
 
-### Step 4: Use Skills in Practice
+### Step 1: Recognize Repeated Workflows
 
-During normal work over 2-3 weeks:
-- Use generated skills when applicable
-- Track usage via `skill_usage_tracker.sh log <skill_name>`
-- Or: skills auto-log if they call the tracker
+During normal work, notice when you repeat a workflow 2-3 times:
+- Git PR workflow (branch → edit → commit → push → PR)
+- Test-fix loop (test → fix → re-test)
+- Nix environment regeneration
+- Vignette render + validation
+- Issue triage + close
 
-**How to invoke a skill**: Use the pattern/command documented in its SKILL.md
+**When you notice repetition**: Make a mental note or add a quick comment
 
-### Step 5: Monitor Usage Stats
+### Step 2: Run `/skillify` When Pattern Emerges
+
+```bash
+# After completing a repeated workflow 2-3 times in one session
+/skillify
+
+# Or specify how many recent tool calls to analyze
+/skillify 30
+```
+
+**What it does**:
+- Analyzes last N tool calls from current session
+- Detects repeatable patterns (6 workflow types)
+- Generates skill markdown with frontmatter
+- Auto-registers in MANIFEST.md
+- Runs quality check
+
+### Step 3: Log Usage Immediately
+
+Right after generating a skill:
+
+```bash
+skill_usage_tracker.sh log <skill_name>
+```
+
+This starts tracking from the moment the skill is created.
+
+### Step 4: Use and Track Generated Skills
+
+Over the next 2-3 weeks:
+- Use generated skills when the pattern recurs
+- Log each use: `skill_usage_tracker.sh log <skill_name>`
+- Or: skills can self-report if they call the tracker
+
+### Step 5: Monitor Progress Weekly
 
 ```bash
 # Quick stats
@@ -87,14 +87,14 @@ At end of Week 3, promote skills that meet both criteria:
 2. Quality score ≥80 (production quality)
 
 ```bash
-# For each candidate:
-# 1. Move to stable
-mv ~/.claude/skills/generated/SESSIONID_SKILLNAME ~/.claude/skills/SKILLNAME
+# Generate final report
+skill_usage_tracker.sh report
 
+# For each candidate with ≥3 uses:
+# 1. Verify it's already in ~/.claude/skills/ (skillify auto-places it there)
 # 2. Update maturity in MANIFEST.md
 # Change: "maturity: beta" → "maturity: stable"
-
-# 3. Remove session ID prefix from directory name
+# 3. Document in CHANGELOG.md
 ```
 
 ---
@@ -117,11 +117,11 @@ mv ~/.claude/skills/generated/SESSIONID_SKILLNAME ~/.claude/skills/SKILLNAME
 
 ---
 
-## Tracking Commands Reference
+## Commands Reference
 
 | Command | Purpose |
 |---------|---------|
-| `skillify_backlog.sh [N]` | Generate skills from last N sessions |
+| `/skillify [N]` | Extract skill from last N tool calls (default: 20) |
 | `skill_usage_tracker.sh log <name>` | Log a skill usage |
 | `skill_usage_tracker.sh stats` | Show quick usage stats |
 | `skill_usage_tracker.sh report` | Generate full usage report |
@@ -130,30 +130,49 @@ mv ~/.claude/skills/generated/SESSIONID_SKILLNAME ~/.claude/skills/SKILLNAME
 
 ## Example Workflow
 
-### Day 1 (Week 1)
+### Week 1, Session 1
 ```bash
-cd ~/docs_gh/llm
-~/.claude/scripts/skillify_backlog.sh 20
-less ~/.claude/skills/generated/backlog_report_*.md
+# Working on issue, notice git workflow repeated 3x
+/skillify
+
+# Output: "Generated: ~/.claude/skills/git-pr-workflow/SKILL.md"
+# Quality score: 85
+
+# Log the generation as first use
+skill_usage_tracker.sh log git-pr-workflow
 ```
 
-### Days 2-7 (Week 1)
-- Review each generated skill
-- Test 2-3 that look immediately useful
-- Archive/delete obvious duplicates or low-quality ones
+### Week 1, Session 3
+```bash
+# Use the skill again for another PR
+# (follow pattern in SKILL.md)
 
-### Weeks 2-3
-- Use generated skills during normal work
-- Log usage: `skill_usage_tracker.sh log <skill_name>`
-- Check stats periodically: `skill_usage_tracker.sh stats`
+# Log usage
+skill_usage_tracker.sh log git-pr-workflow
+```
+
+### Week 2, Mid-week
+```bash
+# Check progress
+skill_usage_tracker.sh stats
+
+# Output:
+# Total uses: 7
+# Unique skills: 3
+# Top skills:
+#   3 uses: git-pr-workflow
+#   2 uses: test-fix-loop
+#   2 uses: vignette-render-check
+```
 
 ### End of Week 3
 ```bash
 # Generate final report
 skill_usage_tracker.sh report
 
-# Promote skills with ≥3 uses and score ≥80
-# Document in CHANGELOG.md
+# Promote git-pr-workflow (3+ uses, score 85)
+# Edit ~/.claude/skills/MANIFEST.md
+# Change maturity: beta → stable
 ```
 
 ---
