@@ -167,8 +167,9 @@ r_pkgs = c(
   # https://blog.r-hub.io/2025/02/13/lazy-meanings/
   #"bench", "future", "data.table", "dtplyr", "duckplyr", "RSQLite",
   # https://borkar.substack.com/p/r-workflows-with-duckdb?r=2qg9ny
-  "arrow", "duckdb", "dplyr", "dbplyr", 
-  # "gt", "blastula", # email
+  "arrow", "duckdb", "dplyr", "dbplyr",
+  "gt", # for dashboard tables
+  # "blastula", # email
   "ggraph", "igraph", # https://discindo.org/posts/2025-09-20-r-ducklake/
   # # https://github.com/jcheng5/pharma-sidebot
   # # "DBI", "duckdb", "fastmap", "fontawesome", "ggridges", "here", "plotly", "reactable", "shiny", # "hadley/elmer", "jcheng5/shinychat",
