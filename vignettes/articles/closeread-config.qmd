@@ -115,7 +115,7 @@ cat(paste0(
 ```
 :::
 
-The file tree shows the physical layout. Every `.md` file in `rules/` is a constraint. Every directory in `skills/` is a capability module. Every `.md` in `agents/` is a specialist definition.
+The file tree shows the physical layout. Every `.md` file in `rules/` is a constraint. Every directory in `skills/` is a capability module. Every `.md` in `agents/` is a specialist definition. The entire stack runs inside a project-specific **[Nix shell](https://nixos.org/manual/nix/stable/command-ref/nix-shell.html)** — each project declares its own `default.nix`, so the R version, system libraries, and every package are pinned and reproducible across machines.
 
 @cr-tree
 
@@ -162,7 +162,7 @@ Rules are not guidelines. They are constraints — hard stops that apply regardl
 
 @cr-rules
 
-Each rule file has the same anatomy: a trigger clause ("When This Applies"), a critical violation, the correct substitution pattern, and a rationale. The trigger clause matters most — it defines precisely when the rule activates so the model doesn't apply it everywhere indiscriminately.
+Each rule file has the same anatomy: a trigger clause ("When This Applies"), a critical violation, the correct substitution pattern, and a rationale. The trigger clause matters most — it defines precisely when the rule activates so the model doesn't apply it everywhere indiscriminately. Every rule and skill file starts with YAML **[frontmatter](https://quarto.org/docs/authoring/markdown-basics.html#yaml-metadata)** — a short header block that declares the file's name, description, and type before the body begins.
 
 @cr-rules
 
@@ -243,7 +243,7 @@ knitr::kable(skill_data, format = "html",
 ```
 :::
 
-If rules define what not to do, skills define what to do. There are `r counts$n_skills` skill modules, each invoked by name: `adversarial-qa` for attack-based testing, `deslop` for removing AI writing patterns, `r-package-workflow` for the nine-step PR process.
+If rules define what not to do, skills define what to do. There are `r counts$n_skills` skill modules, each invoked by name: `adversarial-qa` for attack-based testing, `deslop` for removing AI writing patterns, `r-package-workflow` for the nine-step PR process. All skills are indexed in **[MANIFEST.md](https://github.com/JohnGavin/llm/blob/main/.claude/skills/MANIFEST.md)** — a single file listing every module with its trigger phrases and category.
 
 @cr-skills
 
@@ -298,7 +298,7 @@ The twelve agents exist because not every task needs the same capability — or 
 
 @cr-agents
 
-Auto-delegation is mandatory. If the task involves a single file, fewer than five line changes, and no reasoning about correctness, it goes to haiku. If it matches a specialist trigger, it goes to that specialist. Only multi-file architecture decisions and synthesis tasks stay with the orchestrator.
+Auto-delegation is mandatory. If the task involves a single file, fewer than five line changes, and no reasoning about correctness, it goes to haiku. If it matches a specialist trigger, it goes to that specialist. Only multi-file architecture decisions and synthesis tasks stay with the orchestrator. Some specialist tools — such as `r-btw` — are exposed to agents through a **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)** server, a lightweight JSON-RPC interface that lets Claude call R functions and inspect session state without executing arbitrary code.
 
 @cr-agents
 
@@ -334,7 +334,7 @@ The critic and fixer are complementary: critic is read-only and adversarial, fix
 ```
 :::
 
-Memory persists what conversation context cannot. The `r counts$n_memory` memory files capture lessons learned, failed approaches, and standing conventions — facts that need to survive across sessions.
+Memory persists what conversation context cannot. The `r counts$n_memory` memory files capture lessons learned, failed approaches, and standing conventions — facts that need to survive across **[session context](https://docs.anthropic.com/en/docs/claude-code/memory)** windows. The auto-memory system writes each incident to a dedicated file, so the next session picks up where the last one left off without relying on the model's in-context state alone.
 
 @cr-memory
 
