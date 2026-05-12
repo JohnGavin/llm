@@ -138,7 +138,11 @@
       "Bash(gh ssh-key delete:*)",
       "Bash(gh gpg-key delete:*)"
     ],
-    "defaultMode": "default"
+    "defaultMode": "default",
+    "additionalDirectories": [
+      "/Users/johngavin/docs_gh/llm",
+      "/Users/johngavin/.claude"
+    ]
   },
   "hooks": {
     "SessionStart": [
@@ -267,6 +271,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/loop_continuation.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
             "command": "(/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0"
           }
         ]
@@ -277,6 +290,17 @@
             "type": "command",
             "command": "~/.claude/hooks/session_stop.sh",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/permission_request.sh",
+            "timeout": 15
           }
         ]
       }
@@ -293,6 +317,8 @@
     ]
   },
   "alwaysThinkingEnabled": true,
+  "autoCompactEnabled": true,
+  "autoCompactWindow": 800000,
   "skipDangerousModePermissionPrompt": true,
   "autoUpdatesChannel": "latest"
 }
