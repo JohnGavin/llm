@@ -84,23 +84,12 @@ jobs:
 
       - name: Validate rendered HTML
         run: |
-          echo "=== Checking for [MISSING EVIDENCE] ==="
-          missing=$(grep -rl "MISSING EVIDENCE" docs/articles/*.html 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$missing" -gt 0 ]; then
-            echo "FAIL: $missing articles contain [MISSING EVIDENCE]"
-            grep -l "MISSING EVIDENCE" docs/articles/*.html
-            exit 1
-          fi
-          echo "OK: 0 [MISSING EVIDENCE]"
-
-          echo "=== Checking for NULL outputs ==="
-          null_count=$(grep -cE '#&gt; NULL|class="gt_sourcenote">NULL' docs/articles/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
-          if [ "$null_count" -gt 0 ]; then
-            echo "WARN: $null_count NULL outputs found in rendered HTML"
-            grep -lE '#&gt; NULL|class="gt_sourcenote">NULL' docs/articles/*.html
-          else
-            echo "OK: 0 NULLs"
-          fi
+          # Single source of truth — pattern set lives in
+          # R/tar_plans/plan_qa_gates.R (QA_HTML_ERROR_PATTERNS).
+          # The function cli::cli_abort()s on detection, so a non-zero
+          # exit fails this step and blocks the deploy job that needs it.
+          echo "=== HTML error scan (R/tar_plans/plan_qa_gates.R) ==="
+          Rscript -e 'source("R/tar_plans/plan_qa_gates.R"); scan_html_for_errors("docs")'
 
           echo "=== Checking internal links ==="
           broken=0
