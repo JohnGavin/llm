@@ -26,13 +26,18 @@ Welcome to the **LLM Project Dashboard**. This page provides a high-level overvi
 ### 💰 Today's Spend
 ```{r spend-today, echo=FALSE}
 if (!is.null(daily_data) && nrow(daily_data) > 0) {
-  today_cost <- daily_data |>
+  today_row <- daily_data |>
     filter(date == max(date)) |>
-    summarise(cost = sum(totalCost)) |>
-    pull(cost)
-  knitr::asis_output(paste0("#### ", scales::dollar(today_cost)))
+    summarise(
+      Date = format(max(date), "%Y-%m-%d"),
+      Spend = scales::dollar(sum(totalCost))
+    )
+  knitr::kable(today_row, align = c("l", "r"))
 } else {
-  knitr::asis_output("#### No data")
+  knitr::kable(
+    data.frame(Date = "—", Spend = "No data"),
+    align = c("l", "r")
+  )
 }
 ```
 :::
