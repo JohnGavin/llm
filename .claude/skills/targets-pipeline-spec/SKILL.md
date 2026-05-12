@@ -489,17 +489,21 @@ tar_validate()  # Check for errors in _targets.R
 |---|---|---|---|
 | Define steps | `tar_target()` | `rxp_r()` | `%>>%` pipe |
 | Build | `tar_make()` | `rxp_make()` | `run_schedule()` |
-| Read output | `tar_read()` | `rxp_read()` | — |
+| Read output | `tar_read()` (interactive) | `rxp_read()` | — (no interactive inspect) |
 | Visualise | `tar_visnetwork()` | `rxp_ggdag()` | `build_schedule_graph()` |
-| Config file | `_targets.R` | `pipeline.R` | `schedule.R` |
-| Built-in scheduler | No (use cron/GH Actions) | No | Yes (cron-style) |
-| Content-addressed cache | Yes (hash-based) | Yes | No |
-| Scope | General (any R object) | General (hermetic) | Data pipelines only |
+| Config file | `_targets.R` + plan files | `pipeline.R` | `schedule.R` |
+| Built-in scheduler | No (use cron / GH Actions) | No | **Yes (cron-style)** |
+| Content-addressed cache | **Yes (hash-based, skips unchanged)** | Yes | No (each run from scratch) |
+| Scope of valid targets | General — any R object (plots, captions, HTML, models, text) | General (hermetic per-step) | **Data pipelines only** |
+| Parallelism | `crew` controllers (local, SLURM, AWS Batch), `mirai`, `future` | Same as targets | Simple per-task; no worker pool primitive |
+| Ecosystem | `tarchetypes`, `stantargets`, `jagstargets`, `geotargets`, `tarflow.iquizoo`, ~10+ extensions | Nascent (single package) | Minimal |
+| Deployment | Local store, S3 (`targets.s3upload`), cloud caches | Nix store | Designed for live scheduled jobs, not artifact storage |
+| CI fit | Mature — `tar_make()` in GH Actions, partial-run support, `tarchetypes::tar_render` for vignettes | Works in any nix-aware CI | Cron triggers, not commit-triggered |
 
-**Use targets** (default) when: dynamic branching, parallel execution (crew), 20+ steps, R-only, HPC, or when targets are non-data objects (plots, captions, alt-text, HTML, models).
-**Use rixpress** when: hermetic per-step isolation, mixed R+Python, <20 steps, regulatory audit.
-**Use Maestro** when: the primary need is cron-style scheduling of data pipeline tasks with no requirement for content-addressed caching or non-data targets. See JohnGavin/llm#143 for full comparison.
-**Never mix both** targets and rixpress in the same project — they manage overlapping concerns (DAG, caching).
+**Use targets** (default) when: dynamic branching, parallel execution (`crew`), 20+ steps, R-only, HPC, or when targets are non-data objects (plots, captions, alt-text, HTML, models).
+**Use rixpress** when: hermetic per-step isolation matters more than caching speed, mixed R+Python steps, <20 steps, regulatory audit needs.
+**Use Maestro** when: the primary need is cron-style scheduling of pure-data pipelines, you have no interest in caching across runs, you don't need interactive `tar_read()` debugging, and the pipeline doesn't need to mix in non-data targets (figures, captions, reports). In this project: stay on targets — Maestro's only unique advantage (built-in scheduling) is already covered by GitHub Actions cron triggers and macOS `launchd`. Adopting Maestro would lose `tar_read()` and smart invalidation without buying anything new.
+**Never mix** targets with rixpress or Maestro in the same project — they manage overlapping concerns (DAG, caching).
 
 ## Related Skills
 
