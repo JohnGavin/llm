@@ -101,6 +101,69 @@ For projects needing SQL transformation orchestration, use dbt with the duckdb a
 
 See [dbt-integration.md](references/dbt-integration.md) for setup, configuration, models, and targets orchestration.
 
+## Fuzzy Matching with fuzzyjoin
+
+For entity resolution and categorisation pipelines (merchant names, team names, medication names), use `{fuzzyjoin}` when exact string equality fails:
+
+```r
+library(fuzzyjoin)
+
+# Match raw transaction descriptions to category lookup
+# jw = Jaro-Winkler distance (good for OCR/typo errors)
+int_categorised <- stg_transactions |>
+  stringdist_left_join(
+    category_lookup,
+    by = c("description" = "pattern"),
+    method = "jw",
+    max_dist = 0.2        # 0 = exact, 1 = totally different
+  )
+
+# Regex matching (for pattern-based categorisation)
+int_categorised <- stg_transactions |>
+  fuzzy_left_join(
+    category_lookup,
+    by = c("description" = "pattern"),
+    match_fun = stringr::str_detect
+  )
+```
+
+### Method selection
+
+| Method | Use when | R equivalent |
+|--------|----------|--------------|
+| `jw` | Short strings, name matching, OCR noise | Jaro-Winkler |
+| `lv` | Longer strings, edit distance | Levenshtein |
+| `cosine` | Bag-of-words similarity | Token overlap |
+| `regex` | Pattern-based (known structures) | `str_detect` |
+
+### dbt equivalent
+
+The dbt equivalent uses SQL `ILIKE` with `qualify row_number()`:
+```sql
+select t.*, c.category
+from transactions t
+left join categories c
+  on t.description ilike '%' || c.pattern || '%'
+qualify row_number() over (partition by t.id order by c.priority) = 1
+```
+
+Use `{fuzzyjoin}` for R-side pipelines; use the SQL pattern in dbt/DuckDB when the dataset is too large for in-memory matching.
+
+### In a targets pipeline
+
+```r
+tar_target(int_transactions_categorised, {
+  stg_transactions |>
+    fuzzyjoin::stringdist_left_join(
+      tar_read(stg_category_lookup),  # categories also a target
+      by = c("description" = "pattern"),
+      method = "jw",
+      max_dist = 0.15
+    ) |>
+    dplyr::mutate(category = dplyr::coalesce(category, "uncategorised"))
+})
+```
+
 ## Decision Matrix
 
 | Use Case | Approach |
