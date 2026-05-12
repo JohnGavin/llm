@@ -166,4 +166,10 @@ if [ -x "$PROPAGATE" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   timeout 10 "$PROPAGATE" 2>/dev/null || true
 fi
 
+# ── Semantic drift logger (passive) — #125 Phase 1 ────────────────────
+DRIFT="$HOME/docs_gh/llm/.claude/scripts/drift_check.py"
+if [ -x "$DRIFT" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  timeout 30 python3 "$DRIFT" 2>/dev/null || true
+fi
+
 exit 0
