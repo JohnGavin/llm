@@ -87,6 +87,17 @@ cat("Non-NA date range:", format(min(df$date[!is.na(df$rolling_ma)])),
 # If non-NA starts years after data start → NA propagation from scattered NAs
 ```
 
+**Adjacent failure mode — type mismatch on join keys:** when a cross-series join
+produces 0 complete cases or "incorrect number of dimensions" downstream, check
+date-column TYPES before assuming a date-value mismatch. `Date` vs `POSIXct` join
+silently to 0 matches. See `data-validation-timeseries` rule Section 9.
+
+```r
+# Before assuming "NAs propagated" or "wrong frequency":
+purrr::iwalk(list_of_series, ~ cat(.y, ": ", paste(class(.x$date), collapse="/"), "\n"))
+# If types differ → coerce with as.Date() before joining
+```
+
 ## Data Sources Most Likely to Have Scattered NAs
 
 | Source | Common cause |
