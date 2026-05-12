@@ -9,7 +9,93 @@ backup_model = ''
 # Number of related reviews to include as context for this repo.
 review_context_count = 3
 # Extra review instructions added to prompts for this repo.
-review_guidelines = "R package (llm) — global config management project. Review for:\n- Rule/skill/agent .md files: check for contradictions with existing rules\n- Hook scripts: verify portable bash (no grep -oP, use sed)\n- AGENTS.md must stay under 200 lines\n- Rules must stay under 150 lines\n- All rules need YAML frontmatter with paths:\n- Diffs are structural (difftastic/tree-sitter) — formatting changes are invisible, focus on semantic changes only\n"
+# Expanded per #145: OpenAI token budget is not the constraint —
+# the review prompt should cover a wide range of correctness, statistical,
+# security, Quarto, test, and dependency failure modes per commit.
+review_guidelines = """R package (llm) — global config management project.
+
+CONTEXT:
+- Diffs are structural (difftastic/tree-sitter) — pure formatting changes
+  are invisible. Focus on semantic changes only.
+- AGENTS.md must stay under 200 lines; rule files under 150.
+- All rule .md files need YAML frontmatter (--- block, name +
+  description + type at minimum).
+- Hook scripts must be portable bash (no `grep -oP`, no `sed -i ''`,
+  no `stat -f` — see `nix-shell-portability` memory).
+- Project lives inside a nix shell; never `install.packages()`,
+  `devtools::install()`, or `pak::pkg_install()`.
+
+CORRECTNESS & DATA INTEGRITY:
+- Filter inversions (`!=` vs `==`, `>` vs `>=`, off-by-one indices).
+- Implicit joins / missing `by =` argument (silent Cartesian product).
+- Type coercion that silently drops rows: `suppressWarnings(as.integer(x))`
+  is BANNED per `suppress-warnings-antipattern` rule. Use readr
+  col_types or explicit coerce-with-tracking helpers.
+- `NA` propagation in rolling stats: `RcppRoll::roll_mean(x, n=63)`
+  returns NA for any window with any NA. See `na-propagation-rolling-stats`
+  rule — use `roll_mean_safe()` with `min_frac` gate.
+- Look-ahead bias in time series: `zoo::na.approx` uses tomorrow's
+  value — BANNED for backtest features.
+- Date vs POSIXct join-key type mismatches silently produce 0 matches
+  with no warning (see `data-validation-timeseries` §9). Defensive
+  `as.Date()` on both sides of any cross-series join.
+- Hardcoded values that should be computed dynamically: any numeric or
+  date in prose/captions/tables that could go stale must be inline R
+  (`r expr`) or `paste0()` (see `dynamic-prose-values` rule).
+- Missing units / scale (percentage stored as 0–1 mixed with 0–100).
+- Off-by-one in window functions, `lag`/`lead`, `slice(-1)` vs `slice(1)`.
+
+STATISTICAL REPORTING (per `statistical-reporting` rule):
+- p-values reported WITHOUT effect size + CI + sample n.
+- The word "significant" anywhere in prose/captions/commit messages —
+  BANNED. Replace with p + FPR + effect-size CI.
+- Multiple comparisons without `p.adjust()` correction.
+- p-values quoted to more than 3 decimal places.
+- Exploratory findings presented as confirmatory without disclosure.
+- Reporting any p-value without the matching False Positive Risk (FPR)
+  at equipoise prior — Colquhoun 2019.
+
+SECURITY / SCOPE:
+- Credentials in committed code (`password = "..."`, `api_key = "..."`,
+  `sk-...`, `ghp_...`). Should be `Sys.getenv("DB_PASSWORD")`.
+- Compound bash commands (`cd && git ...` — banned, use `git -C dir`).
+- Destructive ops without confirmation: `rm -rf` on protected paths
+  (`R/`, `data/`, `inst/extdata/`, `_targets/`, `knowledge/`).
+- Raw SQL strings where `duckplyr` would do (per `qa-targets-pipeline`).
+
+QUARTO / VISUALISATION:
+- Hardcoded values in vignette prose, captions, table headers.
+- Missing `fig-alt` on any figure.
+- `value_box()` / pie chart / bar chart usage — BANNED. Use Cleveland
+  dotplots or compact two-column tables (see `visualization-standards`).
+- Unrendered markdown leaking into output (`^####\\s`, raw `*term*`).
+- Captions shorter than 3 sentences without units + source + dynamic values.
+
+TESTS / PIPELINE:
+- New exported function without a `testthat::test_that()` test.
+- Tests using mocks where integration is required (e.g., mocked DB
+  where production hits real DuckDB — past incident).
+- `tar_make()` called inside `R/` function (anti-pattern, untestable).
+- `tar_load()` inside a `tar_target` body — hidden dependency, breaks
+  static analysis.
+- Missing snapshot test on Shiny module output.
+- `_targets.R` containing inline `tar_target()` calls (must live in
+  `R/tar_plans/plan_*.R`).
+
+DEPENDENCIES & ENVIRONMENT:
+- New package used in code but not added to `DESCRIPTION` (Imports
+  or Suggests).
+- New Python package used but not in `default.R` `py_pkgs`.
+- System dep used but not in `default.R`/`default.nix`.
+- `install.packages()` / `pak::pkg_install()` / `devtools::install()`
+  anywhere — BANNED in nix.
+
+CRITICAL SEVERITY EXAMPLES (flag at critical, not medium):
+- Any committed credential.
+- Look-ahead bias in a feature used by a model.
+- Reverting an `na-propagation-rolling-stats` fix without explanation.
+- Adding `value_box()` after that rule was established.
+"""
 # Override the review job timeout in minutes for this repo.
 job_timeout_minutes = 0
 # Branches that should be skipped for automatic review in this repo.
@@ -19,7 +105,9 @@ excluded_commit_patterns = ['[skip review]', 'docs: rebuild pkgdown', 'chore: gi
 # Display name shown for this repo in the TUI and output.
 display_name = ''
 # Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum.
-review_reasoning = 'standard'
+# Bumped per #145 — OpenAI token budget is not the constraint, give it more
+# thinking time per commit.
+review_reasoning = 'thorough'
 # Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum.
 refine_reasoning = 'standard'
 # Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum.
