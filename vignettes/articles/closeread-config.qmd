@@ -247,7 +247,7 @@ If rules define what not to do, skills define what to do. There are `r counts$n_
 
 @cr-skills
 
-Skills come in two varieties: mandatory and situational. The eight mandatory skills load for every task — quality gates, adversarial QA, TDD, the R package workflow. They are always active. Situational skills activate when the user's request matches a trigger phrase.
+Skills come in two varieties: mandatory and situational. The eight mandatory skills load for every task — **[quality gates](https://github.com/JohnGavin/llm/blob/main/.claude/skills/quality-gates/SKILL.md)**, adversarial QA, TDD, the R package workflow. They are always active. Situational skills activate when the user's request matches a trigger phrase.
 
 @cr-skills
 
@@ -382,7 +382,7 @@ knitr::kable(cmd_data, format = "html",
 ```
 :::
 
-Commands are skills with a slash in front. `/hi` triggers `session-start`, which reads CHANGELOG, checks git status, and orients the session. `/bye` triggers `session-end`, which commits, appends the CHANGELOG, and checks for stale wiki pages.
+**[Slash commands](https://docs.anthropic.com/en/docs/claude-code/cli-reference#slash-commands)** are skills with a slash in front. `/hi` triggers `session-start`, which reads CHANGELOG, checks git status, and orients the session. `/bye` triggers `session-end`, which commits, appends the CHANGELOG, and checks for stale wiki pages.
 
 @cr-commands
 
