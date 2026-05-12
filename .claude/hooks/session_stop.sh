@@ -168,8 +168,10 @@ fi
 
 # ── Semantic drift logger (passive) — #125 Phase 1 ────────────────────
 DRIFT="$HOME/docs_gh/llm/.claude/scripts/drift_check.py"
+DRIFT_PY="$HOME/.venvs/drift/bin/python3"
+[ -x "$DRIFT_PY" ] || DRIFT_PY=python3   # graceful fallback to system python
 if [ -x "$DRIFT" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-  timeout 30 python3 "$DRIFT" 2>/dev/null || true
+  timeout 30 "$DRIFT_PY" "$DRIFT" 2>/dev/null || true
 fi
 
 exit 0
