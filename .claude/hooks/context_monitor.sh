@@ -44,7 +44,15 @@ if [ "$USAGE_PCT" -ge 90 ]; then
 elif [ "$USAGE_PCT" -ge 80 ]; then
   echo "INFO: Context at ${USAGE_PCT}%. Auto-compact approaching. Consider finishing current task."
 elif [ "$USAGE_PCT" -ge 65 ]; then
-  echo "INFO: Context at ${USAGE_PCT}%. Save important decisions to CURRENT_WORK.md."
+  echo "INFO: Context at ${USAGE_PCT}%. Triggering haiku compression — writing summary to CURRENT_WORK.md."
+  # Write a compression trigger that Claude will notice on next turn
+  _trigger_file="${CLAUDE_PROJECT_DIR:-.}/.claude/.compress_trigger"
+  cat > "$_trigger_file" <<TRIGGER
+CONTEXT_COMPRESSION_NEEDED: Context at ${USAGE_PCT}%.
+Action: Summarise session to CURRENT_WORK.md using haiku agent (see auto-delegation rule haiku-for-summarisation section), then run /compact.
+Triggered: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+TRIGGER
+  echo "Trigger written to $_trigger_file — Claude will act on next turn."
 elif [ "$USAGE_PCT" -ge 40 ]; then
   echo "INFO: Context at ${USAGE_PCT}%. Consider saving non-obvious discoveries to memory."
 fi
