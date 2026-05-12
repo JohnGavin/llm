@@ -16,6 +16,20 @@ Use this skill when:
 - Adding crew parallel execution
 - Reviewing pipeline structure for best practices
 
+## targets Is Not Just for Data Pipelines
+
+`{targets}` is a **general-purpose Make-like build system for R**. Any R object can be a target. In this project, targets manages:
+
+- Data transformations (staging → intermediate → marts)
+- Figure generation (plot targets with `format = "file"`)
+- Caption text (caption string as a target, referencing data targets)
+- Alt-text generation (alt text as a target derived from figure and data targets)
+- Vignette pre-computation (`vig_*` prefix)
+- pkgdown build artifacts
+- pkgctx context generation
+
+This breadth is why targets is the **default orchestrator** for all pipeline work, and why the staging→intermediate→marts layer pattern applies universally — not just to data engineering projects.
+
 ## Core Architecture
 
 ### Directory Structure
@@ -113,6 +127,64 @@ plan_data_acquisition <- list(
 )
 ```
 
+## Data Layer Architecture (Staging → Intermediate → Marts)
+
+All data pipelines — regardless of domain — follow a three-layer naming convention. This applies to financial data, observational science, clinical data, and any tabular pipeline.
+
+| Layer | Prefix | Responsibility | Example targets |
+|-------|--------|----------------|-----------------|
+| **Staging** | `stg_` | Load raw source, minimal transforms (cast types, rename cols) | `stg_transactions`, `stg_buoy_obs` |
+| **Intermediate** | `int_` | Joins, enrichment, business logic | `int_transactions_categorised`, `int_buoy_flagged` |
+| **Marts** | `mart_` | Final aggregations, business-defined summaries | `mart_monthly_spend`, `mart_wave_summary` |
+
+### Rules
+
+- Staging targets read **only** from raw sources (files, APIs). No joins.
+- Intermediate targets can join across staging targets but produce **no final summaries**.
+- Mart targets are the terminal layer — consumed by vignettes (`vig_*`), Shiny apps, and reports.
+- Never skip layers: a target that reads raw data and produces a business summary is doing two layers of work and must be split.
+
+### Plan file mapping
+
+```r
+plan_staging.R        # stg_* targets
+plan_intermediate.R   # int_* targets  
+plan_marts.R          # mart_* targets
+plan_vignette_outputs.R  # vig_* targets (consume mart_*)
+```
+
+### Example (personal finance pipeline)
+
+```r
+# Staging: load raw CSV, cast types only
+tar_target(stg_transactions, {
+  readr::read_csv("data-raw/bank_export.csv") |>
+    dplyr::mutate(
+      date = lubridate::ymd(date),
+      amount = as.numeric(amount)
+    )
+}),
+
+# Intermediate: enrich with categories
+tar_target(int_transactions_categorised, {
+  stg_transactions |>
+    fuzzyjoin::stringdist_left_join(
+      category_lookup,
+      by = c("description" = "pattern"),
+      method = "jw", max_dist = 0.2
+    )
+}),
+
+# Mart: monthly summary
+tar_target(mart_monthly_spend, {
+  int_transactions_categorised |>
+    dplyr::summarise(
+      total = sum(amount),
+      .by = c(lubridate::floor_date(date, "month"), category)
+    )
+})
+```
+
 ## Target Names Are API Contracts (MANDATORY)
 
 Target names are **durable interfaces** consumed by vignettes (`safe_tar_read("vig_X")`), Shiny apps (`tar_read(model_Y)`), cross-project references, and other pipeline plans. Renaming a target breaks all downstream consumers silently.
@@ -150,62 +222,13 @@ grep -r "old_target_name" vignettes/ R/ inst/shiny/ tests/
 | `plan_pkgctx.R` | Package context | pkgctx_* |
 | `plan_telemetry.R` | Pipeline metrics | telem_* |
 
-## Crew Integration Patterns
+## Crew Integration
 
-### Basic Local Controller
-
-```r
-tar_option_set(
-  controller = crew::crew_controller_local(
-    workers = 4,
-    seconds_idle = 60
-  )
-)
-```
-
-### With Logging and Metrics
+For controller setup, logging/metrics, and resource-specific (multi-controller) configuration, see the `crew-operations` skill — its "Integration with targets" section is canonical. The minimal hook-up is:
 
 ```r
 tar_option_set(
-  controller = crew::crew_controller_local(
-    workers = parallel::detectCores() - 1,
-    seconds_idle = 120,
-    options_local = crew::crew_options_local(
-      log_directory = "logs/crew/"
-    ),
-    options_metrics = crew::crew_options_metrics(
-      path = "/dev/stdout",
-      seconds_interval = 5
-    )
-  )
-)
-```
-
-### Resource-Specific Controllers
-
-```r
-# Different controllers for different target types
-ctrl_fast <- crew::crew_controller_local(
-  name = "fast",
-  workers = 4
-)
-
-ctrl_memory <- crew::crew_controller_local(
-  name = "memory_intensive",
-  workers = 2  # Fewer workers for memory-heavy tasks
-)
-
-tar_option_set(
-  controller = crew::crew_controller_group(ctrl_fast, ctrl_memory)
-)
-
-# In plan file:
-tar_target(
-  heavy_computation,
-  run_heavy_task(data),
-  resources = tar_resources(
-    crew = tar_resources_crew(controller = "memory_intensive")
-  )
+  controller = crew::crew_controller_local(workers = 4, seconds_idle = 60)
 )
 ```
 
@@ -251,6 +274,27 @@ tar_target(
   format = "file"
 )
 ```
+
+### Incremental Deduplication Pattern
+
+When data arrives in append-only batches (e.g., daily API pulls, CSV exports), use MD5 surrogate keys to deduplicate across incremental loads:
+
+```r
+tar_target(stg_transactions_deduped, {
+  # Generate surrogate key from identifying columns
+  stg_transactions |>
+    dplyr::mutate(
+      row_id = digest::digest(
+        paste(date, description, amount, sep = "_"),
+        algo = "md5"
+      )
+    ) |>
+    # Deduplicate: keep first occurrence of each row_id
+    dplyr::distinct(row_id, .keep_all = TRUE)
+})
+```
+
+This is the targets equivalent of dbt's `incremental` materialisation. The hash captures logical uniqueness (not row order), so re-importing the same CSV does not duplicate records.
 
 ### Vignette Data Pattern
 
@@ -352,6 +396,30 @@ tar_target(my_param, 42),
 tar_target(result, compute(my_param))  # ✓ Tracked
 ```
 
+### ❌ tar_load() Inside a Target
+
+```r
+# BAD: hidden dependency, not picked up by static analysis
+tar_target(model, {
+  tar_load(data)  # ❌ targets cannot see `data` as an upstream dep
+  lm(y ~ x, data = data)
+})
+
+# GOOD: name the upstream target as a symbol — auto-detected
+tar_target(model, lm(y ~ x, data = data))  # ✓ `data` tracked
+```
+
+### ❌ tar_make() in Package Code
+
+```r
+# BAD: pipeline execution buried inside a function
+my_pipeline <- function() {
+  targets::tar_make()  # ❌ side effect, untestable, hides config
+}
+```
+
+`tar_make()` is a user action invoked from a session, CI job, or `Makefile` — not from inside `R/` functions. Document the entry point in README or a vignette.
+
 ## Debugging Targets
 
 ### Check Pipeline State
@@ -362,6 +430,28 @@ tar_outdated()      # What needs to run
 tar_visnetwork()    # DAG visualization
 tar_meta()          # Build metadata
 ```
+
+### Interactive Inspection with tar_read()
+
+`tar_read()` is targets' key advantage for debugging — inspect any intermediate object without re-running the pipeline:
+
+```r
+# Read a completed target directly
+tar_read(int_transactions_categorised)
+
+# Read a specific branch of a mapped target
+tar_read(results, branches = 1)
+
+# Use in combination with dplyr for quick exploration
+tar_read(mart_monthly_spend) |> dplyr::glimpse()
+tar_read(mart_monthly_spend) |> dplyr::filter(total > 1000)
+```
+
+**When to use tar_read() vs tar_load():**
+- `tar_read()` — returns the value; use in pipes and assignments
+- `tar_load()` — loads into `.GlobalEnv` by name; use at top-level interactive debugging
+
+This avoids re-running expensive upstream targets during a debugging session.
 
 ### Debug Specific Target
 
@@ -393,74 +483,23 @@ tar_validate()  # Check for errors in _targets.R
 - [ ] `_targets/` in `.gitignore`
 - [ ] `tar_validate()` passes
 
-## 5 Common Mistakes
+## Pipeline Tool Choice: targets vs rixpress vs Maestro
 
-```r
-# MISTAKE 1: Defining targets directly in _targets.R
-# WRONG:
-# _targets.R
-list(
-  tar_target(data, read_csv("data.csv")),
-  tar_target(model, lm(y ~ x, data = data))
-)
-# RIGHT: Use modular plan files
-# _targets.R
-list(plan_data(), plan_model())
-# R/tar_plans/plan_data.R returns list of tar_target()
+| Feature | targets | rixpress | Maestro |
+|---|---|---|---|
+| Define steps | `tar_target()` | `rxp_r()` | `%>>%` pipe |
+| Build | `tar_make()` | `rxp_make()` | `run_schedule()` |
+| Read output | `tar_read()` | `rxp_read()` | — |
+| Visualise | `tar_visnetwork()` | `rxp_ggdag()` | `build_schedule_graph()` |
+| Config file | `_targets.R` | `pipeline.R` | `schedule.R` |
+| Built-in scheduler | No (use cron/GH Actions) | No | Yes (cron-style) |
+| Content-addressed cache | Yes (hash-based) | Yes | No |
+| Scope | General (any R object) | General (hermetic) | Data pipelines only |
 
-# MISTAKE 2: Using tar_load() inside a target
-# WRONG:
-tar_target(model, {
-  tar_load(data)  # NO! Creates hidden dependency
-  lm(y ~ x, data = data)
-})
-# RIGHT: Pass as function argument
-tar_target(model, lm(y ~ x, data = data))  # data is auto-detected
-
-# MISTAKE 3: Not using format = "file" for file targets
-# WRONG:
-tar_target(plot_file, {
-  ggsave("plot.png", my_plot)
-  "plot.png"
-})
-# RIGHT:
-tar_target(plot_file, {
-  path <- "plot.png"
-  ggsave(path, my_plot)
-  path
-}, format = "file")  # Tracks file hash for invalidation
-
-# MISTAKE 4: Forgetting to set crew controller
-# WRONG: No parallelism despite having crew installed
-tar_option_set(packages = c("dplyr"))
-# RIGHT:
-tar_option_set(
-  packages = c("dplyr"),
-  controller = crew::crew_controller_local(workers = 4)
-)
-
-# MISTAKE 5: Using tar_make() in package code
-# WRONG: Calling tar_make() from R/ functions
-my_pipeline <- function() {
-  targets::tar_make()  # Side effect, not testable
-}
-# RIGHT: tar_make() is a user action, not a function
-# Document in README or vignette how to run the pipeline
-```
-
-## Pipeline Tool Choice: targets vs rixpress
-
-| Feature | targets | rixpress |
-|---|---|---|
-| Define steps | `tar_target()` | `rxp_r()` |
-| Build | `tar_make()` | `rxp_make()` |
-| Read output | `tar_read()` | `rxp_read()` |
-| Visualise | `tar_visnetwork()` | `rxp_ggdag()` |
-| Config file | `_targets.R` | `pipeline.R` |
-
-**Use targets** (default) when: dynamic branching, parallel execution (crew), 20+ steps, R-only, HPC.
+**Use targets** (default) when: dynamic branching, parallel execution (crew), 20+ steps, R-only, HPC, or when targets are non-data objects (plots, captions, alt-text, HTML, models).
 **Use rixpress** when: hermetic per-step isolation, mixed R+Python, <20 steps, regulatory audit.
-**Never mix both** in the same project — they manage overlapping concerns (DAG, caching).
+**Use Maestro** when: the primary need is cron-style scheduling of data pipeline tasks with no requirement for content-addressed caching or non-data targets. See JohnGavin/llm#143 for full comparison.
+**Never mix both** targets and rixpress in the same project — they manage overlapping concerns (DAG, caching).
 
 ## Related Skills
 
