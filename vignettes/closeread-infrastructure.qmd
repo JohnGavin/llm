@@ -35,25 +35,35 @@ safe_tar_read <- function(name) {
   NULL
 }
 
+# Resolve a Claude config subdirectory. Prefers the in-repo .claude/ copy
+# (which is what gets deployed to gh-pages), falling back to the user's local
+# ~/.claude/ for areas that don't live in the repo yet (notably memory/ — see #144).
+claude_dir <- function(sub) {
+  candidates <- c(
+    here::here(".claude", sub),
+    here::here(sub),  # for top-level repo dirs like memory/ once moved
+    path.expand(file.path("~/.claude/projects/-Users-johngavin-docs-gh-llm", sub)),
+    path.expand(file.path("~/.claude", sub))
+  )
+  hit <- candidates[dir.exists(candidates)]
+  if (length(hit) > 0) hit[1] else NA_character_
+}
+
 counts <- safe_tar_read("vig_cr_infra_counts")
 if (is.null(counts)) {
   # Count files directly (reproducible, always current)
-  claude_dir <- path.expand("~/.claude")
-
-  n_rules <- length(list.files(file.path(claude_dir, "rules"), pattern = "\\.md$", recursive = TRUE))
-  n_skills <- length(list.dirs(file.path(claude_dir, "skills"), recursive = FALSE))
-  n_agents <- length(list.files(file.path(claude_dir, "agents"), pattern = "\\.md$", recursive = TRUE))
-  n_hooks <- length(list.files(file.path(claude_dir, "hooks"), pattern = "\\.sh$"))
-  n_commands <- length(list.files(file.path(claude_dir, "commands"), pattern = "\\.md$", recursive = TRUE))
-  n_memory <- length(list.files(file.path(claude_dir, "memory"), pattern = "\\.md$", recursive = TRUE))
+  n_files <- function(sub, pattern, recursive = TRUE) {
+    d <- claude_dir(sub)
+    if (is.na(d)) 0L else length(list.files(d, pattern = pattern, recursive = recursive))
+  }
 
   counts <- list(
-    n_rules = n_rules,
-    n_skills = n_skills,
-    n_agents = n_agents,
-    n_hooks = n_hooks,
-    n_commands = n_commands,
-    n_memory = n_memory
+    n_rules    = n_files("rules",    "\\.md$"),
+    n_skills   = { d <- claude_dir("skills"); if (is.na(d)) 0L else length(list.dirs(d, recursive = FALSE)) },
+    n_agents   = n_files("agents",   "\\.md$"),
+    n_hooks    = n_files("hooks",    "\\.sh$", recursive = FALSE),
+    n_commands = n_files("commands", "\\.md$"),
+    n_memory   = n_files("memory",   "\\.md$")
   )
 }
 ```
@@ -123,8 +133,8 @@ graph LR
 ### Rules
 
 ```{r rules-table}
-rules_dir <- file.path(path.expand("~/.claude"), "rules")
-if (dir.exists(rules_dir)) {
+rules_dir <- claude_dir("rules")
+if (!is.na(rules_dir)) {
   rule_files <- list.files(rules_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
 
   # Extract rule name and first meaningful line as description
@@ -145,11 +155,11 @@ if (dir.exists(rules_dir)) {
     data.frame(Rule = paste0("`", name, "`"), Description = desc, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(rules_df, caption = paste0("All ", nrow(rules_df), " rules in ~/.claude/rules/"))
+  knitr::kable(rules_df, caption = paste0("All ", nrow(rules_df), " rules in `", rules_dir, "`"))
 } else {
   knitr::kable(
     data.frame(Rule = character(0), Description = character(0)),
-    caption = "Rules (not available in pkgdown build — run locally to see all entries)"
+    caption = "Rules directory not found (checked .claude/rules/ and ~/.claude/rules/)"
   )
 }
 ```
@@ -188,8 +198,8 @@ if (!is.null(skill_cats)) {
 ### Agents
 
 ```{r agents-table}
-agents_dir <- file.path(path.expand("~/.claude"), "agents")
-if (dir.exists(agents_dir)) {
+agents_dir <- claude_dir("agents")
+if (!is.na(agents_dir)) {
   agent_files <- list.files(agents_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
 
   agents_df <- lapply(agent_files, function(f) {
@@ -216,11 +226,11 @@ if (dir.exists(agents_dir)) {
     data.frame(Agent = paste0("`", name, "`"), Model = model, Trigger = trigger, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(agents_df, caption = paste0("All ", nrow(agents_df), " agents in ~/.claude/agents/"))
+  knitr::kable(agents_df, caption = paste0("All ", nrow(agents_df), " agents in `", agents_dir, "`"))
 } else {
   knitr::kable(
     data.frame(Agent = character(0), Model = character(0), Trigger = character(0)),
-    caption = "Agents (not available in pkgdown build — run locally to see all entries)"
+    caption = "Agents directory not found (checked .claude/agents/ and ~/.claude/agents/)"
   )
 }
 ```
@@ -230,8 +240,8 @@ if (dir.exists(agents_dir)) {
 **Hooks** — shell scripts triggered by events:
 
 ```{r hooks-table}
-hooks_dir <- file.path(path.expand("~/.claude"), "hooks")
-if (dir.exists(hooks_dir)) {
+hooks_dir <- claude_dir("hooks")
+if (!is.na(hooks_dir)) {
   hook_files <- list.files(hooks_dir, pattern = "\\.sh$", full.names = TRUE)
 
   hooks_df <- lapply(hook_files, function(f) {
@@ -261,11 +271,11 @@ if (dir.exists(hooks_dir)) {
     data.frame(Hook = paste0("`", name, "`"), Event = event, Purpose = purpose, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(hooks_df, caption = paste0("All ", nrow(hooks_df), " hooks"))
+  knitr::kable(hooks_df, caption = paste0("All ", nrow(hooks_df), " hooks in `", hooks_dir, "`"))
 } else {
   knitr::kable(
     data.frame(Hook = character(0), Event = character(0), Purpose = character(0)),
-    caption = "Hooks (not available in pkgdown build — run locally to see all entries)"
+    caption = "Hooks directory not found (checked .claude/hooks/ and ~/.claude/hooks/)"
   )
 }
 ```
@@ -273,8 +283,8 @@ if (dir.exists(hooks_dir)) {
 **Memory** — file-based persistence across conversations:
 
 ```{r memory-table}
-memory_dir <- file.path(path.expand("~/.claude"), "memory")
-if (dir.exists(memory_dir)) {
+memory_dir <- claude_dir("memory")
+if (!is.na(memory_dir)) {
   memory_files <- list.files(memory_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
 
   memory_df <- lapply(memory_files, function(f) {
@@ -293,11 +303,11 @@ if (dir.exists(memory_dir)) {
     data.frame(File = paste0("`", name, "`"), Purpose = purpose, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(memory_df, caption = paste0("All ", nrow(memory_df), " memory files"))
+  knitr::kable(memory_df, caption = paste0("All ", nrow(memory_df), " memory files in `", memory_dir, "`"))
 } else {
   knitr::kable(
     data.frame(File = character(0), Purpose = character(0)),
-    caption = "Memory (not available in pkgdown build — run locally to see all entries)"
+    caption = "Memory directory not found (lives outside the repo; tracked in #144)"
   )
 }
 ```
