@@ -114,8 +114,9 @@ if ! $HAS_MODEL_OVERRIDE; then
   elif [[ "$BURN" -ge 70 ]]; then
     echo "⚠️  BURN WARNING ($BURN%) — using sonnet"
     ARGS+=(--model sonnet)
+  else
+    ARGS+=(--model claude-opus-4-7)
   fi
-  # else: default to opus (no --model flag needed, it's the default)
 fi
 
 exec ~/.local/bin/claude "${ARGS[@]}" "$@"

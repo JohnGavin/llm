@@ -6,6 +6,28 @@ description: Auto-delegate to cheaper models when trigger patterns match
 ## When This Applies
 Every orchestrator decision about whether to do work directly or delegate.
 
+## CRITICAL: Opus Role — Plan, Decompose, Synthesise ONLY
+
+**Opus NEVER uses `Edit`, `Write`, or `Bash` directly for code or config changes.** Always spawn a subagent:
+
+| Work type | Delegate to |
+|-----------|-------------|
+| Single-file edits, doc updates, version bumps | `quick-fix` (haiku) |
+| Multi-step implementations, new files, complex content | `fixer` (sonnet) |
+| Code review | `reviewer` (sonnet) |
+| Bug fixing | `r-debugger` (sonnet) |
+
+**Opus-only tasks (never delegate):**
+- Plan and decompose work into subagent prompts
+- Synthesise results and communicate to user
+- Memory and CLAUDE.md updates (short prose edits)
+- User dialogue and clarification
+
+The three-tier model:
+- **Opus:** plan + decompose + synthesise
+- **Sonnet:** all multi-step edits, new files, complex content
+- **Haiku:** single-file edits, doc updates, version bumps
+
 ## CRITICAL: Do Not Use Opus for Haiku-Level Work
 
 If ALL of these are true, MUST use `quick-fix` agent (haiku):
@@ -18,6 +40,29 @@ If ALL of these are true, MUST use `quick-fix` agent (haiku):
 Agent(subagent_type="quick-fix", model="haiku",
       prompt="In <file>, change <old> to <new>. Reason: <why>")
 ```
+
+## Haiku for Context Summarisation (Cost Compression)
+
+When `context_monitor.sh` reports ≥ 65% context usage, or before a loop expected to exceed 20 turns, spawn haiku to write a compressed session summary:
+
+```
+Agent(
+  subagent_type = "quick-fix",
+  model = "haiku",
+  prompt = "Read CURRENT_WORK.md and the recent conversation state. Write a concise prose summary (max 300 words) of: (1) what was accomplished this session, (2) key decisions made and why, (3) exact next step. Overwrite CURRENT_WORK.md with this summary. No preamble."
+)
+```
+
+This implements recursive summarisation: a cheap model compresses the expensive model's accumulated context before it grows quadratically.
+
+**Trigger conditions (ANY ONE):**
+- `CLAUDE_CONTEXT_USAGE_PERCENT` ≥ 65
+- About to start a `/loop` or multi-turn automation
+- About to spawn 3+ sequential subagents
+
+**Do NOT use haiku for summarisation when:**
+- Context < 40% (premature compression adds latency)
+- The session involves active debugging with many intermediate states needed
 
 ## CRITICAL: Do Not Use Opus for Sonnet-Level Work
 
