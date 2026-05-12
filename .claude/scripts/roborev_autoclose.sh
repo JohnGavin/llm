@@ -1,23 +1,38 @@
 #!/usr/bin/env bash
-# roborev_autoclose.sh — close open roborev findings older than N days
+# roborev_autoclose.sh — close stale roborev findings.
 #
-# Status: DRAFT (#138). Not yet wired into any hook or launchd plist.
-#         Threshold and cadence pending user decision — see the issue.
+# Two phases:
+#   Phase 1 — `roborev close <id>` for jobs that have a review attached
+#             (status='done', the agent ran and emitted findings).
+#   Phase 2 — direct DB UPDATE status='canceled' for jobs that don't
+#             (status='failed', the agent errored before producing a
+#             review; daemon API rejects `close` with 404 "review not
+#             found for job"). Backs up reviews.db, then UPDATE scoped
+#             to ROBOREV_REPO (default 'llm') and age > THRESHOLD_DAYS.
+#             Daemon stays running — SQLite WAL + busy_timeout handles
+#             write contention with the live daemon (it's supervised by
+#             com.roborev.auto-refine launchd, so killing it just makes
+#             it respawn).
+#
+# Status: wired into weekly launchd via
+#   ~/Library/LaunchAgents/com.claude.roborev-autoclose.plist
+# Tracked in #138.
 #
 # Usage:
-#   roborev_autoclose.sh                  # default: dry-run, threshold=30d
-#   roborev_autoclose.sh --apply          # actually close
+#   roborev_autoclose.sh                  # dry-run, threshold=30d
+#   roborev_autoclose.sh --apply          # actually mutate
 #   THRESHOLD_DAYS=14 roborev_autoclose.sh --apply
+#   ROBOREV_REPO=mycare roborev_autoclose.sh --apply
 #
 # Exit codes:
 #   0  ok (including "nothing to do" and "roborev binary missing")
-#   1  unexpected error
+#   1  unexpected error (daemon stop failed, backup failed, SQL failed)
 #
 # Why "open" findings accumulate: a roborev review job runs after each
-# commit and stays in the `open` set (closed=false) until either (a) the
-# user dismisses the finding or (b) something auto-closes it. There is
-# currently no (b) — hence the queue grows. See #138 for analysis showing
-# 47% of the 129 open jobs in the llm repo are >30 days old.
+# commit and stays in the `open` set until something dismisses it.
+# Phase 1 + Phase 2 together handle both populations (review-with and
+# review-without). See #138 for analysis showing ~47% of open jobs
+# were >30d old.
 
 set -euo pipefail
 
@@ -99,6 +114,71 @@ done
 
 log "applied: closed=$CLOSED failed=$FAILED threshold=${THRESHOLD_DAYS}d"
 echo "roborev: closed $CLOSED / $N stale jobs (>${THRESHOLD_DAYS}d, $FAILED failed)"
+
+# ── Phase 2: cancel stale failed jobs (no review attached) ────────────
+# Done jobs with reviews use the API (above). Failed jobs never produced
+# a review, so the daemon API rejects `close` with 404. Resolve by
+# direct DB UPDATE — stop daemon, backup DB, transition status='failed'
+# → 'canceled', restart daemon. Scoped to the current repo only.
+ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
+ROBOREV_REPO="${ROBOREV_REPO:-llm}"
+SQLITE="${SQLITE:-/usr/bin/sqlite3}"
+if [ ! -f "$ROBOREV_DB" ] || [ ! -x "$SQLITE" ]; then
+  log "phase2 skipped: missing $ROBOREV_DB or $SQLITE"
+  exit 0
+fi
+
+# Count what we'd cancel before doing anything
+PHASE2_N=$("$SQLITE" "$ROBOREV_DB" <<SQL 2>/dev/null
+SELECT COUNT(*)
+FROM review_jobs rj JOIN repos r ON r.id = rj.repo_id
+WHERE r.name = '$ROBOREV_REPO'
+  AND rj.status = 'failed'
+  AND (julianday('now') - julianday(rj.enqueued_at)) > $THRESHOLD_DAYS;
+SQL
+)
+PHASE2_N=${PHASE2_N:-0}
+
+if [ "$PHASE2_N" -eq 0 ]; then
+  log "phase2: 0 stale failed jobs in repo=$ROBOREV_REPO"
+  exit 0
+fi
+
+echo "roborev phase2: $PHASE2_N stale failed jobs (repo=$ROBOREV_REPO, no review attached) — cancelling via DB"
+
+# Backup BEFORE mutating (daemon may be running — SQLite WAL handles concurrent
+# read; we use busy_timeout for the write).
+BACKUP="$ROBOREV_DB.bak-$(date +%Y%m%d_%H%M%S)"
+if ! cp "$ROBOREV_DB" "$BACKUP"; then
+  log "phase2 abort: backup to $BACKUP failed"
+  echo "roborev phase2: backup failed"
+  exit 1
+fi
+
+# We don't stop the daemon — it's supervised by com.roborev.auto-refine
+# launchd which respawns it. SQLite's BEGIN IMMEDIATE + busy_timeout
+# handles write contention with the running daemon.
+"$SQLITE" "$ROBOREV_DB" <<SQL >/dev/null 2>&1
+PRAGMA busy_timeout = 10000;
+BEGIN IMMEDIATE;
+UPDATE review_jobs
+SET status = 'canceled',
+    error = COALESCE(error, '') || ' [autoclose: cancelled at threshold ${THRESHOLD_DAYS}d, no review attached]'
+WHERE repo_id = (SELECT id FROM repos WHERE name = '$ROBOREV_REPO')
+  AND status = 'failed'
+  AND (julianday('now') - julianday(enqueued_at)) > $THRESHOLD_DAYS;
+COMMIT;
+SQL
+SQL_RC=$?
+
+if [ "$SQL_RC" -ne 0 ]; then
+  log "phase2 abort: SQL UPDATE failed rc=$SQL_RC (backup at $BACKUP)"
+  echo "roborev phase2: SQL UPDATE failed (rc=$SQL_RC) — backup at $BACKUP"
+  exit 1
+fi
+
+log "phase2: cancelled $PHASE2_N failed jobs (repo=$ROBOREV_REPO, backup=$BACKUP)"
+echo "roborev phase2: cancelled $PHASE2_N stale failed jobs (backup at $BACKUP)"
 
 # Integration options (pick one when #138 is resolved):
 #
