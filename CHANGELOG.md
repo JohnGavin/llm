@@ -131,6 +131,16 @@ e8db458  fix(dashboard): query GitHub for live issue counts (#141)
 - **#146** — repo-wide `_brand.yml` setup (filed this session)
 - (everything else closed)
 
+### Final additions (post-session-end-checklist)
+
+- **#145** closed — `9406929` expands `.roborev.toml` `review_guidelines` from 6 to 83 lines covering 30+ checks across 7 categories; bumps `review_reasoning` from `standard` to `thorough` per "tokens not the constraint" framing. Kept severity at `medium` (not lowering to `low` until backlog clears).
+- **Telemetry export** ran cleanly via `~/.claude/scripts/export_and_deploy_data.sh` — no data changes since last push.
+- **ctx_sync** kicked off in background (`bv1e70ncy`) — 15 packages need refresh (9 stale, 6 other-version). Will populate `~/docs_gh/proj/data/llm/content/inst/ctx/external/` as each pkgctx call completes. Not blocking session end.
+
+### Open at very-final session end (1)
+
+- **#146** — repo-wide `_brand.yml` setup
+
 ## 2026-05-11 (Session 3)
 
 ### Completed
