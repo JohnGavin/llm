@@ -440,6 +440,10 @@ flowchart LR
 :::
 
 
+## Related Vignettes
+
+- <a href="articles/closeread-config.html" target="_blank">**Walking the Config Stack**</a> — scrollytelling tour of `~/.claude/`: how rules, skills, agents, memory, commands and hooks compose into a working harness.
+
 ## Build Info
 
 ```{r build-info}
