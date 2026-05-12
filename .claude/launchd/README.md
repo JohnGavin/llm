@@ -16,6 +16,8 @@ canonical, version-controlled copies; the live copies live at
 | Label | Schedule | What it does |
 |---|---|---|
 | `com.claude.roborev-autoclose` | Weekly, Mon 09:15 | Closes roborev review findings older than 30 days. See `.claude/scripts/roborev_autoclose.sh`. Tracked in #138. |
+| `com.claude.pr-status-pulse` | Daily 09:30 / 12:30 / 16:30 | Logs open PR + CI status across tracked repos to `~/.claude/logs/pr_status.log`. Part of #137 Phase 4. |
+| `com.claude.wiki-health-pulse` | Daily 09:45 | Runs `wiki_health_check.sh` against the local knowledge wiki. Part of #137 Phase 4. |
 
 ## Install / reload after editing
 
