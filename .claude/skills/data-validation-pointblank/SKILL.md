@@ -258,3 +258,66 @@ cli::cli_abort(
   class = "data_contract_error"
 )
 ```
+
+## Lightweight Alternatives for In-Pipeline Validation
+
+`pointblank` is the right tool for formal QA reports and data contracts. For quick pipeline-embedded assertions where you don't need HTML reports, use `assertr` or `data.validator`.
+
+### assertr — Pipe-friendly assertions
+
+`assertr` integrates directly into dplyr pipes. Validation happens inside the target:
+
+```r
+library(assertr)
+
+tar_target(stg_transactions_validated, {
+  stg_transactions |>
+    # Column-level: amount must be non-NA, spend must be positive
+    verify(!is.na(amount)) |>
+    verify(amount != 0) |>
+    # Statistical: no z-score outliers (catches data entry errors)
+    insist(within_n_sds(3), amount) |>
+    # Row-level: date must be within plausible range
+    assert(within_bounds(as.Date("2000-01-01"), Sys.Date()), date)
+})
+```
+
+`assertr` raises an informative error that halts the targets pipeline at the failing step — downstream targets never run on bad data.
+
+### data.validator — Tibble-native validation
+
+`data.validator` produces structured validation reports within a targets step:
+
+```r
+library(data.validator)
+
+tar_target(validation_report_lightweight, {
+  report <- data_validation_report()
+  
+  stg_transactions |>
+    validate_if(is.numeric(amount), "amount is numeric") |>
+    validate_if(!anyNA(date), "no missing dates") |>
+    validate_cols_in_set(category, valid_categories, "valid categories only") |>
+    add_results(report)
+  
+  if (!is_success(report)) {
+    cli::cli_warn("Validation warnings: {get_failed_count(report)} rules failed")
+  }
+  
+  report
+})
+```
+
+### Decision table
+
+| Tool | Use when | Output |
+|------|----------|--------|
+| `pointblank` | Formal data contracts, HTML reports, stakeholder QA | HTML report + structured results |
+| `assertr` | Quick pipe-embedded assertions, halt-on-fail | Error (halts pipeline) |
+| `data.validator` | Lightweight reporting inside targets, no HTML needed | Structured list |
+
+### Layer placement
+
+- **Staging layer**: `assertr` — verify raw data meets schema expectations (types, no NAs in key cols)
+- **Intermediate layer**: `assertr` — verify join results (no unexpected row explosion, key coverage)
+- **Marts layer**: `pointblank` — formal data contract for downstream consumers
