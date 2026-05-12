@@ -88,6 +88,9 @@ proj/stats/ideas/ROC_brierScore/survival_time-to-event analysis.md symlink
 
 /.quarto/
 
+# Ephemeral output of .claude/scripts/skillify_backlog.sh
+.claude/skills/generated/
+
 # Exclude from package
 proj/
 archive/
