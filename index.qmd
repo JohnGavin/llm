@@ -63,10 +63,26 @@ if (!is.null(daily_data) && nrow(daily_data) > 0) {
 ::: {.g-col-4}
 ### 🛠️ Active Issues
 ```{r issues, echo=FALSE}
-issues_tbl <- data.frame(
+# Query live GitHub state — replaces previously hardcoded counts (#141).
+# Counts are: Open total, Closed in last 7 days, Reopened in last 7 days.
+# Reopened is left at NA: the Search API has no native "reopened in window"
+# query and the cost of trawling events isn't worth it for this dashboard.
+issues_tbl <- tryCatch({
+  since <- format(Sys.Date() - 7, "%Y-%m-%d")
+  q_open   <- gh::gh("GET /search/issues",
+                     q = "repo:JohnGavin/llm is:issue is:open",
+                     .limit = 1L)$total_count
+  q_closed <- gh::gh("GET /search/issues",
+                     q = sprintf("repo:JohnGavin/llm is:issue closed:>=%s", since),
+                     .limit = 1L)$total_count
+  data.frame(
+    Status = c("Open (total)", paste0("Closed (since ", since, ")"), "Reopened (7d)"),
+    Count  = c(q_open %||% 0L, q_closed %||% 0L, NA_integer_)
+  )
+}, error = function(e) data.frame(
   Status = c("Open", "Closed", "Reopened"),
-  Count  = c(4L, 141L, 0L)
-)
+  Count  = rep(NA_integer_, 3L)
+))
 knitr::kable(issues_tbl, align = c("l", "r"))
 ```
 :::
