@@ -91,6 +91,10 @@ proj/stats/ideas/ROC_brierScore/survival_time-to-event analysis.md symlink
 # Ephemeral output of .claude/scripts/skillify_backlog.sh
 .claude/skills/generated/
 
+# Python bytecode from .claude/scripts/*.py
+.claude/scripts/__pycache__/
+**/__pycache__/
+
 # Exclude from package
 proj/
 archive/
@@ -113,3 +117,4 @@ nohup.out
 explorations/*
 !explorations/CONVENTIONS.md
 .claude/plans/
+/.claude/drafts/
