@@ -1,3 +1,7 @@
+---
+description: Hook-enforced filesystem guard — blocks rm -rf, git clean, git reset --hard on protected paths without a 4-digit confirmation code
+---
+
 # Rule: Destructive Filesystem Guard (Enforced)
 
 ## Source
