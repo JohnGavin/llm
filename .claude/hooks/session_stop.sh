@@ -160,4 +160,10 @@ if [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
   fi
 fi
 
+# ── Entity propagation (projects only) — #137 Phase 3 minimal cut ─────
+PROPAGATE="$HOME/docs_gh/llm/.claude/scripts/entity_propagate.sh"
+if [ -x "$PROPAGATE" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  timeout 10 "$PROPAGATE" 2>/dev/null || true
+fi
+
 exit 0
