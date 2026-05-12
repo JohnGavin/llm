@@ -4,6 +4,100 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-12 (Session — issue sweep + agent infra)
+
+Closed 5 issues, scoped 2, filed 2 new. 19 commits, all individually revertable.
+
+### Issues closed
+
+| # | Title | Closing SHA |
+|---|---|---|
+| #144 | Move memory/ inside llm repo | `ab52d53` (+ `dece40e` for AGENTS.md) |
+| #140 | closeread-infrastructure.html directory errors | `5e4c67d` |
+| #139 | QA: HTML error detection in pkgdown validation | `6a9c0ac` + `9065848` |
+| #138 | roborev: decide when to close jobs in queue | `486306f` (weekly launchd, 30d threshold) |
+| #143 | Compare targets vs Maestro | `faf01fc` |
+
+### Issues with shipped fixes, still open pending decision
+
+| # | Title | State |
+|---|---|---|
+| #141 | Dashboard formatting (#### visible) | `eef27f7` shipped; live HTML showed `####` was already rendering as H4, not literal — fix is structural improvement, not bug |
+| #142 | closeread-config bold+links | `e8ccf44` shipped 2 of 7 terms; other 5 only exist in tables/code, would need new prose |
+| #70  | closeread scrollytelling parent | `b693fd0` cross-link added; alt-text N/A; brand styling deferred to separate issue |
+
+### Issues with framework shipped, awaiting enablement
+
+- **#125** Phase 1 semantic drift logger — `f1c6dd5` ships the framework (session-end hook, baseline from last 30 closed-no-revert commits, z-score log). `transformers` not in nix shell so currently logs "embedder unavailable". Enable via venv or add to `default.R`. Phase 2 (entropy) closed as API-blocked (no logprobs in Claude API).
+
+### Issues newly filed
+
+- **#144** (closed in this session) — memory/ move tracking
+- **#145** — broaden roborev review scope (correctness, statistical reporting, security, Quarto, tests, dependencies). Priority: OpenAI tokens not the constraint.
+
+### Audit-warning fixes (P0 cluster)
+
+- `5abf4dc` — YAML frontmatter for `destructive-fs-guard.md` and `quadratic-loop-cost.md` (silences `Rules FM: WARN` in session_init audit)
+- AGENTS.md `/batch` removed from commands list (already at HEAD; audit-noted)
+
+### #137 progress (was Tan meta-prompting gap analysis)
+
+| Phase | Status | Where |
+|---|---|---|
+| 1: Skillify | ✅ already merged | `26de4ec` + `a30a948` |
+| 2: Cross-modal eval | ✅ already merged | `2944b70` |
+| 3: Entity propagation (minimal cut, project mentions only) | ✅ this session | `2092bb2` |
+| 4: Cron density (3 jobs) | ✅ this session | `486306f` (roborev) + `e1986d5` (PR status + wiki health) |
+| 5: Book mirror | wontfix | no concrete trigger |
+
+Cron density went from 2 jobs/day to **5 jobs/day**: `config_pulse`, `knowledge_pulse`, `roborev-autoclose` (weekly Mon 09:15), `pr-status-pulse` (3x daily 09:30/12:30/16:30), `wiki-health-pulse` (daily 09:45).
+
+### Infra additions
+
+| Path | Purpose |
+|---|---|
+| `.claude/memory/` | 16 memory files moved in-repo from `~/.claude/projects/-Users-johngavin-docs-gh-llm/memory/` (which is now a symlink). Closed #144. |
+| `.claude/launchd/` | New convention for tracking macOS launchd plists in-repo. README + 3 plists. |
+| `.claude/scripts/roborev_autoclose.sh` | Closes roborev findings >30 days old. |
+| `.claude/scripts/pr_status_pulse.sh` | Logs open PR + CI rollup across tracked repos. |
+| `.claude/scripts/entity_propagate.sh` | Counts project mentions per session, writes to `knowledge/mentions/`. |
+| `.claude/scripts/drift_check.py` | Semantic drift logger framework (passive). |
+| `.claude/scripts/drift_README.md` | How to enable embeddings + how to revert. |
+
+### Failed approaches / gotchas
+
+- **toybox grep shadows GNU grep in the nix shell PATH** — toybox grep does not support `\b` word boundaries, returning 0 matches for valid patterns. Discovered during `entity_propagate.sh` testing. Fix: use `/usr/bin/grep` explicitly (BSD grep, always available on macOS). Documented in `entity_propagate.sh`.
+- **`set -u` + the Bash tool's shell-snapshot** — the snapshot init references `$ZSH_VERSION`; with `set -u` enabled, command substitution silently captures empty output. Drop `-u` in scripts that need command substitution.
+- **`grep -c ... || echo 0`** is a footgun: when grep finds nothing it prints `0` and exits 1, so `||` appends another `0`, yielding the string `"0\n0"` which is not a valid integer for `-gt` comparison. Use `count=${count:-0}` instead.
+- **`destructive_fs_guard` correctly blocked `rm -rf knowledge/`** during entity-propagate testing. Rule working as intended.
+- **#141's `####`-visible bug** was already absent from the deployed dashboard — the live HTML had `<h4>$34.36</h4>` rendering correctly. The fix replaces the H3+H4 pattern with a one-row table (more consistent with neighbouring panels and the visualization-standards rule) but isn't fixing a present literal-`####` leak.
+
+### Commits this session (in order, oldest first)
+
+```
+5abf4dc  fix(rules): add YAML frontmatter to two rule files
+5e4c67d  fix(vignettes): resolve closeread-infrastructure (#140)
+0cd8a85  feat(hooks): loop continuation + permission routing + context compression
+a30a948  feat(scripts): skillify_backlog retrospective workflow analyzer (#137)
+e827459  docs(rules): refine NA-rolling policy + pre-agent pkgctx step
+bb8f277  docs(skills): targets-pipeline trim + data stack/validation
+4cfd0ec  chore: session-end alias note + nested vignettes/.gitignore
+ab52d53  feat: bring project memory inside the repo (#144)
+dece40e  docs(AGENTS): update Memory section after in-repo move
+6a9c0ac  feat(qa): expand HTML error patterns + extract scan_html_for_errors (#139)
+9065848  ci(quarto-publish): delegate HTML error scan to R function (#139)
+eef27f7  fix(dashboard): replace #### markdown with proper table (#141)
+e8ccf44  docs(vignettes): bold+link key terms in closeread-config (#142)
+b693fd0  docs(vignettes): cross-link to closeread-config (#70)
+faf01fc  docs(skills): expand targets-vs-Maestro decision table (#143)
+486306f  feat: weekly roborev autoclose at 30-day threshold (#138)
+e1986d5  feat: PR status + wiki health launchd pulses (#137 Phase 4)
+2092bb2  feat: minimal entity propagation — project mentions (#137 Phase 3)
+f1c6dd5  feat: semantic drift logger framework (#125 Phase 1, passive)
+```
+
+Revert any single commit with `git revert <sha>`. The launchd plists can be unloaded per `.claude/launchd/README.md`.
+
 ## 2026-05-11 (Session 3)
 
 ### Completed
