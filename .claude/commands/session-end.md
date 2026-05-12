@@ -1,5 +1,7 @@
 # /session-end - End Development Session
 
+**Alias: `/bye`** — `~/.claude/commands/bye.md` mirrors this file. This is canonical; update here and copy to `bye.md`.
+
 Run the end-of-session checklist from AGENTS.md Section 6.
 
 ## Steps
