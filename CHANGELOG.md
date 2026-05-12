@@ -141,6 +141,17 @@ e8db458  fix(dashboard): query GitHub for live issue counts (#141)
 
 - **#146** — repo-wide `_brand.yml` setup
 
+### Bonus: roborev backlog cleared now (was planned for next Monday)
+
+- `roborev_autoclose.sh` Phase 1 closed 10 of 60 stale findings via `roborev close`. The other 50 were failed-no-review jobs — daemon API rejected with 404 ("review not found for job").
+- Patched the script (`67a3a6d`) to add **Phase 2**: direct SQLite UPDATE on `~/.roborev/reviews.db` for failed jobs without an associated review. Daemon stays running (supervised by `com.roborev.auto-refine`); SQLite WAL + `busy_timeout=10000` handles write contention. Backup at `reviews.db.bak-<timestamp>` before mutating.
+- Verified `roborev repo show llm` Failed: 65 → 15 (50 cancelled) and global `roborev status` failed: 202 → 152.
+- Known CLI quirk: `roborev list --open` still shows the cancelled jobs because it filters on `reviews.closed` not `job.status`. Functional state is correct; display is misleading.
+
+### Failed approach learned
+
+- `roborev daemon stop` doesn't actually stop the daemon when it's supervised by `com.roborev.auto-refine` — the supervisor respawns it. The patched script no longer attempts the daemon stop/start dance.
+
 ## 2026-05-11 (Session 3)
 
 ### Completed
