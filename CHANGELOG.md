@@ -4,9 +4,20 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
-## 2026-05-12 (Session — issue sweep + agent infra)
+## 2026-05-12 (Session — issue sweep + agent infra) [updated]
 
-Closed 5 issues, scoped 2, filed 2 new. 19 commits, all individually revertable.
+Closed **9 issues**, scoped 2, filed **3 new** (one closed same session). **24 commits**, all individually revertable.
+
+### Late additions (after first changelog write)
+
+- **#137** closed — gap analysis tracker; Phases 1-4 done, Phase 5 wontfix
+- **#70** closed — closeread scrollytelling vignette; brand styling broken out to #146
+- **#146** new — repo-wide `_brand.yml` setup (was the deferred Phase 4 polish item)
+- **#142** closed — `24e5f55` writes the 5 missing prose introductions (Nix shell, frontmatter, MANIFEST.md, MCP, session context)
+- **#125** closed — `c2d1ed8` activates the drift embedder via `~/.venvs/drift` (sentence-transformers 5.5.0, `intfloat/e5-small-v2`). Initial baseline n=30, mean=0.1479, std=0.0109. First live session z=+0.69. Discovered TOKENIZERS_PARALLELISM=false is required in this nix shell or sentence-transformers silently terminates after model load.
+- **#141** closed — `e8db458` replaces hardcoded `c(4L, 141L, 0L)` with live `gh::gh()` search queries. Honest disclosure in commit: the original `####`-visible bug wasn't actually present in the deployed HTML at the time of close (was rendering as `<h4>` correctly). The earlier table-replacement was structural alignment with the visualization-standards rule rather than a literal bug fix.
+
+### Additional commits
 
 ### Issues closed
 
@@ -97,6 +108,28 @@ f1c6dd5  feat: semantic drift logger framework (#125 Phase 1, passive)
 ```
 
 Revert any single commit with `git revert <sha>`. The launchd plists can be unloaded per `.claude/launchd/README.md`.
+
+### Additional commits (late additions)
+
+```
+24e5f55  docs(vignettes): introduce 5 remaining key terms in prose (#142)
+c2d1ed8  feat(drift): activate semantic drift embedder via ~/.venvs/drift (#125)
+e8db458  fix(dashboard): query GitHub for live issue counts (#141)
+```
+
+### Additional venv (outside the repo, documented in drift_README.md)
+
+```
+~/.venvs/drift/   # /usr/bin/python3 -m venv ~/.venvs/drift
+                  # pip install sentence-transformers (5.5.0)
+                  # ~133MB e5-small-v2 model in ~/.cache/huggingface/
+```
+
+### Open issues remaining (3)
+
+- **#145** — broaden roborev review scope (priority; filed this session)
+- **#146** — repo-wide `_brand.yml` setup (filed this session)
+- (everything else closed)
 
 ## 2026-05-11 (Session 3)
 
