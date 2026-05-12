@@ -38,6 +38,24 @@ Plan approved
 | `default.nix` / `default.R` | `nix-env` |
 | Multiple formats | Run applicable agents in parallel |
 
+## Pre-Agent Compression (MANDATORY for Package Work)
+
+Before spawning any subagent that will work on an R package, run `pkgctx` to generate a compact API spec. This replaces 20+ source file reads with a 2k-token spec.
+
+```bash
+# Generate compact context spec (run once per session before spawning)
+nix run github:b-rodrigues/pkgctx -- r . --compact > /tmp/pkg_context.txt
+
+# Include in subagent prompt:
+# "Package API spec (use instead of reading source files): $(cat /tmp/pkg_context.txt)"
+```
+
+**When to run pkgctx:**
+- Before spawning `reviewer`, `r-debugger`, `critic`, or `fixer` agents on R package code
+- Not needed for: `nix-env`, `targets-runner`, `wiki-curator` (don't read R package source)
+
+This reduces per-subagent token cost by ~60% for package work.
+
 ## Critic-Fixer Integration
 
 1. **Critic** (read-only): Identify issues with severity
