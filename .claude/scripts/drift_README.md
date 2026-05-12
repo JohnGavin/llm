@@ -6,10 +6,14 @@ last 30 closed-no-revert commits.
 
 ## Status
 
-**Passive log only.** No enforcement, no notification. The threshold
-in `drift_check.py` (`ALERT_Z = 2.5`) marks lines but doesn't gate
-on them. Need 2-3 weeks of data before deciding whether the signal
-is meaningful enough to act on.
+**Active (passive log only).** Embedder runs via `~/.venvs/drift`
+(installed 2026-05-12). The threshold in `drift_check.py`
+(`ALERT_Z = 2.5`) marks lines but doesn't gate on them. Need 2-3
+weeks of data before deciding whether the signal is meaningful
+enough to act on.
+
+First baseline (built 2026-05-12 from last 30 closed-no-revert
+commits): mean cosine distance = 0.1479, std = 0.0109.
 
 ## What's wired
 
@@ -25,19 +29,23 @@ The script currently logs `"embedder unavailable"` because
 `transformers` / `sentence_transformers` are not in the nix shell.
 Two options:
 
-### Option A — venv (recommended for prototype phase)
+### Option A — venv (currently active)
+
+Already done on this machine:
 
 ```bash
 /usr/bin/python3 -m venv ~/.venvs/drift
 ~/.venvs/drift/bin/pip install sentence-transformers
+~/.venvs/drift/bin/python3 .claude/scripts/drift_check.py --rebuild-baseline
 ```
 
-Then point the hook at the venv's python by editing
-`.claude/hooks/session_stop.sh` to call
-`~/.venvs/drift/bin/python3 "$DRIFT"`.
+`session_stop.sh` auto-detects `~/.venvs/drift/bin/python3` and falls
+back to system `python3` if missing.
 
-First run downloads `intfloat/e5-small-v2` (~133MB) into
-`~/.cache/huggingface/`.
+First run downloaded `intfloat/e5-small-v2` (~133MB) into
+`~/.cache/huggingface/hub/models--intfloat--e5-small-v2/`.
+
+**Reproducing on another machine**: run the three commands above.
 
 ### Option B — add to nix shell (commit, all sessions get it)
 

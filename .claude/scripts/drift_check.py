@@ -26,6 +26,11 @@ import subprocess
 import datetime
 import pathlib
 
+# Must be set before importing tokenizers — the multiprocessing pool
+# default conflicts with the nix-shell python environment and silently
+# terminates the script. Setting to false uses single-threaded tokenization.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 # ── Config ─────────────────────────────────────────────────────────────
 REPO_ROOT = pathlib.Path.home() / "docs_gh" / "llm"
 JSONL_DIR = pathlib.Path.home() / ".claude" / "projects" / "-Users-johngavin-docs-gh-llm"
@@ -58,12 +63,17 @@ def get_embedder():
 
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(MODEL_NAME)
+        # device=cpu — avoids MPS fork issues on macOS
+        model = SentenceTransformer(MODEL_NAME, device="cpu")
 
         def embed(text: str):
             # e5 expects "query: ..." or "passage: ..." prefixes; we are
             # comparing similar-domain content, so use "passage:" uniformly.
-            return model.encode(f"passage: {text}", normalize_embeddings=True)
+            return model.encode(
+                f"passage: {text}",
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
         return embed
     except ImportError:
         pass
