@@ -49,8 +49,14 @@ for cmd in "$DB" "$SQLITE" "$ROBOREV" "$GIT"; do
   fi
 done
 
-# Pull all repos from roborev's DB (single source of truth)
-mapfile -t REPOS < <(
+# Pull all repos from roborev's DB (single source of truth).
+# NOTE: portable while-read loop instead of `mapfile` — launchd uses macOS
+# system bash 3.2 (/bin/bash), which lacks mapfile (a bash-4+ builtin).
+# This script must run under that interpreter without modification.
+REPOS=()
+while IFS= read -r _line; do
+  REPOS+=("$_line")
+done < <(
   "$SQLITE" "$DB" "SELECT id || '|' || name || '|' || root_path FROM repos;"
 )
 
