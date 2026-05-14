@@ -686,6 +686,49 @@ if [ -f "_quarto.yml" ]; then
   fi
 fi
 
+# ── Phase 11c: roborev post-commit hook coverage ──
+# Scan known repos in roborev's DB for missing hooks. See JohnGavin/llm#148.
+_rdb="$HOME/.roborev/reviews.db"
+_sqlite=/usr/bin/sqlite3
+if [ -f "$_rdb" ] && [ -x "$_sqlite" ]; then
+  _missing_hooks=""
+  while IFS= read -r _rp; do
+    [ -z "$_rp" ] && continue
+    [ -d "$_rp/.git" ] || [ -f "$_rp/.git" ] || continue
+    _hp=$(/usr/bin/git -C "$_rp" config --get core.hooksPath 2>/dev/null)
+    [ -z "$_hp" ] && _hp="$_rp/.git/hooks"
+    _hook="$_hp/post-commit"
+    if [ ! -f "$_hook" ] || ! /usr/bin/grep -q roborev "$_hook" 2>/dev/null; then
+      _missing_hooks="${_missing_hooks}$(basename "$_rp") "
+    fi
+  done < <("$_sqlite" "$_rdb" "SELECT root_path FROM repos;" 2>/dev/null)
+  if [ -n "$_missing_hooks" ]; then
+    WARNINGS="${WARNINGS}WARN: roborev post-commit hook missing in: ${_missing_hooks}— run \`roborev install-hook\` inside each. "
+  fi
+fi
+
+# ── Phase 11d: auto-rebootstrap unloaded launchd plists ──
+# Detect known plists that have become unloaded and rebootstrap them.
+# See JohnGavin/llm#148 sub-fix 3. Uses /bin/launchctl (not in nix-shell PATH).
+_KNOWN_LABELS="com.roborev.auto-refine com.claude.roborev-autoclose com.claude.roborev-poll-merges com.claude.pr-status-pulse com.claude.wiki-health-pulse com.claude.config-pulse com.claude.knowledge-pulse"
+_lc=/bin/launchctl
+if [ -x "$_lc" ]; then
+  _uid=$(/usr/bin/id -u)
+  _rebooted=""
+  for _label in $_KNOWN_LABELS; do
+    _plist="$HOME/Library/LaunchAgents/$_label.plist"
+    [ -f "$_plist" ] || continue
+    if ! "$_lc" print "gui/$_uid/$_label" >/dev/null 2>&1; then
+      if "$_lc" bootstrap "gui/$_uid" "$_plist" >/dev/null 2>&1; then
+        _rebooted="${_rebooted}$_label "
+      fi
+    fi
+  done
+  if [ -n "$_rebooted" ]; then
+    WARNINGS="${WARNINGS}INFO: re-bootstrapped unloaded plists: ${_rebooted}"
+  fi
+fi
+
 # ── Phase 12: Log session start to unified DuckDB ──
 _log_script="$HOME/.claude/scripts/log_session.sh"
 _session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
