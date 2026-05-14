@@ -13,6 +13,8 @@ Nix shell puts GNU coreutils on PATH, replacing macOS equivalents. macOS-specifi
 
 **Related lesson 2026-05-13:** a launchd-managed daemon has its OWN PATH from the plist's `EnvironmentVariables.PATH` — completely independent of the interactive shell. If the daemon's PATH lists `/usr/local/bin` first and an old Homebrew/legacy tool is there (e.g. `/usr/local/bin/node` v18.15.0), the daemon picks the old version even when the interactive shell happily uses a newer one from `/opt/homebrew/bin`. Diagnostic: `/bin/launchctl print gui/$(id -u)/<label> | grep PATH`, then test the binary with that exact PATH. Don't conclude "X is broken on this machine" from an interactive-shell test alone — always reproduce the daemon's PATH.
 
+**Related lesson 2026-05-14 — launchd uses bash 3.2:** scripts launched via launchd run under `/bin/bash` (macOS system bash 3.2.57), not the interactive shell's bash. **`mapfile`/`readarray` and `declare -A` (assoc arrays) do not exist in bash 3.2.** Symptom: `line N: mapfile: command not found` in `~/.claude/logs/<job>.err`, with last exit code = 127. Test scripts that launchd will run with `/bin/bash -n script.sh` (syntax check) AND `/bin/bash script.sh` (actual run) before bootstrapping the plist. Portable substitutes: replace `mapfile -t arr < <(cmd)` with `arr=(); while IFS= read -r l; do arr+=("$l"); done < <(cmd)`. Same family as the daemon-PATH lesson: don't conclude a script works because it runs in YOUR shell — reproduce the launchd-equivalent environment.
+
 **Defensive pattern when running macOS-specific tools from a nix shell:**
 
 ```bash
