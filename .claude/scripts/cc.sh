@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # cc.sh — Claude Code wrapper with permission-mode + budget-aware model selection
+#         + project-name auto-set (#147)
 #
 # Permission mode selection:
 #   /tmp, /private/tmp                       → bypassPermissions
@@ -11,12 +12,19 @@
 #   BURN >= 70%: Use sonnet model
 #   BURN <  70%: Use opus model
 #
+# Project name + colour (#147):
+#   Session title = basename($PWD) (passed to `claude -n` so /resume + session
+#   switcher show the project name). If a colour is mapped in
+#   ~/.claude/project-colors.yaml, prints a one-line paste tip with
+#   `/color <name>` — paste once per session, colour persists across resume.
+#
 # Usage:
 #   alias cc='~/.claude/scripts/cc.sh'
-#   cc                      # starts session with auto-selected mode + model
+#   cc                      # starts session with auto-selected mode + model + name
 #   cc --print-mode         # prints the detected mode and exits
 #   cc --model opus         # explicit model override (bypasses budget check)
 #   cc --permission-mode <m> ...  # explicit permission override
+#   cc -n <custom-name> ... # explicit name override (skips auto-name)
 #
 # Companion rules: permission-mode-discipline, auto-delegation
 
@@ -54,12 +62,25 @@ get_burn_rate() {
 # Check for explicit overrides
 HAS_MODEL_OVERRIDE=false
 HAS_PERMISSION_OVERRIDE=false
+HAS_NAME_OVERRIDE=false
 for arg in "$@"; do
   case "$arg" in
     --model|--model=*) HAS_MODEL_OVERRIDE=true ;;
     --permission-mode|--permission-mode=*) HAS_PERMISSION_OVERRIDE=true ;;
+    -n|--name|-n=*|--name=*) HAS_NAME_OVERRIDE=true ;;
   esac
 done
+
+# Resolve project name from cwd basename (works for worktrees too — each
+# worktree dir has its own basename like "llm-sonnet"). For #147.
+PROJECT_NAME="$(basename "$PWD")"
+
+# Look up colour in YAML map (one shallow level, no nested keys needed)
+PROJECT_COLOR=""
+_colors_yaml="$HOME/.claude/project-colors.yaml"
+if [ -f "$_colors_yaml" ]; then
+  PROJECT_COLOR=$(/usr/bin/sed -n "s/^${PROJECT_NAME}:[[:space:]]*\([^[:space:]#]*\).*/\1/p" "$_colors_yaml" | head -1)
+fi
 
 # Print mode and exit if requested
 if [ "${1:-}" = "--print-mode" ]; then
@@ -117,6 +138,16 @@ if ! $HAS_MODEL_OVERRIDE; then
   else
     ARGS+=(--model claude-opus-4-7)
   fi
+fi
+
+# Auto-add -n <project_name> unless user already passed one
+if ! $HAS_NAME_OVERRIDE; then
+  ARGS+=(-n "$PROJECT_NAME")
+fi
+
+# Surface colour paste-tip (single line, easy to copy)
+if [ -n "$PROJECT_COLOR" ]; then
+  echo "Tip (paste once): /color $PROJECT_COLOR    [project: $PROJECT_NAME]"
 fi
 
 exec ~/.local/bin/claude "${ARGS[@]}" "$@"
