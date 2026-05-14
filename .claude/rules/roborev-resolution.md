@@ -112,12 +112,29 @@ This means the agent couldn't figure out what to change. The review stays open. 
 | Cross-project | `llm/knowledge/wiki/roborev-patterns.md` | Recurring patterns → rule candidates |
 | Global rules | `llm/.claude/rules/` | Graduated patterns (3+ occurrences) |
 
+## Coverage Model (CRITICAL — what roborev does NOT catch)
+
+### Lesson 2026-05-13: remote-merged PRs don't fire post-commit
+
+`post-commit` only fires on **local** `git commit`. PRs merged on GitHub (web UI, `gh pr merge`, auto-merge) reach the repo via `git fetch` / `git pull` / `git merge --ff` — **none of these trigger `post-commit`**. Projects that do most work via PRs therefore have near-zero roborev coverage despite the hook being installed.
+
+Symptom: roborev DB shows no jobs for a repo for hours/days despite commits being on `origin/main`.
+
+Diagnosis: compare `git log -1 --pretty=%H` with the latest reviewed commit_sha in `~/.roborev/reviews.db` for that repo. If git is ahead → PR merges are uncovered.
+
+Backfill: `(cd <repo> && roborev review --since <last_reviewed_sha>)`.
+
+Long-term fix: a periodic poller (tracked in #148) that fetches each watched repo and runs `roborev review --since` if HEAD is ahead. The post-commit hook alone is insufficient.
+
 ## Known Issues
 
+- **Remote-merged PRs invisible** (see above) — install local hook + periodic `--since` poll
 - `codex` and `gemini` not in nix shell PATH — wrappers at `/usr/local/bin/` + `codex_cmd` config
 - `--agent codex` silently falls back to claude-code if codex unavailable (no error)
 - `check-agents` uses PATH lookup, but actual commands use `*_cmd` config
 - No `gemini_cmd` config key exists yet
+- `core.hooksPath` shared across repos (e.g., `llm/git-hooks/`) — `roborev install-hook` writes to the shared path, so one install covers many repos but a misconfigured one breaks many at once
+- **`.roborev.toml` is gitignored in some projects** (e.g., micromort line 52) but tracked in others (coMMpass, llm). Edits in gitignored projects are LOCAL-only and silently disappear if `roborev init` regenerates. Check `git check-ignore .roborev.toml` before editing; if ignored, add a top-of-file comment recording the manual value (since the comment is the only durable signal that survives regeneration in the file's own context).
 
 ## Related
 
