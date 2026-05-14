@@ -9,6 +9,9 @@ execute:
   warning: false
 ---
 
+{{< include ../_includes/qr-footer.qmd >}}
+
+
 ```{r setup}
 #| include: false
 library(dplyr)
@@ -334,3 +337,5 @@ Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw s
 **Privacy:** Knowledge base is local-only. This dashboard shows metrics, not content.
 
 *Last updated: `r Sys.time()`*
+
+{{< include ../_includes/qr-footer.qmd >}}

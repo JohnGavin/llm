@@ -48,7 +48,7 @@ r_pkgs = c(
   # https://github.com/Techtonique/esgtoolkit
   # "forecast", "targets", "tarchetypes", # "ahead", "esgtoolkit", 
   # statues named john ~/docs_gh/claude_rix/statues_named_john/PLAN_what.md
-  "gender", "chromote", "sf", "WikidataQueryServiceR", "WikidataR", "leaflet", "osmdata", "dplyr", "ggplot2", "httr", "knitr", "purrr", "rmarkdown", "rvest", "sf", "stringr", "tarchetypes", "targets", "testthat", "tibble",
+  "gender", "chromote", "sf", "WikidataQueryServiceR", "WikidataR", "leaflet", "osmdata", "dplyr", "ggplot2", "httr", "knitr", "purrr", "qrcode", "rmarkdown", "rvest", "sf", "stringr", "tarchetypes", "targets", "testthat", "tibble",
 
   # https://cran.r-project.org/web/packages/treasury/index.html
   "treasury", 

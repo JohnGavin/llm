@@ -12,6 +12,8 @@ execute:
   message: false
 ---
 
+{{< include ../_includes/qr-footer.qmd >}}
+
 ```{r setup}
 #| include: false
 
@@ -451,3 +453,6 @@ flowchart LR
 info <- safe_tar_read("vig_cr_build_info")
 if (!is.null(info)) cat(info) else cat("*Run `tar_make()` locally to generate build info.*")
 ```
+
+{{< include ../_includes/qr-footer.qmd >}}
+

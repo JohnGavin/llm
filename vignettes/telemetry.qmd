@@ -13,6 +13,9 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+{{< include ../_includes/qr-footer.qmd >}}
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -251,3 +254,5 @@ safe_tar_read("vig_pred_success_rate_plot")
 ```
 
 :::
+
+{{< include ../_includes/qr-footer.qmd >}}

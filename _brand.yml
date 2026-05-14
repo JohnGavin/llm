@@ -1,0 +1,57 @@
+## llm — repo-wide brand.yml
+##
+## Used by:
+##   - _quarto.yml (websites + vignettes via `format: html: brand: _brand.yml`)
+##   - inst/shiny/* (when added; via `bslib::bs_theme(brand = TRUE)`)
+##
+## Dark-mode contrast: per `accessibility` + `dark-mode-completeness` rules,
+##   the dark palette uses literal #000000 background and high-contrast
+##   foreground colours (WCAG AA on black). Light palette is cosmo-aligned.
+##
+## Logos: deliberately omitted for now — tracked separately. See follow-up
+##   issue filed alongside this commit.
+
+meta:
+  name: llm
+  link:
+    home: https://johngavin.github.io/llm/
+
+color:
+  palette:
+    # Brand-neutral base
+    near-black: "#0e1116"
+    pure-black: "#000000"
+    pure-white: "#ffffff"
+    cosmo-blue: "#2780e3"   # cosmo theme primary
+    cosmo-red:  "#ff0039"
+    cosmo-orange: "#f0ad4e"
+    # Dark-mode-safe variants (WCAG AA on #000000)
+    dark-primary: "#4ea8de"
+    dark-success: "#69d4a0"
+    dark-warning: "#ffd166"
+    dark-danger:  "#f08080"
+    dark-info:    "#5edaff"
+
+  primary:    cosmo-blue
+  secondary:  "#6c757d"
+  success:    "#198754"
+  info:       "#0dcaf0"
+  warning:    cosmo-orange
+  danger:     cosmo-red
+  background: pure-white
+  foreground: near-black
+
+typography:
+  fonts:
+    - family: "system-ui"
+      source: system
+    - family: "ui-monospace"
+      source: system
+  base:
+    family: "system-ui"
+    line-height: 1.6
+  headings:
+    family: "system-ui"
+    weight: 600
+  monospace:
+    family: "ui-monospace"
