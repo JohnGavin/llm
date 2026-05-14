@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-agent-health</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_agent_health.sh</string>
+        <string>--apply</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_agent_health.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_agent_health.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
