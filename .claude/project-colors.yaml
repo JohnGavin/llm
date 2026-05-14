@@ -1,0 +1,32 @@
+# Per-project Claude Code session colours (and rename names).
+#
+# Used by ~/.claude/scripts/cc.sh (#147):
+#   - Project name is resolved from $(basename "$PWD"). If a matching key
+#     exists below, cc.sh passes `-n <name>` to claude and prints a tip line
+#     suggesting `/color <colour>` to set the prompt-bar colour.
+#   - You then paste `/color red` (or whichever) once per session. Colour
+#     persists for that session and across `--resume` (Claude Code 2.1.140+).
+#
+# Colour value: any name accepted by Claude Code's /color command, OR a hex.
+# Common names: red, blue, green, yellow, magenta, cyan, white, gray, orange.
+#
+# When you add a new project here, no restart needed — cc.sh reads on startup.
+# The file lives in the llm repo so it's versioned + portable across machines.
+
+llm: red
+llm-sonnet: orange      # the sibling worktree — distinct from main llm
+llmtelemetry: cyan
+mycare: blue
+historical: magenta
+urban_planning: green
+coMMpass: yellow
+crypto_swarms: magenta
+crypto_solwatch: magenta
+micromort: green
+randomwalk: cyan
+JohnGavin.github.io: white
+knowledge: gray
+footbet: yellow
+t_demos: blue
+hello_t: blue
+my_t_project: blue
