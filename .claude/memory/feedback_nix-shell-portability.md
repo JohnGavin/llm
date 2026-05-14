@@ -4,11 +4,33 @@ description: Nix shell provides GNU utils that differ from macOS — use Claude 
 type: feedback
 ---
 
-Nix shell puts GNU coreutils on PATH, replacing macOS equivalents. Several commands behave differently.
+Nix shell puts GNU coreutils on PATH, replacing macOS equivalents. macOS-specific tools (`launchctl`, `ps`, `lsof`, `osascript`, `pmset`, `defaults`, `sw_vers`) are **not on the nix-shell PATH at all** — invoking them without an absolute path returns "command not found".
 
-**Why:** Two incidents:
+**Why:** Three incidents:
 1. `grep -oP` (Perl regex) — not supported by nix GNU grep. Fixed: use `sed` instead.
 2. `sed -i ''` (macOS in-place edit) — GNU sed interprets `''` as filename. Fixed: use Edit tool.
+3. **2026-05-13** — `launchctl list 2>&1 | grep -i roborev` returned EMPTY (looked like "no plists loaded"). Real cause: bare `launchctl` was not on PATH, shell printed `command not found` to stderr (captured by `2>&1`), then `grep` matched no lines. The pipe **silently swallows the upstream failure** — the grep output looks identical to a successful command that produced no matches. Fixed by using `/bin/launchctl list`. Real check showed all 6 plists actually loaded — wasted 10 minutes on a wrong diagnosis.
+
+**Related lesson 2026-05-13:** a launchd-managed daemon has its OWN PATH from the plist's `EnvironmentVariables.PATH` — completely independent of the interactive shell. If the daemon's PATH lists `/usr/local/bin` first and an old Homebrew/legacy tool is there (e.g. `/usr/local/bin/node` v18.15.0), the daemon picks the old version even when the interactive shell happily uses a newer one from `/opt/homebrew/bin`. Diagnostic: `/bin/launchctl print gui/$(id -u)/<label> | grep PATH`, then test the binary with that exact PATH. Don't conclude "X is broken on this machine" from an interactive-shell test alone — always reproduce the daemon's PATH.
+
+**Defensive pattern when running macOS-specific tools from a nix shell:**
+
+```bash
+# Wrong — silent failure in pipes:
+launchctl list | grep roborev          # may produce empty output even if loaded
+
+# Right — absolute path:
+/bin/launchctl list | grep roborev
+
+# Or with a guard:
+LC=/bin/launchctl
+[ -x "$LC" ] || LC=$(command -v launchctl) || { echo "no launchctl"; exit 1; }
+"$LC" list | grep roborev
+```
+
+**When the upstream command in a pipe might be missing, ALWAYS:**
+1. Use the absolute path (`/bin/launchctl`, `/bin/ps`, `/usr/sbin/lsof`), OR
+2. Run the upstream command alone first to confirm exit 0, THEN pipe.
 
 **How to apply:**
 
@@ -20,7 +42,13 @@ Nix shell puts GNU coreutils on PATH, replacing macOS equivalents. Several comma
 | `stat -f '%Sm'` | macOS format | Not available | Use `Rscript -e 'file.mtime()'` |
 | `date -j` | macOS date | Not available | Use `date -d` or `Rscript -e 'Sys.time()'` |
 | `ps aux` | Available | Not in nix PATH | Use `/bin/ps aux` |
-| `lsof` | Available | Not in nix PATH | Use full path `/usr/sbin/lsof` |
+| `lsof` | Available | Not in nix PATH | Use `/usr/sbin/lsof` |
 | `launchctl` | Available | Not in nix PATH | Use `/bin/launchctl` |
+| `osascript` | Available | Not in nix PATH | Use `/usr/bin/osascript` |
+| `pmset` | Available | Not in nix PATH | Use `/usr/bin/pmset` |
+| `defaults` | Available | Not in nix PATH | Use `/usr/bin/defaults` |
+| `sw_vers` | Available | Not in nix PATH | Use `/usr/bin/sw_vers` |
+| `pbcopy` / `pbpaste` | Available | Not in nix PATH | Use `/usr/bin/pbcopy` etc. |
+| `say` | Available | Not in nix PATH | Use `/usr/bin/say` |
 
 **Rule of thumb:** For file edits, ALWAYS prefer Claude Code's Edit/Write tools over sed/awk in Bash. For data extraction, prefer R (`Rscript -e '...'`) over shell tools — R is always available and portable in the nix shell.
