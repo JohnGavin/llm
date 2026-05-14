@@ -9,6 +9,9 @@ execute:
   warning: false
 ---
 
+{{< include ../_includes/qr-footer.qmd >}}
+
+
 ```{r setup}
 #| include: false
 library(dplyr)
@@ -411,3 +414,5 @@ Current counts: ", fallback_counts$n_rules, " rules, ", fallback_counts$n_skills
 **Data Collection:** Run `~/.claude/scripts/config_pulse.sh` daily to collect snapshots stored in `~/.claude/logs/config/`.
 
 *Last updated: `r Sys.time()`*
+
+{{< include ../_includes/qr-footer.qmd >}}
