@@ -69,6 +69,7 @@ jobs:
             any::duckdb
             any::withr
             any::gridExtra
+            any::qrcode
 
       - uses: quarto-dev/quarto-actions/setup@v2
 
