@@ -20,6 +20,7 @@ Imports:
     here,
     jsonlite,
     purrr,
+    qrcode,
     scales,
     tibble
 VignetteBuilder: knitr

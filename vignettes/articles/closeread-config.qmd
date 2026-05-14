@@ -13,6 +13,9 @@ execute:
   message: false
 ---
 
+{{< include ../../_includes/qr-footer.qmd >}}
+
+
 <style>
 .cr-section.sidebar-left .cr-sidebar-col { flex: 0 0 55% !important; max-width: 55% !important; }
 .cr-section.sidebar-left .cr-narrative-col { flex: 0 0 45% !important; max-width: 45% !important; }
@@ -524,3 +527,5 @@ None of these layers operates in isolation. A skill invokes an agent. An agent a
 @cr-composition
 
 :::
+
+{{< include ../../_includes/qr-footer.qmd >}}
