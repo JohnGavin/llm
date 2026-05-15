@@ -48,9 +48,14 @@ if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requ
   }, error = function(e) NULL)
 }
 
-# Fallback: count files directly (works in CI)
+# Fallback: count files directly (works in CI).
+# In CI, ~/.claude doesn't exist — the repo-committed .claude/ does (per #144).
+# Probe in priority order so this also works locally where ~/.claude has the
+# same content via symlinks.
 if (is.null(config_data)) {
-  claude_dir <- path.expand("~/.claude")
+  .candidates <- c(here::here(".claude"), path.expand("~/.claude"))
+  claude_dir <- Find(dir.exists, .candidates)
+  if (is.null(claude_dir)) claude_dir <- .candidates[1]  # last-resort string
 
   # Count rules
   rules_dir <- file.path(claude_dir, "rules")

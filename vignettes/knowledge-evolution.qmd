@@ -47,8 +47,13 @@ if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requ
   }, error = function(e) NULL)
 }
 
-# Fallback: count files directly
-kb_path <- path.expand("~/docs_gh/llm/knowledge")
+# Fallback: count files directly.
+# In CI, ~/docs_gh/llm/knowledge resolves to a non-existent home — the data
+# we want lives at <repo>/knowledge/. Probe the repo-relative path first so
+# this works both in CI and locally (per #144 + portable-paths rule).
+.kb_candidates <- c(here::here("knowledge"), path.expand("~/docs_gh/llm/knowledge"))
+kb_path <- Find(dir.exists, .kb_candidates)
+if (is.null(kb_path)) kb_path <- .kb_candidates[1]  # last-resort
 wiki_dir <- file.path(kb_path, "wiki")
 raw_dir <- file.path(kb_path, "raw")
 
