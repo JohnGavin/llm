@@ -118,6 +118,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 - `quarto-alt-text` — Accessibility alt text
 - `webr-multi-page-vignettes` — WebR multi-page vignettes
 - `describe-design` — Codebase architecture docs
+- `closeread-scrollytelling` — Sticky-panel scrollytelling with closeread extension
 
 ### Prose Quality
 - `deslop` — Remove AI writing patterns from prose (vignettes, emails, READMEs, captions, issues). Overrides: captions MUST have units+source+dynamic values; code quality always paramount
