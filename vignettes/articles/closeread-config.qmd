@@ -528,4 +528,23 @@ None of these layers operates in isolation. A skill invokes an agent. An agent a
 
 :::
 
+## Methodology
+
+### What this vignette computes
+
+This scrollytelling vignette walks through all six layers of the Claude Code configuration stack — rules, skills, agents, memory, commands, and hooks — using a closeread narrative with sticky code panels. Configuration counts per layer are read from `safe_tar_read("vig_cr_infra_counts")`; rule and skill category tables from `safe_tar_read("vig_cr_rule_categories")` and `safe_tar_read("vig_cr_skill_categories")`; agent tier data from `safe_tar_read("vig_cr_agent_tiers")`; hook lifecycle from `safe_tar_read("vig_cr_hook_lifecycle")`; and slash command list from `safe_tar_read("vig_cr_commands")`.
+
+### Data sources
+
+- `vig_cr_infra_counts`: per-layer file counts from `.claude/` directory tree
+- `vig_cr_rule_categories`: rules grouped by category with example rule names
+- `vig_cr_skill_categories`: skills grouped by domain with purpose summaries
+- `vig_cr_agent_tiers`: agent list with model tier and delegation trigger phrase
+- `vig_cr_hook_lifecycle`: hook scripts with event trigger and action description
+- `vig_cr_commands`: slash commands with alias and description; all targets pre-computed at pipeline build time and served from `inst/extdata/vignettes/` in CI
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
 {{< include ../../_includes/qr-footer.qmd >}}
