@@ -2,13 +2,25 @@
 # Vignette URL is derived from the current input file path so this partial
 # can be reused unchanged across every vignette. Renders a centred QR plus
 # the URL as a clickable caption. See #146.
+#
+# Quarto pre-processes .qmd → .rmarkdown and chdirs into the source dir,
+# so knitr::current_input() returns just "telemetry.rmarkdown" (no
+# vignettes/ prefix). We reconstruct the project-relative path by
+# subtracting here::here() from getwd().
 .qr_for_current_vignette <- function() {
   base <- "https://johngavin.github.io/llm/"
   inp  <- tryCatch(knitr::current_input(), error = function(e) NULL)
   if (is.null(inp) || !nzchar(inp)) return(invisible(NULL))
-  # vignettes/foo.qmd  -> vignettes/foo.html
-  # vignettes/articles/foo.qmd -> vignettes/articles/foo.html
-  rel <- sub("\\.qmd$", ".html", inp)
+  # Reconstruct path relative to project root
+  proj <- tryCatch(here::here(), error = function(e) getwd())
+  wd <- getwd()
+  rel_dir <- if (nchar(wd) > nchar(proj) + 1 && startsWith(wd, proj)) {
+    substring(wd, nchar(proj) + 2)
+  } else {
+    ""
+  }
+  rel_file <- sub("\\.(rmarkdown|qmd)$", ".html", inp)
+  rel <- if (nzchar(rel_dir)) file.path(rel_dir, rel_file) else rel_file
   url <- paste0(base, rel)
   if (requireNamespace("qrcode", quietly = TRUE)) {
     qr <- qrcode::qr_code(url)
