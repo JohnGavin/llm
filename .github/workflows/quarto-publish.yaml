@@ -9,9 +9,12 @@ on:
     paths:
       - 'vignettes/**'
       - '_quarto.yml'
+      - '_brand.yml'
+      - '_includes/**'
       - 'index.qmd'
       - 'R/ccusage.R'
       - 'inst/extdata/ccusage_*.json'
+      - 'DESCRIPTION'
       - '.github/workflows/quarto-publish.yaml'
   workflow_dispatch:
 
