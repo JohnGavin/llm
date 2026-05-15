@@ -1,4 +1,4 @@
-```{r qr-footer, echo=FALSE, message=FALSE, warning=FALSE, fig.width=2, fig.height=2, fig.align='center'}
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=2, fig.height=2, fig.align='center'}
 # Vignette URL is derived from the current input file path so this partial
 # can be reused unchanged across every vignette. Renders a centred QR linking
 # to the published page on GitHub Pages. See #146.
