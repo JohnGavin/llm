@@ -1,7 +1,7 @@
-```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=2, fig.height=2, fig.align='center'}
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.width=2, fig.height=2, fig.align='center'}
 # Vignette URL is derived from the current input file path so this partial
-# can be reused unchanged across every vignette. Renders a centred QR linking
-# to the published page on GitHub Pages. See #146.
+# can be reused unchanged across every vignette. Renders a centred QR plus
+# the URL as a clickable caption. See #146.
 .qr_for_current_vignette <- function() {
   base <- "https://johngavin.github.io/llm/"
   inp  <- tryCatch(knitr::current_input(), error = function(e) NULL)
@@ -14,11 +14,11 @@
     qr <- qrcode::qr_code(url)
     plot(qr)
   }
+  cat(sprintf(
+    '\n<p class="text-center text-muted" style="font-size: 0.85em; word-break: break-all;"><a href="%s">%s</a></p>\n',
+    url, url
+  ))
   invisible(url)
 }
 .qr_for_current_vignette()
 ```
-
-::: {.text-center .text-muted style="font-size: 0.85em;"}
-Scan to open this vignette on a phone.
-:::
