@@ -343,4 +343,19 @@ Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw s
 
 *Last updated: `r Sys.time()`*
 
+## Methodology
+
+### What this vignette computes
+
+This vignette tracks the health and growth of the knowledge base at `~/docs_gh/llm/knowledge/` — measuring wiki page count, raw source count, provenance coverage (fraction of pages with `## Sources` sections), and AI-inferred claim density. It reads time-series snapshots from `~/.claude/logs/knowledge/*.parquet` via DuckDB when available, falling back to live `list.files()` counts from `knowledge/wiki/` and `knowledge/raw/` when no snapshots exist.
+
+### Data sources
+
+- `~/.claude/logs/knowledge/*.parquet`: daily snapshots produced by `~/.claude/scripts/knowledge_pulse.sh`; each row is one metric for one category (wiki/raw/quality) at one snapshot date
+- Live fallback: `list.files()` on `knowledge/wiki/` and `knowledge/raw/` directories — used in CI; provenance percentage computed by scanning each wiki file for `^## Sources` and `AI-inferred` patterns
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
 {{< include ../_includes/qr-footer.qmd >}}
