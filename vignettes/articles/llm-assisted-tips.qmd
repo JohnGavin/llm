@@ -217,4 +217,18 @@ cat(sprintf(
 ))
 ```
 
+## Methodology
+
+### What this vignette computes
+
+This vignette presents practical principles for LLM-assisted development — spec-first planning, declarative prompting, multi-model delegation, and targets pipeline patterns — drawn from experience building R packages with Claude Code. It also provides a reference guide to `tar_target()` vs `tar_target_raw()` with scoping examples. Content is static prose and code examples; no targets pipeline data is read at render time.
+
+### Data sources
+
+- Build info: `git rev-parse HEAD` (current commit SHA), `R.version` (R version), `Sys.time()` (render timestamp) — computed inline at render time, not from the targets pipeline
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
 {{< include ../../_includes/qr-footer.qmd >}}

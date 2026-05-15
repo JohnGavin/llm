@@ -454,5 +454,22 @@ info <- safe_tar_read("vig_cr_build_info")
 if (!is.null(info)) cat(info) else cat("*Run `tar_make()` locally to generate build info.*")
 ```
 
+## Methodology
+
+### What this vignette computes
+
+This vignette enumerates the six layers of the Claude Code configuration stack (rules, skills, agents, hooks, commands, memory) by counting files directly from the `.claude/` directory tree and reading pre-computed pipeline objects via `safe_tar_read("vig_cr_infra_counts")`, `safe_tar_read("vig_cr_skill_categories")`, and `safe_tar_read("vig_cr_pipeline_walkthrough")`. It illustrates how Nix, rix, targets, and the LLM harness compose into a reproducible pipeline, using the irishbuoys project as a real-world example.
+
+### Data sources
+
+- `vig_cr_infra_counts`: count of rules, skills, agents, hooks, commands, and memory files — computed from `.claude/` directory at pipeline build time; falls back to live `list.files()` in CI
+- `vig_cr_skill_categories`: skill counts grouped by domain category — computed from `~/.claude/skills/MANIFEST.md`
+- `vig_cr_pipeline_walkthrough`: irishbuoys pipeline plan-file inventory — computed from the irishbuoys project's `R/tar_plans/` directory
+- `vig_cr_build_info`: build metadata string (package version, git SHA, R version, date)
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
 {{< include ../_includes/qr-footer.qmd >}}
 

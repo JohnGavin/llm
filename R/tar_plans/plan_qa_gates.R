@@ -111,11 +111,87 @@ scan_html_for_errors <- function(html_dir       = "docs",
   invisible(results)
 }
 
+#' Check that all rendered vignette HTML contains the mandatory methodology block
+#'
+#' Every analytical vignette must ship with three H3 subsections:
+#' "What this vignette computes", "Data sources", and "AI disclosure".
+#' This function scans rendered HTML and aborts the pipeline if any are missing.
+#'
+#' @param vignettes_dir Path to rendered vignettes HTML (default "docs/articles").
+#' @param docs_dir Additional path to check for top-level vignette HTML (default "docs").
+#' @return Invisibly returns a character vector of checked files when all pass.
+#'   Calls `cli::cli_abort()` if any rendered vignette is missing any of the
+#'   three required subsections.
+check_methodology_blocks <- function(vignettes_dir = "docs/articles",
+                                     docs_dir       = "docs") {
+  # Collect all rendered vignette HTML files
+  html_files <- c(
+    list.files(vignettes_dir, pattern = "\\.html$", full.names = TRUE, recursive = FALSE),
+    list.files(docs_dir, pattern = "\\.html$", full.names = TRUE, recursive = FALSE)
+  )
+
+  # Skip changelog, news, index, and reference pages
+  skip_basenames <- c("CHANGELOG.html", "NEWS.html", "news.html", "index.html",
+                      "404.html", "reference.html")
+  skip_paths <- c("/news/", "/reference/", "/pkgdown-")
+  html_files <- html_files[
+    !basename(html_files) %in% skip_basenames &
+    !Reduce(`|`, lapply(skip_paths, function(p) grepl(p, html_files, fixed = TRUE)))
+  ]
+
+  if (length(html_files) == 0L) {
+    cli::cli_alert_warning(
+      "No vignette HTML found in {.path {vignettes_dir}} or {.path {docs_dir}} — run pkgdown/quarto first"
+    )
+    return(invisible(character(0L)))
+  }
+
+  # Required methodology section markers (match H3 id slugs or text)
+  required_markers <- c(
+    methodology  = "Methodology",
+    data_sources = "Data sources",
+    ai_disc      = "AI disclosure"
+  )
+
+  missing_report <- purrr::map_dfr(html_files, function(f) {
+    content <- paste(readLines(f, warn = FALSE), collapse = "\n")
+    absent <- names(required_markers)[
+      !vapply(required_markers, function(m) grepl(m, content, ignore.case = TRUE), logical(1L))
+    ]
+    if (length(absent) > 0L) {
+      tibble::tibble(
+        file    = basename(f),
+        missing = paste(absent, collapse = ", ")
+      )
+    }
+  })
+
+  if (!is.null(missing_report) && nrow(missing_report) > 0L) {
+    cli::cli_alert_danger("Methodology blocks missing in {nrow(missing_report)} vignette(s):")
+    print(missing_report)
+    cli::cli_abort(c(
+      "x" = "All rendered vignettes must contain ## Methodology with three H3 subsections.",
+      "i" = "Missing in: {paste(missing_report$file, collapse = ', ')}",
+      "i" = "See narrative-evidence-block rule for the required structure."
+    ))
+  }
+
+  cli::cli_alert_success(
+    "Methodology blocks present in all {length(html_files)} vignette page(s)"
+  )
+  invisible(html_files)
+}
+
 plan_qa_gates <- function() {
   list(
     targets::tar_target(
       qa_html_no_errors,
       scan_html_for_errors(),
+      packages = c("purrr", "tibble", "cli")
+    ),
+    targets::tar_target(
+      qa_methodology_blocks,
+      check_methodology_blocks(),
       packages = c("purrr", "tibble", "cli")
     )
   )

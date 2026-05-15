@@ -255,4 +255,24 @@ safe_tar_read("vig_pred_success_rate_plot")
 
 :::
 
+## Methodology
+
+### What this vignette computes
+
+This vignette presents six categories of telemetry for the `llm` project: LLM usage and costs (by model, daily trends, cumulative spend), session efficiency (duration, cost per minute), pipeline metrics (plan files, target counts, heaviest targets by size and compute time), GitHub activity (commits, issues, PRs, CI workflow runtimes), project structure (codebase metrics, file counts), and prediction calibration (Brier scores, calibration buckets, predicted vs actual success rates). All data is pre-computed by the targets pipeline and read via `safe_tar_read()`.
+
+### Data sources
+
+- `vig_usage_summary`, `vig_cost_trend_plot`, `vig_cumulative_cost_plot`, `vig_breakdowns_plot`: Claude API usage data from `~/.claude/logs/ccusage/` parquet files, aggregated by the `plan_telemetry.R` pipeline
+- `vig_gemini_plot`: Gemini usage data from the Gemini usage database
+- `vig_duration_trend_plot`, `vig_cost_efficiency_plot`, `vig_cost_duration_plot`, `vig_model_session_plot`, `vig_max5_table`: session-level metrics derived from Claude API usage logs, including Claude Max5 5-hour window tracking
+- `vig_pipeline_plans_table`, `vig_pipeline_top_size_table`, `vig_pipeline_top_time_table`: targets pipeline manifest queried via `targets::tar_manifest()` with size and timing metadata
+- `vig_commit_velocity_table`, `vig_github_activity_table`, `vig_workflow_plot`, `vig_git_history_plot`: GitHub API data via `gh::gh()` for repository commits, issues, PRs, and Actions workflow runs
+- `vig_codebase_metrics`, `vig_file_counts_table`, `vig_github_stats_table`: static repository metrics from `list.files()` and GitHub API
+- `vig_pred_by_project_table`, `vig_pred_global_calibration_table`, `vig_pred_global_brier_plot`, `vig_pred_success_rate_plot`: prediction calibration data from `~/.claude/logs/predictions/` log files
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
 {{< include ../_includes/qr-footer.qmd >}}
