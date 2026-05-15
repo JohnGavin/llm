@@ -1,0 +1,256 @@
+---
+title: "How `.claude/` grew: a scroll through 222 files"
+format:
+  closeread-html:
+    toc: false
+    code-fold: true
+    code-summary: "Show code"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include ../../_includes/qr-footer.qmd >}}
+
+```{r setup}
+#| include: false
+library(ggplot2)
+library(dplyr)
+
+safe_tar_read <- function(name) {
+  store <- tryCatch({
+    owd <- setwd(here::here())
+    on.exit(setwd(owd))
+    normalizePath(targets::tar_config_get("store"))
+  }, error = function(e) NULL)
+  if (!is.null(store)) {
+    obj <- tryCatch(targets::tar_read_raw(name, store = store), error = function(e) NULL)
+    if (!is.null(obj)) return(obj)
+  }
+  for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
+              file.path(here::here(), "inst/extdata/vignettes"))) {
+    rds <- file.path(d, paste0(name, ".rds"))
+    if (file.exists(rds)) return(readRDS(rds))
+  }
+  NULL
+}
+
+cfg <- safe_tar_read("vig_scrolly_config")
+if (is.null(cfg)) {
+  cfg <- tibble::tibble(
+    path = character(0), category = factor(character(0), levels = c("rules","skills","agents","hooks","memory","commands","scripts")),
+    n_lines = integer(0), n_bytes = integer(0), git_age_days = numeric(0)
+  )
+}
+
+# Stable colour palette — used unchanged across all 5 scenes
+category_palette <- c(
+  rules    = "#e6194b",
+  skills   = "#3cb44b",
+  agents   = "#4363d8",
+  hooks    = "#f58231",
+  memory   = "#911eb4",
+  commands = "#46f0f0",
+  scripts  = "#aaffc3"
+)
+
+n_files <- nrow(cfg)
+
+base_theme <- theme_minimal(base_size = 13) +
+  theme(
+    panel.background  = element_rect(fill = "transparent", colour = NA),
+    plot.background   = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    legend.key        = element_rect(fill = "transparent", colour = NA)
+  )
+```
+
+:::{.cr-section}
+
+:::{#cr-scene1 .sticky}
+```{r scene1-plot}
+#| fig-alt: "Each dot represents one file in the .claude/ configuration directory. All 222 dots are shown in the same grey colour with no additional encoding, establishing the full dataset baseline before any categorical breakdown."
+ggplot(cfg, aes(x = n_bytes, y = n_lines)) +
+  geom_point(colour = "#888888", alpha = 0.6, size = 2) +
+  scale_x_continuous(labels = scales::label_number(suffix = " B")) +
+  labs(
+    title = paste0("All ", n_files, " config files"),
+    x     = "File size (bytes)",
+    y     = "Lines"
+  ) +
+  base_theme
+```
+:::
+
+Every session starts by loading `~/.claude/CLAUDE.md`. But behind that single entry point sit `r n_files` configuration files spread across seven directories: rules, skills, agents, hooks, memory, commands, and scripts. Each dot above is one file. No encoding yet — just the full inventory, plotted by file size vs line count. The cluster near the origin holds short hook scripts; the outliers at the top are long rule documents.
+
+@cr-scene1
+
+The spread along the y-axis is striking. A handful of files exceed 300 lines; most sit under 100. File size and line count correlate loosely — some files are dense prose, others are sparse with long lines.
+
+@cr-scene1
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-scene2 .sticky}
+```{r scene2-plot}
+#| fig-alt: "The same 222 dots now coloured by category. Rules are red and the largest cluster; skills are green and slightly smaller; scripts are light green; commands are cyan. Agents and hooks form smaller groups."
+ggplot(cfg, aes(x = n_bytes, y = n_lines, colour = category)) +
+  geom_point(alpha = 0.65, size = 2.5) +
+  scale_colour_manual(values = category_palette, name = "Category") +
+  scale_x_continuous(labels = scales::label_number(suffix = " B")) +
+  labs(
+    title = "Coloured by category",
+    x     = "File size (bytes)",
+    y     = "Lines"
+  ) +
+  base_theme
+```
+:::
+
+The same dots, now colour-coded by category. Rules (red) and skills (green) dominate by count; between them they account for over half the files. Each colour maps to one directory — and that mapping is held constant across every scene in this story.
+
+@cr-scene2
+
+Skills lean smaller — a SKILL.md is typically a focused capability document. Rules lean larger — they carry rationale, forbidden patterns, and enforcement mechanisms. Commands and hooks form distinct clusters in the lower-left: concise by design.
+
+@cr-scene2
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-scene3 .sticky}
+```{r scene3-plot}
+#| fig-alt: "The same colour-coded dots now have size proportional to git_age_days, so older files appear as larger circles. Several large red dots in the rules category indicate long-standing constraint files."
+ggplot(
+  cfg |> mutate(age_clamped = pmin(git_age_days, 200)),
+  aes(x = n_bytes, y = n_lines, colour = category, size = age_clamped)
+) +
+  geom_point(alpha = 0.55) +
+  scale_colour_manual(values = category_palette, name = "Category") +
+  scale_size_continuous(name = "Age (days, capped 200)", range = c(1, 8)) +
+  scale_x_continuous(labels = scales::label_number(suffix = " B")) +
+  labs(
+    title = "Size encodes git age",
+    x     = "File size (bytes)",
+    y     = "Lines"
+  ) +
+  base_theme
+```
+:::
+
+A third encoding: dot **size** now represents `git_age_days` — how many days since the file last changed in git. Larger dots are older. Smaller dots are recent additions or actively maintained files.
+
+@cr-scene3
+
+The large red circles in the rules cluster identify rules that were written early and have been stable since. The small dots scattered across all categories are recent additions — new constraints, new skills, new scripts written in the last few weeks.
+
+@cr-scene3
+
+Age and size together tell a different story than either alone. A large, old, large-line rules file is a bedrock constraint. A small, recent hook script is an emerging automation. The config stack grows in layers.
+
+@cr-scene3
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-scene4 .sticky}
+```{r scene4-plot}
+#| fig-alt: "Files with more than 150 lines in the rules category are highlighted in red with full opacity. All other files are shown in grey at low opacity, drawing attention to the six outlier rule documents that dominate by line count."
+hotspot_threshold <- 150L
+cfg_hot <- cfg |>
+  mutate(
+    is_hotspot = category == "rules" & n_lines > hotspot_threshold,
+    alpha_val  = if_else(is_hotspot, 1, 0.12),
+    colour_val = if_else(is_hotspot, "hotspot", "other")
+  )
+
+n_hotspots <- sum(cfg_hot$is_hotspot)
+
+ggplot(cfg_hot, aes(x = n_bytes, y = n_lines, colour = colour_val, alpha = alpha_val)) +
+  geom_point(size = 3) +
+  scale_colour_manual(
+    values = c(hotspot = category_palette[["rules"]], other = "#999999"),
+    name   = NULL,
+    labels = c(hotspot = paste0("rules > ", hotspot_threshold, " lines"), other = "all others")
+  ) +
+  scale_alpha_identity() +
+  scale_x_continuous(labels = scales::label_number(suffix = " B")) +
+  labs(
+    title = paste0("Hotspots: ", n_hotspots, " rules files > ", hotspot_threshold, " lines"),
+    x     = "File size (bytes)",
+    y     = "Lines"
+  ) +
+  base_theme
+```
+:::
+
+Alpha-fade everything except the `r sum(cfg$category == "rules" & cfg$n_lines > 150)` rule files that exceed 150 lines. These are the load-bearing constraints — the ones a new agent encounters first and cannot ignore.
+
+@cr-scene4
+
+Every rule beyond 150 lines is a codified incident. Each section — "When This Applies", "CRITICAL", "Forbidden Patterns", "Related" — exists because something went wrong without it. Length here is not a quality problem; it is accumulated evidence.
+
+@cr-scene4
+
+The greyed-out mass shows what those hotspots sit within: dozens of shorter files that together form the texture of the constraint set. The hotspots are peaks. The grey is the terrain.
+
+@cr-scene4
+
+:::
+
+:::{.cr-section}
+
+:::{#cr-scene5 .sticky}
+```{r scene5-plot}
+#| fig-alt: "Small multiples showing the line count distribution for each of the seven config categories. Rules have the widest spread and highest maximum. Scripts and hooks cluster near zero. Skills and commands fall in the middle range."
+ggplot(cfg, aes(x = n_lines, fill = category)) +
+  geom_histogram(binwidth = 20, colour = NA, alpha = 0.8) +
+  facet_wrap(~category, scales = "free_y", ncol = 2) +
+  scale_fill_manual(values = category_palette, guide = "none") +
+  labs(
+    title = "Line-count distribution by category",
+    x     = "Lines",
+    y     = "Count"
+  ) +
+  base_theme +
+  theme(strip.text = element_text(face = "bold"))
+```
+:::
+
+Small multiples — one panel per category, each using the same colour as the previous scenes. The x-axis shows line count; the y-axis is free so each panel uses its own scale.
+
+@cr-scene5
+
+Rules and skills have the widest distributions: both categories contain short focused files and long comprehensive ones. Agents and memory are tightly clustered — their scope is bounded by convention. Hooks and scripts skew short: automation scripts prefer clarity over comprehensiveness.
+
+@cr-scene5
+
+Commands sit in the middle: a slash command needs enough prose to explain the workflow it triggers, but not so much that the skill it delegates to becomes redundant. The bimodal shape in commands separates simple one-line triggers from multi-step session workflows.
+
+@cr-scene5
+
+:::
+
+## Methodology
+
+### What this vignette computes
+
+This vignette inspects every file under `.claude/` (rules, skills, agents, hooks, memory, commands, scripts) and visualizes their distribution, sizing, and git age across five progressive-disclosure scenes. The same `r n_files`-row dataset is re-encoded in each scene with stable colours per category.
+
+### Data sources
+
+- `vig_scrolly_config` target (built from `R/tar_plans/plan_scrolly_config.R`), pre-computed RDS at `inst/extdata/vignettes/vig_scrolly_config.rds`
+- Underlying file system: `.claude/rules/**`, `.claude/skills/**`, `.claude/agents/*`, `.claude/hooks/*`, `.claude/memory/*`, `.claude/commands/*`, `.claude/scripts/*`
+- `git_age_days` from `git log -1 --format=%ct -- <file>` per file
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (Opus 4.7 and Sonnet 4.6). AI helped with code structure, scene composition, and prose drafting. All analytical decisions and data interpretations are the author's responsibility.
+
+{{< include ../../_includes/qr-footer.qmd >}}
