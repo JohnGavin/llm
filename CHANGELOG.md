@@ -4,6 +4,41 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-16 (Session — parallel worktrees + #153 reopen)
+
+### Completed
+
+- **#146 closed** — verified deployed brand+QR on `https://johngavin.github.io/llm/vignettes/telemetry.html`; 2 QR PNGs + clickable URL captions confirmed
+- **#154 closed** — `b85bb59` (worktree-isolated fixer agent). New target `vig_kb_stats` in `R/tar_plans/plan_kb_stats.R`; pre-computed RDS (267 B, aggregates only) at `inst/extdata/vignettes/vig_kb_stats.rds`. knowledge-evolution.qmd now renders in CI with real numbers despite gitignored `knowledge/`.
+- **#153 attempted-closed-then-reopened** — `b9283ab` (Option B: Homebrew bash shebang) merged ff-only; verification showed state-T persisted. Three further fixes attempted same session: plist `ProcessType=Background` + `AbandonProcessGroup=true`, `trap '' SIGTSTP SIGTTIN SIGTTOU`, external wrapper watchdog. All failed. Issue reopened with full findings.
+- **#156 filed** — estate / legacy / incapacity planning Q-list (10 sections from YouTube takeaways, work tracked for fresh session)
+- **#157 filed** — MyExpatSIPP knowledge-base addition
+
+### Failed Approaches
+
+- **Option B for #153** (shebang to `/opt/homebrew/bin/bash`) — bash version not the cause; state T persists with bash 5.x as much as bash 3.2
+- **launchd plist tweaks for #153** (`ProcessType=Background`, `AbandonProcessGroup=true`) — neither prevents SIGSTOP
+- **Bash signal trap for #153** (`trap '' SIGTSTP SIGTTIN SIGTTOU`) — confirmed the signal is SIGSTOP, not SIGTSTP; SIGSTOP cannot be caught
+- **External wrapper watchdog for #153** — the wrapper itself gets SIGSTOPed by launchd; rules out script-content as cause. Sibling `roborev_agent_health.sh` with same shebang runs fine — there's something poller-specific (process substitution `< <()` suspected but not confirmed) that triggers SIGSTOP from launchd or below
+
+### Parallel-worktree pattern
+
+Three worktree-isolated fixer agents dispatched simultaneously this session (#153 + #154 from fixers running in parallel git worktrees; #146 closed in opus alongside). Net wall time: ~5 min vs ~3h sequential. `isolation: "worktree"` Agent parameter worked as designed; branches merged back with one ff and one merge commit.
+
+### Accuracy / Metrics
+
+- 5 commits today (b85bb59, 88308a6 [Phase 3 from yesterday lingered into today's date pivot], b9283ab, 0c8f5ba merge, dc05132 revert)
+- 3 issues filed (#155 pre-existing today, #156, #157)
+- 3 issues closed (#146, #154, #155 — #155 closed yesterday via Phase 3 commit's `closes #155`)
+- 1 issue reopened (#153)
+- Open llm issues at session end: **7** (#147, #149, #150, #152, #153, #156, #157)
+
+### Known Limitations
+
+- **#153** — poller state-T under launchd unresolved. Manual workaround: `/bin/kill -CONT <pid>` after process enters T. Investigation directions in the comment thread: macOS unified log capture during launch, dtrace signal tracing, alternate interpreter (python3 wrapper), comparison with agent-health byte-by-byte.
+- Burn rate **84% / projected 118%** at session end; weekly cap likely to bind before reset
+- `roborev summary` shows 0 of 73 failures addressed (0% resolution rate) — out of scope for this session but worth a #149-driven sweep when staged-rollout resumes
+
 ## 2026-05-12 (Session — issue sweep + agent infra) [updated]
 
 Closed **9 issues**, scoped 2, filed **3 new** (one closed same session). **24 commits**, all individually revertable.
