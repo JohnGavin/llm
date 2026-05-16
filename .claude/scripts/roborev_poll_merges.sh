@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 # roborev_poll_merges.sh — catchup poller for commits roborev's post-commit
 # hook missed (remote-merged PRs don't fire local post-commit).
 #
