@@ -113,5 +113,5 @@ Names, geographic data finer than state, dates (except year), phone/fax numbers,
 
 - `medical-data-anonymization` rule — PHI handling for medical projects
 - `medical-etl-quality` rule — ETL quality for health data
-- `duckdb-security` rule — DuckDB-specific security
+- `duckdb-patterns` skill — DuckDB security hardening and duckplyr patterns
 - `safe-deletion` rule — safe handling of sensitive files
