@@ -71,16 +71,25 @@ for arg in "$@"; do
   esac
 done
 
-# Resolve project name from cwd basename (works for worktrees too — each
-# worktree dir has its own basename like "llm-sonnet"). For #147.
-PROJECT_NAME="$(basename "$PWD")"
+# Resolve project name and colour from a given directory.
+# Called once before worktree switch and again after (if switched) so that
+# the launched session is always named for its actual working directory.
+resolve_project_name_and_color() {
+  local dir="${1:-$PWD}"
+  PROJECT_NAME="$(basename "$dir")"
+  PROJECT_COLOR=""
+  local colors_yaml="$HOME/.claude/project-colors.yaml"
+  if [ -f "$colors_yaml" ]; then
+    # Use awk for literal-key lookup to avoid regex metacharacter mis-match
+    # (e.g. "JohnGavin.github.io" contains dots that would be wildcards in sed).
+    PROJECT_COLOR=$(awk -F': *' -v key="$PROJECT_NAME" '
+      $1 == key { gsub(/[[:space:]#].*/, "", $2); print $2; exit }
+    ' "$colors_yaml")
+  fi
+}
 
-# Look up colour in YAML map (one shallow level, no nested keys needed)
-PROJECT_COLOR=""
-_colors_yaml="$HOME/.claude/project-colors.yaml"
-if [ -f "$_colors_yaml" ]; then
-  PROJECT_COLOR=$(/usr/bin/sed -n "s/^${PROJECT_NAME}:[[:space:]]*\([^[:space:]#]*\).*/\1/p" "$_colors_yaml" | head -1)
-fi
+# Initial resolution from current working directory.
+resolve_project_name_and_color "$PWD"
 
 # Print mode and exit if requested
 if [ "${1:-}" = "--print-mode" ]; then
@@ -125,6 +134,9 @@ if ! $HAS_MODEL_OVERRIDE; then
       echo ""
 
       cd "$WORKTREE"
+      # Re-resolve name/colour for the worktree directory (fixes #905: name was
+      # computed for the original checkout before the cd).
+      resolve_project_name_and_color "$WORKTREE"
       # Re-select mode for worktree (will be bypassPermissions)
       ARGS=(--permission-mode "$(select_mode)" --model sonnet)
     else
