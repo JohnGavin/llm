@@ -147,21 +147,21 @@ SEVERITY_WEIGHT = {
 }
 
 CATEGORY_RISK = {
-    "security":            3.0,
-    "error-handling":      2.5,
+    "security":            5.0,
+    "error-handling":      4.0,
     "async/concurrency":   2.0,
-    "dependency/namespace":1.5,
+    "dependency/namespace":1.0,
     "test-quality":        1.5,
-    "input-validation":    1.5,
-    "performance":         1.2,
-    "file-io":             1.2,
-    "logging/observ":      1.0,
-    "shell/bash":          1.0,
+    "input-validation":    2.0,
+    "performance":         1.5,
+    "file-io":             1.0,
+    "logging/observ":      0.8,
+    "shell/bash":          1.5,
     "git/CI":              1.0,
     "config/settings":     1.0,
     "refactor/simplify":   0.8,
-    "quarto/render":       0.7,
-    "docs/comments":       0.5,
+    "quarto/render":       0.5,
+    "docs/comments":       0.3,
     "style/lint":          0.3,
     "uncategorized":       1.0,
 }
@@ -191,8 +191,8 @@ CATEGORY_PATTERNS = [
      r"\b(refactor|simplif\w+|redundant|duplicat\w+\s+code|magic\s+number"
      r"|extract\s+function|too\s+long|complex\w+)\b"),
     ("dependency/namespace",
-     r"\b(namespace|import\w+|::|package\s+(load|imports?)|library\(\)|require\(\)"
-     r"|DESCRIPTION|@importFrom)\b"),
+     r"\b(missing\s+import|undocumented\s+dependency|wrong\s+namespace|@importFrom"
+     r"|DESCRIPTION\s+(Imports|Depends)|library\(\s*['\"]\w+['\"]?\s*\)|unused\s+import|@import\b)\b"),
     ("file-io",
      r"\b(file\s+path|hardcoded\s+path|portable\s+path|getwd|file\.path"
      r"|Sys\.getenv|absolute\s+path)\b"),
@@ -243,7 +243,7 @@ def days_old(created_at_str):
 def priority_score(sev, categories, age_days):
     sw = SEVERITY_WEIGHT.get(sev, 1)
     cr = max(CATEGORY_RISK.get(c, 1.0) for c in categories)
-    age_factor = 1 + math.log10(1 + age_days)
+    age_factor = 1 + math.sqrt(age_days)
     return sw * cr * age_factor
 
 scored = []
