@@ -143,13 +143,13 @@ if (is.null(rule_data)) {
     example_rule = c(
       "systematic-debugging, verification-before-completion",
       "nix-agent-shell-protocol, nix-nested-shell-isolation",
-      "data-validation-timeseries, duckdplyr-not-sql",
+      "data-validation-timeseries, missing-data-handling",
       "statistical-reporting, look-ahead-bias-prevention",
-      "visualization-standards, diagram-generation",
-      "quarto-vignette-format, vignette-targets-export",
+      "visualization, narrative-colour-persistence",
+      "quarto-vignettes, narrative-evidence-block",
       "shinylive-webr-nonblocking, module-isolation",
-      "git-no-compound-cd, safe-deletion",
-      "wiki-staleness-check, raw-folder-readonly",
+      "git-no-compound-cd, bash-safety",
+      "wiki-conventions, raw-folder-readonly",
       "btw-timeouts, confidence-markers, ..."
     )
   )
