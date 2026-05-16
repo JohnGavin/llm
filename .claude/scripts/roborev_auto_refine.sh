@@ -34,14 +34,10 @@ run_listener() {
         repo=$(echo "$line" | /usr/bin/jq -r '.repo // empty' 2>/dev/null)
         job_kind=$(echo "$line" | /usr/bin/jq -r '.kind // .job_kind // empty' 2>/dev/null)
 
-        # Only trigger refine for original review jobs, not for refine jobs
-        # This prevents self-induced refine loops where a failed refine triggers another refine
-        if [[ "$event_type" == "job_completed" && "$status" == "failed" ]]; then
-            # Skip if this is a refine job itself (would cause infinite loop)
-            if [[ "$job_kind" == "refine" || "$job_kind" == "fix" ]]; then
-                log "Skipping refine for $job_kind job $job_id (not a review)"
-                continue
-            fi
+        # Only trigger refine for original review jobs with an explicit "review" kind.
+        # Any other kind (refine, fix, scan, or unknown) is skipped to prevent
+        # background churn from unrelated job failures (fixes roborev #679).
+        if [[ "$event_type" == "job_completed" && "$status" == "failed" && "$job_kind" == "review" ]]; then
             log "Review $job_id failed in $repo — triggering refine"
 
             # Run refine in background for that repo, max 2 iterations per trigger
