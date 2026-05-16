@@ -88,7 +88,7 @@ Every fitted model MUST report:
 - [ ] Assumption checks (residual plots, overdispersion, VIF)
 - [ ] Sensitivity analysis or robustness check (at least one)
 
-## 6. Dynamic Values Only (see `reproducible-visualization` rule)
+## 6. Dynamic Values Only (see `dynamic-prose-values` rule)
 
 All reported numbers MUST come from code, never hardcoded:
 ```r
