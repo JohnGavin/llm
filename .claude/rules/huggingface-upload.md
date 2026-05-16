@@ -21,14 +21,21 @@ The HuggingFace REST API upload endpoints are undocumented and unreliable:
 # Use a unique variable name to avoid shadowing system $TMPDIR
 HF_WORKDIR=$(mktemp -d)
 
-# Clone using git credential helper (avoids embedding token in URL)
-# Pre-configure: git config --global credential.helper store
-# Then: huggingface-cli login (stores token in ~/.cache/huggingface/token)
+# Clone using git credential helper (avoids embedding token in URL or env).
+# One-time setup: huggingface-cli login
+# This stores the token in ~/.cache/huggingface/token and configures git to
+# use it via the credential helper — never exposes it in ps output or history.
 GIT_ASKPASS=echo git clone "https://huggingface.co/datasets/owner/repo" "$HF_WORKDIR/repo"
 
-# Alternative if credential helper not configured:
-# git -c "http.extraHeader=Authorization: Bearer $(cat ~/.cache/huggingface/token)" \
-#     clone "https://huggingface.co/datasets/owner/repo" "$HF_WORKDIR/repo"
+# If the credential helper is not configured, use GIT_ASKPASS with a helper
+# script rather than embedding the token on the command line:
+#   echo '#!/bin/sh; cat ~/.cache/huggingface/token' > /tmp/hf_askpass.sh
+#   chmod +x /tmp/hf_askpass.sh
+#   GIT_ASKPASS=/tmp/hf_askpass.sh git clone "https://..." "$HF_WORKDIR/repo"
+#   rm /tmp/hf_askpass.sh
+#
+# NEVER use: git clone https://user:$(cat ~/.cache/huggingface/token)@...
+# Tokens in URLs appear in ps output, git config remote URL, and shell history.
 
 # Copy updated parquet(s)
 cp data/dist/equity_daily.parquet "$HF_WORKDIR/repo/"
