@@ -4,6 +4,52 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-16 (Session 2 — roborev evaluation + closure-loop automation Phase 1)
+
+### Completed
+
+- **#156 closed** — estate planning Q-list compiled (`knowledge/wiki/estate-planning-questions.md`, 17.7 KB, 10 sections, 65 questions, 4 AI-inferred markers). YouTube transcript captured via `yt-dlp` from Wade Pfau / Alex Magia "Retire with Style" podcast Ch11. Local-only.
+- **#157 closed** — MyExpatSIPP wiki page (`knowledge/wiki/sipp-offshore.md`, 3 raw docs / 9.6 KB total, 5 independent sources cited, 10 AI-inferred claims tagged, bidirectional cross-link with #156). FCA register lookup hit CSS error — flagged for manual verification.
+- **#158 closed** — Roborev evaluation. Step 1 quantitative: 1,694 reviews, 24.4% approval, **15.5% addressed rate** (`knowledge/wiki/roborev-evaluation.md`). Step 2 stratified 30-finding sample (`knowledge/wiki/roborev-eval-sample.md`). User classification: 30/30 = TP-actioned. **Decision: KEEP roborev.** Signal is excellent; bottleneck is the addressed-rate.
+- **#159 filed** — Close config gaps vs MachineLearningMastery agentic-patterns + LLM-observability articles
+- **#160 filed** — Roborev never uses Critical or Info severity (prompt investigation + add Critical tier)
+- **#161 filed** — Backlog remediation parent tracker; per-project closure passes
+- **#163 filed** — Automate roborev closure loop (8-component, 7-phase design)
+- **Per-project backlog issues filed (5)** — `historical#176`, `crypto_swarms#11`, `JohnGavin.github.io#9`, `llmtelemetry#89`, `micromort#100` (reframed from noise investigation to remediation pass). mycare has no GitHub repo (PHI) — handled locally.
+- **PR #162 opened** — `fix(kb): vig_kb_stats RDS loader` (top-level `return()` + missing `saveRDS()` — 7 duplicate roborev findings resolved by 2 underlying bug fixes). Worktree-isolated sonnet fixer pattern.
+- **3 security fixes shipped to main** (`eb13711`, `2867655`, `cfd6ad8`) — closes roborev #905, #679, #675. Worktree-isolated sonnet fixer pattern.
+- **1 cross-repo security fix** to llmtelemetry (`ca7f8fd`) — `inst/scripts/config_pulse.sh` (symlink target) — closes roborev #717. Not yet pushed (diverged state).
+- **Phase 1 of #163 shipped** — per-project backlog watcher script (`53dc7aa` initial + `109be91` tuning). Reads `~/.roborev/reviews.db`, categorizes by regex, computes `severity × category_risk × (1 + sqrt(age))` priority, writes `<project>/.roborev/backlog.md`. Ran successfully on **all 21 known projects**; 16 wrote to project root, 5 to /tmp fallback (no local checkout).
+- **micromort#100 filed** (then reframed) — initially "investigate 6% approval as noise" → after #158 disproved noise hypothesis, reframed to "remediation pass for 163 open findings, 0% close rate"
+
+### Failed Approaches
+
+- **Parallel wiki agents hit transient 500s** — first dispatch of #156+#157 wiki-curators both got `API Error: 500` mid-flight. Recovered by sequential retry (single-agent dispatch). Lesson: under API stress, sequential beats parallel for retry resilience.
+- **Haiku quick-fix has no Bash tool** — dispatched haiku for prioritizer tuning thinking it could test the script after editing. Haiku returned edits-only; orchestrator ran the smoke test + commit + push manually. Lesson: if the task needs verification (run + check), use sonnet fixer not haiku quick-fix.
+- **Security agent worktree auto-merged to main** (and Phase 1 worktree too) — both committed directly to main of the orchestrator's checkout despite being dispatched with `isolation: "worktree"`. Worktree dirs were GC'd. Pattern: when the agent's commits don't reference any worktree-only branch, they land on main. Acceptable for infrastructure work; for per-finding fixes the error-handling agent correctly stayed on its worktree branch (`fix/kb-stats-rds-loader`, PR #162).
+
+### Accuracy / Metrics
+
+- 5 commits to llm main today (eb13711, 2867655, cfd6ad8, 53dc7aa, 109be91); 1 PR opened (#162) with 2 worktree commits not yet merged
+- 1 cross-repo commit to llmtelemetry (ca7f8fd) NOT YET PUSHED — diverged state
+- 5 issues filed (#158, #159, #160, #161, #163) + 5 per-project tracker issues across 4 repos
+- 4 issues closed (#156, #157, #158, parts of #161 via batch 1)
+- Open llm issues: **9** (#147, #149, #150, #152, #153, #159, #160, #161, #163) + #162 PR
+- Roborev backlog snapshot: ~1,101 open across 21 projects (micromort 167, historical 148, mycare 135, knowledge 130, crypto_swarms 124, JohnGavin.github.io 123, llmtelemetry 85, llm 78, …, hello_t 0)
+- Burn rate **102%+ at session end** (over weekly cap; 2 days to reset)
+
+### Known Limitations
+
+- **llmtelemetry NOT PUSHED** — 1 ahead (security commit ca7f8fd), 5 behind, 9 modified JSON exports uncommitted. High conflict risk on `inst/scripts/config_pulse.sh` if rebased. Recommend cherry-pick on top of origin/main next session.
+- **#158 sample classification was assumed by user** ("assume all 30 ticked TP no exceptions") rather than manually triaged finding-by-finding. The KEEP decision is correct in spirit but the percentages should not be cited as observed data; they're user-stipulated.
+- **Prioritizer still over-weights shell/bash + git/CI** in `llm` output — security only has 4 findings so doesn't surface to top 10 despite weight 5.0. Acceptable for v1; revisit if needed.
+- **#163 Phase 2+ blocked on #160** — Critical severity tier needed for prioritizer to differentiate true-critical from "just High"
+- **5 projects (crypto, football, mycare, randomwalk-wiki, repo) backlog landed in /tmp** — root_path in DB doesn't match local checkout. Either repo not cloned locally, or DB has stale path.
+
+### Architecture insight
+
+7 roborev reports for 2 underlying bugs (the kb_stats fix) — roborev's deduplication is weak. Worth filing an enhancement against roborev itself if the pattern recurs.
+
 ## 2026-05-16 (Session — parallel worktrees + #153 reopen)
 
 ### Completed
