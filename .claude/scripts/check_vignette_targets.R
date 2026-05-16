@@ -85,10 +85,11 @@ if (!is.null(qmd_file)) {
   ok <- check_targets(targets, strict = TRUE)
   if (!ok) quit(status = 1)
 } else {
-  # Check all .qmd files: prefer vignettes/, fall back to docs/, then repo root
-  qmd_files <- list.files("vignettes", pattern = "\\.qmd$", full.names = TRUE)
+  # Check all .qmd files recursively: prefer vignettes/, fall back to docs/, then repo root.
+  # Must be recursive to pick up vignettes/articles/*.qmd (fixes roborev #679).
+  qmd_files <- list.files("vignettes", pattern = "\\.qmd$", full.names = TRUE, recursive = TRUE)
   if (length(qmd_files) == 0) {
-    qmd_files <- list.files("docs", pattern = "\\.qmd$", full.names = TRUE)
+    qmd_files <- list.files("docs", pattern = "\\.qmd$", full.names = TRUE, recursive = TRUE)
   }
   if (length(qmd_files) == 0) {
     qmd_files <- list.files(".", pattern = "\\.qmd$", full.names = TRUE)
