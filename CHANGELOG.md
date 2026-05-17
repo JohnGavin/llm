@@ -4,6 +4,14 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-17 (fixer — launchd Phase 4 bug fixes)
+
+### Completed
+
+- **wiki-health-pulse plist fixed** — `com.claude.wiki-health-pulse.plist` was missing the required `<wiki_dir>` argument to `wiki_health_check.sh`. Script exits with usage error when no directory is provided, so the T4 cron job never ran the health check. Added `/Users/johngavin/docs_gh/llm/knowledge/wiki` as the second `<string>` in `ProgramArguments`. Verified with `plutil -lint`.
+- **Note on 2026-05-16 Phase 4 count** — the "5 jobs/day" count in the May 16 entry included `wiki-health-pulse` but the plist was broken at time of shipping. Count is now accurate.
+- **roborev_poll_merges.sh shebang** — already corrected to `#!/usr/bin/env bash` in a prior session (per 2026-05-16 "Option B" entry); no change needed in this PR.
+
 ## 2026-05-16 (Session 2 — roborev evaluation + closure-loop automation Phase 1)
 
 ### Completed
