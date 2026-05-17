@@ -11,8 +11,6 @@ execute:
   message: false
 ---
 
-{{< include ../../_includes/qr-footer.qmd >}}
-
 ```{r setup}
 #| include: false
 library(ggplot2)
