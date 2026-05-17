@@ -1,6 +1,9 @@
 # R/tar_plans/plan_scrolly_config.R
 # Targets for scrolly-config-evolution vignette
-# Scans .claude/ files and builds a per-file tibble with metadata
+# Scans a subset of .claude/ config artifacts and builds a per-file tibble
+# with metadata. Coverage: rules (.md), skills (SKILL.md only), agents (.md),
+# hooks (.sh), memory (.md), commands (.md), scripts (.sh).
+# Other .claude/ paths (e.g. worktrees/, logs/) are intentionally excluded.
 
 plan_scrolly_config <- function() {
   list(
