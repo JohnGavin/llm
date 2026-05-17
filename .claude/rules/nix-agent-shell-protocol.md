@@ -79,14 +79,25 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
 1. **Edit `default.R`** — add the new package to `r_pkgs` or `py_pkgs`
 2. **Coordinate with DESCRIPTION** — if it's an R package project, the same
    package must be added to `DESCRIPTION` (Imports/Suggests) AND `default.R`
-3. **Run `Rscript default.R`** — this regenerates `default.nix` via `rix::rix()`
-   Must be run from a shell that has `rix` installed. The canonical name is
-   the `rix.setup` shell, but on this machine it lives at `~/docs_gh/llm/`
-   (verified 2026-05-08; `~/docs_gh/rix.setup/` does not exist as a directory
-   — only as `~/docs_gh/rix.setup.zip` whose `default.R` is a one-line
-   pointer to `~/docs_gh/llm/default.R`). Use:
+3. **Run `Rscript default.R` with cwd PINNED to the target project** —
+   this regenerates `default.nix` via `rix::rix()`. Must be run from a
+   shell that has `rix` installed. The canonical name is the `rix.setup`
+   shell, but on this machine it lives at `~/docs_gh/llm/` (verified
+   2026-05-08; `~/docs_gh/rix.setup/` does not exist as a directory —
+   only as `~/docs_gh/rix.setup.zip` whose `default.R` is a one-line
+   pointer to `~/docs_gh/llm/default.R`).
+
+   **MUST use one of the two cwd-safe forms** (see "Worktree-Isolated
+   rix Regenerations" below for why — the bare `Rscript <path>` form
+   inherits the caller's cwd and silently overwrites the wrong checkout):
    ```bash
-   nix-shell ~/docs_gh/llm/default.nix --run "Rscript /path/to/project/default.R"
+   # Form A — subshell isolates cd (the documented exception in git-no-compound-cd)
+   (cd /absolute/path/to/project && \
+      nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")
+
+   # Form B — explicit setwd() inside Rscript
+   nix-shell ~/docs_gh/llm/default.nix --run \
+     "Rscript -e 'setwd(\"/absolute/path/to/project\"); source(\"default.R\")'"
    ```
    Verify rix is loadable inside the shell once before relying on it:
    ```bash
@@ -95,7 +106,7 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
    ```
 4. **Verify** — enter the new shell and confirm the package loads:
    ```bash
-   nix-shell /path/to/project/default.nix --run "Rscript -e 'library(newpkg)'"
+   nix-shell /absolute/path/to/project/default.nix --run "Rscript -e 'library(newpkg)'"
    ```
 
 **This is ALWAYS done by an agent** (typically `nix-env` agent or the
@@ -152,22 +163,30 @@ In the mycare project, regenerating default.nix to add testthat/here/withr strip
 
 **Defensive workflow when regenerating default.nix:**
 
+Every step below that runs `Rscript default.R` MUST use one of the
+cwd-safe forms documented in the section above (subshell or explicit
+`setwd()`) — bare `Rscript default.R` is allowed ONLY when the caller is
+already in the project's checkout AND not in a worktree-orchestrator
+context. In an agent context, always use Form A or B.
+
 Preferred — use a `default.post.sh` per project (idempotent shell script
 that re-applies the project's overlays):
 
-1. `Rscript default.R` (regenerate)
-2. `./default.post.sh` (re-apply overlays — script must be idempotent and
-   detect "already applied" via a `grep -q "marker" "$NIX_FILE"` guard)
-3. Verify by entering the shell and loading affected packages
+1. Regenerate (Form A, from agent or orchestrator):
+   `(cd /absolute/path/to/project && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")`
+2. `(cd /absolute/path/to/project && ./default.post.sh)` —
+   re-apply overlays. Script must be idempotent and detect
+   "already applied" via a `grep -q "marker" "$NIX_FILE"` guard.
+3. Verify by entering the shell and loading affected packages.
 
 Fallback — when no `default.post.sh` exists yet:
 
-1. `cp default.nix default.nix.pre-regen.bak`
-2. `Rscript default.R`
-3. `diff default.nix.pre-regen.bak default.nix` — eyeball stripped sections
+1. `cp /absolute/path/to/project/default.nix /absolute/path/to/project/default.nix.pre-regen.bak`
+2. `(cd /absolute/path/to/project && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")`
+3. `diff /absolute/path/to/project/default.nix.pre-regen.bak /absolute/path/to/project/default.nix` — eyeball stripped sections
 4. Re-apply overlays manually
 5. Verify
-6. `rm default.nix.pre-regen.bak`
+6. `rm /absolute/path/to/project/default.nix.pre-regen.bak`
 7. **Capture the manual steps as a `default.post.sh`** so the next regen
    is automatic (and add `default.nix.bak` to `.gitignore`).
 

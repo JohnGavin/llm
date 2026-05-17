@@ -6,9 +6,9 @@ description: Auto-delegate to cheaper models when trigger patterns match
 ## When This Applies
 Every orchestrator decision about whether to do work directly or delegate.
 
-## CRITICAL: Opus Role — Plan, Decompose, Synthesise ONLY
+## CRITICAL: Opus Role — Plan, Decompose, Synthesise (+ bounded prose exceptions)
 
-**Opus NEVER uses `Edit`, `Write`, or `Bash` directly for code or config changes.** Always spawn a subagent:
+**Default rule:** opus delegates all code, script, and configuration edits to subagents. This includes everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree.
 
 | Work type | Delegate to |
 |-----------|-------------|
@@ -17,14 +17,22 @@ Every orchestrator decision about whether to do work directly or delegate.
 | Code review | `reviewer` (sonnet) |
 | Bug fixing | `r-debugger` (sonnet) |
 
-**Opus-only tasks (never delegate):**
-- Plan and decompose work into subagent prompts
-- Synthesise results and communicate to user
-- Memory and CLAUDE.md updates (short prose edits)
-- User dialogue and clarification
+### Bounded exceptions — opus MAY use Edit/Write/Bash directly for
 
-The three-tier model:
-- **Opus:** plan + decompose + synthesise
+Opus retains write access for these — they are too small/dialog-driven to be worth the round-trip cost of a subagent, AND they don't benefit from sonnet's deeper code reasoning:
+
+| Path | Scope |
+|------|-------|
+| `~/.claude/CLAUDE.md`, `.claude/CLAUDE.md` | Prose updates only (rule wording, table edits) |
+| `.claude/rules/*.md`, `.claude/memory/*.md` | Prose edits to existing rules and memory files; new rule creation OK |
+| `.claude/CURRENT_WORK.md`, `CHANGELOG.md` (session-end append) | Session state and changelog entries |
+| Roborev DB closure comments via `/usr/local/bin/roborev comment`/`close` | Triage actions, not code |
+| Read-only investigation: `Read`, `Grep`, `Glob`, `Bash` for queries (`git log`, `gh pr view`, `du`, SQL reads) | Pre-decomposition reconnaissance |
+
+What "prose edit" means: text/markdown content where no code parses or executes from the change. Editing a shell snippet inside a markdown code fence is NOT a prose edit — delegate that to a subagent so the snippet is actually tested.
+
+### Three-tier model
+- **Opus:** plan + decompose + synthesise + prose exceptions above
 - **Sonnet:** all multi-step edits, new files, complex content
 - **Haiku:** single-file edits, doc updates, version bumps
 
@@ -87,8 +95,9 @@ If the task matches a named agent's trigger, MUST delegate:
 - Multi-file architecture decisions
 - Plan creation requiring user dialogue
 - Synthesising results from multiple agents
-- Memory/config updates
+- Prose edits to memory, rules, CLAUDE.md, CHANGELOG, CURRENT_WORK (scope above)
 - Ambiguous requirements needing clarification
+- Roborev triage closures (`comment` + `close` on individual reviews)
 
 ## Burn-Rate-Aware Escalation
 
