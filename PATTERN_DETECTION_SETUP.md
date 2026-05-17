@@ -1,18 +1,25 @@
 # Pattern Detection Setup (Option 4: Hybrid)
 
 **Created**: 2026-05-11
-**Status**: Ready to integrate
-**Cost**: ~$0.01-0.03 per session
+**Status**: Integrated
+**Cost**: ~$0.01-0.03 per /bye invocation (zero cost on normal replies)
 
 ## What This Does
 
-Automatically detects repeated workflows at session end and prompts you to run `/skillify` in the next session.
+Automatically detects repeated workflows when you run `/bye` and schedules `/skillify`
+for the next session if patterns are found.
 
 **Flow**:
-1. At `/bye`, system analyzes tool call patterns using Opus API
-2. Presents detected workflows with confidence levels
-3. You decide whether to skillify in next session
-4. If yes, `/hi` in next session auto-runs skillify
+1. You run `/bye` — the command writes `~/.claude/.bye-requested` (sentinel file)
+2. The Stop hook fires; it checks for the sentinel and deletes it (one-shot)
+3. Pattern detection runs (Opus API call) only because the sentinel was present
+4. If patterns found, `/hi` in next session auto-runs skillify
+
+**IMPORTANT — Stop fires on every reply, not only /bye.**
+The sentinel-file gate is mandatory: without it, pattern detection (a paid Opus
+API call) would run after every single Claude response, causing massive cost
+regression. Only the `/bye` command writes the sentinel, so only /bye triggers
+detection.
 
 ## Files Created
 
@@ -24,38 +31,46 @@ Automatically detects repeated workflows at session end and prompts you to run `
 
 ## Integration Steps
 
-### Step 1: Add to `~/.claude/hooks/session_stop.sh`
+### Step 1: session_stop.sh — already integrated with sentinel gate
 
-Add this block **before the final "Session ended"** message:
+The block below is already in `~/.claude/hooks/session_stop.sh`. Do **not** use
+the old pattern (bare `if detect_patterns.sh` without sentinel check) — that runs
+on every reply and incurs an Opus API call each time.
 
 ```bash
-# === Pattern Detection (Phase 1 Validation) ===
-if [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
-    echo ""
-    PATTERNS=$(${HOME}/.claude/scripts/detect_patterns.sh "$TRANSCRIPT" 2>&1)
-
-    if echo "$PATTERNS" | grep -q "🔍 Detected workflow patterns"; then
-        echo "$PATTERNS"
-        echo ""
-        read -p "Run /skillify in next session for these patterns? [Y/n] " -t 30 -n 1 -r || REPLY="n"
-        echo ""
-
-        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-            # Store transcript path and patterns
-            echo "$TRANSCRIPT" > "${HOME}/.claude/.pending_skillify"
-            echo "<!-- PATTERNS:" >> "${HOME}/.claude/.pending_skillify"
-            echo "$PATTERNS" | sed -n '/<!-- JSON_START/,/JSON_END -->/p' >> "${HOME}/.claude/.pending_skillify"
-            echo "-->" >> "${HOME}/.claude/.pending_skillify"
-
-            echo "✓ Will run /skillify on next session start"
-        else
-            echo "⊘ Skipped pattern capture"
-        fi
-    else
-        echo "$PATTERNS"
+# === Pattern Detection — gated on /bye sentinel ===
+# The Stop hook fires after every Claude response, not only /bye.
+# We gate on ~/.claude/.bye-requested written by the /bye command.
+# The sentinel is deleted immediately (one-shot) to avoid stale triggers.
+_BYE_SENTINEL="${HOME}/.claude/.bye-requested"
+if [ -f "$_BYE_SENTINEL" ] && [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
+  rm -f "$_BYE_SENTINEL"  # consume sentinel immediately — one-shot
+  TRANSCRIPT=$(ls -t "${HOME}/.claude/projects/"*/*.jsonl 2>/dev/null | head -1)
+  if [ -n "$TRANSCRIPT" ]; then
+    PATTERNS=$(timeout 30 "${HOME}/.claude/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
+    if echo "$PATTERNS" | grep -q "Detected workflow patterns"; then
+      echo ""
+      echo "$PATTERNS"
+      echo ""
+      # No interactive read — hooks run non-interactively; auto-schedule skillify.
+      echo "$TRANSCRIPT" > "${HOME}/.claude/.pending_skillify"
+      echo "✓ Patterns detected — /skillify will run at next session start."
     fi
+  fi
 fi
 ```
+
+### Step 1b: /bye command — already integrated
+
+The `/bye` (session-end) command writes the sentinel before the hook fires.
+This is already in `~/.claude/commands/session-end.md`:
+
+```bash
+# Written by /bye before doing anything else:
+touch ~/.claude/.bye-requested
+```
+
+If you add a new alias for /bye, add the same `touch` to that alias's first step.
 
 ### Step 2: Add to `~/.claude/hooks/session_init.sh`
 
@@ -84,17 +99,20 @@ echo "export ANTHROPIC_API_KEY=your_key_here" >> ~/.claude/.env
 
 ```bash
 # Start a session, do some repetitive work (3+ tool calls repeated 2+ times)
-# At session end, run /bye
-# Should see pattern detection output
+# At session end, run /bye (NOT just ending the session — must run the /bye command)
+# Should see pattern detection output only when /bye was used
 
-# Example output:
+# Expected output when patterns found:
 # 🔍 Detected workflow patterns:
 #
 #   3× git-pr-workflow [HIGH confidence]
 #      Steps: Bash → Edit → Bash → Bash
 #      → Consistent git branch → edit → commit → push sequence
 #
-# Run /skillify in next session for these patterns? [Y/n]
+# ✓ Patterns detected — /skillify will run at next session start.
+
+# Verify no output on normal replies (sentinel absent):
+# ls ~/.claude/.bye-requested  # should NOT exist between /bye invocations
 ```
 
 ## Configuration
