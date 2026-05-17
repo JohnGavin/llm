@@ -4,13 +4,52 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
-## 2026-05-17 (fixer — launchd Phase 4 bug fixes)
+## 2026-05-17 (Session 3 — Pattern A parallel wave + merge cycle)
 
 ### Completed
 
-- **wiki-health-pulse plist fixed** — `com.claude.wiki-health-pulse.plist` was missing the required `<wiki_dir>` argument to `wiki_health_check.sh`. Script exits with usage error when no directory is provided, so the T4 cron job never ran the health check. Added `/Users/johngavin/docs_gh/llm/knowledge/wiki` as the second `<string>` in `ProgramArguments`. Verified with `plutil -lint`.
-- **Note on 2026-05-16 Phase 4 count** — the "5 jobs/day" count in the May 16 entry included `wiki-health-pulse` but the plist was broken at time of shipping. Count is now accurate.
-- **roborev_poll_merges.sh shebang** — already corrected to `#!/usr/bin/env bash` in a prior session (per 2026-05-16 "Option B" entry); no change needed in this PR.
+- **Backlog analysis** — categorized 1,174 High-severity open-non-approved roborev findings across 16 projects via SQLite + tightened regex. Top groups: `micromort × data-correctness` (291), `mycare × security` (158), `historical × security` (8 of 11). llm = 44 findings, ranked into 12 fix-clusters.
+- **PR 1 (`default.nix:146 inherit ()`)** — investigated; `nix-instantiate --parse` accepts empty inherit; mori DESCRIPTION has no `Imports:`; closed roborev review 773/job 975 as false positive with justification comment.
+- **PR 7 (cross-modal-eval cluster)** — sonnet fixer dispatched to import the missing external scripts + finish. Merged as **PR #164** (9 findings addressed: `jq -n --arg`-safe JSON, exit-1-on-FAIL test script, in-repo paths, accurate docs).
+- **PR 13 (config_pulse symlink)** — closed roborev review 783/job 986 as **wontfix; laptop-local by design**.
+- **Pattern A parallel wave dispatched** — 8 sonnet fixer agents in parallel via `isolation: "worktree"` + 1 opus PR (rule rewrites). All 9 PRs opened.
+- **8 PRs merged this session:** #162 (kb_stats RDS loader, carried from prior session), #164 (cross-modal-eval), #165 (launchd Phase 4), #167 (roborev shell cluster — Bash 3.2 + WAL backup), #168 (prioritizer age cap), #170 (rule self-contradictions), #171 (drift_check + per-row hash + BSD-grep portability), #172 (dead hook removal + nav-link scoping).
+- **Roborev infrastructure improvements** (via merged PRs):
+  - WAL-aware DB backup via `sqlite3.backup()` API
+  - `COALESCE(finished_at, enqueued_at)` for staleness queries
+  - `datetime(field)` wrapper for ISO-vs-default timestamp comparisons
+  - Bash 3.2-compatible `while IFS= read` replacing `mapfile`
+  - Age contribution capped at `sqrt(30)` so fresh Critical outranks stale Low
+- **Rule rewrites (PR #170, mine, opus)** — `auto-delegation.md`: replaced "Opus NEVER" absolute with "Default rule: delegate" + explicit Bounded Exceptions table (rule/memory prose, CLAUDE.md, CURRENT_WORK, CHANGELOG append, roborev triage). `nix-agent-shell-protocol.md`: step 3 of regen workflow now mandates Form A (subshell) or Form B (explicit `setwd()`) up front; bare-Rscript pattern (previously labelled wrong later in the same rule) removed end-to-end.
+- **Worktree cleanup** — 6 worktrees reclaimed (~34M); 3 still locked (open-PR working trees).
+
+### Failed Approaches
+
+- **Initial finding categorization regex too loose** — first pass used `` `[^`]+` `` (matches any backtick codespan), inflating "shell-bash" to 750+ findings (~63%). Tightened to phrase-level matches, dropped to ~6%. Lesson: a regex that matches a markdown delimiter matches the entire markdown world.
+- **PR 9 agent crashed at the comment step** — hit org monthly usage limit at 52 tool uses / 6m22s, after pushing the commit but before posting roborev comments. Manual post by orchestrator (allowed under bounded-exception). One finding (`index.qmd:16` ccusage naming) missed entirely.
+- **Quarto-workflow finding (PR 10) was wrong** — agent investigated and found only ONE active publisher; other "duplicate" workflow files are `workflow_call`-only or unrelated. Resolved by header-comment documenting roles (same false-positive recovery pattern as PR 1).
+- **Worktree-shared-FS stash dance** — after merging PR #164, working tree showed the merged content as "uncommitted local mods" because the agent's worktree shares the working filesystem with main. Resolved by stashing the two files (blob hashes byte-identical to merged state), pulling, dropping stash. Repeat-pattern hazard for every agent-worktree merge.
+
+### Accuracy / Metrics
+
+- Findings addressed: **31 in PR scope + 2 closed directly** (PR 1 false-positive, PR 13 wontfix) = **33 / 44** originally identified
+- 8 PRs merged to main this session
+- 3 PRs still open: #166 (Stop hook), #169 (permission_request), #173 (vignette/QA — 9 files)
+- llm backlog count: **79 → 90** at session end (transient rebound — roborev queued reviews on each new commit; expected to settle below 79 once re-reviews complete)
+- Disk reclaimed: ~34M (6 worktrees removed)
+- **Org monthly usage limit HIT** during PR 9 — no more agent dispatches this period
+- Weekly burn: **~110%+** at session end
+
+### Known Limitations
+
+- **3 PRs need closer review before merging:**
+  - #166 (Stop hook gate) — verify the `~/.claude/.bye-requested` sentinel approach doesn't break the /bye flow
+  - #169 (permission_request) — MUST run `PERMISSION_REQUEST_SELFTEST=1 bash .claude/hooks/permission_request.sh` from a real terminal (Claude Code intercepts the assignment)
+  - #173 (vignette/QA, 9 files) — largest-surface diff; eyeball before merging
+- **1 missed finding**: `index.qmd:16` ccusage naming mismatch (`ccusage_daily.json` vs loader expects `ccusage_daily_all.json`). Vignette still renders; new telemetry doesn't load. One-line fix.
+- **Org agent quota exhausted** — no new agent dispatches possible until next billing cycle.
+- **llmtelemetry divergence still unresolved** (carried from 2026-05-16) — 1 ahead, 5 behind, 9 modified JSON exports. `config_pulse.sh` modified both locally AND upstream — high conflict risk.
+- **Roborev backlog rebound** — temporarily +11 on llm because re-reviews of merged code are queued. Will settle below the start-of-session count after roborev catches up.
 
 ## 2026-05-16 (Session 2 — roborev evaluation + closure-loop automation Phase 1)
 
