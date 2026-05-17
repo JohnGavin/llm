@@ -67,10 +67,7 @@ if [ -f "$CACHE_FILE" ]; then
     fi
 fi
 
-# Escape JSON content
-ESCAPED_CONTENT=$(echo "$CONTENT" | jq -Rs .)
-
-# Model evaluation prompts
+# Model evaluation prompts (plain strings — never interpolated into JSON literals)
 PRECISION_PROMPT="You are a precision checker. Review this text for factual errors, misconceptions, or technically incorrect statements. Focus on: (1) Technical accuracy, (2) Correct terminology, (3) Logical consistency. Rate 1-10 (10=perfect precision) and provide specific feedback on any errors found. Format: {\"score\": N, \"feedback\": \"...\"}"
 
 RECALL_PROMPT="You are a recall checker. Review this text for missing context or incomplete explanations. Focus on: (1) Key concepts omitted, (2) Necessary background missing, (3) Incomplete examples. Rate 1-10 (10=complete coverage) and provide specific feedback on gaps. Format: {\"score\": N, \"feedback\": \"...\"}"
@@ -78,57 +75,71 @@ RECALL_PROMPT="You are a recall checker. Review this text for missing context or
 GENERICITY_PROMPT="You are a genericity checker. Review this text for AI slop patterns and generic language. Focus on: (1) Vague phrases like 'it's important to note', (2) Obvious truisms, (3) Non-specific recommendations. Rate 1-10 (10=specific and concrete) and provide specific feedback on generic patterns. Format: {\"score\": N, \"feedback\": \"...\"}"
 
 # Function to call Opus (precision)
+# Fix (roborev #779): use jq -n --arg to build the payload — never interpolate
+# RAW_CONTENT into a JSON string literal; jq handles all escaping correctly.
 call_opus() {
     local prompt="$1"
     local output="$2"
+    local user_msg="${prompt}
+
+Text to evaluate:
+${CONTENT}"
+
+    local payload
+    payload=$(jq -n \
+        --arg model "claude-opus-4-5-20251101" \
+        --arg content "$user_msg" \
+        '{"model": $model, "max_tokens": 1024, "messages": [{"role": "user", "content": $content}]}')
 
     timeout "$TIMEOUT" curl -s https://api.anthropic.com/v1/messages \
         -H "x-api-key: ${ANTHROPIC_API_KEY}" \
         -H "anthropic-version: 2023-06-01" \
         -H "content-type: application/json" \
-        -d "{
-            \"model\": \"claude-opus-4-5-20251101\",
-            \"max_tokens\": 1024,
-            \"messages\": [
-                {\"role\": \"user\", \"content\": \"${prompt}\n\nText to evaluate:\n${ESCAPED_CONTENT}\"}
-            ]
-        }" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
+        -d "$payload" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
 }
 
 # Function to call GPT-4 (recall)
+# Fix (roborev #779): same jq -n --arg pattern as call_opus.
 call_gpt4() {
     local prompt="$1"
     local output="$2"
 
+    local payload
+    payload=$(jq -n \
+        --arg system_msg "$prompt" \
+        --arg user_msg "$CONTENT" \
+        '{"model": "gpt-4o-mini", "max_tokens": 1024,
+          "messages": [
+            {"role": "system", "content": $system_msg},
+            {"role": "user",   "content": $user_msg}
+          ]}')
+
     timeout "$TIMEOUT" curl -s https://api.openai.com/v1/chat/completions \
         -H "Authorization: Bearer ${OPENAI_API_KEY}" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"model\": \"gpt-4o-mini\",
-            \"messages\": [
-                {\"role\": \"system\", \"content\": \"${prompt}\"},
-                {\"role\": \"user\", \"content\": ${ESCAPED_CONTENT}}
-            ],
-            \"max_tokens\": 1024
-        }" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
+        -d "$payload" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
 }
 
 # Function to call DeepSeek (genericity)
+# Fix (roborev #779): same jq -n --arg pattern.
 call_deepseek() {
     local prompt="$1"
     local output="$2"
 
+    local payload
+    payload=$(jq -n \
+        --arg system_msg "$prompt" \
+        --arg user_msg "$CONTENT" \
+        '{"model": "deepseek-chat", "max_tokens": 1024,
+          "messages": [
+            {"role": "system", "content": $system_msg},
+            {"role": "user",   "content": $user_msg}
+          ]}')
+
     timeout "$TIMEOUT" curl -s https://api.deepseek.com/v1/chat/completions \
         -H "Authorization: Bearer ${DEEPSEEK_API_KEY}" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"model\": \"deepseek-chat\",
-            \"messages\": [
-                {\"role\": \"system\", \"content\": \"${prompt}\"},
-                {\"role\": \"user\", \"content\": ${ESCAPED_CONTENT}}
-            ],
-            \"max_tokens\": 1024
-        }" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
+        -d "$payload" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
 }
 
 # Run all models in parallel
