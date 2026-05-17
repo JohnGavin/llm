@@ -213,6 +213,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/compound_command_guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "~/.claude/hooks/docs_qa_precommit.sh",
             "timeout": 10
           }

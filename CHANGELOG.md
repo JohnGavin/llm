@@ -4,6 +4,33 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-17 (Session 4 spike — compound-command guard hook, issue #176)
+
+### Completed
+
+- **Spiked `compound_command_guard.sh`** — PreToolUse:Bash hook that detects compound shell operators (`|`, `&&`, `||`, unescaped `;`) outside quoted strings, heredocs, and subshells. Uses Python to strip quoted regions and heredoc bodies before detection; subshells `(...)` are explicitly allowed per `bash-safety` rule.
+- **Three modes:** `off` (default, no-op), `log` (detect + write to `~/.claude/logs/compound_guard.log`, always exit 0), `block` (detect + log + exit 1 with actionable retry message). Default in settings.json is `off` to avoid breaking live work.
+- **12/12 self-test cases pass** — 5 compound commands correctly detected, 7 allowed cases (quoted strings, escaped semicolons, subshells, background `&`, heredoc bodies, plain commands) correctly passed through.
+- **Wired into settings.json** as a third PreToolUse:Bash hook after `destructive_fs_guard.sh` and `destructive_api_guard.sh`. JSON validated clean.
+- **PR opened:** `feat/176-compound-guard-spike` against main (do not merge — collect false positives for 1 week in log mode first).
+
+### How to enable block mode after log collection
+
+```bash
+# Review what was logged in the first week
+cat ~/.claude/logs/compound_guard.log | grep detected | sort | uniq -c | sort -rn
+
+# If false-positive rate is acceptable, enable blocking via settings.json env:
+# Change "COMPOUND_GUARD_MODE": "off" to "log" or "block"
+# Or export per-session: COMPOUND_GUARD_MODE=block claude
+```
+
+### Link to issue
+
+- #176 — Compound bash command auto-guard
+
+---
+
 ## 2026-05-17 (Session 3 follow-up — merged remaining PRs + Tasks 1/2/3 + SDK-caching issue)
 
 ### Completed
