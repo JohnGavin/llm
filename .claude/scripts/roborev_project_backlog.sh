@@ -243,7 +243,11 @@ def days_old(created_at_str):
 def priority_score(sev, categories, age_days):
     sw = SEVERITY_WEIGHT.get(sev, 1)
     cr = max(CATEGORY_RISK.get(c, 1.0) for c in categories)
-    age_factor = 1 + math.sqrt(age_days)
+    # Cap age contribution at sqrt(30) ≈ 5.48 so a fresh Critical beats a stale Low:
+    #   fresh Critical: sev=10 * cr * (1+0)    = 10*cr
+    #   stale Low 1yr:  sev=1  * cr * (1+5.48) = 6.48*cr
+    # Works as long as severity weight for Critical >= 7 (currently 10).
+    age_factor = 1 + min(math.sqrt(age_days), math.sqrt(30))
     return sw * cr * age_factor
 
 scored = []
