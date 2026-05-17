@@ -6,16 +6,20 @@
 
 **Why Option 3**: Historical session transcripts contain no tool call data, making retrospective analysis (Option 4 Week 1) non-viable. Pivoting to progressive capture ensures organic skill generation from actual repeated workflows.
 
-## Finding: No Historical Tool Call Data
+## Finding: No Historical Tool Call Data (Confirmed Limitation)
 
 **Investigation (2026-05-11)**: Tested 15+ session transcripts in `~/.claude/projects/-Users-johngavin-docs-gh-llm/`:
 - All transcripts return "Insufficient data" (<3 tool calls)
-- `grep "type":"tool_call_result"` returns 0 matches
+- `grep '"type":"tool_call_result"'` returns 0 matches in every transcript
 - Transcripts are compacted summaries without detailed tool history
 
-**Impact**: Retrospective analysis (Option 4 Week 1) cannot generate skills from history.
+**Impact on skillify_backlog.sh**: The `skillify_backlog.sh [N]` command documented in earlier plans **does not scan N transcripts usefully** — it iterates over transcripts but every transcript returns "Insufficient data", so no skills are generated. This is a known architectural limitation, not a bug.
 
-**Pivot**: Use Option 3 — generate skills live during Weeks 1-3 as patterns emerge naturally.
+**Impact on PHASE1_VALIDATION.md claims**: References to `~/.claude/scripts/skillify_backlog.sh 20` generating skills from history were aspirational. The actual validation strategy is Option 3 (live capture), not Option 4 (retrospective).
+
+**Future path**: Rewrite `skillify_backlog.sh` to read from `~/.claude/logs/unified.duckdb` once its tool-event schema is documented (tracking #137). Until then, the script is retained as a documented placeholder.
+
+**Pivot**: Use Option 3 — generate skills live during Weeks 1-3 as patterns emerge naturally via `/skillify` within active sessions.
 
 ---
 

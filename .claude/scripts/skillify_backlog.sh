@@ -2,15 +2,31 @@
 # skillify_backlog.sh — Retrospective workflow analysis from past sessions
 # Part of Option 4 (Hybrid) validation strategy for #137 Phase 1
 #
+# KNOWN LIMITATION (roborev #824 / roborev #787, option b chosen):
+# Claude Code session transcripts are compacted summaries — they do NOT
+# retain individual tool_call_result events. Investigation of 15+ real
+# transcripts (2026-05-11) found zero "tool_call_result" lines; all
+# return "Insufficient data (<3 tool calls)" from detect_patterns.sh.
+#
+# As a result, the per-transcript loop below is a no-op for all real
+# sessions. The loop runs harmlessly but generates no skills.
+#
+# FUTURE PATH: rewrite to consume ~/.claude/logs/unified.duckdb once
+# its tool-event schema is documented (tracking #137). For now this
+# script is retained as a placeholder and produces an honest report.
+#
+# For live pattern detection use /skillify interactively within a session,
+# or run detect_patterns.sh on a freshly written (uncompacted) transcript.
+#
 # Usage:
-#   skillify_backlog.sh [N]  # analyze last N sessions (default: 20)
+#   skillify_backlog.sh [N]  # scan last N transcripts (default: 20)
+#                            # NOTE: currently a no-op (transcripts lack tool events)
 #
 # Output:
-#   - Generates candidate skills in ~/.claude/skills/generated/
-#   - Creates summary report with skill names and workflow types
-#   - Tracks which transcripts produced which skills (for deduplication)
+#   - Report in ~/.claude/skills/generated/ documenting scanned transcripts
+#   - No skills generated in practice (transcript limitation above)
 #
-# Related: #137 Phase 1 validation, skillify command
+# Related: #137 Phase 1 validation, skillify command, PHASE1_VALIDATION.md
 
 set -euo pipefail
 
