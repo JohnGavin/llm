@@ -10,7 +10,7 @@
 
 ## Deliverables Created
 
-### 1. Core Script: `~/.claude/scripts/cross_modal_eval.sh` (239 lines)
+### 1. Core Script: `.claude/scripts/cross_modal_eval.sh`
 
 **Executable multi-model evaluation script with:**
 
@@ -24,28 +24,30 @@
 - **Cost-efficient**: ~$0.05-0.10 per evaluation
 - **Smart caching**: 1-hour cache by content hash saves redundant API calls
 - **Robust error handling**: Timeout protection, graceful degradation, API failure recovery
+- **Safe JSON building**: `jq -n --arg` pattern throughout — no shell variable interpolation into JSON literals
 
-### 2. Configuration Template: `~/.claude/.env.example` (30 lines)
+### 2. Configuration Template: `.claude/.env.example`
 
 **Complete setup guide with:**
 
-- API key placeholders for all three services
+- API key placeholders for all three services (placeholder values only — no real keys)
 - Cost estimates per evaluation
 - Optional configuration variables (timeout, burn rate settings)
 - Security notes about .env file handling
 - Usage documentation
 
-### 3. Test Suite: `test_cross_modal_eval.sh` (worktree)
+### 3. Test Suite: `test_cross_modal_eval.sh`
 
-**Comprehensive validation with 7 tests:**
+**Comprehensive validation with 8 assertions:**
 
 - ✓ Error handling (missing file, no args, no API keys)
+- ✓ In-repo `.env.example` exists with placeholder keys only
 - ✓ Mock scoring logic verification
 - ✓ Small mismatch detection (<3 points, no flag)
 - ✓ Large mismatch detection (>3 points, flags)
 - ✓ Overall status computation (PASS/WARN/ERROR)
 
-**Results**: All core logic tests passing
+**Results**: 8/8 assertions pass; exit code 1 on any failure (verified)
 
 ### 4. Documentation: `IMPLEMENTATION.md` (worktree)
 
@@ -220,17 +222,15 @@ To test with real APIs:
 
 ---
 
-## Files Changed (Global)
+## Files Changed (In-Repo)
 
-- **Created**: `~/.claude/scripts/cross_modal_eval.sh` (executable, 239 lines)
-- **Created**: `~/.claude/.env.example` (template, 30 lines)
-
-## Files Changed (Worktree)
-
-- **Created**: `IMPLEMENTATION.md` (technical documentation)
-- **Created**: `test_cross_modal_eval.sh` (test suite, executable)
-- **Created**: `test_output.txt` (test fixture)
-- **Created**: `COMPLETION_SUMMARY.md` (this file)
+- **Created/Fixed**: `.claude/scripts/cross_modal_eval.sh` — JSON interpolation bug fixed (jq --arg)
+- **Created/Fixed**: `.claude/scripts/detect_patterns.sh` — JSON interpolation bug fixed (jq --arg)
+- **Created**: `.claude/.env.example` — configuration template (placeholder keys only)
+- **Fixed**: `test_cross_modal_eval.sh` — exits 1 on assertion failure; uses in-repo paths
+- **Fixed**: `COMPLETION_SUMMARY.md` — references in-repo paths, accurate test results
+- **Fixed**: `PHASE1_VALIDATION.md` — documents transcript limitation; downscoped skillify_backlog
+- **Fixed**: `.claude/scripts/skillify_backlog.sh` — honest limitation documentation
 
 ---
 
@@ -244,12 +244,22 @@ To test with real APIs:
 
 ## Ready for Merge
 
-**Branch**: `feat/cross-modal-eval`
-**Status**: ✓ All acceptance criteria met
-**Testing**: ✓ Core logic verified, manual API testing pending user setup
-**Documentation**: ✓ Complete technical docs and usage examples
-**Quality**: ✓ Follows bash-safety patterns, error handling, timeout protection
+**Branch**: `feat/cross-modal-eval-complete`
+**Status**: ✓ All acceptance criteria met; roborev findings addressed
+**Testing**: ✓ 8/8 assertions pass; exit 1 on failure verified
+**Documentation**: ✓ In-repo paths throughout; limitations documented
+**Quality**: ✓ jq --arg JSON building; bash-safety; error handling; timeout protection
 
 **Merge recommendation**: Ready to merge to `main` once reviewed.
 
-**Post-merge**: User should set up API keys in `~/.claude/.env` for live testing.
+**Post-merge**: User should copy `.claude/.env.example` to `~/.claude/.env` and add real API keys for live testing.
+
+## Roborev Findings Addressed
+
+| Review ID | Location | Fix Applied |
+|-----------|----------|-------------|
+| 777 | `test_cross_modal_eval.sh:10-31` | Exit 1 on failure; in-repo paths; 8 assertions |
+| 779 | `COMPLETION_SUMMARY.md:13-36` | In-repo paths; accurate test counts |
+| 808 | `detect_patterns.sh:73-108` | jq --arg JSON building |
+| 787 | `PHASE1_VALIDATION.md:16-20` | skillify_backlog limitation documented |
+| 824 | `skillify_backlog.sh:53-74` | Limitation documented; loop marked as no-op |

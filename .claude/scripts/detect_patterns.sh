@@ -70,18 +70,10 @@ if [ "$TOOL_SUMMARY" = "Insufficient tool calls (<3)" ]; then
 fi
 
 # Call Opus API for pattern analysis
-ANALYSIS=$(curl -s https://api.anthropic.com/v1/messages \
-    -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "content-type: application/json" \
-    -d @- <<EOF
-{
-    "model": "claude-opus-4-5-20251101",
-    "max_tokens": 2048,
-    "messages": [
-        {
-            "role": "user",
-            "content": "Analyze this tool call sequence from a development session. Identify repeated workflows (patterns of 3+ consecutive tool calls that appear 2+ times). For each pattern, provide:
+# Fix (roborev #808): use jq -n --arg to build the payload safely.
+# $TOOL_SUMMARY may contain quotes, backslashes, or newlines that would break
+# a JSON literal. jq --arg handles all escaping correctly.
+PROMPT_TEXT="Analyze this tool call sequence from a development session. Identify repeated workflows (patterns of 3+ consecutive tool calls that appear 2+ times). For each pattern, provide:
 
 1. **workflow_name** (short kebab-case identifier)
 2. **confidence** (HIGH/MEDIUM/LOW based on repetition and semantic coherence)
@@ -105,12 +97,18 @@ Format response as JSON array:
 \`\`\`
 
 Tool call sequence:
-$TOOL_SUMMARY"
-        }
-    ]
-}
-EOF
-)
+${TOOL_SUMMARY}"
+
+PAYLOAD=$(jq -n \
+    --arg content "$PROMPT_TEXT" \
+    '{"model": "claude-opus-4-5-20251101", "max_tokens": 2048,
+      "messages": [{"role": "user", "content": $content}]}')
+
+ANALYSIS=$(curl -s https://api.anthropic.com/v1/messages \
+    -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "content-type: application/json" \
+    -d "$PAYLOAD")
 
 # Extract content from API response
 PATTERNS=$(echo "$ANALYSIS" | jq -r '.content[0].text // ""')

@@ -1,33 +1,109 @@
 #!/usr/bin/env bash
 # Test script for cross_modal_eval.sh
 # Verifies logic without making real API calls
+#
+# Fix (roborev #777): track failures via FAIL_COUNT; exit 1 when any assertion
+# fails so CI (and the unconditional success message) never masks broken tests.
+# Fix (roborev #777 / finding 5): reference in-repo paths under .claude/scripts/
+# and .claude/.env.example rather than ~/.claude/ paths.
 
 set -euo pipefail
 
+# Resolve the repo root from this script's location so tests work from any cwd
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CROSS_MODAL_SCRIPT="${SCRIPT_DIR}/.claude/scripts/cross_modal_eval.sh"
+ENV_EXAMPLE="${SCRIPT_DIR}/.claude/.env.example"
+
+# Verify expected in-repo files exist before running tests
+if [ ! -f "$CROSS_MODAL_SCRIPT" ]; then
+    echo "ERROR: $CROSS_MODAL_SCRIPT not found — did you run this from the repo root?" >&2
+    exit 1
+fi
+if [ ! -f "$ENV_EXAMPLE" ]; then
+    echo "ERROR: $ENV_EXAMPLE not found" >&2
+    exit 1
+fi
+
 echo "Testing cross_modal_eval.sh logic..."
+echo "Script: $CROSS_MODAL_SCRIPT"
+echo "Env example: $ENV_EXAMPLE"
+echo ""
+
+FAIL_COUNT=0
+
+# Helper to record pass/fail
+assert_pass() {
+    local label="$1"
+    local result="$2"   # "PASS" or "FAIL"
+    echo -n "${label}: "
+    if [ "$result" = "PASS" ]; then
+        echo "PASS"
+    else
+        echo "FAIL"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+}
+
+# Note: the cross_modal_eval.sh script exits non-zero on validation failures.
+# We capture output first, then test it, to avoid set -e killing our script.
 
 # Test 1: Missing file
 echo -n "Test 1 (missing file): "
-if ~/.claude/scripts/cross_modal_eval.sh /tmp/nonexistent_file_12345.txt 2>&1 | grep -q "File not found"; then
+t1_out=$("$CROSS_MODAL_SCRIPT" /tmp/nonexistent_file_12345.txt 2>&1 || true)
+if echo "$t1_out" | grep -q "File not found"; then
     echo "PASS"
 else
     echo "FAIL"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Test 2: No arguments
 echo -n "Test 2 (no arguments): "
-if ~/.claude/scripts/cross_modal_eval.sh 2>&1 | grep -q "No output file provided"; then
+t2_out=$("$CROSS_MODAL_SCRIPT" 2>&1 || true)
+if echo "$t2_out" | grep -q "No output file provided"; then
     echo "PASS"
 else
     echo "FAIL"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Test 3: Missing API keys
+# Test 3: Missing API keys (use a real file that exists; no keys set)
+# Create a temp file so the script gets past the file-not-found check
+TMPFILE=$(mktemp)
+echo "Sample text for testing" > "$TMPFILE"
 echo -n "Test 3 (missing API keys): "
-if ~/.claude/scripts/cross_modal_eval.sh /private/tmp/llm-phase1-crossmodal/test_output.txt 2>&1 | grep -q "Missing API keys"; then
+t3_out=$(env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u DEEPSEEK_API_KEY \
+   "$CROSS_MODAL_SCRIPT" "$TMPFILE" 2>&1 || true)
+if echo "$t3_out" | grep -q "Missing API keys"; then
     echo "PASS"
 else
     echo "FAIL"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+rm -f "$TMPFILE"
+
+# Test 4: .env.example exists in repo with placeholder keys (not real)
+echo -n "Test 4 (.env.example exists in repo): "
+if [ -f "$ENV_EXAMPLE" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+# Test 4b: .env.example contains no real key patterns (only placeholders)
+echo -n "Test 4b (.env.example has only placeholder keys): "
+if grep -qE '^(ANTHROPIC|OPENAI|DEEPSEEK)_API_KEY=sk-' "$ENV_EXAMPLE"; then
+    # Has key lines — check none look like real keys (>20 chars after prefix)
+    if grep -E '^(ANTHROPIC|OPENAI|DEEPSEEK)_API_KEY=sk-[a-zA-Z0-9_-]{20,}' "$ENV_EXAMPLE" | grep -qv 'xxx'; then
+        echo "FAIL (possible real key detected)"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        echo "PASS"
+    fi
+else
+    echo "FAIL (no key lines found)"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Create a mock version of the script for testing the scoring logic
@@ -71,22 +147,24 @@ EOF
 
 chmod +x /tmp/test_cross_modal_mock.sh
 
-# Test 4: Mock scoring logic
-echo -n "Test 4 (mock scoring): "
+# Test 5: Mock scoring logic
+echo -n "Test 5 (mock scoring): "
 mock_output=$(/tmp/test_cross_modal_mock.sh)
 if echo "$mock_output" | jq -e '.precision.score == 9 and .recall.score == 8 and .genericity.score == 7' >/dev/null 2>&1; then
     echo "PASS"
 else
     echo "FAIL"
     echo "Output: $mock_output"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Test 5: Mismatch detection (diff=2, should not flag)
-echo -n "Test 5 (small mismatch): "
+# Test 6: Mismatch detection (diff=1, should not flag)
+echo -n "Test 6 (small mismatch): "
 if echo "$mock_output" | jq -e '.mismatches[2].diff == 1 and .mismatches[2].flag == false' >/dev/null 2>&1; then
     echo "PASS"
 else
     echo "FAIL"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Test large mismatch
@@ -124,27 +202,36 @@ EOF
 
 chmod +x /tmp/test_cross_modal_mock_large.sh
 
-# Test 6: Large mismatch detection (diff=5, should flag)
-echo -n "Test 6 (large mismatch): "
+# Test 7: Large mismatch detection (diff=5, should flag)
+echo -n "Test 7 (large mismatch): "
 large_output=$(/tmp/test_cross_modal_mock_large.sh)
 if echo "$large_output" | jq -e '.mismatches[0].diff == 5 and .mismatches[0].flag == true' >/dev/null 2>&1; then
     echo "PASS"
 else
     echo "FAIL"
     echo "Output: $large_output"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Test 7: Overall status with flag
-echo -n "Test 7 (WARN status): "
+# Test 8: Overall status with flag
+echo -n "Test 8 (WARN status): "
 if echo "$large_output" | jq -e '.overall == "WARN"' >/dev/null 2>&1; then
     echo "PASS"
 else
     echo "FAIL"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
-
-echo ""
-echo "All logic tests passed! Script is ready for real API testing."
-echo "To test with real APIs, set up ~/.claude/.env with your API keys."
 
 # Cleanup
 rm -f /tmp/test_cross_modal_mock.sh /tmp/test_cross_modal_mock_large.sh
+
+echo ""
+echo "Results: $((8 - FAIL_COUNT))/8 assertions passed"
+
+if [ "$FAIL_COUNT" -gt 0 ]; then
+    echo "FAILED: $FAIL_COUNT assertion(s) failed."
+    exit 1
+fi
+
+echo "All logic tests passed. Script is ready for real API testing."
+echo "To test with real APIs, copy .claude/.env.example to ~/.claude/.env and add your keys."
