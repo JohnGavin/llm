@@ -66,8 +66,12 @@ fi
 CUTOFF=$(date -u -v "-${THRESHOLD_DAYS}d" +%s 2>/dev/null \
        || date -u -d "${THRESHOLD_DAYS} days ago" +%s)
 
-# Fetch open jobs, filter by enqueued_at < cutoff, emit ids
-mapfile -t STALE_IDS < <(
+# Fetch open jobs, filter by enqueued_at < cutoff, emit ids.
+# Portable while-read loop instead of mapfile (Bash 3.2 compat — macOS ships Bash 3.2).
+STALE_IDS=()
+while IFS= read -r _line; do
+  STALE_IDS+=("$_line")
+done < <(
   "$ROBOREV" list --json --open --limit 1000 2>/dev/null \
     | python3 -c "
 import json, sys
@@ -146,11 +150,20 @@ fi
 
 echo "roborev phase2: $PHASE2_N stale failed jobs (repo=$ROBOREV_REPO, no review attached) — cancelling via DB"
 
-# Backup BEFORE mutating (daemon may be running — SQLite WAL handles concurrent
-# read; we use busy_timeout for the write).
+# Backup BEFORE mutating using Python's sqlite3.backup() — this is WAL-safe because
+# it uses the SQLite Online Backup API which snapshots committed state including any
+# un-checkpointed WAL pages. A plain `cp reviews.db` would miss those pages.
+# We use /usr/bin/python3 to avoid depending on sqlite3 CLI being on PATH inside nix.
 BACKUP="$ROBOREV_DB.bak-$(date +%Y%m%d_%H%M%S)"
-if ! cp "$ROBOREV_DB" "$BACKUP"; then
-  log "phase2 abort: backup to $BACKUP failed"
+if ! /usr/bin/python3 -c "
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+src.close()
+dst.close()
+" "$ROBOREV_DB" "$BACKUP"; then
+  log "phase2 abort: WAL-safe backup to $BACKUP failed"
   echo "roborev phase2: backup failed"
   exit 1
 fi

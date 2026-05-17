@@ -74,7 +74,7 @@ SELECT COUNT(*)
 FROM review_jobs
 WHERE agent = 'codex'
   AND status = 'failed'
-  AND enqueued_at > datetime('now', '-${FAILURE_WINDOW_MIN} minute');
+  AND datetime(enqueued_at) > datetime('now', '-${FAILURE_WINDOW_MIN} minute');
 SQL
 }
 

@@ -41,7 +41,11 @@ echo
 
 # Collect HTML files recursively (covers vignettes/articles/ and docs/articles/).
 # Reuse this list for all checks to ensure consistency (fixes roborev #679).
-mapfile -t HTML_FILES < <(find "$DOCS_DIR" -name "*.html" 2>/dev/null)
+# Portable while-read loop instead of mapfile (Bash 3.2 compat — macOS ships Bash 3.2).
+HTML_FILES=()
+while IFS= read -r _line; do
+  HTML_FILES+=("$_line")
+done < <(find "$DOCS_DIR" -name "*.html" 2>/dev/null)
 HTML_COUNT="${#HTML_FILES[@]}"
 if [ "$HTML_COUNT" -eq 0 ]; then
   echo "ERROR: No .html files found under $DOCS_DIR"

@@ -115,7 +115,7 @@ for r in repos:
         JOIN reviews rv ON rv.job_id = rj.id
         WHERE repo.id = ?
           AND rj.status = 'done'
-          AND (julianday('now') - julianday(rj.enqueued_at)) > ?
+          AND (julianday('now') - julianday(COALESCE(rj.finished_at, rj.enqueued_at))) > ?
         ORDER BY rj.enqueued_at ASC
     """, (r["id"], threshold_days)).fetchall()
 
