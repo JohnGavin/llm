@@ -19,8 +19,12 @@
 set -o pipefail  # no -e — single project lookup must not kill the pass
                   # no -u either — interacts badly with some snapshot/init scripts
 
-# Use BSD grep explicitly: the nix shell's PATH puts toybox grep first,
-# and toybox grep does not support `\b` word boundaries.
+# Grep configuration.
+# BSD grep (/usr/bin/grep on macOS) does NOT support \b word-boundary
+# assertions in ERE mode (-E). We use POSIX character-class anchors instead:
+#   (^|[^[:alnum:]_])PATTERN([^[:alnum:]_]|$)
+# This is portable across BSD grep, GNU grep, and toybox grep.
+# Do NOT use \b — it silently matches nothing on BSD grep with -E.
 GREP="${GREP:-/usr/bin/grep}"
 SESSION_ID="${1:-${CLAUDE_CODE_SESSION_ID:-}}"
 KNOWLEDGE_ROOT="${KNOWLEDGE_ROOT:-$HOME/docs_gh/llm/knowledge}"
@@ -63,7 +67,13 @@ for project in "${PROJECTS[@]}"; do
   # Word-boundary match on the project name. Lowercase compare via grep -i.
   # Count occurrences in the JSONL — each line is a JSON event.
   # `grep -c` exits 1 with output "0" when nothing matches; coerce to int safely.
-  count=$("$GREP" -ciE "\\b${project}\\b" "$JSONL" 2>/dev/null)
+  #
+  # PORTABILITY: \b is NOT supported by BSD grep (macOS /usr/bin/grep) in ERE
+  # mode. Use POSIX character-class boundary instead:
+  #   (^|[^[:alnum:]_])  = start of string OR non-word char before match
+  #   ([^[:alnum:]_]|$)  = non-word char after match OR end of string
+  # This correctly matches "llm" in " llm " but not in "llmtelemetry".
+  count=$("$GREP" -ciE "(^|[^[:alnum:]_])${project}([^[:alnum:]_]|$)" "$JSONL" 2>/dev/null)
   count=${count:-0}
   [ "$count" -gt 0 ] || continue
 
@@ -82,5 +92,43 @@ HEADER
 
   echo "${LOG_PREFIX}  count=${count}" >> "$target"
 done
+
+# ── Self-test (run with ENTITY_PROPAGATE_SELFTEST=1) ─────────────────────────
+# Tests the POSIX word-boundary regex pattern on known inputs.
+# Usage: ENTITY_PROPAGATE_SELFTEST=1 bash entity_propagate.sh
+# NOTE: placed before "exit 0" so the env-var gate can actually be reached.
+if [ "${ENTITY_PROPAGATE_SELFTEST:-0}" = "1" ]; then
+  echo "=== entity_propagate.sh self-test ===" >&2
+  TMPF=$(mktemp)
+  printf 'mention of llm project here\n' >> "$TMPF"
+  printf 'llmtelemetry is a different project\n' >> "$TMPF"
+  printf '"project":"llm","action":"test"\n' >> "$TMPF"
+  printf 'no match in this line\n' >> "$TMPF"
+
+  # "llm" should match lines 1 and 3 (count=2); NOT line 2 (llmtelemetry)
+  c=$("$GREP" -ciE "(^|[^[:alnum:]_])llm([^[:alnum:]_]|$)" "$TMPF" 2>/dev/null || true)
+  c=${c:-0}
+  if [ "$c" = "2" ]; then
+    echo "PASS: 'llm' matched $c/2 expected lines (not llmtelemetry)" >&2
+  else
+    echo "FAIL: 'llm' matched $c lines (expected 2)" >&2
+    rm -f "$TMPF"
+    exit 1
+  fi
+
+  # "llmtelemetry" should match line 2 only (count=1)
+  c2=$("$GREP" -ciE "(^|[^[:alnum:]_])llmtelemetry([^[:alnum:]_]|$)" "$TMPF" 2>/dev/null || true)
+  c2=${c2:-0}
+  if [ "$c2" = "1" ]; then
+    echo "PASS: 'llmtelemetry' matched $c2/1 expected lines" >&2
+  else
+    echo "FAIL: 'llmtelemetry' matched $c2 lines (expected 1)" >&2
+    rm -f "$TMPF"
+    exit 1
+  fi
+
+  rm -f "$TMPF"
+  echo "=== all self-tests passed ===" >&2
+fi
 
 exit 0

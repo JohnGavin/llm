@@ -281,12 +281,15 @@ When data arrives in append-only batches (e.g., daily API pulls, CSV exports), u
 
 ```r
 tar_target(stg_transactions_deduped, {
-  # Generate surrogate key from identifying columns
+  # Generate surrogate key from identifying columns — one hash per ROW.
+  # digest::digest() is NOT vectorized: wrapping the paste() vector hashes
+  # the entire vector as one object, producing the SAME id for every row.
+  # Use purrr::pmap_chr() to apply digest() element-wise instead.
   stg_transactions |>
     dplyr::mutate(
-      row_id = digest::digest(
-        paste(date, description, amount, sep = "_"),
-        algo = "md5"
+      row_id = purrr::pmap_chr(
+        list(date, description, amount),
+        \(d, x, a) digest::digest(paste(d, x, a, sep = "_"), algo = "md5")
       )
     ) |>
     # Deduplicate: keep first occurrence of each row_id
