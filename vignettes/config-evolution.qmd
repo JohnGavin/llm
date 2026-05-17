@@ -9,9 +9,6 @@ execute:
   warning: false
 ---
 
-{{< include ../_includes/qr-footer.qmd >}}
-
-
 ```{r setup}
 #| include: false
 library(dplyr)
@@ -53,9 +50,12 @@ if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requ
 # Probe in priority order so this also works locally where ~/.claude has the
 # same content via symlinks.
 if (is.null(config_data)) {
-  .candidates <- c(here::here(".claude"), path.expand("~/.claude"))
+  # Probe repo-relative path first (works in CI and locally via symlink).
+  # The user-level ~/.claude path is excluded: vignettes must be reproducible
+  # from the checked-in source tree alone, not from reviewer-local state.
+  .candidates <- c(here::here(".claude"))
   claude_dir <- Find(dir.exists, .candidates)
-  if (is.null(claude_dir)) claude_dir <- .candidates[1]  # last-resort string
+  if (is.null(claude_dir)) claude_dir <- here::here(".claude")  # last-resort string
 
   # Count rules
   rules_dir <- file.path(claude_dir, "rules")
