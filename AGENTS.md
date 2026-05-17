@@ -176,7 +176,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Loop management:** List running loops via `/schedule list`. Stop: `/schedule stop <job-id>`.
 
-**Hooks integration:** PostToolUse hook auto-runs `styler::style_file()` on R edits, `check_dark_contrast.sh` on Quarto edits (see `~/.claude/hooks/post_tool_use_format.sh`).
+**Hooks integration:** R auto-format and dark-contrast checks run via pre-commit scripts; see `~/.claude/scripts/r_code_check.sh` and `~/.claude/scripts/check_dark_contrast.sh`.
 
 ## Templates (5)
 
@@ -192,7 +192,7 @@ Core: `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `syst
 
 ## Hooks (9 scripts, 5 event hooks)
 
-`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `post_tool_use_format.sh`(PostToolUse:Edit|Write — auto-format), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
+`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `skill_quality_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
 
 ## Memory (16 files at `.claude/memory/`)
 
