@@ -4,6 +4,16 @@
 
 Run the end-of-session checklist from AGENTS.md Section 6.
 
+## First: Write the /bye sentinel
+
+Before any other step, run this shell command so the session_stop.sh hook
+knows this Stop event comes from /bye (not a normal reply). The hook gates
+the paid pattern-detection block on this sentinel file and deletes it after use.
+
+```bash
+touch ~/.claude/.bye-requested
+```
+
 ## Steps
 
 1. Check for uncommitted changes
