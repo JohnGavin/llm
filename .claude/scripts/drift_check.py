@@ -138,6 +138,15 @@ def rebuild_baseline(embed) -> None:
         return
     vecs = np.stack([embed(s) for s in subjects])
     centroid = vecs.mean(axis=0)
+    # Normalize centroid to unit length so cosine-distance formula is valid.
+    # The mean of unit vectors is NOT itself unit-length; normalization is
+    # mandatory before using the dot-product shortcut (1 - v·c) for cosine dist.
+    centroid_norm = np.linalg.norm(centroid)
+    if centroid_norm < 1e-10:
+        log("ERROR: centroid is a zero vector — baseline is degenerate")
+        return
+    centroid = centroid / centroid_norm
+    assert abs(np.linalg.norm(centroid) - 1.0) < 1e-9, "centroid not unit-normalized"
     # Distance of each baseline item to the centroid → distribution
     dists = 1.0 - vecs @ centroid           # cosine distance for unit vectors
     np.save(BASELINE_NPY, centroid)
