@@ -141,7 +141,15 @@ for p in pending:
 fi
 
 # ── Pattern Detection (Phase 1 Validation, Option 4 Hybrid) ──────────────
-if [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
+# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
+# Running pattern detection (paid Opus API call) on every response would be
+# a massive cost regression. We gate on a sentinel file that /bye writes
+# before invoking the Stop hook. Non-/bye stops skip this block entirely.
+# The sentinel (~/.claude/.bye-requested) is deleted immediately after use
+# so a crash or abort does not leave a stale sentinel.
+_BYE_SENTINEL="${HOME}/.claude/.bye-requested"
+if [ -f "$_BYE_SENTINEL" ] && [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
+  rm -f "$_BYE_SENTINEL"  # consume sentinel immediately — one-shot
   TRANSCRIPT=$(ls -t "${HOME}/.claude/projects/"*/*.jsonl 2>/dev/null | head -1)
   if [ -n "$TRANSCRIPT" ]; then
     PATTERNS=$(timeout 30 "${HOME}/.claude/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
@@ -149,13 +157,9 @@ if [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
       echo ""
       echo "$PATTERNS"
       echo ""
-      echo "▶ Run /skillify next session? [Y/n, 15s timeout]"
-      read -t 15 -n 1 -r REPLY 2>/dev/null || REPLY="n"
-      echo ""
-      if [[ "${REPLY:-n}" =~ ^[Yy]$ ]]; then
-        echo "$TRANSCRIPT" > "${HOME}/.claude/.pending_skillify"
-        echo "✓ Will auto-run /skillify on next session start"
-      fi
+      # No interactive read — hooks run non-interactively; auto-schedule skillify.
+      echo "$TRANSCRIPT" > "${HOME}/.claude/.pending_skillify"
+      echo "✓ Patterns detected — /skillify will run at next session start."
     fi
   fi
 fi
