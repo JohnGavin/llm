@@ -14,7 +14,14 @@
 # Output: JSON with precision/recall/genericity scores and mismatch flags
 # Cost: ~$0.05-0.10 per evaluation
 #
-# Related: Issue #137 (cross-modal evaluation), Issue #130 (T lang incident)
+# Prompt caching: The Anthropic call (call_opus) uses cache_control markers on
+# the system block (ephemeral type). Anthropic requires >=1024 tokens to cache;
+# PRECISION_PROMPT is ~125 tokens so caching is silently skipped today.
+# This is scaffolding: structure is correct, cache-hit logging is active, and
+# caching will engage automatically when prompts grow. See Issue #174.
+#
+# Related: Issue #137 (cross-modal evaluation), Issue #130 (T lang incident),
+#          Issue #174 (prompt caching scaffolding)
 
 set -euo pipefail
 
@@ -77,25 +84,62 @@ GENERICITY_PROMPT="You are a genericity checker. Review this text for AI slop pa
 # Function to call Opus (precision)
 # Fix (roborev #779): use jq -n --arg to build the payload — never interpolate
 # RAW_CONTENT into a JSON string literal; jq handles all escaping correctly.
+#
+# Prompt caching scaffolding (Issue #174):
+# - The system block carries cache_control: {type: "ephemeral"} so Anthropic will
+#   cache it once it exceeds the 1024-token minimum.
+# - PRECISION_PROMPT is currently ~125 tokens — below that threshold, so the
+#   cache_control marker is silently ignored by the API today.
+# - When prompts grow past 1024 tokens (Opus/Sonnet minimum), caching engages
+#   automatically without further code changes.
+# - Cache hits/creations are logged to ~/.claude/logs/cross_modal_cache.log.
 call_opus() {
     local prompt="$1"
     local output="$2"
-    local user_msg="${prompt}
-
-Text to evaluate:
-${CONTENT}"
 
     local payload
     payload=$(jq -n \
         --arg model "claude-opus-4-5-20251101" \
-        --arg content "$user_msg" \
-        '{"model": $model, "max_tokens": 1024, "messages": [{"role": "user", "content": $content}]}')
+        --arg system_prompt "$prompt" \
+        --arg user_content "$CONTENT" \
+        '{
+            model: $model,
+            max_tokens: 1024,
+            system: [
+                {
+                    type: "text",
+                    text: $system_prompt,
+                    cache_control: {type: "ephemeral"}
+                }
+            ],
+            messages: [{role: "user", content: $user_content}]
+        }')
 
-    timeout "$TIMEOUT" curl -s https://api.anthropic.com/v1/messages \
+    local raw_response
+    raw_response=$(timeout "$TIMEOUT" curl -s https://api.anthropic.com/v1/messages \
         -H "x-api-key: ${ANTHROPIC_API_KEY}" \
         -H "anthropic-version: 2023-06-01" \
+        -H "anthropic-beta: prompt-caching-2024-07-31" \
         -H "content-type: application/json" \
-        -d "$payload" > "$output" 2>/dev/null || echo '{"error": "API call failed"}' > "$output"
+        -d "$payload" 2>/dev/null) || raw_response='{"error": "API call failed"}'
+
+    # Log cache metrics (cache_read_input_tokens=0 when threshold not yet met)
+    local cache_log="${HOME}/.claude/logs/cross_modal_cache.log"
+    mkdir -p "$(dirname "$cache_log")"
+    local cache_read cache_creation input_tokens output_tokens
+    cache_read=$(echo "$raw_response" | jq -r '.usage.cache_read_input_tokens // 0')
+    cache_creation=$(echo "$raw_response" | jq -r '.usage.cache_creation_input_tokens // 0')
+    input_tokens=$(echo "$raw_response" | jq -r '.usage.input_tokens // 0')
+    output_tokens=$(echo "$raw_response" | jq -r '.usage.output_tokens // 0')
+    printf '%s hash=%s cache_read=%s cache_creation=%s input=%s output=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S)" \
+        "$CONTENT_HASH" \
+        "$cache_read" \
+        "$cache_creation" \
+        "$input_tokens" \
+        "$output_tokens" >> "$cache_log"
+
+    echo "$raw_response" > "$output"
 }
 
 # Function to call GPT-4 (recall)
