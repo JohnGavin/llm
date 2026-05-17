@@ -3,7 +3,8 @@
     "MAX_THINKING_TOKENS": "1024",
     "CLAUDE_WEEKLY_CAP_USD": "500",
     "CLAUDE_WEEK_START_DAY": "tuesday",
-    "CLAUDE_TIMEZONE": "Europe/Dublin"
+    "CLAUDE_TIMEZONE": "Europe/Dublin",
+    "COMPOUND_GUARD_MODE": "log"
   },
   "permissions": {
     "allow": [
