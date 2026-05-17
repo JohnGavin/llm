@@ -123,21 +123,28 @@ scan_html_for_errors <- function(html_dir       = "docs",
 #'   Calls `cli::cli_abort()` if any rendered vignette is missing any of the
 #'   three required subsections.
 check_methodology_blocks <- function(vignettes_dir = "docs/articles",
-                                     docs_dir       = "docs") {
-  # Collect all rendered vignette HTML files
-  html_files <- c(
-    list.files(vignettes_dir, pattern = "\\.html$", full.names = TRUE, recursive = FALSE),
-    list.files(docs_dir, pattern = "\\.html$", full.names = TRUE, recursive = FALSE)
-  )
+                                     docs_dir       = "docs",
+                                     src_vignettes  = "vignettes") {
+  # Derive the set of HTML files to check from the vignette SOURCE files.
+  # This prevents non-vignette pages (authors.html, AGENTS.html, etc.) from
+  # being flagged for missing methodology blocks.
+  #
+  # Mapping: vignettes/<name>.qmd   -> docs/<name>.html
+  #          vignettes/articles/<name>.qmd -> docs/articles/<name>.html
+  src_top      <- list.files(src_vignettes, pattern = "\\.qmd$",
+                              full.names = FALSE, recursive = FALSE)
+  src_articles <- list.files(file.path(src_vignettes, "articles"),
+                              pattern = "\\.qmd$",
+                              full.names = FALSE, recursive = FALSE)
 
-  # Skip changelog, news, index, and reference pages
-  skip_basenames <- c("CHANGELOG.html", "NEWS.html", "news.html", "index.html",
-                      "404.html", "reference.html")
-  skip_paths <- c("/news/", "/reference/", "/pkgdown-")
-  html_files <- html_files[
-    !basename(html_files) %in% skip_basenames &
-    !Reduce(`|`, lapply(skip_paths, function(p) grepl(p, html_files, fixed = TRUE)))
-  ]
+  html_top      <- file.path(docs_dir,
+                              sub("\\.qmd$", ".html", src_top))
+  html_articles <- file.path(vignettes_dir,
+                              sub("\\.qmd$", ".html", src_articles))
+
+  html_files <- c(html_top, html_articles)
+  # Keep only files that actually exist (skip if docs not yet rendered)
+  html_files <- html_files[file.exists(html_files)]
 
   if (length(html_files) == 0L) {
     cli::cli_alert_warning(
