@@ -1,5 +1,9 @@
 # Build and deploy Quarto website to GitHub Pages
 # Uses r-lib/actions (Native R) - NOT Nix - per CI skill Decision Matrix
+#
+# SOLE quarto publisher for this repo. Other workflows in .github/workflows/:
+#   vignette-validation.yml  — workflow_call (reusable, NOT push-triggered)
+#   wiki-sync-check.yaml     — wiki drift check, does NOT deploy Pages
 
 name: Quarto Publish
 
