@@ -30,14 +30,15 @@ theme_dashboard <- theme_minimal(base_size = 14) +
 # Priority 0: CI-safe path — read pre-computed aggregates from committed RDS.
 # knowledge/ is gitignored (wiki-storage-policy), so live file counts return 0
 # in CI. The committed RDS ships aggregate-only stats from the last local build.
+# Note: return() is invalid at chunk top-level; use Find() to select the first
+# existing path, then readRDS() it outside the for loop.
 kb_stats <- tryCatch({
-  for (rds_path in c(
+  rds_candidates <- c(
     here::here("inst/extdata/vignettes/vig_kb_stats.rds"),
     "../inst/extdata/vignettes/vig_kb_stats.rds"
-  )) {
-    if (file.exists(rds_path)) return(readRDS(rds_path))
-  }
-  NULL
+  )
+  rds_hit <- Find(file.exists, rds_candidates)
+  if (!is.null(rds_hit)) readRDS(rds_hit) else NULL
 }, error = function(e) NULL)
 
 # Try to load from local pulse data

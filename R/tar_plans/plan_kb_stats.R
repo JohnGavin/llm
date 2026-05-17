@@ -80,7 +80,7 @@ plan_kb_stats <- function() {
           0L
         }
 
-        list(
+        result <- list(
           n_pages             = as.integer(n_pages),
           n_sources           = as.integer(n_sources),
           with_sources        = as.integer(with_sources_raw),
@@ -94,6 +94,13 @@ plan_kb_stats <- function() {
           snapshot_date       = Sys.Date(),
           note                = NA_character_
         )
+
+        # Write RDS so the vignette can load it in CI (knowledge/ is gitignored).
+        # Commit inst/extdata/vignettes/vig_kb_stats.rds after running tar_make().
+        rds_out <- here::here("inst/extdata/vignettes/vig_kb_stats.rds")
+        saveRDS(result, rds_out)
+
+        result
       },
       packages = c("here"),
       cue = tar_cue(mode = "always")
