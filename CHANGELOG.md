@@ -4,6 +4,34 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-17 (Session 3 follow-up — merged remaining PRs + Tasks 1/2/3 + SDK-caching issue)
+
+### Completed
+
+- **Merged the 3 remaining open PRs** — #173 (vignette/QA scope cluster, 5 of 7 findings — `index.qmd:16` and `llm-assisted-tips.qmd:89` deferred to false-positive review), #166 (Stop hook sentinel gate), #169 (permission_request hardening). All 9 worktree-derived `fix/*` branches + 7 `worktree-agent-*` parking branches deleted; agent-worktree dir reclaimed (0M remaining).
+- **Task 2 = entirely false-positive closures.** Investigated both findings; closed 3 roborev reviews (job 911 for `index.qmd:16` — loader contract is correct, alleged "new artifacts" are dead files; jobs 959 + 964 for `llm-assisted-tips.qmd:89` — prose already debunks the misconception, fixed by PR #136 on 2026-05-11).
+- **Task 3 = llmtelemetry divergence resolved.** State had improved since the 2026-05-16 handoff: `ca7f8fd` was already upstream as `5ec5a19`; 0 ahead / 0 behind. Only 10 modified telemetry JSON exports remained. Committed (split into 2 commits `b8530cf` + `a886254` due to parallel git-process race on staging) and pushed.
+- **#174 filed** — Enable Anthropic SDK prompt caching on long, reused system/role prompts. Audit + acceptance criteria for adding `cache_control: ephemeral` markers across detection-style scripts and agent loops.
+
+### Failed Approaches
+
+- **Single `git add` + `git commit` failed in llmtelemetry** — a parallel git process (cron / export script) raced on the staging index, splitting one logical commit into two. Recovery: ran `git add -u` again after the race cleared, committed the remaining 9. Lesson: when another process may be touching the same repo, prefer `git add -u <path>` + immediate `commit` in a tight pair.
+
+### Accuracy / Metrics (cumulative)
+
+- **11 PRs merged this session:** #162, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173
+- **0 PRs open at session end**
+- **36 roborev findings resolved** (31 via merged PRs + 5 false-positive/wontfix closures: PR 1, PR 13, index.qmd:16, llm-assisted-tips ×2)
+- llm backlog: **79 → 87** at session end (transient — settled higher than start because roborev queued reviews on each merge commit; will drop below 79 once re-reviews complete)
+- **1 issue filed:** #174 (SDK prompt caching)
+- llmtelemetry: 0 ahead / 0 behind, clean
+- Weekly burn: **~115%** at session end
+
+### Known Limitations
+
+- **Issue #174 (SDK caching) is unaddressed** — filed today, no implementation yet. High potential cost-saver for detection-style and agent-loop scripts.
+- **3 carried open issues unchanged from prior session-end** — #163 Phase 2/3 (closure-loop auto-verifier), #161 cross-project backlog (5 child issues across 4 repos), #160 (Critical severity tier).
+
 ## 2026-05-17 (Session 3 — Pattern A parallel wave + merge cycle)
 
 ### Completed
