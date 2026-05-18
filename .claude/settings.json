@@ -1,335 +1,353 @@
 {
-  "env": {
-    "MAX_THINKING_TOKENS": "1024",
-    "CLAUDE_WEEKLY_CAP_USD": "500",
-    "CLAUDE_WEEK_START_DAY": "tuesday",
-    "CLAUDE_TIMEZONE": "Europe/Dublin",
-    "COMPOUND_GUARD_MODE": "log"
-  },
-  "permissions": {
-    "allow": [
-      "Bash(git:*)",
-      "Bash(gh:*)",
-      "Bash(quarto:*)",
-      "Bash(R :*)",
-      "Bash(Rscript:*)",
-      "Bash(cat:*)",
-      "Bash(ls:*)",
-      "Bash(echo:*)",
-      "Bash(find:*)",
-      "Bash(done:*)",
-      "Bash(sed:*)",
-      "Bash(while:*)",
-      "Bash(if:*)",
-      "Bash(then:*)",
-      "Bash(else:*)",
-      "Bash(fi:*)",
-      "Bash(export:*)",
-      "Bash(claude:*)",
-      "Bash(cp:*)",
-      "Bash(mv:*)",
-      "Bash(mkdir:*)",
-      "Bash(nix-shell:*)",
-      "Bash(nix:*)",
-      "Bash(nix-store:*)",
-      "Bash(nix-build:*)",
-      "Bash(nix-instantiate:*)",
-      "Bash(env:*)",
-      "Bash(timeout:*)",
-      "Bash(time:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(grep:*)",
-      "Bash(wc:*)",
-      "Bash(python3:*)",
-      "Bash(otool:*)",
-      "Read",
-      "Write",
-      "WebSearch",
-      "WebFetch(domain:www.r-bloggers.com)",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:posit-dev.github.io)",
-      "WebFetch(domain:wlandau.github.io)",
-      "WebFetch(domain:rstudio.github.io)",
-      "WebFetch(domain:tidyverse.github.io)",
-      "WebFetch(domain:r-lib.github.io)",
-      "WebFetch(domain:docs.ropensci.org)",
-      "WebFetch(domain:shiny.posit.co)",
-      "WebFetch(domain:blog.r-hub.io)",
-      "WebFetch(domain:quarto.org)",
-      "WebFetch(domain:www.andrewheiss.com)",
-      "WebFetch(domain:blogs.rstudio.com)",
-      "WebFetch(domain:shinylive.io)",
-      "WebFetch(domain:shikokuchuo.net)",
-      "WebFetch(domain:shipyard.build)",
-      "WebFetch(domain:cran.r-project.org)",
-      "WebFetch(domain:tidyverse.org)",
-      "WebFetch(domain:r-universe.dev)",
-      "WebFetch(domain:johngavin.r-universe.dev)",
-      "Bash(duckdb:*)",
-      "Bash(~/.claude/scripts:*)",
-      "Bash(chmod:*)",
-      "Bash(rm:*)",
-      "Bash(du:*)",
-      "Bash(stat:*)",
-      "Bash(pip3:*)",
-      "Bash(/tmp:*)",
-      "Bash(which:*)",
-      "Bash(file:*)",
-      "Bash(xxd:*)",
-      "Bash(diff:*)",
-      "Bash(sort:*)",
-      "Bash(uniq:*)",
-      "Bash(cut:*)",
-      "Bash(awk:*)",
-      "Bash(tr:*)",
-      "Bash(tee:*)",
-      "Bash(touch:*)",
-      "Bash(basename:*)",
-      "Bash(dirname:*)",
-      "Bash(realpath:*)",
-      "Bash(readlink:*)",
-      "Bash(xargs:*)",
-      "Bash(kill:*)",
-      "Bash(uuidgen:*)",
-      "Bash(date:*)",
-      "Bash(sleep:*)",
-      "Bash(test:*)",
-      "Bash([:*)",
-      "Bash(true:*)",
-      "Bash(false:*)",
-      "Bash(pwd:*)",
-      "Bash(whoami:*)",
-      "Bash(id:*)",
-      "Bash(uname:*)",
-      "Bash(sw_vers:*)",
-      "Bash(open:*)",
-      "Bash(pbcopy:*)",
-      "Bash(pbpaste:*)",
-      "Bash(osascript:*)",
-      "Bash(sqlite3:*)",
-      "Bash(jq:*)",
-      "Bash(npm:*)",
-      "Bash(npx:*)",
-      "Bash(pip:*)",
-      "Bash(/usr/bin:*)",
-      "Bash(/bin:*)",
-      "Bash(/nix/store:*)",
-      "Bash(caffeinate:*)",
-      "Bash(launchctl:*)",
-      "Bash(plutil:*)",
-      "Bash(curl -fsSL:*)",
-      "Bash(curl -s:*)",
-      "Bash(curl -sL:*)",
-      "Bash(curl -L:*)",
-      "Bash(curl -I:*)",
-      "Bash(curl -o:*)"
-    ],
-    "deny": [
-      "Bash(rm -rf:*)",
-      "Bash(rm -fr:*)",
-      "Bash(rm -Rf:*)",
-      "Bash(rm -fR:*)",
-      "Bash(rm -r:*)",
-      "Bash(gh repo delete:*)",
-      "Bash(gh release delete:*)",
-      "Bash(gh secret delete:*)",
-      "Bash(gh workflow delete:*)",
-      "Bash(gh ssh-key delete:*)",
-      "Bash(gh gpg-key delete:*)"
-    ],
-    "defaultMode": "default",
-    "additionalDirectories": [
-      "/Users/johngavin/docs_gh/llm",
-      "/Users/johngavin/.claude"
-    ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/session_init.sh",
-            "timeout": 30
-          }
+    "env": {
+        "MAX_THINKING_TOKENS": "1024",
+        "CLAUDE_WEEKLY_CAP_USD": "500",
+        "CLAUDE_WEEK_START_DAY": "tuesday",
+        "CLAUDE_TIMEZONE": "Europe/Dublin",
+        "COMPOUND_GUARD_MODE": "log"
+    },
+    "permissions": {
+        "allow": [
+            "Bash(git:*)",
+            "Bash(gh:*)",
+            "Bash(quarto:*)",
+            "Bash(R :*)",
+            "Bash(Rscript:*)",
+            "Bash(cat:*)",
+            "Bash(ls:*)",
+            "Bash(echo:*)",
+            "Bash(find:*)",
+            "Bash(done:*)",
+            "Bash(sed:*)",
+            "Bash(while:*)",
+            "Bash(if:*)",
+            "Bash(then:*)",
+            "Bash(else:*)",
+            "Bash(fi:*)",
+            "Bash(export:*)",
+            "Bash(claude:*)",
+            "Bash(cp:*)",
+            "Bash(mv:*)",
+            "Bash(mkdir:*)",
+            "Bash(nix-shell:*)",
+            "Bash(nix:*)",
+            "Bash(nix-store:*)",
+            "Bash(nix-build:*)",
+            "Bash(nix-instantiate:*)",
+            "Bash(env:*)",
+            "Bash(timeout:*)",
+            "Bash(time:*)",
+            "Bash(head:*)",
+            "Bash(tail:*)",
+            "Bash(grep:*)",
+            "Bash(wc:*)",
+            "Bash(python3:*)",
+            "Bash(otool:*)",
+            "Read",
+            "Write",
+            "WebSearch",
+            "WebFetch(domain:www.r-bloggers.com)",
+            "WebFetch(domain:github.com)",
+            "WebFetch(domain:raw.githubusercontent.com)",
+            "WebFetch(domain:posit-dev.github.io)",
+            "WebFetch(domain:wlandau.github.io)",
+            "WebFetch(domain:rstudio.github.io)",
+            "WebFetch(domain:tidyverse.github.io)",
+            "WebFetch(domain:r-lib.github.io)",
+            "WebFetch(domain:docs.ropensci.org)",
+            "WebFetch(domain:shiny.posit.co)",
+            "WebFetch(domain:blog.r-hub.io)",
+            "WebFetch(domain:quarto.org)",
+            "WebFetch(domain:www.andrewheiss.com)",
+            "WebFetch(domain:blogs.rstudio.com)",
+            "WebFetch(domain:shinylive.io)",
+            "WebFetch(domain:shikokuchuo.net)",
+            "WebFetch(domain:shipyard.build)",
+            "WebFetch(domain:cran.r-project.org)",
+            "WebFetch(domain:tidyverse.org)",
+            "WebFetch(domain:r-universe.dev)",
+            "WebFetch(domain:johngavin.r-universe.dev)",
+            "Bash(duckdb:*)",
+            "Bash(~/.claude/scripts:*)",
+            "Bash(chmod:*)",
+            "Bash(rm:*)",
+            "Bash(du:*)",
+            "Bash(stat:*)",
+            "Bash(pip3:*)",
+            "Bash(/tmp:*)",
+            "Bash(which:*)",
+            "Bash(file:*)",
+            "Bash(xxd:*)",
+            "Bash(diff:*)",
+            "Bash(sort:*)",
+            "Bash(uniq:*)",
+            "Bash(cut:*)",
+            "Bash(awk:*)",
+            "Bash(tr:*)",
+            "Bash(tee:*)",
+            "Bash(touch:*)",
+            "Bash(basename:*)",
+            "Bash(dirname:*)",
+            "Bash(realpath:*)",
+            "Bash(readlink:*)",
+            "Bash(xargs:*)",
+            "Bash(kill:*)",
+            "Bash(uuidgen:*)",
+            "Bash(date:*)",
+            "Bash(sleep:*)",
+            "Bash(test:*)",
+            "Bash([:*)",
+            "Bash(true:*)",
+            "Bash(false:*)",
+            "Bash(pwd:*)",
+            "Bash(whoami:*)",
+            "Bash(id:*)",
+            "Bash(uname:*)",
+            "Bash(sw_vers:*)",
+            "Bash(open:*)",
+            "Bash(pbcopy:*)",
+            "Bash(pbpaste:*)",
+            "Bash(osascript:*)",
+            "Bash(sqlite3:*)",
+            "Bash(jq:*)",
+            "Bash(npm:*)",
+            "Bash(npx:*)",
+            "Bash(pip:*)",
+            "Bash(/usr/bin:*)",
+            "Bash(/bin:*)",
+            "Bash(/nix/store:*)",
+            "Bash(caffeinate:*)",
+            "Bash(launchctl:*)",
+            "Bash(plutil:*)",
+            "Bash(curl -fsSL:*)",
+            "Bash(curl -s:*)",
+            "Bash(curl -sL:*)",
+            "Bash(curl -L:*)",
+            "Bash(curl -I:*)",
+            "Bash(curl -o:*)"
+        ],
+        "deny": [
+            "Bash(rm -rf:*)",
+            "Bash(rm -fr:*)",
+            "Bash(rm -Rf:*)",
+            "Bash(rm -fR:*)",
+            "Bash(rm -r:*)",
+            "Bash(gh repo delete:*)",
+            "Bash(gh release delete:*)",
+            "Bash(gh secret delete:*)",
+            "Bash(gh workflow delete:*)",
+            "Bash(gh ssh-key delete:*)",
+            "Bash(gh gpg-key delete:*)"
+        ],
+        "defaultMode": "default",
+        "additionalDirectories": [
+            "/Users/johngavin/docs_gh/llm",
+            "/Users/johngavin/.claude"
         ]
-      },
-      {
-        "matcher": "compact|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/context_survival.sh restore",
-            "timeout": 10
-          }
+    },
+    "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/session_init.sh",
+                        "timeout": 30
+                    }
+                ]
+            },
+            {
+                "matcher": "compact|resume",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/context_survival.sh restore",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/llmtelemetry_emit.sh start",
+                        "timeout": 5
+                    }
+                ]
+            }
+        ],
+        "PreCompact": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/context_survival.sh save",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "PreToolUse": [
+            {
+                "matcher": "Edit|Write",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/file_protection.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/destructive_fs_guard.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/destructive_api_guard.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/compound_command_guard.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/docs_qa_precommit.sh",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Bash|Task",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/context_monitor.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/post_push_qa.sh",
+                        "timeout": 30
+                    }
+                ]
+            },
+            {
+                "matcher": "Edit|Write",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/wiki_health_onwrite.sh",
+                        "timeout": 5
+                    },
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/skill_quality_onwrite.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Agent",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/log_agent_run.sh",
+                        "timeout": 5
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/llmtelemetry_emit.sh stop",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/loop_continuation.sh",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "(/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0"
+                    }
+                ]
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/session_stop.sh",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "PermissionRequest": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/permission_request.sh",
+                        "timeout": 15
+                    }
+                ]
+            }
+        ],
+        "Notification": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "(/usr/bin/afplay -v 0.35 /System/Library/Sounds/Ping.aiff &) 2>/dev/null; exit 0"
+                    }
+                ]
+            }
         ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/context_survival.sh save",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/file_protection.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/destructive_fs_guard.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/destructive_api_guard.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/compound_command_guard.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/docs_qa_precommit.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash|Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/context_monitor.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/post_push_qa.sh",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/wiki_health_onwrite.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/skill_quality_onwrite.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/log_agent_run.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/loop_continuation.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "(/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/session_stop.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/permission_request.sh",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "(/usr/bin/afplay -v 0.35 /System/Library/Sounds/Ping.aiff &) 2>/dev/null; exit 0"
-          }
-        ]
-      }
-    ]
-  },
-  "alwaysThinkingEnabled": true,
-  "autoCompactEnabled": true,
-  "autoCompactWindow": 800000,
-  "skipDangerousModePermissionPrompt": true,
-  "autoUpdatesChannel": "latest"
+    },
+    "alwaysThinkingEnabled": true,
+    "autoCompactEnabled": true,
+    "autoCompactWindow": 800000,
+    "skipDangerousModePermissionPrompt": true,
+    "autoUpdatesChannel": "latest"
 }
