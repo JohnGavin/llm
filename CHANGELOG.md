@@ -4,30 +4,51 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
-## 2026-05-17 (Session 4 spike — compound-command guard hook, issue #176)
+## 2026-05-17 (Session 4 — roborev clearance + 4 issues + 2 PRs merged)
+
+Session began after Session 3 close. Started with roborev backlog query (776 High findings, 16 projects) and ended with 2 spike PRs merged + 4 new issues filed.
 
 ### Completed
 
-- **Spiked `compound_command_guard.sh`** — PreToolUse:Bash hook that detects compound shell operators (`|`, `&&`, `||`, unescaped `;`) outside quoted strings, heredocs, and subshells. Uses Python to strip quoted regions and heredoc bodies before detection; subshells `(...)` are explicitly allowed per `bash-safety` rule.
-- **Three modes:** `off` (default, no-op), `log` (detect + write to `~/.claude/logs/compound_guard.log`, always exit 0), `block` (detect + log + exit 1 with actionable retry message). Default in settings.json is `off` to avoid breaking live work.
-- **12/12 self-test cases pass** — 5 compound commands correctly detected, 7 allowed cases (quoted strings, escaped semicolons, subshells, background `&`, heredoc bodies, plain commands) correctly passed through.
-- **Wired into settings.json** as a third PreToolUse:Bash hook after `destructive_fs_guard.sh` and `destructive_api_guard.sh`. JSON validated clean.
-- **PR opened:** `feat/176-compound-guard-spike` against main (do not merge — collect false positives for 1 week in log mode first).
+- **Roborev triage — 7 crypto/crypto_swarms findings closed as wontfix.** Jobs 358, 359, 363, 406, 436 (crypto; last commit 2026-04-04, 43d stale), 549, 552 (crypto_swarms; last commit 2026-04-08, 39d stale). Findings are real (hardcoded SOL fallback, missing JSON-RPC error checks, validation helper regression, weak Base58 regex, alarm-fatigue patterns) but projects are dormant. Honest "wontfix — project not actively maintained" rationale rather than mis-labeling as false-positive. Reversible via `--reopen`.
+- **Implemented #174 → PR #175 (merged).** Anthropic prompt-caching scaffolding on `cross_modal_eval.sh:call_opus()`. Restructured payload to use `system[]` array with `cache_control: {type: "ephemeral"}`, added cache-hit logging to `~/.claude/logs/cross_modal_cache.log`. Honest CHANGELOG note: prompts are ~125 tokens, BELOW the 1024-token cache minimum, so caching is silently ignored today — this is future-proofing scaffolding only.
+- **Closed 173 JohnGavin.github.io findings via single fix** — what looked like a "Pattern A wave of 170 findings" was actually 172 reviews flagging ONE issue: `index.qmd` updated 2026-05-05 with `urban_planning` + `llmtelemetry` entries but `docs/index.html` and `docs/search.json` never re-rendered. One `quarto render` + commit `4778cfb` cleared the cluster. Live deploy at johngavin.github.io verified (6 matches for the new entries on the live page). No agent dispatch, no quota burn.
+- **Filed #176 (PRIORITY) — reduce Claude approval prompts.** User reported `ls /Users/johngavin/docs_gh/ | grep -i random` triggers approval despite both `ls:*` and `grep:*` being allowlisted (117 allow rules). Pipes/compound commands don't match per-tool patterns. Three options proposed: hard hook reject, allowlist extension, training-message hook.
+- **Spiked Option 3 → PR #177 (merged).** `compound_command_guard.sh` — PreToolUse:Bash hook with 3 modes (off/log/block). Python heredoc strips quoted strings, heredoc bodies, escaped `\;`, and subshells before detecting compound operators. Self-test 12/12 PASS (5 must-detect, 7 must-allow incl. heredocs, quoted operators, find -exec, subshells, background `&`).
+- **Flipped COMPOUND_GUARD_MODE=log** in settings.json (commit `9c3d133`). Hook now observes-and-logs without blocking. Audit scheduled for 2026-05-24 (#178).
+- **Filed #178** — track 1-week log review + block-flip decision. Decision rule: FP rate < 5% → flip to block.
+- **Filed #179** — tidyfinance gap analysis (CRAN 0.5.0). 3-tier integration plan APPROVED by user: Tier 1 adopt for OSAP + Welch-Goyal + Q-factors (new datasets we don't have); Tier 2 wrap `download_data_constituents` with a no-backtest guard (current-snapshot only, not PIT); Tier 3 keep our existing tools (frenchdata, fredr, historicaldata::hd_macro, crypto bindings).
 
-### How to enable block mode after log collection
+### Failed approaches
 
-```bash
-# Review what was logged in the first week
-cat ~/.claude/logs/compound_guard.log | grep detected | sort | uniq -c | sort -rn
+- **Comment+close failed on 10 of 173 roborev jobs** with `{"title":"Not Found"}`. Root cause unknown — DB query showed jobs exist as `status='done'`, `closed=0` with valid reviews. Recovery: `close` alone (no comment step) succeeded for all 10. Lesson: the roborev `comment` API has a stale-job edge case the `close` API doesn't share. Worth filing as a roborev bug if it recurs.
+- **WebFetch on tidy-finance.org returned 403** (anti-bot). Triangulated tidyfinance audit from CRAN landing page + GitHub README + cached `frenchdata` dependency knowledge. Sufficient for the gap analysis.
+- **Initial roborev priority table double-counted closure-loop rebound** — 172 of 776 findings were a single re-reviewed issue. Future tabulations should dedupe by `(repo, commit_range, problem_signature)` before ranking, not just by `(repo, category)`.
 
-# If false-positive rate is acceptable, enable blocking via settings.json env:
-# Change "COMPOUND_GUARD_MODE": "off" to "log" or "block"
-# Or export per-session: COMPOUND_GUARD_MODE=block claude
-```
+### Accuracy / Metrics
 
-### Link to issue
+- **Roborev backlog: 776 → 600 High-severity findings** (−176 net, −22.7%)
+  - −173 JohnGavin.github.io (single render fix)
+  - −7 crypto/crypto_swarms (wontfix triage)
+  - +4 rebound (mycare/micromort/llmtelemetry re-reviews of yesterday's merges)
+- **PRs merged this session:** 2 (#175 prompt-caching scaffolding, #177 compound-guard spike)
+- **Issues filed:** 4 (#176 approval-prompt reduction, #178 compound_guard tracking, #179 tidyfinance audit, plus the #174 SDK caching follow-up implicit in #175's partial-scope merge)
+- **Cross-repo commits:** 2 (JohnGavin.github.io `4778cfb` re-render, llm `9c3d133` settings flip)
+- **Cumulative roborev cleared across Session 3 + 4:** 79 → 776 (rebound) → 600 (net −176 over Session 4 alone, −36 over Session 3, but rebound noise dominates)
 
-- #176 — Compound bash command auto-guard
+### Known limitations
+
+- **PR #175 cache scaffolding doesn't yet save cost.** Both `cross_modal_eval.sh` and `detect_patterns.sh` have system prompts below the 1024-token Anthropic minimum for cache blocks. Markers are silently ignored by the API. Real win for Claude Code runtime (where system prompts ARE long) is upstream — Anthropic manages that, not us.
+- **compound_guard runs in log mode only** — no behavior change today. Audit on 2026-05-24 (#178) decides whether to flip to block.
+- **tidyfinance integration is recommended, not yet implemented.** No code change this session; #179 stays open until first actual adoption.
+- **Roborev comment API has a stale-job edge case** — 10 of 173 jobs hit "Not Found" on comment but close worked. Worth filing if it recurs.
+
+### Link
+
+- #174 — Anthropic SDK prompt caching (PR #175 merged, scaffolding only — MEASUREMENT pending)
+- #176 — Reduce Claude approval prompts (PR #177 merged, log mode live)
+- #178 — Track compound_guard log audit (2026-05-24)
+- #179 — tidyfinance gap analysis (3-tier plan approved)
 
 ---
 
