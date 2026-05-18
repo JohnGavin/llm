@@ -55,7 +55,7 @@ Continued from Session 4 close-out (2026-05-17). Cleared the entire `#161` per-p
 
 ### Link
 
-- #161 — Roborev remediation parent tracker (open; recommend close per milestone comment, but left to user)
+- #161 — Roborev remediation parent tracker — **CLOSED** this session per milestone comment
 - #163 — Automate roborev closure loop — Phase 2 shipped (Phases 3-7 remain)
 - micromort#101 (HIGH) — risk_sensitivity uniform scaling bug — needs real fix
 - micromort#102 — quiz UTC streak bug
