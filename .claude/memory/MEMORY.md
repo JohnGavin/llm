@@ -98,6 +98,13 @@
 - Trigger: "I just pushed a fix and CI failed again on the same file" → delegate
 - 6 opus edits ≈ $30 vs 6 sonnet edits ≈ $3 — 10x cost difference
 
+## Parallel Model Allocation (see feedback_parallel-model-allocation.md)
+- Allocate the cheapest sufficient model to each task — and dispatch INDEPENDENT tasks IN PARALLEL
+- Even 1-line config edits (e.g. settings.json env flip) should delegate to quick-fix/fixer
+- Build actions that produce committable artifacts (quarto render + commit) should delegate the whole sequence to fixer
+- Parallel dispatch = single message with multiple Agent tool uses (not sequential)
+- Pre-flight: "Could a fixer/quick-fix do this in 30 seconds?" If yes, delegate.
+
 ## Config Migration (2026-03-09)
 - All rules, scripts, CLAUDE.md now git-backed via symlinks
 - CLAUDE.md → AGENTS.md (merged, <200 lines)
