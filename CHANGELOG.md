@@ -4,6 +4,58 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-18 (Session 2 — cross-repo roborev sweep + 2 umbrellas + permission_request security fix)
+
+Continued from Session 1 close-out. Massive cross-repo roborev sweep cleared 15 of 17 active repos to zero open findings. Global addressed rate moved 15.5% (session start) → **95.4%**. Two umbrella trackers filed for the remaining themed work (knowledge + llm-self). One real security fix shipped on `permission_request.sh`.
+
+### Completed
+
+- **Group A: rebound re-flags handoff** — crypto_swarms (5 reviews on canonical `_targets.R:20` → already-filed crypto_swarms#12) + llmtelemetry (17 reviews on commit `263e90a738f0` → 6 new project issues filed: llmtelemetry#105 HIGH deploy-dashboard validation, #106 export canonicalization, #107 cost_by_model routing, #108 duplicate rows, #109 pagination fallback, #110 rollup dedup). 22 DB closures.
+- **Group B/C/D sweep** — closure-handoff for 12 remaining repos. 5 new micromort issues (#105 HIGH pkgdown CI regex, #106 unlabeled-chunk false-positive, #107 quiz UTC migration, #108 shinylive streak port, #109 hardcoded cancer row), 1 llmtelemetry (#111 HIGH unified_sessions invalid rows), 2 randomwalk (#201 NA guard, #202 render refactor). 95 reviews wontfix-dormant across 9 repos (football/coMMpass/crypto_solwatch/crypto/my_t_project/repo/content/randomwalk-wiki/t_demos) — projects with stale GH presence (40d+) or no clear GH target. 116 DB closures + 9 new issues.
+- **historical cleanup** — 4 new reviews from today's commits filed as 3 issues: historical#215 (Medium cross_market Date/POSIXct join), #216 (Medium factormax x-axis shift), #217 (Low themed: 3 recent fixes shipped without regression tests). 4 DB closures.
+- **knowledge wiki-health dedup** — 281 open findings on the local-only knowledge subdirectory: 268 daily range-review duplicates of canonical id=2742 closed via rebound-dedup; 13 distinct findings handed off to llm#180 umbrella covering 7 themes (recurring HIGH Faheem Osman→Rahman misattribution flagged 3×, recurring HIGH oncology self-referential sources, vocabulary drift, dead [[...]] links, citation/provenance drift, privacy hook gap, knowledge ingest pipeline issues).
+- **llm self-review backlog** — 92 reviews → llm#181 umbrella covering 7 themes: Theme 1 permission_request security (CRITICAL — 6+ bypass bugs), Theme 2 Bash 3.2 / BSD-grep portability (`mapfile` + `-P`/`\b` across 5 scripts), Theme 3 rule self-contradictions, Theme 4 launchd plist mis-wirings, Theme 5 roborev's own scripts have bugs, Theme 6 QA gate path bugs, Theme 7 docs accuracy + unversioned code. 46 HIGH, 133 Medium, 15 Low total.
+- **Theme 1 (security) SHIPPED** — commit `e456c03` rewrote `.claude/hooks/permission_request.sh`. Moved all extraction + guard + matcher logic into a single Python block; bash wrapper now a thin dispatcher over the verdict. Closes 4 bug classes simultaneously: 120-char `_action` truncation bypass, broken `[\n]` regex (matched literal `n`, not newlines), non-portable `grep -qP`, matchers inheriting the truncation. Self-test extended from 6 to 14 cases — all PASS. Independent manual verification of the two known bypass attempts (120-char padding + newline injection) both now correctly fall through to human approval.
+- **Telemetry instrumentation wired** — commit `b7af8cf` adds `.claude/hooks/llmtelemetry_emit.sh` (fire-and-forget session-start/stop emission to `~/.claude/logs/llmtelemetry-staging/`), settings.json hook entries on SessionStart + Stop, and `.llmtelemetry_emit` per-project opt-in marker. Opt-in design — either `~/.claude/.llmtelemetry_emit` (global) or `<project>/.llmtelemetry_emit` (per-project) enables emission. Fail-open if gate check errors.
+- **5 #161 child trackers + #161 parent closed** earlier this session. Plus #213, #215, #216, #217 historical bug trackers. Plus llmtelemetry#89.
+
+### Failed approaches
+
+- **Naive single-line signature clustering was too coarse** — first attempt to detect duplicates hashed the first 200 chars of each review's output. Every roborev output starts with `## Review Findings` so 232 reviews all hashed identically. Real signature needs to group by `(commit, job_type)` — far more informative. Banked as pattern for future dedup work.
+- **3 of 4 target repos not checked out locally** — `historical`, `crypto_swarms`, `micromort` are not in `~/docs_gh/`. Code-level fix work was impossible from this orchestrator without cloning. Worked around via DB-only handoff + project-issue filing, but for any future deep-fix sweep, repos need cloning first.
+- **football → footbet mapping unverified** — DB key `football` doesn't exist as `~/docs_gh/football` or `JohnGavin/football` on GitHub. `footbet` exists on GitHub (pushed 2026-04-22) but the connection wasn't certain; defaulted to wontfix-dormant to avoid mis-filing.
+- **quick-fix agent dispatched for a task that needs git commit** (recurring) — `quick-fix` only has Read/Grep/Glob/Edit tools, no Bash. The `_quarto.yml` edit landed but commit had to be done by opus. Pattern is in `feedback_parallel-model-allocation.md` but worth a sharper rule: any task with commit/push needs `fixer`, not `quick-fix`.
+- **Some daily range-reviews still re-flag the same bug for weeks** — micromort commit `a3d7465a` had 182 range-reviews over 3 days, all flagging the same HIGH `risk_sensitivity.R` bug. Roborev's daily scanner doesn't dedupe its own output; that's what #163 Phase 4 (auto-verifier) needs to address.
+
+### Accuracy / Metrics
+
+- **DB closures this session: 511** (22 Group A + 116 Group B/C/D + 4 historical + 281 knowledge + 92 llm-self = 515 minus a few re-counts)
+- **Issues closed (existing): 7** — llmtelemetry#89, JohnGavin.github.io#9 (Session 1), crypto_swarms#11, micromort#100, historical#176, llm#161 + Theme 1 ship visible on #181
+- **Issues filed (new): 21** — micromort#101-109 (across both sessions, 9 total this day), llmtelemetry#105-111 (7), randomwalk#201-202 (2), historical#213/215-217 (4 — note #213 was Session 1), crypto_swarms#12 (Session 1), llm#180 (knowledge umbrella), llm#181 (llm-self umbrella)
+- **Real code commits**: `e456c03` (permission_request security rewrite), `b7af8cf` (telemetry instrumentation wired), `c6dc424` (CHANGELOG post-script — Session 1), `280458f` (CHANGELOG Session 1), `0b867b6` (Phase 2 of #163 — Session 1), `a40f420` (memory followup — Session 1)
+- **Per-project final addressed rates**: JohnGavin.github.io 100%, llmtelemetry ~99% (2 trickle-in re-flags), crypto_swarms ~100% (recent 5 re-flags closed), micromort ~100% (1 re-flag), historical ~100% (1 re-flag), knowledge ~100% (1 re-flag), llm self **100%** (92 → 0 via umbrella). Combined: 95.4% global rate (vs the 78.1% earlier in this session and 15.5% at session start).
+- **14/14 permission_request self-tests pass** post-fix (was 6 cases originally; added 8 new bypass scenarios)
+
+### Known limitations
+
+- **mycare (92 open findings) remains blocked** — PHI rule per CLAUDE.md prohibits GitHub issues. Must be handled in a dedicated mycare local session.
+- **5 active repos have 1-2 trickle-in re-flags from today's commits** — llmtelemetry/micromort/knowledge/historical (1 each) + llmtelemetry (2). These are post-handoff new reviews and will keep arriving daily until the underlying code is actually fixed in each project. Best mitigated by #163 Phase 4 (auto-verifier) when shipped.
+- **llm#181 Themes 2-7 unstarted** — 5 more themes remain in the llm-self umbrella. Theme 2 (Bash 3.2 / BSD-grep portability) is the next-highest-leverage (multiple launchd jobs currently failing silently).
+- **Audit log host-local only** — `~/.roborev/auto_closures.log` (today: ~150+ lines covering 800+ closures) lives only on this machine. Not synced; if this machine is lost, the rationale narrative for every closure is lost too. Worth a follow-up to mirror to llmtelemetry or knowledge.
+- **Roborev script bugs (Theme 5)** could corrupt future audit data — WAL backup loses recent rows, staleness filter on wrong column, priority formula inverted. These affect the very system that ran today's sweep.
+- **`football` → `footbet` mapping uncertain** — 37 wontfix-dormant closures; if `football` is actually `footbet`, those 37 might warrant re-opening to file at footbet. Recoverable via `roborev close --reopen`.
+- **3 of 4 target repos not locally checked out** — code-level fix work for historical/crypto_swarms/micromort would require cloning first. None done this session.
+
+### Link
+
+- #181 — llm self-review backlog (Theme 1 shipped; 6 themes remain)
+- #180 — knowledge wiki backlog umbrella (7 themes, 13 reviews)
+- micromort#101 (HIGH) — risk_sensitivity uniform scaling
+- micromort#105 (HIGH) — pkgdown CI regex skipping hyphenated slugs
+- llmtelemetry#105 (HIGH) — deploy-dashboard.yaml validation skew
+- llmtelemetry#111 (HIGH) — unified_sessions invalid rows in published data
+- historical#215 — cross_market Date/POSIXct join
+
 ## 2026-05-18 (Session 1 — #163 Phase 2 shipped + #161 child-issue closeout + 727 roborev DB closures)
 
 Continued from Session 4 close-out (2026-05-17). Cleared the entire `#161` per-project remediation backlog — all 5 child issues closed, global roborev addressed-rate moved 15.5% → **74.1%** (85.0% excluding the knowledge repo which has a separate workflow).
