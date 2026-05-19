@@ -13,14 +13,22 @@
 # Format: {"ts":"...","host":"...","pid":"...","payload":{...}}
 #
 # Fire-and-forget: always exits 0. Never blocks session start/stop.
+#
+# Real-session-end gate: the Stop hook fires after EVERY Claude response, not
+# only at actual session end. To avoid emitting spurious stop events on every
+# response, we gate stop emission behind the same ~/.claude/.bye-requested
+# sentinel that session_stop.sh uses for its Opus pattern-detection call.
+# The sentinel is written by /bye (the session-end skill) and consumed here
+# immediately. Mid-session Stop invocations (non-/bye) skip emit entirely.
+#
+# Concurrent-session safety: state files are namespaced by SESSION_ID so that
+# two overlapping sessions don't overwrite each other's start time or sid.
 
 set -uo pipefail
 
 MODE="${1:-stop}"
 LOG_DIR="$HOME/.claude/logs"
 STAGING_DIR="$LOG_DIR/llmtelemetry-staging"
-STATE_START="$LOG_DIR/.llmtelemetry_started_at"
-STATE_SID="$LOG_DIR/.llmtelemetry_session_id"
 GLOBAL_FLAG="$HOME/.claude/.llmtelemetry_emit"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd 2>/dev/null || echo "")}"
 PROJECT_FLAG="$PROJECT_DIR/.llmtelemetry_emit"
@@ -37,6 +45,10 @@ if [ -z "$SESSION_ID" ] && [ -f "$LOG_DIR/.current_session" ]; then
 fi
 [ -n "$SESSION_ID" ] || SESSION_ID="hook-$(date -u '+%Y%m%dT%H%M%SZ')"
 
+# Per-session state files — namespaced by SESSION_ID to avoid concurrent collisions
+STATE_START="$LOG_DIR/.llmtelemetry_started_at.${SESSION_ID}"
+STATE_SID="$LOG_DIR/.llmtelemetry_session_id.${SESSION_ID}"
+
 # Derive project from project dir
 PROJECT=$(basename "${PROJECT_DIR:-$(pwd 2>/dev/null || echo unknown)}")
 
@@ -46,6 +58,18 @@ if [ "$MODE" = "start" ]; then
   printf '%s' "$SESSION_ID" > "$STATE_SID" 2>/dev/null || true
   exit 0
 fi
+
+# ── STOP mode: gate on /bye sentinel ─────────────────────────────────────────
+# The Stop hook fires after every Claude response. Only emit session_stop when
+# the user has explicitly ended the session via /bye, which writes the sentinel.
+_BYE_SENTINEL="${HOME}/.claude/.bye-requested"
+if [ ! -f "$_BYE_SENTINEL" ]; then
+  # Not a real session end — skip telemetry emit. State files are preserved
+  # so the eventual real /bye stop can compute accurate duration.
+  exit 0
+fi
+# Consume the sentinel (same one-shot pattern as session_stop.sh)
+rm -f "$_BYE_SENTINEL" 2>/dev/null || true
 
 # ── STOP mode: emit JSONL envelope ───────────────────────────────────────────
 mkdir -p "$STAGING_DIR" 2>/dev/null || exit 0
@@ -99,7 +123,7 @@ JSONL=$(printf \
 
 printf '%s\n' "$JSONL" >> "$STAGING_DIR/events-${HOST}-${DATE}.jsonl" 2>/dev/null || true
 
-# Clean up state files
+# Clean up per-session state files (only on real session end)
 rm -f "$STATE_START" "$STATE_SID" 2>/dev/null || true
 
 exit 0
