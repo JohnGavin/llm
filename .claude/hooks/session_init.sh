@@ -695,7 +695,7 @@ if [ -f "$_rdb" ] && [ -x "$_sqlite" ]; then
   while IFS= read -r _rp; do
     [ -z "$_rp" ] && continue
     [ -d "$_rp/.git" ] || [ -f "$_rp/.git" ] || continue
-    _hp=$(/usr/bin/git -C "$_rp" config --get core.hooksPath 2>/dev/null)
+    _hp=$(/usr/bin/git -C "$_rp" config --get core.hooksPath 2>/dev/null || true)
     [ -z "$_hp" ] && _hp="$_rp/.git/hooks"
     _hook="$_hp/post-commit"
     if [ ! -f "$_hook" ] || ! /usr/bin/grep -q roborev "$_hook" 2>/dev/null; then
