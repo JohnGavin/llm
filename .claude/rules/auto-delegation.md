@@ -25,7 +25,8 @@ Opus retains write access for these — they are too small/dialog-driven to be w
 |------|-------|
 | `~/.claude/CLAUDE.md`, `.claude/CLAUDE.md` | Prose updates only (rule wording, table edits) |
 | `.claude/rules/*.md`, `.claude/memory/*.md` | Prose edits to existing rules and memory files; new rule creation OK |
-| `.claude/CURRENT_WORK.md`, `CHANGELOG.md` (session-end append) | Session state and changelog entries |
+| `CHANGELOG.md` (session-end append) | Session-end changelog entries only |
+| `.claude/CURRENT_WORK.md` | Opus writes session state directly; OR delegates to haiku for context-compression summarisation (see "Haiku for Context Summarisation" below) — haiku writes the file, opus decides when |
 | Roborev DB closure comments via `/usr/local/bin/roborev comment`/`close` | Triage actions, not code |
 | Read-only investigation: `Read`, `Grep`, `Glob`, `Bash` for queries (`git log`, `gh pr view`, `du`, SQL reads) | Pre-decomposition reconnaissance |
 
@@ -51,7 +52,7 @@ Agent(subagent_type="quick-fix", model="haiku",
 
 ## Haiku for Context Summarisation (Cost Compression)
 
-When `context_monitor.sh` reports ≥ 65% context usage, or before a loop expected to exceed 20 turns, spawn haiku to write a compressed session summary:
+When `context_monitor.sh` reports ≥ 65% context usage, or before a loop expected to exceed 20 turns, **opus decides to delegate** the summarisation of `CURRENT_WORK.md` to haiku. This is a deliberate delegation decision by opus — it is not haiku autonomously writing session state. Opus determines what to summarise and when; haiku executes the write:
 
 ```
 Agent(
@@ -61,7 +62,7 @@ Agent(
 )
 ```
 
-This implements recursive summarisation: a cheap model compresses the expensive model's accumulated context before it grows quadratically.
+This implements recursive summarisation: a cheap model compresses the expensive model's accumulated context before it grows quadratically. Opus retains ownership of CURRENT_WORK.md; haiku is a delegate writer, not an autonomous updater.
 
 **Trigger conditions (ANY ONE):**
 - `CLAUDE_CONTEXT_USAGE_PERCENT` ≥ 65
@@ -95,7 +96,8 @@ If the task matches a named agent's trigger, MUST delegate:
 - Multi-file architecture decisions
 - Plan creation requiring user dialogue
 - Synthesising results from multiple agents
-- Prose edits to memory, rules, CLAUDE.md, CHANGELOG, CURRENT_WORK (scope above)
+- Prose edits to memory, rules, CLAUDE.md, CHANGELOG (scope above)
+- CURRENT_WORK.md updates (opus writes directly, or delegates the write to haiku when context compression is needed — opus always decides when and what to compress)
 - Ambiguous requirements needing clarification
 - Roborev triage closures (`comment` + `close` on individual reviews)
 
