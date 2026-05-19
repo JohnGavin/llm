@@ -6,6 +6,7 @@
 #
 # Guard design: python3 temp file reads FULL command — no truncation, no grep -P.
 # Fixes: 120-char bypass, broken [\n] regex, BSD-grep grep -P (issue #181 Theme 1).
+# Additional: output redirect > / >>, find -delete / -exec auto-approve gaps.
 
 set -euo pipefail
 
@@ -60,6 +61,10 @@ try:
         reason = "newline"
     elif "\r" in cmd:
         reason = "carriage-return"
+    elif ">>" in cmd:
+        reason = "append redirect >>"
+    elif re.search(r'(?<!>)>(?![>=])', cmd):   # bare > (not >> or >=)
+        reason = "output redirect >"
     else:
         if re.search(r'(?<!\|)\|(?!\|)', cmd):    # bare pipe (not ||)
             reason = "bare pipe"
@@ -79,7 +84,8 @@ try:
     elif re.match(
         r'^(ls|find|which|stat|wc|head|tail|cat|file|du|df|pwd|echo|printf|uname|sw_vers)(\s|$)',
         cmd
-    ):
+    ) and not re.search(r'\s(-delete|--delete|-exec)\b', cmd):
+        # find -delete / find -exec and similar destructive flags must not auto-approve
         verdict = "APPROVE_BASH"
 
     safe_exit(tool, verdict, cmd)
@@ -205,7 +211,28 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
     APPROVE
 
-  echo "=== Results: $_pass passed, $_fail failed (16 total) ==="
+  # --- New gap cases (find -exec/-delete and output redirect) ---
+  _selftest_case \
+    "find -delete: must not auto-approve destructive find" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -name '\''*.tmp'\'' -delete"}}' \
+    REJECT
+
+  _selftest_case \
+    "find -exec rm: must not auto-approve exec rm" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -exec rm {} +"}}' \
+    REJECT
+
+  _selftest_case \
+    "output redirect >: cat > file must not auto-approve" \
+    '{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/evil.sh"}}' \
+    REJECT
+
+  _selftest_case \
+    "output redirect >>: echo >> file must not auto-approve" \
+    '{"tool_name":"Bash","tool_input":{"command":"echo hello >> /tmp/out.txt"}}' \
+    REJECT
+
+  echo "=== Results: $_pass passed, $_fail failed (20 total) ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
