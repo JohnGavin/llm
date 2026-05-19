@@ -79,17 +79,13 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
 1. **Edit `default.R`** — add the new package to `r_pkgs` or `py_pkgs`
 2. **Coordinate with DESCRIPTION** — if it's an R package project, the same
    package must be added to `DESCRIPTION` (Imports/Suggests) AND `default.R`
-3. **Run `Rscript default.R` with cwd PINNED to the target project** —
-   this regenerates `default.nix` via `rix::rix()`. Must be run from a
-   shell that has `rix` installed. The canonical name is the `rix.setup`
-   shell, but on this machine it lives at `~/docs_gh/llm/` (verified
-   2026-05-08; `~/docs_gh/rix.setup/` does not exist as a directory —
-   only as `~/docs_gh/rix.setup.zip` whose `default.R` is a one-line
-   pointer to `~/docs_gh/llm/default.R`).
-
-   **MUST use one of the two cwd-safe forms** (see "Worktree-Isolated
-   rix Regenerations" below for why — the bare `Rscript <path>` form
-   inherits the caller's cwd and silently overwrites the wrong checkout):
+3. **Regenerate `default.nix` using a cwd-safe form** — this runs
+   `rix::rix()` inside a shell that has `rix` installed (the llm dev
+   shell at `~/docs_gh/llm/`). The bare form `Rscript /path/to/default.R`
+   is **WRONG** because it inherits the caller's cwd; `rix::rix()` writes
+   `default.nix` relative to cwd and silently overwrites the wrong
+   checkout. Always use Form A or Form B (see "Worktree-Isolated rix
+   Regenerations" below for the full explanation):
    ```bash
    # Form A — subshell isolates cd (the documented exception in git-no-compound-cd)
    (cd /absolute/path/to/project && \
@@ -98,6 +94,9 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
    # Form B — explicit setwd() inside Rscript
    nix-shell ~/docs_gh/llm/default.nix --run \
      "Rscript -e 'setwd(\"/absolute/path/to/project\"); source(\"default.R\")'"
+
+   # WRONG — bare path inherits caller cwd, overwrites wrong checkout
+   # nix-shell ~/docs_gh/llm/default.nix --run "Rscript /path/to/project/default.R"
    ```
    Verify rix is loadable inside the shell once before relying on it:
    ```bash
@@ -164,10 +163,10 @@ In the mycare project, regenerating default.nix to add testthat/here/withr strip
 **Defensive workflow when regenerating default.nix:**
 
 Every step below that runs `Rscript default.R` MUST use one of the
-cwd-safe forms documented in the section above (subshell or explicit
-`setwd()`) — bare `Rscript default.R` is allowed ONLY when the caller is
-already in the project's checkout AND not in a worktree-orchestrator
-context. In an agent context, always use Form A or B.
+cwd-safe forms documented in the section above (subshell Form A or
+explicit `setwd()` Form B). There is no safe exception: even when the
+caller appears to be in the right directory, worktree-orchestrator cwd
+drift can silently overwrite the wrong checkout. Always use Form A or B.
 
 Preferred — use a `default.post.sh` per project (idempotent shell script
 that re-applies the project's overlays):
