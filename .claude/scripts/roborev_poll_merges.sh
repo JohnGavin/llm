@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # roborev_poll_merges.sh — catchup poller for commits roborev's post-commit
+#
+# Portability: this script is invoked by launchd, which provides only a bare
+# PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that git,
+# sqlite3, and roborev are visible on both Homebrew and Nix Macs.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 # hook missed (remote-merged PRs don't fire local post-commit).
 #
 # For each repo in ~/.roborev/reviews.db's repos table:
