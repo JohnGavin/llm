@@ -123,7 +123,6 @@ scan_html_for_errors <- function(html_dir       = "docs",
 #'   Calls `cli::cli_abort()` if any rendered vignette is missing any of the
 #'   three required subsections.
 check_methodology_blocks <- function(vignettes_dir = "docs/articles",
-                                     docs_dir       = "docs",
                                      src_vignettes  = "vignettes") {
   # Derive the set of HTML files to check from the vignette SOURCE files.
   # This prevents non-vignette pages (authors.html, AGENTS.html, etc.) from
@@ -137,7 +136,7 @@ check_methodology_blocks <- function(vignettes_dir = "docs/articles",
                               pattern = "\\.qmd$",
                               full.names = FALSE, recursive = FALSE)
 
-  html_top      <- file.path(docs_dir,
+  html_top      <- file.path(vignettes_dir,
                               sub("\\.qmd$", ".html", src_top))
   html_articles <- file.path(vignettes_dir,
                               sub("\\.qmd$", ".html", src_articles))
@@ -148,7 +147,7 @@ check_methodology_blocks <- function(vignettes_dir = "docs/articles",
 
   if (length(html_files) == 0L) {
     cli::cli_alert_warning(
-      "No vignette HTML found in {.path {vignettes_dir}} or {.path {docs_dir}} — run pkgdown/quarto first"
+      "No vignette HTML found in {.path {vignettes_dir}} — run pkgdown/quarto first"
     )
     return(invisible(character(0L)))
   }
