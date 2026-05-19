@@ -19,64 +19,74 @@ trap 'rm -f "$_PY"' EXIT
 cat > "$_PY" << 'PYEOF'
 import json, re, sys
 
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("unknown")
-    print("SAFE")
-    print("")
-    sys.exit(0)
-
-tool = d.get("tool_name", "unknown")
-ti = d.get("tool_input", {})
-# FULL command — no truncation in the guard path
-cmd = str(ti.get("command", ti.get("path", ti.get("url", ""))))
-
-# Metacharacter guard — FULL cmd, no truncation. Order: cheapest first.
-reason = None
-
-if ";" in cmd:
-    reason = "semicolon"
-elif "&&" in cmd:
-    reason = "&&"
-elif "||" in cmd:
-    reason = "||"
-elif "`" in cmd:
-    reason = "backtick"
-elif "$(" in cmd:
-    reason = "subshell $("
-elif "\n" in cmd:
-    reason = "newline"
-elif "\r" in cmd:
-    reason = "carriage-return"
-else:
-    if re.search(r'(?<!\|)\|(?!\|)', cmd):    # bare pipe (not ||)
-        reason = "bare pipe"
-    elif re.search(r'(?<!&)&(?!&)', cmd):     # bare & (not &&)
-        reason = "bare background &"
-
-if reason:
+# On ANY unexpected failure: emit NEEDS_HUMAN so the shell falls through to
+# the normal human-approval prompt rather than exiting non-zero under set -e.
+def safe_exit(tool="unknown", verdict="NEEDS_HUMAN", cmd=""):
     print(tool)
-    print("UNSAFE:" + reason)
+    print(verdict)
     print(cmd[:200])
     sys.exit(0)
 
-# Read-only matchers (guard passed — no metachar). \s+ matches tab/multispace.
-verdict = "NEEDS_HUMAN"
-if re.match(
-    r'^git\s+(-C\s+\S+\s+)?(status|log|diff|show|branch|remote|tag|describe|rev-parse)(\s|$)',
-    cmd
-):
-    verdict = "APPROVE_GIT"
-elif re.match(
-    r'^(ls|find|which|stat|wc|head|tail|cat|file|du|df|pwd|echo|printf|uname|sw_vers)(\s|$)',
-    cmd
-):
-    verdict = "APPROVE_BASH"
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    safe_exit()
 
-print(tool)
-print(verdict)
-print(cmd[:200])  # truncate only for log readability
+try:
+    tool = d.get("tool_name", "unknown")
+    raw_ti = d.get("tool_input", {})
+    # Treat null / string / non-dict tool_input as empty dict (avoids AttributeError)
+    ti = raw_ti if isinstance(raw_ti, dict) else {}
+    # FULL command — no truncation in the guard path
+    cmd = str(ti.get("command", ti.get("path", ti.get("url", ""))))
+except Exception:
+    safe_exit()
+
+# Metacharacter guard — FULL cmd, no truncation. Order: cheapest first.
+try:
+    reason = None
+
+    if ";" in cmd:
+        reason = "semicolon"
+    elif "&&" in cmd:
+        reason = "&&"
+    elif "||" in cmd:
+        reason = "||"
+    elif "`" in cmd:
+        reason = "backtick"
+    elif "$(" in cmd:
+        reason = "subshell $("
+    elif "\n" in cmd:
+        reason = "newline"
+    elif "\r" in cmd:
+        reason = "carriage-return"
+    else:
+        if re.search(r'(?<!\|)\|(?!\|)', cmd):    # bare pipe (not ||)
+            reason = "bare pipe"
+        elif re.search(r'(?<!&)&(?!&)', cmd):     # bare & (not &&)
+            reason = "bare background &"
+
+    if reason:
+        safe_exit(tool, "UNSAFE:" + reason, cmd)
+
+    # Read-only matchers (guard passed — no metachar). \s+ matches tab/multispace.
+    verdict = "NEEDS_HUMAN"
+    if re.match(
+        r'^git\s+(-C\s+\S+\s+)?(status|log|diff|show|branch|remote|tag|describe|rev-parse)(\s|$)',
+        cmd
+    ):
+        verdict = "APPROVE_GIT"
+    elif re.match(
+        r'^(ls|find|which|stat|wc|head|tail|cat|file|du|df|pwd|echo|printf|uname|sw_vers)(\s|$)',
+        cmd
+    ):
+        verdict = "APPROVE_BASH"
+
+    safe_exit(tool, verdict, cmd)
+
+except Exception:
+    safe_exit(tool if 'tool' in dir() else "unknown", "NEEDS_HUMAN",
+              cmd if 'cmd' in dir() else "")
 PYEOF
 
 # ── Self-test mode ──────────────────────────────────────────────────────
@@ -153,6 +163,17 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"ls -la `whoami`"}}' \
     REJECT
 
+  # --- Robustness: malformed tool_input must not crash (REJECT = human prompt) ---
+  _selftest_case \
+    "null tool_input: should fall through to human approval" \
+    '{"tool_name":"Bash","tool_input":null}' \
+    REJECT
+
+  _selftest_case \
+    "string tool_input: should fall through to human approval" \
+    '{"tool_name":"Bash","tool_input":"not-a-dict"}' \
+    REJECT
+
   # --- Must-APPROVE (single read-only commands, no metacharacters) ---
   _selftest_case \
     "plain: git status" \
@@ -184,7 +205,7 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
     APPROVE
 
-  echo "=== Results: $_pass passed, $_fail failed ==="
+  echo "=== Results: $_pass passed, $_fail failed (16 total) ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
