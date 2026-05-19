@@ -2,6 +2,11 @@
 # roborev_agent_health.sh — detect sustained codex failures and temporarily
 # swap to gemini in ~/.roborev/config.toml; probe for recovery and swap back.
 #
+# Portability: this script is invoked by launchd, which provides only a bare
+# PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that
+# `timeout` (from GNU coreutils) is visible under both Homebrew and Nix.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+#
 # Logic:
 #   1. Count codex-agent failures in the last 60 minutes (review_jobs table).
 #   2. Threshold ≥3 → "throttled" state.
@@ -80,12 +85,35 @@ SQL
 
 marker_exists() { [ -f "$MARKER" ]; }
 
+# Portable timeout helper — macOS /usr/bin/timeout does not exist; use GNU
+# coreutils `timeout` (Homebrew: /opt/homebrew/bin/timeout, or on PATH after
+# the PATH export above). Falls back to a pure-shell background-kill pattern.
+_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    # Shell-only fallback: run in background, sleep, kill if still running.
+    "$@" &
+    local pid=$!
+    (sleep "$secs" && kill -TERM "$pid" 2>/dev/null) &
+    local watchdog=$!
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    kill -TERM "$watchdog" 2>/dev/null
+    wait "$watchdog" 2>/dev/null
+    return "$rc"
+  fi
+}
+
 # Probe codex health: version check with 10s timeout
 codex_healthy() {
   if [ ! -x "$CODEX" ]; then
     return 1
   fi
-  timeout 10 "$CODEX" --version >/dev/null 2>&1
+  _timeout 10 "$CODEX" --version >/dev/null 2>&1
 }
 
 # ── Status report ─────────────────────────────────────────────────────────────
