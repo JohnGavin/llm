@@ -378,6 +378,8 @@ Closed **9 issues**, scoped 2, filed **3 new** (one closed same session). **24 c
 
 Cron density went from 2 jobs/day to **5 jobs/day**: `config_pulse`, `knowledge_pulse`, `roborev-autoclose` (weekly Mon 09:15), `pr-status-pulse` (3x daily 09:30/12:30/16:30), `wiki-health-pulse` (daily 09:45).
 
+> **Correction (roborev #851):** `wiki-health-pulse` was shipped without the required `<wiki_dir>` positional arg in `ProgramArguments`, causing it to exit immediately with a usage error on every run. The 5-jobs/day count was therefore inflated — the job was wired but non-functional. Fixed in `058d260` (pass wiki_dir arg to wiki-health-pulse, #165). The `4` effective jobs were `config_pulse`, `knowledge_pulse`, `roborev-autoclose`, and `pr-status-pulse`; `wiki-health-pulse` became the 5th only after the arg was added.
+
 ### Infra additions
 
 | Path | Purpose |
