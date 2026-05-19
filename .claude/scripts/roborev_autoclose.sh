@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # roborev_autoclose.sh — close stale roborev findings.
 #
+# Portability: this script is invoked by launchd, which provides only a bare
+# PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that
+# python3, sqlite3, and other tools are visible on both Homebrew and Nix Macs.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+#
 # Two phases:
 #   Phase 1 — `roborev close <id>` for jobs that have a review attached
 #             (status='done', the agent ran and emitted findings).
