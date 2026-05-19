@@ -4,7 +4,7 @@
         "CLAUDE_WEEKLY_CAP_USD": "500",
         "CLAUDE_WEEK_START_DAY": "tuesday",
         "CLAUDE_TIMEZONE": "Europe/Dublin",
-        "COMPOUND_GUARD_MODE": "log"
+        "COMPOUND_GUARD_MODE": "block"
     },
     "permissions": {
         "allow": [
@@ -124,7 +124,27 @@
             "Bash(curl -sL:*)",
             "Bash(curl -L:*)",
             "Bash(curl -I:*)",
-            "Bash(curl -o:*)"
+            "Bash(curl -o:*)",
+            "Bash(roborev list *)",
+            "Bash(roborev show *)",
+            "Bash(roborev summary *)",
+            "Bash(roborev --help)",
+            "Bash(roborev help *)",
+            "Bash(roborev status *)",
+            "Bash(roborev log *)",
+            "Bash(roborev stream *)",
+            "Bash(roborev wait *)",
+            "Bash(/usr/local/bin/roborev list *)",
+            "Bash(/usr/local/bin/roborev show *)",
+            "Bash(/usr/local/bin/roborev summary *)",
+            "Bash(/usr/local/bin/roborev --help)",
+            "Bash(git -C * status *)",
+            "Bash(git -C * log *)",
+            "Bash(git -C * diff *)",
+            "Bash(git -C * show *)",
+            "Bash(git -C * blame *)",
+            "Bash(git -C * ls-files *)",
+            "Bash(git -C * rev-parse *)"
         ],
         "deny": [
             "Bash(rm -rf:*)",
