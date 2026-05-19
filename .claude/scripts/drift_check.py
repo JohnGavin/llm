@@ -104,17 +104,25 @@ def get_embedder():
 def last_closed_no_revert_commits(n: int):
     """Return the subject lines of the last n commits that aren't reverts
     and weren't reverted by a later commit. Heuristic, not perfect."""
+    import re
+    # Use %H\t%s for subject lines (filtering out revert commits by subject prefix)
     out = subprocess.check_output(
         ["git", "-C", str(REPO_ROOT), "log", "--format=%H\t%s", "-n", str(n * 3)],
         text=True,
     )
     lines = [line.split("\t", 1) for line in out.strip().splitlines() if "\t" in line]
-    reverted_shas = {
-        m.group(1)
-        for s in lines
-        for m in [__import__("re").search(r"This reverts commit ([a-f0-9]+)", s[1])]
-        if m
-    }
+
+    # Bug fix (#850): "This reverts commit <sha>" appears in the commit BODY, not
+    # the subject (%s). A second git log call with %B (full body) is needed to
+    # find reverted SHAs. The previous code searched %s (subject) so
+    # reverted_shas was always empty and reverted commits were never filtered.
+    body_out = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT), "log", "--format=%H\t%B", "-n", str(n * 3)],
+        text=True,
+    )
+    reverted_shas = set()
+    for m in re.finditer(r"This reverts commit ([a-f0-9]{7,40})", body_out):
+        reverted_shas.add(m.group(1))
     out = []
     for sha, subject in lines:
         if subject.lower().startswith("revert "):
@@ -168,6 +176,13 @@ def load_baseline():
     if not BASELINE_NPY.exists() or not BASELINE_META.exists():
         return None, None
     centroid = np.load(BASELINE_NPY)
+    # Bug fix (#2114): baselines saved before the centroid-normalisation fix in
+    # rebuild_baseline() may be un-normalised. Re-normalise on every load so
+    # existing .npy files produce correct cosine distances without requiring a
+    # manual --rebuild-baseline run.
+    centroid_norm = np.linalg.norm(centroid)
+    if centroid_norm > 1e-10:
+        centroid = centroid / centroid_norm
     with open(BASELINE_META) as f:
         meta = json.load(f)
     return centroid, meta
