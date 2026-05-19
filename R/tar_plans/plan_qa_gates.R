@@ -118,7 +118,6 @@ scan_html_for_errors <- function(html_dir       = "docs",
 #' This function scans rendered HTML and aborts the pipeline if any are missing.
 #'
 #' @param vignettes_dir Path to rendered vignettes HTML (default "docs/articles").
-#' @param docs_dir Additional path to check for top-level vignette HTML (default "docs").
 #' @return Invisibly returns a character vector of checked files when all pass.
 #'   Calls `cli::cli_abort()` if any rendered vignette is missing any of the
 #'   three required subsections.
@@ -128,8 +127,9 @@ check_methodology_blocks <- function(vignettes_dir = "docs/articles",
   # This prevents non-vignette pages (authors.html, AGENTS.html, etc.) from
   # being flagged for missing methodology blocks.
   #
-  # Mapping: vignettes/<name>.qmd   -> docs/<name>.html
-  #          vignettes/articles/<name>.qmd -> docs/articles/<name>.html
+  # pkgdown flattens ALL vignettes into docs/articles/<name>.html:
+  #   vignettes/<name>.qmd          -> docs/articles/<name>.html
+  #   vignettes/articles/<name>.qmd -> docs/articles/<name>.html
   src_top      <- list.files(src_vignettes, pattern = "\\.qmd$",
                               full.names = FALSE, recursive = FALSE)
   src_articles <- list.files(file.path(src_vignettes, "articles"),
