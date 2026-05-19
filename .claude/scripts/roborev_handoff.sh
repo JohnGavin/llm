@@ -115,8 +115,9 @@ for r in repos:
         JOIN reviews rv ON rv.job_id = rj.id
         WHERE repo.id = ?
           AND rj.status = 'done'
-          AND (julianday('now') - julianday(COALESCE(rj.finished_at, rj.enqueued_at))) > ?
-        ORDER BY rj.enqueued_at ASC
+          AND rj.finished_at IS NOT NULL
+          AND (julianday('now') - julianday(rj.finished_at)) > ?
+        ORDER BY rj.finished_at ASC
     """, (r["id"], threshold_days)).fetchall()
 
     jobs_file = os.path.join(workdir, f"jobs_{r['id']}.jsonl")
