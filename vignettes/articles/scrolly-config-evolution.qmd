@@ -1,5 +1,5 @@
 ---
-title: "How `.claude/` grew: a scroll through 222 files"
+title: "How `.claude/` grew: a scroll through config files"
 format:
   closeread-html:
     toc: false
@@ -68,7 +68,7 @@ base_theme <- theme_minimal(base_size = 13) +
 
 :::{#cr-scene1 .sticky}
 ```{r scene1-plot}
-#| fig-alt: "Each dot represents one file in the .claude/ configuration directory. All 222 dots are shown in the same grey colour with no additional encoding, establishing the full dataset baseline before any categorical breakdown."
+#| fig-alt: "Each dot represents one tracked config file across seven .claude/ subdirectories (rules, skills, agents, hooks, memory, commands, scripts). All dots are shown in the same grey colour with no additional encoding, establishing the full dataset baseline before any categorical breakdown."
 ggplot(cfg, aes(x = n_bytes, y = n_lines)) +
   geom_point(colour = "#888888", alpha = 0.6, size = 2) +
   scale_x_continuous(labels = scales::label_number(suffix = " B")) +
@@ -95,7 +95,7 @@ The spread along the y-axis is striking. A handful of files exceed 300 lines; mo
 
 :::{#cr-scene2 .sticky}
 ```{r scene2-plot}
-#| fig-alt: "The same 222 dots now coloured by category. Rules are red and the largest cluster; skills are green and slightly smaller; scripts are light green; commands are cyan. Agents and hooks form smaller groups."
+#| fig-alt: "The same config files now coloured by category. Rules are red and the largest cluster; skills are green and slightly smaller; scripts are light green; commands are cyan. Agents and hooks form smaller groups."
 ggplot(cfg, aes(x = n_bytes, y = n_lines, colour = category)) +
   geom_point(alpha = 0.65, size = 2.5) +
   scale_colour_manual(values = category_palette, name = "Category") +
@@ -239,7 +239,7 @@ Commands sit in the middle: a slash command needs enough prose to explain the wo
 
 ### What this vignette computes
 
-This vignette inspects every file under `.claude/` (rules, skills, agents, hooks, memory, commands, scripts) and visualizes their distribution, sizing, and git age across five progressive-disclosure scenes. The same `r n_files`-row dataset is re-encoded in each scene with stable colours per category.
+This vignette inspects a tracked subset of `.claude/` configuration files — seven subdirectories: rules, skills, agents, hooks, memory, commands, and scripts. Paths like `worktrees/`, `logs/`, and `data/` are intentionally excluded. The `r n_files`-row dataset is re-encoded across five progressive-disclosure scenes with stable colours per category.
 
 ### Data sources
 
