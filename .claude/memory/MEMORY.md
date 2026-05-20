@@ -112,6 +112,13 @@
 - Non-llm sessions MUST NOT edit files outside their own tree, dispatch agents to other trees, or run roborev on other repos
 - See ~/docs_gh/llm/.claude/rules/cross-project-scope.md
 
+## Roborev Session-End Automation (2026-05-20)
+- session_init.sh Phase 14 records HEAD SHA → ~/.claude/.session_start_sha_<project>
+- session_stop.sh fires session_end_refine.sh in background (nohup, never blocks /bye)
+- Bounds: timeout 120s + --max-iterations 3 + --min-severity high
+- Opt-out: SKIP_SESSION_END_REFINE=1 or .roborev.toml `session_end_refine = false`
+- Log: ~/.claude/logs/session_end_refine.log
+
 ## Config Migration (2026-03-09)
 - All rules, scripts, CLAUDE.md now git-backed via symlinks
 - CLAUDE.md → AGENTS.md (merged, <200 lines)
