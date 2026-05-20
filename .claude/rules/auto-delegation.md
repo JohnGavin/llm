@@ -178,9 +178,55 @@ If pwd doesn't start with $WORKTREE_PATH, STOP — something is wrong.
 
 Orchestrator responsibilities when dispatching:
 
-1. Compute the worktree path the harness will create (typically `.claude/worktrees/agent-<id>/`) and inject it as the literal `$WORKTREE_PATH` value
+1. Compute the worktree path the harness will create (typically `.claude/worktrees/agent-<id>/`) and inject it as the literal `$WORKTREE_PATH` value — OR instruct the agent to capture its own `pwd` at startup (more robust since the agent ID is generated at dispatch time)
 2. Stop referencing absolute paths to the main checkout for write-target file references — use `$WORKTREE_PATH`-relative paths or omit the prefix and use repo-relative paths
-3. After the agent completes, verify: `git -C <main-checkout> rev-parse --abbrev-ref HEAD` should still be `main`, and `git -C <main-checkout> rev-parse HEAD` should match the SHA captured before dispatch. Any drift = isolation failure; cherry-pick the commit onto the intended branch and `git reset` main back
+3. **Tier 3 post-verify (MANDATORY):** Before dispatching, capture the main checkout's HEAD SHA. After the agent completes, verify HEAD hasn't moved. See "Tier 3 — Post-Agent Verification" below.
+
+### Tier 3 — Post-Agent Verification
+
+Even with both prefixes in place, an agent may ignore them. The orchestrator's
+last line of defence is a HEAD-snapshot check around every `isolation: "worktree"`
+dispatch. This is Tier 3 of the multi-tier plan in `JohnGavin/llm#191`.
+
+**Pattern:**
+
+```bash
+# Before dispatch
+main_head_before=$(git -C <main-checkout> rev-parse HEAD)
+main_branch_before=$(git -C <main-checkout> rev-parse --abbrev-ref HEAD)
+
+# ... dispatch agent, wait for completion ...
+
+# After completion
+main_head_after=$(git -C <main-checkout> rev-parse HEAD)
+main_branch_after=$(git -C <main-checkout> rev-parse --abbrev-ref HEAD)
+
+if [ "$main_head_before" != "$main_head_after" ] || [ "$main_branch_before" != "$main_branch_after" ]; then
+    echo "ISOLATION VIOLATION: agent mutated main checkout"
+    # Auto-recovery (with user confirmation):
+    #   git -C <main-checkout> branch <agent-recovery-branch> $main_head_after
+    #   git -C <main-checkout> reset --hard $main_head_before
+    # Then re-merge from the recovery branch.
+fi
+```
+
+Helper script: `~/.claude/scripts/agent-post-verify.sh` wraps this pattern.
+Usage: capture state with `agent-post-verify.sh capture <repo-path>` before
+dispatch; check with `agent-post-verify.sh check <repo-path>` after.
+
+**When the check fires:**
+
+| Drift detected | Action |
+|---|---|
+| Main HEAD moved but branch is still `main` | Agent committed directly to main. Move the new commit to a feature branch, reset main, alert user. |
+| Main HEAD moved AND branch changed (e.g. from `main` to `fix/something`) | Agent switched + committed. Switch main back, leave the feature branch in place. |
+| Main HEAD unchanged but branch changed | Agent switched without committing. Switch main back. No data loss. |
+| No drift | Agent honoured isolation. Proceed normally. |
+
+**Logging:** every check writes to `~/.claude/logs/worktree_post_verify.log`
+with timestamp, agent ID, before/after SHA, and verdict. Review this log
+periodically to gauge whether Tier 1+3 alone is sufficient or whether Tier 2
+(hook enforcement) is needed.
 
 ### Right vs Wrong
 
