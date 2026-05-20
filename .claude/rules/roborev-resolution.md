@@ -136,6 +136,63 @@ Long-term fix: a periodic poller (tracked in #148) that fetches each watched rep
 - `core.hooksPath` shared across repos (e.g., `llm/git-hooks/`) — `roborev install-hook` writes to the shared path, so one install covers many repos but a misconfigured one breaks many at once
 - **`.roborev.toml` is gitignored in some projects** (e.g., micromort line 52) but tracked in others (coMMpass, llm). Edits in gitignored projects are LOCAL-only and silently disappear if `roborev init` regenerates. Check `git check-ignore .roborev.toml` before editing; if ignored, add a top-of-file comment recording the manual value (since the comment is the only durable signal that survives regeneration in the file's own context).
 
+## Session-End Refine (Automated)
+
+The session-end refine runs automatically when the user types `/bye`.
+
+### Rollout: SKIP defaulted ON (7-day soak)
+
+For the first 7 days after deployment, `session_stop.sh` invokes `session_end_refine.sh` with `SKIP_SESSION_END_REFINE=1` prefixed, so each call exits early with `result=skipped` and only the bookkeeping logs are written. This lets us observe:
+
+- That `session_init.sh` Phase 14 wrote the start-SHA file
+- That `session_stop.sh` actually fires the script at /bye
+- That the cwd-detection / project-name sanitisation logic finds the right project
+- That nothing else in `/bye` got slower
+
+After 7 clean days, **remove the `SKIP_SESSION_END_REFINE=1` prefix from session_stop.sh** in a follow-up commit. The opt-out env var remains available per-session (set in shell rc files or one-off).
+
+### What runs
+
+`~/.claude/scripts/session_end_refine.sh` is invoked by `session_stop.sh` in the background via `nohup`. It reads the session-start SHA recorded by `session_init.sh` (Phase 14) and calls:
+
+```bash
+timeout 120 roborev refine \
+  --since <session-start-sha> \
+  --max-iterations 3 \
+  --min-severity high \
+  --quiet \
+  --agent codex
+```
+
+### Bounds
+
+| Bound | Value | Effect |
+|-------|-------|--------|
+| `timeout 120` | 2 minutes | Hard wall-clock kill |
+| `--max-iterations 3` | 3 iterations | roborev internal cap |
+| `--min-severity high` | High+ only | Skips low/medium noise |
+| `nohup ... &` | Background | Never blocks `/bye` |
+
+### Opt-out mechanisms
+
+| Mechanism | How to set | Scope |
+|-----------|------------|-------|
+| Env var | `SKIP_SESSION_END_REFINE=1` before `/bye` | Session-level |
+| TOML flag | `session_end_refine = false` in `.roborev.toml` | Per-project |
+
+### Log location
+
+`~/.claude/logs/session_end_refine.log` — one line per session:
+```
+2026-05-20 14:32:01 project=llm start-sha=abc1234 result=ok
+```
+
+Result values: `ok`, `timeout`, `error`, `skipped`.
+
+### State file
+
+`~/.claude/.session_start_sha_<sanitized-project-name>` — written by `session_init.sh` Phase 14 at session start.
+
 ## Related
 
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
