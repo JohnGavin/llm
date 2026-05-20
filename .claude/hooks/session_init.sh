@@ -5,7 +5,9 @@
 
 set -euo pipefail
 
-CLAUDE_DIR="$HOME/.claude"
+CLAUDE_RUNTIME_ROOT="${CLAUDE_RUNTIME_ROOT:-$HOME/.claude}"
+CLAUDE_CONTROL_PLANE_ROOT="${CLAUDE_CONTROL_PLANE_ROOT:-$CLAUDE_RUNTIME_ROOT}"
+CLAUDE_DIR="$CLAUDE_CONTROL_PLANE_ROOT"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
 SKILLS_DIR="$CLAUDE_DIR/skills"
 RULES_DIR="$CLAUDE_DIR/rules"
@@ -25,6 +27,12 @@ phase_env() {
   else
     echo "Nix Shell: WARNING — not in nix shell"
   fi
+}
+
+as_int_or_zero() {
+  local value="${1:-0}"
+  value=$(printf '%s\n' "$value" | grep -E '^[0-9]+$' | head -1 || true)
+  printf '%s\n' "${value:-0}"
 }
 
 # ── Phase 1b: Permission Mode Advisory ────────────────────────────────
@@ -58,7 +66,7 @@ phase_perm_mode() {
     main)             expected="default" ;;
     *)                expected="default" ;;
   esac
-  settings="$HOME/.claude/settings.json"
+  settings="$SETTINGS_JSON"
   current="unknown"
   if [ -f "$settings" ]; then
     current=$(grep -oE '"defaultMode"[[:space:]]*:[[:space:]]*"[^"]+"' "$settings" \
@@ -528,7 +536,7 @@ phase_roborev() {
 
 # ── Phase 9: Weekly Burn Rate ─────────────────────────────────────────
 phase_burn_rate() {
-  local script="$HOME/.claude/scripts/burn_rate_check.sh"
+  local script="$CLAUDE_DIR/scripts/burn_rate_check.sh"
   if [ -x "$script" ]; then
     timeout 45 "$script" full 2>/dev/null || echo "Burn rate: check failed"
   fi
@@ -648,8 +656,10 @@ if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
   rv_output=$(/usr/local/bin/roborev status 2>/dev/null) || true
   if echo "$rv_output" | grep -qE "running" 2>/dev/null; then
     # Count high-severity failures specifically
-    n_high=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 100 2>/dev/null | grep -cE "^Job" || echo 0) || true
-    n_total=$(/usr/local/bin/roborev list --status failed --limit 100 2>/dev/null | grep -cE "^Job" || echo 0) || true
+    n_high=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 100 2>/dev/null | grep -cE "^Job" || true)
+    n_total=$(/usr/local/bin/roborev list --status failed --limit 100 2>/dev/null | grep -cE "^Job" || true)
+    n_high=$(as_int_or_zero "$n_high")
+    n_total=$(as_int_or_zero "$n_total")
     if [ "${n_high:-0}" -gt 0 ]; then
       roborev_status="roborev:${n_high}high/${n_total}total"
     elif [ "${n_total:-0}" -gt 0 ]; then
@@ -668,7 +678,7 @@ fi
 
 # Phase 9: Burn rate (run in background, use cache if available)
 burn_output=""
-burn_script="$HOME/.claude/scripts/burn_rate_check.sh"
+burn_script="$CLAUDE_DIR/scripts/burn_rate_check.sh"
 if [ -x "$burn_script" ]; then
   burn_output=$(timeout 45 "$burn_script" compact 2>/dev/null) || burn_output="burn:err"
 fi
@@ -690,7 +700,7 @@ fi
 
 # Phase 11: AGENTS.md audit
 audit_output=""
-audit_script="$HOME/.claude/scripts/agents_md_audit.sh"
+audit_script="$CLAUDE_DIR/scripts/agents_md_audit.sh"
 if [ -x "$audit_script" ]; then
   audit_output=$("$audit_script" 2>/dev/null) || true
   if echo "$audit_output" | grep -q "DRIFT"; then
@@ -752,16 +762,16 @@ if [ -x "$_lc" ]; then
 fi
 
 # ── Phase 12: Log session start to unified DuckDB ──
-_log_script="$HOME/.claude/scripts/log_session.sh"
+_log_script="$CLAUDE_DIR/scripts/log_session.sh"
 _session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
 if [ -x "$_log_script" ]; then
   "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" 2>/dev/null || true
 fi
 # Record session start time for session_stop braindump sweep
-date '+%Y-%m-%d %H:%M:%S' > "$HOME/.claude/logs/.session_start_time"
+date '+%Y-%m-%d %H:%M:%S' > "$CLAUDE_RUNTIME_ROOT/logs/.session_start_time"
 
 # ── Phase 13: Surface unprocessed braindumps for Claude to act on ──
-_bd_db="$HOME/.claude/logs/unified.duckdb"
+_bd_db="$CLAUDE_RUNTIME_ROOT/logs/unified.duckdb"
 if [ -f "$_bd_db" ]; then
   _bd_output=$(duckdb "$_bd_db" -c "
     SELECT id, source, captured_at::VARCHAR as captured,
@@ -827,6 +837,7 @@ fi
 # Background ctx_sync if missing packages detected
 if [ -f "DESCRIPTION" ]; then
   ctx_miss=$(echo "$ctx_part" | cut -d: -f2 | cut -d/ -f3)
+  ctx_miss=$(as_int_or_zero "$ctx_miss")
   if [ "${ctx_miss:-0}" -gt 0 ]; then
     nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
       > /tmp/ctx_sync_$$.log 2>&1 &
@@ -841,5 +852,23 @@ fi
 echo ""
 echo "TIP: Check active loops with: /btw 'Show running loops via /schedule list'"
 echo "     Auto-loop suggestions: /loop 1h /check | /loop 30m /ctx-check"
+
+# ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
+# Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
+# session_end_refine.sh can bound a roborev refine to commits from this session.
+# One state file per project — concurrent sessions for the same project
+# overwrite each other (latest start wins, which is fine).
+# No dependency on other phases; safe to run unconditionally.
+_sha_project_root=$(git rev-parse --show-toplevel 2>/dev/null) || _sha_project_root=""
+if [ -n "$_sha_project_root" ]; then
+  _sha_project_name=$(basename "$_sha_project_root")
+  _sha_slug=$(echo "$_sha_project_name" | tr '/ ' '__' | sed 's/^_*//')
+  _sha_state_file="$CLAUDE_RUNTIME_ROOT/.session_start_sha_${_sha_slug}"
+  _sha_head=$(git -C "$_sha_project_root" rev-parse HEAD 2>/dev/null) || _sha_head=""
+  if [ -n "$_sha_head" ]; then
+    echo "$_sha_head" > "$_sha_state_file"
+    # No console output — this is infrastructure, not user-facing info
+  fi
+fi
 
 exit 0

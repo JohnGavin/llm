@@ -5,7 +5,9 @@
 
 set -euo pipefail
 
-CLAUDE_DIR="$HOME/.claude"
+CLAUDE_RUNTIME_ROOT="${CLAUDE_RUNTIME_ROOT:-$HOME/.claude}"
+CLAUDE_CONTROL_PLANE_ROOT="${CLAUDE_CONTROL_PLANE_ROOT:-$CLAUDE_RUNTIME_ROOT}"
+CLAUDE_DIR="$CLAUDE_CONTROL_PLANE_ROOT"
 CURRENT_WORK="${CLAUDE_PROJECT_DIR:-.}/.claude/CURRENT_WORK.md"
 TODAY=$(date +%Y-%m-%d)
 
@@ -40,26 +42,26 @@ if [ -d "$CLAUDE_DIR/.git" ] || git -C "$CLAUDE_DIR" rev-parse --git-dir >/dev/n
   changes=$(git -C "$CLAUDE_DIR" status -s 2>/dev/null | head -5)
   if [ -n "$changes" ]; then
     n_changes=$(echo "$changes" | wc -l | tr -d ' ')
-    echo "Config: $n_changes uncommitted changes in ~/.claude/"
+    echo "Config: $n_changes uncommitted changes in $CLAUDE_DIR/"
   fi
 fi
 
 # ── Skill audit (only if skills changed) ─────────────────────────────
-AUDIT_WRAPPER="$HOME/docs_gh/llm/.claude/scripts/audit_skills_if_changed.sh"
+AUDIT_WRAPPER="$CLAUDE_DIR/scripts/audit_skills_if_changed.sh"
 if [ -x "$AUDIT_WRAPPER" ]; then
   timeout 15 "$AUDIT_WRAPPER" 2>/dev/null || true
 fi
 
 # ── Model mix log ────────────────────────────────────────────────────
-MIX_SCRIPT="$HOME/.claude/scripts/model_mix_log.sh"
+MIX_SCRIPT="$CLAUDE_DIR/scripts/model_mix_log.sh"
 if [ -x "$MIX_SCRIPT" ]; then
   timeout 35 "$MIX_SCRIPT" >/dev/null 2>&1 || true
 fi
 
 # ── Log session stop to unified DuckDB ───────────────────────────────
-_log_script="$HOME/.claude/scripts/log_session.sh"
-if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
-  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+_log_script="$CLAUDE_DIR/scripts/log_session.sh"
+if [ -x "$_log_script" ] && [ -f "$CLAUDE_RUNTIME_ROOT/logs/.current_session" ]; then
+  _sid=$(cat "$CLAUDE_RUNTIME_ROOT/logs/.current_session" 2>/dev/null || echo "")
   "$_log_script" stop "$_sid" "$(basename "$(pwd)")" "" 2>/dev/null || true
 fi
 
@@ -74,7 +76,7 @@ fi
 
 # ── Braindump closed-loop check ─────────────────────────────────────
 # Safety net: warn if braindumps were surfaced but not processed this session.
-_bd_db="$HOME/.claude/logs/unified.duckdb"
+_bd_db="$CLAUDE_RUNTIME_ROOT/logs/unified.duckdb"
 if [ -f "$_bd_db" ]; then
   _unprocessed=$(duckdb -list -noheader "$_bd_db" -c "
     SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;
@@ -82,11 +84,11 @@ if [ -f "$_bd_db" ]; then
 
   if [ "${_unprocessed:-0}" -gt 0 ]; then
     echo "BRAINDUMP: $_unprocessed unprocessed braindump(s) — these were surfaced but not acted on."
-    echo "  Run: ~/.claude/scripts/braindump_act.sh pending"
+    echo "  Run: $CLAUDE_DIR/scripts/braindump_act.sh pending"
   fi
 
   # Check for commits this session that aren't linked to any braindump action
-  _session_start_file="$HOME/.claude/logs/.session_start_time"
+  _session_start_file="$CLAUDE_RUNTIME_ROOT/logs/.session_start_time"
   if [ -f "$_session_start_file" ]; then
     _start_time=$(cat "$_session_start_file" 2>/dev/null || echo "")
     if [ -n "$_start_time" ]; then
@@ -106,13 +108,13 @@ fi
 
 # ── Telemetry data export + deploy (Calibration + Sessions tabs) ────
 # Auto-runs export_and_deploy_data.sh (was orphaned — header claimed it ran here).
-EXPORT_SCRIPT="$HOME/.claude/scripts/export_and_deploy_data.sh"
+EXPORT_SCRIPT="$CLAUDE_DIR/scripts/export_and_deploy_data.sh"
 if [ -x "$EXPORT_SCRIPT" ]; then
   timeout 180 "$EXPORT_SCRIPT" 2>&1 | tail -3 || true
 fi
 
 # --- Prediction calibration: remind about unresolved predictions ---
-PRED_DIR="$HOME/.claude/predictions"
+PRED_DIR="$CLAUDE_RUNTIME_ROOT/predictions"
 if [ -d "$PRED_DIR" ]; then
   PROJECT_SLUG=$(echo "${CLAUDE_PROJECT_DIR:-.}" | sed 's|/|-|g; s|^-||')
   PRED_FILE="$PRED_DIR/${PROJECT_SLUG}.jsonl"
@@ -147,31 +149,42 @@ fi
 # before invoking the Stop hook. Non-/bye stops skip this block entirely.
 # The sentinel (~/.claude/.bye-requested) is deleted immediately after use
 # so a crash or abort does not leave a stale sentinel.
-_BYE_SENTINEL="${HOME}/.claude/.bye-requested"
-if [ -f "$_BYE_SENTINEL" ] && [ -f "${HOME}/.claude/scripts/detect_patterns.sh" ]; then
+_BYE_SENTINEL="${CLAUDE_RUNTIME_ROOT}/.bye-requested"
+if [ -f "$_BYE_SENTINEL" ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh" ]; then
   rm -f "$_BYE_SENTINEL"  # consume sentinel immediately — one-shot
-  TRANSCRIPT=$(ls -t "${HOME}/.claude/projects/"*/*.jsonl 2>/dev/null | head -1)
+  TRANSCRIPT=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/*.jsonl 2>/dev/null | head -1)
   if [ -n "$TRANSCRIPT" ]; then
-    PATTERNS=$(timeout 30 "${HOME}/.claude/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
+    PATTERNS=$(timeout 30 "${CLAUDE_DIR}/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
     if echo "$PATTERNS" | grep -q "Detected workflow patterns"; then
       echo ""
       echo "$PATTERNS"
       echo ""
       # No interactive read — hooks run non-interactively; auto-schedule skillify.
-      echo "$TRANSCRIPT" > "${HOME}/.claude/.pending_skillify"
+      echo "$TRANSCRIPT" > "${CLAUDE_RUNTIME_ROOT}/.pending_skillify"
       echo "✓ Patterns detected — /skillify will run at next session start."
     fi
   fi
 fi
 
+# ── Bounded session-end roborev refine (fire-and-forget) ─────────────────────
+# Runs a bounded `roborev refine --since <session-start-sha>` in the background.
+# Never blocks /bye. Opt-out: SKIP_SESSION_END_REFINE=1 or .roborev.toml flag.
+# Logs: ~/.claude/logs/session_end_refine.log
+_REFINE_SCRIPT="$CLAUDE_DIR/scripts/session_end_refine.sh"
+if [ -x "$_REFINE_SCRIPT" ]; then
+  # Default SKIP=1 for the first 7 days of soak — per #196 rollout plan.
+  # After 7 days of clean dry-run-equivalent logs, remove the env-var prefix.
+  SKIP_SESSION_END_REFINE=1 nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
+fi
+
 # ── Entity propagation (projects only) — #137 Phase 3 minimal cut ─────
-PROPAGATE="$HOME/docs_gh/llm/.claude/scripts/entity_propagate.sh"
+PROPAGATE="$CLAUDE_DIR/scripts/entity_propagate.sh"
 if [ -x "$PROPAGATE" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   timeout 10 "$PROPAGATE" 2>/dev/null || true
 fi
 
 # ── Semantic drift logger (passive) — #125 Phase 1 ────────────────────
-DRIFT="$HOME/docs_gh/llm/.claude/scripts/drift_check.py"
+DRIFT="$CLAUDE_DIR/scripts/drift_check.py"
 DRIFT_PY="$HOME/.venvs/drift/bin/python3"
 [ -x "$DRIFT_PY" ] || DRIFT_PY=python3   # graceful fallback to system python
 if [ -x "$DRIFT" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
