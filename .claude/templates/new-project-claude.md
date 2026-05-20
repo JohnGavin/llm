@@ -11,6 +11,7 @@ Global config: `~/.claude/CLAUDE.md` (loaded first, all rules apply unless overr
 | Stage | {{Active development / Maintenance / Archive}} |
 | Nix shell | `/Users/johngavin/docs_gh/{{package-name}}/default.nix` |
 | R version | 4.5.x (from `default.nix`) |
+| Cross-project authority | `false` — work only within this tree; file cross-cutting issues in llm |
 
 ## Active Skills (prioritized for this project)
 

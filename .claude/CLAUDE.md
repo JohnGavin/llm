@@ -13,6 +13,7 @@ Global config: `~/.claude/CLAUDE.md` (loaded first, all rules apply unless overr
 | Nix shell | `/Users/johngavin/docs_gh/llm/default.nix` |
 | Targets store | `_targets/` (default) |
 | R version | 4.5.x (from `default.nix`) |
+| Cross-project authority | `true` — this is the meta-config project; may work in any repo |
 
 ## Active Skills (prioritized for this project)
 
