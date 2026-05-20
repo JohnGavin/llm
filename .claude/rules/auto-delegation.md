@@ -110,6 +110,55 @@ When `burn_rate_check.sh` reports WARN or CRITICAL:
 | WARN | Prefer sonnet agents. Use haiku for all single-file edits. Defer speculative exploration. |
 | CRITICAL | Opus for user dialogue only. ALL code work via sonnet/haiku agents. Suggest worktree: `git worktree add ../<repo>-sonnet feat/<task> && cd ../<repo>-sonnet && claude --model sonnet` |
 
+## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
+
+Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside
+worktrees and `/tmp/*`. It is NEVER safe in the main checkout, where live API
+tokens and credentials sit. An agent running `bypassPermissions` in the main
+checkout can silently overwrite `.Renviron`, `default.nix`, or any other
+file without a confirmation prompt.
+
+**Therefore:** ANY Agent dispatch where the agent may invoke Bash MUST be
+called with `isolation: "worktree"`. This includes:
+
+| Agent | Bash? | Worktree required? |
+|-------|-------|--------------------|
+| `fixer` | Yes | **Yes** |
+| `r-debugger` | Yes | **Yes** |
+| `targets-runner` | Yes | **Yes** |
+| `nix-env` | Yes | **Yes** |
+| `shiny-async-debugger` | Yes | **Yes** |
+| `data-quality-guardian` | Yes | **Yes** |
+| `data-engineer` | Yes | **Yes** |
+| `shinylive-builder` | Yes | **Yes** |
+| `wiki-curator` | Yes | **Yes** |
+| `quick-fix` (haiku) | No | Optional |
+| `critic` (read-only) | No | Optional |
+
+### Right vs Wrong
+
+```
+# WRONG: fixer runs in main checkout — live tokens exposed
+Agent(subagent_type="fixer",
+      prompt="Fix R/foo.R line 42 — add NA check before division.")
+
+# RIGHT: fixer isolated to a fresh worktree
+Agent(subagent_type="fixer",
+      isolation="worktree",
+      prompt="""**CRITICAL — Bash discipline:** Compound bash commands
+(`&&`/`||`/`;`/`|`) are HOOK-REJECTED in block mode. Every Bash tool call
+must contain exactly ONE command. The ONLY exception is subshell `(cd dir && cmd)`
+for atomic cd+cmd. Use `git -C <path>` for git operations. For multi-step
+shell logic, write a script file and run it.
+
+Fix R/foo.R line 42 — add NA check before division.""")
+```
+
+Note that the Agent Dispatch Template (from `bash-safety.md` Part 1) is
+included verbatim at the top of the right example above. Both `isolation:
+"worktree"` AND the Bash discipline prefix are required for every Bash-capable
+agent dispatch.
+
 ## Parallel Worktree Sessions
 
 For independent tasks, spawn a sonnet-only worktree session:
