@@ -105,6 +105,13 @@
 - Parallel dispatch = single message with multiple Agent tool uses (not sequential)
 - Pre-flight: "Could a fixer/quick-fix do this in 30 seconds?" If yes, delegate.
 
+## Cross-Project Scope (see cross-project-scope rule)
+- Only llm sessions may work across projects (llm#190)
+- All other projects: own-tree-only by default
+- Non-llm sessions may file an issue in the target project OR in llm (for cross-cutting findings)
+- Non-llm sessions MUST NOT edit files outside their own tree, dispatch agents to other trees, or run roborev on other repos
+- See ~/docs_gh/llm/.claude/rules/cross-project-scope.md
+
 ## Config Migration (2026-03-09)
 - All rules, scripts, CLAUDE.md now git-backed via symlinks
 - CLAUDE.md → AGENTS.md (merged, <200 lines)

@@ -92,6 +92,24 @@ phase_env_class() {
   fi
 }
 
+# ── Phase 1d: Cross-Project Scope Authority ──────────────────────────
+# Reads $PWD/.claude/CLAUDE.md for "Cross-project authority" row.
+# Reports whether this session may work outside its own tree.
+# See rule: cross-project-scope (llm#190)
+phase_scope() {
+  local project_claude="$PWD/.claude/CLAUDE.md"
+  local scope_val=""
+  if [ -f "$project_claude" ]; then
+    scope_val=$(grep -iE 'Cross-project authority' "$project_claude" \
+                | head -1 | grep -oiE '(true|false)' | head -1)
+  fi
+  if [ "${scope_val:-false}" = "true" ]; then
+    echo "project-scope: cross-project=YES"
+  else
+    echo "project-scope: own-tree-only"
+  fi
+}
+
 # ── Phase 2: Mapping Validation ───────────────────────────────────────
 phase_mappings() {
   local has_mismatch=0
@@ -541,6 +559,10 @@ elif echo "$env_class_output" | grep -q "WARN prod"; then
   env_class_val="prod"
   WARNINGS="${WARNINGS}${env_class_output} "
 fi
+
+# Phase 1d: Cross-project scope (llm#190)
+scope_output=$(phase_scope 2>/dev/null)
+echo "$scope_output"
 
 # Phase 2: Mappings (capture warnings)
 map_output=$(phase_mappings 2>/dev/null)
