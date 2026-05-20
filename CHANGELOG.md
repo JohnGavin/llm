@@ -4,6 +4,76 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-20 (Session 3 — governance + soak rollouts: 3 PRs merged, 8 issues filed)
+
+Continued from Session 2. Filed and landed three behaviour-changing PRs (cross-project scope rule, agent-push guard, session-end roborev refine), all merged with cautious soak defaults. Filed eight governance/policy issues spanning supply-chain trust, repo hygiene, approval-prompt friction, and future-dated automation. Critically reviewed and declined an external code-bundle solicitation on llm#191.
+
+### Completed
+
+- **Three enforcement PRs merged on origin/main**:
+  - **#192** — cross-project scope rule (`.claude/rules/cross-project-scope.md`) + `Cross-project authority: <true|false>` row in CLAUDE.md + `session_init.sh` Phase 1d reporter. Phase 1 advisory only; Phase 2 hook enforcement deferred.
+  - **#197** — `agent_push_guard.sh` PreToolUse:Bash hook + rule + settings.json registration. Detects push from `.claude/worktrees/`/`/private/tmp/` + protected branch (main/master/release/prod/production). 8/8 self-test PASS (modes log + block). Default: LOG-only for 48h soak (logs to `~/.claude/logs/agent_push_would_block.log`). Bypass: `AGENT_PUSH_OK=1`.
+  - **#196** — bounded session-end `roborev refine` wiring. New `~/.claude/scripts/session_end_refine.sh` + `session_init.sh` Phase 14 (records start-SHA) + `session_stop.sh` nohup invocation + `roborev-resolution.md` automation section. Bounded by `timeout 120` + `--max-iterations 3` + fire-and-forget. Default: `SKIP_SESSION_END_REFINE=1` prefix for 7-day soak.
+- **llmtelemetry PR #132** opened — synced stale `inst/hooks/llmtelemetry_emit.sh` with the live `llm/.claude/hooks/llmtelemetry_emit.sh` (start/stop mode, /bye sentinel gate, session-ID namespacing, duration_min, host-namespaced filenames, fire-and-forget, template-purpose header). Awaiting review.
+- **AGENTS.md** updated with new core rule: **External Code — ZERO TRUST (MANDATORY, ALL PROJECTS)**. Codifies no-copy policy for external code (issue comments by non-CODEOWNERS, blog posts, third-party SaaS audit tools). May read for ideas; must re-implement. R preferred over Python.
+- **Eight governance/policy issues filed**:
+  - **#189** — agent push discipline gap (3 of 5 fixers auto-pushed to main despite "don't push" prompt). 5 options (D combo recommended). Implemented via PR #197.
+  - **#190** — cross-project scope governance: only llm sessions may work cross-project. Phase 1 advisory + Phase 2 enforcement. Implemented Phase 1 via PR #192.
+  - **#194** — external code ZERO TRUST + 5-layer hook enforcement plan (WebFetch quarantine, content-similarity cross-check, gh comment-provenance check via `author_association`, PR merge guard, trusted-contributor manifest). Triggered by llm#191 comment from `ianymu` (cold contributor + external SaaS link + paid-PR offer pattern).
+  - **#195** — tidy llm top-level + 3-stage plan to move R package source into `llm/` subfolder (same name as `Package: llm`). Body revised twice with user feedback: don't delete any top-level symlinks (blanket rule across all projects), full standard R package layout move list (DESCRIPTION/NAMESPACE/.Rbuildignore/_pkgdown.yml + R/man/tests/vignettes/inst), dual-purpose files (LICENSE/README/NEWS/CHANGELOG) handling.
+  - **#200** — eliminate approval prompts on `$(cat /tmp/...)` patterns; convention change to prefer `gh ... --body-file`. Also flags the gh-pr-edit + `read:org` token scope issue as separate follow-up.
+  - **#201** — `[2026-05-22]` dated reminder to flip `agent_push_guard` `DEFAULT_MODE="log"` → `"block"` after 48h soak.
+  - **#202** — `[2026-05-27]` dated reminder to remove `SKIP_SESSION_END_REFINE=1` prefix from session_stop.sh after 7-day soak.
+  - **#203** — session_init phase to surface `[YYYY-MM-DD]`-prefixed dated issues when date ≤ today. Option A (bash, current-repo, 1h cache) recommended.
+- **Critique of llm#191 comment by ianymu**: identified supply-chain solicitation pattern (cold contributor, embedded code snippet, external SaaS link asking for our config + traces upload, paid-PR offer). Technical observations were correct but already documented in llm#191's own Tier 1/2/3 plan. Declined to copy any code. Wrote our own implementation (PR #197).
+- **Roborev automation surface** answered: post-commit hook + 5 launchd daemons (`com.roborev.auto-refine`, `com.claude.roborev-poll-merges` 15min, `com.claude.roborev-autoclose` weekly, `com.claude.roborev-agent-health`). Session-end gap closed by PR #196 (Option C).
+- **PR triage** done with options + pros/cons per PR; merge order #192 → #197 → #196 with #196 needing a rebase (MEMORY.md + session_init.sh conflicts resolved by keeping BOTH #192's Cross-Project Scope section and #196's Roborev Automation entry).
+- **Tasks completed/closed**: 14 (PR merges, issues filed, soak windows scheduled).
+
+### Failed approaches
+
+- **CronCreate `durable: true` does NOT persist** in this environment — both one-shot crons (b01e47bd for 2026-05-22, ecdf0e60 for 2026-05-27) were marked `[session-only]` despite the flag; `.claude/scheduled_tasks.json` was not created. Fell back to dated GH issues (#201 + #202) for cross-session durability. Document the limitation if/when it bites again.
+- **`gh pr edit`** consistently failed for both PR-body-update fixers — token lacks `read:org` scope that gh's underlying GraphQL query needs for org/team metadata. Agents fall back to leaving body files in `/tmp/` for manual edit. Tracked as follow-up in #200.
+- **First parallel batch of fixer dispatches** (#189 + #190 + session-end-refine, 3 in parallel) hit org's monthly usage limit on two of three; only #190 Phase 1 implementation completed. Re-dispatched the failed two individually a few hours later; both succeeded.
+- **First push-guard fixer dispatch** errored with "socket connection closed unexpectedly" at 11 tool uses. Re-dispatched fresh; second attempt succeeded.
+- **`Edit` tool refused to write through `~/.claude/CLAUDE.md`** (symlink to `~/docs_gh/llm/AGENTS.md`) — resolved the symlink and edited the target directly per `feedback_symlink-edit-vs-mv.md`. Working pattern.
+
+### Accuracy / Metrics
+
+- **PRs merged this session**: 3 (#192, #196, #197) — all with soak defaults on
+- **PRs opened, awaiting review**: 1 (llmtelemetry #132)
+- **Issues filed**: 8 (#189, #190, #194, #195, #200, #201, #202, #203)
+- **Worktree-isolated fixer dispatches**: 8+ across the session (mix of #189/#190/#196 implementation + drift-fix retries + PR-modification passes)
+- **Self-tests added**: 8/8 PASS in `agent_push_guard.sh` (2 new for mode switch); 4/4 PASS in `session_end_refine.sh` dry-run scenarios
+- **Roborev backlog**: 47/150 addressed (no change this session — pre-existing). 103 unaddressed in backlog.
+- **Soak windows on the calendar (durable via dated GH issues)**:
+  - 2026-05-22: flip `agent_push_guard` `DEFAULT_MODE` log → block (via #201)
+  - 2026-05-27: remove `SKIP_SESSION_END_REFINE=1` prefix from session_stop.sh (via #202)
+
+### Known limitations
+
+- **CronCreate `durable: true` doesn't actually persist** in this environment — current workaround = dated GH issues + manual review. If frequent enough, file a tooling issue.
+- **`gh pr edit` requires `read:org`** in current GH token. PR body updates from fixers fall back to `/tmp/` files awaiting manual application. Should be its own follow-up issue (mentioned in #200's "related friction").
+- **5 "unrelated refactoring" files** in working tree (`context_monitor.sh`, `log_agent_run.sh`, `wiki_health_onwrite.sh`, `agents_md_audit.sh`, `audit_skills_if_changed.sh`) — flagged as drift by an earlier fixer ("hardcoded path cleanup"). Stashed at session end via `git stash session-2026-05-20-pre-pull`. Next session: review and decide commit/discard.
+- **103 unaddressed roborev failures** remain (no movement this session; pre-existing backlog).
+- **llm#194 enforcement hooks (5 layers)** not yet implemented — Phase 1 rule file pending.
+- **llm#195 folder tidy** not executed — 3 stages planned (cleanup → reorg → path-sweep), each independently shippable.
+- **llm#203 dated-issue session-init phase** not implemented — would auto-surface #201/#202 on their dates. Small task; one fixer.
+- **PR #197 LOG-only mode soak** runs until 2026-05-22; review `~/.claude/logs/agent_push_would_block.log` then flip via #201.
+- **PR #196 SKIP=1 soak** runs until 2026-05-27; review `~/.claude/logs/session_end_refine.log` then remove prefix via #202.
+
+### Next session
+
+- Continue on branch: `main`
+- Open priorities:
+  - Review + merge llmtelemetry PR #132 (hook drift sync)
+  - Implement llm#203 (dated-issue session-init phase) — small enough for one fixer
+  - Begin llm#194 Phase 1 (rule file at minimum) or llm#195 Stage 1 (low-risk file cleanup)
+  - Decide on the 5 drift-refactoring files stashed (`git stash list` → `session-2026-05-20-pre-pull`)
+- Approaching dates:
+  - **2026-05-22**: flip `agent_push_guard` to `block` mode (review log; close llm#201)
+  - **2026-05-27**: remove `SKIP_SESSION_END_REFINE=1` prefix (review log; close llm#202)
+
 ## 2026-05-18 (Session 2 — cross-repo roborev sweep + 2 umbrellas + permission_request security fix)
 
 Continued from Session 1 close-out. Massive cross-repo roborev sweep cleared 15 of 17 active repos to zero open findings. Global addressed rate moved 15.5% (session start) → **95.4%**. Two umbrella trackers filed for the remaining themed work (knowledge + llm-self). One real security fix shipped on `permission_request.sh`.
