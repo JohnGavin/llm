@@ -172,7 +172,9 @@ fi
 # Logs: ~/.claude/logs/session_end_refine.log
 _REFINE_SCRIPT="$CLAUDE_DIR/scripts/session_end_refine.sh"
 if [ -x "$_REFINE_SCRIPT" ]; then
-  nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
+  # Default SKIP=1 for the first 7 days of soak — per #196 rollout plan.
+  # After 7 days of clean dry-run-equivalent logs, remove the env-var prefix.
+  SKIP_SESSION_END_REFINE=1 nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
 fi
 
 # ── Entity propagation (projects only) — #137 Phase 3 minimal cut ─────
