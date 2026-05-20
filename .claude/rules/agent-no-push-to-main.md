@@ -23,6 +23,15 @@ branch.
 exits non-zero (code 2) before the command reaches the shell. The hook cannot
 be bypassed by prompt wording alone.
 
+### Rollout: LOG-only mode (48h soak, then enforce)
+
+The hook defaults to `AGENT_PUSH_GUARD_MODE=log` for the first 48 hours after deployment. In log-only mode:
+- A would-be-blocked push is **allowed through** but recorded to `~/.claude/logs/agent_push_would_block.log`
+- After 48h of clean audit (no unexpected blocks), the default flips to `block` in a follow-up commit
+- To force enforcement before the flip: set `AGENT_PUSH_GUARD_MODE=block` in your shell
+
+Once the default is `block`, the bypass remains via `AGENT_PUSH_OK=1` (per-command override with audit log).
+
 ---
 
 ## Detection Logic
@@ -96,7 +105,8 @@ Bash("git push origin main")
 
 | Log file | Contents |
 |---|---|
-| `~/.claude/logs/agent_push_blocked.log` | Every blocked push attempt with timestamp, command, path, and target |
+| `~/.claude/logs/agent_push_blocked.log` | Every blocked push attempt with timestamp, command, path, and target (enforce mode) |
+| `~/.claude/logs/agent_push_would_block.log` | Pushes that would have been blocked but were allowed through (log-only mode soak) |
 
 ---
 
@@ -106,7 +116,7 @@ Bash("git push origin main")
 CLAUDE_HOOK_SELFTEST=1 bash ~/.claude/hooks/agent_push_guard.sh
 ```
 
-Expected output: `6/6 PASS`
+Expected output: `8/8 PASS`
 
 ---
 
