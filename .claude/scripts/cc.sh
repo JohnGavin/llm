@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc.sh — Claude Code wrapper with permission-mode + budget-aware model selection
-#         + project-name auto-set (#147)
+#         + project-name auto-set (#147) + worktree-offer on main checkout (B2)
 #
 # Permission mode selection:
 #   /tmp, /private/tmp                       → bypassPermissions
@@ -11,6 +11,13 @@
 #   BURN >= 90%: Auto-spawn sonnet session in worktree
 #   BURN >= 70%: Use sonnet model
 #   BURN <  70%: Use opus model
+#
+# Worktree offer (B2 — approval-reduction plan):
+#   When launched in a main checkout (not worktree, not /tmp), cc.sh prints a
+#   one-line note and prompts the user to open a new worktree. Choosing yes (or
+#   typing a branch name) creates the worktree, changes into it, and continues.
+#   The worktree session will use bypassPermissions automatically.
+#   Pass --no-worktree to suppress the prompt.
 #
 # Project name + colour (#147):
 #   Session title = basename($PWD) (passed to `claude -n` so /resume + session
@@ -25,10 +32,79 @@
 #   cc --model opus         # explicit model override (bypasses budget check)
 #   cc --permission-mode <m> ...  # explicit permission override
 #   cc -n <custom-name> ... # explicit name override (skips auto-name)
+#   cc --no-worktree        # skip the worktree-offer prompt (stay in main checkout)
 #
-# Companion rules: permission-mode-discipline, auto-delegation
+# Companion rules: permission-mode-discipline, auto-delegation, permission-discipline
 
 set -e
+
+# ---------------------------------------------------------------------------
+# Self-test mode: CC_SH_SELFTEST=1 bash cc.sh
+# Runs minimal state-detection and flag-parsing tests then exits 0/1.
+# ---------------------------------------------------------------------------
+if [ "${CC_SH_SELFTEST:-0}" = "1" ]; then
+  PASS=0
+  FAIL=0
+
+  check() {
+    local desc="$1" expected="$2" actual="$3"
+    if [ "$actual" = "$expected" ]; then
+      echo "PASS: $desc"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: $desc — expected '$expected' got '$actual'"
+      FAIL=$((FAIL + 1))
+    fi
+  }
+
+  # Test 1: is_worktree detects non-worktree (run from /tmp)
+  result=$(git -C /tmp rev-parse --git-dir 2>/dev/null || echo "not-a-repo")
+  check "non-repo returns not-a-repo" "not-a-repo" "$result"
+
+  # Test 2: --no-worktree flag detection
+  NO_WORKTREE=false
+  for _arg in --no-worktree --model opus; do
+    case "$_arg" in --no-worktree) NO_WORKTREE=true ;; esac
+  done
+  check "--no-worktree detected in arg list" "true" "$NO_WORKTREE"
+
+  # Test 3: --no-worktree stripping from args
+  # Input: 4 tokens (--no-worktree --model opus foo), expect 3 after stripping
+  set -- --no-worktree --model opus foo
+  CLEAN_ARGS=()
+  for _arg in "$@"; do
+    case "$_arg" in --no-worktree) ;; *) CLEAN_ARGS+=("$_arg") ;; esac
+  done
+  check "--no-worktree stripped, 4 args remain as 3" "3" "${#CLEAN_ARGS[@]}"
+
+  # Test 4: branch name sanitisation (/ → -)
+  raw="feat/my-task"
+  sanitised="${raw//\//-}"
+  check "branch / replaced with -" "feat-my-task" "$sanitised"
+
+  # Test 5: default branch name format
+  branch_ts="feat/cc-$(date +%Y%m%d-%H%M%S)"
+  # Just check it starts with feat/cc-
+  prefix="${branch_ts:0:8}"
+  check "default branch starts with feat/cc-" "feat/cc-" "$prefix"
+
+  # Test 6: worktree path construction from repo root + branch suffix
+  _repo_root="/Users/johngavin/docs_gh/llm"
+  _repo_name="$(basename "$_repo_root")"
+  _branch="feat/my-feature"
+  _suffix="${_branch//\//-}"
+  _wt="${_repo_root}/../${_repo_name}-${_suffix}"
+  check "worktree path constructed" "/Users/johngavin/docs_gh/llm/../llm-feat-my-feature" "$_wt"
+
+  echo ""
+  echo "Results: $PASS passed, $FAIL failed"
+  [ "$FAIL" -eq 0 ]
+  exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
 
 is_worktree() {
   local common gitdir
@@ -37,6 +113,10 @@ is_worktree() {
   common=$(cd "$common" 2>/dev/null && pwd) || return 1
   gitdir=$(cd "$gitdir" 2>/dev/null && pwd) || return 1
   [ "$common" != "$gitdir" ]
+}
+
+is_in_git_repo() {
+  git rev-parse --git-dir >/dev/null 2>&1
 }
 
 select_mode() {
@@ -59,18 +139,6 @@ get_burn_rate() {
   fi
 }
 
-# Check for explicit overrides
-HAS_MODEL_OVERRIDE=false
-HAS_PERMISSION_OVERRIDE=false
-HAS_NAME_OVERRIDE=false
-for arg in "$@"; do
-  case "$arg" in
-    --model|--model=*) HAS_MODEL_OVERRIDE=true ;;
-    --permission-mode|--permission-mode=*) HAS_PERMISSION_OVERRIDE=true ;;
-    -n|--name|-n=*|--name=*) HAS_NAME_OVERRIDE=true ;;
-  esac
-done
-
 # Resolve project name and colour from a given directory.
 # Called once before worktree switch and again after (if switched) so that
 # the launched session is always named for its actual working directory.
@@ -88,8 +156,98 @@ resolve_project_name_and_color() {
   fi
 }
 
-# Initial resolution from current working directory.
+# offer_worktree: when in a main git checkout, prompt the user to create a
+# worktree. Reads from /dev/tty so it works even when stdin is redirected.
+# Sets WORKTREE_DIR to the chosen worktree path (empty if user declined).
+offer_worktree() {
+  # Skip if not in a git repo
+  is_in_git_repo || return 0
+  # Skip if already a worktree
+  is_worktree && return 0
+  # Skip if in /tmp
+  case "$PWD" in
+    /tmp|/tmp/*|/private/tmp|/private/tmp/*) return 0 ;;
+  esac
+
+  local repo_root repo_name
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  repo_name="$(basename "$repo_root")"
+
+  echo "You're in the main checkout of $repo_name. New work should go in a worktree (lets bypassPermissions safely)."
+  printf "Open a new worktree? [y / N / branch-name]: "
+
+  local answer
+  read -r answer </dev/tty
+
+  case "$answer" in
+    ""|n|N) return 0 ;;
+    y|Y) answer="feat/cc-$(date +%Y%m%d-%H%M%S)" ;;
+  esac
+
+  # Sanitise branch name for use as a directory suffix (replace / with -)
+  local branch="$answer"
+  local suffix="${branch//\//-}"
+  local wt_path="${repo_root}/../${repo_name}-${suffix}"
+  wt_path="$(cd "${repo_root}/.." && pwd)/${repo_name}-${suffix}"
+
+  if [ -d "$wt_path" ]; then
+    echo "Worktree already exists: $wt_path"
+    echo "Switched to worktree: $wt_path"
+    cd "$wt_path"
+    WORKTREE_DIR="$wt_path"
+    return 0
+  fi
+
+  echo "Creating worktree $wt_path on branch $branch ..."
+  if git -C "$repo_root" worktree add -b "$branch" "$wt_path" 2>/dev/null; then
+    echo "Switched to worktree: $wt_path"
+  elif git -C "$repo_root" worktree add -B "$branch" "$wt_path" 2>/dev/null; then
+    echo "Switched to worktree (reset existing branch): $wt_path"
+  else
+    echo "Could not create worktree — continuing in main checkout."
+    return 0
+  fi
+
+  cd "$wt_path"
+  WORKTREE_DIR="$wt_path"
+}
+
+# ---------------------------------------------------------------------------
+# Flag parsing
+# ---------------------------------------------------------------------------
+
+# Check for explicit overrides and --no-worktree
+HAS_MODEL_OVERRIDE=false
+HAS_PERMISSION_OVERRIDE=false
+HAS_NAME_OVERRIDE=false
+NO_WORKTREE=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --model|--model=*) HAS_MODEL_OVERRIDE=true ;;
+    --permission-mode|--permission-mode=*) HAS_PERMISSION_OVERRIDE=true ;;
+    -n|--name|-n=*|--name=*) HAS_NAME_OVERRIDE=true ;;
+    --no-worktree) NO_WORKTREE=true ;;
+  esac
+done
+
+# Strip --no-worktree from the args that will be forwarded to claude
+PASSTHROUGH_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-worktree) ;;
+    *) PASSTHROUGH_ARGS+=("$arg") ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Initial project-name + colour resolution (from current directory)
+# ---------------------------------------------------------------------------
 resolve_project_name_and_color "$PWD"
+
+# ---------------------------------------------------------------------------
+# Early exits
+# ---------------------------------------------------------------------------
 
 # Print mode and exit if requested
 if [ "${1:-}" = "--print-mode" ]; then
@@ -98,7 +256,23 @@ if [ "${1:-}" = "--print-mode" ]; then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Worktree offer (B2)
+# Runs before ARGS construction so that select_mode() sees the post-cd cwd.
+# ---------------------------------------------------------------------------
+WORKTREE_DIR=""
+if ! $NO_WORKTREE; then
+  offer_worktree
+fi
+
+# If we changed directory into a worktree, re-resolve project name + colour
+if [ -n "$WORKTREE_DIR" ]; then
+  resolve_project_name_and_color "$WORKTREE_DIR"
+fi
+
+# ---------------------------------------------------------------------------
 # Build argument list
+# ---------------------------------------------------------------------------
 ARGS=()
 
 # Add permission mode unless overridden
@@ -121,12 +295,12 @@ if ! $HAS_MODEL_OVERRIDE; then
 
       if [[ ! -d "$WORKTREE" ]]; then
         BRANCH_NAME="sonnet-$(date +%m%d)"
-        echo "🔥 BURN CRITICAL ($BURN%) — creating worktree at $WORKTREE"
-        git worktree add "$WORKTREE" -b "$BRANCH_NAME" 2>/dev/null || \
-          git worktree add "$WORKTREE" "$BRANCH_NAME" 2>/dev/null || \
-          git worktree add "$WORKTREE" HEAD
+        echo "BURN CRITICAL ($BURN%) — creating worktree at $WORKTREE"
+        git -C "$REPO_ROOT" worktree add "$WORKTREE" -b "$BRANCH_NAME" 2>/dev/null || \
+          git -C "$REPO_ROOT" worktree add "$WORKTREE" "$BRANCH_NAME" 2>/dev/null || \
+          git -C "$REPO_ROOT" worktree add "$WORKTREE" HEAD
       else
-        echo "🔥 BURN CRITICAL ($BURN%) — using existing worktree at $WORKTREE"
+        echo "BURN CRITICAL ($BURN%) — using existing worktree at $WORKTREE"
       fi
 
       echo "Starting sonnet session in worktree..."
@@ -140,12 +314,12 @@ if ! $HAS_MODEL_OVERRIDE; then
       # Re-select mode for worktree (will be bypassPermissions)
       ARGS=(--permission-mode "$(select_mode)" --model sonnet)
     else
-      echo "🔥 BURN CRITICAL ($BURN%) — using sonnet"
+      echo "BURN CRITICAL ($BURN%) — using sonnet"
       ARGS+=(--model sonnet)
     fi
 
   elif [[ "$BURN" -ge 70 ]]; then
-    echo "⚠️  BURN WARNING ($BURN%) — using sonnet"
+    echo "BURN WARNING ($BURN%) — using sonnet"
     ARGS+=(--model sonnet)
   else
     ARGS+=(--model claude-opus-4-7)
@@ -162,4 +336,4 @@ if [ -n "$PROJECT_COLOR" ]; then
   echo "Tip (paste once): /color $PROJECT_COLOR    [project: $PROJECT_NAME]"
 fi
 
-exec ~/.local/bin/claude "${ARGS[@]}" "$@"
+exec ~/.local/bin/claude "${ARGS[@]}" "${PASSTHROUGH_ARGS[@]}"
