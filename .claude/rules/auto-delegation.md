@@ -135,14 +135,66 @@ called with `isolation: "worktree"`. This includes:
 | `quick-fix` (haiku) | No | Optional |
 | `critic` (read-only) | No | Optional |
 
+### Mandatory Agent Dispatch Prefixes (BOTH required)
+
+Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include
+BOTH of the following prefixes verbatim at the top of the prompt, BEFORE any
+task-specific instructions. The orchestrator owns the responsibility for
+injecting both. Agents that receive a prompt missing either prefix exhibit
+the failure modes documented in `JohnGavin/llm#182` (sandbox over-restrict)
+and `JohnGavin/llm#191` (silent drift to main checkout).
+
+**Prefix 1 — Bash discipline** (from `bash-safety.md`):
+
+```
+**CRITICAL — Bash discipline:** Compound bash commands (`&&`/`||`/`;`/`|`) are
+HOOK-REJECTED in block mode. Every Bash tool call must contain exactly ONE
+command. The ONLY exception is subshell `(cd dir && cmd)` for atomic cd+cmd.
+Use `git -C <path>` for git operations. For multi-step shell logic, write a
+script file and run it.
+```
+
+**Prefix 2 — Worktree isolation** (closes `JohnGavin/llm#191`):
+
+```
+**CRITICAL — Worktree isolation:** Your worktree is $WORKTREE_PATH (the
+orchestrator replaces this with the actual absolute path before dispatch).
+ALL writes (Edit, Write, Bash) MUST target paths under $WORKTREE_PATH.
+NEVER write to the orchestrator's main checkout. For read-only reference
+you may Read/Grep from main-checkout paths.
+
+Git operations MUST use `git -C $WORKTREE_PATH ...`. Your worktree's branch
+is set by the orchestrator — NEVER `git checkout main` or any other branch.
+If you need to switch branches, STOP and report back — let the orchestrator
+decide.
+
+When you finish, your report MUST include three self-check lines:
+  - pwd (must start with $WORKTREE_PATH)
+  - git -C $WORKTREE_PATH rev-parse --abbrev-ref HEAD (must NOT be `main`)
+  - Last commit SHA on YOUR worktree's branch
+
+If pwd doesn't start with $WORKTREE_PATH, STOP — something is wrong.
+```
+
+Orchestrator responsibilities when dispatching:
+
+1. Compute the worktree path the harness will create (typically `.claude/worktrees/agent-<id>/`) and inject it as the literal `$WORKTREE_PATH` value
+2. Stop referencing absolute paths to the main checkout for write-target file references — use `$WORKTREE_PATH`-relative paths or omit the prefix and use repo-relative paths
+3. After the agent completes, verify: `git -C <main-checkout> rev-parse --abbrev-ref HEAD` should still be `main`, and `git -C <main-checkout> rev-parse HEAD` should match the SHA captured before dispatch. Any drift = isolation failure; cherry-pick the commit onto the intended branch and `git reset` main back
+
 ### Right vs Wrong
 
 ```
-# WRONG: fixer runs in main checkout — live tokens exposed
+# WRONG: fixer runs in main checkout — live tokens exposed, may overwrite .Renviron
 Agent(subagent_type="fixer",
       prompt="Fix R/foo.R line 42 — add NA check before division.")
 
-# RIGHT: fixer isolated to a fresh worktree
+# WRONG: isolation set but neither prefix injected — agent may drift to main checkout (llm#191)
+Agent(subagent_type="fixer",
+      isolation="worktree",
+      prompt="Fix R/foo.R line 42 — add NA check before division.")
+
+# RIGHT: isolation set + BOTH prefixes injected
 Agent(subagent_type="fixer",
       isolation="worktree",
       prompt="""**CRITICAL — Bash discipline:** Compound bash commands
@@ -151,13 +203,14 @@ must contain exactly ONE command. The ONLY exception is subshell `(cd dir && cmd
 for atomic cd+cmd. Use `git -C <path>` for git operations. For multi-step
 shell logic, write a script file and run it.
 
+**CRITICAL — Worktree isolation:** Your worktree is /Users/johngavin/docs_gh/<repo>/.claude/worktrees/agent-<id>.
+ALL writes MUST target paths under that worktree. NEVER write to the main checkout
+at /Users/johngavin/docs_gh/<repo>. Git operations MUST use git -C <worktree-path>.
+NEVER git checkout to a different branch. End-of-run report MUST include pwd,
+git rev-parse --abbrev-ref HEAD, and last commit SHA — all from the worktree.
+
 Fix R/foo.R line 42 — add NA check before division.""")
 ```
-
-Note that the Agent Dispatch Template (from `bash-safety.md` Part 1) is
-included verbatim at the top of the right example above. Both `isolation:
-"worktree"` AND the Bash discipline prefix are required for every Bash-capable
-agent dispatch.
 
 ## Parallel Worktree Sessions
 
