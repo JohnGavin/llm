@@ -21,11 +21,25 @@
 
 set -euo pipefail
 
+# ─── Mode switch ────────────────────────────────────────────────────────────
+# Set AGENT_PUSH_GUARD_MODE=block to enforce; default = log-only.
+# During 48h soak (per #197 rollout plan), default is "log".
+# After clean log review, change DEFAULT_MODE to "block" in a follow-up commit.
+DEFAULT_MODE="log"
+MODE="${AGENT_PUSH_GUARD_MODE:-$DEFAULT_MODE}"
+# ─────────────────────────────────────────────────────────────────────────────
+
 LOG_FILE="$HOME/.claude/logs/agent_push_blocked.log"
+WOULD_BLOCK_LOG="$HOME/.claude/logs/agent_push_would_block.log"
 
 log_blocked() {
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED push to protected branch: $1" >> "$LOG_FILE"
+}
+
+log_would_block() {
+  mkdir -p "$(dirname "$WOULD_BLOCK_LOG")"
+  echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') would-block: $1" >> "$WOULD_BLOCK_LOG"
 }
 
 log_allowed() {
@@ -156,7 +170,13 @@ decide() {
 if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
   PASS=0
   FAIL=0
-  TOTAL=6
+  TOTAL=8
+
+  # Temp log paths to avoid polluting production logs during self-test
+  SELFTEST_LOG="/tmp/agent_push_selftest_blocked_$$"
+  SELFTEST_WOULD_LOG="/tmp/agent_push_selftest_would_$$"
+  LOG_FILE="$SELFTEST_LOG"
+  WOULD_BLOCK_LOG="$SELFTEST_WOULD_LOG"
 
   check_scenario() {
     local n="$1"
@@ -172,6 +192,39 @@ if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
       PASS=$((PASS + 1))
     else
       echo "$n/$TOTAL FAIL  expected=$expected got=$result"
+      FAIL=$((FAIL + 1))
+    fi
+  }
+
+  # effective_action: applies mode logic on top of decide() — returns "allow" or "block"
+  effective_action() {
+    local cmd="$1"
+    local cwd="$2"
+    local mode="$3"
+    local decision
+    decision=$(decide "$cmd" "$cwd")
+    local action
+    action=$(echo "$decision" | cut -d: -f1)
+    if [ "$action" = "block" ] && [ "$mode" = "log" ]; then
+      echo "allow"
+    else
+      echo "$action"
+    fi
+  }
+
+  check_mode_scenario() {
+    local n="$1"
+    local expected="$2"  # "allow" or "block"
+    local cmd="$3"
+    local cwd="$4"
+    local mode="$5"
+    local actual
+    actual=$(effective_action "$cmd" "$cwd" "$mode")
+    if [ "$actual" = "$expected" ]; then
+      echo "$n/$TOTAL PASS  (mode=$mode, effective=$actual)"
+      PASS=$((PASS + 1))
+    else
+      echo "$n/$TOTAL FAIL  expected=$expected got=$actual (mode=$mode)"
       FAIL=$((FAIL + 1))
     fi
   }
@@ -205,6 +258,21 @@ if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
   check_scenario 6 "block" \
     "git push origin HEAD:main" \
     "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 7: default log-only mode + push to main from worktree → ALLOW (would-block, logged)
+  check_mode_scenario 7 "allow" \
+    "git push origin main" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123" \
+    "log"
+
+  # 8: AGENT_PUSH_GUARD_MODE=block + push to main from worktree → BLOCK (enforce mode)
+  check_mode_scenario 8 "block" \
+    "git push origin main" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123" \
+    "block"
+
+  # Cleanup temp test logs
+  rm -f "$SELFTEST_LOG" "$SELFTEST_WOULD_LOG"
 
   echo ""
   echo "$PASS/$TOTAL PASS"
@@ -249,6 +317,20 @@ EFFECTIVE_PATH=$(echo "$DECISION" | cut -d: -f3)
 DISPLAY_CMD="${COMMAND:0:80}"
 [ ${#COMMAND} -gt 80 ] && DISPLAY_CMD="${DISPLAY_CMD}..."
 
+# Log-only mode: record what WOULD have been blocked, then allow through
+if [ "$MODE" = "log" ]; then
+  log_would_block "cmd=${DISPLAY_CMD} cwd=${EFFECTIVE_PATH} target-ref=${TARGET_BRANCH}"
+  cat >&2 <<EOF
+
+[agent_push_guard] LOG-ONLY MODE: would-block push to '${TARGET_BRANCH}' from '${EFFECTIVE_PATH}'.
+Recorded to $WOULD_BLOCK_LOG — switch AGENT_PUSH_GUARD_MODE=block to enforce.
+Rule: agent-no-push-to-main.md | Issue: llm#189 (48h soak, PR #197)
+
+EOF
+  exit 0
+fi
+
+# Enforce mode: block the push
 cat >&2 <<EOF
 
 ╔═════════════════════════════════════════════════════════════════════════════╗
