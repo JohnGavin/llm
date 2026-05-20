@@ -14,6 +14,31 @@ Every Bash tool call, without exception.
 
 ## Part 1: No Compound Commands (Universal `&&` Ban)
 
+> **Status: ENFORCED (block mode)**
+> `COMPOUND_GUARD_MODE=block` is active in `settings.json`. Any Bash call
+> containing `&&`, `||`, `;` (outside a subshell), or `|` between independent
+> commands is rejected by the pre-tool hook with a retry message. The command
+> never reaches the shell. Fix the call and retry — do not attempt to work
+> around the guard.
+
+### Agent Dispatch Template
+
+Every Agent dispatch that involves Bash MUST include the following prefix
+**verbatim** at the top of the agent prompt. Orchestrators are responsible for
+pasting this prefix before any other instructions:
+
+```
+**CRITICAL — Bash discipline:** Compound bash commands (`&&`/`||`/`;`/`|`) are
+HOOK-REJECTED in block mode. Every Bash tool call must contain exactly ONE
+command. The ONLY exception is subshell `(cd dir && cmd)` for atomic cd+cmd.
+Use `git -C <path>` for git operations. For multi-step shell logic, write a
+script file and run it.
+```
+
+This is not optional. An agent that receives a prompt without this prefix will
+default to compound commands and have its calls rejected. The orchestrator owns
+the responsibility for injecting this prefix.
+
 ### CRITICAL: Never Use `&&` in Bash Commands
 
 Compound commands with `&&` trigger confirmation prompts that interrupt workflow.
