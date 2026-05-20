@@ -95,6 +95,22 @@ for line in "${REPOS[@]}"; do
     continue
   fi
 
+  # Idempotency anchor: range reviews store commit_id=range-start, so last_sha
+  # can lag forever behind real HEAD. Skip if HEAD already has any review_job
+  # regardless of what last_sha resolves to. Fixes JohnGavin/llm#198 Bug 2.
+  head_review_count=$("$SQLITE" "$DB" "
+      SELECT COUNT(*) FROM review_jobs rj
+      JOIN commits c ON c.id = rj.commit_id
+      WHERE rj.repo_id = $repo_id
+        AND c.sha = '$head_sha'
+        AND rj.status IN ('done','running','queued','failed');
+  ")
+  if [ "$head_review_count" -gt 0 ]; then
+    log "skip: $name — HEAD($head_sha) already has $head_review_count review(s)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
   [ "$head_sha" = "$last_sha" ] && continue   # up to date
 
   # last_sha must be an ancestor of HEAD, else the branch diverged
