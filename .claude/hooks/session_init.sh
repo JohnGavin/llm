@@ -534,6 +534,83 @@ phase_roborev() {
   fi
 }
 
+# ── Phase 8b: roborev-autoclose visibility ────────────────────────────
+# Reads ~/.claude/.roborev_autoclose_counters.json (written by F1 script).
+# Emits one line: roborev-autoclose: threshold=<T> [closed_today=N, closed_week=M, parse_fail=P]
+# Degrades gracefully when counter file is absent (F1 not yet merged).
+# See llm#224 Phase 4 (F2 — visibility surfaces).
+phase_roborev_autoclose() {
+  local counter_file="${HOME}/.claude/.roborev_autoclose_counters.json"
+  local repo_name
+  repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")")
+
+  if [ ! -f "$counter_file" ]; then
+    echo "roborev-autoclose: threshold=off (counter file absent — feature not yet active)"
+    return
+  fi
+
+  # Pass values via env vars to avoid shell expansion of Python f-string braces
+  # (unquoted heredoc << PYEOF would expand ${threshold} etc. as shell vars)
+  ROBOREV_COUNTER_FILE="$counter_file" ROBOREV_REPO_NAME="$repo_name" python3 << 'PYEOF'
+import json, sys, os
+from datetime import datetime, timezone, timedelta
+
+counter_file = os.environ.get("ROBOREV_COUNTER_FILE", "")
+repo_name = os.environ.get("ROBOREV_REPO_NAME", "unknown")
+
+try:
+    with open(counter_file, "r") as f:
+        data = json.load(f)
+except Exception as e:
+    print("roborev-autoclose: threshold=unknown (counter file unreadable: " + str(e) + ")")
+    sys.exit(0)
+
+by_date = data.get("by_date", {})
+today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+# Last 7 days including today
+week_dates = set()
+for i in range(7):
+    d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+    week_dates.add(d)
+
+# Effective threshold: most recent date entry that mentions this repo
+threshold = "unknown"
+for date_key in sorted(by_date.keys(), reverse=True):
+    entry = by_date[date_key]
+    t_obs = entry.get("threshold_observed", {})
+    if repo_name in t_obs:
+        threshold = t_obs[repo_name]
+        break
+    elif t_obs:
+        # Fall back to any repo's threshold as global default
+        threshold = next(iter(t_obs.values()))
+        break
+
+# closed_today for this repo
+today_entry = by_date.get(today_utc, {})
+today_by_repo = today_entry.get("by_repo", {})
+if repo_name in today_by_repo:
+    closed_today = int(today_by_repo[repo_name].get("closed", 0))
+else:
+    closed_today = int(today_entry.get("closed_count", 0))
+
+parse_fail = int(today_entry.get("parse_fail_count", 0))
+
+# closed_week across last 7 days
+closed_week = 0
+for d in week_dates:
+    entry = by_date.get(d, {})
+    by_repo = entry.get("by_repo", {})
+    if repo_name in by_repo:
+        closed_week += int(by_repo[repo_name].get("closed", 0))
+    else:
+        closed_week += int(entry.get("closed_count", 0))
+
+print(f"roborev-autoclose: threshold={threshold} [closed_today={closed_today}, closed_week={closed_week}, parse_fail={parse_fail}]")
+PYEOF
+}
+
 # ── Phase 9: Weekly Burn Rate ─────────────────────────────────────────
 phase_burn_rate() {
   local script="$CLAUDE_DIR/scripts/burn_rate_check.sh"
@@ -675,6 +752,9 @@ if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
     roborev_status="roborev:off"
   fi
 fi
+
+# Phase 8b: roborev-autoclose visibility
+phase_roborev_autoclose 2>/dev/null || echo "roborev-autoclose: threshold=unknown (error reading counter file)"
 
 # Phase 9: Burn rate (run in background, use cache if available)
 burn_output=""
