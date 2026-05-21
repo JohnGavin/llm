@@ -170,13 +170,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Loop intervals:** `30s`, `5m`, `1h`, `2d` (or trailing: `every 30 minutes`). Minimum `/schedule` interval: 1 hour.
 
-**Common loop patterns:**
-- `/loop 30m /check` — Continuous R CMD check (catch issues early)
-- `/loop 1h /ctx-check` — Verify ctx.yaml coverage
-- `/loop 5m /roborev` — Auto code review on push
-- `/schedule '0 9 * * 1-5' /pr-status` — Weekday 9 AM PR checks
-
-**Loop management:** List running loops via `/schedule list`. Stop: `/schedule stop <job-id>`.
+**Common loop patterns:** `/loop 30m /check` (continuous R CMD check), `/loop 5m /roborev` (auto code review), `/schedule '0 9 * * 1-5' /pr-status` (weekday AM PR checks). List: `/schedule list`. Stop: `/schedule stop <job-id>`.
 
 **Hooks integration:** R auto-format and dark-contrast checks run via pre-commit scripts; see `~/.claude/scripts/r_code_check.sh` and `~/.claude/scripts/check_dark_contrast.sh`.
 
