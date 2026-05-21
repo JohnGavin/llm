@@ -33,14 +33,9 @@ sanitize() {
   echo "$1" | tr '/ ' '__' | sed 's/^_*//'
 }
 
-# ── Env opt-out ───────────────────────────────────────────────────────────────
-if [ "${SKIP_SESSION_END_REFINE:-}" = "1" ]; then
-  log "result=skipped reason=SKIP_SESSION_END_REFINE"
-  echo "skipping (opt-out env var)"
-  exit 0
-fi
-
 # ── Determine project root ────────────────────────────────────────────────────
+# Non-destructive setup runs BEFORE any opt-out checks so the soak period
+# actually exercises repo-resolution and slug-derivation logic (C2 Medium fix).
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT=""
 if [ -z "$PROJECT_ROOT" ]; then
   log "result=skipped reason=not-a-git-repo"
@@ -50,6 +45,23 @@ if [ -z "$PROJECT_ROOT" ]; then
   exit 0
 fi
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+# ── Read session-start SHA (non-destructive, needed for logging) ──────────────
+SLUG=$(sanitize "$PROJECT_NAME")
+STATE_FILE="$HOME/.claude/.session_start_sha_${SLUG}"
+START_SHA=""
+if [ -f "$STATE_FILE" ]; then
+  START_SHA=$(head -1 "$STATE_FILE" 2>/dev/null | tr -d '[:space:]')
+fi
+
+# ── Env opt-out (AFTER non-destructive setup) ─────────────────────────────────
+# The skip exits here — the setup above is exercised in all runs (including soak)
+# so the soak validates that repo-resolution and slug/state-file derivation work.
+if [ "${SKIP_SESSION_END_REFINE:-}" = "1" ]; then
+  log "project=$PROJECT_NAME slug=$SLUG state_file_exists=$([ -f "$STATE_FILE" ] && echo yes || echo no) start_sha=${START_SHA:-EMPTY} result=skipped reason=SKIP_SESSION_END_REFINE"
+  echo "skipping (opt-out env var)"
+  exit 0
+fi
 
 # ── Per-project TOML opt-out ──────────────────────────────────────────────────
 TOML="$PROJECT_ROOT/.roborev.toml"
@@ -63,10 +75,7 @@ if [ -f "$TOML" ]; then
   fi
 fi
 
-# ── Read session-start SHA ────────────────────────────────────────────────────
-SLUG=$(sanitize "$PROJECT_NAME")
-STATE_FILE="$HOME/.claude/.session_start_sha_${SLUG}"
-
+# ── Validate session-start SHA ────────────────────────────────────────────────
 if [ ! -f "$STATE_FILE" ]; then
   log "project=$PROJECT_NAME result=skipped reason=no-session-start-sha"
   if [ "${SESSION_END_REFINE_DRYRUN:-}" = "1" ]; then
@@ -75,7 +84,6 @@ if [ ! -f "$STATE_FILE" ]; then
   exit 0
 fi
 
-START_SHA=$(cat "$STATE_FILE" 2>/dev/null | head -1 | tr -d '[:space:]')
 if [ -z "$START_SHA" ]; then
   log "project=$PROJECT_NAME result=skipped reason=empty-state-file"
   if [ "${SESSION_END_REFINE_DRYRUN:-}" = "1" ]; then
