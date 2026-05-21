@@ -125,6 +125,21 @@ for r in repos:
         for j in jobs:
             f.write(json.dumps(dict(j)) + "\n")
 
+    # Warn when done jobs lack finished_at — they are silently excluded above.
+    # A non-zero count indicates review_jobs schema integrity issues.
+    excluded = con.execute(
+        "SELECT COUNT(*) FROM review_jobs rj "
+        "WHERE rj.repo_id = ? AND rj.status = 'done' AND rj.finished_at IS NULL",
+        (r["id"],)
+    ).fetchone()[0]
+    if excluded > 0:
+        import sys as _sys
+        print(
+            f"WARN: {excluded} done-but-finished_at-null job(s) excluded from "
+            f"handoff for repo '{r['name']}' — investigate review_jobs schema integrity",
+            file=_sys.stderr,
+        )
+
 con.close()
 PYEOF
 
