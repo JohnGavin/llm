@@ -5,55 +5,91 @@
 # hooks (.sh), memory (.md), commands (.md), scripts (.sh).
 # Other .claude/ paths (e.g. worktrees/, logs/) are intentionally excluded.
 
+# Internal helper: derive human-readable scope text from scan_specs.
+# scan_specs: named list of lists with fields $pattern and $recurse.
+# n_files: integer — total files in vig_scrolly_config after exclusions.
+# Returns a list with two character(1) elements:
+#   $prose — for methodology section prose
+#   $alt   — shorter string for fig-alt attributes
+.build_scrolly_scope <- function(scan_specs, n_files) {
+  cat_desc <- vapply(names(scan_specs), function(cat) {
+    spec     <- scan_specs[[cat]]
+    pat      <- spec$pattern
+    rec      <- isTRUE(spec$recurse)
+    pat_desc <- if (grepl("^SKILL\\.md\\$", pat, ignore.case = FALSE)) {
+      "SKILL.md only"
+    } else if (grepl("^\\.md\\$", pat)) {
+      if (rec) "*.md (recursive)" else "*.md (top-level)"
+    } else if (grepl("^\\.sh\\$", pat)) {
+      if (rec) "*.sh (recursive)" else "*.sh (top-level)"
+    } else {
+      pat
+    }
+    paste0(cat, " (", pat_desc, ")")
+  }, character(1L))
+
+  cat_list <- paste(cat_desc, collapse = ", ")
+
+  prose <- paste0(
+    "Tracked files scanned from `.claude/` using per-category specs: ",
+    cat_list,
+    ". Paths under `archive/` and `worktrees/` subtrees are excluded. ",
+    n_files, " files total."
+  )
+
+  alt <- paste0(
+    "Config files from `.claude/` across ",
+    length(scan_specs), " categories (",
+    paste(names(scan_specs), collapse = ", "),
+    "). Skills match SKILL.md only; rules use recursive *.md; all other categories ",
+    "use top-level glob. archive/ and worktrees/ excluded."
+  )
+
+  list(prose = prose, alt = alt)
+}
+
 plan_scrolly_config <- function() {
   list(
+    # scrolly_scan_specs: canonical per-category scan configuration.
+    # Both vig_scrolly_config and scrolly_scope_text derive from this target
+    # so prose and data stay in sync when specs change.
+    tar_target(
+      scrolly_scan_specs,
+      list(
+        rules    = list(pattern = "\\.md$",      recurse = TRUE),
+        skills   = list(pattern = "SKILL\\.md$", recurse = TRUE),
+        agents   = list(pattern = "\\.md$",      recurse = FALSE),
+        hooks    = list(pattern = "\\.sh$",      recurse = FALSE),
+        memory   = list(pattern = "\\.md$",      recurse = FALSE),
+        commands = list(pattern = "\\.md$",      recurse = FALSE),
+        scripts  = list(pattern = "\\.sh$",      recurse = FALSE)
+      ),
+      packages = character(0)
+    ),
+    # scrolly_scope_text: human-readable scope description derived from
+    # scrolly_scan_specs. Referenced in vignette prose and fig-alt attributes
+    # via safe_tar_read("scrolly_scope_text") — satisfies dynamic-prose-values rule.
+    tar_target(
+      scrolly_scope_text,
+      .build_scrolly_scope(scrolly_scan_specs, nrow(vig_scrolly_config)),
+      packages = character(0)
+    ),
     tar_target(
       vig_scrolly_config,
       {
         claude_dir <- here::here(".claude")
 
-        # File patterns to scan per category
-        scan_specs <- list(
-          rules    = list(
-            path    = file.path(claude_dir, "rules"),
-            pattern = "\\.md$",
-            recurse = TRUE
-          ),
-          skills   = list(
-            path    = file.path(claude_dir, "skills"),
-            pattern = "SKILL\\.md$",
-            recurse = TRUE
-          ),
-          agents   = list(
-            path    = file.path(claude_dir, "agents"),
-            pattern = "\\.md$",
-            recurse = FALSE
-          ),
-          hooks    = list(
-            path    = file.path(claude_dir, "hooks"),
-            pattern = "\\.sh$",
-            recurse = FALSE
-          ),
-          memory   = list(
-            path    = file.path(claude_dir, "memory"),
-            pattern = "\\.md$",
-            recurse = FALSE
-          ),
-          commands = list(
-            path    = file.path(claude_dir, "commands"),
-            pattern = "\\.md$",
-            recurse = FALSE
-          ),
-          scripts  = list(
-            path    = file.path(claude_dir, "scripts"),
-            pattern = "\\.sh$",
-            recurse = FALSE
-          )
-        )
+        # Build full scan_specs (with path) from the canonical spec target
+        full_specs <- lapply(names(scrolly_scan_specs), function(cat) {
+          s <- scrolly_scan_specs[[cat]]
+          s$path <- file.path(claude_dir, cat)
+          s
+        })
+        names(full_specs) <- names(scrolly_scan_specs)
 
         # Collect files per category
-        rows <- lapply(names(scan_specs), function(cat) {
-          spec  <- scan_specs[[cat]]
+        rows <- lapply(names(full_specs), function(cat) {
+          spec  <- full_specs[[cat]]
           if (!dir.exists(spec$path)) return(tibble::tibble())
           files <- list.files(
             spec$path,
@@ -117,9 +153,7 @@ plan_scrolly_config <- function() {
         dplyr::mutate(
           all_files,
           path         = as.character(fs::path_rel(abs_path, repo_root)),
-          category     = factor(category,
-                                levels = c("rules", "skills", "agents", "hooks",
-                                           "memory", "commands", "scripts")),
+          category     = factor(category, levels = names(scrolly_scan_specs)),
           n_lines      = vapply(abs_path, count_lines, integer(1L)),
           n_bytes      = as.integer(file.info(abs_path)$size),
           git_age_days = vapply(abs_path, get_git_age, numeric(1L))
