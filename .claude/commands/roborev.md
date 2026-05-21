@@ -42,6 +42,53 @@ case "$ARG" in
       echo "roborev: ON for $(basename "$REPO_DIR") (agent: $AGENT)"
       echo "Last 5 reviews:"
       roborev list --limit 5 2>/dev/null || echo "  (daemon not running)"
+
+      # Severity-autoclose suppression count (llm#224 Phase 4 — F2 visibility)
+      # Only shown if counter file exists and today's count > 0.
+      _COUNTER_FILE="${HOME}/.claude/.roborev_autoclose_counters.json"
+      _REPO_NAME=$(basename "$REPO_DIR")
+      if [ -f "$_COUNTER_FILE" ]; then
+        _SUPPRESSED=$(ROBOREV_COUNTER_FILE="$_COUNTER_FILE" ROBOREV_REPO_NAME="$_REPO_NAME" python3 << 'PYEOF'
+import json, sys, os
+from datetime import datetime, timezone
+
+counter_file = os.environ.get("ROBOREV_COUNTER_FILE", "")
+repo_name = os.environ.get("ROBOREV_REPO_NAME", "unknown")
+
+try:
+    with open(counter_file, "r") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+
+today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+by_date = data.get("by_date", {})
+today_entry = by_date.get(today, {})
+
+# Effective threshold (most recent)
+threshold = "unknown"
+for date_key in sorted(by_date.keys(), reverse=True):
+    t_obs = by_date[date_key].get("threshold_observed", {})
+    if repo_name in t_obs:
+        threshold = t_obs[repo_name]
+        break
+    elif t_obs:
+        threshold = next(iter(t_obs.values()))
+        break
+
+# Today's closed count for this repo
+by_repo = today_entry.get("by_repo", {})
+if repo_name in by_repo:
+    closed = int(by_repo[repo_name].get("closed", 0))
+else:
+    closed = int(today_entry.get("closed_count", 0))
+
+if closed > 0:
+    print(f"Suppressed by severity threshold: {closed} (threshold={threshold})")
+PYEOF
+        )
+        [ -n "$_SUPPRESSED" ] && echo "$_SUPPRESSED"
+      fi
     else
       echo "roborev: OFF for $(basename "$REPO_DIR")"
       echo "Enable with: /roborev on"
