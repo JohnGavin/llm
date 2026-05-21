@@ -1,3 +1,9 @@
+---
+name: agent-no-push-to-main
+description: Prevents worktree-isolated agents from pushing to protected branches (main/master/release/prod).
+type: enforcement
+---
+
 # Rule: Agent Worktree — No Push to Protected Branches
 
 ## Source
@@ -17,20 +23,27 @@ branch.
 
 ---
 
-## CRITICAL: This Rule Is ENFORCED, Not Advisory
+## CRITICAL: This Rule Is Enforced — Block Mode Active After Soak Period
 
-`~/.claude/hooks/agent_push_guard.sh` fires as a **PreToolUse:Bash** hook and
-exits non-zero (code 2) before the command reaches the shell. The hook cannot
-be bypassed by prompt wording alone.
+`~/.claude/hooks/agent_push_guard.sh` fires as a **PreToolUse:Bash** hook.
+After the 48-hour soak period ended (`SOAK_END_UTC=2026-05-21T17:00:09Z`), the
+hook defaults to **block** mode and exits non-zero (code 2) before the command
+reaches the shell. The hook cannot be bypassed by prompt wording alone.
 
-### Rollout: LOG-only mode (48h soak, then enforce)
+### Soak period and automatic expiry
 
-The hook defaults to `AGENT_PUSH_GUARD_MODE=log` for the first 48 hours after deployment. In log-only mode:
-- A would-be-blocked push is **allowed through** but recorded to `~/.claude/logs/agent_push_would_block.log`
-- After 48h of clean audit (no unexpected blocks), the default flips to `block` in a follow-up commit
-- To force enforcement before the flip: set `AGENT_PUSH_GUARD_MODE=block` in your shell
+The hook contains a hardcoded `SOAK_END_UTC` timestamp. Before that date the
+hook defaults to log-only mode (records would-be-blocked pushes, allows them
+through). After that date the hook automatically defaults to block mode.
 
-Once the default is `block`, the bypass remains via `AGENT_PUSH_OK=1` (per-command override with audit log).
+The soak period for this hook ended on `2026-05-21T17:00:09Z` — **block mode
+is now the default**.
+
+- In log-only mode: a would-be-blocked push is **allowed through** but recorded to `~/.claude/logs/agent_push_would_block.log`
+- In block mode: the push is rejected with exit code 2 and logged to `~/.claude/logs/agent_push_blocked.log`
+- To override the automatic default, set `AGENT_PUSH_GUARD_MODE=log` (revert to log-only) or `AGENT_PUSH_GUARD_MODE=block` (force enforce)
+
+The bypass for legitimate orchestrator pushes remains: `AGENT_PUSH_OK=1 git push origin <branch>` (per-command override, audit-logged).
 
 ---
 

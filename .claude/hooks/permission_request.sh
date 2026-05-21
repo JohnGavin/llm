@@ -82,10 +82,13 @@ try:
     ):
         verdict = "APPROVE_GIT"
     elif re.match(
-        r'^(ls|find|which|stat|wc|head|tail|cat|file|du|df|pwd|echo|printf|uname|sw_vers)(\s|$)',
+        r'^(ls|which|stat|wc|head|tail|cat|file|du|df|pwd|echo|printf|uname|sw_vers)(\s|$)',
         cmd
-    ) and not re.search(r'\s(-delete|--delete|-exec)\b', cmd):
-        # find -delete / find -exec and similar destructive flags must not auto-approve
+    ):
+        # NOTE: `find` is intentionally excluded from APPROVE_BASH.
+        # A blacklist of dangerous find flags (-exec, -execdir, -ok, -okdir, -delete,
+        # -fprint, -fls) is too subtle — new dangerous flags are added without
+        # updating the guard. Instead, find always goes through normal human approval.
         verdict = "APPROVE_BASH"
 
     safe_exit(tool, verdict, cmd)
@@ -197,9 +200,9 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     APPROVE
 
   _selftest_case \
-    "find with quoted pattern, no pipe" \
+    "find with quoted pattern: find is NOT auto-approved (removed from APPROVE_BASH)" \
     '{"tool_name":"Bash","tool_input":{"command":"find . -name '\''*.tmp'\''"}}' \
-    APPROVE
+    REJECT
 
   _selftest_case \
     "git with tab whitespace: git<TAB>status" \
@@ -223,6 +226,31 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     REJECT
 
   _selftest_case \
+    "find -execdir rm: must not auto-approve execdir rm" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -execdir rm {} +"}}' \
+    REJECT
+
+  _selftest_case \
+    "find -ok rm: must not auto-approve ok rm" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -ok rm {} \\;"}}' \
+    REJECT
+
+  _selftest_case \
+    "find -okdir rm: must not auto-approve okdir rm" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -okdir rm {} \\;"}}' \
+    REJECT
+
+  _selftest_case \
+    "find -fprint: must not auto-approve file output" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -name '\''*.tmp'\'' -fprint out.txt"}}' \
+    REJECT
+
+  _selftest_case \
+    "find -fls: must not auto-approve listing output" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . -fls out.txt"}}' \
+    REJECT
+
+  _selftest_case \
     "output redirect >: cat > file must not auto-approve" \
     '{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/evil.sh"}}' \
     REJECT
@@ -232,7 +260,7 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"echo hello >> /tmp/out.txt"}}' \
     REJECT
 
-  echo "=== Results: $_pass passed, $_fail failed (20 total) ==="
+  echo "=== Results: $_pass passed, $_fail failed (25 total) ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 

@@ -22,10 +22,28 @@
 set -euo pipefail
 
 # ─── Mode switch ────────────────────────────────────────────────────────────
-# Set AGENT_PUSH_GUARD_MODE=block to enforce; default = log-only.
-# During 48h soak (per #197 rollout plan), default is "log".
-# After clean log review, change DEFAULT_MODE to "block" in a follow-up commit.
-DEFAULT_MODE="log"
+# Soak end: 48h after the initial log-only commit (4f38319, 2026-05-19T17:00:09Z).
+# After this timestamp the hook defaults to "block" regardless of DEFAULT_MODE.
+# Explicitly set AGENT_PUSH_GUARD_MODE=log to opt back into log-only.
+SOAK_END_UTC="2026-05-21T17:00:09Z"
+
+# Compute current UTC epoch vs soak-end epoch. Use python3 for portability
+# (macOS `date -d` is not available; BSD `date -j -f` differs from GNU).
+_now_epoch=$(python3 -c "import time; print(int(time.time()))")
+_soak_epoch=$(python3 -c "
+import datetime
+s = '${SOAK_END_UTC}'
+dt = datetime.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+print(int(dt.timestamp()))
+")
+
+if [ "$_now_epoch" -ge "$_soak_epoch" ]; then
+  # Soak period has ended — default to enforce mode.
+  DEFAULT_MODE="block"
+else
+  DEFAULT_MODE="log"
+fi
+
 MODE="${AGENT_PUSH_GUARD_MODE:-$DEFAULT_MODE}"
 # ─────────────────────────────────────────────────────────────────────────────
 
