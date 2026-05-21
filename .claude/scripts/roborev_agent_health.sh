@@ -35,8 +35,12 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-ROBOREV="${ROBOREV:-/usr/local/bin/roborev}"
-CODEX="${CODEX:-/usr/local/bin/codex}"
+if [ -z "${ROBOREV:-}" ]; then
+    ROBOREV="$(command -v roborev 2>/dev/null || echo /usr/local/bin/roborev)"
+fi
+if [ -z "${CODEX:-}" ]; then
+    CODEX="$(command -v codex 2>/dev/null || echo /usr/local/bin/codex)"
+fi
 SQLITE="${SQLITE:-/usr/bin/sqlite3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 CONFIG_TOML="${CONFIG_TOML:-$HOME/.roborev/config.toml}"
@@ -95,16 +99,35 @@ _timeout() {
   elif command -v gtimeout >/dev/null 2>&1; then
     gtimeout "$secs" "$@"
   else
-    # Shell-only fallback: run in background, sleep, kill if still running.
+    # Shell-only fallback: run in background; watchdog sends SIGTERM then
+    # SIGKILL after a 2-second grace period and exits 124 (GNU coreutils
+    # convention) so the caller can detect that the timeout actually fired.
     "$@" &
     local pid=$!
-    (sleep "$secs" && kill -TERM "$pid" 2>/dev/null) &
+    (
+      sleep "$secs"
+      kill -TERM "$pid" 2>/dev/null
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null
+      exit 124
+    ) &
     local watchdog=$!
-    wait "$pid" 2>/dev/null
-    local rc=$?
-    kill -TERM "$watchdog" 2>/dev/null
-    wait "$watchdog" 2>/dev/null
-    return "$rc"
+    if wait "$pid" 2>/dev/null; then
+      local rc=$?
+      # Child completed before timeout — reap the watchdog.
+      kill "$watchdog" 2>/dev/null
+      wait "$watchdog" 2>/dev/null
+      return "$rc"
+    else
+      # Child was killed — check whether the watchdog already exited (fired).
+      if ! kill -0 "$watchdog" 2>/dev/null; then
+        wait "$watchdog" 2>/dev/null
+        return 124
+      fi
+      kill "$watchdog" 2>/dev/null
+      wait "$watchdog" 2>/dev/null
+      return 1
+    fi
   fi
 }
 
