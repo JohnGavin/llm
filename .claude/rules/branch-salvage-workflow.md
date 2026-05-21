@@ -1,5 +1,7 @@
 ---
+name: branch-salvage-workflow
 description: Three-step pre-salvage check before rebasing or cherry-picking stale branches; prevents dispatching subagents to no-op work
+type: rule
 ---
 
 # Rule: Branch Salvage Workflow
