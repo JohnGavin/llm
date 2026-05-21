@@ -177,7 +177,14 @@ offer_worktree() {
   printf "Open a new worktree? [y / N / branch-name]: "
 
   local answer
-  read -r answer </dev/tty
+  if [ -t 0 ] && [ -r /dev/tty ]; then
+    if ! read -r answer </dev/tty 2>/dev/null; then
+      answer="n"
+    fi
+  else
+    # non-interactive — decline worktree, fall through to plain claude
+    answer="n"
+  fi
 
   case "$answer" in
     ""|n|N) return 0 ;;
@@ -191,6 +198,16 @@ offer_worktree() {
   wt_path="$(cd "${repo_root}/.." && pwd)/${repo_name}-${suffix}"
 
   if [ -d "$wt_path" ]; then
+    # Safety check: confirm the existing directory really is the intended branch,
+    # not a collision where a different branch mapped to the same path
+    # (e.g. feat/foo and feat-foo both → feat-foo under tr '/' '-').
+    local actual_branch
+    actual_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$actual_branch" != "$branch" ]; then
+      echo "ERROR: Directory $wt_path exists but is on branch '$actual_branch', not '$branch'."
+      echo "Refusing to reuse — possible branch-name collision. Use a different branch name."
+      return 0
+    fi
     echo "Worktree already exists: $wt_path"
     echo "Switched to worktree: $wt_path"
     cd "$wt_path"
@@ -201,11 +218,32 @@ offer_worktree() {
   echo "Creating worktree $wt_path on branch $branch ..."
   if git -C "$repo_root" worktree add -b "$branch" "$wt_path" 2>/dev/null; then
     echo "Switched to worktree: $wt_path"
-  elif git -C "$repo_root" worktree add -B "$branch" "$wt_path" 2>/dev/null; then
-    echo "Switched to worktree (reset existing branch): $wt_path"
+  elif git -C "$repo_root" worktree add "$wt_path" "$branch" 2>/dev/null; then
+    # Branch already exists — attach worktree without resetting its tip.
+    echo "Switched to worktree (existing branch): $wt_path"
   else
-    echo "Could not create worktree — continuing in main checkout."
-    return 0
+    # Branch exists AND may be checked out elsewhere, or user wants a forced reset.
+    local reset_answer="n"
+    printf "Branch '%s' already exists. Reset its tip to current HEAD? [y/N]: " "$branch"
+    if [ -t 0 ] && [ -r /dev/tty ]; then
+      if ! read -r reset_answer </dev/tty 2>/dev/null; then
+        reset_answer="n"
+      fi
+    fi
+    case "$reset_answer" in
+      y|Y)
+        if git -C "$repo_root" worktree add -B "$branch" "$wt_path"; then
+          echo "Switched to worktree (branch tip reset): $wt_path"
+        else
+          echo "Could not create worktree — continuing in main checkout."
+          return 0
+        fi
+        ;;
+      *)
+        echo "Could not create worktree — continuing in main checkout."
+        return 0
+        ;;
+    esac
   fi
 
   cd "$wt_path"
