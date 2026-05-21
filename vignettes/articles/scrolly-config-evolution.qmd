@@ -37,8 +37,29 @@ safe_tar_read <- function(name) {
 cfg <- safe_tar_read("vig_scrolly_config")
 if (is.null(cfg)) {
   cfg <- tibble::tibble(
-    path = character(0), category = factor(character(0), levels = c("rules","skills","agents","hooks","memory","commands","scripts")),
+    path = character(0),
+    category = factor(character(0),
+      levels = c("rules", "skills", "agents", "hooks", "memory", "commands", "scripts")),
     n_lines = integer(0), n_bytes = integer(0), git_age_days = numeric(0)
+  )
+}
+
+scope <- safe_tar_read("scrolly_scope_text")
+if (is.null(scope)) {
+  scope <- list(
+    prose = paste0(
+      "Tracked files scanned from `.claude/` across seven categories: ",
+      "rules (*.md, recursive), skills (SKILL.md only), agents (*.md, top-level), ",
+      "hooks (*.sh, top-level), memory (*.md, top-level), commands (*.md, top-level), ",
+      "scripts (*.sh, top-level). ",
+      "archive/ and worktrees/ subtrees excluded."
+    ),
+    alt = paste0(
+      "Config files from `.claude/` across seven categories ",
+      "(rules, skills, agents, hooks, memory, commands, scripts). ",
+      "Skills match SKILL.md only; rules use recursive *.md; all others use top-level glob. ",
+      "archive/ and worktrees/ excluded."
+    )
   )
 }
 
@@ -68,7 +89,7 @@ base_theme <- theme_minimal(base_size = 13) +
 
 :::{#cr-scene1 .sticky}
 ```{r scene1-plot}
-#| fig-alt: "Each dot represents one tracked config file across seven .claude/ subdirectories (rules, skills, agents, hooks, memory, commands, scripts). All dots are shown in the same grey colour with no additional encoding, establishing the full dataset baseline before any categorical breakdown."
+#| fig-alt: !expr scope$alt
 ggplot(cfg, aes(x = n_bytes, y = n_lines)) +
   geom_point(colour = "#888888", alpha = 0.6, size = 2) +
   scale_x_continuous(labels = scales::label_number(suffix = " B")) +
@@ -239,12 +260,13 @@ Commands sit in the middle: a slash command needs enough prose to explain the wo
 
 ### What this vignette computes
 
-This vignette inspects a tracked subset of `.claude/` configuration files — seven subdirectories: rules, skills, agents, hooks, memory, commands, and scripts. Paths like `worktrees/`, `logs/`, and `data/` are intentionally excluded. The `r n_files`-row dataset is re-encoded across five progressive-disclosure scenes with stable colours per category.
+`r scope$prose` The `r n_files`-row dataset is re-encoded across five progressive-disclosure scenes with stable colours per category.
 
 ### Data sources
 
 - `vig_scrolly_config` target (built from `R/tar_plans/plan_scrolly_config.R`), pre-computed RDS at `inst/extdata/vignettes/vig_scrolly_config.rds`
-- Underlying file system: `.claude/rules/**`, `.claude/skills/**`, `.claude/agents/*`, `.claude/hooks/*`, `.claude/memory/*`, `.claude/commands/*`, `.claude/scripts/*`
+- `scrolly_scope_text` target (built from `R/tar_plans/plan_scrolly_config.R`), derives scope description from `scrolly_scan_specs` metadata
+- Underlying file system: `.claude/rules/**` (*.md recursive), `.claude/skills/**` (SKILL.md only), `.claude/agents/*` (*.md top-level), `.claude/hooks/*` (*.sh top-level), `.claude/memory/*` (*.md top-level), `.claude/commands/*` (*.md top-level), `.claude/scripts/*` (*.sh top-level); `archive/` and `worktrees/` subtrees excluded
 - `git_age_days` from `git log -1 --format=%ct -- <file>` per file
 
 ### AI disclosure
