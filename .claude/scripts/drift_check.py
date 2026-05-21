@@ -25,6 +25,7 @@ import sys
 import subprocess
 import datetime
 import pathlib
+import warnings
 
 # Must be set before importing tokenizers — the multiprocessing pool
 # default conflicts with the nix-shell python environment and silently
@@ -181,10 +182,27 @@ def load_baseline():
     # existing .npy files produce correct cosine distances without requiring a
     # manual --rebuild-baseline run.
     centroid_norm = np.linalg.norm(centroid)
-    if centroid_norm > 1e-10:
+    needs_renorm = centroid_norm > 1e-10 and abs(centroid_norm - 1.0) > 1e-9
+    if needs_renorm:
+        # Renormalise centroid to unit length for correct cosine distances.
         centroid = centroid / centroid_norm
     with open(BASELINE_META) as f:
         meta = json.load(f)
+    if needs_renorm:
+        # Bug fix (#3344, #3319): dist_mean and dist_std in this legacy baseline
+        # were computed against the un-normalised centroid, so they no longer
+        # match the renormalised centroid.  Returning stale stats silently would
+        # produce nonsense z-scores.  Invalidate them and warn so the caller
+        # knows to trigger a --rebuild-baseline pass.
+        warnings.warn(
+            f"Baseline at {BASELINE_META} predates centroid normalization. "
+            "dist_mean and dist_std are stale and have been set to None. "
+            "Run drift_check.py --rebuild-baseline to refresh distribution statistics.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        meta["dist_mean"] = None
+        meta["dist_std"] = None
     return centroid, meta
 
 
@@ -237,6 +255,9 @@ def main() -> int:
     if centroid is None:
         log("no baseline — try --rebuild-baseline")
         return 0
+    if meta.get("dist_mean") is None or meta.get("dist_std") is None:
+        log("stale baseline (dist_mean/dist_std invalidated after renorm) — run --rebuild-baseline")
+        return 1
 
     text = session_assistant_text(session_id)
     if not text.strip():
