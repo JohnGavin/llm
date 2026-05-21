@@ -47,3 +47,4 @@ For detailed guidance (captions, Mermaid, plotly theming), invoke `visualization
 
 - `accessibility` rule — contrast, alt text
 - `visualization-detailed` skill — full caption spec, plotly, Mermaid
+- `mermaid-click-anchors` — every clickable node URL into project source must include `#L<n>`
