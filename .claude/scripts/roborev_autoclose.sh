@@ -41,7 +41,9 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 set -euo pipefail
 
-ROBOREV="${ROBOREV:-/usr/local/bin/roborev}"
+if [ -z "${ROBOREV:-}" ]; then
+    ROBOREV="$(command -v roborev 2>/dev/null || echo /usr/local/bin/roborev)"
+fi
 THRESHOLD_DAYS="${THRESHOLD_DAYS:-30}"
 APPLY=0
 LOGFILE="$HOME/.claude/logs/roborev_autoclose.log"
