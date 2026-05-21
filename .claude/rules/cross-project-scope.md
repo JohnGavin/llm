@@ -1,3 +1,9 @@
+---
+name: cross-project-scope
+description: Only llm sessions may work cross-project; all other sessions are own-tree-only and must file issues rather than directly editing other projects.
+type: rule
+---
+
 # Rule: Cross-Project Scope — Only llm Sessions May Work Cross-Project
 
 ## Source
