@@ -95,15 +95,21 @@ for line in "${REPOS[@]}"; do
     continue
   fi
 
-  # Idempotency anchor: range reviews store commit_id=range-start, so last_sha
-  # can lag forever behind real HEAD. Skip if HEAD already has any review_job
-  # regardless of what last_sha resolves to. Fixes JohnGavin/llm#198 Bug 2.
+  # Idempotency anchor: range reviews set commit_id=NULL (no commits row for the
+  # range tip), so the old JOIN on commits.sha always returned 0 for range jobs,
+  # making every poll enqueue a duplicate. Fix: also match against the END of
+  # git_ref (the reviewed tip SHA) for range jobs.
+  # Fixes JohnGavin/llm#198 Bug 2 / roborev #4013.
   head_review_count=$("$SQLITE" "$DB" "
       SELECT COUNT(*) FROM review_jobs rj
-      JOIN commits c ON c.id = rj.commit_id
+      LEFT JOIN commits c ON c.id = rj.commit_id
       WHERE rj.repo_id = $repo_id
-        AND c.sha = '$head_sha'
-        AND rj.status IN ('done','running','queued','failed');
+        AND rj.status IN ('done','running','queued','failed')
+        AND (
+          c.sha = '$head_sha'
+          OR rj.git_ref = '$head_sha'
+          OR rj.git_ref LIKE '%..$head_sha'
+        );
   ")
   if [ "$head_review_count" -gt 0 ]; then
     log "skip: $name — HEAD($head_sha) already has $head_review_count review(s)"
