@@ -170,8 +170,21 @@ fi
 # Runs a bounded `roborev refine --since <session-start-sha>` in the background.
 # Never blocks /bye. Opt-out: SKIP_SESSION_END_REFINE=1 or .roborev.toml flag.
 # Logs: ~/.claude/logs/session_end_refine.log
+#
+# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
+# We gate this block on the _BYE_SENTINEL (same mechanism used by the
+# pattern-detection block above). The sentinel is written by the /bye skill
+# before the Stop hook fires, and consumed (rm -f) by the pattern-detection
+# block above. Since pattern detection consumes it first, we re-check by
+# looking for a second sentinel written specifically for the refine step.
+#
+# Sentinel path:   ~/.claude/.bye-session-end-refine
+# Written by:      /bye skill (session_end.md)
+# Consumed below:  rm -f immediately after reading — one-shot per /bye
+_REFINE_SENTINEL="${CLAUDE_RUNTIME_ROOT}/.bye-session-end-refine"
 _REFINE_SCRIPT="$CLAUDE_DIR/scripts/session_end_refine.sh"
-if [ -x "$_REFINE_SCRIPT" ]; then
+if [ -f "$_REFINE_SENTINEL" ] && [ -x "$_REFINE_SCRIPT" ]; then
+  rm -f "$_REFINE_SENTINEL"  # consume sentinel immediately — one-shot
   # Default SKIP=1 for the first 7 days of soak — per #196 rollout plan.
   # After 7 days of clean dry-run-equivalent logs, remove the env-var prefix.
   SKIP_SESSION_END_REFINE=1 nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
