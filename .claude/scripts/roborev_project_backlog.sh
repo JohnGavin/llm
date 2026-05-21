@@ -243,14 +243,16 @@ def days_old(created_at_str):
 def priority_score(sev, categories, age_days):
     sw = SEVERITY_WEIGHT.get(sev, 1)
     cr = max(CATEGORY_RISK.get(c, 1.0) for c in categories)
-    # log10 keeps age growth sub-linear so severity stays dominant:
-    #   fresh Critical:    sev=10 * cr * (1 + log10(1))  = 10*cr
-    #   stale Low 30d:     sev=1  * cr * (1 + log10(31)) ≈ 2.49*cr
-    #   stale Low 1yr:     sev=1  * cr * (1 + log10(366)) ≈ 3.56*cr
-    # A fresh Critical (10*cr) always beats a stale Low (≤4*cr for any age).
-    # sqrt was reverted: sqrt(age) grows too fast and any item >30d old
-    # would score 6.48*cr, inverting triage order vs. fresh Critical issues.
-    age_factor = 1 + math.log10(age_days + 1)
+    # log10 keeps age growth sub-linear so severity stays dominant.
+    # Cap at 1.5 to prevent age from bridging severity tiers: a very old Low
+    # (sw=1) with cap=1.5 scores at most 1.5×cr, while a fresh Medium (sw=2)
+    # scores 2.0×cr — so Medium always beats Low regardless of age.
+    # Without the cap, after ~9-10 days a Low would exceed a fresh Medium
+    # (1 + log10(11) ≈ 2.04 > 2.0 / 1.0 ratio). Cap derivation:
+    #   cap × Low_base < Medium_base  →  cap × 1 < 2  →  cap < 2.0
+    #   1.5 chosen to allow meaningful age signal while preserving tier order.
+    #   stale Low 1yr (uncapped): sev=1 * cr * 3.56 — cap prevents this.
+    age_factor = min(1 + math.log10(age_days + 1), 1.5)
     return sw * cr * age_factor
 
 scored = []
