@@ -1,0 +1,27 @@
+# Per-repo roborev config — copy to .roborev.toml and customise.
+# This file IS tracked in version control (not gitignored) so the threshold
+# decision is auditable alongside the code it protects.
+#
+# Usage:
+#   cp .roborev.toml.template .roborev.toml
+#   # edit .roborev.toml for this repo's needs
+#
+# The severity autoclose script reads this file at:
+#   <repo root>/.roborev.toml → [autoclose] severity_threshold
+
+[autoclose]
+# Effective severities (off|low|medium|high|critical).
+#
+#   off      = no severity-based autoclose (safe default)
+#   low      = close pure-Low reviews only
+#   medium   = close pure-Medium and pure-Low reviews (RECOMMENDED starting point)
+#   high     = close everything except Critical (aggressive — review before enabling)
+#   critical = close everything including Critical (not recommended)
+#
+# Close logic: review is closed iff max(finding_severities) <= severity_threshold.
+# If a review has ANY finding at or above the threshold, it stays open.
+# If output has no **Severity**: markers, the review is skipped (never auto-closed).
+#
+# This value overrides ~/.roborev/config.toml for this repo only.
+# The env var ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD overrides both.
+severity_threshold = "off"
