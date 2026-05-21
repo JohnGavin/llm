@@ -23,21 +23,7 @@ Every Bash tool call, without exception.
 
 ### Agent Dispatch Template
 
-Every Agent dispatch that involves Bash MUST include the following prefix
-**verbatim** at the top of the agent prompt. Orchestrators are responsible for
-pasting this prefix before any other instructions:
-
-```
-**CRITICAL — Bash discipline:** Compound bash commands (`&&`/`||`/`;`/`|`) are
-HOOK-REJECTED in block mode. Every Bash tool call must contain exactly ONE
-command. The ONLY exception is subshell `(cd dir && cmd)` for atomic cd+cmd.
-Use `git -C <path>` for git operations. For multi-step shell logic, write a
-script file and run it.
-```
-
-This is not optional. An agent that receives a prompt without this prefix will
-default to compound commands and have its calls rejected. The orchestrator owns
-the responsibility for injecting this prefix.
+Every Agent dispatch involving Bash MUST include the verbatim Bash discipline prefix at the top of the prompt. See [_companions/bash-safety-dispatch-template.md](_companions/bash-safety-dispatch-template.md) for the full text and rationale.
 
 ### CRITICAL: Never Use `&&` in Bash Commands
 
