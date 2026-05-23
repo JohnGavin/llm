@@ -1017,6 +1017,109 @@ echo ""
 echo "TIP: Check active loops with: /btw 'Show running loops via /schedule list'"
 echo "     Auto-loop suggestions: /loop 1h /check | /loop 30m /ctx-check"
 
+# ── Phase 13d: roborev backlog banner (Component 6, JohnGavin/llm#163) ───────
+# Surfaces open-count + top finding + addressed-rate for the current project.
+# Format: roborev-backlog: open=N (priority-1=sev:cat, top=#id) | addressed=XX%
+# Silent if DB missing or no project entry — graceful degradation.
+phase_roborev_backlog() {
+  local _rb_db="${HOME}/.roborev/reviews.db"
+  local _rb_python="/usr/bin/python3"
+
+  # Require python3 and DB — both must exist; silent skip otherwise
+  [ -f "$_rb_db" ] || return 0
+  [ -x "$_rb_python" ] || return 0
+
+  # Derive project name from git toplevel (same logic as Phase 14)
+  local _rb_root _rb_name
+  _rb_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  _rb_name=$(basename "$_rb_root")
+  [ -n "$_rb_name" ] || return 0
+
+  # Read top-finding from backlog.md if present (fast path — avoids re-querying DB)
+  local _rb_backlog="${_rb_root}/.roborev/backlog.md"
+  local _rb_top_sev="" _rb_top_cat="" _rb_top_id=""
+  if [ -f "$_rb_backlog" ]; then
+    # Extract first data row: | id | sev | category | ...
+    local _rb_first_row
+    _rb_first_row=$(grep -E '^\| [0-9]' "$_rb_backlog" | head -1) || true
+    if [ -n "$_rb_first_row" ]; then
+      _rb_top_id=$(echo "$_rb_first_row"  | awk -F'|' '{gsub(/ /,"",$2); print $2}')
+      _rb_top_sev=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+      _rb_top_cat=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
+    fi
+  fi
+
+  # Query DB for open count + addressed rate
+  local _rb_out
+  _rb_out=$("$_rb_python" - "$_rb_db" "$_rb_name" <<'PYEOF'
+import sys, sqlite3
+
+db_path   = sys.argv[1]
+repo_name = sys.argv[2]
+
+try:
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+except Exception:
+    sys.exit(0)
+
+repo_row = con.execute(
+    "SELECT id FROM repos WHERE name = ? ORDER BY id DESC LIMIT 1",
+    (repo_name,)
+).fetchone()
+
+if repo_row is None:
+    sys.exit(0)
+
+repo_id = repo_row["id"]
+
+try:
+    stats = con.execute("""
+        SELECT
+            SUM(CASE WHEN rv.closed = 0 THEN 1 ELSE 0 END) AS open_count,
+            COUNT(*) AS total_count,
+            SUM(rv.closed) AS closed_count
+        FROM reviews rv
+        JOIN review_jobs rj ON rj.id = rv.job_id
+        WHERE rj.repo_id = ?
+          AND rj.status = 'done'
+    """, (repo_id,)).fetchone()
+except Exception:
+    sys.exit(0)
+
+con.close()
+
+open_count   = stats["open_count"]  or 0
+total_count  = stats["total_count"] or 0
+closed_count = stats["closed_count"] or 0
+
+addressed_pct = round(100.0 * closed_count / total_count) if total_count > 0 else 0
+print(f"OPEN:{open_count}")
+print(f"ADDRESSED:{addressed_pct}")
+PYEOF
+  ) || true
+
+  [ -n "$_rb_out" ] || return 0
+
+  local _rb_open _rb_pct
+  _rb_open=$(printf '%s\n' "$_rb_out" | grep "^OPEN:"      | sed 's/^OPEN://')
+  _rb_pct=$(printf  '%s\n' "$_rb_out" | grep "^ADDRESSED:" | sed 's/^ADDRESSED://')
+
+  [ -n "$_rb_open" ] || return 0
+
+  # Build the banner line
+  local _rb_top_part=""
+  if [ -n "$_rb_top_sev" ] && [ -n "$_rb_top_cat" ] && [ -n "$_rb_top_id" ]; then
+    _rb_top_part=" (priority-1=${_rb_top_sev}:${_rb_top_cat}, top=#${_rb_top_id})"
+  fi
+
+  local _rb_pct_part=""
+  [ -n "$_rb_pct" ] && _rb_pct_part=" | addressed=${_rb_pct}%"
+
+  echo "roborev-backlog: open=${_rb_open}${_rb_top_part}${_rb_pct_part}"
+}
+phase_roborev_backlog || true
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
