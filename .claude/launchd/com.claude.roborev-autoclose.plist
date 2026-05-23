@@ -6,8 +6,8 @@
     <string>com.claude.roborev-autoclose</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_autoclose.sh</string>
-        <string>--apply</string>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_weekly_chain.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
