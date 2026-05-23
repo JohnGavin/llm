@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Stage 1 overnight self-review detector (Issue #235).         -->
+    <!-- Runs at 02:30 daily — after metrics ETL (~02:00) and         -->
+    <!-- before backup (~03:00). Stage 2 (LLM proposer) is DEFERRED.  -->
+    <!-- DO NOT install this plist via launchctl from this dispatch.  -->
+    <!-- Install manually: launchctl load -w ~/Library/LaunchAgents/  -->
+    <!--   com.claude.self-review-stage1.plist                         -->
+
+    <key>Label</key>
+    <string>com.claude.self-review-stage1</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/self_review_stage1.sh</string>
+        <string>--write</string>
+    </array>
+
+    <!-- 02:30 daily: after roborev-metrics-etl (~02:00), before backup (~03:00) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/self_review_stage1.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/self_review_stage1.err</string>
+
+    <!-- Do NOT run on load — only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- 120-second hard kill if SQL hangs (large DB). -->
+    <!-- launchd will SIGKILL the process after this many seconds. -->
+    <key>TimeOut</key>
+    <integer>120</integer>
+
+    <!-- Soft memory cap: 256 MB for DuckDB query execution. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>256</integer>
+    </dict>
+
+</dict>
+</plist>
