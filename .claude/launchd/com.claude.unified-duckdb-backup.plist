@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.unified-duckdb-backup.plist
+     Daily WAL-safe backup of unified.duckdb to iCloud Drive.
+     Runs at 03:00 local time — one hour after roborev ETL at 02:00,
+     ensuring the nightly ETL data is captured in the backup.
+
+     Backup destination:
+       ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/YYYY-MM-DD/
+
+     Retention:
+       Daily exports  — 30 days
+       Monthly anchor — 365 days (1st-of-month export)
+
+     Install:
+       cp ~/.claude/launchd/com.claude.unified-duckdb-backup.plist \
+          ~/Library/LaunchAgents/com.claude.unified-duckdb-backup.plist
+       launchctl load ~/Library/LaunchAgents/com.claude.unified-duckdb-backup.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.unified-duckdb-backup.plist
+       rm ~/Library/LaunchAgents/com.claude.unified-duckdb-backup.plist
+
+     Manual dry-run (no writes):
+       ~/.claude/scripts/unified_duckdb_backup.sh --dry-run
+
+     Manual apply (writes backup):
+       ~/.claude/scripts/unified_duckdb_backup.sh --apply --prune
+
+     Self-test:
+       SELFTEST=1 bash ~/.claude/scripts/unified_duckdb_backup.sh
+
+     Tracked in llm#228.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.unified-duckdb-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/.claude/scripts/unified_duckdb_backup.sh</string>
+        <string>--apply</string>
+        <string>--prune</string>
+    </array>
+
+    <!-- Daily at 03:00 local time (one hour after roborev ETL at 02:00) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/unified_duckdb_backup.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/unified_duckdb_backup.log</string>
+
+    <!-- Retry once after 60s if the job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- PATH must include nix store and homebrew for duckdb -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+</dict>
+</plist>
