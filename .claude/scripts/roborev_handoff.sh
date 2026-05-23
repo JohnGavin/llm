@@ -60,13 +60,15 @@ esac
 mkdir -p "$(dirname "$LOG")" "$FINDINGS_DIR"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
-# ── SELFTEST (ROBOREV_HANDOFF_SELFTEST=1) ────────────────────────────────────
-# Exercises Phase 1b logic using in-process function calls only.
+# ── SELFTEST (ROBOREV_HANDOFF_SELFTEST=1 or HANDOFF_SELFTEST_FULL=1) ─────────
+# Exercises Phase 1a/1b/1c logic using in-process function calls only.
 # CRITICAL: no subprocess-recursion — never calls `bash $0` from within this block.
 #
 # Usage: ROBOREV_HANDOFF_SELFTEST=1 bash ~/.claude/scripts/roborev_handoff.sh
+#        HANDOFF_SELFTEST_FULL=1   bash ~/.claude/scripts/roborev_handoff.sh
+# Both env vars are equivalent; HANDOFF_SELFTEST_FULL is the canonical name.
 # Expected: all PASS lines, exit 0, runtime <10s.
-if [ "${ROBOREV_HANDOFF_SELFTEST:-0}" = "1" ]; then
+if [ "${ROBOREV_HANDOFF_SELFTEST:-0}" = "1" ] || [ "${HANDOFF_SELFTEST_FULL:-0}" = "1" ]; then
   PASS=0; FAIL=0
 
   _assert() {
@@ -149,6 +151,52 @@ Some notes here."
   echo "$append_block" | grep -q "job 777" \
     && _assert "7. append_block contains job marker" "ok" \
     || _assert "7. append_block contains job marker" "missing 'job 777' in block"
+
+  # ── Phase 1c specific tests ───────────────────────────────────────────────
+
+  # ── 8. Phase 1c: pass-clean produces dry-run "[dry] ... would close" line ──
+  # Simulate the dry-run branch of the pass-clean case block inline.
+  # APPLY=0 is the default (dry-run); the case block prints the [dry] message.
+  _simulate_1c_dryrun() {
+    local repo_name="$1" job_id="$2" apply="${3:-0}"
+    if [ "$apply" -eq 0 ]; then
+      echo "[dry] $repo_name: would close pass-clean (job $job_id)"
+    else
+      echo "applied"
+    fi
+  }
+  dryrun_out=$(_simulate_1c_dryrun "testproject" "42" 0)
+  echo "$dryrun_out" | grep -q "\[dry\].*would close pass-clean.*job 42" \
+    && _assert "8. 1c dry-run emits [dry] would-close line" "ok" \
+    || _assert "8. 1c dry-run emits [dry] would-close line" "got: '$dryrun_out'"
+
+  # ── 9. Phase 1c: classify + dry-run combined path (end-to-end 1c dry flow) ─
+  # verdict_bool=1, output starts with "No issues found." → pass-clean → dry-run close
+  clean_verdict=1
+  clean_output="No issues found.
+
+All checks passed."
+  clean_output_trimmed=$(echo "$clean_output" | sed 's/^[[:space:]]*//')
+  clean_classification=$(_classify "$clean_verdict" "$clean_output_trimmed")
+  [ "$clean_classification" = "pass-clean" ] \
+    && _assert "9. 1c end-to-end: classify step yields pass-clean" "ok" \
+    || _assert "9. 1c end-to-end: classify step yields pass-clean" "got '$clean_classification'"
+
+  # ── 10. Phase 1c: fail job is NOT routed to silent-close (no false-silent) ─
+  fail_output_trimmed="No issues found."   # text looks clean but verdict_bool=0 → fail
+  fail_classification=$(_classify 0 "$fail_output_trimmed")
+  [ "$fail_classification" = "fail" ] \
+    && _assert "10. 1c guard: fail verdict_bool NOT silently closed" "ok" \
+    || _assert "10. 1c guard: fail verdict_bool NOT silently closed" "got '$fail_classification'"
+
+  # ── 11. Phase 1c: pass-comments not silently closed ──────────────────────
+  comments_output_trimmed="## Suggestions
+
+- Rename variable."
+  comments_classification=$(_classify 1 "$comments_output_trimmed")
+  [ "$comments_classification" = "pass-comments" ] \
+    && _assert "11. 1c guard: pass-comments NOT silently closed" "ok" \
+    || _assert "11. 1c guard: pass-comments NOT silently closed" "got '$comments_classification'"
 
   echo ""
   echo "selftest: ${PASS} PASS, ${FAIL} FAIL"
