@@ -10,6 +10,8 @@ Every orchestrator decision about whether to do work directly or delegate.
 
 **Default rule:** opus delegates all code, script, and configuration edits to subagents. This includes everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree.
 
+> **Clarification:** "delegate code/script edits" does NOT mean opus never uses Edit/Write. Opus DOES use Edit/Write directly for the bounded exceptions listed below (prose files, memory, rules, CHANGELOG, CURRENT_WORK.md). The constraint is on code-level edits to the package source tree, not on all file writes.
+
 | Work type | Delegate to |
 |-----------|-------------|
 | Single-file edits, doc updates, version bumps | `quick-fix` (haiku) |
@@ -26,7 +28,7 @@ Opus retains write access for these — they are too small/dialog-driven to be w
 | `~/.claude/CLAUDE.md`, `.claude/CLAUDE.md` | Prose updates only (rule wording, table edits) |
 | `.claude/rules/*.md`, `.claude/memory/*.md` | Prose edits to existing rules and memory files; new rule creation OK |
 | `CHANGELOG.md` (session-end append) | Session-end changelog entries only |
-| `.claude/CURRENT_WORK.md` | Opus writes session state directly; OR delegates to haiku for context-compression summarisation (see "Haiku for Context Summarisation" below) — haiku writes the file, opus decides when |
+| `.claude/CURRENT_WORK.md` | Opus **owns** this file and writes session state directly. Exception: when context ≥ 65%, opus **decides** to delegate the physical write to haiku (see "Haiku for Context Summarisation" below) — haiku writes under opus's direction; haiku NEVER autonomously updates this file |
 | Roborev DB closure comments via `/usr/local/bin/roborev comment`/`close` | Triage actions, not code |
 | Read-only investigation: `Read`, `Grep`, `Glob`, `Bash` for queries (`git log`, `gh pr view`, `du`, SQL reads) | Pre-decomposition reconnaissance |
 
@@ -87,8 +89,8 @@ If the task matches a named agent's trigger, MUST delegate:
 - Multi-file architecture decisions
 - Plan creation requiring user dialogue
 - Synthesising results from multiple agents
-- Prose edits to memory, rules, CLAUDE.md, CHANGELOG (scope above)
-- CURRENT_WORK.md updates (opus writes directly, or delegates the write to haiku when context compression is needed — opus always decides when and what to compress)
+- Prose edits to `.claude/rules/*.md`, `.claude/memory/*.md`, `CLAUDE.md`, `CHANGELOG.md` (bounded exceptions in the table above)
+- `CURRENT_WORK.md` **ownership** — opus always decides what to write and when to compress; opus writes directly OR delegates the physical write to haiku (haiku executes, opus directs — see "Haiku for Context Summarisation" above)
 - Ambiguous requirements needing clarification
 - Roborev triage closures (`comment` + `close` on individual reviews)
 
