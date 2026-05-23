@@ -5,6 +5,10 @@
 # Portability: this script is invoked by launchd, which provides only a bare
 # PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that
 # `timeout` (from GNU coreutils) is visible under both Homebrew and Nix.
+# Portability fixes (#181 Theme 2 — roborev id 900):
+#   - macOS /usr/bin/timeout does not exist. The _timeout() helper detects
+#     timeout/gtimeout via `command -v` and falls back to a portable
+#     background-kill pattern (SIGTERM then SIGKILL, exits 124 on timeout).
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 #
 # Logic:

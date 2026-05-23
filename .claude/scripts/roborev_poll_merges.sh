@@ -4,6 +4,10 @@
 # Portability: this script is invoked by launchd, which provides only a bare
 # PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that git,
 # sqlite3, and roborev are visible on both Homebrew and Nix Macs.
+# Portability fixes (#181 Theme 2 — roborev id 1509):
+#   - Shebang changed from /opt/homebrew/bin/bash (Apple Silicon only) to
+#     #!/usr/bin/env bash so the script runs on Intel Macs and non-Homebrew
+#     setups. PATH export ensures launchd's bare env finds coreutils binaries.
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 # hook missed (remote-merged PRs don't fire local post-commit).
 #
