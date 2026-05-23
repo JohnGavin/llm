@@ -193,9 +193,83 @@ Result values: `ok`, `timeout`, `error`, `skipped`.
 
 `~/.claude/.session_start_sha_<sanitized-project-name>` — written by `session_init.sh` Phase 14 at session start.
 
+## Poller Schedule Decision (2026-05-23, #217)
+
+### What changed
+
+`com.claude.roborev-poll-merges.plist` was updated from:
+
+```
+StartInterval: 900   (every 15 min, 24/7)
+```
+
+to:
+
+```
+StartCalendarInterval: hourly, Mon–Fri 09:00–22:00 (70 fire points per week)
+```
+
+### Why business hours
+
+Issue #217 diagnosed the poller log showing repeated `behind=0 enqueued=0` runs
+during overnight and weekend hours — no PRs are merged outside working hours in
+this solo development context, so every off-hours fire is a no-op that burns
+launchd overhead and pollutes the log.
+
+The 15-minute interval was originally chosen for responsiveness during active
+development. Hourly during business hours gives adequate latency (at most 1h
+delay before a newly-merged PR is reviewed) while eliminating ~90% of no-op
+fire events.
+
+### Reload instructions (after merge to main)
+
+```bash
+# Unload old plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
+
+# Copy updated plist
+cp /Users/johngavin/docs_gh/llm/.claude/launchd/com.claude.roborev-poll-merges.plist \
+   ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
+
+# Load new schedule
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
+
+# Verify
+launchctl print "gui/$(id -u)/com.claude.roborev-poll-merges" | grep -A2 calendar
+```
+
+### Ephemeral-repos cleanup
+
+The poller reported `total=55` repos because roborev's `repos` table accumulates
+every path that was ever passed to `roborev review`, including ephemeral
+`/private/tmp/` worktree checkouts from agent runs. These entries contribute
+noise to the poller's per-repo scan loop.
+
+Cleanup script: `~/.claude/scripts/cleanup_ephemeral_repos.sql`
+
+To execute (operator step, after reviewing the TO DELETE preview):
+
+```bash
+sqlite3 ~/.roborev/reviews.db < ~/.claude/scripts/cleanup_ephemeral_repos.sql
+```
+
+The script is idempotent and wrapped in a transaction. It shows a dry-run
+preview, deletes matching rows, and then prints surviving entries for
+confirmation.
+
+### Future path: Option B (post-merge hook)
+
+The poller exists only to cover remote-merged PRs that don't fire the local
+`post-commit` hook. A proper fix is a server-side or CI post-merge hook that
+calls `roborev review` immediately when GitHub merges a PR. Once that is in
+place, the poller becomes redundant and should be unloaded and removed.
+
+Tracked in #217.
+
 ## Related
 
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol
 - llm#110 — tracking issue
+- llm#217 — poller schedule + ephemeral-repos cleanup
