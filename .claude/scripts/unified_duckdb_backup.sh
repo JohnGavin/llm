@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# unified_duckdb_backup.sh — WAL-safe daily backup of unified.duckdb to iCloud Drive.
+# unified_duckdb_backup.sh — WAL-safe daily backup of unified.duckdb to Dropbox.
+#
+# Default backup target is Dropbox (`~/Dropbox/Backups/unified_duckdb/`) because
+# Dropbox sync is active on this Mac while iCloud Drive is not (verified via
+# absence of synced content in `~/Library/Mobile Documents/com~apple~CloudDocs/`).
+# Override via `BACKUP_ROOT=...` env var or `--dest DIR` flag.
 #
 # Strategy: DuckDB EXPORT DATABASE (Parquet) — reads a consistent MVCC snapshot
 # while the DB may be live; produces a portable directory of Parquet files +
@@ -7,7 +12,7 @@
 #
 # Flags:
 #   --dry-run   (default) show what would be backed up; no writes
-#   --apply     write backup to iCloud Drive
+#   --apply     write backup to Dropbox (or whatever BACKUP_ROOT resolves to)
 #   --db PATH   override source DB path (default: ~/.claude/logs/unified.duckdb)
 #   --dest DIR  override backup root directory
 #   --prune     delete daily exports older than 30 days and monthly exports older than 365 days
@@ -46,8 +51,10 @@ export _UNIFIED_DUCKDB_BACKUP_DEPTH=$((_DEPTH + 1))
 
 # ── Paths / defaults ──────────────────────────────────────────────────────────
 UNIFIED_DB="${UNIFIED_DB:-${HOME}/.claude/logs/unified.duckdb}"
-ICLOUD_ROOT="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
-BACKUP_ROOT="${BACKUP_ROOT:-${ICLOUD_ROOT}/Backups/unified_duckdb}"
+# Dropbox sync root — `~/Dropbox` symlinks to `~/Library/CloudStorage/Dropbox`
+# on macOS when the Dropbox client is installed. Override with BACKUP_ROOT.
+DROPBOX_ROOT="${HOME}/Dropbox"
+BACKUP_ROOT="${BACKUP_ROOT:-${DROPBOX_ROOT}/Backups/unified_duckdb}"
 LOGFILE="${HOME}/.claude/logs/unified_duckdb_backup.log"
 DAILY_RETAIN_DAYS=30
 MONTHLY_RETAIN_DAYS=365
@@ -138,7 +145,7 @@ perform_backup() {
   # --apply path: create destination and export
   log "APPLY: exporting $db_path → $dest_dir"
 
-  # iCloud parent may need to exist
+  # Sync-root parent (Dropbox / iCloud / NAS) may need to exist
   mkdir -p "$backup_root"
 
   if [ -d "$dest_dir" ]; then
@@ -351,7 +358,7 @@ Usage: unified_duckdb_backup.sh [--dry-run] [--apply] [--prune]
 
 Flags:
   --dry-run   (default) show what would be backed up; no writes
-  --apply     write backup to iCloud Drive
+  --apply     write backup to Dropbox (or whatever BACKUP_ROOT resolves to)
   --prune     remove daily exports > 30 days, monthly > 365 days
   --db PATH   override source DB (default: ~/.claude/logs/unified.duckdb)
   --dest DIR  override backup root directory

@@ -76,14 +76,19 @@ catches the fresh data within one hour. The 24h RPO is acceptable given:
 | GitHub LFS private repo | DIFFERENT — GitHub servers | After push | 1 GB LFS free; DuckDB EXPORT produces ~5 MB parquet per backup |
 | Time Machine (local snapshots) | SAME volume snapshots | N/A | `/Volumes/com.apple.TimeMachine.localsnapshots` is local; not a different failure domain |
 
-**Recommendation:** iCloud Drive. It is already enabled on this machine
-(`~/Library/Mobile Documents/com~apple~CloudDocs/Documents/` exists), provides a
-genuinely different failure domain (Apple servers in a different geographic location),
-syncs automatically without credentials or API keys, and retains deleted files for 30
-days in iCloud trash. A 30-day retention of daily backups requires ~150 MB of iCloud
-storage (12 tables × 30 days × ~400 KB per EXPORT).
+**Recommendation:** Dropbox. The Dropbox client is already installed on this Mac
+(`~/Dropbox -> ~/Library/CloudStorage/Dropbox`), provides a genuinely different
+failure domain (Dropbox servers + any paired devices), syncs automatically without
+extra credentials, and retains deleted files for 30 days (longer with paid plans).
+A 30-day retention of daily backups requires ~150 MB of Dropbox storage (12 tables ×
+30 days × ~400 KB per EXPORT).
 
-Backup path: `~/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/YYYY-MM-DD/`
+iCloud Drive was the original recommendation but is NOT active on this Mac — the
+directory `~/Library/Mobile Documents/com~apple~CloudDocs/` exists with only a
+`.DS_Store` and a Desktop symlink (no synced content). Writing there would NOT
+sync anywhere, failing the `backup-architecture` rule.
+
+Backup path: `~/Dropbox/Backups/unified_duckdb/YYYY-MM-DD/`
 
 ---
 
@@ -102,7 +107,7 @@ directory of Parquet files (one per table) plus a `schema.sql` file — human-re
 inspectable with any Parquet reader, and restorable with `IMPORT DATABASE`.
 
 ```sql
-EXPORT DATABASE '~/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/2026-05-23'
+EXPORT DATABASE '~/Dropbox/Backups/unified_duckdb/2026-05-23'
   (FORMAT PARQUET, COMPRESSION ZSTD);
 ```
 
@@ -111,7 +116,7 @@ Restore:
 -- Create new db
 duckdb ~/.claude/logs/unified.duckdb.restored
 -- Inside duckdb:
-IMPORT DATABASE '~/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/2026-05-23';
+IMPORT DATABASE '~/Dropbox/Backups/unified_duckdb/2026-05-23';
 ```
 
 ---
@@ -146,11 +151,12 @@ Manual restore test should be performed quarterly:
 | Option | Failure domain | WAL-safe | Automated | Storage | Complexity |
 |---|---|---|---|---|---|
 | `cp` same disk | SAME | No | Yes | Minimal | Minimal |
-| iCloud `EXPORT DATABASE` daily | DIFFERENT | **Yes** | **Yes** (launchd) | ~150 MB/month | Low |
+| **Dropbox `EXPORT DATABASE` daily** | **DIFFERENT** | **Yes** | **Yes** (launchd) | **~150 MB/month** | **Low** |
+| iCloud `EXPORT DATABASE` daily | DIFFERENT (but iCloud sync not active on this Mac) | Yes | Yes | ~150 MB/month | Low (but inactive — would silently fail) |
 | B2 `EXPORT DATABASE` daily | DIFFERENT | Yes | Yes | ~150 MB/month | Medium (API keys) |
-| External drive | DIFFERENT (when connected) | Yes | Partial | Unlimited | Low |
+| External drive (Passport) | DIFFERENT (when connected) | Yes | Partial | Unlimited | Low (already TM-registered) |
 
-**Selected option:** iCloud Drive + `EXPORT DATABASE` (Parquet) + daily at 03:00 +
+**Selected option:** Dropbox + `EXPORT DATABASE` (Parquet) + daily at 03:00 +
 30-day daily retention + 12-month monthly retention. Implemented in
 `.claude/scripts/unified_duckdb_backup.sh` and scheduled via
 `.claude/launchd/com.claude.unified-duckdb-backup.plist`.
