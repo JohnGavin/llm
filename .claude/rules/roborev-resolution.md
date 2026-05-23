@@ -387,11 +387,97 @@ roborev reopen <finding_id>
 
 `~/.claude/logs/roborev_auto_verify.log` — one entry per verifier run.
 
+## Merge Gate (dry-run mode)
+
+Tracked in llm#241. MVP ships the dry-run script only — enforcement deferred.
+
+### What it does
+
+`~/.claude/scripts/roborev_merge_gate.sh <pr#>` queries `~/.roborev/reviews.db` for
+open findings whose `commit_sha` is in the PR's commits, then checks whether each
+finding has been cited in a commit message (`closes/fixes/acks roborev #N`) or
+explicitly acked via `roborev_ack.sh`.
+
+### Verdicts
+
+| Verdict | Meaning | Mode |
+|---------|---------|------|
+| `[gate-pass]` | 0 unresolved findings at threshold | always exits 0 |
+| `[gate-warn]` | Medium-only unresolved findings | exits 0, week-1 signal |
+| `[gate-block]` | High/Critical unresolved findings | dry-run: exits 0, enforce: exits 1 |
+
+### Invoking the gate
+
+```bash
+# Dry-run (default) — always exits 0, prints verdict
+~/.claude/scripts/roborev_merge_gate.sh 253
+
+# Explicit dry-run
+~/.claude/scripts/roborev_merge_gate.sh --dry-run 253
+
+# From branch name (auto-detects PR#)
+~/.claude/scripts/roborev_merge_gate.sh --branch feat/my-feature
+
+# Enforce mode (NOT active yet — for future CI integration)
+~/.claude/scripts/roborev_merge_gate.sh --enforce 253
+```
+
+Logs to `~/.claude/logs/merge_gate.log` (one JSON line per invocation).
+
+### Ack flow for false positives
+
+When a finding is a confirmed false positive or wontfix, use the ack CLI:
+
+```bash
+# Dry-run (default) — shows what would be written, prints commit guidance
+~/.claude/scripts/roborev_ack.sh 42 --reason "false positive — nix-only path" --pr 253
+
+# Apply (writes to ~/.roborev/acks.jsonl)
+~/.claude/scripts/roborev_ack.sh 42 --reason "false positive — nix-only path" --pr 253 --apply
+```
+
+Then include the printed line in your commit message:
+```
+acks roborev #42 --reason "false positive — nix-only path"
+```
+
+The ack does NOT close the finding in `reviews.db`. Closure happens via fix-commit +
+auto-verifier (#163) or manual `roborev close`.
+
+### Week-1 data plan
+
+For the first week, run the gate on every PR before merge and let it log to
+`~/.claude/logs/merge_gate.log`. After 1 week:
+
+1. Review `merge_gate.log` — how many gate-block / gate-warn verdicts?
+2. File a follow-up issue with the enforce-mode decision.
+3. If High/Critical block rate is low, enable `--enforce` for High/Critical only.
+4. Update the PR template to make the checklist row mandatory.
+
+### Threshold
+
+Reads `review_min_severity` from per-repo `.roborev.toml` (default `medium`).
+The gate currently warns on Medium and would block on High/Critical in enforce mode.
+
+### Interaction with severity-autoclose (#224)
+
+Autoclose operates on **aged** findings (>7d). The gate operates on **PR-current**
+findings (any age on the PR's commits). The two do not cancel each other: a finding
+autoclosed for age satisfaction is `closed=1` and therefore invisible to the gate.
+
+### Kill switch
+
+Set `SKIP_MERGE_GATE=1` in your shell environment to bypass the gate in dry-run mode
+(the gate script exits 0 immediately). For enforce mode the kill switch is simply
+not invoking `--enforce`.
+
 ## Related
 
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol
 - llm#110 — tracking issue
-- llm#163 — closure-loop automation (this component is Component 4, Slice 3)
+- llm#241 — merge gate policy (Merge Gate section above)
+- llm#163 — closure-loop automation (Auto-Verifier section above — Component 4, Slice 3)
+- llm#224 — severity autoclose (sibling policy)
 - llm#217 — poller schedule + ephemeral-repos cleanup
