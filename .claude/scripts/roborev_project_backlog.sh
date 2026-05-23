@@ -24,6 +24,12 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 #   0  ok (including "nothing to do" and "binary/db missing")
 #   1  unexpected error
 #
+# Priority formula (Component 2 — JohnGavin/llm#163):
+#   priority = severity_weight × category_risk × (1 + log10(days_old)) × (1 + log10(file_touches_30d))
+#   severity_weight: Critical=10, High=5, Medium=2, Low=1
+#   category_risk: security=3, error-handling=2.5, async=2, dependency=1.5, test=1.5,
+#                  performance=1.2, other=1, docs=0.5
+#
 # Tracked in JohnGavin/llm#163.
 
 set -uo pipefail
@@ -60,12 +66,60 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
 # ── Functions (testable directly — no subprocess of $0) ──────────────────────
 
+# Compute composite priority score from components.
+# Args: severity_weight category_risk age_days file_touches_30d
+# Output: floating-point priority score on stdout.
+# Uses awk for portability (no python3 dependency here — called from shell context).
+_compute_priority() {
+  local sev_weight="$1"
+  local cat_risk="$2"
+  local age_days="${3:-1}"
+  local touches="${4:-1}"
+
+  # Clamp age_days and touches to minimum 1 to avoid log10(0)
+  [ "${age_days:-0}" -lt 1 ] 2>/dev/null && age_days=1
+  [ "${touches:-0}" -lt 1 ] 2>/dev/null && touches=1
+
+  awk -v sw="$sev_weight" -v cr="$cat_risk" -v age="$age_days" -v t="$touches" '
+    BEGIN {
+      pi = sw * cr * (1 + log(age)/log(10)) * (1 + log(t)/log(10))
+      printf "%.1f\n", pi
+    }
+  '
+}
+
+# Get file_touches_30d for a file path within a project root.
+# Args: project_root file_path
+# Output: integer touch count (defaults to 1 if unknown).
+_get_file_touches() {
+  local project_root="$1"
+  local file_path="$2"
+
+  if [ -z "$project_root" ] || [ ! -d "$project_root" ] || [ -z "$file_path" ]; then
+    echo 1
+    return 0
+  fi
+
+  local count
+  count=$(git -C "$project_root" log \
+    --since='30 days ago' \
+    --name-only \
+    --pretty=format: \
+    -- "$file_path" 2>/dev/null \
+    | grep -c "$file_path" 2>/dev/null) || count=0
+
+  # Default to 1 if no data (prevents log10(0))
+  [ "${count:-0}" -lt 1 ] && count=1
+  echo "$count"
+}
+
 # Query the DB for open findings for a given repo name.
 # Outputs first line as ROOT_PATH:<path> then markdown table lines.
 # Returns 0 always (fail-open on missing DB).
 _query_backlog() {
   local repo_name="$1"
   local db="$2"
+  local root_path_override="${3:-}"  # optional: pass project root for file_touches
 
   if [ ! -f "$db" ]; then
     echo "ROOT_PATH:"
@@ -75,11 +129,100 @@ _query_backlog() {
     return 0
   fi
 
-  "$PYTHON" - "$db" "$repo_name" <<'PYEOF'
-import sys, sqlite3
+  "$PYTHON" - "$db" "$repo_name" "$root_path_override" <<'PYEOF'
+import sys, sqlite3, math, re, subprocess, os
 
 db_path = sys.argv[1]
 repo_name = sys.argv[2]
+root_path_override = sys.argv[3] if len(sys.argv) > 3 else ""
+
+# ── Severity / category weight tables ────────────────────────────────────────
+SEV_WEIGHT = {"critical": 10, "high": 5, "medium": 2, "low": 1, "unknown": 1}
+CAT_RISK   = {
+    "security": 3.0, "error-handling": 2.5, "async": 2.0,
+    "dependency": 1.5, "test": 1.5, "performance": 1.2,
+    "other": 1.0, "docs": 0.5,
+}
+
+def max_sev_ord(output):
+    """Return (sev_label, sev_weight) for the highest severity in output text."""
+    text = output or ""
+    best_ord = 0
+    best_label = "unknown"
+    for sev, ord_val in [("critical", 4), ("high", 3), ("medium", 2), ("low", 1)]:
+        if (f"**Severity**: {sev.capitalize()}" in text
+                or f"**Severity**: {sev}" in text
+                or f"Severity: {sev.capitalize()}" in text):
+            if ord_val > best_ord:
+                best_ord = ord_val
+                best_label = sev
+    return best_label, SEV_WEIGHT.get(best_label, 1)
+
+def infer_category(output):
+    """Infer risk category from review output text keywords."""
+    text = (output or "").lower()
+    # Priority order: check higher-risk categories first
+    if any(w in text for w in ["sql injection", "xss", "csrf", "secret", "credential",
+                                 "password", "token leak", "auth bypass", "privilege"]):
+        return "security"
+    if any(w in text for w in ["error handling", "exception", "try-catch", "tryCatch",
+                                 "stop(", "abort", "condition", "error propagat"]):
+        return "error-handling"
+    if any(w in text for w in ["async", "promise", "future", "extendedtask",
+                                 "reactive", "observer", "eventreactive"]):
+        return "async"
+    if any(w in text for w in ["dependency", "import", "require", "namespace",
+                                 "package version", "library("]):
+        return "dependency"
+    if any(w in text for w in ["test", "testthat", "expect_", "mock", "fixture",
+                                 "coverage"]):
+        return "test"
+    if any(w in text for w in ["performance", "slow", "memory", "allocation",
+                                 "loop", "vectori", "n²", "o(n"]):
+        return "performance"
+    if any(w in text for w in ["doc", "roxygen", "@param", "@return", "@export",
+                                 "readme", "vignette", "comment"]):
+        return "docs"
+    return "other"
+
+def get_file_mention(output):
+    """Extract first file path mentioned in output (for git log lookup)."""
+    text = output or ""
+    # Look for backtick-quoted paths or Location: markers
+    for pattern in [
+        r'`([^`]+\.[a-zA-Z]+)`',           # `path/file.ext`
+        r'\*\*Location\*\*:\s*`?([^\n`]+)', # **Location**: path
+        r'Location:\s*`?([^\n`]+)',          # Location: path
+    ]:
+        m = re.search(pattern, text)
+        if m:
+            candidate = m.group(1).strip().rstrip('`').split(':')[0]
+            # Only return if it looks like a file path (has extension or slash)
+            if '.' in candidate or '/' in candidate:
+                return candidate
+    return ""
+
+def get_file_touches(root_path, file_path):
+    """Count git log touches in last 30 days for the given file."""
+    if not root_path or not file_path or not os.path.isdir(root_path):
+        return 1
+    try:
+        result = subprocess.run(
+            ["git", "-C", root_path, "log", "--since=30 days ago",
+             "--name-only", "--pretty=format:", "--", file_path],
+            capture_output=True, text=True, timeout=5
+        )
+        count = len([l for l in result.stdout.splitlines() if l.strip() == file_path
+                     or (file_path and l.strip().endswith(os.path.basename(file_path)))])
+        return max(count, 1)
+    except Exception:
+        return 1
+
+def compute_priority(sev_weight, cat_risk, age_days, touches):
+    """Composite priority = sw × cr × (1+log10(age)) × (1+log10(touches))."""
+    age = max(age_days or 1, 1)
+    t   = max(touches or 1, 1)
+    return sev_weight * cat_risk * (1 + math.log10(age)) * (1 + math.log10(t))
 
 try:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -104,25 +247,14 @@ if repo_row is None:
     print(f"(repo '{repo_name}' not found in DB)")
     sys.exit(0)
 
-repo_id = repo_row["id"]
-root_path = repo_row["root_path"]
+repo_id   = repo_row["id"]
+root_path = root_path_override or repo_row["root_path"] or ""
 
 print(f"ROOT_PATH:{root_path}")
 print(f"REPO:{repo_name}")
 print("")
 
-sev_label = {4: "critical", 3: "high", 2: "medium", 1: "low", 0: "unknown"}
-
-def max_sev(output):
-    """Return severity ordinal from review output text."""
-    text = output or ""
-    ord_val = 0
-    for sev, val in [("critical", 4), ("high", 3), ("medium", 2), ("low", 1)]:
-        if f"**Severity**: {sev.capitalize()}" in text or f"**Severity**: {sev}" in text:
-            ord_val = max(ord_val, val)
-    return ord_val
-
-# Top-10 open findings sorted by age descending
+# Fetch open findings
 try:
     rows = con.execute("""
         SELECT
@@ -135,11 +267,9 @@ try:
         WHERE rj.repo_id = ?
           AND rj.status = 'done'
           AND rv.closed = 0
-        ORDER BY age_days DESC
-        LIMIT 10
+        LIMIT 100
     """, (repo_id,)).fetchall()
 except Exception:
-    # older schema may not have closed column — fall back
     rows = con.execute("""
         SELECT
             rv.id                 AS rid,
@@ -150,8 +280,7 @@ except Exception:
         JOIN review_jobs rj ON rj.id = rv.job_id
         WHERE rj.repo_id = ?
           AND rj.status = 'done'
-        ORDER BY age_days DESC
-        LIMIT 10
+        LIMIT 100
     """, (repo_id,)).fetchall()
 
 con.close()
@@ -160,21 +289,54 @@ if not rows:
     print("_No open findings._")
     sys.exit(0)
 
-print("| id | sev | age_days | summary |")
-print("|----|-----|----------|---------|")
+# Compute priority for each row, then sort DESC
+scored = []
 for row in rows:
-    rid = row["rid"]
-    sev_ord = max_sev(row["output"])
-    sev = sev_label.get(sev_ord, "unknown")
-    age = row["age_days"] if row["age_days"] is not None else "?"
+    sev_label, sev_weight = max_sev_ord(row["output"])
+    category = infer_category(row["output"])
+    cat_risk  = CAT_RISK.get(category, 1.0)
+    age       = row["age_days"] if row["age_days"] is not None else 1
+    file_path = get_file_mention(row["output"])
+    touches   = get_file_touches(root_path, file_path)
+    priority  = compute_priority(sev_weight, cat_risk, age, touches)
+    scored.append({
+        "rid": row["rid"],
+        "sev": sev_label,
+        "category": category,
+        "age_days": age,
+        "file_touches_30d": touches,
+        "priority": priority,
+        "output": row["output"],
+    })
+
+# Sort by priority DESC, take top 10
+scored.sort(key=lambda x: x["priority"], reverse=True)
+top10 = scored[:10]
+
+print("| id | sev | category | age_days | touches | priority | summary |")
+print("|----|-----|----------|----------|---------|----------|---------|")
+for r in top10:
+    rid = r["rid"]
+    sev = r["sev"]
+    cat = r["category"]
+    age = r["age_days"]
+    t   = r["file_touches_30d"]
+    pri = f"{r['priority']:.1f}"
     summary = ""
-    for line in (row["output"] or "").splitlines():
+    for line in (r["output"] or "").splitlines():
         line = line.strip()
         if line and not line.startswith("#") and not line.startswith("---"):
             summary = line[:80]
             break
     summary = summary.replace("|", "\\|")
-    print(f"| {rid} | {sev} | {age} | {summary} |")
+    print(f"| {rid} | {sev} | {cat} | {age} | {t} | {pri} | {summary} |")
+
+# Emit top-finding metadata for session_init banner use
+top = top10[0] if top10 else None
+if top:
+    print(f"TOP_FINDING_ID:{top['rid']}")
+    print(f"TOP_FINDING_SEV:{top['sev']}")
+    print(f"TOP_FINDING_CAT:{top['category']}")
 PYEOF
 }
 
@@ -194,7 +356,7 @@ _write_backlog() {
     printf '_Generated: %s_\n\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'Check `.roborev/backlog.md` for prioritised open findings before starting fixes.\n\n'
     printf '%s\n\n' "$table"
-    printf '_Source: `%s` — top 10 open findings, sorted by age (oldest first)._\n' "$ROBOREV_DB"
+    printf '_Source: `%s` — top 10 open findings, sorted by composite priority (severity × category-risk × age × file-heat)._\n' "$ROBOREV_DB"
   } > "$out_file"
 
   echo "$out_file"
@@ -231,13 +393,15 @@ _selftest() {
   local _tmpdir
   _tmpdir=$(mktemp -d)
   local _written
-  _written=$(_write_backlog "$_tmpdir" "| id | sev | age_days | summary |
-|----|-----|----------|---------|
-| 1  | high | 5 | test |" "test-repo")
+  _written=$(_write_backlog "$_tmpdir" "| id | sev | category | age_days | touches | priority | summary |
+|----|-----|----------|----------|---------|----------|---------|
+| 1  | high | security | 5 | 2 | 12.5 | test |" "test-repo")
   _t "write_backlog: file exists" "1" "$([ -f "$_tmpdir/.roborev/backlog.md" ] && echo 1 || echo 0)"
   _t "write_backlog: returns correct path" "$_tmpdir/.roborev/backlog.md" "$_written"
   # Check file contains repo name
   _t "write_backlog: header in file" "1" "$(grep -q 'test-repo' "$_tmpdir/.roborev/backlog.md" && echo 1 || echo 0)"
+  # Check priority column is present in footer
+  _t "write_backlog: priority mention in footer" "1" "$(grep -q 'priority' "$_tmpdir/.roborev/backlog.md" && echo 1 || echo 0)"
   rm -rf "$_tmpdir"
 
   # Test 4: depth guard triggers at depth > 2
@@ -251,6 +415,31 @@ _selftest() {
     exit 0
   ' 2>/dev/null || _rc3=$?
   _t "depth guard: exits 2 at depth 3" "2" "$_rc3"
+
+  # Test 5: _compute_priority returns a non-zero number
+  local _pri
+  _pri=$(_compute_priority 5 2.5 10 3)
+  _t "compute_priority: non-empty output" "1" "$([ -n "$_pri" ] && echo 1 || echo 0)"
+  # Critical/security/10days/3touches should be > 1
+  local _pri_gt1
+  _pri_gt1=$(awk -v p="$_pri" 'BEGIN { print (p > 1) ? 1 : 0 }')
+  _t "compute_priority: result > 1" "1" "$_pri_gt1"
+
+  # Test 6: _get_file_touches with empty project root returns 1
+  local _touches
+  _touches=$(_get_file_touches "" "some/file.R")
+  _t "get_file_touches: empty root returns 1" "1" "$_touches"
+
+  # Test 7: _query_backlog output with real DB has priority column header (if DB present)
+  if [ -f "${ROBOREV_DB:-$HOME/.roborev/reviews.db}" ]; then
+    local _qout
+    _qout=$(_query_backlog "llm" "${ROBOREV_DB:-$HOME/.roborev/reviews.db}" 2>/dev/null)
+    # Either "No open findings" or table with priority column
+    local _has_priority=0
+    echo "$_qout" | grep -q "priority" && _has_priority=1
+    echo "$_qout" | grep -q "No open findings" && _has_priority=1
+    _t "query_backlog: output has priority col or no-findings" "1" "$_has_priority"
+  fi
 
   echo ""
   echo "${pass}/$((pass+fail)) PASS"
@@ -281,16 +470,23 @@ fi
 # Query backlog
 raw_output=$(_query_backlog "$REPO_NAME" "$ROBOREV_DB")
 
-# Extract root_path from first line
+# Extract metadata lines
 root_path=$(printf '%s\n' "$raw_output" | grep "^ROOT_PATH:" | head -1 | sed 's/^ROOT_PATH://')
+top_id=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_ID:" | head -1 | sed 's/^TOP_FINDING_ID://')
+top_sev=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_SEV:" | head -1 | sed 's/^TOP_FINDING_SEV://')
+top_cat=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_CAT:" | head -1 | sed 's/^TOP_FINDING_CAT://')
 
 # Strip metadata lines for table content
-table=$(printf '%s\n' "$raw_output" | grep -v "^ROOT_PATH:" | grep -v "^REPO:")
+table=$(printf '%s\n' "$raw_output" \
+  | grep -v "^ROOT_PATH:" \
+  | grep -v "^REPO:" \
+  | grep -v "^TOP_FINDING_")
 
 if [ "$APPLY" -eq 0 ]; then
   echo "=== roborev backlog: $REPO_NAME (dry-run) ==="
   echo ""
   printf '%s\n' "$table"
+  [ -n "$top_id" ] && echo "Top finding: #${top_id} (${top_sev}:${top_cat})"
   log "dry-run: repo=$REPO_NAME"
 else
   if [ -z "$root_path" ]; then
@@ -300,7 +496,7 @@ else
   fi
 
   out_file=$(_write_backlog "$root_path" "$table" "$REPO_NAME")
-  log "apply: wrote $out_file repo=$REPO_NAME"
+  log "apply: wrote $out_file repo=$REPO_NAME top=#${top_id}(${top_sev}:${top_cat})"
   echo "roborev_project_backlog: wrote $out_file"
 fi
 
