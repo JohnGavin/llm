@@ -27,6 +27,10 @@ website:
         text: Config Stack
       - href: vignettes/articles/llm-assisted-tips.qmd
         text: LLM-assisted Tips
+      - text: Roborev
+        menu:
+          - href: vignettes/articles/roborev-architecture.qmd
+            text: Architecture
 
 format:
   html:
