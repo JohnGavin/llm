@@ -1,5 +1,14 @@
 # Phase 1 Validation Plan: Option 3 (Progressive Real-Usage Capture)
 
+<!-- Roborev closure: #787 resolved in commit 60389d4 (PR #164).
+     Original finding: plan claimed skillify_backlog.sh 20 "scans 20 transcripts and
+     runs /skillify on each", but the implementation only analyzed the latest transcript
+     and returned "Insufficient data" for all (transcripts are compacted summaries with
+     no tool call history). Fix: "Finding: No Historical Tool Call Data" section added
+     at top of this file, documenting the architectural limitation and the pivot to
+     Option 3 (live capture). Script retained as a documented placeholder with a
+     no-op marker pending DuckDB tool-event schema documentation. -->
+
 **Issue**: #137 Phase 1 validation
 **Duration**: 2-3 weeks
 **Strategy**: Live usage capture during normal work (no retrospective analysis)
