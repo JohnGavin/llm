@@ -1,405 +1,307 @@
 #!/usr/bin/env bash
-# roborev_project_backlog.sh — Phase 1 of roborev closure-loop automation (#163)
+# roborev_project_backlog.sh — per-project backlog watcher.
 #
-# Closes roborev #1747 and #2109 (#181 Theme 5) — priority formula uses log10
-# (not sqrt), keeping age growth sub-linear so severity stays dominant.
-# The sqrt variant caused age to dominate severity, inverting triage order.
-# Fix landed in commit 24de32e.
+# Reads ~/.roborev/reviews.db (read-only) and writes a prioritised markdown
+# table of open high-severity findings to <project-root>/.roborev/backlog.md.
 #
-# Usage: roborev_project_backlog.sh <project-name>
+# Portability: may be invoked by launchd with a bare PATH; prepend common
+# tool locations so python3 and sqlite3 are visible.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 #
-# Reads ~/.roborev/reviews.db (read-only), categorizes open rejected findings,
-# computes composite priority score, writes prioritized backlog markdown to
-# <project-root>/.roborev/backlog.md.
+# Usage:
+#   roborev_project_backlog.sh [--repo <name>] [--apply | --dry-run]
+#
+# Options:
+#   --repo <name>  Restrict to a single repo by name (default: llm)
+#   --apply        Write .roborev/backlog.md to the project root (default)
+#   --dry-run      Print table to stdout only; no file writes
+#   --help         Usage
+#
+# Self-test:
+#   ROBOREV_BACKLOG_SELFTEST=1 bash roborev_project_backlog.sh
 #
 # Exit codes:
-#   0 = success
-#   1 = project not found in DB
-#   2 = DB unreadable
+#   0  ok (including "nothing to do" and "binary/db missing")
+#   1  unexpected error
 #
-# Constraints:
-#   - No && in bash (bash-safety rule)
-#   - No mutations to DB — read-only queries only
-#   - /usr/bin/python3 used directly (sqlite3 CLI not in nix shell PATH)
+# Tracked in JohnGavin/llm#163.
 
-set -euo pipefail
+set -uo pipefail
 
-PROJECT="${1:-}"
-DB_PATH="${HOME}/.roborev/reviews.db"
-SCRIPT_NAME="$(basename "$0")"
-
-# --- Validation ---
-
-if [ -z "$PROJECT" ]; then
-  echo "Usage: ${SCRIPT_NAME} <project-name>" >&2
-  exit 1
-fi
-
-if [ ! -f "$DB_PATH" ]; then
-  echo "ERROR: DB not readable at ${DB_PATH}" >&2
+# ── Depth guard (defense-in-depth — prevents accidental subprocess recursion) ──
+_DEPTH="${_ROBOREV_BACKLOG_DEPTH:-0}"
+if [ "$_DEPTH" -gt 2 ]; then
+  echo "ERROR: roborev_project_backlog.sh: recursion depth $_DEPTH — aborting" >&2
   exit 2
 fi
+export _ROBOREV_BACKLOG_DEPTH=$((_DEPTH + 1))
 
-if [ ! -r "$DB_PATH" ]; then
-  echo "ERROR: DB not readable at ${DB_PATH}" >&2
-  exit 2
-fi
+# ── Config ────────────────────────────────────────────────────────────────────
+PYTHON="${PYTHON:-/usr/bin/python3}"
+ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
+LOG="$HOME/.claude/logs/roborev_project_backlog.log"
+REPO_NAME="${ROBOREV_BACKLOG_REPO:-llm}"
+APPLY=1   # default: write file
 
-# --- Delegate all logic to Python (sqlite3 available, no shell quoting headaches) ---
+# ── Parse args ────────────────────────────────────────────────────────────────
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)      shift; REPO_NAME="$1" ;;
+    --apply)     APPLY=1 ;;
+    --dry-run)   APPLY=0 ;;
+    -h|--help)   sed -n '2,30p' "$0"; exit 0 ;;
+    *)           echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+  shift
+done
 
-/usr/bin/python3 - "$PROJECT" "$DB_PATH" <<'PYEOF'
-import sys
-import os
-import re
-import math
-import sqlite3
-from datetime import datetime, timezone
+mkdir -p "$(dirname "$LOG")"
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
-project_name = sys.argv[1]
-db_path = sys.argv[2]
+# ── Functions (testable directly — no subprocess of $0) ──────────────────────
 
-# ---- Connect read-only ----
+# Query the DB for open findings for a given repo name.
+# Outputs first line as ROOT_PATH:<path> then markdown table lines.
+# Returns 0 always (fail-open on missing DB).
+_query_backlog() {
+  local repo_name="$1"
+  local db="$2"
+
+  if [ ! -f "$db" ]; then
+    echo "ROOT_PATH:"
+    echo "REPO:$repo_name"
+    echo ""
+    echo "(DB unavailable — fail open)"
+    return 0
+  fi
+
+  "$PYTHON" - "$db" "$repo_name" <<'PYEOF'
+import sys, sqlite3
+
+db_path = sys.argv[1]
+repo_name = sys.argv[2]
+
 try:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
 except Exception as e:
-    print(f"ERROR: Cannot open DB: {e}", file=sys.stderr)
-    sys.exit(2)
+    print(f"ROOT_PATH:")
+    print(f"REPO:{repo_name}")
+    print("")
+    print(f"(DB error: {e})")
+    sys.exit(0)
 
-cursor = conn.cursor()
+# Fetch repo root path
+repo_row = con.execute(
+    "SELECT id, root_path FROM repos WHERE name = ? ORDER BY id DESC LIMIT 1",
+    (repo_name,)
+).fetchone()
 
-# ---- Resolve repo root_path (pick the canonical non-tmp path if multiple rows) ----
-cursor.execute(
-    "SELECT id, root_path FROM repos WHERE name = ? ORDER BY id",
-    (project_name,)
-)
-repo_rows = cursor.fetchall()
+if repo_row is None:
+    print(f"ROOT_PATH:")
+    print(f"REPO:{repo_name}")
+    print("")
+    print(f"(repo '{repo_name}' not found in DB)")
+    sys.exit(0)
 
-if not repo_rows:
-    print(f"project not found: {project_name}", file=sys.stderr)
-    sys.exit(1)
+repo_id = repo_row["id"]
+root_path = repo_row["root_path"]
 
-# Prefer the first non-/tmp path; fall back to first row
-repo_id = None
-root_path = None
-for row in repo_rows:
-    if not row["root_path"].startswith("/tmp") and not row["root_path"].startswith("/private/tmp"):
-        repo_id = row["id"]
-        root_path = row["root_path"]
-        break
+print(f"ROOT_PATH:{root_path}")
+print(f"REPO:{repo_name}")
+print("")
 
-if root_path is None:
-    repo_id = repo_rows[0]["id"]
-    root_path = repo_rows[0]["root_path"]
+sev_label = {4: "critical", 3: "high", 2: "medium", 1: "low", 0: "unknown"}
 
-# ---- Fetch open rejected findings across ALL repo_ids for this project name ----
-repo_ids = [r["id"] for r in repo_rows]
-placeholders = ",".join("?" * len(repo_ids))
+def max_sev(output):
+    """Return severity ordinal from review output text."""
+    text = output or ""
+    ord_val = 0
+    for sev, val in [("critical", 4), ("high", 3), ("medium", 2), ("low", 1)]:
+        if f"**Severity**: {sev.capitalize()}" in text or f"**Severity**: {sev}" in text:
+            ord_val = max(ord_val, val)
+    return ord_val
 
-cursor.execute(
-    f"""
-    SELECT
-        rv.id,
-        rv.output,
-        rv.created_at,
-        rv.closed,
-        rv.verdict_bool,
-        rj.git_ref,
-        rj.branch
-    FROM reviews rv
-    JOIN review_jobs rj ON rv.job_id = rj.id
-    WHERE rj.repo_id IN ({placeholders})
-      AND rv.closed = 0
-      AND rv.verdict_bool = 0
-    ORDER BY rv.created_at ASC
-    """,
-    repo_ids,
-)
-open_findings = cursor.fetchall()
+# Top-10 open findings sorted by age descending
+try:
+    rows = con.execute("""
+        SELECT
+            rv.id                 AS rid,
+            rj.id                 AS job_id,
+            CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+            rv.output
+        FROM reviews rv
+        JOIN review_jobs rj ON rj.id = rv.job_id
+        WHERE rj.repo_id = ?
+          AND rj.status = 'done'
+          AND rv.closed = 0
+        ORDER BY age_days DESC
+        LIMIT 10
+    """, (repo_id,)).fetchall()
+except Exception:
+    # older schema may not have closed column — fall back
+    rows = con.execute("""
+        SELECT
+            rv.id                 AS rid,
+            rj.id                 AS job_id,
+            CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+            rv.output
+        FROM reviews rv
+        JOIN review_jobs rj ON rj.id = rv.job_id
+        WHERE rj.repo_id = ?
+          AND rj.status = 'done'
+        ORDER BY age_days DESC
+        LIMIT 10
+    """, (repo_id,)).fetchall()
 
-# ---- Fetch summary counts (total reviews, rejected, close rate) ----
-cursor.execute(
-    f"""
-    SELECT
-        COUNT(*)                                                       AS total,
-        SUM(CASE WHEN rv.verdict_bool = 0 THEN 1 ELSE 0 END)          AS rejected,
-        SUM(CASE WHEN rv.closed = 0 AND rv.verdict_bool = 0 THEN 1 ELSE 0 END) AS open_rejected,
-        SUM(CASE WHEN rv.closed = 1 THEN 1 ELSE 0 END)                AS closed_count
-    FROM reviews rv
-    JOIN review_jobs rj ON rv.job_id = rj.id
-    WHERE rj.repo_id IN ({placeholders})
-    """,
-    repo_ids,
-)
-summary = cursor.fetchone()
-conn.close()
+con.close()
 
-total       = summary["total"] or 0
-rejected    = summary["rejected"] or 0
-open_rej    = summary["open_rejected"] or 0
-closed_cnt  = summary["closed_count"] or 0
-close_rate  = (closed_cnt / total * 100) if total > 0 else 0.0
+if not rows:
+    print("_No open findings._")
+    sys.exit(0)
 
-# ---- Priority weights ----
-
-SEVERITY_WEIGHT = {
-    "critical": 10,
-    "high":     5,
-    "medium":   2,
-    "low":      1,
-    "info":     1,
-    "unknown":  1,
-}
-
-CATEGORY_RISK = {
-    "security":            5.0,
-    "error-handling":      4.0,
-    "async/concurrency":   2.0,
-    "dependency/namespace":1.0,
-    "test-quality":        1.5,
-    "input-validation":    2.0,
-    "performance":         1.5,
-    "file-io":             1.0,
-    "logging/observ":      0.8,
-    "shell/bash":          1.5,
-    "git/CI":              1.0,
-    "config/settings":     1.0,
-    "refactor/simplify":   0.8,
-    "quarto/render":       0.5,
-    "docs/comments":       0.3,
-    "style/lint":          0.3,
-    "uncategorized":       1.0,
-}
-
-CATEGORY_PATTERNS = [
-    ("security",
-     r"\b(secret|credential|password|token|api[_ ]?key|injection|xss|sql injection"
-     r"|sanitiz|escape|hardcod\w*\s+(key|password|secret)|expose\w*\s+(token|key|credential))\b"),
-    ("error-handling",
-     r"\b(silent\s+(failure|catch|error)|swallow\w*\s+error|bare\s+except|tryCatch.*NULL"
-     r"|stop\(\)|panic|missing\s+error|unhandled)\b"),
-    ("test-quality",
-     r"\b(missing\s+test|no\s+test|untested|test\s+coverage|mock\w*|fixture|snapshot"
-     r"|expect_\w+|assert)\b"),
-    ("input-validation",
-     r"\b(input\s+validation|validate\s+input|missing\s+check|NULL\s+check|NA\s+handl\w*"
-     r"|type\s+check|check_\w+|stopifnot)\b"),
-    ("performance",
-     r"\b(performance|slow|optim\w+|memory\s+leak|allocation|inefficient|O\(n\^?2\)|quadratic)\b"),
-    ("docs/comments",
-     r"\b(documentation|docstring|roxygen|@param|@return|@examples|missing\s+doc"
-     r"|outdated\s+(doc|comment)|README|NEWS\.md|vignette)\b"),
-    ("style/lint",
-     r"\b(naming\s+convention|inconsistent\s+(naming|style)|formatting|indent"
-     r"|tidyverse\s+style|snake_case|camelCase|lint)\b"),
-    ("refactor/simplify",
-     r"\b(refactor|simplif\w+|redundant|duplicat\w+\s+code|magic\s+number"
-     r"|extract\s+function|too\s+long|complex\w+)\b"),
-    ("dependency/namespace",
-     r"\b(missing\s+import|undocumented\s+dependency|wrong\s+namespace|@importFrom"
-     r"|DESCRIPTION\s+(Imports|Depends)|library\(\s*['\"]\w+['\"]?\s*\)|unused\s+import|@import\b)\b"),
-    ("file-io",
-     r"\b(file\s+path|hardcoded\s+path|portable\s+path|getwd|file\.path"
-     r"|Sys\.getenv|absolute\s+path)\b"),
-    ("async/concurrency",
-     r"\b(race\s+condition|deadlock|lock|mutex|async|future|crew|mirai|parallel|concurrent)\b"),
-    ("logging/observ",
-     r"\b(logging|logger|telemetry|observ\w+|trace|metric|monitor)\b"),
-    ("shell/bash",
-     r"\b(bash|shell\s+script|launchctl|launchd|nix-shell|cd\s+&&|set\s+-e|trap|shebang|#!)\b"),
-    ("quarto/render",
-     r"\b(quarto|render|knitr|qmd|rmarkdown|chunk|fig-cap|alt[- ]text)\b"),
-    ("git/CI",
-     r"\b(github\s+actions|workflow|\.github/workflows|gh-pages|CI/CD|pre-commit|hook)\b"),
-    ("config/settings",
-     r"\b(\.claude/settings|hooks?\.sh|CLAUDE\.md|AGENTS\.md|\.roborev\.toml"
-     r"|configuration|env\s+var)\b"),
-]
-
-# ---- Categorize + score each finding ----
-
-def extract_severity(output_text):
-    m = re.search(r"\*\*Severity\*\*:\s*(High|Medium|Low|Critical|Info)", output_text or "", re.I)
-    if m:
-        return m.group(1).lower()
-    return "unknown"
-
-def categorize(output_text):
-    text_lower = (output_text or "").lower()
-    matched = []
-    for cat, pattern in CATEGORY_PATTERNS:
-        if re.search(pattern, text_lower, re.I):
-            matched.append(cat)
-    if not matched:
-        matched = ["uncategorized"]
-    return matched
-
-def days_old(created_at_str):
-    try:
-        # DB stores as 'YYYY-MM-DD HH:MM:SS' (UTC)
-        dt = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
-        dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(tz=timezone.utc)
-        delta = (now - dt).total_seconds() / 86400
-        return max(delta, 0.0)
-    except Exception:
-        return 0.0
-
-def priority_score(sev, categories, age_days):
-    sw = SEVERITY_WEIGHT.get(sev, 1)
-    cr = max(CATEGORY_RISK.get(c, 1.0) for c in categories)
-    # log10 keeps age growth sub-linear so severity stays dominant.
-    # Cap at 1.5 to prevent age from bridging severity tiers: a very old Low
-    # (sw=1) with cap=1.5 scores at most 1.5×cr, while a fresh Medium (sw=2)
-    # scores 2.0×cr — so Medium always beats Low regardless of age.
-    # Without the cap, after ~9-10 days a Low would exceed a fresh Medium
-    # (1 + log10(11) ≈ 2.04 > 2.0 / 1.0 ratio). Cap derivation:
-    #   cap × Low_base < Medium_base  →  cap × 1 < 2  →  cap < 2.0
-    #   1.5 chosen to allow meaningful age signal while preserving tier order.
-    #   stale Low 1yr (uncapped): sev=1 * cr * 3.56 — cap prevents this.
-    age_factor = min(1 + math.log10(age_days + 1), 1.5)
-    return sw * cr * age_factor
-
-scored = []
-for row in open_findings:
-    output_text = row["output"] or ""
-    sev = extract_severity(output_text)
-    cats = categorize(output_text)
-    primary_cat = max(cats, key=lambda c: CATEGORY_RISK.get(c, 1.0))
-    age = days_old(row["created_at"])
-    score = priority_score(sev, cats, age)
-    summary_text = output_text.replace("\n", " ")[:100]
-    scored.append({
-        "id":         row["id"],
-        "sev":        sev,
-        "categories": cats,
-        "primary":    primary_cat,
-        "age_days":   age,
-        "score":      score,
-        "created_at": row["created_at"],
-        "output":     output_text,
-        "summary":    summary_text,
-    })
-
-# Sort by priority descending
-scored.sort(key=lambda x: x["score"], reverse=True)
-
-# ---- Build category breakdown ----
-
-from collections import defaultdict
-cat_stats = defaultdict(lambda: {"open": 0, "high": 0, "med": 0, "low": 0})
-for f in scored:
-    for c in f["categories"]:
-        cat_stats[c]["open"] += 1
-        if f["sev"] in ("high", "critical"):
-            cat_stats[c]["high"] += 1
-        elif f["sev"] == "medium":
-            cat_stats[c]["med"] += 1
-        elif f["sev"] in ("low", "info"):
-            cat_stats[c]["low"] += 1
-
-cat_rows_sorted = sorted(cat_stats.items(), key=lambda kv: kv[1]["open"], reverse=True)
-
-# ---- Determine output path ----
-
-fallback = False
-if os.path.isdir(root_path):
-    out_dir = os.path.join(root_path, ".roborev")
-    out_path = os.path.join(out_dir, "backlog.md")
-else:
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", project_name)
-    out_path = f"/tmp/roborev_backlog_{safe_name}.md"
-    out_dir = None
-    fallback = True
-    print(
-        f"WARN: root_path '{root_path}' not found on this machine. "
-        f"Writing to {out_path}",
-        file=sys.stderr,
-    )
-
-if out_dir is not None:
-    os.makedirs(out_dir, exist_ok=True)
-
-# ---- Render backlog.md ----
-
-now_iso = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-today_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-
-def age_str(days):
-    if days < 1:
-        return "<1d"
-    if days < 7:
-        return f"{int(days)}d"
-    if days < 30:
-        return f"{int(days/7)}w"
-    return f"{int(days/30)}mo"
-
-lines = []
-lines.append(f"# Roborev backlog — {project_name} — {today_str}")
-lines.append("")
-lines.append(f"Generated: {now_iso}")
-lines.append(f"Source: ~/.roborev/reviews.db")
-lines.append("")
-lines.append("## Summary")
-lines.append("")
-lines.append("| Metric | Value |")
-lines.append("|---|---|")
-lines.append(f"| Total reviews | {total} |")
-lines.append(f"| Rejected | {rejected} |")
-lines.append(f"| Open (action needed) | **{open_rej}** |")
-lines.append(f"| Close rate | {close_rate:.1f}% |")
-lines.append("")
-
-# Top 20
-lines.append("## Top 20 by priority")
-lines.append("")
-lines.append("| rank | id | sev | category | age | priority | summary (first 100 chars) |")
-lines.append("|------|----|----|----------|-----|----------|---------------------------|")
-for i, f in enumerate(scored[:20], start=1):
-    row_str = (
-        f"| {i} | {f['id']} | {f['sev']} | {f['primary']} "
-        f"| {age_str(f['age_days'])} | {f['score']:.1f} | {f['summary']} |"
-    )
-    lines.append(row_str)
-lines.append("")
-
-# Category breakdown
-lines.append("## By category (all open)")
-lines.append("")
-lines.append("| category | open | high | med | low |")
-lines.append("|---|---|---|---|---|")
-for cat, stats in cat_rows_sorted:
-    lines.append(
-        f"| {cat} | {stats['open']} | {stats['high']} | {stats['med']} | {stats['low']} |"
-    )
-lines.append("")
-
-# Full list
-lines.append("## Full list")
-lines.append("")
-lines.append(
-    "All open findings, ordered by priority desc — id, severity, category, age, score, first 200 chars of output."
-)
-lines.append("")
-for f in scored:
-    out_excerpt = f["output"].replace("\n", " ")[:200]
-    lines.append(
-        f"**#{f['id']}** | {f['sev']} | {f['primary']} | {age_str(f['age_days'])} "
-        f"| score {f['score']:.1f}"
-    )
-    lines.append(f"> {out_excerpt}")
-    lines.append("")
-
-content = "\n".join(lines) + "\n"
-
-with open(out_path, "w", encoding="utf-8") as fh:
-    fh.write(content)
-
-print(f"Wrote {len(scored)} findings to {out_path}")
-if not fallback:
-    print(f"Project root: {root_path}")
-
+print("| id | sev | age_days | summary |")
+print("|----|-----|----------|---------|")
+for row in rows:
+    rid = row["rid"]
+    sev_ord = max_sev(row["output"])
+    sev = sev_label.get(sev_ord, "unknown")
+    age = row["age_days"] if row["age_days"] is not None else "?"
+    summary = ""
+    for line in (row["output"] or "").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and not line.startswith("---"):
+            summary = line[:80]
+            break
+    summary = summary.replace("|", "\\|")
+    print(f"| {rid} | {sev} | {age} | {summary} |")
 PYEOF
+}
 
-EXIT_CODE=$?
-exit $EXIT_CODE
+# Write backlog.md to <root_path>/.roborev/backlog.md
+# Args: root_path, table_content, repo_name
+# Echoes the output file path on success.
+_write_backlog() {
+  local root_path="$1"
+  local table="$2"
+  local repo_name="$3"
+  local out_dir="$root_path/.roborev"
+  local out_file="$out_dir/backlog.md"
+
+  mkdir -p "$out_dir"
+  {
+    printf '# roborev backlog — %s\n\n' "$repo_name"
+    printf '_Generated: %s_\n\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'Check `.roborev/backlog.md` for prioritised open findings before starting fixes.\n\n'
+    printf '%s\n\n' "$table"
+    printf '_Source: `%s` — top 10 open findings, sorted by age (oldest first)._\n' "$ROBOREV_DB"
+  } > "$out_file"
+
+  echo "$out_file"
+}
+
+# ── Self-test (no subprocess of $0) ──────────────────────────────────────────
+_selftest() {
+  local pass=0 fail=0
+
+  _t() {
+    local label="$1" expected="$2" got="$3"
+    if [ "$got" = "$expected" ]; then
+      pass=$((pass+1))
+      echo "  PASS [$label]"
+    else
+      fail=$((fail+1))
+      echo "  FAIL [$label]: expected='$expected' got='$got'"
+    fi
+  }
+
+  # Test 1: _query_backlog with missing DB fails open (exit 0, non-empty output)
+  local _rc=0
+  local _out
+  _out=$(_query_backlog "llm" "/tmp/no_such_db_backlog_$$" 2>/dev/null) || _rc=$?
+  _t "missing DB: exit 0" "0" "$_rc"
+  _t "missing DB: output non-empty" "1" "$([ -n "$_out" ] && echo 1 || echo 0)"
+
+  # Test 2: _query_backlog with real DB (if present) exits 0
+  local _rc2=0
+  _query_backlog "llm" "${ROBOREV_DB:-$HOME/.roborev/reviews.db}" >/dev/null 2>&1 || _rc2=$?
+  _t "real DB or missing: exit 0" "0" "$_rc2"
+
+  # Test 3: _write_backlog writes to the expected path
+  local _tmpdir
+  _tmpdir=$(mktemp -d)
+  local _written
+  _written=$(_write_backlog "$_tmpdir" "| id | sev | age_days | summary |
+|----|-----|----------|---------|
+| 1  | high | 5 | test |" "test-repo")
+  _t "write_backlog: file exists" "1" "$([ -f "$_tmpdir/.roborev/backlog.md" ] && echo 1 || echo 0)"
+  _t "write_backlog: returns correct path" "$_tmpdir/.roborev/backlog.md" "$_written"
+  # Check file contains repo name
+  _t "write_backlog: header in file" "1" "$(grep -q 'test-repo' "$_tmpdir/.roborev/backlog.md" && echo 1 || echo 0)"
+  rm -rf "$_tmpdir"
+
+  # Test 4: depth guard triggers at depth > 2
+  local _rc3=0
+  _ROBOREV_BACKLOG_DEPTH=3 bash -c '
+    export _ROBOREV_BACKLOG_DEPTH=3
+    _DEPTH="${_ROBOREV_BACKLOG_DEPTH:-0}"
+    if [ "$_DEPTH" -gt 2 ]; then
+      exit 2
+    fi
+    exit 0
+  ' 2>/dev/null || _rc3=$?
+  _t "depth guard: exits 2 at depth 3" "2" "$_rc3"
+
+  echo ""
+  echo "${pass}/$((pass+fail)) PASS"
+  [ "$fail" -eq 0 ] && return 0 || return 1
+}
+
+if [ "${ROBOREV_BACKLOG_SELFTEST:-0}" = "1" ]; then
+  _selftest
+  exit $?
+fi
+
+# ── Main entry ────────────────────────────────────────────────────────────────
+
+# Fail-open: exit 0 if Python missing
+if [ ! -x "$PYTHON" ]; then
+  log "skip: $PYTHON not found"
+  echo "roborev_project_backlog: skipped ($PYTHON missing)"
+  exit 0
+fi
+
+# Fail-open: exit 0 if DB missing (portability — CI, other machines)
+if [ ! -f "$ROBOREV_DB" ]; then
+  log "skip: DB not found at $ROBOREV_DB"
+  echo "roborev_project_backlog: skipped (DB missing)"
+  exit 0
+fi
+
+# Query backlog
+raw_output=$(_query_backlog "$REPO_NAME" "$ROBOREV_DB")
+
+# Extract root_path from first line
+root_path=$(printf '%s\n' "$raw_output" | grep "^ROOT_PATH:" | head -1 | sed 's/^ROOT_PATH://')
+
+# Strip metadata lines for table content
+table=$(printf '%s\n' "$raw_output" | grep -v "^ROOT_PATH:" | grep -v "^REPO:")
+
+if [ "$APPLY" -eq 0 ]; then
+  echo "=== roborev backlog: $REPO_NAME (dry-run) ==="
+  echo ""
+  printf '%s\n' "$table"
+  log "dry-run: repo=$REPO_NAME"
+else
+  if [ -z "$root_path" ]; then
+    log "error: could not determine root_path for repo=$REPO_NAME"
+    echo "roborev_project_backlog: error — repo '$REPO_NAME' not in DB or no root_path" >&2
+    exit 1
+  fi
+
+  out_file=$(_write_backlog "$root_path" "$table" "$REPO_NAME")
+  log "apply: wrote $out_file repo=$REPO_NAME"
+  echo "roborev_project_backlog: wrote $out_file"
+fi
+
+exit 0
