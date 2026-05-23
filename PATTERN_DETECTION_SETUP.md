@@ -1,5 +1,16 @@
 # Pattern Detection Setup (Option 4: Hybrid)
 
+<!-- Roborev closure: #801 resolved in commit 9e8f030 (PR #166 — fix(hooks): gate
+     pattern detection to /bye only).
+     Original finding: guide said wire detect_patterns.sh into session_stop.sh "as if
+     it runs only at /bye", but the Stop hook fires after every Claude response, so
+     a bare integration would incur a paid Opus API call after every reply.
+     Fix: sentinel-file gate documented and implemented. /bye command writes
+     ~/.claude/.bye-requested; session_stop.sh checks for that sentinel and deletes it
+     immediately (one-shot) before invoking detect_patterns.sh. Normal replies produce
+     zero cost because the sentinel is absent. This guide now includes the IMPORTANT
+     warning block and the correct sentinel-gated code block under Step 1. -->
+
 **Created**: 2026-05-11
 **Status**: Integrated
 **Cost**: ~$0.01-0.03 per /bye invocation (zero cost on normal replies)
