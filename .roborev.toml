@@ -14,6 +14,11 @@ review_context_count = 3
 # security, Quarto, test, and dependency failure modes per commit.
 review_guidelines = """R package (llm) — global config management project.
 
+SEVERITY OVERRIDE: The base prompt format says High/Medium/Low but this project
+uses Critical/High/Medium/Low. Use Critical when genuinely warranted — do not
+collapse critical issues into High. Valid severity values: Critical, High, Medium,
+Low. Info severity is not used in this project — upgrade to Low or omit entirely.
+
 CONTEXT:
 - Diffs are structural (difftastic/tree-sitter) — pure formatting changes
   are invisible. Focus on semantic changes only.
@@ -90,11 +95,18 @@ DEPENDENCIES & ENVIRONMENT:
 - `install.packages()` / `pak::pkg_install()` / `devtools::install()`
   anywhere — BANNED in nix.
 
-CRITICAL SEVERITY EXAMPLES (flag at critical, not medium):
-- Any committed credential.
-- Look-ahead bias in a feature used by a model.
-- Reverting an `na-propagation-rolling-stats` fix without explanation.
-- Adding `value_box()` after that rule was established.
+CRITICAL SEVERITY EXAMPLES (flag at Critical, not High — use Critical for these):
+- Any committed credential: api key, password, token, private key, `sk-...`, `ghp_...`.
+- Broken authentication or auth bypass (missing auth check, anyone can call admin endpoint).
+- SQL injection via raw string interpolation (f-string or paste0 in SQL query).
+- Production data loss: destructive ops (`rm -rf`, DROP TABLE, DELETE) on non-tmp
+  paths without confirmation code / recovery trail.
+- Look-ahead bias in any feature used by a production or backtest model.
+- Reverting an `na-propagation-rolling-stats` fix without explicit explanation.
+- Adding `value_box()`, pie chart, or stacked bar AFTER the visualization-standards
+  rule was established (regression of a named anti-pattern).
+- `install.packages()` / `pak::pkg_install()` / `devtools::install()` in any file
+  that runs inside the Nix shell (will brick the reproducible environment).
 """
 # Override the review job timeout in minutes for this repo.
 job_timeout_minutes = 0
