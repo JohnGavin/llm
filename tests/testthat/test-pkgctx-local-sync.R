@@ -1,3 +1,9 @@
+# NOTE: `local_ctx_sync()` and `read_ctx_package_meta()` live in
+# `R/tar_plans/plan_pkgctx.R` — a targets-plan file sourced explicitly,
+# NOT a package function loaded by `devtools::load_all()`.
+# The companion `helper-pkgctx-local-sync.R` sources the plan file into
+# the global env before tests run.
+
 test_that("local_ctx_sync returns empty tibble for directory with no ctx files", {
   empty_dir <- withr::local_tempdir()
   result <- local_ctx_sync(dirs = empty_dir, cache_dir = withr::local_tempdir())
