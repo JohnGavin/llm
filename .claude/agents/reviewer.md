@@ -210,3 +210,14 @@ devtools::check(args = "--as-cran")
 - [ ] R CMD check: [0 errors, X warnings, Y notes]
 - [ ] Documentation complete: [Yes/No]
 ```
+
+## Mandatory Verification Block (Required Final Step)
+
+Before reporting completion, you MUST list all artifacts produced and run the relevant checks as your FINAL tool calls, quoting their literal output in your end-of-run report. This agent is typically read-only (no commits), so the checks are a subset — but they are still mandatory.
+
+1. List every artifact you produced: review file path(s), inline comment URL(s), closed roborev review ID(s).
+2. For each roborev review you closed: `sqlite3 ~/.roborev/reviews.db "SELECT id, closed FROM reviews WHERE id=<id>"` — must return `closed=1`.
+3. If you posted any GitHub review comments: confirm the PR comment URL is reachable (e.g. `gh api <comment_url>` returns HTTP 200).
+4. Confirm you made NO file edits, NO commits, and NO pushes (reviewer is read-only).
+
+If any check fails, do NOT claim success. Report what is missing and stop.

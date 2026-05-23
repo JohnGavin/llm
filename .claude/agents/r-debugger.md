@@ -151,3 +151,15 @@ docker run --rm -v "$(pwd):/pkg" -w /pkg --network=none \
 ```
 
 This eliminates macOS-specific behaviour: different `grep`/`sed` flags, system lib versions, locale settings, font availability.
+
+## Mandatory Verification Block (Required Final Step)
+
+Before reporting completion, you MUST run these checks as your FINAL tool calls and quote their literal output in your end-of-run report. Reports that omit this block, or that report success without these checks passing, are treated as incomplete by the orchestrator.
+
+1. `git -C <worktree> rev-parse --abbrev-ref HEAD` — must NOT be `main`
+2. If commits were made: `git -C <worktree> log origin/main..HEAD --oneline` — must show ≥1 commit
+3. If commits were made: `git -C <worktree> rev-list --count @{u}..HEAD` — must be `0` (all commits pushed)
+4. If a roborev review was supposed to be closed: `sqlite3 ~/.roborev/reviews.db "SELECT id, closed FROM reviews WHERE id IN (<ids>)"` — every cited row must show `closed=1`
+5. If a PR was supposed to be opened: `gh pr view <PR#> --repo <repo> --json state,headRefOid` — state=OPEN, oid matches local HEAD
+
+If any check fails, do NOT claim success. Report what is missing, what state the worktree is actually in, and stop. Purely diagnostic runs (no commits made) must still pass check 1 and confirm they produced no side-effects.
