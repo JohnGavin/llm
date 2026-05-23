@@ -373,6 +373,10 @@ phase_ctx_audit() {
       > /tmp/ctx_sync_$$.log 2>&1 &
     echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
   fi
+
+  # Auto-launch background local_ctx_sync — ingests sibling-project ctx.yaml files (#207)
+  nohup timeout 120 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); local_ctx_sync(dry_run = FALSE)' \
+    > /tmp/local_ctx_sync_$$.log 2>&1 &
 }
 
 # ── Phase 6: R-universe Build Status ──────────────────────────────────
