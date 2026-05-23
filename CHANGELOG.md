@@ -4,6 +4,21 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-23 (#181 Theme 4 — launchd plist + script mis-wirings verified)
+
+All four roborev findings from #181 Theme 4 confirmed addressed in prior PRs.
+
+| Roborev | Finding | Fixed in | Commit |
+|---------|---------|----------|--------|
+| 845 | `com.claude.wiki-health-pulse.plist` invoked `wiki_health_check.sh` with no `<wiki_dir>` arg — exited with usage error every run | PR #165 | `058d260` |
+| 851 | CHANGELOG Phase 4 "5 jobs/day" claim inflated — wiki-health-pulse was non-functional | PR #218 (CHANGELOG correction) | `3e54784` |
+| 868 | `roborev_autoclose.sh` Phase 2 backup used plain `cp reviews.db` — WAL pages not captured | PR #167 | `4f4c35e` |
+| 897 | `session_init.sh` Phase 11c `git config --get core.hooksPath` exited 1 under `set -e` for repos with default hooks dir | PR #218 | `5c17221` |
+
+Verification: `plutil -lint .claude/launchd/com.claude.wiki-health-pulse.plist` → OK; `bash -n` on both shell scripts → clean.
+
+Refs #181 (Theme 4)
+
 ## 2026-05-20 (Session 3 — governance + soak rollouts: 3 PRs merged, 8 issues filed)
 
 Continued from Session 2. Filed and landed three behaviour-changing PRs (cross-project scope rule, agent-push guard, session-end roborev refine), all merged with cautious soak defaults. Filed eight governance/policy issues spanning supply-chain trust, repo hygiene, approval-prompt friction, and future-dated automation. Critically reviewed and declined an external code-bundle solicitation on llm#191.
