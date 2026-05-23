@@ -56,25 +56,48 @@ case "$ACTION" in
   agent_start)
     AGENT_TYPE="${5:-unknown}"
     MODEL="${6:-unknown}"
+    TOOL_USE_ID="${7:-}"
     duckdb "$DB" -c "
-      INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status)
+      INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id)
       VALUES ('$SESSION_ID', '$AGENT_TYPE', '$MODEL', current_timestamp,
-              '$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")', 'running');
+              '$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")', 'running',
+              NULLIF('$TOOL_USE_ID',''));
     " 2>/dev/null || true
     ;;
   agent_stop)
     AGENT_TYPE="${5:-unknown}"
-    STATUS="${6:-completed}"
-    duckdb "$DB" -c "
-      UPDATE agent_runs
-      SET ended_at = current_timestamp,
-          duration_sec = EXTRACT(EPOCH FROM (current_timestamp - started_at)),
-          status = '$STATUS'
-      WHERE session_id = '$SESSION_ID'
-        AND agent_type = '$AGENT_TYPE'
-        AND status = 'running'
-      ORDER BY started_at DESC LIMIT 1;
-    " 2>/dev/null || true
+    STATUS="${6:-done}"
+    TOOL_USE_ID="${7:-}"
+    PROMPT_PV="$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")"
+    # Helper: strip duckdb timing/loading noise, keep only real data lines
+    _dq_filter() {
+      grep -v '^Run Time' | grep -v '^loaded ' | grep -v '^memory:' \
+        | grep -v '^unified:' | grep -v '^backfill_test:' | grep -v '^$'
+    }
+    _hit=""
+    if [ -n "$TOOL_USE_ID" ]; then
+      _hit=$(duckdb "$DB" -noheader -list -c "
+        UPDATE agent_runs SET ended_at=current_timestamp,
+          duration_sec=EXTRACT(EPOCH FROM (current_timestamp-started_at)), status='$STATUS'
+        WHERE tool_use_id='$TOOL_USE_ID' AND status='running' RETURNING id;" 2>/dev/null \
+        | _dq_filter || echo "")
+    fi
+    if [ -z "$_hit" ]; then
+      _hit=$(duckdb "$DB" -noheader -list -c "
+        UPDATE agent_runs SET ended_at=current_timestamp,
+          duration_sec=EXTRACT(EPOCH FROM (current_timestamp-started_at)), status='$STATUS'
+        WHERE id=(SELECT id FROM agent_runs WHERE session_id='$SESSION_ID'
+          AND agent_type='$AGENT_TYPE' AND status='running'
+          ORDER BY started_at DESC LIMIT 1) RETURNING id;" 2>/dev/null \
+        | _dq_filter || echo "")
+    fi
+    if [ -z "$_hit" ]; then
+      duckdb "$DB" -c "
+        INSERT INTO agent_runs (session_id, agent_type, model, started_at, ended_at,
+          duration_sec, prompt_preview, status, tool_use_id)
+        VALUES ('$SESSION_ID','$AGENT_TYPE','inherited',current_timestamp,
+          current_timestamp,0,'$PROMPT_PV','$STATUS',NULLIF('$TOOL_USE_ID',''));" 2>/dev/null || true
+    fi
     ;;
   *)
     echo "Usage: log_session.sh start|stop|error|hook|agent_start|agent_stop [session_id] [project] [summary] [extra_args...]" >&2
