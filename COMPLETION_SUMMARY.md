@@ -1,5 +1,12 @@
 # Cross-Modal Evaluation Implementation - COMPLETE
 
+<!-- Roborev closure: #779 resolved in commit 60389d4 (PR #164).
+     Original finding: "Ready for Merge" claim invalid because deliverables lived
+     outside the repo (~/.claude/ paths) and test_cross_modal_eval.sh exited 0 on
+     assertion failure. Fix: in-repo paths (.claude/scripts/, .claude/.env.example)
+     throughout; FAIL_COUNT + exit 1 semantics verified in test suite.
+     All Roborev findings addressed section added at bottom. -->
+
 ## Issue #137, Phase 1.2 - Successfully Implemented
 
 ### Branch: `feat/cross-modal-eval`
