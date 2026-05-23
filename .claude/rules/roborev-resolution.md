@@ -20,9 +20,10 @@ roborev reviews every commit automatically. Findings persist in its database unt
 
 ### Session Start (session_init.sh Phase 14)
 
-1. Report unpushed roborev fix commits: `git log origin/main..HEAD --oneline | grep "Address review findings"`
-2. Report open high-severity findings: `roborev fix --list --min-severity high | head -5`
-3. Push any unpushed roborev fixes
+1. Check `.roborev/backlog.md` for prioritised open findings before starting fixes.
+2. Report unpushed roborev fix commits: `git log origin/main..HEAD --oneline | grep "Address review findings"`
+3. Report open high-severity findings: `roborev fix --list --min-severity high | head -5`
+4. Push any unpushed roborev fixes
 
 ### During Session
 
@@ -111,6 +112,32 @@ This means the agent couldn't figure out what to change. The review stays open. 
 | Per-project | `project/knowledge/LOG.md` | High-severity findings + resolution |
 | Cross-project | `llm/knowledge/wiki/roborev-patterns.md` | Recurring patterns → rule candidates |
 | Global rules | `llm/.claude/rules/` | Graduated patterns (3+ occurrences) |
+
+## Commit Convention (Component 3)
+
+When a commit addresses a roborev finding, include a citation in the commit message body
+using one of these three patterns (case-insensitive):
+
+```
+fixes roborev #N          — fix applied; ID must be open in the DB
+closes roborev #N         — finding resolved another way; ID must be open
+wontfix roborev #N [reason: <explanation>]  — intentional non-fix; requires a reason tag
+```
+
+Variants also accepted: `fix`, `close` (no trailing s); `roborev#N` (no space before #).
+
+The pre-commit hook (`git-hooks/commit-msg` → `roborev_citation_validate.sh`) validates
+each cited ID against `~/.roborev/reviews.db`:
+
+- Cited ID not found → commit blocked (exit 1)
+- Cited ID already closed → commit blocked (exit 1)
+- DB unavailable → hook passes (fail-open; offline commits are never blocked)
+
+**Bypass (emergency):** `git commit --no-verify` skips all hooks including this one.
+
+**Refs vs Closes:** Use `Refs #N` (GitHub issue syntax, no `roborev`) to cross-reference
+related issues without triggering the validator. The validator only acts on the
+`roborev #N` prefix.
 
 ## Coverage Model (CRITICAL — what roborev does NOT catch)
 
