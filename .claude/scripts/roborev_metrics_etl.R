@@ -17,7 +17,10 @@
 # Slice 1 populates:
 #   roborev_daily_metrics     — daily per-repo rollup
 #   roborev_review_lifecycle  — per-review timeline
-# Other 3 tables are created empty by schema init only.
+# Slice 2 populates:
+#   roborev_agent_performance  — daily per-agent rollup (tokens/cost NULL when absent)
+#   roborev_threshold_changes  — audit trail reconstructed from counter JSON
+#   roborev_cadence_efficacy   — poll vs hook breakdown from poll_merges.log
 #
 # Schema file: ~/.claude/scripts/roborev_metrics_schema.sql
 # Source DB:   ~/.roborev/reviews.db (SQLite, read via DuckDB sqlite ext)
@@ -87,6 +90,8 @@ COUNTER_FILE  <- file.path(Sys.getenv("HOME"), ".claude",
                              ".roborev_autoclose_counters.json")
 AUTOCLOSE_LOG <- file.path(Sys.getenv("HOME"), ".claude", "logs",
                              "roborev_severity_autoclose.log")
+POLL_LOG      <- file.path(Sys.getenv("HOME"), ".claude", "logs",
+                             "roborev_poll_merges.log")
 
 # ── Logging helper ─────────────────────────────────────────────────────────
 
@@ -463,6 +468,431 @@ build_review_lifecycle <- function(jobs, reviews) {
   )
 }
 
+# ── Build roborev_agent_performance ───────────────────────────────────────
+# Per-day × per-agent × per-model rollup.
+# token_usage JSON is sparse/absent in current data → token/cost columns are NULL.
+# model column is often NULL → COALESCE to '' (matches schema DEFAULT '').
+
+parse_token_usage <- function(json_text) {
+  # Returns list(tokens_in=NA_integer_, tokens_out=NA_integer_)
+  # Gracefully handles NULL, empty string, or malformed JSON.
+  empty <- list(tokens_in = NA_integer_, tokens_out = NA_integer_)
+  if (is.na(json_text) || !nzchar(json_text)) return(empty)
+  tryCatch({
+    parsed <- jsonlite::fromJSON(json_text, simplifyVector = TRUE)
+    # Common key variants: input_tokens/output_tokens, prompt_tokens/completion_tokens
+    tok_in  <- parsed$input_tokens %||% parsed$prompt_tokens %||%
+               parsed$inputTokens  %||% NA_integer_
+    tok_out <- parsed$output_tokens %||% parsed$completion_tokens %||%
+               parsed$outputTokens %||% NA_integer_
+    list(
+      tokens_in  = if (is.null(tok_in)  || is.na(tok_in))  NA_integer_ else as.integer(tok_in),
+      tokens_out = if (is.null(tok_out) || is.na(tok_out)) NA_integer_ else as.integer(tok_out)
+    )
+  }, error = function(e) empty)
+}
+
+build_agent_performance <- function(jobs, reviews) {
+  empty_df <- data.frame(
+    date             = as.Date(character()),
+    agent            = character(),
+    model            = character(),
+    n_runs           = integer(),
+    pass_count       = integer(),
+    fail_count       = integer(),
+    error_count      = integer(),
+    p50_duration_s   = double(),
+    p90_duration_s   = double(),
+    total_tokens_in  = integer(),
+    total_tokens_out = integer(),
+    total_cost_usd   = double(),
+    stringsAsFactors = FALSE
+  )
+
+  if (nrow(jobs) == 0L) {
+    cat("roborev_metrics_etl.R: no jobs in window — agent_performance will be empty\n")
+    return(empty_df)
+  }
+
+  # Pull token_usage from review_jobs if available; join reviews for verdict
+  sql_agent <- sprintf("
+    SELECT
+      rj.id          AS job_id,
+      date(rj.enqueued_at) AS job_date,
+      COALESCE(rj.agent, 'unknown') AS agent,
+      COALESCE(rj.model, '')        AS model,
+      rj.status,
+      rj.started_at,
+      rj.finished_at,
+      rj.token_usage
+    FROM src.review_jobs rj
+    JOIN src.repos rp ON rp.id = rj.repo_id
+    WHERE date(rj.enqueued_at) >= DATE '%s'
+    %s
+    ORDER BY rj.id
+  ", since_str, repo_clause)
+
+  jobs_agent <- tryCatch(
+    dbGetQuery(read_con, sql_agent),
+    error = function(e) {
+      log_msg("WARN: agent_performance query failed: ", conditionMessage(e))
+      data.frame()
+    }
+  )
+
+  if (nrow(jobs_agent) == 0L) return(empty_df)
+
+  # Join verdict from reviews
+  rv_verdict <- if (nrow(reviews) > 0L) {
+    reviews[, c("job_id", "verdict_bool"), drop = FALSE]
+  } else {
+    data.frame(job_id = integer(), verdict_bool = integer(), stringsAsFactors = FALSE)
+  }
+  merged <- merge(jobs_agent, rv_verdict, by = "job_id", all.x = TRUE)
+
+  # Parse duration
+  parse_ts_local <- function(x) {
+    tryCatch(as.POSIXct(x, tz = "UTC", format = "%Y-%m-%d %H:%M:%S"),
+             error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01"))
+  }
+  finished <- parse_ts_local(merged$finished_at)
+  started  <- parse_ts_local(merged$started_at)
+  duration <- as.numeric(difftime(finished, started, units = "secs"))
+  merged$duration_s <- duration
+
+  # Parse token_usage — defensive, returns NA on any failure
+  tok_parsed   <- lapply(merged$token_usage, parse_token_usage)
+  merged$tok_in  <- vapply(tok_parsed, `[[`, integer(1L), "tokens_in")
+  merged$tok_out <- vapply(tok_parsed, `[[`, integer(1L), "tokens_out")
+
+  # Aggregate by (date, agent, model)
+  combos <- unique(merged[, c("job_date", "agent", "model"), drop = FALSE])
+
+  result_rows <- lapply(seq_len(nrow(combos)), function(k) {
+    d  <- combos$job_date[[k]]
+    ag <- combos$agent[[k]]
+    mo <- combos$model[[k]]
+
+    grp <- merged[merged$job_date == d & merged$agent == ag & merged$model == mo, ]
+
+    # Duration quantiles — omit NA
+    durs   <- grp$duration_s[!is.na(grp$duration_s)]
+    p50_d  <- if (length(durs) > 0L) as.double(quantile(durs, 0.50, names = FALSE)) else NA_real_
+    p90_d  <- if (length(durs) > 0L) as.double(quantile(durs, 0.90, names = FALSE)) else NA_real_
+
+    # Token sums — NA if all missing
+    tok_in_vals  <- grp$tok_in[!is.na(grp$tok_in)]
+    tok_out_vals <- grp$tok_out[!is.na(grp$tok_out)]
+    tot_in  <- if (length(tok_in_vals)  > 0L) sum(tok_in_vals)  else NA_integer_
+    tot_out <- if (length(tok_out_vals) > 0L) sum(tok_out_vals) else NA_integer_
+
+    # Verdict-level counts (via joined reviews)
+    n_pass  <- sum(grp$verdict_bool == 1L, na.rm = TRUE)
+    n_fail  <- sum(grp$verdict_bool == 0L, na.rm = TRUE)
+    n_error <- sum(grp$status == "failed",  na.rm = TRUE)
+
+    data.frame(
+      date             = as.Date(d),
+      agent            = ag,
+      model            = mo,
+      n_runs           = nrow(grp),
+      pass_count       = n_pass,
+      fail_count       = n_fail,
+      error_count      = n_error,
+      p50_duration_s   = p50_d,
+      p90_duration_s   = p90_d,
+      total_tokens_in  = tot_in,
+      total_tokens_out = tot_out,
+      total_cost_usd   = NA_real_,   # no costs table in SQLite yet
+      stringsAsFactors = FALSE
+    )
+  })
+
+  do.call(rbind, result_rows)
+}
+
+# ── Build roborev_threshold_changes ───────────────────────────────────────
+# Reconstructs change events from the counter JSON's by_date history.
+# When threshold_observed for a repo changes between two consecutive dates,
+# emit one change row. Source = 'counter-json'; actor = hostname.
+#
+# The counter JSON only keeps one snapshot per date so we can only detect
+# inter-day changes. Intra-day changes are not observable from this source.
+
+build_threshold_changes <- function(counter_data, since_date) {
+  empty_df <- data.frame(
+    changed_at_utc = as.POSIXct(character()),
+    repo           = character(),
+    old_threshold  = character(),
+    new_threshold  = character(),
+    source         = character(),
+    actor          = character(),
+    stringsAsFactors = FALSE
+  )
+
+  if (length(counter_data) == 0L) {
+    cat("roborev_metrics_etl.R: no counter data — threshold_changes will be empty\n")
+    return(empty_df)
+  }
+
+  # Sort dates in the counter JSON
+  all_dates <- sort(names(counter_data))
+  # Filter to dates on or after since_date (keep one day before for context)
+  # We include one day before since to detect changes that happened ON since_date
+  prior_dates <- all_dates[all_dates < format(since_date, "%Y-%m-%d")]
+  window_dates <- c(
+    if (length(prior_dates) > 0L) tail(prior_dates, 1L) else character(0L),
+    all_dates[all_dates >= format(since_date, "%Y-%m-%d")]
+  )
+
+  if (length(window_dates) < 2L) {
+    cat("roborev_metrics_etl.R: insufficient date history — threshold_changes may be empty\n")
+    # Still return what we can: all observed thresholds as initial records
+    if (length(window_dates) == 1L) {
+      d <- window_dates[[1L]]
+      day_data <- counter_data[[d]] %||% list()
+      th_obs   <- day_data$threshold_observed %||% list()
+      if (length(th_obs) == 0L) return(empty_df)
+      rows <- lapply(names(th_obs), function(repo_name) {
+        data.frame(
+          changed_at_utc = as.POSIXct(paste0(d, "T00:00:00Z"),
+                                       format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+          repo           = repo_name,
+          old_threshold  = NA_character_,
+          new_threshold  = as.character(th_obs[[repo_name]] %||% NA_character_),
+          source         = "counter-json",
+          actor          = Sys.info()[["nodename"]],
+          stringsAsFactors = FALSE
+        )
+      })
+      return(do.call(rbind, rows))
+    }
+    return(empty_df)
+  }
+
+  # Build per-repo threshold map across dates
+  result_rows <- list()
+  # Collect all known repos across all dates in window
+  all_repos <- unique(unlist(lapply(window_dates, function(d) {
+    day_data <- counter_data[[d]] %||% list()
+    th_obs   <- day_data$threshold_observed %||% list()
+    names(th_obs)
+  })))
+
+  # Also add the global '*' sentinel if threshold_observed has a top-level entry
+  # (some versions record global threshold differently)
+
+  actor <- tryCatch(Sys.info()[["nodename"]], error = function(e) "unknown")
+
+  for (repo_name in all_repos) {
+    prev_th <- NULL  # unknown before first date
+    for (idx in seq_along(window_dates)) {
+      d <- window_dates[[idx]]
+      day_data <- counter_data[[d]] %||% list()
+      th_obs   <- day_data$threshold_observed %||% list()
+      curr_th  <- th_obs[[repo_name]] %||% NA_character_
+
+      if (is.null(curr_th)) curr_th <- NA_character_
+
+      if (idx == 1L) {
+        # First date in window: record as initial state (no change event)
+        prev_th <- curr_th
+        next
+      }
+
+      # Check for change
+      prev_known <- !is.null(prev_th) && !is.na(prev_th)
+      curr_known <- !is.na(curr_th)
+
+      changed <- if (!prev_known && curr_known) {
+        TRUE  # threshold appeared
+      } else if (prev_known && curr_known && (prev_th != curr_th)) {
+        TRUE  # threshold changed value
+      } else {
+        FALSE
+      }
+
+      if (changed) {
+        # Timestamp: midnight UTC of the date where the new value was observed
+        ts <- tryCatch(
+          as.POSIXct(paste0(d, "T00:00:00Z"),
+                     format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+          error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01")
+        )
+        result_rows[[length(result_rows) + 1L]] <- data.frame(
+          changed_at_utc = ts,
+          repo           = repo_name,
+          old_threshold  = if (!prev_known) NA_character_ else as.character(prev_th),
+          new_threshold  = as.character(curr_th),
+          source         = "counter-json",
+          actor          = actor,
+          stringsAsFactors = FALSE
+        )
+      }
+      prev_th <- curr_th
+    }
+  }
+
+  if (length(result_rows) == 0L) {
+    cat("roborev_metrics_etl.R: no threshold changes detected in window\n")
+    return(empty_df)
+  }
+
+  do.call(rbind, result_rows)
+}
+
+# ── Build roborev_cadence_efficacy ─────────────────────────────────────────
+# Per-day × per-repo breakdown of poll vs hook activity.
+# Log format (roborev_poll_merges.log):
+#   YYYY-MM-DD HH:MM:SS [dry] repo: N commit(s) behind, would enqueue: ...
+#   YYYY-MM-DD HH:MM:SS applied: repo: N commit(s) enqueued (since ...)
+#   YYYY-MM-DD HH:MM:SS summary [applied]: repos=N behind=N enqueued=N skipped=N
+#   YYYY-MM-DD HH:MM:SS summary [dry-run]: repos=N behind=N enqueued=N skipped=N
+#
+# review_jobs.source column is currently always NULL so hook vs poll
+# distinction falls back to counting non-null source values.
+
+parse_poll_log <- function(path, since_date) {
+  result <- list()  # key = "date|repo" → list(polls_run, polls_noop, polls_enqueued, n_via_poll)
+
+  if (!file.exists(path)) {
+    log_msg("INFO: poll log absent: ", path)
+    return(result)
+  }
+
+  since_str_local <- format(since_date, "%Y-%m-%d")
+
+  tryCatch({
+    lines <- readLines(path, warn = FALSE)
+
+    # Pattern 1: "applied:" lines — repo actually got commits enqueued
+    # YYYY-MM-DD HH:MM:SS applied: repo: N commit(s) enqueued (since ...)
+    pat_applied  <- "^(\\d{4}-\\d{2}-\\d{2}) \\d{2}:\\d{2}:\\d{2} applied: ([^:]+): ([0-9]+) commit"
+    # Pattern 2: "[dry]" lines — would-enqueue (in dry-run pass, not a real run)
+    # We only count "applied" summary lines as actual poll runs.
+    # Pattern 3: summary lines to count total invocations per day
+    # YYYY-MM-DD HH:MM:SS summary [applied]: ...
+    pat_summary  <- "^(\\d{4}-\\d{2}-\\d{2}) \\d{2}:\\d{2}:\\d{2} summary \\[applied\\]"
+    pat_summary_dry <- "^(\\d{4}-\\d{2}-\\d{2}) \\d{2}:\\d{2}:\\d{2} summary \\[dry-run\\]"
+
+    for (line in lines) {
+      d <- substr(line, 1L, 10L)
+      if (d < since_str_local) next
+
+      # Count summary lines as invocations (one invocation per summary line)
+      if (grepl(pat_summary,     line)) {
+        key <- paste0(d, "|__INVOCATION__")
+        result[[key]] <- (result[[key]] %||% 0L) + 1L
+      }
+      if (grepl(pat_summary_dry, line)) {
+        # dry-run summaries also count as "polls run" for audit purposes
+        key <- paste0(d, "|__INVOCATION__")
+        result[[key]] <- (result[[key]] %||% 0L) + 1L
+      }
+
+      # Count per-repo applied lines
+      m <- regmatches(line, regexec(pat_applied, line))[[1L]]
+      if (length(m) == 4L) {
+        repo_name  <- trimws(m[[3L]])
+        n_commits  <- as.integer(m[[4L]])
+        key        <- paste0(d, "|", repo_name)
+        if (is.null(result[[key]])) {
+          result[[key]] <- list(enqueued_runs = 0L, total_commits = 0L)
+        }
+        result[[key]]$enqueued_runs  <- result[[key]]$enqueued_runs  + 1L
+        result[[key]]$total_commits  <- result[[key]]$total_commits  + n_commits
+      }
+    }
+  }, error = function(e) {
+    log_msg("WARN: poll log parse error: ", conditionMessage(e))
+  })
+
+  result
+}
+
+build_cadence_efficacy <- function(jobs, poll_log_data, since_date) {
+  empty_df <- data.frame(
+    date                     = as.Date(character()),
+    repo                     = character(),
+    polls_run                = integer(),
+    polls_noop               = integer(),
+    polls_enqueued           = integer(),
+    reviews_created_via_poll = integer(),
+    reviews_created_via_hook = integer(),
+    stringsAsFactors         = FALSE
+  )
+
+  # Build set of (date, repo) combos from jobs + poll_log_data
+  job_combos <- if (nrow(jobs) > 0L) {
+    jobs_dated <- jobs
+    jobs_dated$date_str <- substr(jobs_dated$enqueued_at, 1L, 10L)
+    unique(jobs_dated[, c("date_str", "repo"), drop = FALSE])
+  } else {
+    data.frame(date_str = character(), repo = character(), stringsAsFactors = FALSE)
+  }
+
+  # Extract dates/repos from poll log (exclude __INVOCATION__ sentinel)
+  poll_repo_keys <- names(poll_log_data)[!grepl("__INVOCATION__", names(poll_log_data))]
+  poll_combos <- if (length(poll_repo_keys) > 0L) {
+    parts <- strsplit(poll_repo_keys, "\\|")
+    data.frame(
+      date_str = vapply(parts, `[[`, character(1L), 1L),
+      repo     = vapply(parts, `[[`, character(1L), 2L),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    data.frame(date_str = character(), repo = character(), stringsAsFactors = FALSE)
+  }
+
+  all_combos <- unique(rbind(job_combos, poll_combos))
+  if (nrow(all_combos) == 0L) {
+    cat("roborev_metrics_etl.R: no data for cadence_efficacy\n")
+    return(empty_df)
+  }
+
+  result_rows <- lapply(seq_len(nrow(all_combos)), function(k) {
+    d        <- all_combos$date_str[[k]]
+    rep_name <- all_combos$repo[[k]]
+
+    # Invocations for this date (global, not per-repo)
+    inv_key   <- paste0(d, "|__INVOCATION__")
+    polls_run <- as.integer(poll_log_data[[inv_key]] %||% 0L)
+
+    # Per-repo enqueued runs
+    repo_key   <- paste0(d, "|", rep_name)
+    repo_entry <- poll_log_data[[repo_key]]
+    enq_runs   <- if (!is.null(repo_entry)) as.integer(repo_entry$enqueued_runs) else 0L
+
+    # polls_noop: invocations where this repo was NOT enqueued
+    polls_noop <- max(0L, polls_run - enq_runs)
+
+    # Reviews from this repo on this date
+    if (nrow(jobs) > 0L) {
+      day_jobs_repo <- jobs[substr(jobs$enqueued_at, 1L, 10L) == d & jobs$repo == rep_name, ]
+      n_via_poll <- sum(!is.na(day_jobs_repo$source) & day_jobs_repo$source == "poll",
+                        na.rm = TRUE)
+      n_via_hook <- sum(!is.na(day_jobs_repo$source) & day_jobs_repo$source == "hook",
+                        na.rm = TRUE)
+    } else {
+      n_via_poll <- 0L
+      n_via_hook <- 0L
+    }
+
+    data.frame(
+      date                     = as.Date(d),
+      repo                     = rep_name,
+      polls_run                = polls_run,
+      polls_noop               = polls_noop,
+      polls_enqueued           = enq_runs,
+      reviews_created_via_poll = n_via_poll,
+      reviews_created_via_hook = n_via_hook,
+      stringsAsFactors         = FALSE
+    )
+  })
+
+  do.call(rbind, result_rows)
+}
+
 # ── Build tables ───────────────────────────────────────────────────────────
 
 daily_df     <- build_daily_metrics(jobs_raw, reviews_raw)
@@ -471,18 +901,33 @@ lifecycle_df <- build_review_lifecycle(jobs_raw, reviews_raw)
 cat(sprintf("roborev_metrics_etl.R: built %d daily_metrics rows, %d lifecycle rows\n",
             nrow(daily_df), nrow(lifecycle_df)))
 
+# Slice 2 tables
+agent_perf_df <- build_agent_performance(jobs_raw, reviews_raw)
+poll_log_data <- parse_poll_log(POLL_LOG, since)
+cadence_df    <- build_cadence_efficacy(jobs_raw, poll_log_data, since)
+threshold_df  <- build_threshold_changes(counter_data, since)
+
+cat(sprintf(
+  "roborev_metrics_etl.R: built %d agent_performance rows, %d threshold_changes rows, %d cadence_efficacy rows\n",
+  nrow(agent_perf_df), nrow(threshold_df), nrow(cadence_df)
+))
+
 # ── Dry-run: print summary and exit 0 ─────────────────────────────────────
 
 if (mode == "dry-run") {
   cat("\n--- DRY RUN (no writes) ---\n")
-  cat(sprintf("  roborev_daily_metrics:    %d rows (since %s)\n",
+  cat(sprintf("  roborev_daily_metrics:     %d rows (since %s)\n",
               nrow(daily_df), format(since, "%Y-%m-%d")))
-  cat(sprintf("  roborev_review_lifecycle: %d rows\n", nrow(lifecycle_df)))
-  cat("  roborev_agent_performance:  (empty — Slice 2)\n")
-  cat("  roborev_threshold_changes:  (empty — Slice 2)\n")
-  cat("  roborev_cadence_efficacy:   (empty — Slice 2)\n")
+  cat(sprintf("  roborev_review_lifecycle:  %d rows\n", nrow(lifecycle_df)))
+  cat(sprintf("  roborev_agent_performance: %d rows\n", nrow(agent_perf_df)))
+  cat(sprintf("  roborev_threshold_changes: %d rows\n", nrow(threshold_df)))
+  cat(sprintf("  roborev_cadence_efficacy:  %d rows\n", nrow(cadence_df)))
   cat("--- end dry-run ---\n")
-  log_msg(sprintf("dry-run: daily=%d lifecycle=%d", nrow(daily_df), nrow(lifecycle_df)))
+  log_msg(sprintf(
+    "dry-run: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d",
+    nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
+    nrow(threshold_df), nrow(cadence_df)
+  ))
   quit(status = 0L)
 }
 
@@ -565,23 +1010,28 @@ upsert_table <- function(con, table_name, df) {
   })
 }
 
-# ── Transaction: populate Slice 1 tables ──────────────────────────────────
+# ── Transaction: populate all 5 tables ────────────────────────────────────
 
 tryCatch({
   dbBegin(duck_con)
 
   upsert_table(duck_con, "roborev_daily_metrics",    daily_df)
   upsert_table(duck_con, "roborev_review_lifecycle", lifecycle_df)
+  upsert_table(duck_con, "roborev_agent_performance", agent_perf_df)
+  upsert_table(duck_con, "roborev_threshold_changes", threshold_df)
+  upsert_table(duck_con, "roborev_cadence_efficacy",  cadence_df)
 
   dbCommit(duck_con)
 
   log_msg(sprintf(
-    "apply: daily=%d lifecycle=%d mode=apply since=%s",
-    nrow(daily_df), nrow(lifecycle_df), format(since, "%Y-%m-%d")
+    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d mode=apply since=%s",
+    nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
+    nrow(threshold_df), nrow(cadence_df), format(since, "%Y-%m-%d")
   ))
   cat(sprintf(
-    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d\n",
-    nrow(daily_df), nrow(lifecycle_df)
+    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d\n",
+    nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
+    nrow(threshold_df), nrow(cadence_df)
   ))
 }, error = function(e) {
   tryCatch(dbRollback(duck_con), error = function(e2) NULL)
