@@ -119,7 +119,10 @@ refine_min_severity = 'medium'
 # Minimum severity for reviews in this repo: critical, high, medium, low.
 review_min_severity = 'medium'
 # Filenames or glob patterns to exclude from review diffs for this repo.
-exclude_patterns = []
+exclude_patterns = [
+  "CHANGELOG.md",
+  ".claude/CURRENT_WORK.md",
+]
 # Automatic post-commit review mode for this repo: commit or branch.
 post_commit_review = ''
 reuse_review_session_lookback = 0
