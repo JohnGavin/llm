@@ -81,8 +81,9 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
    package must be added to `DESCRIPTION` (Imports/Suggests) AND `default.R`
 3. **Regenerate `default.nix` using a cwd-safe form** — this runs
    `rix::rix()` inside a shell that has `rix` installed (the llm dev
-   shell at `~/docs_gh/llm/`). The bare form `Rscript /path/to/default.R`
-   is **WRONG** because it inherits the caller's cwd; `rix::rix()` writes
+   shell at `~/docs_gh/llm/`). The bare form
+   `nix-shell ... --run "Rscript /path/to/project/default.R"` is **WRONG**
+   because the script inherits the caller's cwd; `rix::rix()` writes
    `default.nix` relative to cwd and silently overwrites the wrong
    checkout. Always use Form A or Form B (see "Worktree-Isolated rix
    Regenerations" below for the full explanation):
@@ -162,16 +163,19 @@ In the mycare project, regenerating default.nix to add testthat/here/withr strip
 
 **Defensive workflow when regenerating default.nix:**
 
-Every step below that runs `Rscript default.R` MUST use one of the
-cwd-safe forms documented in the section above (subshell Form A or
-explicit `setwd()` Form B). There is no safe exception: even when the
-caller appears to be in the right directory, worktree-orchestrator cwd
-drift can silently overwrite the wrong checkout. Always use Form A or B.
+Every regeneration call MUST use cwd-safe Form A (subshell) or Form B
+(`setwd()`), as documented above. There is no safe exception: even when
+the caller appears to be in the right directory, worktree-orchestrator cwd
+drift can silently overwrite the wrong checkout.
+
+- **Form A** (subshell): `(cd /absolute/path/to/project && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")`
+- **Form B** (setwd): `nix-shell ~/docs_gh/llm/default.nix --run "Rscript -e 'setwd(\"/absolute/path/to/project\"); source(\"default.R\")'")`
+- **NEVER** use a bare absolute path: `nix-shell ... --run "Rscript /absolute/path/to/project/default.R"` — this is the pattern that caused the 2026-05-02 and 2026-05-08 incidents.
 
 Preferred — use a `default.post.sh` per project (idempotent shell script
 that re-applies the project's overlays):
 
-1. Regenerate (Form A, from agent or orchestrator):
+1. Regenerate using Form A:
    `(cd /absolute/path/to/project && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")`
 2. `(cd /absolute/path/to/project && ./default.post.sh)` —
    re-apply overlays. Script must be idempotent and detect
@@ -181,7 +185,8 @@ that re-applies the project's overlays):
 Fallback — when no `default.post.sh` exists yet:
 
 1. `cp /absolute/path/to/project/default.nix /absolute/path/to/project/default.nix.pre-regen.bak`
-2. `(cd /absolute/path/to/project && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")`
+2. Regenerate using Form A:
+   `(cd /absolute/path/to/project && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")`
 3. `diff /absolute/path/to/project/default.nix.pre-regen.bak /absolute/path/to/project/default.nix` — eyeball stripped sections
 4. Re-apply overlays manually
 5. Verify
