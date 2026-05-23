@@ -16,14 +16,33 @@ Every project with roborev post-commit hook enabled (`roborev install-hook`).
 
 roborev reviews every commit automatically. Findings persist in its database until explicitly closed via `roborev fix`, `roborev refine`, or `roborev close`. A 0% resolution rate means technical debt grows with every commit.
 
+## Composite Priority Scorer (Component 2, JohnGavin/llm#163)
+
+`roborev_project_backlog.sh` scores each open finding using:
+
+```
+priority = severity_weight × category_risk × (1 + log10(days_old)) × (1 + log10(file_touches_30d))
+```
+
+Weights: `severity_weight` — Critical=10, High=5, Medium=2, Low=1. `category_risk` — security=3, error-handling=2.5, async=2, dependency/test=1.5, performance=1.2, other=1, docs=0.5. `file_touches_30d` counts git commits touching that file in the last 30 days (defaults to 1 when the file path cannot be identified). The backlog table is sorted by `priority DESC`; `age_days` is retained as a transparency column.
+
+At session start, `session_init.sh` Phase 13d emits a one-line banner:
+
+```
+roborev-backlog: open=N (priority-1=sev:cat, top=#id) | addressed=XX%
+```
+
+The banner is silent when `.roborev/reviews.db` is absent (portability — CI, other machines).
+
 ## Per-Session Workflow (Mandatory)
 
-### Session Start (session_init.sh Phase 14)
+### Session Start (session_init.sh Phase 13d)
 
-1. Check `.roborev/backlog.md` for prioritised open findings before starting fixes.
-2. Report unpushed roborev fix commits: `git log origin/main..HEAD --oneline | grep "Address review findings"`
-3. Report open high-severity findings: `roborev fix --list --min-severity high | head -5`
-4. Push any unpushed roborev fixes
+1. Read the `roborev-backlog:` banner in session-init output — it shows open count, top finding, and addressed rate.
+2. Check `.roborev/backlog.md` for the full prioritised list before starting fixes.
+3. Report unpushed roborev fix commits: `git log origin/main..HEAD --oneline | grep "Address review findings"`
+4. Report open high-severity findings: `roborev fix --list --min-severity high | head -5`
+5. Push any unpushed roborev fixes
 
 ### During Session
 
