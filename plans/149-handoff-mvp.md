@@ -1,5 +1,8 @@
 # MVP Plan: Cross-Repo Roborev Handoff — Phase 1a Only
 
+> **Pilot target updated 2026-05-23: crypto inactive → randomwalk**
+> All §7 pilot references changed from `crypto` to `randomwalk`. See `plans/149-handoff-pilot-report.md` for dry-run output and the manual `--apply` command.
+
 **Issue:** [JohnGavin/llm#149](https://github.com/JohnGavin/llm/issues/149)
 **Plan source:** `.claude/plans/cross-repo-roborev-handoff.md` (full plan, all phases)
 **MVP scope:** Phase 1a only — per-commit fail issues; Phases 1b and 1c deferred
@@ -55,7 +58,7 @@ The script already exists. The MVP is about verifying the slice that matters:
 
 1. **`--dry-run` (default):** for 3 manually-picked stale `verdict=fail` jobs, the script prints `[dry] <repo>: would create GH issue (commit <sha>, job <id>, label roborev-handoff)` and exits 0 without touching GH.
 
-2. **`--apply` single-repo pilot:** `ROBOREV_REPO=crypto ~/.claude/scripts/roborev_handoff.sh --apply` creates one GH issue per stale fail job in `crypto` with:
+2. **`--apply` single-repo pilot:** `ROBOREV_REPO=randomwalk ~/.claude/scripts/roborev_handoff.sh --apply` creates one GH issue per stale fail job in `randomwalk` with:
    - Title: `roborev review for <7-char sha>`
    - Label: `roborev-handoff`
    - Body: review markdown + `roborev job: <id>` footer
@@ -85,7 +88,7 @@ The script already exists. The MVP is about verifying the slice that matters:
 All distinct from the full issue's acceptance checklist:
 
 - [ ] `roborev_handoff.sh --dry-run` (no args) runs without error on the current DB; output lists at least one `[dry] ... would create GH issue` line (or "nothing to do" if DB is empty)
-- [ ] `ROBOREV_REPO=crypto roborev_handoff.sh --apply` creates ≥1 GH issue in `JohnGavin/crypto` with label `roborev-handoff` OR exits cleanly with "nothing to do"
+- [ ] `ROBOREV_REPO=randomwalk roborev_handoff.sh --apply` creates ≥1 GH issue in `JohnGavin/randomwalk` with label `roborev-handoff` OR exits cleanly with "nothing to do"
 - [ ] Re-running `--apply` on the same repo within 60 seconds produces zero new issues (idempotency gate)
 - [ ] `~/.claude/logs/roborev_handoff.log` contains a `1a: created issue` line AND a `1a: closed job=` line for the same job_id
 - [ ] If `gh issue create` is forced to fail (e.g., `GH=/usr/bin/false`), the roborev job remains open (close-after-success ordering)
@@ -100,24 +103,25 @@ Phase 1b, 1c, and plist wiring are NOT acceptance criteria for this PR.
 |---|---|---|
 | GH rate-limit on repos with many stale fail jobs | Medium | Script already logs and leaves job open on API failure; re-run next day |
 | Duplicate issues from concurrent `--apply` runs (two launchd invocations overlap) | Low | Idempotency search reduces window; the sha search is not atomic but concurrent runs are rare given weekly launchd trigger |
-| Target repo has `roborev-handoff` label missing, causing `gh issue create` to fail | Medium | Pre-flight the pilot: `gh label create roborev-handoff --repo JohnGavin/crypto --color 8B5CF6` before first `--apply`; add to the rollout checklist |
+| Target repo has `roborev-handoff` label missing, causing `gh issue create` to fail | Medium | Pre-flight the pilot: `gh label create roborev-handoff --repo JohnGavin/randomwalk --color 8B5CF6` before first `--apply`; add to the rollout checklist |
 
 ---
 
 ## 7. Pilot Target
 
-Use **`crypto`** as the first `--apply` target (as suggested in the issue's Phase 2 row). Rationale:
+Use **`randomwalk`** as the first `--apply` target. Rationale:
 
-- Quietest dev repo; any spurious issues are easy to identify and close.
-- Has GitHub issues enabled (confirmed).
-- Has stale roborev jobs (the DB query in the plan file will show candidates).
+- `crypto` is inactive (user decision 2026-05-23); `randomwalk` is the replacement pilot.
+- Active dev repo with 7 confirmed stale verdict=fail candidates (verified 2026-05-23).
+- Has GitHub issues enabled (confirmed: `hasIssuesEnabled=true`).
+- Any spurious issues are easy to identify and close.
 
 Pilot sequence:
-1. `sqlite3 ~/.roborev/reviews.db "SELECT COUNT(*) FROM review_jobs rj JOIN repos r ON r.id=rj.repo_id JOIN reviews rv ON rv.job_id=rj.id WHERE r.name='crypto' AND rj.status='done' AND (julianday('now')-julianday(rj.finished_at))>7 AND rv.verdict_bool=0"` — confirm ≥1 candidate
-2. Ensure `roborev-handoff` label exists in `JohnGavin/crypto`
-3. `ROBOREV_REPO=crypto ~/.claude/scripts/roborev_handoff.sh` (dry-run first)
+1. `sqlite3 ~/.roborev/reviews.db "SELECT COUNT(*) FROM review_jobs rj JOIN repos r ON r.id=rj.repo_id JOIN reviews rv ON rv.job_id=rj.id WHERE r.name='randomwalk' AND rj.status='done' AND (julianday('now')-julianday(rj.finished_at))>7 AND rv.verdict_bool=0"` — confirms 7 candidates (verified 2026-05-23)
+2. Ensure `roborev-handoff` label exists in `JohnGavin/randomwalk`
+3. `ROBOREV_REPO=randomwalk ~/.claude/scripts/roborev_handoff.sh` (dry-run first)
 4. Inspect dry-run output
-5. `ROBOREV_REPO=crypto ~/.claude/scripts/roborev_handoff.sh --apply`
+5. `ROBOREV_REPO=randomwalk ~/.claude/scripts/roborev_handoff.sh --apply`
 6. Verify issue on GitHub; verify log; verify idempotency
 
 ---

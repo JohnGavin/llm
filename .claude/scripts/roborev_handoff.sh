@@ -46,7 +46,7 @@ set -euo pipefail
 # ── Config ───────────────────────────────────────────────────────────────────
 ROBOREV="${ROBOREV:-/usr/local/bin/roborev}"
 SQLITE="${SQLITE:-/usr/bin/sqlite3}"
-GH="${GH:-/usr/bin/gh}"
+GH="${GH:-$(command -v gh 2>/dev/null || echo /usr/bin/gh)}"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 THRESHOLD_DAYS="${THRESHOLD_DAYS:-7}"
