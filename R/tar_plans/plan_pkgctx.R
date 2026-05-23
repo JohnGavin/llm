@@ -283,6 +283,242 @@ ctx_cleanup <- function(cache_dir = CTX_CACHE, max_age_days = CTX_CLEANUP_DAYS) 
   invisible(length(old))
 }
 
+# ── Registered project directories for local_ctx_sync() ──────────────
+LOCAL_CTX_PROJECTS <- c(
+  file.path(Sys.getenv("HOME"), "docs_gh/proj/finance/data/historical"),
+  file.path(Sys.getenv("HOME"), "docs_gh/proj/data/coMMpass"),
+  file.path(Sys.getenv("HOME"), "docs_gh/proj/medicine/mycare"),
+  file.path(Sys.getenv("HOME"), "docs_gh/proj/data/irishbuoys")
+)
+
+#' Extract package name and version from a multi-doc ctx.yaml file
+#'
+#' Reads the first `kind: package` document from a multi-document YAML file
+#' and returns its `name` and `version` fields.
+#'
+#' @param ctx_path Path to a `.ctx.yaml` file (multi-doc YAML with `---` separators)
+#' @return A named list with elements `name` (character) and `version` (character),
+#'   or `NULL` if the file cannot be parsed or lacks a `kind: package` document.
+#' @keywords internal
+read_ctx_package_meta <- function(ctx_path) {
+  if (!file.exists(ctx_path)) return(NULL)
+
+  # Multi-doc YAML: split on "---" separator lines, parse each doc
+  raw <- tryCatch(
+    readLines(ctx_path, warn = FALSE),
+    error = function(e) {
+      cli::cli_warn("Cannot read {.file {ctx_path}}: {conditionMessage(e)}")
+      NULL
+    }
+  )
+  if (is.null(raw)) return(NULL)
+
+  # Split into YAML documents on "---" boundary lines (keep non-empty docs)
+  doc_breaks <- c(0L, which(grepl("^---\\s*$", raw)), length(raw) + 1L)
+  docs <- lapply(
+    seq_len(length(doc_breaks) - 1L),
+    function(i) raw[(doc_breaks[i] + 1L):(doc_breaks[i + 1L] - 1L)]
+  )
+  docs <- docs[vapply(docs, function(d) any(nzchar(trimws(d))), logical(1))]
+
+  # Find the document with `kind: package`
+  for (doc_lines in docs) {
+    parsed <- tryCatch(
+      yaml::yaml.load(paste(doc_lines, collapse = "\n")),
+      error = function(e) NULL
+    )
+    if (!is.null(parsed) && identical(parsed[["kind"]], "package")) {
+      name    <- parsed[["name"]]
+      version <- parsed[["version"]]
+      if (!is.null(name) && nzchar(name)) {
+        return(list(
+          name    = as.character(name),
+          version = if (!is.null(version)) as.character(version) else "unknown"
+        ))
+      }
+    }
+  }
+  NULL
+}
+
+#' Locate ctx.yaml files in a project directory
+#'
+#' Checks the project root for a `ctx.yaml` file and also looks for ctx yaml
+#' files under `inst/extdata/ctx/` matching the project package name.
+#'
+#' @param project_dir Path to the project root directory
+#' @return Character vector of absolute paths to discovered ctx yaml files
+#' @keywords internal
+find_project_ctx_files <- function(project_dir) {
+  if (!dir.exists(project_dir)) return(character(0))
+
+  candidates <- c(
+    file.path(project_dir, "ctx.yaml"),
+    list.files(
+      file.path(project_dir, "inst", "extdata", "ctx"),
+      pattern = "\\.ctx\\.yaml$",
+      full.names = TRUE
+    )
+  )
+  candidates[file.exists(candidates)]
+}
+
+#' Sync local project ctx.yaml files into the central cache
+#'
+#' Scans a list of registered project directories for `ctx.yaml` files
+#' (multi-document YAML, schema v1.1) and copies them into the central context
+#' cache at `~/docs_gh/proj/data/llm/content/inst/ctx/external/` using the
+#' version-stamped naming convention `{name}\@{version}.ctx.yaml`.
+#'
+#' By default (`dry_run = TRUE`) no files are written — the function only
+#' reports what it would do. Set `dry_run = FALSE` to perform the actual copy.
+#'
+#' @param dirs Character vector of project root directories to scan.
+#'   Defaults to `LOCAL_CTX_PROJECTS` (the configured registry).
+#' @param cache_dir Destination directory. Defaults to `CTX_CACHE`.
+#' @param dry_run Logical. When `TRUE` (the default) no files are written;
+#'   the function returns a tibble describing what *would* be synced.
+#' @return A [tibble::tibble()] with columns:
+#'   \describe{
+#'     \item{project_dir}{Source project directory}
+#'     \item{ctx_src}{Absolute path to the source ctx file}
+#'     \item{package}{Package name extracted from the ctx file}
+#'     \item{version}{Package version extracted from the ctx file}
+#'     \item{dest}{Destination path in the central cache}
+#'     \item{action}{One of `"copied"`, `"skipped"` (already current),
+#'       `"dry_run"`, `"error"`, or `"parse_failed"`}
+#'   }
+#' @examples
+#' # Report what would be synced (no writes)
+#' local_ctx_sync(dry_run = TRUE)
+#'
+#' # Actually copy files into the central cache
+#' \dontrun{
+#' local_ctx_sync(dry_run = FALSE)
+#' }
+#' @export
+local_ctx_sync <- function(
+    dirs      = LOCAL_CTX_PROJECTS,
+    cache_dir = CTX_CACHE,
+    dry_run   = TRUE
+) {
+  if (!is.character(dirs)) {
+    cli::cli_abort(c(
+      "x" = "{.arg dirs} must be a character vector.",
+      "i" = "Got {.cls {class(dirs)}}."
+    ))
+  }
+  if (!is.logical(dry_run) || length(dry_run) != 1L) {
+    cli::cli_abort(c(
+      "x" = "{.arg dry_run} must be a single logical value.",
+      "i" = "Got {.cls {class(dry_run)}} of length {length(dry_run)}."
+    ))
+  }
+
+  if (dry_run) {
+    cli::cli_inform("local_ctx_sync: dry_run=TRUE — no files will be written")
+  }
+
+  rows <- list()
+
+  for (project_dir in dirs) {
+    ctx_files <- find_project_ctx_files(project_dir)
+    if (length(ctx_files) == 0L) next
+
+    for (ctx_src in ctx_files) {
+      meta <- tryCatch(
+        read_ctx_package_meta(ctx_src),
+        warning = function(w) {
+          cli::cli_warn(
+            "Parsing {.file {ctx_src}}: {conditionMessage(w)}",
+            .frequency = "once",
+            .frequency_id = ctx_src
+          )
+          NULL
+        },
+        error = function(e) {
+          cli::cli_warn(
+            "Failed to parse {.file {ctx_src}}: {conditionMessage(e)}"
+          )
+          NULL
+        }
+      )
+
+      if (is.null(meta)) {
+        rows <- c(rows, list(tibble::tibble(
+          project_dir = project_dir,
+          ctx_src     = ctx_src,
+          package     = NA_character_,
+          version     = NA_character_,
+          dest        = NA_character_,
+          action      = "parse_failed"
+        )))
+        next
+      }
+
+      dest_name <- ctx_filename(meta$name, meta$version)
+      dest      <- file.path(cache_dir, dest_name)
+
+      # Determine action
+      action <- if (dry_run) {
+        "dry_run"
+      } else if (file.exists(dest) &&
+                 identical(
+                   readLines(ctx_src,  warn = FALSE),
+                   readLines(dest, warn = FALSE)
+                 )) {
+        "skipped"
+      } else {
+        dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+        ok <- tryCatch(
+          { file.copy(ctx_src, dest, overwrite = TRUE); TRUE },
+          error = function(e) {
+            cli::cli_warn("Copy failed for {.file {dest_name}}: {conditionMessage(e)}")
+            FALSE
+          }
+        )
+        if (ok) "copied" else "error"
+      }
+
+      if (action == "copied") {
+        cli::cli_alert_success(
+          "Synced {.pkg {meta$name}} {meta$version} → {.file {dest_name}}"
+        )
+      } else if (action == "skipped") {
+        cli::cli_alert_info(
+          "Already current: {.file {dest_name}}"
+        )
+      } else if (action == "dry_run") {
+        cli::cli_alert_info(
+          "[dry_run] Would copy {.pkg {meta$name}} {meta$version} → {.file {dest_name}}"
+        )
+      }
+
+      rows <- c(rows, list(tibble::tibble(
+        project_dir = project_dir,
+        ctx_src     = ctx_src,
+        package     = meta$name,
+        version     = meta$version,
+        dest        = dest,
+        action      = action
+      )))
+    }
+  }
+
+  if (length(rows) == 0L) {
+    return(tibble::tibble(
+      project_dir = character(0),
+      ctx_src     = character(0),
+      package     = character(0),
+      version     = character(0),
+      dest        = character(0),
+      action      = character(0)
+    ))
+  }
+
+  do.call(rbind, rows)
+}
+
 # ── Targets plan (for llm project) ───────────────────────────────────
 
 plan_pkgctx <- function() {
@@ -308,6 +544,13 @@ plan_pkgctx <- function() {
         ctx_sync("DESCRIPTION", CTX_CACHE, fix_missing = TRUE, fix_stale = TRUE)
       },
       packages = c("cli"),
+      cue = targets::tar_cue(mode = "always")
+    ),
+
+    targets::tar_target(
+      pkgctx_local_sync,
+      local_ctx_sync(dry_run = FALSE),
+      packages = c("cli", "yaml", "tibble"),
       cue = targets::tar_cue(mode = "always")
     )
   )

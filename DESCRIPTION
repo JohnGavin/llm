@@ -22,7 +22,8 @@ Imports:
     purrr,
     qrcode,
     scales,
-    tibble
+    tibble,
+    yaml
 VignetteBuilder: knitr
 Suggests:
     DT,
