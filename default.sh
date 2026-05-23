@@ -165,17 +165,58 @@ cachix use rstats-on-nix
 
 # Lock only the nix-build step to prevent concurrent builds
 # (multiple tabs can run default.sh to enter the shell, but only one builds)
+#
+# Configurable bounds (so a hung peer build cannot hang us forever):
+#   NIX_BUILD_WAIT_MAX  seconds to wait for peer build (default 1800 = 30 min;
+#                       set 0 to skip waiting and fail immediately)
+#   NIX_BUILD_NO_WAIT=1 shorthand for NIX_BUILD_WAIT_MAX=0
+#   NIX_BUILD_FORCE=1   ignore existing lock entirely (assume stale)
+NIX_BUILD_WAIT_MAX="${NIX_BUILD_WAIT_MAX:-1800}"
+if [ "${NIX_BUILD_NO_WAIT:-0}" = "1" ]; then NIX_BUILD_WAIT_MAX=0; fi
+
 if [ -f "$LOCK_FILE" ]; then
     LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
-    if kill -0 "$LOCK_PID" 2>/dev/null; then
-        echo "Another nix-build is running (PID $LOCK_PID). Waiting for it to finish..."
-        while kill -0 "$LOCK_PID" 2>/dev/null; do sleep 2; done
-        echo "Build finished. Continuing..."
+    if [ "${NIX_BUILD_FORCE:-0}" = "1" ]; then
+        echo "NIX_BUILD_FORCE=1 set; ignoring lock file (was PID '$LOCK_PID')."
+        rm -f "$LOCK_FILE"
+    elif [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+        if [ "$NIX_BUILD_WAIT_MAX" -le 0 ] 2>/dev/null; then
+            echo "ERROR: Another nix-build is running (PID $LOCK_PID) and NIX_BUILD_WAIT_MAX=0."
+            echo "  Lock: $LOCK_FILE"
+            echo "  To wait:        NIX_BUILD_WAIT_MAX=1800 $0"
+            echo "  To force-take:  NIX_BUILD_FORCE=1 $0   (only if PID $LOCK_PID is stuck)"
+            exit 1
+        fi
+        SLEEP_INTERVAL=10
+        elapsed=0
+        echo "Another nix-build is running (PID $LOCK_PID). Waiting up to ${NIX_BUILD_WAIT_MAX}s..."
+        echo "  To override: NIX_BUILD_FORCE=1 $0  (or remove $LOCK_FILE)"
+        while kill -0 "$LOCK_PID" 2>/dev/null; do
+            if [ "$elapsed" -ge "$NIX_BUILD_WAIT_MAX" ]; then
+                echo ""
+                echo "ERROR: Timed out after ${NIX_BUILD_WAIT_MAX}s waiting for PID $LOCK_PID."
+                echo "  Peer build may be hung. Options:"
+                echo "    1. Inspect:  ps -p $LOCK_PID -o pid,etime,command"
+                echo "    2. Kill:     kill $LOCK_PID; rm $LOCK_FILE"
+                echo "    3. Force:    NIX_BUILD_FORCE=1 $0"
+                echo "    4. Wait 2x:  NIX_BUILD_WAIT_MAX=$((NIX_BUILD_WAIT_MAX*2)) $0"
+                exit 1
+            fi
+            sleep "$SLEEP_INTERVAL"
+            elapsed=$((elapsed + SLEEP_INTERVAL))
+            if [ $((elapsed % 60)) -eq 0 ]; then
+                echo "  ...still waiting (${elapsed}s/${NIX_BUILD_WAIT_MAX}s, PID $LOCK_PID alive)"
+            fi
+        done
+        echo "Peer build finished after ${elapsed}s. Continuing..."
     else
+        echo "Stale lock file (PID '$LOCK_PID' not running). Removing $LOCK_FILE."
         rm -f "$LOCK_FILE"
     fi
 fi
 echo $$ > "$LOCK_FILE"
+# Clear our lock on any exit path (not just successful completion below)
+trap '[ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE" 2>/dev/null)" = "$$" ] && rm -f "$LOCK_FILE"' EXIT
 
 echo "Starting nix-build '$NIX_FILE' ..."
 if ! time nix-build "$NIX_FILE" \
