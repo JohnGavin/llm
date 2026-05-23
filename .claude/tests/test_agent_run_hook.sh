@@ -13,17 +13,9 @@ BACKFILL="$WT/.claude/scripts/backfill_agent_runs_270.sh"
 PASS=0
 FAIL=0
 
-# duckdb in this environment prints timing/loading noise to stdout; strip it.
-# We keep only lines that look like actual data (not "Run Time", "loaded ...", "unified:", etc.)
 dq() {
   local db="$1" sql="$2"
-  duckdb "$db" -noheader -list -c "$sql" 2>/dev/null \
-    | grep -v '^Run Time' \
-    | grep -v '^loaded ' \
-    | grep -v '^memory:' \
-    | grep -v '^unified:' \
-    | grep -v '^backfill_test:' \
-    | grep -v '^$'
+  duckdb -init /dev/null "$db" -noheader -list -c "$sql" 2>/dev/null
 }
 
 assert() {
@@ -77,7 +69,7 @@ chmod +x "$T/.claude/hooks/log_agent_run.sh"
 TESTDB="$T/.claude/logs/unified.duckdb"
 
 # Create minimal schema
-duckdb "$TESTDB" -c "
+duckdb -init /dev/null "$TESTDB" -c "
   CREATE SEQUENCE IF NOT EXISTS agent_seq START 1;
   CREATE TABLE IF NOT EXISTS agent_runs (
     id INTEGER DEFAULT nextval('agent_seq'),
@@ -189,7 +181,7 @@ echo "=== Test group 4: backfill script ==="
 BFDIR=$(mktemp -d)
 BFDB="$BFDIR/backfill_test.duckdb"
 
-duckdb "$BFDB" -c "
+duckdb -init /dev/null "$BFDB" -c "
   CREATE SEQUENCE IF NOT EXISTS agent_seq2 START 1;
   CREATE TABLE agent_runs (
     id INTEGER DEFAULT nextval('agent_seq2'),
