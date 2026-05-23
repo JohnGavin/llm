@@ -6,6 +6,10 @@
 # fails so CI (and the unconditional success message) never masks broken tests.
 # Fix (roborev #777 / finding 5): reference in-repo paths under .claude/scripts/
 # and .claude/.env.example rather than ~/.claude/ paths.
+# Closure (roborev #777, #779): both resolved in commit 60389d4 (PR #164).
+# #779 covered COMPLETION_SUMMARY.md "Ready for Merge" claim; that file now
+# documents in-repo deliverable paths and the accurate test-count (8/8 with
+# exit 1 on any failure).
 
 set -euo pipefail
 
