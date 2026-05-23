@@ -1,0 +1,84 @@
+<!-- _includes/hover-popups.qmd
+     Shared Tippy.js hover-popup partial. Include at the top of every .qmd
+     page that uses the tt() helper or the .tt span syntax.
+     Usage: {{< include /_includes/hover-popups.qmd >}}
+     See .claude/rules/hover-popup-standard.md for authoring guidelines.
+-->
+
+```{=html}
+<!-- Tippy.js hover-popup infrastructure (Issue #246) -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/tippy.js@6/dist/tippy.css"
+  crossorigin="anonymous"
+>
+<script
+  src="https://unpkg.com/@popperjs/core@2"
+  crossorigin="anonymous"
+></script>
+<script
+  src="https://unpkg.com/tippy.js@6"
+  crossorigin="anonymous"
+></script>
+
+<style>
+/* Tippy box — body-size font, Bootstrap CSS-variable colours for dark-mode. */
+.tippy-box {
+  font-size: 1rem !important;        /* body parity — never browser-default 11px */
+  font-family: inherit !important;   /* match page body, not monospace */
+  background: var(--bs-tertiary-bg, #f8f9fa) !important;
+  color: var(--bs-body-color, #212529) !important;
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  max-width: min(80ch, 500px) !important;
+  line-height: 1.5 !important;
+  text-align: left !important;
+}
+.tippy-box .tippy-content {
+  padding: 0.6rem 0.8rem !important;
+}
+/* Arrow inherits background */
+.tippy-arrow {
+  color: var(--bs-tertiary-bg, #f8f9fa) !important;
+}
+/* Underline+cursor on hover-term spans */
+.tt {
+  text-decoration: underline dotted !important;
+  cursor: help !important;
+  color: inherit !important;
+}
+.tt:focus {
+  outline: 2px solid var(--bs-primary, #0d6efd);
+  outline-offset: 2px;
+}
+/* Dark-mode override — explicit selectors for pages that add .dark-mode on body */
+body.dark-mode .tippy-box,
+[data-bs-theme="dark"] .tippy-box {
+  background: #1a1a2e !important;
+  color: #e9ecef !important;
+  border-color: #495057 !important;
+}
+body.dark-mode .tippy-arrow,
+[data-bs-theme="dark"] .tippy-arrow {
+  color: #1a1a2e !important;
+}
+</style>
+
+<script>
+/* Initialise Tippy on all .tt[data-tippy-content] elements after DOM ready.
+   interactive: true  — popup stays open while hovering inside it (allows
+                        clicking links in the body).
+   allowHTML: true    — body may contain <b>, <a>, etc.
+   aria.content:      — wires aria-describedby for screen-reader support.
+*/
+document.addEventListener('DOMContentLoaded', function () {
+  tippy('[data-tippy-content]', {
+    allowHTML: true,
+    interactive: true,
+    maxWidth: 500,
+    placement: 'top',
+    theme: 'light-border',
+    aria: { content: 'describedby', expanded: false }
+  });
+});
+</script>
+```

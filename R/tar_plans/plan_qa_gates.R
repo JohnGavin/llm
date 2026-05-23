@@ -188,6 +188,113 @@ check_methodology_blocks <- function(vignettes_dir = "docs/articles",
   invisible(html_files)
 }
 
+#' Check rendered HTML pages for hover-popup compliance (Issue #246)
+#'
+#' Scans all rendered HTML pages in `html_dir` for three classes of problems:
+#' 1. Pages with bare `<abbr title="…">` elements but no Tippy.js upgrade
+#'    (i.e. no `.tt[data-tippy-content]` spans present on the same page).
+#' 2. `.tt[data-tippy-content]` elements whose body contains fewer than 2
+#'    sentences (insufficient contextual detail per the hover-popup standard).
+#' 3. `.tt[data-tippy-content]` elements whose body contains no `<a href`
+#'    anchor (every popup must link to at least one reference).
+#'
+#' Returns invisibly when all checks pass. Calls `cli::cli_abort()` — which
+#' causes `tar_make()` to abort — when any violation is detected.
+#'
+#' @param html_dir Path to the directory of rendered HTML files to scan.
+#'   Defaults to `"docs"` (pkgdown output root). Searched recursively.
+#' @param skip_basenames Character vector of HTML basenames to exclude.
+#' @return Invisibly returns a character vector of scanned file paths on
+#'   success. Calls `cli::cli_abort()` on failure.
+check_hover_popups <- function(html_dir       = "docs",
+                               skip_basenames = c("CHANGELOG.html",
+                                                   "NEWS.html",
+                                                   "news.html")) {
+  html_files <- list.files(
+    html_dir,
+    pattern    = "\\.html$",
+    recursive  = TRUE,
+    full.names = TRUE
+  )
+  html_files <- html_files[!basename(html_files) %in% skip_basenames]
+
+  if (length(html_files) == 0L) {
+    cli::cli_alert_warning(
+      "No HTML files found in {.path {html_dir}} — run pkgdown/quarto first"
+    )
+    return(invisible(character(0L)))
+  }
+
+  issues <- character(0L)
+
+  for (h in html_files) {
+    content <- paste(readLines(h, warn = FALSE), collapse = "\n")
+
+    # Check 1: bare <abbr title> without any Tippy upgrade on the page
+    has_bare_abbr <- grepl('<abbr[^>]+title=', content, perl = TRUE)
+    has_tippy     <- grepl('class="tt"[^>]*data-tippy-content=|data-tippy-content=', content, perl = TRUE)
+    if (has_bare_abbr && !has_tippy) {
+      issues <- c(issues, sprintf(
+        "%s — bare <abbr title> found with no Tippy upgrade",
+        basename(h)
+      ))
+    }
+
+    # Check 2 & 3: per .tt element — body length and embedded link
+    # Extract all data-tippy-content attribute values
+    # Pattern: data-tippy-content="..." (double-quoted attribute)
+    matches <- regmatches(
+      content,
+      gregexpr('data-tippy-content="[^"]*"', content, perl = TRUE)
+    )[[1L]]
+
+    for (m in matches) {
+      # Strip the attribute name and surrounding quotes
+      body <- sub('^data-tippy-content="', "", m)
+      body <- sub('"$', "", body)
+      # Unescape &quot; so sentence splitting works on punctuation
+      body <- gsub("&quot;", '"', body, fixed = TRUE)
+
+      # Sentence count: split on [.!?] followed by whitespace or end
+      parts       <- strsplit(body, "[.!?]+\\s*")[[1L]]
+      n_sentences <- sum(nzchar(trimws(parts)))
+
+      has_link <- grepl("<a[[:space:]]+href=", body, perl = TRUE)
+
+      if (n_sentences < 2L) {
+        issues <- c(issues, sprintf(
+          "%s — tooltip '%s…' has %d sentence(s); need ≥2",
+          basename(h),
+          substr(body, 1L, 40L),
+          n_sentences
+        ))
+      }
+      if (!has_link) {
+        issues <- c(issues, sprintf(
+          "%s — tooltip '%s…' has no <a href> link",
+          basename(h),
+          substr(body, 1L, 40L)
+        ))
+      }
+    }
+  }
+
+  if (length(issues) > 0L) {
+    cli::cli_alert_danger("hover-popup QA failed in {length(issues)} case(s):")
+    for (i in issues) cli::cli_alert_warning(i)
+    cli::cli_abort(c(
+      "x" = "hover-popup QA failed: {length(issues)} violation(s) detected.",
+      "i" = "See .claude/rules/hover-popup-standard.md for authoring rules.",
+      "i" = "Fix bare <abbr title>, add >=2 sentences, add >=1 <a href> per tooltip."
+    ))
+  }
+
+  cli::cli_alert_success(
+    "Hover-popup QA passed for {length(html_files)} page(s)"
+  )
+  invisible(html_files)
+}
+
 plan_qa_gates <- function() {
   list(
     targets::tar_target(
@@ -199,6 +306,11 @@ plan_qa_gates <- function() {
       qa_methodology_blocks,
       check_methodology_blocks(),
       packages = c("purrr", "tibble", "cli")
+    ),
+    targets::tar_target(
+      qa_hover_popups,
+      check_hover_popups(),
+      packages = c("cli")
     )
   )
 }
