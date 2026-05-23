@@ -4,6 +4,125 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-23 (Session 5 — sweep day: 27 PRs, ETL + backup + self-review deployed, fork-bomb survived)
+
+Single long session. Cleared the #181 self-review backlog umbrella, shipped 3 new
+overnight launchd jobs (metrics ETL, self-review Stage 1, unified.duckdb backup),
+landed Components 1+2+3 of the closure-loop automation (#163) plus the auto-verifier
+schema for Slice 3, completed the cross-repo handoff (#149 — Phase 1a piloted
+against `randomwalk`, 7 fail issues + 5 pass-clean silent closes), and shipped
+the merge-gate dry-run + ack CLI (#241). Filed 11 new issues; closed 9. Recovered
+from a fork-bomb mid-session.
+
+### Completed
+
+- **27 PRs merged** in waves: #232, #233, #234, #237-240, #242-244, #247-249, #250-252,
+  #253-255, #256-260, #261-267, #268, #271. Mix of substantive features and
+  closure-audit PRs.
+- **#181 umbrella closed** — all 7 themes resolved (T1 security rewrite via #238;
+  T2-T7 mostly pre-fixed in prior PRs with closure-audit PRs added today).
+- **Roborev metrics ETL (#226 + #267)** — daily 02:00 launchd job populating
+  5 frozen schemas in `unified.duckdb`. Initial backfill: 73 daily + 3,241 lifecycle
+  + 10 agent + 8 threshold + 73 cadence rows.
+- **Overnight self-review Stage 1 (#235 / PR #261)** — daily 02:30 launchd job
+  with 5 SQL detectors. Stage 2 (LLM proposer) deferred to a future PR.
+- **unified.duckdb backup (#228 → PR #271)** — daily 03:00 EXPORT DATABASE to
+  Dropbox (`~/Dropbox/Backups/unified_duckdb/YYYY-MM-DD/`). RECOVERY.md per
+  `backup-architecture` rule. First production backup: 116 KB / 12 parquet.
+- **Closure-loop (#163)** — Slice 1 (backlog watcher + commit citation validator),
+  Slice 2 (composite priority scorer + Phase 13d session-init banner),
+  Slice 3 schema migration v2 + auto-verifier (not yet enabled).
+- **Cross-repo handoff (#149)** — Phase 1a + 1b + 1c all in production; weekly-chain
+  plist wired (handoff → autoclose). Pilot ran against `randomwalk`.
+- **Merge-gate (#241)** — dry-run script + ack CLI shipped; enforce mode deferred
+  to week-1 signal review.
+- **Hover-popup standard (#246)** — Tippy.js shared partial + `tt()` R helper +
+  QA gate + pilot vignette.
+- **Roborev architecture vignette (#245)** — sections 1+2+9+10 with clickable
+  Mermaid; sections 3-8 are skeleton stubs.
+- **Worktree sweep** — 56 → 10 worktrees (46 removed). Alt-design ETL draft
+  archived at `~/docs_gh/llm-archive-roborev-metrics-etl-draft-20260523/`.
+- **Wave-5 (7 agents) demonstrated true parallel dispatch** — ~11 min wall-clock
+  for 7 PRs vs ~28 min serial for 5 in wave 4.
+
+### Failed approaches
+
+- **Wave 4 serial Agent dispatch**: I claimed "in parallel" but issued 5 separate
+  Agent tool calls in 5 separate responses, causing strict serialization (~28 min
+  wall-clock instead of ~5). Lesson: multiple Agent tool uses MUST be in one
+  `<function_calls>` block to actually run concurrently. Wave 5 corrected this
+  and ran 7 in parallel in ~11 min.
+- **#163 v1 citation validator self-test fork-bombed** — used `bash "$0"` to
+  recurse, relying on `ROBOREV_CITE_SELFTEST=0` env-var guard which failed.
+  4,399 instances spawned over ~3 hours, exhausting the macOS process table to
+  87% of capacity and breaking Bash transport session-wide. Killed via
+  `/usr/bin/pkill -9 -f`. Quarantined as `.BROKEN_FORK_BOMB.bak`. Reimplemented
+  in PR #253 v2: self-tests call functions directly with `_DEPTH` env-var guard
+  as defense-in-depth.
+- **#228 iCloud backup target assumed sync was active** because the directory
+  `~/Library/Mobile Documents/com~apple~CloudDocs/` exists — but it only contained
+  `.DS_Store` and a Desktop symlink, with no actual iCloud sync running. Backups
+  there would replicate nowhere. Fixed via PR #271 switching default to Dropbox
+  (verified active via `~/Dropbox -> ~/Library/CloudStorage/Dropbox`).
+- **`Closes #181 partial` in PR #238** — GitHub's auto-close keyword ignores the
+  "partial" qualifier and closed the umbrella prematurely. Reopened with a
+  comment explaining the 7-theme scope.
+- **PR #266 merge conflict on `roborev-resolution.md`** — wave-5 agents for #163
+  Slice 3 and #241 both appended sections to the same file in parallel. Resolved
+  by rebasing #266 onto post-#264 main, keeping both sections.
+- **Quick-fix (haiku) agent bled writes into orchestrator worktree** for PR #233
+  (#212 grep fix) — haiku has no Bash so `isolation: "worktree"` doesn't fully
+  apply; agent's Edit tool wrote into my orchestrator's `.claude/scripts/` path.
+  Recovery: reverted, recreated in a dedicated worktree. Live evidence on
+  #191; verification block in agent definitions added via #240.
+
+### Accuracy / Metrics
+
+- **27 PRs merged** (originally counted 25; +#268 hotfix +#271 backup-target fix).
+- **11 issues opened** (#235, #236, #241, #245, #246, #269, #270, plus 4 others).
+- **9 issues closed** (#211, #160, #223, #181, #201, #203, #207, #212 auto, plus #228 via #271).
+- **pkgctx-local-sync tests**: 13 FAIL → **24 PASS** (PR #268: `helper-*.R` pattern
+  sources the plan file before tests).
+- **Roborev addressed-rate (llm)**: 66% (152 open / 447 total), unchanged from
+  start; #181 umbrella closure reflects findings already resolved in prior PRs.
+- **Worktree count**: 56 → **10** (46 swept after merge-status verified via
+  `git cherry` patch-id check).
+- **Process count peak vs baseline**: 5,017 (fork-bomb) → ~605 healthy.
+- **unified.duckdb**: 12 tables; 3,241 review_lifecycle rows after backfill.
+- **Backup**: 116 KB compressed Parquet for first full export; ~150 MB projected
+  for 30-day retention.
+- **Tier 3 isolation breaches** (agent writes to main checkout): **0** across
+  ~17 dispatches, via the helper script `~/.claude/scripts/agent-post-verify.sh`.
+
+### Known limitations
+
+- **#270 (NEW)** — `agent_runs` ETL never records completion: `ended_at` always
+  NULL, `status` stuck at `'running'`, `agent_type` always `'unknown'`. Blocks
+  Stage 1 self-review accuracy, #226 per-agent metrics, and #236 parallel-agent
+  cap investigation.
+- **#269 (NEW)** — Stage 1 self-review detectors emit false positives: hook-block
+  thresholds use absolute all-time counts instead of rate-windowing; stuck-loop
+  detector keys off `status='failed'` which is unreachable until #270 lands.
+  Stage 1 plist still installed but will write noisy findings nightly until
+  refined.
+- **#163 Slice 3 auto-verifier NOT enabled** — schema migration applied to
+  `~/.roborev/reviews.db` (idempotent), but no post-commit hook installed.
+  Pilot target `t_demos` doesn't exist locally; user to install via
+  `roborev_install_auto_verify_hook.sh --repo <path>` when ready.
+- **#246 hover-popup sweep deferred** — pilot vignette migrated; existing
+  vignettes not yet swept to the Tippy.js standard. Tracked as follow-up.
+- **#245 vignette sections 3-8 are skeleton stubs** — full content deferred;
+  dashboard cross-links use placeholder anchors until `llmtelemetry#144` ships.
+- **#241 merge-gate is dry-run only** — week-1 signal-gathering phase; enforce
+  mode wiring + CI integration deferred.
+- **Wave-4 serialization lesson** captured in this entry's "Failed approaches";
+  no rule change yet — relying on memory file for now.
+- **`hover-popup-standard.md`** rule shipped (PR #263) **without YAML frontmatter**
+  — session_init flags `Rules FM: WARN: 1 missing frontmatter`. Trivial follow-up.
+- **CHANGELOG conflict-resolution earlier this session** kept both 2026-05-23
+  (#181 T4) and 2026-05-22 (Session 4 codex rollout) entries — the user's local
+  changelog work merged cleanly with the merged PRs.
+
 ## 2026-05-23 (#181 Theme 4 — launchd plist + script mis-wirings verified)
 
 All four roborev findings from #181 Theme 4 confirmed addressed in prior PRs.
@@ -18,6 +137,21 @@ All four roborev findings from #181 Theme 4 confirmed addressed in prior PRs.
 Verification: `plutil -lint .claude/launchd/com.claude.wiki-health-pulse.plist` → OK; `bash -n` on both shell scripts → clean.
 
 Refs #181 (Theme 4)
+
+## 2026-05-22 (Session 4 — Codex/Claude shared-folder rollout + Claude memory consolidation)
+
+Validated the Codex/Claude shared-folder runbook, found a real skills-parser incompatibility on the Codex side, and completed the minimal Claude-memory merge into the repo-backed `llm` memory tree.
+
+### Completed
+
+- **Codex shared-folder rollout tested** — `~/.codex/rules` and `~/.codex/memories` were linked to the Claude-backed repo paths and stayed healthy under `codex doctor`. `~/.codex/skills` was also linked for smoke testing, then rolled back to the archived local copy after verification exposed a parser incompatibility.
+- **Codex compatibility issue documented** — filed **llm#230** after `codex exec` reported repeated `invalid YAML: mapping values are not allowed in this context` failures while loading many Claude `SKILL.md` files. Policy followed: issue filed instead of patching shared skill content.
+- **Minimal Claude memory merge completed** — imported `r-vectorization-patterns.md` into `llm/.claude/memory/`, added a `Performance Patterns` entry to `MEMORY.md`, and preserved the more complete repo-backed memory index as the source of truth.
+- **Claude memory symlink completed** — `~/.claude/memory` now points to `~/docs_gh/llm/.claude/memory`, so Claude keeps the old path while reading the repo-backed memory tree.
+
+### Failed approaches
+
+- **Direct in-session replacement of `~/.claude/memory` hit filesystem restrictions** — the agent could update the repo-backed memory files but `mv`/cleanup operations against the live `~/.claude/memory` directory were blocked with `Operation not permitted`. Worked around by having the user complete the final symlink handoff manually.
 
 ## 2026-05-20 (Session 3 — governance + soak rollouts: 3 PRs merged, 8 issues filed)
 
