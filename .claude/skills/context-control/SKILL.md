@@ -247,6 +247,10 @@ Context control supports the 9-step workflow:
 | `TodoWrite` | Persist state | Track progress |
 | Save to file | External memory | Key decisions |
 
+## Recap: Regaining Context Across Parallel Agent Threads
+
+Claude Code has a built-in `/recap` command that summarises what each parallel agent thread has done and re-establishes shared context in the orchestrator window. Use it after dispatching multiple agents when you need to synthesise their outputs without re-reading every thread in full. The workflow is: dispatch agents → wait for completion → run `/recap` in the orchestrator session to get a concise cross-thread summary before making the next architectural decision. This is especially useful after 3+ parallel fixer or critic agents return reports at similar times. For long sessions approaching context limits, combine `/recap` with `/compact`: run `/recap` first to capture the agent summaries, save the digest to `.claude/CURRENT_WORK.md`, then run `/compact` to flush accumulated context while preserving the inter-thread synthesis. See the `quadratic-loop-cost` rule for when to compact before a loop rather than during it.
+
 ## Resources
 
 - Session Continuity Guide: `.claude/WIKI_CONTENT/Session-Continuity.md`
