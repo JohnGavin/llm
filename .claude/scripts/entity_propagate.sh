@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # entity_propagate.sh — minimal entity propagation (#137 Phase 3)
 #
+# Portability fixes (#181 Theme 2 — roborev id 848):
+#   - BSD grep /usr/bin/grep on macOS does NOT support \b word-boundary
+#     assertions in ERE mode (-E). All word-boundary matches now use
+#     POSIX character-class anchors: (^|[^[:alnum:]_])PATTERN([^[:alnum:]_]|$)
+#
 # Scans the current session's JSONL transcript for mentions of curated
 # project names and appends one-line entries to
 # knowledge/mentions/<project>.md per occurrence.

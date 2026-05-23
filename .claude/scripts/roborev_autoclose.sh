@@ -4,6 +4,9 @@
 # Portability: this script is invoked by launchd, which provides only a bare
 # PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that
 # python3, sqlite3, and other tools are visible on both Homebrew and Nix Macs.
+# Portability fixes (#181 Theme 2 — roborev ids 844):
+#   - mapfile replaced with portable while-read loop (Bash 3.2 compat;
+#     macOS ships Bash 3.2 which lacks the mapfile builtin).
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 #
 # Two phases:

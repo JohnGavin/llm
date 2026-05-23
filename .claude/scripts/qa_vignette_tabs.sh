@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # qa_vignette_tabs.sh — QA check for vignette tab content
 #
+# Portability fixes (#181 Theme 2 — roborev ids 1724, 1731, 1745):
+#   - mapfile replaced with portable while-read loop (Bash 3.2 compat;
+#     macOS ships Bash 3.2 which lacks the mapfile builtin).
+#
 # Usage:
 #   qa_vignette_tabs.sh [docs_dir]
 #
