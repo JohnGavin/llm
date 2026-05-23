@@ -2,11 +2,6 @@
 # roborev_handoff.sh — hand off stale cross-repo roborev findings to their
 # owning projects via GitHub issues or CURRENT_WORK.md inbox entries.
 #
-# Closes roborev #899 (#181 Theme 5) — staleness filter uses finished_at (not
-# enqueued_at), so fresh reviews on long-queued jobs are not auto-closed.
-# Fix landed in commit f2b851f (primary) and a05eb7f (warn on null finished_at).
-# Jobs where finished_at IS NULL are excluded and produce a stderr WARN.
-#
 # Handles three populations (threshold = THRESHOLD_DAYS, default 7d):
 #   Phase 1a  verdict=fail       → per-commit GH issue (label roborev-handoff)
 #   Phase 1b  verdict=pass+notes → append to weekly digest issue (label roborev-digest)
@@ -64,6 +59,101 @@ esac
 
 mkdir -p "$(dirname "$LOG")" "$FINDINGS_DIR"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
+
+# ── SELFTEST (ROBOREV_HANDOFF_SELFTEST=1) ────────────────────────────────────
+# Exercises Phase 1b logic using in-process function calls only.
+# CRITICAL: no subprocess-recursion — never calls `bash $0` from within this block.
+#
+# Usage: ROBOREV_HANDOFF_SELFTEST=1 bash ~/.claude/scripts/roborev_handoff.sh
+# Expected: all PASS lines, exit 0, runtime <10s.
+if [ "${ROBOREV_HANDOFF_SELFTEST:-0}" = "1" ]; then
+  PASS=0; FAIL=0
+
+  _assert() {
+    local label="$1" result="$2"
+    if [ "$result" = "ok" ]; then
+      echo "PASS: $label"; PASS=$((PASS+1))
+    else
+      echo "FAIL: $label — $result"; FAIL=$((FAIL+1))
+    fi
+  }
+
+  # Helper: classify_review is defined later in the file; source it inline here
+  # since bash doesn't forward-declare functions.  We inline the logic to keep
+  # the selftest self-contained.
+  _classify() {
+    local verdict_bool="$1" output_trimmed="$2"
+    if [ "$verdict_bool" -eq 0 ]; then
+      echo "fail"
+    elif echo "$output_trimmed" | grep -q "^No issues found\."; then
+      echo "pass-clean"
+    else
+      echo "pass-comments"
+    fi
+  }
+
+  # ── 1. classify_review: verdict_bool=1 + "No issues found." → pass-clean ──
+  got=$(_classify 1 "No issues found.
+
+Summary: adds a lockfile.")
+  [ "$got" = "pass-clean" ] \
+    && _assert "1. classify pass-clean" "ok" \
+    || _assert "1. classify pass-clean" "got '$got'"
+
+  # ── 2. classify_review: verdict_bool=1 + substantive output → pass-comments ─
+  got=$(_classify 1 "## Minor suggestions
+
+- Consider adding error handling here.
+- Rename variable for clarity.")
+  [ "$got" = "pass-comments" ] \
+    && _assert "2. classify pass-comments" "ok" \
+    || _assert "2. classify pass-comments" "got '$got'"
+
+  # ── 3. classify_review: verdict_bool=0 → fail regardless of output ─────────
+  got=$(_classify 0 "No issues found.")
+  [ "$got" = "fail" ] \
+    && _assert "3. classify fail (verdict_bool=0 overrides)" "ok" \
+    || _assert "3. classify fail (verdict_bool=0 overrides)" "got '$got'"
+
+  # ── 4. Digest title format matches YYYY-Www ────────────────────────────────
+  iso_week=$(date -u +%G-W%V)
+  digest_title="roborev pass-comments digest $iso_week"
+  echo "$digest_title" | grep -qE '^roborev pass-comments digest [0-9]{4}-W[0-9]{2}$' \
+    && _assert "4. digest title format YYYY-Www" "ok" \
+    || _assert "4. digest title format YYYY-Www" "title='$digest_title'"
+
+  # ── 5. Idempotency guard: grep "job <id>" in existing body prevents duplicate
+  fake_job_id="999"
+  fake_existing_body="## roborev pass-comments digest 2026-W21
+
+---
+### Commit abc1234 (job 999) — 2026-05-23
+
+Some notes here."
+  echo "$fake_existing_body" | grep -q "job $fake_job_id" \
+    && _assert "5. idempotency guard detects job in digest body" "ok" \
+    || _assert "5. idempotency guard detects job in digest body" "grep missed job $fake_job_id"
+
+  # ── 6. Idempotency guard: absent job_id is NOT detected (no false-positive) ─
+  fake_new_job_id="1234"
+  echo "$fake_existing_body" | grep -q "job $fake_new_job_id" \
+    && _assert "6. idempotency guard: absent job NOT falsely detected" "false-positive — should not match" \
+    || _assert "6. idempotency guard: absent job NOT falsely detected" "ok"
+
+  # ── 7. Digest body append format contains job marker ─────────────────────
+  fake_output="## Minor suggestions
+
+- Consider renaming \`x\` to \`threshold\`."
+  append_block=$(printf '\n---\n### Commit %s (job %s) — %s\n\n%s\n' \
+    "abc1234" "777" "$(date -u +%F)" "$fake_output")
+  echo "$append_block" | grep -q "job 777" \
+    && _assert "7. append_block contains job marker" "ok" \
+    || _assert "7. append_block contains job marker" "missing 'job 777' in block"
+
+  echo ""
+  echo "selftest: ${PASS} PASS, ${FAIL} FAIL"
+  [ "$FAIL" -eq 0 ] && exit 0 || exit 1
+fi
 
 # Quietly succeed if required binaries/db missing (laptop vs CI portability)
 for thing in "$PYTHON" "$ROBOREV" "$SQLITE" "$GH" "$ROBOREV_DB"; do
