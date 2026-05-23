@@ -39,8 +39,8 @@ echo
 # -------- Step 1: patch-id check --------
 echo "--- Step 1: patch-id check (git cherry main $BRANCH) ---"
 cherry_out=$(git -C "$REPO" cherry main "$BRANCH" 2>&1)
-new_count=$(echo "$cherry_out" | grep -c '^+' || true)
-old_count=$(echo "$cherry_out" | grep -c '^-' || true)
+new_count=$(echo "$cherry_out" | grep -cE '^\+' || true)
+old_count=$(echo "$cherry_out" | grep -cE '^-' || true)
 
 echo "$cherry_out"
 echo "Result: $new_count genuinely-new patches, $old_count already-applied patches"
