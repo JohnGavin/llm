@@ -126,6 +126,8 @@ called with `isolation: "worktree"`. This includes:
 | `quick-fix` (haiku) | No | Optional |
 | `critic` (read-only) | No | Optional |
 
+> **Haiku-tier (`quick-fix`) tool limitation:** the quick-fix agent has Read, Grep, Glob, Edit — but NO Bash. It cannot `git commit`, `git push`, `gh pr create`, or `roborev close`. Dispatching quick-fix for tasks that require any of these is a dispatch error — use fixer (sonnet) instead. Documented to prevent the recurrence pattern from #223.
+
 ### Mandatory Agent Dispatch Prefixes (BOTH required)
 
 Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include BOTH prefixes verbatim at the top of the prompt, before any task-specific instructions. Missing either prefix causes the failure modes in `JohnGavin/llm#182` and `JohnGavin/llm#191`.
