@@ -887,6 +887,90 @@ if [ -f "${HOME}/.claude/.pending_skillify" ] && [ -x "${HOME}/.claude/scripts/p
   timeout 5 "${HOME}/.claude/scripts/process_pending_skillify.sh" 2>/dev/null || true
 fi
 
+# ── Phase 13c: Surface dated GH issues with date ≤ today (llm#203) ────────────
+# Issues whose title starts with [YYYY-MM-DD] are durable scheduled reminders
+# (CronCreate's durable:true proved unreliable — see llm#203). Current repo
+# only. Cache 1h. Silent if no past-due. Skips gracefully without gh / network.
+#
+# Notes on portability:
+#   - `timeout` lives in coreutils (nix PATH); macOS has no /usr/bin/timeout.
+#     Use it bare via PATH; degrade gracefully if absent.
+#   - /usr/bin/{stat,sed,jq} are present on macOS — use absolute paths so the
+#     hook works outside any nix shell too.
+# Derive owner/repo from origin URL — ~50× faster than `gh repo view`.
+# Handles `https://host/owner/repo(.git)` and `git@host:owner/repo(.git)`.
+_dated_repo=""
+if command -v gh >/dev/null 2>&1; then
+  _dated_url=$(/usr/bin/git config --get remote.origin.url 2>/dev/null || true)
+  if [ -n "$_dated_url" ]; then
+    _dated_repo=$(echo "$_dated_url" | /usr/bin/sed -E 's#^https?://[^/]+/##; s#^git@[^:]+:##; s#\.git$##')
+    # Sanity: must look like owner/repo (single slash, no spaces).
+    case "$_dated_repo" in
+      */*) : ;;
+      *) _dated_repo="" ;;
+    esac
+  fi
+fi
+
+if [ -n "$_dated_repo" ]; then
+  _dated_cache_dir="$CLAUDE_RUNTIME_ROOT/state/dated_issues_cache"
+  /bin/mkdir -p "$_dated_cache_dir" 2>/dev/null || true
+  _dated_cache_file="$_dated_cache_dir/$(echo "$_dated_repo" | tr '/' '_').jsonl"
+
+  # Refresh cache if missing or > 1h old; failure is non-fatal (silently skip).
+  _dated_need_refresh=0
+  if [ ! -f "$_dated_cache_file" ]; then
+    _dated_need_refresh=1
+  else
+    _dated_mtime=$(/usr/bin/stat -f %m "$_dated_cache_file" 2>/dev/null || /usr/bin/stat -c %Y "$_dated_cache_file" 2>/dev/null || echo 0)
+    _dated_now_sec=$(date +%s)
+    if [ "$((_dated_now_sec - _dated_mtime))" -gt 3600 ]; then
+      _dated_need_refresh=1
+    fi
+  fi
+
+  if [ "$_dated_need_refresh" = "1" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+      _dated_gh_cmd="timeout 5 gh"
+    else
+      _dated_gh_cmd="gh"
+    fi
+    if $_dated_gh_cmd issue list --repo "$_dated_repo" --state open --limit 100 \
+        --json number,title \
+        --jq '.[] | select(.title | test("^\\[[0-9]{4}-[0-9]{2}-[0-9]{2}\\]"))' \
+        > "$_dated_cache_file.tmp" 2>/dev/null; then
+      mv "$_dated_cache_file.tmp" "$_dated_cache_file" 2>/dev/null || true
+    else
+      rm -f "$_dated_cache_file.tmp" 2>/dev/null || true
+    fi
+  fi
+
+  # Compare each cached title's date prefix vs today (numeric YYYYMMDD).
+  if [ -s "$_dated_cache_file" ] && [ -x /usr/bin/jq ]; then
+    _dated_today_num=$(date +%Y%m%d)
+    _dated_out=""
+    while IFS= read -r _dated_line; do
+      [ -z "$_dated_line" ] && continue
+      _dated_title=$(printf '%s' "$_dated_line" | /usr/bin/jq -r '.title' 2>/dev/null) || _dated_title=""
+      _dated_number=$(printf '%s' "$_dated_line" | /usr/bin/jq -r '.number' 2>/dev/null) || _dated_number=""
+      [ -z "$_dated_title" ] && continue
+      [ -z "$_dated_number" ] && continue
+      _dated_date=$(printf '%s' "$_dated_title" | /usr/bin/sed -nE 's/^\[([0-9]{4}-[0-9]{2}-[0-9]{2})\].*/\1/p')
+      [ -z "$_dated_date" ] && continue
+      _dated_date_num=$(echo "$_dated_date" | tr -d '-')
+      if [ "$_dated_date_num" -le "$_dated_today_num" ] 2>/dev/null; then
+        _dated_out="${_dated_out}DATED: ${_dated_repo}#${_dated_number} — ${_dated_title}
+"
+      fi
+    done < "$_dated_cache_file"
+    if [ -n "$_dated_out" ]; then
+      echo ""
+      echo "=== Dated issues (≤ today) ==="
+      printf '%s' "$_dated_out"
+    fi
+  fi
+fi
+
 # ── Compact summary line ──
 summary=""
 [ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
