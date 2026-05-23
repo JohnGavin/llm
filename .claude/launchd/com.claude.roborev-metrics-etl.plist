@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.roborev-metrics-etl.plist
+     Daily ETL: roborev review data → unified.duckdb (roborev_* tables).
+     Runs at 02:00 local time — quiet hour, no contention with llmtelemetry reads.
+
+     Install:
+       cp ~/.claude/launchd/com.claude.roborev-metrics-etl.plist \
+          ~/Library/LaunchAgents/com.claude.roborev-metrics-etl.plist
+       launchctl load ~/Library/LaunchAgents/com.claude.roborev-metrics-etl.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.roborev-metrics-etl.plist
+       rm ~/Library/LaunchAgents/com.claude.roborev-metrics-etl.plist
+
+     Manual run (apply):
+       ~/.claude/scripts/roborev_metrics_etl.sh --apply
+
+     Tracked in llm#226.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-metrics-etl</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/.claude/scripts/roborev_metrics_etl.sh</string>
+        <string>--apply</string>
+    </array>
+
+    <!-- Daily at 02:00 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_metrics_etl_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_metrics_etl_launchd.log</string>
+
+    <!-- Retry 1× after 60s if the job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>
