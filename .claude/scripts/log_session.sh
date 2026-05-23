@@ -17,7 +17,7 @@ fi
 
 case "$ACTION" in
   start)
-    duckdb "$DB" -c "
+    duckdb -init /dev/null "$DB" -c "
       INSERT OR REPLACE INTO sessions (session_id, project, started_at, summary)
       VALUES ('$SESSION_ID', '$PROJECT', current_timestamp, '$SUMMARY');
     " 2>/dev/null || true
@@ -29,7 +29,7 @@ case "$ACTION" in
     if [ "$SESSION_ID" = "" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
       SESSION_ID=$(cat "$HOME/.claude/logs/.current_session")
     fi
-    duckdb "$DB" -c "
+    duckdb -init /dev/null "$DB" -c "
       UPDATE sessions
       SET ended_at = current_timestamp,
           duration_min = EXTRACT(EPOCH FROM (current_timestamp - started_at)) / 60.0,
@@ -40,7 +40,7 @@ case "$ACTION" in
     ;;
   error)
     SOURCE="${5:-unknown}"
-    duckdb "$DB" -c "
+    duckdb -init /dev/null "$DB" -c "
       INSERT INTO errors (session_id, source, error_text, context)
       VALUES ('$SESSION_ID', '$SOURCE', '$(echo "$SUMMARY" | sed "s/'/''/g")', '$PROJECT');
     " 2>/dev/null || true
@@ -48,7 +48,7 @@ case "$ACTION" in
   hook)
     HOOK_NAME="${5:-unknown}"
     EVENT_TYPE="${6:-unknown}"
-    duckdb "$DB" -c "
+    duckdb -init /dev/null "$DB" -c "
       INSERT INTO hook_events (session_id, hook_name, event_type, output_preview)
       VALUES ('$SESSION_ID', '$HOOK_NAME', '$EVENT_TYPE', '$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")');
     " 2>/dev/null || true
@@ -57,7 +57,7 @@ case "$ACTION" in
     AGENT_TYPE="${5:-unknown}"
     MODEL="${6:-unknown}"
     TOOL_USE_ID="${7:-}"
-    duckdb "$DB" -c "
+    duckdb -init /dev/null "$DB" -c "
       INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id)
       VALUES ('$SESSION_ID', '$AGENT_TYPE', '$MODEL', current_timestamp,
               '$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")', 'running',
@@ -69,30 +69,23 @@ case "$ACTION" in
     STATUS="${6:-done}"
     TOOL_USE_ID="${7:-}"
     PROMPT_PV="$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")"
-    # Helper: strip duckdb timing/loading noise, keep only real data lines
-    _dq_filter() {
-      grep -v '^Run Time' | grep -v '^loaded ' | grep -v '^memory:' \
-        | grep -v '^unified:' | grep -v '^backfill_test:' | grep -v '^$'
-    }
     _hit=""
     if [ -n "$TOOL_USE_ID" ]; then
-      _hit=$(duckdb "$DB" -noheader -list -c "
+      _hit=$(duckdb -init /dev/null "$DB" -noheader -list -c "
         UPDATE agent_runs SET ended_at=current_timestamp,
           duration_sec=EXTRACT(EPOCH FROM (current_timestamp-started_at)), status='$STATUS'
-        WHERE tool_use_id='$TOOL_USE_ID' AND status='running' RETURNING id;" 2>/dev/null \
-        | _dq_filter || echo "")
+        WHERE tool_use_id='$TOOL_USE_ID' AND status='running' RETURNING id;" 2>/dev/null || echo "")
     fi
     if [ -z "$_hit" ]; then
-      _hit=$(duckdb "$DB" -noheader -list -c "
+      _hit=$(duckdb -init /dev/null "$DB" -noheader -list -c "
         UPDATE agent_runs SET ended_at=current_timestamp,
           duration_sec=EXTRACT(EPOCH FROM (current_timestamp-started_at)), status='$STATUS'
         WHERE id=(SELECT id FROM agent_runs WHERE session_id='$SESSION_ID'
           AND agent_type='$AGENT_TYPE' AND status='running'
-          ORDER BY started_at DESC LIMIT 1) RETURNING id;" 2>/dev/null \
-        | _dq_filter || echo "")
+          ORDER BY started_at DESC LIMIT 1) RETURNING id;" 2>/dev/null || echo "")
     fi
     if [ -z "$_hit" ]; then
-      duckdb "$DB" -c "
+      duckdb -init /dev/null "$DB" -c "
         INSERT INTO agent_runs (session_id, agent_type, model, started_at, ended_at,
           duration_sec, prompt_preview, status, tool_use_id)
         VALUES ('$SESSION_ID','$AGENT_TYPE','inherited',current_timestamp,

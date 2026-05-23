@@ -37,13 +37,13 @@ cp -a "$DB" "$BACKUP"
 echo "Backup created."
 
 echo "Running migration ALTERs..."
-duckdb "$DB" -c "
+duckdb -init /dev/null "$DB" -c "
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tool_use_id VARCHAR;
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS backfilled BOOLEAN DEFAULT false;
 "
 
 echo "Running backfill..."
-duckdb "$DB" -c "
+duckdb -init /dev/null "$DB" -c "
   WITH windowed AS (
     SELECT
       ar.id,
@@ -86,7 +86,7 @@ duckdb "$DB" -c "
 
 echo ""
 echo "Summary after backfill:"
-duckdb "$DB" -c "
+duckdb -init /dev/null "$DB" -c "
   SELECT status, backfilled, COUNT(*) AS n
   FROM agent_runs
   GROUP BY status, backfilled
