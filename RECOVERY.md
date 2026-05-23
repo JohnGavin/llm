@@ -22,8 +22,8 @@ All other state in this project is reproducible from git + `tar_make()` / `quart
 
 | Field | Value |
 |---|---|
-| Backup location | `~/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/` |
-| Failure domain | iCloud Drive (Apple servers — different from laptop disk) |
+| Backup location | `~/Dropbox/Backups/unified_duckdb/` (override via `BACKUP_ROOT` env var) |
+| Failure domain | Dropbox (Dropbox servers + paired devices — different from laptop disk) |
 | Mechanism | DuckDB `EXPORT DATABASE` (Parquet, ZSTD) — WAL-safe consistent snapshot |
 | Cadence | Daily at 03:00 local time (one hour after roborev ETL at 02:00) |
 | Retention — daily | 30 days |
@@ -31,15 +31,15 @@ All other state in this project is reproducible from git + `tar_make()` / `quart
 | Script | `~/.claude/scripts/unified_duckdb_backup.sh` |
 | launchd plist | `~/.claude/launchd/com.claude.unified-duckdb-backup.plist` |
 
-**RPO (Recovery Point Objective):** 24 hours  
-**RTO (Recovery Time Objective):** 15 minutes (download from iCloud + run restore commands)
+**RPO (Recovery Point Objective):** 24 hours
+**RTO (Recovery Time Objective):** 15 minutes (sync from Dropbox + run restore commands)
 
 ---
 
 ## Backup Layout
 
 ```
-~/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/
+~/Dropbox/Backups/unified_duckdb/
   2026-05-23/
     schema.sql         ← DDL for all tables
     agent_runs.parquet
@@ -89,7 +89,7 @@ launchctl list | grep unified-duckdb-backup
 ### Step 1 — Identify the backup to restore from
 
 ```bash
-ls -la ~/Library/Mobile\ Documents/com~apple~CloudDocs/Backups/unified_duckdb/
+ls -la ~/Dropbox/Backups/unified_duckdb/
 ```
 
 Choose the most recent date directory, e.g. `2026-05-23`.
@@ -98,7 +98,7 @@ Choose the most recent date directory, e.g. `2026-05-23`.
 
 ```bash
 # Count the parquet files — should match the number of tables in unified.duckdb
-ls ~/Library/Mobile\ Documents/com~apple~CloudDocs/Backups/unified_duckdb/2026-05-23/*.parquet | wc -l
+ls ~/Dropbox/Backups/unified_duckdb/2026-05-23/*.parquet | wc -l
 # Expected: 12
 ```
 
@@ -117,7 +117,7 @@ mv ~/.claude/logs/unified.duckdb \
 duckdb ~/.claude/logs/unified.duckdb
 
 -- Inside the duckdb prompt:
-IMPORT DATABASE '/Users/johngavin/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/2026-05-23';
+IMPORT DATABASE '/Users/johngavin/Dropbox/Backups/unified_duckdb/2026-05-23';
 .quit
 ```
 
@@ -179,7 +179,7 @@ Run quarterly to verify backups are valid:
 ```bash
 # Restore to a temp location
 duckdb /tmp/unified_restore_test.duckdb -c \
-  "IMPORT DATABASE '/Users/johngavin/Library/Mobile Documents/com~apple~CloudDocs/Backups/unified_duckdb/$(ls ~/Library/Mobile\ Documents/com~apple~CloudDocs/Backups/unified_duckdb/ | tail -1)'"
+  "IMPORT DATABASE '/Users/johngavin/Dropbox/Backups/unified_duckdb/$(ls ~/Dropbox/Backups/unified_duckdb/ | tail -1)'"
 
 # Verify counts
 duckdb /tmp/unified_restore_test.duckdb -c \
@@ -226,7 +226,7 @@ If the duckdb binary version differs from the version that wrote the backup, the
 
 ```bash
 # Check the duckdb version used by the backup (recorded in schema.sql)
-head -5 ~/Library/Mobile\ Documents/com~apple~CloudDocs/Backups/unified_duckdb/2026-05-23/schema.sql
+head -5 ~/Dropbox/Backups/unified_duckdb/2026-05-23/schema.sql
 
 # Install a matching duckdb version and retry
 ```
