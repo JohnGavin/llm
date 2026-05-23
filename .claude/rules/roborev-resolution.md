@@ -312,10 +312,86 @@ place, the poller becomes redundant and should be unloaded and removed.
 
 Tracked in #217.
 
+## Auto-Verifier (Component 4, JohnGavin/llm#163 Slice 3)
+
+### What it does
+
+When a commit message contains a `closes/fixes roborev #N` citation (validated by
+the Component 3 commit-msg hook), the auto-verifier:
+
+1. Parses cited finding IDs.
+2. Triggers a roborev re-review of the commit.
+3. Polls until the re-review completes (max 120 seconds).
+4. On **approval** → writes a row to `closures` table + calls `roborev close <id>`.
+5. On **rejection** → writes a row to `fix_rejected_queue` for human triage.
+6. On any failure (binary absent, DB unavailable, poll timeout) → exits 0 (**fail-open**).
+
+### Opt-in semantics
+
+The verifier is **NOT auto-installed**. To install:
+
+```bash
+# 1. Apply DB migration (one-time per machine)
+sqlite3 ~/.roborev/reviews.db < ~/.claude/scripts/roborev_schema_migration_v2.sql
+
+# 2. Dry-run to preview the hook content
+bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path> --dry-run
+
+# 3. Install (creates .git/hooks/post-commit → roborev_auto_verify.sh --apply)
+bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path>
+```
+
+To uninstall: `bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path> --uninstall`
+
+### Pilot target: t_demos
+
+Pilot on `t_demos` only until ≥3 auto-closures, 0 wrong-closures. Expand to other
+projects after pilot passes. Never expand to a project with open Critical findings
+until the human-gate guardrail ships (Slice 4 / Component 7).
+
+### DB schema (migration_v2)
+
+Two new tables added to `~/.roborev/reviews.db` by `roborev_schema_migration_v2.sql`:
+
+| Table | Purpose |
+|---|---|
+| `closures` | Audit log of auto-close decisions (type: approved / wontfix / manual / stale) |
+| `fix_rejected_queue` | Fix commits that roborev re-reviewed and rejected; requires human triage |
+
+Migration is idempotent (`CREATE TABLE IF NOT EXISTS`). Safe to re-run.
+
+### Triage query (pending rejections)
+
+```sql
+SELECT id, finding_ids_json, fix_commit_sha, rejection_summary, attempted_at
+FROM fix_rejected_queue
+WHERE resolved = 0
+ORDER BY attempted_at DESC
+LIMIT 20;
+```
+
+### Kill switch
+
+```bash
+# Disable for one commit
+SKIP_ROBOREV_VALIDATOR=1 git commit ...
+
+# Uninstall from a project
+bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path> --uninstall
+
+# Reopen a wrongly closed finding
+roborev reopen <finding_id>
+```
+
+### Log
+
+`~/.claude/logs/roborev_auto_verify.log` — one entry per verifier run.
+
 ## Related
 
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol
 - llm#110 — tracking issue
+- llm#163 — closure-loop automation (this component is Component 4, Slice 3)
 - llm#217 — poller schedule + ephemeral-repos cleanup
