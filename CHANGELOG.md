@@ -4,6 +4,61 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-23 (Session 6 — agent_runs ETL completion fix + launchd job tracking)
+
+Short focused session in worktree `feat/cc-20260523-204734`. Fixed the long-latent
+`agent_runs` completion gap (#270), then triaged #272's untracked-WIP checklist and
+split its critical group into #276, committing the two untracked active launchd jobs.
+
+### Completed
+
+- **#270 — agent_runs ETL completion (PRs #274 + #275, merged):** `log_agent_run.sh`
+  was a PostToolUse-only hook that logged `agent_start` (status=`running`) and never
+  closed rows, and read the empty legacy `CLAUDE_TOOL_INPUT` env var instead of stdin
+  JSON — hence every row stuck at `status='running'`, `agent_type='unknown'`. Rewrote
+  it as ONE hook wired to both PreToolUse(→`agent_start`) and PostToolUse(→`agent_stop`),
+  parsing stdin JSON via `jq`. Added `tool_use_id` correlation (precise match, with
+  session+agent_type fallback and a never-lose-a-completion self-insert), `backfilled`
+  flag column, and fixed the invalid DuckDB `UPDATE … ORDER BY … LIMIT`. 15 hermetic
+  tests (`.claude/tests/test_agent_run_hook.sh`), run independently by the orchestrator.
+  Live backfill applied to `unified.duckdb` (backup `unified.duckdb.pre270.20260523_210959.bak`):
+  all 50 legacy rows → `done` + `backfilled=true`, `ended_at` populated (durations
+  5.4–600s, median 35.6s).
+- **#272 → #276 split + PR #277 (merged):** triaged #272's untracked-WIP checklist;
+  split the 🔴 critical group (2 LOADED launchd plists + the codex overnight script +
+  viewer) into #276 and committed them so the active jobs are reproducible. Validated
+  plists (`plistlib`), `bash -n`, `py_compile`, and ran a secret scan before committing.
+
+### Failed Approaches
+
+- Initially assumed `~/.claude/hooks` and `~/.claude/scripts` were regular-file copies
+  needing a manual `cp` sync after merge. They are **symlinked directories** to the main
+  checkout (`~/.claude/hooks -> ~/docs_gh/llm/.claude/hooks`), so a `git pull` on the main
+  checkout makes hook/script changes live automatically — no `cp` needed. (`settings.json`
+  is likewise a symlink.) Caught when `cp` reported "are the same file".
+- First fixer round worked around `~/.duckdbrc` timer/extension stdout noise with a
+  prefix-filter (`_dq_filter`), which was fragile and leaked a `^backfill_test:` test
+  prefix into production. Replaced with `duckdb -init /dev/null` (#275), which suppresses
+  the noise at the source.
+
+### Accuracy / Metrics
+
+- 3 PRs merged (#274, #275, #277); 2 issues closed (#270, #276); 1 issue filed (#276).
+- agent_runs: 50/50 rows backfilled; new `tool_use_id` + `backfilled` columns live.
+- ETL hook: 15/15 hermetic tests pass.
+
+### Known Limitations
+
+- Backfilled `agent_runs` rows keep `agent_type='unknown'` (unrecoverable — never captured).
+  Only rows created under the new hook get real types; downstream per-agent aggregates
+  (#226) should filter on `backfilled=false`.
+- The new PreToolUse(Agent) wiring takes effect at next session start (settings reload);
+  the first live `started_at`/`ended_at` pairs appear then.
+- Parallel same-type agents without a `tool_use_id` fall back to most-recent matching,
+  which can swap individual durations (precise when `tool_use_id` is present).
+- #272 remainder still open: 🟡 codex helper scripts, 🟢 docs/memory (`r-vectorization-patterns.md`,
+  README/MEMORY edits), ⚪ `.claude/skills/.system/` policy (blocked on #230 + #194).
+
 ## 2026-05-23 (Session 5 — sweep day: 27 PRs, ETL + backup + self-review deployed, fork-bomb survived)
 
 Single long session. Cleared the #181 self-review backlog umbrella, shipped 3 new
