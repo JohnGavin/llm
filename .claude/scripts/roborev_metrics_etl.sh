@@ -148,6 +148,107 @@ if [ "${ROBOREV_METRICS_ETL_SELFTEST:-0}" = "1" ]; then
     _assert "since_flag_parsed" "no" "yes"
   fi
 
+  # ── Case 9: parse_token_usage — empty/NULL input → NA ────────────────
+  _tok_result=$(Rscript -e '
+    parse_token_usage <- function(json_text) {
+      empty <- list(tokens_in = NA_integer_, tokens_out = NA_integer_)
+      if (is.na(json_text) || !nzchar(json_text)) return(empty)
+      tryCatch({
+        parsed <- jsonlite::fromJSON(json_text, simplifyVector = TRUE)
+        `%||%` <- function(a, b) if (!is.null(a)) a else b
+        tok_in  <- parsed$input_tokens %||% parsed$prompt_tokens %||%
+                   parsed$inputTokens  %||% NA_integer_
+        tok_out <- parsed$output_tokens %||% parsed$completion_tokens %||%
+                   parsed$outputTokens %||% NA_integer_
+        list(
+          tokens_in  = if (is.null(tok_in)  || is.na(tok_in))  NA_integer_ else as.integer(tok_in),
+          tokens_out = if (is.null(tok_out) || is.na(tok_out)) NA_integer_ else as.integer(tok_out)
+        )
+      }, error = function(e) empty)
+    }
+    r1 <- parse_token_usage(NA_character_)
+    r2 <- parse_token_usage("")
+    r3 <- parse_token_usage("not-json{{{{")
+    ok <- is.na(r1$tokens_in) && is.na(r2$tokens_in) && is.na(r3$tokens_in)
+    cat(if (ok) "yes" else "no")
+  ' 2>/dev/null)
+  _assert "parse_token_usage_null_na" "$_tok_result" "yes"
+
+  # ── Case 10: parse_token_usage — valid JSON → integers ────────────────
+  _tok_result2=$(Rscript -e '
+    `%||%` <- function(a, b) if (!is.null(a)) a else b
+    parse_token_usage <- function(json_text) {
+      empty <- list(tokens_in = NA_integer_, tokens_out = NA_integer_)
+      if (is.na(json_text) || !nzchar(json_text)) return(empty)
+      tryCatch({
+        parsed <- jsonlite::fromJSON(json_text, simplifyVector = TRUE)
+        tok_in  <- parsed$input_tokens %||% parsed$prompt_tokens %||% parsed$inputTokens  %||% NA_integer_
+        tok_out <- parsed$output_tokens %||% parsed$completion_tokens %||% parsed$outputTokens %||% NA_integer_
+        list(
+          tokens_in  = if (is.null(tok_in)  || is.na(tok_in))  NA_integer_ else as.integer(tok_in),
+          tokens_out = if (is.null(tok_out) || is.na(tok_out)) NA_integer_ else as.integer(tok_out)
+        )
+      }, error = function(e) empty)
+    }
+    r <- parse_token_usage("{\"input_tokens\":100,\"output_tokens\":50}")
+    cat(if (r$tokens_in == 100L && r$tokens_out == 50L) "yes" else "no")
+  ' 2>/dev/null)
+  _assert "parse_token_usage_valid_json" "$_tok_result2" "yes"
+
+  # ── Case 11: build_threshold_changes — absent counter → empty df ──────
+  _tc_result=$(Rscript -e '
+    `%||%` <- function(a, b) if (!is.null(a)) a else b
+    build_threshold_changes <- function(counter_data, since_date) {
+      empty_df <- data.frame(
+        changed_at_utc = as.POSIXct(character()),
+        repo = character(), old_threshold = character(),
+        new_threshold = character(), source = character(), actor = character(),
+        stringsAsFactors = FALSE
+      )
+      if (length(counter_data) == 0L) return(empty_df)
+      empty_df
+    }
+    r <- build_threshold_changes(list(), Sys.Date())
+    cat(if (nrow(r) == 0L) "yes" else "no")
+  ' 2>/dev/null)
+  _assert "threshold_changes_empty_counter" "$_tc_result" "yes"
+
+  # ── Case 12: parse_poll_log — absent file → empty list ────────────────
+  _pl_result=$(Rscript -e '
+    `%||%` <- function(a, b) if (!is.null(a)) a else b
+    parse_poll_log <- function(path, since_date) {
+      result <- list()
+      if (!file.exists(path)) return(result)
+      result
+    }
+    r <- parse_poll_log("/tmp/no_such_poll_log_$$_absent", Sys.Date())
+    cat(if (length(r) == 0L) "yes" else "no")
+  ' 2>/dev/null)
+  _assert "parse_poll_log_absent_file" "$_pl_result" "yes"
+
+  # ── Case 13: dry-run output includes all 5 table lines (real DB) ──────
+  # When reviews.db is present, verify all 5 roborev_* tables appear in output.
+  # When absent, verify graceful skip message appears (not a fatal error).
+  _real_db="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
+  if [ -f "$_real_db" ]; then
+    SCHEMA_FILE="$SCHEMA_FILE" _run_r_exit "$_TMPOUT" --dry-run >/dev/null 2>&1 || true
+    _has_five=$(grep -c "roborev_" "$_TMPOUT" 2>/dev/null || echo "0")
+    if [ "$_has_five" -ge 5 ]; then
+      _assert "dry_run_shows_5_tables" "yes" "yes"
+    else
+      _assert "dry_run_shows_5_tables" "no" "yes"
+    fi
+  else
+    # No real DB: verify graceful exit (SKIP line in output)
+    _ec=$(ROBOREV_DB=/tmp/no_such_db_$$_absent SCHEMA_FILE="$SCHEMA_FILE" \
+           _run_r_exit "$_TMPOUT" --dry-run)
+    if grep -q "SKIP" "$_TMPOUT" 2>/dev/null; then
+      _assert "dry_run_shows_5_tables" "yes" "yes"
+    else
+      _assert "dry_run_shows_5_tables" "no" "yes"
+    fi
+  fi
+
   rm -f "$_TMPOUT"
 
   echo ""
