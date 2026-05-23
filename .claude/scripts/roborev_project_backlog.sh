@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # roborev_project_backlog.sh — Phase 1 of roborev closure-loop automation (#163)
 #
+# Closes roborev #1747 and #2109 (#181 Theme 5) — priority formula uses log10
+# (not sqrt), keeping age growth sub-linear so severity stays dominant.
+# The sqrt variant caused age to dominate severity, inverting triage order.
+# Fix landed in commit 24de32e.
+#
 # Usage: roborev_project_backlog.sh <project-name>
 #
 # Reads ~/.roborev/reviews.db (read-only), categorizes open rejected findings,

@@ -2,6 +2,11 @@
 # roborev_handoff.sh — hand off stale cross-repo roborev findings to their
 # owning projects via GitHub issues or CURRENT_WORK.md inbox entries.
 #
+# Closes roborev #899 (#181 Theme 5) — staleness filter uses finished_at (not
+# enqueued_at), so fresh reviews on long-queued jobs are not auto-closed.
+# Fix landed in commit f2b851f (primary) and a05eb7f (warn on null finished_at).
+# Jobs where finished_at IS NULL are excluded and produce a stderr WARN.
+#
 # Handles three populations (threshold = THRESHOLD_DAYS, default 7d):
 #   Phase 1a  verdict=fail       → per-commit GH issue (label roborev-handoff)
 #   Phase 1b  verdict=pass+notes → append to weekly digest issue (label roborev-digest)

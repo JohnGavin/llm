@@ -2,6 +2,12 @@
 # roborev_agent_health.sh — detect sustained codex failures and temporarily
 # swap to gemini in ~/.roborev/config.toml; probe for recovery and swap back.
 #
+# Closes roborev #900 (#181 Theme 5) — timestamp format mismatch fixed.
+# The WHERE clause normalises ISO-8601 (YYYY-MM-DDTHH:MM:SS...Z) to SQLite's
+# internal format (YYYY-MM-DD HH:MM:SS) via replace() before passing to
+# datetime(), ensuring the "last 60 min" failure count is not inflated.
+# Fix landed in commit a93b670.
+#
 # Portability: this script is invoked by launchd, which provides only a bare
 # PATH (/usr/bin:/bin:/usr/sbin:/sbin). Prepend coreutils paths so that
 # `timeout` (from GNU coreutils) is visible under both Homebrew and Nix.
