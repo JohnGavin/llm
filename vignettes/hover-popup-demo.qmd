@@ -23,7 +23,7 @@ knitr::opts_chunk$set(
   warning   = FALSE,
   results   = "asis"
 )
-source(file.path(pkgload::pkg_path(), "R", "hover_popup_helper.R"))
+source(here::here("R", "hover_popup_helper.R"))
 ```
 
 This vignette demonstrates the hover-popup standard introduced in
@@ -87,7 +87,7 @@ Include the shared partial at the top of every vignette that uses `tt()`:
 In a knitr chunk with `results = "asis"`, source the helper and call `tt()`:
 
 ```r
-source(file.path(pkgload::pkg_path(), "R", "hover_popup_helper.R"))
+source(here::here("R", "hover_popup_helper.R"))
 cat(tt(
   "LLM",
   paste0(
