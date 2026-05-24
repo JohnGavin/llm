@@ -1,5 +1,5 @@
 ```{r}
-#| label: !expr paste0("qr-footer-", tools::file_path_sans_ext(basename(knitr::current_input(dir = FALSE))))
+#| label: qr-footer
 #| echo: false
 #| message: false
 #| warning: false
@@ -7,11 +7,17 @@
 #| fig.width: 2
 #| fig.height: 2
 #| fig.align: center
-# NOTE: No static explicit label — this partial may be included in any vignette.
-# The label is derived from the vignette filename so each vignette gets a unique
-# chunk label (e.g. qr-footer-telemetry). Including the partial twice in one
-# document will fail loudly with a duplicate-label error rather than silently
-# producing wrong output. See roborev #907.
+# NOTE: Static label `qr-footer`. knitr chunk labels are scoped per-document,
+# so a fixed label never collides across the vignettes that include this
+# partial. Including it twice in ONE document still fails loudly with a
+# duplicate-label error (the desired behaviour) rather than silently producing
+# wrong output. See roborev #907.
+#
+# This previously used `#| label: !expr paste0("qr-footer-", ...)` to derive a
+# per-file label, but knitr 1.51 broke `!expr` labels: parse_block runs a
+# `%in%` duplicate-label check on the raw label BEFORE evaluating `!expr`, so
+# match() receives a language object and aborts with "'match' requires vector
+# arguments", failing Quarto Publish for every vignette. See JohnGavin/llm#278.
 # Vignette URL is derived from the current input file path so this partial
 # can be reused unchanged across every vignette. Renders a centred QR plus
 # the URL as a clickable caption. See #146.
