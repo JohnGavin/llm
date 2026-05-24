@@ -4,6 +4,47 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-24 (Session 7 — Quarto Publish unblocked: knitr 1.51 + pkgload)
+
+Worktree `feat/cc-20260524-105447`. `Quarto Publish` had failed on every push to `main`
+since ~2026-05-19, blocking the GitHub Pages deploy. Two independent, stacked causes;
+fixing the first revealed the second.
+
+### Completed
+
+- **#278 → PR #279 (merged): knitr 1.51 rejects dynamic `!expr` chunk labels.** Build
+  died at file 2/10 (`closeread-infrastructure.qmd`) with `'match' requires vector
+  arguments` in `parse_block -> %in%` — a *parse-time* crash, before any chunk executes.
+  CI had silently upgraded to knitr 1.51 (R 4.6), which runs a `%in%` duplicate-label
+  check on the raw label *before* evaluating `!expr`, so `match()` receives a language
+  object. The offending construct was `#| label: !expr paste0("qr-footer-", ...)` in
+  `_includes/qr-footer.qmd`, `{{< include >}}`-ed by 9 vignettes (Quarto resolves the
+  include before knitr, so all 9 broke; `index.qmd` survived only because it doesn't
+  include the footer). Fix: static `#| label: qr-footer`. knitr labels are per-document
+  so a fixed label never collides across vignettes, and a double-include in one document
+  still fails loudly (the partial's design intent, roborev #907). Verified under knitr
+  1.51: minimal `!expr`-label repro fails; static label parses; duplicate static label
+  still fails loudly; full vignette with the include resolved parses + executes clean.
+- **PR #280 (merged): `hover-popup-demo.qmd` used `pkgload::pkg_path()`.** Surfaced at
+  file 4/10 once #279 unblocked the build: `there is no package called 'pkgload'` —
+  `pkgload` is not in the `quarto-publish.yaml` dependency list. Replaced both
+  occurrences (setup chunk + doc example) with `source(here::here("R",
+  "hover_popup_helper.R"))` (`here` is already a CI dep; resolves via the DESCRIPTION
+  marker, per `portable-paths`). `tt()` is not exported, so sourcing remains the intended
+  pattern. Run 26359668931 then went green end-to-end (build + deploy).
+- **#281 + scheduled routine: Node 20 → Node 24 GH Actions deprecation.** CI annotated
+  that `actions/checkout@v4` + `actions/upload-artifact@v4` move to Node 24 by
+  2026-06-02. Filed #281 and created a one-time remote routine
+  (`trig_011fCZWxKiuc7WgzazHvGMwL`, fires 2026-06-01) to audit + bump all workflows and
+  open a PR for review.
+
+### Notes
+
+- `!expr` on non-label options (e.g. `fig-alt` in `scrolly-config-evolution.qmd`) is
+  unaffected — the knitr 1.51 regression is label-specific. A QA gate banning
+  `#| label: !expr` is under consideration; the static-label alternative is provably
+  equivalent (still fails loudly on double-include) and more robust.
+
 ## 2026-05-23 (Session 6 — agent_runs ETL completion fix + launchd job tracking)
 
 Short focused session in worktree `feat/cc-20260523-204734`. Fixed the long-latent
