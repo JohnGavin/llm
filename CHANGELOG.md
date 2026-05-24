@@ -4,6 +4,59 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-24 (Session 7 pt.2 — roborev report planning + data-architecture spike)
+
+Planning/triage continuation after the Quarto fixes. No package code changed; output is an
+analysis, a read-only data-architecture spike, and a cross-linked issue cluster.
+
+### Completed
+
+- **roborev review-frequency analysis** (by agent × project) over `~/.roborev/reviews.db`
+  (read-only via `duckdb` sqlite attach): codex dominates (default reviewer), claude-code
+  second, gemini once.
+- **Issue cluster filed + cross-linked:** #284 (daily resolution report — review_type × verdict,
+  time-to-close, rolling 1/3/7/14d, trends, outliers), #286 (attempts instrumentation),
+  #287 (email + dashboard delivery), alongside user-filed #283 (reviewer fallback rotation)
+  and #285 (auto-close clean verdicts). Filed **llmtelemetry#181** (reconcile the unmerged
+  roborev page + ETL into main + one-time 72-day backfill) as the upstream prerequisite.
+- **Node 20→24 GH Actions deprecation:** filed #281 + a one-time remote routine
+  `trig_011fCZWxKiuc7WgzazHvGMwL` (fires 2026-06-01) to bump actions before the 2026-06-02
+  GitHub deadline.
+
+### Spike findings (reusable — do not re-derive)
+
+- `reviews.db` is 642 MB because of **stored prompts** (`review_jobs.prompt` 312 MB +
+  `reviews.prompt` 308 MB, duplicated); findings `output` only 8.8 MB; `diff_content`/`patch`
+  NULL. The metric columns total <10 MB.
+- **Attempts-to-close is NOT derivable from raw `reviews.db`:** `parent_job_id` 0/4696 set;
+  `patch_id` 31% & ~all unique; `branch` ~always `main` (firehose); `session_id` 1:1 per job;
+  `closures` table empty; a commit is re-reviewed ≥2× only 5 times.
+- **But `~/.claude/logs/unified.duckdb` already has a derived roborev analytics layer** —
+  `roborev_review_lifecycle` (`created_at`, `closed_at`, `close_reason`, `duration_s`,
+  `verdict`, `severity_max`), `roborev_daily_metrics`, `_agent_performance`,
+  `_cadence_efficacy`, `_threshold_changes`. Time-to-close = `closed_at − created_at`;
+  loops/cadence approximates re-review recurrence. So #284 = views on top of these, surfaced
+  in the **existing** `roborev_summary.qmd` page + `send_daily_email.R`.
+- `unified.duckdb` is **our** DB (we control retention; ETL upserts → unbounded history going
+  forward) but holds only **8 days** (ETL started 2026-05-16). Source `reviews.db` retains
+  **72 days** (from 2026-03-13, no prune/TTL) → one-time 72-day backfill (llmtelemetry#181).
+
+### Failed Approaches
+
+- Claimed "no roborev page in llmtelemetry" from `ls vignettes/*.qmd` + a bash
+  `vignettes/**/*.qmd` glob — the `**` did **not** recurse (globstar off), so I missed
+  `vignettes/roborev_summary.qmd` (lives in ~18 worktrees) and the published review page.
+  Corrected mid-session. **Lesson:** use `find` for recursive search, never bash `**`; verify
+  "absence" claims against the published site, not just the working tree.
+
+### Known Limitations
+
+- The entire roborev page + ETL is **unmerged on llmtelemetry `main`** (0 tracked roborev
+  files) — the published page has no canonical source. Prerequisite to #284/#287, tracked in
+  llmtelemetry#181.
+- Global roborev backlog: 162 failed/unaddressed reviews (cross-project, pre-existing) —
+  hygiene tracked in #283/#285.
+
 ## 2026-05-24 (Session 7 — Quarto Publish unblocked: knitr 1.51 + pkgload)
 
 Worktree `feat/cc-20260524-105447`. `Quarto Publish` had failed on every push to `main`
