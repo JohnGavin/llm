@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Verify that the overnight Stage-1 self-review --write run succeeded.  -->
+    <!-- Runs at 08:00 daily — after 02:30 stage1 run + ~03:00 backup.        -->
+    <!-- Tracks: JohnGavin/llm#235.                                            -->
+    <!-- Remove once the overnight job is confirmed stable.                    -->
+    <!--                                                                        -->
+    <!-- Install:                                                               -->
+    <!--   cp .claude/launchd/com.claude.self-review-verify.plist              -->
+    <!--        ~/Library/LaunchAgents/                                         -->
+    <!--   launchctl load -w                                                   -->
+    <!--        ~/Library/LaunchAgents/com.claude.self-review-verify.plist     -->
+
+    <key>Label</key>
+    <string>com.claude.self-review-verify</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/self_review_verify.sh</string>
+    </array>
+
+    <!-- 08:00 daily: after 02:30 stage1 run and ~03:00 backup -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/self_review_verify.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/self_review_verify.err</string>
+
+    <!-- Do NOT run on load — only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
