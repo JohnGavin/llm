@@ -14,6 +14,12 @@
 
 set -euo pipefail
 
+# ─── PATH (launchd runs us with a bare PATH) ─────────────────────────────────
+# /nix/var/nix/profiles/default/bin is the stable nix-shell location under the
+# multi-user nix install; launchd's default PATH omits it. Homebrew/usr dirs are
+# kept as a fallback for the duck_run() degradation path below.
+export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 # ─── Recursion / fork-bomb guard ─────────────────────────────────────────────
 # Depth incremented before any work so nested invocations see depth > 0.
 : "${SELF_REVIEW_DEPTH:=0}"
@@ -25,6 +31,7 @@ export SELF_REVIEW_DEPTH=$(( SELF_REVIEW_DEPTH + 1 ))
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NIX_DEFAULT="$(cd "${SCRIPT_DIR}/../.." 2>/dev/null && pwd)/default.nix"
 DB="${HOME}/.claude/logs/unified.duckdb"
 SQL_FILE="${SCRIPT_DIR}/self_review_stage1.sql"
 LOG_DIR="${HOME}/.claude/logs"
@@ -36,6 +43,23 @@ log() {
     local ts
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
     echo "${ts} $*" | tee -a "${LOG_FILE}"
+}
+
+# ─── duckdb invocation ───────────────────────────────────────────────────────
+# duck_run: run duckdb from the project nix shell so the DuckDB version matches
+# the rest of the pipeline (unified.duckdb is written by nix-shell duckdb 1.4.x
+# elsewhere). Falls back to PATH duckdb if nix-shell or default.nix is absent.
+# stdin is passed through (used for the piped-SQL dry-run path). printf %q
+# re-quotes each arg so the inner `bash -c` reconstructs them exactly (handles
+# the `-c "SELECT … (*)…"` case with spaces and parens).
+duck_run() {
+    if command -v nix-shell >/dev/null 2>&1 && [[ -f "${NIX_DEFAULT}" ]]; then
+        local q="" a
+        for a in "$@"; do q+=" $(printf '%q' "$a")"; done
+        nix-shell "${NIX_DEFAULT}" --run "duckdb${q}"
+    else
+        duckdb "$@"
+    fi
 }
 
 # ─── Core functions (called directly; no bash "$0" re-invocation) ─────────────
@@ -57,7 +81,7 @@ run_dry() {
         printf 'BEGIN TRANSACTION;\n'
         cat "${SQL_FILE}"
         printf '\nROLLBACK;\n'
-    } | duckdb "${db_path}" 2>&1 | tee -a "${LOG_FILE}"
+    } | duck_run "${db_path}" 2>&1 | tee -a "${LOG_FILE}"
 }
 
 # run_write: execute SQL and persist findings to DB.
@@ -72,11 +96,11 @@ run_write() {
         return 1
     fi
     log "INFO: --write mode. DB = ${db_path}"
-    duckdb "${db_path}" < "${SQL_FILE}" 2>&1 | tee -a "${LOG_FILE}"
+    duck_run "${db_path}" < "${SQL_FILE}" 2>&1 | tee -a "${LOG_FILE}"
     local status="${PIPESTATUS[0]}"
     if (( status == 0 )); then
         local count
-        count="$(duckdb "${db_path}" -c \
+        count="$(duck_run "${db_path}" -c \
             "SELECT COUNT(*) FROM self_review_findings_stage1" \
             2>/dev/null | grep -E '^[[:space:]]*[0-9]+' | tr -d ' ' || echo 'unknown')"
         log "INFO: Total cumulative findings in table: ${count}"
@@ -112,10 +136,14 @@ selftest() {
     [[ -f "${SQL_FILE}" ]] && sql_exists=0
     _assert "sql-file-exists" "${sql_exists}" "0"
 
-    # Test 3: duckdb binary in PATH
+    # Test 3: duckdb reachable (via nix shell, or PATH fallback)
     local db_avail=1
-    command -v duckdb >/dev/null 2>&1 && db_avail=0
-    _assert "duckdb-in-path" "${db_avail}" "0"
+    if command -v nix-shell >/dev/null 2>&1 && [[ -f "${NIX_DEFAULT}" ]]; then
+        nix-shell "${NIX_DEFAULT}" --run "command -v duckdb" >/dev/null 2>&1 && db_avail=0
+    else
+        command -v duckdb >/dev/null 2>&1 && db_avail=0
+    fi
+    _assert "duckdb-reachable" "${db_avail}" "0"
 
     # Test 4: lock file not present initially (clean state after removing it)
     rm -f "${LOCK_FILE}"
