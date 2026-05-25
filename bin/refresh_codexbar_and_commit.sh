@@ -8,6 +8,9 @@
 # Tracks: llm#184
 #
 # Mirrors: ~/docs_gh/llm/bin/refresh_ccusage_and_commit.sh
+#
+# INTERIM #229: publishes sanitised data to the unprotected `data` branch
+# (main is protected by required pr-checks). Clean up when #229 is resolved.
 
 set -uo pipefail
 # NOTE: we do NOT use `set -e` unconditionally because we want to handle
@@ -97,61 +100,38 @@ else
   log "WARNING: ${USAGE_JSON} not found — capture may have been skipped"
 fi
 
-# ---------------------------------------------------------------------------
-# Dry-run: report what would be committed and exit
-# ---------------------------------------------------------------------------
+# ── INTERIM #229: publish sanitised data to the unprotected `data` branch ──────
+# main is protected (required pr-checks) so direct push is rejected. Publish to a
+# `data` branch via a throwaway worktree instead. CLEAN UP when #229 is resolved.
 if [ "${DRYRUN}" = "1" ]; then
-  log "DRYRUN mode — skipping git add/commit/push"
-  log "Would stage: ${USAGE_JSON}"
-  log "Would stage: ${COST_JSON}"
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Stage the sanitised JSON files
-# ---------------------------------------------------------------------------
-# Only stage files that exist (cost file may be absent on first run)
-staged=0
-if [ -f "${USAGE_JSON}" ]; then
-  git -C "${REPO}" add "${USAGE_JSON}"
-  log "Staged: inst/extdata/codexbar_usage.json"
-  staged=1
-fi
-if [ -f "${COST_JSON}" ]; then
-  git -C "${REPO}" add "${COST_JSON}"
-  log "Staged: inst/extdata/codexbar_cost_daily.json"
-  staged=1
-fi
-
-if [ "${staged}" -eq 0 ]; then
-  log "No output files found to stage — skipping commit"
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Commit (skip cleanly if nothing changed)
-# ---------------------------------------------------------------------------
-if git -C "${REPO}" diff --cached --quiet; then
-  log "No changes to commit (files unchanged since last commit)"
-  exit 0
-fi
-
-commit_msg="chore: Auto-refresh codexbar cache $(date '+%Y-%m-%d %H:%M')"
-if git -C "${REPO}" commit -m "${commit_msg}" >> "${LOG_FILE}" 2>&1; then
-  log "Committed: ${commit_msg}"
+  log "DRYRUN — would publish codexbar_*.json to origin/data branch"
 else
-  log "ERROR: git commit failed — check ${LOG_FILE}"
-  exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# Push to remote
-# ---------------------------------------------------------------------------
-log "Pushing to remote"
-if git -C "${REPO}" push >> "${LOG_FILE}" 2>&1; then
-  log "Push successful"
-else
-  log "WARNING: Push failed — may need manual intervention (check remote tracking branch)"
+  DATA_WT="$(mktemp -d /tmp/llmtel-data.XXXXXX)"
+  git -C "${REPO}" fetch origin data >/dev/null 2>&1 || true
+  if git -C "${REPO}" show-ref --verify --quiet refs/remotes/origin/data; then
+    git -C "${REPO}" worktree add --force "${DATA_WT}" -B data origin/data >> "${LOG_FILE}" 2>&1
+  else
+    git -C "${REPO}" worktree add --force "${DATA_WT}" -b data origin/main >> "${LOG_FILE}" 2>&1
+  fi
+  mkdir -p "${DATA_WT}/inst/extdata"
+  if [ -f "${USAGE_JSON}" ]; then
+    cp "${USAGE_JSON}" "${DATA_WT}/inst/extdata/"
+  fi
+  if [ -f "${COST_JSON}" ]; then
+    cp "${COST_JSON}" "${DATA_WT}/inst/extdata/"
+  fi
+  git -C "${DATA_WT}" add inst/extdata/codexbar_usage.json inst/extdata/codexbar_cost_daily.json
+  if git -C "${DATA_WT}" diff --cached --quiet; then
+    log "No codexbar data changes to publish"
+  else
+    git -C "${DATA_WT}" commit -m "data: codexbar refresh $(date '+%Y-%m-%d %H:%M') [INTERIM #229]" >> "${LOG_FILE}" 2>&1
+    if git -C "${DATA_WT}" push origin data >> "${LOG_FILE}" 2>&1; then
+      log "Published codexbar data to origin/data"
+    else
+      log "ERROR: push to data branch failed"
+    fi
+  fi
+  git -C "${REPO}" worktree remove --force "${DATA_WT}" >> "${LOG_FILE}" 2>&1 || true
 fi
 
 log "=== refresh_codexbar_and_commit.sh done ==="
