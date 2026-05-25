@@ -100,7 +100,7 @@ run_write() {
     local status="${PIPESTATUS[0]}"
     if (( status == 0 )); then
         local count
-        count="$(duck_run "${db_path}" -c \
+        count="$(duck_run "${db_path}" -init /dev/null -noheader -list -c \
             "SELECT COUNT(*) FROM self_review_findings_stage1" \
             2>/dev/null | grep -E '^[[:space:]]*[0-9]+' | tr -d ' ' || echo 'unknown')"
         log "INFO: Total cumulative findings in table: ${count}"
