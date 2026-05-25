@@ -64,6 +64,16 @@ classify_block() {
     echo "PASS"
 }
 
+# ─── Notify policy: FAIL always; PASS only on state change ──────────────────
+# $1 = current result ("PASS" or "FAIL"), $2 = previous state (or empty).
+# Outputs "1" to notify, "0" to stay silent.
+should_notify() {
+    local current="$1" prev="$2"
+    if [ "${current}" = "FAIL" ]; then echo 1; return; fi
+    if [ "${current}" = "PASS" ] && [ "${prev}" != "PASS" ]; then echo 1; return; fi
+    echo 0
+}
+
 # ─── SELFTEST mode ───────────────────────────────────────────────────────────
 selftest() {
     local pass=0 fail=0
@@ -111,6 +121,18 @@ selftest() {
     local bad_result_nodone
     bad_result_nodone="$(classify_block "${bad_block_nodone}")"
     _assert "classify-fail-no-done" "${bad_result_nodone}" "FAIL:no_done_line"
+
+    # Test 6: should_notify — FAIL always notifies
+    _assert "should_notify-fail-after-pass" "$(should_notify FAIL PASS)" "1"
+
+    # Test 7: should_notify — PASS after PASS stays silent
+    _assert "should_notify-pass-after-pass" "$(should_notify PASS PASS)" "0"
+
+    # Test 8: should_notify — PASS after FAIL notifies (recovery)
+    _assert "should_notify-pass-after-fail" "$(should_notify PASS FAIL)" "1"
+
+    # Test 9: should_notify — PASS on first run (empty prev) notifies
+    _assert "should_notify-pass-first-run" "$(should_notify PASS "")" "1"
 
     echo "─────────────────────────────"
     echo "Selftest: ${pass} PASS, ${fail} FAIL"
@@ -182,6 +204,26 @@ fi
 
 # Step 7: append result line to VERIFY_LOG
 log_verify "${timestamp} [${verdict}] overnight self-review: run_date=${run_date} done=${done_found} errors=${errors} db_rows=${count}"
+
+# ─── Email notification via llmtelemetry CI (reuses its GMAIL_* secret) ───────
+# Notify on FAIL always; on PASS only when state changes (first run / recovery),
+# so steady-state PASS days are silent. State file is overridable for testing.
+STATE_FILE="${SELF_REVIEW_VERIFY_STATE:-${HOME}/.claude/logs/.self_review_verify_state}"
+prev_state="$(cat "${STATE_FILE}" 2>/dev/null || true)"
+printf '%s\n' "${verdict}" > "${STATE_FILE}"
+
+if [ "$(should_notify "${verdict}" "${prev_state}")" = "1" ] \
+   && [ "${SELF_REVIEW_VERIFY_NOTIFY:-1}" = "1" ] \
+   && command -v gh >/dev/null 2>&1; then
+    details="run_date=${run_date} done=${done_found} errors=${errors} db_rows=${count}"
+    if gh workflow run self-review-email.yml --repo JohnGavin/llmtelemetry \
+        -f result="${verdict}" -f count="${count}" -f run_date="${run_date}" \
+        -f details="${details}" >/dev/null 2>&1; then
+        log_verify "$(ts) INFO: dispatched self-review email workflow (result=${verdict})"
+    else
+        log_verify "$(ts) WARN: gh workflow dispatch failed (result=${verdict})"
+    fi
+fi
 
 # Step 8: macOS notification (best-effort, never aborts)
 if command -v osascript >/dev/null 2>&1; then
