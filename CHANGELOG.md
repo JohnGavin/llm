@@ -302,6 +302,68 @@ Validated the Codex/Claude shared-folder runbook, found a real skills-parser inc
 
 - **Direct in-session replacement of `~/.claude/memory` hit filesystem restrictions** — the agent could update the repo-backed memory files but `mv`/cleanup operations against the live `~/.claude/memory` directory were blocked with `Operation not permitted`. Worked around by having the user complete the final symlink handoff manually.
 
+## 2026-05-21 (Session 4 — roborev backlog sweep: 12 PRs merged, 7 issues filed, severity-autoclose + metrics designed)
+
+Closed the entire High-severity roborev backlog (23 findings) across two batches of parallel worktree agents, plus the largest Medium cluster (67-review scrolly vignette). Reduced poll-merges launchd cadence from 96/day to 13/day per llm#217. Designed and partly built the severity-threshold autoclose system (llm#224) and the metrics ETL → unified.duckdb → llmtelemetry dashboard pipeline (llm#226 + llmtelemetry#145). Session ended in a harness-level dead-cwd condition that locked Bash and Agent dispatch — recovery deferred to a fresh session (handoff doc in `.claude/CURRENT_WORK.md`).
+
+### Completed
+
+- **12 PRs merged on origin/main** (`48985e6 → d78658e`):
+  - Batch 1 (High coverage): #208 security allowlist + permission_request find-guard + agent_push_guard SOAK_END_UTC; #209 scrolly vignette dynamic scope (67-review cluster collapse via `scrolly_scope_text` target derived from `scrolly_scan_specs` metadata); #210 Tier 3 post-verify with porcelain hash + session-end `/bye` sentinel gating; #213 branch-cherry-check closing-PR detection + dynamic search paths; #214 cc.sh non-resetting worktree add + TTY guard + collision-safe path; #215 roborev_poll_merges idempotency (LEFT JOIN + range-ref matching for NULL commit_id); #216 qa-gates current_input(dir=FALSE) + new methodology-blocks tests
+  - Batch 2 (Medium cleanup): #218 launchd `command -v` ROBOREV + escalating SIGTERM→SIGKILL timeout; #219 priority_score cap at 1.5 + handoff WARN on done-but-null-finished_at; #220 drift_check baseline mean/std invalidation; #221 cross-project-scope frontmatter; #222 file-size caps (AGENTS 203→197, bash-safety 164→150, auto-delegation 272→146 via `.claude/rules/_companions/` extraction)
+- **llm#217 implemented** — `~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist` replaced `StartInterval=900` with `StartCalendarInterval` hourly 09:00–21:00 daily (13 runs/day vs 96, quiet hours 22:00–08:59). Backup at `~/.claude/backups/com.claude.roborev-poll-merges.plist.pre-quiet-hours-20260521_134239.bak`. `plutil -lint` OK, reloaded via `launchctl unload && launchctl load`. Status comment posted.
+- **Seven issues filed** spanning autoclose feature, metrics layer, backup architecture, cross-project notifications, and dashboard question backlog:
+  - **llm#217** — poll-merges cadence reduction (implemented same session)
+  - **llm#224** — severity-threshold autoclose feature (full spec: precedence chain, --reopen/--replay/--list flags, counter file schema, per-repo `.roborev.toml` override; user-confirmed threshold=medium, retroactive=yes, granularity=global+per-repo)
+  - **llm#226** — metrics ETL + 5 frozen schemas (`roborev_daily_metrics`, `roborev_review_lifecycle`, `roborev_agent_performance`, `roborev_threshold_changes`, `roborev_cadence_efficacy`) → extends `~/.claude/logs/unified.duckdb`, daily 02:00 launchd
+  - **llm#228** — unified.duckdb backup strategy (6 options with pros/cons; recommended Option D Parquet → different domain) + extension comment on placement of `~/.claude/state/`, `~/.claude/hooks/`, `~/.claude/settings.json` artefacts
+  - **llmtelemetry#145** — dashboard build (read_unified_roborev_*() + rollup_roborev.R + Shiny tab) consuming llm#226 schemas
+  - **llmtelemetry#146** — ROI / "is roborev worth it?" question backlog (20 starter questions across 5 tiers with templates for additions)
+  - **llmtelemetry#147** — cross-cutting heads-up to llmtelemetry covering all llm changes affecting its read path
+- **Two PRs ready but blocked from merge** (orchestrator Bash locked):
+  - **#225** — F1 from #224: `roborev_severity_autoclose.sh` (7/7 self-test PASS, dry-run shows 287 reviews would close at threshold=medium against live backlog)
+  - **#227** — F2 from #224: session-init banner + `roborev_summary_wrap.sh` + `/roborev` skill output line (3/3 self-test PASS, graceful degradation verified)
+- **Tier 3 post-verification held across 12 worktree agent dispatches** — main checkout HEAD never moved outside its proper merges; porcelain hash drift detection (added in #210) validated against synthetic dirty state.
+
+### Failed approaches
+
+- **`quick-fix` (haiku) agent + `isolation: "worktree"` is incompatible** — haiku's tool set is Read/Grep/Glob/Edit only (no Bash/gh). Agent cannot enter its assigned worktree (no `pwd`), cannot commit, cannot push, cannot open PR. Result on E4 dispatch: edit landed in the orchestrator's worktree, not an isolated one. Recovery: `git stash`, create fresh fix branch on main checkout, apply edit, push, open PR #221. Lesson: for any worktree-isolated task, use `fixer` (sonnet). Add to `auto-delegation.md` if not already documented.
+- **ETL agent (#226) stalled on watchdog** at 600s with no progress, partway through refactoring its self-test into a separate R helper file. Worktree preserved at `.claude/worktrees/agent-a475587d7d2f5c08f/` — needs recovery in next session (revert the R-file refactor and use inline self-test per original llm#226 spec, OR continue the refactor cleanly).
+- **`cd`-ing into an agent worktree from the orchestrator's bash is a foot-gun.** Did this earlier in the session for the `gh pr create` step on PR #208 (worktree path was `.claude/worktrees/agent-ab1dc7126458859a6/`). When that PR was merged with `--delete-branch`, the worktree was reaped by the harness, but the orchestrator's shell cwd remained pointed at the now-missing path. Subsequent Bash calls all failed with `Exit code 1` and no stderr — the harness can't fork subprocesses when cwd doesn't exist. Cascaded to Agent dispatches (`Failed to create worktree:` — also needs cwd). Workaround attempt: subshell `(cd /valid && cmd)` worked once for `gh issue comment` but stopped working later — root cause is harness-level, not just shell-state. Recovery: start a fresh Claude Code session. Lesson: **never `cd` into agent worktrees from the orchestrator** — always use `git -C <path>` and `--repo` flags.
+- **`agent_push_guard.sh` is internally fragile.** Uses `python3` under `set -euo pipefail` for SOAK_END_UTC date math (added in #208). If python3 isn't on the hook's PATH or any internal command fails, the hook fails-closed and blocks all subsequent bash calls. Worth filing a follow-up to replace python3 with `/bin/date -j -u -f` (BSD date, always at that absolute path on macOS) and drop `-e` so internal errors don't block user commands.
+- **`gh issue comment` with `--body "$(cat <<'EOF'... EOF)"` heredoc form failed** (exit 1) — possibly because of backtick handling inside markdown table cells in the heredoc. Worked when switched to `--body-file /tmp/file.md`. Confirms #200's existing recommendation to prefer `--body-file`.
+
+### Accuracy / Metrics
+
+- **PRs merged this session**: 12 (#208 #209 #210 #213 #214 #215 #216 #218 #219 #220 #221 #222)
+- **PRs opened, awaiting merge**: 2 (#225 #227 — both verified MERGEABLE before harness lock)
+- **PRs stalled mid-work**: 1 (ETL for #226 — agent watchdog timed out)
+- **Issues filed**: 7 (llm: #217, #224, #226, #228; llmtelemetry: #145, #146, #147)
+- **High-severity roborev findings closed**: 23/23 (100%)
+- **Medium-severity scrolly cluster collapsed**: 67 reviews → 0 (single root-cause fix in #209)
+- **Medium-severity additional cleanup**: ~30 across themes 11–17 (#218–#222)
+- **Worktree-isolated fixer dispatches**: 12 (3+5+1+3 across the day) — Tier 3 isolation held on every one
+- **Poll-merges launchd cadence reduction**: 96/day → 13/day (7×)
+- **Self-tests added across the session**: 25/25 PASS in permission_request.sh (#208), 8/8 PASS in agent_push_guard.sh (#208), 7/7 PASS in roborev_severity_autoclose.sh (#225), 3/3 PASS in roborev_summary_wrap.sh (#227), 3/3 PASS in test-plan-qa-gates.R (#216)
+
+### Known limitations
+
+- **Session ended in harness-level dead-cwd lock** — both Bash and Agent dispatch (with `isolation: "worktree"`) returned `Exit code 1` / `Failed to create worktree:`. Only Read/Edit/Write still functional. Recovery requires starting a fresh Claude Code session from a valid directory. Handoff captured in `.claude/CURRENT_WORK.md`.
+- **PR #225 and PR #227 not merged** — both verified MERGEABLE before the lock. Next session: `gh pr merge 225 --repo JohnGavin/llm --merge --delete-branch` then same for #227.
+- **ETL agent worktree pending recovery** — `.claude/worktrees/agent-a475587d7d2f5c08f/` on branch `feat/roborev-metrics-etl`. Was mid-refactor of self-test. Next session: dispatch fresh fixer to revert refactor (use inline self-test per spec) OR finish the R-file extraction cleanly, then commit + push + open PR.
+- **Retroactive autoclose sweep pending** — once #225 merges, run `~/docs_gh/llm/.claude/scripts/roborev_severity_autoclose.sh --apply --threshold medium` against the live backlog. Closes ~287 Medium-only reviews in one operation.
+- **Launchd plists pending install** — severity-autoclose template from #225 PR (`.claude/launchd_templates/`) needs `cp` into `~/Library/LaunchAgents/` and `launchctl load`. Similarly the metrics ETL plist from #226 work when that lands.
+- **Global config pending** — add `autoclose_severity_threshold = "medium"` to `~/.roborev/config.toml` after #225 merges (currently no global default).
+- **llm#228 backup decision pending user input** — 6 options laid out; Option D (Parquet → different domain) recommended; needs user to pick target domain (S3 / B2 / iCloud / local external) before implementation.
+- **`agent_push_guard.sh` python3-dependency fragility** — caused this session's lockup. File a sub-issue to replace with `/bin/date` + drop `set -e`. Cross-references llm#208.
+- **llm#191 enforcement layers (5 hooks) still not built** — same as last session.
+- **llm#195 folder tidy still not executed** — same as last session.
+
+### Soak windows still active on the calendar
+
+- **2026-05-22** (per #201): flip `agent_push_guard` `DEFAULT_MODE` log → block. **Update**: #208's SOAK_END_UTC mechanism already auto-flips at `2026-05-21T17:00:09Z` (today's session likely already past it).
+- **2026-05-27** (per #202): remove `SKIP_SESSION_END_REFINE=1` prefix from session_stop.sh after 7-day soak.
+
 ## 2026-05-20 (Session 3 — governance + soak rollouts: 3 PRs merged, 8 issues filed)
 
 Continued from Session 2. Filed and landed three behaviour-changing PRs (cross-project scope rule, agent-push guard, session-end roborev refine), all merged with cautious soak defaults. Filed eight governance/policy issues spanning supply-chain trust, repo hygiene, approval-prompt friction, and future-dated automation. Critically reviewed and declined an external code-bundle solicitation on llm#191.
