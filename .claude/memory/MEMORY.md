@@ -47,6 +47,9 @@
 - Preferred tools: mirai, crew, duckdb, arrow, dplyr, targets, pkgctx, cli
 - Cachix push rules and common task approaches
 
+## Performance Patterns
+- [R Vectorization Patterns](r-vectorization-patterns.md) — 10-100x speedup for entity loops: matrices not lists, padded grid, batch RNG, cbind indexing
+
 ## Session Conventions
 - Commit with gert, not bash git
 - Append CHANGELOG.md at session end (completed, failed approaches, metrics)
