@@ -79,3 +79,42 @@ After review, suggest:
 - Before ending a long session
 - When a feature is complete but feels over-engineered
 - After multiple iterative fixes to the same issue
+
+## Worktree Hygiene (#199)
+
+Stale git worktrees accumulate under `~/docs_gh/` across projects. Run the
+sweeper to surface candidates, then decide what to remove.
+
+### Step 1 — Dry-run sweep
+
+```bash
+bash ~/.claude/scripts/worktree_gc.sh
+```
+
+Output lines tagged `[would-remove]` are fully-merged, clean, and older than
+7 days. Lines tagged `[keep-*]` show why a worktree was spared.
+
+### Step 2 — Handle branches that FAIL the patch-id gate
+
+Any branch with unique patches (`[keep-unmerged]`) was NOT auto-listed. These
+may be squash-merged (different patch-id but content is in main). For each:
+
+1. **`git cherry main <branch>`** — if all lines are `-`, patch is in main.
+2. **Closing-PR check** — `gh issue view <N> --comments` and
+   `gh pr list --search "closed:<N>" --state closed` to confirm squash-merge.
+3. **Unique-strings check** — grep 2–3 distinctive strings from
+   `git diff main...<branch>` against `R/ tests/ vignettes/`.
+
+See the `branch-salvage-workflow` rule for the full decision matrix.
+
+### Step 3 — Remove confirmed stale worktrees
+
+After human confirmation, apply removals:
+
+```bash
+AGE_DAYS=7 bash ~/.claude/scripts/worktree_gc.sh --apply
+```
+
+The sweeper only removes if patch-id gate + clean + age all pass. It never
+removes locked, agent-managed (`/.claude/worktrees/`), or dirty worktrees.
+Repos with a `.no-worktree-gc` file are skipped entirely.
