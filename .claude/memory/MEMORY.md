@@ -68,6 +68,11 @@
 - Push cachix with ./push_to_cachix.sh (never push deps)
 - Check CURRENT_WORK.md + git status + open issues at start
 
+## Worktree Location Convention (see rules/worktree-location.md)
+- All new worktrees go under ~/worktrees/<project>/<branch>/ — NOT as siblings in ~/docs_gh/
+- Use ~/.claude/scripts/cc-worktree.sh <project> <branch> [base] to create them
+- Harness-internal worktrees (.claude/worktrees/agent-*) are unaffected by this convention
+
 ## Never `cd && git` (see feedback_no-compound-cd.md)
 - `cd <dir> && git ...` triggers approval prompt that bypassPermissions does NOT bypass
 - ALWAYS use `git -C <dir> <subcommand>` instead — every git subcommand accepts -C

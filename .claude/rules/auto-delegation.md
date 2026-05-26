@@ -105,6 +105,9 @@ When `burn_rate_check.sh` reports WARN or CRITICAL:
 
 ## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
 
+For the canonical path to use when creating worktrees, see the `worktree-location`
+rule and `~/.claude/scripts/cc-worktree.sh`.
+
 Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside
 worktrees and `/tmp/*`. It is NEVER safe in the main checkout, where live API
 tokens and credentials sit. An agent running `bypassPermissions` in the main
