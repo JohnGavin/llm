@@ -53,6 +53,7 @@ responsibility.
 - Bulleted list — one bullet per distinct source
 - Each bullet: `<source identifier>: <what it is and how produced>`
 - Sources include: targets pipeline names (`vig_*`), log files, GitHub API queries (`gh::gh()`), DuckDB tables, ERDDAP feeds, parquet files, fallback file counts
+- When a source bullet links to a specific function in project source, the URL MUST include `#L<n>` — see `mermaid-click-anchors` rule
 - **Forbidden:** empty section, "see pipeline", or "various sources"
 
 ### `### AI disclosure`
@@ -121,6 +122,7 @@ responsibility.
 ## Related
 
 - `dynamic-prose-values` — numbers in methodology text must be dynamic, not hardcoded
+- `mermaid-click-anchors` — source links in Data sources bullets must include `#L<n>` when pointing to a specific function
 - `quarto-vignettes` — vignette structure rules (zero inline computation, `safe_tar_read()`)
 - `narrative-colour-persistence` — colour rules for multi-panel vignettes
 - `verification-before-completion` — verify block is present in rendered HTML before push
