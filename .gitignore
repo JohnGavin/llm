@@ -51,6 +51,8 @@ proj/stats/simulations/randomwalk/
 # Claude local settings and ephemeral state
 .claude/settings.local.json
 .claude/CURRENT_WORK.md
+.claude/worktrees/
+.claude/skills/.system/
 
 # Nix build artifacts
 result
