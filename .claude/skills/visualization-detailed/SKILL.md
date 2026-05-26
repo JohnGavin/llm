@@ -153,6 +153,58 @@ Use `<script type="text/plain" data-mermaid="id">` for diagram text (avoids `>` 
 
 Use external `.js` files only — inline scripts stripped.
 
+### Click Links: Line Anchors Mandatory
+
+Every clickable node URL that points into the current project's source tree MUST include `#L<n>`. Bare-file URLs (no anchor) force readers to search for the symbol the node represents.
+
+**Surface coverage:**
+
+| Surface | Required pattern |
+|---------|-----------------|
+| Mermaid `click` directive | `click NODE "…/file.R#L<n>" _blank` |
+| `node_links` R table → `<a href>` | URL column must contain `#L<n>` |
+| Markdown prose link to project source | `[name](…/file.R#L<n>)` |
+| ggiraph `onclick` JS | URL string must contain `#L<n>` |
+| plotly `customdata` / `onclick` | URL string must contain `#L<n>` |
+
+**Wrong:**
+```
+click VIX_level "https://github.com/OWNER/REPO/blob/main/R/plan_vix_macro_overlay.R" _blank
+```
+
+**Right:**
+```
+click VIX_level "https://github.com/OWNER/REPO/blob/main/R/plan_vix_macro_overlay.R#L11" _blank
+```
+
+**The `diagram_node_links()` / `gh_url()` helper (always generate, never hand-code):**
+
+```r
+diagram_node_links <- function() {
+  tibble::tribble(
+    ~node,        ~file,                        ~line,
+    "VIX_level",  "R/plan_vix_macro_overlay.R",  11L,
+    # one row per clickable node across all diagrams
+  )
+}
+
+gh_url <- function(node, ref = "main", repo = NULL) {
+  if (is.null(repo)) repo <- gh::gh_tree_remote()$repo  # or hardcode
+  row <- diagram_node_links()[diagram_node_links()$node == node, ]
+  stopifnot("node not registered" = nrow(row) == 1L,
+            "line missing"        = !is.na(row$line))
+  sprintf("https://github.com/%s/blob/%s/%s#L%d", repo, ref, row$file, row$line)
+}
+
+# Emit click directives — never author these by hand
+purrr::map_chr(diagram_node_links()$node,
+               ~ sprintf(' click %s "%s" _blank', .x, gh_url(.x)))
+```
+
+**Migration steps:** (1) audit existing click directives, (2) build `diagram_node_links.R` with `NA_integer_` lines, (3) resolve each `NA`, (4) replace hand-coded URLs with the generated form, (5) add QA gate (`qa_no_bare_source_urls` target). Reference: [JohnGavin/historical#240](https://github.com/JohnGavin/historical/issues/240).
+
+See `mermaid-click-anchors` rule for the full specification, forbidden patterns, and CI guard.
+
 ## Part 4: Reproducible Visualization
 
 ### Rule 7: Data Behind Plots
