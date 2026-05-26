@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Sweep stale worktrees across all repos under ~/docs_gh weekly.          -->
+    <!-- Dry-run only until the script's SOAK_END date (2026-06-02);             -->
+    <!-- after that date --apply removes merged+clean+old worktrees.             -->
+    <!-- Tracks: JohnGavin/llm#199.                                              -->
+    <!--                                                                          -->
+    <!-- Install (do NOT install before SOAK_END):                               -->
+    <!--   cp .claude/launchd/com.claude.worktree-gc.plist                       -->
+    <!--        ~/Library/LaunchAgents/                                           -->
+    <!--   launchctl load -w                                                      -->
+    <!--        ~/Library/LaunchAgents/com.claude.worktree-gc.plist              -->
+
+    <key>Label</key>
+    <string>com.claude.worktree-gc</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/worktree_gc.sh</string>
+        <string>--apply</string>
+    </array>
+
+    <!-- Weekly: Sunday 04:00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/worktree_gc.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/worktree_gc.err</string>
+
+    <!-- Do NOT run on load — only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
