@@ -177,6 +177,29 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
   _run_case_clean "clean-verdict-prefix" "0" "No issues found. All checks passed." "CLOSE_CLEAN"
   _run_case_clean "findings-verdict-bool-0" "0" "## Review Findings\n- **Severity**: Low" "SKIP"
 
+  # Case 10: job_id field parsing — candidate row with distinct id and job_id
+  # Asserts that field 6 (job_id) is parsed correctly and is NOT equal to field 1 (review_id).
+  # This guards against the regression described in llm#312 where close was called with
+  # rv.id instead of rv.job_id (the two id spaces overlap so the wrong review was closed).
+  _run_case_job_id_parse() {
+    local label="$1"
+    # Construct a tab-separated candidate row: id=100, output=..., root=..., repo=..., verdict=0, job_id=999
+    local _test_row="100	No issues found.	/some/path	testrepo	0	999"
+    local _parsed_id
+    local _parsed_job_id
+    _parsed_id=$(echo "$_test_row" | cut -f1)
+    _parsed_job_id=$(echo "$_test_row" | cut -f6)
+    # job_id must be 999, not 100 (review id)
+    if [ "$_parsed_job_id" = "999" ] && [ "$_parsed_id" = "100" ] && [ "$_parsed_job_id" != "$_parsed_id" ]; then
+      PASS=$((PASS+1))
+      echo "  PASS [$label]: job_id=$_parsed_job_id correctly parsed from field 6 (review_id=$_parsed_id)"
+    else
+      FAIL=$((FAIL+1))
+      echo "  FAIL [$label]: expected job_id=999 review_id=100, got job_id=$_parsed_job_id review_id=$_parsed_id"
+    fi
+  }
+  _run_case_job_id_parse "job_id-field6-parse"
+
   TOTAL=$((PASS+FAIL))
   echo ""
   if [ "$FAIL" -eq 0 ]; then
@@ -633,8 +656,8 @@ fi
 
 # Fetch all open reviews with repo info (both findings and clean verdicts)
 REVIEW_ROWS=()
-while IFS=$'\t' read -r _id _output _root _repo _verdict; do
-  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}	${_verdict}")
+while IFS=$'\t' read -r _id _output _root _repo _verdict _job_id; do
+  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}	${_verdict}	${_job_id}")
 done < <(
   /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" <<'PYEOF'
 import sqlite3, sys
@@ -645,7 +668,7 @@ repo_filter = sys.argv[2] if len(sys.argv) > 2 else ''
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
 sql = """
-    SELECT rv.id, rv.output, rp.root_path, rp.name, rv.verdict_bool
+    SELECT rv.id, rv.output, rp.root_path, rp.name, rv.verdict_bool, rv.job_id
     FROM reviews rv
     JOIN review_jobs rj ON rj.id = rv.job_id
     JOIN repos rp ON rp.id = rj.repo_id
@@ -663,7 +686,7 @@ rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
     output = (row[1] or '').replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}\t{row[4]}")
+    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}\t{row[4]}\t{row[5]}")
 PYEOF
 )
 
@@ -688,6 +711,7 @@ for _row in "${REVIEW_ROWS[@]}"; do
   _root=$(echo "$_row"     | cut -f3)
   _repo=$(echo "$_row"     | cut -f4)
   _verdict=$(echo "$_row"  | cut -f5)
+  _job_id=$(echo "$_row"   | cut -f6)
 
   # Determine effective threshold + source for this repo
   _eff_threshold=""
@@ -727,20 +751,20 @@ for _row in "${REVIEW_ROWS[@]}"; do
     # Clean review: close unconditionally (no threshold check needed)
     if [ "$MODE" = "apply" ]; then
       _close_ok=0
-      if "$ROBOREV_BIN" close "$_id" >/dev/null 2>&1; then
+      if "$ROBOREV_BIN" close "$_job_id" >/dev/null 2>&1; then
         _close_ok=1
       fi
       if [ "$_close_ok" -eq 1 ]; then
         _marker="auto-closed: clean verdict [run:${RUN_TS}]"
-        "$ROBOREV_BIN" comment "$_id" "$_marker" >/dev/null 2>&1 || true
+        "$ROBOREV_BIN" comment "$_job_id" "$_marker" >/dev/null 2>&1 || true
         ACTION="CLOSE_CLEAN"
         TOTAL_CLOSED=$((TOTAL_CLOSED+1))
         CLOSED_BY_REPO["$_repo"]=$(( ${CLOSED_BY_REPO["$_repo"]:-0} + 1 ))
-        log "${ACTION} review_id=${_id} repo=${_repo}"
-        echo "  CLOSE_CLEAN review_id=${_id} repo=${_repo}"
+        log "${ACTION} review_id=${_id} job_id=${_job_id} repo=${_repo}"
+        echo "  CLOSE_CLEAN review_id=${_id} job_id=${_job_id} repo=${_repo}"
       else
-        log "CLOSE_CLEAN_FAIL review_id=${_id} repo=${_repo}"
-        echo "  CLOSE_CLEAN_FAIL review_id=${_id} repo=${_repo} (roborev close failed)"
+        log "CLOSE_CLEAN_FAIL review_id=${_id} job_id=${_job_id} repo=${_repo}"
+        echo "  CLOSE_CLEAN_FAIL review_id=${_id} job_id=${_job_id} repo=${_repo} (roborev close failed)"
         TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
         SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
       fi
@@ -749,8 +773,8 @@ for _row in "${REVIEW_ROWS[@]}"; do
       ACTION="CLOSE_CLEAN"
       TOTAL_CLOSED=$((TOTAL_CLOSED+1))
       CLOSED_BY_REPO["$_repo"]=$(( ${CLOSED_BY_REPO["$_repo"]:-0} + 1 ))
-      log "DRY_RUN_CLOSE_CLEAN review_id=${_id} repo=${_repo}"
-      echo "  [dry-run] CLOSE_CLEAN review_id=${_id} repo=${_repo}"
+      log "DRY_RUN_CLOSE_CLEAN review_id=${_id} job_id=${_job_id} repo=${_repo}"
+      echo "  [dry-run] CLOSE_CLEAN review_id=${_id} job_id=${_job_id} repo=${_repo}"
     fi
     continue
   fi
@@ -770,23 +794,24 @@ for _row in "${REVIEW_ROWS[@]}"; do
     log "${ACTION} review_id=${_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=off source=${_eff_source}"
     echo "  SKIP_THRESHOLD_OFF review_id=${_id} repo=${_repo} max=$(_sev_name "$_max_ord")"
   elif [ "$_max_ord" -le "$_t_ord" ]; then
-    # Close
+    # Close — use job_id for roborev close/comment (fix #312: roborev close expects
+    # job_id not review_id; job:review is 1:1 so this closes exactly the right review)
     if [ "$MODE" = "apply" ]; then
       _close_ok=0
-      if "$ROBOREV_BIN" close "$_id" >/dev/null 2>&1; then
+      if "$ROBOREV_BIN" close "$_job_id" >/dev/null 2>&1; then
         _close_ok=1
       fi
       if [ "$_close_ok" -eq 1 ]; then
         _marker="auto-closed: severity<=${_eff_threshold} [config:${_eff_source}] [run:${RUN_TS}]"
-        "$ROBOREV_BIN" comment "$_id" "$_marker" >/dev/null 2>&1 || true
+        "$ROBOREV_BIN" comment "$_job_id" "$_marker" >/dev/null 2>&1 || true
         ACTION="CLOSE"
         TOTAL_CLOSED=$((TOTAL_CLOSED+1))
         CLOSED_BY_REPO["$_repo"]=$(( ${CLOSED_BY_REPO["$_repo"]:-0} + 1 ))
-        log "${ACTION} review_id=${_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=${_eff_threshold} source=${_eff_source}"
-        echo "  CLOSE review_id=${_id} repo=${_repo} max=$(_sev_name "$_max_ord") threshold=${_eff_threshold}"
+        log "${ACTION} review_id=${_id} job_id=${_job_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=${_eff_threshold} source=${_eff_source}"
+        echo "  CLOSE review_id=${_id} job_id=${_job_id} repo=${_repo} max=$(_sev_name "$_max_ord") threshold=${_eff_threshold}"
       else
-        log "CLOSE_FAIL review_id=${_id} repo=${_repo}"
-        echo "  CLOSE_FAIL review_id=${_id} repo=${_repo} (roborev close failed)"
+        log "CLOSE_FAIL review_id=${_id} job_id=${_job_id} repo=${_repo}"
+        echo "  CLOSE_FAIL review_id=${_id} job_id=${_job_id} repo=${_repo} (roborev close failed)"
         TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
         SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
       fi
@@ -795,8 +820,8 @@ for _row in "${REVIEW_ROWS[@]}"; do
       ACTION="CLOSE"
       TOTAL_CLOSED=$((TOTAL_CLOSED+1))
       CLOSED_BY_REPO["$_repo"]=$(( ${CLOSED_BY_REPO["$_repo"]:-0} + 1 ))
-      log "DRY_RUN_CLOSE review_id=${_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=${_eff_threshold} source=${_eff_source}"
-      echo "  [dry-run] CLOSE review_id=${_id} repo=${_repo} max=$(_sev_name "$_max_ord") threshold=${_eff_threshold}"
+      log "DRY_RUN_CLOSE review_id=${_id} job_id=${_job_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=${_eff_threshold} source=${_eff_source}"
+      echo "  [dry-run] CLOSE review_id=${_id} job_id=${_job_id} repo=${_repo} max=$(_sev_name "$_max_ord") threshold=${_eff_threshold}"
     fi
   else
     ACTION="SKIP_ABOVE_THRESHOLD"
