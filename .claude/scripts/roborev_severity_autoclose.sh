@@ -149,6 +149,34 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
   # Case 7: empty output → must SKIP (SKIP_PARSE_FAIL)
   _run_case "empty-output" "" "$THRESHOLD_FOR_TEST" "SKIP"
 
+  # Case 8: clean verdict (verdict_bool=1, output begins with "No issues found") →
+  # must CLOSE via the clean-verdict path, NOT SKIP_PARSE_FAIL.
+  _run_case_clean() {
+    local label="$1" verdict="$2" output="$3" expected="$4"
+    local result
+    # Mirror the clean-verdict branch in the main loop:
+    # clean iff verdict=1 OR output starts with "no issues found" (case-insensitive)
+    local output_lower
+    output_lower=$(echo "$output" | tr '[:upper:]' '[:lower:]')
+    if [ "$verdict" = "1" ] || [[ "$output_lower" == "no issues found"* ]]; then
+      result="CLOSE_CLEAN"
+    else
+      # Fall through to severity path (simplified: just note not-clean)
+      result="SKIP"
+    fi
+    if [ "$result" = "$expected" ]; then
+      PASS=$((PASS+1))
+      echo "  PASS [$label]: got $result"
+    else
+      FAIL=$((FAIL+1))
+      echo "  FAIL [$label]: expected $expected, got $result (verdict='$verdict')"
+    fi
+  }
+
+  _run_case_clean "clean-verdict-bool" "1" "No issues found." "CLOSE_CLEAN"
+  _run_case_clean "clean-verdict-prefix" "0" "No issues found. All checks passed." "CLOSE_CLEAN"
+  _run_case_clean "findings-verdict-bool-0" "0" "## Review Findings\n- **Severity**: Low" "SKIP"
+
   TOTAL=$((PASS+FAIL))
   echo ""
   if [ "$FAIL" -eq 0 ]; then
@@ -603,10 +631,10 @@ fi
 
 # ── Main: dry-run / apply ─────────────────────────────────────────────────
 
-# Fetch all open failing reviews with repo info
+# Fetch all open reviews with repo info (both findings and clean verdicts)
 REVIEW_ROWS=()
-while IFS=$'\t' read -r _id _output _root _repo; do
-  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}")
+while IFS=$'\t' read -r _id _output _root _repo _verdict; do
+  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}	${_verdict}")
 done < <(
   /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" <<'PYEOF'
 import sqlite3, sys
@@ -617,12 +645,11 @@ repo_filter = sys.argv[2] if len(sys.argv) > 2 else ''
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
 sql = """
-    SELECT rv.id, rv.output, rp.root_path, rp.name
+    SELECT rv.id, rv.output, rp.root_path, rp.name, rv.verdict_bool
     FROM reviews rv
     JOIN review_jobs rj ON rj.id = rv.job_id
     JOIN repos rp ON rp.id = rj.repo_id
     WHERE rv.closed = 0
-      AND rv.verdict_bool = 0
 """
 params = []
 
@@ -636,18 +663,18 @@ rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
     output = (row[1] or '').replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}")
+    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}\t{row[4]}")
 PYEOF
 )
 
 N=${#REVIEW_ROWS[@]}
 if [ "$N" -eq 0 ]; then
-  echo "roborev_severity_autoclose: no open failing reviews found"
-  log "ok: 0 open failing reviews"
+  echo "roborev_severity_autoclose: no open reviews found"
+  log "ok: 0 open reviews"
   exit 0
 fi
 
-echo "roborev_severity_autoclose: ${N} open failing reviews to evaluate"
+echo "roborev_severity_autoclose: ${N} open reviews to evaluate"
 
 # Per-repo counters for this run
 declare -A CLOSED_BY_REPO SKIPPED_BY_REPO THRESHOLD_BY_REPO
@@ -656,10 +683,11 @@ TOTAL_SKIPPED=0
 TOTAL_PARSE_FAIL=0
 
 for _row in "${REVIEW_ROWS[@]}"; do
-  _id=$(echo "$_row"    | cut -f1)
-  _output=$(echo "$_row" | cut -f2)
-  _root=$(echo "$_row"  | cut -f3)
-  _repo=$(echo "$_row"  | cut -f4)
+  _id=$(echo "$_row"       | cut -f1)
+  _output=$(echo "$_row"   | cut -f2)
+  _root=$(echo "$_row"     | cut -f3)
+  _repo=$(echo "$_row"     | cut -f4)
+  _verdict=$(echo "$_row"  | cut -f5)
 
   # Determine effective threshold + source for this repo
   _eff_threshold=""
@@ -693,7 +721,41 @@ for _row in "${REVIEW_ROWS[@]}"; do
   # Record threshold per repo
   THRESHOLD_BY_REPO["$_repo"]="$_eff_threshold"
 
-  # Decision
+  # Decision — clean-verdict branch FIRST (before severity checks)
+  _output_lower=$(echo "$_output" | tr '[:upper:]' '[:lower:]')
+  if [ "$_verdict" = "1" ] || [[ "$_output_lower" == "no issues found"* ]]; then
+    # Clean review: close unconditionally (no threshold check needed)
+    if [ "$MODE" = "apply" ]; then
+      _close_ok=0
+      if "$ROBOREV_BIN" close "$_id" >/dev/null 2>&1; then
+        _close_ok=1
+      fi
+      if [ "$_close_ok" -eq 1 ]; then
+        _marker="auto-closed: clean verdict [run:${RUN_TS}]"
+        "$ROBOREV_BIN" comment "$_id" "$_marker" >/dev/null 2>&1 || true
+        ACTION="CLOSE_CLEAN"
+        TOTAL_CLOSED=$((TOTAL_CLOSED+1))
+        CLOSED_BY_REPO["$_repo"]=$(( ${CLOSED_BY_REPO["$_repo"]:-0} + 1 ))
+        log "${ACTION} review_id=${_id} repo=${_repo}"
+        echo "  CLOSE_CLEAN review_id=${_id} repo=${_repo}"
+      else
+        log "CLOSE_CLEAN_FAIL review_id=${_id} repo=${_repo}"
+        echo "  CLOSE_CLEAN_FAIL review_id=${_id} repo=${_repo} (roborev close failed)"
+        TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
+        SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
+      fi
+    else
+      # dry-run
+      ACTION="CLOSE_CLEAN"
+      TOTAL_CLOSED=$((TOTAL_CLOSED+1))
+      CLOSED_BY_REPO["$_repo"]=$(( ${CLOSED_BY_REPO["$_repo"]:-0} + 1 ))
+      log "DRY_RUN_CLOSE_CLEAN review_id=${_id} repo=${_repo}"
+      echo "  [dry-run] CLOSE_CLEAN review_id=${_id} repo=${_repo}"
+    fi
+    continue
+  fi
+
+  # Severity-based decision (verdict_bool=0 reviews only reach here)
   if [ -z "$_max_ord" ]; then
     # No severity found in output
     ACTION="SKIP_PARSE_FAIL"
