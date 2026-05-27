@@ -302,7 +302,9 @@ Validated the Codex/Claude shared-folder runbook, found a real skills-parser inc
 
 - **Direct in-session replacement of `~/.claude/memory` hit filesystem restrictions** — the agent could update the repo-backed memory files but `mv`/cleanup operations against the live `~/.claude/memory` directory were blocked with `Operation not permitted`. Worked around by having the user complete the final symlink handoff manually.
 
-## 2026-05-21 (Session 4 — roborev backlog sweep: 12 PRs merged, 7 issues filed, severity-autoclose + metrics designed)
+## 2026-05-21 (Session 3.5 — roborev backlog sweep: 12 PRs merged, 7 issues filed, severity-autoclose + metrics designed)
+
+> Numbered 3.5 as an interstitial: it sits between Session 3 (2026-05-20) and Session 4 (2026-05-22). Backfilled after the fact, so it does not take a whole session number in the 1→7 sequence.
 
 Closed the entire High-severity roborev backlog (23 findings) across two batches of parallel worktree agents, plus the largest Medium cluster (67-review scrolly vignette). Reduced poll-merges launchd cadence from 96/day to 13/day per llm#217. Designed and partly built the severity-threshold autoclose system (llm#224) and the metrics ETL → unified.duckdb → llmtelemetry dashboard pipeline (llm#226 + llmtelemetry#145). Session ended in a harness-level dead-cwd condition that locked Bash and Agent dispatch — recovery deferred to a fresh session (handoff doc in `.claude/CURRENT_WORK.md`).
 
