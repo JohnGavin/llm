@@ -389,6 +389,7 @@ system_pkgs <- c(
   #   else brms 'intl' error libintl-dev
   "gettext",
   "quarto", "pandoc", # ?
+  "poppler-utils", # pdftoppm/pdftotext for Claude Read tool PDF rendering (#296)
   # 'pdflatex' is needed to make vignettes but is missing on your system.
   "texliveBasic",
   "less", # pager needs less
