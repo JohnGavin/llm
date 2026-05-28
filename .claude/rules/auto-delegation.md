@@ -139,6 +139,33 @@ Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include BOTH
 
 See [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegation-dispatch-details.md) for the full verbatim text of both prefixes, orchestrator responsibilities, Tier 3 post-verification pattern, and right/wrong examples.
 
+### CRITICAL — SendMessage Continuations for Write Operations (#304)
+
+When the follow-up work for an agent involves any **write** (edit, commit, push),
+do NOT use `SendMessage` to continue the agent. SendMessage continuations may
+fall back to the orchestrator's cwd when the original harness worktree is gone or
+when the harness restarts — writing to the main checkout or to the orchestrator's
+session branch (`feat/cc-*`) on a stale base.
+
+| Continuation | Action |
+|---|---|
+| Write (edit/commit/push) | Dispatch a **fresh `isolation: "worktree"` agent** |
+| Read-only / advisory | SendMessage is safe |
+| Original worktree verifiably live (confirm pwd) | SendMessage MAY be used |
+
+See the "SendMessage Continuations" section in the companion doc for the full
+anti-pattern table and evidence from llm#304.
+
+### Cross-Repo Writes (#182 resolution)
+
+Agents dispatched with `isolation: "worktree"` cannot write outside their sandbox.
+For cross-repo writes (e.g. llm session edits llmtelemetry): pre-create the target
+repo's worktree via `cc-worktree.sh`, set `$WORKTREE_PATH` to that path in the
+dispatch prompt, and run dual-repo post-verify after completion.
+
+See the "Cross-Repo Writes" section in the companion doc for the full pattern,
+dual-repo post-verify example, and the #182 decision rationale.
+
 ## Parallel Worktree Sessions
 
 For independent tasks, spawn a sonnet-only worktree session:
