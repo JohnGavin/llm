@@ -85,3 +85,4 @@ Is it a direct tool call (Read, ls, grep)?
 2. **Parallel when independent** — multiple Agent calls in one message
 3. **No delegation chains** — agents don't spawn sub-agents
 4. **Check first** — simple checks don't need agents
+5. **No SendMessage for writes** — for write continuations (edit/commit/push) always dispatch a fresh `isolation: "worktree"` agent; see `auto-delegation.md` → "CRITICAL — SendMessage Continuations for Write Operations (#304)"
