@@ -1,0 +1,53 @@
+# Proposed ~/.roborev/config.toml changes to fix reviewer fallback order (#283)
+#
+# PROBLEM: gemini binary is not in PATH, so the fallback chain
+#   codex → gemini → claude-code
+# degrades to effectively: codex → claude-code (skipping gemini).
+#
+# This file documents the two required changes to ~/.roborev/config.toml.
+# Apply with:
+#   cp ~/.roborev/config.toml ~/.roborev/config.toml.bak-20260528
+#   roborev config set --global review_backup_agent gemini
+#   roborev config set --global refine_backup_agent gemini
+#   roborev config set --global fix_backup_agent gemini
+#
+# Then verify: roborev config get review_backup_agent
+# Expected: gemini
+#
+# The default_backup_agent = 'gemini' line that already exists in config.toml
+# should remain unchanged — it acts as the catch-all fallback.
+#
+# PREREQUISITE (Path B): gemini-cli must be installed and authenticated:
+#   /opt/homebrew/bin/brew install gemini-cli
+#   gemini auth login          # interactive browser auth
+#   GEMINI_CLI_TRUST_WORKSPACE=true gemini --version   # verify headless mode
+#   roborev check-agents       # should show gemini: OK
+#
+# Trust environment variable — required for headless roborev use:
+#   Add to ~/.launchd_env.sh or the launchd plist that starts roborev daemon:
+#   export GEMINI_CLI_TRUST_WORKSPACE=true
+#   Then restart the daemon: roborev daemon restart
+#
+# After gemini is installed, these config keys enable the intended order
+# codex → gemini → claude-code (last resort, code-review only):
+
+# --- Changes to make to ~/.roborev/config.toml ---
+# (Use `roborev config set --global <key> <value>` for each)
+
+# CHANGE 1: Set review_backup_agent explicitly to gemini
+# Current: review_backup_agent = ''   (falls through to default_backup_agent)
+# Proposed: review_backup_agent = 'gemini'
+# This makes the backup chain explicit for review operations.
+
+# CHANGE 2: Set refine_backup_agent to gemini
+# Current: refine_backup_agent = 'codex'  (was using codex as backup for itself!)
+# Proposed: refine_backup_agent = 'gemini'
+
+# CHANGE 3: Set fix_backup_agent to gemini
+# Current: fix_backup_agent = 'codex'  (same problem)
+# Proposed: fix_backup_agent = 'gemini'
+
+# NOTE: The existing line `default_backup_agent = 'gemini'` in config.toml
+# is already correct. No change needed there.
+# The claude-code last-resort chain relies on roborev's internal fallback
+# when all configured agents fail — this is roborev binary behaviour.
