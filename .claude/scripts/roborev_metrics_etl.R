@@ -1029,6 +1029,191 @@ build_cadence_efficacy <- function(jobs, poll_log_data, since_date) {
   do.call(rbind, result_rows)
 }
 
+# ── Build roborev_finding_lineage (#286) ──────────────────────────────────
+#
+# Heuristic lineage: group review jobs into re-review chains using available
+# signals, since parent_job_id is never populated by roborev today (#286).
+#
+# Signal priority (applied per job, strongest first):
+#   1. parent_job_id IS NOT NULL → trust it (forward-compatible)
+#   2. patch_id set → group by (repo_id, patch_id)
+#   3. commit_id reviewed >1× in same repo+branch → group by (repo_id, branch, commit_id)
+#   4. solo → chain of length 1
+#
+# Returns a data.frame with columns:
+#   finding_id, attempt_n, lineage_method, job_id, created_at, verdict_bool,
+#   closed, chain_size, is_closing_attempt
+#
+# "finding_id" = reviews.id (the review row is the canonical finding record;
+# jobs without a review row are excluded — they have no finding yet).
+
+build_finding_lineage <- function(read_con, since_date, repo_clause) {
+  since_str_local <- format(since_date, "%Y-%m-%d")
+
+  # Pull all job+review pairs in the window (left join — jobs without reviews
+  # are excluded: no finding, no lineage row).
+  sql_lineage_src <- sprintf("
+    SELECT
+      rv.id             AS finding_id,
+      rj.id             AS job_id,
+      rj.repo_id,
+      rj.commit_id,
+      rj.branch,
+      rj.patch_id,
+      rj.parent_job_id,
+      rj.enqueued_at,
+      rv.created_at,
+      rv.verdict_bool,
+      rv.closed
+    FROM src.reviews rv
+    JOIN src.review_jobs rj ON rj.id = rv.job_id
+    JOIN src.repos rp ON rp.id = rj.repo_id
+    WHERE date(rj.enqueued_at) >= DATE '%s'
+    %s
+    ORDER BY rj.enqueued_at
+  ", since_str_local, repo_clause)
+
+  src_df <- tryCatch(
+    dbGetQuery(read_con, sql_lineage_src),
+    error = function(e) {
+      log_msg("WARN: lineage source query failed: ", conditionMessage(e))
+      data.frame()
+    }
+  )
+
+  empty_df <- data.frame(
+    finding_id         = integer(),
+    attempt_n          = integer(),
+    lineage_method     = character(),
+    job_id             = integer(),
+    created_at         = as.POSIXct(character()),
+    verdict_bool       = integer(),
+    closed             = integer(),
+    chain_size         = integer(),
+    is_closing_attempt = logical(),
+    stringsAsFactors   = FALSE
+  )
+
+  if (nrow(src_df) == 0L) {
+    cat("roborev_metrics_etl.R: no reviews in window — finding_lineage will be empty\n")
+    return(empty_df)
+  }
+
+  # ── Assign each row its group_key and lineage_method ──────────────────────
+  # Build lookup: which commit_ids are reviewed more than once within the same
+  # repo+branch (the commit_branch signal)?
+  multi_commit_key <- function(df) {
+    # Group key = paste(repo_id, branch, commit_id)
+    keys <- paste(df$repo_id, df$branch, df$commit_id, sep = "|")
+    counts <- table(keys)
+    names(counts)[counts > 1L]
+  }
+  multi_keys <- multi_commit_key(src_df)
+
+  group_key   <- character(nrow(src_df))
+  lin_method  <- character(nrow(src_df))
+
+  for (i in seq_len(nrow(src_df))) {
+    row <- src_df[i, ]
+    if (!is.na(row$parent_job_id) && row$parent_job_id > 0L) {
+      # Priority 1: explicit parent_job_id (not currently populated by roborev)
+      group_key[[i]]  <- paste0("pjid|", row$repo_id, "|", row$parent_job_id)
+      lin_method[[i]] <- "parent_job_id"
+    } else if (!is.na(row$patch_id) && nzchar(row$patch_id)) {
+      # Priority 2: patch_id groups
+      group_key[[i]]  <- paste0("patch|", row$repo_id, "|", row$patch_id)
+      lin_method[[i]] <- "patch_id"
+    } else {
+      # Priority 3: commit_branch grouping (only when commit_id appears >1 time)
+      ck <- paste(row$repo_id, row$branch, row$commit_id, sep = "|")
+      if (!is.na(row$commit_id) && ck %in% multi_keys) {
+        group_key[[i]]  <- paste0("cb|", ck)
+        lin_method[[i]] <- "commit_branch"
+      } else {
+        # Priority 4: solo (unique group per finding)
+        group_key[[i]]  <- paste0("solo|", row$finding_id)
+        lin_method[[i]] <- "solo"
+      }
+    }
+  }
+
+  src_df$group_key  <- group_key
+  src_df$lin_method <- lin_method
+
+  # ── Sort chronologically within each group, assign attempt_n ─────────────
+  # Sort globally first, then by group so attempt_n reflects enqueue order.
+  ord <- order(src_df$group_key, src_df$enqueued_at)
+  src_sorted <- src_df[ord, ]
+
+  # Compute within-group rank (attempt_n)
+  attempt_n   <- integer(nrow(src_sorted))
+  chain_size  <- integer(nrow(src_sorted))
+  group_rle   <- rle(src_sorted$group_key)
+
+  pos <- 1L
+  for (grp_len in group_rle$lengths) {
+    attempt_n[pos:(pos + grp_len - 1L)]  <- seq_len(grp_len)
+    chain_size[pos:(pos + grp_len - 1L)] <- grp_len
+    pos <- pos + grp_len
+  }
+
+  src_sorted$attempt_n  <- attempt_n
+  src_sorted$chain_size <- chain_size
+
+  # is_closing_attempt: the LAST row in a chain that has closed=1
+  # (a chain may have closed=0 throughout if still open; then no row is TRUE)
+  is_closing <- logical(nrow(src_sorted))
+  pos <- 1L
+  for (grp_len in group_rle$lengths) {
+    grp_rows <- pos:(pos + grp_len - 1L)
+    # Find the last row in this group that has closed=1
+    closed_in_grp <- which(src_sorted$closed[grp_rows] == 1L)
+    if (length(closed_in_grp) > 0L) {
+      last_closed_pos <- grp_rows[max(closed_in_grp)]
+      is_closing[last_closed_pos] <- TRUE
+    }
+    pos <- pos + grp_len
+  }
+  src_sorted$is_closing_attempt <- is_closing
+
+  # ── Parse created_at timestamps ───────────────────────────────────────────
+  parse_ts_safe <- function(x) {
+    tryCatch({
+      x_norm <- sub("([+-][0-9]{2}):([0-9]{2})$", "\\1\\2", x)
+      x_norm <- sub("Z$", "+0000", x_norm)
+      ts <- as.POSIXct(x_norm, tz = "UTC", format = "%Y-%m-%dT%H:%M:%S%z")
+      still_na <- which(is.na(ts) & !is.na(x))
+      if (length(still_na) > 0L) {
+        ts[still_na] <- as.POSIXct(x_norm[still_na], tz = "UTC",
+                                    format = "%Y-%m-%d %H:%M:%S")
+      }
+      ts
+    }, error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01"))
+  }
+
+  created_at_ts <- parse_ts_safe(src_sorted$created_at)
+
+  data.frame(
+    finding_id         = as.integer(src_sorted$finding_id),
+    attempt_n          = as.integer(src_sorted$attempt_n),
+    lineage_method     = src_sorted$lin_method,
+    job_id             = as.integer(src_sorted$job_id),
+    created_at         = created_at_ts,
+    verdict_bool       = as.integer(src_sorted$verdict_bool),
+    closed             = as.integer(coalesce_int(src_sorted$closed, 0L)),
+    chain_size         = as.integer(src_sorted$chain_size),
+    is_closing_attempt = as.logical(src_sorted$is_closing_attempt),
+    stringsAsFactors   = FALSE
+  )
+}
+
+# Helper: coerce to integer with NA-safe default
+coalesce_int <- function(x, default = 0L) {
+  x <- as.integer(x)
+  x[is.na(x)] <- default
+  x
+}
+
 # ── Build tables ───────────────────────────────────────────────────────────
 
 daily_df     <- build_daily_metrics(jobs_raw, reviews_raw)
@@ -1048,6 +1233,17 @@ cat(sprintf(
   nrow(agent_perf_df), nrow(threshold_df), nrow(cadence_df)
 ))
 
+# Slice 3: heuristic finding lineage (#286)
+lineage_df <- build_finding_lineage(read_con, since, repo_clause)
+
+cat(sprintf(
+  "roborev_metrics_etl.R: built %d finding_lineage rows (%d chains)\n",
+  nrow(lineage_df),
+  if (nrow(lineage_df) > 0L) length(unique(
+    paste(lineage_df$finding_id[lineage_df$attempt_n == 1L])
+  )) else 0L
+))
+
 # ── Dry-run: print summary and exit 0 ─────────────────────────────────────
 
 if (mode == "dry-run") {
@@ -1058,11 +1254,12 @@ if (mode == "dry-run") {
   cat(sprintf("  roborev_agent_performance: %d rows\n", nrow(agent_perf_df)))
   cat(sprintf("  roborev_threshold_changes: %d rows\n", nrow(threshold_df)))
   cat(sprintf("  roborev_cadence_efficacy:  %d rows\n", nrow(cadence_df)))
+  cat(sprintf("  roborev_finding_lineage:   %d rows\n", nrow(lineage_df)))
   cat("--- end dry-run ---\n")
   log_msg(sprintf(
-    "dry-run: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d",
+    "dry-run: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df)
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df)
   ))
   quit(status = 0L)
 }
@@ -1156,18 +1353,19 @@ tryCatch({
   upsert_table(duck_con, "roborev_agent_performance", agent_perf_df)
   upsert_table(duck_con, "roborev_threshold_changes", threshold_df)
   upsert_table(duck_con, "roborev_cadence_efficacy",  cadence_df)
+  upsert_table(duck_con, "roborev_finding_lineage",   lineage_df)
 
   dbCommit(duck_con)
 
   log_msg(sprintf(
-    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d mode=apply since=%s",
+    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d mode=apply since=%s",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df), format(since, "%Y-%m-%d")
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), format(since, "%Y-%m-%d")
   ))
   cat(sprintf(
-    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d\n",
+    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d\n",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df)
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df)
   ))
 }, error = function(e) {
   tryCatch(dbRollback(duck_con), error = function(e2) NULL)
