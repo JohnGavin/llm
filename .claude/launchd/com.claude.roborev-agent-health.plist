@@ -9,6 +9,13 @@
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_agent_health.sh</string>
         <string>--apply</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>GEMINI_CLI_TRUST_WORKSPACE</key>
+        <string>true</string>
+    </dict>
     <key>StartInterval</key>
     <integer>1800</integer>
     <key>StandardOutPath</key>
