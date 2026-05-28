@@ -131,18 +131,26 @@ read_con <- tryCatch(
 on.exit(tryCatch(dbDisconnect(read_con, shutdown = TRUE), error = function(e) NULL),
         add = TRUE)
 
-# Install and load SQLite extension
-tryCatch({
-  dbExecute(read_con, "INSTALL sqlite")
-  dbExecute(read_con, "LOAD sqlite")
+# Load SQLite extension.  In DuckDB >= 1.1.0 the sqlite extension is bundled
+# and LOAD succeeds without INSTALL.  INSTALL fetches from the network and may
+# fail in offline environments (launchd jobs, Nix shells without curl).
+# Strategy: try LOAD first; fall back to INSTALL+LOAD only if LOAD fails.
+invisible(tryCatch({
+  tryCatch({
+    invisible(dbExecute(read_con, "LOAD sqlite"))
+  }, error = function(e_load) {
+    # Bundled LOAD failed — try downloading the extension
+    invisible(dbExecute(read_con, "INSTALL sqlite"))
+    invisible(dbExecute(read_con, "LOAD sqlite"))
+  })
 }, error = function(e) {
   graceful_exit(paste("DuckDB sqlite extension unavailable:", conditionMessage(e)))
-})
+}))
 
 # Attach the SQLite DB read-only
 tryCatch({
-  dbExecute(read_con,
-            sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)", REVIEWS_DB))
+  invisible(dbExecute(read_con,
+            sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)", REVIEWS_DB)))
 }, error = function(e) {
   graceful_exit(paste("cannot attach reviews.db:", conditionMessage(e)))
 })
@@ -178,6 +186,9 @@ tryCatch({
              c("id", "job_id", "closed", "verdict_bool", "output"))
   check_cols(read_con, "src", "repos",
              c("id", "name"))
+  # responses table holds auto-closed marker comments — required for close_reason
+  check_cols(read_con, "src", "responses",
+             c("id", "job_id", "response"))
 }, error = function(e) {
   graceful_exit(paste("Schema validation failed:", conditionMessage(e)))
 })
@@ -224,7 +235,8 @@ sql_reviews <- sprintf("
     rv.closed,
     rv.verdict_bool,
     rv.output,
-    rv.created_at
+    rv.created_at,
+    rv.updated_at
   FROM src.reviews rv
   JOIN src.review_jobs rj ON rj.id = rv.job_id
   JOIN src.repos rp ON rp.id = rj.repo_id
@@ -241,8 +253,35 @@ reviews_raw <- tryCatch(
   }
 )
 
-cat(sprintf("roborev_metrics_etl.R: read %d jobs, %d reviews from reviews.db\n",
-            nrow(jobs_raw), nrow(reviews_raw)))
+# ── Read latest auto-closed marker per job from responses table ───────────
+# Only retrieve the most recent auto-closed: marker per job_id (MAX(id) proxy
+# for latest).  This is the canonical close reason for a review.
+# NOTE: DuckDB sqlite extension reads through WAL automatically; do NOT use
+# RSQLite here as it may miss WAL entries.
+
+sql_markers <- "
+  SELECT
+    rsp.job_id,
+    rsp.response AS marker
+  FROM src.responses rsp
+  WHERE rsp.response LIKE 'auto-closed:%'
+  AND rsp.id IN (
+    SELECT MAX(id) FROM src.responses
+    WHERE response LIKE 'auto-closed:%'
+    GROUP BY job_id
+  )
+"
+
+markers_raw <- tryCatch(
+  dbGetQuery(read_con, sql_markers),
+  error = function(e) {
+    log_msg("WARN: could not query responses (markers): ", conditionMessage(e))
+    data.frame(job_id = integer(), marker = character(), stringsAsFactors = FALSE)
+  }
+)
+
+cat(sprintf("roborev_metrics_etl.R: read %d jobs, %d reviews, %d closure markers from reviews.db\n",
+            nrow(jobs_raw), nrow(reviews_raw), nrow(markers_raw)))
 
 # ── Parse autoclose counter JSON ───────────────────────────────────────────
 
@@ -395,9 +434,59 @@ build_daily_metrics <- function(jobs, reviews) {
   do.call(rbind, result_rows)
 }
 
+# ── Derive close_reason from auto-closed marker text ──────────────────────
+#
+# Priority (applied to the LATEST marker per job):
+#   1. "auto-closed: severity<=<band> ..." → "severity-<band>"  (e.g. "severity-medium")
+#   2. "auto-closed: clean verdict ..." + verdict_bool=1  → "clean-verdict"
+#   3. "auto-closed: clean verdict ..." + verdict_bool=0  → "clean-verdict-pre-fix"
+#      (these were closed by the buggy pre-#311 path that called clean-verdict
+#       on a non-clean review)
+#   4. closed=1, no marker, verdict_bool=1 → "clean-verdict-pre-fix"
+#      (pre-autoclose manual closes of clean reviews)
+#   5. closed=1, no marker, verdict_bool=0 → "manual"
+#      (pre-autoclose manual closes, or closes from before any scripted path)
+#   6. closed=0 → NA (open review)
+#
+# Vocabulary (5 values + NA):
+#   "clean-verdict"       — autoclose: review passed, severity markers absent
+#   "clean-verdict-pre-fix" — autoclose ran but closed a non-clean review (pre-#311),
+#                             OR a clean review closed manually before autoclose existed
+#   "severity-<band>"     — autoclose because max severity <= configured threshold
+#                           band is the literal word: low/medium/high/critical
+#   "manual"              — closed=1, no auto-closed marker, verdict_bool=0
+#   NA                    — open (closed=0)
+
+derive_close_reason <- function(marker, verdict_bool, is_closed) {
+  # marker: character(1) or NA; verdict_bool: integer(1) or NA; is_closed: logical(1)
+  if (!is_closed) return(NA_character_)
+
+  if (!is.na(marker)) {
+    if (grepl("^auto-closed: severity<=", marker, perl = TRUE)) {
+      # Extract band between "severity<=" and the next space/bracket
+      band <- sub("^auto-closed: severity<=(\\w+).*", "\\1", marker, perl = TRUE)
+      return(paste0("severity-", tolower(band)))
+    }
+    if (grepl("^auto-closed: clean verdict", marker, perl = TRUE)) {
+      if (!is.na(verdict_bool) && verdict_bool == 1L) {
+        return("clean-verdict")
+      }
+      return("clean-verdict-pre-fix")
+    }
+    # Unknown marker format — treat as manual
+    return("manual")
+  }
+
+  # No marker at all
+  if (!is.na(verdict_bool) && verdict_bool == 1L) {
+    return("clean-verdict-pre-fix")
+  }
+  "manual"
+}
+
 # ── Build roborev_review_lifecycle ─────────────────────────────────────────
 
-build_review_lifecycle <- function(jobs, reviews) {
+build_review_lifecycle <- function(jobs, reviews, markers) {
   empty_df <- data.frame(
     review_id                    = integer(),
     job_id                       = integer(),
@@ -428,9 +517,37 @@ build_review_lifecycle <- function(jobs, reviews) {
                   drop = FALSE]
   merged <- merge(reviews, jb, by = "job_id", all.x = TRUE)
 
+  # Join the latest closure marker per job (left join — NAs for open/unmarked reviews)
+  if (!is.null(markers) && nrow(markers) > 0L) {
+    merged <- merge(merged, markers, by = "job_id", all.x = TRUE)
+  } else {
+    merged$marker <- NA_character_
+  }
+
   parse_ts <- function(x) {
-    tryCatch(as.POSIXct(x, tz = "UTC", format = "%Y-%m-%d %H:%M:%S"),
-             error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01"))
+    # Handles these timestamp formats (all observed in reviews.db):
+    #   "2026-05-27T18:17:12+01:00"  RFC 3339 with colon offset  → +0100 (after norm)
+    #   "2026-05-27T18:17:12+0100"   ISO 8601 compact offset
+    #   "2026-05-27T13:02:32Z"       UTC shorthand (Z suffix)    → +0000 (after norm)
+    #   "2026-05-27 18:17:12"        plain space-separated (UTC assumed)
+    #
+    # R's %z expects "+HHMM" (no colon).  Normalise before parsing.
+    # IMPORTANT: x is a vector — handle element-by-element fallback.
+    tryCatch({
+      # 1. Replace RFC 3339 colon-offset "+HH:MM" → "+HHMM"
+      x_norm <- sub("([+-][0-9]{2}):([0-9]{2})$", "\\1\\2", x)
+      # 2. Replace trailing "Z" with "+0000"
+      x_norm <- sub("Z$", "+0000", x_norm)
+      # Try ISO 8601 with offset first
+      ts <- as.POSIXct(x_norm, tz = "UTC", format = "%Y-%m-%dT%H:%M:%S%z")
+      # Element-wise fallback: for any position still NA, try space-separated
+      still_na <- which(is.na(ts) & !is.na(x))
+      if (length(still_na) > 0L) {
+        ts_fb <- as.POSIXct(x_norm[still_na], tz = "UTC", format = "%Y-%m-%d %H:%M:%S")
+        ts[still_na] <- ts_fb
+      }
+      ts
+    }, error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01"))
   }
 
   finished <- parse_ts(merged$finished_at)
@@ -444,8 +561,27 @@ build_review_lifecycle <- function(jobs, reviews) {
   severity_max <- vapply(merged$output, parse_max_severity,
                          character(1L), USE.NAMES = FALSE)
 
-  close_reason <- ifelse(!is.na(merged$closed) & merged$closed == 1L,
-                         "manual", NA_character_)
+  # ── Populate closed_at and close_reason ─────────────────────────────────
+  #
+  # closed_at: reviews.updated_at when closed=1.  The autoclose scripts always
+  # touch updated_at when flipping closed=1, so non-null is the norm.  If
+  # updated_at is null or unparseable, fall back to NA (do not fabricate).
+  #
+  # close_reason: derived by derive_close_reason() from the latest marker.
+
+  is_closed <- !is.na(merged$closed) & merged$closed == 1L
+
+  closed_at_raw <- ifelse(is_closed, merged$updated_at, NA_character_)
+  closed_at     <- parse_ts(closed_at_raw)
+
+  close_reason <- mapply(
+    derive_close_reason,
+    marker      = merged$marker,
+    verdict_bool = merged$verdict_bool,
+    is_closed   = is_closed,
+    SIMPLIFY    = TRUE,
+    USE.NAMES   = FALSE
+  )
 
   data.frame(
     review_id                    = as.integer(merged$review_id),
@@ -461,7 +597,7 @@ build_review_lifecycle <- function(jobs, reviews) {
     duration_s                   = duration,
     verdict                      = verdict,
     severity_max                 = severity_max,
-    closed_at                    = as.POSIXct(NA_real_, origin = "1970-01-01"),
+    closed_at                    = closed_at,
     close_reason                 = close_reason,
     autoclose_threshold_at_close = NA_character_,   # Slice 2
     stringsAsFactors             = FALSE
@@ -896,7 +1032,7 @@ build_cadence_efficacy <- function(jobs, poll_log_data, since_date) {
 # ── Build tables ───────────────────────────────────────────────────────────
 
 daily_df     <- build_daily_metrics(jobs_raw, reviews_raw)
-lifecycle_df <- build_review_lifecycle(jobs_raw, reviews_raw)
+lifecycle_df <- build_review_lifecycle(jobs_raw, reviews_raw, markers_raw)
 
 cat(sprintf("roborev_metrics_etl.R: built %d daily_metrics rows, %d lifecycle rows\n",
             nrow(daily_df), nrow(lifecycle_df)))
