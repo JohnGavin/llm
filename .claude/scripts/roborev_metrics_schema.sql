@@ -1,14 +1,16 @@
 -- roborev_metrics_schema.sql
--- CREATE TABLE IF NOT EXISTS for all 5 roborev_* tables in unified.duckdb.
+-- CREATE TABLE IF NOT EXISTS for all 7 roborev_* tables in unified.duckdb.
 --
 -- SCHEMAS FROZEN — llmtelemetry#144 depends on these column names and types.
 -- Do NOT modify column names or types without a coordinated bump across both repos.
 -- Tracked in llm#226.
 --
--- All 5 tables are created on every ETL invocation (idempotent).
+-- All 7 tables are created on every ETL invocation (idempotent).
 -- Slice 1 populates: roborev_daily_metrics, roborev_review_lifecycle.
--- Slice 2 will populate: roborev_agent_performance, roborev_threshold_changes,
+-- Slice 2 populates: roborev_agent_performance, roborev_threshold_changes,
 --   roborev_cadence_efficacy.
+-- Slice 3 (#286) populates: roborev_finding_lineage;
+--   view roborev_finding_lineage_summary is rebuilt as CREATE OR REPLACE VIEW.
 
 -- ── roborev_daily_metrics ─────────────────────────────────────────────────
 -- Per-day × per-repo rollup.
@@ -96,3 +98,54 @@ CREATE TABLE IF NOT EXISTS roborev_cadence_efficacy (
   reviews_created_via_hook   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (date, repo)
 );
+
+-- ── roborev_finding_lineage ───────────────────────────────────────────────
+-- Heuristic re-review chain. One row per (finding/review, attempt position).
+-- Lineage is derived from observable signals only — no parent_job_id exists yet
+-- (see llm#286 for the upstream ask). Priority of lineage_method:
+--   1. parent_job_id  (forward-compatible when roborev starts populating it)
+--   2. patch_id       (same patch re-reviewed across jobs, 31% set)
+--   3. commit_branch  (same repo+branch+commit_id reviewed >1 time)
+--   4. solo           (single-attempt finding, no re-review detected)
+-- PK: (finding_id, attempt_n) — finding_id = reviews.id
+CREATE TABLE IF NOT EXISTS roborev_finding_lineage (
+  finding_id          BIGINT    NOT NULL,
+  attempt_n           INTEGER   NOT NULL,
+  lineage_method      VARCHAR   NOT NULL,
+  job_id              BIGINT    NOT NULL,
+  created_at          TIMESTAMP,
+  verdict_bool        INTEGER,
+  closed              INTEGER   NOT NULL DEFAULT 0,
+  chain_size          INTEGER   NOT NULL DEFAULT 1,
+  is_closing_attempt  BOOLEAN   NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (finding_id, attempt_n)
+);
+
+-- ── roborev_finding_lineage_summary (view) ────────────────────────────────
+-- Per-finding summary: attempt count, time-to-close, verdict chain.
+-- Rebuilt as CREATE OR REPLACE VIEW on each ETL run (views are cheap to recreate).
+CREATE OR REPLACE VIEW roborev_finding_lineage_summary AS
+SELECT
+  fl.finding_id,
+  (SELECT rp.name
+   FROM roborev_review_lifecycle rl
+   JOIN roborev_finding_lineage fl2 ON fl2.finding_id = rl.review_id
+                                    AND fl2.attempt_n = 1
+   WHERE fl2.finding_id = fl.finding_id
+   LIMIT 1) AS repo,
+  MIN(fl.lineage_method)                            AS lineage_method,
+  COUNT(*)                                          AS n_attempts,
+  MIN(fl.created_at)                                AS created_at_first,
+  MAX(CASE WHEN fl.closed = 1 THEN fl.created_at END) AS closed_at_last,
+  ROUND(
+    EXTRACT(EPOCH FROM
+      (MAX(CASE WHEN fl.closed = 1 THEN fl.created_at END) - MIN(fl.created_at))
+    ) / 3600.0,
+    2
+  )                                                 AS time_to_close_hrs,
+  STRING_AGG(
+    CASE WHEN fl.verdict_bool = 1 THEN 'clean' ELSE 'fail' END,
+    '→' ORDER BY fl.attempt_n
+  )                                                 AS verdict_chain
+FROM roborev_finding_lineage fl
+GROUP BY fl.finding_id;
