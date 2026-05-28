@@ -185,9 +185,9 @@ _REFINE_SENTINEL="${CLAUDE_RUNTIME_ROOT}/.bye-session-end-refine"
 _REFINE_SCRIPT="$CLAUDE_DIR/scripts/session_end_refine.sh"
 if [ -f "$_REFINE_SENTINEL" ] && [ -x "$_REFINE_SCRIPT" ]; then
   rm -f "$_REFINE_SENTINEL"  # consume sentinel immediately — one-shot
-  # Default SKIP=1 for the first 7 days of soak — per #196 rollout plan.
-  # After 7 days of clean dry-run-equivalent logs, remove the env-var prefix.
-  SKIP_SESSION_END_REFINE=1 nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
+  # Soak ended 2026-05-27 (7 days after PR #196 merged 2026-05-20). Prefix removed per #202.
+  # Opt-out: set SKIP_SESSION_END_REFINE=1 before /bye, or add session_end_refine=false to .roborev.toml
+  nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
 fi
 
 # ── Entity propagation (projects only) — #137 Phase 3 minimal cut ─────

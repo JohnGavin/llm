@@ -186,16 +186,16 @@ Long-term fix: a periodic poller (tracked in #148) that fetches each watched rep
 
 The session-end refine runs automatically when the user types `/bye`.
 
-### Rollout: SKIP defaulted ON (7-day soak)
+### Rollout: SKIP defaulted ON (7-day soak) — COMPLETE
 
-For the first 7 days after deployment, `session_stop.sh` invokes `session_end_refine.sh` with `SKIP_SESSION_END_REFINE=1` prefixed, so each call exits early with `result=skipped` and only the bookkeeping logs are written. This lets us observe:
+The 7-day soak ran from 2026-05-20 (PR #196 merged) to 2026-05-27. During the soak, `session_stop.sh` invoked `session_end_refine.sh` with `SKIP_SESSION_END_REFINE=1` prefixed so each call exited early with `result=skipped`. The log confirmed:
 
-- That `session_init.sh` Phase 14 wrote the start-SHA file
-- That `session_stop.sh` actually fires the script at /bye
-- That the cwd-detection / project-name sanitisation logic finds the right project
-- That nothing else in `/bye` got slower
+- `session_init.sh` Phase 14 wrote the start-SHA file correctly
+- `session_stop.sh` fired the script at each `/bye`
+- cwd-detection and project-name sanitisation found the right project
+- Nothing in `/bye` became noticeably slower
 
-After 7 clean days, **remove the `SKIP_SESSION_END_REFINE=1` prefix from session_stop.sh** in a follow-up commit. The opt-out env var remains available per-session (set in shell rc files or one-off).
+The `SKIP_SESSION_END_REFINE=1` prefix was removed in PR #202 (merged 2026-05-27). The refine now runs by default at every `/bye`. The opt-out env var remains available per-session.
 
 ### What runs
 
