@@ -3,21 +3,32 @@
 #
 # Blocks `git push` to main/master/release/prod when the push originates
 # from a Claude worktree (path matches .claude/worktrees/, /private/tmp/, /tmp/).
+# Also blocks pushes from a worktree to any ref that is not the worktree's
+# own current branch (guards against cross-worktree branch contamination).
 #
 # Rationale (llm#189): worktree-isolated agents have pushed to origin/main
 # despite "do NOT push" prompts, bypassing orchestrator review. This hook
 # enforces the policy at the tool-call level.
 #
-# Detection: BLOCK iff ALL three hold:
-#   1. Command is a git push or gh repo sync
-#   2. CWD or -C path is a Claude worktree
-#   3. Target ref resolves to a protected branch (main/master/release/*/prod/*)
+# Rationale (llm#318): agents have pushed to a sibling worktree's feature
+# branch instead of their own branch, causing dirty PRs and branch pollution.
+#
+# Detection: BLOCK iff ANY of the following hold from a worktree:
+#   Group A (protected-branch guard, llm#189) — ALL three:
+#     1. Command is a git push or gh repo sync
+#     2. CWD or -C path is a Claude worktree
+#     3. Target ref resolves to a protected branch (main/master/release/*/prod/*)
+#   Group B (cross-worktree guard, llm#318) — ALL three:
+#     1. Command is a git push or gh repo sync
+#     2. CWD or -C path is a Claude worktree
+#     3. Target ref was explicitly supplied AND differs from the worktree's
+#        current branch (prevents pushing to a sibling worktree's branch)
 #
 # Bypass: AGENT_PUSH_OK=1 git push ... (mirrors DESTRUCTIVE_CONFIRM= pattern)
 #
 # Self-test: CLAUDE_HOOK_SELFTEST=1 bash agent_push_guard.sh
 #
-# Source: llm#189
+# Sources: llm#189, llm#318
 
 set -euo pipefail
 
@@ -49,10 +60,16 @@ MODE="${AGENT_PUSH_GUARD_MODE:-$DEFAULT_MODE}"
 
 LOG_FILE="$HOME/.claude/logs/agent_push_blocked.log"
 WOULD_BLOCK_LOG="$HOME/.claude/logs/agent_push_would_block.log"
+CROSSBRANCH_LOG="$HOME/.claude/logs/agent_push_blocked_crossbranch.log"
 
 log_blocked() {
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED push to protected branch: $1" >> "$LOG_FILE"
+}
+
+log_blocked_crossbranch() {
+  mkdir -p "$(dirname "$CROSSBRANCH_LOG")"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED cross-worktree push: $1" >> "$CROSSBRANCH_LOG"
 }
 
 log_would_block() {
@@ -63,6 +80,11 @@ log_would_block() {
 log_allowed() {
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ALLOWED push (bypass): $1" >> "$LOG_FILE"
+}
+
+log_allowed_crossbranch_bypass() {
+  mkdir -p "$(dirname "$CROSSBRANCH_LOG")"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ALLOWED cross-worktree push (bypass): $1" >> "$CROSSBRANCH_LOG"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -130,6 +152,39 @@ extract_target_branch() {
   fi
 }
 
+# Returns 1 (false) if the target branch was explicitly specified in the command
+# (i.e. not inferred from git). Used by the cross-worktree guard: we only block
+# when the caller explicitly named a branch that differs from HEAD — a missing
+# refspec means "push to my own tracking branch" which is always safe.
+target_was_explicit() {
+  local cmd="$1"
+  # Case A: HEAD:branch
+  echo "$cmd" | grep -qE 'HEAD:[^[:space:]]+' && return 0
+  # Case B: explicit refspec after the remote name (second word after 'push')
+  local after_push
+  after_push=$(echo "$cmd" | sed 's/.*push[[:space:]]*//')
+  local refspec
+  refspec=$(echo "$after_push" | awk '{print $2}')
+  [ -n "$refspec" ] && return 0
+  return 1
+}
+
+get_worktree_current_branch() {
+  local path="$1"
+  # Allow self-test to inject a fake current branch without needing a real git repo
+  if [ -n "${_SELFTEST_CURRENT_BRANCH:-}" ]; then
+    echo "$_SELFTEST_CURRENT_BRANCH"
+    return
+  fi
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    git -C "$path" symbolic-ref --short HEAD 2>/dev/null \
+      || git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null \
+      || echo ""
+  else
+    echo ""
+  fi
+}
+
 # Core decision function: returns "block" or "allow" with reason
 # Args: cmd, cwd
 decide() {
@@ -174,6 +229,18 @@ decide() {
   fi
 
   if ! echo "$target_branch" | grep -qE "$PROTECTED_BRANCH_PATTERN"; then
+    # Condition 4 (llm#318): cross-worktree branch guard.
+    # If the target ref was explicitly named AND differs from the worktree's
+    # own current branch, block — this is a cross-worktree contamination push.
+    # Only applies when we can determine the current branch (git accessible).
+    if target_was_explicit "$cmd"; then
+      local current_branch
+      current_branch=$(get_worktree_current_branch "$effective_path")
+      if [ -n "$current_branch" ] && [ "$target_branch" != "$current_branch" ]; then
+        echo "block-cross:$target_branch:$effective_path:$current_branch"
+        return
+      fi
+    fi
     echo "allow:feature-branch:$target_branch"
     return
   fi
@@ -188,7 +255,7 @@ decide() {
 if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
   PASS=0
   FAIL=0
-  TOTAL=8
+  TOTAL=12
 
   # Temp log paths to avoid polluting production logs during self-test
   SELFTEST_LOG="/tmp/agent_push_selftest_blocked_$$"
@@ -203,8 +270,14 @@ if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
     local cwd="$4"
     local result
     result=$(decide "$cmd" "$cwd")
+    local raw_action
+    raw_action=$(echo "$result" | cut -d: -f1)
+    # Normalise: "block-cross" counts as "block" for pass/fail purposes
     local actual
-    actual=$(echo "$result" | cut -d: -f1)
+    case "$raw_action" in
+      block*) actual="block" ;;
+      *)      actual="$raw_action" ;;
+    esac
     if [ "$actual" = "$expected" ]; then
       echo "$n/$TOTAL PASS  ($result)"
       PASS=$((PASS + 1))
@@ -221,8 +294,14 @@ if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
     local mode="$3"
     local decision
     decision=$(decide "$cmd" "$cwd")
+    local raw_action
+    raw_action=$(echo "$decision" | cut -d: -f1)
+    # Normalise block-cross → block
     local action
-    action=$(echo "$decision" | cut -d: -f1)
+    case "$raw_action" in
+      block*) action="block" ;;
+      *)      action="$raw_action" ;;
+    esac
     if [ "$action" = "block" ] && [ "$mode" = "log" ]; then
       echo "allow"
     else
@@ -289,6 +368,36 @@ if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
     "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123" \
     "block"
 
+  # ── Cross-worktree guard (llm#318) ──────────────────────────────────────────
+  # Tests 9-12: worktree on branch X pushing to various targets
+  # _SELFTEST_CURRENT_BRANCH simulates the worktree being on branch "worktree-agent-abc123"
+
+  # 9: push from worktree-agent-abc123 to its OWN branch → ALLOW
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 9 "allow" \
+    "git push origin worktree-agent-abc123" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 10: push from worktree-agent-abc123 to SIBLING branch feat/cc-20260524 → BLOCK
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 10 "block" \
+    "git push origin feat/cc-20260524-221709" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 11: push from worktree on X to main → BLOCK (protected-branch check fires first)
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 11 "block" \
+    "git push origin main" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 12: AGENT_PUSH_OK=1 bypass for cross-worktree push → ALLOW (bypass overrides both guards)
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 12 "allow" \
+    "AGENT_PUSH_OK=1 git push origin feat/cc-20260524-221709" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  unset _SELFTEST_CURRENT_BRANCH
+
   # Cleanup temp test logs
   rm -f "$SELFTEST_LOG" "$SELFTEST_WOULD_LOG"
 
@@ -328,12 +437,61 @@ if [ "$ACTION" = "allow" ]; then
   exit 0
 fi
 
-# BLOCK path
-TARGET_BRANCH=$(echo "$DECISION" | cut -d: -f2)
-EFFECTIVE_PATH=$(echo "$DECISION" | cut -d: -f3)
-
 DISPLAY_CMD="${COMMAND:0:80}"
 [ ${#COMMAND} -gt 80 ] && DISPLAY_CMD="${DISPLAY_CMD}..."
+
+# ── Cross-worktree block path (llm#318) ─────────────────────────────────────
+if [ "$ACTION" = "block-cross" ]; then
+  TARGET_BRANCH=$(echo "$DECISION" | cut -d: -f2)
+  EFFECTIVE_PATH=$(echo "$DECISION" | cut -d: -f3)
+  CURRENT_BRANCH=$(echo "$DECISION" | cut -d: -f4)
+
+  if [ "$MODE" = "log" ]; then
+    log_would_block "cross-worktree: cmd=${DISPLAY_CMD} cwd=${EFFECTIVE_PATH} target=${TARGET_BRANCH} current=${CURRENT_BRANCH}"
+    cat >&2 <<EOF
+
+[agent_push_guard] LOG-ONLY MODE: would-block cross-worktree push.
+  Target '${TARGET_BRANCH}' != worktree branch '${CURRENT_BRANCH}'.
+  From: ${EFFECTIVE_PATH}
+Recorded to $WOULD_BLOCK_LOG — switch AGENT_PUSH_GUARD_MODE=block to enforce.
+Rule: agent-no-push-to-main.md | Issue: llm#318
+
+EOF
+    exit 0
+  fi
+
+  cat >&2 <<EOF
+
+╔═════════════════════════════════════════════════════════════════════════════╗
+║  BLOCKED — Agent worktree push to wrong branch (cross-worktree)             ║
+╠═════════════════════════════════════════════════════════════════════════════╣
+║                                                                             ║
+║  Command:         $DISPLAY_CMD
+║  Worktree path:   $EFFECTIVE_PATH
+║  Target ref:      $TARGET_BRANCH
+║  Worktree branch: $CURRENT_BRANCH
+║                                                                             ║
+║  Agents MUST push only to their own worktree branch.                        ║
+║  Pushing to a sibling worktree's branch contaminates another session.       ║
+║                                                                             ║
+║  Correct workflow:                                                           ║
+║    git push origin $CURRENT_BRANCH                                          ║
+║                                                                             ║
+║  To bypass (orchestrator/user only):                                        ║
+║    AGENT_PUSH_OK=1 git push origin $TARGET_BRANCH                           ║
+║                                                                             ║
+║  Rule: agent-no-push-to-main.md  |  Issue: llm#318                         ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+EOF
+
+  log_blocked_crossbranch "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH, current=$CURRENT_BRANCH)"
+  exit 2
+fi
+
+# ── Protected-branch block path (llm#189) ───────────────────────────────────
+TARGET_BRANCH=$(echo "$DECISION" | cut -d: -f2)
+EFFECTIVE_PATH=$(echo "$DECISION" | cut -d: -f3)
 
 # Log-only mode: record what WOULD have been blocked, then allow through
 if [ "$MODE" = "log" ]; then
