@@ -28,8 +28,9 @@ Any project using the T language (`tproject.toml` present) that also contains an
 1. `tproject.toml` `[r-dependencies] packages` — add the package name
 2. `DESCRIPTION` Imports or Suggests — add the package name
 3. `t update` (inside `nix develop`)
-4. `exit && nix develop` (picks up regenerated flake.nix)
-5. `Rscript -e 'library(newpkg)'` — verify
+4. `bash default.post.sh` — re-apply closure-rebuild shellHook (stripped by step 3)
+5. `exit && nix develop` (picks up patched flake.nix)
+6. `Rscript -e 'library(newpkg)'` — verify
 
 ## Compiled Packages Segfault Across Shells
 
@@ -44,6 +45,28 @@ nix develop /path/to/project --command bash -c 'Rscript -e "..."'
 
 If code needs package X, install X first. Never write fallback branches.
 
+## CRITICAL: Preserve the Closure-Rebuild shellHook After `t update`
+
+`t update` regenerates `flake.nix` wholesale and **strips** the
+closure-rebuild shellHook that prevents compiled-package segfaults. Every
+T-lang R project MUST:
+
+1. Ship a `default.post.sh` in the project root (reference: `JohnGavin/historical`)
+2. Run `bash default.post.sh` **immediately** after every `t update`
+3. Never commit `flake.nix` after `t update` without running `default.post.sh`
+
+Verify the patch is present before committing:
+
+```bash
+grep -q "Closure-rebuild" flake.nix || {
+  echo "ERROR: run bash default.post.sh first"
+  exit 1
+}
+```
+
+Upstream fix tracked in llm#303. When T-lang bakes the closure-rebuild into
+its template, `default.post.sh` is no longer needed for this purpose.
+
 ## Detailed Guides
 
 See `~/docs_gh/llm/knowledge/t-lang/wiki/` for:
@@ -55,4 +78,5 @@ See `~/docs_gh/llm/knowledge/t-lang/wiki/` for:
 
 - `duckdplyr-not-sql` — duckplyr gotchas in nix shells
 - `huggingface-upload` — data hosting for T projects
-- `nix-nested-shell-isolation` — ABI mismatch details
+- `nix-nested-shell-isolation` — ABI mismatch details and T-lang workaround
+- llm#303 — upstream T-lang template fix request
