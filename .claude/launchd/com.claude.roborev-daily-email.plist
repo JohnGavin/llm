@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.roborev-daily-email.plist
+     Daily roborev snapshot → llmtelemetry data branch → digest email.
+     Runs at 08:00 local time, after the 02:00 roborev-metrics-etl job (#226).
+
+     Install:
+       cp .claude/launchd/com.claude.roborev-daily-email.plist \
+          ~/Library/LaunchAgents/com.claude.roborev-daily-email.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.roborev-daily-email.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.roborev-daily-email.plist
+       rm ~/Library/LaunchAgents/com.claude.roborev-daily-email.plist
+
+     Manual dry-run:
+       DRYRUN=1 EMAIL_DRY_RUN=1 bash ~/docs_gh/llm/bin/roborev_daily_cron.sh
+
+     Credentials: ~/.claude/env/roborev_email.env (not committed; create manually)
+       GMAIL_USERNAME=you@gmail.com
+       GMAIL_APP_PASSWORD=<16-char app password>
+       REPORT_RECIPIENT=you@gmail.com
+       ROBOREV_DASHBOARD_URL=https://johngavin.github.io/llmtelemetry/#roborev
+
+     Tracked in llm#287.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-daily-email</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/roborev_daily_cron.sh</string>
+    </array>
+
+    <!-- Daily at 08:00 local time (after 02:00 metrics-etl job) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- PATH must include nix stable profile so nix-shell resolves -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <!-- NIX_SSL_CERT_FILE is required for nix-shell to make network calls -->
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_daily_email_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_daily_email_launchd.log</string>
+
+    <!-- Retry once after 60 s if job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
