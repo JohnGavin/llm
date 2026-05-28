@@ -5,7 +5,7 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 ## Core Rules
 
-**Session Start:** `echo $IN_NIX_SHELL` (1/impure), `which R` (/nix/store/...). If not: `caffeinate -i ~/docs_gh/rix.setup/default.sh`. Check `CHANGELOG.md`, `git status`, open issues.
+**Session Start:** `echo $IN_NIX_SHELL` (1/impure), `which R` (/nix/store/...). If not: `caffeinate -i ~/docs_gh/llm/default.sh`. Check `CHANGELOG.md`, `git status`, open issues.
 
 **Git/GitHub — R packages ONLY:** `gert::git_add()`, `git_commit()`, `git_push()`; `usethis::pr_init()`, `pr_push()`; `gh::gh()`. **In bash, NEVER `cd <dir> && git ...` (triggers bare-repo approval prompt that bypassPermissions does NOT bypass). ALWAYS `git -C <dir> ...`.** See `git-no-compound-cd` rule.
 
