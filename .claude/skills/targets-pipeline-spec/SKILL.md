@@ -1,6 +1,6 @@
 ---
 name: targets-pipeline-spec
-description: Use when organizing targets pipelines in R packages, setting up modular plan files, integrating crew with targets, or avoiding common targets anti-patterns. Triggers: targets, pipeline, tar_plan, targets architecture, modular plans, _targets.R.
+description: "Use when organizing targets pipelines in R packages, setting up modular plan files, integrating crew with targets, or avoiding common targets anti-patterns. Triggers: targets, pipeline, tar_plan, targets architecture, modular plans, _targets.R."
 ---
 # targets Pipeline Specification
 

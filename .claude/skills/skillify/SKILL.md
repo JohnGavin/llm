@@ -1,6 +1,6 @@
 ---
 name: skillify
-description: Use when extracting repeatable patterns from conversation history to create new skills. Triggers: create skill from workflow, automate pattern, capture workflow as skill, analyze conversation for patterns.
+description: "Use when extracting repeatable patterns from conversation history to create new skills. Triggers: create skill from workflow, automate pattern, capture workflow as skill, analyze conversation for patterns."
 ---
 
 # Skillify — Automate Skill Creation from Conversation History

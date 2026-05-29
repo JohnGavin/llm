@@ -1,6 +1,6 @@
 ---
 name: nix-rix-r-environment
-description: Use when setting up reproducible R environments with Nix and rix, troubleshooting Nix shell issues, managing R package dependencies in Nix, or detecting environment drift. Triggers: Nix, rix, Nix shell, reproducible environment, nix-shell, R environment, segfault.
+description: "Use when setting up reproducible R environments with Nix and rix, troubleshooting Nix shell issues, managing R package dependencies in Nix, or detecting environment drift. Triggers: Nix, rix, Nix shell, reproducible environment, nix-shell, R environment, segfault."
 ---
 # Nix and Rix for Reproducible R Environments
 

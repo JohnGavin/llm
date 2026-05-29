@@ -1,6 +1,6 @@
 ---
 name: project-telemetry
-description: Use when implementing project logging with the logger package, creating telemetry vignettes with targets, tracking pipeline metrics, or monitoring project health. Triggers: telemetry, logging, metrics, project health, pipeline monitoring, logger package.
+description: "Use when implementing project logging with the logger package, creating telemetry vignettes with targets, tracking pipeline metrics, or monitoring project health. Triggers: telemetry, logging, metrics, project health, pipeline monitoring, logger package."
 ---
 # Project Telemetry and Logging
 

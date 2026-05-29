@@ -1,6 +1,6 @@
 ---
 name: targets-vignettes
-description: Use when pre-calculating objects for package vignettes using targets, keeping vignettes focused on narrative while computation runs through the pipeline. Triggers: targets vignettes, pre-compute, vignette data, tar_read in vignettes.
+description: "Use when pre-calculating objects for package vignettes using targets, keeping vignettes focused on narrative while computation runs through the pipeline. Triggers: targets vignettes, pre-compute, vignette data, tar_read in vignettes."
 ---
 # Targets Pipeline for Vignette Pre-calculation
 
