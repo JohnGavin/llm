@@ -1,6 +1,6 @@
 ---
 name: context-control
-description: Use when managing Claude Code context window limits, compacting conversations, preserving important information across compactions, or optimizing session productivity. Triggers: context window, compaction, context management, session productivity, memory limits.
+description: "Use when managing Claude Code context window limits, compacting conversations, preserving important information across compactions, or optimizing session productivity. Triggers: context window, compaction, context management, session productivity, memory limits."
 ---
 # Context Control Guide
 

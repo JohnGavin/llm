@@ -1,6 +1,6 @@
 ---
 name: webr-multi-page-vignettes
-description: Use when creating interactive multi-page vignettes with WebR for browser-based R execution, building vignettes that run R code without local installation. Triggers: WebR, multi-page vignettes, browser R, interactive vignettes, WebR vignettes.
+description: "Use when creating interactive multi-page vignettes with WebR for browser-based R execution, building vignettes that run R code without local installation. Triggers: WebR, multi-page vignettes, browser R, interactive vignettes, WebR vignettes."
 ---
 # WebR Multi-Page Vignettes
 

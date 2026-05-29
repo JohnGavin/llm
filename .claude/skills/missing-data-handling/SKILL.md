@@ -1,6 +1,6 @@
 ---
 name: missing-data-handling
-description: Use when handling NA values in R, implementing missing data patterns across base R and tidyverse, ensuring database interoperability with NULLs, or writing defensive code for missing values. Triggers: NA, missing data, NULL, na.rm, complete.cases, missing values.
+description: "Use when handling NA values in R, implementing missing data patterns across base R and tidyverse, ensuring database interoperability with NULLs, or writing defensive code for missing values. Triggers: NA, missing data, NULL, na.rm, complete.cases, missing values."
 ---
 # Missing Data Handling in R
 

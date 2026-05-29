@@ -1,6 +1,6 @@
 ---
 name: mcp-servers
-description: Use when configuring, troubleshooting, or extending MCP (Model Context Protocol) servers for Claude Code, adding specialized tools or resources. Triggers: MCP, Model Context Protocol, MCP server, MCP tools, server configuration.
+description: "Use when configuring, troubleshooting, or extending MCP (Model Context Protocol) servers for Claude Code, adding specialized tools or resources. Triggers: MCP, Model Context Protocol, MCP server, MCP tools, server configuration."
 ---
 # MCP (Model Context Protocol) Servers Guide
 

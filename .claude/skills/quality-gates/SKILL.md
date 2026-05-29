@@ -1,6 +1,6 @@
 ---
 name: quality-gates
-description: Use when applying numeric scoring for commit/PR/merge gates, evaluating Bronze/Silver/Gold quality levels, or enforcing quality checks at PR steps 4, 6, and 8. Triggers: quality gate, scoring, Bronze/Silver/Gold, PR quality, commit gate, merge gate.
+description: "Use when applying numeric scoring for commit/PR/merge gates, evaluating Bronze/Silver/Gold quality levels, or enforcing quality checks at PR steps 4, 6, and 8. Triggers: quality gate, scoring, Bronze/Silver/Gold, PR quality, commit gate, merge gate."
 ---
 # Quality Gates Skill
 
