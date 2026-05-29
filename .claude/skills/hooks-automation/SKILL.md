@@ -1,6 +1,6 @@
 ---
 name: hooks-automation
-description: Use when configuring Claude Code hooks for automated linting, type checking, testing, or validation workflows triggered before or after tool calls. Triggers: hooks, automation, pre-commit, post-tool, linting hooks, validation hooks.
+description: "Use when configuring Claude Code hooks for automated linting, type checking, testing, or validation workflows triggered before or after tool calls. Triggers: hooks, automation, pre-commit, post-tool, linting hooks, validation hooks."
 ---
 # Hooks Automation Guide
 
