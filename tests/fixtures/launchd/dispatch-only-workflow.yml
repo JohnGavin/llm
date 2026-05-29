@@ -1,0 +1,20 @@
+name: Self-Review Verify Email
+
+on:
+  workflow_dispatch:
+    inputs:
+      result:
+        description: "PASS or FAIL"
+        required: true
+      count:
+        description: "row count"
+        required: false
+        default: "?"
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Send email
+        run: echo "Sending email for ${{ inputs.result }}"
