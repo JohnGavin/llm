@@ -1,6 +1,6 @@
 ---
 name: lazy-evaluation-guide
-description: Use when working with lazy evaluation in R, clarifying the seven meanings of lazy (promises, futures, database queries, package data loading, build systems, test optimization, regex quantifiers). Triggers: lazy evaluation, promises, NSE, non-standard evaluation, deferred evaluation, lazy testing, lazytest.
+description: "Use when working with lazy evaluation in R, clarifying the seven meanings of lazy (promises, futures, database queries, package data loading, build systems, test optimization, regex quantifiers). Triggers: lazy evaluation, promises, NSE, non-standard evaluation, deferred evaluation, lazy testing, lazytest."
 ---
 # Lazy Evaluation in R - A Taxonomy
 

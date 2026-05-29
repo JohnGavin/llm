@@ -1,6 +1,6 @@
 ---
 name: project-review
-description: Use when reviewing R projects for technical debt, identifying simplification opportunities, assessing code quality, or planning cleanup work. Triggers: project review, technical debt, code cleanup, simplification, code quality assessment.
+description: "Use when reviewing R projects for technical debt, identifying simplification opportunities, assessing code quality, or planning cleanup work. Triggers: project review, technical debt, code cleanup, simplification, code quality assessment."
 ---
 # Project Review and Technical Debt Assessment
 

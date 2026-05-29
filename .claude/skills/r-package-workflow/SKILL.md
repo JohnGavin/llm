@@ -1,6 +1,6 @@
 ---
 name: r-package-workflow
-description: Use when developing R packages following the structured 9-step PR workflow integrating architecture planning, test-driven development, and systematic debugging. Triggers: R package, package development, PR workflow, package workflow, new feature, bug fix.
+description: "Use when developing R packages following the structured 9-step PR workflow integrating architecture planning, test-driven development, and systematic debugging. Triggers: R package, package development, PR workflow, package workflow, new feature, bug fix."
 ---
 # R Package Development Workflow
 
