@@ -68,7 +68,16 @@ elif [ "$WORDS" -gt 3500 ]; then
   WARNINGS=$((WARNINGS + 1))
 fi
 
-# 6. Check MANIFEST entry
+# 6. Check strict-YAML compatibility (Codex / serde_yaml parser — see llm#230)
+CHECKER_SCRIPT="$(dirname "$(dirname "$FILE")")/scripts/check_skill_frontmatter.sh"
+if [ -x "$CHECKER_SCRIPT" ]; then
+  if ! bash "$CHECKER_SCRIPT" "$(dirname "$(dirname "$FILE")")/skills" > /dev/null 2>&1; then
+    echo "SKILL WARN [$SKILL_NAME]: Front matter fails strict YAML (Codex-incompatible). Run check_skill_frontmatter.sh to diagnose."
+    WARNINGS=$((WARNINGS + 1))
+  fi
+fi
+
+# 7. Check MANIFEST entry
 MANIFEST="$(dirname "$(dirname "$FILE")")/MANIFEST.md"
 if [ -f "$MANIFEST" ]; then
   if ! grep -q "$SKILL_NAME" "$MANIFEST"; then
