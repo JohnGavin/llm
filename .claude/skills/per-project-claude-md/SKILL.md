@@ -1,6 +1,6 @@
 ---
 name: per-project-claude-md
-description: Use when setting up a per-project CLAUDE.md for a new R package or analysis project. Creates a slim project-level config that points to global rules and adds project-specific overrides. Triggers: per-project config, project CLAUDE.md, project-level claude config, project overrides.
+description: "Use when setting up a per-project CLAUDE.md for a new R package or analysis project. Creates a slim project-level config that points to global rules and adds project-specific overrides. Triggers: per-project config, project CLAUDE.md, project-level claude config, project overrides."
 ---
 # Per-Project CLAUDE.md Skill
 

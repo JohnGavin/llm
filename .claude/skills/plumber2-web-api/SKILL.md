@@ -1,6 +1,6 @@
 ---
 name: plumber2-web-api
-description: Use when building web APIs with plumber2, implementing async/promise-based endpoints, or integrating mirai for high-concurrency R web services. Triggers: plumber2, web API, REST API, plumber, API endpoints, async API.
+description: "Use when building web APIs with plumber2, implementing async/promise-based endpoints, or integrating mirai for high-concurrency R web services. Triggers: plumber2, web API, REST API, plumber, API endpoints, async API."
 ---
 # Web APIs with plumber2
 

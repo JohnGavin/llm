@@ -1,6 +1,6 @@
 ---
 name: modeling-baselines
-description: Use when starting predictive modeling to enforce baseline-first workflow, comparing ML models against simple GLM/GLMM baselines, or preventing premature complexity. Triggers: baseline model, GLM baseline, model comparison, modeling workflow, simple model first.
+description: "Use when starting predictive modeling to enforce baseline-first workflow, comparing ML models against simple GLM/GLMM baselines, or preventing premature complexity. Triggers: baseline model, GLM baseline, model comparison, modeling workflow, simple model first."
 ---
 # Modeling Baselines
 
