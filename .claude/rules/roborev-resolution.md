@@ -481,3 +481,27 @@ not invoking `--enforce`.
 - llm#163 — closure-loop automation (Auto-Verifier section above — Component 4, Slice 3)
 - llm#224 — severity autoclose (sibling policy)
 - llm#217 — poller schedule + ephemeral-repos cleanup
+- llm#300 — weekly launchd health email (long-term solution)
+
+## launchd Job Health — Immediate Audit
+
+If roborev or other automated jobs appear to have stopped running (e.g. autoclose log is
+days stale, backlog is not updating), run the ad-hoc audit script to see which plists
+are installed but NOT loaded by launchd:
+
+```bash
+bin/launchd_health_audit.sh --quiet
+```
+
+Output sections:
+- **Section 3** (NOT loaded) — jobs with plists installed but not loaded; these will never fire.
+  Fix with: `launchctl load -w ~/Library/LaunchAgents/<label>.plist`
+- **Section 2** (Loaded, failing) — jobs loaded but last exit code was non-zero.
+- **Section 4** (Stale) — jobs loaded but haven't fired within 1.5× their cadence.
+
+Common trigger: after a macOS update or logout/login cycle, launchd may unload all user
+agents. Use `bin/launchd_health_audit.sh` to confirm, then reload the affected plists.
+
+The weekly health email (llm#300) will automate this check once its `launchd_runs`
+ledger is populated. Until then, run `bin/launchd_health_audit.sh` any time a roborev
+job looks stale.
