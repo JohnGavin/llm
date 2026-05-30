@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-labelledby="title-cc">
+  <title id="title-cc">closeread-config vignette logo — agent definitions, rules, hooks</title>
+  <circle cx="100" cy="100" r="96" fill="#f08080"/>
+  <!-- Gear / settings icon -->
+  <circle cx="100" cy="100" r="22" fill="#000000" opacity="0.25"/>
+  <circle cx="100" cy="100" r="12" fill="#f08080"/>
+  <!-- Gear teeth (8 rectangles rotated) -->
+  <rect x="95" y="66" width="10" height="16" rx="3" fill="#000000" opacity="0.25" transform="rotate(0 100 100)"/>
+  <rect x="95" y="66" width="10" height="16" rx="3" fill="#000000" opacity="0.25" transform="rotate(45 100 100)"/>
+  <rect x="95" y="66" width="10" height="16" rx="3" fill="#000000" opacity="0.25" transform="rotate(90 100 100)"/>
+  <rect x="95" y="66" width="10" height="16" rx="3" fill="#000000" opacity="0.25" transform="rotate(135 100 100)"/>
+  <text x="100" y="52" font-family="ui-monospace,monospace" font-size="20" font-weight="700" fill="#ffffff" text-anchor="middle">CC</text>
+  <text x="100" y="168" font-family="system-ui,sans-serif" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">Config Stack</text>
+</svg>

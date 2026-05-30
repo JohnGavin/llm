@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-labelledby="title-ci">
+  <title id="title-ci">closeread-infrastructure vignette logo — layered stack / orchestration</title>
+  <circle cx="100" cy="100" r="96" fill="#4ea8de"/>
+  <rect x="44" y="66" width="112" height="18" rx="4" fill="#000000" opacity="0.20"/>
+  <rect x="44" y="91" width="112" height="18" rx="4" fill="#000000" opacity="0.30"/>
+  <rect x="44" y="116" width="112" height="18" rx="4" fill="#000000" opacity="0.40"/>
+  <text x="100" y="52" font-family="ui-monospace,monospace" font-size="20" font-weight="700" fill="#ffffff" text-anchor="middle">CI</text>
+  <text x="100" y="158" font-family="system-ui,sans-serif" font-size="13" fill="#ffffff" text-anchor="middle" opacity="0.9">Infrastructure</text>
+</svg>
