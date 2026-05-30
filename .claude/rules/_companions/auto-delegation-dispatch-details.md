@@ -206,6 +206,64 @@ Evidence: PR #243 (llmtelemetry roborev dashboard) shipped via this pattern in
 
 ---
 
+## `gh` CLI — Always Use `--body-file` (#200)
+
+**CRITICAL:** Never use `--body "$(cat ...)"` or `--body "$var"` with multiline content
+in any `gh` CLI call. Use `--body-file <path>` instead.
+
+### Why
+
+`--body "$(cat /tmp/file.md)"` is a command substitution. Claude Code's static
+analyser cannot see inside `$(...)`, so every such call triggers an approval prompt
+("Contains shell syntax that cannot be statically analysed"). With `--body-file`,
+the path is visible in the command and the allowlist works correctly — zero prompts.
+
+The same applies to `--body "$multiline_var"` when the variable contains markdown
+with pipes, backticks, or tables (heredoc-body failures, see llm#200).
+
+### Supported commands
+
+`--body-file` exists on all these subcommands:
+
+```
+gh pr create  --body-file <path>
+gh pr edit    --body-file <path>
+gh pr comment --body-file <path>
+gh issue create  --body-file <path>
+gh issue edit    --body-file <path>
+gh issue comment --body-file <path>
+gh release create --notes-file <path>
+```
+
+### Required pattern (agents AND scripts)
+
+```bash
+# WRONG — triggers approval prompt
+gh pr create --title "..." --body "$(cat /tmp/body.md)"
+gh issue comment 42 --body "$multiline_var"
+
+# RIGHT — statically analysable, zero prompts
+_body=$(mktemp /tmp/gh_body_XXXXXX.md)
+printf '%s' "$body_content" > "$_body"
+gh pr create --title "..." --body-file "$_body"
+rm -f "$_body"
+```
+
+Cleanup is mandatory. Use `rm -f` immediately after the `gh` call, or register a
+`trap 'rm -f "$_body"' EXIT` at the top of the function.
+
+**Exception:** `git commit -m "$(cat <<'EOF' ... EOF)"` patterns are NOT affected —
+these are git, not gh CLI, and do not trigger the same approval path. Leave those
+as-is. Document the exception with a comment when the two patterns appear near each
+other.
+
+### Reference
+
+- llm#200 — origin issue with full options analysis
+- `bash-safety` rule — compound commands; `$(...)` is a related surface
+
+---
+
 ## Right vs Wrong
 
 ```
