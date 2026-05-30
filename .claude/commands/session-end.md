@@ -4,14 +4,32 @@
 
 Run the end-of-session checklist from AGENTS.md Section 6.
 
-## First: Write the /bye sentinel
+## First: Write the /bye sentinels (llm#273 — per-session)
 
-Before any other step, run this shell command so the session_stop.sh hook
-knows this Stop event comes from /bye (not a normal reply). The hook gates
-the paid pattern-detection block on this sentinel file and deletes it after use.
+Before any other step, run this shell command so session_stop.sh and
+llmtelemetry_emit.sh know this Stop event comes from /bye (not a normal reply).
+Both hooks now use per-session sentinels to prevent concurrent sessions from
+consuming each other's sentinels. The legacy global sentinels are also written
+for backward compatibility with any consumer not yet updated.
 
 ```bash
-touch ~/.claude/.bye-requested
+# Resolve session ID (mirrors llmtelemetry_emit.sh resolution)
+_bye_sid="${CLAUDE_SESSION_ID:-}"
+if [ -z "$_bye_sid" ] && [ -f "${HOME}/.claude/logs/.llmtelemetry_ppid_session.${PPID:-0}" ]; then
+  _bye_sid=$(cat "${HOME}/.claude/logs/.llmtelemetry_ppid_session.${PPID:-0}" 2>/dev/null || echo "")
+fi
+if [ -z "$_bye_sid" ] && [ -f "${HOME}/.claude/logs/.current_session" ]; then
+  _bye_sid=$(cat "${HOME}/.claude/logs/.current_session" 2>/dev/null || echo "")
+fi
+
+# Write per-session sentinels (primary — llm#273)
+if [ -n "$_bye_sid" ]; then
+  touch "${HOME}/.claude/.bye-requested.${_bye_sid}"
+  touch "${HOME}/.claude/.bye-session-end-refine.${_bye_sid}"
+fi
+# Write legacy global sentinels (backward-compat for hooks not yet updated)
+touch "${HOME}/.claude/.bye-requested"
+touch "${HOME}/.claude/.bye-session-end-refine"
 ```
 
 ## Steps
