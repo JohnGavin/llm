@@ -18,6 +18,10 @@
         <key>Minute</key>
         <integer>30</integer>
     </dict>
+    <!-- StandardInPath=/dev/null: same SIGTTIN/state-T fix as roborev-poll-merges
+         (llm#153); roborev_severity_autoclose.sh uses < <(...) process subst. -->
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
     <key>StandardOutPath</key>
     <string>/Users/johngavin/.claude/logs/roborev_severity_autoclose.out</string>
     <key>StandardErrorPath</key>
