@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-labelledby="title-hp">
+  <title id="title-hp">hover-popup-demo vignette logo — interactive tooltip demonstrations</title>
+  <circle cx="100" cy="100" r="96" fill="#fd79a8"/>
+  <!-- Speech bubble shape -->
+  <rect x="50" y="72" width="100" height="60" rx="10" fill="#000000" opacity="0.25"/>
+  <polygon points="90,132 100,150 110,132" fill="#000000" opacity="0.25"/>
+  <!-- Three dots in bubble -->
+  <circle cx="78" cy="102" r="6" fill="#fd79a8"/>
+  <circle cx="100" cy="102" r="6" fill="#fd79a8"/>
+  <circle cx="122" cy="102" r="6" fill="#fd79a8"/>
+  <text x="100" y="52" font-family="ui-monospace,monospace" font-size="20" font-weight="700" fill="#ffffff" text-anchor="middle">HP</text>
+  <text x="100" y="170" font-family="system-ui,sans-serif" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">Hover Popup</text>
+</svg>

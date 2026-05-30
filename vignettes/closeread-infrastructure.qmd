@@ -1,5 +1,6 @@
 ---
 title: "From Nix Shells to Project Outputs"
+image: man/figures/vignette-closeread-infrastructure.svg
 format:
   html:
     toc: false
