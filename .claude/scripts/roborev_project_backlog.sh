@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
-# roborev_project_backlog.sh — per-project backlog watcher.
+# roborev_project_backlog.sh — per-project backlog watcher + prioritizer.
 #
 # Reads ~/.roborev/reviews.db (read-only) and writes a prioritised markdown
 # table of open high-severity findings to <project-root>/.roborev/backlog.md.
+# Implements Components 1 and 2 of JohnGavin/llm#163.
 #
 # Portability: may be invoked by launchd with a bare PATH; prepend common
 # tool locations so python3 and sqlite3 are visible.
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 #
 # Usage:
-#   roborev_project_backlog.sh [--repo <name>] [--apply | --dry-run]
+#   roborev_project_backlog.sh <project-name> [options]
+#
+# Arguments:
+#   <project-name>          Repo name as stored in reviews.db (positional, required)
 #
 # Options:
-#   --repo <name>  Restrict to a single repo by name (default: llm)
-#   --apply        Write .roborev/backlog.md to the project root (default)
-#   --dry-run      Print table to stdout only; no file writes
-#   --help         Usage
+#   --repo-root PATH        Project root directory (default: ~/docs_gh/<name>)
+#   --out PATH              Output file path (default: <repo-root>/.roborev/backlog.md)
+#   --top-n N               Number of top findings to show (default: 10)
+#   --dry-run               Print table to stdout only; no file writes
+#   --help                  Usage
+#
+# Legacy alias (backward compat):
+#   --repo <name>           Same as positional <project-name>
+#   --apply                 Write file (default; opposite of --dry-run)
 #
 # Self-test:
 #   ROBOREV_BACKLOG_SELFTEST=1 bash roborev_project_backlog.sh
@@ -46,20 +55,43 @@ export _ROBOREV_BACKLOG_DEPTH=$((_DEPTH + 1))
 PYTHON="${PYTHON:-/usr/bin/python3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 LOG="$HOME/.claude/logs/roborev_project_backlog.log"
-REPO_NAME="${ROBOREV_BACKLOG_REPO:-llm}"
-APPLY=1   # default: write file
+REPO_NAME="${ROBOREV_BACKLOG_REPO:-}"
+REPO_ROOT=""         # populated from --repo-root or default ~/docs_gh/<name>
+OUT_FILE=""          # populated from --out or default <repo-root>/.roborev/backlog.md
+TOP_N=10             # default top-N
+APPLY=1              # default: write file
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)      shift; REPO_NAME="$1" ;;
-    --apply)     APPLY=1 ;;
-    --dry-run)   APPLY=0 ;;
-    -h|--help)   sed -n '2,30p' "$0"; exit 0 ;;
-    *)           echo "unknown arg: $1" >&2; exit 1 ;;
+    --repo)       shift; REPO_NAME="$1" ;;      # legacy alias
+    --repo-root)  shift; REPO_ROOT="$1" ;;
+    --out)        shift; OUT_FILE="$1" ;;
+    --top-n)      shift; TOP_N="$1" ;;
+    --apply)      APPLY=1 ;;
+    --dry-run)    APPLY=0 ;;
+    -h|--help)    sed -n '2,45p' "$0"; exit 0 ;;
+    -*)           echo "unknown option: $1" >&2; exit 1 ;;
+    *)
+      # First positional arg = project name
+      if [ -z "$REPO_NAME" ]; then
+        REPO_NAME="$1"
+      else
+        echo "unexpected argument: $1 (project name already set to '$REPO_NAME')" >&2
+        exit 1
+      fi
+      ;;
   esac
   shift
 done
+
+# Default repo name if still unset
+[ -z "$REPO_NAME" ] && REPO_NAME="llm"
+
+# Derive repo root from name if not explicitly provided
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT="$HOME/docs_gh/$REPO_NAME"
+fi
 
 mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
@@ -120,21 +152,24 @@ _query_backlog() {
   local repo_name="$1"
   local db="$2"
   local root_path_override="${3:-}"  # optional: pass project root for file_touches
+  local top_n="${4:-10}"             # optional: top-N, default 10
 
   if [ ! -f "$db" ]; then
     echo "ROOT_PATH:"
     echo "REPO:$repo_name"
+    echo "OPEN_COUNT:0"
     echo ""
-    echo "(DB unavailable — fail open)"
+    echo "_0 open findings (DB unavailable — fail open)._"
     return 0
   fi
 
-  "$PYTHON" - "$db" "$repo_name" "$root_path_override" <<'PYEOF'
+  "$PYTHON" - "$db" "$repo_name" "$root_path_override" "$top_n" <<'PYEOF'
 import sys, sqlite3, math, re, subprocess, os
 
 db_path = sys.argv[1]
 repo_name = sys.argv[2]
 root_path_override = sys.argv[3] if len(sys.argv) > 3 else ""
+top_n = int(sys.argv[4]) if len(sys.argv) > 4 else 10
 
 # ── Severity / category weight tables ────────────────────────────────────────
 SEV_WEIGHT = {"critical": 10, "high": 5, "medium": 2, "low": 1, "unknown": 1}
@@ -286,7 +321,8 @@ except Exception:
 con.close()
 
 if not rows:
-    print("_No open findings._")
+    print(f"OPEN_COUNT:0")
+    print("_0 open findings._")
     sys.exit(0)
 
 # Compute priority for each row, then sort DESC
@@ -309,13 +345,14 @@ for row in rows:
         "output": row["output"],
     })
 
-# Sort by priority DESC, take top 10
+# Sort by priority DESC, take top_n
 scored.sort(key=lambda x: x["priority"], reverse=True)
-top10 = scored[:10]
+top_list = scored[:top_n]
 
+print(f"OPEN_COUNT:{len(scored)}")
 print("| id | sev | category | age_days | touches | priority | summary |")
 print("|----|-----|----------|----------|---------|----------|---------|")
-for r in top10:
+for r in top_list:
     rid = r["rid"]
     sev = r["sev"]
     cat = r["category"]
@@ -332,7 +369,7 @@ for r in top10:
     print(f"| {rid} | {sev} | {cat} | {age} | {t} | {pri} | {summary} |")
 
 # Emit top-finding metadata for session_init banner use
-top = top10[0] if top10 else None
+top = top_list[0] if top_list else None
 if top:
     print(f"TOP_FINDING_ID:{top['rid']}")
     print(f"TOP_FINDING_SEV:{top['sev']}")
@@ -340,26 +377,50 @@ if top:
 PYEOF
 }
 
-# Write backlog.md to <root_path>/.roborev/backlog.md
-# Args: root_path, table_content, repo_name
+# Write backlog.md to the project's .roborev/backlog.md (or --out path).
+# Args: root_path, table_content, repo_name, [out_file_override]
 # Echoes the output file path on success.
 _write_backlog() {
   local root_path="$1"
   local table="$2"
   local repo_name="$3"
-  local out_dir="$root_path/.roborev"
-  local out_file="$out_dir/backlog.md"
+  local out_file_override="${4:-}"
+  local out_file
 
-  mkdir -p "$out_dir"
+  if [ -n "$out_file_override" ]; then
+    out_file="$out_file_override"
+  else
+    out_file="$root_path/.roborev/backlog.md"
+  fi
+
+  mkdir -p "$(dirname "$out_file")"
   {
     printf '# roborev backlog — %s\n\n' "$repo_name"
     printf '_Generated: %s_\n\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    printf 'Check `.roborev/backlog.md` for prioritised open findings before starting fixes.\n\n'
+    printf 'Check `%s` for prioritised open findings before starting fixes.\n\n' "$out_file"
     printf '%s\n\n' "$table"
-    printf '_Source: `%s` — top 10 open findings, sorted by composite priority (severity × category-risk × age × file-heat)._\n' "$ROBOREV_DB"
+    printf '_Source: `%s` — top-%s open findings, sorted by composite priority (severity × category-risk × age × file-heat)._\n' \
+      "${ROBOREV_DB:-~/.roborev/reviews.db}" "${TOP_N:-10}"
   } > "$out_file"
 
   echo "$out_file"
+}
+
+# Append .roborev/ to <project-root>/.gitignore if not already present.
+# Idempotent — safe to call multiple times.
+_ensure_gitignore() {
+  local root_path="$1"
+  local gitignore="$root_path/.gitignore"
+
+  [ -z "$root_path" ] && return 0
+  [ ! -d "$root_path" ] && return 0
+
+  # Already present
+  if [ -f "$gitignore" ] && grep -qF '.roborev/' "$gitignore" 2>/dev/null; then
+    return 0
+  fi
+
+  printf '\n# roborev per-project backlog (generated by roborev_project_backlog.sh)\n.roborev/\n' >> "$gitignore"
 }
 
 # ── Self-test (no subprocess of $0) ──────────────────────────────────────────
@@ -467,37 +528,38 @@ if [ ! -f "$ROBOREV_DB" ]; then
   exit 0
 fi
 
-# Query backlog
-raw_output=$(_query_backlog "$REPO_NAME" "$ROBOREV_DB")
+# Query backlog (pass TOP_N to Python)
+raw_output=$(_query_backlog "$REPO_NAME" "$ROBOREV_DB" "$REPO_ROOT" "$TOP_N")
 
 # Extract metadata lines
-root_path=$(printf '%s\n' "$raw_output" | grep "^ROOT_PATH:" | head -1 | sed 's/^ROOT_PATH://')
+db_root_path=$(printf '%s\n' "$raw_output" | grep "^ROOT_PATH:" | head -1 | sed 's/^ROOT_PATH://')
+open_count=$(printf '%s\n' "$raw_output" | grep "^OPEN_COUNT:" | head -1 | sed 's/^OPEN_COUNT://')
 top_id=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_ID:" | head -1 | sed 's/^TOP_FINDING_ID://')
 top_sev=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_SEV:" | head -1 | sed 's/^TOP_FINDING_SEV://')
 top_cat=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_CAT:" | head -1 | sed 's/^TOP_FINDING_CAT://')
+
+# Use --repo-root override if provided; else fall back to what the DB says; else ~/docs_gh/<name>
+effective_root="${REPO_ROOT:-${db_root_path:-$HOME/docs_gh/$REPO_NAME}}"
 
 # Strip metadata lines for table content
 table=$(printf '%s\n' "$raw_output" \
   | grep -v "^ROOT_PATH:" \
   | grep -v "^REPO:" \
+  | grep -v "^OPEN_COUNT:" \
   | grep -v "^TOP_FINDING_")
 
 if [ "$APPLY" -eq 0 ]; then
   echo "=== roborev backlog: $REPO_NAME (dry-run) ==="
+  echo "${open_count:-0} open findings"
   echo ""
   printf '%s\n' "$table"
   [ -n "$top_id" ] && echo "Top finding: #${top_id} (${top_sev}:${top_cat})"
-  log "dry-run: repo=$REPO_NAME"
+  log "dry-run: repo=$REPO_NAME open=${open_count:-0}"
 else
-  if [ -z "$root_path" ]; then
-    log "error: could not determine root_path for repo=$REPO_NAME"
-    echo "roborev_project_backlog: error — repo '$REPO_NAME' not in DB or no root_path" >&2
-    exit 1
-  fi
-
-  out_file=$(_write_backlog "$root_path" "$table" "$REPO_NAME")
-  log "apply: wrote $out_file repo=$REPO_NAME top=#${top_id}(${top_sev}:${top_cat})"
-  echo "roborev_project_backlog: wrote $out_file"
+  out_file=$(_write_backlog "$effective_root" "$table" "$REPO_NAME" "${OUT_FILE:-}")
+  _ensure_gitignore "$effective_root"
+  log "apply: wrote $out_file repo=$REPO_NAME open=${open_count:-?} top=#${top_id}(${top_sev}:${top_cat})"
+  echo "roborev_project_backlog: wrote $out_file (${open_count:-?} open findings)"
 fi
 
 exit 0
