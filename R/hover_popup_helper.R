@@ -47,6 +47,27 @@ tt <- function(term, body) {
   checkmate::assert_string(term, min.chars = 1L)
   checkmate::assert_string(body, min.chars = 1L)
 
+  # Validate: body must contain at least one <a href> anchor (rule requirement)
+  if (!grepl("<a[[:space:]]+href=", body)) {
+    stop(
+      "tt(): body must contain at least one <a href=\"...\"> anchor. ",
+      "Add an external reference link per the hover-popup-standard rule."
+    )
+  }
+
+  # Validate: body must contain at least 2 sentences (rule requirement).
+  # Strip HTML tags before counting sentence-terminal punctuation.
+  body_text <- gsub("<[^>]+>", "", body)
+  parts       <- strsplit(body_text, "[.!?]+\\s*")[[1L]]
+  n_sentences <- sum(nzchar(trimws(parts)))
+  if (n_sentences < 2L) {
+    stop(
+      "tt(): body must contain at least 2 sentences (found ", n_sentences, "). ",
+      "Provide at least two sentences of contextual explanation per the ",
+      "hover-popup-standard rule."
+    )
+  }
+
   # Escape for HTML attribute value context:
   # 1. & must come first (avoid double-escaping)
   # 2. " breaks the double-quoted attribute value
