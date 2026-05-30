@@ -11,6 +11,8 @@ execute:
   message: false
 ---
 
+{{< include /_includes/hover-popups.qmd >}}
+
 ```{r setup}
 #| include: false
 library(ggplot2)
