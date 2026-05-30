@@ -107,10 +107,16 @@ if [ -f "$_bd_db" ]; then
 fi
 
 # ── Telemetry data export + deploy (Calibration + Sessions tabs) ────
-# Auto-runs export_and_deploy_data.sh (was orphaned — header claimed it ran here).
+# Background the export so /bye returns instantly. Output to dated log
+# for post-hoc inspection. See llm#381.
 EXPORT_SCRIPT="$CLAUDE_DIR/scripts/export_and_deploy_data.sh"
+EXPORT_LOG_DIR="$CLAUDE_DIR/logs"
+EXPORT_LOG="$EXPORT_LOG_DIR/export_and_deploy.$(date +%Y%m%d).log"
 if [ -x "$EXPORT_SCRIPT" ]; then
-  timeout 180 "$EXPORT_SCRIPT" 2>&1 | tail -3 || true
+  mkdir -p "$EXPORT_LOG_DIR"
+  nohup timeout 180 "$EXPORT_SCRIPT" > "$EXPORT_LOG" 2>&1 &
+  disown
+  echo "TELEMETRY: export backgrounded (log: $EXPORT_LOG)"
 fi
 
 # --- Prediction calibration: remind about unresolved predictions ---
