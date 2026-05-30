@@ -1,5 +1,6 @@
 ---
 title: "Global Config Evolution Dashboard"
+image: man/figures/vignette-config-evolution.svg
 format:
   html:
     page-layout: full

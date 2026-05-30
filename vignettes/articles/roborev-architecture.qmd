@@ -1,5 +1,6 @@
 ---
 title: "roborev: architecture, workflow, and quality compounding"
+image: ../../man/figures/vignette-roborev-architecture.svg
 author: "John Gavin"
 date: "`r Sys.Date()`"
 description: >
