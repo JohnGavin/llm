@@ -16,13 +16,16 @@
 #
 # Real-session-end gate: the Stop hook fires after EVERY Claude response, not
 # only at actual session end. To avoid emitting spurious stop events on every
-# response, we gate stop emission behind the same ~/.claude/.bye-requested
-# sentinel that session_stop.sh uses for its Opus pattern-detection call.
-# The sentinel is written by /bye (the session-end skill) and consumed here
-# immediately. Mid-session Stop invocations (non-/bye) skip emit entirely.
+# response, we gate stop emission behind a per-session sentinel written by /bye.
+# Mid-session Stop invocations (non-/bye) skip emit entirely.
 #
-# Concurrent-session safety: state files are namespaced by SESSION_ID so that
-# two overlapping sessions don't overwrite each other's start time or sid.
+# Concurrent-session safety (llm#273):
+#   - SESSION_ID is stable: prefer $CLAUDE_SESSION_ID → PPID-anchored fallback
+#     written at start time. A PPID-keyed anchor file ensures start/stop resolve
+#     the same ID even when CLAUDE_SESSION_ID is absent.
+#   - Sentinels are per-session: ~/.claude/.bye-requested.<SESSION_ID>
+#     A /bye in session B CANNOT consume session A's sentinel.
+#   - State files are namespaced by SESSION_ID.
 
 set -uo pipefail
 
@@ -38,12 +41,30 @@ if [ ! -f "$GLOBAL_FLAG" ] && [ ! -f "$PROJECT_FLAG" ]; then
   exit 0
 fi
 
-# Derive session ID: env var → state file → generate
+# ── Stable session ID resolution (llm#273) ──────────────────────────────────
+# Priority: CLAUDE_SESSION_ID env var → PPID-anchored file → .current_session
+# → generate + anchor. The PPID anchor persists the generated ID across
+# start/stop invocations that share the same parent process (one Claude session).
+_PPID_ANCHOR="$LOG_DIR/.llmtelemetry_ppid_session.${PPID:-0}"
 SESSION_ID="${CLAUDE_SESSION_ID:-}"
-if [ -z "$SESSION_ID" ] && [ -f "$LOG_DIR/.current_session" ]; then
-  SESSION_ID=$(cat "$LOG_DIR/.current_session" 2>/dev/null || echo "")
+if [ -z "$SESSION_ID" ]; then
+  if [ -f "$_PPID_ANCHOR" ]; then
+    SESSION_ID=$(cat "$_PPID_ANCHOR" 2>/dev/null || echo "")
+  fi
 fi
-[ -n "$SESSION_ID" ] || SESSION_ID="hook-$(date -u '+%Y%m%dT%H%M%SZ')"
+if [ -z "$SESSION_ID" ]; then
+  # .current_session is written by log_session.sh at SessionStart — last resort
+  if [ -f "$LOG_DIR/.current_session" ]; then
+    SESSION_ID=$(cat "$LOG_DIR/.current_session" 2>/dev/null || echo "")
+  fi
+fi
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID="emit-$(uuidgen 2>/dev/null || date -u '+%Y%m%dT%H%M%SZ')"
+fi
+# Write PPID anchor on first use so stop resolves the same ID
+if [ ! -f "$_PPID_ANCHOR" ]; then
+  printf '%s' "$SESSION_ID" > "$_PPID_ANCHOR" 2>/dev/null || true
+fi
 
 # Per-session state files — namespaced by SESSION_ID to avoid concurrent collisions
 STATE_START="$LOG_DIR/.llmtelemetry_started_at.${SESSION_ID}"
@@ -59,17 +80,34 @@ if [ "$MODE" = "start" ]; then
   exit 0
 fi
 
-# ── STOP mode: gate on /bye sentinel ─────────────────────────────────────────
-# The Stop hook fires after every Claude response. Only emit session_stop when
-# the user has explicitly ended the session via /bye, which writes the sentinel.
-_BYE_SENTINEL="${HOME}/.claude/.bye-requested"
-if [ ! -f "$_BYE_SENTINEL" ]; then
+# ── STOP mode: gate on per-session /bye sentinel (llm#273) ───────────────────
+# /bye writes ~/.claude/.bye-requested.<SESSION_ID> (per-session) AND the
+# legacy ~/.claude/.bye-requested for session_stop.sh pattern detection.
+# We check ONLY the per-session sentinel so concurrent sessions cannot steal
+# each other's stop events.
+_BYE_SENTINEL_PER_SESSION="${HOME}/.claude/.bye-requested.${SESSION_ID}"
+_BYE_SENTINEL_GLOBAL="${HOME}/.claude/.bye-requested"
+
+_sentinel_found=0
+if [ -f "$_BYE_SENTINEL_PER_SESSION" ]; then
+  _sentinel_found=1
+  rm -f "$_BYE_SENTINEL_PER_SESSION" 2>/dev/null || true
+elif [ -f "$_BYE_SENTINEL_GLOBAL" ]; then
+  # Backward-compat: consume global sentinel only when exactly one session is
+  # active (i.e. only one PPID anchor exists). Prevents stealing another
+  # session's intended sentinel when two sessions run concurrently.
+  _anchor_count=$(find "$LOG_DIR" -maxdepth 1 -name '.llmtelemetry_ppid_session.*' 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${_anchor_count:-2}" -le 1 ]; then
+    _sentinel_found=1
+    rm -f "$_BYE_SENTINEL_GLOBAL" 2>/dev/null || true
+  fi
+fi
+
+if [ "$_sentinel_found" -eq 0 ]; then
   # Not a real session end — skip telemetry emit. State files are preserved
   # so the eventual real /bye stop can compute accurate duration.
   exit 0
 fi
-# Consume the sentinel (same one-shot pattern as session_stop.sh)
-rm -f "$_BYE_SENTINEL" 2>/dev/null || true
 
 # ── STOP mode: emit JSONL envelope ───────────────────────────────────────────
 mkdir -p "$STAGING_DIR" 2>/dev/null || exit 0
@@ -123,7 +161,7 @@ JSONL=$(printf \
 
 printf '%s\n' "$JSONL" >> "$STAGING_DIR/events-${HOST}-${DATE}.jsonl" 2>/dev/null || true
 
-# Clean up per-session state files (only on real session end)
-rm -f "$STATE_START" "$STATE_SID" 2>/dev/null || true
+# Clean up per-session state files and PPID anchor (only on real session end)
+rm -f "$STATE_START" "$STATE_SID" "$_PPID_ANCHOR" 2>/dev/null || true
 
 exit 0
