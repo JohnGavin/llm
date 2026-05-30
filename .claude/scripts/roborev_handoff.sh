@@ -453,15 +453,19 @@ while IFS= read -r repo_json; do
             if [ -n "$existing" ]; then
               log "skip: $repo_name job=$job_id issue already exists (#$existing)"
             else
-              issue_body=$(printf '## roborev review — commit `%s`\n\n%s\n\n---\n_roborev job: %s_\n' \
-                "$commit_short" "$output" "$job_id")
+              # Use --body-file to avoid command-substitution approval prompts (#200)
+              _body_file_1a=$(mktemp /tmp/roborev_handoff_1a_XXXXXX.md)
+              printf '## roborev review — commit `%s`\n\n%s\n\n---\n_roborev job: %s_\n' \
+                "$commit_short" "$output" "$job_id" > "$_body_file_1a"
               issue_url=$(
                 "$GH" issue create \
                   --repo "$owner_repo" \
                   --title "roborev review for $commit_short" \
                   --label "roborev-handoff" \
-                  --body "$issue_body" 2>/dev/null
-              ) && {
+                  --body-file "$_body_file_1a" 2>/dev/null
+              )
+              rm -f "$_body_file_1a"
+              [ -n "$issue_url" ] && {
                 log "1a: created issue $issue_url job=$job_id repo=$repo_name"
                 "$ROBOREV" close "$job_id" >/dev/null 2>&1 \
                   && log "1a: closed job=$job_id" \
@@ -504,7 +508,13 @@ while IFS= read -r repo_json; do
                 log "skip: $repo_name job=$job_id already in digest #$digest_num"
               else
                 new_body="${existing_body}${append_block}"
-                "$GH" issue edit "$digest_num" --repo "$owner_repo" --body "$new_body" >/dev/null 2>&1 && {
+                # Use --body-file to avoid command-substitution approval prompts (#200)
+                _body_file_1b=$(mktemp /tmp/roborev_handoff_1b_XXXXXX.md)
+                printf '%s' "$new_body" > "$_body_file_1b"
+                "$GH" issue edit "$digest_num" --repo "$owner_repo" --body-file "$_body_file_1b" >/dev/null 2>&1
+                _gh_rc=$?
+                rm -f "$_body_file_1b"
+                [ "$_gh_rc" -eq 0 ] && {
                   log "1b: appended to digest #$digest_num job=$job_id repo=$repo_name"
                   "$ROBOREV" close "$job_id" >/dev/null 2>&1 \
                     && log "1b: closed job=$job_id" \
@@ -515,13 +525,18 @@ while IFS= read -r repo_json; do
               fi
             else
               # Create new digest issue for this week
+              # Use --body-file to avoid command-substitution approval prompts (#200)
+              _body_file_1b_new=$(mktemp /tmp/roborev_handoff_1bnew_XXXXXX.md)
+              printf '%s' "$append_block" > "$_body_file_1b_new"
               issue_url=$(
                 "$GH" issue create \
                   --repo "$owner_repo" \
                   --title "$digest_title" \
                   --label "roborev-digest" \
-                  --body "$append_block" 2>/dev/null
-              ) && {
+                  --body-file "$_body_file_1b_new" 2>/dev/null
+              )
+              rm -f "$_body_file_1b_new"
+              [ -n "$issue_url" ] && {
                 log "1b: created digest $issue_url job=$job_id repo=$repo_name"
                 "$ROBOREV" close "$job_id" >/dev/null 2>&1 \
                   && log "1b: closed job=$job_id" \
