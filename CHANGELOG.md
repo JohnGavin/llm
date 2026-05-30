@@ -4,6 +4,164 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-30 (Session — closure-loop completion, 5-parallel sweep, Stage 2 audit, here() correction)
+
+Single-session run executing the remaining "go ahead" items + a 5-parallel
+fixer sweep + housekeeping. Main moved through 6 squash-merges; session branch
+ends synced to main.
+
+### Completed
+
+- **#150 Phase 1 (PR #364, merged):** codex↔gemini auto-fallback wrapper
+  `.claude/scripts/codex_with_fallback.sh` — classifies primary exit
+  (`rate_limit_429` / `auth_failed` / `provider_error` / `success` / `other`),
+  retries via gemini on 429, fails fast on auth, emits one JSON record per
+  invocation to `~/.claude/logs/codex_fallback/<date>.jsonl`. 20-test stub-binary
+  suite at `tests/codex_fallback/test_codex_fallback.sh`.
+- **#365 Phase 1.5 (PR #378, merged):** wired the wrapper into the live roborev
+  path via Option C (PATH-shim with anti-recursion). New `.claude/scripts/codex_shim/codex`
+  trampoline strips `codex_shim/` from PATH before exec to prevent re-entering
+  itself. New `.claude/scripts/roborev_review.sh` drop-in wrapper. Four
+  callers updated (`roborev_poll_merges.sh`, `roborev_verify_closure.sh`,
+  `roborev_auto_verify.sh`, `session_end_refine.sh`); post-merge hook generator
+  in `bin/roborev_install_post_merge_hook.sh` now emits the wrapper-calling
+  variant. 22-assertion integration smoke at
+  `tests/codex_fallback/test_roborev_integration.sh`. `CODEX_SHIM_DISABLE=1`
+  escape hatch documented.
+- **#363 Phase A audit (PR #367, merged):** read-only path-reference inventory
+  for Stage 2 of #195 (move R package into `pkg/`). 385-line report at
+  `plans/195-stage2-audit.md` covering 14 sections; ~21 unique files and ~44
+  line references catalogued. Largest coupling category is `here::here()`
+  (13 files / 26 refs) — recommendation is `PKG_ROOT <- system.file(package = "llm")`
+  rather than `here::here()` for package-source paths.
+- **#368 silent test skip (PR #372, merged):** mirrored
+  `.claude/scripts/send_roborev_email.R` into `inst/scripts/` via symlink so
+  `system.file("scripts/send_roborev_email.R", package = "llm")` resolves after
+  install. Replaced `skip_if_not` with `expect_true(...)` in
+  `test-roborev-daily-email.R` (both call sites) so future regressions fail
+  loudly instead of silently skipping. `R CMD INSTALL` verified end-to-end.
+- **#369 vignette source() anti-pattern (PR #371 superseded → PR #373, merged):**
+  replaced `source(here::here("R", "hover_popup_helper.R"))` in
+  `vignettes/hover-popup-demo.qmd` with `library(llm)`. PR #371 was the original
+  agent output but its branch was the harness branch (forked off the diverged
+  session branch) so the PR diff ballooned to 219 files. Cherry-picked the
+  correct commit onto a fresh branch off `origin/main` → clean 1-file diff in
+  PR #373. Render verified, 6 `data-tippy-content` elements present.
+- **#362 YouTube digest (PR #377, merged):** Daniel Miessler PAI/second-brain
+  video (https://www.youtube.com/watch?v=AqxgBREOkNM) fetched, digested, and
+  gap-analysed against current llm setup. Three deliverable files at
+  `plans/youtube-AqxgBREOkNM/{transcript,digest,gap-analysis}.md`. 20-pattern
+  pattern→asset map with confidence markers. Spawned three follow-up issues:
+  **#374** (session rename hook on close), **#375** (weekly AI-release upgrade
+  skill), **#376** (two-vault credential split + one-command incident response).
+- **#303 fork PR (JohnGavin/tlang#1, OPEN, not upstreamed):** forked
+  `b-rodrigues/tlang`; patched `src/package_manager/nix_generator.ml`
+  (`generate_project_flake` + `generate_package_flake`) to inject the
+  closure-rebuild shellHook block extracted verbatim from
+  `nix-nested-shell-isolation.md § "The Fix"`. Two new OCaml tests in
+  `test_package_manager.ml` assert the closure-rebuild marker + key shell
+  variables. **Not verified locally** — `t` CLI not on PATH in agent worktree.
+  llm#303 remains OPEN until orchestrator-driven local `t update` smoke + the
+  manual upstream PR to `b-rodrigues/tlang`.
+- **Audit correction (#370 filed):** the audit's Section 4 + 13.1 claimed
+  `here::here()` "anchors to where `.git` lives" — wrong. `here:::.onLoad`
+  registers a chain `is_here | is_rstudio_project | is_vscode_project |
+  is_quarto_project | is_renv_project | is_r_package | ... | is_vcs_root`;
+  `is_vcs_root` is the LAST fallback. `here::dr_here(show_reason = TRUE)` from
+  this repo root reports the matching marker as `_quarto.yml`, not `.git`. The
+  practical Stage 2 implication is the same (paths still resolve to repo root,
+  not `pkg/`) but the mechanism is "first marker wins in the walk-up", not
+  "git anchoring". Issue documents the correction for future readers.
+- **Status comments / triage** on validation-gated issues: #150 (Phase 1
+  dispatch starting), #184 (14-day CodexBar validation window), #303 (fork-PR
+  pre-work + post-dispatch handoff), #307 (blocked on #184), #217 Phase 4
+  (7-day post-merge-hook soak until 2026-06-06), #195 (Stage 2 deferred to
+  dedicated session; planning sub-issue #363 filed), #362 (deferred while it
+  was thought to need knowledge/ writes; later dispatched once scoped to
+  `plans/`).
+- **Follow-up issues filed:** **#362** (YouTube digest), **#363** (Stage 2
+  planning sub-issue), **#365** (Phase 1.5 wiring — closed), **#366**
+  (Phase 2 ETL provider attribution), **#368** (silent test skip — closed),
+  **#369** (vignette antipattern — closed), **#370** (audit `here()`
+  correction), **#374/#375/#376** (YouTube-derived gaps).
+- **Session-branch resync (post-sweep):** discovered `feat/cc-20260524-221709`
+  was 2 commits "ahead" of main with content `a3f2e84` (codexbar refresh job)
+  and `178aec7` (tlang workaround rule docs). Both turned out to be functional
+  no-ops vs main — codexbar was duplicate-merged via PR #305 (`29e36c8`); tlang
+  docs are byte-identical to current main. Reset session branch to
+  `origin/main` (`295a7c2`) and force-pushed (`--force-with-lease`). Future
+  harness-spawned worktrees now branch off current main, preventing the PR
+  #371-style monster-diff failure mode from recurring.
+
+### Failed Approaches
+
+- **Claimed `here::here()` anchors to `.git`.** The audit agent's wording was
+  wrong; I repeated it without verifying against the `here` package source.
+  User pushed back. Verified empirically via `here:::.onLoad` and
+  `here::dr_here(show_reason = TRUE)` that the matched criterion in this repo
+  is `is_quarto_project` (`_quarto.yml`). Filed #370 to correct the audit.
+  **Lesson:** don't repeat audit-agent claims about library behaviour without
+  reading the actual package source — especially when the claim is a one-line
+  causal mechanism that's easy to verify.
+- **#369 fixer stayed on the harness branch instead of creating a feature
+  branch off `origin/main`.** PR #371 ended up with a 219-file / +24,615/-648
+  diff because the harness branch was forked off the session branch, which
+  was 5-behind / 2-ahead of main. GitHub's PR-base computation drowned the
+  intended 1-file vignette fix in unrelated divergence. Resolved by
+  cherry-picking the correct commit (`9982fd9`) onto a fresh branch
+  (`fix/issue-369-vignette-clean`) and superseding via PR #373. **Lesson:**
+  every future Bash-capable agent dispatch must include an explicit instruction
+  "create your feature branch from `origin/main`, not the harness base" — OR
+  ensure the orchestrator session branch is at main's tip before dispatch
+  (the resync done at session end is the structural fix).
+- **Initial #303 cherry-pick attempt for the 2 stranded session-branch commits
+  hit an add/add conflict** on `bin/refresh_codexbar_and_commit.sh`. Investigation
+  revealed `29e36c8` had already squash-merged that file into main via PR #305.
+  Then the second cherry-pick (`178aec7` tlang docs) reported "cherry-pick is
+  now empty" — the rule edits were already byte-identical in main. **Lesson:**
+  run `git cherry main <branch>` (patch-id check) BEFORE planning salvage PRs,
+  per the `branch-salvage-workflow` rule. Both commits were patch-id matches
+  hiding behind different SHAs.
+- **#362 initially deferred as "needs foreground session because knowledge/
+  is local-only".** Re-scoped on the user's "go ahead" by routing outputs to
+  `plans/youtube-AqxgBREOkNM/*.md` instead of `knowledge/`. Worked first try.
+  **Lesson:** "writes need to land in path X" is a constraint on output
+  location, not on whether the work can be parallelised — re-route the output
+  before deferring.
+
+### Accuracy / Metrics
+
+- PRs merged this session: **6** (#364, #367, #372, #373, #377, #378).
+- New issues filed: **9** (#362, #363, #365, #366, #370, #374, #375, #376) +
+  fork-PR JohnGavin/tlang#1.
+- Issues closed: **5** (#150, #362, #365, #368, #369).
+- Main branch advanced: `5a06c5c` → `295a7c2`.
+- Parallel fixer dispatches in the final sweep: **5** (one isolation-leak
+  cherry-pick-recovery → 4 clean merges + 1 fork PR).
+- Tier-3 post-verify run after every dispatch: **0 isolation breaches**
+  (all writes landed in worktrees / cross-repo target, not main checkout).
+
+### Known Limitations
+
+- **#303 fork PR `JohnGavin/tlang#1` needs local `t update` verification +
+  upstream PR to `b-rodrigues/tlang`.** Agent couldn't verify (`t` not on PATH
+  in nix-shell). Orchestrator-driven in a foreground session.
+- **#150 Phase 2 (#366) blocked** until #365 wiring has been deployed long
+  enough to accumulate `~/.claude/logs/codex_fallback/*.jsonl` for the ETL to
+  consume.
+- **#184 CodexBar validation window** still in progress; #307 deprecation
+  (ccusage/cmonitor) blocked behind it.
+- **#217 Phase 4** (delete `com.claude.roborev-poll-merges.plist`) gated on
+  7-day soak completing 2026-06-06.
+- **#195 Stage 2** (move R package into `pkg/`) needs dedicated foreground
+  session — planning sub-issue **#363** has the phased plan; the audit at
+  `plans/195-stage2-audit.md` is the input artefact.
+- **Roborev backlog**: 60 failed verdicts, only 12 addressed at session end —
+  autoclose + sweep jobs should converge overnight. Most are from the 5+ PRs
+  merged today.
+- **#370 audit correction** is not yet applied to `plans/195-stage2-audit.md`
+  itself — issue describes the patch to apply when Stage 2 work resumes.
+
 ## 2026-05-30 (Stage 1 #195 — archive one-off MDs + remove stray artifacts)
 
 Stage 1 of issue #195 (tidy top-level directory). Four one-off markdown files
