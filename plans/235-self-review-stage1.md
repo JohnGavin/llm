@@ -14,17 +14,17 @@ involved. No issues are filed. No files are edited.
 
 | Detector | Finding type | Threshold | Severity |
 |---|---|---|---|
-| Repeated identical agent dispatches (stuck loop proxy) | `stuck_loop` | same `(session_id, agent_type, status)` ≥ 3 times | major |
+| Repeated identical agent dispatches (stuck loop proxy) | `stuck_loop` | same `(session_id, agent_type)` with `status='running' AND ended_at IS NULL AND started_at < NOW()-1h` ≥ 3 times | major |
 | Permission/guard blocks | `excessive_guard_blocks` | > 5 blocks from any guard hook in one hour | major |
-| Tool error rate | `high_tool_error_rate` | error_count / total_calls > 20% per tool per day | minor (20-50%) / major (≥50%) |
+| Tool error rate | `high_tool_error_rate` | error_count / total_calls > 20% per tool per day, rolling 7-day window | minor (20-50%) / major (≥50%) |
 | Agent dispatch isolation violations | `isolation_violation` | any hook_events row with `output_preview ILIKE '%ISOLATION%VIOLATION%'` | critical |
 | Pivot-signal rule threshold | `pivot_signal_threshold` | ≥ 3 errors from same tool in one session (3=minor, 5=major, 7=critical) | minor/major/critical |
 
 ### Thresholds — rationale
 
-- **Stuck loop ≥ 3:** the `pivot-signal` rule treats 3 consecutive failures as the first signal. Below 3, variation is normal; at 3 the agent is expected to pause and pivot.
+- **Stuck loop ≥ 3:** the `pivot-signal` rule treats 3 consecutive failures as the first signal. Below 3, variation is normal; at 3 the agent is expected to pause and pivot. Agents flagged must have `status='running'`, `ended_at IS NULL`, and `started_at < NOW()-1h` — completed agents (`status='done'`) are never stuck by definition. (Fixed: #269)
 - **Guard blocks > 5/hour:** individual blocks are expected (hooks are working). Five+ in an hour indicates a systematic issue (bad dispatch pattern, missing bypass flag, or hook misconfiguration).
-- **Error rate > 20%:** one-in-five failures is the standard alert threshold in production SRE practice. Below 20% is within operational noise.
+- **Error rate > 20%:** one-in-five failures is the standard alert threshold in production SRE practice. Below 20% is within operational noise. Rate is computed over the rolling 7-day window only — historical errors outside that window are excluded. (Fixed: #269)
 - **Isolation violations:** zero tolerance. A single confirmed violation means an agent wrote to the main checkout — immediate surfacing required.
 - **Pivot signal 3/5/7:** maps directly to the rule's three-tier escalation table.
 
