@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# codex_shim/codex — PATH-shim for roborev→codex interception.
+#
+# Purpose: When roborev calls `codex` it resolves the binary via PATH.
+# Callers that prepend .claude/scripts/codex_shim/ to PATH cause roborev
+# to invoke THIS script instead of the real codex binary.
+#
+# This script delegates to codex_with_fallback.sh (from PR #364) which:
+#   1. Calls the real codex ($CODEX_BIN, default: real codex binary)
+#   2. On 429 rate-limit, falls back to gemini
+#   3. Emits JSONL telemetry to ~/.claude/logs/codex_fallback/
+#
+# Opt-out: set CODEX_SHIM_DISABLE=1 to bypass this shim and call codex directly.
+# This is an escape hatch for emergency debugging — do not set permanently.
+#
+# Tracked: JohnGavin/llm#365
+
+set -uo pipefail
+
+# Opt-out escape hatch
+if [ "${CODEX_SHIM_DISABLE:-0}" = "1" ]; then
+  # Find the real codex by stripping codex_shim from PATH
+  REAL_PATH=""
+  IFS=: read -ra PATH_PARTS <<< "$PATH"
+  for dir in "${PATH_PARTS[@]}"; do
+    case "$dir" in
+      */codex_shim*) continue ;;
+    esac
+    if [ -x "$dir/codex" ]; then
+      REAL_PATH="$dir/codex"
+      break
+    fi
+  done
+  if [ -z "$REAL_PATH" ]; then
+    echo "codex_shim: CODEX_SHIM_DISABLE=1 but real codex not found on PATH" >&2
+    exit 127
+  fi
+  exec "$REAL_PATH" "$@"
+fi
+
+# Resolve the wrapper relative to this shim's location
+SHIM_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SHIM_DIR/../.." && pwd)"
+WRAPPER="$REPO_ROOT/.claude/scripts/codex_with_fallback.sh"
+
+if [ ! -x "$WRAPPER" ]; then
+  echo "codex_shim: wrapper not found or not executable: $WRAPPER" >&2
+  echo "  Expected: .claude/scripts/codex_with_fallback.sh" >&2
+  exit 127
+fi
+
+# Strip codex_shim from PATH so the wrapper's CODEX_BIN lookup finds real codex,
+# not this shim (which would cause infinite recursion).
+CLEAN_PATH=""
+IFS=: read -ra PATH_PARTS <<< "$PATH"
+for dir in "${PATH_PARTS[@]}"; do
+  case "$dir" in
+    */codex_shim*) continue ;;
+  esac
+  if [ -z "$CLEAN_PATH" ]; then
+    CLEAN_PATH="$dir"
+  else
+    CLEAN_PATH="$CLEAN_PATH:$dir"
+  fi
+done
+export PATH="$CLEAN_PATH"
+
+exec "$WRAPPER" "$@"

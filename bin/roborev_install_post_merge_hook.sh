@@ -64,9 +64,15 @@ cat > "${HOOK_FILE}" <<'HOOK'
 # ORIG_HEAD is set automatically by git to the pre-merge HEAD SHA.
 # `roborev review --since ORIG_HEAD` reviews all commits between
 # ORIG_HEAD (exclusive) and HEAD (inclusive) — i.e. exactly the merged commits.
+# Uses roborev_review.sh wrapper (#365) to route codex calls through
+# codex_with_fallback.sh (429→gemini fallback + JSONL telemetry).
 set -uo pipefail
-if ! command -v roborev > /dev/null 2>&1; then exit 0; fi
-roborev review --since "${1:-ORIG_HEAD}" --quiet > /dev/null 2>&1 || true
+REVIEW_WRAPPER="$HOME/docs_gh/llm/.claude/scripts/roborev_review.sh"
+if [ -x "$REVIEW_WRAPPER" ]; then
+  "$REVIEW_WRAPPER" --since "${1:-ORIG_HEAD}" --quiet > /dev/null 2>&1 || true
+elif command -v roborev > /dev/null 2>&1; then
+  roborev review --since "${1:-ORIG_HEAD}" --quiet > /dev/null 2>&1 || true
+fi
 HOOK
 
 chmod +x "${HOOK_FILE}"

@@ -49,6 +49,12 @@
 # Issue: JohnGavin/llm#353
 
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# Wire codex_with_fallback.sh into roborev's codex calls (#365):
+_SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ -x "${_SCRIPT_DIR}/codex_shim/codex" ]; then
+  export PATH="${_SCRIPT_DIR}/codex_shim:$PATH"
+fi
+unset _SCRIPT_DIR
 
 set -uo pipefail
 
