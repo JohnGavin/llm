@@ -13,6 +13,7 @@ format:
     toc-depth: 3
     code-fold: true
     code-summary: "Show code"
+    fig-alt: true
 execute:
   echo: false
   warning: false
@@ -27,9 +28,19 @@ knitr::opts_chunk$set(
   warning   = FALSE,
   echo      = FALSE
 )
+
+# Colour palette — define ONCE, reuse in every chart
+PALETTE <- c(
+  "open"                 = "#f08080",
+  "closed"               = "#69d4a0",
+  "clean-verdict"        = "#5edaff",
+  "severity-medium"      = "#ffd93d",
+  "manual"               = "#c084fc",
+  "clean-verdict-pre-fix" = "#4ea8de"
+)
 ```
 
-## 1. Why roborev exists {#why}
+## 1. What roborev is {#what}
 
 Every software project accumulates a gap between "code that was committed" and
 "code that was reviewed". The gap is rarely malicious — it is a product of
@@ -44,23 +55,34 @@ a solo or small-team project, and failing any one of them means findings that
 could be caught in five minutes get missed until they compound into something
 much harder to fix.
 
-Automated linters and static analysis tools catch a valuable but narrow slice
-of the problem: style violations, obvious type mismatches, known anti-patterns.
-They cannot evaluate whether a new function is consistent with the rest of the
-codebase, whether an argument name follows conventions established three months
-ago, or whether a change that appears correct in isolation introduces a subtle
-issue when composed with the rest of the system.
+<abbr title="Automated agentic code review: every git commit triggers an AI agent to review the diff and write structured findings to a local SQLite database">roborev</abbr>
+([roborev-dev/roborev](https://github.com/roborev-dev/roborev)) fills the gap.
+On every commit it dispatches an
+<abbr title="Artificial Intelligence">AI</abbr> agent to review the diff in the
+context of the full repository, produce findings categorised by severity, and
+write those findings to a local
+<abbr title="Structured Query Language: a standard language for relational databases">SQLite</abbr>
+database. Findings accumulate across commits, are visible in the
+[llmtelemetry dashboard](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html),
+and are closed either automatically or by a developer committing a fix.
 
-[roborev](https://github.com/roborev-dev/roborev) fills the gap. It is an
-agentic code review tool: on every commit, it dispatches an AI agent to review
-the diff in the context of the full repository, produce findings categorised by
-severity, and write those findings to a local [SQLite](https://www.sqlite.org/)
-database. The findings are persistent — they accumulate across commits — and
-they are visible in the [llmtelemetry
-dashboard](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html).
+The practical result, observed over many months of use, is that the
+unreviewed-commit gap shrinks to near zero. Not because every commit gets a
+perfect review, but because every commit gets *some* review — and that compound
+effect changes the shape of the codebase over time.
 
-Within the broader QA stack used in this project, roborev occupies a
-specific position:
+---
+
+## 2. Why this vignette exists {#why}
+
+The [llmtelemetry roborev dashboard](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html)
+shows the *live state*: how many findings are open, how fast they close, which
+projects have the most backlog. This vignette is the *narrative*: it explains
+what each component does, why it was built, and how the pieces connect.
+
+Within the broader
+<abbr title="Quality Assurance: systematic checking that software meets requirements">QA</abbr>
+stack, roborev occupies a specific position:
 
 | Layer | Tool | What it catches |
 |-------|------|-----------------|
@@ -71,37 +93,30 @@ specific position:
 | Analytical correctness | `analytical-review-checklist` rule | Does the analysis answer the right question? |
 | Numeric quality gate | `quality-gates` skill | Bronze / Silver / Gold scoring, per-issue deduction |
 
-roborev is the layer that reads the whole commit, knows the whole codebase, and
-brings the full reasoning capability of a large model to every change — without
-requiring a human reviewer to be available or rested.
-
-The practical result, observed over many months of use, is that the unreviewed-
-commit gap shrinks to near zero. Not because every commit gets a perfect review,
-but because every commit gets *some* review — and that compound effect changes
-the shape of the codebase over time.
-
 ---
 
-## 2. Architecture {#architecture}
+## 3. Architecture diagram {#architecture}
 
 The diagram below shows the full data flow from a git commit to a resolved
-finding. Each node links to the relevant source file or dashboard panel.
+finding. Every node links to the relevant source file or dashboard panel.
 
-::: {aria-label="Architecture diagram of the roborev system. A git commit triggers a post-commit hook which queues work in the roborev daemon. The daemon dispatches an AI agent to produce review findings. Findings land in a local SQLite database. Three downstream consumers read the database: the severity autoclose job weekly, the threshold-based autoclose job, and the llmtelemetry dashboard. A separate poller catches any commits the hook missed."}
+::: {aria-label="Architecture diagram of the roborev system. A git commit triggers a post-commit hook which queues work in the roborev daemon. The daemon dispatches an AI agent. The agent produces findings that land in a local SQLite database. Three downstream consumers read the database: the weekly age-based autoclose job, the daily severity-threshold autoclose, and the llmtelemetry dashboard. A separate 15-minute poller catches any commits the hook missed. The daily ETL at 02:00 extracts the database into unified.duckdb for analytics."}
 
 ```{mermaid}
 flowchart LR
   COMMIT["git commit"]
-  HOOK["post-commit hook\n(per-repo .git/hooks/)"]
+  HOOK["post-commit hook\n.git/hooks/post-commit"]
   DAEMON["roborev daemon\n(launchd plist)"]
-  POLL["roborev_poll_merges.sh\n(launchd, every 15 min)"]
+  POLL["roborev_poll_merges.sh\nevery 15 min"]
   DB[("~/.roborev/reviews.db\nSQLite + WAL")]
-  AGENT["AI agent dispatch\n(codex / claude-code)"]
-  REVIEW["review output\n(findings + severity tags)"]
-  AUTOCLOSE["roborev_autoclose.sh\n(weekly Mon 09:15)"]
-  SEVCLOSE["severity_autoclose.sh\n(threshold-based, daily)"]
-  HANDOFF["roborev_handoff.sh\n(cross-repo, #149)"]
-  DASHBOARD["llmtelemetry dashboard\n(read-only, published)"]
+  AGENT["AI agent\ncodex / claude-code"]
+  REVIEW["findings + severity\nwritten to DB"]
+  WEEKLY["roborev_weekly_chain.sh\nMon 09:15"]
+  SEVCLOSE["roborev_severity_autoclose.sh\ndaily 09:30"]
+  ETL["roborev_metrics_etl.sh\ndaily 02:00"]
+  UNIFIED[("unified.duckdb\nanalytics layer")]
+  EMAIL["daily digest email\n08:00"]
+  DASHBOARD["llmtelemetry dashboard\nroborev-pulse.html"]
 
   COMMIT --> HOOK
   HOOK --> DAEMON
@@ -109,104 +124,201 @@ flowchart LR
   DAEMON --> AGENT
   AGENT --> REVIEW
   REVIEW --> DB
-  DB --> AUTOCLOSE
+  DB --> WEEKLY
   DB --> SEVCLOSE
-  DB --> HANDOFF
-  DB --> DASHBOARD
+  DB --> ETL
+  ETL --> UNIFIED
+  UNIFIED --> EMAIL
+  UNIFIED --> DASHBOARD
 
-  click HOOK "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/"
-  click POLL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh"
-  click DAEMON "https://github.com/JohnGavin/llm/blob/main/.claude/launchd/"
+  click HOOK "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_install_auto_verify_hook.sh#L1"
+  click POLL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1"
+  click DAEMON "https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-poll-merges.plist#L1"
   click DB "https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#open-findings"
-  click AUTOCLOSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_autoclose.sh"
-  click SEVCLOSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/severity_autoclose.sh"
-  click HANDOFF "https://github.com/JohnGavin/llm/issues/149"
+  click WEEKLY "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1"
+  click SEVCLOSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1"
+  click ETL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1"
+  click UNIFIED "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_schema.sql#L1"
+  click EMAIL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1"
   click DASHBOARD "https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html"
-  click AGENT "https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md"
+  click AGENT "https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1"
   click REVIEW "https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#severity-distribution"
 ```
 
 :::
 
-### Node descriptions
+### Component map
 
-| Node | What it is |
-|------|------------|
-| `git commit` | Any commit to a git repo with roborev enabled via `.roborev.toml` |
-| `post-commit hook` | Shell script installed at `.git/hooks/post-commit`; calls `roborev queue` |
-| `roborev daemon` | Background process managed by a launchd plist under `~/Library/LaunchAgents/`; dequeues and dispatches reviews |
-| `roborev_poll_merges.sh` | Catchup script: finds commits since last poll that the hook may have missed (e.g. off-hours commits, force-pushes) |
-| `AI agent dispatch` | The daemon forks a `codex` or `claude-code` subprocess with the diff and repo context |
-| `review output` | JSON findings: each finding has `severity`, `category`, `message`, `file`, `line`, `closed` |
-| `reviews.db` | Local SQLite database with WAL mode; the single source of truth for all findings |
-| `roborev_autoclose.sh` | Weekly cron: closes findings older than 7 days with severity below `severity_autoclose_threshold` |
-| `severity_autoclose.sh` | Daily cron: closes findings when a per-repo day-count threshold is exceeded |
-| `roborev_handoff.sh` | Cross-repo filing: creates GitHub issues in a target project for High/Critical findings (#149) |
-| `llmtelemetry dashboard` | Published Quarto site reading a snapshot of `reviews.db` via ETL (#226) |
+| Component | File path | What it does | When it runs | Established by |
+|-----------|-----------|--------------|--------------|----------------|
+| `post-commit hook` | [`.git/hooks/post-commit`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_install_auto_verify_hook.sh#L1) (per repo) | Calls `roborev queue` on every commit | On every `git commit` | `roborev setup` install |
+| `roborev daemon` | [`com.claude.roborev-poll-merges.plist`](https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-poll-merges.plist#L1) | Dequeues and dispatches AI reviews | Continuous (launchd supervised) | Core roborev |
+| `roborev_poll_merges.sh` | [`.claude/scripts/roborev_poll_merges.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1) | Catchup: reviews commits the hook missed | Every 15 min via launchd | [#217](https://github.com/JohnGavin/llm/issues/217) |
+| `reviews.db` | `~/.roborev/reviews.db` | Single source of truth: all findings, jobs, verdicts | Written by daemon continuously | Core roborev |
+| `roborev_weekly_chain.sh` | [`.claude/scripts/roborev_weekly_chain.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1) | Closes aged low-severity findings | Mon 09:15 via launchd | [#224](https://github.com/JohnGavin/llm/issues/224) |
+| `roborev_severity_autoclose.sh` | [`.claude/scripts/roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1) | Threshold-based close (clean-verdict + severity band) | Daily 09:30 via launchd | [#311](https://github.com/JohnGavin/llm/issues/311)/[#313](https://github.com/JohnGavin/llm/issues/313) |
+| `roborev_metrics_etl.sh` | [`.claude/scripts/roborev_metrics_etl.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1) | SQLite → `unified.duckdb` ETL | Daily 02:00 via launchd | [#226](https://github.com/JohnGavin/llm/issues/226) |
+| `unified.duckdb` | `~/.claude/logs/unified.duckdb` | Analytics DuckDB: 7 roborev_* tables + finding_lineage | Written by ETL | [#226](https://github.com/JohnGavin/llm/issues/226) |
+| `send_roborev_email.R` | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | Composes + sends daily blastula digest | Daily 08:00 via launchd | [#287](https://github.com/JohnGavin/llm/issues/287) |
+| Dashboard | [llmtelemetry roborev-pulse](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html) | Published Quarto site reading unified.duckdb snapshot | Refreshed on data branch push | [#287](https://github.com/JohnGavin/llm/issues/287) |
 
 ---
 
-## 3. Configuration layers {#config}
+## 4. Closure mechanisms {#closure}
 
-::: {.callout-note}
-**In progress.** Full configuration reference is tracked in [#229](https://github.com/JohnGavin/llm/issues/229).
-See `~/.roborev/config.toml` (global) and `<repo>/.roborev.toml` (per-repo) for current fields.
+Every finding in `reviews.db` starts as `closed = 0`. Three pathways close it:
+
+### (a) Clean-verdict autoclose
+
+When a review job produces no findings — the
+<abbr title="Large Language Model: a neural network trained to generate, analyse, and summarise text">LLM</abbr>
+concludes "no issues found" — the review carries `verdict_bool = 1`. The daily
+[`roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L748)
+checks `verdict_bool` **before** severity parsing: if `1`, it closes the review
+unconditionally and writes the comment marker `auto-closed: clean verdict [run:...]`.
+This path was added in [#311](https://github.com/JohnGavin/llm/issues/311).
+
+### (b) Severity-threshold autoclose
+
+Reviews with findings (`verdict_bool = 0`) are closed if their maximum severity
+falls at or below the configured threshold (default `medium`). The threshold is
+read in precedence order:
+
+1. `--threshold` flag at call time
+2. `ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD` env var
+3. Per-repo `.roborev.toml` `[autoclose] severity_threshold`
+4. Global `~/.roborev/config.toml` `autoclose_severity_threshold`
+5. Default: `off` (no autoclose)
+
+The `llm` repo runs with `--threshold medium` (see
+[`com.claude.roborev-severity-autoclose.plist`](https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-severity-autoclose.plist#L1)),
+meaning Medium and Low findings are closed automatically when the daily job runs.
+
+### (c) Manual close
+
+A developer explicitly closes a finding — either by running `roborev close <job_id>`
+directly, or by the orchestrator calling `roborev close` after triaging the finding.
+The per-project triage protocol is described in
+[`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1).
+
+### Learned lesson: rv.id vs job_id bug (#312)
+
+::: {.callout-warning}
+**Bug closed in [#313](https://github.com/JohnGavin/llm/issues/313).**
+
+`roborev_severity_autoclose.sh` originally called `roborev close <rv.id>` (the
+review's own integer primary key). The `roborev close` command, however, expects
+a **job_id** — a different integer that happens to occupy the same id space.
+Because the two spaces overlap numerically (job 47 ≠ review 47 in general), the
+wrong review was silently closed. The fix adds `rv.job_id` as the sixth field in
+the candidate query (see [line 659](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L659))
+and passes `$_job_id` to all close and comment calls. The self-test was extended
+to 11/11 PASS, including a new case that asserts `job_id ≠ review_id` for a
+synthetic row with `id=100, job_id=999`.
 :::
 
 ---
 
-## 4. Workflow scenarios {#workflow}
+## 5. Daily lifecycle {#daily-lifecycle}
 
-::: {.callout-note}
-**In progress.** Per-scenario sequence diagrams (commit-triggers-review, fix-and-close, autoclose,
-cross-repo handoff) will be added in a follow-up. Tracked in [#245](https://github.com/JohnGavin/llm/issues/245).
+The diagram below shows the sequence of scheduled jobs that run every 24 hours.
+All times are local.
+
+::: {aria-label="Sequence diagram showing the daily roborev lifecycle. At 02:00 the metrics ETL runs: it reads reviews.db via DuckDB sqlite extension and writes to unified.duckdb. At 09:30 the severity autoclose runs: it reads open reviews from reviews.db, closes clean-verdict and below-threshold severity findings. At 08:00 the daily email job reads unified.duckdb and sends a blastula digest. The llmtelemetry data branch is refreshed after the email job so the dashboard reflects the same numbers as the email."}
+
+```{mermaid}
+sequenceDiagram
+  participant DB as reviews.db (SQLite)
+  participant ETL as roborev_metrics_etl.sh<br/>02:00
+  participant DUCK as unified.duckdb
+  participant CLOSE as roborev_severity_autoclose.sh<br/>09:30
+  participant EMAIL as send_roborev_email.R<br/>08:00
+  participant DASH as llmtelemetry dashboard
+
+  ETL->>DB: ATTACH ... TYPE SQLITE READ_ONLY
+  DB-->>ETL: reviews + jobs + repos + closures
+  ETL->>DUCK: INSERT OR REPLACE roborev_review_lifecycle
+  ETL->>DUCK: INSERT OR REPLACE roborev_finding_lineage
+
+  CLOSE->>DB: SELECT open reviews (verdict_bool, severity, job_id)
+  CLOSE->>DB: roborev close <job_id> (clean-verdict path)
+  CLOSE->>DB: roborev close <job_id> (severity-threshold path)
+
+  EMAIL->>DUCK: read roborev_review_lifecycle, roborev_daily_metrics
+  EMAIL-->>EMAIL: compose blastula digest (dot charts, TTC buckets)
+  EMAIL->>EMAIL: send via Gmail SMTP
+
+  ETL->>DASH: push parquet snapshot to llmtelemetry data branch
+  DASH-->>DASH: quarto render roborev-pulse.qmd
+```
+
 :::
+
+**Note on ordering:** the
+<abbr title="Extract, Transform, Load: the process of moving data from a source system to an analytics store">ETL</abbr>
+runs at 02:00 and writes `unified.duckdb`. The email job runs at 08:00 and reads
+the same
+<abbr title="DuckDB: an in-process analytical database">DuckDB</abbr>
+snapshot. The
+<abbr title="Time To Close: wall-clock duration from finding creation to closure">TTC</abbr>
+values in the email therefore reflect the prior night's data — one batch behind
+the live `reviews.db`.
 
 ---
 
-## 5. Severity model {#severity}
+## 6. Configuration layers {#config}
 
-::: {.callout-note}
-**In progress.** The 5-tier severity model (Critical / High / Medium / Low / Info),
-per-repo threshold configuration, and severity decision tree are tracked in
-[#160](https://github.com/JohnGavin/llm/issues/160) and [#245](https://github.com/JohnGavin/llm/issues/245).
-:::
+| Layer | Path | Fields |
+|-------|------|--------|
+| Global | `~/.roborev/config.toml` | Agent defaults, model defaults, global severity floor, `autoclose_severity_threshold` |
+| Per-repo | `<repo>/.roborev.toml` | `review_guidelines`, `review_min_severity`, `exclude_patterns`, agent/model overrides, `[autoclose] severity_threshold` |
+| Autoclose counters | `~/.claude/.roborev_autoclose_counters.json` | Per-day, per-repo threshold observations (used by the weekly age-based autoclose) |
+| Post-commit hook | `<repo>/.git/hooks/post-commit` | Calls `roborev queue`; installed per-repo via `roborev setup` |
 
----
+The `exclude_patterns` field prevents session-ledger files (`CHANGELOG.md`,
+`.claude/CURRENT_WORK.md`) from triggering review cascades — see
+[`roborev-exclude-patterns` rule](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-exclude-patterns.md#L1)
+and [#198](https://github.com/JohnGavin/llm/issues/198).
 
-## 6. Metrics and ROI {#metrics}
-
-::: {.callout-note}
-**In progress.** Cross-linked metric tables (addressed rate, median time-to-close,
-cost per finding by agent, severity distribution) are tracked in
-[#226](https://github.com/JohnGavin/llm/issues/226) (ETL) and [#245](https://github.com/JohnGavin/llm/issues/245).
-Dashboard panels live at the
-[roborev pulse page](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html).
-:::
+A full governance spec for `.roborev.toml` fields is tracked in
+[#229](https://github.com/JohnGavin/llm/issues/229).
 
 ---
 
-## 7. Closure-loop philosophy {#closure}
+## 7. Open questions and future work {#roadmap}
 
-::: {.callout-note}
-**In progress.** The `closes roborev #N` commit convention, auto-verifier, and merge-gate
-proposal are tracked in [#163](https://github.com/JohnGavin/llm/issues/163),
-[#241](https://github.com/JohnGavin/llm/issues/241), and [#245](https://github.com/JohnGavin/llm/issues/245).
-:::
+The list below links every active work item. Status reflects the state as of
+the date at the top of this page.
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| [#149](https://github.com/JohnGavin/llm/issues/149) | Cross-repo handoff protocol | Open — design agreed, implementation in progress |
+| [#150](https://github.com/JohnGavin/llm/issues/150) | Reviewer fallback when primary agent unavailable | Open |
+| [#160](https://github.com/JohnGavin/llm/issues/160) | Severity model formalisation | Open — 5-tier scale in use, docs incomplete |
+| [#163](https://github.com/JohnGavin/llm/issues/163) | Closure-loop automation (`closes roborev #N` convention) | Open — convention not yet enforced |
+| [#181](https://github.com/JohnGavin/llm/issues/181) | Self-review backlog (T2 portability) | Open — hook portability across worktrees |
+| [#217](https://github.com/JohnGavin/llm/issues/217) | Poller redesign (event-driven replacement) | Open |
+| [#241](https://github.com/JohnGavin/llm/issues/241) | Merge gate — block merges with open ≥ High findings | Open |
+| [#245](https://github.com/JohnGavin/llm/issues/245) | This vignette — sections 3–8 full content | In progress |
+| [#246](https://github.com/JohnGavin/llm/issues/246) | Hover-popup standard for vignettes | Open — companion CSS/JS work |
+| [#284](https://github.com/JohnGavin/llm/issues/284) | Daily resolution report (attempts + TTC rolling windows) | Open — ETL foundation shipped in #316, #321 |
+| [#286](https://github.com/JohnGavin/llm/issues/286) | Finding lineage: `parent_job_id` upstream support | Open — heuristic stopgap shipped in #321 |
+| [#287](https://github.com/JohnGavin/llm/issues/287) | Daily email + dashboard link | Partial — email shipped, dashboard link in progress |
+| [#310](https://github.com/JohnGavin/llm/issues/310) | close_reason gap in ETL lifecycle table | Resolved by [#316](https://github.com/JohnGavin/llm/issues/316) |
+| [#311](https://github.com/JohnGavin/llm/issues/311) | Clean-verdict close path | Merged |
+| [#312](https://github.com/JohnGavin/llm/issues/312) | rv.id vs job_id bug in severity autoclose | Resolved by [#313](https://github.com/JohnGavin/llm/issues/313) |
+| [#316](https://github.com/JohnGavin/llm/issues/316) | ETL: populate closed_at + close_reason | Merged |
+| [#318](https://github.com/JohnGavin/llm/issues/318) | Agent worktree push to sibling branch — isolation breach | Resolved by [#326](https://github.com/JohnGavin/llm/issues/326) |
+| [#321](https://github.com/JohnGavin/llm/issues/321) | ETL: heuristic finding lineage | Merged |
+| [#326](https://github.com/JohnGavin/llm/issues/326) | post-verify + SendMessage caveat + cross-repo pattern | Merged |
+| [#332](https://github.com/JohnGavin/llm/issues/332) | ETL BINDER bug on narrow `--since` windows | Open — currently breaking ETL on narrow windows |
+
+The [open findings panel](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#open-findings)
+in the dashboard shows the live view of what is currently pending across all repos.
 
 ---
 
-## 8. Cross-project handoff {#handoff}
-
-::: {.callout-note}
-**In progress.** The 3-population model (fail / pass-with-comments / pass-clean),
-label idempotency, and dashboard handoff log are tracked in
-[#149](https://github.com/JohnGavin/llm/issues/149) and [#245](https://github.com/JohnGavin/llm/issues/245).
-:::
-
----
-
-## 9. Where things live {#cheat-sheet}
+## 8. Where things live {#cheat-sheet}
 
 Quick-reference table for anyone landing here from the dashboard or needing to
 locate a specific component.
@@ -219,40 +331,18 @@ locate a specific component.
 | Findings database | `~/.roborev/reviews.db` | SQLite + WAL; local-only, never pushed to git |
 | Autoclose counters | `~/.claude/.roborev_autoclose_counters.json` | Per-day, per-repo threshold observations for severity autoclose |
 | Post-commit hook | `<repo>/.git/hooks/post-commit` | Calls `roborev queue`; installed per-repo via `roborev setup` |
-| Poller script | `.claude/scripts/roborev_poll_merges.sh` | Catchup for missed commits; fired every 15 min via launchd |
-| Autoclose script | `.claude/scripts/roborev_autoclose.sh` | Weekly close of low-severity aged findings |
-| Severity autoclose | `.claude/scripts/severity_autoclose.sh` | Daily threshold-based close with reversibility log |
-| Launchd plists | `.claude/launchd/*.plist` → `~/Library/LaunchAgents/` | Daemon + poller + autoclose schedulers |
-| Resolution rule | `.claude/rules/roborev-resolution.md` | Triage protocol: close vs fix vs escalate |
-| Auto-delegation rule | `.claude/rules/auto-delegation.md` | How the orchestrator invokes roborev comment/close |
-| Metrics ETL | `.claude/scripts/roborev_metrics_etl.sh` | Extracts `reviews.db` → parquet for dashboard (#226) |
-| Dashboard | `llmtelemetry/vignettes/articles/roborev-pulse.html` | Published at `JohnGavin.github.io/llmtelemetry/...` |
+| Poller script | [`.claude/scripts/roborev_poll_merges.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1) | Catchup for missed commits; fired every 15 min via launchd |
+| Weekly autoclose | [`.claude/scripts/roborev_weekly_chain.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1) | Closes aged low-severity findings; Mon 09:15 |
+| Severity autoclose | [`.claude/scripts/roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1) | Daily threshold-based close; daily 09:30 |
+| Metrics ETL (shell) | [`.claude/scripts/roborev_metrics_etl.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1) | SQLite → unified.duckdb; daily 02:00 |
+| Metrics ETL (R) | [`.claude/scripts/roborev_metrics_etl.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.R#L1) | R side of ETL: lifecycle + lineage population |
+| Metrics schema | [`.claude/scripts/roborev_metrics_schema.sql`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_schema.sql#L1) | 7-table DuckDB schema for analytics |
+| Launchd plists | [`.claude/launchd/`](https://github.com/JohnGavin/llm/tree/main/.claude/launchd) `→ ~/Library/LaunchAgents/` | Daemon + poller + autoclose schedulers |
+| Resolution rule | [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1) | Triage protocol: close vs fix vs escalate |
+| Exclude patterns rule | [`.claude/rules/roborev-exclude-patterns.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-exclude-patterns.md#L1) | Why CHANGELOG.md and CURRENT_WORK.md are excluded |
+| Daily email | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | blastula digest sent daily at 08:00 |
+| Dashboard | [llmtelemetry/articles/roborev-pulse.html](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html) | Published Quarto site |
 | This vignette | `llm/vignettes/articles/roborev-architecture.qmd` | You are here |
-
----
-
-## 10. Open issues and roadmap {#roadmap}
-
-Current open work, in rough dependency order:
-
-| Issue | Title | Status |
-|-------|-------|--------|
-| [#149](https://github.com/JohnGavin/llm/issues/149) | Cross-repo handoff protocol | Open — design agreed, implementation in progress |
-| [#160](https://github.com/JohnGavin/llm/issues/160) | Severity model formalisation | Open — 5-tier scale in use, docs incomplete |
-| [#163](https://github.com/JohnGavin/llm/issues/163) | Closure-loop automation | Open — `closes roborev #N` convention not yet enforced |
-| [#181](https://github.com/JohnGavin/llm/issues/181) | Self-review backlog (T2 portability) | Open — hook portability across worktrees |
-| [#217](https://github.com/JohnGavin/llm/issues/217) | Poller redesign | Open — event-driven replacement for polling |
-| [#223](https://github.com/JohnGavin/llm/issues/223) | Verification block in reviews | Open — structured evidence block per finding |
-| [#224](https://github.com/JohnGavin/llm/issues/224) | Autoclose improvements | Open — edge cases in threshold calculation |
-| [#226](https://github.com/JohnGavin/llm/issues/226) | Metrics ETL to unified DuckDB | Open — foundation for dashboard data layer |
-| [#229](https://github.com/JohnGavin/llm/issues/229) | Governance and config spec | Open — `.roborev.toml` fields formally documented |
-| [#235](https://github.com/JohnGavin/llm/issues/235) | Session-end roborev summary | Open |
-| [#241](https://github.com/JohnGavin/llm/issues/241) | Merge gate proposal | Open — block merges with open ≥ High findings |
-| [#245](https://github.com/JohnGavin/llm/issues/245) | This vignette (sections 3–8) | Open — skeleton delivered, full content follow-up |
-| [#246](https://github.com/JohnGavin/llm/issues/246) | Hover-popup standard for vignettes | Open — companion CSS/JS work |
-
-The dashboard's [open findings panel](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#open-findings)
-shows a live view of what is currently pending across all repos.
 
 ---
 
@@ -260,21 +350,31 @@ shows a live view of what is currently pending across all repos.
 
 ### What this vignette computes
 
-This vignette is a narrative architecture document — it does not compute values
-from the targets pipeline. It reads no `safe_tar_read()` targets. The content
-is static prose, a Mermaid flowchart, and reference tables describing the roborev
-system as configured in the `llm` repository. Dynamic metrics (addressed rate,
-time-to-close, cost per finding) will be added in a follow-up PR once the ETL
-pipeline (#226) produces stable targets.
+This is a narrative architecture document. It does not compute values from the
+`targets` pipeline. The content is static prose, Mermaid diagrams, and reference
+tables describing the roborev system as configured in the `llm` repository. The
+colour palette object `PALETTE` is defined in the setup chunk for reuse in any
+future chart additions. Dynamic metrics (addressed rate, median
+<abbr title="Time To Close: wall-clock duration from when a finding is created to when it is closed">TTC</abbr>,
+cost per finding by agent) will be added in a follow-up once
+[#226](https://github.com/JohnGavin/llm/issues/226) and
+[#284](https://github.com/JohnGavin/llm/issues/284) produce stable
+`safe_tar_read()` targets.
 
 ### Data sources
 
-- Architecture diagram: drawn from reading `.claude/scripts/roborev_*.sh`,
-  `.claude/launchd/*.plist`, `.claude/rules/roborev-resolution.md`, and
-  `auto-delegation.md` — all in the `llm` repository
-- Cheat-sheet table (section 9): hand-verified against the current filesystem
-  layout of the `llm` repository as of 2026-05-23
-- Roadmap table (section 10): constructed from open GitHub issues in `JohnGavin/llm`
+- Architecture diagram: drawn from reading
+  [`.claude/scripts/roborev_*.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1),
+  [`.claude/launchd/*.plist`](https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-metrics-etl.plist#L1),
+  [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1),
+  and [`auto-delegation.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1)
+  — all in the `llm` repository
+- Component map (section 3) and cheat-sheet (section 8): hand-verified against
+  the current filesystem layout as of 2026-05-30
+- Roadmap table (section 7): constructed from open GitHub issues in `JohnGavin/llm`
+- Closure mechanisms (section 4): derived from reading
+  [`roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L748)
+  (clean-verdict branch at line 748) and issue summaries for #311, #313, #316
 
 ### AI disclosure
 
