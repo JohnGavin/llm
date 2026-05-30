@@ -16,6 +16,10 @@
         <key>Minute</key>
         <integer>45</integer>
     </dict>
+    <!-- StandardInPath=/dev/null: same SIGTTIN/state-T fix as roborev-poll-merges
+         (llm#153); wiki_health_check.sh uses < <(...) process subst. -->
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
     <key>StandardOutPath</key>
     <string>/Users/johngavin/.claude/logs/wiki_health_pulse.out</string>
     <key>StandardErrorPath</key>

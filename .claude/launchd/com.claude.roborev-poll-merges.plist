@@ -87,6 +87,16 @@
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>0</integer></dict>
     </array>
+    <!--
+      StandardInPath=/dev/null prevents SIGTTIN/SIGTTOU stopping the process
+      (state T) when bash's process substitution < <(...) opens a pipe under
+      bash 3.2 without a controlling terminal. Root cause: launchd by default
+      provides an open stdin fd; bash job-control interprets a read attempt on
+      that fd as a background tty-read and sends SIGTSTP/SIGTTIN → state T.
+      Setting stdin to /dev/null severs that pathway. Fixes llm#153.
+    -->
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
     <key>StandardOutPath</key>
     <string>/Users/johngavin/.claude/logs/roborev_poll_merges.out</string>
     <key>StandardErrorPath</key>
