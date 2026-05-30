@@ -78,12 +78,12 @@ run_email_dry_run <- function(fixture, extra_env = character(0)) {
     json_path
   )
 
+  # Primary: installed package path (CI). Fallback: dev-time source tree.
   email_script <- system.file(
-    ".claude/scripts/send_roborev_email.R",
+    "scripts/send_roborev_email.R",
     package = "llm",
     mustWork = FALSE
   )
-  # Fallback: resolve from tests/ location
   if (!nzchar(email_script) || !file.exists(email_script)) {
     email_script <- normalizePath(
       file.path(dirname(dirname(testthat::test_path())),
@@ -91,7 +91,10 @@ run_email_dry_run <- function(fixture, extra_env = character(0)) {
       mustWork = FALSE
     )
   }
-  skip_if_not(file.exists(email_script), "send_roborev_email.R not found")
+  expect_true(
+    nzchar(email_script) && file.exists(email_script),
+    info = "send_roborev_email.R must be present (via system.file or dev-time fallback)"
+  )
 
   env_vars <- c(
     "EMAIL_DRY_RUN=1",
@@ -175,12 +178,23 @@ test_that("dry-run output contains outlier review IDs", {
 test_that("script exits non-zero when no JSON found in empty dir", {
   skip_if_not_installed("blastula")
 
-  email_script <- normalizePath(
-    file.path(dirname(dirname(testthat::test_path())),
-              ".claude", "scripts", "send_roborev_email.R"),
+  # Primary: installed package path (CI). Fallback: dev-time source tree.
+  email_script <- system.file(
+    "scripts/send_roborev_email.R",
+    package = "llm",
     mustWork = FALSE
   )
-  skip_if_not(file.exists(email_script), "send_roborev_email.R not found")
+  if (!nzchar(email_script) || !file.exists(email_script)) {
+    email_script <- normalizePath(
+      file.path(dirname(dirname(testthat::test_path())),
+                ".claude", "scripts", "send_roborev_email.R"),
+      mustWork = FALSE
+    )
+  }
+  expect_true(
+    nzchar(email_script) && file.exists(email_script),
+    info = "send_roborev_email.R must be present (via system.file or dev-time fallback)"
+  )
 
   empty_dir <- tempfile("roborev_empty_")
   dir.create(empty_dir)
