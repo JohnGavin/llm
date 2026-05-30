@@ -32,15 +32,25 @@ CREATE TABLE IF NOT EXISTS self_review_findings_stage1 (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- DETECTOR 1: Stuck loop — repeated identical tool calls
+-- DETECTOR 1: Stuck loop — agents dispatched multiple times but never completed
 --
--- Proxy: same agent_type dispatched ≥ 3 times in one session with status 'failed'
--- (hook_events and agent_runs don't store raw tool inputs; we use agent repetition
---  as the available signal until a richer tool-call log is added in Stage 2.)
+-- Fix (#269): The original query used no status filter and matched status='done'
+-- rows, producing false positives whenever the same agent type was legitimately
+-- dispatched ≥3 times in a session (e.g., three fixer agents on different tasks).
+-- status='failed' was referenced in comments but that value never appears in the
+-- ETL because ended_at is never written back — every completed agent stays
+-- status='running' or 'done' depending on ETL version.
 --
--- Threshold: ≥ 3 identical (session_id, agent_type, status) rows
+-- Corrected definition of "stuck":
+--   status = 'running' AND ended_at IS NULL AND started_at < NOW() - 1 HOUR
+--   (i.e., an agent that started over an hour ago and has not finished)
+-- The session_id + agent_type combination appearing ≥3 times under those
+-- conditions is the genuine stuck-loop signal.
+--
+-- Threshold: ≥ 3 such rows per (session_id, agent_type)
 -- Severity: major
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Ref: #269 — false positives from status='done' rows matching the old query
 WITH stuck_loop_candidates AS (
     SELECT
         session_id,
@@ -50,7 +60,15 @@ WITH stuck_loop_candidates AS (
         MIN(started_at) AS first_call,
         MAX(started_at) AS last_call
     FROM agent_runs
-    WHERE session_id IS NOT NULL
+    WHERE
+        session_id IS NOT NULL
+        -- Only flag agents that are still marked running and have no end time.
+        -- Completed agents (status='done', ended_at IS NOT NULL) are not stuck.
+        -- (#269: previous version had no status filter; matched status='done')
+        AND status = 'running'
+        AND ended_at IS NULL
+        -- Must have been running for > 1 hour to avoid flagging in-flight agents.
+        AND started_at < current_timestamp - INTERVAL '1' HOUR
     GROUP BY session_id, agent_type, status
     HAVING COUNT(*) >= 3
 ),
@@ -148,16 +166,25 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- Source: errors table, grouped by (source, day).
 -- Cross-referenced against agent_runs to estimate total tool calls per day.
 --
+-- Fix (#269): The original query had no time-window on the errors table, so a
+-- single old error (e.g., 2026-04-20 signal_notes) produced a 100% error rate
+-- finding indefinitely. Added WHERE logged_at >= NOW() - 7 DAYS on both CTEs
+-- so only the rolling 7-day window is evaluated.
+--
 -- Threshold: error_count / max(total_calls, 1) > 0.20 (20%)
 -- Severity: major (>= 50%) or minor (20-50%)
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Ref: #269 — absolute counts produced stale findings from historical data
 WITH daily_errors AS (
     SELECT
         CAST(logged_at AS DATE)     AS day_bucket,
         source                      AS tool_name,
         COUNT(*)                    AS error_count
     FROM errors
-    WHERE session_id IS NOT NULL
+    WHERE
+        session_id IS NOT NULL
+        -- Rate-window: only consider the last 7 days (#269 fix)
+        AND logged_at >= current_timestamp - INTERVAL '7' DAY
     GROUP BY CAST(logged_at AS DATE), source
 ),
 daily_agent_calls AS (
@@ -165,7 +192,10 @@ daily_agent_calls AS (
         CAST(started_at AS DATE)    AS day_bucket,
         COUNT(*)                    AS total_calls
     FROM agent_runs
-    WHERE session_id IS NOT NULL
+    WHERE
+        session_id IS NOT NULL
+        -- Rate-window: only consider the last 7 days (#269 fix)
+        AND started_at >= current_timestamp - INTERVAL '7' DAY
     GROUP BY CAST(started_at AS DATE)
 ),
 error_rates AS (
