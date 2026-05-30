@@ -1,5 +1,6 @@
 ---
 title: "LLM-assisted projects: practical tips"
+image: ../../man/figures/vignette-llm-assisted-tips.svg
 format:
   html:
     toc: true

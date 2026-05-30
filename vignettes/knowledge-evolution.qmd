@@ -1,5 +1,6 @@
 ---
 title: "Knowledge Base Evolution Dashboard"
+image: man/figures/vignette-knowledge-evolution.svg
 format:
   html:
     page-layout: full

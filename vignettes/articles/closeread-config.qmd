@@ -1,5 +1,6 @@
 ---
 title: "The Claude Code Config Stack"
+image: ../../man/figures/vignette-closeread-config.svg
 format:
   closeread-html:
     toc: false

@@ -8,13 +8,19 @@
 ##   the dark palette uses literal #000000 background and high-contrast
 ##   foreground colours (WCAG AA on black). Light palette is cosmo-aligned.
 ##
-## Logos: deliberately omitted for now — tracked separately. See follow-up
-##   issue filed alongside this commit.
+## Logos: project mark at assets/logo.svg (fallback for all vignettes).
+##   Per-vignette logos at man/figures/vignette-<slug>.svg, referenced
+##   via each vignette's `image:` frontmatter field. See llm#152.
 
 meta:
   name: llm
   link:
     home: https://johngavin.github.io/llm/
+
+logo:
+  images:
+    light: assets/logo.svg
+    dark: assets/logo.svg
 
 color:
   palette:

@@ -8,6 +8,10 @@ project:
 
 website:
   title: "LLM Project"
+  image: assets/logo.svg
+  open-graph: true
+  twitter-card:
+    card-style: summary
   navbar:
     background: dark
     left:
