@@ -9,6 +9,15 @@
 #     #!/usr/bin/env bash so the script runs on Intel Macs and non-Homebrew
 #     setups. PATH export ensures launchd's bare env finds coreutils binaries.
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# Wire codex_with_fallback.sh into roborev's codex calls (#365):
+# Prepend the codex_shim directory so roborev resolves 'codex' to our
+# fallback wrapper (429→gemini + JSONL telemetry). The shim is in the
+# same repo as this script; resolve it relative to this file's location.
+_SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ -x "${_SCRIPT_DIR}/codex_shim/codex" ]; then
+  export PATH="${_SCRIPT_DIR}/codex_shim:$PATH"
+fi
+unset _SCRIPT_DIR
 # hook missed (remote-merged PRs don't fire local post-commit).
 #
 # For each repo in ~/.roborev/reviews.db's repos table:
