@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
   warning   = FALSE,
   results   = "asis"
 )
-source(here::here("R", "hover_popup_helper.R"))
+library(llm)
 ```
 
 This vignette demonstrates the hover-popup standard introduced in
@@ -85,10 +85,10 @@ Include the shared partial at the top of every vignette that uses `tt()`:
 {{< include /_includes/hover-popups.qmd >}}
 ````
 
-In a knitr chunk with `results = "asis"`, source the helper and call `tt()`:
+In a knitr chunk with `results = "asis"`, load the package and call `tt()`:
 
 ```r
-source(here::here("R", "hover_popup_helper.R"))
+library(llm)
 cat(tt(
   "LLM",
   paste0(
@@ -116,7 +116,7 @@ introduced in Issue #246.
 
 ### Data sources
 
-- `R/hover_popup_helper.R`: the `tt()` function sourced directly at render time.
+- `llm::tt()`: the hover-popup helper exported from the `llm` package; loaded via `library(llm)` at render time.
 - `_includes/hover-popups.qmd`: the shared Tippy.js CSS + JS partial, included
   via Quarto's `{{< include >}}` directive.
 
