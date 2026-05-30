@@ -142,16 +142,39 @@ for p in pending:
   fi
 fi
 
+# ── Resolve stable session ID (llm#273) ──────────────────────────────────────
+# Mirrors the resolution in llmtelemetry_emit.sh so both hooks agree on the
+# session ID when checking per-session sentinels.
+# Priority: CLAUDE_SESSION_ID → PPID-anchored file → .current_session
+_STOP_SESSION_ID="${CLAUDE_SESSION_ID:-}"
+_STOP_LOG_DIR="$CLAUDE_RUNTIME_ROOT/logs"
+_STOP_PPID_ANCHOR="$_STOP_LOG_DIR/.llmtelemetry_ppid_session.${PPID:-0}"
+if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_PPID_ANCHOR" ]; then
+  _STOP_SESSION_ID=$(cat "$_STOP_PPID_ANCHOR" 2>/dev/null || echo "")
+fi
+if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_LOG_DIR/.current_session" ]; then
+  _STOP_SESSION_ID=$(cat "$_STOP_LOG_DIR/.current_session" 2>/dev/null || echo "")
+fi
+
 # ── Pattern Detection (Phase 1 Validation, Option 4 Hybrid) ──────────────
 # IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
 # Running pattern detection (paid Opus API call) on every response would be
-# a massive cost regression. We gate on a sentinel file that /bye writes
+# a massive cost regression. We gate on a per-session sentinel that /bye writes
 # before invoking the Stop hook. Non-/bye stops skip this block entirely.
-# The sentinel (~/.claude/.bye-requested) is deleted immediately after use
-# so a crash or abort does not leave a stale sentinel.
-_BYE_SENTINEL="${CLAUDE_RUNTIME_ROOT}/.bye-requested"
-if [ -f "$_BYE_SENTINEL" ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh" ]; then
-  rm -f "$_BYE_SENTINEL"  # consume sentinel immediately — one-shot
+# The per-session sentinel is deleted immediately after use (llm#273).
+# Backward-compat: also accept the legacy global sentinel when no per-session ID.
+_BYE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-requested.${_STOP_SESSION_ID}"
+_BYE_SENTINEL_GLOBAL="${CLAUDE_RUNTIME_ROOT}/.bye-requested"
+_bye_detected=0
+if [ -n "$_STOP_SESSION_ID" ] && [ -f "$_BYE_SENTINEL_PS" ]; then
+  rm -f "$_BYE_SENTINEL_PS"  # consume per-session sentinel — one-shot
+  _bye_detected=1
+elif [ -f "$_BYE_SENTINEL_GLOBAL" ]; then
+  rm -f "$_BYE_SENTINEL_GLOBAL"  # consume global sentinel — one-shot (backward-compat)
+  _bye_detected=1
+fi
+
+if [ "$_bye_detected" -eq 1 ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh" ]; then
   TRANSCRIPT=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/*.jsonl 2>/dev/null | head -1)
   if [ -n "$TRANSCRIPT" ]; then
     PATTERNS=$(timeout 30 "${CLAUDE_DIR}/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
@@ -161,7 +184,7 @@ if [ -f "$_BYE_SENTINEL" ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh" ];
       echo ""
       # No interactive read — hooks run non-interactively; auto-schedule skillify.
       echo "$TRANSCRIPT" > "${CLAUDE_RUNTIME_ROOT}/.pending_skillify"
-      echo "✓ Patterns detected — /skillify will run at next session start."
+      echo "Patterns detected — /skillify will run at next session start."
     fi
   fi
 fi
@@ -172,19 +195,21 @@ fi
 # Logs: ~/.claude/logs/session_end_refine.log
 #
 # IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
-# We gate this block on the _BYE_SENTINEL (same mechanism used by the
-# pattern-detection block above). The sentinel is written by the /bye skill
-# before the Stop hook fires, and consumed (rm -f) by the pattern-detection
-# block above. Since pattern detection consumes it first, we re-check by
-# looking for a second sentinel written specifically for the refine step.
-#
-# Sentinel path:   ~/.claude/.bye-session-end-refine
-# Written by:      /bye skill (session_end.md)
-# Consumed below:  rm -f immediately after reading — one-shot per /bye
-_REFINE_SENTINEL="${CLAUDE_RUNTIME_ROOT}/.bye-session-end-refine"
+# Gated on a per-session sentinel (llm#273): ~/.claude/.bye-session-end-refine.<SID>
+# Written by /bye skill; consumed here immediately — one-shot per /bye.
+# Backward-compat: also accept the legacy global sentinel.
+_REFINE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-session-end-refine.${_STOP_SESSION_ID}"
+_REFINE_SENTINEL_GLOBAL="${CLAUDE_RUNTIME_ROOT}/.bye-session-end-refine"
 _REFINE_SCRIPT="$CLAUDE_DIR/scripts/session_end_refine.sh"
-if [ -f "$_REFINE_SENTINEL" ] && [ -x "$_REFINE_SCRIPT" ]; then
-  rm -f "$_REFINE_SENTINEL"  # consume sentinel immediately — one-shot
+_refine_sentinel_found=0
+if [ -n "$_STOP_SESSION_ID" ] && [ -f "$_REFINE_SENTINEL_PS" ]; then
+  rm -f "$_REFINE_SENTINEL_PS"  # consume per-session sentinel — one-shot
+  _refine_sentinel_found=1
+elif [ -f "$_REFINE_SENTINEL_GLOBAL" ]; then
+  rm -f "$_REFINE_SENTINEL_GLOBAL"  # consume global sentinel — one-shot (backward-compat)
+  _refine_sentinel_found=1
+fi
+if [ "$_refine_sentinel_found" -eq 1 ] && [ -x "$_REFINE_SCRIPT" ]; then
   # Soak ended 2026-05-27 (7 days after PR #196 merged 2026-05-20). Prefix removed per #202.
   # Opt-out: set SKIP_SESSION_END_REFINE=1 before /bye, or add session_end_refine=false to .roborev.toml
   nohup "$_REFINE_SCRIPT" >/dev/null 2>&1 &
