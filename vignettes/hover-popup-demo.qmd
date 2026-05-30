@@ -1,5 +1,6 @@
 ---
 title: "Hover-Popup Standard: Demo"
+image: man/figures/vignette-hover-popup-demo.svg
 author: "John Gavin"
 date: "`r Sys.Date()`"
 format:

@@ -1,5 +1,6 @@
 ---
 title: "Project Telemetry"
+image: man/figures/vignette-telemetry.svg
 author: "John Gavin"
 date: "`r Sys.Date()`"
 format:

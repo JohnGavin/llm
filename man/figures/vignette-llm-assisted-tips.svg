@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-labelledby="title-la">
+  <title id="title-la">llm-assisted-tips vignette logo — lightbulb / practical advice</title>
+  <circle cx="100" cy="100" r="96" fill="#5edaff"/>
+  <!-- Lightbulb shape -->
+  <path d="M100 62 C80 62 66 76 66 94 C66 107 74 118 86 124 L86 134 C86 137 88 139 91 139 L109 139 C112 139 114 137 114 134 L114 124 C126 118 134 107 134 94 C134 76 120 62 100 62 Z" fill="#000000" opacity="0.25"/>
+  <rect x="88" y="139" width="24" height="5" rx="2" fill="#000000" opacity="0.20"/>
+  <text x="100" y="52" font-family="ui-monospace,monospace" font-size="20" font-weight="700" fill="#000000" text-anchor="middle" opacity="0.7">LA</text>
+  <text x="100" y="168" font-family="system-ui,sans-serif" font-size="12" fill="#000000" text-anchor="middle" opacity="0.7">LLM Tips</text>
+</svg>

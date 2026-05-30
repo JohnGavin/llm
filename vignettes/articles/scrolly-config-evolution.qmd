@@ -1,5 +1,6 @@
 ---
 title: "How `.claude/` grew: a scroll through config files"
+image: ../../man/figures/vignette-scrolly-config-evolution.svg
 format:
   closeread-html:
     toc: false
