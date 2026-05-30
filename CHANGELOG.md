@@ -4,6 +4,17 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-30 (Stage 1 #195 — archive one-off MDs + remove stray artifacts)
+
+Stage 1 of issue #195 (tidy top-level directory). Four one-off markdown files
+archived to `archive/2026-05-*.md` via `git mv` (history preserved). One stray
+test script (`test_cross_modal_eval.sh`) also archived. One stray output file
+(`test_output.txt`) removed via `git rm`. Untracked files (`nohup.out`,
+`Rplots.pdf`, `.DS_Store`) left in place per bash-safety rule (not tracked).
+`.llmtelemetry_emit` retained — intentional empty hook marker. `.Rbuildignore`
+already covers `archive/`. Stage 2 (pkg/ subfolder move) deferred to separate
+session.
+
 ## 2026-05-24 (Session 7 pt.2 — roborev report planning + data-architecture spike)
 
 Planning/triage continuation after the Quarto fixes. No package code changed; output is an
