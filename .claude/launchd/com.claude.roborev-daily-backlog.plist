@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.roborev-daily-backlog.plist
+     Nightly backlog aggregator: iterates all registered projects in
+     ~/.roborev/reviews.db and refreshes per-project .roborev/backlog.md files,
+     then emits a global summary at ~/.claude/logs/roborev_daily_backlog/<date>.md.
+
+     Runs at 02:15 local time — 15 minutes after the metrics-ETL job (02:00)
+     to avoid DB contention.  Implements Component 6 of JohnGavin/llm#163.
+
+     Install:
+       cp ~/docs_gh/llm/.claude/launchd/com.claude.roborev-daily-backlog.plist \
+          ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
+       rm ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
+
+     Manual run:
+       ~/.claude/scripts/roborev_daily_backlog_aggregator.sh
+     Dry-run:
+       ~/.claude/scripts/roborev_daily_backlog_aggregator.sh --dry-run
+
+     Tracked in llm#355.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-daily-backlog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_daily_backlog_aggregator.sh</string>
+    </array>
+
+    <!-- PATH must include /usr/local/bin (roborev binary) and /usr/bin (python3, sqlite3) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Nightly at 02:15 local (offset from metrics-ETL at 02:00) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <!-- StandardInPath=/dev/null: prevents SIGTTIN/state-T hang when the
+         script (or a subprocess) reads from stdin while running under launchd.
+         Same fix as com.claude.roborev-autoclose and com.claude.roborev-poll-merges
+         (llm#342 lesson). -->
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_daily_backlog_aggregator.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_daily_backlog_aggregator.err</string>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Retry after 60s if job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>
