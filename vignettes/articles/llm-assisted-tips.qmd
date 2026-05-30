@@ -7,6 +7,8 @@ format:
     code-summary: "Show code"
 ---
 
+{{< include /_includes/hover-popups.qmd >}}
+
 A short set of working principles I've converged on after a stretch of building R packages, dashboards, and analyses with Claude Code as a daily collaborator. None of these are novel — they're cribbed and consolidated from people much further along — but they're the ones that actually changed how I work.
 
 ## Three load-bearing principles

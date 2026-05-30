@@ -13,6 +13,8 @@ execute:
   message: false
 ---
 
+{{< include /_includes/hover-popups.qmd >}}
+
 <style>
 .cr-section.sidebar-left .cr-sidebar-col { flex: 0 0 55% !important; max-width: 55% !important; }
 .cr-section.sidebar-left .cr-narrative-col { flex: 0 0 45% !important; max-width: 45% !important; }
