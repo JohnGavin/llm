@@ -255,8 +255,10 @@ check_hover_popups <- function(html_dir       = "docs",
       # Unescape &quot; so sentence splitting works on punctuation
       body <- gsub("&quot;", '"', body, fixed = TRUE)
 
-      # Sentence count: split on [.!?] followed by whitespace or end
-      parts       <- strsplit(body, "[.!?]+\\s*")[[1L]]
+      # Sentence count: strip HTML tags first so URL dots (e.g. .com) are not
+      # counted as sentence terminators, then split on terminal punctuation.
+      body_text   <- gsub("<[^>]+>", "", body)
+      parts       <- strsplit(body_text, "[.!?]+\\s*")[[1L]]
       n_sentences <- sum(nzchar(trimws(parts)))
 
       has_link <- grepl("<a[[:space:]]+href=", body, perl = TRUE)

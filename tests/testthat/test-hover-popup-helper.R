@@ -74,3 +74,32 @@ test_that("tt() wraps term text verbatim (term not HTML-escaped)", {
   result <- tt("CI/CD", "Continuous integration. See <a href='https://example.com'>ref</a>.")
   expect_true(grepl(">CI/CD<", result, fixed = TRUE))
 })
+
+test_that("tt() raises an error when body has fewer than 2 sentences", {
+  source(.helper_path, local = TRUE)
+  # One sentence — should be rejected
+  expect_error(
+    tt("term", "Only one sentence here with <a href='https://example.com'>link</a>."),
+    regexp = "at least 2 sentences"
+  )
+})
+
+test_that("tt() raises an error when body has no <a href> anchor", {
+  source(.helper_path, local = TRUE)
+  # Two sentences but no link — should be rejected
+  expect_error(
+    tt("term", "First sentence. Second sentence without any link."),
+    regexp = "at least one <a href"
+  )
+})
+
+test_that("tt() accepts body with exactly 2 sentences and one link", {
+  source(.helper_path, local = TRUE)
+  # Minimum compliant body
+  result <- tt(
+    "API",
+    "Application Programming Interface. Used to integrate external services, see <a href='https://example.com/api'>docs</a>."
+  )
+  expect_true(grepl('class="tt"', result, fixed = TRUE))
+  expect_true(grepl("href=", result, fixed = TRUE))
+})
