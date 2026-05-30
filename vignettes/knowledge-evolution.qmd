@@ -368,6 +368,77 @@ Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw s
 
 *Last updated: `r Sys.time()`*
 
+## Architecture & Intent
+
+The knowledge base (KB) is a **private "second brain"** — a local-only git repository at `~/docs_gh/llm/knowledge/` that accumulates raw source material, distilled wiki pages, and outputs, all under a `PRIVATE` marker that blocks any accidental push to GitHub (per the [`knowledge-base-wiki`](https://github.com/JohnGavin/llm/blob/main/.claude/skills/knowledge-base-wiki.md) skill and the [`wiki-storage-policy`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/wiki-conventions.md#L17) rule). The dashboard on this page and the daily [Knowledge Base (KB) digest email](https://github.com/JohnGavin/llm/issues/298) summarise *how the KB grows* — tracking counts, provenance coverage, and topic connections — without ever exposing its contents. This is the central design constraint: CI pipelines, dashboards, and emails see aggregates and titles only; raw bodies never cross the local boundary.
+
+### Knowledge Base Data Flow
+
+The diagram below shows the three-layer structure and where the privacy boundary sits. Clickable nodes link to the relevant source files and rules.
+
+```{mermaid}
+%%| fig-alt: "Knowledge base data flow: raw (append-only) feeds wiki (provenance + cross-links) feeds outputs. A privacy boundary prevents raw content from reaching CI, the dashboard, or the digest email. knowledge_pulse.sh extracts aggregate metrics only."
+
+flowchart LR
+  subgraph LOCAL ["🔒 Local only (PRIVATE + pre-push block)"]
+    RAW["raw/\n(append-only)"]
+    WIKI["wiki/\n(provenance + [[links]])"]
+    OUT["outputs/"]
+    RAW --> WIKI
+    WIKI --> OUT
+  end
+
+  subgraph METRICS ["Aggregate metrics only"]
+    PULSE["knowledge_pulse.sh\n(counts · titles · themes)"]
+    RDS["vig_kb_stats.rds\n(anonymised aggregates)"]
+    PULSE --> RDS
+  end
+
+  WIKI -->|"metrics only\n(no bodies)"| PULSE
+
+  subgraph PUBLISH ["Public / CI"]
+    DASH["KB-evolution\ndashboard"]
+    EMAIL["daily digest\n(titles + counts)"]
+    RDS --> DASH
+    PULSE -->|"summaries only"| EMAIL
+  end
+
+  PRIVACY["🚫 Raw content\nNEVER here"]
+  PUBLISH -.->|blocked| PRIVACY
+
+  click RAW "https://github.com/JohnGavin/llm/blob/main/.claude/rules/wiki-conventions.md#L44" _blank
+  click WIKI "https://github.com/JohnGavin/llm/blob/main/.claude/rules/wiki-conventions.md#L63" _blank
+  click PULSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/knowledge_pulse.sh#L1" _blank
+  click RDS "https://github.com/JohnGavin/llm/issues/122" _blank
+  click EMAIL "https://github.com/JohnGavin/llm/issues/298" _blank
+  click DASH "https://johngavin.github.io/llm/articles/knowledge-evolution.html" _blank
+```
+
+### Key ideas for a new reader
+
+- **Local-only git with hard block**: `knowledge/` has no remote and a `pre-push` hook that aborts if the `PRIVATE` marker is present — a push to GitHub is structurally impossible, not just discouraged.
+- **`raw/` is append-only**: files in `raw/` are write-once; editing an existing file corrupts the provenance chain and creates an AI-output-as-input feedback loop. The `file_protection.sh` hook enforces this.
+- **Every wiki page requires `## Sources`**: a page without a `## Sources` section is flagged by `/wiki-health` and the T1 on-write hook. Sources link back to specific lines in `raw/` files.
+- **AI-inferred claims are tagged `> ⚠ AI-inferred:`**: this marks synthesised conclusions that are not direct quotes, allowing readers (and future wiki authors) to distinguish evidence strength.
+- **Confidence markers can be downgraded**: a claim promoted to "source-stated" can be demoted back to "AI-inferred" if closer inspection reveals it was a synthesis. The health metric targets >70% source-stated, <20% AI-inferred.
+- **The dashboard and digest ship aggregates and titles, never bodies**: `knowledge_pulse.sh` records counts, line deltas, and page-title lists — not page content. The committed `vig_kb_stats.rds` anonymises even file paths (`page_001`, `page_002`, …).
+
+### Questions a new reader should ask
+
+- *What is private vs publishable here?* Counts, titles, and themes are publishable. Page bodies, raw source text, and any Personally Identifiable Information (PII) within raw files are strictly local.
+- *Where did this claim come from?* Every wiki claim should trace to a `## Sources` entry linking to a `raw/` file with a line anchor. If it does not, the provenance is incomplete.
+- *How confident is it?* Look for `> ⚠ AI-inferred:` (synthesised) vs unmarked text (direct quote/paraphrase). The `consensus_level` frontmatter field gives the page-level view.
+- *Why does CI show aggregates only?* Because `knowledge/` is gitignored — CI never sees the file contents. The dashboard reads the committed `vig_kb_stats.rds`, which ships aggregate-only stats from the last local `tar_make()` run.
+- *How is the digest computed without leaking content?* [`knowledge_pulse.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/knowledge_pulse.sh#L1) runs locally, extracts only metrics and titles, and writes them to `~/.claude/logs/knowledge/*.parquet`. The digest email reads those summaries — raw bodies never enter the email pipeline.
+
+### Structure & application
+
+Raw notes or transcripts land in `raw/` (append-only). The `wiki-curator` agent distils these into `wiki/*.md` pages, each with frontmatter, a `## Sources` section, and `[[topic]]` cross-links. `knowledge_pulse.sh` runs nightly and writes a row-per-metric snapshot to a local Parquet file. `tar_make()` reads those snapshots (or the live file counts as fallback) and writes `vig_kb_stats.rds` into `inst/extdata/vignettes/`. This vignette reads that committed RDS — so the dashboard works in CI without ever touching the local KB.
+
+A daily digest row maps directly to a dashboard panel: the "Wiki Pages" KPI comes from `vig_kb_stats.rds$n_pages`; the "Evolution" tab time-series comes from `~/.claude/logs/knowledge/*.parquet`; the "Confidence" bar comes from the `quality` category rows in the same Parquet files. Running `/wiki-health` triggers the same provenance and staleness checks that feed both the digest and the dashboard.
+
+**Related:** [#298 KB digest email](https://github.com/JohnGavin/llm/issues/298) · [#301 config-side sibling](https://github.com/JohnGavin/llm/issues/301) · [`knowledge-base-wiki` skill](https://github.com/JohnGavin/llm/blob/main/.claude/skills/knowledge-base-wiki.md) · [`wiki-storage-policy` rule](https://github.com/JohnGavin/llm/blob/main/.claude/rules/wiki-conventions.md#L17) · `/wiki-health` command
+
 ## Methodology
 
 ### What this vignette computes
