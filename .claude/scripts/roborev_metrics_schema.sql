@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS roborev_finding_lineage (
 CREATE OR REPLACE VIEW roborev_finding_lineage_summary AS
 SELECT
   fl.finding_id,
-  (SELECT rp.name
+  (SELECT rl.repo
    FROM roborev_review_lifecycle rl
    JOIN roborev_finding_lineage fl2 ON fl2.finding_id = rl.review_id
                                     AND fl2.attempt_n = 1
