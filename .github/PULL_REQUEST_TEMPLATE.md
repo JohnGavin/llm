@@ -14,10 +14,9 @@
 - [ ] SELFTEST=1 passes for any new `.claude/scripts/*.sh`
 - [ ] `devtools::test()` passes (if R package code changed)
 
-## roborev checklist
+## Reviewer checklist
 
-- [ ] `roborev_merge_gate.sh <pr#>` ran — no unresolved High/Critical findings on PR commits
-  (run: `~/.claude/scripts/roborev_merge_gate.sh <pr#>`)
+- [ ] All related roborev findings ≥ HIGH severity are either closed (cited as `closes roborev #N`) or acked (`acks roborev #N --reason "…"`). See `bin/roborev_merge_gate.sh <pr#>`.
 
 ## Notes
 
