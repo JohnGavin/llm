@@ -471,13 +471,57 @@ Set `SKIP_MERGE_GATE=1` in your shell environment to bypass the gate in dry-run 
 (the gate script exits 0 immediately). For enforce mode the kill switch is simply
 not invoking `--enforce`.
 
+## Merge-gate policy (#241, pilot HIGH)
+
+> No PR merges to `main` while any related roborev finding at severity ≥ `review_min_severity`
+> (currently `High` in the pilot) is `closed=0` AND not cited by a `closes roborev #N`
+> (or `acks roborev #N --reason …`) line in the PR's commits.
+
+### Definitions
+
+| Term | Meaning |
+|------|---------|
+| **Related** | A roborev review whose `commit_sha` is in `git log origin/main..<head>` (commit-scope, Alternative C from #241 — tightest scope, avoids day-1 backlog freeze) |
+| **Resolved** | `closed=1` in `~/.roborev/reviews.db` AND has a commit message citing it — OR — an explicit `acks roborev #N --reason "…"` commit |
+| **Threshold** | Pilot: `High` (enforced by `bin/roborev_merge_gate.sh`). Per-repo override via `.roborev.toml` `review_min_severity` in Phase 3. |
+| **Acked** | Waiver written to `~/.roborev/acks.jsonl` via `roborev_ack.sh --apply` with a written reason. Does NOT close the finding; closure is via fix-commit + auto-verifier (#163). |
+
+### Pilot escalation path
+
+1. **Pilot (now):** `bin/roborev_merge_gate.sh` enforces HIGH only. Run before every merge.
+2. **After 1 week of signal:** review `~/.claude/logs/merge_gate.log`. If block rate is low, escalate threshold to MEDIUM.
+3. **Phase 3 (per-repo):** read threshold from `.roborev.toml` `review_min_severity` instead of hardcoded High. Different projects can set different thresholds.
+
+### Local invocation
+
+```bash
+# Check before merging PR #253
+bin/roborev_merge_gate.sh 253
+
+# With explicit severity threshold
+bin/roborev_merge_gate.sh --min-severity High 253
+
+# JSON output (for scripting)
+bin/roborev_merge_gate.sh --json 253
+
+# Explicit repo (when not in a git checkout)
+bin/roborev_merge_gate.sh --repo JohnGavin/llm 253
+```
+
+Exit codes: `0` = PASS (no unresolved findings), `1` = BLOCK (unresolved findings found).
+
+The `bin/` script exits 1 on block (enforcing mode). The predecessor
+`~/.claude/scripts/roborev_merge_gate.sh` is dry-run only (always exits 0) and
+is kept for week-1 signal logging. See that script's header for `--dry-run` /
+`--enforce` flags.
+
 ## Related
 
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol
 - llm#110 — tracking issue
-- llm#241 — merge gate policy (Merge Gate section above)
+- llm#241 — merge gate policy (Merge Gate sections above)
 - llm#163 — closure-loop automation (Auto-Verifier section above — Component 4, Slice 3)
 - llm#224 — severity autoclose (sibling policy)
 - llm#217 — poller schedule + ephemeral-repos cleanup
