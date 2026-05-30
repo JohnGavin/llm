@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.roborev-weekly-rollup-email.plist
+     Weekly roborev cross-project digest email.
+     Runs Sunday at 09:15 local time (offset by 15 min from launchd-health-weekly
+     which runs at 09:00, to avoid I/O contention on reviews.db).
+
+     Install:
+       cp .claude/launchd/com.claude.roborev-weekly-rollup-email.plist \
+          ~/Library/LaunchAgents/com.claude.roborev-weekly-rollup-email.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.roborev-weekly-rollup-email.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.roborev-weekly-rollup-email.plist
+       rm ~/Library/LaunchAgents/com.claude.roborev-weekly-rollup-email.plist
+
+     Manual dry-run:
+       DRYRUN=1 EMAIL_DRY_RUN=1 bash ~/docs_gh/llm/bin/roborev_weekly_rollup_cron.sh
+
+     Credentials: ~/.claude/env/roborev_email.env (not committed; create manually)
+       GMAIL_USERNAME=you@gmail.com
+       GMAIL_APP_PASSWORD=<16-char app password>
+       REPORT_RECIPIENT=you@gmail.com
+       ROBOREV_DASHBOARD_URL=https://johngavin.github.io/llmtelemetry/#roborev
+
+     Tracked in llm#356.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-weekly-rollup-email</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/roborev_weekly_rollup_cron.sh</string>
+    </array>
+
+    <!-- Sunday at 09:15 local time (Weekday 0 = Sunday) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- PATH must include nix stable profile so nix-shell and Rscript resolve -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <!-- NIX_SSL_CERT_FILE is required for nix-shell to make network calls -->
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_weekly_rollup_email_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_weekly_rollup_email_launchd.log</string>
+
+    <!-- Retry once after 60 s if job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
