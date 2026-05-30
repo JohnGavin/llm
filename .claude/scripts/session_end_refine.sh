@@ -19,6 +19,13 @@
 
 set -uo pipefail   # -u: unset vars are errors; no -e: we exit 0 on all errors
 
+# Wire codex_with_fallback.sh into roborev's codex calls (#365):
+_SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ -x "${_SCRIPT_DIR}/codex_shim/codex" ]; then
+  export PATH="${_SCRIPT_DIR}/codex_shim:$PATH"
+fi
+unset _SCRIPT_DIR
+
 ROBOREV="/usr/local/bin/roborev"
 LOGFILE="$HOME/.claude/logs/session_end_refine.log"
 mkdir -p "$(dirname "$LOGFILE")"
