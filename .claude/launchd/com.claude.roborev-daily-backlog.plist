@@ -35,11 +35,14 @@
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_daily_backlog_aggregator.sh</string>
     </array>
 
-    <!-- PATH must include /usr/local/bin (roborev binary) and /usr/bin (python3, sqlite3) -->
+    <!-- PATH must include ~/.local/bin (roborev shim — #386) and /usr/local/bin
+         (real roborev binary) and /usr/bin (python3, sqlite3).
+         ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 shim
+         intercepts calls from the primary review loop. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/johngavin/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>/Users/johngavin</string>
     </dict>
