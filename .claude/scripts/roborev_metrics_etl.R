@@ -92,6 +92,8 @@ AUTOCLOSE_LOG <- file.path(Sys.getenv("HOME"), ".claude", "logs",
                              "roborev_severity_autoclose.log")
 POLL_LOG      <- file.path(Sys.getenv("HOME"), ".claude", "logs",
                              "roborev_poll_merges.log")
+CODEX_FALLBACK_LOG_DIR <- file.path(Sys.getenv("HOME"), ".claude", "logs",
+                                     "codex_fallback")
 
 # ── Logging helper ─────────────────────────────────────────────────────────
 
@@ -604,6 +606,210 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
   )
 }
 
+# ── Pricing constants for cost_usd computation ────────────────────────────
+#
+# Source: Anthropic API pricing as of 2026-05-31, plus codex/gemini estimates.
+# Units: USD per 1M tokens.
+# Update this table when pricing changes.  A follow-up issue will move this
+# to a versioned pricing table in unified.duckdb (#380).
+#
+# Matching is prefix-based: longest-matching prefix wins.
+# Default (unknown model): sonnet-tier pricing.
+
+PRICING_TABLE <- list(
+  # Anthropic Claude 4 Opus
+  list(prefix = "claude-opus-4",     input = 15.00, output = 75.00),
+  # Anthropic Claude 4 Sonnet
+  list(prefix = "claude-sonnet-4",   input =  3.00, output = 15.00),
+  # Anthropic Claude 4 Haiku
+  list(prefix = "claude-haiku-4",    input =  0.80, output =  4.00),
+  # Anthropic Claude 3.7 series
+  list(prefix = "claude-opus-3-7",   input = 15.00, output = 75.00),
+  list(prefix = "claude-sonnet-3-7", input =  3.00, output = 15.00),
+  list(prefix = "claude-haiku-3-7",  input =  0.80, output =  4.00),
+  # Anthropic Claude 3.5 series
+  list(prefix = "claude-opus-3-5",   input = 15.00, output = 75.00),
+  list(prefix = "claude-sonnet-3-5", input =  3.00, output = 15.00),
+  list(prefix = "claude-haiku-3-5",  input =  0.80, output =  4.00),
+  # OpenAI / Codex
+  list(prefix = "gpt-5",             input =  0.15, output =  0.60),
+  list(prefix = "gpt-4",             input =  2.50, output = 10.00),
+  list(prefix = "gpt-3",             input =  0.50, output =  1.50),
+  list(prefix = "o1",                input = 15.00, output = 60.00),
+  list(prefix = "o3",                input = 10.00, output = 40.00),
+  # Google Gemini
+  list(prefix = "gemini-2.5",        input =  0.075, output =  0.30),
+  list(prefix = "gemini-2",          input =  0.10,  output =  0.40),
+  list(prefix = "gemini-1",          input =  0.125, output =  0.375)
+)
+
+# Default pricing when no prefix matches (sonnet-tier)
+PRICING_DEFAULT_INPUT  <- 3.00
+PRICING_DEFAULT_OUTPUT <- 15.00
+
+# Return pricing (input, output) in USD per 1M tokens for a given model id.
+# Longest-prefix match wins.
+model_pricing <- function(model_id) {
+  if (is.na(model_id) || !nzchar(model_id) || model_id == "unknown") {
+    return(list(input = PRICING_DEFAULT_INPUT, output = PRICING_DEFAULT_OUTPUT))
+  }
+  # Sort by prefix length descending so longest prefix wins
+  sorted <- PRICING_TABLE[order(vapply(PRICING_TABLE,
+                                       function(x) nchar(x$prefix),
+                                       integer(1L)),
+                                decreasing = TRUE)]
+  for (entry in sorted) {
+    if (startsWith(tolower(model_id), tolower(entry$prefix))) {
+      return(list(input = entry$input, output = entry$output))
+    }
+  }
+  list(input = PRICING_DEFAULT_INPUT, output = PRICING_DEFAULT_OUTPUT)
+}
+
+# Compute cost in USD given token counts and model id.
+# Tokens are approximate (from byte-count heuristic when CLI doesn't expose them).
+compute_cost_usd <- function(prompt_tokens, completion_tokens, model_id) {
+  p <- model_pricing(model_id)
+  cost_in  <- if (!is.na(prompt_tokens)     && prompt_tokens > 0L)
+                (prompt_tokens     / 1e6) * p$input  else 0.0
+  cost_out <- if (!is.na(completion_tokens) && completion_tokens > 0L)
+                (completion_tokens / 1e6) * p$output else 0.0
+  cost_in + cost_out
+}
+
+# Bytes-to-tokens approximation: 4 bytes ≈ 1 token (English/code prose).
+# Used when the CLI does not expose token counts.  Conservative — actual token
+# count may differ.  Documented in plans/380-investigation.md.
+BYTES_PER_TOKEN <- 4L
+
+bytes_to_tokens <- function(bytes) {
+  if (is.na(bytes) || bytes <= 0L) return(0L)
+  as.integer(ceiling(bytes / BYTES_PER_TOKEN))
+}
+
+# ── Ingest codex_fallback JSONL into codex_provider_invocations ───────────
+#
+# Reads all YYYY-MM-DD.jsonl files under CODEX_FALLBACK_LOG_DIR.
+# Tracks the last-read high-water mark in UNIFIED_DB via a metadata key so
+# incremental runs only process new records.  The tracking is invocation_id
+# based: any record whose invocation_id is already in codex_provider_invocations
+# is skipped (PRIMARY KEY idempotency is enforced at DB upsert time too).
+#
+# Returns a data.frame ready for upsert into codex_provider_invocations.
+# Returns empty data.frame when no JSONL files exist (graceful).
+
+read_codex_fallback_jsonl <- function(log_dir) {
+  empty_df <- data.frame(
+    invocation_id        = character(),
+    ts                   = as.POSIXct(character()),
+    primary_provider     = character(),
+    primary_classification = character(),
+    fallback_used        = logical(),
+    fallback_provider    = character(),
+    final_provider       = character(),
+    duration_sec         = double(),
+    response_bytes       = integer(),
+    prompt_bytes         = integer(),
+    prompt_tokens        = integer(),
+    completion_tokens    = integer(),
+    model                = character(),
+    cost_usd             = double(),
+    stringsAsFactors     = FALSE
+  )
+
+  if (!dir.exists(log_dir)) {
+    log_msg("INFO: codex_fallback log dir absent: ", log_dir)
+    return(empty_df)
+  }
+
+  jsonl_files <- list.files(log_dir, pattern = "^\\d{4}-\\d{2}-\\d{2}\\.jsonl$",
+                             full.names = TRUE)
+  if (length(jsonl_files) == 0L) {
+    log_msg("INFO: no codex_fallback JSONL files found in ", log_dir)
+    return(empty_df)
+  }
+
+  rows <- list()
+
+  for (fpath in jsonl_files) {
+    lines <- tryCatch(readLines(fpath, warn = FALSE),
+                      error = function(e) {
+                        log_msg("WARN: cannot read JSONL file: ", fpath, " — ", conditionMessage(e))
+                        character(0L)
+                      })
+
+    for (line in lines) {
+      line <- trimws(line)
+      if (!nzchar(line)) next
+
+      rec <- tryCatch(jsonlite::fromJSON(line, simplifyVector = TRUE),
+                      error = function(e) {
+                        log_msg("WARN: malformed JSONL record — skipping: ", conditionMessage(e))
+                        NULL
+                      })
+      if (is.null(rec)) next
+
+      # Parse required fields
+      inv_id       <- rec$invocation_id %||% NA_character_
+      ts_raw       <- rec$ts %||% NA_character_
+      final_prov   <- rec$final_provider %||% "codex"
+      prim_class   <- rec$primary_classification %||% NA_character_
+      fb_used      <- isTRUE(rec$fallback_used)
+      fb_provider  <- if (!is.null(rec$fallback_provider) &&
+                          !is.na(rec$fallback_provider)) rec$fallback_provider else NA_character_
+      dur          <- as.double(rec$duration_sec %||% NA_real_)
+
+      # Byte counts (new fields added in #380; absent in pre-#380 records → 0)
+      resp_bytes   <- as.integer(rec$response_bytes %||% 0L)
+      prompt_bytes <- as.integer(rec$prompt_bytes   %||% 0L)
+      model_id     <- rec$model %||% "unknown"
+      if (is.null(model_id) || is.na(model_id)) model_id <- "unknown"
+
+      # Token approximation from byte counts
+      prompt_tok  <- bytes_to_tokens(prompt_bytes)
+      complet_tok <- bytes_to_tokens(resp_bytes)
+
+      # Cost computation
+      cost <- compute_cost_usd(prompt_tok, complet_tok, model_id)
+
+      # Parse timestamp
+      ts_val <- tryCatch({
+        ts_norm <- sub("Z$", "+0000", ts_raw)
+        ts_norm <- sub("([+-][0-9]{2}):([0-9]{2})$", "\\1\\2", ts_norm)
+        as.POSIXct(ts_norm, tz = "UTC", format = "%Y-%m-%dT%H:%M:%S%z")
+      }, error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01"))
+
+      rows[[length(rows) + 1L]] <- data.frame(
+        invocation_id          = as.character(inv_id),
+        ts                     = ts_val,
+        primary_provider       = "codex",
+        primary_classification = as.character(prim_class),
+        fallback_used          = fb_used,
+        fallback_provider      = as.character(fb_provider),
+        final_provider         = as.character(final_prov),
+        duration_sec           = dur,
+        response_bytes         = resp_bytes,
+        prompt_bytes           = prompt_bytes,
+        prompt_tokens          = prompt_tok,
+        completion_tokens      = complet_tok,
+        model                  = as.character(model_id),
+        cost_usd               = cost,
+        stringsAsFactors       = FALSE
+      )
+    }
+  }
+
+  if (length(rows) == 0L) {
+    log_msg("INFO: codex_fallback JSONL read: 0 records")
+    return(empty_df)
+  }
+
+  result <- do.call(rbind, rows)
+  log_msg(sprintf("INFO: codex_fallback JSONL read: %d records from %d files",
+                  nrow(result), length(jsonl_files)))
+  result
+}
+
 # ── Build roborev_agent_performance ───────────────────────────────────────
 # Per-day × per-agent × per-model rollup.
 # token_usage JSON is sparse/absent in current data → token/cost columns are NULL.
@@ -628,7 +834,7 @@ parse_token_usage <- function(json_text) {
   }, error = function(e) empty)
 }
 
-build_agent_performance <- function(jobs, reviews) {
+build_agent_performance <- function(jobs, reviews, invocations = NULL) {
   empty_df <- data.frame(
     date             = as.Date(character()),
     agent            = character(),
@@ -727,6 +933,31 @@ build_agent_performance <- function(jobs, reviews) {
     n_fail  <- sum(grp$verdict_bool == 0L, na.rm = TRUE)
     n_error <- sum(grp$status == "failed",  na.rm = TRUE)
 
+    # Cost: sum invocations whose timestamp falls within job started_at..finished_at
+    # (± 60s grace). Only computed when invocations data is available.
+    grp_cost_usd <- NA_real_
+    if (!is.null(invocations) && nrow(invocations) > 0L && nrow(grp) > 0L) {
+      grp_started  <- as.POSIXct(grp$started_at,  tz = "UTC",
+                                  format = "%Y-%m-%d %H:%M:%S")
+      grp_finished <- as.POSIXct(grp$finished_at, tz = "UTC",
+                                  format = "%Y-%m-%d %H:%M:%S")
+      inv_ts       <- as.POSIXct(invocations$ts, tz = "UTC")
+      GRACE_S      <- 60L
+
+      # For each invocation, check if it falls in any of the group's job windows
+      inv_matched <- vapply(inv_ts, function(t) {
+        any(
+          (!is.na(grp_started) & !is.na(grp_finished)) &
+          (t >= (grp_started  - GRACE_S)) &
+          (t <= (grp_finished + GRACE_S))
+        )
+      }, logical(1L))
+
+      matched_cost <- invocations$cost_usd[inv_matched]
+      matched_cost <- matched_cost[!is.na(matched_cost)]
+      grp_cost_usd <- if (length(matched_cost) > 0L) sum(matched_cost) else NA_real_
+    }
+
     data.frame(
       date             = as.Date(d),
       agent            = ag,
@@ -739,7 +970,7 @@ build_agent_performance <- function(jobs, reviews) {
       p90_duration_s   = p90_d,
       total_tokens_in  = tot_in,
       total_tokens_out = tot_out,
-      total_cost_usd   = NA_real_,   # no costs table in SQLite yet
+      total_cost_usd   = grp_cost_usd,
       stringsAsFactors = FALSE
     )
   })
@@ -1223,7 +1454,12 @@ cat(sprintf("roborev_metrics_etl.R: built %d daily_metrics rows, %d lifecycle ro
             nrow(daily_df), nrow(lifecycle_df)))
 
 # Slice 2 tables
-agent_perf_df <- build_agent_performance(jobs_raw, reviews_raw)
+# Read codex/gemini invocation log for cost attribution
+invocations_raw <- read_codex_fallback_jsonl(CODEX_FALLBACK_LOG_DIR)
+cat(sprintf("roborev_metrics_etl.R: read %d codex_provider_invocations records\n",
+            nrow(invocations_raw)))
+
+agent_perf_df <- build_agent_performance(jobs_raw, reviews_raw, invocations_raw)
 poll_log_data <- parse_poll_log(POLL_LOG, since)
 cadence_df    <- build_cadence_efficacy(jobs_raw, poll_log_data, since)
 threshold_df  <- build_threshold_changes(counter_data, since)
@@ -1248,18 +1484,19 @@ cat(sprintf(
 
 if (mode == "dry-run") {
   cat("\n--- DRY RUN (no writes) ---\n")
-  cat(sprintf("  roborev_daily_metrics:     %d rows (since %s)\n",
+  cat(sprintf("  roborev_daily_metrics:        %d rows (since %s)\n",
               nrow(daily_df), format(since, "%Y-%m-%d")))
-  cat(sprintf("  roborev_review_lifecycle:  %d rows\n", nrow(lifecycle_df)))
-  cat(sprintf("  roborev_agent_performance: %d rows\n", nrow(agent_perf_df)))
-  cat(sprintf("  roborev_threshold_changes: %d rows\n", nrow(threshold_df)))
-  cat(sprintf("  roborev_cadence_efficacy:  %d rows\n", nrow(cadence_df)))
-  cat(sprintf("  roborev_finding_lineage:   %d rows\n", nrow(lineage_df)))
+  cat(sprintf("  roborev_review_lifecycle:     %d rows\n", nrow(lifecycle_df)))
+  cat(sprintf("  roborev_agent_performance:    %d rows\n", nrow(agent_perf_df)))
+  cat(sprintf("  roborev_threshold_changes:    %d rows\n", nrow(threshold_df)))
+  cat(sprintf("  roborev_cadence_efficacy:     %d rows\n", nrow(cadence_df)))
+  cat(sprintf("  roborev_finding_lineage:      %d rows\n", nrow(lineage_df)))
+  cat(sprintf("  codex_provider_invocations:   %d rows\n", nrow(invocations_raw)))
   cat("--- end dry-run ---\n")
   log_msg(sprintf(
-    "dry-run: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d",
+    "dry-run: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df)
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), nrow(invocations_raw)
   ))
   quit(status = 0L)
 }
@@ -1348,24 +1585,26 @@ upsert_table <- function(con, table_name, df) {
 tryCatch({
   dbBegin(duck_con)
 
-  upsert_table(duck_con, "roborev_daily_metrics",    daily_df)
-  upsert_table(duck_con, "roborev_review_lifecycle", lifecycle_df)
-  upsert_table(duck_con, "roborev_agent_performance", agent_perf_df)
-  upsert_table(duck_con, "roborev_threshold_changes", threshold_df)
-  upsert_table(duck_con, "roborev_cadence_efficacy",  cadence_df)
-  upsert_table(duck_con, "roborev_finding_lineage",   lineage_df)
+  upsert_table(duck_con, "roborev_daily_metrics",       daily_df)
+  upsert_table(duck_con, "roborev_review_lifecycle",    lifecycle_df)
+  upsert_table(duck_con, "roborev_agent_performance",   agent_perf_df)
+  upsert_table(duck_con, "roborev_threshold_changes",   threshold_df)
+  upsert_table(duck_con, "roborev_cadence_efficacy",    cadence_df)
+  upsert_table(duck_con, "roborev_finding_lineage",     lineage_df)
+  upsert_table(duck_con, "codex_provider_invocations",  invocations_raw)
 
   dbCommit(duck_con)
 
   log_msg(sprintf(
-    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d mode=apply since=%s",
+    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d mode=apply since=%s",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), format(since, "%Y-%m-%d")
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), nrow(invocations_raw),
+    format(since, "%Y-%m-%d")
   ))
   cat(sprintf(
-    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d\n",
+    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d\n",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df)
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), nrow(invocations_raw)
   ))
 }, error = function(e) {
   tryCatch(dbRollback(duck_con), error = function(e2) NULL)

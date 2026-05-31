@@ -128,6 +128,21 @@ _classify() {
   printf 'other'
 }
 
+# Estimate byte sizes from temp files for token-count approximation.
+# Neither codex nor gemini CLI exposes structured token counts at the CLI
+# layer.  We capture response_bytes (stdout size) and prompt_bytes (args string
+# size) as proxies.  The ETL converts these to approximate tokens and cost:
+#   tokens ≈ bytes / 4  (conservative 4-char-per-token estimate for code/prose)
+# A follow-up issue will replace this with actual API usage data (#380).
+_file_bytes() {
+  local f="$1"
+  if [ -f "$f" ]; then
+    wc -c < "$f" 2>/dev/null | tr -d ' ' || echo "0"
+  else
+    echo "0"
+  fi
+}
+
 # Emit one JSONL record to the daily log file.
 # Arguments (positional):
 #   1  invocation_id
@@ -138,7 +153,10 @@ _classify() {
 #   6  fallback_exit        (int or "")
 #   7  final_provider       (codex|gemini)
 #   8  duration_sec
-#   9+ original args (redacted)
+#   9  response_bytes       (stdout byte count — used for token approximation)
+#  10  prompt_bytes         (args string byte count — proxy for prompt size)
+#  11  model                (model name or "" when unknown)
+#  12+ original args (redacted)
 _emit_jsonl() {
   local inv_id="$1"
   local prim_exit="$2"
@@ -148,7 +166,10 @@ _emit_jsonl() {
   local fb_exit="$6"
   local final_prov="$7"
   local dur="$8"
-  shift 8
+  local resp_bytes="$9"
+  local prompt_bytes="${10}"
+  local model_id="${11}"
+  shift 11
 
   local ts
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -172,9 +193,19 @@ _emit_jsonl() {
     fb_exit_json="${fb_exit}"
   fi
 
-  printf '{"ts":"%s","invocation_id":"%s","primary_provider":"codex","primary_exit":%s,"primary_classification":"%s","fallback_used":%s,"fallback_provider":%s,"fallback_exit":%s,"final_provider":"%s","duration_sec":%s,"args_redacted":%s}\n' \
+  local model_json='"unknown"'
+  if [ -n "$model_id" ]; then
+    model_json="\"${model_id}\""
+  fi
+
+  # resp_bytes and prompt_bytes default to 0 when missing
+  resp_bytes="${resp_bytes:-0}"
+  prompt_bytes="${prompt_bytes:-0}"
+
+  printf '{"ts":"%s","invocation_id":"%s","primary_provider":"codex","primary_exit":%s,"primary_classification":"%s","fallback_used":%s,"fallback_provider":%s,"fallback_exit":%s,"final_provider":"%s","duration_sec":%s,"response_bytes":%s,"prompt_bytes":%s,"model":%s,"args_redacted":%s}\n' \
     "$ts" "$inv_id" "$prim_exit" "$prim_class" "$fb_used" \
-    "$fb_provider_json" "$fb_exit_json" "$final_prov" "$dur" "$args_json" \
+    "$fb_provider_json" "$fb_exit_json" "$final_prov" "$dur" \
+    "$resp_bytes" "$prompt_bytes" "$model_json" "$args_json" \
     >> "$logfile"
 }
 
@@ -187,7 +218,7 @@ T_START=$(date +%s)
 
 if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
   echo "codex_with_fallback: ERROR — primary '$CODEX_BIN' not found on PATH" >&2
-  _emit_jsonl "$INV_ID" 127 "other" false "" "" "codex" 0 "$@"
+  _emit_jsonl "$INV_ID" 127 "other" false "" "" "codex" 0 0 0 "" "$@"
   exit 127
 fi
 
@@ -207,6 +238,19 @@ PRIMARY_EXIT=0
 T_END=$(date +%s)
 DURATION=$(( T_END - T_START ))
 
+# Capture byte counts for token-count approximation.
+# Neither codex nor gemini exposes token counts at the CLI layer.
+# response_bytes = stdout size (proxy for completion tokens: bytes/4 ≈ tokens).
+# prompt_bytes   = args string length (proxy for prompt tokens).
+# The ETL computes: prompt_tokens ≈ prompt_bytes/4, completion_tokens ≈ response_bytes/4.
+# Tracked: JohnGavin/llm#380. Follow-up will wire actual API usage data.
+PRIMARY_RESP_BYTES=$(_file_bytes "$PRIMARY_STDOUT")
+PROMPT_BYTES=$(printf '%s' "$*" | wc -c | tr -d ' ')
+
+# Detect codex model from environment (CODEX_MODEL env var, or default codex model).
+# roborev sets ROBOREV_MODEL when invoking the wrapper; fall back to detection.
+DETECTED_MODEL="${ROBOREV_MODEL:-${CODEX_MODEL:-gpt-5.4}}"
+
 # Combine stdout+stderr for classification
 PRIMARY_COMBINED=""
 PRIMARY_COMBINED=$(cat "$PRIMARY_STDOUT" "$PRIMARY_STDERR" 2>/dev/null) || true
@@ -216,7 +260,8 @@ PRIMARY_CLASS=$(_classify "$PRIMARY_EXIT" "$PRIMARY_COMBINED")
 
 case "$PRIMARY_CLASS" in
   success)
-    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "success" false "" "" "codex" "$DURATION" "$@"
+    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "success" false "" "" "codex" \
+      "$DURATION" "$PRIMARY_RESP_BYTES" "$PROMPT_BYTES" "$DETECTED_MODEL" "$@"
     cat "$PRIMARY_STDOUT"
     exit 0
     ;;
@@ -227,7 +272,8 @@ case "$PRIMARY_CLASS" in
     if ! command -v "$GEMINI_BIN" >/dev/null 2>&1; then
       echo "codex_with_fallback: ERROR — fallback '$GEMINI_BIN' not found on PATH" >&2
       echo "  Install hint: npm install -g @google/gemini-cli" >&2
-      _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "rate_limit_429" false "" "" "codex" "$DURATION" "$@"
+      _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "rate_limit_429" false "" "" "codex" \
+        "$DURATION" "$PRIMARY_RESP_BYTES" "$PROMPT_BYTES" "$DETECTED_MODEL" "$@"
       cat "$PRIMARY_STDERR" >&2
       exit "$PRIMARY_EXIT"
     fi
@@ -240,7 +286,11 @@ case "$PRIMARY_CLASS" in
     T_FB_END=$(date +%s)
     TOTAL_DURATION=$(( T_FB_END - T_START ))
 
-    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "rate_limit_429" true "gemini" "$FB_EXIT" "gemini" "$TOTAL_DURATION" "$@"
+    FB_RESP_BYTES=$(_file_bytes "$FB_STDOUT")
+    FB_MODEL="${GEMINI_MODEL:-gemini-2.5-pro}"
+
+    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "rate_limit_429" true "gemini" "$FB_EXIT" "gemini" \
+      "$TOTAL_DURATION" "$FB_RESP_BYTES" "$PROMPT_BYTES" "$FB_MODEL" "$@"
 
     if [ "$FB_EXIT" -ne 0 ]; then
       echo "codex_with_fallback: gemini fallback also failed (exit $FB_EXIT)" >&2
@@ -254,14 +304,16 @@ case "$PRIMARY_CLASS" in
 
   auth_failed)
     echo "codex_with_fallback: authentication failure — not falling back (check API key)" >&2
-    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "auth_failed" false "" "" "codex" "$DURATION" "$@"
+    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "auth_failed" false "" "" "codex" \
+      "$DURATION" "$PRIMARY_RESP_BYTES" "$PROMPT_BYTES" "$DETECTED_MODEL" "$@"
     cat "$PRIMARY_STDERR" >&2
     exit "$PRIMARY_EXIT"
     ;;
 
   provider_error|other)
     echo "codex_with_fallback: provider error (exit $PRIMARY_EXIT, class $PRIMARY_CLASS) — not falling back" >&2
-    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "$PRIMARY_CLASS" false "" "" "codex" "$DURATION" "$@"
+    _emit_jsonl "$INV_ID" "$PRIMARY_EXIT" "$PRIMARY_CLASS" false "" "" "codex" \
+      "$DURATION" "$PRIMARY_RESP_BYTES" "$PROMPT_BYTES" "$DETECTED_MODEL" "$@"
     cat "$PRIMARY_STDERR" >&2
     exit "$PRIMARY_EXIT"
     ;;
