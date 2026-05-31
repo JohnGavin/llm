@@ -53,6 +53,8 @@ proj/stats/simulations/randomwalk/
 .claude/CURRENT_WORK.md
 .claude/worktrees/
 .claude/skills/.system/
+# Credential tiers — live file is per-user (not committed); template ships
+.claude/credential_tiers.toml
 
 # Nix build artifacts
 result
