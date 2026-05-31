@@ -25,6 +25,18 @@ Use `git -C <path>` for git operations. For multi-step shell logic, write a
 script file and run it.
 ```
 
+**Substitution table referenced in Prefix 1** — orchestrators MUST point agents to this table when handing off Bash-heavy work:
+
+| Don't write              | Write instead                                |
+|--------------------------|----------------------------------------------|
+| `cat F \| head -N`         | `Read(F, limit=N)`                           |
+| `grep -rn P path \| head`  | `Grep(pattern=P, path=path, head_limit=N)`   |
+| `find ... \| head`         | `Glob(pattern)`                              |
+| `cmd 2>&1 \| head -50`     | `cmd >/tmp/x 2>&1`, then `Read(/tmp/x)`      |
+| `cmd \|\| echo "missing"` | plain `cmd`; check exit code in next call    |
+
+Single trailing `\| head` / `\| tail` / `\| wc` / `\| sort -u` / `\| uniq` is allowed by the compound guard since #393 Phase 1.
+
 **Prefix 2 — Worktree isolation** (closes `JohnGavin/llm#191`; strengthened
 for `llm#304` and `llm#318`):
 
