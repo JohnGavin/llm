@@ -54,11 +54,14 @@ if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
   echo "=== compound_command_guard.sh self-test ==="
   echo "--- Must DETECT (compound operators outside strings/heredocs) ---"
 
-  _selftest_case "pipe: git status | wc -l"                  "git status | wc -l"                          DETECT
   _selftest_case "ampamp: cd /tmp && ls"                      "cd /tmp && ls"                               DETECT
   _selftest_case "semicolon: ls /a; ls /b"                    "ls /a; ls /b"                                DETECT
   _selftest_case "oror: cmd1 || cmd2"                         "cmd1 || cmd2"                                DETECT
-  _selftest_case "multi-pipe: git status | grep mod | wc -l"  "git status | grep modified | wc -l"         DETECT
+  _selftest_case "two pipes blocked: cat F | head | tail"     "cat /etc/hosts | head | tail"                DETECT
+  _selftest_case "trailing wc two pipes: a | b | wc -l"       "cat F | grep x | wc -l"                     DETECT
+  _selftest_case "or-chain blocked: cmd1 || head"             "cmd1 || head -1"                             DETECT
+  _selftest_case "semicolon chain blocked: cmd1; head"        "cmd1; head"                                  DETECT
+  _selftest_case "&& chain blocked: cmd && head -1"           "cmd && head -1"                              DETECT
 
   echo "--- Must ALLOW (operators inside strings, heredocs, or subshells) ---"
 
@@ -69,6 +72,16 @@ if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
   _selftest_case "background operator at end of line"         "sleep 5 &"                                   ALLOW
   _selftest_case "simple command, no operators"               "ls /tmp"                                      ALLOW
   _selftest_case "heredoc with pipe in body"                  "$(printf 'git commit -m "$(cat <<'"'"'EOF'"'"'\nmessage with | in it\nEOF\n)"')"  ALLOW
+
+  echo "--- Must ALLOW (single-pipe terminal filters) ---"
+
+  _selftest_case "terminal filter head: ls | head -20"        "ls /tmp | head -20"                          ALLOW
+  _selftest_case "terminal filter head no args: ls | head"    "ls /tmp | head"                              ALLOW
+  _selftest_case "terminal filter tail: cat F | tail -50"     "cat /etc/hosts | tail -50"                   ALLOW
+  _selftest_case "terminal filter wc -l: git status | wc -l"  "git status | wc -l"                         ALLOW
+  _selftest_case "terminal filter sort -u: find . | sort -u"  "find . -name \"*.R\" | sort -u"             ALLOW
+  _selftest_case "terminal filter uniq: cat F | uniq"         "cat /etc/hosts | uniq"                       ALLOW
+  _selftest_case "filter grep then head allowed"              "grep root /etc/hosts | head"                  ALLOW
 
   echo "--- Must ALLOW (non-Bash tool_name — belt-and-braces for issue #391) ---"
 
@@ -146,9 +159,45 @@ if re.search(r'&&', cmd):
 if re.search(r';(?!\s*$)', cmd, re.MULTILINE):
     found.append(';')
 
+# ── Terminal-filter allow path (#393) ────────────────────────────────────
+# If the ONLY operator found is a single bare '|' (no &&, ||, ;), check
+# whether the right side of the pipe is a safe stateless terminal filter.
+# If so, emit empty found so the hook exits 0.
+ALLOWED_FILTERS = re.compile(
+    r'^\s*(?:'
+    r'head(?:\s+-n\s+\d+|\s+-\d+)?'
+    r'|tail(?:\s+-n\s+\d+|\s+-\d+)?'
+    r'|wc(?:\s+-[lcw])?'
+    r'|sort(?:\s+-u)?'
+    r'|uniq'
+    r')\s*$'
+)
+if found == ['|']:
+    # Count bare pipes in stripped cmd — must be exactly one
+    pipe_count = len(re.findall(r'(?<!\|)\|(?!\|)', cmd))
+    if pipe_count == 1:
+        parts = cmd.split('|', 1)
+        rhs = parts[1] if len(parts) == 2 else ''
+        if ALLOWED_FILTERS.match(rhs):
+            # Signal the allow path with a distinct marker so the shell
+            # can log it and exit 0 cleanly.
+            print('__TERMINAL_FILTER_ALLOWED__')
+            sys.exit(0)
+
 print(','.join(found))
 PY
 )
+
+# Terminal-filter allow path (#393): single pipe to a safe filter — log and allow
+if [ "$DETECTED" = "__TERMINAL_FILTER_ALLOWED__" ]; then
+  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+  CMD_TRUNCATED="${COMMAND:0:120}"
+  [ ${#COMMAND} -gt 120 ] && CMD_TRUNCATED="${CMD_TRUNCATED}..."
+  mkdir -p "$(dirname "$LOG")"
+  printf '%s mode=%s detected=| mode=allow_terminal_filter cmd_truncated=%s\n' \
+    "$TIMESTAMP" "$MODE" "$CMD_TRUNCATED" >> "$LOG"
+  exit 0
+fi
 
 # No operators found — allow
 if [ -z "$DETECTED" ]; then
