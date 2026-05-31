@@ -109,8 +109,63 @@ Names, geographic data finer than state, dates (except year), phone/fax numbers,
 
 **Minimum necessary:** Request only variables needed for analysis.
 
+## Tier-based use (llm#376)
+
+Not all credentials carry equal blast radius. The two-vault tier split in
+`.claude/credential_tiers.toml` (gitignored; template at
+`.claude/credential_tiers.toml.template`) classifies every environment
+variable name into one of two tiers:
+
+| Tier | Meaning | Agent behaviour |
+|------|---------|-----------------|
+| `[auto]` | Read-only keys, internal paths, low blast-radius | Agent may use without per-call human prompt |
+| `[ask]` | Write-capable, billing, or high-value keys | Explicit human confirmation required per use |
+| *(unlisted)* | Anything not categorised | Zero-trust default — treated as `[ask]` |
+
+The `permission_request.sh` PreToolUse hook enforces these tiers. It scans
+the command string for ALL_CAPS_WITH_UNDERSCORES patterns, looks each name
+up in the TOML, and either approves silently (`[auto]`) or requires human
+confirmation (`[ask]` or unknown).
+
+**Setup:** copy the template and populate with your actual `.Renviron` key names:
+
+```bash
+cp .claude/credential_tiers.toml.template .claude/credential_tiers.toml
+# Edit .claude/credential_tiers.toml — add key names only, never values
+```
+
+See `.claude/credential_tiers.README.md` for full setup instructions and the
+self-test command.
+
+### What belongs in `[auto]`
+
+- Fine-grained read-only tokens (GitHub contents:read, issues:read)
+- Internal filesystem paths (not secrets — just paths)
+- Public read-only APIs where compromise grants only read access
+
+### What belongs in `[ask]`
+
+- Any key that can spend money (ANTHROPIC_API_KEY, OPENAI_API_KEY)
+- Any key that can mutate external state (GITHUB_TOKEN, CACHIX_AUTH_TOKEN)
+- Any key that can send external communications (NTFY_TOPIC)
+- Production database credentials (DB_PASSWORD, DB_USER)
+- Any key whose blast-radius you have not verified
+
+### Forbidden patterns
+
+| Pattern | Why wrong |
+|---------|-----------|
+| Putting billing keys in `[auto]` | Agent can incur costs without human knowledge |
+| Committing the live `.toml` to git | Key names reveal what credentials exist |
+| Leaving `[auto]` empty when read-only keys exist | Unnecessary friction for low-risk ops |
+| Trusting `_READ_` suffix without verifying | Provider naming is not enforced |
+
 ## Related
 
+- `.claude/credential_tiers.toml.template` — sample template
+- `.claude/credential_tiers.README.md` — full setup guide
+- `.claude/hooks/permission_request.sh` — tier enforcement hook
+- `permission-discipline` rule — broader MCP and workspace permission rules
 - `medical-data-anonymization` rule — PHI handling for medical projects
 - `medical-etl-quality` rule — ETL quality for health data
 - `duckdb-patterns` skill — DuckDB security hardening and duckplyr patterns
