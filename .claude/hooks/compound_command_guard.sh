@@ -24,12 +24,12 @@ if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
   SCRIPT_PATH="$(realpath "$0")"
 
   _selftest_case() {
-    local desc="$1" cmd="$2" expect="$3"
+    local desc="$1" cmd="$2" expect="$3" tool_name="${4:-Bash}"
     local payload
     # Escape for JSON
     local escaped
     escaped=$(printf '%s' "$cmd" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" 2>/dev/null || printf '"%s"' "$cmd")
-    payload="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":$escaped}}"
+    payload="{\"tool_name\":\"$tool_name\",\"tool_input\":{\"command\":$escaped}}"
     local exit_code=0
     printf '%s' "$payload" | \
       env COMPOUND_GUARD_MODE=block COMPOUND_GUARD_SELFTEST=0 \
@@ -70,19 +70,34 @@ if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
   _selftest_case "simple command, no operators"               "ls /tmp"                                      ALLOW
   _selftest_case "heredoc with pipe in body"                  "$(printf 'git commit -m "$(cat <<'"'"'EOF'"'"'\nmessage with | in it\nEOF\n)"')"  ALLOW
 
+  echo "--- Must ALLOW (non-Bash tool_name — belt-and-braces for issue #391) ---"
+
+  _selftest_case "non-Bash tool: Grep with pipe-like input"   "ls | head"                                    ALLOW  Grep
+  _selftest_case "non-Bash tool: Read with pipe-like input"   "cat file | head"                              ALLOW  Read
+
   echo "=== Results: $_pass passed, $_fail failed ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
 # ── Normal hook execution ───────────────────────────────────────────────
 
-# Mode=off: skip everything
+# Mode=off: skip everything (fast path — no stdin read needed)
 if [ "$MODE" = "off" ]; then
   exit 0
 fi
 
 # Read JSON from stdin
 INPUT=$(cat)
+
+# Belt-and-braces: only inspect Bash tool calls (settings.json matcher is
+# already "Bash", but harness-internal bundles may produce payloads with a
+# different tool_name — exit 0 immediately for non-Bash tools).
+# Fixes issue #391 false positives on Search/Read/Glob harness bundles.
+TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || true)
+if [ -n "$TOOL_NAME" ] && [ "$TOOL_NAME" != "Bash" ]; then
+  exit 0
+fi
+
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
 
 # Can't parse command — allow
