@@ -7,6 +7,13 @@
 # Guard design: python3 temp file reads FULL command — no truncation, no grep -P.
 # Fixes: 120-char bypass, broken [\n] regex, BSD-grep grep -P (issue #181 Theme 1).
 # Additional: output redirect > / >>, find -delete / -exec auto-approve gaps.
+#
+# Credential tier check (JohnGavin/llm#376):
+#   Additive layer after the main guard. When a Bash command references an env-var
+#   that appears in the [ask] tier of ~/.claude/credential_tiers.toml, the hook
+#   emits a visible "ASK-VAULT CONFIRMATION REQUIRED" warning to stderr before
+#   falling through to the normal human-approval prompt.
+#   Uses .claude/scripts/credential_tier_lookup.sh — tolerates its absence.
 
 set -euo pipefail
 
@@ -331,6 +338,38 @@ if [ "$_tool" = "Bash" ]; then
   esac
   # Rscript REMOVED from auto-approve: can execute arbitrary fs/network/process ops.
   # Require human approval for every Rscript call (see Finding 2 in issue #181).
+fi
+
+# ── Credential tier check (additive, JohnGavin/llm#376) ───────────────
+# Scan the command for env-var patterns (Sys.getenv("VAR"), $VAR, ${VAR}).
+# For each candidate name, look it up via credential_tier_lookup.sh.
+# If any name is in the [ask] tier, emit a warning to stderr and continue
+# to the normal human-approval prompt below — this does NOT auto-deny.
+# Tolerates: missing lookup script, missing tier file, lookup errors.
+_TIER_LOOKUP_SCRIPT="$(dirname "$0")/../scripts/credential_tier_lookup.sh"
+if [ -f "$_TIER_LOOKUP_SCRIPT" ] && [ "$_guard" != "UNSAFE:"* ] 2>/dev/null; then
+  # Extract candidate var names from the action log (truncated to 200 chars by python).
+  # Patterns matched: Sys.getenv("VAR"), $VAR, ${VAR}
+  _cred_candidates=$(printf '%s' "$_action_log" | \
+    grep -oE 'Sys\.getenv\("([A-Z_][A-Z0-9_]*)"\)|\$\{?([A-Z_][A-Z0-9_]*)' | \
+    grep -oE '[A-Z_][A-Z0-9_]+' | sort -u || true)
+
+  _ask_vars=""
+  for _cvar in $_cred_candidates; do
+    _tier=$(bash "$_TIER_LOOKUP_SCRIPT" "$_cvar" 2>/dev/null || true)
+    if [ "$_tier" = "ask" ]; then
+      _ask_vars="${_ask_vars} ${_cvar}"
+    fi
+  done
+
+  if [ -n "$_ask_vars" ]; then
+    log "ASK-VAULT: ask-tier credentials referenced:${_ask_vars} -- action=$_action_log"
+    # Write a prominent warning to stderr (visible in the permission prompt UI)
+    printf '\n⚠️  ASK-VAULT CONFIRMATION REQUIRED\n' >&2
+    printf '   Ask-tier credential(s) referenced:%s\n' "$_ask_vars" >&2
+    printf '   These are in the [ask] tier of ~/.claude/credential_tiers.toml.\n' >&2
+    printf '   Confirm you intend to allow agent use of these credentials.\n\n' >&2
+  fi
 fi
 
 # ── Needs human approval: notify and fall through ─────────────────────
