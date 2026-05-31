@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS roborev_daily_metrics (
 -- ── roborev_review_lifecycle ──────────────────────────────────────────────
 -- Per-review timeline. One row per review (keyed on review_id from reviews.id).
 -- PK: review_id
+-- ADDITIVE columns (llm#379, 2026-05-31) — safe; downstream uses SELECT by name:
+--   fix_commit_sha, fix_commit_at, fix_method
+-- fix_method vocabulary: manual | commit_reference | pr_close |
+--   autoclose_severity | unknown
+-- Unblocks llmtelemetry #146 Q4 (time-to-fix), Q9 (false-positive rate),
+-- Q14 (closing-the-loop funnel).
 CREATE TABLE IF NOT EXISTS roborev_review_lifecycle (
   review_id                    BIGINT    NOT NULL,
   job_id                       BIGINT    NOT NULL,
@@ -49,6 +55,9 @@ CREATE TABLE IF NOT EXISTS roborev_review_lifecycle (
   closed_at                    TIMESTAMP,
   close_reason                 VARCHAR,
   autoclose_threshold_at_close VARCHAR,
+  fix_commit_sha               VARCHAR,
+  fix_commit_at                TIMESTAMP,
+  fix_method                   VARCHAR,
   PRIMARY KEY (review_id)
 );
 
@@ -173,3 +182,13 @@ SELECT
   )                                                 AS verdict_chain
 FROM roborev_finding_lineage fl
 GROUP BY fl.finding_id;
+
+-- ── Migration: add fix-commit link columns to existing lifecycle tables ────
+-- llm#379 — additive ALTER TABLE for databases created before 2026-05-31.
+-- DuckDB: ALTER TABLE ... ADD COLUMN IF NOT EXISTS is idempotent.
+ALTER TABLE IF EXISTS roborev_review_lifecycle
+  ADD COLUMN IF NOT EXISTS fix_commit_sha VARCHAR;
+ALTER TABLE IF EXISTS roborev_review_lifecycle
+  ADD COLUMN IF NOT EXISTS fix_commit_at TIMESTAMP;
+ALTER TABLE IF EXISTS roborev_review_lifecycle
+  ADD COLUMN IF NOT EXISTS fix_method VARCHAR;
