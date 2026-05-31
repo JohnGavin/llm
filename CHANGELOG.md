@@ -4,6 +4,158 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-31 (Session — roborev DB enrichment, llmtelemetry hardening, Q4/Q9/Q14 panels live, YouTube+PWL umbrella)
+
+Continuation of the closure-loop work. Spans **two public repos** (llm +
+llmtelemetry) and one **local-only repo** (premortem). 10 PRs merged across
+the public repos, 1 fork-PR open, 23+ new issues filed, 4 cross-project
+umbrellas.
+
+### Completed
+
+#### Closure-loop completion (llm)
+
+- **#379 (PR #385) — roborev DB review → fix-commit link.** Three new columns
+  on `roborev_review_lifecycle`: `fix_commit_sha`, `fix_commit_at`,
+  `fix_method` (`manual` / `commit_reference` / `pr_close` /
+  `autoclose_severity` / `unknown`). Heuristic chain runs during ETL. Live
+  distribution on 3941 closed reviews: 5 `commit_reference` (0.1%), 16
+  `manual` (0.4%), 502 `autoclose_severity` (12.7%), 3418 `unknown` (86.7%).
+  Eight shell-invocation bugs the fixer hit (system2 vs system + shQuote,
+  tryCatch return semantics, escaping in grep patterns) all resolved.
+- **#380 (PR #384) — per-review cost instrumentation.** New
+  `codex_provider_invocations` table in unified.duckdb; new pricing table
+  + 4 helper functions in `roborev_metrics_etl.R`; time-window join
+  populates `roborev_agent_performance.total_cost_usd`. 17/17 cost-
+  instrumentation tests pass. `codex_with_fallback.sh` extended with
+  response/prompt byte capture.
+- **#366 closed as superseded** by #380's end-to-end implementation.
+- **#381 (PR #382) — background telemetry export.** Surgical 8-line swap in
+  `session_stop.sh:109-118` from synchronous `timeout 180 ... | tail -3`
+  to `nohup timeout 180 ... > $EXPORT_LOG 2>&1 & disown`. `/bye` returns
+  instantly; failures observable via dated log file.
+- **#386 filed (not closed) — Phase 1.6 wrapper coverage gap.** The
+  `codex_shim/codex` PATH-shim is wired into 4 secondary callers but the
+  roborev daemon's primary review loop bypasses it — so
+  `~/.claude/logs/codex_fallback/` never accumulates JSONL records and
+  llmtelemetry#146 Q1/Q11/Q20 (cost panels) render with empty cost cells.
+  4 mitigation options documented.
+
+#### llmtelemetry hardening — 6 issues closed
+
+- **#261 (cmonitor-rs detection), #262 (pull-rebase before push), #263
+  (deploy-failure alert), #264 (last_updated.txt timestamp), #265
+  (centralised privacy_exclusion helper), #266 (atomic JSON writes)** — all
+  CLOSED. 3 PRs landed (#267 β, #268 γ, #269 α). Each surgically rebased
+  onto `origin/main` after local-main divergence hit them. Established the
+  `rebase --onto origin/main <branch-base> <branch>` recipe.
+
+#### llmtelemetry dashboard — #146 Q4 / Q9 / Q14 panels LIVE
+
+- **llmtelemetry#273 → PR #276 → fix #278 / PR #279 → merged.** Three new
+  panels in the Reviews tab consuming the new `fix_*` columns from llm#379:
+  Q4 (time-to-fix), Q9 (closure breakdown), Q14 (closing-the-loop funnel).
+- **PR #279 fix** corrected a CI regression in PR #276: the three new
+  export blocks broke the established "DB-missing → copy committed source"
+  pattern and overwrote committed JSONs with empty content in CI. 6-line /
+  -12 surgical fix in `inst/scripts/export_dashboard_data.R`.
+- **Deploy run `26712374747` succeeded** (sha `86520e8`, 5:29 build). Re-
+  verified the published JSONs at `johngavin.github.io/llmtelemetry/data/`
+  contain real data — 21 rows for Q4, 3-bucket breakdown for Q9, 4-step
+  funnel for Q14.
+
+#### Cross-project umbrellas filed
+
+- **llm#388** — Digest YouTube `EBuAx-LiBxg` + PWL Capital expected-returns
+  paper. Maps onto multivariate-simulation gap in `historical` and cashflow
+  projection in `premortem`.
+- **historical#389** — Multivariate return simulation: audit + 5-phase
+  build (covariance → joint simulator → quantile outputs → real/nominal).
+- **llm#389** — Trend tracker for `commit_reference_rate` (today 0.1%) to
+  measure adoption of the `roborev #N` commit-message convention from
+  llm#359. Targets: ≥5% @ 6 weeks, ≥15% @ 12 weeks.
+- **premortem 0019** (LOCAL, commit `9e22529`) — Cashflow projection:
+  median (P50) + P25/P75 band from simulated returns instead of constant
+  6.6% growth. Gated on historical#389 Phase C+. INDEX updated; commit
+  local-only per AGENTS.md privacy policy (pre-push hook blocks remotes).
+
+#### Other issues filed (not yet actioned)
+
+- **llm#383** — Install microsoft/markitdown + markitdown-mcp for
+  cross-format → markdown conversion. Immediate consumers: mycare PDFs, KB
+  ingestion, cross-modal LLM context.
+
+### Failed Approaches
+
+- **Asserted `here::here()` anchors to `.git`** — wrong. Verified via
+  `here:::.onLoad` and `here::dr_here(show_reason = TRUE)` that the matched
+  criterion in this repo is `is_quarto_project` (`_quarto.yml`); `is_vcs_root`
+  is LAST in the criterion chain. Filed llm#370 to correct
+  `plans/195-stage2-audit.md`. **Lesson:** library-behaviour claims need
+  source-level verification before propagation.
+- **Cross-repo agent dispatches into llmtelemetry hit `add/add` conflicts
+  on parquet files** during rebase, because local llmtelemetry main was
+  10 commits behind origin/main (its own data divergence). Resolved via
+  `rebase --onto origin/main <branch-base> <branch>` to replay just the
+  agent's single commit. Established as the canonical recipe for "agent
+  branched off stale local main".
+- **PR #276 deployed Q4/Q9/Q14 panels with EMPTY data.** Three new export
+  blocks wrote empty JSONs in CI's DB-missing branch instead of preserving
+  committed sources; CI then copied empty content over the real data. Same
+  failure shape as llmtelemetry#261 (cmonitor-rs case). Fix in PR #279.
+  **Lesson:** new export blocks MUST follow the established "DB-missing →
+  copy committed source" pattern verbatim.
+- **Initial /session-end summary asserted "telemetry export not run"** —
+  wrong. It runs automatically via session_stop.sh on every Stop. Filed
+  llm#381 to background the export. **Lesson:** check what hooks actually
+  do before claiming work isn't done.
+- **Searched for `JohnGavin/postmortem` repo** — doesn't exist. User
+  clarified it's named `premortem` and lives at
+  `~/docs_gh/proj/pers/premortem/` (LOCAL only, no remote, contains PII).
+  Filed as local markdown issue per the project's own tracker convention.
+
+### Accuracy / Metrics
+
+- **PRs merged this session:** 5 in llm (#382, #384, #385 directly; #364/#366
+  resolutions carrying over). 5 in llmtelemetry (#267, #268, #269, #276,
+  #279). **10 total.**
+- **Fork PR open, NOT merged:** JohnGavin/tlang#1 (awaits orchestrator-
+  driven `t update` smoke + upstream PR to `b-rodrigues/tlang`).
+- **Issues filed:** 23+. llm (#362, #363, #365, #366, #370, #374, #375,
+  #376, #381, #383, #386, #388, #389); llmtelemetry (#261-#266, #273, #278);
+  historical (#389); premortem (0019 local).
+- **Issues closed:** 17 total. llm (#150, #362, #365, #366, #368, #369,
+  #379, #380, #381); llmtelemetry (#261-#266, #273, #278).
+- **Live dashboard data:** 3941 closed roborev reviews classified;
+  Q4/Q9/Q14 panels rendering at `johngavin.github.io/llmtelemetry/` with
+  real data.
+- **commit_reference_rate baseline (2026-05-31):** 5/3941 = **0.1%**.
+  Track vs targets in llm#389.
+- **Tier-3 isolation breaches across all parallel dispatches:** 0.
+
+### Known Limitations
+
+- **llm#386** (Phase 1.6 wrapper coverage) — roborev daemon's primary
+  review loop bypasses `codex_shim`; codex_fallback JSONL empty;
+  llmtelemetry#146 Q1/Q11/Q20 cost panels render with empty cost cells
+  until one of the 4 documented options is picked.
+- **llm#370** — audit correction not yet applied to
+  `plans/195-stage2-audit.md` (small prose fix; prereq for #363 Stage 2).
+- **llm#363** Stage 2 — needs dedicated foreground session for the
+  R-package `pkg/`-subfolder move.
+- **llmtelemetry #279 fix preserves committed JSONs in CI** but the local
+  push pipeline still needs a fresh `roborev_metrics_etl.R --apply` +
+  commit after each batch of new closures for the dashboard to reflect
+  them. Currently manual.
+- **86.7% of closed roborev reviews still `unknown`.** Trend tracker
+  llm#389 filed but `roborev_fix_method_trend` ETL table not yet built —
+  need that to measure whether #359 commit-msg hook is moving the needle.
+- **JohnGavin/tlang#1** — needs orchestrator-driven local verification.
+- **premortem 0019** — gated on historical#389 Phase C+ (joint simulator
+  with quantile output).
+- **Roborev backlog at session end:** 60 failed / 9 addressed lifetime.
+  Autoclose + sweep jobs converge overnight; not a session-blocker.
+
 ## 2026-05-30 (Session — closure-loop completion, 5-parallel sweep, Stage 2 audit, here() correction)
 
 Single-session run executing the remaining "go ahead" items + a 5-parallel
