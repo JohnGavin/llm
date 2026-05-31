@@ -5,10 +5,10 @@
 -- Do NOT modify column names or types without a coordinated bump across both repos.
 -- Tracked in llm#226.
 --
--- All 7 tables are created on every ETL invocation (idempotent).
+-- All 8 tables are created on every ETL invocation (idempotent).
 -- Slice 1 populates: roborev_daily_metrics, roborev_review_lifecycle.
 -- Slice 2 populates: roborev_agent_performance, roborev_threshold_changes,
---   roborev_cadence_efficacy.
+--   roborev_cadence_efficacy, codex_provider_invocations (#380).
 -- Slice 3 (#286) populates: roborev_finding_lineage;
 --   view roborev_finding_lineage_summary is rebuilt as CREATE OR REPLACE VIEW.
 
@@ -119,6 +119,30 @@ CREATE TABLE IF NOT EXISTS roborev_finding_lineage (
   chain_size          INTEGER   NOT NULL DEFAULT 1,
   is_closing_attempt  BOOLEAN   NOT NULL DEFAULT FALSE,
   PRIMARY KEY (finding_id, attempt_n)
+);
+
+-- ── codex_provider_invocations ───────────────────────────────────────────
+-- One row per codex_with_fallback.sh invocation (from ~/.claude/logs/codex_fallback/*.jsonl).
+-- Populated by roborev_metrics_etl.R via read_codex_fallback_jsonl().
+-- Token counts are approximated from byte sizes (4 bytes ≈ 1 token).
+-- Cost is computed from embedded pricing constants in the ETL.
+-- PK: invocation_id
+CREATE TABLE IF NOT EXISTS codex_provider_invocations (
+  invocation_id          VARCHAR   NOT NULL,
+  ts                     TIMESTAMP NOT NULL,
+  primary_provider       VARCHAR   NOT NULL DEFAULT 'codex',
+  primary_classification VARCHAR   NOT NULL DEFAULT 'unknown',
+  fallback_used          BOOLEAN   NOT NULL DEFAULT FALSE,
+  fallback_provider      VARCHAR,
+  final_provider         VARCHAR   NOT NULL,
+  duration_sec           DOUBLE,
+  response_bytes         BIGINT,
+  prompt_bytes           BIGINT,
+  prompt_tokens          BIGINT,
+  completion_tokens      BIGINT,
+  model                  VARCHAR,
+  cost_usd               DOUBLE,
+  PRIMARY KEY (invocation_id)
 );
 
 -- ── roborev_finding_lineage_summary (view) ────────────────────────────────
