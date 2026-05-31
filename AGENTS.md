@@ -7,6 +7,19 @@ For detailed guidance, invoke the relevant skill. For tool preferences, see `mem
 
 **Session Start:** `echo $IN_NIX_SHELL` (1/impure), `which R` (/nix/store/...). If not: `caffeinate -i ~/docs_gh/llm/default.sh`. Check `CHANGELOG.md`, `git status`, open issues.
 
+**Bash substitution table — substitute BEFORE every Bash call** (issue #393):
+
+| Don't write              | Write instead                                |
+|--------------------------|----------------------------------------------|
+| `cat F \| head -N`         | `Read(F, limit=N)`                           |
+| `grep -rn P path \| head`  | `Grep(pattern=P, path=path, head_limit=N)`   |
+| `find ... \| head`         | `Glob(pattern)`                              |
+| `cmd 2>&1 \| head -50`     | `cmd >/tmp/x 2>&1`, then `Read(/tmp/x)`      |
+| `cmd \|\| echo "missing"` | plain `cmd`; check exit code in next call    |
+| `cd dir && cmd`           | `git -C dir cmd` / `make -C dir` / etc.      |
+
+Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| uniq` is now allowed by the compound guard (#393 Phase 1). Anything else compound is hook-rejected — see `bash-safety` rule for the full table.
+
 **Git/GitHub — R packages ONLY:** `gert::git_add()`, `git_commit()`, `git_push()`; `usethis::pr_init()`, `pr_push()`; `gh::gh()`. **In bash, NEVER `cd <dir> && git ...` (triggers bare-repo approval prompt that bypassPermissions does NOT bypass). ALWAYS `git -C <dir> ...`.** See `git-no-compound-cd` rule.
 
 **Nix — Shell Architecture (CRITICAL):** The USER stays in the **global dev shell** at all times. The global shell does NOT have project-specific packages (e.g., pdfplumber, lme4, brms). Agents/subshells MUST enter the **project's own nix shell** for project-specific work: `nix-shell /absolute/path/to/project/default.nix --run "cmd"`. NEVER assume packages from `default.nix` are available in the outer shell. NEVER use relative paths (`nix-shell default.nix`) — always absolute. If `nix-shell` build fails (nixpkgs regression), fall back to pip venv: `/usr/bin/python3 -m venv /tmp/venv && /tmp/venv/bin/pip install pkg`. See `nix-agent-shell-protocol` rule. Verify global shell: `echo $IN_NIX_SHELL` (1/impure). **NEVER** `install.packages()`/`devtools::install()`/`pak::pkg_install()` in Nix.
