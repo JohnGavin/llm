@@ -1,0 +1,20 @@
+# Trusted contributors — Layer 6 of the external-code-zero-trust defence
+#
+# Format: one GitHub login per line. Lines starting with '#' are comments.
+# Blank lines are ignored.
+#
+# These are the contributors whose code may be incorporated without the
+# "re-implement from scratch" requirement that applies to all external code.
+# This list mirrors CODEOWNERS (project root or .github/CODEOWNERS).
+#
+# To add an entry:
+#   1. Verify the contributor has an active CODEOWNERS or collaborator entry
+#   2. Add the GitHub login below
+#   3. Commit with a message referencing the PR or decision that authorised the change
+#
+# Rule reference: .claude/rules/external-code-zero-trust.md
+# Issue: JohnGavin/llm#194
+
+JohnGavin
+github-actions[bot]
+dependabot[bot]
