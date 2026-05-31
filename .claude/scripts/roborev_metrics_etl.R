@@ -506,6 +506,9 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
     closed_at                    = as.POSIXct(character()),
     close_reason                 = character(),
     autoclose_threshold_at_close = character(),
+    fix_commit_sha               = character(),
+    fix_commit_at                = as.POSIXct(character()),
+    fix_method                   = character(),
     stringsAsFactors             = FALSE
   )
 
@@ -602,6 +605,9 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
     closed_at                    = closed_at,
     close_reason                 = close_reason,
     autoclose_threshold_at_close = NA_character_,   # Slice 2
+    fix_commit_sha               = NA_character_,   # Slice 3 (#379): populated by enrich_fix_commit_links()
+    fix_commit_at                = as.POSIXct(NA_real_, origin = "1970-01-01"),   # Slice 3 (#379)
+    fix_method                   = NA_character_,   # Slice 3 (#379)
     stringsAsFactors             = FALSE
   )
 }
@@ -1445,10 +1451,317 @@ coalesce_int <- function(x, default = 0L) {
   x
 }
 
+# ── find_fix_commit_for_review (#379) ─────────────────────────────────────
+#
+# Heuristic chain to link a closed review to the commit that fixed it.
+#
+# Returns a named list with:
+#   fix_commit_sha : character(1) or NA
+#   fix_commit_at  : POSIXct(1) or NA
+#   fix_method     : one of "commit_reference" / "pr_close" / "manual" /
+#                    "autoclose_severity" / "unknown"
+#
+# Priority order:
+#   1. explicit commit reference in git log grep
+#   2. PR close via gh (skipped if gh unavailable — network call)
+#   3. time-proximity (commit within 6h before closure)
+#   4. autoclose (close_reason indicates automated close, no human fix commit)
+#   5. fallthrough: unknown
+#
+# Args:
+#   review_id    integer(1)  — reviews.id
+#   repo_path    character(1) — local filesystem path for git log (may not exist)
+#   closed_at    POSIXct(1)  — parsed closure timestamp
+#   close_reason character(1) — from derive_close_reason()
+#   closer_actor character(1) — git author name (best-effort; NA if unknown)
+#
+# All git calls are wrapped in tryCatch — a git failure never aborts the ETL.
+
+find_fix_commit_for_review <- function(review_id, repo_path, closed_at,
+                                        close_reason, closer_actor = NA_character_) {
+  empty_result <- list(
+    fix_commit_sha = NA_character_,
+    fix_commit_at  = as.POSIXct(NA_real_, origin = "1970-01-01"),
+    fix_method     = "unknown"
+  )
+
+  # Heuristic 4 first (cheap — no git needed): autoclose patterns do not
+  # correspond to a human fix commit.
+  if (!is.na(close_reason)) {
+    if (grepl("^(clean-verdict|severity-|autoclose)", close_reason, perl = TRUE)) {
+      return(list(
+        fix_commit_sha = NA_character_,
+        fix_commit_at  = as.POSIXct(NA_real_, origin = "1970-01-01"),
+        fix_method     = "autoclose_severity"
+      ))
+    }
+  }
+
+  # Require a valid repo path and closed_at timestamp for git-based heuristics
+  if (is.na(closed_at) || !is.character(repo_path) || !nzchar(repo_path) ||
+      !file.exists(repo_path)) {
+    return(empty_result)
+  }
+
+  # Format timestamps for git --since / --until
+  fmt_git <- function(ts) format(ts, "%Y-%m-%dT%H:%M:%S", tz = "UTC")
+  since_1d <- fmt_git(closed_at - 86400L)   # 1 day before closure
+  until_1d <- fmt_git(closed_at + 86400L)   # 1 day after closure
+  since_6h <- fmt_git(closed_at - 21600L)   # 6h before closure
+
+  # ── Heuristic 1: explicit commit reference ──────────────────────────────
+  # grep pattern: "roborev" followed by optional chars then the review_id.
+  # Use ERE (--extended-regexp) so {0,8} works.
+  # system2() on macOS passes args through /bin/sh which interprets unquoted
+  # parentheses as subshell syntax. Use system() with shQuote() on the grep
+  # value so the pattern is single-quoted when the shell sees it.
+  grep_pattern <- sprintf("roborev.{0,8}#?%d[^0-9]", review_id)
+
+  ref_sha <- tryCatch({
+    cmd <- paste(
+      "git", "-C", shQuote(repo_path),
+      "log",
+      "--extended-regexp",
+      "--regexp-ignore-case",
+      paste0("--since=", shQuote(since_1d)),
+      paste0("--until=", shQuote(until_1d)),
+      paste0("--grep=", shQuote(grep_pattern)),
+      "--format=%H#%ai",     # %ai = "2026-05-30 22:35:36 +0100"
+      "--no-merges",
+      "2>/dev/null"
+    )
+    raw <- system(cmd, intern = TRUE)
+    if (length(raw) > 0L && nzchar(raw[[1L]])) raw[[1L]] else NA_character_
+  }, error = function(e) NA_character_,
+     warning = function(w) NA_character_)
+
+  if (!is.na(ref_sha) && grepl("^[0-9a-f]{7}", ref_sha, perl = TRUE) && grepl("#", ref_sha, fixed = TRUE)) {
+    parts   <- strsplit(ref_sha, "#")[[1L]]
+    sha     <- parts[[1L]]
+    ts_raw  <- if (length(parts) >= 2L) parts[[2L]] else NA_character_
+    # %ai format: "2026-05-30 22:35:36 +0100" — parse with tz offset
+    fix_at  <- tryCatch(
+      as.POSIXct(trimws(ts_raw), tz = "UTC", format = "%Y-%m-%d %H:%M:%S %z"),
+      error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01")
+    )
+    return(list(
+      fix_commit_sha = sha,
+      fix_commit_at  = fix_at,
+      fix_method     = "commit_reference"
+    ))
+  }
+
+  # ── Heuristic 2: PR close via gh CLI ───────────────────────────────────
+  # Only attempt if gh is available; skip silently otherwise.
+  gh_available <- tryCatch(
+    { system("gh --version > /dev/null 2>&1"); TRUE },
+    error   = function(e) FALSE,
+    warning = function(w) FALSE
+  )
+
+  if (isTRUE(gh_available)) {
+    # Derive github repo slug from root_path by checking remote URL
+    remote_slug <- tryCatch({
+      cmd_remote <- paste("git -C", shQuote(repo_path), "remote get-url origin 2>/dev/null")
+      url_raw <- system(cmd_remote, intern = TRUE)
+      if (length(url_raw) < 1L) NA_character_
+      else {
+        url <- trimws(url_raw[[1L]])
+        # Parse "git@github.com:Org/Repo.git" or "https://github.com/Org/Repo.git"
+        m <- regmatches(url, regexec("github\\.com[:/]([^/]+/[^/\\.]+)", url))[[1L]]
+        if (length(m) >= 2L) m[[2L]] else NA_character_
+      }
+    }, error = function(e) NA_character_)
+
+    if (!is.na(remote_slug)) {
+      pr_sha <- tryCatch({
+        # Search for closed PRs whose body/title mentions the review ID
+        search_q <- sprintf(
+          "roborev %d repo:%s merged:%s..%s",
+          review_id, remote_slug,
+          format(closed_at - 86400L, "%Y-%m-%d", tz = "UTC"),
+          format(closed_at + 86400L, "%Y-%m-%d", tz = "UTC")
+        )
+        cmd_gh <- paste(
+          "gh pr list",
+          "--repo", shQuote(remote_slug),
+          "--search", shQuote(search_q),
+          "--state closed",
+          "--json mergeCommit,mergedAt",
+          "--limit 1",
+          "2>/dev/null"
+        )
+        raw_pr <- system(cmd_gh, intern = TRUE)
+        if (length(raw_pr) == 0L) {
+          NA_character_
+        } else {
+          pr_json <- paste(raw_pr, collapse = "\n")
+          parsed  <- tryCatch(
+            jsonlite::fromJSON(pr_json, simplifyVector = TRUE),
+            error = function(e) list()
+          )
+          if (is.data.frame(parsed) && nrow(parsed) > 0L) {
+            mc <- parsed$mergeCommit[[1L]]
+            if (!is.null(mc) && !is.null(mc$oid)) mc$oid else NA_character_
+          } else {
+            NA_character_
+          }
+        }
+      }, error = function(e) NA_character_,
+         warning = function(w) NA_character_)
+
+      if (!is.na(pr_sha) && nzchar(pr_sha)) {
+        return(list(
+          fix_commit_sha = pr_sha,
+          fix_commit_at  = as.POSIXct(NA_real_, origin = "1970-01-01"),
+          fix_method     = "pr_close"
+        ))
+      }
+    }
+  }
+
+  # ── Heuristic 3: time-proximity (low confidence) ────────────────────────
+  # git log within 6h before closure; prefer commits by closer_actor if known.
+  # Use %x01 (SOH) as field separator to avoid shell or author-name conflicts.
+  # Use system() with shQuote() for all path arguments (same reason as H1).
+  proximity_lines <- tryCatch({
+    cmd <- paste(
+      "git", "-C", shQuote(repo_path),
+      "log",
+      paste0("--since=", shQuote(since_6h)),
+      paste0("--until=", shQuote(fmt_git(closed_at))),
+      "--format=%H%x01%ai%x01%an",
+      "--no-merges",
+      "--max-count=20",
+      "2>/dev/null"
+    )
+    raw <- system(cmd, intern = TRUE)
+    if (length(raw) > 0L) raw else character(0L)
+  }, error = function(e) character(0L),
+     warning = function(w) character(0L))
+
+  if (length(proximity_lines) > 0L) {
+    # Parse SOH-delimited fields: SHA, date, author
+    parts_list <- strsplit(proximity_lines, "\x01", fixed = TRUE)
+    shas    <- vapply(parts_list, function(p) if (length(p) >= 1L) p[[1L]] else NA_character_, character(1L))
+    ts_raws <- vapply(parts_list, function(p) if (length(p) >= 2L) p[[2L]] else NA_character_, character(1L))
+    authors <- vapply(parts_list, function(p) if (length(p) >= 3L) p[[3L]] else NA_character_, character(1L))
+
+    # Filter to valid SHA entries
+    valid <- nzchar(shas) & grepl("^[0-9a-f]{40}$", shas, perl = TRUE)
+    shas    <- shas[valid]
+    ts_raws <- ts_raws[valid]
+    authors <- authors[valid]
+
+    if (length(shas) > 0L) {
+      # Prefer by closer_actor if available
+      chosen_idx <- if (!is.na(closer_actor) && nzchar(closer_actor)) {
+        actor_match <- which(authors == closer_actor)
+        if (length(actor_match) > 0L) actor_match[[1L]] else length(shas)
+      } else {
+        length(shas)  # most recent commit (last in reverse-chron order → end of vector)
+      }
+
+      fix_at <- tryCatch(
+        as.POSIXct(trimws(ts_raws[[chosen_idx]]), tz = "UTC", format = "%Y-%m-%d %H:%M:%S %z"),
+        error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01")
+      )
+
+      return(list(
+        fix_commit_sha = shas[[chosen_idx]],
+        fix_commit_at  = fix_at,
+        fix_method     = "manual"
+      ))
+    }
+  }
+
+  empty_result
+}
+
+# ── Enrich lifecycle data frame with fix-commit links ────────────────────
+#
+# Applies find_fix_commit_for_review() row-by-row to closed reviews where
+# fix_commit_sha IS NULL.  Uses repo root_path from a repos lookup tibble.
+#
+# Args:
+#   lifecycle_df   data.frame from build_review_lifecycle()
+#   read_con       DuckDB connection with 'src' sqlite attachment
+#
+# Returns lifecycle_df with fix_commit_sha, fix_commit_at, fix_method columns
+# populated (where determinable) for newly-closed rows.
+
+enrich_fix_commit_links <- function(lifecycle_df, read_con) {
+  if (nrow(lifecycle_df) == 0L) return(lifecycle_df)
+
+  # Ensure fix-link columns exist (may be missing on first call)
+  if (!"fix_commit_sha" %in% names(lifecycle_df)) {
+    lifecycle_df$fix_commit_sha <- NA_character_
+    lifecycle_df$fix_commit_at  <- as.POSIXct(NA_real_, origin = "1970-01-01")
+    lifecycle_df$fix_method     <- NA_character_
+  }
+
+  # Load repo name → root_path mapping from SQLite
+  repos_map <- tryCatch(
+    dbGetQuery(read_con, "SELECT name, root_path FROM src.repos"),
+    error = function(e) {
+      log_msg("WARN: could not load repos for fix-link enrichment: ", conditionMessage(e))
+      data.frame(name = character(), root_path = character(), stringsAsFactors = FALSE)
+    }
+  )
+
+  # Rows needing enrichment: closed=1 and fix_commit_sha IS NA
+  # (In an upsert scenario, already-linked rows keep their fix_commit_sha.)
+  closed_rows  <- !is.na(lifecycle_df$closed_at)
+  needs_enrich <- closed_rows & is.na(lifecycle_df$fix_commit_sha)
+
+  if (!any(needs_enrich)) {
+    cat("roborev_metrics_etl.R: fix-link enrichment — all closed rows already linked, skipping\n")
+    return(lifecycle_df)
+  }
+
+  to_enrich <- which(needs_enrich)
+  cat(sprintf("roborev_metrics_etl.R: fix-link enrichment — processing %d closed reviews\n",
+              length(to_enrich)))
+
+  for (idx in to_enrich) {
+    row        <- lifecycle_df[idx, ]
+    repo_name  <- row$repo
+    root_path  <- repos_map$root_path[repos_map$name == repo_name]
+    root_path  <- if (length(root_path) > 0L && !is.na(root_path[[1L]])) root_path[[1L]] else NA_character_
+
+    result <- find_fix_commit_for_review(
+      review_id    = row$review_id,
+      repo_path    = root_path,
+      closed_at    = row$closed_at,
+      close_reason = row$close_reason,
+      closer_actor = NA_character_   # not stored in current reviews.db
+    )
+
+    lifecycle_df$fix_commit_sha[[idx]] <- result$fix_commit_sha
+    lifecycle_df$fix_commit_at[[idx]]  <- result$fix_commit_at
+    lifecycle_df$fix_method[[idx]]     <- result$fix_method
+  }
+
+  # Summary of fix_method distribution
+  method_tbl <- table(lifecycle_df$fix_method[!is.na(lifecycle_df$fix_method)])
+  cat("roborev_metrics_etl.R: fix-link enrichment complete — method distribution:\n")
+  for (nm in names(method_tbl)) {
+    cat(sprintf("  %s: %d\n", nm, method_tbl[[nm]]))
+  }
+
+  lifecycle_df
+}
+
 # ── Build tables ───────────────────────────────────────────────────────────
 
 daily_df     <- build_daily_metrics(jobs_raw, reviews_raw)
 lifecycle_df <- build_review_lifecycle(jobs_raw, reviews_raw, markers_raw)
+
+# Enrich lifecycle with fix-commit links (#379).
+# Uses git log heuristics on the local repo checkouts — graceful fallback if
+# repo path is absent or git is unavailable.  Only processes rows where
+# fix_commit_sha IS NA (batch guard prevents redundant re-scanning).
+lifecycle_df <- enrich_fix_commit_links(lifecycle_df, read_con)
 
 cat(sprintf("roborev_metrics_etl.R: built %d daily_metrics rows, %d lifecycle rows\n",
             nrow(daily_df), nrow(lifecycle_df)))
@@ -1487,6 +1800,16 @@ if (mode == "dry-run") {
   cat(sprintf("  roborev_daily_metrics:        %d rows (since %s)\n",
               nrow(daily_df), format(since, "%Y-%m-%d")))
   cat(sprintf("  roborev_review_lifecycle:     %d rows\n", nrow(lifecycle_df)))
+
+  # Fix-link column summary (#379)
+  if (nrow(lifecycle_df) > 0L && "fix_method" %in% names(lifecycle_df)) {
+    fix_tbl <- table(lifecycle_df$fix_method[!is.na(lifecycle_df$fix_method)])
+    cat("  fix-commit link distribution:\n")
+    for (nm in names(fix_tbl)) cat(sprintf("    %s: %d\n", nm, fix_tbl[[nm]]))
+    n_unlinked <- sum(is.na(lifecycle_df$fix_method) & !is.na(lifecycle_df$closed_at))
+    cat(sprintf("    (unclassified closed): %d\n", n_unlinked))
+  }
+
   cat(sprintf("  roborev_agent_performance:    %d rows\n", nrow(agent_perf_df)))
   cat(sprintf("  roborev_threshold_changes:    %d rows\n", nrow(threshold_df)))
   cat(sprintf("  roborev_cadence_efficacy:     %d rows\n", nrow(cadence_df)))
