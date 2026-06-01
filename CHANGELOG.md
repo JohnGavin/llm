@@ -4,6 +4,51 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-01 (#383 — markitdown wrapper scaffold)
+
+Ships the **scaffold only** for Microsoft markitdown integration. No installation
+is performed in this commit — actual install (Nix/rix regen or pip venv) is a
+separate human action via `install_markitdown.sh`.
+
+### What ships
+
+- `.claude/scripts/markitdown_convert.sh` — conversion wrapper (`<input> <output.md>`).
+  Venv priority: `MARKITDOWN_VENV` env var → `/tmp/markitdown_venv` → system python3.
+  On missing markitdown: emits install hint and exits non-zero.
+  **PHI guard**: `MARKITDOWN_DISABLE_NETWORK` defaults to `"1"` (offline-only); must
+  be set to `"0"` to allow whisper/cloud features. Selftest mode via
+  `CLAUDE_HOOK_SELFTEST=1`. Logs to `~/.claude/logs/markitdown_convert.log`.
+
+- `.claude/scripts/install_markitdown.sh` — installer with two paths:
+  - Path A (preferred): prints `default.R` modification needed + cwd-safe rix regen
+    command. Does NOT modify `default.R`.
+  - Path B (`--path-b`): creates pip venv at `/tmp/markitdown_venv/` and installs
+    `markitdown[pdf,docx,pptx,xlsx,html]` (no `[all]` — avoids whisper/OCR).
+  - `--dry-run`: prints both paths without executing. Refuses to run if
+    `CLAUDE_AGENT=1` (human-only install, mirroring `incident_response.sh` pattern).
+
+- `.mcp.json.example` — inactive MCP config block. Rename to `.mcp.json` and remove
+  the `_instructions`/`_disabled_reason` keys after running the installer to activate
+  the `markitdown-mcp` server (tier: read; `MARKITDOWN_DISABLE_NETWORK=1` enforced).
+
+- `.claude/rules/permission-discipline.md` — already contained the `markitdown-mcp`
+  table entry from a prior session; no change needed.
+
+### What is deferred (not in this PR)
+
+- Actual installation of markitdown (Nix regen or pip venv)
+- Modification of `default.R` / `default.nix`
+- Dashboard / scheduler / cron integration
+
+### Post-merge human action
+
+```bash
+bash ~/docs_gh/llm/.claude/scripts/install_markitdown.sh --dry-run
+# Then follow Path A or run with --path-b
+```
+
+---
+
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
 Fixes the root cause of why `~/.claude/logs/codex_fallback/` stayed empty despite
