@@ -1124,6 +1124,23 @@ PYEOF
 }
 phase_roborev_backlog || true
 
+# ── Phase 14a: T-lang flake.nix closure-rebuild advisory ─────────────────────
+# Warns if any T-lang R project under ~/docs_gh/ is missing the closure-rebuild
+# shellHook marker. `t update` strips this block; without it, R compiled packages
+# segfault on dyn.load (nix-nested-shell-isolation rule). NON-BLOCKING.
+# See JohnGavin/llm#303 and .claude/scripts/check_tlang_flake_closure_rebuild.sh
+_tlang_check_script="$CLAUDE_DIR/scripts/check_tlang_flake_closure_rebuild.sh"
+if [ -x "$_tlang_check_script" ]; then
+  _tlang_missing=$(timeout 5 bash "$_tlang_check_script" --quiet 2>/dev/null) || true
+  if [ -n "$_tlang_missing" ]; then
+    echo ""
+    echo "WARN: T-lang closure-rebuild marker missing in these projects:"
+    echo "$_tlang_missing"
+    echo "  Fix: cd <project> && bash default.post.sh"
+    echo "  See: .claude/scripts/check_tlang_flake_closure_rebuild.sh"
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
