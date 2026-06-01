@@ -52,6 +52,7 @@ Detection: checkout is a **worktree** iff `git rev-parse --git-common-dir` ≠ `
 |---|---|---|---|
 | r-btw | `docs_*`, `files_list/read/search`, `sessioninfo_*`, `env_describe_*` | `files_write` | `run_r`, `pkg_*` (hang risk — use Bash+timeout) |
 | Gmail/Calendar/Drive | — | — | Auth stubs only; inactive |
+| markitdown-mcp | `convert_to_markdown` (file path → markdown text; no side effects on source) | — (if a write-to-disk variant is exposed, classify as **write** and require per-session approval) | No auth token; local execution only. No destructive tools identified in upstream README. |
 
 ### Pre-Install Checklist
 
