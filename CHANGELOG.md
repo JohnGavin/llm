@@ -48,6 +48,26 @@ bash ~/docs_gh/llm/.claude/scripts/install_markitdown.sh --dry-run
 ```
 
 ---
+## 2026-06-01 (#387 — surface ci-failure issues at session_init Phase 14b)
+
+Adds Phase 14b to `session_init.sh`: queries the active repo's GitHub for open
+issues labeled `ci-failure` and emits one banner line when N>=1. Silent when N=0.
+
+Origin: a 24-hour-old llmtelemetry deploy-dashboard failure (tracked in
+llmtelemetry#270 with 18 comments) was firing the issue alert but no session_init
+scan surfaced it on session entry. The gap was invisible until the PR review cycle
+caught it.
+
+### Files changed
+
+- `.claude/hooks/session_init.sh` — Phase 14b block added between Phase 14a and
+  Phase 14. Uses a 5-second `timeout` on the `gh issue list` call. Silent fail-open
+  when `gh` is absent or the API call fails (debug log only). Derives `OWNER/REPO`
+  from git remote URL (same pattern as Phase 13c, ~50x faster than `gh repo view`).
+- `.claude/hooks/session_init_phase14b_selftest.sh` — standalone selftest; mocks
+  `gh` via stub binary; verifies N=0→no output and N=3→exact banner line. 4/4 PASS.
+- `.claude/rules/session-init-phases.md` — new phase-inventory table documenting all
+  phases; guidance for future additions.
 
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
