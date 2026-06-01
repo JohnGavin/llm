@@ -129,3 +129,7 @@ explorations/*
 # trusted-contributors.txt is NOT excluded — it is source-controlled.
 .claude/state/untrusted-comments.log
 .claude/state/untrusted-comment-pending
+
+# Credential tier file (real one lives at ~/.claude/credential_tiers.toml — JohnGavin/llm#376)
+# The .example template is tracked; the real file with actual key names is not.
+.claude/credential_tiers.toml
