@@ -48,11 +48,13 @@
     <key>RunAtLoad</key>
     <false/>
 
-    <!-- PATH must include nix stable profile so nix-shell resolves -->
+    <!-- PATH must include ~/.local/bin (roborev shim — #386), nix stable profile
+         (for nix-shell), and /usr/local/bin (real roborev binary).
+         ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 shim fires. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <string>/Users/johngavin/.local/bin:/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
         <key>HOME</key>
         <string>/Users/johngavin</string>
         <!-- NIX_SSL_CERT_FILE is required for nix-shell to make network calls -->

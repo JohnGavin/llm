@@ -31,6 +31,18 @@ set -euo pipefail
 
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+# ── Phase-1.6 shim guard (JohnGavin/llm#386) ─────────────────────────────────
+# Warn if the roborev primary shim is not installed.  The shim ensures the
+# codex fallback wrapper (codex_with_fallback.sh) is on PATH for ALL roborev
+# callers, including the daemon's primary review loop.
+if [ ! -x "${HOME}/.local/bin/roborev" ]; then
+  echo "WARNING: ~/.local/bin/roborev shim not installed." >&2
+  echo "  The codex_with_fallback.sh wrapper will NOT intercept primary-loop reviews." >&2
+  echo "  Install: ~/docs_gh/llm/.claude/scripts/install_roborev_primary_shim.sh" >&2
+  echo "  Verify:  which roborev  # must show ~/.local/bin/roborev" >&2
+  echo "" >&2
+fi
+
 VERIFIER_SCRIPT="$(dirname "$(realpath "$0")")/roborev_auto_verify.sh"
 ROBOREV_DB="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
 

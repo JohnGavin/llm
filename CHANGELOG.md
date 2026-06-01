@@ -4,6 +4,58 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
+
+Fixes the root cause of why `~/.claude/logs/codex_fallback/` stayed empty despite
+502 reviews completing in 14 hours. Phase 1.5 (#378) wired `codex_shim/` into PATH
+for secondary roborev callers only; the daemon's **primary review loop** bypassed
+all of them.
+
+**Option A (shim at `~/.local/bin/roborev`):** the shim PATH-injects the
+`codex_shim/` directory and execs `/usr/local/bin/roborev` — all callers,
+including the primary loop, pass through transparently.
+
+### Files added
+
+- `.claude/scripts/roborev_primary_shim.sh` — the wrapper script; resolves
+  `codex_shim/` directory from its own location, prepends it to PATH (idempotent),
+  then `exec /usr/local/bin/roborev "$@"`.
+- `.claude/scripts/install_roborev_primary_shim.sh` — idempotent installer with
+  `--test` mode; creates `~/.local/bin/` if missing; creates symlink
+  `~/.local/bin/roborev → ~/docs_gh/llm/.claude/scripts/roborev_primary_shim.sh`;
+  warns if `~/.local/bin/` is absent from PATH or ordered after `/usr/local/bin/`.
+
+### Launchd PATH updates
+
+All roborev-related launchd plists updated to put
+`/Users/johngavin/.local/bin` ahead of `/usr/local/bin` in
+`EnvironmentVariables.PATH`. Affected plists:
+`com.claude.roborev-daily-backlog`, `roborev-poll-merges`,
+`roborev-agent-health`, `roborev-daily-email`, `roborev-weekly-rollup-email`,
+`roborev-autoclose`, `roborev-project-backlog`, `roborev-severity-autoclose`.
+
+### Guard warnings
+
+`roborev_install_*` scripts emit a warning if `~/.local/bin/roborev` is absent:
+`bin/roborev_install_all_hooks.sh`, `bin/roborev_install_post_merge_hook.sh`,
+`bin/roborev_install_commit_msg_hook.sh`,
+`bin/roborev_install_post_commit_verifier.sh`,
+`.claude/scripts/roborev_install_auto_verify_hook.sh`.
+
+### Post-merge install action required
+
+```bash
+~/docs_gh/llm/.claude/scripts/install_roborev_primary_shim.sh
+which roborev  # must show /Users/johngavin/.local/bin/roborev
+```
+
+After install, reload launchd plists:
+```bash
+launchctl unload ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
+launchctl load ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
+# repeat for each updated plist
+```
+
 ## 2026-05-30 (Stage 1 #195 — archive one-off MDs + remove stray artifacts)
 
 Stage 1 of issue #195 (tidy top-level directory). Four one-off markdown files

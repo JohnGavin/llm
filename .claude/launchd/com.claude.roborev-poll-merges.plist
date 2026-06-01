@@ -85,10 +85,12 @@
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
     </array>
+    <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
+         primary shim (#386) intercepts all roborev invocations from poll-merges. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
     <!--
       StandardInPath=/dev/null prevents SIGTTIN/SIGTTOU stopping the process
