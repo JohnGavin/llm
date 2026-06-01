@@ -459,6 +459,16 @@
                 ]
             },
             {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/gh_comment_provenance.sh",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
                 "matcher": "Edit|Write",
                 "hooks": [
                     {
