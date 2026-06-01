@@ -239,21 +239,79 @@ Result values: `ok`, `timeout`, `error`, `skipped`.
 
 `~/.claude/.session_start_sha_<sanitized-project-name>` — written by `session_init.sh` Phase 14 at session start.
 
-## Poller Schedule Decision (2026-05-23, #217)
+## Review Trigger Mechanisms (Phase 1.7, #217)
 
-### What changed
+### Coverage model — three-tier
 
-`com.claude.roborev-poll-merges.plist` was updated from:
+| Tier | Trigger | Fires on | Introduced |
+|------|---------|----------|------------|
+| Primary | `post-commit` git hook | Every local `git commit` | Phase 1.0 |
+| Secondary | `post-merge` git hook | Every `git pull` / `git merge --ff` that changes HEAD | Phase 1.7 (#217) |
+| Safety net | launchd poller (thrice-daily) | Cron: Mon–Fri 09:00, 13:00, 17:00 | Phase 1.7 (#217) |
 
+The post-merge hook fills the primary gap: remote-merged PRs that arrive via
+`git pull` trigger `post-commit` on the local checkout but NOT on the server.
+The thrice-daily poller is the last-resort backstop for repos that haven't yet
+had the post-merge hook installed, or for any merge path that bypasses both
+hooks (e.g. direct SHA pushes, force-pushes, `git reset --hard`).
+
+Phase 4 (full poller removal) is deferred until the hook rollout has had a
+7-day soak across all watched repos.
+
+### Installing the post-merge hook per repo
+
+```bash
+# Dry-run to preview
+bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh \
+  --repo <path> --dry-run
+
+# Install
+bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh \
+  --repo <path>
+
+# Verify
+cat <path>/.git/hooks/post-merge
 ```
-StartInterval: 900   (every 15 min, 24/7)
+
+Self-test (validates install + idempotency + fail-open + uninstall):
+```bash
+CLAUDE_HOOK_SELFTEST=1 bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh
 ```
 
-to:
+### Cleaning ephemeral entries from the repos table
 
+```bash
+# Preview
+roborev_poll_merges.sh --clean-repos-table --dry-run
+
+# Apply
+roborev_poll_merges.sh --clean-repos-table
 ```
-StartCalendarInterval: hourly, Mon–Fri 09:00–22:00 (70 fire points per week)
-```
+
+Ephemeral entries (root_path starts with `/private/tmp/` or `/tmp/`) are now
+also silently skipped during every polling run, so the DB cleanup is optional.
+
+---
+
+## Poller Schedule Decision (2026-05-23 → 2026-06-01, #217)
+
+### History
+
+| Date | Schedule | Fires/week | Reason for change |
+|------|----------|------------|-------------------|
+| Initial | Every 15 min, 24/7 | ~672 | First implementation |
+| 2026-05-23 | Hourly, Mon–Fri 09:00–22:00 | ~70 | Eliminate overnight no-ops |
+| 2026-06-01 | Thrice-daily, Mon–Fri 09:00/13:00/17:00 | 15 | Post-merge hook now provides primary coverage |
+
+### Current schedule
+
+`com.claude.roborev-poll-merges.plist` fires at 09:00, 13:00, and 17:00 on
+every weekday (Monday–Friday). 3 fires/day × 5 days = 15 fires/week.
+
+The poller is now the **safety net**, not the primary mechanism. The post-merge
+git hook installed per-repo via `roborev_install_post_merge_hook.sh` covers
+the pull-time catchup; the poller covers repos without the hook and any
+exceptional merge paths.
 
 ### Why business hours
 
@@ -261,11 +319,6 @@ Issue #217 diagnosed the poller log showing repeated `behind=0 enqueued=0` runs
 during overnight and weekend hours — no PRs are merged outside working hours in
 this solo development context, so every off-hours fire is a no-op that burns
 launchd overhead and pollutes the log.
-
-The 15-minute interval was originally chosen for responsiveness during active
-development. Hourly during business hours gives adequate latency (at most 1h
-delay before a newly-merged PR is reviewed) while eliminating ~90% of no-op
-fire events.
 
 ### Reload instructions (after merge to main)
 
@@ -303,14 +356,18 @@ The script is idempotent and wrapped in a transaction. It shows a dry-run
 preview, deletes matching rows, and then prints surviving entries for
 confirmation.
 
-### Future path: Option B (post-merge hook)
+### Post-merge hook (Phase 1.7, shipped)
 
-The poller exists only to cover remote-merged PRs that don't fire the local
-`post-commit` hook. A proper fix is a server-side or CI post-merge hook that
-calls `roborev review` immediately when GitHub merges a PR. Once that is in
-place, the poller becomes redundant and should be unloaded and removed.
+The post-merge hook (`roborev_install_post_merge_hook.sh`) was delivered in
+Phase 1.7 (#217). It fires on every `git pull` or `git merge --ff` that changes
+HEAD, calling `roborev review --since ORIG_HEAD --branch <branch>` to cover the
+just-arrived commits.
 
-Tracked in #217.
+This is now the primary mechanism for pull-time coverage. The poller has been
+downgraded to a thrice-daily safety net (see "Review Trigger Mechanisms" above).
+
+Phase 4 (full poller removal) is tracked in #217 — deferred until 7-day soak
+confirms the hook is installed and firing on all watched repos.
 
 ## Auto-Verifier (Component 4, JohnGavin/llm#163 Slice 3)
 
