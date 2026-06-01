@@ -74,11 +74,33 @@ broken; structural risk if `.claude/` is not mirrored into `pkg/inst/`).
 
 ## 4. here::here() Calls
 
-`here::here()` anchors to the repo root (the directory containing a `.here` marker or
-`.git`). After moving the package into `pkg/`, the repo root does not change — `here()`
-will still resolve to the repo root, not to `pkg/`. All paths built with `here::here()`
-that reference package source directories (`R/`, `inst/`, `man/`) will need updating to
-prepend `"pkg"`.
+`here::here()` walks up from the current working directory and returns the first
+directory where **any** criterion in its default chain matches. The chain (from
+`here:::.onLoad`) is:
+
+```r
+set_root_crit(is_here | is_rstudio_project | is_vscode_project |
+              is_quarto_project | is_renv_project | is_r_package |
+              is_remake_project | is_projectile_project | is_vcs_root)
+```
+
+`is_vcs_root` (i.e. the `.git` directory) is the **last fallback**, not the primary
+anchor. In this repo, `_quarto.yml` at the root matches `is_quarto_project` first.
+`here::dr_here(show_reason = TRUE)` confirms: "This directory contains a file
+'_quarto.yml'".
+
+The practical effect after moving the package into `pkg/` depends on cwd:
+
+- cwd at or above the repo root → matches `_quarto.yml`, `here()` returns the repo
+  root → `here::here("inst/...")` resolves to `repo-root/inst/` (which won't exist
+  after the move) → **BREAKS**.
+- cwd inside `pkg/` → matches `DESCRIPTION` (`is_r_package`), `here()` returns
+  `pkg/` → `here::here("inst/...")` resolves to `pkg/inst/` → **WORKS**.
+
+The breakage is **cwd-dependent**. `tar_make()` run from the repo root breaks;
+`tar_make()` run from inside `pkg/` would work. All paths built with `here::here()`
+that reference package source directories (`R/`, `inst/`, `man/`) will need replacing
+with cwd-independent alternatives (see Section 13.1).
 
 | File | Line | Content |
 |------|------|---------|
@@ -258,9 +280,14 @@ the package root. This assumption is not expressed in any one file — it is bak
 - All `here::here("R/...")` calls (resolve to repo-root/R/)
 - `quarto render` in CI (runs from repo root, resolves `vignettes/` from there)
 
-After moving to `pkg/`, `here::here()` will still resolve to the **repo root** (where
-`.git` lives), not to `pkg/`. Every `here::here("inst/...")` and `here::here("R/...")` 
-will be silently wrong — they will look for `repo-root/inst/` not `pkg/inst/`.
+After moving to `pkg/`, `here::here()` resolution becomes **cwd-dependent**. When
+`tar_make()` (or any R session) starts at the repo root, `here()` matches `_quarto.yml`
+via `is_quarto_project` and returns the repo root — **not** `pkg/`. Every
+`here::here("inst/...")` and `here::here("R/...")` will silently resolve to
+`repo-root/inst/` and `repo-root/R/` respectively, which won't exist after the move.
+Note: `is_vcs_root` (`.git`) is the last criterion in `here`'s default chain — it is
+not the primary anchor. The dominant marker in this repo is `_quarto.yml`
+(`is_quarto_project`), as confirmed by `here::dr_here(show_reason = TRUE)`.
 
 **Fix options:**
 
