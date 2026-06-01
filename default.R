@@ -656,6 +656,10 @@ py_conf = list(
     #, "dotenv" # , "chatlas", 
     # https://b-rodrigues.github.io/rixpress_demos/rbc/index.html
     "pandas", "scikit-learn", "xgboost", "pyarrow"
+    # markitdown: Microsoft tool for converting PDF/Word/Excel/PPT/HTML -> markdown
+    # [pdf,docx,pptx,xlsx,html] skips OCR/audio extras (too heavy for first cut)
+    # Issue: JohnGavin/llm#383
+    , "markitdown[pdf,docx,pptx,xlsx,html]"
   ) |>
   unique() |>
   sort()
