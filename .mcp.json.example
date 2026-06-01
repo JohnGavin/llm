@@ -1,0 +1,36 @@
+{
+  "_instructions": [
+    "markitdown-mcp activation instructions (#383)",
+    "",
+    "INACTIVE BY DEFAULT. Follow these steps to activate:",
+    "  1. Run the installer (dry-run first):",
+    "       bash ~/docs_gh/llm/.claude/scripts/install_markitdown.sh --dry-run",
+    "       bash ~/docs_gh/llm/.claude/scripts/install_markitdown.sh [--path-b]",
+    "  2. Copy this file to .mcp.json:",
+    "       cp .mcp.json.example .mcp.json",
+    "  3. Edit .mcp.json and remove the '_instructions' and '_disabled_reason' keys.",
+    "  4. Restart Claude Code to load the MCP server.",
+    "",
+    "Tier classification: read",
+    "  - convert_to_markdown: file path in -> markdown text out; no write side effects",
+    "  - No auth token; local execution only",
+    "  - No destructive tools",
+    "",
+    "PHI guard: MARKITDOWN_DISABLE_NETWORK=1 is set in the env block below,",
+    "  forcing offline-only mode (no whisper/cloud features). To allow network",
+    "  features on non-PHI content, change it to '0'.",
+    "",
+    "See: permission-discipline.md MCP table, JohnGavin/llm#383"
+  ],
+  "_disabled_reason": "markitdown not yet installed — run install_markitdown.sh first",
+  "mcpServers": {
+    "markitdown-mcp": {
+      "command": "python3",
+      "args": ["-m", "markitdown_mcp"],
+      "env": {
+        "MARKITDOWN_DISABLE_NETWORK": "1",
+        "MARKITDOWN_VENV": "/tmp/markitdown_venv"
+      }
+    }
+  }
+}
