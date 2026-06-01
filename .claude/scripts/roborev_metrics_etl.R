@@ -941,6 +941,9 @@ build_agent_performance <- function(jobs, reviews, invocations = NULL) {
 
     # Cost: sum invocations whose timestamp falls within job started_at..finished_at
     # (± 60s grace). Only computed when invocations data is available.
+    # #390: when invocations is NULL or empty, cost is NA and a WARN was already
+    # emitted by the caller (main body) via the post-read check.  This guard
+    # keeps the inner logic clean — no duplicate warnings per group.
     grp_cost_usd <- NA_real_
     if (!is.null(invocations) && nrow(invocations) > 0L && nrow(grp) > 0L) {
       grp_started  <- as.POSIXct(grp$started_at,  tz = "UTC",
@@ -1771,6 +1774,30 @@ cat(sprintf("roborev_metrics_etl.R: built %d daily_metrics rows, %d lifecycle ro
 invocations_raw <- read_codex_fallback_jsonl(CODEX_FALLBACK_LOG_DIR)
 cat(sprintf("roborev_metrics_etl.R: read %d codex_provider_invocations records\n",
             nrow(invocations_raw)))
+# #390: warn when no invocation data found so operators know why total_cost_usd
+# will be NULL.  The upstream source is ~/.claude/logs/codex_fallback/*.jsonl,
+# written by codex_with_fallback.sh only when the codex_shim/ PATH-prepend is
+# active.  roborev_auto_refine.sh and bin/roborev_daily_cron.sh do NOT yet wire
+# the shim — see #386 for that upstream fix.  Until #386 lands, cost stays NA.
+if (nrow(invocations_raw) == 0L) {
+  if (dir.exists(CODEX_FALLBACK_LOG_DIR)) {
+    log_msg(
+      "WARN: codex_fallback dir exists (", CODEX_FALLBACK_LOG_DIR, ") but ",
+      "contains no JSONL records — total_cost_usd will be NULL for all ",
+      "roborev_agent_performance rows.  Confirm codex_with_fallback.sh is ",
+      "being invoked (via codex_shim/ PATH-prepend) during roborev reviews. ",
+      "See llm#386 for the upstream JSONL accumulation fix."
+    )
+  } else {
+    log_msg(
+      "WARN: codex_fallback dir absent (", CODEX_FALLBACK_LOG_DIR, ") — ",
+      "total_cost_usd will be NULL.  codex_with_fallback.sh must be invoked ",
+      "during roborev reviews for JSONL to accumulate here.  ",
+      "roborev_auto_refine.sh and bin/roborev_daily_cron.sh do not yet wire ",
+      "the codex_shim/ PATH-prepend; see llm#386."
+    )
+  }
+}
 
 agent_perf_df <- build_agent_performance(jobs_raw, reviews_raw, invocations_raw)
 poll_log_data <- parse_poll_log(POLL_LOG, since)
