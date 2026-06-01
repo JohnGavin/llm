@@ -4,7 +4,7 @@
         "CLAUDE_WEEKLY_CAP_USD": "500",
         "CLAUDE_WEEK_START_DAY": "tuesday",
         "CLAUDE_TIMEZONE": "Europe/Dublin",
-        "COMPOUND_GUARD_MODE": "block"
+        "COMPOUND_GUARD_MODE": "log"
     },
     "permissions": {
         "allow": [
