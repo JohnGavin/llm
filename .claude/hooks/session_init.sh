@@ -1141,6 +1141,58 @@ if [ -x "$_tlang_check_script" ]; then
   fi
 fi
 
+# ── Phase 14b: Surface open ci-failure issues (JohnGavin/llm#387) ────────────
+# Queries the active repo's GitHub for open issues labeled `ci-failure`.
+# Quiet when N=0 — no banner spam.  Single line when N>=1:
+#   ci-failures: N open  (gh issue list --repo OWNER/REPO --label ci-failure --state open)
+#
+# Discipline:
+#   - 5-second timeout: a slow network must not block session start
+#   - Silent fail-open: logs to debug log only when gh missing or API fails
+#   - No output when N=0 (e.g. everything is green)
+#
+# Style follows Phase 13c (dated-issues): derive OWNER/REPO from git remote URL
+# for ~50x speedup vs `gh repo view`; handle https and git@ URL forms.
+# See JohnGavin/llm#387.
+_cifail_debug_log="${HOME}/.claude/logs/session_init_phase14b.log"
+_cifail_repo=""
+
+# Only attempt when gh is available
+if command -v gh >/dev/null 2>&1; then
+  _cifail_url=$(/usr/bin/git config --get remote.origin.url 2>/dev/null || true)
+  if [ -n "$_cifail_url" ]; then
+    _cifail_repo=$(echo "$_cifail_url" | /usr/bin/sed -E 's#^https?://[^/]+/##; s#^git@[^:]+:##; s#\.git$##')
+    # Sanity: must look like owner/repo (single slash, no spaces).
+    case "$_cifail_repo" in
+      */*) : ;;
+      *) _cifail_repo="" ;;
+    esac
+  fi
+fi
+
+if [ -n "$_cifail_repo" ]; then
+  # Build the gh command with timeout
+  if command -v timeout >/dev/null 2>&1; then
+    _cifail_gh_prefix="timeout 5"
+  else
+    _cifail_gh_prefix=""
+  fi
+
+  # Count open ci-failure issues; capture count only; fail silently on error
+  _cifail_count=$($_cifail_gh_prefix gh issue list \
+      --repo "$_cifail_repo" \
+      --label "ci-failure" \
+      --state open \
+      --json number \
+      --jq 'length' \
+      2>>"$_cifail_debug_log") || _cifail_count=""
+
+  # Emit one banner line when N>=1; stay silent when N=0 or call failed
+  if [ -n "$_cifail_count" ] && [ "$_cifail_count" -gt 0 ] 2>/dev/null; then
+    echo "ci-failures: ${_cifail_count} open  (gh issue list --repo ${_cifail_repo} --label ci-failure --state open)"
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
