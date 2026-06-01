@@ -114,6 +114,25 @@ wiring deferred to a follow-up PR after real-data validation.
   template placeholders; refuses `--send` without KB_DIGEST_SEND_CONFIRM phrase;
   live SMTP deferred (blastula/msmtp/mailgun options documented in comments)
 
+## 2026-06-01 (#363 Phase A v2 — Stage 2 audit updated)
+
+Updated `plans/195-stage2-audit.md` with new findings discovered since the v1 audit
+(2026-05-30). No source files modified — this is a read-only Phase A inventory.
+
+**New findings vs v1:**
+- `wiki-sync-check.yaml` (added after v1 audit): 4 active R/ path references, all
+  pointing to `R/dev/wiki/sync_wiki.R`, will break when the file moves to `pkg/`.
+- `tests/testthat/test-roborev-revalidate.R`: 6 string literals (`"R/foo.R"` etc.)
+  are test fixture strings, not live path bindings — correctly annotated as 0 actionable
+  refs (was absent from v1).
+- `R/tar_plans/plan_vignette_outputs.R`: 3 `list.files("R/...")` calls (lines 406,
+  651, 655) silently return empty results after the move — added to Sections 1 and 10.
+- `tests/testthat/test-roborev-daily-email.R`: fallback path arithmetic
+  (`dirname(dirname(testthat::test_path()))`) breaks when tests move to `pkg/` —
+  added to risk callouts as 13.8.
+- Section 14 now includes the verbatim Phase B–D plan from issue #363 body.
+- Summary table updated: ~22 unique files (was ~21), ~52 total refs (was ~44).
+
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
 Fixes the root cause of why `~/.claude/logs/codex_fallback/` stayed empty despite
