@@ -9,8 +9,12 @@
         <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_weekly_chain.sh</string>
     </array>
+    <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
+         primary shim (#386) intercepts all roborev invocations from autoclose. -->
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>THRESHOLD_DAYS</key>
         <string>30</string>
     </dict>
