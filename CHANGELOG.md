@@ -92,6 +92,28 @@ reusable from other hooks. `session_stop.sh` integration is bounded to 30 s
 via `timeout`. Selftest uses `CLAUDE_HOOK_SELFTEST=0` env override when calling
 subprocess to prevent recursive selftest execution.
 
+## 2026-06-01 (#298 — knowledge-base digest builder + safe email template)
+
+Ships the shell-script builder for the daily KB digest (companion to #297
+config-change digest). Computes a privacy-safe summary from a local
+knowledge/ git repo's recent history. Strict output rules: page titles only
+(first `#` line), counts, line deltas, new `[[topic]]` cross-link count,
+provenance health (pages missing `## Sources`). Three defence layers against
+accidental data exfiltration. launchd cron registration and actual SMTP send
+wiring deferred to a follow-up PR after real-data validation.
+
+### Files added
+
+- `.claude/scripts/kb_digest_builder.sh` — shell builder; `--repo`, `--since`,
+  `--out`, `--dry-run`, `--selftest` modes; refuses CLAUDE_AGENT without
+  KB_DIGEST_AUTO; refuses `~/` output paths; self-test builds a fixture git
+  repo in /tmp and validates title extraction + no body leakage (6 checks, all PASS)
+- `.claude/scripts/kb_digest_email_template.md` — `{{placeholder}}` email
+  template for the digest; pure substitution, no JS eval
+- `.claude/scripts/kb_digest_send.sh` — skeleton send script; substitutes
+  template placeholders; refuses `--send` without KB_DIGEST_SEND_CONFIRM phrase;
+  live SMTP deferred (blastula/msmtp/mailgun options documented in comments)
+
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
 Fixes the root cause of why `~/.claude/logs/codex_fallback/` stayed empty despite
