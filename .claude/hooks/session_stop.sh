@@ -235,4 +235,22 @@ if [ -x "$DRIFT" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   timeout 30 "$DRIFT_PY" "$DRIFT" 2>/dev/null || true
 fi
 
+# ── Session index log — #374 (Daniel Miessler PAI pattern) ────────────────
+# Generates a 6-10 word slug from the first content line of CURRENT_WORK.md
+# and appends: <ISO-timestamp>  <branch>  <slug>
+# to ~/.claude/logs/session_index.log for grep-based session lookup.
+# 30-second timeout — never blocks /bye.
+_SLUG_SCRIPT="$CLAUDE_DIR/scripts/session_slug.sh"
+_SESSION_INDEX_LOG="$CLAUDE_RUNTIME_ROOT/logs/session_index.log"
+if [ -x "$_SLUG_SCRIPT" ]; then
+  _INDEX_BRANCH=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null \
+    || git rev-parse --abbrev-ref HEAD 2>/dev/null \
+    || echo "unknown")
+  _INDEX_SLUG=$(timeout 30 BRANCH="$_INDEX_BRANCH" "$_SLUG_SCRIPT" "$CURRENT_WORK" 2>/dev/null \
+    || echo "unlabeled")
+  _INDEX_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  mkdir -p "$(dirname "$_SESSION_INDEX_LOG")"
+  printf '%s\t%s\t%s\n' "$_INDEX_TS" "$_INDEX_BRANCH" "$_INDEX_SLUG" >> "$_SESSION_INDEX_LOG"
+fi
+
 exit 0

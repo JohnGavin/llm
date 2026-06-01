@@ -68,6 +68,29 @@ caught it.
   `gh` via stub binary; verifies N=0→no output and N=3→exact banner line. 4/4 PASS.
 - `.claude/rules/session-init-phases.md` — new phase-inventory table documenting all
   phases; guidance for future additions.
+## 2026-06-01 (#374 — session index log with auto-slug)
+
+Implements the Daniel Miessler PAI pattern: on every `/bye`, `session_stop.sh`
+now generates a 6–10 word slug from `CURRENT_WORK.md`'s first content line and
+appends `<ISO-timestamp>  <branch>  <slug>` to
+`~/.claude/logs/session_index.log`. Enables grep-based session lookup.
+
+### Files changed
+
+- `.claude/scripts/session_slug.sh` — new standalone slug-generation script.
+  Handles: heading-skip, markdown-format stripping, 8-word truncation, 60-char
+  cap, missing-file fallback to `unlabeled-<short-branch>`, empty-file fallback
+  to `unlabeled`. `CLAUDE_HOOK_SELFTEST=1` runs 5 selftest cases (5/5 PASS).
+- `.claude/hooks/session_stop.sh` — new phase at bottom: calls `session_slug.sh`
+  with 30-second timeout (never blocks close), appends to
+  `~/.claude/logs/session_index.log`.
+
+### Approach
+
+Extracted slug logic to `session_slug.sh` so it is individually testable and
+reusable from other hooks. `session_stop.sh` integration is bounded to 30 s
+via `timeout`. Selftest uses `CLAUDE_HOOK_SELFTEST=0` env override when calling
+subprocess to prevent recursive selftest execution.
 
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
