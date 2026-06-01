@@ -67,6 +67,35 @@ grep -q "Closure-rebuild" flake.nix || {
 Upstream fix tracked in llm#303. When T-lang bakes the closure-rebuild into
 its template, `default.post.sh` is no longer needed for this purpose.
 
+## Periodic Detection — Automated Session Check
+
+`~/.claude/scripts/check_tlang_flake_closure_rebuild.sh` scans all T-lang R
+projects under `~/docs_gh/` and reports which ones are missing the
+`Closure-rebuild` marker.
+
+```bash
+# Check all projects, verbose:
+bash ~/.claude/scripts/check_tlang_flake_closure_rebuild.sh
+
+# Check all projects, only show MISSING:
+bash ~/.claude/scripts/check_tlang_flake_closure_rebuild.sh --quiet
+
+# Self-test (fixture-based, 5 cases):
+CLAUDE_HOOK_SELFTEST=1 bash ~/.claude/scripts/check_tlang_flake_closure_rebuild.sh
+```
+
+Session init (Phase 14a) runs the check automatically in `--quiet` mode with
+a 5-second timeout. It emits a non-blocking WARN line if any project is missing
+the marker. This ensures a stripped shellHook is surfaced at the start of the
+next session — before any R work begins.
+
+Output per project:
+- `OK      <path>` — marker present; no action needed
+- `MISSING <path>` — run `cd <path> && bash default.post.sh` immediately
+- `SKIP    <path>` — has `flake.nix` but no T-lang signature; ignored
+
+See llm#303 (local-side guard) and `nix-nested-shell-isolation` rule.
+
 ## Detailed Guides
 
 See `~/docs_gh/llm/knowledge/t-lang/wiki/` for:

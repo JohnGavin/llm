@@ -55,6 +55,28 @@ launchctl unload ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
 launchctl load ~/Library/LaunchAgents/com.claude.roborev-daily-backlog.plist
 # repeat for each updated plist
 ```
+## 2026-05-31 (#303 — local-side guard for T-lang closure-rebuild marker)
+
+Ships the detection half of issue #303. `t update` regenerates `flake.nix`
+wholesale and strips the closure-rebuild shellHook (the nix-nested-shell-isolation
+fix). Without it, R compiled packages segfault on dyn.load at the next
+`nix develop` entry.
+
+- `.claude/scripts/check_tlang_flake_closure_rebuild.sh` — new detection script.
+  Scans `~/docs_gh/*/` for T-lang R projects (tproject.toml + tlang input) and
+  reports OK / MISSING / SKIP per project. Self-test mode (5/5 PASS):
+  `CLAUDE_HOOK_SELFTEST=1 bash check_tlang_flake_closure_rebuild.sh`.
+- `session_init.sh` Phase 14a — advisory check wired in; runs with 5-second
+  timeout in --quiet mode; emits WARN if any MISSING but does NOT block startup.
+- `.claude/rules/t-lang-r-package.md` — new "Periodic Detection" section
+  documenting the script, its output codes, and the session-init integration.
+
+Upstream OCaml template fix remains tracked in llm#303 / b-rodrigues/tlang.
+Until the template is updated, `default.post.sh` is the per-project fallback
+and the new session-init check ensures a missing marker is caught at session start.
+
+Real-world scan result: `historical` OK (marker present); no MISSING projects
+currently. `llama.cpp` correctly SKIP (has flake.nix, no T-lang signature).
 
 ## 2026-05-30 (Stage 1 #195 — archive one-off MDs + remove stray artifacts)
 
