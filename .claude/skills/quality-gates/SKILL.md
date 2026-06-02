@@ -118,6 +118,7 @@ Specific deductions applied when computing each component score. Agents MUST rep
 | Raw SQL string in non-DDL context | -50 points each |
 | `T`/`F` instead of `TRUE`/`FALSE` | -5 points each |
 | `=` instead of `<-` for assignment | -3 points each |
+| `expect_equal(actual, "literal string")` where `actual` is non-numeric | -2 per occurrence (capped at -10); Gold-tier ineligible if snapshot-candidate rate >20% of all `expect_*` calls |
 
 ### Accessibility & contrast deductions (standalone gate — not a weighted component)
 
