@@ -133,6 +133,61 @@ Updated `plans/195-stage2-audit.md` with new findings discovered since the v1 au
 - Section 14 now includes the verbatim Phase B–D plan from issue #363 body.
 - Summary table updated: ~22 unique files (was ~21), ~52 total refs (was ~44).
 
+## 2026-06-01 (Phase 1.7 #217 — roborev post-merge hook + business-hours poller)
+
+Completes the three-tier roborev coverage model: primary `post-commit` (local commits),
+secondary `post-merge` (pull-time catchup), safety-net poller (thrice-daily). Fixes the
+coverage gap where remote-merged PRs arrive via `git pull` but never trigger `post-commit`.
+
+### Files added / modified
+
+- `.claude/scripts/roborev_install_post_merge_hook.sh` — **new installer** for the
+  `post-merge` git hook; hook body calls `roborev review --since ORIG_HEAD --branch
+  <branch>`; idempotent (marker-detected); chains pre-existing hooks; Phase-1.6 shim
+  guard at top; `--selftest` / `CLAUDE_HOOK_SELFTEST=1` self-test with 5 fixture
+  assertions (dry-run, install, idempotency, fail-open, uninstall); `--uninstall` with
+  backup restore.
+
+- `.claude/launchd/com.claude.roborev-poll-merges.plist` — reduced from hourly
+  Mon–Fri 09:00–22:00 (65 fires/week) to **thrice-daily Mon–Fri 09:00, 13:00, 17:00
+  (15 fires/week)**. Comment updated to explain Phase 1.7 rationale: poller is now
+  the safety net, not the primary mechanism.
+
+- `.claude/scripts/roborev_poll_merges.sh` — added `is_ephemeral_path()` helper that
+  silently skips any `root_path` starting with `/private/tmp/` or `/tmp/` (agent
+  worktree artefacts, never real projects); added `--clean-repos-table [--dry-run]`
+  flag to delete matching rows from `~/.roborev/reviews.db`'s `repos` table.
+
+- `.claude/rules/roborev-resolution.md` — new "Review Trigger Mechanisms" section
+  documenting the three tiers; "Poller Schedule Decision" section updated with
+  history table (three schedule generations); "Future path: Option B" section replaced
+  with "Post-merge hook (Phase 1.7, shipped)".
+
+### Coverage model
+
+| Tier | Trigger | Fires on |
+|------|---------|----------|
+| Primary | `post-commit` | Every local `git commit` |
+| Secondary | `post-merge` | Every `git pull` / `git merge --ff` that changes HEAD |
+| Safety net | launchd poller | Mon–Fri 09:00, 13:00, 17:00 |
+
+### Reload instructions
+
+After merging to main:
+```bash
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
+cp ~/docs_gh/llm/.claude/launchd/com.claude.roborev-poll-merges.plist \
+   ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
+```
+
+Install the post-merge hook on each watched repo:
+```bash
+bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh --repo <path>
+```
+
+---
+
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
 Fixes the root cause of why `~/.claude/logs/codex_fallback/` stayed empty despite

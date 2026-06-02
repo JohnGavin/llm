@@ -187,6 +187,8 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **Hooks integration:** R auto-format and dark-contrast checks run via pre-commit scripts; see `~/.claude/scripts/r_code_check.sh` and `~/.claude/scripts/check_dark_contrast.sh`.
 
+**Roborev automation (Phase 1.7, #217):** Three-tier coverage — primary `post-commit` hook (local commits), secondary `post-merge` hook installed per-repo via `roborev_install_post_merge_hook.sh` (pull-time catchup for remote-merged PRs), thrice-daily business-hours safety-net poller (Mon–Fri 09:00/13:00/17:00 via launchd); see `roborev-resolution` rule.
+
 ## Templates (5)
 
 `new-skill.md`, `new-rule.md`, `new-plan.md`, `new-wiki-page.md`, `new-project-claude.md`
