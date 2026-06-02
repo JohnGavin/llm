@@ -77,6 +77,9 @@ if [ "$VALIDATE_CONFIG" = "1" ]; then
         # Trim whitespace
         CONF_NAME="${CONF_NAME## }"; CONF_NAME="${CONF_NAME%% }"
         CONF_PATH="${CONF_PATH## }"; CONF_PATH="${CONF_PATH%% }"
+        # Strip one layer of surrounding quotes (handles KEY="value" style env files)
+        CONF_PATH="${CONF_PATH#\"}"; CONF_PATH="${CONF_PATH%\"}"
+        CONF_PATH="${CONF_PATH#\'}"; CONF_PATH="${CONF_PATH%\'}"
         if [ -d "$CONF_PATH/.git" ] || [ -f "$CONF_PATH/.git" ]; then
             printf 'OK     %-25s %s\n' "$CONF_NAME" "$CONF_PATH"
         else
@@ -118,6 +121,9 @@ if [ -r "$PROJECTS_CONF" ]; then
         esac
         CONF_NAME="${CONF_NAME## }"; CONF_NAME="${CONF_NAME%% }"
         CONF_PATH="${CONF_PATH## }"; CONF_PATH="${CONF_PATH%% }"
+        # Strip one layer of surrounding quotes (handles KEY="value" style env files)
+        CONF_PATH="${CONF_PATH#\"}"; CONF_PATH="${CONF_PATH%\"}"
+        CONF_PATH="${CONF_PATH#\'}"; CONF_PATH="${CONF_PATH%\'}"
         if [ "$CONF_NAME" = "$PROJECT_NAME" ]; then
             if [ -d "$CONF_PATH/.git" ] || [ -f "$CONF_PATH/.git" ]; then
                 PROJECT_PATH="$CONF_PATH"
