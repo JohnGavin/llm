@@ -495,6 +495,75 @@ phase_worktrees() {
   prunable=$(git worktree list --porcelain 2>/dev/null | grep -c "^prunable" || echo 0)
   [ "$prunable" -gt 0 ] && echo "  Prunable worktrees: $prunable (run: git worktree prune)"
 
+  # 7f: Auto-GC stale agent worktrees (current project only, conservative 14d threshold)
+  # Acceptance criteria: llm#424 Part C
+  # Skip entirely if disabled; never exits non-zero (fail-open).
+  if [ "${CLAUDE_SESSION_INIT_WORKTREE_GC:-1}" != "0" ]; then
+    local _gc_log="${HOME}/.claude/logs/session_init_worktree_gc.log"
+    local _gc_proj_root
+    _gc_proj_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+    local _gc_git_common
+    _gc_git_common=$(git rev-parse --git-common-dir 2>/dev/null) || true
+    case "${_gc_git_common:-}" in /*) : ;; *) _gc_git_common="${_gc_proj_root}/${_gc_git_common}" ;; esac
+    local _gc_agent_dir="${_gc_proj_root}/.claude/worktrees"
+    local _gc_now
+    _gc_now=$(date +%s 2>/dev/null) || _gc_now=0
+    local _gc_threshold=$(( 14 * 86400 ))  # 14 days in seconds
+    local _gc_removed=0
+    local _gc_cwd
+    _gc_cwd=$(pwd 2>/dev/null) || true
+
+    if [ -d "${_gc_agent_dir:-}" ] && [ -n "${_gc_proj_root:-}" ] && [ -n "${_gc_git_common:-}" ]; then
+      while IFS= read -r _gc_wt; do
+        [ -d "$_gc_wt" ] || continue
+        # Guard: never auto-remove current cwd or main checkout
+        [ "$_gc_wt" = "$_gc_cwd" ] && continue
+        [ "$_gc_wt" = "$_gc_proj_root" ] && continue
+        local _gc_name
+        _gc_name=$(basename "$_gc_wt")
+        local _gc_meta="${_gc_git_common}/worktrees/${_gc_name}"
+        [ -d "$_gc_meta" ] || continue
+        # Age check: prefer locked file mtime, fall back to meta-dir mtime
+        local _gc_mtime
+        if [ -f "${_gc_meta}/locked" ]; then
+          _gc_mtime=$(stat -f '%m' "${_gc_meta}/locked" 2>/dev/null) || _gc_mtime=0
+        else
+          _gc_mtime=$(stat -f '%m' "$_gc_meta" 2>/dev/null) || _gc_mtime=0
+        fi
+        local _gc_age=$(( _gc_now - _gc_mtime ))
+        [ "$_gc_age" -lt "$_gc_threshold" ] && continue
+        # PID check: only auto-remove if owner PID is confirmed dead
+        local _gc_pid=""
+        if [ -f "${_gc_meta}/locked" ]; then
+          local _gc_lock_content
+          _gc_lock_content=$(cat "${_gc_meta}/locked" 2>/dev/null) || true
+          _gc_pid=$(printf '%s' "$_gc_lock_content" | grep -oE 'pid=[0-9]+' | grep -oE '[0-9]+' | head -n1 || true)
+          [ -z "$_gc_pid" ] && _gc_pid=$(printf '%s' "$_gc_lock_content" | grep -oE '^[0-9]+$' | head -n1 || true)
+          if [ -n "$_gc_pid" ] && kill -0 "$_gc_pid" 2>/dev/null; then
+            continue  # owner alive — skip
+          fi
+        fi
+        # Uncommitted-changes guard
+        local _gc_status
+        _gc_status=$(git -C "$_gc_wt" status --short 2>/dev/null) || true
+        [ -n "$_gc_status" ] && continue
+        # All guards passed — remove
+        if git -C "$_gc_proj_root" worktree unlock "$_gc_wt" 2>/dev/null; then :; fi
+        if git -C "$_gc_proj_root" worktree remove --force "$_gc_wt" 2>/dev/null; then
+          _gc_removed=$(( _gc_removed + 1 ))
+          mkdir -p "$(dirname "$_gc_log")"
+          printf '%s REMOVED project=%s worktree=%s age=%ds\n' \
+            "$(date '+%Y-%m-%d %H:%M:%S')" "$_gc_proj_root" "$_gc_wt" "$_gc_age" >> "$_gc_log"
+        else
+          mkdir -p "$(dirname "$_gc_log")"
+          printf '%s REMOVE-FAILED project=%s worktree=%s\n' \
+            "$(date '+%Y-%m-%d %H:%M:%S')" "$_gc_proj_root" "$_gc_wt" >> "$_gc_log"
+        fi
+      done < <(find "$_gc_agent_dir" -maxdepth 1 -mindepth 1 -type d -name "agent-*" 2>/dev/null)
+    fi
+    [ "$_gc_removed" -gt 0 ] && echo "Worktree GC: removed ${_gc_removed} stale (>14d, PID-dead)"
+  fi
+
   [ "$wt_count" -eq 0 ] && echo "No worktrees found"
 }
 

@@ -19,6 +19,7 @@ Update this table in the same commit.
 | 5 | ctx.yaml Cache Audit | Dependency ctx cache freshness (via Rscript) | `ctx:N_ok/N_other/N_miss` |
 | 6 | R-universe Build Status | Checks johngavin.r-universe.dev/api/packages | `R-universe: N OK, N failed` |
 | 7 | Worktree Context | Detects worktree session, stale agent/git worktrees | Contextual output + warnings |
+| 7f | Worktree Auto-GC | Auto-removes agent worktrees where PID-dead AND lock-age >14d (current project only). Skipped if `CLAUDE_SESSION_INIT_WORKTREE_GC=0`. Logs to `~/.claude/logs/session_init_worktree_gc.log`. Never exits non-zero. | Silent when N=0; one line `Worktree GC: removed N stale (>14d, PID-dead)` when N>0 |
 | 8 | roborev Review Status | Daemon status + high-severity finding counts | `roborev:Nhigh/Ntotal` |
 | 8b | roborev-autoclose Visibility | Reads autoclose counter JSON for today/week stats | `roborev-autoclose: threshold=…` |
 | 9 | Weekly Burn Rate | Calls `burn_rate_check.sh compact` | `burn:<level>` |
