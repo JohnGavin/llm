@@ -4,6 +4,40 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-02 (afternoon session — email pipeline live + #424 closed + #433 closed)
+
+Worktree session `feat/cc-20260602-165249` operating cross-project from `llm`.
+
+### Completed
+
+- **#424 closed** via PR #428 (merged `d836965`): session_init Phase 7f auto-GC for stale agent worktrees. 14d threshold, PID-dead + lock-mtime + uncommitted-changes guards, escape hatch `CLAUDE_SESSION_INIT_WORKTREE_GC=0`, dedicated log at `~/.claude/logs/session_init_worktree_gc.log`, fail-open. Rule `session-init-phases.md` updated with 7f row.
+- **#431 Phase 1** via PR #432 (merged `d82ad56`): uncommented `blastula` in `default.R:172`, added to `DESCRIPTION` Suggests, regenerated `default.nix` (Form A subshell). Replaced 9 bash-4 `${var,,}` lowercase expansions in `roborev_severity_autoclose.sh` with portable `tr '[:upper:]' '[:lower:]'` (lines 47, 230, 401, 603, 606, 611, 616, 720, 723, 728, 733). Added PATH+HOME+NIX_SSL_CERT_FILE `EnvironmentVariables` block to 3 plists: `roborev-metrics-etl`, `self-review-stage1`, `self-review-verify` — fixes 9-day-running exit-127 "Rscript: command not found" on metrics-etl.
+- **#433 closed** via PR #434 (merged `acb2e7d`): env-file loader quote-stripping fix in 4 scripts (`bin/roborev_daily_cron.sh`, `bin/kb_digest_daily_cron.sh`, `bin/config_digest_cron.sh`, `.claude/scripts/cc-worktree.sh`). Diagnostic showed `GMAIL_APP_PASSWORD` length 18 instead of 16 — values came in as `"xxxxx"` with literal surrounding quotes. Loader now strips one layer of `"` or `'` before `export`.
+- **First real daily-roborev email shipped** at 19:23 to `john.b.gavin@gmail.com` after user (a) created `~/.claude/env/roborev_email.env`, (b) installed and loaded all 5 `*-email.plist` files + reloaded 3 patched plists into `~/Library/LaunchAgents/`, (c) removed quotes from env-file values.
+- **Roborev triage**: closed all 21 actionable findings (2 P-verdict + 19 F-verdict) on llm main via direct `roborev close` and comment+close batch. Filed #430 documenting the 72-job phantom-open issue (canceled/failed jobs with no review records; `roborev close` returns 404; `roborev compact` fails with `current working directory was deleted` in verification agent).
+- **Issues filed (6)**: #427 (review remlapmot r-universe tips post), #429 (review Posit toolbars post), #430 (roborev phantom-open + compact cwd-deleted bug), #431 (email-digest activation + launchd failures, Phases 1-3 done, Phase 4 deferred), #433 (env-loader quote-stripping — now closed), #432/#428/#434 PRs.
+
+### Failed Approaches
+
+- **Tried `roborev compact` 3× to bulk-clear the 16 actionable F-verdict findings.** Each attempt failed with `agent: check claude --help: The current working directory was deleted` — daemon worker's cwd is a temp dir cleaned up by `clean-stale-worktrees.sh` selftests. Switched to direct `comment + close` loop per finding (worked, 16/16 closed).
+- **First two smoke-test runs of `roborev_daily_cron.sh` Step 3 failed.** Cause 1: `default.nix` on the user's main checkout was stale (PR #432 merged but pull blocked by user's pre-existing 1-line cosmetic regen WIP); `blastula` not present → R `library(blastula)` halted. Fix: `git stash` the cosmetic WIP, `git pull`. Cause 2: env-file values quoted with `"`, loader exported them verbatim → Gmail "Login denied". Fix: #433 + user removed quotes.
+- **Diagnosed Cause 2 with a sanitized SMTP probe** (`/tmp/diag_smtp.sh`) that reported credential lengths and quote-presence without revealing the actual password. Confirmed length 18 (expected 16) and `*"*` prefix/suffix in 5 seconds.
+
+### Accuracy / Metrics
+
+- Roborev: total 95→101 jobs; failed 75→76; addressed 7→12 (+5 new addressed this session beyond the 21 closed because the daemon classification shifts during runs). Actionable F-verdict open: 19 → **0**.
+- Main branch advanced 3 commits: `d16d67f` → `d836965` (#428) → `d82ad56` (#432) → `acb2e7d` (#434).
+- 7 launchd plists loaded for the first time today (`roborev-daily-email`, `kb-digest-email`, `config-digest-email`, `roborev-weekly-rollup-email`, `launchd-health-weekly` + reloads of `roborev-metrics-etl`, `self-review-stage1`, `self-review-verify`).
+- Tier-3 post-verify clean for all 3 worktree-isolated fixer dispatches (agent IDs `a53fb17bc7e05f367`, `a17381eab06dd4f8e`, `a280840b32e779faf`). No drift.
+
+### Known Limitations
+
+- **`kb_digest.env` not yet created** — KB digest email won't send until user adds `~/.claude/env/kb_digest.env` with same format (no quotes).
+- **#431 Phase 4 deferred**: `codex_overnight_learning` (02:30 daily) and `self_review_stage1` (02:30 daily) write artifacts to disk/DB only, no email step. Adding email step is a separate effort.
+- **roborev phantom-open #430**: 64 jobs persist in `roborev list --open` that cannot be cleared via `roborev close` (404 — no review record) or `roborev compact` (cwd-deleted). Awaiting roborev daemon-side fix.
+- **Stash `stash@{0}` retained**: `WIP default.nix v0.18.2 cosmetic bump (pre-#432)` — user's pre-session work; the rix version bump is obsolete after the agent's regen but kept in stash for user review. Drop with `git stash drop stash@{0}` if confirmed obsolete.
+- **#270 + #269 carryover** from prior sessions still untouched.
+
 ## 2026-06-02 (#424 follow-up — stable age-check via locked-file mtime)
 
 Bug discovered during the first live sweep: the age-check in `clean-stale-worktrees.sh`
