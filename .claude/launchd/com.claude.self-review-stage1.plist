@@ -38,6 +38,18 @@
     <key>RunAtLoad</key>
     <false/>
 
+    <!-- PATH must include nix stable profile (for nix-shell) and ~/.local/bin.
+         NIX_SSL_CERT_FILE is required for nix-shell to make network calls. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
     <!-- 120-second hard kill if SQL hangs (large DB). -->
     <!-- launchd will SIGKILL the process after this many seconds. -->
     <key>TimeOut</key>
