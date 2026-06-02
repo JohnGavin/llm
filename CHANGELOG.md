@@ -35,6 +35,40 @@ hook (closed roborev findings referencing the fix commit in the commit message).
 86.7% unknown (3418/3941), 12.7% autoclose_severity (502), 0.4% manual (16),
 0.1% commit_reference (5). Target: commit_reference ≥ 5% within 6 weeks.
 
+## 2026-06-02 (#417 — snapshot tests policy B+C)
+
+Implements Option B+C from issue #417: document snapshot tests as the preferred
+pattern for string-output assertions, and add scoring pressure via the quality-gates
+rubric.
+
+### What ships
+
+- `.claude/skills/testthat-patterns/SKILL.md` — new "Preferred: snapshot tests for
+  string / list / formatted output" section near the top, with when-NOT-to guidance
+  and a link to the conversion examples. Bumped to version 1.1.
+
+- `.claude/skills/testthat-patterns/references/snapshot-conversion-examples.md` —
+  5 worked before/after pairs: (1) simple string equality, (2) multi-line string,
+  (3) list with strings, (4) formatted print output, (5) file contents. Each pair
+  explains why the snapshot approach improves review ergonomics.
+
+- `.claude/skills/quality-gates/SKILL.md` — new deduction row in the Code style
+  component: `-2 per `expect_equal(actual, "literal string")` (capped at -10);
+  Gold-tier ineligible if snapshot-candidate rate >20% of all `expect_*` calls.
+
+### Audit numbers (as of 2026-06-02, for #417 comment)
+
+- `expect_equal` calls: 207 across 17 files
+- `expect_identical` calls: 0
+- `expect_snapshot*` calls: 4 across 2 files (minimal adoption)
+- String-literal snapshot candidates: 47 across 10 files
+- Top conversion targets: test-roborev-revalidate.R (13), test-pkgctx-local-sync.R (9)
+
+### Out of scope
+
+- Converting existing tests (separate follow-up; this PR sets the policy)
+- Mandatory rule / hook enforcement (Option A — escalation if drift continues)
+
 ## 2026-06-01 (#383 — markitdown wrapper scaffold)
 
 Ships the **scaffold only** for Microsoft markitdown integration. No installation
