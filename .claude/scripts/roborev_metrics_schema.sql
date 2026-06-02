@@ -183,6 +183,23 @@ SELECT
 FROM roborev_finding_lineage fl
 GROUP BY fl.finding_id;
 
+-- ── roborev_fix_method_trend ──────────────────────────────────────────────
+-- Daily snapshot of fix_method bucket distribution across ALL closed reviews
+-- (not just the ETL window). Written by the ETL at the end of every --apply run.
+-- PK: (run_date, bucket) — one ETL run = 4 rows (one per bucket).
+-- pct_of_closed = n_closed / n_closed_total * 100.
+-- Leading indicator for #359 commit-msg hook adoption (target: commit_reference
+-- bucket >= 5% within 6 weeks of hook going live).
+-- Tracked in llm#389.
+CREATE TABLE IF NOT EXISTS roborev_fix_method_trend (
+  run_date        DATE    NOT NULL,
+  bucket          VARCHAR NOT NULL,
+  n_closed        INTEGER NOT NULL DEFAULT 0,
+  n_closed_total  INTEGER NOT NULL DEFAULT 0,
+  pct_of_closed   DOUBLE  NOT NULL DEFAULT 0.0,
+  PRIMARY KEY (run_date, bucket)
+);
+
 -- ── Migration: add fix-commit link columns to existing lifecycle tables ────
 -- llm#379 — additive ALTER TABLE for databases created before 2026-05-31.
 -- DuckDB: ALTER TABLE ... ADD COLUMN IF NOT EXISTS is idempotent.
