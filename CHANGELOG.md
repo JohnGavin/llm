@@ -14,6 +14,7 @@ Worktree session `feat/cc-20260602-165249` operating cross-project from `llm`.
 - **#235 RE-OPENED** for Stage 2 LLM proposer (the actual "lessons learnt → actionable change" layer). Stage 1 detection has been operational since 2026-05-25 (11 cumulative findings) but Stage 2 was deferred. Acceptance criteria unchanged; quick-win precursor (#436) ships findings visibility before Stage 2 lands.
 - **#436 FILED** + shipped — quick-win Stage 1 findings digest (closed by PR #437).
 - **#438 FILED** — review ahaeusser/tscv for time-series CV gaps (predictions + roborev metrics + `look-ahead-bias-prevention`).
+- **#439 FILED** — review harrelfe/skills for gaps across all 4 surfaces (skills, agents, rules, memory); includes inventory of our 8 stats-adjacent skills + 7 rules and classification matrix.
 - **`~/.claude/env/kb_digest.env`** created (copied from `roborev_email.env`, chmod 600) — unblocks `kb-digest-email.plist` for tomorrow 08:05.
 
 ### Completed
