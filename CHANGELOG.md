@@ -4,6 +4,24 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-02 (#424 follow-up — stable age-check via locked-file mtime)
+
+Bug discovered during the first live sweep: the age-check in `clean-stale-worktrees.sh`
+Guard 5 was using the meta-dir mtime (`.git/worktrees/agent-X/`), but that mtime gets
+bumped by routine `git status` calls — including the script's own Guard 6 probe.
+Net effect: running the script touched every worktree's meta-dir mtime, so a follow-up
+invocation minutes later saw every candidate as "too-recent" and skipped everything.
+The script was effectively self-defeating.
+
+Fix: prefer the `locked` file's mtime over the meta-dir mtime. The locked file only
+changes on actual (un)lock operations — a meaningful proxy for "last real activity".
+Falls back to dir mtime only when no lock file exists (e.g. an unlocked worktree).
+
+Evidence: with the original Guard 5, a live `--sweep --age=1d` removed 0 worktrees
+right after a dry-run reported 81 candidates. With the patched Guard 5, the same
+command removed 118 worktrees cleanly (historical 27, micromort 23, llm 51,
+llmtelemetry 17). Selftest 6/6 PASS across 3 consecutive runs.
+
 ## 2026-06-02 (#389 — commit_reference_rate trend tracker)
 
 Adds a leading-indicator pipeline for measuring adoption of the #359 commit-msg
