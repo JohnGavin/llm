@@ -1,0 +1,22 @@
+# cc-worktree.sh canonical-project paths
+# Format: <project-name>=<absolute-path-to-repo-root>
+# Copy to ~/.config/cc-worktree/projects.conf and edit.
+# Lines beginning with # are comments. Whitespace around = is trimmed.
+#
+# The script tries this config FIRST. If the project name is in the config,
+# the mapped path is used (validated that .git exists). If the project name
+# is NOT in the config, the script falls back to walking ~/docs_gh/ — and
+# REFUSES TO GUESS on ambiguity (multiple repos with the same basename).
+#
+# See JohnGavin/llm#424 for context: the duplicate-clone trap where
+# ~/docs_gh/historical/ and ~/docs_gh/proj/finance/data/historical/ both
+# exist, and the filesystem walk picks one non-deterministically.
+#
+# Validate this file with: cc-worktree.sh --validate-config
+
+llm=/Users/johngavin/docs_gh/llm
+historical=/Users/johngavin/docs_gh/proj/finance/data/historical
+llmtelemetry=/Users/johngavin/docs_gh/llmtelemetry
+premortem=/Users/johngavin/docs_gh/proj/pers/premortem
+micromort=/Users/johngavin/docs_gh/proj/data/micromort
+footbet=/Users/johngavin/docs_gh/proj/stats/sport/footbet
