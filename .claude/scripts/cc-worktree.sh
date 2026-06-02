@@ -31,6 +31,7 @@ LOG_FILE="$LOG_DIR/cc-worktree.log"
 WORKTREES_BASE="$HOME/worktrees"
 DOCS_BASE="$HOME/docs_gh"
 SEARCH_MAXDEPTH=3
+PROJECTS_CONF="${HOME}/.config/cc-worktree/projects.conf"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 log() {
@@ -41,6 +42,7 @@ log() {
 
 # ── Parse arguments ────────────────────────────────────────────────────────────
 DRY_RUN=0
+VALIDATE_CONFIG=0
 POSITIONAL=""
 
 for arg in "$@"; do
@@ -48,11 +50,42 @@ for arg in "$@"; do
         --dry-run)
             DRY_RUN=1
             ;;
+        --validate-config)
+            VALIDATE_CONFIG=1
+            ;;
         *)
             POSITIONAL="${POSITIONAL} ${arg}"
             ;;
     esac
 done
+
+# ── --validate-config short-circuit ────────────────────────────────────────────
+# Reads the projects.conf, checks each entry's path exists and is a git repo.
+# Used by humans + the worktree-location rule's quarterly review to catch
+# entries that have rotted after a project move. See JohnGavin/llm#424.
+if [ "$VALIDATE_CONFIG" = "1" ]; then
+    if [ ! -r "$PROJECTS_CONF" ]; then
+        printf 'No config at %s — skipping (the filesystem search fallback still works)\n' "$PROJECTS_CONF"
+        exit 0
+    fi
+    EXIT_CODE=0
+    while IFS='=' read -r CONF_NAME CONF_PATH; do
+        # Skip comments and blank lines
+        case "$CONF_NAME" in
+            ''|\#*) continue ;;
+        esac
+        # Trim whitespace
+        CONF_NAME="${CONF_NAME## }"; CONF_NAME="${CONF_NAME%% }"
+        CONF_PATH="${CONF_PATH## }"; CONF_PATH="${CONF_PATH%% }"
+        if [ -d "$CONF_PATH/.git" ] || [ -f "$CONF_PATH/.git" ]; then
+            printf 'OK     %-25s %s\n' "$CONF_NAME" "$CONF_PATH"
+        else
+            printf 'FAIL   %-25s %s (no .git found)\n' "$CONF_NAME" "$CONF_PATH"
+            EXIT_CODE=1
+        fi
+    done < "$PROJECTS_CONF"
+    exit "$EXIT_CODE"
+fi
 
 # Strip leading space and split into positional array (bash 3.x compatible)
 set -- $POSITIONAL
@@ -67,24 +100,67 @@ BRANCH_NAME="$2"
 BASE_BRANCH="${3:-main}"
 
 # ── Resolve project path ───────────────────────────────────────────────────────
-# Walk ~/docs_gh/ up to SEARCH_MAXDEPTH levels looking for a git repo root
-# whose basename matches PROJECT_NAME.
-# We use `find` with -maxdepth and check for .git to identify repo roots.
+# Two-tier lookup (see JohnGavin/llm#424):
+# 1. Canonical config at ~/.config/cc-worktree/projects.conf maps name→path.
+#    Format: <name>=<absolute-path>; lines starting with # are comments.
+# 2. If no config OR project not in config, fall back to filesystem search.
+#    On AMBIGUOUS filesystem match (multiple repos with the same basename),
+#    refuse to guess — exit with the candidate list and instruct the user to
+#    add the canonical path to the config.
 
 PROJECT_PATH=""
-while IFS= read -r candidate; do
-    if [ "$(basename "$candidate")" = "$PROJECT_NAME" ]; then
-        PROJECT_PATH="$candidate"
-        break
-    fi
-done < <(find "$DOCS_BASE" -maxdepth "$SEARCH_MAXDEPTH" -name ".git" -type d 2>/dev/null | sed 's|/.git$||')
 
-if [ -z "$PROJECT_PATH" ]; then
-    log "ERROR: Project '${PROJECT_NAME}' not found under ${DOCS_BASE} (maxdepth=${SEARCH_MAXDEPTH})"
-    exit 2
+# Tier 1: config
+if [ -r "$PROJECTS_CONF" ]; then
+    while IFS='=' read -r CONF_NAME CONF_PATH; do
+        case "$CONF_NAME" in
+            ''|\#*) continue ;;
+        esac
+        CONF_NAME="${CONF_NAME## }"; CONF_NAME="${CONF_NAME%% }"
+        CONF_PATH="${CONF_PATH## }"; CONF_PATH="${CONF_PATH%% }"
+        if [ "$CONF_NAME" = "$PROJECT_NAME" ]; then
+            if [ -d "$CONF_PATH/.git" ] || [ -f "$CONF_PATH/.git" ]; then
+                PROJECT_PATH="$CONF_PATH"
+                log "INFO: Resolved '${PROJECT_NAME}' to ${PROJECT_PATH} via ${PROJECTS_CONF}"
+            else
+                log "WARN: ${PROJECTS_CONF} maps ${PROJECT_NAME} -> ${CONF_PATH} but no .git there — falling back to filesystem search"
+            fi
+            break
+        fi
+    done < "$PROJECTS_CONF"
 fi
 
-log "INFO: Resolved project '${PROJECT_NAME}' to ${PROJECT_PATH}"
+# Tier 2: filesystem search (with ambiguity guard)
+if [ -z "$PROJECT_PATH" ]; then
+    MATCHES=""
+    MATCH_COUNT=0
+    while IFS= read -r candidate; do
+        if [ "$(basename "$candidate")" = "$PROJECT_NAME" ]; then
+            MATCHES="${MATCHES}${candidate}"$'\n'
+            MATCH_COUNT=$(( MATCH_COUNT + 1 ))
+        fi
+    done < <(find "$DOCS_BASE" -maxdepth "$SEARCH_MAXDEPTH" -name ".git" 2>/dev/null | sed 's|/.git$||')
+
+    if [ "$MATCH_COUNT" = "0" ]; then
+        log "ERROR: Project '${PROJECT_NAME}' not found under ${DOCS_BASE} (maxdepth=${SEARCH_MAXDEPTH})"
+        log "       If the project is at a non-conventional path, add it to ${PROJECTS_CONF}:"
+        log "         ${PROJECT_NAME}=/absolute/path/to/repo"
+        exit 2
+    fi
+
+    if [ "$MATCH_COUNT" -gt 1 ]; then
+        log "ERROR: Project '${PROJECT_NAME}' has multiple candidates — refusing to guess (JohnGavin/llm#424):"
+        printf '%s' "$MATCHES" | while IFS= read -r m; do
+            [ -n "$m" ] && log "       - ${m}"
+        done
+        log "       Add the canonical one to ${PROJECTS_CONF}:"
+        log "         ${PROJECT_NAME}=/canonical/path"
+        exit 2
+    fi
+
+    PROJECT_PATH=$(printf '%s' "$MATCHES" | head -n1)
+    log "INFO: Resolved '${PROJECT_NAME}' to ${PROJECT_PATH} via filesystem search"
+fi
 
 # ── Check branch does not already exist ───────────────────────────────────────
 if git -C "$PROJECT_PATH" rev-parse --verify "refs/heads/${BRANCH_NAME}" > /dev/null 2>&1; then

@@ -69,6 +69,48 @@ rubric.
 - Converting existing tests (separate follow-up; this PR sets the policy)
 - Mandatory rule / hook enforcement (Option A — escalation if drift continues)
 
+## 2026-06-02 (#424 Parts B+A1 — stale worktree GC + canonical-path config)
+
+Pre-flight scan (read-only) found **170 agent worktrees** globally across `~/docs_gh/`
+(worst: llm=65/64-locked/10-≥7d, historical=47/33/12, micromort=27/27/27 — **all
+stale**, llmtelemetry=20/20/3). 55 worktrees are ≥7 days old; only 3 are ≥30 days.
+Confirms the orphan-accumulation pattern from #424 and informed the 7-day default
+threshold (Part C auto-GC at 14 days is deferred to a follow-up issue).
+
+### Part B — `.claude/scripts/clean-stale-worktrees.sh`
+
+- `--dry-run`, `--age` (default 7d), `--sweep`, `--force-with-changes`
+- Per-worktree decision: skip main checkout / cwd / non-agent paths / live owner-PID /
+  too-recent / has uncommitted changes (override with `--force-with-changes`)
+- Live runs that would remove ≥ 10 worktrees require
+  `CLEAN_STALE_WORKTREES_CONFIRM="YES REMOVE STALE WORKTREES"` env var
+- Single-pass design with cached candidate list — avoids a re-evaluation race
+  where `git status` (Guard 6) bumps the worktree-meta dir mtime between passes
+- Selftest 6/6 PASS (`CLAUDE_HOOK_SELFTEST=1`) covering active/stale-clean/
+  stale-dirty/--force-with-changes paths
+
+### Part A1 — `.claude/scripts/cc-worktree.sh` canonical-path config
+
+- New two-tier project-path resolution:
+  1. `~/.config/cc-worktree/projects.conf` mapping `name=absolute-path` (config first)
+  2. Filesystem search under `~/docs_gh/` (fallback); **refuses to guess** on
+     multiple-match ambiguity — exits with the candidate list and instructs the
+     user to add the canonical path to the config
+- New `--validate-config` mode: checks each config entry's path has `.git`
+- `cc-worktree-projects.conf.example` template covering the 7 active projects
+
+### Documentation
+
+- Each script's docstring captures the scale data and the reasoning behind
+  threshold/confirmation choices
+
+### Deferred to follow-up issues
+
+- Part C: `session_init.sh` Phase 7 auto-GC at 14-day threshold (file after Part B
+  is exercised in production for ≥ 2 weeks)
+- Part D: Stop-hook cleanup (already deferred in #424)
+- Part E: Anthropic upstream feedback (out of scope per #424)
+
 ## 2026-06-01 (#383 — markitdown wrapper scaffold)
 
 Ships the **scaffold only** for Microsoft markitdown integration. No installation
