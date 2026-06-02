@@ -136,7 +136,13 @@ evaluate_worktree() {
         # No parseable PID — fall through to age check (best-effort)
     fi
 
-    # Guard 5: Age check using stat -f '%m' (BSD/macOS mtime)
+    # Guard 5: Age check.
+    # PREFER the locked file's mtime over the meta-dir mtime — the meta-dir
+    # gets bumped by routine `git status` calls (including this script's own
+    # Guard 6 below), making the dir mtime worthless for distinguishing
+    # actually-stale worktrees from ones we just probed. The `locked` file
+    # only changes when the worktree is (un)locked, which is a meaningful
+    # signal of "last real activity". Fall back to dir mtime if no lock file.
     local GITDIR_FOR_WT="${GIT_COMMON_DIR}/worktrees/${WT_NAME}"
     if [ ! -d "$GITDIR_FOR_WT" ]; then
         printf 'SKIP no-gitdir-metadata'
@@ -144,7 +150,11 @@ evaluate_worktree() {
     fi
 
     local WT_MTIME
-    WT_MTIME=$(stat -f '%m' "$GITDIR_FOR_WT" 2>/dev/null || printf '0')
+    if [ -f "${GITDIR_FOR_WT}/locked" ]; then
+        WT_MTIME=$(stat -f '%m' "${GITDIR_FOR_WT}/locked" 2>/dev/null || printf '0')
+    else
+        WT_MTIME=$(stat -f '%m' "$GITDIR_FOR_WT" 2>/dev/null || printf '0')
+    fi
     local WT_AGE=$(( NOW - WT_MTIME ))
 
     if [ "$WT_AGE" -lt "$AGE_SEC" ]; then
