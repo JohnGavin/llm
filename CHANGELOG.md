@@ -8,6 +8,14 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 Worktree session `feat/cc-20260602-165249` operating cross-project from `llm`.
 
+### Late-session additions (post-CHANGELOG-1)
+
+- **PR #437 MERGED** (`ed231c4`): `feat(#436): daily digest email of Stage 1 self-review findings` — 3 new files (313+125+79 lines), zero deletions. Adds `send_stage1_findings_email.R`, `bin/stage1_findings_daily_cron.sh`, `com.claude.stage1-findings-email.plist`. Re-uses #432/#434 pipeline; defaults to `EMAIL_DRY_RUN=1`; 0-row early exit; runs daily 08:10. Quick-win precursor to Stage 2 of #235.
+- **#235 RE-OPENED** for Stage 2 LLM proposer (the actual "lessons learnt → actionable change" layer). Stage 1 detection has been operational since 2026-05-25 (11 cumulative findings) but Stage 2 was deferred. Acceptance criteria unchanged; quick-win precursor (#436) ships findings visibility before Stage 2 lands.
+- **#436 FILED** + shipped — quick-win Stage 1 findings digest (closed by PR #437).
+- **#438 FILED** — review ahaeusser/tscv for time-series CV gaps (predictions + roborev metrics + `look-ahead-bias-prevention`).
+- **`~/.claude/env/kb_digest.env`** created (copied from `roborev_email.env`, chmod 600) — unblocks `kb-digest-email.plist` for tomorrow 08:05.
+
 ### Completed
 
 - **#424 closed** via PR #428 (merged `d836965`): session_init Phase 7f auto-GC for stale agent worktrees. 14d threshold, PID-dead + lock-mtime + uncommitted-changes guards, escape hatch `CLAUDE_SESSION_INIT_WORKTREE_GC=0`, dedicated log at `~/.claude/logs/session_init_worktree_gc.log`, fail-open. Rule `session-init-phases.md` updated with 7f row.
