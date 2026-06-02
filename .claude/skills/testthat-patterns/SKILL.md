@@ -8,13 +8,53 @@ description: >
 metadata:
   author: Garrick Aden-Buie (@gadenbuie)
   adapted-by: johngavin
-  version: "1.0"
+  version: "1.1"
   source: posit-dev/skills (MIT)
 ---
 
 # Testing R Packages with testthat
 
 Modern best practices for R package testing using testthat 3+.
+
+## Preferred: snapshot tests for string / list / formatted output
+
+For any test where the expected value is a **string**, a list-of-strings, formatted
+prose output, or a stable serialised representation, use `testthat::expect_snapshot()`
+(testthat 3+) instead of hand-coded `expect_equal()` / `expect_identical()`.
+
+Snapshot tests record the actual output on first run and compare on subsequent runs —
+no hand-authored expected values. Snapshot diffs in `tests/testthat/_snaps/*.md` make
+behaviour changes visible in code review. Accepting an updated snapshot is one command:
+`testthat::snapshot_accept()`.
+
+```r
+# Preferred for string output
+expect_snapshot(format_status("pending"))
+
+# Not preferred — brittle, hand-authored
+expect_equal(format_status("pending"), "Status: pending (0%)")
+```
+
+### When NOT to use snapshot tests
+
+| Situation | Better alternative |
+|---|---|
+| Numeric tolerance comparisons | `expect_equal(..., tolerance = ...)` |
+| Random / time-dependent output | `expect_*()` after seeding / mocking time |
+| Side-effect testing (file writes, DB inserts, HTTP) | `expect_*()` for the side effect |
+| Cross-platform-sensitive output (line endings, locale dates) | Guard with `skip_on_os()` or normalise before snapshotting |
+
+### Migration pattern
+
+Replace `expect_equal(actual, "literal string")` with `expect_snapshot(actual)`.
+See [`references/snapshot-conversion-examples.md`](references/snapshot-conversion-examples.md)
+for 5 worked before/after pairs covering the most common conversion shapes.
+
+For the audit of existing string-literal `expect_equal` calls in this codebase, see
+issue [#417](https://github.com/JohnGavin/llm/issues/417).
+
+Reference: testthat 3.0+ `vignette("snapshotting", package = "testthat")`; _R Packages
+2e_ snapshot chapter.
 
 ## Initial Setup
 
