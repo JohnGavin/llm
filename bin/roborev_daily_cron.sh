@@ -87,6 +87,9 @@ if [ -f "${ENV_FILE}" ]; then
   while IFS='=' read -r key val; do
     [[ "${key}" =~ ^[[:space:]]*# ]] && continue
     [[ -z "${key}" ]] && continue
+    # Strip one layer of surrounding quotes (handles KEY="value" style env files)
+    val="${val#\"}"; val="${val%\"}"
+    val="${val#\'}"; val="${val%\'}"
     export "${key}=${val}"
   done < "${ENV_FILE}"
   set +a
