@@ -169,7 +169,7 @@ r_pkgs = c(
   # https://borkar.substack.com/p/r-workflows-with-duckdb?r=2qg9ny
   "arrow", "duckdb", "dplyr", "dbplyr",
   "gt", # for dashboard tables
-  # "blastula", # email
+  "blastula", # email
   "ggraph", "igraph", # https://discindo.org/posts/2025-09-20-r-ducklake/
   # # https://github.com/jcheng5/pharma-sidebot
   # # "DBI", "duckdb", "fastmap", "fontawesome", "ggridges", "here", "plotly", "reactable", "shiny", # "hadley/elmer", "jcheng5/shinychat",

@@ -43,6 +43,19 @@
     <key>RunAtLoad</key>
     <false/>
 
+    <!-- PATH must include ~/.local/bin (roborev shim), nix stable profile
+         (for nix-shell and Rscript), and /usr/local/bin (real roborev binary).
+         NIX_SSL_CERT_FILE is required for nix-shell to make network calls. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
     <key>StandardOutPath</key>
     <string>/Users/johngavin/.claude/logs/roborev_metrics_etl_launchd.log</string>
 

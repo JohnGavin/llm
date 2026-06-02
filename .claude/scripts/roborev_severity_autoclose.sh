@@ -44,7 +44,7 @@ if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
   FAIL=0
 
   _sev_ordinal() {
-    case "${1,,}" in
+    case "$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')" in
       off)      echo 0 ;;
       low)      echo 1 ;;
       medium)   echo 2 ;;
@@ -227,7 +227,7 @@ log() {
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 _sev_ordinal() {
-  case "${1,,}" in
+  case "$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')" in
     off)      echo 0 ;;
     low)      echo 1 ;;
     medium)   echo 2 ;;
@@ -398,7 +398,7 @@ done
 
 # Validate threshold flag if provided
 if [ -n "$THRESHOLD_FLAG" ]; then
-  case "${THRESHOLD_FLAG,,}" in
+  case "$(printf '%s' "$THRESHOLD_FLAG" | tr '[:upper:]' '[:lower:]')" in
     off|low|medium|high|critical) : ;;
     *) die "invalid --threshold value '${THRESHOLD_FLAG}'; valid: off low medium high critical" ;;
   esac
@@ -600,20 +600,20 @@ PYEOF
     _eff_threshold=""
     _eff_source=""
     if [ -n "$THRESHOLD_FLAG" ]; then
-      _eff_threshold="${THRESHOLD_FLAG,,}"
+      _eff_threshold="$(printf '%s' "$THRESHOLD_FLAG" | tr '[:upper:]' '[:lower:]')"
       _eff_source="flag"
     elif [ -n "${ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD:-}" ]; then
-      _eff_threshold="${ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD,,}"
+      _eff_threshold="$(printf '%s' "$ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD" | tr '[:upper:]' '[:lower:]')"
       _eff_source="env"
     else
       _per_repo=$(_repo_threshold "$_root")
       if [ -n "$_per_repo" ]; then
-        _eff_threshold="${_per_repo,,}"
+        _eff_threshold="$(printf '%s' "$_per_repo" | tr '[:upper:]' '[:lower:]')"
         _eff_source="per-repo:.roborev.toml"
       else
         _global=$(_global_threshold)
         if [ -n "$_global" ]; then
-          _eff_threshold="${_global,,}"
+          _eff_threshold="$(printf '%s' "$_global" | tr '[:upper:]' '[:lower:]')"
           _eff_source="global:~/.roborev/config.toml"
         else
           _eff_threshold="off"
@@ -717,20 +717,20 @@ for _row in "${REVIEW_ROWS[@]}"; do
   _eff_threshold=""
   _eff_source=""
   if [ -n "$THRESHOLD_FLAG" ]; then
-    _eff_threshold="${THRESHOLD_FLAG,,}"
+    _eff_threshold="$(printf '%s' "$THRESHOLD_FLAG" | tr '[:upper:]' '[:lower:]')"
     _eff_source="flag"
   elif [ -n "${ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD:-}" ]; then
-    _eff_threshold="${ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD,,}"
+    _eff_threshold="$(printf '%s' "$ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD" | tr '[:upper:]' '[:lower:]')"
     _eff_source="env"
   else
     _per_repo=$(_repo_threshold "$_root")
     if [ -n "$_per_repo" ]; then
-      _eff_threshold="${_per_repo,,}"
+      _eff_threshold="$(printf '%s' "$_per_repo" | tr '[:upper:]' '[:lower:]')"
       _eff_source="per-repo:.roborev.toml"
     else
       _global=$(_global_threshold)
       if [ -n "$_global" ]; then
-        _eff_threshold="${_global,,}"
+        _eff_threshold="$(printf '%s' "$_global" | tr '[:upper:]' '[:lower:]')"
         _eff_source="global:~/.roborev/config.toml"
       else
         _eff_threshold="off"
