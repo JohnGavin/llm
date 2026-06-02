@@ -188,6 +188,31 @@ bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh --repo <pa
 
 ---
 
+## 2026-06-01 (Component 5 #354 — roborev auto-close safety guards)
+
+Closes #354 (Component 5 of #163 roborev auto-close loop).
+
+Adds four hard safety guards that protect every auto-close decision:
+1. **Severity downgrade-attack guard** — NEVER auto-close Critical/High finding with Medium-only approving review.
+2. **Security/error-handling queue guard** — Security and error-handling findings are queued to `fix_rejected_queue` for human dispatch, never auto-closed.
+3. **Won't-fix tag guard** — `wontfix` closures require `[reason: ...]` in commit message; rejected without it.
+4. **Stale closure** — findings with no follow-up commit in >30 days are closed as `stale` with audit log entry; guards 1–3 are bypassed for stale.
+
+### Files added
+
+- `.claude/scripts/roborev_migrate_component5.sh` — idempotent DB schema migration; creates `closures` and `fix_rejected_queue` tables with spec column names; 9 self-test cases via `CLAUDE_HOOK_SELFTEST=1`.
+- `.claude/scripts/roborev_auto_close.sh` — auto-close logic implementing the four guards; 12 self-test cases via `CLAUDE_HOOK_SELFTEST=1`; returns `CLOSED=1`, `QUEUED=1`, or `REJECTED=1` on stdout.
+
+### Files modified
+
+- `.claude/scripts/roborev_auto_verify.sh` — added `--no-auto-close` flag; approved verdict now delegates to `roborev_auto_close.sh` instead of doing direct INSERT; rejected verdict INSERT updated to spec column names (`finding_ids`, `fix_commit`, `rejection_review_id`).
+
+### Design decisions
+
+- Column names in `closures` and `fix_rejected_queue` follow the issue spec (`closure_commit`, `closure_review_id`, `finding_ids`, `fix_commit`, `rejection_review_id`), not the earlier draft SQL (`closure_commit_sha`, etc.).
+- `roborev_auto_close.sh` is the authoritative writer for both tables; `roborev_auto_verify.sh` is the caller.
+- Self-tests in both scripts require a functioning `sqlite3` binary; the sandbox environment where the scripts were authored did not have `sqlite3` available, so self-test pass/fail could not be verified at author-time. Integration tests should be run post-merge.
+
 ## 2026-05-31 (Phase 1.6 #386 — roborev primary-loop shim)
 
 Fixes the root cause of why `~/.claude/logs/codex_fallback/` stayed empty despite
