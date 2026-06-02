@@ -2197,3 +2197,23 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 ### Accuracy / Metrics
 - R-universe: 5 OK, 1 failing (micromort)
 - Quality gates: irishbuoys, micromort, millsratio, llmtelemetry have plan_qa_gates.R
+## 2026-06-02 (session-end: feat/cc-20260531-185045)
+
+### Completed
+- 24 PRs merged this session — see CURRENT_WORK.md for the full list
+- Operational: 118 stale worktrees removed, 3 stale claude sessions + 2 stale roborev loops killed, ~/.config/cc-worktree/projects.conf installed
+- 12 issues filed (eval pipelines, follow-ups, governance)
+
+### Failed approaches
+- Original clean-stale-worktrees.sh age-check used meta-dir mtime — self-defeating (git status bumps it). Fixed in PR #426 to use locked-file mtime instead.
+- quick-fix dispatched for new-file prose work — tool limitation discovered: no Write. Lesson: use sonnet fixer for new files, quick-fix only for in-place edits.
+
+### Metrics
+- compound_guard mode: log (was block). To revert: PR after #394+#395+#396 measurement window.
+- 170 → 52 agent worktrees globally after sweep.
+- Roborev unresolved: 74/94 failed (carryover from prior sessions).
+
+### Known limitations
+- Part C of #424 (auto-GC) deferred; manual sweep needed periodically until then.
+- llmtelemetry dashboard panel for #389's trend table pending — needs ≥14 days of data.
+
