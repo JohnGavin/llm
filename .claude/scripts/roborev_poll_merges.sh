@@ -32,8 +32,15 @@ unset _SCRIPT_DIR
 # Status: tracked in JohnGavin/llm#148 (sub-fix 1 of 3).
 #
 # Usage:
-#   roborev_poll_merges.sh                # dry-run (default)
-#   roborev_poll_merges.sh --apply        # enqueue real review jobs
+#   roborev_poll_merges.sh                     # dry-run (default)
+#   roborev_poll_merges.sh --apply             # enqueue real review jobs
+#   roborev_poll_merges.sh --clean-repos-table # delete ephemeral /tmp entries from DB
+#   roborev_poll_merges.sh --clean-repos-table --dry-run  # preview deletions only
+#
+# Ephemeral-path filtering (#217 Phase 1.7):
+#   Any repo whose root_path starts with /private/tmp/ or /tmp/ is skipped
+#   during the per-repo loop (these are agent worktree artefacts, never real
+#   projects). The --clean-repos-table flag deletes matching rows from the DB.
 #
 # Exit codes:
 #   0 ok (including "nothing to do" and "roborev/sqlite missing")
@@ -42,12 +49,19 @@ unset _SCRIPT_DIR
 set -eo pipefail
 
 DRY_RUN=1
+CLEAN_REPOS_TABLE=0
 case "${1:-}" in
-  --apply)   DRY_RUN=0 ;;
-  --dry-run|"") DRY_RUN=1 ;;
-  -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+  --apply)             DRY_RUN=0 ;;
+  --dry-run|"")        DRY_RUN=1 ;;
+  --clean-repos-table) CLEAN_REPOS_TABLE=1 ;;
+  -h|--help)           sed -n '2,25p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 1 ;;
 esac
+
+# Second argument may be --dry-run when --clean-repos-table is first
+if [ "${2:-}" = "--dry-run" ]; then
+  DRY_RUN=1
+fi
 
 DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 SQLITE="${SQLITE:-/usr/bin/sqlite3}"
@@ -58,6 +72,16 @@ mkdir -p "$(dirname "$LOG")"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
+# ── Ephemeral-path predicate ──────────────────────────────────────────────────
+# Returns 0 (true) if the path is an ephemeral nix-shell or agent worktree.
+is_ephemeral_path() {
+  local p="$1"
+  case "$p" in
+    /private/tmp/*|/tmp/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Quietly succeed if any required binary missing (laptop vs CI portability)
 for cmd in "$DB" "$SQLITE" "$ROBOREV" "$GIT"; do
   if [ ! -e "$cmd" ]; then
@@ -66,6 +90,45 @@ for cmd in "$DB" "$SQLITE" "$ROBOREV" "$GIT"; do
     exit 0
   fi
 done
+
+# ── --clean-repos-table mode ──────────────────────────────────────────────────
+if [ "$CLEAN_REPOS_TABLE" -eq 1 ]; then
+  # Preview rows that would be deleted
+  echo "roborev_poll_merges --clean-repos-table:"
+  echo ""
+  EPHEMERAL_ROWS=$("$SQLITE" "$DB" \
+    "SELECT id || ' | ' || name || ' | ' || root_path FROM repos WHERE root_path LIKE '/private/tmp/%' OR root_path LIKE '/tmp/%';")
+  if [ -z "$EPHEMERAL_ROWS" ]; then
+    echo "  No ephemeral entries found in repos table."
+    log "clean-repos-table: no ephemeral entries found"
+    exit 0
+  fi
+  echo "  Ephemeral entries to delete:"
+  echo "$EPHEMERAL_ROWS" | while IFS= read -r row; do
+    echo "    TO DELETE: $row"
+  done
+  echo ""
+  EPHEMERAL_COUNT=$(echo "$EPHEMERAL_ROWS" | wc -l | tr -d ' ')
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  [dry-run] would delete $EPHEMERAL_COUNT row(s). Pass without --dry-run to apply."
+    log "clean-repos-table [dry-run]: $EPHEMERAL_COUNT ephemeral rows would be deleted"
+    exit 0
+  fi
+  # Apply deletion (wrapped in a transaction for safety)
+  "$SQLITE" "$DB" "
+    BEGIN;
+    DELETE FROM repos WHERE root_path LIKE '/private/tmp/%' OR root_path LIKE '/tmp/%';
+    COMMIT;
+  "
+  echo "  Deleted $EPHEMERAL_COUNT ephemeral row(s)."
+  log "clean-repos-table [applied]: deleted $EPHEMERAL_COUNT ephemeral rows"
+  echo ""
+  SURVIVING=$("$SQLITE" "$DB" "SELECT COUNT(*) FROM repos;")
+  echo "  Surviving repos: $SURVIVING"
+  exit 0
+fi
+
+# ── Normal polling mode ───────────────────────────────────────────────────────
 
 # Pull all repos from roborev's DB (single source of truth).
 # NOTE: portable while-read loop instead of `mapfile` — launchd uses macOS
@@ -82,6 +145,15 @@ total=0; behind=0; enqueued=0; skipped=0
 for line in "${REPOS[@]}"; do
   IFS='|' read -r repo_id name root_path <<<"$line"
   total=$((total + 1))
+
+  # Skip ephemeral paths (/private/tmp/ or /tmp/) — nix-shell agent artefacts
+  # that were registered in the DB during agent runs but are never real project
+  # roots. Emitting a debug-level log only (not error — expected noise).
+  if is_ephemeral_path "$root_path"; then
+    log "SKIP $root_path (ephemeral)"
+    skipped=$((skipped + 1))
+    continue
+  fi
 
   # Repo gone? skip
   if [ ! -d "$root_path/.git" ] && [ ! -f "$root_path/.git" ]; then
