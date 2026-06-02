@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Check for vignettes
         id: check-vignettes
@@ -42,7 +42,7 @@ jobs:
 
       - name: Setup Cachix
         if: steps.check-vignettes.outputs.has_vignettes == 'true'
-        uses: cachix/cachix-action@v15
+        uses: cachix/cachix-action@v17
         with:
           name: rstats-on-nix
           extraPullNames: johngavin
