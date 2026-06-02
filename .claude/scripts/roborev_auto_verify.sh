@@ -14,10 +14,11 @@
 #   6. No roborev citations in commit → exits 0 immediately.
 #
 # Flags:
-#   --dry-run   (default) — print what would happen; no DB writes
-#   --apply               — actually mutate the DB
-#   --commit <SHA>        — override commit SHA (default: HEAD)
-#   --repo <name>         — override repo name (default: detected from git remote)
+#   --dry-run         (default) — print what would happen; no DB writes
+#   --apply                     — actually mutate the DB
+#   --no-auto-close             — skip Component 5 safety guards (testing / dry-run use)
+#   --commit <SHA>              — override commit SHA (default: HEAD)
+#   --repo <name>               — override repo name (default: detected from git remote)
 #   --help
 #
 # Self-test:
@@ -219,11 +220,13 @@ usage() {
 MODE="dry-run"
 COMMIT_SHA=""
 REPO_NAME=""
+NO_AUTO_CLOSE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)  MODE="dry-run"; shift ;;
     --apply)    MODE="apply";   shift ;;
+    --no-auto-close) NO_AUTO_CLOSE=1; shift ;;
     --commit)
       shift
       [ $# -gt 0 ] || { echo "ERROR: --commit requires an argument" >&2; exit 1; }
@@ -638,49 +641,60 @@ fi
 
 log "INFO: job_id=${REVIEW_JOB_ID} verdict_bool=${VERDICT}"
 
-# ── Verdict: approved (1) → close findings ────────────────────────────────────
+# ── Verdict: approved (1) → delegate to auto-close (Component 5) ─────────────
 
 if [ "$VERDICT" = "1" ]; then
   echo "  verdict: APPROVED — closing ${N_IDS} finding(s)"
   log "APPROVED: job=${REVIEW_JOB_ID} commit=${COMMIT_SHA} closing $(printf '%s' "$CITED_IDS" | tr '\n' ',')"
 
-  /usr/bin/python3 - "$ROBOREV_DB" "$CITED_IDS" "$COMMIT_SHA" "$REVIEW_JOB_ID" <<'PY'
-import sys, sqlite3
+  # --no-auto-close suppresses Component 5 safety guards (testing / dry-run use)
+  if [ "$NO_AUTO_CLOSE" -eq 1 ]; then
+    log "INFO: --no-auto-close set; skipping roborev_auto_close.sh guards"
+    echo "  auto-close suppressed by --no-auto-close"
+    exit 0
+  fi
 
-db_path   = sys.argv[1]
-ids_raw   = sys.argv[2]
-commit_sha= sys.argv[3]
-job_id    = int(sys.argv[4])
-
-ids = [int(i.strip()) for i in ids_raw.splitlines() if i.strip()]
-
-conn = sqlite3.connect(db_path, timeout=5.0)
-try:
-    cur = conn.cursor()
-    for fid in ids:
-        cur.execute(
-            """INSERT OR IGNORE INTO closures
-               (finding_id, closure_commit_sha, closure_review_job_id, closure_type)
-               VALUES (?, ?, ?, 'approved')""",
-            (fid, commit_sha, job_id)
-        )
-    conn.commit()
-    print(f"ok: wrote {len(ids)} closures rows")
-except Exception as e:
-    conn.rollback()
-    print(f"ERR: {e}", file=sys.stderr)
-finally:
-    conn.close()
-PY
+  # Delegate each finding to roborev_auto_close.sh so the four hard safety
+  # guards (severity downgrade, security queue, wontfix-tag, stale) are applied.
+  _AUTO_CLOSE_SCRIPT="$(dirname "$0")/roborev_auto_close.sh"
+  if [ ! -f "$_AUTO_CLOSE_SCRIPT" ]; then
+    log "WARN: roborev_auto_close.sh not found at ${_AUTO_CLOSE_SCRIPT} — falling back to direct close"
+    # Fallback: call roborev close directly without safety guards
+    while IFS= read -r fid; do
+      [ -z "$fid" ] && continue
+      if "$ROBOREV_BIN" close "$fid" >/dev/null 2>&1; then
+        log "CLOSED finding_id=${fid} type=approved commit=${COMMIT_SHA} (fallback)"
+        echo "  closed finding #${fid} (fallback)"
+      else
+        log "CLOSE_FAIL finding_id=${fid} commit=${COMMIT_SHA} (fallback)"
+        echo "  WARN: could not close finding #${fid} via roborev" >&2
+      fi
+    done <<< "$CITED_IDS"
+    exit 0
+  fi
 
   while IFS= read -r fid; do
     [ -z "$fid" ] && continue
-    if "$ROBOREV_BIN" close "$fid" >/dev/null 2>&1; then
+    AC_OUT=$(ROBOREV_DB="$ROBOREV_DB" bash "$_AUTO_CLOSE_SCRIPT" \
+      --finding-id "$fid" \
+      --approving-review-id "$REVIEW_JOB_ID" \
+      --commit "$COMMIT_SHA" \
+      --type approved 2>&1)
+    AC_RC=$?
+    if printf '%s' "$AC_OUT" | grep -q '^CLOSED=1'; then
       log "CLOSED finding_id=${fid} type=approved commit=${COMMIT_SHA}"
       echo "  closed finding #${fid}"
+      # Also call roborev close to update the CLI record
+      "$ROBOREV_BIN" close "$fid" >/dev/null 2>&1 || true
+    elif printf '%s' "$AC_OUT" | grep -q '^QUEUED=1'; then
+      log "QUEUED finding_id=${fid} commit=${COMMIT_SHA} (security/error-handling guard)"
+      echo "  queued finding #${fid} for human triage (security/error-handling)"
+    elif printf '%s' "$AC_OUT" | grep -q '^REJECTED=1'; then
+      log "REJECTED finding_id=${fid} commit=${COMMIT_SHA} ac_output=${AC_OUT}"
+      echo "  WARN: finding #${fid} rejected by safety guard: ${AC_OUT}" >&2
     else
-      log "CLOSE_FAIL finding_id=${fid} commit=${COMMIT_SHA}"
-      echo "  WARN: could not close finding #${fid} via roborev" >&2
+      log "WARN: unexpected auto-close output for finding_id=${fid}: ${AC_OUT} rc=${AC_RC}"
+      echo "  WARN: unexpected auto-close result for #${fid}: ${AC_OUT}" >&2
     fi
   done <<< "$CITED_IDS"
 
@@ -712,7 +726,7 @@ conn = sqlite3.connect(db_path, timeout=5.0)
 try:
     conn.execute(
         """INSERT INTO fix_rejected_queue
-           (finding_ids_json, fix_commit_sha, rejection_job_id, rejection_summary)
+           (finding_ids, fix_commit, rejection_review_id, rejection_summary)
            VALUES (?, ?, ?, ?)""",
         (ids_json, commit_sha, job_id, rejection_s)
     )
@@ -726,5 +740,5 @@ finally:
 PY
 
 echo "roborev_auto_verify: fix rejected — check fix_rejected_queue for human triage"
-echo "  query: SELECT * FROM fix_rejected_queue WHERE resolved=0 ORDER BY attempted_at DESC LIMIT 10;"
+echo "  query: SELECT * FROM fix_rejected_queue WHERE resolved=0 ORDER BY created_at DESC LIMIT 10;"
 exit 0
