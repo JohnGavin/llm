@@ -1755,6 +1755,84 @@ enrich_fix_commit_links <- function(lifecycle_df, read_con) {
   lifecycle_df
 }
 
+# ── Build roborev_fix_method_trend (#389) ─────────────────────────────────
+#
+# Computes the current distribution of fix_method across ALL closed reviews in
+# unified.duckdb (not just the ETL window) and returns 4 rows — one per bucket:
+#   unknown, autoclose_severity, manual, commit_reference
+#
+# This is a whole-table aggregate (no `since` filter) so the trend table always
+# reflects the global running total, not just the window.
+#
+# Args:
+#   duck_con   DuckDB connection to unified.duckdb (must already have
+#              roborev_review_lifecycle populated for the current run)
+#   run_date   Date — today's ETL run date
+#
+# Returns a 4-row data.frame ready for upsert into roborev_fix_method_trend.
+# Returns empty data.frame on any error (graceful — never aborts the ETL).
+
+build_fix_method_trend <- function(duck_con, run_date) {
+  empty_df <- data.frame(
+    run_date       = as.Date(character()),
+    bucket         = character(),
+    n_closed       = integer(),
+    n_closed_total = integer(),
+    pct_of_closed  = double(),
+    stringsAsFactors = FALSE
+  )
+
+  # Canonical bucket names (vocabulary from fix_method in roborev_review_lifecycle)
+  BUCKETS <- c("unknown", "autoclose_severity", "manual", "commit_reference")
+
+  # Query ALL closed reviews (no since filter — we want the global baseline).
+  # NULLs in fix_method map to the "unknown" bucket.
+  trend_df <- tryCatch({
+    raw <- dbGetQuery(duck_con, "
+      SELECT
+        COALESCE(fix_method, 'unknown') AS bucket,
+        COUNT(*)                        AS n_closed
+      FROM roborev_review_lifecycle
+      WHERE closed_at IS NOT NULL
+      GROUP BY COALESCE(fix_method, 'unknown')
+    ")
+    if (is.null(raw) || nrow(raw) == 0L) return(empty_df)
+
+    # Build a complete row for every canonical bucket (fill absent buckets with 0)
+    counts <- setNames(as.integer(raw$n_closed), raw$bucket)
+    n_total <- sum(counts, na.rm = TRUE)
+    if (n_total == 0L) return(empty_df)
+
+    rows <- lapply(BUCKETS, function(b) {
+      n <- as.integer(counts[[b]] %||% 0L)
+      data.frame(
+        run_date       = as.Date(run_date),
+        bucket         = b,
+        n_closed       = n,
+        n_closed_total = n_total,
+        pct_of_closed  = round(n / n_total * 100.0, 4L),
+        stringsAsFactors = FALSE
+      )
+    })
+    do.call(rbind, rows)
+  }, error = function(e) {
+    log_msg("WARN: build_fix_method_trend query failed: ", conditionMessage(e))
+    empty_df
+  })
+
+  if (nrow(trend_df) > 0L) {
+    cat(sprintf("roborev_metrics_etl.R: fix_method_trend — %d closed total, buckets:\n",
+                trend_df$n_closed_total[[1L]]))
+    for (i in seq_len(nrow(trend_df))) {
+      cat(sprintf("  %-22s %5d  (%.1f%%)\n",
+                  trend_df$bucket[[i]], trend_df$n_closed[[i]],
+                  trend_df$pct_of_closed[[i]]))
+    }
+  }
+
+  trend_df
+}
+
 # ── Build tables ───────────────────────────────────────────────────────────
 
 daily_df     <- build_daily_metrics(jobs_raw, reviews_raw)
@@ -1842,6 +1920,8 @@ if (mode == "dry-run") {
   cat(sprintf("  roborev_cadence_efficacy:     %d rows\n", nrow(cadence_df)))
   cat(sprintf("  roborev_finding_lineage:      %d rows\n", nrow(lineage_df)))
   cat(sprintf("  codex_provider_invocations:   %d rows\n", nrow(invocations_raw)))
+  # #389: fix_method_trend is computed post-upsert so only show note in dry-run
+  cat("  roborev_fix_method_trend:     4 rows (written after lifecycle upsert in --apply)\n")
   cat("--- end dry-run ---\n")
   log_msg(sprintf(
     "dry-run: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d",
@@ -1930,7 +2010,7 @@ upsert_table <- function(con, table_name, df) {
   })
 }
 
-# ── Transaction: populate all 5 tables ────────────────────────────────────
+# ── Transaction: populate all tables ──────────────────────────────────────
 
 tryCatch({
   dbBegin(duck_con)
@@ -1943,18 +2023,25 @@ tryCatch({
   upsert_table(duck_con, "roborev_finding_lineage",     lineage_df)
   upsert_table(duck_con, "codex_provider_invocations",  invocations_raw)
 
+  # #389: fix_method_trend — computed AFTER lifecycle upsert so the query sees
+  # the freshly-written rows.  4 rows per run (one per bucket).
+  trend_df <- build_fix_method_trend(duck_con, Sys.Date())
+  upsert_table(duck_con, "roborev_fix_method_trend", trend_df)
+
   dbCommit(duck_con)
 
   log_msg(sprintf(
-    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d mode=apply since=%s",
+    "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d trend=%d mode=apply since=%s",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
     nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), nrow(invocations_raw),
+    nrow(trend_df),
     format(since, "%Y-%m-%d")
   ))
   cat(sprintf(
-    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d\n",
+    "roborev_metrics_etl.R: done — daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d trend=%d\n",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
-    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), nrow(invocations_raw)
+    nrow(threshold_df), nrow(cadence_df), nrow(lineage_df), nrow(invocations_raw),
+    nrow(trend_df)
   ))
 }, error = function(e) {
   tryCatch(dbRollback(duck_con), error = function(e2) NULL)
