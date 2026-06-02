@@ -4,6 +4,37 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-02 (#389 — commit_reference_rate trend tracker)
+
+Adds a leading-indicator pipeline for measuring adoption of the #359 commit-msg
+hook (closed roborev findings referencing the fix commit in the commit message).
+
+### What ships
+
+- `roborev_metrics_schema.sql` — new `roborev_fix_method_trend` table.
+  Schema: `(run_date DATE, bucket VARCHAR, n_closed INTEGER,
+  n_closed_total INTEGER, pct_of_closed DOUBLE)`.
+  PK: `(run_date, bucket)`. 4 rows per ETL run (one per bucket).
+  Tracks the daily distribution of `fix_method` across ALL closed reviews.
+
+- `roborev_metrics_etl.R` — new `build_fix_method_trend()` function.
+  Called after the lifecycle upsert so it sees freshly-written rows.
+  Queries ALL closed reviews (no `since` filter) for a global running total.
+  Absent buckets are filled with 0 — always 4 rows per run.
+
+- `.claude/scripts/roborev_commit_reference_rate_check.sh` — standalone
+  weekly threshold check. Reads `roborev_fix_method_trend` for the last 30
+  days, checks whether `commit_reference_rate >= 5%` after a 30-day grace
+  period post-#359 hook launch (2026-05-18). Exits 0 (pass/grace/no-data),
+  1 (warn: below threshold), or 2 (error: DB unavailable).
+  `CLAUDE_HOOK_SELFTEST=1` mode with 6 fixture cases.
+  Not wired into daily email yet — wiring waits for ≥14 days of data.
+
+### Baseline at ship time
+
+86.7% unknown (3418/3941), 12.7% autoclose_severity (502), 0.4% manual (16),
+0.1% commit_reference (5). Target: commit_reference ≥ 5% within 6 weeks.
+
 ## 2026-06-01 (#383 — markitdown wrapper scaffold)
 
 Ships the **scaffold only** for Microsoft markitdown integration. No installation
