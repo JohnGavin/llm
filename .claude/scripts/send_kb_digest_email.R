@@ -28,6 +28,21 @@ suppressPackageStartupMessages({
   library(blastula)
 })
 
+# ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
+
+.scripts_dir_kb <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                          ".claude", "scripts", "email_styles.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_kb, "email_styles.R"))
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 dry_run <- identical(Sys.getenv("EMAIL_DRY_RUN"), "1")
@@ -117,17 +132,17 @@ if (!nzchar(trimws(digest_md))) {
   quit(status = 1L)
 }
 
-# ── Colour palette (dark-mode safe — mirrors send_roborev_email.R convention) ─
+# ── Colour palette — aliases to shared constants from email_styles.R ──────────
 
-dark_bg     <- "#1a1a2e"
-dark_card   <- "#16213e"
-dark_row_alt <- "#0f3460"
-dark_text   <- "#e8e8e8"
-dark_muted  <- "#a0a0a0"
-dark_border <- "#2a2a4a"
-accent_green  <- "#00d26a"
-accent_blue   <- "#4fc3f7"
-accent_orange <- "#ff9800"
+dark_bg      <- DARK_BG
+dark_card    <- DARK_CARD
+dark_row_alt <- DARK_ROW_ALT
+dark_text    <- DARK_TEXT
+dark_muted   <- DARK_MUTED
+dark_border  <- DARK_BORDER
+accent_green  <- ACCENT_GREEN
+accent_blue   <- ACCENT_BLUE
+accent_orange <- ACCENT_ORANGE
 
 # ── Convert markdown digest to HTML ────────────────────────────────────────────
 #
@@ -147,8 +162,8 @@ md_to_html_section <- function(md_text) {
               accent_blue, htmlEscape(h3_text))
     } else if (grepl("^\\| ", line)) {
       # Table row — pass through but style it
-      sprintf('<div style="font-family:monospace; font-size:11px; color:%s;">%s</div>',
-              dark_text, htmlEscape(line))
+      sprintf('<div style="font-family:monospace; font-size:%s; color:%s;">%s</div>',
+              EMAIL_FONT_BODY, dark_text, htmlEscape(line))
     } else if (grepl("^- ", line)) {
       item_text <- sub("^- ", "", line)
       sprintf('<li style="color:%s; margin:2px 0;">%s</li>',
@@ -157,13 +172,13 @@ md_to_html_section <- function(md_text) {
       sprintf('<hr style="border:1px solid %s; margin:16px 0;">', dark_border)
     } else if (grepl("^_.*_$", line)) {
       em_text <- gsub("^_|_$", "", line)
-      sprintf('<p style="color:%s; font-style:italic; font-size:11px;">%s</p>',
-              dark_muted, htmlEscape(em_text))
+      sprintf('<p style="color:%s; font-style:italic; font-size:%s;">%s</p>',
+              dark_muted, EMAIL_FONT_SUBTITLE, htmlEscape(em_text))
     } else if (!nzchar(trimws(line))) {
       "<br>"
     } else {
-      sprintf('<p style="color:%s; margin:4px 0; font-size:12px;">%s</p>',
-              dark_text, htmlEscape(line))
+      sprintf('<p style="color:%s; margin:4px 0; font-size:%s;">%s</p>',
+              dark_text, EMAIL_FONT_BODY, htmlEscape(line))
     }
   }, character(1L))
   paste(html_lines, collapse = "\n")
@@ -188,22 +203,23 @@ qa_markers <- sprintf(
 
 email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
-               font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">
-<h2 style="color:%s; margin-bottom:4px;">Knowledge Base Digest — %s</h2>
-<p style="color:%s; font-size:11px; margin-top:0;">
+               font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;
+               font-size:%s;">
+<h2 style="color:%s; margin-bottom:4px; font-size:%s;">Knowledge Base Digest — %s</h2>
+<p style="color:%s; font-size:%s; margin-top:0;">
   Computed locally · No KB content in CI logs · llm#298
 </p>
 %s
-<p style="color:%s; font-size:10px; margin-top:20px;">
+<p style="color:%s; font-size:%s; margin-top:20px;">
   Knowledge repo: (path redacted for privacy) · Sent at %s UTC
 </p>
 %s
 </div>',
-  dark_bg, dark_text,
-  accent_orange, report_date,
-  dark_muted,
+  dark_bg, dark_text, EMAIL_FONT_BODY,
+  accent_orange, EMAIL_FONT_H2, report_date,
+  dark_muted, EMAIL_FONT_SUBTITLE,
   body_inner,
-  dark_muted, format(Sys.time(), "%Y-%m-%dT%H:%M:%S", tz = "UTC"),
+  dark_muted, EMAIL_FONT_FOOTER, format(Sys.time(), "%Y-%m-%dT%H:%M:%S", tz = "UTC"),
   qa_markers
 )
 
