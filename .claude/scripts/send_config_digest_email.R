@@ -26,6 +26,25 @@ suppressPackageStartupMessages({
   library(blastula)
 })
 
+# ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
+
+`%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
+
+.scripts_dir <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    # Fallback: use commandArgs --file= when run via Rscript
+    args  <- commandArgs(trailingOnly = FALSE)
+    idx   <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "email_styles.R"),
+                               mustWork = FALSE))
+  }
+)
+
+source(file.path(.scripts_dir, "email_styles.R"))
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 dry_run <- identical(Sys.getenv("EMAIL_DRY_RUN"), "1")
@@ -113,18 +132,18 @@ if (is.na(since_label))  since_label  <- config_digest_since
 
 report_date <- format(Sys.Date())
 
-# ── Colour palette (dark-mode safe; matches llmtelemetry convention) ──────────
+# ── Colour palette — aliases to shared constants from email_styles.R ──────────
 
-dark_bg       <- "#1a1a2e"
-dark_card     <- "#16213e"
-dark_row_alt  <- "#0f3460"
-dark_text     <- "#e8e8e8"
-dark_muted    <- "#a0a0a0"
-dark_border   <- "#2a2a4a"
-accent_green  <- "#00d26a"
-accent_blue   <- "#4fc3f7"
-accent_orange <- "#ff9800"
-accent_purple <- "#bb86fc"
+dark_bg       <- DARK_BG
+dark_card     <- DARK_CARD
+dark_row_alt  <- DARK_ROW_ALT
+dark_text     <- DARK_TEXT
+dark_muted    <- DARK_MUTED
+dark_border   <- DARK_BORDER
+accent_green  <- ACCENT_GREEN
+accent_blue   <- ACCENT_BLUE
+accent_orange <- ACCENT_ORANGE
+accent_purple <- ACCENT_PURPLE
 
 # ── Build email sections from markdown ────────────────────────────────────────
 
@@ -238,7 +257,8 @@ wrap_tables <- function(html_lines) {
     if (grepl("^<tr ", l) || grepl("^<th ", l)) {
       if (!in_t) {
         result <- c(result, sprintf(
-          '<table style="border-collapse:collapse; width:100%%; font-size:12px; margin:8px 0;">'
+          '<table style="border-collapse:collapse; width:100%%; font-size:%s; margin:8px 0;">',
+          EMAIL_FONT_BODY
         ))
         in_t <- TRUE
       }
@@ -278,7 +298,7 @@ format_breakdown_html <- function(breakdown_str) {
     }
   }
   inner <- paste(labels, collapse = " · ")
-  sprintf('<br><span style="font-size:11px; color:#aaa;">(%s)</span>', inner)
+  sprintf('<br><span style="font-size:%s; color:#aaa;">(%s)</span>', EMAIL_FONT_SUBTITLE, inner)
 }
 
 # ── Headline summary table (two-column Metric | Value) ─────────────────────────
@@ -301,19 +321,18 @@ headline_rows <- list(
   list("Lessons found",    lessons_value_html)
 )
 
-headline_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">At a Glance (last 24h)</h3>
-<table style="border-collapse:collapse; width:100%%; font-size:12px;">
+headline_table_html <- sprintf(
+  '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:left;">Metric</th>
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:right;">Value</th>
   </tr>',
-  accent_orange, dark_row_alt, dark_border, dark_border
+  EMAIL_FONT_BODY, dark_row_alt, dark_border, dark_border
 )
 
 for (i in seq_along(headline_rows)) {
   bg <- if (i %% 2L == 0L) dark_row_alt else dark_card
-  headline_html <- paste0(headline_html, sprintf(
+  headline_table_html <- paste0(headline_table_html, sprintf(
     '<tr style="background-color:%s;">
       <td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>
       <td style="padding:5px 8px; border:1px solid %s; color:%s; text-align:right;">%s</td>
@@ -323,12 +342,76 @@ for (i in seq_along(headline_rows)) {
     dark_border, accent_green, headline_rows[[i]][2L]
   ))
 }
-headline_html <- paste0(headline_html, "</table>")
+headline_table_html <- paste0(headline_table_html, "</table>")
+
+# Wrap headline table in a collapsible block (#447)
+total_files_val  <- if (!is.na(total_files)) total_files else "?"
+total_added_val  <- if (!is.na(total_added)) paste0("+", total_added) else "?"
+total_deleted_val <- if (!is.na(total_deleted)) paste0("-", total_deleted) else "?"
+headline_summary <- sprintf(
+  "Files: %s  •  Lines: %s / %s",
+  total_files_val, total_added_val, total_deleted_val
+)
+headline_html <- collapsible_block(
+  "At a Glance (last 24h)", headline_summary, headline_table_html
+)
 
 # ── Digest body (converted markdown) ──────────────────────────────────────────
 
 digest_html_raw <- md_to_html(clean_md)
-digest_html     <- wrap_tables(digest_html_raw)
+digest_html_wrapped <- wrap_tables(digest_html_raw)
+
+# ── Wrap each <table> block in a collapsible <details> block (#447) ───────────
+#
+# Strategy: scan the wrapped HTML for patterns of:
+#   <h2>...</h2> or <h3>...</h3> followed by a <table>...</table>
+# and collapse each table under the preceding heading as summary title.
+# Tables without a preceding heading get a generic "Details" title.
+#
+# We use a simple line-based state machine rather than full HTML parsing.
+
+wrap_digest_tables <- function(html) {
+  lines   <- strsplit(html, "\n", fixed = TRUE)[[1L]]
+  result  <- character(0L)
+  pending_title  <- "Details"
+  pending_lines  <- character(0L)
+  in_table <- FALSE
+
+  for (l in lines) {
+    if (grepl("^<h[23] ", l, perl = TRUE)) {
+      # Flush any buffered non-table content
+      result <- c(result, pending_lines)
+      pending_lines <- character(0L)
+      # Extract text content for title
+      pending_title <- gsub("<[^>]+>", "", l)
+      pending_lines <- c(l)
+    } else if (grepl("^<table ", l)) {
+      in_table   <- TRUE
+      table_buf  <- l
+    } else if (in_table) {
+      table_buf <- paste0(table_buf, "\n", l)
+      if (grepl("^</table>", l)) {
+        in_table <- FALSE
+        # Emit pending heading + collapsible table
+        result <- c(result, pending_lines)
+        pending_lines <- character(0L)
+        result <- c(result, collapsible_block(
+          pending_title,
+          "Click to expand",
+          table_buf
+        ))
+        pending_title <- "Details"
+      }
+    } else {
+      pending_lines <- c(pending_lines, l)
+    }
+  }
+  # Flush remainder
+  result <- c(result, pending_lines)
+  paste(result, collapse = "\n")
+}
+
+digest_html <- wrap_digest_tables(digest_html_wrapped)
 
 # ── GH commit link ─────────────────────────────────────────────────────────────
 
@@ -363,26 +446,27 @@ qa_markers <- sprintf(
 
 email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
-               font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">
-<h2 style="color:%s; margin-bottom:4px;">Config-Change Digest — %s</h2>
-<p style="color:%s; font-size:11px; margin-top:0;">
+               font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;
+               font-size:%s;">
+<h2 style="color:%s; margin-bottom:4px; font-size:%s;">Config-Change Digest — %s</h2>
+<p style="color:%s; font-size:%s; margin-top:0;">
   Generated: %s UTC &nbsp;|&nbsp; Window: since %s
 </p>
 %s
 %s
 %s
-<p style="color:%s; font-size:10px; margin-top:20px;">
+<p style="color:%s; font-size:%s; margin-top:20px;">
   Digest file: %s
 </p>
 %s
 </div>',
-  dark_bg, dark_text,
-  accent_orange, report_date,
-  dark_muted, generated_at, since_label,
+  dark_bg, dark_text, EMAIL_FONT_BODY,
+  accent_orange, EMAIL_FONT_H2, report_date,
+  dark_muted, EMAIL_FONT_SUBTITLE, generated_at, since_label,
   commits_link_html,
   headline_html,
   digest_html,
-  dark_muted, config_digest_path,
+  dark_muted, EMAIL_FONT_FOOTER, config_digest_path,
   qa_markers
 )
 
