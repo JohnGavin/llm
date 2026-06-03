@@ -297,6 +297,99 @@ check_hover_popups <- function(html_dir       = "docs",
   invisible(html_files)
 }
 
+#' Check that all rendered vignette HTML contains the mandatory build-info block
+#'
+#' Every vignette must end with a `<div class="build-info">` block (from the
+#' `_includes/build-info.qmd` partial). This function:
+#'   1. Scans rendered HTML for the `class="build-info"` marker.
+#'   2. Detects hardcoded literal dates matching `20[0-9]{2}-[0-9]{2}-[0-9]{2}`
+#'      inside the block (a `dynamic-prose-values` violation).
+#'
+#' @param vignettes_dir Path to rendered vignettes HTML (default "docs/articles").
+#' @param src_vignettes Path to vignette source directory (default "vignettes").
+#' @return Invisibly returns a character vector of checked files when all pass.
+#'   Calls `cli::cli_abort()` if any rendered vignette is missing the block or
+#'   contains a hardcoded date.
+check_build_info_blocks <- function(vignettes_dir = "docs/articles",
+                                    src_vignettes  = "vignettes") {
+  src_top      <- list.files(src_vignettes, pattern = "\\.qmd$",
+                              full.names = FALSE, recursive = FALSE)
+  src_articles <- list.files(file.path(src_vignettes, "articles"),
+                              pattern = "\\.qmd$",
+                              full.names = FALSE, recursive = FALSE)
+
+  html_top      <- file.path(vignettes_dir, sub("\\.qmd$", ".html", src_top))
+  html_articles <- file.path(vignettes_dir, sub("\\.qmd$", ".html", src_articles))
+
+  html_files <- c(html_top, html_articles)
+  html_files <- html_files[file.exists(html_files)]
+
+  if (length(html_files) == 0L) {
+    cli::cli_alert_warning(
+      "No vignette HTML found in {.path {vignettes_dir}} — run pkgdown/quarto first"
+    )
+    return(invisible(character(0L)))
+  }
+
+  missing_block    <- character(0L)
+  hardcoded_dates  <- character(0L)
+
+  for (f in html_files) {
+    content <- paste(readLines(f, warn = FALSE), collapse = "\n")
+
+    if (!grepl('class="build-info"', content, fixed = TRUE)) {
+      missing_block <- c(missing_block, basename(f))
+    } else {
+      # Extract the build-info div content and check for hardcoded dates
+      # Pattern: <div class="build-info" ...> ... </div>
+      block_match <- regmatches(
+        content,
+        regexpr('class="build-info"[^>]*>.*?</div>', content, perl = TRUE)
+      )
+      if (length(block_match) > 0L && nzchar(block_match)) {
+        # A hardcoded date looks like 20YY-MM-DD appearing as plain text
+        # (not inside an href URL, not inside a git SHA context)
+        # We look for it outside of href attributes
+        block_text <- gsub('<a[^>]*href="[^"]*"[^>]*>', "", block_match)
+        if (grepl("20[0-9]{2}-[0-9]{2}-[0-9]{2}", block_text, perl = TRUE)) {
+          hardcoded_dates <- c(hardcoded_dates, basename(f))
+        }
+      }
+    }
+  }
+
+  if (length(missing_block) > 0L) {
+    cli::cli_alert_danger(
+      "Build-info block missing in {length(missing_block)} vignette(s):"
+    )
+    for (f in missing_block) cli::cli_alert_warning(f)
+    cli::cli_abort(c(
+      "x" = "All rendered vignettes must contain the build-info block.",
+      "i" = "Missing in: {paste(missing_block, collapse = ', ')}",
+      "i" = "Add {{< include /_includes/build-info.qmd >}} before the QR footer.",
+      "i" = "See .claude/rules/vignette-build-info-block.md for placement rules."
+    ))
+  }
+
+  if (length(hardcoded_dates) > 0L) {
+    cli::cli_alert_danger(
+      "Hardcoded dates detected in build-info block in {length(hardcoded_dates)} vignette(s):"
+    )
+    for (f in hardcoded_dates) cli::cli_alert_warning(f)
+    cli::cli_abort(c(
+      "x" = "Build-info block contains hardcoded literal dates (dynamic-prose-values violation).",
+      "i" = "Affected: {paste(hardcoded_dates, collapse = ', ')}",
+      "i" = "Date fields must be inline-R expressions, not hardcoded strings.",
+      "i" = "See .claude/rules/dynamic-prose-values.md for the requirement."
+    ))
+  }
+
+  cli::cli_alert_success(
+    "Build-info blocks present and valid in all {length(html_files)} vignette(s)"
+  )
+  invisible(html_files)
+}
+
 plan_qa_gates <- function() {
   list(
     targets::tar_target(
@@ -312,6 +405,11 @@ plan_qa_gates <- function() {
     targets::tar_target(
       qa_hover_popups,
       check_hover_popups(),
+      packages = c("cli")
+    ),
+    targets::tar_target(
+      qa_build_info_blocks,
+      check_build_info_blocks(),
       packages = c("cli")
     )
   )
