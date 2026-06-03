@@ -23,7 +23,7 @@
 #
 # Output: a structured markdown file consumed by send_config_digest_email.R.
 #
-# Tracked in llm#297.
+# Tracked in llm#297, enriched in llm#444.
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -77,6 +77,22 @@ find_repo_root <- function() {
 }
 
 REPO_ROOT <- find_repo_root()
+
+# ── Repo slug and link helpers ────────────────────────────────────────────────
+
+REPO_SLUG <- "JohnGavin/llm"
+
+link_hash <- function(short_hash) {
+  # Render a 7-char commit hash as a markdown hyperlink.
+  sprintf("[`%s`](https://github.com/%s/commit/%s)", short_hash, REPO_SLUG, short_hash)
+}
+
+linkify_issues <- function(text) {
+  # Replace #NNN references with markdown issue links.
+  gsub("#([0-9]+)",
+       sprintf("[#\\1](https://github.com/%s/issues/\\1)", REPO_SLUG),
+       text, perl = TRUE)
+}
 
 # ── Category definitions ──────────────────────────────────────────────────────
 
@@ -145,7 +161,8 @@ compute_category_stats <- function(cat_def, since) {
     return(list(
       name = cat_def$name, path = path,
       n_commits = 0L, n_added = 0L, n_deleted = 0L,
-      files_changed = character(0), commits = list()
+      files_changed = character(0), commits = list(),
+      file_stats = list(), top_files = list()
     ))
   }
 
@@ -157,6 +174,8 @@ compute_category_stats <- function(cat_def, since) {
   files_changed <- character(0)
   total_added <- 0L
   total_deleted <- 0L
+  # Per-file accumulator: named list of list(added=N, deleted=N)
+  file_stats <- list()
 
   for (line in lines) {
     if (startsWith(line, "COMMIT:")) {
@@ -183,6 +202,32 @@ compute_category_stats <- function(cat_def, since) {
       if (!is.na(added))   total_added   <- total_added   + added
       if (!is.na(deleted)) total_deleted <- total_deleted + deleted
       files_changed <- unique(c(files_changed, file_path))
+      # Accumulate per-file stats
+      if (!is.null(file_stats[[file_path]])) {
+        file_stats[[file_path]]$added   <- file_stats[[file_path]]$added   + if (!is.na(added))   added   else 0L
+        file_stats[[file_path]]$deleted <- file_stats[[file_path]]$deleted + if (!is.na(deleted)) deleted else 0L
+      } else {
+        file_stats[[file_path]] <- list(
+          added   = if (!is.na(added))   added   else 0L,
+          deleted = if (!is.na(deleted)) deleted else 0L
+        )
+      }
+    }
+  }
+
+  # Compute top_files: top 3 by (added + deleted), sorted descending
+  top_files <- list()
+  if (length(file_stats) > 0L) {
+    totals <- sapply(file_stats, function(fs) fs$added + fs$deleted)
+    ord    <- order(totals, decreasing = TRUE)
+    top_n  <- min(3L, length(ord))
+    for (j in seq_len(top_n)) {
+      fp <- names(file_stats)[ord[j]]
+      top_files[[j]] <- list(
+        path    = fp,
+        added   = file_stats[[fp]]$added,
+        deleted = file_stats[[fp]]$deleted
+      )
     }
   }
 
@@ -193,15 +238,55 @@ compute_category_stats <- function(cat_def, since) {
     n_added       = total_added,
     n_deleted     = total_deleted,
     files_changed = files_changed,
-    commits       = commits
+    commits       = commits,
+    file_stats    = file_stats,
+    top_files     = top_files
   )
+}
+
+# ── Filetype subtotals ────────────────────────────────────────────────────────
+
+compute_filetype_stats <- function(cat_stats) {
+  # Walk all categories and re-bucket file_stats by extension.
+  # Returns a list sorted by total (added+deleted) desc, each entry:
+  #   list(ext=".R", n_files=N, added=N, deleted=N)
+  ext_map <- list()  # keyed by extension string
+
+  for (s in cat_stats) {
+    if (length(s$file_stats) == 0L) next
+    for (fp in names(s$file_stats)) {
+      ext <- tools::file_ext(fp)
+      if (!nzchar(ext)) ext <- "(no ext)"
+      ext_key <- paste0(".", ext)
+      fs  <- s$file_stats[[fp]]
+      if (!is.null(ext_map[[ext_key]])) {
+        ext_map[[ext_key]]$n_files <- ext_map[[ext_key]]$n_files + 1L
+        ext_map[[ext_key]]$added   <- ext_map[[ext_key]]$added   + fs$added
+        ext_map[[ext_key]]$deleted <- ext_map[[ext_key]]$deleted + fs$deleted
+      } else {
+        ext_map[[ext_key]] <- list(
+          ext     = ext_key,
+          n_files = 1L,
+          added   = fs$added,
+          deleted = fs$deleted
+        )
+      }
+    }
+  }
+
+  if (length(ext_map) == 0L) return(list())
+
+  totals <- sapply(ext_map, function(e) e$added + e$deleted)
+  ord    <- order(totals, decreasing = TRUE)
+  ext_map[ord]
 }
 
 # ── Theme clustering ──────────────────────────────────────────────────────────
 
 cluster_themes <- function(commit_lines, top_n = 5L) {
   # commit_lines: "hash|subject" format from git_log_commits()
-  if (length(commit_lines) == 0L) return(list())
+  # Returns: list with $top (top_n themes) and $all_counts (named int vector, sorted desc)
+  if (length(commit_lines) == 0L) return(list(top = list(), all_counts = integer(0)))
 
   parsed <- lapply(commit_lines, function(l) {
     parts   <- strsplit(l, "\x1f", fixed = TRUE)[[1L]]
@@ -227,10 +312,15 @@ cluster_themes <- function(commit_lines, top_n = 5L) {
     themes[[k]]$n       <- themes[[k]]$n + 1L
   }
 
-  # Sort by count descending; return top N
-  counts <- sapply(themes, function(t) t$n)
+  # Sort by count descending
+  counts        <- sapply(themes, function(t) t$n)
   themes_sorted <- themes[order(counts, decreasing = TRUE)]
-  head(themes_sorted, top_n)
+  counts_sorted <- counts[order(counts, decreasing = TRUE)]
+
+  # all_counts: named integer vector for breakdown QA marker
+  all_counts <- setNames(as.integer(counts_sorted), names(themes_sorted))
+
+  list(top = head(themes_sorted, top_n), all_counts = all_counts)
 }
 
 # ── Lessons-learnt extraction ─────────────────────────────────────────────────
@@ -309,12 +399,29 @@ extract_lessons <- function(since, changelog_path = NULL) {
     }
   }
 
-  lessons
+  # Compute type breakdown (named int vector, sorted desc) for QA marker
+  if (length(lessons) > 0L) {
+    type_vec  <- sapply(lessons, function(l) toupper(l$type))
+    type_tbl  <- sort(table(type_vec), decreasing = TRUE)
+    lessons_breakdown <- setNames(as.integer(type_tbl), names(type_tbl))
+  } else {
+    lessons_breakdown <- integer(0)
+  }
+
+  # Return list with $lessons (records) and $breakdown (named int vector)
+  list(lessons = lessons, breakdown = lessons_breakdown)
 }
 
 # ── Markdown rendering ────────────────────────────────────────────────────────
 
-render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
+render_markdown <- function(cat_stats, themes_result, lessons_result, since, generated_at) {
+  # themes_result: list(top=..., all_counts=...)  from cluster_themes()
+  # lessons_result: list(lessons=..., breakdown=...) from extract_lessons()
+  themes          <- themes_result$top
+  themes_counts   <- themes_result$all_counts
+  lessons         <- lessons_result$lessons
+  lessons_brkdown <- lessons_result$breakdown
+
   lines <- character(0)
   emit  <- function(...) lines <<- c(lines, sprintf(...))
 
@@ -322,14 +429,28 @@ render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
   emit("")
   emit("**Window:** since `%s` | **Generated:** `%s` UTC", since, generated_at)
   emit("")
+
+  # ── Enhancement 1: Filetype subtotals line ─────────────────────────────────
+  ft_stats <- compute_filetype_stats(cat_stats)
+  if (length(ft_stats) > 0L) {
+    top3_ft <- head(ft_stats, 3L)
+    others  <- max(0L, length(ft_stats) - 3L)
+    ft_parts <- sapply(top3_ft, function(ft) {
+      sprintf("%d `%s` (+%d -%d)", ft$n_files, ft$ext, ft$added, ft$deleted)
+    })
+    others_str <- if (others > 0L) sprintf(", +%d others", others) else ""
+    emit("**By filetype:** %s%s", paste(ft_parts, collapse = " · "), others_str)
+    emit("")
+  }
+
   emit("---")
   emit("")
 
-  # ── Section 1: Category summary table ──────────────────────────────────────
+  # ── Section 1: Category summary table (with Top files column) ──────────────
   emit("## Changes by Category")
   emit("")
-  emit("| Category | Files changed | Lines added | Lines deleted |")
-  emit("|----------|:-------------:|:-----------:|:-------------:|")
+  emit("| Category | Files changed | Lines added | Lines deleted | Top files |")
+  emit("|----------|:-------------:|:-----------:|:-------------:|-----------|")
 
   total_files   <- 0L
   total_added   <- 0L
@@ -341,11 +462,26 @@ render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
     total_added   <- total_added   + s$n_added
     total_deleted <- total_deleted + s$n_deleted
     if (n_files == 0L && s$n_added == 0L && s$n_deleted == 0L) next
-    emit("| %s | %d | +%d | -%d |",
-         s$name, n_files, s$n_added, s$n_deleted)
+
+    # ── Enhancement 5: Top-3 files drilldown ─────────────────────────────────
+    if (length(s$top_files) > 0L) {
+      file_parts <- sapply(s$top_files, function(tf) {
+        bn  <- basename(tf$path)
+        url <- sprintf("https://github.com/%s/blob/main/%s", REPO_SLUG, tf$path)
+        sprintf("[`%s`](%s) (+%d -%d)", bn, url, tf$added, tf$deleted)
+      })
+      n_extra    <- max(0L, n_files - length(s$top_files))
+      others_str <- if (n_extra > 0L) sprintf(" · +%d others", n_extra) else ""
+      top_files_cell <- paste0(paste(file_parts, collapse = " · "), others_str)
+    } else {
+      top_files_cell <- "—"
+    }
+
+    emit("| %s | %d | +%d | -%d | %s |",
+         s$name, n_files, s$n_added, s$n_deleted, top_files_cell)
   }
 
-  emit("| **Total** | **%d** | **+%d** | **-%d** |",
+  emit("| **Total** | **%d** | **+%d** | **-%d** | |",
        total_files, total_added, total_deleted)
   emit("")
 
@@ -362,7 +498,8 @@ render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
       emit("")
       for (c in head(t$commits, 3L)) {
         short_hash <- substr(c$hash, 1L, 7L)
-        emit("- `%s` %s", short_hash, c$subject)
+        # ── Enhancement 4: Embedded links ─────────────────────────────────────
+        emit("- %s %s", link_hash(short_hash), linkify_issues(c$subject))
       }
       if (t$n > 3L) emit("- _(+%d more)_", t$n - 3L)
       emit("")
@@ -386,7 +523,9 @@ render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
       emit("### From fix/revert commits")
       emit("")
       for (l in fix_lessons) {
-        emit("- **[%s]** `%s` %s", toupper(l$type), l$hash, l$subject)
+        # ── Enhancement 4: Embedded links ───────────────────────────────────
+        hash_part <- if (nzchar(l$hash)) sprintf(" %s", link_hash(l$hash)) else ""
+        emit("- **[%s]**%s %s", toupper(l$type), hash_part, linkify_issues(l$subject))
       }
       emit("")
     }
@@ -394,7 +533,7 @@ render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
       emit("### From CHANGELOG (failed approaches)")
       emit("")
       for (l in cl_lessons) {
-        emit("- %s", l$subject)
+        emit("- %s", linkify_issues(l$subject))
       }
       emit("")
     }
@@ -402,13 +541,31 @@ render_markdown <- function(cat_stats, themes, lessons, since, generated_at) {
 
   emit("---")
   emit("")
+
+  # ── QA markers ────────────────────────────────────────────────────────────
   emit("<!-- QA:config_digest_generated=%s -->"  , generated_at)
   emit("<!-- QA:config_digest_since=%s -->"       , since)
   emit("<!-- QA:config_digest_total_files=%d -->" , total_files)
   emit("<!-- QA:config_digest_total_added=%d -->" , total_added)
   emit("<!-- QA:config_digest_total_deleted=%d -->", total_deleted)
-  emit("<!-- QA:config_digest_n_themes=%d -->"    , length(themes))
+  emit("<!-- QA:config_digest_n_themes=%d -->"    , length(themes_counts))
   emit("<!-- QA:config_digest_n_lessons=%d -->"   , length(lessons))
+
+  # ── Enhancement 2+3: Breakdown QA markers ─────────────────────────────────
+  if (length(themes_counts) > 0L) {
+    top3_t  <- head(themes_counts, 3L)
+    others  <- max(0L, length(themes_counts) - 3L)
+    parts   <- paste(names(top3_t), top3_t, sep = ":")
+    if (others > 0L) parts <- c(parts, sprintf("+%d", others))
+    emit("<!-- QA:config_digest_themes_breakdown=%s -->", paste(parts, collapse = ","))
+  }
+  if (length(lessons_brkdown) > 0L) {
+    top3_l  <- head(lessons_brkdown, 3L)
+    others  <- max(0L, length(lessons_brkdown) - 3L)
+    parts   <- paste(names(top3_l), top3_l, sep = ":")
+    if (others > 0L) parts <- c(parts, sprintf("+%d", others))
+    emit("<!-- QA:config_digest_lessons_breakdown=%s -->", paste(parts, collapse = ","))
+  }
 
   paste(lines, collapse = "\n")
 }
@@ -427,22 +584,24 @@ main <- function() {
   cat_stats <- lapply(CATEGORIES, compute_category_stats, since = since)
 
   # Theme clustering (all commits in window, not scoped to category)
-  commit_lines <- git_log_commits(since)
-  themes <- cluster_themes(commit_lines, top_n = 5L)
+  commit_lines   <- git_log_commits(since)
+  themes_result  <- cluster_themes(commit_lines, top_n = 5L)
 
   # Lessons learnt
-  lessons <- extract_lessons(since)
+  lessons_result <- extract_lessons(since)
 
   # Render
-  digest <- render_markdown(cat_stats, themes, lessons, since, generated_at)
+  digest <- render_markdown(cat_stats, themes_result, lessons_result, since, generated_at)
 
   # Summary to stderr for callers
   total_files   <- sum(sapply(cat_stats, function(s) length(s$files_changed)))
   total_added   <- sum(sapply(cat_stats, function(s) s$n_added))
   total_deleted <- sum(sapply(cat_stats, function(s) s$n_deleted))
+  n_themes  <- length(themes_result$all_counts)
+  n_lessons <- length(lessons_result$lessons)
   message(sprintf(
     "config_change_digest.R: %d files changed | +%d/-%d lines | %d themes | %d lessons",
-    total_files, total_added, total_deleted, length(themes), length(lessons)
+    total_files, total_added, total_deleted, n_themes, n_lessons
   ))
 
   if (dry_run) {

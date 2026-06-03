@@ -98,13 +98,15 @@ qa_val <- function(key, text) {
   sub(sprintf("<!-- QA:%s=", key), "", sub(" -->$", "", m))
 }
 
-generated_at  <- qa_val("config_digest_generated", digest_md)
-since_label   <- qa_val("config_digest_since",     digest_md)
-total_files   <- qa_val("config_digest_total_files",   digest_md)
-total_added   <- qa_val("config_digest_total_added",   digest_md)
-total_deleted <- qa_val("config_digest_total_deleted", digest_md)
-n_themes      <- qa_val("config_digest_n_themes",  digest_md)
-n_lessons     <- qa_val("config_digest_n_lessons", digest_md)
+generated_at       <- qa_val("config_digest_generated", digest_md)
+since_label        <- qa_val("config_digest_since",     digest_md)
+total_files        <- qa_val("config_digest_total_files",   digest_md)
+total_added        <- qa_val("config_digest_total_added",   digest_md)
+total_deleted      <- qa_val("config_digest_total_deleted", digest_md)
+n_themes           <- qa_val("config_digest_n_themes",  digest_md)
+n_lessons          <- qa_val("config_digest_n_lessons", digest_md)
+themes_breakdown   <- qa_val("config_digest_themes_breakdown",  digest_md)
+lessons_breakdown  <- qa_val("config_digest_lessons_breakdown", digest_md)
 
 if (is.na(generated_at)) generated_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
 if (is.na(since_label))  since_label  <- config_digest_since
@@ -174,6 +176,16 @@ htmlify <- function(txt) {
 }
 
 inline_code_html <- function(txt) {
+  # First: convert markdown links [label](url) to HTML anchors.
+  # Must run before htmlify() has escaped the text, because htmlify converts
+  # & < > — but [ ] ( ) are safe.  We run inline_code_html AFTER htmlify(),
+  # so at this point & < > are already &amp; &lt; &gt;.
+  # The link label may itself contain `code` backticks — handle that below.
+  txt <- gsub(
+    "\\[([^]]+)\\]\\(([^)]+)\\)",
+    sprintf('<a href="\\2" style="color:%s;">\\1</a>', accent_blue),
+    txt, perl = TRUE
+  )
   # Replace `code` spans with styled <code> elements
   gsub("`([^`]+)`",
        sprintf('<code style="background:%s; color:%s; padding:1px 3px; border-radius:3px;">\\1</code>',
@@ -243,14 +255,50 @@ wrap_tables <- function(html_lines) {
   paste(result, collapse = "\n")
 }
 
+# ── Breakdown subtitle helper ──────────────────────────────────────────────────
+# Parses "KEY:N,KEY:N,+M" QA breakdown strings into an HTML sub-label.
+# e.g. "chore:7,fix:5,feat:3,+2" -> "(chore 7 · fix 5 · feat 3 · +2 others)"
+
+format_breakdown_html <- function(breakdown_str) {
+  if (is.na(breakdown_str) || !nzchar(breakdown_str)) return("")
+  parts <- strsplit(breakdown_str, ",", fixed = TRUE)[[1L]]
+  labels <- character(length(parts))
+  for (i in seq_along(parts)) {
+    p <- parts[[i]]
+    if (grepl("^\\+[0-9]+$", p)) {
+      # "+N" tail entry
+      labels[i] <- paste0(p, " others")
+    } else if (grepl(":", p, fixed = TRUE)) {
+      kv <- strsplit(p, ":", fixed = TRUE)[[1L]]
+      key <- if (length(kv) >= 1L) kv[[1L]] else ""
+      val <- if (length(kv) >= 2L) kv[[2L]] else ""
+      labels[i] <- paste(key, val)
+    } else {
+      labels[i] <- p
+    }
+  }
+  inner <- paste(labels, collapse = " · ")
+  sprintf('<br><span style="font-size:11px; color:#aaa;">(%s)</span>', inner)
+}
+
 # ── Headline summary table (two-column Metric | Value) ─────────────────────────
+
+# Build value cells with optional breakdown sub-labels (Enhancements 2 & 3)
+themes_value_html  <- paste0(
+  if (!is.na(n_themes)) n_themes else "—",
+  format_breakdown_html(themes_breakdown)
+)
+lessons_value_html <- paste0(
+  if (!is.na(n_lessons)) n_lessons else "—",
+  format_breakdown_html(lessons_breakdown)
+)
 
 headline_rows <- list(
   c("Files changed",   if (!is.na(total_files))   total_files   else "—"),
   c("Lines added",     if (!is.na(total_added))    paste0("+", total_added) else "—"),
   c("Lines deleted",   if (!is.na(total_deleted))  paste0("-", total_deleted) else "—"),
-  c("Themes clustered",if (!is.na(n_themes))       n_themes      else "—"),
-  c("Lessons found",   if (!is.na(n_lessons))      n_lessons     else "—")
+  list("Themes clustered", themes_value_html),
+  list("Lessons found",    lessons_value_html)
 )
 
 headline_html <- sprintf(
