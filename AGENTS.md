@@ -72,98 +72,9 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 | `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
 | `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
 
-## Skills by Category (65)
+## Skills (65)
 
-### Mandatory (always apply)
-- `adversarial-qa` — QA protocol with severity tiers
-- `quality-gates` — Bronze/Silver/Gold scoring with per-issue point-deduction table
-- `r-package-workflow` — 9-step PR workflow
-- `test-driven-development` — RED-GREEN-REFACTOR
-- `nix-rix-r-environment` — Nix/rix shell management + drift detection
-- `llm-package-context` — pkgctx generation
-- `readme-qmd-standard` — README.qmd conventions
-- `subagent-delegation` — When/how to delegate to agents
-- `spec-bundled-skills` — Bundled skill specifications
-
-### R Package Development
-- `cli-package` — cli inline markup, conditions, progress
-- `dplyr-1.1-patterns` — .by=, pick(), reframe(), join_by(), consecutive_id()
-- `rlang-patterns` — {{}} embrace, injection, defusing, try_fetch()
-- `vctrs-patterns` — Custom vector classes, vec_cast/ptype2, vec_arith
-- `s7-oop` — Modern R OOP: new_class(), generics, S7 vs R6/S4
-- `lifecycle-management` — deprecate_soft/warn/stop workflow
-- `cran-submission` — CRAN-specific extra checks
-- `testthat-patterns` — testthat 3 BDD, snapshots, mocking
-- `tidyverse-style` — Code style + air formatter + stringr patterns
-- `r-cmd-check-fixes` — Common R CMD check solutions
-- `lazy-evaluation-guide` — NSE, tidy eval patterns
-- `r-cli-app` — CLI apps with Rapp package
-
-### Data & Analysis
-- `missing-data-handling` — Missing data patterns
-- `data-validation-pointblank` — pointblank validation
-- `data-transformation-stack` — DuckDB + Arrow + dbt stack
-- `eda-workflow` — Exploratory data analysis
-- `modeling-baselines` — Baseline model patterns + model code checklist
-- `model-evaluation-calibration` — Model assessment
-- `survival-analysis` — Time-to-event analysis: KM curves, Cox PH, parametric TTE, censoring
-- `analysis-rationale-logging` — Decision logging
-- `gdc-genomics` — GDC/genomics data
-- `erddap-ocean-data` — ERDDAP ocean data access
-
-### Targets & Pipelines
-- `targets-pipeline-spec` — Pipeline architecture + tool choice
-- `targets-vignettes` — Vignette data pre-computation
-- `crew-operations` — crew worker patterns
-- `parallel-processing` — mirai, parallel computing
-
-### Shiny & Web
-- `shiny-bslib` — bslib Bootstrap 5 components
-- `shiny-async-patterns` — ExtendedTask, async
-- `shiny-module-data-sharing` — Module data-sharing patterns (reactiveValues, R6, gargoyle)
-- `shinylive-deployment` — Shinylive packaging
-- `shinylive-quarto` — Shinylive in Quarto vignettes
-- `brand-yml` — Brand styling for Shiny/Quarto
-- `browser-user-testing` — Browser-based testing
-- `plumber2-web-api` — Plumber API development
-
-### Quarto & Documentation
-- `quarto-websites` — Quarto website structure
-- `quarto-dashboards` — Quarto dashboards
-- `quarto-dynamic-content` — Dynamic Quarto features + tabsets
-- `quarto-alt-text` — Accessibility alt text
-- `webr-multi-page-vignettes` — WebR multi-page vignettes
-- `describe-design` — Codebase architecture docs
-- `closeread-scrollytelling` — Sticky-panel scrollytelling with closeread extension
-
-### Prose Quality
-- `deslop` — Remove AI writing patterns from prose (vignettes, emails, READMEs, captions, issues). Overrides: captions MUST have units+source+dynamic values; code quality always paramount
-
-### DevOps & CI
-- `ci-workflows-github-actions` — GitHub Actions + R-universe workflows
-- `pkgdown-deployment` — pkgdown site deployment
-- `static-api-deployment` — Static API hosting
-
-### Project Management
-- `project-telemetry` — Pipeline metrics + logging
-- `project-review` — Project review workflow
-- `writing-plans` — Plan document creation
-- `executing-plans` — Plan execution
-- `code-review-workflow` — PR review process
-- `context-control` — Context window management
-- `requirements-spec` — MUST/SHOULD/MAY requirements before complex tasks
-- `per-project-claude-md` — Slim project-level config template (overrides global CLAUDE.md)
-- `skill-authoring` — Checklist and template for creating new skills (quality gate)
-
-### AI/LLM Tools
-- `gemini-cli-codebase-analysis` — Gemini CLI + subagent patterns
-- `ai-assisted-analysis` — AI-assisted data analysis
-- `huggingface-r` — HuggingFace from R
-- `mcp-servers` — MCP server management
-- `hooks-automation` — Hook automation patterns
-
-### Specialized
-- `mlops-deployment` — MLOps patterns
+Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · Targets · Shiny · Quarto · Prose · DevOps · PM · AI · Specialized). Mandatory subset enforced via the `**Mandatory skills:**` line above.
 
 ## Commands (15)
 
@@ -200,7 +111,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 ## Rules (52)
 
-Core: `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`, `cross-cutting-rename`, `branch-harvest-on-fork`. Nix: `nix-agent-shell-protocol`, `nix-nested-shell-isolation`. MCP: `btw-timeouts`. Bash: `bash-safety`. Data: `data-in-packages`, `data-validation-timeseries`, `credential-management`. Stats: `statistical-reporting`, `suppress-warnings-antipattern`, `survival-reporting`. Viz: `visualization`, `dynamic-prose-values`, `uniform-typography`, `dashboard-table-styling`, `dashboard-filter-placement`. Quarto: `quarto-vignettes`, `acronym-expansion`, `vignette-build-info-block`. Shiny: `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking`. Pipeline: `qa-targets-pipeline`, `ctx-yaml-cache`. Knowledge: `wiki-conventions`. Quality: `accessibility`, `analytical-review-checklist`, `analysis-rationale-mandatory`, `braindump-closed-loop`. Security: `destructive-fs-guard`, `destructive-ops-guard`, `permission-discipline`, `backup-architecture`. Other: `website-index-update`, `t-lang-r-package`, `huggingface-upload`, `gh-pages-nojekyll`, `namespace-discipline`, `portable-paths`, `project-charter`, `roborev-resolution`, `single-change-experiment`, `snapshot-tests-mandatory`, `search-all-pipeline-stages`, `audience-communication`.
+Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
 
 ## Hooks (9 scripts, 5 event hooks)
 
