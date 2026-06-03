@@ -7,6 +7,8 @@
 #                          (median/p90), close_rate
 #   §3  Trends:            each metric vs prior equivalent window (% + absolute)
 #   §4  Outliers (14d):    top-10 by attempts_to_close + top-10 by time_to_close_hrs
+#   §5  Severity by project (7d):  per-repo counts of High/Medium/Low/Unknown findings
+#                                  (llm#449)
 #
 # Writes:
 #   - JSON snapshot → $ROBOREV_DAILY_DIR/YYYY-MM-DD.json  (default ~/.claude/logs/roborev_daily_report/)
@@ -334,6 +336,62 @@ trend_delta <- function(cur_val, pri_val) {
   }
 }
 
+# ── §5 Per-project severity frequency (7-day window) ─────────────────────────
+#
+# Returns a list of records {repo, High, Medium, Low, Unknown, Total}
+# sorted descending by Total.  Uses severity_max column from lifecycle table.
+
+compute_severity_by_project <- function(con, anchor, days) {
+  bounds <- window_bounds(anchor, days)
+  sql <- sprintf(
+    "SELECT
+       repo,
+       COALESCE(severity_max, 'Unknown') AS severity,
+       COUNT(*)::INTEGER AS n
+     FROM roborev_review_lifecycle
+     WHERE verdict = 'F'
+       AND created_at::TIMESTAMP >= TIMESTAMP '%s'
+       AND created_at::TIMESTAMP <  TIMESTAMP '%s'
+     GROUP BY repo, severity_max
+     ORDER BY repo",
+    fmt_ts(bounds$cur$start), fmt_ts(bounds$cur$end)
+  )
+  raw <- tryCatch(
+    dbGetQuery(con, sql),
+    error = function(e) {
+      message("roborev_daily_report.R: severity_by_project query error: ",
+              conditionMessage(e))
+      data.frame(repo = character(), severity = character(), n = integer(),
+                 stringsAsFactors = FALSE)
+    }
+  )
+  if (nrow(raw) == 0L) return(list())
+
+  sev_levels <- c("High", "Medium", "Low", "Unknown")
+  repos <- unique(raw$repo)
+  pivot <- lapply(repos, function(r) {
+    sub_df <- raw[raw$repo == r, ]
+    counts <- setNames(
+      vapply(sev_levels, function(s) {
+        idx <- sub_df$severity == s
+        if (any(idx)) as.integer(sub_df$n[idx][1L]) else 0L
+      }, integer(1L)),
+      sev_levels
+    )
+    list(
+      repo    = r,
+      High    = counts[["High"]],
+      Medium  = counts[["Medium"]],
+      Low     = counts[["Low"]],
+      Unknown = counts[["Unknown"]],
+      Total   = sum(counts)
+    )
+  })
+  # Sort desc by Total
+  totals <- vapply(pivot, function(x) x[["Total"]], integer(1L))
+  pivot[order(-totals)]
+}
+
 # ── §4 Outliers (14-day window) ───────────────────────────────────────────────
 #
 # Returns list(by_attempts, by_time) — each a data.frame of top-10 closed
@@ -469,6 +527,10 @@ df_14d_global <- load_window(con, bounds_14d$cur$start, bounds_14d$cur$end)
 df_14d_global <- enrich_with_attempts(con, df_14d_global, has_lineage_table)
 outliers_14d  <- compute_outliers(df_14d_global)
 
+# §5 Severity by project: 7d global
+cat("roborev_daily_report.R: computing 7d per-project severity table...\n")
+severity_by_project_7d <- compute_severity_by_project(con, anchor_date, 7L)
+
 # ── Assemble JSON output ───────────────────────────────────────────────────────
 
 report_date   <- format(anchor_date, "%Y-%m-%d", tz = "UTC")
@@ -519,7 +581,8 @@ json_payload <- list(
   outliers_14d   = list(
     by_attempts = outliers_14d$by_attempts,
     by_time     = outliers_14d$by_time
-  )
+  ),
+  severity_by_project_7d = severity_by_project_7d  # §5: per-repo severity counts (llm#449)
 )
 
 # ── Write JSON snapshot ───────────────────────────────────────────────────────
