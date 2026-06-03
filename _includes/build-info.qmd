@@ -1,0 +1,72 @@
+<!-- _includes/build-info.qmd
+     Shared build-info block partial. Include at the END of every vignette body,
+     AFTER ## Methodology and BEFORE any QR/footer include.
+     Usage: {{< include /_includes/build-info.qmd >}}
+     See .claude/rules/vignette-build-info-block.md for authoring guidelines.
+-->
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+# Source the render-time helpers from the project root.
+# here::here() resolves relative to the .Rproj / git root so it works from
+# any vignette depth (vignettes/, vignettes/articles/, dashboard/).
+.bi_script <- here::here(".claude/scripts/vignette_build_info.R")
+if (file.exists(.bi_script)) {
+  source(.bi_script)
+} else {
+  # Provide no-op stubs so the partial never blocks a render
+  vignette_length_label <- function() "—"
+  build_info_categories <- function() "—"
+  build_info_tags       <- function() "—"
+  build_info_see_also   <- function() "—"
+  build_info_source_link <- function() "—"
+  build_info_render_env  <- function() "—"
+}
+```
+
+```{=html}
+<div class="build-info"
+     style="font-size: 1rem;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--bs-border-color, #dee2e6);
+            margin-top: 1.5rem;
+            line-height: 1.5;">
+  <strong>Build info</strong>
+  <table style="width: auto; border-collapse: collapse; margin-top: 0.4rem;">
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Posted on:</td>
+      <td>`r .yaml_meta()[["date"]] %||% "—"`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Last rebuilt:</td>
+      <td>`r format(Sys.time(), "%Y-%m-%dT%H:%M:%S UTC")`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Length:</td>
+      <td>`r vignette_length_label()`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Categories:</td>
+      <td>`r build_info_categories()`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Tags:</td>
+      <td>`r build_info_tags()`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">See also:</td>
+      <td>`r build_info_see_also()`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Source:</td>
+      <td>`r build_info_source_link()`</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: 600;">Render env:</td>
+      <td>`r build_info_render_env()`</td>
+    </tr>
+  </table>
+</div>
+```
