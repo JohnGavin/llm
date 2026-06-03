@@ -26,6 +26,21 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
+# ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
+
+.scripts_dir_rr <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                          ".claude", "scripts", "email_styles.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_rr, "email_styles.R"))
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 ROBOREV_DAILY_DIR <- Sys.getenv(
@@ -71,18 +86,18 @@ snap <- tryCatch(
   }
 )
 
-# ── Colour palette (dark-mode safe, matches llmtelemetry convention) ──────────
+# ── Colour palette — aliases to shared constants from email_styles.R ──────────
 
-dark_bg     <- "#1a1a2e"
-dark_card   <- "#16213e"
-dark_row_alt <- "#0f3460"
-dark_text   <- "#e8e8e8"
-dark_muted  <- "#a0a0a0"
-dark_border <- "#2a2a4a"
-accent_green  <- "#00d26a"
-accent_blue   <- "#4fc3f7"
-accent_orange <- "#ff9800"
-accent_purple <- "#bb86fc"
+dark_bg      <- DARK_BG
+dark_card    <- DARK_CARD
+dark_row_alt <- DARK_ROW_ALT
+dark_text    <- DARK_TEXT
+dark_muted   <- DARK_MUTED
+dark_border  <- DARK_BORDER
+accent_green  <- ACCENT_GREEN
+accent_blue   <- ACCENT_BLUE
+accent_orange <- ACCENT_ORANGE
+accent_purple <- ACCENT_PURPLE
 
 # ── Formatting helpers ─────────────────────────────────────────────────────────
 
@@ -230,18 +245,17 @@ headline_rows <- list(
   c("7d: attempts p90",           fmt_att(att_p90))
 )
 
-headline_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">Headline Metrics (7-day)</h3>
-<table style="border-collapse:collapse; width:100%%; font-size:12px;">
+headline_table_inner <- sprintf(
+  '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:left;">Metric</th>
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:right;">Value</th>
   </tr>',
-  accent_orange, dark_row_alt, dark_border, dark_border
+  EMAIL_FONT_BODY, dark_row_alt, dark_border, dark_border
 )
 for (i in seq_along(headline_rows)) {
   bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-  headline_html <- paste0(headline_html, sprintf(
+  headline_table_inner <- paste0(headline_table_inner, sprintf(
     '<tr style="background-color:%s;">
       <td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>
       <td style="padding:5px 8px; border:1px solid %s; color:%s; text-align:right;">%s</td>
@@ -251,17 +265,21 @@ for (i in seq_along(headline_rows)) {
     dark_border, accent_green, headline_rows[[i]][2]
   ))
 }
-headline_html <- paste0(headline_html, "</table>")
+headline_table_inner <- paste0(headline_table_inner, "</table>")
+headline_html <- collapsible_block(
+  "Headline Metrics (7-day)",
+  sprintf("close rate: %s  •  TTC p50: %s", fmt_rate(close_rate), fmt_hrs(ttc_p50)),
+  headline_table_inner
+)
 
 # §3 Trends two-column table
-trends_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">Trends (7d vs prior 7d)</h3>
-<table style="border-collapse:collapse; width:100%%; font-size:12px;">
+trends_table_inner <- sprintf(
+  '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:left;">Metric</th>
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:right;">Change</th>
   </tr>',
-  accent_purple, dark_row_alt, dark_border, dark_border
+  EMAIL_FONT_BODY, dark_row_alt, dark_border, dark_border
 )
 trend_rows <- list(
   c("TTC p50",    fmt_trend(tr[["ttc_p50"]])),
@@ -271,7 +289,7 @@ trend_rows <- list(
 )
 for (i in seq_along(trend_rows)) {
   bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-  trends_html <- paste0(trends_html, sprintf(
+  trends_table_inner <- paste0(trends_table_inner, sprintf(
     '<tr style="background-color:%s;">
       <td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>
       <td style="padding:5px 8px; border:1px solid %s; color:%s; text-align:right;">%s</td>
@@ -281,13 +299,15 @@ for (i in seq_along(trend_rows)) {
     dark_border, accent_blue, trend_rows[[i]][2]
   ))
 }
-trends_html <- paste0(trends_html, "</table>")
+trends_table_inner <- paste0(trends_table_inner, "</table>")
+trends_html <- collapsible_block(
+  "Trends (7d vs prior 7d)", "Click to expand", trends_table_inner
+)
 
 # §4 Outliers — top-5 by time-to-close (llm#449: linkified IDs+Repos, renamed TTC header)
-outlier_ttc_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">Top-5 Outliers by Time-to-Close (14d)</h3>
-<p style="color:%s; font-size:11px; margin-bottom:6px;">Full detail (top-10) in the JSON snapshot and on the dashboard.</p>
-<table style="border-collapse:collapse; width:100%%; font-size:11px;">
+outlier_ttc_inner <- sprintf(
+  '<p style="color:%s; font-size:%s; margin-bottom:6px;">Full detail (top-10) in the JSON snapshot and on the dashboard.</p>
+<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
     <th style="padding:5px; border:1px solid %s; color:white;">ID</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Repo</th>
@@ -295,7 +315,7 @@ outlier_ttc_html <- sprintf(
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Attempts</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Reason</th>
   </tr>',
-  accent_orange, dark_muted,
+  dark_muted, EMAIL_FONT_SUBTITLE, EMAIL_FONT_BODY,
   dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
 )
 if (n_outliers > 0L) {
@@ -312,7 +332,7 @@ if (n_outliers > 0L) {
       sprintf('<a href="https://github.com/JohnGavin/%s" style="color:%s;">%s</a>',
               repo, accent_blue, repo)
     else repo
-    outlier_ttc_html <- paste0(outlier_ttc_html, sprintf(
+    outlier_ttc_inner <- paste0(outlier_ttc_inner, sprintf(
       '<tr style="background-color:%s;">
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
@@ -329,15 +349,19 @@ if (n_outliers > 0L) {
     ))
   }
 } else {
-  outlier_ttc_html <- paste0(outlier_ttc_html,
+  outlier_ttc_inner <- paste0(outlier_ttc_inner,
     sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in 14-day window)</td></tr>', dark_muted))
 }
-outlier_ttc_html <- paste0(outlier_ttc_html, "</table>")
+outlier_ttc_inner <- paste0(outlier_ttc_inner, "</table>")
+outlier_ttc_html  <- collapsible_block(
+  "Top-5 Outliers by Time-to-Close (14d)",
+  sprintf("%d outlier(s) — click to expand", n_outliers),
+  outlier_ttc_inner
+)
 
 # §4 Outliers — top-5 by attempts (llm#449: linkified IDs+Repos, renamed TTC header)
-outlier_att_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">Top-5 Outliers by Attempts-to-Close (14d)</h3>
-<table style="border-collapse:collapse; width:100%%; font-size:11px;">
+outlier_att_inner <- sprintf(
+  '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
     <th style="padding:5px; border:1px solid %s; color:white;">ID</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Repo</th>
@@ -345,7 +369,7 @@ outlier_att_html <- sprintf(
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Hours to close (h)</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Reason</th>
   </tr>',
-  accent_purple, dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
+  EMAIL_FONT_BODY, dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
 )
 if (n_outliers_att > 0L) {
   for (i in seq_len(n_outliers_att)) {
@@ -361,7 +385,7 @@ if (n_outliers_att > 0L) {
       sprintf('<a href="https://github.com/JohnGavin/%s" style="color:%s;">%s</a>',
               repo, accent_blue, repo)
     else repo
-    outlier_att_html <- paste0(outlier_att_html, sprintf(
+    outlier_att_inner <- paste0(outlier_att_inner, sprintf(
       '<tr style="background-color:%s;">
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
@@ -378,10 +402,15 @@ if (n_outliers_att > 0L) {
     ))
   }
 } else {
-  outlier_att_html <- paste0(outlier_att_html,
+  outlier_att_inner <- paste0(outlier_att_inner,
     sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in 14-day window)</td></tr>', dark_muted))
 }
-outlier_att_html <- paste0(outlier_att_html, "</table>")
+outlier_att_inner <- paste0(outlier_att_inner, "</table>")
+outlier_att_html  <- collapsible_block(
+  "Top-5 Outliers by Attempts-to-Close (14d)",
+  sprintf("%d outlier(s) — click to expand", n_outliers_att),
+  outlier_att_inner
+)
 
 # §5 Per-project severity frequency table (llm#449)
 severity_rows_data <- snap[["severity_by_project_7d"]]
@@ -440,9 +469,10 @@ qa_markers <- sprintf(
 # Assemble full body
 email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
-               font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">
-<h2 style="color:%s; margin-bottom:4px;">roborev Daily Report — %s</h2>
-<p style="color:%s; font-size:11px; margin-top:0;">
+               font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;
+               font-size:%s;">
+<h2 style="color:%s; margin-bottom:4px; font-size:%s;">roborev Daily Report — %s</h2>
+<p style="color:%s; font-size:%s; margin-top:0;">
   Generated: %s UTC &nbsp;|&nbsp; Lineage: %s
 </p>
 %s
@@ -451,15 +481,14 @@ email_body <- sprintf(
 %s
 %s
 %s
-%s
-<p style="color:%s; font-size:10px; margin-top:20px;">
+<p style="color:%s; font-size:%s; margin-top:20px;">
   JSON snapshot: %s
 </p>
 %s
 </div>',
-  dark_bg, dark_text,
-  accent_orange, report_date,
-  dark_muted, generated_at, lineage_src,
+  dark_bg, dark_text, EMAIL_FONT_BODY,
+  accent_orange, EMAIL_FONT_H2, report_date,
+  dark_muted, EMAIL_FONT_SUBTITLE, generated_at, lineage_src,
   dashboard_block,
   headline_1d_html,
   headline_html,
@@ -467,7 +496,7 @@ email_body <- sprintf(
   outlier_ttc_html,
   outlier_att_html,
   severity_html,
-  dark_muted, json_path,
+  dark_muted, EMAIL_FONT_FOOTER, json_path,
   qa_markers
 )
 
