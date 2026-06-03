@@ -1,10 +1,10 @@
 ---
 name: shiny-bslib
 # adapted from posit-dev/skills (MIT)
-description: Build modern Shiny dashboards and applications using bslib (Bootstrap 5). Use when creating new Shiny apps, modernizing legacy apps (fluidPage, fluidRow/column, tabsetPanel, wellPanel, shinythemes), or working with bslib page layouts, grid systems, cards, value boxes, navigation, sidebars, filling layouts, theming, accordions, tooltips, popovers, toasts, or bslib inputs. Assumes familiarity with basic Shiny.
+description: Build modern Shiny dashboards and applications using bslib (Bootstrap 5, minimum 0.11.0). Use when creating new Shiny apps, modernizing legacy apps (fluidPage, fluidRow/column, tabsetPanel, wellPanel, shinythemes), or working with bslib page layouts, grid systems, cards, value boxes, navigation, sidebars, filling layouts, theming, accordions, tooltips, popovers, toasts, bslib inputs, or toolbars. Assumes familiarity with basic Shiny.
 metadata:
   author: Garrick Aden-Buie (@gadenbuie)
-  version: "1.0"
+  version: "1.1"
 license: MIT
 ---
 
@@ -171,6 +171,75 @@ The `title` should describe the purpose of the trigger (e.g., "More information"
 - **`input_submit_textarea()`** -- Textarea with explicit submission
 
 See [inputs.md](references/inputs.md) for detailed guidance.
+
+## Toolbars (bslib 0.11.0+)
+
+Compact control containers for placing buttons, selects, and other inputs
+next to the content they govern — inside card headers/footers, inline with
+input labels, or beside text-area submit regions. Requires `bslib (>= 0.11.0)`
+in `DESCRIPTION` / `default.R`.
+
+**API summary:**
+
+| Function | Purpose |
+|---|---|
+| `toolbar()` | Compact container with `align` and fluid arrangement |
+| `toolbar_input_button()` | Action buttons inside toolbars |
+| `toolbar_input_select()` | Dropdowns inside toolbars |
+| `toolbar_divider()` / `toolbar_spacer()` | Visual structure between groups |
+| `update_toolbar_input_button()` | Reactive update (e.g. icon → checkmark after save) |
+| `update_toolbar_input_select()` | Reactive update for dropdown state |
+
+**Placement pattern 1 — card header filter:**
+
+```r
+card(
+  full_screen = TRUE,
+  card_header(
+    "Monthly Revenue",
+    toolbar(
+      toolbar_input_select(
+        "region", label = NULL,
+        choices = c("All", "EMEA", "APAC"), selected = "All"
+      ),
+      toolbar_divider(),
+      toolbar_input_button(
+        "reset", label = bs_icon("arrow-counterclockwise", title = "Reset")
+      )
+    )
+  ),
+  plotOutput("rev_plot")
+)
+```
+
+**Placement pattern 2 — inline with input label:**
+
+```r
+numericInput("threshold", label = toolbar(
+  "Threshold",
+  toolbar_input_button("low",  label = "Low",  class = "btn-sm btn-outline-secondary"),
+  toolbar_input_button("high", label = "High", class = "btn-sm btn-outline-secondary")
+), value = 50)
+```
+
+**Placement pattern 3 — text-area submit region:**
+
+```r
+layout_column_wrap(
+  input_submit_textarea("msg", "Message",
+    submit_button = toolbar(
+      toolbar_input_button("send", label = "Send", class = "btn-primary"),
+      toolbar_divider(),
+      toolbar_input_select("priority", label = NULL,
+        choices = c("Normal", "Urgent"))
+    )
+  )
+)
+```
+
+**Placement decision:** use `toolbar()` in a card header/footer when a filter
+affects ONE card; use `sidebar()` when a filter affects the whole page. See the
+`dashboard-filter-placement` rule for the full decision table.
 
 ## Common Workflows
 
