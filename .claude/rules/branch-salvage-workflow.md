@@ -107,8 +107,22 @@ Before dispatching a subagent to rebase or cherry-pick a stale branch, the orche
 | Treating "issue is closed" as automatic discard | Some closing PRs don't fully address the issue; branch may have unique work | Run step 3 to verify |
 | Skipping step 3 because step 2 is inconclusive | Re-implementations don't show in PR threads | Step 3 catches what 1 and 2 miss |
 
+## Relationship to `branch-harvest-on-fork`
+
+These two rules cover different phases of the same problem:
+
+| Rule | When it runs | What it does |
+|---|---|---|
+| **`branch-harvest-on-fork`** | Session start (Phase 7g of `session_init.sh`) | DETECT unmerged feat branches that might contain stranded improvements. Output is advisory, asking the user to triage. |
+| **`branch-salvage-workflow`** (this rule) | AFTER a triage decision says "look at this branch" | DECIDE whether the branch's commits are already applied (squash-merge / re-implementation / patch-id match) before paying the cost of cherry-picking |
+
+A session that decides "harvest" in the branch-harvest output then runs the
+3-step salvage workflow on the chosen branch to confirm the work is genuinely
+new before re-applying it.
+
 ## Related
 
+- `branch-harvest-on-fork` — the BEFORE check that surfaces candidate branches
 - [llmtelemetry#129](https://github.com/JohnGavin/llmtelemetry/issues/129) — origin issue documenting the squash-merge limitation discovery
 - `auto-delegation` — orchestrator rules; this workflow is a pre-delegation check
 - `~/.claude/scripts/branch-cherry-check.sh` — runnable helper

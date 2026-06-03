@@ -20,6 +20,7 @@ Update this table in the same commit.
 | 6 | R-universe Build Status | Checks johngavin.r-universe.dev/api/packages | `R-universe: N OK, N failed` |
 | 7 | Worktree Context | Detects worktree session, stale agent/git worktrees | Contextual output + warnings |
 | 7f | Worktree Auto-GC | Auto-removes agent worktrees where PID-dead AND lock-age >14d (current project only). Skipped if `CLAUDE_SESSION_INIT_WORKTREE_GC=0`. Logs to `~/.claude/logs/session_init_worktree_gc.log`. Never exits non-zero. | Silent when N=0; one line `Worktree GC: removed N stale (>14d, PID-dead)` when N>0 |
+| 7g | Branch Harvest on Fork | Audits unmerged `feat/*` branches for SESSION_INTERRUPTED OR (SURFACE_TOUCHED AND STALE). Skipped if `CLAUDE_BRANCH_HARVEST=0`. Per-branch silence via `git notes --ref=harvest`. Logs to `~/.claude/logs/branch_harvest.log`. 5s timeout, fail-open. | Silent when no findings; one `branch-harvest: N branches flagged` block per finding when N>0. See `branch-harvest-on-fork` rule. |
 | 8 | roborev Review Status | Daemon status + high-severity finding counts | `roborev:Nhigh/Ntotal` |
 | 8b | roborev-autoclose Visibility | Reads autoclose counter JSON for today/week stats | `roborev-autoclose: threshold=…` |
 | 9 | Weekly Burn Rate | Calls `burn_rate_check.sh compact` | `burn:<level>` |

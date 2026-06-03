@@ -567,6 +567,20 @@ phase_worktrees() {
   [ "$wt_count" -eq 0 ] && echo "No worktrees found"
 }
 
+# ── Phase 7g: Branch Harvest on Fork ──────────────────────────────────
+# Scans unmerged feat/* branches for surface-touching commits and
+# session-limit-interrupted markers. Silent on a clean repo. Advisory;
+# triage outcomes are documented in the branch-harvest-on-fork rule.
+# See: ~/docs_gh/llm/.claude/rules/branch-harvest-on-fork.md
+phase_branch_harvest() {
+  local script="${HOME}/.claude/scripts/branch_harvest_audit.sh"
+  [ -x "$script" ] || return 0
+  # 5s timeout, fail-open. Run in the current repo (default = $PWD).
+  local out
+  out=$(timeout 5 bash "$script" 2>/dev/null) || true
+  [ -n "$out" ] && printf '%s\n' "$out"
+}
+
 # ── Phase 8: roborev Review Status ────────────────────────────────────
 phase_roborev() {
   if ! command -v /usr/local/bin/roborev >/dev/null 2>&1; then
@@ -799,6 +813,9 @@ if echo "$wt_output" | grep -qE "Agent worktrees|Git worktree:|Sibling worktree:
   echo "$wt_output" | grep -E "Sibling|Prunable|Agent|Git worktree|cleanup" || true
   wt_count=$(echo "$wt_output" | grep -cE "worktree:|Prunable" || echo 0)
 fi
+
+# Phase 7g: Branch Harvest on Fork (silent unless flagged)
+phase_branch_harvest 2>/dev/null || true
 
 # Phase 8: roborev
 roborev_status=""
