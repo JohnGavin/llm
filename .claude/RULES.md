@@ -1,10 +1,10 @@
-# Rules (52)
+# Rules (54)
 
 Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-rules subset is still listed inline in `AGENTS.md` so it loads as part of every session's context.
 
 | Group | Rules |
 |---|---|
-| **Core** | `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`, `cross-cutting-rename`, `branch-harvest-on-fork` |
+| **Core** | `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`, `cross-cutting-rename`, `branch-harvest-on-fork`, `pr-shipping-discipline`, `skills-vs-mcp` |
 | **Nix** | `nix-agent-shell-protocol`, `nix-nested-shell-isolation` |
 | **MCP** | `btw-timeouts` |
 | **Bash** | `bash-safety` |
