@@ -31,6 +31,24 @@ suppressPackageStartupMessages({
   library(blastula)
 })
 
+# ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
+
+`%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
+
+.scripts_dir <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args  <- commandArgs(trailingOnly = FALSE)
+    idx   <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "email_styles.R"),
+                               mustWork = FALSE))
+  }
+)
+
+source(file.path(.scripts_dir, "email_styles.R"))
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 ROBOREV_DASHBOARD_URL <- Sys.getenv(
@@ -48,7 +66,7 @@ dry_run <- identical(Sys.getenv("EMAIL_DRY_RUN"), "1")
 # ── Locate or generate the weekly rollup ──────────────────────────────────────
 
 rollup_script <- file.path(
-  dirname(normalizePath(sys.frame(0)$filename %||% ".")),
+  .scripts_dir,
   "roborev_weekly_rollup.R"
 )
 # Fallback: resolve from this file's own path
@@ -58,10 +76,6 @@ rollup_script_candidates <- c(
             "roborev_weekly_rollup.R")
 )
 rollup_script <- rollup_script_candidates[file.exists(rollup_script_candidates)][1L]
-
-# Null coalescing helper (must precede any use)
-`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0L) a else b
-
 rollup_script <- rollup_script %||% NA_character_
 
 today_str <- format(Sys.Date(), "%Y-%m-%d")
@@ -98,17 +112,17 @@ if (file.exists(rollup_path)) {
   )
 }
 
-# ── Colour palette (dark-mode safe, matches llmtelemetry convention) ──────────
+# ── Colour aliases (sourced from email_styles.R above) ────────────────────────
 
-dark_bg       <- "#1a1a2e"
-dark_card     <- "#16213e"
-dark_row_alt  <- "#0f3460"
-dark_text     <- "#e8e8e8"
-dark_muted    <- "#a0a0a0"
-dark_border   <- "#2a2a4a"
-accent_green  <- "#00d26a"
-accent_blue   <- "#4fc3f7"
-accent_orange <- "#ff9800"
+dark_bg       <- DARK_BG
+dark_card     <- DARK_CARD
+dark_row_alt  <- DARK_ROW_ALT
+dark_text     <- DARK_TEXT
+dark_muted    <- DARK_MUTED
+dark_border   <- DARK_BORDER
+accent_green  <- ACCENT_GREEN
+accent_blue   <- ACCENT_BLUE
+accent_orange <- ACCENT_ORANGE
 
 # ── Convert markdown to simple HTML ──────────────────────────────────────────
 
@@ -134,14 +148,14 @@ md_to_simple_html <- function(md) {
     } else if (grepl("^_.*_$", l)) {
       # Italics line (e.g. _Generated: ..._)
       inner <- gsub("^_(.*)_$", "\\1", l)
-      html_parts[i] <- sprintf('<p style="color:%s; font-size:11px; margin:2px 0;">%s</p>',
-                                dark_muted, inner)
+      html_parts[i] <- sprintf('<p style="color:%s; font-size:%s; margin:2px 0;">%s</p>',
+                                dark_muted, EMAIL_FONT_SUBTITLE, inner)
     } else if (grepl("^\\|", l) && grepl("\\|$", l)) {
       # Table row
       if (!in_table) {
         html_parts[i] <- sprintf(
-          '<table style="border-collapse:collapse; width:100%%; font-size:12px; margin:8px 0;">\n',
-          NULL
+          '<table style="border-collapse:collapse; width:100%%; font-size:%s; margin:8px 0;">\n',
+          EMAIL_FONT_BODY
         )
         in_table <- TRUE
       }
@@ -167,11 +181,11 @@ md_to_simple_html <- function(md) {
     } else {
       if (in_table) {
         html_parts[i] <- paste0("</table>\n",
-                                sprintf('<p style="color:%s; font-size:12px;">%s</p>', dark_text, l))
+                                sprintf('<p style="color:%s; font-size:%s;">%s</p>', dark_text, EMAIL_FONT_BODY, l))
         in_table <- FALSE
       } else if (nzchar(trimws(l))) {
-        html_parts[i] <- sprintf('<p style="color:%s; font-size:12px; margin:4px 0;">%s</p>',
-                                  dark_text, l)
+        html_parts[i] <- sprintf('<p style="color:%s; font-size:%s; margin:4px 0;">%s</p>',
+                                  dark_text, EMAIL_FONT_BODY, l)
       } else {
         html_parts[i] <- ""
       }
@@ -181,7 +195,13 @@ md_to_simple_html <- function(md) {
   paste(html_parts, collapse = "\n")
 }
 
-body_inner <- md_to_simple_html(rollup_md)
+body_inner_html <- md_to_simple_html(rollup_md)
+rollup_lines <- length(strsplit(rollup_md, "\n")[[1L]])
+body_inner <- collapsible_block(
+  "&#x1F4CB; Weekly Rollup",
+  sprintf("~%d lines", rollup_lines),
+  body_inner_html
+)
 
 # Dashboard CTA
 dashboard_block <- sprintf(
@@ -201,12 +221,12 @@ email_body <- sprintf(
                font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">
 %s
 %s
-<p style="color:%s; font-size:10px; margin-top:20px;">Rollup file: %s</p>
+<p style="color:%s; font-size:%s; margin-top:20px;">Rollup file: %s</p>
 </div>',
   dark_bg, dark_text,
   body_inner,
   dashboard_block,
-  dark_muted, rollup_path
+  dark_muted, EMAIL_FONT_FOOTER, rollup_path
 )
 
 # ── Dry-run mode ───────────────────────────────────────────────────────────────
