@@ -164,12 +164,15 @@ n_outliers_att <- min(5L, length(outliers_by_att))
 
 d1_freq_rows <- if (!is.null(d1)) d1[["freq_table"]] else list()
 d1_found_closed <- 0L; d1_found_open <- 0L; d1_clean_closed <- 0L; d1_clean_open <- 0L
+d1_other_n <- 0L  # llm#484: count unmatched verdict/status pairs
 for (row in d1_freq_rows) {
   v <- row[["verdict_label"]]; s <- row[["status"]]; n <- as.integer(row[["n"]])
-  if (identical(v, "issues_found") && identical(s, "closed")) d1_found_closed <- n
-  if (identical(v, "issues_found") && identical(s, "open"))   d1_found_open   <- n
-  if (identical(v, "clean")        && identical(s, "closed")) d1_clean_closed <- n
-  if (identical(v, "clean")        && identical(s, "open"))   d1_clean_open   <- n
+  matched <- FALSE
+  if (identical(v, "issues_found") && identical(s, "closed")) { d1_found_closed <- n; matched <- TRUE }
+  if (identical(v, "issues_found") && identical(s, "open"))   { d1_found_open   <- n; matched <- TRUE }
+  if (identical(v, "clean")        && identical(s, "closed")) { d1_clean_closed <- n; matched <- TRUE }
+  if (identical(v, "clean")        && identical(s, "open"))   { d1_clean_open   <- n; matched <- TRUE }
+  if (!matched) d1_other_n <- d1_other_n + n
 }
 d1_sp <- if (!is.null(d1)) d1[["speed"]] else list()
 d1_ttc_p50 <- d1_sp[["ttc_p50_hrs"]]; d1_close_rate <- d1_sp[["close_rate"]]
@@ -198,42 +201,76 @@ dashboard_block <- sprintf(
   ROBOREV_DASHBOARD_URL, accent_blue
 )
 
-# §1 + §2 Headline Metrics (last 24h) — shown FIRST (llm#449)
-headline_1d_rows <- list(
-  c("24h: issues found (closed)",  fmt_int(d1_found_closed)),
-  c("24h: issues found (open)",    fmt_int(d1_found_open)),
-  c("24h: clean (closed)",         fmt_int(d1_clean_closed)),
-  c("24h: clean (open)",           fmt_int(d1_clean_open)),
-  c("24h: close rate",             fmt_rate(d1_close_rate)),
-  c("24h: hours to close p50",     fmt_num(d1_ttc_p50)),
-  c("24h: attempts p50",           fmt_att(d1_att_p50))
+# §1 + §2 Headline Metrics (last 24h) — shown FIRST (llm#449, llm#484)
+# Derive UTC window bounds from report_date + window_days (no producer changes needed)
+d1_window_end_dt   <- tryCatch(
+  as.POSIXct(paste0(report_date, "T00:00:00"), tz = "UTC"),
+  error = function(e) Sys.time()
+)
+d1_window_start_dt <- d1_window_end_dt - 86400  # 24h earlier
+d1_window_caption  <- sprintf(
+  "Headline Metrics (last 24h: %s &#8594; %s UTC)",
+  format(d1_window_start_dt, "%Y-%m-%d %H:%M", tz = "UTC"),
+  format(d1_window_end_dt,   "%Y-%m-%d %H:%M", tz = "UTC")
 )
 
+d1_n_reviews <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
+
 headline_1d_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">Headline Metrics (last 24h)</h3>
+  '<h3 style="color:%s; margin-top:20px;">%s</h3>
 <table style="border-collapse:collapse; width:100%%; font-size:12px;">
   <tr style="background-color:%s;">
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:left;">Metric</th>
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:right;">Value</th>
   </tr>',
-  accent_green, dark_row_alt, dark_border, dark_border
+  accent_green, d1_window_caption, dark_row_alt, dark_border, dark_border
 )
-for (i in seq_along(headline_1d_rows)) {
-  bg <- if (i %% 2 == 0) dark_row_alt else dark_card
+
+if (is.null(d1) || d1_n_reviews == 0L) {
+  # llm#484: empty-state single-row diagnostic instead of 7 boilerplate zeros
   headline_1d_html <- paste0(headline_1d_html, sprintf(
     '<tr style="background-color:%s;">
-      <td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>
-      <td style="padding:5px 8px; border:1px solid %s; color:%s; text-align:right;">%s</td>
+      <td colspan="2" style="padding:6px 8px; border:1px solid %s; color:%s; font-style:italic;">
+        <!-- QA:24h_empty_state -->No reviews logged in this window — see dashboard for full context
+      </td>
     </tr>',
-    bg,
-    dark_border, dark_text, headline_1d_rows[[i]][1],
-    dark_border, accent_green, headline_1d_rows[[i]][2]
+    dark_card, dark_border, dark_muted
   ))
+} else {
+  headline_1d_rows <- list(
+    c("24h: reviews in window",       fmt_int(d1_n_reviews)),        # llm#484: n_reviews FIRST
+    c("24h: issues found (closed)",   fmt_int(d1_found_closed)),
+    c("24h: issues found (open)",     fmt_int(d1_found_open)),
+    c("24h: clean (closed)",          fmt_int(d1_clean_closed)),
+    c("24h: clean (open)",            fmt_int(d1_clean_open)),
+    c("24h: close rate",              fmt_rate(d1_close_rate)),
+    c("24h: hours to close p50",      fmt_num(d1_ttc_p50)),
+    c("24h: attempts p50",            fmt_att(d1_att_p50))
+  )
+  # llm#484: append Other verdicts row when there are unmatched entries
+  if (d1_other_n > 0L) {
+    headline_1d_rows <- c(headline_1d_rows,
+      list(c("24h: other verdicts", fmt_int(d1_other_n))))
+  }
+  for (i in seq_along(headline_1d_rows)) {
+    bg <- if (i %% 2 == 0) dark_row_alt else dark_card
+    headline_1d_html <- paste0(headline_1d_html, sprintf(
+      '<tr style="background-color:%s;">
+        <td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>
+        <td style="padding:5px 8px; border:1px solid %s; color:%s; text-align:right;">%s</td>
+      </tr>',
+      bg,
+      dark_border, dark_text, headline_1d_rows[[i]][1],
+      dark_border, accent_green, headline_1d_rows[[i]][2]
+    ))
+  }
 }
 headline_1d_html <- paste0(headline_1d_html, "</table>")
 
 # §1 + §2 Headline two-column table (7-day)
+d7_n_reviews <- if (!is.null(d7)) as.integer(d7[["n_reviews"]] %||% 0L) else 0L
 headline_rows <- list(
+  c("7d: reviews in window",      fmt_int(d7_n_reviews)),            # llm#484: n_reviews FIRST
   c("7d: issues found (closed)",  fmt_int(issues_found_closed)),
   c("7d: issues found (open)",    fmt_int(issues_found_open)),
   c("7d: clean (closed)",         fmt_int(clean_closed)),
@@ -461,9 +498,11 @@ if (length(severity_rows_data) > 0L) {
 severity_html <- paste0(severity_html, "</table>")
 
 # QA markers (tested by test-send-roborev-email.R)
+# llm#484: added n_reviews and d1_n_reviews markers for diagnostic visibility
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s -->',
-  report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d -->',
+  report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL,
+  d1_n_reviews, d7_n_reviews, d1_other_n
 )
 
 # Assemble full body
