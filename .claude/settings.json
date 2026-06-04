@@ -445,6 +445,16 @@
                         "timeout": 5
                     }
                 ]
+            },
+            {
+                "matcher": "Task",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/log_agent_run.sh",
+                        "timeout": 5
+                    }
+                ]
             }
         ],
         "PostToolUse": [
@@ -495,6 +505,16 @@
             },
             {
                 "matcher": "Agent",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/log_agent_run.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
+                "matcher": "Task",
                 "hooks": [
                     {
                         "type": "command",
