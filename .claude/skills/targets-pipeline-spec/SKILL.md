@@ -51,22 +51,15 @@ project/
 ### _targets.R Structure (Orchestrator Only)
 
 ```r
-# _targets.R - ORCHESTRATION ONLY
-# NO tar_target() definitions here!
-
+# _targets.R — ORCHESTRATION ONLY, no tar_target() calls here
 library(targets)
 library(tarchetypes)
 
-# Set global options
 tar_option_set(
   packages = c("dplyr", "ggplot2", "arrow"),
-  format = "qs",  # Fast serialization
+  format = "qs",
   memory = "transient",
-  garbage_collection = TRUE
-)
-
-# Optional: crew parallel execution
-tar_option_set(
+  garbage_collection = TRUE,
   controller = crew::crew_controller_local(
     workers = parallel::detectCores() - 1,
     seconds_idle = 60
@@ -78,22 +71,11 @@ for (file in list.files("R", pattern = "\\.R$", full.names = TRUE)) {
   if (!grepl("R/(dev|tar_plans)/", file)) source(file)
 }
 
-# Source and combine all plans
-plan_files <- list.files(
-  "R/tar_plans",
-  pattern = "^plan_.*\\.R$",
-  full.names = TRUE
-)
-for (plan_file in plan_files) source(plan_file)
+# Source all plan files then combine
+for (f in list.files("R/tar_plans", pattern = "^plan_.*\\.R$", full.names = TRUE)) source(f)
 
-# Combine all plans (each plan_*.R defines a list)
-c(
-  plan_data_acquisition,
-  plan_quality_control,
-  plan_analysis,
-  plan_visualization,
-  plan_vignette_outputs
-)
+c(plan_data_acquisition, plan_quality_control, plan_analysis,
+  plan_visualization, plan_vignette_outputs)
 ```
 
 ### Plan File Structure
@@ -281,10 +263,7 @@ When data arrives in append-only batches (e.g., daily API pulls, CSV exports), u
 
 ```r
 tar_target(stg_transactions_deduped, {
-  # Generate surrogate key from identifying columns — one hash per ROW.
-  # digest::digest() is NOT vectorized: wrapping the paste() vector hashes
-  # the entire vector as one object, producing the SAME id for every row.
-  # Use purrr::pmap_chr() to apply digest() element-wise instead.
+  # digest::digest() is NOT vectorized — use purrr::pmap_chr() for per-row hashes
   stg_transactions |>
     dplyr::mutate(
       row_id = purrr::pmap_chr(
@@ -292,7 +271,6 @@ tar_target(stg_transactions_deduped, {
         \(d, x, a) digest::digest(paste(d, x, a, sep = "_"), algo = "md5")
       )
     ) |>
-    # Deduplicate: keep first occurrence of each row_id
     dplyr::distinct(row_id, .keep_all = TRUE)
 })
 ```
@@ -503,10 +481,10 @@ tar_validate()  # Check for errors in _targets.R
 | Deployment | Local store, S3 (`targets.s3upload`), cloud caches | Nix store | Designed for live scheduled jobs, not artifact storage |
 | CI fit | Mature — `tar_make()` in GH Actions, partial-run support, `tarchetypes::tar_render` for vignettes | Works in any nix-aware CI | Cron triggers, not commit-triggered |
 
-**Use targets** (default) when: dynamic branching, parallel execution (`crew`), 20+ steps, R-only, HPC, or when targets are non-data objects (plots, captions, alt-text, HTML, models).
-**Use rixpress** when: hermetic per-step isolation matters more than caching speed, mixed R+Python steps, <20 steps, regulatory audit needs.
-**Use Maestro** when: the primary need is cron-style scheduling of pure-data pipelines, you have no interest in caching across runs, you don't need interactive `tar_read()` debugging, and the pipeline doesn't need to mix in non-data targets (figures, captions, reports). In this project: stay on targets — Maestro's only unique advantage (built-in scheduling) is already covered by GitHub Actions cron triggers and macOS `launchd`. Adopting Maestro would lose `tar_read()` and smart invalidation without buying anything new.
-**Never mix** targets with rixpress or Maestro in the same project — they manage overlapping concerns (DAG, caching).
+**Use targets** (default): dynamic branching, parallel execution (`crew`), 20+ steps, R-only, HPC, or non-data targets (plots, captions, alt-text, HTML, models).
+**Use rixpress**: hermetic per-step isolation, mixed R+Python, <20 steps, regulatory audit.
+**Use Maestro**: cron-style scheduling of pure-data pipelines with no caching or `tar_read()` needed. In this project stay on targets — Maestro's scheduler advantage is covered by GH Actions cron and `launchd`.
+**Never mix** targets with rixpress or Maestro — they manage overlapping concerns.
 
 ## Related Skills
 
