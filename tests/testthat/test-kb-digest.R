@@ -423,6 +423,10 @@ test_that("send_kb_digest_email.R dry-run produces HTML with QA markers", {
               info = "QA:kb_digest_date marker missing from email dry-run output")
   expect_true(grepl("QA:kb_privacy=local_smtp_only", combined),
               info = "QA:kb_privacy marker missing from email dry-run output")
+  expect_true(grepl("QA:kb_collapsible=true", combined),
+              info = "QA:kb_collapsible marker missing — sections not wrapped in collapsible_block()")
+  expect_true(grepl("<details ", combined),
+              info = "<details> tag missing — collapsible_block() not emitting <details> blocks")
   expect_gt(nchar(combined), 200L)
 })
 
