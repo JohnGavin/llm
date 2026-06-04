@@ -164,6 +164,31 @@ Each element hyperlinked to GitHub release/commit/CRAN.
 
 ---
 
+## Fence Parity (Mandatory)
+
+Every `.qmd` file MUST have balanced code fences. An orphan triple-backtick
+(unmatched fence) causes Quarto to silently interpret all subsequent markdown as
+raw code, breaking headings, prose, and R chunks below the orphan.
+
+**QA gate:** `~/.claude/scripts/check_qmd_fence_parity.sh` — run automatically
+by `r_code_check.sh` on `vignettes/` and `docs/` at pre-commit time.
+
+```bash
+# Manual check
+~/.claude/scripts/check_qmd_fence_parity.sh vignettes/
+~/.claude/scripts/check_qmd_fence_parity.sh --selftest  # 4/4 expected
+```
+
+| Pattern | Allowed? |
+|---------|----------|
+| Triple-backtick code fences (` ``` `) | Yes — must be balanced (even count) |
+| Quadruple-backtick escape fences (` ```` `) | Yes — valid for prose showing markdown syntax |
+| Orphan opening or closing triple-backtick | **No** — caught by QA gate, exit 1 |
+
+See JohnGavin/llm#465.
+
+---
+
 ## Pre-Commit Checklist
 
 - [ ] `parse("_targets.R")` succeeds
@@ -172,6 +197,7 @@ Each element hyperlinked to GitHub release/commit/CRAN.
 - [ ] No single RDS > 2MB
 - [ ] `grep "MISSING EVIDENCE" docs/articles/*.html` returns 0
 - [ ] Dark mode toggle present
+- [ ] `check_qmd_fence_parity.sh vignettes/` exits 0
 
 ---
 
