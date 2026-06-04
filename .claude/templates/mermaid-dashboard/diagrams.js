@@ -1,0 +1,397 @@
+// premortem-diagrams.js — Architecture + Assumptions diagrams for the
+// planning dashboard. Modelled on the historical project's
+// `causal-diagrams.js` pattern (which is the proven working template).
+//
+// Key differences from Quarto's default mermaid handling:
+//   1. CDN-imported mermaid ESM module (bypasses Quarto's embedded bundle)
+//   2. Per-diagram render with try/catch (one failure doesn't break others)
+//   3. shown.bs.tab listener (re-renders when a hidden tab becomes visible)
+//   4. Node tooltips via SVG <title> elements (native browser hover)
+//   5. Edge tooltips via floating popup div with embedded source-code links
+//   6. Popup font size: 1.05rem (per 2026-06-03 user request: larger)
+//
+// To add a new diagram: add an entry to `dagDefs` and a div in planning.qmd
+// with id matching the key.
+
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+// ── Mermaid init (historical project pattern) ────────────────────────────────
+// theme:"dark" + background black + light text on dark nodes.
+// securityLevel:"loose" is required for click directives to bind URLs.
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: "loose",
+  theme: "dark",
+  themeVariables: {
+    background: "#000",
+    primaryColor: "#000",
+    primaryTextColor: "#fff",
+    lineColor: "#CC0000",
+    clusterBkg: "#000",
+    clusterBorder: "#fff"
+  }
+});
+
+// ── Node tooltips: detailed descriptions with embedded source-code links ─────
+// Shown as a popup on hover over a node. Bigger font (1.05rem) per user request.
+// Each entry: short label + 2-3 sentences + GitHub-style source URL.
+var nodeTooltips = {
+  // ── IO layer ───────────────────────────────────────────────────────────────
+  "IO": "initial_state_from_yaml() — reads estate.yaml and constructs the initial state object (pool values, cost basis, dividends). Called once per scenario at year 0. Source: model/R/io.R#L44",
+  "LOAD_SCEN": "load_scenarios() — reads model/scenarios.yaml and returns the named list of scenarios + regimes. Each scenario carries a schedule (gifts, charity, ISA top-ups) and a charity_legacy_pct. Source: model/R/io.R#L10",
+  // ── Engine + Waterfall + Metrics ───────────────────────────────────────────
+  "PROJ": "project_year() — projects ONE year forward: applies growth to each pool, applies scheduled cash flows (gifts, charity, ISA top-up), routes net cash need through the funding waterfall, and updates the state. Source: model/R/engine.R#L99",
+  "PATH_FULL": "project_path_full() — orchestrates the full per-year projection across the horizon. Calls project_year() for each year and assembles the path data.frame with PV-discounted columns. Source: model/R/engine.R#L315",
+  "IHT": "compute_iht() — applies UK Inheritance Tax rules: NRB of £325k, 36% reduced rate when ≥10% of net estate is left to charity (s33 Schedule 1A IHTA 1984), 40% standard rate otherwise. Source: model/R/engine.R#L512",
+  "WATERFALL": "compute_funding_plan() — decides the ORDER of draws to meet annual net cash needs. Default: ISA → CGT → SIPP_low → div_int → SIPP_high. ISA-first is ~2pp more PV-efficient than SIPP-first across all three plans. Source: model/R/funding_waterfall.R#L147",
+  "METRICS": "compute_recipient_metrics() — computes 4-way totals (John, Charity, Bens, HMRC), durations, PV-totals, tax-efficiency %, real residual %. Source: model/R/metrics.R#L41",
+  // ── Pipeline + Output ──────────────────────────────────────────────────────
+  "BUILD_DB": "build_db.R — top-level script: loads scenarios, runs the engine for each (scenario × regime), and writes 6 tables to data/projections.duckdb (scenario, assumption, projection, iht, recipient_metrics, recipient_flows). Source: model/build_db.R",
+  "DUCKDB": "data/projections.duckdb — pre-computed analytical results. 6 core tables + 4 sensitivity tables (scenarios_ABC, priority_sensitivity, charity_legacy_sensitivity, sipp_growth_sensitivity). Source: data/projections.duckdb",
+  "DASHBOARD": "dashboard/planning.qmd — the rendered Quarto page you are reading. Reads from data/projections.duckdb via dashboard/R/dashboard_data.R helpers. Source: dashboard/planning.qmd",
+  // ── Assumption-flow nodes ──────────────────────────────────────────────────
+  "GROWTH": "growth_pa — per-bucket nominal growth rate (default 6.6% pa for SIPP/brokerage; lower for ISA depending on regime). Set in scenarios.yaml regime block. Source: model/scenarios.yaml",
+  "INFLATION": "inflation_pa — annual inflation rate (default 3.5%) used to index gifts, charity, ISA top-up, living costs. Also used to compute real-residual %. Source: model/scenarios.yaml",
+  "GIFT": "gift_k_yr1 — Year-1 nominal gift amount to beneficiaries. £50k pa for the £60k gifts plan, £100k pa for £120k gifts. Indexed annually at inflation_pa. Source: model/scenarios.yaml",
+  "CHARITY": "charity_k_yr1 — Year-1 nominal cash to charity (donor cash, BEFORE Gift Aid uplift). £10k for £60k gifts, £20k for £120k gifts. Source: model/scenarios.yaml",
+  "ISA_TOPUP": "isa_topup_k_yr1 / isa_topup_years — annual ISA contribution (£20k for 19 years), stopping after year 19. After year 19 the cash that would have topped the ISA stays in brokerage. Source: model/scenarios.yaml",
+  "BASIS": "taxable_cost_basis_k — initial brokerage cost basis (£2,000k against £2,194k market = £194k unrealised gain). Depletes pro-rata on disposal. Source: model/R/io.R#L72",
+  "PRIORITY": "funding_priority — ordered list of pools drawn from to meet annual cash need. Default: ISA → CGT → SIPP_low → div_int → SIPP_high. Source: model/scenarios.yaml#L81",
+  "BAND_TAX": "Banded income tax — UK rates 0% (personal allowance) / 20% basic / 40% higher / 45% additional. Applied to SIPP drawdown + dividends + interest. Source: model/R/funding_waterfall.R#L14",
+  "CGT_CALC": "Capital Gains Tax — 24% on gains above £3k annual exempt amount (post-Oct 2024 Budget). Gain = disposal − pro-rata cost basis. Source: model/R/funding_waterfall.R#L22",
+  "GIFT_AID": "Gift Aid — donor cash × 1.25 = gross to charity (basic-rate reclaim). Higher-rate relief reclaimed separately via Self Assessment (capped at year's income tax). Source: model/R/engine.R#L190",
+  "IHT_NRB": "NRB (Nil-Rate Band) — £325,000 IHT-free threshold. No transferable NRB (no spouse). No Residence NRB (no owned home; estate > £2M tapers it away). Source: model/R/engine.R#L552",
+  "IHT_CHAR": "Charity legacy ≥10% → 36% IHT rate — s33 Schedule 1A IHTA 1984 reduced rate. With 16.67% legacy (1/6 of residue), the threshold is comfortably met in every scenario. Source: model/R/engine.R#L550",
+  "IHT_RATE": "IHT rate 36% (charity ≥10%) OR 40% (standard). 36% saves ~£480k PV for the £60k gifts plan at horizon 15. Source: model/R/engine.R#L557",
+  "OUT_RESIDUAL": "Real residual % — final estate divided by starting estate, deflated by (1+inflation)^horizon. Above 100% = estate grew in real terms; below = eroded. Source: model/R/metrics.R#L202",
+  "OUT_PETS": "Lifetime PETs — total nominal lifetime gifts (Potentially Exempt Transfers). IHT-free if donor survives 7 years from the gift. Source: model/R/engine.R#L220",
+  "OUT_RECIPIENTS": "4-way totals — lifetime + post-IHT receipts split between John, beneficiaries, charity (incl. Gift Aid + 1/6 legacy), and HMRC (CGT + income tax + IHT). Source: model/R/metrics.R#L41",
+  "OUT_FOURSHARE": "4-share % — each recipient's share of total estate flows. The headline donut/table at the top of the dashboard reads this. Source: model/R/metrics.R#L166"
+};
+
+// ── Edge tooltips: shown when hovering over an arrow (NOT a node) ────────────
+// Keyed as "SRC->DST" using node IDs. Detailed descriptions + GitHub URL.
+var edgeMetadata = {
+  // Architecture
+  "IO->PROJ":          { tooltip: "initial_state_from_yaml() produces the starting state object that project_year() takes as input for year 1.", href: "../model/R/engine.R#L99" },
+  "LOAD_SCEN->PROJ":   { tooltip: "load_scenarios() supplies the schedule (gift/charity/ISA-topup amounts per year) that project_year() consumes.", href: "../model/scenarios.yaml" },
+  "PROJ->PATH_FULL":   { tooltip: "project_path_full() invokes project_year() in a loop, accumulating the per-year state into a path data.frame.", href: "../model/R/engine.R#L315" },
+  "PATH_FULL->WATERFALL": { tooltip: "Each year, project_path_full() calls compute_funding_plan() to decide which pools to draw from to meet that year's net cash need.", href: "../model/R/funding_waterfall.R#L147" },
+  "PATH_FULL->IHT":    { tooltip: "After the last projection year, project_path_full() calls compute_iht() on the final state to compute the IHT bill and post-IHT residual.", href: "../model/R/engine.R#L512" },
+  "PATH_FULL->METRICS": { tooltip: "compute_recipient_metrics() consumes the per-year path + IHT result to produce 4-way totals, durations, PV-shares, tax-efficiency %.", href: "../model/R/metrics.R#L41" },
+  "IHT->METRICS":      { tooltip: "The IHT bill is itself a flow to HMRC and a legacy to charity — compute_recipient_metrics() adds it to the lifetime flows.", href: "../model/R/metrics.R#L41" },
+  "METRICS->BUILD_DB": { tooltip: "build_db.R writes the recipient_metrics + recipient_flows tables into data/projections.duckdb.", href: "../model/build_db.R" },
+  "BUILD_DB->DUCKDB":  { tooltip: "build_db.R writes 6 core tables + 4 sensitivity tables to data/projections.duckdb. Re-run via Rscript model/build_db.R.", href: "../model/build_db.R" },
+  "DUCKDB->DASHBOARD": { tooltip: "dashboard/planning.qmd reads via dashboard/R/dashboard_data.R helpers (load_recipient_metrics, load_recipient_flows, etc.).", href: "../dashboard/R/dashboard_data.R" },
+  // Assumptions
+  "GROWTH->BAND_TAX":  { tooltip: "growth_pa applies to each pool's balance per year. Banded income tax acts on SIPP drawdown + dividends; the higher the SIPP balance grows the more income tax is paid on drawdown.", href: "../model/R/funding_waterfall.R#L14" },
+  "GROWTH->CGT_CALC":  { tooltip: "Brokerage growth widens the gap between market value and cost basis, increasing the gain portion subject to CGT.", href: "../model/R/funding_waterfall.R#L22" },
+  "INFLATION->GIFT":   { tooltip: "Gift amount in year t is gift_k_yr1 × (1+inflation_pa)^(t-1) for scalar scenarios.", href: "../model/scenarios.yaml" },
+  "INFLATION->CHARITY":{ tooltip: "Charity cash in year t is charity_k_yr1 × (1+inflation_pa)^(t-1).", href: "../model/scenarios.yaml" },
+  "GIFT->OUT_PETS":    { tooltip: "Cumulative lifetime PETs = sum over years of gift amounts. Each PET becomes IHT-free 7 years after the gift date.", href: "../model/R/engine.R#L220" },
+  "CHARITY->GIFT_AID": { tooltip: "Donor cash to a qualifying charity is grossed up by 25%: donor pays £10k, charity receives £12.5k.", href: "../model/R/engine.R#L190" },
+  "BASIS->CGT_CALC":   { tooltip: "On disposal of brokerage, the cost basis is depleted pro-rata: new_basis = old_basis × (1 - disposal/market). Gain = disposal − pro-rata basis.", href: "../model/R/funding_waterfall.R#L22" },
+  "PRIORITY->BAND_TAX": { tooltip: "Priority order determines whether SIPP drawdown happens early (filling the basic-rate band) or late (only the higher-rate band).", href: "../model/R/funding_waterfall.R#L14" },
+  "ISA_TOPUP->BAND_TAX": { tooltip: "ISA top-up consumes cash that would otherwise be available for living costs — pushing the demand for SIPP drawdown higher.", href: "../model/R/funding_waterfall.R#L14" },
+  "BAND_TAX->OUT_RECIPIENTS": { tooltip: "Banded income tax paid is a flow to HMRC — counted in the 4-way totals.", href: "../model/R/metrics.R#L41" },
+  "CGT_CALC->OUT_RECIPIENTS": { tooltip: "CGT paid is a flow to HMRC; CGT-net residual stays in the estate.", href: "../model/R/metrics.R#L41" },
+  "GIFT_AID->OUT_RECIPIENTS": { tooltip: "Gross charity (donor cash × 1.25) is the flow to charity counted in 4-way totals.", href: "../model/R/metrics.R#L41" },
+  "IHT_NRB->IHT_RATE": { tooltip: "Net estate above NRB (£325k) is the taxable amount that IHT_rate is applied to.", href: "../model/R/engine.R#L552" },
+  "IHT_CHAR->IHT_RATE": { tooltip: "≥10% of net estate to charity triggers the 36% reduced rate (s33 Schedule 1A IHTA 1984).", href: "../model/R/engine.R#L550" },
+  "IHT_RATE->OUT_RECIPIENTS": { tooltip: "IHT due = (net estate − NRB) × IHT_rate, paid to HMRC. The residual goes to beneficiaries + charity per will provisions.", href: "../model/R/metrics.R#L41" },
+  "OUT_RECIPIENTS->OUT_FOURSHARE": { tooltip: "Each recipient's share = their total flow ÷ total estate flows. Shares sum to 100%.", href: "../model/R/metrics.R#L166" },
+  "OUT_RECIPIENTS->OUT_RESIDUAL": { tooltip: "Real residual % uses the post-IHT pool balance (not the recipient flows directly), but the two are computed from the same path.", href: "../model/R/metrics.R#L202" }
+};
+
+// ── Diagram definitions ──────────────────────────────────────────────────────
+// Pattern: `graph TD` / `graph LR`, quoted node labels, per-node `style`
+// directives setting fill/stroke/text colour, `linkStyle default` for arrows.
+// Node colours by layer (per historical convention):
+//   IO/inputs     → blue   #4e9af1
+//   Engine/calc   → orange #f17c4e
+//   Output/sink   → green  #4ef18a
+// All nodes: RED stroke (#CC0000), BLACK text (#000) — high contrast on dark page.
+var dagDefs = {
+  "arch-mount":
+    "graph TD\n" +
+    "  subgraph IO_LAYER[\"IO layer\"]\n" +
+    "    IO[\"initial_state_from_yaml\"]\n" +
+    "    LOAD_SCEN[\"load_scenarios\"]\n" +
+    "  end\n" +
+    "  subgraph ENGINE[\"Engine + Waterfall + Metrics\"]\n" +
+    "    PROJ[\"project_year\"]\n" +
+    "    PATH_FULL[\"project_path_full\"]\n" +
+    "    IHT[\"compute_iht\"]\n" +
+    "    WATERFALL[\"compute_funding_plan\"]\n" +
+    "    METRICS[\"compute_recipient_metrics\"]\n" +
+    "  end\n" +
+    "  subgraph PIPELINE[\"Pipeline + Output\"]\n" +
+    "    BUILD_DB[\"build_db.R\"]\n" +
+    "    DUCKDB[\"projections.duckdb\"]\n" +
+    "    DASHBOARD[\"planning.qmd\"]\n" +
+    "  end\n" +
+    "  IO --> PROJ\n" +
+    "  LOAD_SCEN --> PROJ\n" +
+    "  PROJ --> PATH_FULL\n" +
+    "  PATH_FULL --> WATERFALL\n" +
+    "  PATH_FULL --> IHT\n" +
+    "  PATH_FULL --> METRICS\n" +
+    "  IHT --> METRICS\n" +
+    "  METRICS --> BUILD_DB\n" +
+    "  BUILD_DB --> DUCKDB\n" +
+    "  DUCKDB --> DASHBOARD\n" +
+    "  click IO \"../model/R/io.R#L44\" _blank\n" +
+    "  click LOAD_SCEN \"../model/R/io.R#L10\" _blank\n" +
+    "  click PROJ \"../model/R/engine.R#L99\" _blank\n" +
+    "  click PATH_FULL \"../model/R/engine.R#L315\" _blank\n" +
+    "  click WATERFALL \"../model/R/funding_waterfall.R#L147\" _blank\n" +
+    "  click IHT \"../model/R/engine.R#L512\" _blank\n" +
+    "  click METRICS \"../model/R/metrics.R#L41\" _blank\n" +
+    "  click BUILD_DB \"../model/build_db.R\" _blank\n" +
+    "  click DUCKDB \"../data/projections.duckdb\" _blank\n" +
+    "  click DASHBOARD \"../dashboard/planning.qmd\" _blank\n" +
+    "  linkStyle default stroke:#CC0000,stroke-width:4px\n" +
+    "  style IO fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style LOAD_SCEN fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style PROJ fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style PATH_FULL fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style WATERFALL fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style IHT fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style METRICS fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style BUILD_DB fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style DUCKDB fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style DASHBOARD fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000",
+  "assump-mount":
+    "graph LR\n" +
+    "  subgraph INPUTS[\"Inputs (scenarios.yaml + estate.yaml)\"]\n" +
+    "    GROWTH[\"growth_pa 6.6%\"]\n" +
+    "    INFLATION[\"inflation_pa 3.5%\"]\n" +
+    "    GIFT[\"gift_k_yr1\"]\n" +
+    "    CHARITY[\"charity_k_yr1\"]\n" +
+    "    ISA_TOPUP[\"ISA top-up\"]\n" +
+    "    BASIS[\"cost basis 2000k\"]\n" +
+    "    PRIORITY[\"funding priority\"]\n" +
+    "  end\n" +
+    "  subgraph ENGINE2[\"Engine blocks\"]\n" +
+    "    BAND_TAX[\"Banded income tax\"]\n" +
+    "    CGT_CALC[\"CGT 24%\"]\n" +
+    "    GIFT_AID[\"Gift Aid x 1.25\"]\n" +
+    "  end\n" +
+    "  subgraph IHT_BOX[\"IHT calc\"]\n" +
+    "    IHT_NRB[\"NRB 325k\"]\n" +
+    "    IHT_CHAR[\"charity legacy 16.67%\"]\n" +
+    "    IHT_RATE[\"IHT rate 36 or 40%\"]\n" +
+    "  end\n" +
+    "  subgraph OUTPUTS[\"Outputs\"]\n" +
+    "    OUT_RESIDUAL[\"Real residual %\"]\n" +
+    "    OUT_PETS[\"Lifetime PETs\"]\n" +
+    "    OUT_RECIPIENTS[\"4-way totals\"]\n" +
+    "    OUT_FOURSHARE[\"4-share %\"]\n" +
+    "  end\n" +
+    "  GROWTH --> BAND_TAX\n" +
+    "  GROWTH --> CGT_CALC\n" +
+    "  INFLATION --> GIFT\n" +
+    "  INFLATION --> CHARITY\n" +
+    "  GIFT --> OUT_PETS\n" +
+    "  CHARITY --> GIFT_AID\n" +
+    "  BASIS --> CGT_CALC\n" +
+    "  PRIORITY --> BAND_TAX\n" +
+    "  ISA_TOPUP --> BAND_TAX\n" +
+    "  BAND_TAX --> OUT_RECIPIENTS\n" +
+    "  CGT_CALC --> OUT_RECIPIENTS\n" +
+    "  GIFT_AID --> OUT_RECIPIENTS\n" +
+    "  IHT_NRB --> IHT_RATE\n" +
+    "  IHT_CHAR --> IHT_RATE\n" +
+    "  IHT_RATE --> OUT_RECIPIENTS\n" +
+    "  OUT_RECIPIENTS --> OUT_FOURSHARE\n" +
+    "  OUT_RECIPIENTS --> OUT_RESIDUAL\n" +
+    "  click GROWTH \"../model/scenarios.yaml\" _blank\n" +
+    "  click INFLATION \"../model/scenarios.yaml\" _blank\n" +
+    "  click GIFT \"../model/scenarios.yaml\" _blank\n" +
+    "  click CHARITY \"../model/scenarios.yaml\" _blank\n" +
+    "  click ISA_TOPUP \"../model/scenarios.yaml\" _blank\n" +
+    "  click BASIS \"../model/R/io.R#L72\" _blank\n" +
+    "  click PRIORITY \"../model/scenarios.yaml#L81\" _blank\n" +
+    "  click BAND_TAX \"../model/R/funding_waterfall.R#L14\" _blank\n" +
+    "  click CGT_CALC \"../model/R/funding_waterfall.R#L22\" _blank\n" +
+    "  click GIFT_AID \"../model/R/engine.R#L190\" _blank\n" +
+    "  click IHT_RATE \"../model/R/engine.R#L557\" _blank\n" +
+    "  click IHT_NRB \"../model/R/engine.R#L552\" _blank\n" +
+    "  click IHT_CHAR \"../model/R/engine.R#L550\" _blank\n" +
+    "  click OUT_RESIDUAL \"../model/R/metrics.R#L202\" _blank\n" +
+    "  click OUT_PETS \"../model/R/engine.R#L220\" _blank\n" +
+    "  click OUT_RECIPIENTS \"../model/R/metrics.R#L41\" _blank\n" +
+    "  click OUT_FOURSHARE \"../model/R/metrics.R#L166\" _blank\n" +
+    "  linkStyle default stroke:#CC0000,stroke-width:4px\n" +
+    "  style GROWTH fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style INFLATION fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style GIFT fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style CHARITY fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style ISA_TOPUP fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style BASIS fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style PRIORITY fill:#4e9af1,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style BAND_TAX fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style CGT_CALC fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style GIFT_AID fill:#f17c4e,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style IHT_NRB fill:#a14ef1,stroke:#CC0000,stroke-width:2px,color:#fff\n" +
+    "  style IHT_CHAR fill:#a14ef1,stroke:#CC0000,stroke-width:2px,color:#fff\n" +
+    "  style IHT_RATE fill:#a14ef1,stroke:#CC0000,stroke-width:2px,color:#fff\n" +
+    "  style OUT_RESIDUAL fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style OUT_PETS fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style OUT_RECIPIENTS fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000\n" +
+    "  style OUT_FOURSHARE fill:#4ef18a,stroke:#CC0000,stroke-width:2px,color:#000"
+};
+
+// ── Floating popup CSS (larger font per 2026-06-03 user request) ─────────────
+(function injectPopupStyles() {
+  if (document.getElementById('premortem-popup-styles')) return;
+  var style = document.createElement('style');
+  style.id = 'premortem-popup-styles';
+  style.textContent = [
+    '.pm-popup {',
+    '  position: fixed; visibility: hidden;',
+    '  background: #0d1421; color: #ffffff;',
+    '  border: 1px solid #ff5050; border-radius: 6px;',
+    '  padding: 12px 16px; max-width: 480px;',
+    '  font-size: 1.05rem; line-height: 1.5;',  // LARGER per user request
+    '  z-index: 9999; pointer-events: auto;',
+    '  box-shadow: 0 4px 16px rgba(0,0,0,0.5);',
+    '}',
+    '.pm-popup p { margin: 0 0 8px 0; }',
+    '.pm-popup a { color: #69d4a0; text-decoration: underline; font-weight: 600; }',
+    '.pm-popup a:hover { color: #ffffff; }'
+  ].join('\n');
+  document.head.appendChild(style);
+}());
+
+// Single shared popup div
+var sharedPopup = null;
+var hideTimeout = null;
+function getPopup() {
+  if (!sharedPopup) {
+    sharedPopup = document.createElement('div');
+    sharedPopup.className = 'pm-popup';
+    document.body.appendChild(sharedPopup);
+    sharedPopup.addEventListener('mouseenter', function() {
+      if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
+    });
+    sharedPopup.addEventListener('mouseleave', hidePopup);
+  }
+  return sharedPopup;
+}
+function showPopup(evt, body, href) {
+  var p = getPopup();
+  var html = '<p>' + body + '</p>';
+  if (href) html += '<a href="' + href + '" target="_blank" rel="noopener noreferrer">Open source &rarr;</a>';
+  p.innerHTML = html;
+  var x = evt.clientX + 16, y = evt.clientY + 16;
+  if (x + 480 > window.innerWidth) x = window.innerWidth - 496;
+  if (y + 200 > window.innerHeight) y = window.innerHeight - 216;
+  p.style.left = Math.max(8, x) + 'px';
+  p.style.top  = Math.max(8, y) + 'px';
+  p.style.visibility = 'visible';
+}
+function hidePopup() {
+  if (hideTimeout) clearTimeout(hideTimeout);
+  hideTimeout = setTimeout(function() {
+    hideTimeout = null;
+    if (sharedPopup) sharedPopup.style.visibility = 'hidden';
+  }, 200);
+}
+
+// ── Attach node hover popups (custom; richer than browser <title>) ───────────
+function addNodeHovers(svg) {
+  if (!svg) return;
+  Object.keys(nodeTooltips).forEach(function(id) {
+    var selectors = [
+      '[data-id="' + id + '"]',
+      '[id*="flowchart-' + id + '-"]',
+      '.node[id*="-' + id + '-"]'
+    ];
+    var el = null;
+    for (var i = 0; i < selectors.length && !el; i++) {
+      el = svg.querySelector(selectors[i]);
+    }
+    if (!el) return;
+    var body = nodeTooltips[id];
+    // Extract trailing "Source: path" if present and turn into href
+    var href = null;
+    var m = body.match(/Source:\s+([^\s]+)$/);
+    if (m) href = '../' + m[1].replace(/^\.\.\//, '');
+    el.style.cursor = 'pointer';
+    el.addEventListener('mouseenter', function(e) { showPopup(e, body, href); });
+    el.addEventListener('mouseleave', hidePopup);
+  });
+}
+
+// ── Attach edge hover popups (uses edgeMetadata) ─────────────────────────────
+function addEdgeHovers(svg, mountId) {
+  if (!svg) return;
+  var src = dagDefs[mountId] || '';
+  // Build the set of valid node IDs by scanning the source for definitions
+  var nodeIds = new Set();
+  var defRe = /\b([A-Z_][A-Za-z0-9_]*)\b/g;
+  var m;
+  while ((m = defRe.exec(src)) !== null) nodeIds.add(m[1]);
+  // Walk every edge path
+  svg.querySelectorAll('path.flowchart-link, path[id^="L_"]').forEach(function(path) {
+    var key = parseEdgeId(path.id, nodeIds);
+    if (!key) return;
+    var meta = edgeMetadata[key];
+    if (!meta) return;
+    path.style.pointerEvents = 'stroke';
+    path.style.cursor = 'pointer';
+    path.addEventListener('mouseenter', function(e) { showPopup(e, meta.tooltip, meta.href); });
+    path.addEventListener('mouseleave', hidePopup);
+    if (meta.href) {
+      path.addEventListener('click', function() { window.open(meta.href, '_blank', 'noopener'); });
+    }
+  });
+}
+function parseEdgeId(pathId, validIds) {
+  var m = pathId.match(/^L_(.+)_(\d+)$/);
+  if (!m) return null;
+  var body = m[1];
+  var parts = body.split('_');
+  // Try greedy split from longest source first
+  for (var i = parts.length - 1; i >= 1; i--) {
+    var s = parts.slice(0, i).join('_');
+    var d = parts.slice(i).join('_');
+    if (validIds.has(s) && validIds.has(d)) return s + '->' + d;
+  }
+  return null;
+}
+
+// ── Render each diagram, with try/catch, deferred until mount is visible ─────
+async function renderAll() {
+  for (var mountId in dagDefs) {
+    var mount = document.getElementById(mountId);
+    if (!mount) continue;
+    if (mount.querySelector('svg')) continue;       // already rendered
+    if (mount.offsetParent === null) continue;       // hidden tab — wait until shown
+    var src = dagDefs[mountId];
+    try {
+      var out = await mermaid.render('mmd-render-' + mountId, src);
+      mount.innerHTML = out.svg;
+      var svg = mount.querySelector('svg');
+      if (svg) {
+        svg.style.maxWidth = '100%';
+        svg.style.height = 'auto';
+        addNodeHovers(svg);
+        addEdgeHovers(svg, mountId);
+      }
+      console.log('[premortem-diagrams] rendered ' + mountId);
+    } catch (e) {
+      console.error('[premortem-diagrams] render failed for ' + mountId + ':', e);
+      mount.innerHTML =
+        '<pre style="color:#ff5050;background:#000;border:1px solid #ff5050;padding:1rem;">' +
+        'Diagram render failed: ' + (e.message || e) +
+        '</pre>';
+    }
+  }
+}
+
+// Initial render + tab-switch re-render
+document.addEventListener('DOMContentLoaded', function() { setTimeout(renderAll, 500); });
+window.addEventListener('load', function() { setTimeout(renderAll, 800); });
+document.addEventListener('shown.bs.tab', function() { setTimeout(renderAll, 300); });
