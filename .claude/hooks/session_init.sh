@@ -1279,6 +1279,18 @@ if [ -n "$_cifail_repo" ]; then
   fi
 fi
 
+# ── Phase 15a: ETL freshness alarm (JohnGavin/llm#491) ───────────────────────
+# Queries ~/.claude/logs/unified.duckdb for the age of the most-recent row in
+# each tracked table.  Emits one summary line when any table is AMBER/RED/CRITICAL.
+# Skippable: CLAUDE_ETL_FRESHNESS_CHECK=0
+# Fail-open: any error → silently continue (no non-zero exit from this block).
+if [ "${CLAUDE_ETL_FRESHNESS_CHECK:-1}" != "0" ]; then
+  _etl_script="${CLAUDE_DIR}/scripts/etl_freshness_check.sh"
+  if [ -x "$_etl_script" ]; then
+    timeout 5 "$_etl_script" --quiet 2>/dev/null || true
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
