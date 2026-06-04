@@ -20,6 +20,24 @@ suppressPackageStartupMessages({
   library(blastula)
 })
 
+# ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
+
+`%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
+
+.scripts_dir <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args  <- commandArgs(trailingOnly = FALSE)
+    idx   <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "email_styles.R"),
+                               mustWork = FALSE))
+  }
+)
+
+source(file.path(.scripts_dir, "email_styles.R"))
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SCRIPTS_DIR <- Sys.getenv(
@@ -68,19 +86,19 @@ if (!file.exists(md_tmp)) {
 
 report_md <- paste(readLines(md_tmp, warn = FALSE), collapse = "\n")
 
-# ── Colour palette (matches llmtelemetry convention) ──────────────────────────
+# ── Colour aliases (sourced from email_styles.R above) ────────────────────────
 
-dark_bg       <- "#1a1a2e"
-dark_card     <- "#16213e"
-dark_row_alt  <- "#0f3460"
-dark_text     <- "#e8e8e8"
-dark_muted    <- "#a0a0a0"
-dark_border   <- "#2a2a4a"
-accent_green  <- "#00d26a"
-accent_blue   <- "#4fc3f7"
-accent_orange <- "#ff9800"
-accent_purple <- "#bb86fc"
-accent_red    <- "#f08080"
+dark_bg       <- DARK_BG
+dark_card     <- DARK_CARD
+dark_row_alt  <- DARK_ROW_ALT
+dark_text     <- DARK_TEXT
+dark_muted    <- DARK_MUTED
+dark_border   <- DARK_BORDER
+accent_green  <- ACCENT_GREEN
+accent_blue   <- ACCENT_BLUE
+accent_orange <- ACCENT_ORANGE
+accent_purple <- ACCENT_PURPLE
+accent_red    <- "#f08080"   # script-local: not in email_styles.R palette
 
 # ── Parse report sections ──────────────────────────────────────────────────────
 
@@ -129,11 +147,11 @@ md_table_to_html <- function(md_text, header_bg = dark_row_alt, header_color = "
   }
 
   sprintf(
-    '<table style="border-collapse:collapse; width:100%%; font-size:12px;">
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">%s</tr>
   %s
 </table>',
-    header_bg, th_html, paste(rows_html, collapse = "\n  ")
+    EMAIL_FONT_BODY, header_bg, th_html, paste(rows_html, collapse = "\n  ")
   )
 }
 
@@ -154,16 +172,31 @@ md_to_simple_html <- function(s) {
 }
 
 # Section 1 tables
-s1_tables <- md_table_to_html(s1, header_bg = dark_row_alt)
+s1_tables_inner <- md_table_to_html(s1, header_bg = dark_row_alt)
+s1_n_rows <- length(grep("^\\|", strsplit(s1, "\n")[[1L]])) - 2L   # minus header + separator
+s1_n_rows <- max(0L, s1_n_rows)
+s1_tables <- collapsible_block(
+  "&#x1F534; Section 1 — Inventory (Priority × Time-of-Day)",
+  sprintf("%d job%s", s1_n_rows, if (s1_n_rows == 1L) "" else "s"),
+  s1_tables_inner
+)
+
 # Section 2 check for placeholder text vs table
 has_s2_table <- grepl("^\\|", trimws(s2))
-s2_html <- if (has_s2_table) {
+s2_html_inner <- if (has_s2_table) {
   md_table_to_html(s2)
 } else {
   sprintf('<p style="color:%s; font-style:italic;">%s</p>',
           dark_muted, md_to_simple_html(gsub("\n", " ", trimws(s2))))
 }
-# Section 3 bullets
+s2_n_rows <- if (has_s2_table) max(0L, length(grep("^\\|", strsplit(s2, "\n")[[1L]])) - 2L) else 0L
+s2_html <- collapsible_block(
+  "&#x1F4CA; Section 2 — Per-Job Run Metrics (7-Day)",
+  sprintf("%d job%s", s2_n_rows, if (s2_n_rows == 1L) "" else "s"),
+  s2_html_inner
+)
+
+# Section 3 bullets (not collapsible — suggestions are short, always show)
 s3_bullets <- strsplit(trimws(s3), "\n")[[1L]]
 s3_bullets <- s3_bullets[nzchar(s3_bullets)]
 s3_html <- paste(sprintf(
@@ -171,13 +204,21 @@ s3_html <- paste(sprintf(
   dark_text,
   vapply(gsub("^[-*] ", "", s3_bullets), md_to_simple_html, character(1L))
 ), collapse = "\n")
+
 # Section 4
-s4_html <- if (grepl("^\\|", trimws(sub("^[^|]*", "", s4)))) {
+has_s4_table <- grepl("^\\|", trimws(sub("^[^|]*", "", s4)))
+s4_html_inner <- if (has_s4_table) {
   md_table_to_html(s4, header_bg = "#2d1b6e")
 } else {
   sprintf('<p style="color:%s; font-style:italic;">%s</p>',
           dark_muted, md_to_simple_html(gsub("\n", " ", trimws(s4))))
 }
+s4_n_rows <- if (has_s4_table) max(0L, length(grep("^\\|", strsplit(s4, "\n")[[1L]])) - 2L) else 0L
+s4_html <- collapsible_block(
+  "&#x2601; Section 4 — Related Cloud Crons (GitHub Actions)",
+  sprintf("%d cron%s", s4_n_rows, if (s4_n_rows == 1L) "" else "s"),
+  s4_html_inner
+)
 
 # ── Build full HTML body ───────────────────────────────────────────────────────
 
@@ -194,16 +235,10 @@ email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
                font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">
 <h2 style="color:%s; margin-bottom:4px;">Weekly Scheduled-Task Health Report — %s</h2>
-<p style="color:%s; font-size:11px; margin-top:0;">Generated: %s</p>
+<p style="color:%s; font-size:%s; margin-top:0;">Generated: %s</p>
 
-<h3 style="color:%s; margin-top:20px; border-bottom:1px solid %s; padding-bottom:4px;">
-  &#x1F534; Section 1 — Inventory (Priority &times; Time-of-Day)
-</h3>
 %s
 
-<h3 style="color:%s; margin-top:24px; border-bottom:1px solid %s; padding-bottom:4px;">
-  &#x1F4CA; Section 2 — Per-Job Run Metrics (7-Day)
-</h3>
 %s
 
 <h3 style="color:%s; margin-top:24px; border-bottom:1px solid %s; padding-bottom:4px;">
@@ -213,12 +248,9 @@ email_body <- sprintf(
 %s
 </ul>
 
-<h3 style="color:%s; margin-top:24px; border-bottom:1px solid %s; padding-bottom:4px;">
-  &#x2601; Section 4 — Related Cloud Crons (GitHub Actions)
-</h3>
 %s
 
-<p style="color:%s; font-size:10px; margin-top:24px;">
+<p style="color:%s; font-size:%s; margin-top:24px;">
   Tracked in <a href="https://github.com/JohnGavin/llm/issues/300" style="color:%s;">llm#300</a>.
   Ledger: ~/.claude/logs/launchd_runs.duckdb
 </p>
@@ -226,16 +258,13 @@ email_body <- sprintf(
 </div>',
   dark_bg, dark_text,
   accent_orange, report_date,
-  dark_muted, generated_at,
-  accent_orange, dark_border,
+  dark_muted, EMAIL_FONT_SUBTITLE, generated_at,
   s1_tables,
-  accent_blue, dark_border,
   s2_html,
   accent_red, dark_border,
   s3_html,
-  accent_purple, dark_border,
   s4_html,
-  dark_muted, accent_blue,
+  dark_muted, EMAIL_FONT_FOOTER, accent_blue,
   qa_markers
 )
 
