@@ -4,7 +4,41 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
-## 2026-06-02 (afternoon session — email pipeline live + #424 closed + #433 closed)
+## 2026-06-04 (evening — #491-D Stage 2 self-review design + decomposition)
+
+Worktree session `feat/491d-stage2-plan` — design layer for the deferred Stage 2 of #235.
+
+### Completed
+
+- **Design doc** at `plans/491d-self-review-stage2-design.md` (220+ lines). Covers
+  all 6 design questions from the #491 Stage 2 brief: hybrid form (deterministic
+  transcript ETL + bounded LLM proposer), confirmed JSONL schema from a real sample,
+  10 candidate detectors classified P0/P1/P2, cost model with $5/day circuit breaker,
+  privacy boundary (opt-in/out per project + redaction patterns for credentials),
+  OUTBOX output (never auto-creates issues/PRs per `pr-shipping-discipline`).
+- **6 sub-issues filed** (all label `enhancement`, all reference #491):
+  - #494 — umbrella tracking
+  - #495 — transcript ETL → `unified.duckdb::transcripts`
+  - #496 — deterministic detectors D-A (premature parent-issue closure), D-B (subagent
+    false-positive), D-F (HEAD_MOVED_SAME_BRANCH noise filter) — P0 set
+  - #498 — LLM proposer Layer 2b + cost circuit breaker
+  - #499 — OUTBOX + `session_init.sh` Phase 13e surfacing
+  - #500 — 7-night dry-run soak before `--write` go-live
+- Each detector classified per `skills-vs-mcp` rule (deterministic SQL vs bounded LLM vs
+  rule/skill). Privacy boundary respects `credential-management`,
+  `permission-discipline` Part 4, `cross-project-scope`. No auto-PR per
+  `pr-shipping-discipline` — OUTBOX only.
+
+### Why this matters
+
+#491 reported the Stage 1 source-table starvation (parallel work track). Even when those
+sources flow, Stage 1's 5 narrow operational detectors miss the actual lessons-learnt
+signals (false-positive findings, premature closures, repeated rule violations, user
+pushback) — those live in transcript text, not in any DuckDB table. This plan lays out
+the pipeline to capture them without (a) hallucinating problems and (b) auto-modifying
+the codebase.
+
+
 
 Worktree session `feat/cc-20260602-165249` operating cross-project from `llm`.
 
