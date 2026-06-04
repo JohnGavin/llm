@@ -486,6 +486,18 @@ EOF
 EOF
 
   log_blocked_crossbranch "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH, current=$CURRENT_BRANCH)"
+
+  # ── Log to unified DuckDB errors table (llm#491-a) ──
+  _log_script="$HOME/.claude/scripts/log_session.sh"
+  if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
+    _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+    if [ -n "$_sid" ]; then
+      "$_log_script" error "$_sid" "$(basename "${EFFECTIVE_PATH:-$PWD}")" \
+        "BLOCKED: cross-worktree push target=${TARGET_BRANCH} current=${CURRENT_BRANCH}" \
+        "agent_push_guard" 2>/dev/null || true
+    fi
+  fi
+
   exit 2
 fi
 
@@ -534,5 +546,16 @@ cat >&2 <<EOF
 EOF
 
 log_blocked "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH)"
+
+# ── Log to unified DuckDB errors table (llm#491-a) ──
+_log_script="$HOME/.claude/scripts/log_session.sh"
+if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
+  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+  if [ -n "$_sid" ]; then
+    "$_log_script" error "$_sid" "$(basename "${EFFECTIVE_PATH:-$PWD}")" \
+      "BLOCKED: push to protected branch ${TARGET_BRANCH}" \
+      "agent_push_guard" 2>/dev/null || true
+  fi
+fi
 
 exit 2

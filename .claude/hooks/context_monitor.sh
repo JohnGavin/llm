@@ -9,7 +9,17 @@ set -euo pipefail
 # Context percentage may be available as environment variable
 USAGE_PCT="${CLAUDE_CONTEXT_USAGE_PERCENT:-0}"
 
-# Skip if percentage not available
+# ── Log hook event to unified DuckDB (fires unconditionally on every PostToolUse) ──
+# Moved before the USAGE_PCT guard so hook_events receives real data even when
+# CLAUDE_CONTEXT_USAGE_PERCENT is unset (which is the common case).
+# Fix: llm#491-a — tables were dead because this block was inside the USAGE_PCT>0 guard.
+_log_script="$HOME/.claude/scripts/log_session.sh"
+if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
+  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+  [ -n "$_sid" ] && "$_log_script" hook "$_sid" "$(basename "$(pwd)")" "ctx=${USAGE_PCT}%" "context_monitor" "PostToolUse" 2>/dev/null || true
+fi
+
+# Skip context-threshold warnings if percentage not available
 if [ "$USAGE_PCT" -eq 0 ] 2>/dev/null; then
   exit 0
 fi
@@ -30,13 +40,6 @@ if [ "$((_bc % BURN_INTERVAL))" -eq 0 ]; then
       *CRITICAL*|*WARN*) echo "$_burn_msg" ;;
     esac
   fi
-fi
-
-# ── Log hook event to unified DuckDB ──────────────────────────────────
-_log_script="$HOME/.claude/scripts/log_session.sh"
-if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
-  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
-  [ -n "$_sid" ] && "$_log_script" hook "$_sid" "$(basename "$(pwd)")" "ctx=${USAGE_PCT}%" "context_monitor" "PostToolUse" 2>/dev/null || true
 fi
 
 if [ "$USAGE_PCT" -ge 90 ]; then

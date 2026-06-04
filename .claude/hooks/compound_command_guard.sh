@@ -242,4 +242,13 @@ Subshells are allowed; bare && chains are not.
 To disable this guard temporarily: COMPOUND_GUARD_MODE=off <command>
 EOF
 
+# ── Log blocked event to unified DuckDB errors table (llm#491-a) ──────
+_log_script="$HOME/.claude/scripts/log_session.sh"
+if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
+  _sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
+  if [ -n "$_sid" ]; then
+    "$_log_script" error "$_sid" "$(basename "$(pwd)")" "BLOCKED: compound operator(s) ${DETECTED}" "compound_guard" 2>/dev/null || true
+  fi
+fi
+
 exit 1
