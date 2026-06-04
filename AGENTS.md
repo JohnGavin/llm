@@ -72,11 +72,11 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 | `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
 | `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
 
-## Skills (65)
+## Skills (73)
 
 Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · Targets · Shiny · Quarto · Prose · DevOps · PM · AI · Specialized). Mandatory subset enforced via the `**Mandatory skills:**` line above.
 
-## Commands (15)
+## Commands (20)
 
 `/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`, `/skillify`
 
@@ -109,7 +109,7 @@ Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · 
 
 `deploy-new-project.md`, `onboard-dataset.md`, `debug-ci-failure.md`, `publish-vignette.md`
 
-## Rules (54)
+## Rules (67)
 
 Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
 
@@ -117,7 +117,7 @@ Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data 
 
 `session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `skill_quality_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
 
-## Memory (16 files at `.claude/memory/`)
+## Memory (18 files at `.claude/memory/`)
 
 In-repo at `.claude/memory/`; the runtime path `~/.claude/projects/-Users-johngavin-docs-gh-llm/memory` is a symlink into this directory (#144).
 
