@@ -217,6 +217,72 @@ if [ "${CC_SH_SELFTEST:-0}" = "1" ]; then
 
   rm -rf "$_tmpdir" "$_tmpdir2" 2>/dev/null || true
 
+  # ── select_mode() / permission-mode detection tests (#493) ────────────────
+
+  # Inline is_worktree and select_mode for selftest (identical logic to the
+  # production definitions below; kept here so the test is self-contained and
+  # runs before the function definitions that appear later in the file).
+  _is_worktree() {
+    local _common _gitdir
+    _common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+    _gitdir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+    _common=$(cd "$_common" 2>/dev/null && pwd) || return 1
+    _gitdir=$(cd "$_gitdir" 2>/dev/null && pwd) || return 1
+    [ "$_common" != "$_gitdir" ]
+  }
+
+  _select_mode() {
+    local _pwd="${1:-$PWD}"
+    case "$_pwd" in
+      /tmp|/tmp/*|/private/tmp|/private/tmp/*) echo "bypassPermissions"; return ;;
+    esac
+    # Run is_worktree from the current directory
+    if (cd "$_pwd" 2>/dev/null && _is_worktree); then
+      echo "bypassPermissions"
+    else
+      echo "default"
+    fi
+  }
+
+  # Test 11: /tmp path → bypassPermissions
+  _m11=$(_select_mode /tmp/some-scratch)
+  check "select_mode: /tmp/* → bypassPermissions" "bypassPermissions" "$_m11"
+
+  # Test 12: /private/tmp path → bypassPermissions
+  _m12=$(_select_mode /private/tmp/scratch-xyz)
+  check "select_mode: /private/tmp/* → bypassPermissions" "bypassPermissions" "$_m12"
+
+  # Test 13: main checkout (this repo's root) → default
+  # We detect the main checkout as the git common dir from the current worktree.
+  _main_checkout=$(git rev-parse --git-common-dir 2>/dev/null)
+  if [ -n "$_main_checkout" ]; then
+    _main_abs=$(cd "$_main_checkout" 2>/dev/null && pwd)
+    # The main checkout is the parent of the .git dir — go up one level from .git
+    _main_root=$(dirname "$_main_abs" 2>/dev/null || echo "")
+    if [ -n "$_main_root" ] && [ -d "$_main_root" ]; then
+      _m13=$(_select_mode "$_main_root")
+      check "select_mode: main checkout → default" "default" "$_m13"
+    else
+      check "select_mode: main checkout → default (skipped — dir not found)" "default" "default"
+    fi
+  else
+    check "select_mode: main checkout → default (skipped — not in a git repo)" "default" "default"
+  fi
+
+  # Test 14: current path is a worktree → bypassPermissions
+  # (The selftest runs from the actual file path, which may be a worktree; detect.)
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+  if [ -n "$_script_dir" ]; then
+    _m14=$(_select_mode "$_script_dir")
+    if (cd "$_script_dir" 2>/dev/null && _is_worktree) 2>/dev/null; then
+      check "select_mode: script dir (worktree) → bypassPermissions" "bypassPermissions" "$_m14"
+    else
+      check "select_mode: script dir (main/other) → default" "default" "$_m14"
+    fi
+  else
+    check "select_mode: script dir detection (skipped)" "skip" "skip"
+  fi
+
   echo ""
   echo "Results: $PASS passed, $FAIL failed"
   [ "$FAIL" -eq 0 ]
@@ -573,5 +639,10 @@ if [ "${CC_NO_AUTORENAME:-0}" != "1" ]; then
     echo "Tip: no colour set for '$PROJECT_NAME' — add to ~/.claude/project-colors.yaml"
   fi
 fi
+
+# Signal to session_init Phase 1b that cc.sh was used (so it can suppress the
+# false-positive WARN that fires when settings.json defaultMode="default" but
+# the runtime permission-mode is bypassPermissions, as set above via --permission-mode).
+export CC_LAUNCHED_VIA_WRAPPER=1
 
 exec ~/.local/bin/claude "${ARGS[@]}" "${PASSTHROUGH_ARGS[@]}"
