@@ -75,8 +75,21 @@ phase_perm_mode() {
   fi
   if [ "$current" = "$expected" ]; then
     echo "Permission Mode: ok ($kind → $expected)"
+  elif [ "$kind" = "worktree" ] || [ "$kind" = "scratch" ]; then
+    # Worktree/scratch running in 'default' mode — provide concrete relaunch hint.
+    # Detect whether cc.sh was used (it exports CC_LAUNCHED_VIA_WRAPPER=1 before exec).
+    if [ "${CC_LAUNCHED_VIA_WRAPPER:-0}" = "1" ]; then
+      # cc.sh was used but settings.json still says 'default' (static field — harmless
+      # false-positive; runtime permission mode is correctly bypassPermissions).
+      echo "Permission Mode: ok ($kind → $expected via cc.sh; settings.json defaultMode is static)"
+    else
+      echo "Permission Mode: WARN workspace=$kind expected=$expected actual=$current"
+      echo "  → Relaunch via: ~/.claude/scripts/cc.sh (sets --permission-mode bypassPermissions)"
+      echo "  → Or set CLAUDE_ALLOW_DEFAULT_IN_WORKTREE=1 to suppress (not recommended)"
+      echo "  → See permission-discipline rule Part 1"
+    fi
   else
-    echo "Permission Mode: WARN workspace=$kind expected=$expected actual=$current — see permission-mode-discipline rule"
+    echo "Permission Mode: WARN workspace=$kind expected=$expected actual=$current — see permission-discipline rule"
   fi
 }
 
