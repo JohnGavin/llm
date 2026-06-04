@@ -377,6 +377,16 @@
                 ]
             },
             {
+                "matcher": "Edit|Write",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/mermaid_dashboard_guard.sh",
+                        "timeout": 5
+                    }
+                ]
+            },
+            {
                 "matcher": "Bash",
                 "hooks": [
                     {
