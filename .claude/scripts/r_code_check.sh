@@ -19,6 +19,10 @@
 #   r_code_check.sh [TARGET_DIR] [--json]
 #   r_code_check.sh R/
 #   r_code_check.sh ~/docs_gh/proj/mypackage/R/ --json
+#
+# Also runs check_qmd_fence_parity.sh on any *.qmd files in the project root
+# vignettes/ and docs/ directories (parallel to TARGET_DIR).
+# See JohnGavin/llm#465.
 
 set -euo pipefail
 
@@ -115,5 +119,38 @@ else
   echo "  Note: jarl is not available on GitHub Actions runners."
 fi
 
-# Exit code: 1 if any errors (ast-grep or jarl), 0 if clean or warnings only
-[ "$n_error" -gt 0 ] || [ "$jarl_errors" -gt 0 ] && exit 1 || exit 0
+# ─── Quarto fence parity check (llm#465) ────────────────────────────────────
+# Run check_qmd_fence_parity.sh on vignettes/ and docs/ relative to TARGET_DIR
+# so staged .qmd edits are caught at pre-commit time.
+QMD_FENCE_SCRIPT="$(dirname "$0")/check_qmd_fence_parity.sh"
+qmd_errors=0
+if [ -x "$QMD_FENCE_SCRIPT" ]; then
+  echo ""
+  echo "=== Quarto Fence Parity Check ==="
+  # Derive project root from TARGET_DIR: walk up until we find a DESCRIPTION or .git
+  PROJ_ROOT="$TARGET_DIR"
+  while [ "$PROJ_ROOT" != "/" ] && [ ! -f "$PROJ_ROOT/DESCRIPTION" ] && [ ! -d "$PROJ_ROOT/.git" ]; do
+    PROJ_ROOT=$(dirname "$PROJ_ROOT")
+  done
+  qmd_exit=0
+  for qmd_dir in "$PROJ_ROOT/vignettes" "$PROJ_ROOT/docs"; do
+    if [ -d "$qmd_dir" ]; then
+      if ! "$QMD_FENCE_SCRIPT" "$qmd_dir"; then
+        qmd_exit=1
+      fi
+    fi
+  done
+  if [ "$qmd_exit" -ne 0 ]; then
+    echo "Quarto fence parity: FAIL — fix orphan triple-backtick fences above"
+    qmd_errors=1
+  else
+    echo "Quarto fence parity: OK"
+  fi
+else
+  echo ""
+  echo "=== Quarto Fence Parity Check ==="
+  echo "check_qmd_fence_parity.sh not found at $QMD_FENCE_SCRIPT — skipping"
+fi
+
+# Exit code: 1 if any errors (ast-grep, jarl, or qmd fence), 0 if clean or warnings only
+[ "$n_error" -gt 0 ] || [ "$jarl_errors" -gt 0 ] || [ "$qmd_errors" -gt 0 ] && exit 1 || exit 0
