@@ -28,6 +28,23 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
+# ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !is.na(a[1])) a else b
+
+.scripts_dir_s1 <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                          ".claude", "scripts", "email_styles.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_s1, "email_styles.R"))
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 UNIFIED_DUCKDB <- Sys.getenv(
@@ -83,18 +100,21 @@ if (n_findings == 0L) {
 }
 
 # ── Colour palette (dark-mode safe, matches send_roborev_email.R) ─────────────
+# Note: DARK_BG, DARK_CARD, DARK_ROW_ALT, DARK_TEXT, DARK_MUTED, DARK_BORDER,
+#       ACCENT_GREEN, ACCENT_BLUE, ACCENT_ORANGE, ACCENT_PURPLE now from email_styles.R
+# Local aliases for backward-compat with the helper functions below:
 
-dark_bg       <- "#1a1a2e"
-dark_card     <- "#16213e"
-dark_row_alt  <- "#0f3460"
-dark_text     <- "#e8e8e8"
-dark_muted    <- "#a0a0a0"
-dark_border   <- "#2a2a4a"
-accent_green  <- "#00d26a"
-accent_blue   <- "#4fc3f7"
-accent_orange <- "#ff9800"
+dark_bg       <- DARK_BG
+dark_card     <- DARK_CARD
+dark_row_alt  <- DARK_ROW_ALT
+dark_text     <- DARK_TEXT
+dark_muted    <- DARK_MUTED
+dark_border   <- DARK_BORDER
+accent_green  <- ACCENT_GREEN
+accent_blue   <- ACCENT_BLUE
+accent_orange <- ACCENT_ORANGE
 accent_red    <- "#f08080"
-accent_purple <- "#bb86fc"
+accent_purple <- ACCENT_PURPLE
 
 severity_colour <- function(sev) {
   switch(
@@ -106,8 +126,6 @@ severity_colour <- function(sev) {
     accent_blue
   )
 }
-
-`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !is.na(a[1])) a else b
 
 # ── Truncate evidence JSON to ~200 chars ──────────────────────────────────────
 
@@ -140,23 +158,24 @@ build_group_table <- function(group_df) {
 
   header <- sprintf(
     '<h4 style="color:%s; margin:16px 0 6px 0;">
-       %s &nbsp;<span style="color:%s; font-size:11px;">[%s]</span>
-       &nbsp;<span style="color:%s; font-size:11px;">(%d finding%s)</span>
+       %s &nbsp;<span style="color:%s; font-size:%s;">[%s]</span>
+       &nbsp;<span style="color:%s; font-size:%s;">(%d finding%s)</span>
      </h4>',
     sev_col,
     htmltools_escape(type_val),
-    sev_col, htmltools_escape(sev_val),
-    dark_muted, n_rows, if (n_rows == 1L) "" else "s"
+    sev_col, EMAIL_FONT_SUBTITLE, htmltools_escape(sev_val),
+    dark_muted, EMAIL_FONT_SUBTITLE, n_rows, if (n_rows == 1L) "" else "s"
   )
 
   table_open <- sprintf(
-    '<table style="border-collapse:collapse; width:100%%; font-size:11px; margin-bottom:10px;">
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s; margin-bottom:10px;">
        <tr style="background-color:%s;">
          <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Finding ID</th>
          <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Session</th>
          <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Evidence</th>
          <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Detected</th>
        </tr>',
+    EMAIL_FONT_BODY,
     dark_row_alt,
     dark_border, dark_border, dark_border, dark_border
   )
@@ -173,20 +192,26 @@ build_group_table <- function(group_df) {
     detected_str <- format(as.POSIXct(row$detected_at), "%Y-%m-%d %H:%M", tz = "UTC")
     rows_html <- paste0(rows_html, sprintf(
       '<tr style="background-color:%s;">
-         <td style="padding:4px 6px; border:1px solid %s; color:%s; font-size:10px;">%s</td>
-         <td style="padding:4px 6px; border:1px solid %s; color:%s; font-size:10px;">%s</td>
+         <td style="padding:4px 6px; border:1px solid %s; color:%s; font-size:%s;">%s</td>
+         <td style="padding:4px 6px; border:1px solid %s; color:%s; font-size:%s;">%s</td>
          <td style="padding:4px 6px; border:1px solid %s; color:%s;">%s</td>
          <td style="padding:4px 6px; border:1px solid %s; color:%s; white-space:nowrap;">%s</td>
        </tr>',
       bg,
-      dark_border, accent_blue, htmltools_escape(row$finding_id %||% ""),
-      dark_border, dark_muted,  session_short,
+      dark_border, accent_blue, EMAIL_FONT_FOOTER, htmltools_escape(row$finding_id %||% ""),
+      dark_border, dark_muted,  EMAIL_FONT_FOOTER, session_short,
       dark_border, dark_text,   truncate_evidence(row$evidence),
       dark_border, dark_muted,  detected_str
     ))
   }
 
-  paste0(header, table_open, rows_html, "</table>")
+  table_html <- paste0(table_open, rows_html, "</table>")
+  collapsible_block(
+    title         = paste0(htmltools_escape(type_val),
+                           " [", htmltools_escape(sev_val), "]"),
+    summary_stats = paste0(n_rows, " finding", if (n_rows == 1L) "" else "s"),
+    html_body     = paste0(header, table_html)
+  )
 }
 
 # Minimal HTML escaping (htmltools not always available in nix env)
@@ -230,22 +255,22 @@ email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
                font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">
 <h2 style="color:%s; margin-bottom:4px;">Stage 1 Self-Review Findings &mdash; %s</h2>
-<p style="color:%s; font-size:11px; margin-top:0; margin-bottom:16px;">
+<p style="color:%s; font-size:%s; margin-top:0; margin-bottom:16px;">
   %d finding%s in the last 24 hours &nbsp;|&nbsp; Generated: %s UTC
 </p>
 %s
-<p style="color:%s; font-size:10px; margin-top:20px;">
+<p style="color:%s; font-size:%s; margin-top:20px;">
   Source: %s &nbsp;|&nbsp; Table: self_review_findings_stage1
 </p>
 %s
 </div>',
   dark_bg, dark_text,
   accent_orange, report_date,
-  dark_muted,
+  dark_muted, EMAIL_FONT_SUBTITLE,
   n_findings, if (n_findings == 1L) "" else "s",
   format(Sys.time(), "%Y-%m-%d %H:%M", tz = "UTC"),
   groups_html,
-  dark_muted, UNIFIED_DUCKDB,
+  dark_muted, EMAIL_FONT_FOOTER, UNIFIED_DUCKDB,
   qa_markers
 )
 
