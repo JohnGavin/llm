@@ -36,6 +36,7 @@ Update this table in the same commit.
 | 13d | roborev Backlog Banner | Open count + addressed rate from roborev DB | `roborev-backlog: open=N …` |
 | 14a | T-lang Closure-Rebuild | Warns if `flake.nix` missing closure-rebuild marker | WARN block if any projects affected |
 | 14b | CI-Failure Issues | Counts open GitHub issues labeled `ci-failure` | One line if N>=1; silent if N=0 |
+| 15a | ETL Freshness Alarm | Checks age of most-recent row in 5 unified.duckdb tables; GREEN/AMBER/RED/CRITICAL. Skipped if `CLAUDE_ETL_FRESHNESS_CHECK=0`. 5s timeout, fail-open. See JohnGavin/llm#491. | Silent when all GREEN; one `etl-freshness: N RED, N AMBER, …` line when any table is non-GREEN |
 | 14 | Session-Start SHA | Records HEAD SHA for session-end roborev refine | Silent (infrastructure) |
 
 ## Adding a New Phase
