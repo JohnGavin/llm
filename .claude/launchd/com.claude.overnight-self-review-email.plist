@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.overnight-self-review-email.plist
+     Overnight self-review digest email — surfaces ETL starvation and new
+     self-review findings from unified.duckdb. Sends a collapsible HTML email
+     at 06:30 daily (after self-review-stage1 at 02:30).
+
+     Install:
+       cp .claude/launchd/com.claude.overnight-self-review-email.plist \
+          ~/Library/LaunchAgents/com.claude.overnight-self-review-email.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.overnight-self-review-email.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.overnight-self-review-email.plist
+       rm ~/Library/LaunchAgents/com.claude.overnight-self-review-email.plist
+
+     Manual dry-run (no SMTP, prints HTML to log):
+       EMAIL_DRY_RUN=1 Rscript ~/docs_gh/llm/.claude/scripts/send_overnight_self_review_email.R
+
+     Credentials (set in ~/.claude/env/overnight_email.env or ~/.Renviron):
+       GMAIL_USERNAME=you@gmail.com
+       GMAIL_APP_PASSWORD=<16-char app password>
+       REPORT_RECIPIENT=you@gmail.com
+
+     Tracked in llm#491.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.overnight-self-review-email</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/nix/var/nix/profiles/default/bin/Rscript</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/send_overnight_self_review_email.R</string>
+    </array>
+
+    <!-- Daily at 06:30 local time (after self-review-stage1 at 02:30) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- PATH includes nix profile (for R + packages), homebrew, and standard dirs.
+         HOME is required for ~/.Renviron credential loading.
+         NIX_SSL_CERT_FILE is required for any nix-shell network calls. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/overnight_self_review_email_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/overnight_self_review_email_launchd.log</string>
+
+    <!-- Retry interval (seconds) if job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
