@@ -148,15 +148,24 @@ accent_orange <- ACCENT_ORANGE
 #
 # Simple line-by-line conversion.  We don't pull in a full markdown parser
 # to avoid adding a dependency; the digest format is tightly controlled.
+#
+# Each ## section is wrapped in collapsible_block() (from email_styles.R) so
+# readers can expand/collapse sections just like other daily digests.  Any
+# content before the first ## line is emitted unwrapped as a preamble.
 
-md_to_html_section <- function(md_text) {
-  lines <- strsplit(md_text, "\n")[[1L]]
+# Simple HTML escaper (avoids htmltools dependency)
+htmlEscape <- function(text) {
+  text <- gsub("&", "&amp;", text)
+  text <- gsub("<", "&lt;", text)
+  text <- gsub(">", "&gt;", text)
+  text <- gsub("\"", "&quot;", text)
+  text
+}
+
+# Convert a vector of lines (excluding the leading ## heading line) to HTML.
+lines_to_html <- function(lines) {
   html_lines <- vapply(lines, function(line) {
-    if (grepl("^## ", line)) {
-      h2_text <- sub("^## ", "", line)
-      sprintf('<h2 style="color:%s; margin-top:24px; margin-bottom:8px;">%s</h2>',
-              accent_orange, htmlEscape(h2_text))
-    } else if (grepl("^### ", line)) {
+    if (grepl("^### ", line)) {
       h3_text <- sub("^### ", "", line)
       sprintf('<h3 style="color:%s; margin-top:16px; margin-bottom:6px;">%s</h3>',
               accent_blue, htmlEscape(h3_text))
@@ -184,20 +193,70 @@ md_to_html_section <- function(md_text) {
   paste(html_lines, collapse = "\n")
 }
 
-# Simple HTML escaper (avoids htmltools dependency)
-htmlEscape <- function(text) {
-  text <- gsub("&", "&amp;", text)
-  text <- gsub("<", "&lt;", text)
-  text <- gsub(">", "&gt;", text)
-  text <- gsub("\"", "&quot;", text)
-  text
+# Derive a one-line summary for a section from its body lines.
+section_summary_stats <- function(body_lines) {
+  n_list  <- sum(grepl("^- ", body_lines))
+  n_table <- sum(grepl("^\\| ", body_lines))
+  n_items <- n_list + n_table
+  if (n_items > 0L) {
+    return(sprintf("%d item%s", n_items, if (n_items == 1L) "" else "s"))
+  }
+  # Fallback: first non-empty, non-separator line truncated to 60 chars
+  first_line <- Filter(function(l) nzchar(trimws(l)) && !grepl("^---$", l), body_lines)
+  if (length(first_line) > 0L) {
+    raw <- trimws(first_line[[1L]])
+    if (nchar(raw) > 60L) raw <- paste0(substr(raw, 1L, 57L), "...")
+    return(htmlEscape(raw))
+  }
+  ""
+}
+
+md_to_html_section <- function(md_text) {
+  lines <- strsplit(md_text, "\n")[[1L]]
+
+  # Find indices of ## heading lines
+  h2_idx <- which(grepl("^## ", lines))
+
+  # Preamble: everything before the first ## heading
+  preamble_html <- if (length(h2_idx) == 0L || h2_idx[[1L]] > 1L) {
+    preamble_end <- if (length(h2_idx) > 0L) h2_idx[[1L]] - 1L else length(lines)
+    lines_to_html(lines[seq_len(preamble_end)])
+  } else {
+    ""
+  }
+
+  # No ## sections at all — fall back to flat conversion
+  if (length(h2_idx) == 0L) {
+    return(lines_to_html(lines))
+  }
+
+  # Build one collapsible_block per ## section
+  section_blocks <- vapply(seq_along(h2_idx), function(i) {
+    heading_line  <- lines[h2_idx[[i]]]
+    section_title <- sub("^## ", "", heading_line)
+
+    body_start <- h2_idx[[i]] + 1L
+    body_end   <- if (i < length(h2_idx)) h2_idx[[i + 1L]] - 1L else length(lines)
+    body_lines <- if (body_start <= body_end) lines[body_start:body_end] else character(0L)
+
+    stats     <- section_summary_stats(body_lines)
+    body_html <- lines_to_html(body_lines)
+
+    collapsible_block(
+      title         = htmlEscape(section_title),
+      summary_stats = stats,
+      html_body     = body_html
+    )
+  }, character(1L))
+
+  paste(c(preamble_html, section_blocks), collapse = "\n")
 }
 
 body_inner <- md_to_html_section(digest_md)
 
 # QA markers (tested by test-kb-digest-email.R)
 qa_markers <- sprintf(
-  '<!-- QA:kb_digest_date=%s --><!-- QA:kb_privacy=local_smtp_only -->',
+  '<!-- QA:kb_digest_date=%s --><!-- QA:kb_privacy=local_smtp_only --><!-- QA:kb_collapsible=true -->',
   report_date
 )
 
