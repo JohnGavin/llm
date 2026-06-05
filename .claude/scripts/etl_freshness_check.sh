@@ -8,6 +8,8 @@
 #   etl_freshness_check.sh              # normal — prints compact summary
 #   etl_freshness_check.sh --quiet      # one-line summary only (machine-parseable)
 #   etl_freshness_check.sh --verbose    # full per-table report
+#   etl_freshness_check.sh --list-tables # print tracked table set and exit 0
+#   etl_freshness_check.sh --no-discover # skip auto-discovery of untracked stale tables
 #   etl_freshness_check.sh --selftest   # run self-tests against fixture DBs
 #
 # Exit codes:
@@ -62,11 +64,19 @@ THRESH_RED=2592000        # 30 days
 # Format: "table_name:ts_column[:rate_check]"
 #   rate_check = "rate" triggers 7-day average rate AMBER check (< 5 rows/day)
 TRACKED_TABLES=(
+    # ── Core session infrastructure ────────────────────────────────────────
     "hook_events:fired_at:rate"
     "errors:logged_at"
     "agent_runs:started_at:rate"
     "sessions:started_at"
     "self_review_findings_stage1:detected_at"
+    # ── Roborev pipeline — produced by com.claude.roborev-metrics-etl @ 02:00 daily
+    "roborev_review_lifecycle:created_at:rate"
+    "roborev_finding_lineage:created_at"
+    "roborev_finding_lineage_summary:closed_at_last"
+    "roborev_daily_metrics:etl_run_at"
+    # ── Roborev event-driven (sparse; no rate check) ───────────────────────
+    "roborev_threshold_changes:changed_at_utc"
 )
 
 # ─── Severity colour codes (only when a terminal) ────────────────────────────
@@ -80,15 +90,18 @@ else
 fi
 
 # ─── Argument parsing ─────────────────────────────────────────────────────────
-MODE="normal"   # normal | quiet | verbose | selftest
+MODE="normal"   # normal | quiet | verbose | selftest | list-tables
+DISCOVER=1      # 1=auto-discover untracked stale tables; 0=skip
 
 for arg in "$@"; do
     case "${arg}" in
-        --quiet)   MODE="quiet" ;;
-        --verbose) MODE="verbose" ;;
-        --selftest) MODE="selftest" ;;
+        --quiet)        MODE="quiet" ;;
+        --verbose)      MODE="verbose" ;;
+        --selftest)     MODE="selftest" ;;
+        --list-tables)  MODE="list-tables" ;;
+        --no-discover)  DISCOVER=0 ;;
         *)
-            echo "Usage: $0 [--quiet|--verbose|--selftest]" >&2
+            echo "Usage: $0 [--quiet|--verbose|--selftest|--list-tables|--no-discover]" >&2
             exit 1
             ;;
     esac
@@ -196,6 +209,69 @@ check_table() {
     fi
 }
 
+# ─── discover_untracked_stale: warn about tables NOT in TRACKED_TABLES ───────
+# Emits INFO lines for tables whose MAX(ts) > 7d that we are not tracking.
+# Does NOT affect exit code (fail-open: informational only).
+discover_untracked_stale() {
+    local db_path="$1"
+    if [[ ! -f "${db_path}" ]]; then return 0; fi
+
+    # Build a | -separated list of already-tracked table names for fast exclusion
+    local tracked_set=""
+    local spec
+    for spec in "${TRACKED_TABLES[@]}"; do
+        local tname="${spec%%:*}"
+        tracked_set+="${tname}|"
+    done
+    tracked_set="${tracked_set%|}"  # strip trailing |
+
+    # Get all user-table names from the DB
+    local all_tables
+    all_tables=$(duck_run "${db_path}" -init /dev/null -noheader -list \
+        -c "SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY 1" \
+        2>/dev/null || true)
+
+    if [[ -z "${all_tables}" ]]; then return 0; fi
+
+    local tname
+    while IFS= read -r tname; do
+        [[ -z "${tname}" ]] && continue
+        # Skip if already tracked
+        if echo "${tracked_set}" | grep -qE "(^|\\|)${tname}(\\||$)"; then
+            continue
+        fi
+
+        # Try common timestamp column names; use the first that exists
+        local ts_candidate age_sec max_ts now_sec
+        for ts_col in ts created_at logged_at started_at fired_at updated_at captured_at date; do
+            local col_exists
+            col_exists=$(duck_run "${db_path}" -init /dev/null -noheader -list \
+                -c "SELECT count(*) FROM information_schema.columns
+                    WHERE table_name='${tname}' AND column_name='${ts_col}'" \
+                2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "0")
+            if [[ "${col_exists:-0}" -eq 1 ]]; then
+                ts_candidate="${ts_col}"
+                break
+            fi
+        done
+        [[ -z "${ts_candidate:-}" ]] && continue
+
+        # Get MAX; use CAST in case column is DATE not TIMESTAMP
+        max_ts=$(duck_run "${db_path}" -init /dev/null -noheader -list \
+            -c "SELECT epoch(CAST(MAX(${ts_candidate}) AS TIMESTAMP)) FROM ${tname} WHERE ${ts_candidate} IS NOT NULL" \
+            2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1 || echo "0")
+        [[ -z "${max_ts}" || "${max_ts}" == "0" ]] && continue
+
+        max_ts="${max_ts%%.*}"
+        now_sec=$(date +%s)
+        age_sec=$(( now_sec - max_ts ))
+        if [[ "${age_sec}" -gt "${THRESH_AMBER}" ]]; then
+            local age_human="$(( age_sec / 86400 ))d"
+            echo "  INFO: untracked table '${tname}' (${ts_candidate}): latest ${age_human} ago — consider adding to TRACKED_TABLES"
+        fi
+    done <<< "${all_tables}"
+}
+
 # ─── run_checks: populate arrays and return worst exit code ──────────────────
 run_checks() {
     local db_path="${1:-${DB}}"
@@ -269,6 +345,11 @@ run_checks() {
         fi
     fi
 
+    # ── Auto-discovery of untracked stale tables ──────────────────────────
+    if [[ "${DISCOVER}" -eq 1 ]] && [[ "${MODE}" != "quiet" ]]; then
+        discover_untracked_stale "${db_path}"
+    fi
+
     return "${exit_code}"
 }
 
@@ -308,8 +389,8 @@ selftest() {
     fi
 
     # Fresh fixture DB
-    # Rate-checked tables (hook_events, agent_runs) need >35 rows in 7 days
-    # to pass the 5-rows/day threshold check (5*7=35).
+    # Rate-checked tables (hook_events, agent_runs, roborev_review_lifecycle) need >35 rows
+    # in 7 days to pass the 5-rows/day threshold check (5*7=35).
     local fresh_db="/tmp/etl_freshness_fresh_${pid}.duckdb"
     rm -f "${fresh_db}"
     duck_run "${fresh_db}" -c "
@@ -325,6 +406,18 @@ selftest() {
         INSERT INTO sessions VALUES (current_timestamp);
         CREATE TABLE self_review_findings_stage1 (detected_at TIMESTAMP);
         INSERT INTO self_review_findings_stage1 VALUES (current_timestamp);
+        CREATE TABLE roborev_review_lifecycle (created_at TIMESTAMP);
+        INSERT INTO roborev_review_lifecycle
+            SELECT current_timestamp - INTERVAL (i * 1 || ' HOUR') AS created_at
+            FROM range(40) t(i);
+        CREATE TABLE roborev_finding_lineage (created_at TIMESTAMP);
+        INSERT INTO roborev_finding_lineage VALUES (current_timestamp);
+        CREATE TABLE roborev_finding_lineage_summary (closed_at_last TIMESTAMP);
+        INSERT INTO roborev_finding_lineage_summary VALUES (current_timestamp);
+        CREATE TABLE roborev_daily_metrics (etl_run_at TIMESTAMP);
+        INSERT INTO roborev_daily_metrics VALUES (current_timestamp);
+        CREATE TABLE roborev_threshold_changes (changed_at_utc TIMESTAMP);
+        INSERT INTO roborev_threshold_changes VALUES (current_timestamp);
     " >/dev/null 2>&1
 
     # Test 2: all tables fresh → all GREEN, exit 0
@@ -380,8 +473,54 @@ selftest() {
     r5=$(ETL_FRESHNESS_DB="${sparse_db}" DB="${sparse_db}" check_table "agent_runs:started_at:rate")
     _assert "sparse-rate-AMBER" "${r5%%:*}" "AMBER"
 
+    # Test 6: roborev_review_lifecycle fresh → GREEN
+    local roborev_fresh_db="/tmp/etl_freshness_roborev_fresh_${pid}.duckdb"
+    rm -f "${roborev_fresh_db}"
+    duck_run "${roborev_fresh_db}" -c "
+        CREATE TABLE roborev_review_lifecycle (created_at TIMESTAMP);
+        INSERT INTO roborev_review_lifecycle
+            SELECT current_timestamp - INTERVAL (i * 1 || ' HOUR') AS created_at
+            FROM range(40) t(i);
+    " >/dev/null 2>&1
+    local r6
+    r6=$(ETL_FRESHNESS_DB="${roborev_fresh_db}" DB="${roborev_fresh_db}" \
+         check_table "roborev_review_lifecycle:created_at:rate")
+    _assert "roborev_review_lifecycle-fresh-GREEN" "${r6%%:*}" "GREEN"
+
+    # Test 7: roborev_review_lifecycle 5-days-old → AMBER
+    local roborev_stale_db="/tmp/etl_freshness_roborev_stale_${pid}.duckdb"
+    rm -f "${roborev_stale_db}"
+    duck_run "${roborev_stale_db}" -c "
+        CREATE TABLE roborev_review_lifecycle (created_at TIMESTAMP);
+        INSERT INTO roborev_review_lifecycle VALUES (current_timestamp - INTERVAL 5 DAY);
+    " >/dev/null 2>&1
+    local r7
+    r7=$(ETL_FRESHNESS_DB="${roborev_stale_db}" DB="${roborev_stale_db}" \
+         check_table "roborev_review_lifecycle:created_at:rate")
+    _assert "roborev_review_lifecycle-5d-AMBER" "${r7%%:*}" "AMBER"
+
+    # Test 8: auto-discover finds an untracked table 8d stale → INFO line emitted
+    local discover_db="/tmp/etl_freshness_discover_${pid}.duckdb"
+    rm -f "${discover_db}"
+    duck_run "${discover_db}" -c "
+        CREATE TABLE untracked_widget (created_at TIMESTAMP);
+        INSERT INTO untracked_widget VALUES (current_timestamp - INTERVAL 8 DAY);
+    " >/dev/null 2>&1
+    local r8
+    r8=$(ETL_FRESHNESS_DB="${discover_db}" DB="${discover_db}" DISCOVER=1 \
+         discover_untracked_stale "${discover_db}")
+    local r8_found
+    r8_found=$(echo "${r8}" | grep -c "untracked_widget" || true)
+    _assert "discover-untracked-8d-INFO" "${r8_found}" "1"
+
+    # Test 9: --list-tables prints tracked table count
+    local r9
+    r9=$(MODE="list-tables" bash "${BASH_SOURCE[0]}" --list-tables 2>/dev/null | head -1)
+    _assert "list-tables-header" "${r9%% *}" "Tracked"
+
     # Cleanup
-    rm -f "${fresh_db}" "${stale_db}" "${empty_db}" "${sparse_db}" "${absent_db}" 2>/dev/null || true
+    rm -f "${fresh_db}" "${stale_db}" "${empty_db}" "${sparse_db}" "${absent_db}" \
+          "${roborev_fresh_db}" "${roborev_stale_db}" "${discover_db}" 2>/dev/null || true
 
     echo "─────────────────────────────"
     echo "Selftest: ${pass} PASS, ${fail} FAIL"
@@ -392,6 +531,19 @@ selftest() {
 if [[ "${MODE}" == "selftest" ]]; then
     selftest
     exit $?
+fi
+
+if [[ "${MODE}" == "list-tables" ]]; then
+    echo "Tracked tables (${#TRACKED_TABLES[@]}):"
+    for _lt_spec in "${TRACKED_TABLES[@]}"; do
+        _lt_tname="${_lt_spec%%:*}"
+        _lt_rest="${_lt_spec#*:}"
+        _lt_ts_col="${_lt_rest%%:*}"
+        _lt_rate_flag=""
+        [[ "${_lt_rest}" == *":rate" ]] && _lt_rate_flag=" [rate-check]"
+        echo "  ${_lt_tname}:${_lt_ts_col}${_lt_rate_flag}"
+    done
+    exit 0
 fi
 
 # ─── Guard: DB must exist ────────────────────────────────────────────────────
