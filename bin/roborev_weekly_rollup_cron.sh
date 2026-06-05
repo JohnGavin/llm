@@ -48,6 +48,21 @@ else
   export EMAIL_DRY_RUN
 fi
 
+# ── Deploy: pull latest main before running (llm#510) ─────────────────────────
+# Cron wrappers run against ${REPO_DIR}; without this step every gh pr merge
+# ships nothing — the cron uses whatever was last manually pulled to the main
+# checkout. The fast-forward is silent on success and never overwrites local
+# work because of --ff-only.
+if [ -z "${SKIP_CRON_PULL:-}" ]; then
+    git -C "${REPO_DIR}" fetch origin main 2>/dev/null
+    if git -C "${REPO_DIR}" merge --ff-only origin/main 2>/dev/null; then
+        log "deploy: ff to $(git -C "${REPO_DIR}" rev-parse --short HEAD)"
+    else
+        log "deploy WARN: ff-only failed — running against $(git -C "${REPO_DIR}" rev-parse --short HEAD)"
+    fi
+fi
+log "HEAD: $(git -C "${REPO_DIR}" rev-parse --short HEAD) $(git -C "${REPO_DIR}" log -1 --format='%s')"
+
 # ── Locate Rscript ────────────────────────────────────────────────────────────
 RSCRIPT=""
 for candidate in \
