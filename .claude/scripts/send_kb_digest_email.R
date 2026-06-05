@@ -254,10 +254,544 @@ md_to_html_section <- function(md_text) {
 
 body_inner <- md_to_html_section(digest_md)
 
-# QA markers (tested by test-kb-digest-email.R)
-qa_markers <- sprintf(
-  '<!-- QA:kb_digest_date=%s --><!-- QA:kb_privacy=local_smtp_only --><!-- QA:kb_collapsible=true -->',
-  report_date
+# ── Signal #479: Fix/revert commits without KB reference (last 24h) ───────────
+#
+# For commits in the last 24h with fix( / revert( / fix: / revert: subjects,
+# count those whose BODY does NOT mention knowledge/, [[, or wiki/.
+# Table: commit_sha | subject | author
+# QA marker: <!-- QA:kb_signal_479=N -->
+
+compute_fix_no_kb <- function(llm_repo, since_ts) {
+  tryCatch({
+    # Build the --after= date argument
+    ts_to_date <- function(ts) {
+      m <- regmatches(ts, regexpr("^[0-9]{4}-[0-9]{2}-[0-9]{2}", ts))
+      if (length(m) == 0L || !nzchar(m)) return(ts)
+      m
+    }
+    date_arg <- sprintf("--after=%s", ts_to_date(since_ts))
+
+    # Get all commits since cutoff with SHA + subject + author name, body
+    # Format: %H | %s | %an | %b (NULL separator between records)
+    raw_lines <- tryCatch(
+      suppressWarnings(system2(
+        "git",
+        c("-C", llm_repo,
+          "log", "--format=%H\x01%s\x01%an\x01%b\x01END_BODY",
+          date_arg),
+        stdout = TRUE, stderr = FALSE
+      )),
+      error = function(e) character(0L)
+    )
+
+    if (length(raw_lines) == 0L) {
+      return(list(count = 0L, rows = list()))
+    }
+
+    # Parse: collapse into a single string and split on END_BODY
+    all_text <- paste(raw_lines, collapse = "\n")
+    records  <- strsplit(all_text, "\n.*END_BODY\n?", perl = TRUE)[[1L]]
+    records  <- records[nzchar(trimws(records))]
+
+    fix_no_kb <- list()
+
+    for (rec in records) {
+      rec_lines <- strsplit(rec, "\n")[[1L]]
+      if (length(rec_lines) == 0L) next
+
+      # First line: sha | subject | author | (body follows)
+      header_parts <- strsplit(rec_lines[[1L]], "\x01")[[1L]]
+      if (length(header_parts) < 3L) next
+      sha     <- trimws(header_parts[[1L]])
+      subject <- trimws(header_parts[[2L]])
+      author  <- trimws(header_parts[[3L]])
+
+      # Only care about fix/revert commits
+      is_fix_revert <- grepl(
+        "^(fix(|!)|revert(|!))([:(]|$)",
+        subject,
+        ignore.case = TRUE
+      )
+      if (!is_fix_revert) next
+
+      # The body: lines after the first header line
+      body_text <- paste(
+        if (length(rec_lines) > 1L) rec_lines[-1L] else character(0L),
+        collapse = "\n"
+      )
+      # Combine subject + body for KB reference check
+      full_text <- paste(subject, body_text, sep = "\n")
+
+      has_kb_ref <- grepl("knowledge/|\\[\\[|wiki/", full_text, perl = TRUE)
+      if (!has_kb_ref) {
+        fix_no_kb[[length(fix_no_kb) + 1L]] <- list(
+          sha     = substr(sha, 1L, 8L),
+          subject = if (nchar(subject) > 72L) paste0(substr(subject, 1L, 69L), "...") else subject,
+          author  = author
+        )
+      }
+    }
+
+    list(count = length(fix_no_kb), rows = fix_no_kb)
+  }, error = function(e) {
+    message("compute_fix_no_kb: error — ", conditionMessage(e))
+    list(count = 0L, rows = list())
+  })
+}
+
+signal_479 <- compute_fix_no_kb(
+  llm_repo = file.path(Sys.getenv("HOME"), "docs_gh", "llm"),
+  since_ts = since_ts
+)
+
+signal_479_html <- if (signal_479$count == 0L) {
+  collapsible_block(
+    title         = "Fix/revert commits without KB reference (last 24h)",
+    summary_stats = paste0("0 found — all fix/revert commits reference KB"),
+    html_body     = sprintf(
+      '<p style="color:%s; font-style:italic;">No fix/revert commits lacking a KB reference in the last 24h.</p>',
+      DARK_MUTED
+    )
+  )
+} else {
+  rows_html <- paste(vapply(signal_479$rows, function(r) {
+    sprintf(
+      '<tr>
+        <td style="padding:4px 8px; font-family:monospace; color:%s;">%s</td>
+        <td style="padding:4px 8px; color:%s;">%s</td>
+        <td style="padding:4px 8px; color:%s;">%s</td>
+      </tr>',
+      ACCENT_BLUE, htmlEscape(r$sha),
+      DARK_TEXT,   htmlEscape(r$subject),
+      DARK_MUTED,  htmlEscape(r$author)
+    )
+  }, character(1L)), collapse = "\n")
+
+  table_html <- sprintf(
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
+      <thead>
+        <tr style="color:%s; text-align:left;">
+          <th style="padding:4px 8px;">SHA</th>
+          <th style="padding:4px 8px;">Subject</th>
+          <th style="padding:4px 8px;">Author</th>
+        </tr>
+      </thead>
+      <tbody>%s</tbody>
+    </table>',
+    EMAIL_FONT_BODY, DARK_MUTED,
+    rows_html
+  )
+
+  collapsible_block(
+    title         = "Fix/revert commits without KB reference (last 24h)",
+    summary_stats = sprintf("%d commit%s missing KB ref",
+                            signal_479$count,
+                            if (signal_479$count == 1L) "" else "s"),
+    html_body     = table_html
+  )
+}
+
+# QA marker for signal #479
+signal_479_qa <- sprintf(
+  "<!-- QA:kb_signal_479=%d -->", signal_479$count
+)
+
+# ── Signal #480: raw/ files awaiting wiki promotion (>14d) ────────────────────
+#
+# Files under knowledge/raw/ where mtime > 14 days AND no wiki/ file references
+# the filename. Table: file | days_old | size.
+# QA marker: <!-- QA:kb_signal_480=N -->
+
+compute_stale_raw <- function(knowledge_repo) {
+  tryCatch({
+    raw_dir  <- file.path(knowledge_repo, "raw")
+    wiki_dir <- file.path(knowledge_repo, "wiki")
+
+    if (!dir.exists(raw_dir)) return(list(count = 0L, rows = list()))
+
+    raw_files <- list.files(raw_dir, full.names = TRUE, recursive = FALSE)
+    raw_files <- raw_files[!dir.exists(raw_files)]  # files only
+
+    if (length(raw_files) == 0L) return(list(count = 0L, rows = list()))
+
+    # Read all wiki files into a single text blob for reference checking
+    wiki_text <- ""
+    if (dir.exists(wiki_dir)) {
+      wiki_mds <- list.files(wiki_dir, pattern = "\\.md$", full.names = TRUE,
+                              recursive = TRUE)
+      if (length(wiki_mds) > 0L) {
+        wiki_lines <- unlist(lapply(wiki_mds, function(f) {
+          tryCatch(readLines(f, warn = FALSE), error = function(e) character(0L))
+        }))
+        wiki_text <- paste(wiki_lines, collapse = "\n")
+      }
+    }
+
+    now <- Sys.time()
+    stale <- list()
+
+    for (f in raw_files) {
+      info <- tryCatch(file.info(f), error = function(e) NULL)
+      if (is.null(info) || is.na(info$mtime)) next
+
+      days_old <- as.numeric(difftime(now, info$mtime, units = "days"))
+      if (days_old <= 14) next
+
+      # Check if this file's basename is referenced in any wiki file
+      fname <- basename(f)
+      is_referenced <- grepl(fname, wiki_text, fixed = TRUE)
+      if (is_referenced) next
+
+      # Format size
+      size_bytes <- info$size
+      size_str <- if (size_bytes > 1024 * 1024) {
+        sprintf("%.1f MB", size_bytes / (1024 * 1024))
+      } else if (size_bytes > 1024) {
+        sprintf("%.1f KB", size_bytes / 1024)
+      } else {
+        sprintf("%d B", size_bytes)
+      }
+
+      stale[[length(stale) + 1L]] <- list(
+        file     = fname,
+        days_old = round(days_old),
+        size     = size_str
+      )
+    }
+
+    list(count = length(stale), rows = stale)
+  }, error = function(e) {
+    message("compute_stale_raw: error — ", conditionMessage(e))
+    list(count = 0L, rows = list())
+  })
+}
+
+signal_480 <- compute_stale_raw(knowledge_repo)
+
+signal_480_html <- if (signal_480$count == 0L) {
+  collapsible_block(
+    title         = "raw/ files awaiting wiki promotion (>14d)",
+    summary_stats = "0 found — all raw files promoted or referenced",
+    html_body     = sprintf(
+      '<p style="color:%s; font-style:italic;">No raw files older than 14 days are awaiting wiki promotion.</p>',
+      DARK_MUTED
+    )
+  )
+} else {
+  rows_html <- paste(vapply(signal_480$rows, function(r) {
+    sprintf(
+      '<tr>
+        <td style="padding:4px 8px; color:%s;">%s</td>
+        <td style="padding:4px 8px; text-align:right; color:%s;">%s d</td>
+        <td style="padding:4px 8px; text-align:right; color:%s;">%s</td>
+      </tr>',
+      DARK_TEXT,   htmlEscape(r$file),
+      ACCENT_ORANGE, as.character(r$days_old),
+      DARK_MUTED,  htmlEscape(r$size)
+    )
+  }, character(1L)), collapse = "\n")
+
+  table_html <- sprintf(
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
+      <thead>
+        <tr style="color:%s; text-align:left;">
+          <th style="padding:4px 8px;">File</th>
+          <th style="padding:4px 8px; text-align:right;">Days old</th>
+          <th style="padding:4px 8px; text-align:right;">Size</th>
+        </tr>
+      </thead>
+      <tbody>%s</tbody>
+    </table>',
+    EMAIL_FONT_BODY, DARK_MUTED,
+    rows_html
+  )
+
+  collapsible_block(
+    title         = "raw/ files awaiting wiki promotion (>14d)",
+    summary_stats = sprintf("%d file%s stale",
+                            signal_480$count,
+                            if (signal_480$count == 1L) "" else "s"),
+    html_body     = table_html
+  )
+}
+
+signal_480_qa <- sprintf("<!-- QA:kb_signal_480=%d -->", signal_480$count)
+
+# ── Signal #481: Broken [[topic]] wiki backlinks ───────────────────────────────
+#
+# Scan knowledge/wiki/*.md for [[topic]] syntax, check if the target file
+# exists (try topic.md, topic-page.md, topic.qmd).
+# Table: wiki_file:line | broken_target
+# QA marker: <!-- QA:kb_signal_481=N -->
+
+compute_broken_backlinks <- function(knowledge_repo) {
+  tryCatch({
+    wiki_dir <- file.path(knowledge_repo, "wiki")
+    if (!dir.exists(wiki_dir)) return(list(count = 0L, rows = list()))
+
+    wiki_files <- list.files(wiki_dir, pattern = "\\.md$", full.names = TRUE,
+                              recursive = TRUE)
+    if (length(wiki_files) == 0L) return(list(count = 0L, rows = list()))
+
+    broken <- list()
+
+    for (f in wiki_files) {
+      lines <- tryCatch(readLines(f, warn = FALSE), error = function(e) character(0L))
+      if (length(lines) == 0L) next
+
+      rel_name <- basename(f)
+
+      for (i in seq_along(lines)) {
+        line <- lines[[i]]
+        # Find all [[topic]] patterns
+        m <- gregexpr("\\[\\[([^\\]]+)\\]\\]", line, perl = TRUE)
+        if (m[[1L]][[1L]] == -1L) next
+
+        matches <- regmatches(line, m)[[1L]]
+        targets <- gsub("^\\[\\[|\\]\\]$", "", matches)
+
+        for (tgt in targets) {
+          # Try candidate filenames
+          tgt_slug <- gsub(" ", "-", tolower(tgt))
+          candidates <- c(
+            file.path(wiki_dir, paste0(tgt, ".md")),
+            file.path(wiki_dir, paste0(tgt_slug, ".md")),
+            file.path(wiki_dir, paste0(tgt, "-page.md")),
+            file.path(wiki_dir, paste0(tgt_slug, "-page.md")),
+            file.path(wiki_dir, paste0(tgt, ".qmd")),
+            file.path(wiki_dir, paste0(tgt_slug, ".qmd"))
+          )
+          exists_any <- any(file.exists(candidates))
+          if (!exists_any) {
+            broken[[length(broken) + 1L]] <- list(
+              location = sprintf("%s:%d", rel_name, i),
+              target   = tgt
+            )
+          }
+        }
+      }
+    }
+
+    list(count = length(broken), rows = broken)
+  }, error = function(e) {
+    message("compute_broken_backlinks: error — ", conditionMessage(e))
+    list(count = 0L, rows = list())
+  })
+}
+
+signal_481 <- compute_broken_backlinks(knowledge_repo)
+
+signal_481_html <- if (signal_481$count == 0L) {
+  collapsible_block(
+    title         = "Broken [[topic]] wiki backlinks",
+    summary_stats = "0 found — all backlinks resolve",
+    html_body     = sprintf(
+      '<p style="color:%s; font-style:italic;">No broken [[topic]] backlinks found in wiki/.</p>',
+      DARK_MUTED
+    )
+  )
+} else {
+  rows_html <- paste(vapply(signal_481$rows, function(r) {
+    sprintf(
+      '<tr>
+        <td style="padding:4px 8px; font-family:monospace; color:%s;">%s</td>
+        <td style="padding:4px 8px; color:%s;">[[%s]]</td>
+      </tr>',
+      DARK_MUTED, htmlEscape(r$location),
+      ACCENT_ORANGE, htmlEscape(r$target)
+    )
+  }, character(1L)), collapse = "\n")
+
+  table_html <- sprintf(
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
+      <thead>
+        <tr style="color:%s; text-align:left;">
+          <th style="padding:4px 8px;">Location (file:line)</th>
+          <th style="padding:4px 8px;">Broken target</th>
+        </tr>
+      </thead>
+      <tbody>%s</tbody>
+    </table>',
+    EMAIL_FONT_BODY, DARK_MUTED,
+    rows_html
+  )
+
+  collapsible_block(
+    title         = "Broken [[topic]] wiki backlinks",
+    summary_stats = sprintf("%d broken link%s",
+                            signal_481$count,
+                            if (signal_481$count == 1L) "" else "s"),
+    html_body     = table_html
+  )
+}
+
+signal_481_qa <- sprintf("<!-- QA:kb_signal_481=%d -->", signal_481$count)
+
+# ── Signal #482: New skills/rules without wiki context (last 7d) ──────────────
+#
+# Skills under .claude/skills/*/SKILL.md and rules under .claude/rules/*.md
+# whose git-add time is within the last 7d, checked against wiki/ references.
+# Table: kind | name | created | wiki_referenced (y/n)
+# QA marker: <!-- QA:kb_signal_482=N -->
+
+compute_new_no_wiki <- function(knowledge_repo) {
+  tryCatch({
+    llm_repo <- file.path(Sys.getenv("HOME"), "docs_gh", "llm")
+    wiki_dir <- file.path(knowledge_repo, "wiki")
+
+    # Read all wiki content for reference checking
+    wiki_text <- ""
+    if (dir.exists(wiki_dir)) {
+      wiki_mds <- list.files(wiki_dir, pattern = "\\.md$", full.names = TRUE,
+                              recursive = TRUE)
+      if (length(wiki_mds) > 0L) {
+        wiki_lines <- unlist(lapply(wiki_mds, function(f) {
+          tryCatch(readLines(f, warn = FALSE), error = function(e) character(0L))
+        }))
+        wiki_text <- paste(wiki_lines, collapse = "\n")
+      }
+    }
+
+    cutoff <- Sys.time() - 7L * 86400L  # 7 days ago
+
+    # Get skills: .claude/skills/*/SKILL.md
+    skills_dir <- file.path(llm_repo, ".claude", "skills")
+    skill_files <- character(0L)
+    if (dir.exists(skills_dir)) {
+      skill_files <- list.files(skills_dir, pattern = "^SKILL\\.md$",
+                                 full.names = TRUE, recursive = TRUE)
+    }
+
+    # Get rules: .claude/rules/*.md (non-recursive, excludes _companions/)
+    rules_dir <- file.path(llm_repo, ".claude", "rules")
+    rule_files <- character(0L)
+    if (dir.exists(rules_dir)) {
+      rule_files <- list.files(rules_dir, pattern = "\\.md$",
+                                full.names = TRUE, recursive = FALSE)
+    }
+
+    rows <- list()
+    process_file <- function(f, kind) {
+      # Get the date this file was first added to git
+      rel_path <- sub(paste0(llm_repo, "/?"), "", f)
+      date_raw <- tryCatch(
+        suppressWarnings(system2(
+          "git",
+          c("-C", llm_repo,
+            "log", "--diff-filter=A", "--format=%aI", "--follow", "--", rel_path),
+          stdout = TRUE, stderr = FALSE
+        )),
+        error = function(e) character(0L)
+      )
+      if (length(date_raw) == 0L || !nzchar(date_raw[[1L]])) return()
+
+      # Parse ISO 8601 date
+      add_time <- tryCatch(
+        as.POSIXct(date_raw[[1L]], format = "%Y-%m-%dT%H:%M:%S", tz = "UTC"),
+        error   = function(e) NA
+      )
+      if (is.na(add_time)) return()
+      if (add_time < cutoff) return()  # older than 7 days
+
+      # Name: skill dir name or rule filename without extension
+      name <- if (kind == "skill") {
+        basename(dirname(f))
+      } else {
+        tools::file_path_sans_ext(basename(f))
+      }
+
+      # Check wiki reference: does any wiki page mention this name?
+      wiki_ref <- grepl(name, wiki_text, fixed = TRUE)
+      wiki_ref_str <- if (wiki_ref) "y" else "n"
+
+      rows[[length(rows) + 1L]] <<- list(
+        kind    = kind,
+        name    = name,
+        created = format(add_time, "%Y-%m-%d"),
+        wiki_ref = wiki_ref_str
+      )
+    }
+
+    for (f in skill_files) process_file(f, "skill")
+    for (f in rule_files)  process_file(f, "rule")
+
+    # Count those WITHOUT wiki reference
+    no_wiki <- Filter(function(r) r$wiki_ref == "n", rows)
+    list(count = length(no_wiki), rows = rows)
+  }, error = function(e) {
+    message("compute_new_no_wiki: error — ", conditionMessage(e))
+    list(count = 0L, rows = list())
+  })
+}
+
+signal_482 <- compute_new_no_wiki(knowledge_repo)
+
+signal_482_html <- if (length(signal_482$rows) == 0L) {
+  collapsible_block(
+    title         = "New skills/rules without wiki context (last 7d)",
+    summary_stats = "0 new items in last 7d",
+    html_body     = sprintf(
+      '<p style="color:%s; font-style:italic;">No new skills or rules added in the last 7 days.</p>',
+      DARK_MUTED
+    )
+  )
+} else {
+  rows_html <- paste(vapply(signal_482$rows, function(r) {
+    ref_color <- if (r$wiki_ref == "y") ACCENT_GREEN else ACCENT_ORANGE
+    sprintf(
+      '<tr>
+        <td style="padding:4px 8px; color:%s;">%s</td>
+        <td style="padding:4px 8px; color:%s;">%s</td>
+        <td style="padding:4px 8px; color:%s;">%s</td>
+        <td style="padding:4px 8px; text-align:center; color:%s;">%s</td>
+      </tr>',
+      DARK_MUTED,  htmlEscape(r$kind),
+      DARK_TEXT,   htmlEscape(r$name),
+      DARK_MUTED,  htmlEscape(r$created),
+      ref_color,   htmlEscape(r$wiki_ref)
+    )
+  }, character(1L)), collapse = "\n")
+
+  table_html <- sprintf(
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
+      <thead>
+        <tr style="color:%s; text-align:left;">
+          <th style="padding:4px 8px;">Kind</th>
+          <th style="padding:4px 8px;">Name</th>
+          <th style="padding:4px 8px;">Created</th>
+          <th style="padding:4px 8px; text-align:center;">Wiki ref</th>
+        </tr>
+      </thead>
+      <tbody>%s</tbody>
+    </table>',
+    EMAIL_FONT_BODY, DARK_MUTED,
+    rows_html
+  )
+
+  no_wiki_count <- signal_482$count
+  collapsible_block(
+    title         = "New skills/rules without wiki context (last 7d)",
+    summary_stats = sprintf(
+      "%d new item%s — %d without wiki ref",
+      length(signal_482$rows),
+      if (length(signal_482$rows) == 1L) "" else "s",
+      no_wiki_count
+    ),
+    html_body     = table_html
+  )
+}
+
+signal_482_qa <- sprintf("<!-- QA:kb_signal_482=%d -->", signal_482$count)
+
+# ── QA markers (tested by test-kb-digest.R) ────────────────────────────────────
+qa_markers <- paste0(
+  sprintf('<!-- QA:kb_digest_date=%s -->', report_date),
+  '<!-- QA:kb_privacy=local_smtp_only -->',
+  '<!-- QA:kb_collapsible=true -->',
+  signal_479_qa,
+  signal_480_qa,
+  signal_481_qa,
+  signal_482_qa
 )
 
 email_body <- sprintf(
@@ -269,6 +803,10 @@ email_body <- sprintf(
   Computed locally · No KB content in CI logs · llm#298
 </p>
 %s
+%s
+%s
+%s
+%s
 <p style="color:%s; font-size:%s; margin-top:20px;">
   Knowledge repo: (path redacted for privacy) · Sent at %s UTC
 </p>
@@ -278,6 +816,10 @@ email_body <- sprintf(
   accent_orange, EMAIL_FONT_H2, report_date,
   dark_muted, EMAIL_FONT_SUBTITLE,
   body_inner,
+  signal_479_html,
+  signal_480_html,
+  signal_481_html,
+  signal_482_html,
   dark_muted, EMAIL_FONT_FOOTER, format(Sys.time(), "%Y-%m-%dT%H:%M:%S", tz = "UTC"),
   qa_markers
 )
