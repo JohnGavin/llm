@@ -23,7 +23,7 @@ Update this table in the same commit.
 | 7g | Branch Harvest on Fork | Audits unmerged `feat/*` branches for SESSION_INTERRUPTED OR (SURFACE_TOUCHED AND STALE). Skipped if `CLAUDE_BRANCH_HARVEST=0`. Per-branch silence via `git notes --ref=harvest`. Logs to `~/.claude/logs/branch_harvest.log`. 5s timeout, fail-open. | Silent when no findings; one `branch-harvest: N branches flagged` block per finding when N>0. See `branch-harvest-on-fork` rule. |
 | 8 | roborev Review Status | Daemon status + high-severity finding counts | `roborev:Nhigh/Ntotal` |
 | 8b | roborev-autoclose Visibility | Reads autoclose counter JSON for today/week stats | `roborev-autoclose: threshold=…` |
-| 9 | Weekly Burn Rate | Calls `burn_rate_check.sh compact` | `burn:<level>` |
+| 9 | Weekly Burn Rate | Calls `burn_rate_check.sh compact` (primary, ccusage). During 14-day soak (2026-06-05 to 2026-06-19, llm#523) also runs `burn_rate_check_codexbar.sh` in parallel; both outputs logged to `~/.claude/logs/burn_rate_compare.log`. Skip secondary with `CLAUDE_BURN_RATE_COMPARE=0`. | `burn:<level>` (primary unchanged) |
 | 10 | Orphan crew Workers | Kills crew workers with no controller | Kills + WARN count |
 | 11 | AGENTS.md Audit | Drift detection via `agents_md_audit.sh` | Silent OK or DRIFT warning |
 | 11b | Quarto Contrast Wiring | Checks `_quarto.yml` post-render dark-contrast hook | WARN if missing |
