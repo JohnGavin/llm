@@ -11,6 +11,11 @@
 #   - send_kb_digest_email.R: no raw content leakage in email body
 #   - Bash syntax: kb_digest_daily_cron.sh passes bash -n
 #   - plutil: com.claude.kb-digest-email.plist is valid XML plist
+#   - Signal #479: compute_fix_no_kb() returns list(count, rows) (#479)
+#   - Signal #480: compute_stale_raw() excludes recent/referenced files (#480)
+#   - Signal #481: compute_broken_backlinks() detects missing [[topic]] targets (#481)
+#   - Signal #482: compute_new_no_wiki() returns correct structure (#482)
+#   - Integration: dry-run HTML includes all four QA:kb_signal_NNN= markers (#479-#482)
 #
 # CRITICAL no-leak assertion:
 #   No line of the digest body (or email HTML body) character-for-character
@@ -518,4 +523,236 @@ test_that("com.claude.kb-digest-email.plist is valid XML plist (plutil)", {
   exit_code <- system2(plutil_path, args = c("-lint", plist),
                         stdout = FALSE, stderr = FALSE)
   expect_equal(exit_code, 0L, info = "plist failed plutil -lint check")
+})
+
+# ── Tests: KB-digest signal functions (#479 #480 #481 #482) ──────────────────
+
+test_that("compute_fix_no_kb() returns list(count, rows) with correct structure (#479)", {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  # Source only the function definition by running a small inline script.
+  # KB_DIGEST_FILE must be set to bypass the sys.frame(1L) kb_digest.R path.
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines("## Test\nDummy digest.", tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    "llm_repo <- file.path(Sys.getenv('HOME'), 'docs_gh', 'llm')\n",
+    "if (!dir.exists(llm_repo)) quit(status=77)\n",
+    "res <- compute_fix_no_kb(llm_repo, Sys.time() - 24*3600)\n",
+    "stopifnot(is.list(res))\n",
+    "stopifnot('count' %in% names(res), 'rows' %in% names(res))\n",
+    "stopifnot(is.integer(res$count) || is.numeric(res$count))\n",
+    "stopifnot(res$count >= 0)\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r), add = TRUE)
+
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+  exit_code <- attr(out, "status") %||% 0L
+
+  # exit 77 = llm repo not found on this machine — acceptable skip
+  if (identical(exit_code, 77L) || any(grepl("status=77", out)))
+    skip("llm repo not available on this machine")
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("compute_fix_no_kb() failed:", combined))
+})
+
+test_that("compute_stale_raw() returns list(count, rows) excluding recent files (#480)", {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines("## Test\nDummy digest.", tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  # Create a synthetic knowledge repo with one old raw file and one new one.
+  synth_kb <- tempfile("kb_test_")
+  dir.create(file.path(synth_kb, "raw"), recursive = TRUE)
+  dir.create(file.path(synth_kb, "wiki"), recursive = TRUE)
+
+  # New file (today — should NOT be reported as stale)
+  writeLines("fresh content", file.path(synth_kb, "raw", "fresh.txt"))
+
+  # Old file — force mtime to 30 days ago
+  old_file <- file.path(synth_kb, "raw", "old.txt")
+  writeLines("stale content not in wiki", old_file)
+  old_mtime <- Sys.time() - 30 * 86400
+  Sys.setFileTime(old_file, old_mtime)
+
+  on.exit(unlink(synth_kb, recursive = TRUE), add = TRUE)
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    "knowledge_repo <- '", synth_kb, "'\n",
+    "res <- compute_stale_raw(knowledge_repo)\n",
+    "stopifnot(is.list(res))\n",
+    "stopifnot('count' %in% names(res), 'rows' %in% names(res))\n",
+    "stopifnot(is.integer(res$count) || is.numeric(res$count))\n",
+    # The old file should be in stale list; the fresh file should not
+    "stopifnot(res$count >= 1L)\n",
+    "found_old <- any(sapply(res$rows, function(r) grepl('old.txt', r$file)))\n",
+    "found_fresh <- any(sapply(res$rows, function(r) grepl('fresh.txt', r$file)))\n",
+    "stopifnot(found_old)\n",
+    "stopifnot(!found_fresh)\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r), add = TRUE)
+
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("compute_stale_raw() failed:", combined))
+})
+
+test_that("compute_broken_backlinks() detects missing [[topic]] targets (#481)", {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines("## Test\nDummy digest.", tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  # Create a synthetic wiki with one valid link and one broken link.
+  synth_kb <- tempfile("kb_test_")
+  wiki_dir <- file.path(synth_kb, "wiki")
+  dir.create(wiki_dir, recursive = TRUE)
+
+  # existing.md exists — link to it should be valid
+  writeLines("# Existing\n## Sources\n- source A", file.path(wiki_dir, "existing.md"))
+
+  # page-with-links.md references [[existing]] (valid) and [[missing-topic]] (broken)
+  writeLines(c(
+    "# Links page",
+    "## Sources",
+    "- source B",
+    "See [[existing]] for details.",
+    "Also see [[missing-topic]] which does not exist."
+  ), file.path(wiki_dir, "page-with-links.md"))
+
+  on.exit(unlink(synth_kb, recursive = TRUE), add = TRUE)
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    "knowledge_repo <- '", synth_kb, "'\n",
+    "res <- compute_broken_backlinks(knowledge_repo)\n",
+    "stopifnot(is.list(res))\n",
+    "stopifnot('count' %in% names(res), 'rows' %in% names(res))\n",
+    "stopifnot(is.integer(res$count) || is.numeric(res$count))\n",
+    # Only the broken link should be reported
+    "stopifnot(res$count == 1L)\n",
+    "stopifnot(grepl('missing-topic', res$rows[[1]]$target))\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r), add = TRUE)
+
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("compute_broken_backlinks() failed:", combined))
+})
+
+test_that("compute_new_no_wiki() returns list(count, rows) with correct structure (#482)", {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  # This signal queries the actual llm git log — skip if the repo isn't here.
+  llm_repo <- file.path(Sys.getenv("HOME"), "docs_gh", "llm")
+  skip_if_not(dir.exists(llm_repo), "llm repo not available on this machine")
+
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines("## Test\nDummy digest.", tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    # supply a synth knowledge repo (no wiki/) so count may differ from live
+    "synth_kb <- tempfile('kb_')\n",
+    "dir.create(file.path(synth_kb, 'wiki'), recursive=TRUE)\n",
+    "on.exit(unlink(synth_kb, recursive=TRUE))\n",
+    "res <- compute_new_no_wiki(synth_kb)\n",
+    "stopifnot(is.list(res))\n",
+    "stopifnot('count' %in% names(res), 'rows' %in% names(res))\n",
+    "stopifnot(is.integer(res$count) || is.numeric(res$count))\n",
+    "stopifnot(res$count >= 0)\n",
+    "if (length(res$rows) > 0) {\n",
+    "  row1 <- res$rows[[1]]\n",
+    "  stopifnot('kind' %in% names(row1), 'name' %in% names(row1))\n",
+    "  stopifnot('created' %in% names(row1), 'wiki_referenced' %in% names(row1))\n",
+    "}\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r), add = TRUE)
+
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("compute_new_no_wiki() failed:", combined))
+})
+
+test_that("dry-run email HTML includes all four KB-digest signal QA markers (#479-#482)", {
+  skip_if_not_installed("blastula")
+
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines(c("## Digest header", "", "Digest body text."), tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  env_vars <- c(
+    "EMAIL_DRY_RUN=1",
+    paste0("KB_DIGEST_FILE=", tmp_digest),
+    "GMAIL_USERNAME=",
+    "GMAIL_APP_PASSWORD=",
+    "REPORT_RECIPIENT="
+  )
+
+  out <- system2("Rscript", args = email_script,
+                  stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+  combined <- paste(out, collapse = "\n")
+
+  # Each signal must embed its QA marker in the HTML output
+  expect_true(grepl("QA:kb_signal_479=", combined),
+              info = "QA:kb_signal_479 marker missing from email dry-run output")
+  expect_true(grepl("QA:kb_signal_480=", combined),
+              info = "QA:kb_signal_480 marker missing from email dry-run output")
+  expect_true(grepl("QA:kb_signal_481=", combined),
+              info = "QA:kb_signal_481 marker missing from email dry-run output")
+  expect_true(grepl("QA:kb_signal_482=", combined),
+              info = "QA:kb_signal_482 marker missing from email dry-run output")
+
+  # All four collapsible sections should be present
+  expect_true(grepl("Fix/revert commits without KB reference", combined),
+              info = "Signal #479 section heading missing")
+  expect_true(grepl("raw/ files awaiting wiki promotion", combined),
+              info = "Signal #480 section heading missing")
+  expect_true(grepl("Broken.*backlinks", combined),
+              info = "Signal #481 section heading missing")
+  expect_true(grepl("New skills/rules without wiki context", combined),
+              info = "Signal #482 section heading missing")
 })
