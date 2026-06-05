@@ -57,6 +57,21 @@ if [[ -f "$ENV_FILE" ]]; then
   log "sourced credentials from $ENV_FILE"
 fi
 
+# ── Deploy: pull latest main before running (llm#510) ─────────────────────────
+# Cron wrappers run against ${REPO_ROOT}; without this step every gh pr merge
+# ships nothing — the cron uses whatever was last manually pulled to the main
+# checkout. The fast-forward is silent on success and never overwrites local
+# work because of --ff-only.
+if [ -z "${SKIP_CRON_PULL:-}" ]; then
+    git -C "${REPO_ROOT}" fetch origin main 2>/dev/null
+    if git -C "${REPO_ROOT}" merge --ff-only origin/main 2>/dev/null; then
+        log "deploy: ff to $(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
+    else
+        log "deploy WARN: ff-only failed — running against $(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
+    fi
+fi
+log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
+
 # ── Step 1: Generate markdown report ─────────────────────────────────────────
 
 log "running aggregator → $REPORT_OUT"
