@@ -79,8 +79,11 @@ if [ "${ROBOREV_METRICS_ETL_SELFTEST:-0}" = "1" ]; then
   # Usage: _run_r_exit <tmpfile> <r_args...>
   _run_r_exit() {
     local _out="$1"; shift
-    if [ -f "$NIX_DEFAULT" ] && command -v nix-shell >/dev/null 2>&1; then
-      nix-shell "$NIX_DEFAULT" --run "Rscript '$R_SCRIPT' $*" > "$_out" 2>&1
+    # Use absolute path for nix-shell: launchd PATH does not resolve command -v
+    # reliably inside the launchd sandbox even when the binary is in PATH.
+    local _NIX_SHELL_BIN="/nix/var/nix/profiles/default/bin/nix-shell"
+    if [ -f "$NIX_DEFAULT" ] && [ -x "$_NIX_SHELL_BIN" ]; then
+      "$_NIX_SHELL_BIN" "$NIX_DEFAULT" --run "Rscript '$R_SCRIPT' $*" > "$_out" 2>&1
     else
       Rscript "$R_SCRIPT" "$@" > "$_out" 2>&1
     fi
@@ -316,12 +319,15 @@ echo "roborev_metrics_etl: start mode=${MODE} ts=${RUN_TS}"
 # Fall back to bare Rscript if nix-shell is not available.
 
 _invoke_r() {
+  # Use absolute path for nix-shell: launchd PATH does not resolve `command -v`
+  # reliably even when /nix/var/nix/profiles/default/bin is in PATH (#511).
+  local _NIX_SHELL_BIN="/nix/var/nix/profiles/default/bin/nix-shell"
   # shellcheck disable=SC2086
-  if [ -f "$NIX_SHELL_DEFAULT" ] && command -v nix-shell >/dev/null 2>&1; then
+  if [ -f "$NIX_SHELL_DEFAULT" ] && [ -x "$_NIX_SHELL_BIN" ]; then
     ROBOREV_DB="$ROBOREV_DB" \
     UNIFIED_DB="$UNIFIED_DB" \
     SCHEMA_FILE="${SCHEMA_FILE:-${HOME}/.claude/scripts/roborev_metrics_schema.sql}" \
-      nix-shell "$NIX_SHELL_DEFAULT" --run "Rscript '$R_SCRIPT' $RSCRIPT_ARGS"
+      "$_NIX_SHELL_BIN" "$NIX_SHELL_DEFAULT" --run "Rscript '$R_SCRIPT' $RSCRIPT_ARGS"
   else
     ROBOREV_DB="$ROBOREV_DB" \
     UNIFIED_DB="$UNIFIED_DB" \
