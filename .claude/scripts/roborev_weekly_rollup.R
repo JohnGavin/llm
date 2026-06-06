@@ -31,6 +31,23 @@ suppressPackageStartupMessages({
   library(DBI)
 })
 
+# ── Canonical-projects filter (#537) ──────────────────────────────────────────
+# Source helper from lib/canonical_check.R (provides filter_canonical, canonical_slugs).
+# Set INCLUDE_NON_CANONICAL=1 to bypass (e.g. for fixture/test repo debugging).
+
+.scripts_dir_rollup <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "roborev_weekly_rollup.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_rollup, "lib", "canonical_check.R"))
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 ROBOREV_DAILY_BACKLOG_DIR <- Sys.getenv(
@@ -329,6 +346,66 @@ if (!has_rsqlite) {
   )
 } else {
   db_data <- query_reviews_db(REVIEWS_DB, week_start_str, week_end_str)
+}
+
+# ── 2b. Apply canonical-projects filter to per_project and stuck_findings ────
+# Both data frames come from reviews.db (SQLite); canonical_projects lives in
+# unified.duckdb.  We cannot JOIN across DBs, so we fetch slugs from duckdb
+# first and filter in R.
+#
+# Opt-out: INCLUDE_NON_CANONICAL=1 skips filtering (useful for debugging).
+# CANONICAL_PROJECTS_INCLUDE_FIXTURES=1 is also honoured (set inside filter_canonical).
+
+if (!identical(Sys.getenv("INCLUDE_NON_CANONICAL"), "1") &&
+    requireNamespace("duckdb", quietly = TRUE) &&
+    file.exists(UNIFIED_DUCKDB)) {
+
+  duck_con_filter <- tryCatch(
+    DBI::dbConnect(duckdb::duckdb(), UNIFIED_DUCKDB, read_only = TRUE),
+    error = function(e) {
+      message("roborev_weekly_rollup: cannot open unified.duckdb for canonical filter — ",
+              conditionMessage(e))
+      NULL
+    }
+  )
+
+  if (!is.null(duck_con_filter)) {
+    on.exit(DBI::dbDisconnect(duck_con_filter, shutdown = FALSE), add = TRUE)
+
+    # Filter per_project (has repo_name, not repo — rename before/after)
+    pp <- db_data$per_project
+    n_pp_before <- nrow(pp)
+    if (n_pp_before > 0L) {
+      names(pp)[names(pp) == "repo_name"] <- "repo"
+      pp <- filter_canonical(pp, duck_con_filter,
+                             producer = "roborev_weekly_rollup/per_project")
+      names(pp)[names(pp) == "repo"] <- "repo_name"
+    }
+    n_pp_after <- nrow(pp)
+    if (n_pp_before != n_pp_after) {
+      message(sprintf(
+        "roborev_weekly_rollup: per_project: %d → %d rows after canonical filter",
+        n_pp_before, n_pp_after
+      ))
+    }
+    db_data$per_project <- pp
+
+    # Filter stuck_findings (already has repo column)
+    sf <- db_data$stuck_findings
+    n_sf_before <- nrow(sf)
+    sf <- filter_canonical(sf, duck_con_filter,
+                           producer = "roborev_weekly_rollup/stuck_findings")
+    n_sf_after <- nrow(sf)
+    if (n_sf_before != n_sf_after) {
+      message(sprintf(
+        "roborev_weekly_rollup: stuck_findings: %d → %d rows after canonical filter",
+        n_sf_before, n_sf_after
+      ))
+    }
+    db_data$stuck_findings <- sf
+  }
+} else if (identical(Sys.getenv("INCLUDE_NON_CANONICAL"), "1")) {
+  message("roborev_weekly_rollup: INCLUDE_NON_CANONICAL=1 — canonical filter bypassed")
 }
 
 # ── 3. Query unified.duckdb for close_reason distribution ────────────────────
