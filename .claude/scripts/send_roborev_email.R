@@ -566,8 +566,9 @@ if (length(severity_rows_data) > 0L) {
 }
 severity_inner <- paste0(severity_inner, "</table>")
 # llm#527: wrap severity table in collapsible_block(open=FALSE) — collapsed by default
+# llm#534: caption updated to reflect canonical-only filtering
 severity_html <- collapsible_block(
-  "Severity by Project (7d)",
+  "Severity by Project (7d, canonical only — see #528)",
   sprintf("%d project(s) tracked", length(severity_rows_data)),
   severity_inner,
   open = FALSE
