@@ -40,15 +40,17 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 
-mode  <- "dry-run"   # default
-since <- NULL        # NULL = 7 days back
-repo  <- NULL        # NULL = all repos
+mode             <- "dry-run"  # default
+since            <- NULL       # NULL = 7 days back
+repo             <- NULL       # NULL = all repos
+include_fixtures <- FALSE      # TRUE = bypass canonical-project guard (#536)
 
 i <- 1L
 while (i <= length(args)) {
   switch(args[[i]],
-    "--dry-run" = { mode <- "dry-run"; i <- i + 1L },
-    "--apply"   = { mode <- "apply";   i <- i + 1L },
+    "--dry-run"          = { mode <- "dry-run"; i <- i + 1L },
+    "--apply"            = { mode <- "apply";   i <- i + 1L },
+    "--include-fixtures" = { include_fixtures <- TRUE; i <- i + 1L },
     "--since"   = {
       if (i + 1L > length(args)) stop("--since requires a YYYY-MM-DD argument")
       since <- tryCatch(as.Date(args[[i + 1L]]),
@@ -65,6 +67,11 @@ while (i <= length(args)) {
       stop(paste("unknown argument:", args[[i]]))
     }
   )
+}
+
+# Env-var opt-out (for launchd jobs / CI that can't pass CLI flags)
+if (identical(Sys.getenv("CANONICAL_PROJECTS_INCLUDE_FIXTURES"), "1")) {
+  include_fixtures <- TRUE
 }
 
 # Default since: 7 days back
@@ -229,6 +236,50 @@ jobs_raw <- tryCatch(
     data.frame()
   }
 )
+
+# ── Canonical-project guard (#536) ───────────────────────────────────────────
+# Filter jobs_raw to canonical repos only (unless --include-fixtures / env var
+# CANONICAL_PROJECTS_INCLUDE_FIXTURES=1 is set).  This prevents self-test
+# fixture dirs like /tmp/roborev_pmhook_test_XXXXXX from being written to
+# roborev_review_lifecycle in unified.duckdb.
+if (!include_fixtures && nrow(jobs_raw) > 0L && "repo" %in% names(jobs_raw)) {
+  canon_slugs <- tryCatch(
+    {
+      duck_read <- DBI::dbConnect(duckdb::duckdb(), UNIFIED_DB, read_only = TRUE)
+      on.exit(tryCatch(DBI::dbDisconnect(duck_read, shutdown = TRUE),
+                       error = function(e) NULL), add = TRUE)
+      DBI::dbGetQuery(duck_read, "
+        SELECT slug FROM canonical_projects WHERE is_active = TRUE
+        UNION ALL
+        SELECT alias FROM canonical_project_aliases
+      ")$slug
+    },
+    error = function(e) {
+      log_msg("WARN: canonical_check failed (", conditionMessage(e),
+              ") — skipping guard, all repos pass")
+      NULL  # NULL signals "guard unavailable, let everything through"
+    }
+  )
+  if (!is.null(canon_slugs) && length(canon_slugs) > 0L) {
+    non_canon <- unique(jobs_raw$repo[!jobs_raw$repo %in% canon_slugs])
+    if (length(non_canon) > 0L) {
+      skip_log <- file.path(Sys.getenv("HOME"), ".claude", "logs",
+                             "canonical_producer_skip.log")
+      ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+      for (slug in non_canon) {
+        tryCatch(
+          cat(sprintf("%s SKIP slug=%s producer=roborev_metrics_etl.R\n", ts, slug),
+              file = skip_log, append = TRUE),
+          error = function(e) NULL
+        )
+      }
+      log_msg("canonical guard: skipped ", length(non_canon),
+              " non-canonical repo(s): ", paste(non_canon, collapse = ", "))
+      jobs_raw <- jobs_raw[jobs_raw$repo %in% canon_slugs, , drop = FALSE]
+    }
+  }
+}
+# ─────────────────────────────────────────────────────────────────────────────
 
 sql_reviews <- sprintf("
   SELECT
