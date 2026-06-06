@@ -1,0 +1,19 @@
+slug,display_name,repo,kind,is_active,notes
+JohnGavin.github.io,Personal Site,JohnGavin/JohnGavin.github.io,quarto-website,true,user site repo
+acd_area_climate_design,ACD Area Climate Design,JohnGavin/acd_area_climate_design,analysis,true,
+coMMpass,COMMpass,JohnGavin/coMMpass-analysis,analysis,true,GH repo is coMMpass-analysis; alias commpass for lowercase joins
+crypto,Crypto,JohnGavin/crypto,analysis,true,confirmed by user 2026-06-06
+crypto_solwatch,Crypto SolWatch,JohnGavin/crypto_solwatch,dashboard,true,
+crypto_swarms,Crypto Swarms,JohnGavin/crypto_swarms,analysis,true,
+football,Football,JohnGavin/football,analysis,true,confirmed by user 2026-06-06
+footbet,Footbet,JohnGavin/footbet,analysis,true,
+historical,Historical,JohnGavin/historical,analysis,true,
+irishbuoys,Irish Buoys,JohnGavin/irishbuoys,r-package,true,
+llm,LLM (meta-config),JohnGavin/llm,meta-config,true,this repo
+llmtelemetry,LLM Telemetry,JohnGavin/llmtelemetry,r-package,true,
+micromort,Micromort,JohnGavin/micromort,analysis,true,
+mycare,MyCare,JohnGavin/mycare,r-package,true,
+premortem,Premortem,JohnGavin/premortem,analysis,true,confirmed by user 2026-06-06
+randomwalk,Random Walk,JohnGavin/randomwalk,analysis,true,
+rix.setup,rix Setup,JohnGavin/rix.setup,meta-config,true,
+urban_planning,Urban Planning,JohnGavin/urban_planning,analysis,true,
