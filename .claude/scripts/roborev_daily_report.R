@@ -341,21 +341,56 @@ trend_delta <- function(cur_val, pri_val) {
 # Returns a list of records {repo, High, Medium, Low, Unknown, Total}
 # sorted descending by Total.  Uses severity_max column from lifecycle table.
 
-compute_severity_by_project <- function(con, anchor, days) {
+compute_severity_by_project <- function(con, anchor, days,
+                                       filtered = TRUE) {
+  # Honour env-var escape hatch: INCLUDE_NON_CANONICAL=1 forces unfiltered.
+  if (nzchar(Sys.getenv("INCLUDE_NON_CANONICAL"))) filtered <- FALSE
+
   bounds <- window_bounds(anchor, days)
-  sql <- sprintf(
-    "SELECT
-       repo,
-       COALESCE(severity_max, 'Unknown') AS severity,
-       COUNT(*)::INTEGER AS n
-     FROM roborev_review_lifecycle
-     WHERE verdict = 'F'
-       AND created_at::TIMESTAMP >= TIMESTAMP '%s'
-       AND created_at::TIMESTAMP <  TIMESTAMP '%s'
-     GROUP BY repo, severity_max
-     ORDER BY repo",
-    fmt_ts(bounds$cur$start), fmt_ts(bounds$cur$end)
-  )
+
+  if (filtered) {
+    # Join against canonical_projects + canonical_project_aliases so fixture
+    # repos, test repos, and one-off repos are excluded.  Aliases (e.g.
+    # "coMMpass") are resolved to the canonical slug before pivoting.
+    # See issue #534 and the canonical_projects table seeded by PR #540.
+    sql <- sprintf(
+      "WITH valid_slugs AS (
+         SELECT slug FROM canonical_projects WHERE is_active = TRUE
+       ),
+       alias_map AS (
+         SELECT alias, slug FROM canonical_project_aliases
+       )
+       SELECT
+         COALESCE(a.slug, s.repo) AS repo,
+         COALESCE(s.severity_max, 'Unknown') AS severity,
+         COUNT(*)::INTEGER AS n
+       FROM roborev_review_lifecycle s
+       LEFT JOIN alias_map a ON s.repo = a.alias
+       WHERE s.verdict = 'F'
+         AND s.created_at::TIMESTAMP >= TIMESTAMP '%s'
+         AND s.created_at::TIMESTAMP <  TIMESTAMP '%s'
+         AND (s.repo IN (SELECT slug FROM valid_slugs)
+              OR s.repo IN (SELECT alias FROM alias_map))
+       GROUP BY COALESCE(a.slug, s.repo), s.severity_max
+       ORDER BY repo",
+      fmt_ts(bounds$cur$start), fmt_ts(bounds$cur$end)
+    )
+  } else {
+    sql <- sprintf(
+      "SELECT
+         repo,
+         COALESCE(severity_max, 'Unknown') AS severity,
+         COUNT(*)::INTEGER AS n
+       FROM roborev_review_lifecycle
+       WHERE verdict = 'F'
+         AND created_at::TIMESTAMP >= TIMESTAMP '%s'
+         AND created_at::TIMESTAMP <  TIMESTAMP '%s'
+       GROUP BY repo, severity_max
+       ORDER BY repo",
+      fmt_ts(bounds$cur$start), fmt_ts(bounds$cur$end)
+    )
+  }
+
   raw <- tryCatch(
     dbGetQuery(con, sql),
     error = function(e) {
@@ -527,9 +562,10 @@ df_14d_global <- load_window(con, bounds_14d$cur$start, bounds_14d$cur$end)
 df_14d_global <- enrich_with_attempts(con, df_14d_global, has_lineage_table)
 outliers_14d  <- compute_outliers(df_14d_global)
 
-# §5 Severity by project: 7d global
+# §5 Severity by project: 7d global (filtered to canonical_projects)
 cat("roborev_daily_report.R: computing 7d per-project severity table...\n")
-severity_by_project_7d <- compute_severity_by_project(con, anchor_date, 7L)
+severity_by_project_7d     <- compute_severity_by_project(con, anchor_date, 7L, filtered = TRUE)
+severity_by_project_7d_all <- compute_severity_by_project(con, anchor_date, 7L, filtered = FALSE)
 
 # ── Assemble JSON output ───────────────────────────────────────────────────────
 
@@ -582,7 +618,8 @@ json_payload <- list(
     by_attempts = outliers_14d$by_attempts,
     by_time     = outliers_14d$by_time
   ),
-  severity_by_project_7d = severity_by_project_7d  # §5: per-repo severity counts (llm#449)
+  severity_by_project_7d     = severity_by_project_7d,      # §5: filtered (llm#534)
+  severity_by_project_7d_all = severity_by_project_7d_all   # §5: unfiltered (debug/legacy)
 )
 
 # ── Write JSON snapshot ───────────────────────────────────────────────────────
