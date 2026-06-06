@@ -4,6 +4,47 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-06 (morning — #528 canonical_projects design + decomposition)
+
+Worktree session `feat/528-canonical-projects-plan` — planning layer for #528.
+
+### Completed
+
+- **Design doc** at `plans/528-canonical-projects-design.md` (350+ lines). Covers
+  the symptom (fixture noise dominates daily roborev email), measured scope
+  (175 distinct `repo` values, 162 fixture-like, 13 plausibly-real), canonical
+  seed list (15–17 verified projects from `~/docs_gh/` + `gh repo list` cross-ref),
+  schema (PRIMARY KEY slug + `aliases` for short-vs-owner/repo heterogeneity),
+  source-of-truth decision (CSV at `.claude/data/canonical_projects.csv`),
+  consumer migration order (daily email FIRST — closes user complaint), audit
+  script + Phase 15b wiring mirroring 15a.
+- **Sub-issues filed** decomposing implementation (each independently shippable):
+  - foundation (table + CSV + migration)
+  - first consumer migration (`compute_severity_by_project()` filtered)
+  - audit script + Phase 15b
+  - producer-side skip-and-warn helper
+  - remaining consumer migrations (weekly rollup, KB digest, dashboards)
+
+### Investigation evidence
+
+- `~/.claude/logs/unified.duckdb::roborev_review_lifecycle` distinct `repo`
+  values tallied by regex: 18 `config_digest_git_fixture_*`, 21 `kb_*`, 91
+  `roborev_pmhook_test_*` (one producer accounts for >50% of all noise),
+  13 `testrepo_*`, 19 throwaway/placeholder, 13 plausibly-real.
+- Consumers identified: `roborev_daily_report.R::compute_severity_by_project()`
+  (line 344), `send_roborev_email.R` (line 524 reads
+  `snap[["severity_by_project_7d"]]`), `roborev_weekly_rollup.R`.
+- `~/docs_gh/` projects live under `~/docs_gh/proj/{finance,data,stats,pers}/`
+  not flat — design doc captures the path indirection.
+
+### Methodology
+
+DB queried read-only on 2026-06-06; counts dynamic-computed (no hardcoded
+numbers in prose per `dynamic-prose-values`); design doc has methodology +
+data sources + AI disclosure per `narrative-evidence-block`; no compound
+bash commands per `bash-safety`; PR opened (not merged) per
+`pr-shipping-discipline`.
+
 ## 2026-06-04 (evening — #491-D Stage 2 self-review design + decomposition)
 
 Worktree session `feat/491d-stage2-plan` — design layer for the deferred Stage 2 of #235.
