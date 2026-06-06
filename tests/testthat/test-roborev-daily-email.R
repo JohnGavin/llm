@@ -286,3 +286,45 @@ test_that("roborev_daily_cron.sh DRYRUN=1 smoke: exits 0", {
   expect_true(exit_code %in% c(0L, 1L),
     info = sprintf("Unexpected exit code %d from dry-run cron", exit_code))
 })
+
+# ── Tests: #529 footer no-regression, #527 details open count, #484 QA marker ──
+
+test_that("dry-run output has no malformed footer CSS (no font-size:# or style='; ')", {
+  # #529 regression guard: severity_html must NOT bleed into the footer color slot
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+
+  expect_false(grepl("font-size:#", combined, fixed = TRUE),
+    info = "#529 regression: 'font-size:#' found — severity_html is bleeding into footer color slot")
+  expect_false(grepl('style="; ', combined, fixed = TRUE),
+    info = "#529 regression: 'style=\"; ' found — malformed style attribute in footer")
+})
+
+test_that("dry-run output has exactly one <details open> (headline 24h only)", {
+  # #527: headline_1d_html uses open=TRUE, all other collapsible blocks use open=FALSE
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+
+  n_details_open <- lengths(regmatches(combined, gregexpr("<details open", combined, fixed = TRUE)))
+  expect_equal(n_details_open, 1L,
+    info = sprintf("#527: expected exactly 1 '<details open' but found %d", n_details_open))
+
+  n_details_total <- lengths(regmatches(combined, gregexpr("<details", combined, fixed = TRUE)))
+  expect_gte(n_details_total, 5L,
+    info = sprintf("#527: expected at least 5 '<details' blocks but found %d", n_details_total))
+})
+
+test_that("dry-run output contains QA:zero_action_trap_fired marker", {
+  # #484: zero_action_trap_fired must appear in qa_markers regardless of whether trap fired
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:zero_action_trap_fired=", combined),
+    info = "#484: QA:zero_action_trap_fired marker missing from dry-run output")
+})

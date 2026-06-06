@@ -38,10 +38,13 @@ DARK_BORDER   <- "#2a2a4a"
 # @param summary_stats One-line stat string shown in the summary bar
 #                      e.g. "Files changed: 19  •  Lines: +2868/-91"
 # @param html_body     Full HTML content to collapse/expand
+# @param open          If TRUE the <details> is expanded by default (open attribute).
+#                      Default FALSE = collapsed on load. (#527)
 # @return A length-1 character string containing the <details> block
-collapsible_block <- function(title, summary_stats, html_body) {
+collapsible_block <- function(title, summary_stats, html_body, open = FALSE) {
+  details_attr <- if (open) " open" else ""
   sprintf(
-    '<details style="margin: 12px 0;">
+    '<details%s style="margin: 12px 0;">
 <summary style="cursor: pointer; padding: 8px 12px;
   background-color: %s; color: %s; font-size: %s; font-weight: bold;
   border-radius: 4px; list-style: none; -webkit-appearance: none;
@@ -50,6 +53,7 @@ collapsible_block <- function(title, summary_stats, html_body) {
 </summary>
 <div style="margin-top: 8px;">%s</div>
 </details>',
+    details_attr,
     DARK_CARD, DARK_TEXT, EMAIL_FONT_BODY,
     title, ACCENT_GREEN, summary_stats,
     html_body
