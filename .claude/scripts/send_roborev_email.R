@@ -188,19 +188,6 @@ lineage_src  <- snap[["lineage_source"]] %||% "unknown"
 
 # ── HTML email body ────────────────────────────────────────────────────────────
 
-# Dashboard link CTA
-dashboard_block <- sprintf(
-  '<div style="margin: 16px 0;">
-  <a href="%s"
-     style="display:inline-block; padding:10px 20px; background-color:%s;
-            color:#1a1a2e; text-decoration:none; border-radius:4px;
-            font-weight:bold; font-size:13px;">
-    View Full roborev Dashboard
-  </a>
-</div>',
-  ROBOREV_DASHBOARD_URL, accent_blue
-)
-
 # §1 + §2 Headline Metrics (last 24h) — shown FIRST (llm#449, llm#484)
 # Derive UTC window bounds from report_date + window_days (no producer changes needed)
 d1_window_end_dt   <- tryCatch(
@@ -216,19 +203,96 @@ d1_window_caption  <- sprintf(
 
 d1_n_reviews <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
 
-headline_1d_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">%s</h3>
-<table style="border-collapse:collapse; width:100%%; font-size:12px;">
+# ── #484: zero-action trap ─────────────────────────────────────────────────────
+# When n_reviews > 0 but all action metrics are zero/NA, the JSON is likely stale.
+# Attempt an ETL refresh; if it stays zero-action, emit a loud error block.
+
+zero_action_fired <- FALSE
+
+.d1_has_reviews <- isTRUE(!is.null(d1_n_reviews) && d1_n_reviews > 0L)
+.d1_no_close    <- isTRUE(is.null(d1_close_rate) || is.na(d1_close_rate) || d1_close_rate == 0)
+.d1_no_ttc      <- isTRUE(is.null(d1_ttc_p50) || is.na(d1_ttc_p50))
+.d1_no_att      <- isTRUE(is.null(d1_att_p50) || is.na(d1_att_p50))
+
+if (.d1_has_reviews && .d1_no_close && .d1_no_ttc && .d1_no_att) {
+  message("send_roborev_email.R: zero-action trap fired — attempting ETL refresh")
+  etl_script <- file.path(.scripts_dir_rr, "roborev_metrics_etl.sh")
+  if (file.exists(etl_script)) {
+    system2("bash", args = c(etl_script, "--apply"),
+            stdout = FALSE, stderr = FALSE, timeout = 30L)
+    # Re-read latest JSON after ETL refresh
+    json_path_new <- find_latest_json(ROBOREV_DAILY_DIR)
+    if (!is.null(json_path_new)) {
+      snap_new <- tryCatch(
+        jsonlite::fromJSON(json_path_new, simplifyVector = FALSE),
+        error = function(e) NULL
+      )
+      if (!is.null(snap_new)) {
+        snap <- snap_new
+        json_path <- json_path_new
+        # Re-extract d1 after refresh; also update n_reviews
+        d1 <- snap[["global_windows"]][["d1"]]
+        d1_sp_new <- if (!is.null(d1)) d1[["speed"]] else list()
+        d1_ttc_p50    <- d1_sp_new[["ttc_p50_hrs"]]
+        d1_close_rate <- d1_sp_new[["close_rate"]]
+        d1_att_p50    <- d1_sp_new[["att_p50"]]
+        d1_n_reviews  <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
+      }
+    }
+  }
+  # Re-check: if still zero-action, set flag
+  .d1_no_close2 <- isTRUE(is.null(d1_close_rate) || is.na(d1_close_rate) || d1_close_rate == 0)
+  .d1_no_ttc2   <- isTRUE(is.null(d1_ttc_p50) || is.na(d1_ttc_p50))
+  .d1_no_att2   <- isTRUE(is.null(d1_att_p50) || is.na(d1_att_p50))
+  if (.d1_no_close2 && .d1_no_ttc2 && .d1_no_att2) {
+    zero_action_fired <- TRUE
+    message("send_roborev_email.R: zero-action trap still active after ETL refresh")
+  }
+}
+
+# Zero-action error block (prepended before dashboard CTA when fired — llm#484)
+zero_action_block <- if (zero_action_fired) {
+  sprintf(
+    '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
+      border-radius:6px; padding:14px 18px; margin:16px 0; font-size:%s;">
+      <strong style="font-size:15px;">&#9888; Zero-Action Data Detected</strong><br>
+      <span>%d review(s) were recorded in the 24h window but all action metrics
+      (close rate, time-to-close, attempt count) are zero or missing. ETL refresh
+      was attempted but the issue persists. Check the roborev daemon and ETL
+      pipeline for upstream errors before acting on this report.</span>
+    </div>',
+    EMAIL_FONT_BODY, d1_n_reviews
+  )
+} else ""
+
+# Dashboard link CTA (llm#484: zero_action_block prepended when trap fires)
+dashboard_block <- paste0(
+  zero_action_block,
+  sprintf(
+    '<div style="margin: 16px 0;">
+  <a href="%s"
+     style="display:inline-block; padding:10px 20px; background-color:%s;
+            color:#1a1a2e; text-decoration:none; border-radius:4px;
+            font-weight:bold; font-size:13px;">
+    View Full roborev Dashboard
+  </a>
+</div>',
+    ROBOREV_DASHBOARD_URL, accent_blue
+  )
+)
+
+headline_1d_inner <- sprintf(
+  '<table style="border-collapse:collapse; width:100%%; font-size:12px;">
   <tr style="background-color:%s;">
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:left;">Metric</th>
     <th style="padding:6px 8px; border:1px solid %s; color:white; text-align:right;">Value</th>
   </tr>',
-  accent_green, d1_window_caption, dark_row_alt, dark_border, dark_border
+  dark_row_alt, dark_border, dark_border
 )
 
 if (is.null(d1) || d1_n_reviews == 0L) {
   # llm#484: empty-state single-row diagnostic instead of 7 boilerplate zeros
-  headline_1d_html <- paste0(headline_1d_html, sprintf(
+  headline_1d_inner <- paste0(headline_1d_inner, sprintf(
     '<tr style="background-color:%s;">
       <td colspan="2" style="padding:6px 8px; border:1px solid %s; color:%s; font-style:italic;">
         <!-- QA:24h_empty_state -->No reviews logged in this window — see dashboard for full context
@@ -254,7 +318,7 @@ if (is.null(d1) || d1_n_reviews == 0L) {
   }
   for (i in seq_along(headline_1d_rows)) {
     bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-    headline_1d_html <- paste0(headline_1d_html, sprintf(
+    headline_1d_inner <- paste0(headline_1d_inner, sprintf(
       '<tr style="background-color:%s;">
         <td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>
         <td style="padding:5px 8px; border:1px solid %s; color:%s; text-align:right;">%s</td>
@@ -265,7 +329,14 @@ if (is.null(d1) || d1_n_reviews == 0L) {
     ))
   }
 }
-headline_1d_html <- paste0(headline_1d_html, "</table>")
+headline_1d_inner <- paste0(headline_1d_inner, "</table>")
+# llm#527: wrap 24h table in collapsible_block(open=TRUE) so it starts expanded
+headline_1d_html <- collapsible_block(
+  d1_window_caption,
+  sprintf("%d review(s) in window", d1_n_reviews),
+  headline_1d_inner,
+  open = TRUE
+)
 
 # §1 + §2 Headline two-column table (7-day)
 d7_n_reviews <- if (!is.null(d7)) as.integer(d7[["n_reviews"]] %||% 0L) else 0L
@@ -453,9 +524,8 @@ outlier_att_html  <- collapsible_block(
 severity_rows_data <- snap[["severity_by_project_7d"]]
 if (is.null(severity_rows_data)) severity_rows_data <- list()
 
-severity_html <- sprintf(
-  '<h3 style="color:%s; margin-top:20px;">Severity by Project (7d)</h3>
-<table style="border-collapse:collapse; width:100%%; font-size:11px;">
+severity_inner <- sprintf(
+  '<table style="border-collapse:collapse; width:100%%; font-size:11px;">
   <tr style="background-color:%s;">
     <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Project</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">High</th>
@@ -463,7 +533,6 @@ severity_html <- sprintf(
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Low</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Total</th>
   </tr>',
-  accent_purple,
   dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
 )
 if (length(severity_rows_data) > 0L) {
@@ -475,7 +544,7 @@ if (length(severity_rows_data) > 0L) {
       sprintf('<a href="https://github.com/JohnGavin/%s" style="color:%s;">%s</a>',
               repo_val, accent_blue, repo_val)
     else repo_val
-    severity_html <- paste0(severity_html, sprintf(
+    severity_inner <- paste0(severity_inner, sprintf(
       '<tr style="background-color:%s;">
         <td style="padding:4px 8px; border:1px solid %s; color:%s;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
@@ -492,17 +561,24 @@ if (length(severity_rows_data) > 0L) {
     ))
   }
 } else {
-  severity_html <- paste0(severity_html,
+  severity_inner <- paste0(severity_inner,
     sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in 7-day window)</td></tr>', dark_muted))
 }
-severity_html <- paste0(severity_html, "</table>")
+severity_inner <- paste0(severity_inner, "</table>")
+# llm#527: wrap severity table in collapsible_block(open=FALSE) — collapsed by default
+severity_html <- collapsible_block(
+  "Severity by Project (7d)",
+  sprintf("%d project(s) tracked", length(severity_rows_data)),
+  severity_inner,
+  open = FALSE
+)
 
 # QA markers (tested by test-send-roborev-email.R)
 # llm#484: added n_reviews and d1_n_reviews markers for diagnostic visibility
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s -->',
   report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL,
-  d1_n_reviews, d7_n_reviews, d1_other_n
+  d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(zero_action_fired))
 )
 
 # Assemble full body
@@ -514,6 +590,7 @@ email_body <- sprintf(
 <p style="color:%s; font-size:%s; margin-top:0;">
   Generated: %s UTC &nbsp;|&nbsp; Lineage: %s
 </p>
+%s
 %s
 %s
 %s
