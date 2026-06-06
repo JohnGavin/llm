@@ -1320,6 +1320,19 @@ if [ "${CLAUDE_ETL_FRESHNESS_CHECK:-1}" != "0" ]; then
   fi
 fi
 
+# ── Phase 15b: Canonical-projects audit (JohnGavin/llm#535) ──────────────────
+# Queries unified.duckdb for distinct project/repo values across tracked tables,
+# classifies each as FIXTURE / CANONICAL / UNKNOWN, and emits one compact line
+# when unknowns are found (silent when fully clean).
+# Skippable: CLAUDE_CANONICAL_PROJECTS_AUDIT=0
+# Fail-open: any error → silently continue (no non-zero exit from this block).
+if [ "${CLAUDE_CANONICAL_PROJECTS_AUDIT:-1}" != "0" ]; then
+  _audit_script="${CLAUDE_DIR}/scripts/canonical_projects_audit.sh"
+  if [ -x "$_audit_script" ]; then
+    timeout 5 "$_audit_script" --quiet 2>/dev/null || true
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
