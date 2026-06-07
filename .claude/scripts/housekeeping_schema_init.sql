@@ -2,10 +2,11 @@
 -- Unified DuckDB schema for the overnight housekeeping framework.
 --
 -- Tables:
---   worktree_gc_events  -- one row per worktree inspected/removed/skipped by any writer
---   housekeeping_runs   -- one row per cron/script invocation (heartbeat)
---   config_events       -- one row per config-file change detected by config_digest_cron.sh
---   kb_events           -- one row per knowledge-base change detected by kb_digest_daily_cron.sh
+--   worktree_gc_events     -- one row per worktree inspected/removed/skipped by any writer
+--   housekeeping_runs      -- one row per cron/script invocation (heartbeat)
+--   config_events          -- one row per config-file change detected by config_digest_cron.sh
+--   kb_events              -- one row per knowledge-base change detected by kb_digest_daily_cron.sh
+--   launchd_health_events  -- one row per launchd plist's last-observed state (llm#554)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -13,7 +14,7 @@
 -- Apply with:
 --   bash .claude/scripts/housekeeping_schema_apply.sh
 --
--- Tracked in llm#550 Phase B, llm#552 Phase B, llm#553 Phase B.
+-- Tracked in llm#550 Phase B, llm#552 Phase B, llm#553 Phase B, llm#554 Phase B.
 
 CREATE TABLE IF NOT EXISTS worktree_gc_events (
   id                TEXT PRIMARY KEY,
@@ -71,7 +72,28 @@ CREATE TABLE IF NOT EXISTS kb_events (
   commit_sha    TEXT
 );
 
+-- launchd_health_events: one row per launchd plist's last-observed state.
+-- Written by launchd_health_weekly_cron.sh (per-plist row, one batch per run).
+-- Queried by the 06:30 digest to surface the "Cron health (last fire)" section.
+-- A missing or stale row for any plist is the meta-check that flags broken cron jobs.
+-- Natural key is (plist_label, fired_at); uniqueness enforced by primary key on id.
+-- TODO: consider UNIQUE (plist_label, fired_at) constraint — see llm#567.
+-- See llm#554 Phase B.
+CREATE TABLE IF NOT EXISTS launchd_health_events (
+  id              TEXT PRIMARY KEY,
+  fired_at        TIMESTAMPTZ NOT NULL,
+  source          TEXT NOT NULL,           -- 'launchd_health_weekly_cron.sh'
+  plist_label     TEXT NOT NULL,           -- e.g. 'com.claude.worktree-gc'
+  state           TEXT NOT NULL,           -- 'loaded_ok' | 'loaded_recent_fail' | 'unloaded' | 'missing' | 'orphan'
+  last_exit_code  INTEGER,
+  last_fired_at   TIMESTAMPTZ,             -- from launchctl print (NULL when not parseable)
+  next_fire_at    TIMESTAMPTZ,             -- from launchctl print (NULL when not scheduled/parseable)
+  detail          TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_housekeeping_runs_task_started ON housekeeping_runs(task, started_at);
 CREATE INDEX IF NOT EXISTS idx_config_events_fired_at ON config_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_kb_events_fired_at ON kb_events(fired_at);
+CREATE INDEX IF NOT EXISTS idx_launchd_health_events_fired_at ON launchd_health_events(fired_at);
+CREATE INDEX IF NOT EXISTS idx_launchd_health_events_plist ON launchd_health_events(plist_label, fired_at);
