@@ -43,7 +43,15 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 **Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `/wiki-health` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`, `knowledge-base-wiki`.
-**Mandatory rules:** `systematic-debugging`, `verification-before-completion`, `btw-timeouts`, `orchestrator-protocol`, `provenance-mandatory`, `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`, `git-no-compound-cd`, `look-ahead-bias-prevention`, `nix-agent-shell-protocol`, `worktree-location`, `dark-mode-completeness`, `narrative-evidence-block`, `narrative-colour-persistence`, `mermaid-click-anchors`, `mermaid-dashboard-pattern`, `roborev-exclude-patterns`, `cross-cutting-rename`, `data-glossary-and-entity-resolution`, `unified-observability-schema`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`, `dashboard-table-styling`, `uniform-typography`, `branch-harvest-on-fork`, `dashboard-filter-placement`, `survival-reporting`, `vignette-build-info-block`, `pr-shipping-discipline`.
+**Mandatory rules** (auto-loaded — safety-critical, fire on every session): `verification-before-completion`, `systematic-debugging`, `btw-timeouts`, `git-no-compound-cd`, `nix-agent-shell-protocol`, `worktree-location`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`.
+
+**Context-load rules** (read when the task matches — NOT auto-loaded; load via Read tool when relevant):
+- Orchestration / provenance: `orchestrator-protocol`, `provenance-mandatory`, `look-ahead-bias-prevention`, `pr-shipping-discipline`, `branch-harvest-on-fork`
+- Knowledge base: `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`
+- Quarto / vignettes: `dark-mode-completeness`, `narrative-evidence-block`, `narrative-colour-persistence`, `vignette-build-info-block`, `uniform-typography`
+- Dashboards / viz: `dashboard-table-styling`, `dashboard-filter-placement`, `mermaid-click-anchors`, `mermaid-dashboard-pattern`
+- Data / analysis: `cross-cutting-rename`, `data-glossary-and-entity-resolution`, `unified-observability-schema`, `survival-reporting`
+- Tooling: `roborev-exclude-patterns`
 
 **Dark-mode contrast (every Quarto project):** Single global script at `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh` (public mirror: `https://raw.githubusercontent.com/JohnGavin/llm/main/.claude/scripts/check_dark_contrast.sh`). NEVER copy into a project. EVERY `_quarto.yml` MUST add this line under `project: post-render:` — `- /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh`. Render fails on any uncovered light inline background. See `dark-mode-completeness` rule.
 
