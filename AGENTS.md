@@ -46,7 +46,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 **Mandatory rules** (auto-loaded — safety-critical, fire on every session): `verification-before-completion`, `systematic-debugging`, `btw-timeouts`, `git-no-compound-cd`, `nix-agent-shell-protocol`, `worktree-location`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`.
 
 **Context-load rules** (read when the task matches — NOT auto-loaded; load via Read tool when relevant):
-- Orchestration / provenance: `orchestrator-protocol`, `provenance-mandatory`, `look-ahead-bias-prevention`, `pr-shipping-discipline`, `branch-harvest-on-fork`
+- Orchestration / provenance: `orchestrator-protocol`, `provenance-mandatory`, `look-ahead-bias-prevention`, `pr-shipping-discipline`, `branch-harvest-on-fork`, `housekeeping-framework`
 - Knowledge base: `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`
 - Quarto / vignettes: `dark-mode-completeness`, `narrative-evidence-block`, `narrative-colour-persistence`, `vignette-build-info-block`, `uniform-typography`
 - Dashboards / viz: `dashboard-table-styling`, `dashboard-filter-placement`, `mermaid-click-anchors`, `mermaid-dashboard-pattern`
@@ -84,9 +84,9 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · Targets · Shiny · Quarto · Prose · DevOps · PM · AI · Specialized). Mandatory subset enforced via the `**Mandatory skills:**` line above.
 
-## Commands (20)
+## Commands (21)
 
-`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`, `/skillify`
+`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/cleanup-worktrees`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`, `/skillify`
 
 ## Automation Features (v2.1.72+)
 

@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # worktree_gc.sh — Safe stale-worktree garbage collector
 #
-# Sweeps all git repos under ~/docs_gh for worktrees that are:
-#   • patch-id fully merged into the default branch
+# Sweeps all git worktrees across three location patterns:
+#   1. ~/docs_gh/*-*            (deprecated sibling worktrees, AGE_DAYS=7)
+#   2. ~/docs_gh/*/.claude/worktrees/agent-*  (harness agent worktrees, AGE_DAYS=14)
+#   3. ~/worktrees/*/*/*        (convention worktrees, AGE_DAYS=30)
+#
+# A worktree is eligible for removal only when ALL of:
+#   • patch-id fully merged into the default branch (git cherry)
 #   • clean (no uncommitted / untracked files)
-#   • older than AGE_DAYS (default 7)
+#   • older than AGE_DAYS for its location pattern
+#   • NOT locked by git
+#   • NOT the current working directory
+#   • NOT protected by a .no-worktree-gc opt-out marker in its repo root
 #
 # Conservative by design — squash-merged branches (unique patch-ids) are left
-# for human review via /cleanup. Under-deletes, never over-deletes.
+# for human review via /cleanup-worktrees. Under-deletes, never over-deletes.
 #
 # Usage:
 #   bash worktree_gc.sh            # dry-run (safe; never removes anything)
@@ -15,8 +23,13 @@
 #   SELFTEST=1 bash worktree_gc.sh # run built-in unit tests against temp repos
 #
 # Opt-out: place a .no-worktree-gc file in a repo root to skip that repo.
+# Empty ~/worktrees/<proj>/{feat,fix,chore}/ parents are rmdir'd when all
+# worktrees under them have been removed.
 #
-# Tracks: JohnGavin/llm#199
+# Writes outcomes to unified.duckdb (worktree_gc_events + housekeeping_runs)
+# when duckdb is available. Silently skips DB writes when duckdb is absent.
+#
+# Tracks: JohnGavin/llm#550 (Phase A), JohnGavin/llm#199
 
 set -euo pipefail
 
@@ -31,10 +44,23 @@ export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:
 SOAK_END="2026-06-02"
 
 # ─── Config ──────────────────────────────────────────────────────────────────
-AGE_DAYS="${AGE_DAYS:-7}"
+# Per-pattern age thresholds (days)
+AGE_DAYS_SIBLINGS="${AGE_DAYS_SIBLINGS:-7}"    # deprecated ~/docs_gh/*-* siblings
+AGE_DAYS_AGENT="${AGE_DAYS_AGENT:-14}"         # harness agent worktrees (matches Phase 7f)
+AGE_DAYS_CONVENTION="${AGE_DAYS_CONVENTION:-30}"  # ~/worktrees/*/* convention
+
 DOCS_GH="${DOCS_GH:-$HOME/docs_gh}"
+WORKTREES_BASE="${WORKTREES_BASE:-$HOME/worktrees}"
+UNIFIED_DB="${UNIFIED_DB_PATH:-$HOME/.claude/logs/unified.duckdb}"
 LOG_FILE="$HOME/.claude/logs/worktree_gc.log"
 APPLY=0
+
+# Sweep patterns: "glob|age_days_var_name"
+SWEEP_PATTERNS=(
+  "${DOCS_GH}/*-*|siblings"
+  "${DOCS_GH}/*/.claude/worktrees/agent-*|agent"
+  "${WORKTREES_BASE}/*/*/*|convention"
+)
 
 for arg in "$@"; do
   [ "$arg" = "--apply" ] && APPLY=1
@@ -58,6 +84,33 @@ log() {
   echo "$msg" >> "$LOG_FILE"
   echo "$msg"
 }
+
+# ─── DuckDB availability check ───────────────────────────────────────────────
+_duckdb_ok=0
+if command -v duckdb >/dev/null 2>&1 && [ -f "$UNIFIED_DB" ]; then
+  _duckdb_ok=1
+fi
+
+# Run ID for this invocation (used in housekeeping_runs + worktree_gc_events)
+_run_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
+_run_started=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
+_script_abs=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P && echo "$(basename "$0")" || echo "$0")
+
+# Insert housekeeping_runs start row
+if [ "$_duckdb_ok" = "1" ]; then
+  duckdb "$UNIFIED_DB" "
+    INSERT OR IGNORE INTO housekeeping_runs
+      (id, task, source_script, started_at, status, rows_written)
+    VALUES (
+      '${_run_id}',
+      'worktree_gc',
+      '${_script_abs}',
+      TIMESTAMPTZ '${_run_started}',
+      'ok',
+      0
+    );
+  " 2>/dev/null || true
+fi
 
 # ─── Helper: default branch for a repo ───────────────────────────────────────
 default_branch() {
@@ -97,141 +150,260 @@ now_epoch() {
   python3 -c "import time; print(int(time.time()))"
 }
 
+# ─── Helper: du -sm for size_mb ──────────────────────────────────────────────
+dir_size_mb() {
+  python3 -c "
+import os, stat
+total = 0
+for dirpath, dirnames, filenames in os.walk('$1'):
+    for f in filenames:
+        fp = os.path.join(dirpath, f)
+        try: total += os.path.getsize(fp)
+        except OSError: pass
+print(int(total / 1048576))
+" 2>/dev/null || echo "0"
+}
+
+# ─── Helper: write one row to worktree_gc_events ─────────────────────────────
+write_gc_event() {
+  # args: pattern_label project wt_path branch action reason size_mb
+  [ "$_duckdb_ok" = "1" ] || return 0
+  local _evt_id
+  _evt_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
+  local _now_ts
+  _now_ts=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
+  local _pattern_label="$1" _project="$2" _wt_path="$3" _branch="$4"
+  local _action="$5" _reason="$6" _size_mb="$7"
+
+  duckdb "$UNIFIED_DB" "
+    INSERT OR IGNORE INTO worktree_gc_events
+      (id, fired_at, source, session_id, location_pattern,
+       project, worktree_path, branch, action, reason, size_mb)
+    VALUES (
+      '${_evt_id}',
+      TIMESTAMPTZ '${_now_ts}',
+      'worktree_gc.sh',
+      NULL,
+      '${_pattern_label}',
+      '${_project}',
+      '${_wt_path}',
+      '${_branch}',
+      '${_action}',
+      '${_reason}',
+      ${_size_mb}
+    );
+  " 2>/dev/null || true
+}
+
 # ─── Main sweep ──────────────────────────────────────────────────────────────
 _now=$(now_epoch)
-_age_seconds=$(( AGE_DAYS * 86400 ))
 _current_pwd=$(pwd -P 2>/dev/null || echo "")
 
 CANDIDATES=0
 WOULD_REMOVE=0
 REMOVED=0
 KEPT=0
+EVENTS_WRITTEN=0
 
-for repo_dir in "$DOCS_GH"/*/; do
-  [ -d "$repo_dir" ] || continue
+# Track convention-pattern parent dirs for later rmdir
+declare -a CONVENTION_PARENTS=()
 
-  # Must be a git repo
-  git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || continue
+# ─── Sweep each pattern ───────────────────────────────────────────────────────
+for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
+  _glob="${_pattern_entry%%|*}"
+  _label="${_pattern_entry##*|}"
 
-  # Must be a main checkout (not itself a worktree)
-  is_main_checkout "$repo_dir" || continue
+  # Resolve age threshold for this pattern
+  case "$_label" in
+    siblings)    _age_days="$AGE_DAYS_SIBLINGS" ;;
+    agent)       _age_days="$AGE_DAYS_AGENT" ;;
+    convention)  _age_days="$AGE_DAYS_CONVENTION" ;;
+    *)           _age_days="14" ;;
+  esac
+  _age_seconds=$(( _age_days * 86400 ))
 
-  # Opt-out marker
-  if [ -f "$repo_dir/.no-worktree-gc" ]; then
-    log "[skip-repo] $repo_dir (opt-out marker)"
-    continue
-  fi
+  log "[sweep] pattern=$_label glob=$_glob age_days=$_age_days"
 
-  default_br=$(default_branch "$repo_dir")
+  # Expand glob — use nullglob-compatible test
+  _dirs=()
+  while IFS= read -r -d '' _d; do
+    _dirs+=("$_d")
+  done < <(find $HOME -maxdepth 5 -type d -name "$(basename "$_glob")" 2>/dev/null -print0 | sort -z || true)
 
-  # Parse porcelain worktree list
-  # Format: blank-line separated blocks, fields:
-  #   worktree <path>
-  #   HEAD <sha>
-  #   branch refs/heads/<name>   (or "detached")
-  #   locked [reason]            (optional)
-  wt_path="" wt_sha="" wt_branch="" wt_locked=0
+  # Simpler approach: use shell glob expansion carefully
+  _dirs=()
+  for _d in $_glob; do
+    [ -d "$_d" ] && _dirs+=("$_d")
+  done
 
-  while IFS= read -r line || [ -n "$line" ]; do
-    if [[ "$line" == worktree\ * ]]; then
-      wt_path="${line#worktree }"
-      wt_sha="" wt_branch="" wt_locked=0
-    elif [[ "$line" == HEAD\ * ]]; then
-      wt_sha="${line#HEAD }"
-    elif [[ "$line" == branch\ * ]]; then
-      wt_branch="${line#branch refs/heads/}"
-    elif [[ "$line" == locked* ]]; then
-      wt_locked=1
-    elif [ -z "$line" ] && [ -n "$wt_path" ]; then
-      # End of a block — evaluate this worktree
-      _process_worktree=1
+  for wt_path in "${_dirs[@]:-}"; do
+    [ -z "$wt_path" ] && continue
+    [ -d "$wt_path" ] || continue
 
-      # Skip: main checkout itself
-      wt_realpath=$(cd "$wt_path" 2>/dev/null && pwd -P 2>/dev/null || echo "$wt_path")
-      repo_realpath=$(cd "$repo_dir" 2>/dev/null && pwd -P 2>/dev/null || echo "$repo_dir")
-      if [ "$wt_realpath" = "$repo_realpath" ]; then
-        _process_worktree=0
-      fi
+    # Must be a git worktree (not a random directory)
+    git -C "$wt_path" rev-parse --git-dir >/dev/null 2>&1 || continue
 
-      # Skip: locked
-      if [ "$wt_locked" = "1" ]; then
-        _process_worktree=0
-      fi
-
-      # Skip: agent worktrees (harness-managed)
-      if [[ "$wt_path" == */.claude/worktrees/* ]]; then
-        _process_worktree=0
-      fi
-
-      # Skip: current running session
-      if [ -n "$_current_pwd" ] && [[ "$_current_pwd" == "$wt_path"* ]]; then
-        _process_worktree=0
-      fi
-
-      if [ "$_process_worktree" = "1" ] && [ -d "$wt_path" ]; then
-        CANDIDATES=$(( CANDIDATES + 1 ))
-
-        # Gate 1: patch-id check — no lines starting with + means fully merged
-        cherry_out=$(git -C "$repo_dir" cherry "$default_br" "$wt_branch" 2>/dev/null || echo "cherry-failed")
-        if echo "$cherry_out" | grep -q '^+'; then
-          log "[keep-unmerged] $wt_path (branch $wt_branch has unique patches vs $default_br)"
-          KEPT=$(( KEPT + 1 ))
-          wt_path="" wt_sha="" wt_branch="" wt_locked=0
-          continue
-        fi
-        if [ "$cherry_out" = "cherry-failed" ]; then
-          log "[keep-cherry-error] $wt_path (cherry check failed)"
-          KEPT=$(( KEPT + 1 ))
-          wt_path="" wt_sha="" wt_branch="" wt_locked=0
-          continue
-        fi
-
-        # Gate 2: clean working tree
-        dirty=$(git -C "$wt_path" status --porcelain 2>/dev/null || echo "status-failed")
-        if [ -n "$dirty" ]; then
-          log "[keep-dirty] $wt_path (uncommitted/untracked files)"
-          KEPT=$(( KEPT + 1 ))
-          wt_path="" wt_sha="" wt_branch="" wt_locked=0
-          continue
-        fi
-
-        # Gate 3: age
-        wt_mtime=$(dir_mtime_epoch "$wt_path")
-        wt_age=$(( _now - wt_mtime ))
-        if [ "$wt_age" -lt "$_age_seconds" ]; then
-          log "[keep-too-new] $wt_path (age $wt_age s < ${_age_seconds} s threshold)"
-          KEPT=$(( KEPT + 1 ))
-          wt_path="" wt_sha="" wt_branch="" wt_locked=0
-          continue
-        fi
-
-        # All gates passed — candidate for removal
-        WOULD_REMOVE=$(( WOULD_REMOVE + 1 ))
-        if [ "$APPLY" = "1" ]; then
-          log "[removing] $wt_path branch=$wt_branch sha=$wt_sha repo=$repo_dir"
-          # worktree remove refuses if dirty (backstop)
-          if git -C "$repo_dir" worktree remove "$wt_path" 2>/dev/null; then
-            # Delete the branch only if safe (refuses if unmerged)
-            git -C "$repo_dir" branch -d "$wt_branch" 2>/dev/null && \
-              log "[branch-deleted] $wt_branch in $repo_dir" || \
-              log "[branch-keep] $wt_branch in $repo_dir (branch delete refused)"
-            REMOVED=$(( REMOVED + 1 ))
-          else
-            log "[remove-failed] $wt_path (worktree remove refused)"
-            KEPT=$(( KEPT + 1 ))
-          fi
-        else
-          log "[would-remove] $wt_path branch=$wt_branch sha=$wt_sha repo=$repo_dir"
-        fi
-      fi
-
-      wt_path="" wt_sha="" wt_branch="" wt_locked=0
+    # Must NOT be a main checkout — only sweep actual worktrees
+    if is_main_checkout "$wt_path"; then
+      continue
     fi
-  done < <(git -C "$repo_dir" worktree list --porcelain; echo "")
 
-done
+    # Find the main checkout (git-common-dir)
+    _common_dir=$(git -C "$wt_path" rev-parse --git-common-dir 2>/dev/null || true)
+    # git-common-dir inside a worktree points to <main>/.git
+    _repo_dir=$(dirname "$_common_dir")
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE removed=$REMOVED kept=$KEPT apply=$APPLY soak-past=$_past_soak"
+    # Validate repo dir exists
+    [ -d "$_repo_dir" ] || continue
+
+    # Extract project name from repo path
+    _project=$(basename "$_repo_dir")
+
+    # Opt-out marker in the main repo root
+    if [ -f "$_repo_dir/.no-worktree-gc" ]; then
+      log "[skip-repo] $wt_path (opt-out marker in $_repo_dir)"
+      write_gc_event "$_label" "$_project" "$wt_path" "" "skipped_optout" "opt-out marker" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      continue
+    fi
+
+    # Get branch from git
+    wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    wt_sha=$(git -C "$wt_path" rev-parse HEAD 2>/dev/null || echo "")
+
+    # Skip: current running session's cwd
+    if [ -n "$_current_pwd" ] && [[ "$_current_pwd" == "$wt_path"* ]]; then
+      log "[skip-cwd] $wt_path (current session)"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_cwd" "current session cwd" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      KEPT=$(( KEPT + 1 ))
+      continue
+    fi
+
+    # Skip: locked (check via worktree list porcelain)
+    _is_locked=0
+    while IFS= read -r _wt_line; do
+      if [[ "$_wt_line" == worktree\ "$wt_path" ]]; then
+        _in_block=1
+      elif [[ "$_wt_line" == worktree\ * ]]; then
+        _in_block=0
+      elif [ "${_in_block:-0}" = "1" ] && [[ "$_wt_line" == locked* ]]; then
+        _is_locked=1
+      fi
+    done < <(git -C "$_repo_dir" worktree list --porcelain 2>/dev/null || true)
+
+    if [ "$_is_locked" = "1" ]; then
+      log "[skip-locked] $wt_path branch=$wt_branch"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_locked" "git worktree locked" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      KEPT=$(( KEPT + 1 ))
+      continue
+    fi
+
+    CANDIDATES=$(( CANDIDATES + 1 ))
+    default_br=$(default_branch "$_repo_dir")
+
+    # Gate 1: patch-id check — no lines starting with + means fully merged
+    cherry_out=$(git -C "$_repo_dir" cherry "$default_br" "$wt_branch" 2>/dev/null || echo "cherry-failed")
+    if echo "$cherry_out" | grep -q '^+'; then
+      _reason="unmerged patches vs $default_br"
+      log "[keep-unmerged] $wt_path (branch $wt_branch has unique patches vs $default_br)"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_unmerged" "$_reason" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      KEPT=$(( KEPT + 1 ))
+      continue
+    fi
+    if [ "$cherry_out" = "cherry-failed" ]; then
+      log "[keep-cherry-error] $wt_path (cherry check failed)"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_cherry_error" "cherry check failed" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      KEPT=$(( KEPT + 1 ))
+      continue
+    fi
+
+    # Gate 2: clean working tree
+    dirty=$(git -C "$wt_path" status --porcelain 2>/dev/null || echo "status-failed")
+    if [ -n "$dirty" ]; then
+      log "[keep-dirty] $wt_path (uncommitted/untracked files)"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_uncommitted" "dirty working tree" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      KEPT=$(( KEPT + 1 ))
+      continue
+    fi
+
+    # Gate 3: age
+    wt_mtime=$(dir_mtime_epoch "$wt_path")
+    wt_age=$(( _now - wt_mtime ))
+    if [ "$wt_age" -lt "$_age_seconds" ]; then
+      log "[keep-too-new] $wt_path (age $wt_age s < ${_age_seconds} s threshold for $_label)"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_age" "age ${wt_age}s < threshold ${_age_seconds}s" "0"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+      KEPT=$(( KEPT + 1 ))
+      continue
+    fi
+
+    # All gates passed — candidate for removal
+    _size_mb=$(dir_size_mb "$wt_path")
+    WOULD_REMOVE=$(( WOULD_REMOVE + 1 ))
+
+    if [ "$_label" = "convention" ]; then
+      # Track parent dir for potential rmdir
+      _parent_dir=$(dirname "$wt_path")
+      CONVENTION_PARENTS+=("$_parent_dir")
+    fi
+
+    if [ "$APPLY" = "1" ]; then
+      log "[removing] $wt_path branch=$wt_branch sha=$wt_sha repo=$_repo_dir size_mb=$_size_mb"
+      # worktree remove refuses if dirty (backstop)
+      if git -C "$_repo_dir" worktree remove "$wt_path" 2>/dev/null; then
+        # Delete the branch only if safe (refuses if unmerged)
+        git -C "$_repo_dir" branch -d "$wt_branch" 2>/dev/null && \
+          log "[branch-deleted] $wt_branch in $_repo_dir" || \
+          log "[branch-keep] $wt_branch in $_repo_dir (branch delete refused)"
+        write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "removed" "all gates passed" "$_size_mb"
+        EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+        REMOVED=$(( REMOVED + 1 ))
+      else
+        log "[remove-failed] $wt_path (worktree remove refused)"
+        write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "worktree remove refused" "$_size_mb"
+        EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+        KEPT=$(( KEPT + 1 ))
+      fi
+    else
+      log "[would-remove] $wt_path branch=$wt_branch sha=$wt_sha repo=$_repo_dir size_mb=$_size_mb"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "would_remove" "dry-run: all gates passed" "$_size_mb"
+      EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+    fi
+
+  done  # end dirs loop
+done  # end patterns loop
+
+# ─── Empty convention parent cleanup ─────────────────────────────────────────
+if [ "$APPLY" = "1" ] && [ "${#CONVENTION_PARENTS[@]}" -gt 0 ]; then
+  # Deduplicate and try rmdir on each parent (rmdir only removes empty dirs)
+  declare -A _seen_parents=()
+  for _parent in "${CONVENTION_PARENTS[@]}"; do
+    [ -z "$_parent" ] && continue
+    [ "${_seen_parents[$_parent]+set}" = "set" ] && continue
+    _seen_parents[$_parent]=1
+    if [ -d "$_parent" ] && rmdir "$_parent" 2>/dev/null; then
+      log "[rmdir-empty-parent] $_parent"
+    fi
+  done
+fi
+
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE removed=$REMOVED kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak"
+
+# Update housekeeping_runs end row
+if [ "$_duckdb_ok" = "1" ]; then
+  _run_ended=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
+  duckdb "$UNIFIED_DB" "
+    UPDATE housekeeping_runs
+    SET ended_at = TIMESTAMPTZ '${_run_ended}',
+        rows_written = ${EVENTS_WRITTEN}
+    WHERE id = '${_run_id}';
+  " 2>/dev/null || true
+fi
 
 # ─── SELFTEST ────────────────────────────────────────────────────────────────
 if [ "${SELFTEST:-0}" = "1" ]; then
@@ -305,20 +477,34 @@ if [ "${SELFTEST:-0}" = "1" ]; then
   # Leave mtime as-is (just created = age < 7 days)
   wt_mtime=$(dir_mtime_epoch "$wt_new")
   wt_age=$(( $(now_epoch) - wt_mtime ))
-  _check "new worktree age is less than 7 days" "1" "$([ "$wt_age" -lt "$_age_seconds" ] && echo 1 || echo 0)"
+  _check "new worktree age is less than 7 days (siblings threshold)" "1" "$([ "$wt_age" -lt "$(( AGE_DAYS_SIBLINGS * 86400 ))" ] && echo 1 || echo 0)"
 
-  # --- Test: agent worktree path is skipped
+  # --- Test: agent worktree path label
   agent_path="$tmpdir/.claude/worktrees/agent-abc123"
   mkdir -p "$agent_path"
-  skip_agent=0
-  [[ "$agent_path" == */.claude/worktrees/* ]] && skip_agent=1
-  _check "agent worktree path is recognised as skip" "1" "$skip_agent"
+  label_agent=0
+  [[ "$agent_path" == */.claude/worktrees/* ]] && label_agent=1
+  _check "agent worktree path matches agent pattern" "1" "$label_agent"
+
+  # --- Test: convention worktree path label
+  convention_path="$tmpdir/worktrees/myproject/feat/my-feature"
+  mkdir -p "$convention_path"
+  label_convention=0
+  [[ "$convention_path" == *worktrees/*/*/* ]] && label_convention=1
+  _check "convention worktree path matches convention pattern" "1" "$label_convention"
+
+  # --- Test: sibling worktree path label
+  sibling_path="$tmpdir/myproject-fix-foo"
+  mkdir -p "$sibling_path"
+  label_sibling=0
+  # Simulated check — siblings end with -something
+  [[ "$sibling_path" == *-* ]] && label_sibling=1
+  _check "sibling worktree path matches sibling pattern" "1" "$label_sibling"
 
   # --- Test: locked worktree is skipped
   wt_locked=$(mk_wt "locked")
   git -C "$main" worktree lock "$wt_locked"
   # The porcelain format emits a "locked" line in the worktree's block.
-  # Count "locked" lines directly — any locked worktree will appear exactly once.
   locked_found=$(git -C "$main" worktree list --porcelain | grep -c "^locked" || true)
   _check "locked worktree shows locked in porcelain" "1" "$locked_found"
 
@@ -328,6 +514,21 @@ if [ "${SELFTEST:-0}" = "1" ]; then
   [ -f "$main/.no-worktree-gc" ] && has_optout=1
   _check "opt-out marker is detected" "1" "$has_optout"
   rm "$main/.no-worktree-gc"
+
+  # --- Test: is_main_checkout correctly identifies main vs worktree
+  _check "main dir is_main_checkout" "0" "$(is_main_checkout "$main" && echo 0 || echo 1)"
+  _check "worktree dir is NOT is_main_checkout" "1" "$(is_main_checkout "$wt_merged" && echo 0 || echo 1)"
+
+  # --- Test: per-pattern age thresholds differ
+  _check "siblings age threshold 7 days" "7" "$AGE_DAYS_SIBLINGS"
+  _check "agent age threshold 14 days" "14" "$AGE_DAYS_AGENT"
+  _check "convention age threshold 30 days" "30" "$AGE_DAYS_CONVENTION"
+
+  # --- Test: convention parent rmdir
+  _conv_parent="$tmpdir/conv_parent"
+  mkdir -p "$_conv_parent"
+  rmdir "$_conv_parent" 2>/dev/null && _rmdir_ok=1 || _rmdir_ok=0
+  _check "empty convention parent can be rmdir'd" "1" "$_rmdir_ok"
 
   echo ""
   echo "$_pass PASS, $_fail FAIL"
