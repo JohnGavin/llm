@@ -131,6 +131,46 @@ phase_scope() {
   fi
 }
 
+# ── Phase 1e: Worktree-Parent CWD Detection (advisory) ───────────────
+# Detects when cwd is under ~/worktrees/<project>/ but is NOT itself a git
+# worktree (only contains worktree subdirs). Lists active worktrees so the
+# user can cd into one, or back to the canonical main checkout.
+# See rule: worktree-location
+phase_worktree_parent() {
+  local cwd
+  cwd=$(pwd 2>/dev/null) || return 0
+  case "$cwd" in
+    "$HOME/worktrees"/*) : ;;
+    *) return 0 ;;
+  esac
+  # If we're in an actual git repo / worktree, Phase 7 handles it.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    return 0
+  fi
+  # Find candidate worktrees 1-2 levels under cwd (.git can be a dir or file).
+  local found_any=0
+  local candidates=""
+  while IFS= read -r d; do
+    [ -e "$d/.git" ] || continue
+    candidates="${candidates}    - ${d#$cwd/}\n"
+    found_any=1
+  done < <(find "$cwd" -mindepth 1 -maxdepth 2 -type d 2>/dev/null)
+  if [ "$found_any" -eq 0 ]; then
+    echo "WORKTREE-PARENT: cwd is under ~/worktrees/ but no active worktrees found here."
+    echo "  Try: cd ~/docs_gh/<project>/  (canonical main checkout)"
+    return 0
+  fi
+  echo "WORKTREE-PARENT: cwd is a worktree parent dir, not a worktree itself."
+  echo "  Active worktrees here:"
+  printf "$candidates"
+  local proj
+  proj=$(basename "$cwd")
+  if [ -d "$HOME/docs_gh/$proj" ]; then
+    echo "  Either: cd ~/worktrees/$proj/<one above>"
+    echo "      or: cd ~/docs_gh/$proj  (canonical main checkout)"
+  fi
+}
+
 # ── Phase 2: Mapping Validation ───────────────────────────────────────
 phase_mappings() {
   local has_mismatch=0
@@ -748,6 +788,9 @@ fi
 # Phase 1d: Cross-project scope (llm#190)
 scope_output=$(phase_scope 2>/dev/null)
 echo "$scope_output"
+
+# Phase 1e: Worktree-parent cwd detection (advisory)
+phase_worktree_parent 2>/dev/null || true
 
 # Phase 2: Mappings (capture warnings)
 map_output=$(phase_mappings 2>/dev/null)
