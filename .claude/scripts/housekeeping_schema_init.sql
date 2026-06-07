@@ -2,8 +2,9 @@
 -- Unified DuckDB schema for the overnight housekeeping framework.
 --
 -- Tables:
---   worktree_gc_events  — one row per worktree inspected/removed/skipped by any writer
---   housekeeping_runs   — one row per cron/script invocation (heartbeat)
+--   worktree_gc_events  -- one row per worktree inspected/removed/skipped by any writer
+--   housekeeping_runs   -- one row per cron/script invocation (heartbeat)
+--   config_events       -- one row per config-file change detected by config_digest_cron.sh
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -11,7 +12,7 @@
 -- Apply with:
 --   bash .claude/scripts/housekeeping_schema_apply.sh
 --
--- Tracked in llm#550 Phase B.
+-- Tracked in llm#550 Phase B, llm#552 Phase B.
 
 CREATE TABLE IF NOT EXISTS worktree_gc_events (
   id                TEXT PRIMARY KEY,
@@ -39,5 +40,21 @@ CREATE TABLE IF NOT EXISTS housekeeping_runs (
   detail_json     TEXT
 );
 
+-- config_events: one row per config-file change detected by config_digest_cron.sh.
+-- Written by bin/config_digest_cron.sh after Step 1 (generate digest) completes.
+-- Queried by the 06:30 digest to surface the "Config changes (24h)" section.
+-- See llm#552 Phase B.
+CREATE TABLE IF NOT EXISTS config_events (
+  id            TEXT PRIMARY KEY,
+  fired_at      TIMESTAMPTZ NOT NULL,
+  source        TEXT NOT NULL,                 -- 'config_digest_cron.sh'
+  file_path     TEXT NOT NULL,                 -- relative to repo root
+  change_type   TEXT NOT NULL,                 -- 'added' | 'modified' | 'removed' | 'permission_change'
+  diff_summary  TEXT,
+  diff_lines    INTEGER,
+  commit_sha    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_housekeeping_runs_task_started ON housekeeping_runs(task, started_at);
+CREATE INDEX IF NOT EXISTS idx_config_events_fired_at ON config_events(fired_at);

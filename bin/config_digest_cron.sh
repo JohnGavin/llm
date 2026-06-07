@@ -1,11 +1,16 @@
 #!/bin/bash
-# config_digest_cron.sh — Wrapper for daily config-change digest email.
+# config_digest_cron.sh -- Wrapper for daily config-change digest email.
 #
 # Steps:
-#   1. Generate markdown digest:
-#      Rscript .claude/scripts/config_change_digest.R --since <24h-ago>
-#   2. Send digest email:
-#      Rscript .claude/scripts/send_config_digest_email.R
+#   0. Write housekeeping_runs start row (if duckdb available)
+#   1. Generate markdown digest via config_change_digest.R
+#   1b. Write config_events rows to unified.duckdb for each detected change
+#   2. Send digest email via send_config_digest_email.R
+#   3. Update housekeeping_runs end row
+#
+# unified.duckdb writes: gracefully skipped when duckdb is absent.
+# Tables written: housekeeping_runs, config_events
+# See: unified-observability-schema rule, llm#552, llm#550
 #
 # All R calls wrapped in nix-shell per nix-agent-shell-protocol rule.
 # Dry-run mode (EMAIL_DRY_RUN=1) passes through to child scripts.
@@ -15,15 +20,10 @@
 #
 # Log: ~/.claude/logs/config_digest_email.log
 #
-# Install plist:
-#   cp .claude/launchd/com.claude.config-digest-email.plist \
-#      ~/Library/LaunchAgents/com.claude.config-digest-email.plist
-#   launchctl load -w ~/Library/LaunchAgents/com.claude.config-digest-email.plist
-#
 # Manual run (dry):
 #   EMAIL_DRY_RUN=1 bash bin/config_digest_cron.sh
 #
-# Tracked in llm#297.
+# Tracked in llm#297, llm#552.
 
 set -uo pipefail
 
@@ -46,6 +46,7 @@ LOG_FILE="${HOME}/.claude/logs/config_digest_email.log"
 ENV_FILE="${HOME}/.claude/env/roborev_email.env"
 LOCK_FILE="/tmp/config_digest_cron.lock"
 DIGEST_PATH="${HOME}/.claude/logs/config_digest_$(date +%Y-%m-%d).md"
+UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME}/.claude/logs/unified.duckdb}"
 
 EMAIL_DRY_RUN="${EMAIL_DRY_RUN:-0}"
 export EMAIL_DRY_RUN LLM_REPO_ROOT="${REPO_ROOT}"
@@ -74,8 +75,7 @@ trap 'rm -f "${LOCK_FILE}"' EXIT
 
 # ── Deploy: pull latest main before running (llm#510) ─────────────────────────
 # Cron wrappers run against ${REPO_ROOT}; without this step every gh pr merge
-# ships nothing — the cron uses whatever was last manually pulled to the main
-# checkout. The fast-forward is silent on success and never overwrites local
+# ships nothing. The fast-forward is silent on success and never overwrites local
 # work because of --ff-only.
 if [ -z "${SKIP_CRON_PULL:-}" ]; then
     git -C "${REPO_ROOT}" fetch origin main 2>/dev/null
@@ -94,7 +94,6 @@ if [ -f "${ENV_FILE}" ]; then
   while IFS='=' read -r key val; do
     [[ "${key}" =~ ^[[:space:]]*# ]] && continue
     [[ -z "${key}" ]] && continue
-    # Strip one layer of surrounding quotes (handles KEY="value" style env files)
     val="${val#\"}"; val="${val%\"}"
     val="${val#\'}"; val="${val%\'}"
     export "${key}=${val}"
@@ -114,6 +113,38 @@ if ! command -v nix-shell > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── DuckDB availability check (llm#552) ───────────────────────────────────────
+# Gracefully skip all DB writes when duckdb binary or unified.duckdb is absent.
+# Same defensive pattern as worktree_gc.sh.
+_duckdb_ok=0
+if command -v duckdb >/dev/null 2>&1 && [ -f "${UNIFIED_DB}" ]; then
+  _duckdb_ok=1
+  log "duckdb: available at ${UNIFIED_DB}"
+else
+  log "duckdb: not available — skipping DB writes"
+fi
+
+# Run ID for this invocation
+_run_id="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
+_run_started="$(python3 -c 'import datetime; print(datetime.datetime.utcnow().isoformat() + "Z")')"
+
+# ── Step 0: Write housekeeping_runs start row ─────────────────────────────────
+if [ "${_duckdb_ok}" = "1" ]; then
+  _script_abs="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)/config_digest_cron.sh"
+  duckdb "${UNIFIED_DB}" "
+    INSERT OR IGNORE INTO housekeeping_runs
+      (id, task, source_script, started_at, status, rows_written)
+    VALUES (
+      '${_run_id}',
+      'config_digest',
+      '${_script_abs}',
+      TIMESTAMPTZ '${_run_started}',
+      'ok',
+      0
+    );
+  " 2>/dev/null || log "duckdb WARN: housekeeping_runs INSERT failed (non-fatal)"
+fi
+
 # ── Step 1: Generate digest ───────────────────────────────────────────────────
 log "Step 1: generating config-change digest..."
 
@@ -125,7 +156,6 @@ fi
 
 SINCE="$(date -v -24H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -d '24 hours ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '')"
 if [ -z "${SINCE}" ]; then
-  # Fallback: yesterday noon
   SINCE="$(date '+%Y-%m-%d')T00:00:00"
 fi
 log "  since=${SINCE}"
@@ -139,6 +169,82 @@ if [ "${STEP1_EXIT}" -ne 0 ]; then
   log "WARNING: config_change_digest.R exited ${STEP1_EXIT} — continuing"
 fi
 log "Step 1 done (exit=${STEP1_EXIT})"
+
+# ── Step 1b: Write config_events rows (llm#552 Phase A) ──────────────────────
+# Query git for config-file changes in the same 24h window as the R digest.
+# Writes one row per (commit_sha, file_path) pair in monitored categories.
+# Category paths mirror the CATEGORIES list in config_change_digest.R.
+_EVENTS_WRITTEN=0
+
+if [ "${_duckdb_ok}" = "1" ]; then
+  log "Step 1b: writing config_events to unified.duckdb..."
+
+  # Category path prefixes -- mirrors CATEGORIES in config_change_digest.R
+  _CONFIG_PATHS=(
+    ".claude/skills"
+    ".claude/agents"
+    ".claude/rules"
+    ".claude/memory"
+    ".claude/hooks"
+    ".claude/scripts"
+    ".claude/templates"
+    ".claude/commands"
+  )
+
+  _now_ts="$(python3 -c 'import datetime; print(datetime.datetime.utcnow().isoformat() + "Z")')"
+  _cur_sha=""
+
+  for _cat_path in "${_CONFIG_PATHS[@]}"; do
+    # git log --numstat: COMMIT:<sha> header then numstat lines then blank lines.
+    # Process substitution avoids subshell (loop vars persist across iterations).
+    while IFS= read -r _gl; do
+      [ -z "${_gl}" ] && continue
+      if [[ "${_gl}" == COMMIT:* ]]; then
+        _cur_sha="${_gl#COMMIT:}"
+        continue
+      fi
+      _added="$(printf '%s' "${_gl}" | cut -f1)"
+      _deleted="$(printf '%s' "${_gl}" | cut -f2)"
+      _fpath="$(printf '%s' "${_gl}" | cut -f3-)"
+      [ -z "${_fpath}" ] && continue
+      [ -z "${_cur_sha}" ] && continue
+      if [ "${_added}" = "-" ] || [ "${_deleted}" = "-" ]; then
+        _change_type="modified" ; _diff_lines=0
+      elif [ "${_deleted}" = "0" ] && [ "${_added}" != "0" ]; then
+        _change_type="added" ; _diff_lines="${_added}"
+      elif [ "${_added}" = "0" ] && [ "${_deleted}" != "0" ]; then
+        _change_type="removed" ; _diff_lines="${_deleted}"
+      else
+        _change_type="modified"
+        _diff_lines=$(( _added + _deleted )) 2>/dev/null || _diff_lines=0
+      fi
+      _short_sha="${_cur_sha:0:7}"
+      _evt_id="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
+      _fpath_sql="${_fpath//"'"/"''"}"
+      duckdb "${UNIFIED_DB}" "
+        INSERT OR IGNORE INTO config_events
+          (id, fired_at, source, file_path, change_type, diff_lines, commit_sha)
+        VALUES (
+          '${_evt_id}',
+          TIMESTAMPTZ '${_now_ts}',
+          'config_digest_cron.sh',
+          '${_fpath_sql}',
+          '${_change_type}',
+          ${_diff_lines},
+          '${_short_sha}'
+        );
+      " 2>/dev/null || true
+      _EVENTS_WRITTEN=$(( _EVENTS_WRITTEN + 1 ))
+    done < <(git -C "${REPO_ROOT}" log --numstat \
+      --pretty="tformat:COMMIT:%H" \
+      --since="${SINCE}" \
+      -- "${_cat_path}" 2>/dev/null || true)
+  done
+
+  log "Step 1b done: ${_EVENTS_WRITTEN} config_events rows written"
+else
+  log "Step 1b: skipped (duckdb not available)"
+fi
 
 # ── Step 2: Send email ────────────────────────────────────────────────────────
 log "Step 2: sending config digest email..."
@@ -156,8 +262,31 @@ STEP2_EXIT=$?
 
 if [ "${STEP2_EXIT}" -ne 0 ]; then
   log "ERROR: send_config_digest_email.R exited ${STEP2_EXIT}"
+  # Update housekeeping_runs with failed status before exiting
+  if [ "${_duckdb_ok}" = "1" ]; then
+    _run_ended="$(python3 -c 'import datetime; print(datetime.datetime.utcnow().isoformat() + "Z")')"
+    duckdb "${UNIFIED_DB}" "
+      UPDATE housekeeping_runs
+      SET ended_at = TIMESTAMPTZ '${_run_ended}',
+          status = 'failed',
+          rows_written = ${_EVENTS_WRITTEN}
+      WHERE id = '${_run_id}';
+    " 2>/dev/null || true
+  fi
   exit "${STEP2_EXIT}"
 fi
 log "Step 2 done"
+
+# ── Step 3: Update housekeeping_runs end row ──────────────────────────────────
+if [ "${_duckdb_ok}" = "1" ]; then
+  _run_ended="$(python3 -c 'import datetime; print(datetime.datetime.utcnow().isoformat() + "Z")')"
+  duckdb "${UNIFIED_DB}" "
+    UPDATE housekeeping_runs
+    SET ended_at = TIMESTAMPTZ '${_run_ended}',
+        rows_written = ${_EVENTS_WRITTEN}
+    WHERE id = '${_run_id}';
+  " 2>/dev/null || log "duckdb WARN: housekeeping_runs UPDATE failed (non-fatal)"
+  log "Step 3: housekeeping_runs updated (rows_written=${_EVENTS_WRITTEN})"
+fi
 
 log "=== config_digest_cron.sh done ==="
