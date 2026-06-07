@@ -17,7 +17,7 @@ Update this table in the same commit.
 | 2 | Mapping Validation | Skills/Rules/Commands/Hooks/Memory consistency | Summary line + warnings |
 | 3 | Size Audit | Line counts for CLAUDE.md, MEMORY.md, dir summaries | Per-file lines + WARN/FAIL |
 | 4 | Skill Token Audit | Skills dir line counts vs 500-line limit | Summary + per-skill WARN |
-| 5 | ctx.yaml Cache Audit | Dependency ctx cache freshness (via Rscript) | `ctx:N_ok/N_other/N_miss` |
+| 5 | ctx.yaml Cache Audit | Dependency ctx cache freshness. All three Rscript calls (1 foreground + 2 background) are wrapped in `nix-shell ~/docs_gh/llm/default.nix --run` so sessions launched outside Nix still reach R (#562). Foreground timeout bumped 10→30s for nix-shell entry cost. If `nix-shell` absent: emits WARN and returns early. | `ctx:N_ok/N_other/N_miss`; `ctx audit: WARN nix-shell missing — skipped` when nix-shell absent |
 | 6 | R-universe Build Status | Checks johngavin.r-universe.dev/api/packages | `R-universe: N OK, N failed` |
 | 7 | Worktree Context | Detects worktree session, stale agent/git worktrees | Contextual output + warnings |
 | 7f | Worktree Auto-GC | Auto-removes agent worktrees where PID-dead AND lock-age >14d (current project only). Skipped if `CLAUDE_SESSION_INIT_WORKTREE_GC=0`. Logs to `~/.claude/logs/session_init_worktree_gc.log`. Never exits non-zero. | Silent when N=0; one line `Worktree GC: removed N stale (>14d, PID-dead)` when N>0 |
