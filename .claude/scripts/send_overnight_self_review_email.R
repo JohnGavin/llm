@@ -593,8 +593,10 @@ if (dry_run) {
 }
 
 # ── Send via blastula ──────────────────────────────────────────────────────────
+# Modern blastula (>= 0.3.x) does not export `html()`; compose_email() accepts
+# `htmltools::HTML()` objects as body (see llm#559 — Rapsody upgraded blastula's API).
 email_obj <- blastula::compose_email(
-  body = blastula::html(email_body)
+  body = htmltools::HTML(email_body)
 )
 
 smtp_creds <- blastula::creds_envvar(
