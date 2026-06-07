@@ -21,6 +21,21 @@ canonical, version-controlled copies; the live copies live at
 | `com.claude.codex-overnight-learning` | Daily 06:10 | Scans recent Codex sessions and writes a nightly learning digest to `~/.codex/learning/`. Startup surfacing comes from `.claude/scripts/codex-start.sh`. Tracked in #231. |
 | `com.claude.overnight-self-review-email` | Daily 06:30 | Queries unified.duckdb for 24h deltas across 4 ETL source tables (sessions, agent_runs, hook_events, errors); sends collapsible HTML digest surfacing stale/dead tables and new self-review findings. Part of #491. |
 
+## Retired jobs
+
+| Label | Retired | Why | Coverage now |
+|---|---|---|---|
+| `com.claude.stage1-findings-email` | 2026-06-07 | Redundant with 06:30 digest (#551) | The 06:30 `overnight-self-review-email` reads `self_review_findings_stage1` and surfaces the same severity breakdown + finding counts |
+
+Retired plists are renamed `*.plist.deprecated-YYYY-MM-DD` (kept for rollback during the soak period — typically 2 weeks) before deletion.
+
+After this retirement, orchestrators MUST unload the still-installed copy from `~/Library/LaunchAgents/`:
+
+```bash
+/bin/launchctl unload ~/Library/LaunchAgents/com.claude.stage1-findings-email.plist
+rm ~/Library/LaunchAgents/com.claude.stage1-findings-email.plist
+```
+
 ## Install / reload after editing
 
 ```bash
