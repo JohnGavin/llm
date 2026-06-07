@@ -4,6 +4,62 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-07 (session-end — 2-day arc summary)
+
+### Completed (2-day arc 2026-06-05 to 2026-06-07)
+
+**Deployment chain repair**:
+- #510 → PR #513: 6 cron wrappers auto-pull `origin/main` before running. Yesterday's `gh pr merge` ships nothing without this. New rule `cron-auto-pull-discipline`.
+- #511 → PR #515: `roborev_metrics_etl.sh` absolute `nix-shell` path. Producer was dead 2026-05-24 → 2026-06-05 (13 nights silently failing). Live row count went 5045 → 5330+ within minutes.
+- #512 → PR #514: Freshness alarm tracks 10 tables (was 5) + auto-discover untracked stale. Selftest 10/10.
+
+**Roborev email visibility**:
+- #484 → PR #531: zero-action trap with DB-refresh attempt + loud red error block. Fired correctly this morning (2026-06-07): "⚠ Zero-Action Data Detected" with 4 reviews in window.
+- #527 → PR #531: every roborev table now `collapsible_block()`; Severity by Project default-collapsed; only 24h Headline open.
+- #529 → PR #531: footer sprintf argument-order bug fixed; regression greps for `font-size:#` and `style="; ` both return 0.
+
+**canonical_projects architecture (umbrella #528 closed)**:
+- #533 → PR #540: foundation — `canonical_projects` + `canonical_project_aliases` tables, 18-project CSV seed, idempotent migration. Required orchestrator takeover after 2 fixer stalls (#541). 5/5 selftest.
+- #534 → PR #542: roborev daily Severity by Project filtered. 14 → **4** distinct repos (`historical`, `llm`, `mycare`, `premortem`).
+- #535 → PR #543: `canonical_projects_audit.sh` + session_init Phase 15b nag. 6/6 selftest. Live: `UNKNOWN=367 CANONICAL=30 FIXTURE=302`.
+- #536 → PR #544: bash + R `canonical_check` helpers wired into `roborev_metrics_etl.R`. 91/day `roborev_pmhook_test_*` accumulation stops at source.
+- #537 → PR #545: `roborev_weekly_rollup.R` filter applied. KB digest + vignettes audited and confirmed no-op (no project dimension).
+
+**Rules + skills batch**:
+- #474 → PR #522: `data-glossary-and-entity-resolution` rule (mandatory)
+- #475 → PR #518: `unified-observability-schema` rule (mandatory)
+- #476 → PR #519: `agent-identity-and-task-scopes` rule (mandatory)
+- #477 → PR #520: `human-in-the-loop-decision-points` rule (mandatory)
+- #478 → PR #521: `llm-portability-statement` rule (advisory)
+- #492 → PR #506: AGENTS.md drift; audit script reads section header counts (not self-referential)
+- #493 → PR #507: cc.sh sentinel `CC_LAUNCHED_VIA_WRAPPER=1` + Phase 1b actionable WARN
+- #472 → PR #505: trim `targets-pipeline-spec/SKILL.md` 520 → 498
+- #465 → PR #508: `check_qmd_fence_parity.sh` (catches orphan triple-backticks) + pre-commit wiring
+- AGENTS.md consolidate PR #526: Rules count 69 → 74; 3 new mandatory rules added to row
+
+**Foundation: 23 PRs merged across 2 days.**
+
+### Failed approaches (this 2-day arc)
+
+1. **Two fixers stalled on #533** at the 600s stream-watchdog timeout (data-engineer + fixer agents). Both stalls happened in `duckdb` + `nix-shell` territory. Recovery: orchestrator took over the partially-written files, fixed two real bugs (`LOWER(BOOLEAN)` binder error + `nix-shell --run "duckdb -c \"$sql\""` quote-mangling), shipped PR #540 directly. Filed #541 for harness investigation. Cost ratio: ~12× more in stall waste than recovery. **Lesson**: when 2 consecutive fixers stall on same task, take over directly rather than risk a 3rd stall.
+2. **PR body multi-close syntax keeps missing**: PRs that "close #X, #Y, #Z" reliably auto-close only the first. Manual `gh issue close` needed for the rest. Cost: small. Lesson: in PR-body templates, prefer "Closes #X. Closes #Y. Closes #Z." (separate sentences) over "closes #X, #Y, #Z" (comma list).
+3. **Recurring AGENT_PUSH_OK=1 use by fixers for own-branch pushes** (#517 filed yesterday) — investigation pending.
+
+### Accuracy / metrics
+
+- **Producer health (lifetime → live)**: roborev_review_lifecycle 5045 → 5615+; hook_events 1 → live (0s ago, 11/day); errors still dead 45d (#516 filed); agent_runs 145 → 162 (rate 9/day, was 3/day after #501 Task tool wiring).
+- **Cron deploy chain**: tomorrow's 08:00 cron will be the first that uses **all** 6 auto-pulled wrappers. Verification window opens then.
+- **Today's roborev email**: zero-action trap fired correctly. Cadence dropped to 4 reviews / 1 repo — cause is **upstream** (cadence collapse on 2026-06-02; #546 filed). NOT a canonical-filter regression.
+
+### Known limitations / next session
+
+- **#546 (cadence collapse 2026-06-02)** is the priority follow-up. 95 distinct repos → 1 in 6 days. Hook coverage suspected. Pre-2026-06-02 baseline was 47-95 repos/day.
+- **#516 (errors table still dead 45 days)** unresolved — either rare-event table or producer wiring gap.
+- **#541 (fixer stream-watchdog false-positives)** — burns tokens at 12:1 vs recovery.
+- **#517 (recurring AGENT_PUSH_OK=1 + symlink-isolation breach)** — Tier 3 hooks need extension.
+- **#547 filed today** — KB-digest signal #482 (new skill/rule no wiki) refinement: drop from 19 → ~3 by requiring external-source trigger. Plus: 5 broken backlink targets in `swedroe-evidence-investing.md` confirmed missing — decide write/remove/mark.
+- **Stage 2 self-review sub-issues** (#494, #495, #496, #498, #499, #500) — all still open; #495 transcript ETL gates the rest.
+
 ## 2026-06-06 (morning — #528 canonical_projects design + decomposition)
 
 Worktree session `feat/528-canonical-projects-plan` — planning layer for #528.
