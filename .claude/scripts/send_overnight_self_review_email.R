@@ -290,7 +290,8 @@ sec2_block <- collapsible_block(
 
 # ── Section 3: Cumulative table health ────────────────────────────────────────
 all_tables <- c("sessions", "agent_runs", "hook_events", "errors",
-                "self_review_findings_stage1")
+                "self_review_findings_stage1",
+                "worktree_gc_events", "housekeeping_runs")
 
 sec3_rows <- lapply(all_tables, function(tbl) {
   ts_col <- switch(tbl,
@@ -298,7 +299,9 @@ sec3_rows <- lapply(all_tables, function(tbl) {
     agent_runs                  = "started_at",
     hook_events                 = "fired_at",
     errors                      = "logged_at",
-    self_review_findings_stage1 = "detected_at"
+    self_review_findings_stage1 = "detected_at",
+    worktree_gc_events          = "fired_at",
+    housekeeping_runs           = "started_at"
   )
 
   info <- safe_query(sprintf("
@@ -361,6 +364,95 @@ sec3_block <- collapsible_block(
   "Cumulative table health",
   sec3_summary,
   sec3_table
+)
+
+
+# ── Section 3b: Worktree footprint (last 24h) ────────────────────────────────
+wt_24h <- safe_query("
+  SELECT
+    action,
+    location_pattern,
+    COUNT(*)       AS n,
+    SUM(size_mb)   AS total_mb
+  FROM worktree_gc_events
+  WHERE fired_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+  GROUP BY action, location_pattern
+  ORDER BY action, location_pattern
+")
+
+if (nrow(wt_24h) > 0L) {
+  n_removed   <- sum(wt_24h$n[wt_24h$action == "removed"],        na.rm = TRUE)
+  n_wouldrem  <- sum(wt_24h$n[wt_24h$action == "would_remove"],   na.rm = TRUE)
+  mb_removed  <- sum(wt_24h$total_mb[wt_24h$action == "removed"], na.rm = TRUE)
+  n_locked    <- sum(wt_24h$n[wt_24h$action == "skipped_locked"], na.rm = TRUE)
+  n_dirty     <- sum(wt_24h$n[wt_24h$action == "skipped_uncommitted"], na.rm = TRUE)
+  n_unmerged  <- sum(wt_24h$n[wt_24h$action %in% c("skipped_unmerged", "flagged")],
+                     na.rm = TRUE)
+
+  wt_rows_html <- paste(apply(wt_24h, 1, function(r) {
+    act_col <- switch(r[["action"]],
+      "removed"          = ACCENT_GREEN,
+      "would_remove"     = ACCENT_ORANGE,
+      "skipped_unmerged" = "#ff5252",
+      "flagged"          = "#ff5252",
+      DARK_MUTED
+    )
+    sprintf(
+      '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-family:monospace;font-size:12px;">%s</td>
+<td style="padding:5px 10px;font-size:12px;color:%s;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;text-align:right;color:%s;">%s MB</td>
+</tr>',
+      DARK_CARD,
+      r[["location_pattern"]],
+      act_col, r[["action"]],
+      r[["n"]],
+      DARK_MUTED, r[["total_mb"]] %||% "0"
+    )
+  }), collapse = "\n")
+
+  wt_table_html <- sprintf(
+    '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Pattern</th>
+<th style="padding:5px 10px;text-align:left;">Action</th>
+<th style="padding:5px 10px;text-align:right;">Count</th>
+<th style="padding:5px 10px;text-align:right;">Size</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+    DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, wt_rows_html
+  )
+  if (n_unmerged > 0L) {
+    wt_table_html <- paste0(
+      wt_table_html,
+      sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-top:8px;">
+  &#9888; %d squash-merge candidate(s) flagged — run /cleanup-worktrees to triage.</p>',
+        EMAIL_FONT_SUBTITLE, n_unmerged
+      )
+    )
+  }
+
+  sec3b_summary <- sprintf(
+    "removed %d (%.0f MB) \u00b7 would-remove %d \u00b7 locked %d \u00b7 dirty %d \u00b7 flagged %d",
+    n_removed, mb_removed, n_wouldrem, n_locked, n_dirty, n_unmerged
+  )
+} else {
+  wt_table_html <- sprintf(
+    '<p style="color:%s;font-size:%s;">No worktree_gc_events in the last 24 h.</p>',
+    DARK_MUTED, EMAIL_FONT_BODY
+  )
+  sec3b_summary <- "no events in last 24h"
+}
+
+sec3b_block <- collapsible_block(
+  "Worktree footprint (24h)",
+  sec3b_summary,
+  wt_table_html
 )
 
 # ── Section 4: New findings — detail (top 20) ─────────────────────────────────
@@ -487,6 +579,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   sec1_block, "\n",
   sec2_block, "\n",
   sec3_block, "\n",
+  sec3b_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",
