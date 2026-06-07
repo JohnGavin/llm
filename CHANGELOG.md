@@ -4,6 +4,56 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-07 (later session — CLAUDE.md trim + housekeeping framework)
+
+### Completed
+
+**CLAUDE.md auto-load trim** (PR #557, merged f90bde4):
+- Diagnosed context-limit failure after `/clear` — root cause: ~30 inline rule files auto-loaded via `Mandatory rules:` line in AGENTS.md, eating ~60–80k tokens at every session start
+- Trimmed Mandatory rules 30 → 8 (safety-critical only: `verification-before-completion`, `systematic-debugging`, `btw-timeouts`, `git-no-compound-cd`, `nix-agent-shell-protocol`, `worktree-location`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`)
+- Other 22 rules moved to new `Context-load rules` section, categorised by topic (Orchestration / provenance, Knowledge base, Quarto / vignettes, Dashboards / viz, Data / analysis, Tooling) — still discoverable, not auto-loaded
+
+**Worktree-parent session guards** (PR #557, merged f90bde4):
+- `cc.sh`: auto-`cd` from `~/worktrees/<proj>/...` (any non-worktree under that root) to `~/docs_gh/<proj>/` before exec'ing claude. Set `CC_NO_REDIRECT=1` to skip
+- `session_init.sh` Phase 1e: backstop advisory if `claude` is launched directly bypassing `cc.sh`
+- `worktree-location` rule: new "Never start a session in the worktree-parent dir" section
+- `session-init-phases` rule: Phase 1e row added to inventory
+
+**Housekeeping framework** (#550 + PR #556, merged dec6ead):
+- Phase B: `worktree_gc_events` + `housekeeping_runs` tables in `unified.duckdb`, idempotent apply script (`housekeeping_schema_apply.sh`). Schema applied to live DB at session end.
+- Phase A: `worktree_gc.sh` extended to 3 location patterns (`~/docs_gh/*-*`, `.claude/worktrees/agent-*`, `~/worktrees/*/*/*`), per-pattern AGE_DAYS (7/14/30), DB writes per candidate, heartbeat row in `housekeeping_runs`, empty category-parent rmdir. Selftest 16/16.
+- Phase C: 06:30 digest (`send_overnight_self_review_email.R`) extended with "Worktree footprint (24h)" collapsible section; meta-summary extended to include `worktree_gc_events` + `housekeeping_runs`
+- Phase D: `/cleanup-worktrees` slash command (read-and-act on `action='flagged'` rows; zero rescan duplication)
+- Phase E: `housekeeping-framework` rule (Convention, not Mandatory) — 5-point template for future housekeeping tasks; "add a writer, add a digest section" — never add new email jobs
+
+**Issues filed for follow-up** (5 task-specific + 1 toolbar gap):
+- #551: retire 06:45 stage1-findings email (smallest; writer already conforms)
+- #552: convert `config_digest_cron` to DB writer + digest section
+- #553: convert `kb_digest_daily_cron` to DB writer + digest section
+- #554: convert `launchd_health_weekly` to daily DB writer + digest section (meta-health check)
+- #555: bridge roborev SQLite → `unified.duckdb` summary + consolidate roborev emails
+- #558: update `dashboard-filter-placement` rule with bslib 0.11.0 toolbar patterns (`input_submit_textarea`, reactive updates, `toolbar_spacer`, tooltips, `align=`, `sidebar(resizable=)`)
+
+### Failed Approaches
+
+- **Initial fixer dispatch added `housekeeping-framework` to Mandatory rules** despite explicit instruction "DO NOT promote — keep in Context-load". Caught at post-fixer review. Resolution: orchestrator-side rebase of fixer's PR #556 on the updated main (#557 had merged in between), resolved AGENTS.md conflict in favour of the trimmed structure + added `housekeeping-framework` to Context-load → Orchestration / provenance group, edited rule header `(Mandatory)` → `(Convention)`. Lesson: fixer prompts need explicit verb-level instructions ("place X under heading Y") rather than "do not put X under Y" — negation appears weaker than positive placement directive.
+- **Tried SendMessage continuation** to fixer for the Mandatory→Context-load correction. Sub-agent correctly refused per `auto-delegation` SendMessage-Continuations rule (#304): write-bearing continuations should use a fresh dispatch, not SendMessage. Workaround: orchestrator did the rebase + edits directly in the fixer's existing worktree (allowed per bounded exceptions: prose edits to AGENTS.md + rule headers).
+- **`gh pr edit 556 --body-file`** failed with "token has not been granted the required scopes (`read:org`)". Workaround: posted the same content as a PR comment via `gh issue comment` (works on the same numeric ID for PRs). Worth filing token-scope expansion separately if PR body edits become common.
+
+### Accuracy / Metrics
+
+- Session-start context load: ~60–80k tokens lower (22 rules deferred to Context-load)
+- Worktree footprint identified for future cleanup: 36 git worktrees, ~445MB across 3 locations in `llm` alone (12 deprecated siblings, 21 agent worktrees, 3 convention worktrees)
+- `worktree_gc.sh` selftest: 7 → 16 cases (existing + new pattern/empty-parent/DB-write/DB-absent coverage)
+- Standalone housekeeping emails today: 6/week (5 daily + 1 weekly). Target after #551–#555 land: 1 daily 06:30 digest with sections.
+
+### Known Limitations
+
+- Live `unified.duckdb` schema applied but `worktree_gc.sh` has NOT run yet against the new tables — first observation cycle is tomorrow's 00:04 launchd fire. Watch `~/.claude/logs/worktree_gc.log` and tomorrow's 06:30 digest for the new "Worktree footprint" section.
+- `worktree_gc.sh` launchd plist runs WITHOUT `--apply` by default. After 2026-06-02 soak end, `--apply` is wired but the cron plist may need a one-character edit if we want auto-apply (separate from this session's scope).
+- The 5 follow-up issues (#551–#555) are all OPEN; each needs its own fixer dispatch. Suggested order: smallest first (#551 — already-conforming writer, just retire duplicate email) to validate the consolidation pattern before tackling #555 (roborev bridge, largest).
+- `gh pr edit --body-file` token scope shortfall — workaround documented above; consider expanding the local token's scopes if PR body edits become common.
+
 ## 2026-06-07 (session-end — 2-day arc summary)
 
 ### Completed (2-day arc 2026-06-05 to 2026-06-07)
