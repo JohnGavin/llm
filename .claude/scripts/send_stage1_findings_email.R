@@ -30,7 +30,15 @@ suppressPackageStartupMessages({
 
 # ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
 
-`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !is.na(a[1])) a else b
+`%||%` <- function(a, b) {
+  # Treats NULL, length-0, NA, AND empty string as missing.
+  # Empty-string handling matters because Sys.getenv() returns "" not NA.
+  # See llm#559.
+  if (is.null(a) || length(a) == 0L) return(b)
+  if (is.na(a[[1L]])) return(b)
+  if (is.character(a) && !nzchar(a[[1L]])) return(b)
+  a
+}
 
 .scripts_dir_s1 <- tryCatch(
   dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
