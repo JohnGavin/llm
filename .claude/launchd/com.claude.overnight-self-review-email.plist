@@ -15,14 +15,20 @@
        rm ~/Library/LaunchAgents/com.claude.overnight-self-review-email.plist
 
      Manual dry-run (no SMTP, prints HTML to log):
-       EMAIL_DRY_RUN=1 Rscript ~/docs_gh/llm/.claude/scripts/send_overnight_self_review_email.R
+       EMAIL_DRY_RUN=1 bash ~/docs_gh/llm/bin/overnight_self_review_email_cron.sh
 
-     Credentials (set in ~/.claude/env/overnight_email.env or ~/.Renviron):
+     Manual live run (sends email):
+       bash ~/docs_gh/llm/bin/overnight_self_review_email_cron.sh
+
+     Credentials (set in ~/.claude/env/overnight_self_review.env):
        GMAIL_USERNAME=you@gmail.com
        GMAIL_APP_PASSWORD=<16-char app password>
        REPORT_RECIPIENT=you@gmail.com
 
-     Tracked in llm#491.
+     The wrapper is required because launchd does NOT inherit ~/.zshenv.
+     The wrapper sources the env file before invoking nix-shell + Rscript.
+
+     Tracked in llm#491, llm#559.
 -->
 <plist version="1.0">
 <dict>
@@ -31,8 +37,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/nix/var/nix/profiles/default/bin/Rscript</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/send_overnight_self_review_email.R</string>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/overnight_self_review_email_cron.sh</string>
     </array>
 
     <!-- Daily at 06:30 local time (after self-review-stage1 at 02:30) -->
