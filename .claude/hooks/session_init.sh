@@ -377,10 +377,21 @@ phase_ctx_audit() {
   [ -f "DESCRIPTION" ] || { echo "No DESCRIPTION file — skipping ctx audit"; return; }
   [ -d "$ctx_cache" ] || { echo "No ctx cache dir — skipping"; return; }
 
-  # Use R to parse DESCRIPTION and check version-stamped ctx files
+  # Guard: nix-shell must be available; sessions outside Nix shell would silently
+  # time out (old R:timeout banner). Fail explicitly instead (#562).
+  if ! command -v nix-shell >/dev/null 2>&1; then
+    echo "ctx audit: WARN nix-shell missing — skipped"
+    return
+  fi
+
+  local _llm_nix="$HOME/docs_gh/llm/default.nix"
+
+  # Use R to parse DESCRIPTION and check version-stamped ctx files.
+  # R code written to a temp file to avoid quoting complexity with nix-shell --run (#562).
   # Output: one line per package as "STATUS:pkg" (OK, STALE, MISSING)
-  local audit_output
-  audit_output=$(timeout 10 Rscript -e '
+  local _audit_r
+  _audit_r=$(mktemp /tmp/ctx_audit_XXXXXX.R)
+  cat > "$_audit_r" << 'REOF'
     d <- read.dcf("DESCRIPTION", fields = c("Imports","Suggests","Depends"))
     raw <- paste(na.omit(as.character(d)), collapse = ",")
     p <- trimws(unlist(strsplit(raw, ",")))
@@ -396,13 +407,17 @@ phase_ctx_audit() {
         age <- as.numeric(difftime(Sys.time(), file.mtime(f), units = "days"))
         cat(if (age > 30) paste0("STALE:", pkg) else paste0("OK:", pkg), "\n")
       } else {
-        # Check for any version
-        any_ver <- list.files(cache, pattern = paste0("^", gsub("\\\\.", "\\\\\\\\.", pkg), "@"), full.names = TRUE)
+        any_ver <- list.files(cache, pattern = paste0("^", gsub("\\.", "\\\\.", pkg), "@"), full.names = TRUE)
         if (length(any_ver) > 0) cat(paste0("OTHER_VER:", pkg), "\n")
         else cat(paste0("MISSING:", pkg), "\n")
       }
     }
-  ' 2>/dev/null) || true
+REOF
+
+  # Foreground audit: timeout bumped 10->30s to accommodate nix-shell entry cost (#562)
+  local audit_output
+  audit_output=$(timeout 30 nix-shell "$_llm_nix" --run "Rscript '$_audit_r'" 2>/dev/null) || true
+  rm -f "$_audit_r"
   [ -z "$audit_output" ] && { echo "Could not parse DESCRIPTION"; return; }
 
   # Count statuses (avoid pipe subshell — background jobs die in subshells)
@@ -420,15 +435,19 @@ phase_ctx_audit() {
   [ "$n_missing" -gt 0 ] && echo "  Missing:$missing_list"
 
   # Auto-launch background ctx_sync (OUTSIDE pipe — survives hook exit)
+  # Wrapped in nix-shell so it works regardless of whether the session entered Nix (#562)
   if [ "$((n_missing + n_stale + n_other))" -gt 0 ] && [ -f "DESCRIPTION" ]; then
     echo "  Launching background ctx_sync..."
-    nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
+    nohup timeout 600 nix-shell "$_llm_nix" --run \
+      "Rscript -e 'source(\"~/docs_gh/llm/R/tar_plans/plan_pkgctx.R\"); ctx_sync(\"DESCRIPTION\")'" \
       > /tmp/ctx_sync_$$.log 2>&1 &
     echo "  Background PID $! — log at /tmp/ctx_sync_$$.log"
   fi
 
   # Auto-launch background local_ctx_sync — ingests sibling-project ctx.yaml files (#207)
-  nohup timeout 120 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); local_ctx_sync(dry_run = FALSE)' \
+  # Wrapped in nix-shell so it works regardless of whether the session entered Nix (#562)
+  nohup timeout 120 nix-shell "$_llm_nix" --run \
+    "Rscript -e 'source(\"~/docs_gh/llm/R/tar_plans/plan_pkgctx.R\"); local_ctx_sync(dry_run = FALSE)'" \
     > /tmp/local_ctx_sync_$$.log 2>&1 &
 }
 
@@ -1161,11 +1180,14 @@ if echo "${burn_output:-}" | grep -qE "CRITICAL|WARN"; then
 fi
 
 # Background ctx_sync if missing packages detected
+# Wrapped in nix-shell so it works regardless of whether the session entered Nix (#562)
 if [ -f "DESCRIPTION" ]; then
   ctx_miss=$(echo "$ctx_part" | cut -d: -f2 | cut -d/ -f3)
   ctx_miss=$(as_int_or_zero "$ctx_miss")
   if [ "${ctx_miss:-0}" -gt 0 ]; then
-    nohup timeout 600 Rscript -e 'source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R"); ctx_sync("DESCRIPTION")' \
+    _llm_nix_bg="$HOME/docs_gh/llm/default.nix"
+    nohup timeout 600 nix-shell "$_llm_nix_bg" --run \
+      "Rscript -e 'source(\"~/docs_gh/llm/R/tar_plans/plan_pkgctx.R\"); ctx_sync(\"DESCRIPTION\")'" \
       > /tmp/ctx_sync_$$.log 2>&1 &
     echo "ctx_sync: $ctx_miss missing, generating in background (PID $!)"
   fi
