@@ -42,7 +42,17 @@
 source(file.path(.scripts_dir, "email_styles.R"))
 
 # ── Null-coalescing operator ───────────────────────────────────────────────────
-`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !is.na(a[[1]])) a else b
+# Treats NULL, length-0, NA, AND empty string as "missing" — falls through to b.
+# Empty-string handling matters because Sys.getenv() returns "" for unset vars
+# (not NA), so the prior version silently used "" as a valid value.
+# See llm#559 / PR #560 — wrapper had to export UNIFIED_DB_PATH explicitly to
+# work around this.
+`%||%` <- function(a, b) {
+  if (is.null(a) || length(a) == 0L) return(b)
+  if (is.na(a[[1L]])) return(b)
+  if (is.character(a) && !nzchar(a[[1L]])) return(b)
+  a
+}
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 dry_run        <- identical(Sys.getenv("EMAIL_DRY_RUN"), "1")
