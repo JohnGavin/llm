@@ -327,7 +327,15 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
 }
 
 # Null-coalescing helper
-`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0L && !is.na(a[1L])) a else b
+# Treats NULL, length-0, NA, AND empty string as missing.
+# Empty-string handling matters because Sys.getenv() returns "" not NA.
+# See llm#559.
+`%||%` <- function(a, b) {
+  if (is.null(a) || length(a) == 0L) return(b)
+  if (is.na(a[[1L]])) return(b)
+  if (is.character(a) && !nzchar(a[[1L]])) return(b)
+  a
+}
 
 # Load RSQLite if available; fall back gracefully
 has_rsqlite <- requireNamespace("RSQLite", quietly = TRUE)
