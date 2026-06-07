@@ -13,6 +13,7 @@ Update this table in the same commit.
 | 1b | Permission Mode | Workspace kind vs settings.json defaultMode | One line: `Permission Mode: ok/WARN` |
 | 1c | Project Environment Class | Reads `Environment:` from `.claude/CLAUDE.md` | One line: `Environment: <val>` |
 | 1d | Cross-Project Scope | Reads cross-project authority from `.claude/CLAUDE.md` | One line: `project-scope: …` |
+| 1e | Worktree-Parent CWD | Detects cwd under `~/worktrees/<project>/` that is NOT itself a git worktree; lists active worktree subdirs and offers `cd` targets (advisory). See `worktree-location` rule. | Silent when cwd is fine; `WORKTREE-PARENT: …` block when triggered |
 | 2 | Mapping Validation | Skills/Rules/Commands/Hooks/Memory consistency | Summary line + warnings |
 | 3 | Size Audit | Line counts for CLAUDE.md, MEMORY.md, dir summaries | Per-file lines + WARN/FAIL |
 | 4 | Skill Token Audit | Skills dir line counts vs 500-line limit | Summary + per-skill WARN |

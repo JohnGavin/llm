@@ -82,6 +82,32 @@ git -C ~/docs_gh/llm worktree remove ~/worktrees/llm/feat/fix-foo
 git -C ~/docs_gh/llm worktree prune
 ```
 
+## Never start a session in the worktree-parent dir
+
+`~/worktrees/<project>/` (and `~/worktrees/<project>/feat/`, `.../fix/`, etc.)
+are parent directories, not checkouts. They contain no `.git`, no source code —
+only the actual worktrees nested beneath. Starting a Claude session there loads
+the full project context (via `additionalDirectories` in `settings.json`) plus
+all global rules, but cwd is functionally empty — every relative path resolves
+to nothing useful.
+
+Valid session-start cwds:
+
+- `~/docs_gh/<project>/` — canonical main checkout (default for everyday work)
+- `~/worktrees/<project>/<branch>/` — a specific worktree (only when deliberately
+  working on that branch in isolation)
+
+Two layers enforce this:
+
+1. **`cc.sh` auto-redirect (primary).** If launched anywhere under
+   `~/worktrees/<project>/` that is not a real worktree, the wrapper `cd`s to
+   `~/docs_gh/<project>/` and prints a one-line note before exec'ing `claude`.
+   Set `CC_NO_REDIRECT=1` to skip (rarely needed).
+2. **`session_init.sh` Phase 1e (backstop).** If a session somehow starts in a
+   worktree-parent (e.g. `claude` invoked directly, not via `cc.sh`), Phase 1e
+   prints a `WORKTREE-PARENT:` block listing the active worktrees and the two
+   valid `cd` targets. Advisory — does not block.
+
 ## Agent Dispatch
 
 When spawning an agent with `isolation: "worktree"`, the harness creates its

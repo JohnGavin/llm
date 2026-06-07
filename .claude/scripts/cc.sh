@@ -538,6 +538,36 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
+# Worktree-parent redirect
+# ---------------------------------------------------------------------------
+# If launched from anywhere under ~/worktrees/<proj>/ that is NOT itself a
+# git worktree (i.e. ~/worktrees/llm, ~/worktrees/llm/feat, etc.), redirect
+# to ~/docs_gh/<proj>/ (canonical main checkout). The parent dirs contain
+# no source code and starting there loads project context with no useful
+# cwd, wasting tokens. Set CC_NO_REDIRECT=1 to skip.
+if [ "${CC_NO_REDIRECT:-0}" != "1" ]; then
+  case "$PWD" in
+    "$HOME/worktrees"/*)
+      if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        _wp_rel="${PWD#$HOME/worktrees/}"
+        _wp_proj="${_wp_rel%%/*}"
+        _wp_target="$HOME/docs_gh/$_wp_proj"
+        if [ -d "$_wp_target/.git" ]; then
+          echo "cc: cwd was $PWD (under ~/worktrees/ but not a worktree)"
+          echo "cc: redirecting to $_wp_target  (set CC_NO_REDIRECT=1 to skip)"
+          cd "$_wp_target"
+        else
+          echo "cc: cwd is $PWD but $_wp_target does not exist."
+          echo "cc: cd into the canonical main checkout or a real worktree, then re-run."
+          exit 2
+        fi
+        unset _wp_rel _wp_proj _wp_target
+      fi
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------------
 # Initial project-name + colour resolution (from current directory)
 # ---------------------------------------------------------------------------
 resolve_project_name_and_color "$PWD"
