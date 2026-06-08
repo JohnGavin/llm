@@ -5,6 +5,7 @@
 --   worktree_gc_events  -- one row per worktree inspected/removed/skipped by any writer
 --   housekeeping_runs   -- one row per cron/script invocation (heartbeat)
 --   config_events       -- one row per config-file change detected by config_digest_cron.sh
+--   kb_events           -- one row per knowledge-base change detected by kb_digest_daily_cron.sh
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -12,7 +13,7 @@
 -- Apply with:
 --   bash .claude/scripts/housekeeping_schema_apply.sh
 --
--- Tracked in llm#550 Phase B, llm#552 Phase B.
+-- Tracked in llm#550 Phase B, llm#552 Phase B, llm#553 Phase B.
 
 CREATE TABLE IF NOT EXISTS worktree_gc_events (
   id                TEXT PRIMARY KEY,
@@ -55,6 +56,22 @@ CREATE TABLE IF NOT EXISTS config_events (
   commit_sha    TEXT
 );
 
+-- kb_events: one row per knowledge-base change detected by kb_digest_daily_cron.sh.
+-- Written after the markdown digest is generated.
+-- Queried by the 06:30 digest to surface the "Knowledge base (24h)" section.
+-- See llm#553 Phase B.
+CREATE TABLE IF NOT EXISTS kb_events (
+  id            TEXT PRIMARY KEY,
+  fired_at      TIMESTAMPTZ NOT NULL,
+  source        TEXT NOT NULL,                 -- 'kb_digest_daily_cron.sh'
+  layer         TEXT NOT NULL,                 -- 'raw' | 'wiki' | 'outputs'
+  path          TEXT NOT NULL,                 -- relative to knowledge/
+  action        TEXT NOT NULL,                 -- 'created' | 'modified' | 'flagged_no_sources' | 'flagged_ai_inferred' | 'broken_link'
+  details       TEXT,
+  commit_sha    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_housekeeping_runs_task_started ON housekeeping_runs(task, started_at);
 CREATE INDEX IF NOT EXISTS idx_config_events_fired_at ON config_events(fired_at);
+CREATE INDEX IF NOT EXISTS idx_kb_events_fired_at ON kb_events(fired_at);

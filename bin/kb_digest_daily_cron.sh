@@ -2,9 +2,16 @@
 # kb_digest_daily_cron.sh — Wrapper for daily knowledge-base digest email.
 #
 # Steps:
+#   0. Write housekeeping_runs start row (if duckdb available)
 #   1. Run kb_digest.R to compute sanitised aggregates into a temp file.
+#   1b. Write kb_events rows to unified.duckdb for each detected KB change
 #   2. Send email locally via blastula+SMTP (NOT via gh workflow run).
 #      The email body must NOT pass through CI logs — KB may contain PHI.
+#   3. Update housekeeping_runs end row
+#
+# unified.duckdb writes: gracefully skipped when duckdb is absent.
+# Tables written: housekeeping_runs, kb_events
+# See: unified-observability-schema rule, llm#553, llm#550
 #
 # PRIVACY CONTRACT:
 #   - The digest is computed on THIS machine from the LOCAL knowledge repo.
@@ -31,7 +38,7 @@
 # Manual run (dry):
 #   DRYRUN=1 EMAIL_DRY_RUN=1 bash bin/kb_digest_daily_cron.sh
 #
-# Tracked in llm#298.
+# Tracked in llm#298, llm#553.
 
 set -uo pipefail
 
@@ -53,11 +60,12 @@ LLM_NIX="${REPO_ROOT}/default.nix"
 LOG_FILE="${HOME}/.claude/logs/kb_digest.log"
 ENV_FILE="${HOME}/.claude/env/kb_digest.env"
 LOCK_FILE="/tmp/kb_digest_daily_cron.lock"
+UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME}/.claude/logs/unified.duckdb}"
 
 # Dry-run flags
 DRYRUN="${DRYRUN:-0}"
 EMAIL_DRY_RUN="${EMAIL_DRY_RUN:-0}"
-export DRYRUN EMAIL_DRY_RUN
+export DRYRUN EMAIL_DRY_RUN LLM_REPO_ROOT="${REPO_ROOT}"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 mkdir -p "$(dirname "${LOG_FILE}")"
@@ -126,6 +134,38 @@ if ! command -v nix-shell > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── DuckDB availability check (llm#553) ───────────────────────────────────────
+# Gracefully skip all DB writes when duckdb binary or unified.duckdb is absent.
+# Same defensive pattern as config_digest_cron.sh (merged via #566).
+_duckdb_ok=0
+if command -v duckdb >/dev/null 2>&1 && [ -f "${UNIFIED_DB}" ]; then
+  _duckdb_ok=1
+  log "duckdb: available at ${UNIFIED_DB}"
+else
+  log "duckdb: not available — skipping DB writes"
+fi
+
+# Run ID for this invocation (bash native — no python3 per llm#569 compliance)
+_run_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+_run_started="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+# ── Step 0: Write housekeeping_runs start row ─────────────────────────────────
+if [ "${_duckdb_ok}" = "1" ]; then
+  _script_abs="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)/kb_digest_daily_cron.sh"
+  duckdb "${UNIFIED_DB}" "
+    INSERT OR IGNORE INTO housekeeping_runs
+      (id, task, source_script, started_at, status, rows_written)
+    VALUES (
+      '${_run_id}',
+      'kb_digest',
+      '${_script_abs}',
+      TIMESTAMPTZ '${_run_started}',
+      'ok',
+      0
+    );
+  " 2>/dev/null || log "duckdb WARN: housekeeping_runs INSERT failed (non-fatal)"
+fi
+
 # ── Step 1: Generate sanitised digest to temp file ────────────────────────────
 log "Step 1: generating knowledge-base digest..."
 
@@ -142,12 +182,18 @@ fi
 KB_KNOWLEDGE_REPO="${KB_KNOWLEDGE_REPO:-${HOME}/docs_gh/llm/knowledge}"
 KB_SINCE="${KB_SINCE:-}"
 
+# Compute the 24h look-back timestamp (macOS/GNU compatible)
+SINCE="$(date -v -24H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -d '24 hours ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '')"
+if [ -z "${SINCE}" ]; then
+  SINCE="$(date '+%Y-%m-%d')T00:00:00"
+fi
+log "  since=${SINCE}"
+
 if [ "${DRYRUN}" = "1" ]; then
   log "  DRYRUN: would run nix-shell ${LLM_NIX} --run 'Rscript ${DIGEST_SCRIPT}'"
   # Create minimal stub for email script to consume
-  echo "## Knowledge Base Digest — $(date +%Y-%m-%d)" > "${DIGEST_TMPFILE}"
-  echo "" >> "${DIGEST_TMPFILE}"
-  echo "_DRYRUN mode — no actual KB analysis performed._" >> "${DIGEST_TMPFILE}"
+  printf '## Knowledge Base Digest — %s\n\n_DRYRUN mode — no actual KB analysis performed._\n' \
+    "$(date +%Y-%m-%d)" > "${DIGEST_TMPFILE}"
   STEP1_EXIT=0
 else
   SINCE_ARG=""
@@ -161,6 +207,17 @@ fi
 
 if [ "${STEP1_EXIT}" -ne 0 ]; then
   log "ERROR: kb_digest.R exited ${STEP1_EXIT} — aborting"
+  # Update housekeeping_runs with failed status before exiting
+  if [ "${_duckdb_ok}" = "1" ]; then
+    _run_ended="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    duckdb "${UNIFIED_DB}" "
+      UPDATE housekeeping_runs
+      SET ended_at = TIMESTAMPTZ '${_run_ended}',
+          status = 'failed',
+          rows_written = 0
+      WHERE id = '${_run_id}';
+    " 2>/dev/null || true
+  fi
   exit "${STEP1_EXIT}"
 fi
 
@@ -172,6 +229,81 @@ if [ -f "${DIGEST_TMPFILE}" ]; then
 fi
 
 log "Step 1 done (exit=${STEP1_EXIT})"
+
+# ── Step 1b: Write kb_events rows (llm#553 Phase A) ──────────────────────────
+# Query git log on the knowledge repo for file changes in the same 24h window.
+# Writes one row per (commit_sha, file_path) pair, keyed by KB layer.
+# Layer is derived from the file path prefix: raw/ | wiki/ | outputs/.
+# Uses process-substitution while-loop to avoid subshell (vars persist).
+# Bash native UUID + ISO timestamp — no python3 per llm#569 compliance.
+_EVENTS_WRITTEN=0
+
+if [ "${_duckdb_ok}" = "1" ]; then
+  log "Step 1b: writing kb_events to unified.duckdb..."
+
+  _now_ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  _cur_sha=""
+
+  # Walk git log on KB repo for last 24h; parse COMMIT header + numstat lines.
+  # Layer prefixes correspond to the three knowledge base subdirectories.
+  while IFS= read -r _gl; do
+    [ -z "${_gl}" ] && continue
+    if [[ "${_gl}" == COMMIT:* ]]; then
+      _cur_sha="${_gl#COMMIT:}"
+      continue
+    fi
+    _added="$(printf '%s' "${_gl}" | cut -f1)"
+    _deleted="$(printf '%s' "${_gl}" | cut -f2)"
+    _fpath="$(printf '%s' "${_gl}" | cut -f3-)"
+    [ -z "${_fpath}" ] && continue
+    [ -z "${_cur_sha}" ] && continue
+
+    # Derive layer from path prefix
+    _layer="outputs"
+    case "${_fpath}" in
+      raw/*)     _layer="raw" ;;
+      wiki/*)    _layer="wiki" ;;
+      outputs/*) _layer="outputs" ;;
+    esac
+
+    # Derive action from numstat columns
+    if [ "${_added}" = "-" ] || [ "${_deleted}" = "-" ]; then
+      _action="modified"          # binary file
+    elif [ "${_deleted}" = "0" ] && [ "${_added}" != "0" ]; then
+      _action="created"
+    elif [ "${_added}" = "0" ] && [ "${_deleted}" != "0" ]; then
+      _action="modified"          # all lines removed = file cleared (rare for KB)
+    else
+      _action="modified"
+    fi
+
+    _short_sha="${_cur_sha:0:7}"
+    # TODO: see llm#567 — UNIQUE constraint on (commit_sha, path) for dedup
+    _evt_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    _fpath_sql="${_fpath//"'"/"''"}"
+    duckdb "${UNIFIED_DB}" "
+      INSERT OR IGNORE INTO kb_events
+        (id, fired_at, source, layer, path, action, commit_sha)
+      VALUES (
+        '${_evt_id}',
+        TIMESTAMPTZ '${_now_ts}',
+        'kb_digest_daily_cron.sh',
+        '${_layer}',
+        '${_fpath_sql}',
+        '${_action}',
+        '${_short_sha}'
+      );
+    " 2>/dev/null || true
+    _EVENTS_WRITTEN=$(( _EVENTS_WRITTEN + 1 ))
+  done < <(git -C "${KB_KNOWLEDGE_REPO}" log --numstat \
+    --pretty="tformat:COMMIT:%H" \
+    --since="${SINCE}" \
+    -- "raw/" "wiki/" "outputs/" 2>/dev/null || true)
+
+  log "Step 1b done: ${_EVENTS_WRITTEN} kb_events rows written"
+else
+  log "Step 1b: skipped (duckdb not available)"
+fi
 
 # ── Step 2: Send email locally via blastula ────────────────────────────────────
 # NOTE: NOT via `gh workflow run` — the body must NOT pass through CI logs.
@@ -200,8 +332,31 @@ fi
 
 if [ "${STEP2_EXIT}" -ne 0 ]; then
   log "ERROR: send_kb_digest_email.R failed (exit=${STEP2_EXIT})"
+  # Update housekeeping_runs with failed status before exiting
+  if [ "${_duckdb_ok}" = "1" ]; then
+    _run_ended="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    duckdb "${UNIFIED_DB}" "
+      UPDATE housekeeping_runs
+      SET ended_at = TIMESTAMPTZ '${_run_ended}',
+          status = 'failed',
+          rows_written = ${_EVENTS_WRITTEN}
+      WHERE id = '${_run_id}';
+    " 2>/dev/null || true
+  fi
   exit "${STEP2_EXIT}"
 fi
 log "Step 2 done"
+
+# ── Step 3: Update housekeeping_runs end row ──────────────────────────────────
+if [ "${_duckdb_ok}" = "1" ]; then
+  _run_ended="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  duckdb "${UNIFIED_DB}" "
+    UPDATE housekeeping_runs
+    SET ended_at = TIMESTAMPTZ '${_run_ended}',
+        rows_written = ${_EVENTS_WRITTEN}
+    WHERE id = '${_run_id}';
+  " 2>/dev/null || log "duckdb WARN: housekeeping_runs UPDATE failed (non-fatal)"
+  log "Step 3: housekeeping_runs updated (rows_written=${_EVENTS_WRITTEN})"
+fi
 
 log "=== kb_digest_daily_cron.sh done ==="
