@@ -4,6 +4,20 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-08 (wiki-curator — fix broken [[topic]] backlinks, #481)
+
+### Completed
+
+**Knowledge base wiki expansion** (issue #481):
+- Authored 5 new wiki pages to resolve 10 broken `[[topic]]` backlinks in `knowledge/wiki/swedroe-evidence-investing.md`
+- New pages: `market-efficiency.md`, `factor-investing-criteria.md`, `recency-bias.md`, `value-premium-spread.md`, `mean-reversion-earnings.md`
+- All pages have `## Sources` (provenance), AI-inferred markers, cross-links back to `[[swedroe-evidence-investing]]`, and `## Methodology` blocks
+- `knowledge/wiki/INDEX.md` updated with all 5 new entries
+- `knowledge/LOG.md` updated with ingest record
+- KB digest signal #481 will show 0 broken backlinks on next run
+
+---
+
 ## 2026-06-07 (later session — CLAUDE.md trim + housekeeping framework)
 
 ### Completed
