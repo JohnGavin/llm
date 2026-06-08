@@ -185,6 +185,22 @@ WITH daily_errors AS (
         session_id IS NOT NULL
         -- Rate-window: only consider the last 7 days (#269 fix)
         AND logged_at >= current_timestamp - INTERVAL '7' DAY
+        -- Exclude PreToolUse hooks that exit 2 by design when blocking
+        -- forbidden operations. The non-zero exit is the intended behaviour,
+        -- not a tool failure. Counting them as errors produces false-positive
+        -- MAJOR findings (see llm#573).
+        -- TODO: replace this allow-list with a hook_action column
+        -- (block_intended/block_error/pass) per llm#573 Path C — that's the
+        -- durable cross-hook fix. This allow-list is the stopgap.
+        AND source NOT IN (
+            'compound_guard',        -- blocks compound bash commands
+            'agent_push_guard',      -- blocks cross-branch / protected-branch pushes
+            'destructive_fs_guard',  -- blocks destructive filesystem ops
+            'destructive_api_guard', -- blocks destructive API calls
+            'file_protection',       -- blocks edits to protected paths
+            'wiki_health_onwrite',   -- blocks writes failing wiki health checks
+            'skill_quality_onwrite'  -- blocks writes failing skill quality checks
+        )
     GROUP BY CAST(logged_at AS DATE), source
 ),
 daily_agent_calls AS (
