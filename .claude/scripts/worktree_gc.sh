@@ -150,18 +150,15 @@ now_epoch() {
   python3 -c "import time; print(int(time.time()))"
 }
 
-# ─── Helper: du -sm for size_mb ──────────────────────────────────────────────
+# ─── Helper: du -sm for size_mb (bash native — llm#569 compliance) ──────────
 dir_size_mb() {
-  python3 -c "
-import os, stat
-total = 0
-for dirpath, dirnames, filenames in os.walk('$1'):
-    for f in filenames:
-        fp = os.path.join(dirpath, f)
-        try: total += os.path.getsize(fp)
-        except OSError: pass
-print(int(total / 1048576))
-" 2>/dev/null || echo "0"
+  # Disk size in MB. 0 if path missing, unreadable, or empty.
+  local _p="$1"
+  [ -d "$_p" ] || { echo "0"; return; }
+  local _mb
+  _mb=$(du -sm "$_p" 2>/dev/null | cut -f1)
+  [ -z "$_mb" ] && _mb=0
+  echo "$_mb"
 }
 
 # ─── Helper: write one row to worktree_gc_events ─────────────────────────────
@@ -262,7 +259,7 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     # Opt-out marker in the main repo root
     if [ -f "$_repo_dir/.no-worktree-gc" ]; then
       log "[skip-repo] $wt_path (opt-out marker in $_repo_dir)"
-      write_gc_event "$_label" "$_project" "$wt_path" "" "skipped_optout" "opt-out marker" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "" "skipped_optout" "opt-out marker" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       continue
     fi
@@ -274,7 +271,7 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     # Skip: current running session's cwd
     if [ -n "$_current_pwd" ] && [[ "$_current_pwd" == "$wt_path"* ]]; then
       log "[skip-cwd] $wt_path (current session)"
-      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_cwd" "current session cwd" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_cwd" "current session cwd" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       KEPT=$(( KEPT + 1 ))
       continue
@@ -294,7 +291,7 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
 
     if [ "$_is_locked" = "1" ]; then
       log "[skip-locked] $wt_path branch=$wt_branch"
-      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_locked" "git worktree locked" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_locked" "git worktree locked" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       KEPT=$(( KEPT + 1 ))
       continue
@@ -308,14 +305,14 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     if echo "$cherry_out" | grep -q '^+'; then
       _reason="unmerged patches vs $default_br"
       log "[keep-unmerged] $wt_path (branch $wt_branch has unique patches vs $default_br)"
-      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_unmerged" "$_reason" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_unmerged" "$_reason" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       KEPT=$(( KEPT + 1 ))
       continue
     fi
     if [ "$cherry_out" = "cherry-failed" ]; then
       log "[keep-cherry-error] $wt_path (cherry check failed)"
-      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_cherry_error" "cherry check failed" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_cherry_error" "cherry check failed" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       KEPT=$(( KEPT + 1 ))
       continue
@@ -325,7 +322,7 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     dirty=$(git -C "$wt_path" status --porcelain 2>/dev/null || echo "status-failed")
     if [ -n "$dirty" ]; then
       log "[keep-dirty] $wt_path (uncommitted/untracked files)"
-      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_uncommitted" "dirty working tree" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_uncommitted" "dirty working tree" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       KEPT=$(( KEPT + 1 ))
       continue
@@ -336,7 +333,7 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     wt_age=$(( _now - wt_mtime ))
     if [ "$wt_age" -lt "$_age_seconds" ]; then
       log "[keep-too-new] $wt_path (age $wt_age s < ${_age_seconds} s threshold for $_label)"
-      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_age" "age ${wt_age}s < threshold ${_age_seconds}s" "0"
+      write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_age" "age ${wt_age}s < threshold ${_age_seconds}s" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
       KEPT=$(( KEPT + 1 ))
       continue
