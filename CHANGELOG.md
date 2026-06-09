@@ -4,6 +4,43 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-09 — feat(#585 Phase A): branch_gc — script + plist + schema
+
+### Completed
+
+- New `.claude/scripts/branch_gc.sh` — daily sweep of merged + squash-merged local branches across `~/docs_gh/*/`. Implements step 1 (`git cherry` patch-id check) + step 2 (closing-PR squash-merge detection via `gh`) of `branch-salvage-workflow` rule. Step 3 (unique-strings re-implementation) deferred to Phase B.
+- New `.claude/launchd/com.claude.branch-gc.plist` — daily 09:08 (8 min after `worktree-gc` at 09:00 so freshly-orphaned branch refs are picked up the same morning).
+- Extended `.claude/scripts/housekeeping_schema_init.sql` — adds `branch_gc_events` table per `unified-observability-schema` rule + `housekeeping_runs.task` taxonomy comment.
+- Deletion path uses `git branch -D` (covers squash-merged case where `-d` would refuse); tags every deleted SHA in `git notes --ref=branch-gc` for recovery within `BRANCH_GC_NOTES_TTL_DAYS=30`.
+
+### SELFTEST
+
+`SELFTEST=1 bash .claude/scripts/branch_gc.sh` → **14/14 PASS** covering: protected branches (main/master/release/*), checked-out branches, too-young branches, fast-forward merged, patch-id merged + apply, recovery note creation, dry-run vs apply mode, default-branch fallback.
+
+### Manual post-merge install
+
+```bash
+bash .claude/scripts/housekeeping_schema_apply.sh   # add branch_gc_events table
+launchctl bootout gui/$(id -u)/com.claude.branch-gc 2>/dev/null
+cp .claude/launchd/com.claude.branch-gc.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude.branch-gc.plist
+```
+
+### Verification (after first 09:08 run)
+
+```bash
+duckdb -readonly ~/.claude/logs/unified.duckdb \
+  "SELECT action, count(*) FROM branch_gc_events WHERE fired_at >= current_date GROUP BY action"
+```
+
+Acceptance criterion from #585: first production run on `llm` should delete **≥40 of the 63 squash-merged branches** that today's `git branch -d` sweep refused.
+
+### Deferred to Phase B
+
+- Step 3 unique-strings check (catches re-implementations whose patch-id doesn't match and whose closing PR predates the branch)
+- Section 3c in `send_overnight_self_review_email.R` (06:30 digest line summarising branch_gc actions over the last 24h)
+- Periodic pruning of `notes/branch-gc` older than `BRANCH_GC_NOTES_TTL_DAYS=30`
+
 ## 2026-06-09 — fix(#586): worktree_gc launchd schedule
 
 ### Completed
