@@ -2,15 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Sweep stale worktrees across all repos under ~/docs_gh weekly.          -->
-    <!-- Dry-run only until the script's SOAK_END date (2026-06-02);             -->
-    <!-- after that date --apply removes merged+clean+old worktrees.             -->
-    <!-- Tracks: JohnGavin/llm#199.                                              -->
+    <!-- Sweep stale worktrees across all repos under ~/docs_gh daily 09:00.     -->
+    <!-- After the script's SOAK_END date (2026-06-02), --apply removes          -->
+    <!-- merged+clean+old worktrees. Before then, treated as dry-run.            -->
+    <!-- Tracks:        JohnGavin/llm#199.                                       -->
+    <!-- Schedule fix:  JohnGavin/llm#586 (was weekly Sun 04:00 — Mac asleep,    -->
+    <!--                job never auto-fired; moved to daily 09:00 when Mac is   -->
+    <!--                reliably awake).                                          -->
     <!--                                                                          -->
-    <!-- Install (do NOT install before SOAK_END):                               -->
+    <!-- Install / reload:                                                       -->
+    <!--   launchctl bootout gui/$(id -u)/com.claude.worktree-gc 2>/dev/null     -->
     <!--   cp .claude/launchd/com.claude.worktree-gc.plist                       -->
     <!--        ~/Library/LaunchAgents/                                           -->
-    <!--   launchctl load -w                                                      -->
+    <!--   launchctl bootstrap gui/$(id -u)                                      -->
     <!--        ~/Library/LaunchAgents/com.claude.worktree-gc.plist              -->
 
     <key>Label</key>
@@ -23,13 +27,11 @@
         <string>--apply</string>
     </array>
 
-    <!-- Weekly: Sunday 04:00 -->
+    <!-- Daily 09:00 (Mac reliably awake) -->
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Weekday</key>
-        <integer>0</integer>
         <key>Hour</key>
-        <integer>4</integer>
+        <integer>9</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
@@ -39,6 +41,10 @@
 
     <key>StandardErrorPath</key>
     <string>/Users/johngavin/.claude/logs/worktree_gc.err</string>
+
+    <!-- Tolerate up to 30 s between retries if a minute is missed -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
 
     <!-- Do NOT run on load — only on the schedule. -->
     <key>RunAtLoad</key>
