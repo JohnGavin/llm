@@ -3,6 +3,7 @@
 --
 -- Tables:
 --   worktree_gc_events     -- one row per worktree inspected/removed/skipped by any writer
+--   branch_gc_events       -- one row per local branch inspected/deleted/skipped (llm#585)
 --   housekeeping_runs      -- one row per cron/script invocation (heartbeat)
 --   config_events          -- one row per config-file change detected by config_digest_cron.sh
 --   kb_events              -- one row per knowledge-base change detected by kb_digest_daily_cron.sh
@@ -14,7 +15,7 @@
 -- Apply with:
 --   bash .claude/scripts/housekeeping_schema_apply.sh
 --
--- Tracked in llm#550 Phase B, llm#552 Phase B, llm#553 Phase B, llm#554 Phase B.
+-- Tracked in llm#550 Phase B, llm#552 Phase B, llm#553 Phase B, llm#554 Phase B, llm#585 Phase A.
 
 CREATE TABLE IF NOT EXISTS worktree_gc_events (
   id                TEXT PRIMARY KEY,
@@ -32,7 +33,7 @@ CREATE TABLE IF NOT EXISTS worktree_gc_events (
 
 CREATE TABLE IF NOT EXISTS housekeeping_runs (
   id              TEXT PRIMARY KEY,
-  task            TEXT NOT NULL,             -- 'worktree_gc' | 'config_digest' | 'kb_digest' | 'launchd_health' | 'roborev_bridge' | 'stage1_findings' | 'self_review_verify'
+  task            TEXT NOT NULL,             -- 'worktree_gc' | 'branch_gc' | 'config_digest' | 'kb_digest' | 'launchd_health' | 'roborev_bridge' | 'stage1_findings' | 'self_review_verify'
   source_script   TEXT NOT NULL,             -- absolute path to script
   started_at      TIMESTAMPTZ NOT NULL,
   ended_at        TIMESTAMPTZ,
@@ -40,6 +41,32 @@ CREATE TABLE IF NOT EXISTS housekeeping_runs (
   rows_written    INTEGER DEFAULT 0,
   error_text      TEXT,
   detail_json     TEXT
+);
+
+-- branch_gc_events: one row per local branch inspected by branch_gc.sh.
+-- Action taxonomy:
+--   deleted_merged   — git cherry showed all '-' (fully patch-id merged)
+--   deleted_squash   — closing PR squash-merged + tip-age >= BRANCH_GC_GRACE_DAYS
+--   kept_unmerged    — has unique patches AND no closing squash-merge
+--   kept_protected   — matched BRANCH_GC_PROTECTED_RE (main/master/release/* etc.)
+--   kept_checked_out — checked out by a worktree (any repo)
+--   kept_young       — tip-age < BRANCH_GC_MIN_AGE_DAYS
+--   kept_grace       — closing PR squash-merged but tip-age < BRANCH_GC_GRACE_DAYS
+--   kept_dryrun      — would have deleted; dry-run only
+-- Tagged-but-not-deleted: see git notes --ref=branch-gc for recovery within
+-- BRANCH_GC_NOTES_TTL_DAYS=30.
+-- See llm#585 Phase A.
+CREATE TABLE IF NOT EXISTS branch_gc_events (
+  id              TEXT PRIMARY KEY,
+  fired_at        TIMESTAMPTZ NOT NULL,
+  source          TEXT NOT NULL,           -- 'branch_gc.sh'
+  project         TEXT NOT NULL,           -- 'llm' | 'historical' | ...
+  branch_name     TEXT NOT NULL,
+  branch_tip_sha  TEXT NOT NULL,
+  action          TEXT NOT NULL,
+  closing_pr      INTEGER,                 -- NULL if no closing PR found
+  age_days        INTEGER,
+  reason          TEXT
 );
 
 -- config_events: one row per config-file change detected by config_digest_cron.sh.
@@ -92,6 +119,8 @@ CREATE TABLE IF NOT EXISTS launchd_health_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
+CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);
+CREATE INDEX IF NOT EXISTS idx_branch_gc_events_project_branch ON branch_gc_events(project, branch_name);
 CREATE INDEX IF NOT EXISTS idx_housekeeping_runs_task_started ON housekeeping_runs(task, started_at);
 CREATE INDEX IF NOT EXISTS idx_config_events_fired_at ON config_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_kb_events_fired_at ON kb_events(fired_at);

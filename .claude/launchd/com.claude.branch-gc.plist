@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Daily 09:08 sweep of merged + squash-merged local branches.            -->
+    <!-- Slotted 8 min after worktree-gc (09:00) so branches whose worktrees    -->
+    <!-- were just deleted are picked up the same morning.                      -->
+    <!-- Schedule chosen daily 09:00 (not Sunday 04:00) per lesson from         -->
+    <!-- llm#586: Mac reliably asleep at 04:00 → cron never fires.              -->
+    <!--                                                                          -->
+    <!-- Tracks: JohnGavin/llm#585 Phase A.                                     -->
+    <!--                                                                          -->
+    <!-- Install / reload:                                                       -->
+    <!--   launchctl bootout gui/$(id -u)/com.claude.branch-gc 2>/dev/null      -->
+    <!--   cp .claude/launchd/com.claude.branch-gc.plist                        -->
+    <!--        ~/Library/LaunchAgents/                                          -->
+    <!--   launchctl bootstrap gui/$(id -u)                                     -->
+    <!--        ~/Library/LaunchAgents/com.claude.branch-gc.plist               -->
+
+    <key>Label</key>
+    <string>com.claude.branch-gc</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/branch_gc.sh</string>
+        <string>--apply</string>
+    </array>
+
+    <!-- Daily 09:08 (after worktree-gc at 09:00) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>8</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/branch_gc.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/branch_gc.err</string>
+
+    <!-- Tolerate up to 30 s between retries if a minute is missed -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Do NOT run on load — only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
