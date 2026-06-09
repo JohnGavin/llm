@@ -4,6 +4,35 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-09 — fix(#586): worktree_gc launchd schedule
+
+### Completed
+
+- `.claude/launchd/com.claude.worktree-gc.plist` schedule moved from Weekly Sunday 04:00 → Daily 09:00; added `ThrottleInterval=30` so missed minutes don't tight-loop.
+- Root cause (diagnostic at llm#586 comment-4661743200): Mac reliably asleep at 04:00 Sunday + `RunAtLoad=false` + no `WakeUp` key → `last exit code = (never exited)` since load. Job has never auto-fired. Today's session manually removed 13 stale sibling worktrees (167 MB) that the cron should have caught.
+- `worktree_gc.sh` apply-gate logic is correct and unchanged; the plist did pass `--apply`, but the program never ran.
+
+### Manual post-merge reload (not automated — system-level launchctl)
+
+```bash
+launchctl bootout gui/$(id -u)/com.claude.worktree-gc 2>/dev/null
+cp .claude/launchd/com.claude.worktree-gc.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude.worktree-gc.plist
+```
+
+### Verification (next day after reload)
+
+```bash
+launchctl print gui/$(id -u)/com.claude.worktree-gc | grep -E 'last exit|state'
+grep '^\[2026-06-10 09:' ~/.claude/logs/worktree_gc.log
+duckdb -readonly ~/.claude/logs/unified.duckdb \
+  "SELECT action, count(*) FROM worktree_gc_events WHERE fired_at >= current_date GROUP BY action"
+```
+
+Should show `action='removed'` rows once stale worktrees re-accumulate.
+
+Unblocks #585 (`branch_gc` automation, which reuses the same housekeeping plumbing).
+
 ## 2026-06-07 (later session — CLAUDE.md trim + housekeeping framework)
 
 ### Completed
