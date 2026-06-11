@@ -30,6 +30,28 @@
 
 set -euo pipefail
 
+# ─── launchd-safe PATH (llm#591) ──────────────────────────────────────────────
+# Under launchd's default PATH, `command -v duckdb` fails and every DB write
+# silently no-ops (log said events=326 but branch_gc_events had 0 rows). Same
+# line as worktree_gc.sh.
+export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Never block on a credential prompt — launchd has no TTY, so a dead or
+# auth-gated remote hangs the whole sweep (llm#591: one fetch hung 4h).
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="ssh -oBatchMode=yes -oConnectTimeout=10"
+
+# Bounded execution for network commands; passthrough when timeout is absent
+# (macOS has no native timeout; homebrew/nix coreutils provide it).
+_timeout() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$@"
+  else
+    shift
+    "$@"
+  fi
+}
+
 # ─── Config ───────────────────────────────────────────────────────────────────
 
 BRANCH_GC_GRACE_DAYS="${BRANCH_GC_GRACE_DAYS:-14}"
@@ -135,7 +157,7 @@ auto_pull_all() {
   for repo in "$DEFAULT_REPOS_ROOT"/*/; do
     [ -d "$repo/.git" ] || continue
     def="$(default_branch_of "$repo")"
-    git -C "$repo" fetch origin "$def" 2>/dev/null || continue
+    _timeout 30 git -C "$repo" fetch origin "$def" 2>/dev/null || continue
     if git -C "$repo" merge --ff-only "origin/$def" 2>/dev/null; then
       log "deploy: $(basename "$repo") → $(git -C "$repo" rev-parse --short HEAD)"
     fi
@@ -200,11 +222,11 @@ closing_squash_pr() {
                 | sed -E 's|.*github\.com[:/]([^/]+/[^/.]+)(\.git)?.*|\1|')"
   [ -z "$repo_slug" ] && { echo ""; return; }
   # Look for a merged PR by head-ref matching the branch name
-  pr="$(gh -R "$repo_slug" pr list --state merged --head "$branch" --limit 1 \
+  pr="$(_timeout 15 gh -R "$repo_slug" pr list --state merged --head "$branch" --limit 1 \
         --json number --jq '.[0].number' 2>/dev/null || true)"
   [ -n "$pr" ] && { echo "$pr"; return; }
   # Otherwise look for merged PR closing the issue we found
-  pr="$(gh -R "$repo_slug" pr list --search "is:merged closes:#${issue_num}" --limit 1 \
+  pr="$(_timeout 15 gh -R "$repo_slug" pr list --search "is:merged closes:#${issue_num}" --limit 1 \
         --json number --jq '.[0].number' 2>/dev/null || true)"
   [ -n "$pr" ] && { echo "$pr"; return; }
   echo ""
@@ -417,6 +439,9 @@ if [ "${SELFTEST:-0}" = "1" ]; then
 fi
 
 log "=== branch_gc start (apply=$APPLY, grace=${BRANCH_GC_GRACE_DAYS}d, min_age=${BRANCH_GC_MIN_AGE_DAYS}d) ==="
+# Make a missing duckdb visible in the log instead of silently skipping all
+# DB writes (the llm#591 failure mode).
+log "db: duckdb=$(command -v duckdb || echo ABSENT) db_file=$([ -f "$DB" ] && echo "$DB" || echo ABSENT)"
 
 # Auto-pull main on every repo (deploy discipline).
 auto_pull_all
