@@ -302,7 +302,12 @@
       "WebFetch(domain:www.wesleyjohnson.co.uk)",
       "WebFetch(domain:www.which.co.uk)",
       "WebSearch",
-      "Write"
+      "Write",
+      "Edit(//Users/johngavin/worktrees/**)",
+      "Write(//Users/johngavin/worktrees/**)",
+      "NotebookEdit(//Users/johngavin/worktrees/**)",
+      "Edit(//tmp/**)",
+      "Write(//tmp/**)"
     ],
     "deny": [
       "Bash(rm -rf:*)",
