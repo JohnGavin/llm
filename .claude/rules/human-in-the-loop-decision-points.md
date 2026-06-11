@@ -1,3 +1,7 @@
+---
+description: 5-class decision taxonomy — Classes A/B/C stop for the human; D/E proceed automatically
+---
+
 # Rule: Human-in-the-Loop Decision Points (Mandatory)
 
 ## Origin

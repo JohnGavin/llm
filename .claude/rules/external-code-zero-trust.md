@@ -1,3 +1,7 @@
+---
+description: Never copy code from external sources — read for ideas, re-implement in our own style
+---
+
 # Rule: External Code Zero Trust
 
 ## When This Applies

@@ -1,3 +1,7 @@
+---
+description: Session-start audit of unmerged feat branches — triage harvest/archive/discard before new work begins
+---
+
 # Rule: Branch Harvest on Fork (Mandatory, All Projects)
 
 ## When This Applies
