@@ -1,3 +1,7 @@
+---
+description: 5-point template for recurring housekeeping tasks — script, launchd plist, events table, digest section, session-init phase
+---
+
 # Rule: Housekeeping Framework (Convention)
 
 ## When This Applies

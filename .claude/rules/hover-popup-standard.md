@@ -1,3 +1,7 @@
+---
+description: Hover popups use Tippy.js via the shared partial — never bare abbr title attributes
+---
+
 # Rule: Hover-Popup Standard (All Vignettes, All Projects)
 
 ## When This Applies

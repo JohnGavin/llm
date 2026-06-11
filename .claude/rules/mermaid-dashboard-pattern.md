@@ -1,3 +1,7 @@
+---
+description: Mermaid in dashboards bypasses Quarto's loader — external JS module + mount divs, never mermaid chunks in tabsets
+---
+
 # Rule: Mermaid Diagrams in Dashboards (Mandatory, All Projects)
 
 ## When This Applies
