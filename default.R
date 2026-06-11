@@ -377,7 +377,9 @@ system_pkgs <- c(
   # "gemini-cli",
   #   nix search nixpkgs codex
   # "codex", # overrides $PATH (which git from /opt/homebrew does not permissions inside nix - use npm installed codex)
-  "claude-code", # https://blog.stephenturner.us/p/positron-assistant-copilot-chat-agent
+  # "claude-code", # REMOVED (llm#598): nixpkgs lags months behind (2.1.25 vs native
+  #   2.1.173) and shadowed the native install in dev-shell PATH. Canonical claude
+  #   is the self-updating native installer at ~/.local/bin/claude.
   # "ollama",
   "cacert", # CA certs / trusted TLS/SSL root certs
   # echo $SSL_CERT_FILE ; echo $NIX_SSL_CERT_FILE
