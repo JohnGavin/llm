@@ -450,16 +450,16 @@ offer_worktree() {
     y|Y) answer="feat/cc-$(date +%Y%m%d-%H%M%S)" ;;
   esac
 
-  # Sanitise branch name for use as a directory suffix (replace / with -)
+  # Central worktree location (worktree-location rule):
+  # ~/worktrees/<project>/<branch>/ — slashes in the branch name become
+  # sub-directories, so no sanitisation is needed.
   local branch="$answer"
-  local suffix="${branch//\//-}"
-  local wt_path="${repo_root}/../${repo_name}-${suffix}"
-  wt_path="$(cd "${repo_root}/.." && pwd)/${repo_name}-${suffix}"
+  local wt_path="$HOME/worktrees/${repo_name}/${branch}"
+  mkdir -p "$(dirname "$wt_path")"
 
   if [ -d "$wt_path" ]; then
-    # Safety check: confirm the existing directory really is the intended branch,
-    # not a collision where a different branch mapped to the same path
-    # (e.g. feat/foo and feat-foo both → feat-foo under tr '/' '-').
+    # Safety check: confirm the existing directory really is the intended
+    # branch, not a leftover checkout of something else at the same path.
     local actual_branch
     actual_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
     if [ "$actual_branch" != "$branch" ]; then
