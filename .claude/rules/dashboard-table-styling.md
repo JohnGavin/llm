@@ -1,3 +1,7 @@
+---
+description: HTML tables shrink to content width, left-aligned in container, right-justified cells
+---
+
 # Rule: Dashboard Table Styling (Mandatory, All Projects)
 
 ## When This Applies

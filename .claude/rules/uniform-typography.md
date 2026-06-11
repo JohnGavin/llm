@@ -1,3 +1,7 @@
+---
+description: One body font size everywhere in dashboards and vignettes — no per-element overrides
+---
+
 # Rule: Uniform Typography in Dashboards and Vignettes (Mandatory)
 
 ## When This Applies

@@ -1,3 +1,7 @@
+---
+description: Every join key has one canonical form — glossary + entity-resolution map applied before any join or aggregation
+---
+
 # Rule: Data Glossary and Entity Resolution (Mandatory)
 
 ## When This Applies

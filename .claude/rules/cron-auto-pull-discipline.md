@@ -1,3 +1,7 @@
+---
+description: Every cron wrapper must ff-only pull origin/main before running and log the HEAD SHA
+---
+
 # Rule: Cron Auto-Pull Discipline
 
 ## Source

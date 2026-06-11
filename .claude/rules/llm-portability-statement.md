@@ -1,3 +1,7 @@
+---
+description: Visible lock-in inventory of Claude/Anthropic-specific dependencies (advisory, not a constraint)
+---
+
 # Rule: LLM Portability Statement (Advisory)
 
 ## When This Applies
