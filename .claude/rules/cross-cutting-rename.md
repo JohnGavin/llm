@@ -1,3 +1,7 @@
+---
+description: User-facing label renames go through a single source of truth + audit grep, never ad-hoc search-and-replace
+---
+
 # Rule: Cross-Cutting Rename Discipline (Mandatory, All Projects)
 
 ## When This Applies

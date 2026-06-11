@@ -1,3 +1,7 @@
+---
+description: Phase inventory for session_init.sh — update the table in the same commit as any phase change
+---
+
 # Rule: session_init.sh Phase Inventory
 
 ## When This Applies

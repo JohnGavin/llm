@@ -1,3 +1,7 @@
+---
+description: Filters live near their data — bslib toolbar() in card headers/footers; sidebar only for page-wide filters
+---
+
 # Rule: Dashboard Filter Placement
 
 ## When This Applies
