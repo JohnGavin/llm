@@ -48,8 +48,9 @@ See `explorations/CONVENTIONS.md` for the graduation workflow.
 
 - `targets-runner`: enter project shell first:
   `nix-shell /Users/johngavin/docs_gh/llm/default.nix --run "Rscript -e 'targets::tar_make()'"`
-- `nix-env`: regenerate default.nix with:
-  `nix-shell ~/docs_gh/rix.setup/default.nix --run "Rscript /Users/johngavin/docs_gh/llm/default.R"`
+- `nix-env`: regenerate default.nix with cwd-safe Form A (the old
+  `~/docs_gh/rix.setup/` shell no longer exists; the llm dev shell has rix):
+  `(cd /Users/johngavin/docs_gh/llm && nix-shell /Users/johngavin/docs_gh/llm/default.nix --run "Rscript default.R")`
 
 ## Session Conventions
 
