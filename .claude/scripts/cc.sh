@@ -10,7 +10,7 @@
 # Budget-aware model selection (unless --model explicitly provided):
 #   BURN >= 90%: Auto-spawn sonnet session in worktree
 #   BURN >= 70%: Use sonnet model
-#   BURN <  70%: Use opus model
+#   BURN <  70%: no --model flag — uses the saved default (settings.json "model")
 #
 # Worktree offer (B2 — approval-reduction plan):
 #   When launched in a main checkout (not worktree, not /tmp), cc.sh prints a
@@ -649,7 +649,10 @@ if ! $HAS_MODEL_OVERRIDE; then
     echo "BURN WARNING ($BURN%) — using sonnet"
     ARGS+=(--model sonnet)
   else
-    ARGS+=(--model claude-opus-4-7)
+    # BURN < 70%: pass no --model so the user's saved default model
+    # (settings.json "model", e.g. fable) applies. Previously this forced
+    # claude-opus-4-7, silently overriding the user's /model choice.
+    :
   fi
 fi
 
