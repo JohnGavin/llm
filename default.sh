@@ -280,6 +280,18 @@ USER_SHELL="$SHELL"
 # Used later: Line 231-247 to apply correct shell configuration
 USER_ACTUAL_SHELL="$SHELL"
 
+# CRITICAL: Save user's PATH BEFORE sourcing Nix environment (fix 2026-06-11)
+# Why: sourcing the Nix env script REPLACES PATH with nix-store-only paths.
+# The "export PATH=$PATH:$USER_PATH" line after sourcing restores system dirs.
+# Without this, /usr/bin/security (Keychain) and /usr/bin/open are unreachable,
+# so Claude Code cannot read its stored credentials and /login fails inside
+# the nix shell. (USER_PATH was previously referenced but never assigned.)
+USER_PATH="$PATH"
+case ":$USER_PATH:" in
+    *":/usr/bin:"*) ;;
+    *) USER_PATH="$USER_PATH:/usr/bin:/bin:/usr/sbin:/sbin" ;;
+esac
+
 # Ensure HOME is a valid absolute path before running the shellHook.
 # Note: is_valid_home() is defined at top of script
 if ! is_valid_home "$USER_HOME"; then
@@ -419,7 +431,12 @@ export NIXPKGS_ALLOW_UNFREE=1
 export GITHUB_PAT="$GITHUB_PAT"
 # Fix log file creation
 touch "$HOME/.nix-session.log" 2>/dev/null || true
-export ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+# Only re-export ANTHROPIC_API_KEY when it is actually set. The user runs on a
+# Max subscription (Keychain OAuth); exporting an empty/placeholder key can make
+# Claude Code prefer API-key auth and break login.
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    export ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+fi
 export TMPDIR="$TMPDIR"
 # Export the GC root path so internal shells can source it
 export RIX_NIX_SHELL_ROOT="$GC_ROOT_PATH"
