@@ -134,6 +134,32 @@ if ! command -v nix-shell > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── Resolve nix target: GC-rooted drv preferred (llm#596) ─────────────────────
+# Evaluating ${LLM_NIX} re-fetches the unhashed nixpkgs tarball once the
+# tarball TTL lapses; the launchd environment cannot resolve github.com, so
+# the job dies before doing any work. `nix-shell <drv>` skips evaluation
+# entirely — no network at runtime. The drv root is maintained by
+# .claude/scripts/nix_gcroot_refresh.sh (best-effort refresh below; a stale
+# root still runs the previously-pinned shell, which beats dying).
+GCROOT_DRV="${HOME}/.claude/nix-gcroots/llm-shell.drv"
+GCROOT_STAMP="${GCROOT_DRV}.stamp"
+# Freshness compares against the .stamp file, NOT the drv symlink — store
+# paths have mtime=1970 so the symlink always reads stale.
+if [ ! -e "${GCROOT_DRV}" ] || [ ! -e "${GCROOT_STAMP}" ] || [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+  "${REPO_ROOT}/.claude/scripts/nix_gcroot_refresh.sh" "${LLM_NIX}" >> "${LOG_FILE}" 2>&1 || true
+fi
+if [ -e "${GCROOT_DRV}" ]; then
+  NIX_TARGET="${GCROOT_DRV}"
+  if [ -e "${GCROOT_STAMP}" ] && [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+    log "nix WARN: gcroot stale — running stale-but-cached shell (llm#596)"
+  else
+    log "nix: using GC-rooted drv (no network needed)"
+  fi
+else
+  NIX_TARGET="${LLM_NIX}"
+  log "nix WARN: no gcroot — falling back to nix-shell evaluation (needs network, llm#596)"
+fi
+
 # ── DuckDB availability check (llm#553) ───────────────────────────────────────
 # Gracefully skip all DB writes when duckdb binary or unified.duckdb is absent.
 # Same defensive pattern as config_digest_cron.sh (merged via #566).
@@ -190,7 +216,7 @@ fi
 log "  since=${SINCE}"
 
 if [ "${DRYRUN}" = "1" ]; then
-  log "  DRYRUN: would run nix-shell ${LLM_NIX} --run 'Rscript ${DIGEST_SCRIPT}'"
+  log "  DRYRUN: would run nix-shell ${NIX_TARGET} --run 'Rscript ${DIGEST_SCRIPT}'"
   # Create minimal stub for email script to consume
   printf '## Knowledge Base Digest — %s\n\n_DRYRUN mode — no actual KB analysis performed._\n' \
     "$(date +%Y-%m-%d)" > "${DIGEST_TMPFILE}"
@@ -199,7 +225,7 @@ else
   SINCE_ARG=""
   [ -n "${KB_SINCE}" ] && SINCE_ARG="--since ${KB_SINCE}"
 
-  nix-shell "${LLM_NIX}" --run \
+  nix-shell "${NIX_TARGET}" --run \
     "Rscript '${DIGEST_SCRIPT}' --knowledge-repo '${KB_KNOWLEDGE_REPO}' ${SINCE_ARG} --out '${DIGEST_TMPFILE}'" \
     >> "${LOG_FILE}" 2>&1
   STEP1_EXIT=$?
@@ -317,16 +343,16 @@ if [ ! -f "${EMAIL_SCRIPT}" ]; then
 fi
 
 if [ "${DRYRUN}" = "1" ]; then
-  log "  DRYRUN: would run nix-shell ${LLM_NIX} --run 'Rscript ${EMAIL_SCRIPT}'"
+  log "  DRYRUN: would run nix-shell ${NIX_TARGET} --run 'Rscript ${EMAIL_SCRIPT}'"
   STEP2_EXIT=0
 elif [ "${EMAIL_DRY_RUN}" = "1" ]; then
   log "  EMAIL_DRY_RUN=1: running script in dry-run mode (body to stdout only)"
   KB_DIGEST_FILE="${DIGEST_TMPFILE}" \
-    nix-shell "${LLM_NIX}" --run "Rscript '${EMAIL_SCRIPT}'" >> "${LOG_FILE}" 2>&1
+    nix-shell "${NIX_TARGET}" --run "Rscript '${EMAIL_SCRIPT}'" >> "${LOG_FILE}" 2>&1
   STEP2_EXIT=$?
 else
   KB_DIGEST_FILE="${DIGEST_TMPFILE}" \
-    nix-shell "${LLM_NIX}" --run "Rscript '${EMAIL_SCRIPT}'" >> "${LOG_FILE}" 2>&1
+    nix-shell "${NIX_TARGET}" --run "Rscript '${EMAIL_SCRIPT}'" >> "${LOG_FILE}" 2>&1
   STEP2_EXIT=$?
 fi
 

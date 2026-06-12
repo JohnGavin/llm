@@ -113,6 +113,32 @@ if ! command -v nix-shell > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── Resolve nix target: GC-rooted drv preferred (llm#596) ─────────────────────
+# Evaluating ${LLM_NIX} re-fetches the unhashed nixpkgs tarball once the
+# tarball TTL lapses; the launchd environment cannot resolve github.com, so
+# the job dies before doing any work. `nix-shell <drv>` skips evaluation
+# entirely — no network at runtime. The drv root is maintained by
+# .claude/scripts/nix_gcroot_refresh.sh (best-effort refresh below; a stale
+# root still runs the previously-pinned shell, which beats dying).
+GCROOT_DRV="${HOME}/.claude/nix-gcroots/llm-shell.drv"
+GCROOT_STAMP="${GCROOT_DRV}.stamp"
+# Freshness compares against the .stamp file, NOT the drv symlink — store
+# paths have mtime=1970 so the symlink always reads stale.
+if [ ! -e "${GCROOT_DRV}" ] || [ ! -e "${GCROOT_STAMP}" ] || [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+  "${REPO_ROOT}/.claude/scripts/nix_gcroot_refresh.sh" "${LLM_NIX}" >> "${LOG_FILE}" 2>&1 || true
+fi
+if [ -e "${GCROOT_DRV}" ]; then
+  NIX_TARGET="${GCROOT_DRV}"
+  if [ -e "${GCROOT_STAMP}" ] && [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+    log "nix WARN: gcroot stale — running stale-but-cached shell (llm#596)"
+  else
+    log "nix: using GC-rooted drv (no network needed)"
+  fi
+else
+  NIX_TARGET="${LLM_NIX}"
+  log "nix WARN: no gcroot — falling back to nix-shell evaluation (needs network, llm#596)"
+fi
+
 # ── DuckDB availability check (llm#552) ───────────────────────────────────────
 # Gracefully skip all DB writes when duckdb binary or unified.duckdb is absent.
 # Same defensive pattern as worktree_gc.sh.
@@ -160,13 +186,17 @@ if [ -z "${SINCE}" ]; then
 fi
 log "  since=${SINCE}"
 
-nix-shell "${LLM_NIX}" --run \
+nix-shell "${NIX_TARGET}" --run \
   "Rscript '${AGGREGATOR}' --since '${SINCE}' --out '${DIGEST_PATH}'" \
   >> "${LOG_FILE}" 2>&1
 STEP1_EXIT=$?
 
+_step1_failed=0
 if [ "${STEP1_EXIT}" -ne 0 ]; then
   log "WARNING: config_change_digest.R exited ${STEP1_EXIT} — continuing"
+  # Final housekeeping_runs row must not read 'ok' when the digest step
+  # failed (llm#596 item 3) — Step 3 downgrades it to 'partial'.
+  _step1_failed=1
 fi
 log "Step 1 done (exit=${STEP1_EXIT})"
 
@@ -255,7 +285,7 @@ if [ ! -f "${EMAIL_SCRIPT}" ]; then
   exit 1
 fi
 
-nix-shell "${LLM_NIX}" --run \
+nix-shell "${NIX_TARGET}" --run \
   "CONFIG_DIGEST_PATH='${DIGEST_PATH}' CONFIG_DIGEST_SINCE='${SINCE}' Rscript '${EMAIL_SCRIPT}'" \
   >> "${LOG_FILE}" 2>&1
 STEP2_EXIT=$?
@@ -280,13 +310,16 @@ log "Step 2 done"
 # ── Step 3: Update housekeeping_runs end row ──────────────────────────────────
 if [ "${_duckdb_ok}" = "1" ]; then
   _run_ended="$(python3 -c 'import datetime; print(datetime.datetime.utcnow().isoformat() + "Z")')"
+  _final_status="ok"
+  [ "${_step1_failed}" = "1" ] && _final_status="partial"
   duckdb "${UNIFIED_DB}" "
     UPDATE housekeeping_runs
     SET ended_at = TIMESTAMPTZ '${_run_ended}',
+        status = '${_final_status}',
         rows_written = ${_EVENTS_WRITTEN}
     WHERE id = '${_run_id}';
   " 2>/dev/null || log "duckdb WARN: housekeeping_runs UPDATE failed (non-fatal)"
-  log "Step 3: housekeeping_runs updated (rows_written=${_EVENTS_WRITTEN})"
+  log "Step 3: housekeeping_runs updated (status=${_final_status} rows_written=${_EVENTS_WRITTEN})"
 fi
 
 log "=== config_digest_cron.sh done ==="
