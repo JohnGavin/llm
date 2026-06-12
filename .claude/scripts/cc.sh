@@ -450,11 +450,11 @@ offer_worktree() {
     y|Y) answer="feat/cc-$(date +%Y%m%d-%H%M%S)" ;;
   esac
 
-  # Central worktree location (worktree-location rule):
-  # ~/worktrees/<project>/<branch>/ — slashes in the branch name become
-  # sub-directories, so no sanitisation is needed.
+  # Central worktree location (worktree-location rule, llm#582):
+  # ~/docs_gh/worktrees/<project>/<branch>/ — slashes in the branch name
+  # become sub-directories, so no sanitisation is needed.
   local branch="$answer"
-  local wt_path="$HOME/worktrees/${repo_name}/${branch}"
+  local wt_path="$HOME/docs_gh/worktrees/${repo_name}/${branch}"
   mkdir -p "$(dirname "$wt_path")"
 
   if [ -d "$wt_path" ]; then
@@ -540,20 +540,23 @@ done
 # ---------------------------------------------------------------------------
 # Worktree-parent redirect
 # ---------------------------------------------------------------------------
-# If launched from anywhere under ~/worktrees/<proj>/ that is NOT itself a
-# git worktree (i.e. ~/worktrees/llm, ~/worktrees/llm/feat, etc.), redirect
-# to ~/docs_gh/<proj>/ (canonical main checkout). The parent dirs contain
-# no source code and starting there loads project context with no useful
-# cwd, wasting tokens. Set CC_NO_REDIRECT=1 to skip.
+# If launched from anywhere under a worktree-parent dir that is NOT itself a
+# git worktree (e.g. ~/docs_gh/worktrees/llm, ~/docs_gh/worktrees/llm/feat),
+# redirect to ~/docs_gh/<proj>/ (canonical main checkout). The parent dirs
+# contain no source code and starting there loads project context with no
+# useful cwd, wasting tokens. Set CC_NO_REDIRECT=1 to skip.
+# Covers the canonical base ~/docs_gh/worktrees/ (llm#582) AND the legacy
+# base ~/worktrees/ until existing worktrees migrate.
 if [ "${CC_NO_REDIRECT:-0}" != "1" ]; then
   case "$PWD" in
-    "$HOME/worktrees"/*)
+    "$HOME/docs_gh/worktrees"/*|"$HOME/worktrees"/*)
       if ! git rev-parse --git-dir >/dev/null 2>&1; then
-        _wp_rel="${PWD#$HOME/worktrees/}"
+        _wp_rel="${PWD#$HOME/docs_gh/worktrees/}"
+        [ "$_wp_rel" = "$PWD" ] && _wp_rel="${PWD#$HOME/worktrees/}"
         _wp_proj="${_wp_rel%%/*}"
         _wp_target="$HOME/docs_gh/$_wp_proj"
         if [ -d "$_wp_target/.git" ]; then
-          echo "cc: cwd was $PWD (under ~/worktrees/ but not a worktree)"
+          echo "cc: cwd was $PWD (under a worktree-parent dir but not a worktree)"
           echo "cc: redirecting to $_wp_target  (set CC_NO_REDIRECT=1 to skip)"
           cd "$_wp_target"
         else
