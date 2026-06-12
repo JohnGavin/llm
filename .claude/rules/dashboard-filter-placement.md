@@ -1,5 +1,9 @@
 ---
 description: Filters live near their data — bslib toolbar() in card headers/footers; sidebar only for page-wide filters
+paths:
+  - "**/*.qmd"
+  - "dashboard/**"
+  - "app/**"
 ---
 
 # Rule: Dashboard Filter Placement

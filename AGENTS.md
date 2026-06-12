@@ -43,9 +43,11 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 **Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `/wiki-health` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`, `knowledge-base-wiki`.
-**Mandatory rules** (auto-loaded — safety-critical, fire on every session): `verification-before-completion`, `systematic-debugging`, `btw-timeouts`, `git-no-compound-cd`, `nix-agent-shell-protocol`, `worktree-location`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`.
+**Mandatory rules** (auto-loaded — safety-critical, fire on every session): `verification-before-completion`, `systematic-debugging`, `btw-timeouts`, `git-no-compound-cd`, `nix-agent-shell-protocol`, `worktree-location`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`. Plus `auto-delegation` (governs every dispatch decision).
 
-**Context-load rules** (read when the task matches — NOT auto-loaded; load via Read tool when relevant):
+**Rule loading is enforced via `paths:` frontmatter (llm#590):** a rule file with NO `paths:` key (or `paths: ["**"]`) loads into EVERY session and EVERY subagent — base-context cost is ~250 tokens/KB, doubled in worktree sessions. Only the mandatory rules above may omit `paths:`. Every other rule MUST carry a real path glob so it injects only when matching files are touched. Audit: `~/.claude/scripts/check_rule_scoping.sh` (any non-mandatory rule without paths is a defect).
+
+**Context-load rules** (path-scoped — auto-inject when matching files are touched; load via Read tool otherwise):
 - Orchestration / provenance: `orchestrator-protocol`, `provenance-mandatory`, `look-ahead-bias-prevention`, `pr-shipping-discipline`, `branch-harvest-on-fork`, `housekeeping-framework`
 - Knowledge base: `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`
 - Quarto / vignettes: `dark-mode-completeness`, `narrative-evidence-block`, `narrative-colour-persistence`, `vignette-build-info-block`, `uniform-typography`

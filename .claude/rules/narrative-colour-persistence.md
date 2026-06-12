@@ -2,6 +2,10 @@
 description: When re-encoding the same dataset across multiple charts in one narrative, colour mapping for each entity must stay stable across all panels.
 type: rule
 name: narrative-colour-persistence
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
+  - "dashboard/**"
 ---
 
 # Rule: Narrative Colour Persistence

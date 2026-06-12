@@ -2,6 +2,10 @@
 name: analytical-review-checklist
 description: Checklist for peer review of analyses to ensure methods are appropriate and conclusions follow from results
 type: rule
+paths:
+  - "analysis/**"
+  - "explorations/**"
+  - "**/*.qmd"
 ---
 
 # Rule: Analytical Peer Review Checklist

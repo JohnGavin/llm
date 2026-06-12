@@ -1,5 +1,8 @@
 ---
 description: Visible lock-in inventory of Claude/Anthropic-specific dependencies (advisory, not a constraint)
+paths:
+  - "**/.mcp.json"
+  - ".claude/skills/claude-api/**"
 ---
 
 # Rule: LLM Portability Statement (Advisory)

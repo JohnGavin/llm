@@ -1,5 +1,9 @@
 ---
 description: Every acronym in vignette prose, tables, captions, and diagrams must be expanded on first use with an external link and have hover tooltips on subsequent uses
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
+  - "README*"
 ---
 
 # Rule: Acronym Expansion (All Vignettes, All Projects)

@@ -2,6 +2,10 @@
 name: backup-architecture
 description: Backups must live in a different failure domain from the primary — same-volume snapshots are not backups; projects capturing irreplaceable data require a RECOVERY.md
 type: rule
+paths:
+  - "**/RECOVERY.md"
+  - "data/**"
+  - ".claude/launchd/**"
 ---
 
 # Rule: Backup Architecture — Different Failure Domain
