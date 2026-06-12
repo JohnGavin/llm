@@ -245,14 +245,23 @@ jobs_raw <- tryCatch(
 if (!include_fixtures && nrow(jobs_raw) > 0L && "repo" %in% names(jobs_raw)) {
   canon_slugs <- tryCatch(
     {
+      # llm#595: this read-only connection MUST be fully shut down before the
+      # apply-phase write connection opens. duckdb caches the database
+      # instance per dbdir, so a live read-only instance silently makes every
+      # later dbConnect() to the same path read-only too ("Cannot execute
+      # CREATE ... attached in read-only mode"). on.exit() does not fire at
+      # script top level — use finally for a deterministic disconnect;
+      # shutdown = TRUE evicts the cached instance.
       duck_read <- DBI::dbConnect(duckdb::duckdb(), UNIFIED_DB, read_only = TRUE)
-      on.exit(tryCatch(DBI::dbDisconnect(duck_read, shutdown = TRUE),
-                       error = function(e) NULL), add = TRUE)
-      DBI::dbGetQuery(duck_read, "
-        SELECT slug FROM canonical_projects WHERE is_active = TRUE
-        UNION ALL
-        SELECT alias FROM canonical_project_aliases
-      ")$slug
+      tryCatch(
+        DBI::dbGetQuery(duck_read, "
+          SELECT slug FROM canonical_projects WHERE is_active = TRUE
+          UNION ALL
+          SELECT alias FROM canonical_project_aliases
+        ")$slug,
+        finally = tryCatch(DBI::dbDisconnect(duck_read, shutdown = TRUE),
+                           error = function(e) NULL)
+      )
     },
     error = function(e) {
       log_msg("WARN: canonical_check failed (", conditionMessage(e),
@@ -1990,22 +1999,105 @@ if (!file.exists(SCHEMA_FILE)) {
 
 dir.create(dirname(UNIFIED_DB), recursive = TRUE, showWarnings = FALSE)
 
-duck_con <- tryCatch(
-  dbConnect(duckdb::duckdb(), UNIFIED_DB),
-  error = function(e) {
-    log_msg("ERROR: cannot open unified.duckdb: ", conditionMessage(e))
-    quit(status = 1L)
+# ── housekeeping_runs heartbeat (llm#595 fix 3) ───────────────────────────
+# A failed/starved ETL must be visible in the 06:30 digest. The start row is
+# written through the verified read-write connection; the connect-failed path
+# falls back to the duckdb CLI (the R connection is unusable there, and after
+# shutdown the CLI can take the write lock).
+
+HK_RUN_ID <- sprintf("etl-%s-%d-%04d",
+                     format(Sys.time(), "%Y%m%d%H%M%S", tz = "UTC"),
+                     Sys.getpid(), sample.int(9999L, 1L))
+
+hk_start_row <- function(con) {
+  invisible(tryCatch(
+    dbExecute(con, "
+      INSERT OR IGNORE INTO housekeeping_runs
+        (id, task, source_script, started_at, status, rows_written)
+      VALUES (?, 'roborev_metrics_etl', ?, current_timestamp, 'running', 0)",
+      params = list(HK_RUN_ID, sub("^.*scripts/", ".claude/scripts/", SCHEMA_FILE))),
+    error = function(e) NULL
+  ))
+}
+
+hk_end_row <- function(con, status, rows, err = "") {
+  tryCatch(
+    dbExecute(con, "
+      UPDATE housekeeping_runs
+      SET ended_at = current_timestamp, status = ?, rows_written = ?,
+          error_text = NULLIF(?, '')
+      WHERE id = ?",
+      params = list(status, as.integer(rows), err, HK_RUN_ID)),
+    error = function(e) NULL
+  )
+}
+
+# CLI fallback for the connect-failed path only (no usable R connection).
+hk_fail_cli <- function(err) {
+  if (!nzchar(Sys.which("duckdb"))) return(invisible(NULL))
+  esc <- gsub("'", "''", substr(err, 1L, 300L))
+  sql <- sprintf("
+    INSERT OR IGNORE INTO housekeeping_runs
+      (id, task, source_script, started_at, ended_at, status, rows_written, error_text)
+    VALUES ('%s', 'roborev_metrics_etl', 'roborev_metrics_etl.R',
+            current_timestamp, current_timestamp, 'failed', 0, '%s');", HK_RUN_ID, esc)
+  tryCatch(system2("duckdb", UNIFIED_DB, input = sql, stdout = FALSE, stderr = FALSE),
+           error = function(e) NULL)
+  invisible(NULL)
+}
+
+# ── Connect read-write, verified (llm#595 fix 2) ──────────────────────────
+# dbConnect() can silently join a cached READ-ONLY database instance for the
+# same path (the #595 failure mode), and a concurrent writer can hold the
+# lock (the 02:00 slot collides with other launchd writers). Verify with
+# duckdb_databases().readonly; on read-only or error, disconnect with
+# shutdown = TRUE (evicts the cached instance) and retry with backoff.
+connect_unified_rw <- function(path, attempts = 3L, wait_s = 10L) {
+  last_err <- "unknown"
+  for (i in seq_len(attempts)) {
+    con <- tryCatch(dbConnect(duckdb::duckdb(), path), error = function(e) e)
+    if (!inherits(con, "error")) {
+      ro <- tryCatch(
+        dbGetQuery(con,
+          "SELECT readonly FROM duckdb_databases() WHERE NOT internal LIMIT 1"
+        )$readonly,
+        error = function(e) NA
+      )
+      if (identical(ro, FALSE)) return(con)
+      tryCatch(dbDisconnect(con, shutdown = TRUE), error = function(e) NULL)
+      last_err <- "connection is read-only (cached instance or read-only attach)"
+    } else {
+      last_err <- conditionMessage(con)
+    }
+    log_msg(sprintf("WARN: unified.duckdb not writable (attempt %d/%d): %s",
+                    i, attempts, last_err))
+    if (i < attempts) Sys.sleep(wait_s)
   }
-)
+  attr(last_err, "failed") <- TRUE
+  last_err
+}
+
+duck_con <- connect_unified_rw(UNIFIED_DB)
+if (is.character(duck_con)) {
+  log_msg("ERROR: cannot open unified.duckdb read-write: ", duck_con)
+  hk_fail_cli(paste("connect:", duck_con))
+  quit(status = 1L)
+}
 on.exit(tryCatch(dbDisconnect(duck_con, shutdown = TRUE), error = function(e) NULL),
         add = TRUE)
 
-# ── Schema init (idempotent) ──────────────────────────────────────────────
+hk_start_row(duck_con)
+
+# ── Schema init (idempotent AND skippable, llm#595 fix 1) ─────────────────
+# All DDL is CREATE-IF-NOT-EXISTS; when every expected table already exists
+# (the steady state — schema was applied long ago), skip DDL entirely so a
+# transient DDL-permission problem can never starve the data writes.
 
 schema_sql  <- tryCatch(
   readLines(SCHEMA_FILE, warn = FALSE),
   error = function(e) {
     log_msg("ERROR: cannot read schema file: ", conditionMessage(e))
+    hk_end_row(duck_con, "failed", 0L, "cannot read schema file")
     quit(status = 1L)
   }
 )
@@ -2016,16 +2108,33 @@ stmts       <- strsplit(schema_text, ";")[[1L]]
 stmts       <- trimws(stmts)
 stmts       <- stmts[nzchar(stmts)]
 
-tryCatch({
-  for (stmt in stmts) {
-    dbExecute(duck_con, stmt)
-  }
-  cat(sprintf("roborev_metrics_etl.R: schema init complete (%d statements)\n",
-              length(stmts)))
-}, error = function(e) {
-  log_msg("ERROR: schema init failed: ", conditionMessage(e))
-  quit(status = 1L)
-})
+create_re       <- "^[Cc][Rr][Ee][Aa][Tt][Ee]\\s+[Tt][Aa][Bb][Ll][Ee]\\s+([Ii][Ff]\\s+[Nn][Oo][Tt]\\s+[Ee][Xx][Ii][Ss][Tt][Ss]\\s+)?\"?([A-Za-z0-9_]+)\"?"
+create_stmts    <- stmts[grepl(create_re, stmts)]
+expected_tables <- tolower(sub(paste0(create_re, ".*$"), "\\2", create_stmts))
+existing_tables <- tolower(tryCatch(
+  dbGetQuery(duck_con, "
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'main'")$table_name,
+  error = function(e) character(0)
+))
+
+if (length(expected_tables) > 0L && all(expected_tables %in% existing_tables)) {
+  cat(sprintf("roborev_metrics_etl.R: schema init skipped — all %d tables present\n",
+              length(expected_tables)))
+} else {
+  tryCatch({
+    for (stmt in stmts) {
+      dbExecute(duck_con, stmt)
+    }
+    cat(sprintf("roborev_metrics_etl.R: schema init complete (%d statements)\n",
+                length(stmts)))
+  }, error = function(e) {
+    log_msg("ERROR: schema init failed: ", conditionMessage(e))
+    hk_end_row(duck_con, "failed", 0L,
+               paste("schema init:", conditionMessage(e)))
+    quit(status = 1L)
+  })
+}
 
 # ── Upsert helper using DuckDB INSERT OR REPLACE ──────────────────────────
 
@@ -2081,6 +2190,11 @@ tryCatch({
 
   dbCommit(duck_con)
 
+  hk_end_row(duck_con, "ok",
+             nrow(daily_df) + nrow(lifecycle_df) + nrow(agent_perf_df) +
+             nrow(threshold_df) + nrow(cadence_df) + nrow(lineage_df) +
+             nrow(invocations_raw) + nrow(trend_df))
+
   log_msg(sprintf(
     "apply: daily=%d lifecycle=%d agent_perf=%d threshold=%d cadence=%d lineage=%d invocations=%d trend=%d mode=apply since=%s",
     nrow(daily_df), nrow(lifecycle_df), nrow(agent_perf_df),
@@ -2096,6 +2210,8 @@ tryCatch({
   ))
 }, error = function(e) {
   tryCatch(dbRollback(duck_con), error = function(e2) NULL)
+  hk_end_row(duck_con, "failed", 0L,
+             paste("transaction:", conditionMessage(e)))
   log_msg("ERROR: transaction failed: ", conditionMessage(e))
   message("roborev_metrics_etl.R ERROR: ", conditionMessage(e))
   quit(status = 1L)
