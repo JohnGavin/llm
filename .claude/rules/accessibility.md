@@ -56,6 +56,35 @@ format:
 
 ## Part 2: Dark Mode Completeness
 
+### Clause 0: `color-scheme: dark` is mandatory (supersedes all other clauses)
+
+Every dark-mode dashboard/vignette MUST include BOTH:
+
+```html
+<meta name="color-scheme" content="dark" />
+```
+
+```css
+:root, html, body { color-scheme: dark; }
+```
+
+Without this, **Chrome's "Auto Dark Mode for Web Contents" (default-on
+since v96, late 2021)** mis-classifies intentionally-dark pages as light
+and silently inverts the page's lightness — black backgrounds → white,
+deep palettes → pastels, in plots, tables AND diagrams. Safari/Edge/Brave
+are unaffected, so the breakage is Chrome-only and easy to miss.
+
+Worked example (premortem issue 0027): **5 merged iterations** fixed the
+wrong layer (mermaid theme override, CSS catch-all, vendored mermaid 10,
+per-diagram `%%{init}%%`, http-server workaround) before the meta tag was
+identified as the root cause. Check this clause FIRST, before any other
+dark-mode debugging.
+
+Verification: `~/.claude/scripts/check_dashboard_color_scheme.sh <dir>`
+(greps every rendered HTML for both signals; exit 1 on any miss). Wire it
+into the project's Quarto `post-render` alongside `check_dark_contrast.sh`.
+See llm#584.
+
 ### CRITICAL: Black = `#000000`. White = `#ffffff`.
 
 `var(--card-bg)`, `#16213e`, `#1a1a2e` are NOT black. They are dark blue.
