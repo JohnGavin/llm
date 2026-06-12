@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # burn_rate_check.sh — Weekly usage burn-rate alert
 # Checks if current-week run rate projects to breach the weekly cap.
-# Uses ccusage JSON output. Week starts Tuesday, Europe/Dublin timezone.
+# Week starts Tuesday, Europe/Dublin timezone.
+#
+# llm#597: ccusage dropped --start-of-week, which made the old
+# `ccusage weekly` invocation fail on every run (guard silently dead).
+# The week window is now computed HERE and fetched via
+# `ccusage daily --since <week_start>`; spend = totals.totalCost.
+# No dependence on ccusage's week bucketing remains.
 #
 # Usage:
 #   burn_rate_check.sh [compact]        # compact = one-line for hooks
@@ -11,6 +17,11 @@
 #   CLAUDE_WEEKLY_CAP_USD  — weekly budget cap (default: 150)
 #   CLAUDE_WEEK_START_DAY  — week start day (default: tuesday)
 #   CLAUDE_TIMEZONE        — timezone (default: Europe/Dublin)
+#
+# Failure visibility (llm#597):
+#   stderr of every failed fetch  → ~/.claude/logs/burn_rate_check.err
+#   >= 2 consecutive failures     → loud "BURN GUARD DEAD" line instead of
+#                                   the quiet burn:err that hid this for days
 
 set -euo pipefail
 
@@ -19,8 +30,51 @@ CAP="${CLAUDE_WEEKLY_CAP_USD:-150}"
 WEEK_START="${CLAUDE_WEEK_START_DAY:-tuesday}"
 TZ_NAME="${CLAUDE_TIMEZONE:-Europe/Dublin}"
 
-# Cache: reuse if < 5 minutes old (ccusage is slow due to pricing fetch)
-CACHE_FILE="/tmp/ccusage_weekly_cache.json"
+ERR_LOG="$HOME/.claude/logs/burn_rate_check.err"
+FAIL_COUNT_FILE="$HOME/.claude/.burn_rate_fail_count"
+
+# Consecutive-failure canary (llm#597). A dead guard must get LOUDER, not
+# quieter: after 2 consecutive fetch failures the output stops being a quiet
+# burn:err and names the log to read.
+fail_and_exit() {
+  local n=0
+  [ -f "$FAIL_COUNT_FILE" ] && n=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  echo "$n" > "$FAIL_COUNT_FILE" 2>/dev/null || true
+  if [ "$MODE" = "--percent-only" ]; then
+    echo "0"  # Always numeric for scripts
+  elif [ "$n" -ge 2 ]; then
+    echo "BURN GUARD DEAD: usage fetch failed ${n} consecutive runs — burn-rate escalation is NOT protecting you. See $ERR_LOG (llm#597)"
+  elif [ "$MODE" = "compact" ]; then
+    echo "burn:err"
+  else
+    echo "Burn rate: could not fetch usage (see $ERR_LOG)"
+  fi
+  exit 0
+}
+
+# Week-start day name → ISO weekday number (date +%u: 1=Mon .. 7=Sun)
+case "$(echo "$WEEK_START" | tr '[:upper:]' '[:lower:]')" in
+  monday)    week_start_u=1 ;;
+  tuesday)   week_start_u=2 ;;
+  wednesday) week_start_u=3 ;;
+  thursday)  week_start_u=4 ;;
+  friday)    week_start_u=5 ;;
+  saturday)  week_start_u=6 ;;
+  sunday)    week_start_u=7 ;;
+  *)         week_start_u=2 ;;  # unknown value — fall back to tuesday
+esac
+
+today_u=$(date +%u)
+days_since=$(( (today_u - week_start_u + 7) % 7 ))
+days_elapsed=$(( days_since + 1 ))  # inclusive of today
+
+# BSD date (-v) first, GNU date (-d) fallback — matches repo convention
+week_start_ymd=$(date -v-"${days_since}"d +%Y%m%d 2>/dev/null \
+  || date -d "-${days_since} days" +%Y%m%d)
+
+# Cache: reuse if < 5 minutes old AND for the same week window
+CACHE_FILE="/tmp/ccusage_burnweek_${week_start_ymd}_cache.json"
 CACHE_MAX_AGE=300
 
 use_cache=false
@@ -32,45 +86,40 @@ if [ -f "$CACHE_FILE" ]; then
 fi
 
 if [ "$use_cache" = true ]; then
-  weekly_json=$(cat "$CACHE_FILE")
+  daily_json=$(cat "$CACHE_FILE")
 else
-  weekly_json=$(timeout 30 npx ccusage weekly \
-    --start-of-week "$WEEK_START" \
+  err_tmp=$(mktemp /tmp/burn_rate_err_XXXXXX)
+  daily_json=$(timeout 30 npx ccusage daily \
+    --since "$week_start_ymd" \
     --timezone "$TZ_NAME" \
-    --since "$(date -v-7d +%Y%m%d 2>/dev/null || date -d '7 days ago' +%Y%m%d)" \
-    --json --offline 2>/dev/null) || {
-    if [ "$MODE" = "--percent-only" ]; then
-      echo "0"  # Always numeric for scripts
-    elif [ "$MODE" = "compact" ]; then
-      echo "burn:err"
-    else
-      echo "Burn rate: could not fetch usage"
-    fi
-    exit 0
+    --json --offline 2>"$err_tmp") || {
+    {
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ccusage daily --since $week_start_ymd failed — stderr:"
+      cat "$err_tmp"
+    } >> "$ERR_LOG" 2>/dev/null || true
+    rm -f "$err_tmp"
+    fail_and_exit
   }
-  echo "$weekly_json" > "$CACHE_FILE"
+  rm -f "$err_tmp"
+  echo "$daily_json" > "$CACHE_FILE"
 fi
 
-# Parse: get the last (current) week's cost
-result=$(echo "$weekly_json" | python3 -c "
+# Fetch succeeded — reset the consecutive-failure canary
+rm -f "$FAIL_COUNT_FILE" 2>/dev/null || true
+
+# Parse: spend = totals.totalCost over the since-window (our cap week)
+result=$(echo "$daily_json" | python3 -c "
 import sys, json
-from datetime import datetime, timedelta
 
 data = json.load(sys.stdin)
-weeks = data.get('weekly', [])
-if not weeks:
+rows = data.get('daily', [])
+if not rows:
     print('no_data')
     sys.exit(0)
 
-# Current week = last entry
-current = weeks[-1]
-spent = current['totalCost']
-week_start_str = current['week']  # e.g. '2026-04-14'
+spent = float(data.get('totals', {}).get('totalCost') or 0)
 
-# Calculate days elapsed and remaining
-week_start = datetime.strptime(week_start_str, '%Y-%m-%d').date()
-today = datetime.now().date()
-days_elapsed = (today - week_start).days + 1  # inclusive of today
+days_elapsed = int(${days_elapsed})
 days_remaining = max(0, 7 - days_elapsed)
 
 # Run rate
@@ -96,11 +145,11 @@ else:
     severity = 'OK'
 
 print(f'{severity}|{spent:.0f}|{projected:.0f}|{cap:.0f}|{days_elapsed}|{days_remaining}|{daily_rate:.0f}|{pct_used:.0f}|{pct_projected:.0f}')
-" 2>/dev/null) || {
+" 2>>"$ERR_LOG") || {
   if [ "$MODE" = "--percent-only" ]; then
     echo "0"  # Always numeric for scripts
   else
-    echo "burn:parse_err"
+    echo "burn:parse_err (see $ERR_LOG)"
   fi
   exit 0
 }
