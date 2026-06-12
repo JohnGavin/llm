@@ -50,7 +50,10 @@ AGE_DAYS_AGENT="${AGE_DAYS_AGENT:-14}"         # harness agent worktrees (matche
 AGE_DAYS_CONVENTION="${AGE_DAYS_CONVENTION:-30}"  # ~/worktrees/*/* convention
 
 DOCS_GH="${DOCS_GH:-$HOME/docs_gh}"
-WORKTREES_BASE="${WORKTREES_BASE:-$HOME/worktrees}"
+# Canonical base (llm#582) + legacy base (transitional — existing worktrees
+# remain there until migrated; GC sweeps both).
+WORKTREES_BASE="${WORKTREES_BASE:-$HOME/docs_gh/worktrees}"
+WORKTREES_BASE_LEGACY="${WORKTREES_BASE_LEGACY:-$HOME/worktrees}"
 UNIFIED_DB="${UNIFIED_DB_PATH:-$HOME/.claude/logs/unified.duckdb}"
 LOG_FILE="$HOME/.claude/logs/worktree_gc.log"
 APPLY=0
@@ -60,6 +63,7 @@ SWEEP_PATTERNS=(
   "${DOCS_GH}/*-*|siblings"
   "${DOCS_GH}/*/.claude/worktrees/agent-*|agent"
   "${WORKTREES_BASE}/*/*/*|convention"
+  "${WORKTREES_BASE_LEGACY}/*/*/*|convention"
 )
 
 for arg in "$@"; do

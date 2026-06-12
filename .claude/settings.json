@@ -306,6 +306,9 @@
       "Edit(//Users/johngavin/worktrees/**)",
       "Write(//Users/johngavin/worktrees/**)",
       "NotebookEdit(//Users/johngavin/worktrees/**)",
+      "Edit(//Users/johngavin/docs_gh/worktrees/**)",
+      "Write(//Users/johngavin/docs_gh/worktrees/**)",
+      "NotebookEdit(//Users/johngavin/docs_gh/worktrees/**)",
       "Edit(//tmp/**)",
       "Write(//tmp/**)"
     ],
