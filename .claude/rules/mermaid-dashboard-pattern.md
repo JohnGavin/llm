@@ -35,6 +35,24 @@ losing game. **Bypass it entirely.**
 
 ## The Six-Step Pattern
 
+### Step 0 — Page-level `color-scheme: dark` (check FIRST)
+
+The most common failure mode for Chrome dashboard diagrams is NOT mermaid
+theme inversion or CSS catch-all gaps; it's **Chrome's Auto Dark Mode for
+Web Contents** (default-on since v96) auto-inverting the whole page —
+black subgraphs render white, the palette goes pastel, and only in Chrome.
+Before spending ANY time on mermaid theme overrides or vendored bundles,
+verify the page declares:
+
+```html
+<meta name="color-scheme" content="dark" />
+```
+
+plus `:root, html, body { color-scheme: dark; }` in CSS. See
+`accessibility` rule Part 2 Clause 0 (origin: premortem issue 0027 — five
+merged iterations on the wrong layer). Automated check:
+`~/.claude/scripts/check_dashboard_color_scheme.sh <output-dir>` (llm#584).
+
 ### Step 1 — Use the external-module approach
 
 Create `<dashboard>/<your-diagrams>.js` modelled on the reference template
