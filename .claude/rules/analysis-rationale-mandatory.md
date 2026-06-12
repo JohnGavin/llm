@@ -2,6 +2,10 @@
 name: analysis-rationale-mandatory
 description: Document analytical choices and decisions before seeing results to prevent retrospective rationalization
 type: rule
+paths:
+  - "analysis/**"
+  - "explorations/**"
+  - "vignettes/**"
 ---
 
 # Rule: Analysis Rationale Logging Is Mandatory

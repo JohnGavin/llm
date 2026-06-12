@@ -2,6 +2,9 @@
 name: agent-no-push-to-main
 description: Prevents worktree-isolated agents from pushing to protected branches (main/master/release/prod) or to any branch other than their own worktree branch.
 type: enforcement
+paths:
+  - ".claude/hooks/**"
+  - ".claude/settings*.json"
 ---
 
 # Rule: Agent Worktree — No Push to Protected Branches or Sibling Branches

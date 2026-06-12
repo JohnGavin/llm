@@ -1,5 +1,7 @@
 ---
 description: Quadratic context growth in agentic loops — estimate per-loop budget and compress context before /loop or /schedule runs exceeding 10 turns
+paths:
+  - ".claude/scripts/burn_rate*"
 ---
 
 # Rule: Quadratic Agentic Loop Cost Guard

@@ -2,6 +2,8 @@
 name: braindump-closed-loop
 description: Complete the full lifecycle of braindumps from capture through interpretation, action, recording, and completion
 type: rule
+paths:
+  - ".claude/scripts/braindump*"
 ---
 
 # Rule: Braindump Closed-Loop Processing

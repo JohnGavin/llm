@@ -1,5 +1,9 @@
 ---
 description: Every cron wrapper must ff-only pull origin/main before running and log the HEAD SHA
+paths:
+  - "bin/**"
+  - ".claude/launchd/**"
+  - ".claude/scripts/**"
 ---
 
 # Rule: Cron Auto-Pull Discipline

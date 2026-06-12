@@ -2,6 +2,10 @@
 name: dynamic-prose-values
 description: All specific values in prose/captions must be dynamic R expressions, never hardcoded
 globs: ["**/*.qmd", "**/*.Rmd", "**/R/*.R"]
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
+  - "README*"
 ---
 
 # Rule: Dynamic Prose Values (Mandatory, No Exceptions)

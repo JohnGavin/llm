@@ -1,5 +1,10 @@
 ---
 description: HTML tables shrink to content width, left-aligned in container, right-justified cells
+paths:
+  - "**/*.qmd"
+  - "dashboard/**"
+  - "**/*.css"
+  - "**/*.scss"
 ---
 
 # Rule: Dashboard Table Styling (Mandatory, All Projects)

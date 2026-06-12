@@ -1,5 +1,9 @@
 ---
 description: 5-point template for recurring housekeeping tasks — script, launchd plist, events table, digest section, session-init phase
+paths:
+  - ".claude/scripts/**"
+  - ".claude/launchd/**"
+  - "bin/**"
 ---
 
 # Rule: Housekeeping Framework (Convention)

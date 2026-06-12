@@ -1,5 +1,10 @@
 ---
 description: One body font size everywhere in dashboards and vignettes — no per-element overrides
+paths:
+  - "**/*.qmd"
+  - "dashboard/**"
+  - "**/*.css"
+  - "**/*.scss"
 ---
 
 # Rule: Uniform Typography in Dashboards and Vignettes (Mandatory)

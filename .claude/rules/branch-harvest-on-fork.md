@@ -1,5 +1,8 @@
 ---
 description: Session-start audit of unmerged feat branches — triage harvest/archive/discard before new work begins
+paths:
+  - ".claude/scripts/branch_harvest*"
+  - ".claude/hooks/session_init*"
 ---
 
 # Rule: Branch Harvest on Fork (Mandatory, All Projects)

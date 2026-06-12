@@ -2,6 +2,12 @@
 name: nix-nested-shell-isolation
 description: Mandatory shellHook in every rix-generated default.nix to prevent segfaults when nix-shell is entered from inside another nix-shell
 type: rule
+paths:
+  - "**/default.nix"
+  - "**/flake.nix"
+  - "**/default.R"
+  - "**/default.post.sh"
+  - "**/tproject.toml"
 ---
 
 # Rule: Nix Nested Shell Isolation (All R Projects)

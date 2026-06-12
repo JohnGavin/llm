@@ -2,6 +2,10 @@
 name: vignette-build-info-block
 description: Mandatory build-info block at the end of every vignette, dashboard, and pkgdown article.
 type: rule
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
+  - "dashboard/**"
 ---
 
 # Rule: Vignette Build-Info Block (Mandatory)

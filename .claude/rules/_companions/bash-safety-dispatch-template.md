@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/agents/**"
+  - ".claude/rules/auto-delegation.md"
+---
 # Bash Safety — Agent Dispatch Template
 
 ## Verbatim prefix for every Agent dispatch that involves Bash

@@ -3,6 +3,11 @@ name: unified-observability-schema
 description: Every observable event (hook fired, agent dispatched, command run, finding logged, error) flows into ONE DuckDB at ~/.claude/logs/unified.duckdb. No project invents its own log file or sqlite DB for these signals.
 metadata:
   type: rule
+paths:
+  - ".claude/hooks/**"
+  - ".claude/scripts/**"
+  - "bin/**"
+  - "**/*.sql"
 ---
 
 # Rule: Unified Observability Schema (Mandatory)
