@@ -1,5 +1,9 @@
 ---
 description: Block destructive API calls, require recovery trails for scripts, two-key confirmation for irreversible ops
+paths:
+  - ".claude/hooks/**"
+  - "bin/**"
+  - ".claude/scripts/**"
 ---
 
 # Rule: Destructive Operations Guard

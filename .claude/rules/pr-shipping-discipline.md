@@ -3,6 +3,8 @@ name: pr-shipping-discipline
 description: "Ship it" / "ready to ship" / "let's ship this" ALWAYS means open a PR. NEVER means merge directly to main. Mandatory.
 metadata:
   type: rule
+paths:
+  - ".claude/rules/pr-shipping-discipline.md"
 ---
 
 # Rule: PR-Shipping Discipline (Mandatory)

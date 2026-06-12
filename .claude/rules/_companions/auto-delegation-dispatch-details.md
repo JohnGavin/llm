@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/agents/**"
+  - ".claude/rules/auto-delegation.md"
+---
 # Auto-Delegation — Dispatch Details
 
 Full verbatim prefixes, Tier 3 verification pattern, SendMessage caveat,

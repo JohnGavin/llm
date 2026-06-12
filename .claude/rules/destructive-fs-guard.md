@@ -1,5 +1,8 @@
 ---
 description: Hook-enforced filesystem guard — blocks rm -rf, git clean, git reset --hard on protected paths without a 4-digit confirmation code
+paths:
+  - ".claude/hooks/**"
+  - ".claude/settings*.json"
 ---
 
 # Rule: Destructive Filesystem Guard (Enforced)

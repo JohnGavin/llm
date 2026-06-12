@@ -2,6 +2,11 @@
 name: survival-reporting
 description: "Mandatory reporting standards for every survival curve, hazard ratio, median survival, and log-rank result published in a vignette, dashboard, or report. Extends statistical-reporting."
 type: rule
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
+  - "analysis/**"
+  - "explorations/**"
 ---
 # Rule: Survival Reporting
 

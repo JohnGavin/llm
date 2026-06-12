@@ -1,5 +1,12 @@
 ---
 description: WCAG 2.1 AA accessibility + dark mode completeness for all public-facing outputs
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
+  - "dashboard/**"
+  - "docs/**"
+  - "**/*.css"
+  - "**/*.scss"
 ---
 
 # Rule: Accessibility Standards
