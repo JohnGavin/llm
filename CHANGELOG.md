@@ -4,6 +4,38 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-12 — #601/#595/#597 fixes shipped, #582 location decided, #584 enforced, #591 closed, #590 root-caused
+
+### Completed
+
+**Five PRs merged** (#603, #609, #610, #611, #612), two issues closed (#591, #601 + #595/#597/#582-location/#584-llm-scope via PRs), six issues opened (#604–#608 + this session's evidence trail):
+
+- **#603 / #601** — file_protection regression fixed: orchestrator bounded-exception allowlist (CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md), linked-worktree `.claude/` writes allowed (git-dir ≠ git-common-dir probe — blocking them had broken the PR path itself), BLOCK messages to stderr (ends "No stderr output"). Selftest 6→11. Same PR: `cc.sh offer_worktree()` moved off the legacy sibling pattern — root cause of "why did this session start in `llm-feat-cc-*`?".
+- **#609 / #595** — roborev ETL starvation (06-06→06-12) root-caused SHARPER than the issue: #536's canonical-guard read-only connection + top-level `on.exit()` (never fires) left duckdb's per-path cached instance read-only; the apply-phase connect silently joined it → every CREATE failed. Fixed: deterministic `finally` disconnect with `shutdown=TRUE`, `connect_unified_rw()` verifying `duckdb_databases().readonly` with evict+retry, skippable schema-init, housekeeping_runs heartbeat (running/ok/failed + CLI fallback). Live `--apply` backfilled all 5 days (22 daily / 75 lifecycle / 75 lineage / 18 threshold rows); threshold_changes RED was starvation, not event-quiet.
+- **#610 / #597** — burn guard resurrected: week window computed in bash, `ccusage daily --since` + `totals.totalCost` (no ccusage week-bucketing dependence), stderr → `burn_rate_check.err`, ≥2-consecutive-failure "BURN GUARD DEAD" canary. First working run found real signal: **CRITICAL $582/$500 (116%), proj 204%**.
+- **#611 / #582** — user decided `~/docs_gh/worktrees/<project>/<branch>/` as canonical. Migrated: cc-worktree.sh, cc.sh (create + parent-redirect), worktree_gc.sh (sweeps both bases), session-init Phase 1e, #599 allowlist, rule + memory. Legacy `~/worktrees/` transitional read-only; no mass migration.
+- **#612 / #584** — Chrome auto-dark enforcement: accessibility rule Clause 0 (`color-scheme: dark` meta + CSS, supersedes all dark-mode clauses), mermaid-dashboard-pattern Step 0, new `check_dashboard_color_scheme.sh` (8/8 selftest). Lesson: Chrome's Auto Dark Mode (default since v96) inverts dark pages it mis-reads as light — premortem 0027 burned 5 iterations on the wrong layer.
+- **#591 closed, verified** — launchctl kickstart (228 rows, scan 1.5 min) AND natural 06-12 09:08 fire (ok, 225 rows, 37 min, no wedge) both wrote heartbeat + events under launchd.
+- **Blog-gap issues filed** (5 parallel Explore agents): #604 jarl (rule groups/autofix/--statistics), #605 test smells (3 uncovered + TDD-skill contradiction), #606 BLAS (we already link OpenBLAS; Accelerate benchmark + thread-control gaps), #607 goodpractice (referenced-never-executed; vehicle for #470), #608 config-usage telemetry (NO table tracks skill/command/rule usage; hook_events only ever logs context_monitor; proposal: `config_usage_events` + retirement loop).
+- **#419 neo4j** extended to unified semantic knowledge graph scope (glossary as ontology, typed edges, markdown-as-source ETL) — **Aura ruled out** (knowledge/ is local-only; cloud load would exfiltrate).
+
+### Failed Approaches
+
+- **#590 is NOT fixed-by-upgrade** (yesterday's recommendation reversed): background AND foreground fixer dispatches both rejected "Prompt is too long" from this worktree session. Measured smoking gun: quick-fix answered a 1-line prompt with ZERO tool calls at **182,170 subagent tokens** — the base context load. Cause: worktree sessions load the entire rule corpus TWICE (`~/.claude/rules` → main checkout + `<worktree>/.claude/rules`), including context-load-only rules that shouldn't auto-load. Fixer's tool/MCP surface tips it over the window. Evidence + 3 fix directions on #590. Everything this session shipped orchestrator-direct (commit footers cite #590).
+- **Ironic corollary**: delegation currently costs MORE tokens than orchestrator-direct editing (182k base vs ~5k direct) — auto-delegation economics inverted until #590 lands.
+
+### Accuracy / Metrics
+
+- Burn: week at 116% of $500 cap with 3d left (guard was dead while it accrued). Session ended on the recommendation to throttle.
+- ETL freshness: all roborev tables current as of 06-12 manual backfill; 02:00 cron runs the fixed script from tonight.
+
+### Known Limitations
+
+- #590 open — subagent dispatch unusable from worktree sessions until rule-dedup/load-trim lands; main-checkout sessions unaffected.
+- #596 (cron nix network) untouched — kb/config digests still failing.
+- #582 follow-ups: Phase 1f tidiness hook; legacy-base removal when `~/worktrees/` empties. #584 follow-ups: premortem wires the global script; optional Phase 2 hook.
+- worktree_gc.sh header comments still name the legacy base (cosmetic).
+
 ## 2026-06-11 — branch_gc production fixes, launcher changeset, permission unblock, install-channel cleanup
 
 ### Completed
