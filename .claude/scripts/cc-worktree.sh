@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cc-worktree.sh — Create a git worktree at ~/worktrees/<project>/<branch>/
+# cc-worktree.sh — Create a git worktree at ~/docs_gh/worktrees/<project>/<branch>/
 #
 # Usage: cc-worktree.sh [--dry-run] <project-name> <branch-name> [base-branch]
 #
@@ -10,8 +10,10 @@
 #   branch-name    Branch to create (will be created from base-branch)
 #   base-branch    Branch to base new branch on (default: main)
 #
-# Convention (worktree-location rule):
-#   All worktrees go under ~/worktrees/<project>/<branch>/
+# Convention (worktree-location rule, llm#582):
+#   All worktrees go under ~/docs_gh/worktrees/<project>/<branch>/
+#   (legacy location ~/worktrees/ is read-only transitional — no new
+#   worktrees are created there)
 #
 # Logs to: ~/.claude/logs/cc-worktree.log
 #
@@ -28,7 +30,7 @@ set -euo pipefail
 # ── Constants ──────────────────────────────────────────────────────────────────
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/cc-worktree.log"
-WORKTREES_BASE="$HOME/worktrees"
+WORKTREES_BASE="$HOME/docs_gh/worktrees"
 DOCS_BASE="$HOME/docs_gh"
 SEARCH_MAXDEPTH=3
 PROJECTS_CONF="${HOME}/.config/cc-worktree/projects.conf"
