@@ -132,7 +132,8 @@ phase_scope() {
 }
 
 # ── Phase 1e: Worktree-Parent CWD Detection (advisory) ───────────────
-# Detects when cwd is under ~/worktrees/<project>/ but is NOT itself a git
+# Detects when cwd is under a worktree-parent dir (~/docs_gh/worktrees/
+# canonical per llm#582, ~/worktrees/ legacy) but is NOT itself a git
 # worktree (only contains worktree subdirs). Lists active worktrees so the
 # user can cd into one, or back to the canonical main checkout.
 # See rule: worktree-location
@@ -140,7 +141,7 @@ phase_worktree_parent() {
   local cwd
   cwd=$(pwd 2>/dev/null) || return 0
   case "$cwd" in
-    "$HOME/worktrees"/*) : ;;
+    "$HOME/docs_gh/worktrees"/*|"$HOME/worktrees"/*) : ;;
     *) return 0 ;;
   esac
   # If we're in an actual git repo / worktree, Phase 7 handles it.
@@ -156,7 +157,7 @@ phase_worktree_parent() {
     found_any=1
   done < <(find "$cwd" -mindepth 1 -maxdepth 2 -type d 2>/dev/null)
   if [ "$found_any" -eq 0 ]; then
-    echo "WORKTREE-PARENT: cwd is under ~/worktrees/ but no active worktrees found here."
+    echo "WORKTREE-PARENT: cwd is a worktree-parent dir but no active worktrees found here."
     echo "  Try: cd ~/docs_gh/<project>/  (canonical main checkout)"
     return 0
   fi
@@ -166,7 +167,7 @@ phase_worktree_parent() {
   local proj
   proj=$(basename "$cwd")
   if [ -d "$HOME/docs_gh/$proj" ]; then
-    echo "  Either: cd ~/worktrees/$proj/<one above>"
+    echo "  Either: cd into one of the worktrees listed above"
     echo "      or: cd ~/docs_gh/$proj  (canonical main checkout)"
   fi
 }

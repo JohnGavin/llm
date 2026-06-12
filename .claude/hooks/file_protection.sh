@@ -193,7 +193,7 @@ case "$TARGET_PATH" in
         ;;
     esac
 
-    # (b) Linked worktree (session sibling, ~/worktrees/<proj>/<branch>/):
+    # (b) Linked worktree (session sibling, ~/docs_gh/worktrees/<proj>/<branch>/):
     #     its .claude/ is a branch COPY — edits land on that branch and ship
     #     via PR, never directly into the canonical config. A checkout is a
     #     linked worktree iff git-dir != git-common-dir. Only paths already

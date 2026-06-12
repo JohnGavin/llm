@@ -72,7 +72,8 @@
 - Check CURRENT_WORK.md + git status + open issues at start
 
 ## Worktree Location Convention (see rules/worktree-location.md)
-- All new worktrees go under ~/worktrees/<project>/<branch>/ — NOT as siblings in ~/docs_gh/
+- All new worktrees go under ~/docs_gh/worktrees/<project>/<branch>/ (llm#582, decided 2026-06-12) — NOT as siblings in ~/docs_gh/
+- Legacy ~/worktrees/ is transitional read-only — existing worktrees finish their lifecycle there, no new ones
 - Use ~/.claude/scripts/cc-worktree.sh <project> <branch> [base] to create them
 - Harness-internal worktrees (.claude/worktrees/agent-*) are unaffected by this convention
 
