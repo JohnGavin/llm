@@ -1,5 +1,7 @@
 ---
 description: Require per-repo .roborev.toml to exclude session-ledger files (CHANGELOG.md, .claude/CURRENT_WORK.md) from automated code review
+paths:
+  - "**/.roborev.toml"
 ---
 
 # Rule: roborev exclude_patterns for Session-Ledger Files

@@ -2,6 +2,9 @@
 description: Every analytical vignette must end with a Methodology + Data Sources + AI Disclosure block — three required H3 subsections, no exceptions.
 type: rule
 name: narrative-evidence-block
+paths:
+  - "**/*.qmd"
+  - "vignettes/**"
 ---
 
 # Rule: Narrative Evidence Block (Mandatory)

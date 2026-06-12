@@ -1,5 +1,10 @@
 ---
 description: Every join key has one canonical form — glossary + entity-resolution map applied before any join or aggregation
+paths:
+  - "data/**"
+  - "**/*.sql"
+  - "_targets.R"
+  - "R/tar_plans/**"
 ---
 
 # Rule: Data Glossary and Entity Resolution (Mandatory)

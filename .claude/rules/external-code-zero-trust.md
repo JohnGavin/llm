@@ -1,5 +1,8 @@
 ---
 description: Never copy code from external sources — read for ideas, re-implement in our own style
+paths:
+  - "**/CODEOWNERS"
+  - ".claude/state/**"
 ---
 
 # Rule: External Code Zero Trust

@@ -3,6 +3,9 @@ name: skills-vs-mcp
 description: Skills STEER behavior (how an agent thinks about a problem); MCP tools DISTRIBUTE business logic (what an agent can do). Pick the right surface before authoring.
 metadata:
   type: rule
+paths:
+  - ".claude/skills/**"
+  - "**/.mcp.json"
 ---
 
 # Rule: Skills vs MCP — Pick the Right Surface

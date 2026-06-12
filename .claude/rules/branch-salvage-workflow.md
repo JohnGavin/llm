@@ -2,6 +2,9 @@
 name: branch-salvage-workflow
 description: Three-step pre-salvage check before rebasing or cherry-picking stale branches; prevents dispatching subagents to no-op work
 type: rule
+paths:
+  - ".claude/scripts/branch-cherry-check*"
+  - ".claude/scripts/worktree_gc*"
 ---
 
 # Rule: Branch Salvage Workflow

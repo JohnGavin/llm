@@ -1,5 +1,9 @@
 ---
 description: Permission mode binding, MCP tool classification, environment declaration, credential discovery policy
+paths:
+  - ".claude/settings*.json"
+  - ".claude/hooks/**"
+  - "**/.mcp.json"
 ---
 
 # Rule: Permission and Security Discipline

@@ -2,6 +2,11 @@
 name: search-all-pipeline-stages
 description: When checking data availability in multi-stage pipelines, search ALL stages (source → intermediate → final) before claiming data is absent
 type: rule
+paths:
+  - "data/**"
+  - "raw/**"
+  - "csv/**"
+  - "pdf/**"
 ---
 
 # Rule: Search All Pipeline Stages Before Claiming Data Absence
