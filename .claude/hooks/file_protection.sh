@@ -6,13 +6,14 @@
 # Self-test: COMPOUND_GUARD_SELFTEST=1 bash file_protection.sh
 #
 # Sources: llm#572 (worktree-aware .claude/ protection)
+#          llm#601 (orchestrator bounded exceptions + linked-worktree allow)
 #          agent-identity-and-task-scopes rule (symlink-trap Pattern 2)
 
 set -euo pipefail
 
 # ─── Self-test harness (CLAUDE_HOOK_SELFTEST=1) ──────────────────────────────
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
-  PASS=0; FAIL=0; TOTAL=6
+  PASS=0; FAIL=0; TOTAL=11
   HOOK_PATH="$0"
 
   # Run the hook in a subprocess with synthetic JSON input.
@@ -76,6 +77,39 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   r=$(_check_hook "/Users/johngavin/docs_gh/llm/.claude/scripts/bar.sh")
   if [ "$r" = "block" ]; then _ok "~/.claude/scripts/ resolved to main checkout → block"
   else _fail "~/.claude/scripts/ expected block, got $r"; fi
+
+  # Cases 7-10 — llm#601: orchestrator bounded exceptions in the MAIN
+  # checkout (auto-delegation rule) → ALLOW
+  r=$(_check_hook "/Users/johngavin/docs_gh/llm/.claude/CURRENT_WORK.md")
+  if [ "$r" = "allow" ]; then _ok "main checkout .claude/CURRENT_WORK.md → allow"
+  else _fail "CURRENT_WORK.md expected allow, got $r"; fi
+
+  r=$(_check_hook "/Users/johngavin/docs_gh/llm/.claude/CLAUDE.md")
+  if [ "$r" = "allow" ]; then _ok "main checkout .claude/CLAUDE.md → allow"
+  else _fail ".claude/CLAUDE.md expected allow, got $r"; fi
+
+  r=$(_check_hook "/Users/johngavin/docs_gh/llm/.claude/rules/some-rule.md")
+  if [ "$r" = "allow" ]; then _ok "main checkout .claude/rules/*.md → allow"
+  else _fail "rules/*.md expected allow, got $r"; fi
+
+  r=$(_check_hook "/Users/johngavin/docs_gh/llm/.claude/memory/some-note.md")
+  if [ "$r" = "allow" ]; then _ok "main checkout .claude/memory/*.md → allow"
+  else _fail "memory/*.md expected allow, got $r"; fi
+
+  # Case 11 — llm#601: linked worktree's own .claude/scripts/ (branch copy,
+  # ships via PR) → ALLOW. Build a real repo + worktree fixture so the
+  # git-dir != git-common-dir detection runs against actual git state.
+  _fix=$(mktemp -d /tmp/fp_wtfix_XXXXXX)
+  git init -q "$_fix/main"
+  git -C "$_fix/main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$_fix/main" worktree add -q -b fp-selftest "$_fix/wt" >/dev/null 2>&1
+  mkdir -p "$_fix/wt/.claude/scripts"
+  touch "$_fix/wt/.claude/scripts/foo.sh"
+  r=$(_check_hook "$_fix/wt/.claude/scripts/foo.sh")
+  if [ "$r" = "allow" ]; then _ok "linked worktree .claude/scripts/ → allow"
+  else _fail "linked worktree .claude/scripts/ expected allow, got $r"; fi
+  git -C "$_fix/main" worktree remove --force "$_fix/wt" >/dev/null 2>&1 || true
+  rm -rf "$_fix"
 
   printf '\nfile_protection selftest: %d/%d PASS\n' "$PASS" "$TOTAL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
@@ -146,10 +180,41 @@ case "$TARGET_PATH" in
     # The bytes land in the agent's isolated sandbox, not in the main checkout.
     ;;
   */.claude/*)
+    # Candidate block. Two exemptions apply before blocking (llm#601):
+    #
+    # (a) Orchestrator bounded exceptions (auto-delegation rule): prose and
+    #     session-state files the orchestrator owns and edits directly, even
+    #     in the main checkout. Scripts and hooks are NOT in this list —
+    #     those must ship via a worktree branch + PR.
+    _claude_rel="${TARGET_PATH#*/.claude/}"
+    case "$_claude_rel" in
+      CURRENT_WORK.md|CLAUDE.md|rules/*.md|memory/*.md)
+        exit 0
+        ;;
+    esac
+
+    # (b) Linked worktree (session sibling, ~/worktrees/<proj>/<branch>/):
+    #     its .claude/ is a branch COPY — edits land on that branch and ship
+    #     via PR, never directly into the canonical config. A checkout is a
+    #     linked worktree iff git-dir != git-common-dir. Only paths already
+    #     matching */.claude/* pay this subprocess cost.
+    _repo_prefix="${TARGET_PATH%%/.claude/*}"
+    if [ -d "$_repo_prefix" ]; then
+      _git_dir=$(git -C "$_repo_prefix" rev-parse --git-dir 2>/dev/null || echo "")
+      _git_common=$(git -C "$_repo_prefix" rev-parse --git-common-dir 2>/dev/null || echo "")
+      if [ -n "$_git_dir" ] && [ "$_git_dir" != "$_git_common" ]; then
+        exit 0
+      fi
+    fi
+
     # .claude/ in main checkout (or symlink-trapped path) — BLOCK.
-    echo "BLOCKED: $FILE_PATH targets the canonical .claude/ (resolved: $TARGET_PATH)"
-    echo "Agents must only edit .claude/ within their own worktree."
-    echo "See: agent-identity-and-task-scopes rule, llm#572."
+    # Message goes to stderr so the harness surfaces it (llm#601 fix 2).
+    {
+      echo "BLOCKED: $FILE_PATH targets the canonical .claude/ (resolved: $TARGET_PATH)"
+      echo "Scripts/hooks changes must go via a worktree branch + PR."
+      echo "Orchestrator prose exceptions: CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md."
+      echo "See: agent-identity-and-task-scopes rule, llm#572, llm#601."
+    } >&2
     exit 2
     ;;
 esac
@@ -159,8 +224,10 @@ esac
 BLOCK_PATTERNS=("NAMESPACE" "man/")
 for pattern in "${BLOCK_PATTERNS[@]}"; do
   if [[ "$TARGET_PATH" == *"$pattern"* ]]; then
-    echo "BLOCKED: $FILE_PATH is auto-generated (matched: $pattern)"
-    echo "Run devtools::document() instead of editing directly."
+    {
+      echo "BLOCKED: $FILE_PATH is auto-generated (matched: $pattern)"
+      echo "Run devtools::document() instead of editing directly."
+    } >&2
     exit 2
   fi
 done
@@ -171,9 +238,11 @@ done
 if [[ "$TARGET_PATH" == *"/raw/"* ]] && [ -f "$TARGET_PATH" ]; then
   TOOL_NAME=$(echo "$INPUT" | sed -n 's/.*"tool_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" ]]; then
-    echo "BLOCKED: $FILE_PATH is in a raw/ folder (append-only)"
-    echo "raw/ files are the source of truth and must not be overwritten."
-    echo "See: raw-folder-readonly rule. To redact PHI, save to raw/anonymized/."
+    {
+      echo "BLOCKED: $FILE_PATH is in a raw/ folder (append-only)"
+      echo "raw/ files are the source of truth and must not be overwritten."
+      echo "See: raw-folder-readonly rule. To redact PHI, save to raw/anonymized/."
+    } >&2
     exit 2
   fi
 fi
