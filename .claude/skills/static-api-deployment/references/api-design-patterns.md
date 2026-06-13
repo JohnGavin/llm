@@ -76,7 +76,7 @@ Every JSON response includes `_meta`:
 
 ```r
 api_envelope <- function(data, endpoint_name, api_version = "v1") {
-  base_url <- "https://johngavin.github.io/llm/api"
+  base_url <- "https://<owner>.github.io/<repo>/api"
   list(
     `_meta` = list(
       api_version = api_version,
