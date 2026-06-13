@@ -67,7 +67,7 @@ Every JSON response includes `_meta`:
     "api_version": "v1",
     "generated_at": "2026-03-09T14:30:00Z",
     "generator": "llm/targets",
-    "schema": "https://johngavin.github.io/llm/api/v1/schema/stats.schema.json",
+    "schema": "https://<owner>.github.io/<repo>/api/v1/schema/stats.schema.json",
     "next_update": "2026-03-16T00:00:00Z"
   },
   "data": [ ... ]
@@ -297,7 +297,7 @@ targets, format timestamps as ISO 8601, wrap with `api_envelope("pipeline-status
 ### R with httr2
 
 ```r
-base_url <- "https://johngavin.github.io/llm/api/v1"
+base_url <- "https://<owner>.github.io/<repo>/api/v1"
 
 stations <- httr2::request(base_url) |>
   httr2::req_url_path_append("stations.json") |>
@@ -312,7 +312,7 @@ stations_df <- purrr::map_dfr(stations$data, tibble::as_tibble)
 ### JavaScript fetch
 
 ```javascript
-const BASE = 'https://johngavin.github.io/llm/api/v1';
+const BASE = 'https://<owner>.github.io/<repo>/api/v1';
 
 async function fetchEndpoint(path) {
   const resp = await fetch(`${BASE}/${path}`);
@@ -331,7 +331,7 @@ const stations = await fetchEndpoint('stations.json');
 
 ```python
 import requests, pandas as pd
-stations = requests.get("https://johngavin.github.io/llm/api/v1/stations.json", timeout=30).json()
+stations = requests.get("https://<owner>.github.io/<repo>/api/v1/stations.json", timeout=30).json()
 df = pd.DataFrame(stations["data"])
 ```
 
@@ -351,7 +351,7 @@ df = pd.DataFrame(stations["data"])
 
 ```r
 api_client <- function(
-    base_url = "https://johngavin.github.io/llm/api/v1",
+    base_url = "https://<owner>.github.io/<repo>/api/v1",
     cache_dir = rappdirs::user_cache_dir("llm-api"),
     max_age_seconds = 3600L) {
   fs::dir_create(cache_dir)
