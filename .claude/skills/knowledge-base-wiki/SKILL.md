@@ -139,7 +139,7 @@ consensus_level: strong                  # unanimous | strong | split | divergen
 sources:
   - flirting-with-models-faheem-osman-commodity-qis.md
   - flirting-with-models-gerald-rushton-commodity-strategies.md
-compiled_by: claude-opus-4-6
+compiled_by: orchestrator-tier  # do not hardcode model IDs — see auto-delegation rule
 compiled_on: 2026-04-09
 ---
 ```
