@@ -66,7 +66,7 @@ context of the full repository, produce findings categorised by severity, and
 write those findings to a local
 <abbr title="Structured Query Language: a standard language for relational databases">SQLite</abbr>
 database. Findings accumulate across commits, are visible in the
-[llmtelemetry dashboard](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html),
+[llmtelemetry dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html),
 and are closed either automatically or by a developer committing a fix.
 
 The practical result, observed over many months of use, is that the
@@ -78,7 +78,7 @@ effect changes the shape of the codebase over time.
 
 ## 2. Why this vignette exists {#why}
 
-The [llmtelemetry roborev dashboard](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html)
+The [llmtelemetry roborev dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html)
 shows the *live state*: how many findings are open, how fast they close, which
 projects have the most backlog. This vignette is the *narrative*: it explains
 what each component does, why it was built, and how the pieces connect.
@@ -137,15 +137,15 @@ flowchart LR
   click HOOK "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_install_auto_verify_hook.sh#L1"
   click POLL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1"
   click DAEMON "https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-poll-merges.plist#L1"
-  click DB "https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#open-findings"
+  click DB "https://johngavin.github.io/llmtelemetry/roborev_summary.html#top-problems"
   click WEEKLY "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1"
   click SEVCLOSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1"
   click ETL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1"
   click UNIFIED "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_schema.sql#L1"
   click EMAIL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1"
-  click DASHBOARD "https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html"
+  click DASHBOARD "https://johngavin.github.io/llmtelemetry/roborev_summary.html"
   click AGENT "https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1"
-  click REVIEW "https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#severity-distribution"
+  click REVIEW "https://johngavin.github.io/llmtelemetry/roborev_summary.html#pulse"
 ```
 
 :::
@@ -163,7 +163,7 @@ flowchart LR
 | `roborev_metrics_etl.sh` | [`.claude/scripts/roborev_metrics_etl.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1) | SQLite → `unified.duckdb` ETL | Daily 02:00 via launchd | [#226](https://github.com/JohnGavin/llm/issues/226) |
 | `unified.duckdb` | `~/.claude/logs/unified.duckdb` | Analytics DuckDB: 7 roborev_* tables + finding_lineage | Written by ETL | [#226](https://github.com/JohnGavin/llm/issues/226) |
 | `send_roborev_email.R` | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | Composes + sends daily blastula digest | Daily 08:00 via launchd | [#287](https://github.com/JohnGavin/llm/issues/287) |
-| Dashboard | [llmtelemetry roborev-pulse](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html) | Published Quarto site reading unified.duckdb snapshot | Refreshed on data branch push | [#287](https://github.com/JohnGavin/llm/issues/287) |
+| Dashboard | [llmtelemetry roborev_summary](https://johngavin.github.io/llmtelemetry/roborev_summary.html) | Published Quarto site reading unified.duckdb snapshot | Refreshed on data branch push | [#287](https://github.com/JohnGavin/llm/issues/287) |
 
 ---
 
@@ -316,7 +316,7 @@ the date at the top of this page.
 | [#326](https://github.com/JohnGavin/llm/issues/326) | post-verify + SendMessage caveat + cross-repo pattern | Merged |
 | [#332](https://github.com/JohnGavin/llm/issues/332) | ETL BINDER bug on narrow `--since` windows | Open — currently breaking ETL on narrow windows |
 
-The [open findings panel](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html#open-findings)
+The [open findings panel](https://johngavin.github.io/llmtelemetry/roborev_summary.html#top-problems)
 in the dashboard shows the live view of what is currently pending across all repos.
 
 ---
@@ -344,7 +344,7 @@ locate a specific component.
 | Resolution rule | [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1) | Triage protocol: close vs fix vs escalate |
 | Exclude patterns rule | [`.claude/rules/roborev-exclude-patterns.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-exclude-patterns.md#L1) | Why CHANGELOG.md and CURRENT_WORK.md are excluded |
 | Daily email | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | blastula digest sent daily at 08:00 |
-| Dashboard | [llmtelemetry/articles/roborev-pulse.html](https://JohnGavin.github.io/llmtelemetry/articles/roborev-pulse.html) | Published Quarto site |
+| Dashboard | [llmtelemetry/roborev_summary.html](https://johngavin.github.io/llmtelemetry/roborev_summary.html) | Published Quarto site |
 | This vignette | `llm/vignettes/articles/roborev-architecture.qmd` | You are here |
 
 ---
