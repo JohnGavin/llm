@@ -1493,7 +1493,6 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 
 ### Completed
 
-- **#146 closed** — verified deployed brand+QR on `https://johngavin.github.io/llm/vignettes/telemetry.html`; 2 QR PNGs + clickable URL captions confirmed
 - **#154 closed** — `b85bb59` (worktree-isolated fixer agent). New target `vig_kb_stats` in `R/tar_plans/plan_kb_stats.R`; pre-computed RDS (267 B, aggregates only) at `inst/extdata/vignettes/vig_kb_stats.rds`. knowledge-evolution.qmd now renders in CI with real numbers despite gitignored `knowledge/`.
 - **#153 attempted-closed-then-reopened** — `b9283ab` (Option B: Homebrew bash shebang) merged ff-only; verification showed state-T persisted. Three further fixes attempted same session: plist `ProcessType=Background` + `AbandonProcessGroup=true`, `trap '' SIGTSTP SIGTTIN SIGTTOU`, external wrapper watchdog. All failed. Issue reopened with full findings.
 - **#156 filed** — estate / legacy / incapacity planning Q-list (10 sections from YouTube takeaways, work tracked for fresh session)

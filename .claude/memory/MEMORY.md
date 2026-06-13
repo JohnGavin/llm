@@ -27,6 +27,7 @@
 - Never install.packages() inside Nix
 - Add packages: edit DESCRIPTION -> default.R -> exit -> re-enter
 - Cachix: push only THIS project's pkg, never deps
+- Launchd/cron: run `nix-shell <GC-rooted drv>` (zero eval, zero network) via nix_gcroot_refresh.sh — never `nix-shell default.nix` (re-fetches tarball, DNS fails under launchd); freshness via .stamp file, store mtime is always 1970 (llm#596)
 
 ## Shinylive (see shinylive-issues.md)
 - Munsell/ggplot2 error: use plotly instead

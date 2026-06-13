@@ -72,7 +72,7 @@ fresh_until: YYYY-MM-DD             # required
 consensus_level: unanimous | strong | split | divergent | direct
 sources:                            # required
   - transcript-1.md
-compiled_by: claude-opus-4-6        # should
+compiled_by: orchestrator-tier        # should (do not hardcode model IDs — see auto-delegation rule)
 compiled_on: YYYY-MM-DD             # should
 tags: [list]                        # may
 ---

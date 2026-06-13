@@ -35,7 +35,7 @@ Before starting any automated loop or long agent run, estimate:
 budget_usd = (expected_turns × avg_context_k × turns/2) × price_per_Mtok / 1e6
 ```
 
-For claude-sonnet-4-6 at ~$3/Mtok input:
+For the worker tier (e.g. Sonnet) at ~$3/Mtok input: <!-- check https://www.anthropic.com/pricing for current rates -->
 - 20 turns × 50k avg context = 20×50k×10 = 10M tokens → ~$30
 - 50 turns × 80k avg context = 50×80k×25 = 100M tokens → ~$300
 
