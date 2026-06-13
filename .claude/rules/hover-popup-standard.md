@@ -44,7 +44,7 @@ cat(tt("LLM", paste0(
   "<b>Large Language Model</b>. A neural network trained on large text corpora ",
   "to generate, summarise, and classify text. See ",
   "<a href='https://en.wikipedia.org/wiki/Large_language_model'>Wikipedia</a> and ",
-  "the <a href='https://johngavin.github.io/llm/articles/telemetry.html'>",
+  "the <a href='https://johngavin.github.io/llm/vignettes/telemetry.html'>",
   "Project Telemetry vignette</a>."
 )))
 ```

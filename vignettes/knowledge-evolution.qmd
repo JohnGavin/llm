@@ -414,7 +414,7 @@ flowchart LR
   click PULSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/knowledge_pulse.sh#L1" _blank
   click RDS "https://github.com/JohnGavin/llm/issues/122" _blank
   click EMAIL "https://github.com/JohnGavin/llm/issues/298" _blank
-  click DASH "https://johngavin.github.io/llm/articles/knowledge-evolution.html" _blank
+  click DASH "https://johngavin.github.io/llm/vignettes/knowledge-evolution.html" _blank
 ```
 
 ### Key ideas for a new reader
