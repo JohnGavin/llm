@@ -163,9 +163,19 @@ usethis::pr_push()
 *   `usethis::pr_merge_main()`
 *   `usethis::pr_finish()`
 
+### Step 8b: Deploy pkgdown site (MANDATORY — do not skip)
+**Goal:** Keep deployed docs in sync with `main`. Docs that are not deployed are invisible to users.
+*   `pkgdown::build_site()` — rebuild locally
+*   CI job (`.github/workflows/pkgdown.yml`) triggers automatically on merge to `main` once set up via `usethis::use_pkgdown_github_pages()`
+*   Spot-check 3 article URLs return HTTP 200 after deploy
+*   If CI job not yet configured: push `docs/` manually — `git -C <repo> subtree push --prefix docs origin gh-pages`
+*   See `pkgdown-deployment` skill for full setup and CI workflow template
+*   **Block issue close until deploy verified.** A 404 on a recently merged article is a deployment failure, not a cosmetic issue.
+
 ### Step 9: Verify & Cleanup
 **Goal:** Close loop.
 *   Verify issue is closed.
+*   Verify pkgdown site deployed — check at least the article added/changed in this PR returns HTTP 200.
 *   Delete log file (optional, or archive it).
 
 ## File Organization
@@ -193,6 +203,7 @@ package/
 *   **`quality-gates`**: Steps 4/6/8 scoring — Bronze (commit), Silver (PR), Gold (merge). Run `tar_make(names = starts_with("qa_"))` and check grade via `tar_read(qa_quality_gate)$grade`.
 *   **`systematic-debugging`**: Step 5 failure handling.
 *   **`nix-rix-r-environment`**: The required execution environment.
+*   **`pkgdown-deployment`**: Step 8b — build and deploy pkgdown site to gh-pages after every merge.
 
 ## Quality Gate Integration
 
