@@ -48,7 +48,7 @@ PAYLOAD=$(jq -n \
     --arg system_text "$SYSTEM_TEXT" \
     --arg user_content "$DYNAMIC_INPUT" \
     '{
-        model: "claude-opus-4-7",
+        model: "claude-opus-4-7",  # orchestrator-tier — check auto-delegation rule'"'"'s Model Tier Lookup for latest ID
         max_tokens: 2048,
         system: [
             {
@@ -83,7 +83,7 @@ client = anthropic.Anthropic()
 SYSTEM_INSTRUCTIONS = "You are a code reviewer. <long static block ...>"
 
 response = client.messages.create(
-    model="claude-opus-4-7",
+    model="claude-opus-4-7",  # orchestrator-tier — check auto-delegation rule's Model Tier Lookup for latest ID
     max_tokens=2048,
     system=[
         {
@@ -110,7 +110,7 @@ library(httr2)
 SYSTEM_TEXT <- "You are a code reviewer. <long static block ...>"
 
 payload <- list(
-  model = "claude-opus-4-7",
+  model = "claude-opus-4-7",  # orchestrator-tier — check auto-delegation rule's Model Tier Lookup for latest ID
   max_tokens = 2048L,
   system = list(
     list(
@@ -163,6 +163,7 @@ When upgrading Claude models:
 
 | Old model | New model | Notes |
 |-----------|-----------|-------|
+| _For current IDs_ | _See `auto-delegation` rule's Model Tier Lookup table_ | _Single source of truth_ |
 | `claude-opus-4-5-20251101` | `claude-opus-4-7` | Drop date suffix; shorter ID |
 | `claude-sonnet-4-5-20251015` | `claude-sonnet-4-6` | Drop date suffix |
 | `claude-haiku-4-5-20251001` | `claude-haiku-4-6` | Drop date suffix |
