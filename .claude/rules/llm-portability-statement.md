@@ -37,7 +37,7 @@ codebase as of 2026-06-05. Portability cost is rated Low/Medium/High.
 | **Extended thinking** (thinking tokens, `thinking` block in response) | `claude-api` skill; any script enabling it | `thinking: {type: "enabled", budget_tokens: N}` in request body | High — no direct equivalent in most providers | OpenAI `o1`/`o3` reasoning is implicit; no explicit token budget |
 | **Tool-use message format** (`tool_use` / `tool_result` content blocks) | `claude-api` skill; `roborev` scripts using structured tool calls | Anthropic's `tool_use` block shape in assistant message + `tool_result` in user message | Medium — OpenAI uses `tool_calls` / `function` format; JSON schema compatible but different field names | OpenAI `tool_calls` (requires JSON rewrite of tool result handling) |
 | **Prompt caching beta header** | `.claude/scripts/cross_modal_eval.sh`, older SDK usage | `anthropic-beta: prompt-caching-2024-07-31` | Low (SDK ≥ 0.28 handles automatically; removed at migration) | N/A |
-| **Model IDs** (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-6`) | `auto-delegation` rule, `CLAUDE.md` agents table, dispatching scripts | Anthropic-namespaced identifiers | Low — swap model ID strings in one place | `gpt-4o`, `gpt-4o-mini`, `o3-mini` |
+| **Model IDs** (orchestrator/worker/lightweight tier aliases — see `auto-delegation` rule's Model Tier Lookup table for current IDs) <!-- updated 2026-06; check auto-delegation rule for latest --> | `auto-delegation` rule, `CLAUDE.md` agents table, dispatching scripts | Anthropic-namespaced identifiers | Low — swap model ID strings in one place (the tier lookup table) | `gpt-4o`, `gpt-4o-mini`, `o3-mini` |
 | **Claude Code harness** (Agent tool, `subagent_type=`, `isolation: "worktree"`) | `auto-delegation` rule, all dispatch scripts | Claude Code-specific tool; no API equivalent | Not portable — tied to Claude Code CLI, not the API | No equivalent; would require building an orchestrator |
 | **Hooks architecture** (PreToolUse / PostToolUse / Stop event hooks) | All `.claude/hooks/*.sh` scripts | Claude Code-specific `settings.json` hook events | Not portable — tied to Claude Code CLI | No equivalent in other agent harnesses |
 | **`bypassPermissions` mode** | `permission-discipline` rule, `cc.sh` wrapper | Claude Code permission modes | Not portable — CLI-specific concept | N/A |
@@ -102,8 +102,7 @@ noted if added:
 - `claude-api` skill — the companion "how to build with Claude" guide; this rule
   is the "what that costs in portability" half
 - `external-code-zero-trust` — supply chain; adjacent concern
-- `auto-delegation` rule — model IDs (`claude-opus-4-7`, `claude-sonnet-4-6`,
-  `claude-haiku-4-6`) live here and are the primary model-ID lock-in
+- `auto-delegation` rule — the Model Tier Lookup table is the single source of truth for current model IDs (orchestrator/worker/lightweight tiers); the primary model-ID lock-in point
 - `btw-timeouts` rule — `r-btw` MCP usage; MCP itself is portable
 - `permission-discipline` — `bypassPermissions` mode; Claude Code-specific
 - `mcp-servers` skill — MCP is an open standard; see as a portability win
