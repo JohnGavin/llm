@@ -140,3 +140,19 @@ The `result` symlink (nix-build output pointing to `/nix/store/...`) must NEVER 
 When setting up a new project, verify `result` is in `.gitignore` before first commit.
 Also watch for accidental "* symlink N" files (e.g. "AGENTS.md symlink 1") created
 by macOS Finder copy operations — add these to `.gitignore` when spotted.
+
+## GC-Rooted drv for Network-Free nix-shell (launchd crons, llm#596)
+
+Unhashed `fetchTarball` in `default.nix` re-downloads once the tarball TTL
+lapses — and launchd contexts can't resolve github.com, so cron `nix-shell
+default.nix` calls die. Fix: instantiate once where network exists, then run
+from the drv (zero evaluation, zero network):
+
+- `nix-instantiate default.nix -A shell --indirect --add-root ~/.claude/nix-gcroots/<proj>-shell.drv`
+- `nix-store --realise <drv-root> --indirect --add-root ~/.claude/nix-gcroots/<proj>-shell-out` (outputs survive GC without keep-outputs)
+- `nix-shell <drv-root> --run 'cmd'`
+
+Maintained by `.claude/scripts/nix_gcroot_refresh.sh`. **Gotcha:** store
+paths have mtime=1970, so `-nt` freshness tests against the drv symlink
+always read stale — compare against the `.stamp` file the refresh script
+touches instead.
