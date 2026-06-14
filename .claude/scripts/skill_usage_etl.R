@@ -27,11 +27,11 @@
 #   config_access(session_id, session_date, project, file_path,
 #                 access_type, accesses, etl_run_at)
 #   config_inventory(item_type, name, file_path, file_size_bytes,
-#                    last_modified, has_paths_scope, etl_run_at)
+#                    last_modified, has_paths_scope, is_mandatory, etl_run_at)
 #
 # View created:
-#   config_staleness — joins inventory with usage; flags never_used /
-#                      stale_90d / stale_30d / active per item
+#   config_staleness — joins inventory with usage; flags mandatory /
+#                      never_used / stale_90d / stale_30d / active per item
 
 suppressPackageStartupMessages({
   library(jsonlite)
@@ -170,7 +170,8 @@ build_config_inventory <- function(llm_root) {
     )
   }
 
-  skills  <- scan_dir(".claude/skills",  "skill",  "*.md")
+  skills  <- scan_dir(".claude/skills",  "skill",  "*.md") |>
+    mutate(name = basename(dirname(file_path)))
   rules   <- scan_dir(".claude/rules",   "rule",   "*.md")
   memory  <- scan_dir(".claude/memory",  "memory", "*.md")
   hooks   <- scan_dir(".claude/hooks",   "hook",   "*.sh")
@@ -191,7 +192,10 @@ build_config_inventory <- function(llm_root) {
   }
 
   bind_rows(skills, rules, memory, hooks, scripts) |>
-    mutate(etl_run_at = now)
+    mutate(
+      is_mandatory = item_type == "rule" & !is.na(has_paths_scope) & !has_paths_scope,
+      etl_run_at   = now
+    )
 }
 
 # ── Aggregate helpers ─────────────────────────────────────────────────────────
@@ -280,12 +284,14 @@ SELECT
   i.file_size_bytes,
   i.last_modified                                          AS file_last_modified,
   i.has_paths_scope,
+  i.is_mandatory,
   u.last_used,
   u.session_count,
   u.total_invocations,
   u.inv_last_30d,
   u.inv_last_90d,
   CASE
+    WHEN i.is_mandatory = TRUE                                  THEN 'mandatory'
     WHEN u.last_used IS NULL                                    THEN 'never_used'
     WHEN u.last_used < CURRENT_DATE - 90                       THEN 'stale_90d'
     WHEN u.last_used < CURRENT_DATE - 30                       THEN 'stale_30d'
@@ -322,7 +328,7 @@ ensure_tables <- function(con) {
     CREATE TABLE IF NOT EXISTS config_inventory (
       item_type TEXT, name TEXT, file_path TEXT,
       file_size_bytes INTEGER, last_modified DATE,
-      has_paths_scope BOOLEAN, etl_run_at TIMESTAMP
+      has_paths_scope BOOLEAN, is_mandatory BOOLEAN, etl_run_at TIMESTAMP
     )")
 }
 
