@@ -338,7 +338,21 @@ _invoke_r() {
 
 _invoke_r
 
-EXIT_CODE=$?
+ROBOREV_EXIT=$?
+log "roborev ETL end: exit=${ROBOREV_EXIT}"
+
+# ── Skill usage ETL (merged here so both ETL steps share one GC-root refresh
+#    and skill_usage rows are captured by the 03:00 unified.duckdb backup) ──
+SKILL_ETL_SCRIPT="${SCRIPT_DIR}/skill_usage_etl.sh"
+if [ -x "$SKILL_ETL_SCRIPT" ]; then
+  log "skill_usage_etl: start"
+  "$SKILL_ETL_SCRIPT" "$MODE" >> "$LOGFILE" 2>&1 || true
+  log "skill_usage_etl: end"
+else
+  log "skill_usage_etl: SKIP (script not found or not executable: ${SKILL_ETL_SCRIPT})"
+fi
+
+EXIT_CODE=$ROBOREV_EXIT
 log "end: exit=${EXIT_CODE}"
 echo "roborev_metrics_etl: exit=${EXIT_CODE}"
 exit $EXIT_CODE
