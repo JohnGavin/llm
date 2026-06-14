@@ -73,6 +73,9 @@ days_elapsed=$(( days_since + 1 ))  # inclusive of today
 week_start_ymd=$(date -v-"${days_since}"d +%Y%m%d 2>/dev/null \
   || date -d "-${days_since} days" +%Y%m%d)
 
+# GNU timeout absent on macOS and under launchd PATH (llm#420)
+TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
+
 # Cache: reuse if < 5 minutes old AND for the same week window
 CACHE_FILE="/tmp/ccusage_burnweek_${week_start_ymd}_cache.json"
 CACHE_MAX_AGE=300
@@ -89,7 +92,7 @@ if [ "$use_cache" = true ]; then
   daily_json=$(cat "$CACHE_FILE")
 else
   err_tmp=$(mktemp /tmp/burn_rate_err_XXXXXX)
-  daily_json=$(timeout 30 npx ccusage daily \
+  daily_json=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 30} npx ccusage daily \
     --since "$week_start_ymd" \
     --timezone "$TZ_NAME" \
     --json --offline 2>"$err_tmp") || {
