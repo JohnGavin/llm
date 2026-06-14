@@ -1,0 +1,45 @@
+# skill-security-scan.yml — CI gate for skill definition security (llm#627 Gap 3).
+# Runs check_skill_security.sh on any .claude/skills/ file changed in a PR.
+# Fails the check if high-severity findings are detected.
+name: Skill Security Scan
+
+on:
+  pull_request:
+    paths:
+      - '.claude/skills/**'
+
+jobs:
+  scan:
+    name: Scan changed skill files
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan changed skill files (high severity)
+        run: |
+          bash .claude/scripts/check_skill_security.sh \
+            --diff origin/${{ github.base_ref }} \
+            --severity high \
+            --fix-hints
+
+      - name: Generate JSON report (all severity)
+        if: always()
+        run: |
+          bash .claude/scripts/check_skill_security.sh \
+            --diff origin/${{ github.base_ref }} \
+            --severity low \
+            --format json > /tmp/skill-security-report.json || true
+          cat /tmp/skill-security-report.json
+
+      - name: Upload JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-security-report
+          path: /tmp/skill-security-report.json
+          retention-days: 30
