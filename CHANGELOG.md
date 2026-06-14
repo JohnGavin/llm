@@ -4,6 +4,19 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-14 — P0s closed: #617 guard fix (PR #636), #546 roborev hooks installed, #590 verified
+
+### Completed
+
+- **#617 — destructive_fs_guard false-positive** (PR #636 open): two root causes fixed in `.claude/hooks/destructive_fs_guard.sh`:
+  1. `strip_heredoc_bodies()` — awk function strips heredoc content before `is_destructive()` check; prevents `rm -rf` inside a script body from blocking the write
+  2. `is_own_worktree_path()` — exempts `.claude/worktrees/agent-*` from PROTECTED_PATHS; agent harness worktrees are sandboxed by `isolation:"worktree"` and should not be blocked
+  Added `CLAUDE_HOOK_SELFTEST=1` mode: 6 tests pass
+- **#546 — roborev cadence restored**: installed `roborev install-hook` in all 4 missing repos (llmtelemetry, micromort, mycare, premortem); queued review of llmtelemetry HEAD (job 6849) to restart cycle; deleted stale mycare duplicate entry (id=7, space-in-path, 22 orphaned reviews)
+- **#590 — fixer overflow verified resolved**: dispatched fixer smoke-test from worktree session — received prompt at 64k tokens (vs ~182k+ before #613); closed as resolved by #613
+
+### Previous entry continues below
+
 ## 2026-06-14 — #634/#635 closed; config staleness ETL shipped; SkillSpector gaps implemented; 31 ghost DB rows cleared; 216 MB GC'd
 
 ### Completed
