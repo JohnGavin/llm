@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.skill-usage-etl.plist
+     Nightly ETL: parse conversation JSONL → skill_usage table in unified.duckdb.
+     Runs at 03:30 local time — after roborev-metrics-etl (02:00) and
+     unified-duckdb-backup (03:00), before any morning read jobs.
+
+     Install:
+       cp ~/.claude/launchd/com.claude.skill-usage-etl.plist \
+          ~/Library/LaunchAgents/com.claude.skill-usage-etl.plist
+       launchctl load ~/Library/LaunchAgents/com.claude.skill-usage-etl.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.skill-usage-etl.plist
+       rm ~/Library/LaunchAgents/com.claude.skill-usage-etl.plist
+
+     Manual dry-run:
+       ~/.claude/scripts/skill_usage_etl.sh
+
+     Manual apply:
+       ~/.claude/scripts/skill_usage_etl.sh --apply
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.skill-usage-etl</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/.claude/scripts/skill_usage_etl.sh</string>
+        <string>--apply</string>
+    </array>
+
+    <!-- Nightly at 03:30 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/skill_usage_etl.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/skill_usage_etl.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>
