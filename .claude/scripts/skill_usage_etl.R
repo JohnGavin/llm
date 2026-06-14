@@ -116,7 +116,7 @@ parse_file <- function(path) {
   project_enc <- basename(dirname(as.character(path)))
   project     <- sub("^-", "/", gsub("-", "/", project_enc))
   session_id  <- tools::file_path_sans_ext(basename(as.character(path)))
-  session_date <- NA_Date_
+  session_date <- as.Date(NA_character_)
 
   all_skills  <- character()
   all_agents  <- list()
@@ -127,7 +127,7 @@ parse_file <- function(path) {
     if (is.null(msg)) next
     if (is.na(session_date) && !is.null(msg$timestamp))
       session_date <- tryCatch(as.Date(substr(msg$timestamp, 1L, 10L)),
-                               error = function(e) NA_Date_)
+                               error = function(e) as.Date(NA_character_))
     if (!identical(msg$type, "assistant")) next
     r <- extract_tool_calls(msg, session_id, session_date %||% Sys.Date(), project)
     if (is.null(r)) next
