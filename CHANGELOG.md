@@ -4,6 +4,43 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-14 — #634/#635 closed; config staleness ETL shipped; SkillSpector gaps implemented; 31 ghost DB rows cleared; 216 MB GC'd
+
+### Completed
+
+**Issues #634 and #635 resolved:**
+
+- **#634 (roborev zero-action / 0% close rate)** — Root cause: `com.claude.roborev-severity-autoclose.plist` was copied to `~/Library/LaunchAgents/` on 2026-05-30 BEFORE the `EnvironmentVariables` PATH block was added to the project plist. Stale plist ran with launchd's default PATH (`/usr/bin:/bin`), finding `/bin/bash` 3.2 which doesn't support `declare -A` (line 703) → script aborted → 0 autoclosures for 30 days. Fix: unloaded stale plist, redeployed from project, reloaded. Script now evaluates 1300 open reviews correctly.
+
+- **#635 (13 locked agent worktrees, 31 ghost DB rows)** — All 13 locked worktrees shared dead PID 10070. `git worktree unlock` on all 13, then `git worktree remove --force` on the 13 whose branches were already merged into main. Freed 216 MB. 31 `agent_runs` rows with `status='running'` from dead sessions updated to `status='completed_inferred'`. The 12 stuck_loop MAJOR findings in the overnight self-review were false positives from the stale DB rows; cleared.
+
+**Config staleness ETL (PRs #629–#633):**
+- `skill_usage_etl.R` completely rewritten: 4 DuckDB tables (`config_inventory`, `skill_usage`, `agent_usage`, `config_access`) + `config_staleness` view across 431 config items
+- Covers skills, rules, memory, hooks, scripts; tracks never_used / stale_7d / stale_30d / stale_90d / mandatory / active
+- Key findings: 206 skills never used, 7 active skills (knowledge-base-wiki, modeling-baselines, targets-pipeline-spec etc.), 6 mandatory rules (auto-injected), 71 never-read scoped rules
+- Top agents: fixer (782), quick-fix (43), Explore (29)
+- ETL runs nightly as tail step of `roborev_metrics_etl.sh` at 02:00 (before 03:00 backup)
+- Cron LaunchAgent plist (`com.claude.skill-usage-etl.plist`) removed (#629)
+
+**SkillSpector gap analysis (#627):**
+- `check_skill_security.sh` — 9 security rules (prompt injection, exfiltration verb, curl POST, SYSTEM PROMPT marker, bypass, withhold, ignore-rule, disable-hook, install.packages)
+- `skill-security-scan.yml` CI gate blocks PR merge on high-severity findings, uploads SARIF artifact
+
+**URL fixes (PRs #624–#625):** 9 broken github.io links fixed in hover-popup-standard.md, knowledge-evolution.qmd, roborev-architecture.qmd, api-design-patterns.md (6 template URLs → `<owner>.github.io/<repo>`)
+
+### Failed Approaches
+
+- `NA_Date_` not a valid R constant — fixed with `as.Date(NA_character_)` (PR #632)
+- Skill inventory name mismatch: `tools::file_path_sans_ext(basename(file_path))` returned "SKILL" not "r-package-workflow" — fixed with `basename(dirname(file_path))` (PR #632)
+- `CREATE TABLE IF NOT EXISTS` doesn't add new columns — changed to `CREATE OR REPLACE TABLE` (PR #633)
+- fixer agent used undefined variables (`REPO_ROOT`, `LOG_FILE`) — corrected to `SCRIPT_DIR` and `LOGFILE` (PR #629)
+
+### Accuracy / Metrics
+
+- Burn: CRITICAL at $942/$500 (188%) with 1 day left in window — throttle to haiku for all remaining work
+- Worktrees reduced: 32 → 19 (13 merged agent worktrees removed, 216 MB freed)
+- agent_runs: 34 ghost running → 31 completed_inferred + 3 valid running (today)
+
 ## 2026-06-12 — #601/#595/#597 fixes shipped, #582 location decided, #584 enforced, #591 closed, #590 root-caused
 
 ### Completed
