@@ -75,6 +75,17 @@ at the hook level; the self-check here provides early warning before you reach
 the push call.
 ```
 
+**Prefix 3 — Progress markers for long-running operations** (closes llm#541):
+
+```
+**CRITICAL — Stream-watchdog:** The harness fires a 600s stream-watchdog if no
+output appears. Before every operation that may take >30s (nix-shell builds,
+duckdb queries, devtools::check, tar_make), emit a one-line progress marker:
+  echo "PROGRESS: starting nix-shell build for <reason>"
+  echo "PROGRESS: running duckdb migration"
+This prevents false-positive watchdog kills on legitimate long-running work.
+```
+
 Orchestrator responsibilities when dispatching:
 
 1. Compute the worktree path the harness will create (typically `.claude/worktrees/agent-<id>/`) and inject it as the literal `$WORKTREE_PATH` value — OR instruct the agent to capture its own `pwd` at startup (more robust since the agent ID is generated at dispatch time)
