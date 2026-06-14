@@ -325,7 +325,7 @@ ensure_tables <- function(con) {
       accesses INTEGER, etl_run_at TIMESTAMP
     )")
   dbExecute(con, "
-    CREATE TABLE IF NOT EXISTS config_inventory (
+    CREATE OR REPLACE TABLE config_inventory (
       item_type TEXT, name TEXT, file_path TEXT,
       file_size_bytes INTEGER, last_modified DATE,
       has_paths_scope BOOLEAN, is_mandatory BOOLEAN, etl_run_at TIMESTAMP
