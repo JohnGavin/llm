@@ -4,6 +4,19 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-14 — P1 sweep: 7 issues closed, 2 code fixes landed in PR #636
+
+### Fixed this session (P1 sweep)
+- **#420 (burn:err)** — `burn_rate_check.sh`: resolve `timeout`/`gtimeout` at runtime; GNU coreutils not in launchd PATH. Commit `15d5348` in PR #636.
+- **#574 (size_mb=0)** — Already fixed in PR #583; DB confirmed non-zero values (max 110MB). Closed as self-resolved.
+- **#516 (errors table dead)** — Already receiving rows after #503; `agent_push_guard` wrote 3 rows today. Closed.
+- **#491 (self-review starved)** — Downstream of #516; `self_review_findings_stage1` now has 15 rows incl. today's stuck_loop findings. Closed.
+- **#573 (false positives)** — Already fixed in PR #583 via allow-list in `self_review_stage1.sql`. Closed.
+- **#541 (stream-watchdog)** — Added Prefix 3 (progress markers) to dispatch-details companion. Commit `b3925bb` in PR #636.
+- **#430 (phantom-open jobs)** — Self-resolved; compact works cleanly in worktree session. Closed.
+
+### PR #636 now carries: #617 guard fix + #420 timeout resolver + #541 dispatch prefix
+
 ## 2026-06-14 — P0s closed: #617 guard fix (PR #636), #546 roborev hooks installed, #590 verified
 
 ### Completed
