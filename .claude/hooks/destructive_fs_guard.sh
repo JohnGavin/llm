@@ -14,19 +14,22 @@
 
 set -euo pipefail
 
-# Get the command from Claude's tool input
-# Claude passes tool input as JSON to stdin for hooks
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
+# In selftest mode, skip stdin reading — functions are defined below, selftest runs after them
+if [ "${CLAUDE_HOOK_SELFTEST:-0}" != "1" ]; then
+  # Get the command from Claude's tool input
+  # Claude passes tool input as JSON to stdin for hooks
+  INPUT=$(cat)
+  COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
 
-# Fallback: check environment variable (older hook interface)
-if [ -z "$COMMAND" ]; then
-  COMMAND="${CLAUDE_TOOL_INPUT:-}"
-fi
+  # Fallback: check environment variable (older hook interface)
+  if [ -z "$COMMAND" ]; then
+    COMMAND="${CLAUDE_TOOL_INPUT:-}"
+  fi
 
-# If still empty, allow (can't parse command)
-if [ -z "$COMMAND" ]; then
-  exit 0
+  # If still empty, allow (can't parse command)
+  if [ -z "$COMMAND" ]; then
+    exit 0
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -71,12 +74,102 @@ generate_expected_code() {
   echo "$hash" | grep -oE '[0-9]' | head -4 | tr -d '\n'
 }
 
+strip_heredoc_bodies() {
+  # Remove heredoc body content before destructive pattern matching (#617).
+  # Prevents false positives when a command writes a script file that happens
+  # to contain rm/git commands inside the heredoc body.
+  printf '%s\n' "$1" | awk '
+    /<</ {
+      line = $0
+      after = $0; sub(/.*<<[-]?[ \t]*/, "", after)
+      gsub(/^'"'"'|^"/, "", after)
+      split(after, a, /[ \t'"'"'"]/)
+      delim = a[1]
+      if (length(delim) > 0) {
+        in_here = 1
+        sub(/[ \t]*<<.*$/, "", line)
+        print line
+        next
+      }
+    }
+    in_here {
+      stripped = $0; sub(/^[ \t]+/, "", stripped)
+      if (stripped == delim || $0 == delim) { in_here = 0 }
+      next
+    }
+    { print }
+  '
+}
+
+is_own_worktree_path() {
+  # Agent harness worktrees (.claude/worktrees/agent-*) are sandboxed by
+  # isolation:"worktree" and should not be blocked by PROTECTED_PATHS (#617).
+  echo "$1" | grep -qE '\.claude/worktrees/agent-[a-f0-9]+'
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SELF-TEST (CLAUDE_HOOK_SELFTEST=1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
+  PASS=0; FAIL=0
+  assert_destructive() {
+    local desc="$1" cmd="$2"
+    local surface; surface=$(strip_heredoc_bodies "$cmd")
+    if is_destructive "$surface" && targets_protected "$cmd" && ! is_own_worktree_path "$cmd"; then
+      PASS=$((PASS+1)); echo "PASS: $desc"
+    else
+      FAIL=$((FAIL+1)); echo "FAIL: $desc"
+    fi
+  }
+  assert_allowed() {
+    local desc="$1" cmd="$2"
+    local surface; surface=$(strip_heredoc_bodies "$cmd")
+    local would_block=0
+    is_destructive "$surface" && targets_protected "$cmd" && ! is_own_worktree_path "$cmd" && would_block=1
+    if [ "$would_block" -eq 0 ]; then
+      PASS=$((PASS+1)); echo "PASS: $desc"
+    else
+      FAIL=$((FAIL+1)); echo "FAIL: $desc"
+    fi
+  }
+
+  # Should BLOCK
+  assert_destructive "rm -rf .claude/rules/" "rm -rf .claude/rules/"
+  assert_destructive "git reset --hard with .claude/ arg" "git reset --hard .claude/scripts/"
+  assert_destructive "git clean -fdx on _targets/" "git clean -fdx _targets/"
+
+  # Should ALLOW — heredoc body with rm inside (#617 fix 1)
+  assert_allowed "heredoc with rm inside body" "$(printf '%s\n' \
+    "cat > /tmp/foo.sh << 'SCRIPT'" \
+    "rm -rf \"\$tmp\"" \
+    "SCRIPT")"
+  assert_allowed "heredoc writing to .claude/scripts/ with rm body" "$(printf '%s\n' \
+    "cat > .claude/scripts/foo.sh << 'EOF'" \
+    "#!/bin/bash" \
+    "rm -rf \"\$build_dir\"" \
+    "EOF")"
+
+  # Should ALLOW — agent harness worktree path (#617 fix 2)
+  assert_allowed "rm in own harness worktree" \
+    "rm -rf .claude/worktrees/agent-abc1234567890abc/"
+
+  echo "$((PASS+FAIL)) tests: $PASS PASS, $FAIL FAIL"
+  exit $([ "$FAIL" -eq 0 ] && echo 0 || echo 1)
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # MAIN LOGIC
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Check if command is destructive AND targets protected path
-if is_destructive "$COMMAND" && targets_protected "$COMMAND"; then
+# Check if command is destructive AND targets protected path.
+# Strip heredoc bodies first so script content doesn't trigger the check (#617).
+COMMAND_SURFACE=$(strip_heredoc_bodies "$COMMAND")
+if is_destructive "$COMMAND_SURFACE" && targets_protected "$COMMAND"; then
+  # Exempt agent harness worktrees — they are already sandboxed (#617).
+  if is_own_worktree_path "$COMMAND"; then
+    exit 0
+  fi
 
   # Extract any provided confirmation code
   PROVIDED_CODE=$(extract_confirm_code "$COMMAND")
