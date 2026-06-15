@@ -84,9 +84,11 @@ if [ -z "${SKIP_CRON_PULL:-}" ]; then
 fi
 log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
 
-# ── Load credentials from env file ────────────────────────────────────────────
-if [ -f "${ENV_FILE}" ]; then
-  log "Loading env from ${ENV_FILE}"
+# ── Load credentials (bws injection takes priority over flat file) ─────────────
+if [[ -n "${GMAIL_USERNAME:-}" ]]; then
+  log "Credentials in environment (bws injection)"
+elif [ -f "${ENV_FILE}" ]; then
+  log "Loading env from ${ENV_FILE} (flat-file fallback)"
   set -a
   while IFS='=' read -r key val; do
     [[ "${key}" =~ ^[[:space:]]*# ]] && continue
