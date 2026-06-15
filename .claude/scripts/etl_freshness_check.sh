@@ -76,7 +76,7 @@ TRACKED_TABLES=(
     "roborev_finding_lineage_summary:closed_at_last"
     "roborev_daily_metrics:etl_run_at"
     # ── Roborev event-driven (sparse; no rate check) ───────────────────────
-    "roborev_threshold_changes:changed_at_utc"
+    "roborev_threshold_changes:changed_at_utc:max_age=60d"
 )
 
 # ─── Severity colour codes (only when a terminal) ────────────────────────────
@@ -116,13 +116,20 @@ fi
 # Writes nothing to stdout (caller captures).
 check_table() {
     local spec="$1"
-    local table ts_col do_rate_check
+    local table ts_col do_rate_check max_age_days
     table="${spec%%:*}"
     local rest="${spec#*:}"
     ts_col="${rest%%:*}"
     do_rate_check=""
+    max_age_days=""
     if [[ "$rest" == *":rate" ]]; then
         do_rate_check="1"
+    fi
+    # Per-table max-age override: ":max_age=Nd" scales thresholds to N days.
+    # GREEN = N/3 d, AMBER = 2N/3 d, RED = N d. For sparse event-driven tables
+    # that update infrequently by design (e.g. roborev_threshold_changes).
+    if [[ "$rest" =~ :max_age=([0-9]+)d ]]; then
+        max_age_days="${BASH_REMATCH[1]}"
     fi
 
     # DB must exist
@@ -197,12 +204,24 @@ check_table() {
         rate_detail="rate=$(( rate_x10 / 10 ))/day (7d)"
     fi
 
+    # Effective thresholds — scaled when per-table max_age is set
+    local eff_green eff_amber eff_red
+    if [[ -n "${max_age_days}" ]]; then
+        eff_green=$(( max_age_days * 86400 / 3 ))
+        eff_amber=$(( max_age_days * 86400 * 2 / 3 ))
+        eff_red=$(( max_age_days * 86400 ))
+    else
+        eff_green="${THRESH_GREEN}"
+        eff_amber="${THRESH_AMBER}"
+        eff_red="${THRESH_RED}"
+    fi
+
     # Classify by age
-    if [[ "${age_sec}" -gt "${THRESH_RED}" ]]; then
+    if [[ "${age_sec}" -gt "${eff_red}" ]]; then
         echo "CRITICAL:${age_human}:${table} latest ${ts_col} is ${age_human} ago${rate_detail:+ (${rate_detail})}"
-    elif [[ "${age_sec}" -gt "${THRESH_AMBER}" ]]; then
+    elif [[ "${age_sec}" -gt "${eff_amber}" ]]; then
         echo "RED:${age_human}:${table} latest ${ts_col} is ${age_human} ago${rate_detail:+ (${rate_detail})}"
-    elif [[ "${age_sec}" -gt "${THRESH_GREEN}" ]]; then
+    elif [[ "${age_sec}" -gt "${eff_green}" ]]; then
         echo "AMBER:${age_human}:${table} latest ${ts_col} is ${age_human} ago${rate_detail:+ (${rate_detail})}"
     else
         echo "GREEN:${age_human}:${table} latest ${ts_col} is ${age_human} ago${rate_detail:+ (${rate_detail})}"
@@ -513,14 +532,39 @@ selftest() {
     r8_found=$(echo "${r8}" | grep -c "untracked_widget" || true)
     _assert "discover-untracked-8d-INFO" "${r8_found}" "1"
 
-    # Test 9: --list-tables prints tracked table count
-    local r9
-    r9=$(MODE="list-tables" bash "${BASH_SOURCE[0]}" --list-tables 2>/dev/null | head -1)
-    _assert "list-tables-header" "${r9%% *}" "Tracked"
+    # Test 9a: max_age=60d — 18-day-old sparse table → GREEN (not RED)
+    local maxage_db="/tmp/etl_freshness_maxage_${pid}.duckdb"
+    rm -f "${maxage_db}"
+    duck_run "${maxage_db}" -c "
+        CREATE TABLE roborev_threshold_changes (changed_at_utc TIMESTAMP);
+        INSERT INTO roborev_threshold_changes VALUES (current_timestamp - INTERVAL 18 DAY);
+    " >/dev/null 2>&1
+    local r9a
+    r9a=$(ETL_FRESHNESS_DB="${maxage_db}" DB="${maxage_db}" \
+          check_table "roborev_threshold_changes:changed_at_utc:max_age=60d")
+    _assert "max_age-60d-18d-GREEN" "${r9a%%:*}" "GREEN"
+
+    # Test 9b: max_age=60d — 50-day-old sparse table → RED
+    local maxage_stale_db="/tmp/etl_freshness_maxage_stale_${pid}.duckdb"
+    rm -f "${maxage_stale_db}"
+    duck_run "${maxage_stale_db}" -c "
+        CREATE TABLE roborev_threshold_changes (changed_at_utc TIMESTAMP);
+        INSERT INTO roborev_threshold_changes VALUES (current_timestamp - INTERVAL 50 DAY);
+    " >/dev/null 2>&1
+    local r9b
+    r9b=$(ETL_FRESHNESS_DB="${maxage_stale_db}" DB="${maxage_stale_db}" \
+          check_table "roborev_threshold_changes:changed_at_utc:max_age=60d")
+    _assert "max_age-60d-50d-RED" "${r9b%%:*}" "RED"
+
+    # Test 10: --list-tables prints tracked table count
+    local r10
+    r10=$(MODE="list-tables" bash "${BASH_SOURCE[0]}" --list-tables 2>/dev/null | head -1)
+    _assert "list-tables-header" "${r10%% *}" "Tracked"
 
     # Cleanup
     rm -f "${fresh_db}" "${stale_db}" "${empty_db}" "${sparse_db}" "${absent_db}" \
-          "${roborev_fresh_db}" "${roborev_stale_db}" "${discover_db}" 2>/dev/null || true
+          "${roborev_fresh_db}" "${roborev_stale_db}" "${discover_db}" \
+          "${maxage_db}" "${maxage_stale_db}" 2>/dev/null || true
 
     echo "─────────────────────────────"
     echo "Selftest: ${pass} PASS, ${fail} FAIL"
