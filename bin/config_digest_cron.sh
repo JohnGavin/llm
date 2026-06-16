@@ -322,4 +322,8 @@ if [ "${_duckdb_ok}" = "1" ]; then
   log "Step 3: housekeeping_runs updated (status=${_final_status} rows_written=${_EVENTS_WRITTEN})"
 fi
 
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/config-digest.stamp"
+
 log "=== config_digest_cron.sh done ==="

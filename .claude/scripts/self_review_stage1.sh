@@ -224,3 +224,7 @@ else
     run_write "${DB}"
     log "INFO: Done."
 fi
+
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/self-review-stage1.stamp"

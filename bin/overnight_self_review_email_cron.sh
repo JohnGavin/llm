@@ -129,6 +129,9 @@ rc=$?
 set -e
 
 if [ $rc -eq 0 ]; then
+  # Stamp for cron_catchup.sh catch-up detection
+  mkdir -p "${HOME}/.claude/logs/stamps"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/overnight-email.stamp"
   log "=== overnight_self_review_email_cron.sh completed OK ==="
 else
   log "=== overnight_self_review_email_cron.sh FAILED (exit ${rc}) ==="

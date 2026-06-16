@@ -481,4 +481,9 @@ done
 log "[done] events=$EVENTS apply=$APPLY"
 
 hk_end "$RUN_ID" "ok" "$EVENTS" ""
+
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/branch-gc.stamp"
+
 exit 0

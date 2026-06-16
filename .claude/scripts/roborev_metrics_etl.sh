@@ -354,5 +354,12 @@ fi
 
 EXIT_CODE=$ROBOREV_EXIT
 log "end: exit=${EXIT_CODE}"
+
+# Stamp for cron_catchup.sh catch-up detection (only on success)
+if [ "${EXIT_CODE}" -eq 0 ]; then
+  mkdir -p "${HOME}/.claude/logs/stamps"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/roborev-metrics-etl.stamp"
+fi
+
 echo "roborev_metrics_etl: exit=${EXIT_CODE}"
 exit $EXIT_CODE

@@ -60,4 +60,8 @@ for p in prs:
   echo
 } >> "$LOG" 2>&1
 
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/pr-status-pulse.stamp"
+
 exit 0
