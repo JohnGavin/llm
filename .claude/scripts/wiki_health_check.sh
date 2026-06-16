@@ -335,4 +335,9 @@ fi
 
 [ $errors -gt 0 ] && exit 2
 [ $warnings -gt 0 ] && exit 1
+
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/wiki-health-pulse.stamp"
+
 exit 0
