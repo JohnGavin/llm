@@ -22,7 +22,7 @@ mkdir -p "${STAMP_DIR}"
 mkdir -p "$(dirname "${LOG_FILE}")"
 
 log() {
-  printf '%s: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "${LOG_FILE}"
+  printf '%s: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "${LOG_FILE}"
 }
 
 # Prevent concurrent runs
