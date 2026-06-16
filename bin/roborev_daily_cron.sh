@@ -191,4 +191,8 @@ if [ "${STEP3_EXIT}" -ne 0 ]; then
 fi
 log "Step 3 done"
 
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/roborev-daily-email.stamp"
+
 log "=== roborev_daily_cron.sh done ==="

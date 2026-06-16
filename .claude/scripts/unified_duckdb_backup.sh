@@ -396,4 +396,8 @@ if [ "$DO_PRUNE" = "1" ]; then
   prune_old_backups "$BACKUP_ROOT" "$APPLY"
 fi
 
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/unified-duckdb-backup.stamp"
+
 log "unified_duckdb_backup: done"
