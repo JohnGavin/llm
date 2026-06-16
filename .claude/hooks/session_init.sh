@@ -922,27 +922,29 @@ fi
 # Phase 8b: roborev-autoclose visibility
 phase_roborev_autoclose 2>/dev/null || echo "roborev-autoclose: threshold=unknown (error reading counter file)"
 
-# Phase 9: Burn rate — dual-comparison soak (2026-06-05 to 2026-06-19, llm#523).
-# Runs ccusage (primary) and CodexBar scripts in parallel; primary output is
-# unchanged. Both outputs are appended to burn_rate_compare.log for validation.
-# Set CLAUDE_BURN_RATE_COMPARE=0 to skip the secondary CodexBar script.
+# Phase 9: Burn rate — CodexBar is now primary (#281 Phase 4c; closes llm#420).
+# Soak log (2026-06-05 to 2026-06-16) confirmed CodexBar reliable (burn:78-86%)
+# while ccusage/cmonitor-rs has been dead (BURN GUARD DEAD, 5+ consecutive runs).
+# Legacy ccusage retained as cross-check; set CLAUDE_BURN_RATE_COMPARE=0 to skip.
 burn_output=""
 burn_script="$CLAUDE_DIR/scripts/burn_rate_check.sh"
 burn_cb_script="$CLAUDE_DIR/scripts/burn_rate_check_codexbar.sh"
-if [ -x "$burn_script" ]; then
-  # Run primary (ccusage) and secondary (CodexBar) in parallel
-  burn_output=$(timeout 5 "$burn_script" compact 2>/dev/null) || burn_output="burn:err"
-  if [ "${CLAUDE_BURN_RATE_COMPARE:-1}" != "0" ] && [ -x "$burn_cb_script" ]; then
-    burn_cb_output=$(timeout 5 "$burn_cb_script" 2>/dev/null) || burn_cb_output="burn:err:timeout"
-    # Append comparison line to log (timestamp | primary | codexbar)
+if [ -x "$burn_cb_script" ]; then
+  # CodexBar is primary (#281 Phase 4c)
+  burn_output=$(timeout 5 "$burn_cb_script" 2>/dev/null) || burn_output="burn:err"
+  if [ "${CLAUDE_BURN_RATE_COMPARE:-1}" != "0" ] && [ -x "$burn_script" ]; then
+    burn_legacy=$(timeout 5 "$burn_script" compact 2>/dev/null) || burn_legacy="burn:err:legacy"
     _compare_log="${HOME}/.claude/logs/burn_rate_compare.log"
-    printf '%s | primary=%s | codexbar=%s\n' \
+    printf '%s | primary=%s (codexbar) | legacy=%s (ccusage)\n' \
       "$(date '+%Y-%m-%dT%H:%M:%S')" \
       "${burn_output:-burn:err}" \
-      "${burn_cb_output:-burn:err}" \
+      "${burn_legacy:-burn:err}" \
       >> "$_compare_log" 2>/dev/null || true
-    unset burn_cb_output
+    unset burn_legacy
   fi
+elif [ -x "$burn_script" ]; then
+  # CodexBar script absent — fall back to legacy ccusage
+  burn_output=$(timeout 5 "$burn_script" compact 2>/dev/null) || burn_output="burn:err"
 fi
 
 # Phase 10: Kill orphan crew workers (no controller running)
