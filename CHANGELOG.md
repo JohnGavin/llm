@@ -4,6 +4,35 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-16 — Anacron catch-up system for all launchd cron jobs + BW SM pilot complete
+
+### Completed
+
+- **Bitwarden Secrets Manager pilot fully wired** (from prior session): all 4 secrets in `claude-llm-creds` project, machine account `claude-cron` scoped, `bws_launcher.sh` exec-without-fallback bug fixed (PR #639, merged). Flat-file fallback intact for network-unavailable (Mac wake-from-sleep lag).
+- **Answered monitoring gap question**: pulse jobs (`config-pulse`, `knowledge-pulse`, `wiki-health-pulse`, `pr-status-pulse`) had no dedicated staleness monitor — the only signal was the session-init ETL freshness check, and only for DuckDB-backed tables. Jobs writing Parquet only were invisible.
+- **Anacron-style catch-up system** (PR #642, merged): `cron_catchup.sh` runs every 15 min via `StartInterval=900` plist. Checks 15 stamp files; re-runs any job stale by more than `max_age_hours` (26h for daily, 10h for 3x-daily). All 15 cron scripts now write `~/.claude/logs/stamps/<label>.stamp` on success.
+  - `config_pulse.sh` + `knowledge_pulse.sh` are symlinks into `llmtelemetry` — covered by companion PR llmtelemetry#304 (merged).
+  - Plist installed and loaded; first run caught up all 15 missed jobs immediately on load.
+- **Fixed double-logging bug** (PR #643, merged): `log()` used `tee` + launchd `StandardOutPath` → every line written twice. Removed `tee`, write directly to file only.
+- **branch_gc Phase B** (PR #638, open): unique-string re-implementation detection (step 3), `deleted_reimpl` action, email Section 3c, `prune_old_notes()`. 17 selftests pass.
+
+### Failed Approaches
+
+- None this session.
+
+### Accuracy / Metrics
+
+- ETL freshness at session start: 8 AMBER, 2 GREEN (same as prior session — pulse catch-up will improve this once stamps populate)
+- cron_catchup first run: 15/15 stale jobs caught up and re-run successfully
+
+### Known Limitations / Open Items
+
+- **Flat env files** (`~/.claude/env/overnight_self_review.env`, `kb_digest.env`, `roborev_email.env`) not yet deleted — wait for a clean overnight run with bws injection confirmed working, then delete.
+- **4 remaining cron scripts not yet migrated to bws_launcher.sh**: `kb_digest_daily_cron.sh`, `config_digest_cron.sh`, `roborev_daily_cron.sh`, `roborev_daily_backlog_aggregator.sh`.
+- **PR #638** (branch_gc Phase B) still open — needs merge.
+- **config_pulse / knowledge_pulse double-run**: until stamp writes land via llmtelemetry#304 (now merged), catchup re-runs these ~15 min after normal plist fires. Harmless for idempotent pulse jobs. Fixed by merge.
+- **roborev**: 23 unresolved findings (accumulated, not from today).
+
 ## 2026-06-14 — P1 sweep: 7 issues closed, 2 code fixes landed in PR #636
 
 ### Fixed this session (P1 sweep)
