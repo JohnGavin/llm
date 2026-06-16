@@ -53,22 +53,32 @@ if [[ "${BW_AVAILABLE}" -eq 1 ]]; then
         exit 0
     fi
     export BWS_ACCESS_TOKEN
-    exec "${BWS_BIN}" run -- "${TARGET}" "$@"
-else
-    # Fallback: source flat env file if provided, then exec the target directly
-    FALLBACK="${BW_FALLBACK_ENV:-}"
-    if [[ -n "${FALLBACK}" ]] && [[ -f "${FALLBACK}" ]]; then
-        log "WARN: bws unavailable — sourcing flat file ${FALLBACK}"
-        set -a
-        # shellcheck disable=SC1090
-        source "${FALLBACK}"
-        set +a
-    else
-        log "WARN: bws unavailable and no BW_FALLBACK_ENV — running ${TARGET} with current env"
-    fi
-    if [[ "${BW_DRYRUN:-0}" == "1" ]]; then
-        echo "[DRYRUN] exec ${TARGET} $*"
+    # Run bws without exec so we can catch network/auth failures and fall back.
+    # bws spawns TARGET as a subprocess; on success we exit with its code.
+    set +e
+    "${BWS_BIN}" run -- "${TARGET}" "$@"
+    bws_exit=$?
+    set -e
+    if [[ $bws_exit -eq 0 ]]; then
         exit 0
     fi
-    exec "${TARGET}" "$@"
+    log "WARN: bws run failed (exit ${bws_exit}) — network timeout or auth error; falling back to flat file"
 fi
+
+# Fallback: source flat env file if provided, then exec the target directly.
+# Reached when: (a) bws binary/token unavailable, or (b) bws run failed above.
+FALLBACK="${BW_FALLBACK_ENV:-}"
+if [[ -n "${FALLBACK}" ]] && [[ -f "${FALLBACK}" ]]; then
+    log "WARN: sourcing flat file ${FALLBACK}"
+    set -a
+    # shellcheck disable=SC1090
+    source "${FALLBACK}"
+    set +a
+else
+    log "WARN: no BW_FALLBACK_ENV — running ${TARGET} with current env"
+fi
+if [[ "${BW_DRYRUN:-0}" == "1" ]]; then
+    echo "[DRYRUN] exec ${TARGET} $*"
+    exit 0
+fi
+exec "${TARGET}" "$@"
