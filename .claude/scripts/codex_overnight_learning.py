@@ -546,6 +546,15 @@ def main() -> int:
     print(f"codex-overnight-learning: sessions={len(sessions)} signals={len(signals)} sha1={digest}")
     print(f"  json: {json_path}")
     print(f"  md:   {md_path}")
+
+    # Stamp for cron_catchup.sh catch-up detection
+    import datetime
+    _stamp_dir = pathlib.Path.home() / ".claude" / "logs" / "stamps"
+    _stamp_dir.mkdir(parents=True, exist_ok=True)
+    (_stamp_dir / "codex-overnight.stamp").write_text(
+        datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ") + "\n"
+    )
+
     return 0
 
 

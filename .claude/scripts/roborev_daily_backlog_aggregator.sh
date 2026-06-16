@@ -366,5 +366,9 @@ out_file="${OUT_DIR}/${TODAY}.md"
 written=$(_write_global_summary "$out_file" "$summary_rows")
 log "summary written: $written"
 
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/roborev-daily-backlog.stamp"
+
 echo "roborev_daily_backlog_aggregator: processed=$processed skipped=$skipped summary=$written"
 exit 0

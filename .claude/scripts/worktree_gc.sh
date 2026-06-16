@@ -395,6 +395,10 @@ fi
 
 log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE removed=$REMOVED kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak"
 
+# Stamp for cron_catchup.sh catch-up detection
+mkdir -p "${HOME}/.claude/logs/stamps"
+date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/worktree-gc.stamp"
+
 # Update housekeeping_runs end row
 if [ "$_duckdb_ok" = "1" ]; then
   _run_ended=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
