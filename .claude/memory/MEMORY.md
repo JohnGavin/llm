@@ -133,3 +133,20 @@
 - All rules, scripts, CLAUDE.md now git-backed via symlinks
 - CLAUDE.md → AGENTS.md (merged, <200 lines)
 - /hi → symlink to /session-start
+
+## Verify External Claims (see feedback_verify-external-claims.md)
+- Don't assert an external tool's internals/capabilities from name/marketing — read source/docs FIRST
+- If unverified, label it as unverified rather than stating as fact (external-tool extension of NEVER speculate)
+- When a vendor site blocks WebFetch, use `gh api repos/<owner>/<repo>/contents/<path>` to read source
+- Origin: claimed msgvault "data model is messages" before reading the code (2026-06-18)
+
+## Adopt Before Build (see feedback_adopt-before-build.md)
+- Before proposing to build / estimating effort, check (a) does our stack already have the primitive, (b) is there a maintained tool
+- DuckDB ships fts (BM25) + vss (HNSW); RRF ≈ 15 lines SQL — glue, not an engine
+- `qmd` already does local hybrid markdown search + MCP server (may obviate llm#645 Phases 2/3b/4)
+- Origin: over-scoped a "reimplement DuckDB+RRF" estimate (2026-06-18)
+
+## Hook ENOENT = Deleted CWD (see hook-cwd-deletion.md)
+- `ENOENT posix_spawn /bin/sh` on every hook = session cwd was deleted (NOT a missing shell/hook bug)
+- Recovery: end session, `cd ~/docs_gh/<project>`, relaunch via cc.sh (in-session cd unreliable)
+- Prevent: don't run from /tmp or ephemeral worktrees; never force-remove the cwd/ancestor (llm#647)
