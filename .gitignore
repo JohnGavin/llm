@@ -1,3 +1,8 @@
+# KB search index — contains knowledge content, must stay local (llm#645)
+*.kbidx.duckdb
+*.kbidx.duckdb.wal
+_kb_index/
+
 # R
 .Rproj.user
 .Rhistory
