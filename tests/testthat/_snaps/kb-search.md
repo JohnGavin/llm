@@ -3,7 +3,8 @@
     Code
       names(res)
     Output
-      [1] "path"       "heading"    "line_start" "score"      "snippet"   
+      [1] "loc"        "path"       "heading"    "line_start" "score"     
+      [6] "snippet"   
 
 # snapshot: error message when db_path missing
 

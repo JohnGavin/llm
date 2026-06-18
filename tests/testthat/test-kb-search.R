@@ -95,7 +95,22 @@ test_that("kb_search() returns tibble with required provenance columns", {
   res <- kb_search("BM25 full-text search", fx$db_path)
 
   expect_s3_class(res, "tbl_df")
-  expect_true(all(c("path", "heading", "line_start", "score", "snippet") %in% names(res)))
+  expect_true(all(c("loc", "path", "heading", "line_start", "score", "snippet") %in% names(res)))
+  # loc must be the first column
+  expect_equal(names(res)[[1L]], "loc")
+})
+
+test_that("kb_search() loc column is basename:line_start form", {
+  fx <- make_fixture()
+  kb_index(fx$dir, fx$db_path)
+  res <- kb_search("worktree sandbox isolation", fx$db_path)
+
+  expect_gt(nrow(res), 0L)
+  # Every loc entry must match "<basename>:<positive integer>"
+  expect_true(all(grepl("^[^:]+:\\d+$", res$loc)))
+  # Verify the formula: loc == paste0(basename(path), ":", line_start)
+  expected_loc <- paste0(basename(res$path), ":", res$line_start)
+  expect_equal(res$loc, expected_loc)
 })
 
 test_that("kb_search() finds relevant file for a targeted query", {

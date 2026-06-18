@@ -232,6 +232,8 @@ kb_index <- function(dir, db_path) {
 #'
 #' @return A [tibble::tibble] with columns:
 #'   \describe{
+#'     \item{loc}{Compact provenance locator: `basename(path):line_start`.
+#'       Surfaces file and line at a glance when printing results to the console.}
 #'     \item{path}{Absolute path of the source file.}
 #'     \item{heading}{Heading text for the chunk (or `"(preamble)"` /
 #'       `"(block N)"` for heading-less sections).}
@@ -289,5 +291,11 @@ kb_search <- function(query, db_path, k = 10L) {
   res <- DBI::dbFetch(stmt)
   DBI::dbClearResult(stmt)
 
-  tibble::as_tibble(res)
+  res <- tibble::as_tibble(res)
+
+  # Add compact provenance locator and move it to the front
+  res$loc <- paste0(basename(res$path), ":", res$line_start)
+  res <- res[, c("loc", "path", "heading", "line_start", "score", "snippet")]
+
+  res
 }

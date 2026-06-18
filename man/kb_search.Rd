@@ -17,6 +17,8 @@ kb_search(query, db_path, k = 10L)
 \value{
 A [tibble::tibble] with columns:
   \describe{
+    \item{loc}{Compact provenance locator: `basename(path):line_start`.
+      Surfaces file and line at a glance when printing results to the console.}
     \item{path}{Absolute path of the source file.}
     \item{heading}{Heading text for the chunk (or `"(preamble)"` /
       `"(block N)"` for heading-less sections).}
