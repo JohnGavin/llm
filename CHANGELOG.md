@@ -43,6 +43,28 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 - None.
 
+## 2026-06-19 — Security/tooling session: supply-chain gaps, KB search (Phase 3a), credential-tier hardening
+
+### Completed
+- Filed gap-analysis / leverage issues with options+pros/cons: #644 (Socket.dev mini-Shai-Hulud/Miasma/Hades PyPI+npm worms vs our setup), #645 (msgvault local DuckDB/MCP KB search), #647 (hook ENOENT-on-deleted-cwd robustness), #648 (agentsview → overnight lessons-learnt review), #649 (OrbStack VM → Code-on-Incus → agent nested sandbox).
+- **KB search Phase 3a shipped** (PR #646, merged): DuckDB BM25 `kb_index()`/`kb_search()` with `loc` (`basename:line`) provenance; 23 tests; indexes 1116 chunks/126 files. Phase 0 confirmed `fts`+`vss` load on DuckDB 1.4.4. qmd logged as adopt-vs-build candidate that may obviate Phases 2/3b/4.
+- **#376 credential-tier hardening** (PR #650, merged): non-interactive fail-safe deny for ask-tier (+ `CREDENTIAL_ASK_ALLOW` per-job pre-auth), structured decision log (names only), `incident_response.sh` extended to 6 providers incl. `BWS_ACCESS_TOKEN` (Keychain rotation). Live `~/.claude/credential_tiers.toml` created by user and verified active.
+- Relocated contagion-networks prototype into `historical/explorations/` with PROVENANCE + GRADUATION gates (historical#472, merged).
+- 3 lessons → memory: verify-external-claims, adopt-before-build, hook-cwd-deletion (commit b1bf911).
+
+### Failed Approaches
+- Asserted msgvault internals ("data model is messages", "reshaping fights the tool") and called #376 "not started" before reading source — wrong order; both confirmed/corrected only after the user pushed back. Captured as `feedback_verify-external-claims`.
+- Tried to write the live `~/.claude/credential_tiers.toml` directly; `file_protection.sh` (correctly) blocked it — the credential policy is a human-only artifact. User created it.
+
+### Accuracy / Metrics
+- `permission_request.sh`: 33/33 self-tests (28 preserved + 5 new #376 cases). `kb_search`: 23 tests passing.
+
+### Known Limitations
+- #376 live credential auto-rotation deferred (dry-run only) — #376 left open to carry it.
+- Spikes queued, not executed: msgvault (#645 Phase 1), agentsview (#648), qmd, OrbStack/COI (#649, gated on #376).
+- #649/#615 sandbox payoff gated on secrets-off-disk (#376/#615 BW SM).
+- roborev backlog: 17 fails (8 codex job crashes — infra, not this session's code).
+
 ## 2026-06-16 — Anacron catch-up system for all launchd cron jobs + BW SM pilot complete
 
 ### Completed
