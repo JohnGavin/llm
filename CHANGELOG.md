@@ -4,6 +4,45 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-19 — #376 credential-tier hardening: fail-safe deny + decision log + incident coverage
+
+### Completed
+
+- **Change 1 — fail-safe deny for ask-tier in non-interactive context** (`permission_request.sh`):
+  When a Bash command references an `[ask]`-tier credential AND the context is non-interactive
+  (stdin/stderr not a TTY, or `CLAUDE_AGENT=1`, `CI`, `CLAUDE_HEADLESS`, `CLAUDE_BACKGROUND` set),
+  the hook now emits `{"decision":"deny",...}` deterministically instead of falling through to the
+  Claude Code permission prompt. This closes the gap where `bypassPermissions` in headless jobs
+  silently auto-approved ask-tier keys.
+  Exception: if the credential name is listed in `CREDENTIAL_ASK_ALLOW` (comma-separated env var),
+  the hook falls through instead — this lets a specific scheduled job pre-authorize a specific key.
+  Interactive behaviour (warn to stderr + fall through) is unchanged.
+
+- **Change 2 — structured decision log** (`permission_request.sh`):
+  Each tier-check decision now appends one JSON line to `~/.claude/logs/credential_decisions.log`
+  with: timestamp, credential_name, tier, requesting_tool, decision, context, reason.
+  Credential values are never written — names only. Log-write failures are silently tolerated.
+
+- **Change 3 — incident_response.sh coverage extended**:
+  Now covers 6 providers: GitHub, Anthropic, OpenAI, FRED, Bitwarden SM (BWS_ACCESS_TOKEN),
+  Gmail. Each provider has distinct ROTATE / REVOKE / UPDATE-STORE steps with CHECKPOINT markers.
+  For BW SM-migrated secrets, UPDATE-STORE = `bws secret edit` (not `.Renviron`).
+  BWS_ACCESS_TOKEN rotation includes Keychain update (`security add-generic-password -U`),
+  machine-account re-scope, and post-rotation `bws secret list` verification.
+  Existing safety guards (CLAUDE_AGENT=1 block, dry-run, INCIDENT_CONFIRM phrase, osascript
+  alert, log) are preserved unchanged.
+
+- **Change 4 — template + changelog updated**:
+  `credential_tiers.toml.example`: added `FRED_API_KEY` to `[auto]`, `BWS_ACCESS_TOKEN` to
+  `[ask]`, and a CONTEXT NOTE explaining the interactive-only gate + CREDENTIAL_ASK_ALLOW bypass.
+
+- **Self-tests**: 33 cases pass (28 original + 5 new tier/non-interactive cases).
+  bash -n passes on both modified scripts.
+
+### Failed Approaches
+
+- None.
+
 ## 2026-06-16 — Anacron catch-up system for all launchd cron jobs + BW SM pilot complete
 
 ### Completed
