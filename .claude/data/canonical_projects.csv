@@ -17,3 +17,5 @@ premortem,Premortem,JohnGavin/premortem,analysis,true,confirmed by user 2026-06-
 randomwalk,Random Walk,JohnGavin/randomwalk,analysis,true,
 rix.setup,rix Setup,JohnGavin/rix.setup,meta-config,true,
 urban_planning,Urban Planning,JohnGavin/urban_planning,analysis,true,
+eis6,EIS 6,,analysis,true,SENSITIVE — local git only; NEVER push to GitHub
+t-demos,T-lang demos (archived),,analysis,false,defunct; archived to proj/data/tlang/t_demos.zip 2026-06-20
