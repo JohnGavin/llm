@@ -812,27 +812,73 @@ echo "$scope_output"
 # Phase 1e: Worktree-parent cwd detection (advisory)
 phase_worktree_parent 2>/dev/null || true
 
-# Phase 2: Mappings (capture warnings)
-map_output=$(phase_mappings 2>/dev/null)
-if echo "$map_output" | grep -qiE "mismatch|WARN"; then
-  WARNINGS="${WARNINGS}$(echo "$map_output" | grep -iE 'WARN|MISMATCH') "
+# Phase 2: Mappings — BACKGROUND (~0.37s; MISMATCH/WARN surfaced from cache)
+_p2_cache="${HOME}/.claude/logs/session_init_phase2_cache.txt"
+if [ -f "$_p2_cache" ]; then
+  _p2_cached=$(cat "$_p2_cache" 2>/dev/null) || true
+  if echo "$_p2_cached" | grep -qiE "mismatch|WARN"; then
+    WARNINGS="${WARNINGS}$(echo "$_p2_cached" | grep -iE 'WARN|MISMATCH') "
+  fi
 fi
+mkdir -p "$(dirname "$_p2_cache")"
+nohup bash -c "
+  CLAUDE_DIR='$CLAUDE_DIR'
+  CLAUDE_MD='$CLAUDE_MD'
+  SKILLS_DIR='$SKILLS_DIR'
+  RULES_DIR='$RULES_DIR'
+  COMMANDS_DIR='$COMMANDS_DIR'
+  AGENTS_DIR='$AGENTS_DIR'
+  MEMORY_DIR='$MEMORY_DIR'
+  SETTINGS_JSON='$SETTINGS_JSON'
+  $(declare -f phase_mappings)
+  phase_mappings > '$_p2_cache' 2>/dev/null || true
+" > /dev/null 2>&1 &
 
-# Phase 3: Sizes (capture warnings)
-size_output=$(phase_sizes 2>/dev/null)
-if echo "$size_output" | grep -qiE "WARN|FAIL"; then
-  WARNINGS="${WARNINGS}$(echo "$size_output" | grep -iE 'WARN|FAIL') "
+# Phase 3: Sizes — BACKGROUND (~0.35s; WARN/FAIL surfaced from cache)
+_p3_cache="${HOME}/.claude/logs/session_init_phase3_cache.txt"
+if [ -f "$_p3_cache" ]; then
+  _p3_cached=$(cat "$_p3_cache" 2>/dev/null) || true
+  if echo "$_p3_cached" | grep -qiE "WARN|FAIL"; then
+    WARNINGS="${WARNINGS}$(echo "$_p3_cached" | grep -iE 'WARN|FAIL') "
+  fi
 fi
+mkdir -p "$(dirname "$_p3_cache")"
+nohup bash -c "
+  CLAUDE_DIR='$CLAUDE_DIR'
+  CLAUDE_MD='$CLAUDE_MD'
+  SKILLS_DIR='$SKILLS_DIR'
+  RULES_DIR='$RULES_DIR'
+  AGENTS_DIR='$AGENTS_DIR'
+  MEMORY_DIR='$MEMORY_DIR'
+  $(declare -f phase_sizes)
+  phase_sizes > '$_p3_cache' 2>/dev/null || true
+" > /dev/null 2>&1 &
 
-# Phase 4: Skill tokens
-skill_output=$(phase_skill_tokens 2>/dev/null)
-if echo "$skill_output" | grep -qiE "WARNING|OVER"; then
-  WARNINGS="${WARNINGS}$(echo "$skill_output" | grep -iE 'WARNING|OVER') "
+# Phase 4: Skill tokens — BACKGROUND (77 wc -l calls ~0.37s)
+# Cache pattern: show cached skill count and warnings for summary line.
+_p4_cache="${HOME}/.claude/logs/session_init_phase4_cache.txt"
+n_skills=""
+if [ -f "$_p4_cache" ]; then
+  _p4_cached=$(cat "$_p4_cache" 2>/dev/null) || true
+  n_skills=$(echo "$_p4_cached" | grep -oE '[0-9]+ skills' | head -1)
+  if echo "$_p4_cached" | grep -qiE "WARNING|OVER"; then
+    WARNINGS="${WARNINGS}$(echo "$_p4_cached" | grep -iE 'WARNING|OVER') "
+  fi
 fi
-n_skills=$(echo "$skill_output" | grep -oE '[0-9]+ skills' | head -1)
+mkdir -p "$(dirname "$_p4_cache")"
+nohup bash -c "
+  CLAUDE_DIR='$CLAUDE_DIR'
+  SKILLS_DIR='$SKILLS_DIR'
+  $(declare -f phase_skill_tokens)
+  phase_skill_tokens > '$_p4_cache' 2>/dev/null || true
+" > /dev/null 2>&1 &
 
-# Phase 5+6: ctx + R-universe (single Rscript)
-r_output=$(timeout 15 Rscript -e '
+# Phase 5+6: ctx + R-universe — BACKGROUND REFRESH with cache.
+# The live Rscript (R startup + network fetch) takes 5-15s on the critical path.
+# We instead: (a) read last-run cache instantly, (b) launch background refresh.
+# Cache file: ~/.claude/logs/session_init_phase56_cache.txt
+_p56_cache="${HOME}/.claude/logs/session_init_phase56_cache.txt"
+_p56_rscript='
   if (file.exists("DESCRIPTION")) {
     tryCatch({
       d <- read.dcf("DESCRIPTION", fields = c("Imports","Suggests","Depends"))
@@ -869,9 +915,20 @@ r_output=$(timeout 15 Rscript -e '
       if (nrow(fails) > 0) cat(sprintf("(%s)", paste(fails$Package, collapse = ",")))
     }
   }, error = function(e) cat("runiverse:err"))
-' 2>/dev/null) || r_output="R:timeout"
+'
 
-# Parse R output
+# Read cached result (instant — one session stale, acceptable for advisory info)
+r_output="ctx:cached|runiverse:cached"
+if [ -f "$_p56_cache" ]; then
+  r_output=$(cat "$_p56_cache" 2>/dev/null) || r_output="ctx:cached|runiverse:cached"
+fi
+
+# Launch background refresh — writes updated value to cache for next session
+mkdir -p "$(dirname "$_p56_cache")"
+nohup bash -c "timeout 20 Rscript -e '$_p56_rscript' 2>/dev/null > '$_p56_cache'.tmp && mv '$_p56_cache'.tmp '$_p56_cache'" \
+  > /dev/null 2>&1 &
+
+# Parse output (cached or live)
 ctx_part=$(echo "$r_output" | cut -d'|' -f1)
 runiverse_part=$(echo "$r_output" | cut -d'|' -f2)
 
@@ -890,33 +947,52 @@ if echo "$wt_output" | grep -qE "Agent worktrees|Git worktree:|Sibling worktree:
   wt_count=$(echo "$wt_output" | grep -cE "worktree:|Prunable" || echo 0)
 fi
 
-# Phase 7g: Branch Harvest on Fork (silent unless flagged)
-phase_branch_harvest 2>/dev/null || true
+# Phase 7g: Branch Harvest on Fork — BACKGROUND (advisory, ~1.15s foreground cost)
+# Output written to cache; shown at next session start if non-empty.
+_bharvest_cache="${HOME}/.claude/logs/session_init_branch_harvest_cache.txt"
+if [ -f "$_bharvest_cache" ]; then
+  _bharvest_cached=$(cat "$_bharvest_cache" 2>/dev/null) || true
+  [ -n "$_bharvest_cached" ] && printf '%s\n' "$_bharvest_cached"
+fi
+_bharvest_script="${HOME}/.claude/scripts/branch_harvest_audit.sh"
+if [ -x "$_bharvest_script" ]; then
+  mkdir -p "$(dirname "$_bharvest_cache")"
+  nohup bash -c "timeout 5 bash '$_bharvest_script' 2>/dev/null > '$_bharvest_cache'.tmp && mv '$_bharvest_cache'.tmp '$_bharvest_cache' || true" \
+    > /dev/null 2>&1 &
+fi
 
-# Phase 8: roborev
+# Phase 8: roborev — BACKGROUND (3 binary calls; each ~0.3-1s; total ~1-3s foreground cost)
+# Show cached status instantly; refresh in background for next session.
+_rv_cache="${HOME}/.claude/logs/session_init_roborev_cache.txt"
 roborev_status=""
+if [ -f "$_rv_cache" ]; then
+  roborev_status=$(cat "$_rv_cache" 2>/dev/null) || roborev_status=""
+fi
+
 if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
-  rv_output=$(/usr/local/bin/roborev status 2>/dev/null) || true
-  if echo "$rv_output" | grep -qE "running" 2>/dev/null; then
-    # Count high-severity failures specifically
-    n_high=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 100 2>/dev/null | grep -cE "^Job" || true)
-    n_total=$(/usr/local/bin/roborev list --status failed --limit 100 2>/dev/null | grep -cE "^Job" || true)
-    n_high=$(as_int_or_zero "$n_high")
-    n_total=$(as_int_or_zero "$n_total")
-    if [ "${n_high:-0}" -gt 0 ]; then
-      roborev_status="roborev:${n_high}high/${n_total}total"
-    elif [ "${n_total:-0}" -gt 0 ]; then
-      roborev_status="roborev:${n_total}failed"
-    else
-      roborev_status="roborev:ok"
-    fi
-    # Warn if hook enabled but config missing
-    if [ -f "$PWD/.git/hooks/post-commit" ] && grep -q roborev "$PWD/.git/hooks/post-commit" 2>/dev/null; then
-      [ ! -f "$PWD/.roborev.toml" ] && WARNINGS="${WARNINGS}WARN: .roborev.toml missing "
-    fi
-  else
-    roborev_status="roborev:off"
+  # Check for missing .roborev.toml — this is fast (just file checks, no binary calls)
+  if [ -f "$PWD/.git/hooks/post-commit" ] && grep -q roborev "$PWD/.git/hooks/post-commit" 2>/dev/null; then
+    [ ! -f "$PWD/.roborev.toml" ] && WARNINGS="${WARNINGS}WARN: .roborev.toml missing "
   fi
+  # Launch background refresh of roborev status
+  mkdir -p "$(dirname "$_rv_cache")"
+  nohup bash -c '
+    rv_out=$(/usr/local/bin/roborev status 2>/dev/null) || true
+    if echo "$rv_out" | grep -qE "running" 2>/dev/null; then
+      n_high=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 100 2>/dev/null | grep -cE "^Job" || true)
+      n_total=$(/usr/local/bin/roborev list --status failed --limit 100 2>/dev/null | grep -cE "^Job" || true)
+      n_high="${n_high:-0}"; n_total="${n_total:-0}"
+      if [ "${n_high:-0}" -gt 0 ]; then
+        echo "roborev:${n_high}high/${n_total}total"
+      elif [ "${n_total:-0}" -gt 0 ]; then
+        echo "roborev:${n_total}failed"
+      else
+        echo "roborev:ok"
+      fi
+    else
+      echo "roborev:off"
+    fi
+  ' > "$_rv_cache" 2>/dev/null &
 fi
 
 # Phase 8b: roborev-autoclose visibility
@@ -925,14 +1001,15 @@ phase_roborev_autoclose 2>/dev/null || echo "roborev-autoclose: threshold=unknow
 # Phase 9: Burn rate — CodexBar is now primary (#281 Phase 4c; closes llm#420).
 # Soak log (2026-06-05 to 2026-06-16) confirmed CodexBar reliable (burn:78-86%)
 # while ccusage/cmonitor-rs has been dead (BURN GUARD DEAD, 5+ consecutive runs).
-# Legacy ccusage retained as cross-check; set CLAUDE_BURN_RATE_COMPARE=0 to skip.
+# Legacy ccusage cross-check now OFF by default (dead weeks; saves one timeout 5).
+# Set CLAUDE_BURN_RATE_COMPARE=1 explicitly to re-enable cross-check logging.
 burn_output=""
 burn_script="$CLAUDE_DIR/scripts/burn_rate_check.sh"
 burn_cb_script="$CLAUDE_DIR/scripts/burn_rate_check_codexbar.sh"
 if [ -x "$burn_cb_script" ]; then
   # CodexBar is primary (#281 Phase 4c)
   burn_output=$(timeout 5 "$burn_cb_script" 2>/dev/null) || burn_output="burn:err"
-  if [ "${CLAUDE_BURN_RATE_COMPARE:-1}" != "0" ] && [ -x "$burn_script" ]; then
+  if [ "${CLAUDE_BURN_RATE_COMPARE:-0}" = "1" ] && [ -x "$burn_script" ]; then
     burn_legacy=$(timeout 5 "$burn_script" compact 2>/dev/null) || burn_legacy="burn:err:legacy"
     _compare_log="${HOME}/.claude/logs/burn_rate_compare.log"
     printf '%s | primary=%s (codexbar) | legacy=%s (ccusage)\n' \
@@ -962,14 +1039,18 @@ if /bin/ps -eo pid,etime,command 2>/dev/null | grep -q "crew_worker"; then
   fi
 fi
 
-# Phase 11: AGENTS.md audit
-audit_output=""
+# Phase 11: AGENTS.md audit — BACKGROUND (~0.45s; DRIFT warnings shown from cache)
+_agents_audit_cache="${HOME}/.claude/logs/session_init_agents_audit_cache.txt"
 audit_script="$CLAUDE_DIR/scripts/agents_md_audit.sh"
-if [ -x "$audit_script" ]; then
-  audit_output=$("$audit_script" 2>/dev/null) || true
-  if echo "$audit_output" | grep -q "DRIFT"; then
-    WARNINGS="${WARNINGS}${audit_output} "
+if [ -f "$_agents_audit_cache" ]; then
+  _agents_cached=$(cat "$_agents_audit_cache" 2>/dev/null) || true
+  if echo "$_agents_cached" | grep -q "DRIFT"; then
+    WARNINGS="${WARNINGS}${_agents_cached} "
   fi
+fi
+if [ -x "$audit_script" ]; then
+  mkdir -p "$(dirname "$_agents_audit_cache")"
+  nohup bash -c "'$audit_script' 2>/dev/null > '$_agents_audit_cache' || true" > /dev/null 2>&1 &
 fi
 
 # ── Phase 11b: Quarto post-render contrast wiring check ──
@@ -1025,18 +1106,45 @@ if [ -x "$_lc" ]; then
   fi
 fi
 
-# ── Phase 12: Log session start to unified DuckDB ──
+# ── Phase 12: Log session start to unified DuckDB — BACKGROUND (~0.74s DuckDB cost) ──
 _log_script="$CLAUDE_DIR/scripts/log_session.sh"
 _session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
 if [ -x "$_log_script" ]; then
-  "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" 2>/dev/null || true
+  nohup "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" > /dev/null 2>&1 &
 fi
-# Record session start time for session_stop braindump sweep
+# Record session start time for session_stop braindump sweep (fast write, stay sync)
 date '+%Y-%m-%d %H:%M:%S' > "$CLAUDE_RUNTIME_ROOT/logs/.session_start_time"
 
-# ── Phase 13: Surface unprocessed braindumps for Claude to act on ──
-_bd_db="$CLAUDE_RUNTIME_ROOT/logs/unified.duckdb"
-if [ -f "$_bd_db" ]; then
+# ── Phase 13: Braindumps + dated issues — BACKGROUND (DuckDB/network; shown cached) ──
+# Cache pattern: background job writes output; next session reads it instantly.
+_p13_cache="${HOME}/.claude/logs/session_init_phase13_cache.txt"
+if [ -f "$_p13_cache" ]; then
+  _p13_cached=$(cat "$_p13_cache" 2>/dev/null) || true
+  [ -n "$_p13_cached" ] && printf '\n%s\n' "$_p13_cached"
+fi
+
+# Background job: braindumps + dated issues + stale actions
+_dated_url=$(/usr/bin/git config --get remote.origin.url 2>/dev/null || true)
+_dated_repo_bg=""
+if [ -n "$_dated_url" ]; then
+  _dated_repo_bg=$(echo "$_dated_url" | /usr/bin/sed -E 's#^https?://[^/]+/##; s#^git@[^:]+:##; s#\.git$##')
+  case "$_dated_repo_bg" in */*) : ;; *) _dated_repo_bg="" ;; esac
+fi
+
+mkdir -p "$(dirname "$_p13_cache")"
+# Export vars needed by background subshell
+_bg_db="${CLAUDE_RUNTIME_ROOT}/logs/unified.duckdb"
+_bg_dated_repo="$_dated_repo_bg"
+_bg_state_dir="${CLAUDE_RUNTIME_ROOT}/state/dated_issues_cache"
+_bg_cache="$_p13_cache"
+
+nohup bash -s "$_bg_db" "$_bg_dated_repo" "$_bg_state_dir" "$_bg_cache" > /dev/null 2>&1 <<'BGEOF' &
+#!/usr/bin/env bash
+_bd_db="$1"; _dated_repo="$2"; _dated_cache_dir="$3"; _out_cache="$4"
+_output=""
+
+# Braindumps
+if [ -f "$_bd_db" ] && command -v duckdb >/dev/null 2>&1; then
   _bd_output=$(duckdb "$_bd_db" -c "
     SELECT id, source, captured_at::VARCHAR as captured,
            CASE WHEN LENGTH(raw_text) > 120 THEN SUBSTR(raw_text, 1, 120) || '...' ELSE raw_text END as preview
@@ -1044,82 +1152,40 @@ if [ -f "$_bd_db" ]; then
     WHERE processed_prompt IS NULL
     ORDER BY captured_at DESC;
   " 2>/dev/null | grep "│" | grep -v "int32\|varchar\|─") || true
-
   _bd_count=$(duckdb -list -noheader "$_bd_db" -c "SELECT COUNT(*) FROM braindumps WHERE processed_prompt IS NULL;" 2>/dev/null | grep -oE '^[0-9]+$' | head -1) || _bd_count=0
-
   if [ "${_bd_count:-0}" -gt 0 ]; then
-    echo ""
-    echo "ACTION: $_bd_count unprocessed braindump(s) awaiting interpretation:"
-    echo "$_bd_output"
-    echo ""
-    echo "For each braindump: interpret the instruction, decide what action to take"
-    echo "(create issue, run command, update file, etc.), then mark as processed:"
-    echo "  duckdb ~/.claude/logs/unified.duckdb -c \"UPDATE braindumps SET processed_prompt='<summary>', processed_at=current_timestamp WHERE id=<N>;\""
-  fi
+    _output="${_output}
+ACTION: $_bd_count unprocessed braindump(s) awaiting interpretation:
+$_bd_output
 
-  # Also check for actions without linked issues (stale)
+For each braindump: interpret the instruction, decide what action to take
+(create issue, run command, update file, etc.), then mark as processed:
+  duckdb ~/.claude/logs/unified.duckdb -c \"UPDATE braindumps SET processed_prompt='<summary>', processed_at=current_timestamp WHERE id=<N>;\""
+  fi
   _stale=$(duckdb -list -noheader "$_bd_db" -c "
     SELECT COUNT(*) FROM braindump_actions
     WHERE status='created' AND issue_closed_at IS NULL
     AND created_at < current_timestamp - INTERVAL 14 DAY;
   " 2>/dev/null | grep -oE '^[0-9]+$' | head -1 2>/dev/null) || _stale=0
-  [ "${_stale:-0}" -gt 0 ] && echo "STALE: $_stale braindump-linked issues open >14 days"
+  [ "${_stale:-0}" -gt 0 ] && _output="${_output}
+STALE: $_stale braindump-linked issues open >14 days"
 fi
 
-# ── Phase 13b: Process pending skillify from previous session ──
-if [ -f "${HOME}/.claude/.pending_skillify" ] && [ -x "${HOME}/.claude/scripts/process_pending_skillify.sh" ]; then
-  timeout 5 "${HOME}/.claude/scripts/process_pending_skillify.sh" 2>/dev/null || true
-fi
-
-# ── Phase 13c: Surface dated GH issues with date ≤ today (llm#203) ────────────
-# Issues whose title starts with [YYYY-MM-DD] are durable scheduled reminders
-# (CronCreate's durable:true proved unreliable — see llm#203). Current repo
-# only. Cache 1h. Silent if no past-due. Skips gracefully without gh / network.
-#
-# Notes on portability:
-#   - `timeout` lives in coreutils (nix PATH); macOS has no /usr/bin/timeout.
-#     Use it bare via PATH; degrade gracefully if absent.
-#   - /usr/bin/{stat,sed,jq} are present on macOS — use absolute paths so the
-#     hook works outside any nix shell too.
-# Derive owner/repo from origin URL — ~50× faster than `gh repo view`.
-# Handles `https://host/owner/repo(.git)` and `git@host:owner/repo(.git)`.
-_dated_repo=""
-if command -v gh >/dev/null 2>&1; then
-  _dated_url=$(/usr/bin/git config --get remote.origin.url 2>/dev/null || true)
-  if [ -n "$_dated_url" ]; then
-    _dated_repo=$(echo "$_dated_url" | /usr/bin/sed -E 's#^https?://[^/]+/##; s#^git@[^:]+:##; s#\.git$##')
-    # Sanity: must look like owner/repo (single slash, no spaces).
-    case "$_dated_repo" in
-      */*) : ;;
-      *) _dated_repo="" ;;
-    esac
-  fi
-fi
-
-if [ -n "$_dated_repo" ]; then
-  _dated_cache_dir="$CLAUDE_RUNTIME_ROOT/state/dated_issues_cache"
+# Dated issues
+if [ -n "$_dated_repo" ] && command -v gh >/dev/null 2>&1; then
   /bin/mkdir -p "$_dated_cache_dir" 2>/dev/null || true
   _dated_cache_file="$_dated_cache_dir/$(echo "$_dated_repo" | tr '/' '_').jsonl"
-
-  # Refresh cache if missing or > 1h old; failure is non-fatal (silently skip).
+  _dated_mtime=0
   _dated_need_refresh=0
   if [ ! -f "$_dated_cache_file" ]; then
     _dated_need_refresh=1
   else
     _dated_mtime=$(/usr/bin/stat -f %m "$_dated_cache_file" 2>/dev/null || /usr/bin/stat -c %Y "$_dated_cache_file" 2>/dev/null || echo 0)
     _dated_now_sec=$(date +%s)
-    if [ "$((_dated_now_sec - _dated_mtime))" -gt 3600 ]; then
-      _dated_need_refresh=1
-    fi
+    [ "$((_dated_now_sec - _dated_mtime))" -gt 3600 ] && _dated_need_refresh=1
   fi
-
   if [ "$_dated_need_refresh" = "1" ]; then
-    if command -v timeout >/dev/null 2>&1; then
-      _dated_gh_cmd="timeout 5 gh"
-    else
-      _dated_gh_cmd="gh"
-    fi
-    if $_dated_gh_cmd issue list --repo "$_dated_repo" --state open --limit 100 \
+    if timeout 5 gh issue list --repo "$_dated_repo" --state open --limit 100 \
         --json number,title \
         --jq '.[] | select(.title | test("^\\[[0-9]{4}-[0-9]{2}-[0-9]{2}\\]"))' \
         > "$_dated_cache_file.tmp" 2>/dev/null; then
@@ -1128,8 +1194,6 @@ if [ -n "$_dated_repo" ]; then
       rm -f "$_dated_cache_file.tmp" 2>/dev/null || true
     fi
   fi
-
-  # Compare each cached title's date prefix vs today (numeric YYYYMMDD).
   if [ -s "$_dated_cache_file" ] && [ -x /usr/bin/jq ]; then
     _dated_today_num=$(date +%Y%m%d)
     _dated_out=""
@@ -1137,8 +1201,7 @@ if [ -n "$_dated_repo" ]; then
       [ -z "$_dated_line" ] && continue
       _dated_title=$(printf '%s' "$_dated_line" | /usr/bin/jq -r '.title' 2>/dev/null) || _dated_title=""
       _dated_number=$(printf '%s' "$_dated_line" | /usr/bin/jq -r '.number' 2>/dev/null) || _dated_number=""
-      [ -z "$_dated_title" ] && continue
-      [ -z "$_dated_number" ] && continue
+      [ -z "$_dated_title" ] && continue; [ -z "$_dated_number" ] && continue
       _dated_date=$(printf '%s' "$_dated_title" | /usr/bin/sed -nE 's/^\[([0-9]{4}-[0-9]{2}-[0-9]{2})\].*/\1/p')
       [ -z "$_dated_date" ] && continue
       _dated_date_num=$(echo "$_dated_date" | tr -d '-')
@@ -1148,11 +1211,20 @@ if [ -n "$_dated_repo" ]; then
       fi
     done < "$_dated_cache_file"
     if [ -n "$_dated_out" ]; then
-      echo ""
-      echo "=== Dated issues (≤ today) ==="
-      printf '%s' "$_dated_out"
+      _output="${_output}
+=== Dated issues (≤ today) ===
+${_dated_out}"
     fi
   fi
+fi
+
+# Write output to cache (empty string means nothing to show)
+printf '%s' "$_output" > "$_out_cache" 2>/dev/null || true
+BGEOF
+
+# ── Phase 13b: Process pending skillify from previous session ──
+if [ -f "${HOME}/.claude/.pending_skillify" ] && [ -x "${HOME}/.claude/scripts/process_pending_skillify.sh" ]; then
+  nohup timeout 5 "${HOME}/.claude/scripts/process_pending_skillify.sh" > /dev/null 2>&1 &
 fi
 
 # ── Compact summary line ──
@@ -1305,99 +1377,155 @@ PYEOF
 
   echo "roborev-backlog: open=${_rb_open}${_rb_top_part}${_rb_pct_part}"
 }
-phase_roborev_backlog || true
+# Phase 13d: roborev backlog — BACKGROUND (sqlite3 + python3 query)
+# Show cached line instantly; refresh in background for next session.
+_rbb_cache="${HOME}/.claude/logs/session_init_roborev_backlog_cache.txt"
+if [ -f "$_rbb_cache" ]; then
+  _rbb_cached=$(cat "$_rbb_cache" 2>/dev/null) || true
+  [ -n "$_rbb_cached" ] && echo "$_rbb_cached"
+fi
+_rbb_db="${HOME}/.roborev/reviews.db"
+_rbb_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+_rbb_name=$(basename "${_rbb_root:-unknown}")
+mkdir -p "$(dirname "$_rbb_cache")"
+nohup bash -s "$_rbb_db" "$_rbb_name" "$_rbb_cache" > /dev/null 2>&1 <<'RBBEOF' &
+#!/usr/bin/env bash
+_rb_db="$1"; _rb_name="$2"; _rb_cache="$3"
+[ -f "$_rb_db" ] || exit 0
+[ -x /usr/bin/python3 ] || exit 0
+_rb_backlog_file=$(dirname "$_rb_db")/../.roborev/backlog.md 2>/dev/null || true
+_rb_top_sev=""; _rb_top_cat=""; _rb_top_id=""
+# Find backlog.md relative to repo root (passed as name, need path)
+_rb_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+[ -n "$_rb_root" ] && _rb_backlog="$_rb_root/.roborev/backlog.md" || _rb_backlog=""
+if [ -n "$_rb_backlog" ] && [ -f "$_rb_backlog" ]; then
+  _rb_first_row=$(grep -E '^\| [0-9]' "$_rb_backlog" | head -1) || true
+  if [ -n "$_rb_first_row" ]; then
+    _rb_top_id=$(echo "$_rb_first_row"  | awk -F'|' '{gsub(/ /,"",$2); print $2}')
+    _rb_top_sev=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+    _rb_top_cat=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
+  fi
+fi
+_rb_out=$(/usr/bin/python3 - "$_rb_db" "$_rb_name" <<'PYEOF'
+import sys, sqlite3
+db_path = sys.argv[1]; repo_name = sys.argv[2]
+try:
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+except Exception:
+    sys.exit(0)
+repo_row = con.execute("SELECT id FROM repos WHERE name = ? ORDER BY id DESC LIMIT 1", (repo_name,)).fetchone()
+if repo_row is None: sys.exit(0)
+repo_id = repo_row["id"]
+try:
+    stats = con.execute("""
+        SELECT SUM(CASE WHEN rv.closed = 0 THEN 1 ELSE 0 END) AS open_count,
+               COUNT(*) AS total_count, SUM(rv.closed) AS closed_count
+        FROM reviews rv JOIN review_jobs rj ON rj.id = rv.job_id
+        WHERE rj.repo_id = ? AND rj.status = 'done'
+    """, (repo_id,)).fetchone()
+except Exception:
+    sys.exit(0)
+con.close()
+open_count = stats["open_count"] or 0; total_count = stats["total_count"] or 0
+closed_count = stats["closed_count"] or 0
+addressed_pct = round(100.0 * closed_count / total_count) if total_count > 0 else 0
+print(f"OPEN:{open_count}")
+print(f"ADDRESSED:{addressed_pct}")
+PYEOF
+) || true
+[ -n "$_rb_out" ] || exit 0
+_rb_open=$(printf '%s\n' "$_rb_out" | grep "^OPEN:"      | sed 's/^OPEN://')
+_rb_pct=$(printf  '%s\n' "$_rb_out" | grep "^ADDRESSED:" | sed 's/^ADDRESSED://')
+[ -n "$_rb_open" ] || exit 0
+_rb_top_part=""
+[ -n "$_rb_top_sev" ] && [ -n "$_rb_top_cat" ] && [ -n "$_rb_top_id" ] && \
+  _rb_top_part=" (priority-1=${_rb_top_sev}:${_rb_top_cat}, top=#${_rb_top_id})"
+_rb_pct_part=""
+[ -n "$_rb_pct" ] && _rb_pct_part=" | addressed=${_rb_pct}%"
+echo "roborev-backlog: open=${_rb_open}${_rb_top_part}${_rb_pct_part}" > "$_rb_cache"
+RBBEOF
 
-# ── Phase 14a: T-lang flake.nix closure-rebuild advisory ─────────────────────
-# Warns if any T-lang R project under ~/docs_gh/ is missing the closure-rebuild
-# shellHook marker. `t update` strips this block; without it, R compiled packages
-# segfault on dyn.load (nix-nested-shell-isolation rule). NON-BLOCKING.
-# See JohnGavin/llm#303 and .claude/scripts/check_tlang_flake_closure_rebuild.sh
+# ── Phase 14a: T-lang flake.nix closure-rebuild advisory — BACKGROUND (~up to 5s) ──
+# Output cached; advisory only (no action needed at prompt time).
+_tlang_cache="${HOME}/.claude/logs/session_init_tlang_cache.txt"
+if [ -f "$_tlang_cache" ]; then
+  _tlang_cached=$(cat "$_tlang_cache" 2>/dev/null) || true
+  [ -n "$_tlang_cached" ] && printf '\n%s\n' "$_tlang_cached"
+fi
 _tlang_check_script="$CLAUDE_DIR/scripts/check_tlang_flake_closure_rebuild.sh"
 if [ -x "$_tlang_check_script" ]; then
-  _tlang_missing=$(timeout 5 bash "$_tlang_check_script" --quiet 2>/dev/null) || true
-  if [ -n "$_tlang_missing" ]; then
-    echo ""
-    echo "WARN: T-lang closure-rebuild marker missing in these projects:"
-    echo "$_tlang_missing"
-    echo "  Fix: cd <project> && bash default.post.sh"
-    echo "  See: .claude/scripts/check_tlang_flake_closure_rebuild.sh"
-  fi
+  mkdir -p "$(dirname "$_tlang_cache")"
+  nohup bash -c "
+    _out=\$(timeout 5 bash '$_tlang_check_script' --quiet 2>/dev/null) || true
+    if [ -n \"\$_out\" ]; then
+      printf 'WARN: T-lang closure-rebuild marker missing in these projects:\n%s\n  Fix: cd <project> && bash default.post.sh\n  See: .claude/scripts/check_tlang_flake_closure_rebuild.sh\n' \"\$_out\" > '$_tlang_cache'
+    else
+      printf '' > '$_tlang_cache'
+    fi
+  " > /dev/null 2>&1 &
 fi
 
-# ── Phase 14b: Surface open ci-failure issues (JohnGavin/llm#387) ────────────
-# Queries the active repo's GitHub for open issues labeled `ci-failure`.
-# Quiet when N=0 — no banner spam.  Single line when N>=1:
-#   ci-failures: N open  (gh issue list --repo OWNER/REPO --label ci-failure --state open)
-#
-# Discipline:
-#   - 5-second timeout: a slow network must not block session start
-#   - Silent fail-open: logs to debug log only when gh missing or API fails
-#   - No output when N=0 (e.g. everything is green)
-#
-# Style follows Phase 13c (dated-issues): derive OWNER/REPO from git remote URL
-# for ~50x speedup vs `gh repo view`; handle https and git@ URL forms.
+# ── Phase 14b: Surface open ci-failure issues — BACKGROUND (gh network call ≤5s) ──
+# Cache pattern: show cached line; refresh in background for next session.
 # See JohnGavin/llm#387.
-_cifail_debug_log="${HOME}/.claude/logs/session_init_phase14b.log"
-_cifail_repo=""
+_cifail_cache="${HOME}/.claude/logs/session_init_cifail_cache.txt"
+if [ -f "$_cifail_cache" ]; then
+  _cifail_cached=$(cat "$_cifail_cache" 2>/dev/null) || true
+  [ -n "$_cifail_cached" ] && echo "$_cifail_cached"
+fi
 
-# Only attempt when gh is available
 if command -v gh >/dev/null 2>&1; then
   _cifail_url=$(/usr/bin/git config --get remote.origin.url 2>/dev/null || true)
+  _cifail_repo=""
   if [ -n "$_cifail_url" ]; then
     _cifail_repo=$(echo "$_cifail_url" | /usr/bin/sed -E 's#^https?://[^/]+/##; s#^git@[^:]+:##; s#\.git$##')
-    # Sanity: must look like owner/repo (single slash, no spaces).
-    case "$_cifail_repo" in
-      */*) : ;;
-      *) _cifail_repo="" ;;
-    esac
+    case "$_cifail_repo" in */*) : ;; *) _cifail_repo="" ;; esac
+  fi
+  if [ -n "$_cifail_repo" ]; then
+    _cifail_debug_log="${HOME}/.claude/logs/session_init_phase14b.log"
+    mkdir -p "$(dirname "$_cifail_cache")"
+    nohup bash -c "
+      _count=\$(timeout 5 gh issue list \
+        --repo '$_cifail_repo' --label 'ci-failure' --state open \
+        --json number --jq 'length' 2>>'$_cifail_debug_log') || _count=''
+      if [ -n \"\$_count\" ] && [ \"\$_count\" -gt 0 ] 2>/dev/null; then
+        echo \"ci-failures: \${_count} open  (gh issue list --repo $_cifail_repo --label ci-failure --state open)\" > '$_cifail_cache'
+      else
+        printf '' > '$_cifail_cache'
+      fi
+    " > /dev/null 2>&1 &
   fi
 fi
 
-if [ -n "$_cifail_repo" ]; then
-  # Build the gh command with timeout
-  if command -v timeout >/dev/null 2>&1; then
-    _cifail_gh_prefix="timeout 5"
-  else
-    _cifail_gh_prefix=""
-  fi
-
-  # Count open ci-failure issues; capture count only; fail silently on error
-  _cifail_count=$($_cifail_gh_prefix gh issue list \
-      --repo "$_cifail_repo" \
-      --label "ci-failure" \
-      --state open \
-      --json number \
-      --jq 'length' \
-      2>>"$_cifail_debug_log") || _cifail_count=""
-
-  # Emit one banner line when N>=1; stay silent when N=0 or call failed
-  if [ -n "$_cifail_count" ] && [ "$_cifail_count" -gt 0 ] 2>/dev/null; then
-    echo "ci-failures: ${_cifail_count} open  (gh issue list --repo ${_cifail_repo} --label ci-failure --state open)"
-  fi
-fi
-
-# ── Phase 15a: ETL freshness alarm (JohnGavin/llm#491) ───────────────────────
-# Queries ~/.claude/logs/unified.duckdb for the age of the most-recent row in
-# each tracked table.  Emits one summary line when any table is AMBER/RED/CRITICAL.
+# ── Phase 15a: ETL freshness alarm — BACKGROUND (DuckDB query ≤5s) ──────────────
+# Cache pattern: show cached line; refresh in background for next session.
 # Skippable: CLAUDE_ETL_FRESHNESS_CHECK=0
-# Fail-open: any error → silently continue (no non-zero exit from this block).
+_etl_cache="${HOME}/.claude/logs/session_init_etl_cache.txt"
 if [ "${CLAUDE_ETL_FRESHNESS_CHECK:-1}" != "0" ]; then
+  if [ -f "$_etl_cache" ]; then
+    _etl_cached=$(cat "$_etl_cache" 2>/dev/null) || true
+    [ -n "$_etl_cached" ] && echo "$_etl_cached"
+  fi
   _etl_script="${CLAUDE_DIR}/scripts/etl_freshness_check.sh"
   if [ -x "$_etl_script" ]; then
-    timeout 5 "$_etl_script" --quiet 2>/dev/null || true
+    mkdir -p "$(dirname "$_etl_cache")"
+    nohup bash -c "timeout 5 '$_etl_script' --quiet 2>/dev/null > '$_etl_cache' || printf '' > '$_etl_cache'" > /dev/null 2>&1 &
   fi
 fi
 
-# ── Phase 15b: Canonical-projects audit (JohnGavin/llm#535) ──────────────────
-# Queries unified.duckdb for distinct project/repo values across tracked tables,
-# classifies each as FIXTURE / CANONICAL / UNKNOWN, and emits one compact line
-# when unknowns are found (silent when fully clean).
+# ── Phase 15b: Canonical-projects audit — BACKGROUND (DuckDB query ≤5s) ────────
 # Skippable: CLAUDE_CANONICAL_PROJECTS_AUDIT=0
-# Fail-open: any error → silently continue (no non-zero exit from this block).
+_cpaudit_cache="${HOME}/.claude/logs/session_init_cpaudit_cache.txt"
 if [ "${CLAUDE_CANONICAL_PROJECTS_AUDIT:-1}" != "0" ]; then
+  if [ -f "$_cpaudit_cache" ]; then
+    _cpaudit_cached=$(cat "$_cpaudit_cache" 2>/dev/null) || true
+    [ -n "$_cpaudit_cached" ] && echo "$_cpaudit_cached"
+  fi
   _audit_script="${CLAUDE_DIR}/scripts/canonical_projects_audit.sh"
   if [ -x "$_audit_script" ]; then
-    timeout 5 "$_audit_script" --quiet 2>/dev/null || true
+    mkdir -p "$(dirname "$_cpaudit_cache")"
+    nohup bash -c "timeout 5 '$_audit_script' --quiet 2>/dev/null > '$_cpaudit_cache' || printf '' > '$_cpaudit_cache'" > /dev/null 2>&1 &
   fi
 fi
 
