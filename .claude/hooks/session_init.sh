@@ -812,27 +812,11 @@ echo "$scope_output"
 # Phase 1e: Worktree-parent cwd detection (advisory)
 phase_worktree_parent 2>/dev/null || true
 
-# Phase 2: Mappings — BACKGROUND (~0.37s; MISMATCH/WARN surfaced from cache)
-_p2_cache="${HOME}/.claude/logs/session_init_phase2_cache.txt"
-if [ -f "$_p2_cache" ]; then
-  _p2_cached=$(cat "$_p2_cache" 2>/dev/null) || true
-  if echo "$_p2_cached" | grep -qiE "mismatch|WARN"; then
-    WARNINGS="${WARNINGS}$(echo "$_p2_cached" | grep -iE 'WARN|MISMATCH') "
-  fi
+# Phase 2: Mappings (capture warnings)
+map_output=$(phase_mappings 2>/dev/null)
+if echo "$map_output" | grep -qiE "mismatch|WARN"; then
+  WARNINGS="${WARNINGS}$(echo "$map_output" | grep -iE 'WARN|MISMATCH') "
 fi
-mkdir -p "$(dirname "$_p2_cache")"
-nohup bash -c "
-  CLAUDE_DIR='$CLAUDE_DIR'
-  CLAUDE_MD='$CLAUDE_MD'
-  SKILLS_DIR='$SKILLS_DIR'
-  RULES_DIR='$RULES_DIR'
-  COMMANDS_DIR='$COMMANDS_DIR'
-  AGENTS_DIR='$AGENTS_DIR'
-  MEMORY_DIR='$MEMORY_DIR'
-  SETTINGS_JSON='$SETTINGS_JSON'
-  $(declare -f phase_mappings)
-  phase_mappings > '$_p2_cache' 2>/dev/null || true
-" > /dev/null 2>&1 &
 
 # Phase 3: Sizes — BACKGROUND (~0.35s; WARN/FAIL surfaced from cache)
 _p3_cache="${HOME}/.claude/logs/session_init_phase3_cache.txt"
