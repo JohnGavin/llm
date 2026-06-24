@@ -150,3 +150,8 @@
 - `ENOENT posix_spawn /bin/sh` on every hook = session cwd was deleted (NOT a missing shell/hook bug)
 - Recovery: end session, `cd ~/docs_gh/<project>`, relaunch via cc.sh (in-session cd unreliable)
 - Prevent: don't run from /tmp or ephemeral worktrees; never force-remove the cwd/ancestor (llm#647)
+
+## Stale PTY-Spare 100% CPU (see stale-pty-spare-cpu.md)
+- Orphaned Claude Code `--bg-pty-host`/`--bg-spare` daemons from an OLD version busy-loop at 100% CPU for days after a harness upgrade (PPID 1)
+- NOT Bash bg jobs, NOT user config — harness bug (orphaned-spare-after-upgrade). Observed 2026-06-23: two 2.1.168 spares stuck 16d while session ran 2.1.186
+- Kill any bg-pty-host whose version != running `claude`: `cur=$(readlink ~/.local/bin/claude | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'); pgrep -fl bg-pty-host | grep -v "$cur" | awk '{print $1}' | xargs -r kill`
