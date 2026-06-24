@@ -7,13 +7,14 @@
 #
 # Sources: llm#572 (worktree-aware .claude/ protection)
 #          llm#601 (orchestrator bounded exceptions + linked-worktree allow)
+#          llm#659 (runtime per-project memory store exemption)
 #          agent-identity-and-task-scopes rule (symlink-trap Pattern 2)
 
 set -euo pipefail
 
 # ─── Self-test harness (CLAUDE_HOOK_SELFTEST=1) ──────────────────────────────
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
-  PASS=0; FAIL=0; TOTAL=11
+  PASS=0; FAIL=0; TOTAL=12
   HOOK_PATH="$0"
 
   # Run the hook in a subprocess with synthetic JSON input.
@@ -111,6 +112,15 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   git -C "$_fix/main" worktree remove --force "$_fix/wt" >/dev/null 2>&1 || true
   rm -rf "$_fix"
 
+  # Case 12 — llm#659: Claude Code runtime per-project memory store → ALLOW
+  # ~/.claude/projects/<proj>/memory/*.md is the runtime store written by the
+  # harness. The path matches */.claude/* (at ~/.claude/) but _claude_rel strips
+  # to "projects/<proj>/memory/x.md" which the original case missed. Fixed by
+  # adding projects/*/memory/*.md to the exemption list.
+  r=$(_check_hook "/Users/johngavin/.claude/projects/some-proj/memory/note.md")
+  if [ "$r" = "allow" ]; then _ok "runtime projects/<proj>/memory/*.md → allow"
+  else _fail "runtime projects memory expected allow, got $r"; fi
+
   printf '\nfile_protection selftest: %d/%d PASS\n' "$PASS" "$TOTAL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
 fi
@@ -188,7 +198,7 @@ case "$TARGET_PATH" in
     #     those must ship via a worktree branch + PR.
     _claude_rel="${TARGET_PATH#*/.claude/}"
     case "$_claude_rel" in
-      CURRENT_WORK.md|CLAUDE.md|rules/*.md|memory/*.md)
+      CURRENT_WORK.md|CLAUDE.md|rules/*.md|memory/*.md|projects/*/memory/*.md)
         exit 0
         ;;
     esac
@@ -212,7 +222,7 @@ case "$TARGET_PATH" in
     {
       echo "BLOCKED: $FILE_PATH targets the canonical .claude/ (resolved: $TARGET_PATH)"
       echo "Scripts/hooks changes must go via a worktree branch + PR."
-      echo "Orchestrator prose exceptions: CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md."
+      echo "Orchestrator prose exceptions: CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md, projects/*/memory/*.md."
       echo "See: agent-identity-and-task-scopes rule, llm#572, llm#601."
     } >&2
     exit 2
