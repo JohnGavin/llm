@@ -3,7 +3,7 @@ agent = ''
 # Default model for this repo when no workflow-specific model is set.
 model = ''
 # Backup agent for this repo if the primary agent fails.
-backup_agent = ''
+backup_agent = 'gemini'
 # Backup model for this repo if the primary model fails.
 backup_model = ''
 # Number of related reviews to include as context for this repo.
