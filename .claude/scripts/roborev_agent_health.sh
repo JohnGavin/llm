@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # roborev_agent_health.sh — detect sustained codex failures and temporarily
-# swap to gemini in ~/.roborev/config.toml; probe for recovery and swap back.
+# swap to claude-code in ~/.roborev/config.toml; probe for recovery and swap back.
+# (#676: free-tier agent was permanently dead — IneligibleTierError/UNSUPPORTED_CLIENT, exit 55.
+# All swap targets changed to claude-code.)
 #
 # Closes roborev #900 (#181 Theme 5) — timestamp format mismatch fixed.
 # The WHERE clause normalises ISO-8601 (YYYY-MM-DDTHH:MM:SS...Z) to SQLite's
@@ -175,20 +177,42 @@ if [ "$STATUS_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-# ── Throttle: swap codex → gemini ────────────────────────────────────────────
+# ── Active-agent failure guard (#676) ────────────────────────────────────────
+# Check job-level health via roborev summary --json. Crashed reviews never
+# produce a verdict, so verdicts.failed == 0 is NOT a "clean" signal. We must
+# inspect overview.failed and agents[].errors to surface silent failures.
+# This guard logs a WARNING so roborev_agent_health.log captures the signal
+# even when the codex-specific failure count is below the swap threshold.
+_active_summary=$(timeout 5 "$ROBOREV" summary --json 2>/dev/null) || _active_summary=""
+if [ -n "$_active_summary" ] && command -v python3 >/dev/null 2>&1; then
+  _active_overview_failed=$(echo "$_active_summary" | python3 -c \
+    "import sys,json; d=json.load(sys.stdin); print(d.get('overview',{}).get('failed',0))" \
+    2>/dev/null || echo 0)
+  _active_agent_errors=$(echo "$_active_summary" | python3 -c \
+    "import sys,json; d=json.load(sys.stdin)
+[print(a['agent']+'='+str(a.get('errors',0))) for a in d.get('agents',[]) if a.get('errors',0)>0]" \
+    2>/dev/null || echo "")
+  _active_overview_failed="${_active_overview_failed:-0}"
+  if [ "${_active_overview_failed:-0}" -gt 0 ] || [ -n "$_active_agent_errors" ]; then
+    log "WARN: active agent failing: overview.failed=${_active_overview_failed} agent_errors=${_active_agent_errors:-none}"
+    echo "roborev_agent_health: WARN: active agent failing (overview.failed=${_active_overview_failed}, agent_errors=${_active_agent_errors:-none})"
+  fi
+fi
+
+# ── Throttle: swap codex → claude-code ───────────────────────────────────────
 if [ "$recent_failures" -ge "$FAILURE_THRESHOLD" ] && ! marker_exists; then
   ts=$(date -u +%Y%m%d_%H%M%S)
   backup_path="${CONFIG_TOML}.bak-agent-health-${ts}"
   ts_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   if [ "$APPLY" -eq 0 ]; then
-    echo "[dry] would throttle codex: backup config, swap to gemini, create marker, kickstart daemon"
+    echo "[dry] would throttle codex: backup config, swap to claude-code, create marker, kickstart daemon"
     echo "  reason: $recent_failures codex failures in last ${FAILURE_WINDOW_MIN} minutes"
     log "dry-run: would throttle codex (failures=$recent_failures threshold=$FAILURE_THRESHOLD)"
     exit 0
   fi
 
-  log "throttle: $recent_failures codex failures in last ${FAILURE_WINDOW_MIN}m — swapping to gemini"
+  log "throttle: $recent_failures codex failures in last ${FAILURE_WINDOW_MIN}m — swapping to claude-code"
 
   # Backup config
   if ! cp "$CONFIG_TOML" "$backup_path"; then
@@ -199,13 +223,14 @@ if [ "$recent_failures" -ge "$FAILURE_THRESHOLD" ] && ! marker_exists; then
   log "backup: $backup_path"
 
   # Swap agents in config (in-place sed; BSD/GNU compatible via temp file)
+  # (#676: swap target changed to claude-code; free-tier agent was permanently dead)
   tmp_config=$(mktemp)
   sed \
-    -e "s|^default_agent = 'codex'|default_agent = 'gemini'|" \
-    -e "s|^default_backup_agent = 'gemini'|default_backup_agent = 'codex'|" \
+    -e "s|^default_agent = 'codex'|default_agent = 'claude-code'|" \
+    -e "s|^default_backup_agent = 'claude-code'|default_backup_agent = 'codex'|" \
     "$CONFIG_TOML" > "$tmp_config"
   mv "$tmp_config" "$CONFIG_TOML"
-  log "config: swapped default_agent=gemini backup_agent=codex"
+  log "config: swapped default_agent=claude-code backup_agent=codex"
 
   # Write marker
   cat > "$MARKER" <<EOF
@@ -226,7 +251,7 @@ EOF
     log "warn: $LAUNCHD_PLIST not found — daemon not kickstarted"
   fi
 
-  echo "roborev_agent_health [applied]: codex throttled — swapped to gemini (backup: $backup_path)"
+  echo "roborev_agent_health [applied]: codex throttled — swapped to claude-code (backup: $backup_path)"
   exit 0
 fi
 
@@ -248,10 +273,11 @@ if marker_exists && [ "$recent_failures" -eq 0 ]; then
       log "recovery: restored config from $backup_path"
     else
       # Backup gone — re-swap manually
+      # (#676: swap target was claude-code, so invert back to codex primary / claude-code backup)
       tmp_config=$(mktemp)
       sed \
-        -e "s|^default_agent = 'gemini'|default_agent = 'codex'|" \
-        -e "s|^default_backup_agent = 'codex'|default_backup_agent = 'gemini'|" \
+        -e "s|^default_agent = 'claude-code'|default_agent = 'codex'|" \
+        -e "s|^default_backup_agent = 'codex'|default_backup_agent = 'claude-code'|" \
         "$CONFIG_TOML" > "$tmp_config"
       mv "$tmp_config" "$CONFIG_TOML"
       log "recovery: backup not found — re-swapped config in place"
@@ -271,8 +297,8 @@ if marker_exists && [ "$recent_failures" -eq 0 ]; then
 
     echo "roborev_agent_health [applied]: codex recovered — restored as primary agent"
   else
-    log "recovery-check: codex still unhealthy (version probe failed) — remaining on gemini"
-    echo "roborev_agent_health: codex still unhealthy — remaining on gemini"
+    log "recovery-check: codex still unhealthy (version probe failed) — remaining on claude-code"
+    echo "roborev_agent_health: codex still unhealthy — remaining on claude-code"
   fi
   exit 0
 fi

@@ -3,7 +3,8 @@ agent = ''
 # Default model for this repo when no workflow-specific model is set.
 model = ''
 # Backup agent for this repo if the primary agent fails.
-backup_agent = 'gemini'
+# Changed from 'gemini' to 'codex' — gemini free tier permanently dead (#676, IneligibleTierError/UNSUPPORTED_CLIENT, exit 55).
+backup_agent = 'codex'
 # Backup model for this repo if the primary model fails.
 backup_model = ''
 # Number of related reviews to include as context for this repo.
