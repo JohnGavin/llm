@@ -4,6 +4,26 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-24/25 — startup perf, CI keepalive, qmd spike, gap issues, tlang CI repair
+
+### Completed
+- **#657 — SessionStart hook startup time cut 17.6s → ~3.4s (merged).** `session_init.sh` was running ~30 phases synchronously before the prompt. Backgrounded ~13 advisory phases (nix-shell ctx audit, r-universe fetch, ETL freshness, roborev, DuckDB writes) with a show-cached/refresh-behind pattern; dropped the redundant legacy-ccusage burn-rate cross-check (`CLAUDE_BURN_RATE_COMPARE=0` default). **Phase 2 (mappings) kept SYNCHRONOUS** per user — mapping mismatches must surface same-session.
+- **Diagnosed startup slowness root cause:** heavy hook × loaded machine (load avg 5.3; bare `Rscript` showed 1.8s sys time). Cleared 2 stale non-current Claude sessions. Note: long-running sessions pin their launch binary version (this session ran v2.1.183 while v2.1.187 was on disk).
+- **#656 — scheduled-workflow 60-day-disable keepalive (done).** Phase 0 audit script `audit_scheduled_workflows.sh` (PR #658). Corrected the audit's per-workflow "11 at-risk" to **2 genuinely dormant repos** (disable is repo-level; one self-committing workflow keeps the whole repo alive). Added self-keepalive `keepalive.yml` (≥50d empty-commit, repo-local GITHUB_TOKEN, no cross-repo PAT per #194/#644) to stratford-events, solwatch, tlang, llmtelemetry — 4 PRs merged. Re-enabled stratford-events' disabled `weekly_report`.
+- **#659/#660 — file_protection.sh false-block fixed (merged).** Added `projects/*/memory/*.md` to the exemption so runtime per-project memory writes pass; scripts/hooks stay blocked. 12/12 self-tests. (Confirmed live: this session's memory writes succeeded.)
+- **#653 — qmd adopt-vs-build spike (closed).** Sandboxed pinned install of `@tobilu/qmd@2.5.3` (integrity MATCH + SLSA attestation; MCP surface = 4 read-only tools). Empirical embed test on knowledge/ (14 docs): **hybrid beat BM25 on only 1/5 queries** → verdict DEFER, keep DuckDB `kb_search`. Re-test trigger (50+ docs) tracked in #661.
+- **Gap-analysis issues filed** from 4 external sources: #662–#664 (snapshot testing), #665–#666 (R dots/`check_dots_*`), #667–#668 (viz principles + coaching lint), #672 (Gmisc data-driven flowcharts vs mermaid). #669 (local-LLM policy) closed as deliberate out-of-scope.
+- **tlang CI fully repaired.** Build-and-Cache failed on GitHub archive-tarball hash drift (`rstats-on-nix/nixpkgs 2026-05-08`); fixed durably by pinning the single nixpkgs input to branch-tip commit `1407df0e` (PR #4, supersedes band-aid #3). trigger-demo (empty token, cross-repo dispatch) guarded to upstream-only → skips on forks (PR #5). All tlang CI green.
+- **#670 — Dexy logo/business-card issue filed.** Reference PDF at `assets/Dexy-loves-R.pdf`, left **untracked** (repo `.gitignore` blocks `*.pdf`).
+
+### Failed Approaches
+- **tlang nixpkgs fix took 3 attempts.** (1) Collapsed two intentionally-separate nixpkgs pins into one → devShell lost `jpmml-evaluator`. (2) Two-input split but pinned the R input to commit `334a2103` (the 05-08 *first* commit) → missing `jpmml-evaluator`; the 04-27 input missing `jpmml-statsmodels`. Root cause: the flake's `fetchTarball` tracked the *moving branch tip*, not a fixed commit. (3) Single input pinned to current branch tip `1407df0e` (has both jpmml pkgs) + a local `nix eval` gate proving both attrs resolve BEFORE push → CI green. Lesson: when a flake pins a dated branch, it tracks a moving tip; gate on local eval before burning CI.
+- **qmd docs-only research said "adopt"; the empirical run said "defer."** Reinforces verify-before-adopt — running it on real data overturned the README-based recommendation.
+
+### Known Limitations
+- **#656 Phase 3** (proactive monthly early-warning for repos >45d idle with scheduled workflows) NOT built — issue left open.
+- Pre-existing uncommitted changes in llm from 2026-06-20 (`.roborev.toml` backup_agent='gemini'; `AGENTS.md` Reproducible-Ingestion rule) — not this session's work; surfaced at /bye.
+
 ## 2026-06-19 — #376 credential-tier hardening: fail-safe deny + decision log + incident coverage
 
 ### Completed
