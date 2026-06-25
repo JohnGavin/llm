@@ -163,3 +163,7 @@
 ## Startup Cost = MCP, Not Hook (see startup-cost-is-mcp-not-hook.md)
 - Slow Claude Code start (>10s) is the r-btw MCP server's `nix-shell default.nix` eval (~10s/launch), NOT session_init.sh (3.5s after #657)
 - Diagnose by timing the MCP command first; fix = boot via GC-rooted drv (PR #673, wrapper r_btw_mcp_launch.sh), then repoint ~/.claude.json. Observed 2026-06-25
+
+## roborev Silent Failure (see roborev-gemini-dead-silent-failure.md)
+- "roborev:ok / 0 failed" can be a LIE: read `overview.failed` + `failures.errors`, NOT `verdicts.failed` (stays 0 when reviews CRASH pre-verdict)
+- gemini free-tier dead (Google UNSUPPORTED_CLIENT, exit 55); fix = config gemini→codex + `roborev daemon restart` (stale daemon kept using gemini) + claude-code primary (works). #676 (detection, merged #677), #679 (cross-counter consistency check). Observed 2026-06-25

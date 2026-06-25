@@ -4,6 +4,23 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-25 — roborev silently failing on EVERYTHING (gemini free-tier dead)
+
+### Completed
+- **Diagnosed roborev silent failure (#676, fix merged #677).** `/bye` reported "roborev clean (0 failed)" but **28/28 reviews on 2026-06-25 crashed**. `summary --json` has TWO sections: `.overview` (job outcomes — failed:16) and `.verdicts` (pass/fail of reviews that *completed* — failed:0). The `/bye` check and `roborev_agent_health.sh` read `.verdicts.failed`, which stays 0 when reviews crash *before* producing a verdict. Visible tell ignored at first: `verdicts.total:1` next to banner `backlog open=59`.
+- **Root cause:** Google killed free-tier `gemini-cli` (`IneligibleTierError: UNSUPPORTED_CLIENT`, exit 55) — gemini permanently dead; codex rate-limited to ~mid-July; the live daemon (up since Jun 19, post agent-health swap) had **stale config** still invoking `gemini -m gemini-3.1-pro-preview` despite `config.toml` saying `default_agent='claude-code'`; and `roborev_agent_health.sh` only watched codex and "remediated" by swapping TO gemini.
+- **Operational fix (out-of-repo, verified):** `~/.roborev/config.toml` all `*_backup_agent` gemini→codex (backups saved); `roborev daemon restart` → next review ran **claude-code, status=done**. `claude-code` confirmed working as a roborev agent.
+- **Code fix (#677, merged):** `/bye` + `session_init.sh` banner now flag `overview.failed`/crashes (`roborev:FAIL(n)`); `roborev_agent_health.sh` swap target gemini→claude-code (`grep gemini`=0) + active-agent failure WARN; `.roborev.toml` backup_agent gemini→codex.
+- **#679 filed** — add automated cross-counter consistency check (e.g. backlog»verdicts, jobs>0 but verdicts=0, high crash rate) so self-contradictory roborev state is caught by code, not eyeballed.
+- Memory: `roborev-gemini-dead-silent-failure.md`.
+
+### Failed Approaches
+- **Initially trusted `summary --json` `.verdicts.failed`** at `/bye` and reported "0 failed / clean" — masked 28 crashes. Lesson: a summary's headline counter can be 0 because the work never ran, not because it passed. Cross-check against an independent counter (backlog, overview, per-agent errors).
+
+### Known Limitations
+- codex backup is rate-limited until ~mid-July 2026 (recovers automatically); primary claude-code works.
+- #679 (consistency check) not yet built. #676 closed by #677 but left OPEN pending #679 follow-up.
+
 ## 2026-06-25 — r-btw MCP startup fix (the REAL bottleneck behind #657)
 
 ### Completed
