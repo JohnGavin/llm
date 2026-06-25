@@ -959,6 +959,9 @@ if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
     [ ! -f "$PWD/.roborev.toml" ] && WARNINGS="${WARNINGS}WARN: .roborev.toml missing "
   fi
   # Launch background refresh of roborev status
+  # Phase 8 (#676): also inspect job-level health via `roborev summary --json`.
+  # Crashed reviews never produce a verdict so verdicts.failed stays 0 — we must
+  # check overview.failed and failures.errors to detect silent failure cascades.
   mkdir -p "$(dirname "$_rv_cache")"
   nohup bash -c '
     rv_out=$(/usr/local/bin/roborev status 2>/dev/null) || true
@@ -966,7 +969,18 @@ if command -v /usr/local/bin/roborev >/dev/null 2>&1; then
       n_high=$(/usr/local/bin/roborev list --status failed --min-severity high --limit 100 2>/dev/null | grep -cE "^Job" || true)
       n_total=$(/usr/local/bin/roborev list --status failed --limit 100 2>/dev/null | grep -cE "^Job" || true)
       n_high="${n_high:-0}"; n_total="${n_total:-0}"
-      if [ "${n_high:-0}" -gt 0 ]; then
+      # Job-level failure check: overview.failed + failures.total (#676)
+      # Use timeout 5 so a slow roborev never blocks the background worker.
+      _summary=$(timeout 5 /usr/local/bin/roborev summary --json 2>/dev/null) || _summary=""
+      _overview_failed=0; _failures_total=0
+      if [ -n "$_summary" ] && command -v python3 >/dev/null 2>&1; then
+        _overview_failed=$(echo "$_summary" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('"'"'overview'"'"',{}).get('"'"'failed'"'"',0))" 2>/dev/null || echo 0)
+        _failures_total=$(echo "$_summary" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('"'"'failures'"'"',{}).get('"'"'total'"'"',0))" 2>/dev/null || echo 0)
+      fi
+      _overview_failed="${_overview_failed:-0}"; _failures_total="${_failures_total:-0}"
+      if [ "${_overview_failed:-0}" -gt 0 ] || [ "${_failures_total:-0}" -gt 0 ]; then
+        echo "roborev:FAIL(${_overview_failed})"
+      elif [ "${n_high:-0}" -gt 0 ]; then
         echo "roborev:${n_high}high/${n_total}total"
       elif [ "${n_total:-0}" -gt 0 ]; then
         echo "roborev:${n_total}failed"
