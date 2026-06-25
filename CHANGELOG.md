@@ -4,6 +4,25 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-25 — r-btw MCP startup fix (the REAL bottleneck behind #657)
+
+### Completed
+- **Diagnosed why startup still felt >10s after #657.** #657 was real but aimed at the wrong target: it cut `session_init.sh` 17.6s → 3.5s, but the dominant perceived cost is the **r-btw MCP server** in `~/.claude.json`, which booted via `nix-shell /…/llm/default.nix --run Rscript …`. Measured: that nix-shell entry takes **8.75s every launch** (repeatable; first run also network-fetched `flakehub.com/.../nixpkgs-weekly`) because it re-evaluates the nixpkgs flake. The harness blocks on it to enumerate btw tools. This is the exact trap already in `nix-operations.md`/#596 for launchd/cron — the GC-rooted-drv rule was just never applied to the MCP config.
+- **#673 (merged) — boot r-btw via GC-rooted drv.** New `r_btw_mcp_launch.sh`: calls existing `nix_gcroot_refresh.sh` for a fresh-or-fallback drv (0.04s when `default.nix` unchanged; re-instantiates only after an edit), enters via that drv (zero eval), falls back to `default.nix` if no usable drv exists. Measured MCP boot **~10.5s → ~6.2s** (the ~1.8s btw server init is irreducible). Activation: repointed the `r-btw` `command` in `~/.claude.json` (global home file, not in-repo) to the wrapper; backup at `~/.claude.json.bak-r-btw-repoint`.
+- **#675 (merged) — Option B: warm the drv on `default.nix` change.** New PostToolUse hook `nix_gcroot_warm.sh` (matcher `Bash|Edit|Write`) fires `nix_gcroot_refresh.sh` in the background the moment `default.nix` becomes newer than the drv stamp, so the rebuild happens in the editing session and the NEXT session's MCP boot is already warm — no inline ~10s penalty. Idempotent (refresh self-skips when fresh), non-blocking (nohup), env-overridable for tests. Fresh→no-op and stale→fires tests pass; confirmed live no-op against current fresh state.
+- **#674 — follow-up issue filed** for the scheduling decision; resolved by #675 (Option B chosen).
+- **Memory:** added `startup-cost-is-mcp-not-hook.md` — when startup is slow, time the MCP `nix-shell default.nix` entry FIRST, not the SessionStart hook.
+
+### Failed Approaches
+- **Initial estimate "startup → ~4s" was too optimistic.** The bare drv entry is 4.3s, but the btw MCP server init adds ~1.8s on top (irreducible), so real MCP boot is ~6.2s. Corrected the figure to the user rather than over-claiming.
+
+### Accuracy / Metrics
+- r-btw MCP boot: ~10.5s → ~6.2s (measured, repeatable). Perceived startup ~10s → ~6s. Takes effect on next session restart (MCP config + hooks read at launch).
+
+### Known Limitations
+- Proactive *scheduling* of `nix_gcroot_refresh.sh` (launchd timer) deliberately NOT done — Option B (on-edit hook) covers the need without a standing job. #674 closed by #675.
+- PR #675's diff cosmetically re-listed `r_btw_mcp_launch.sh` (fixer branched before #673's squash landed in main); verified byte-identical to main, merged CLEAN.
+
 ## 2026-06-24/25 — startup perf, CI keepalive, qmd spike, gap issues, tlang CI repair
 
 ### Completed

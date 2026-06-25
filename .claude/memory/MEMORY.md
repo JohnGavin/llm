@@ -159,3 +159,7 @@
 ## macOS Downloads TCC Block (see macos-downloads-tcc-block.md)
 - Bash tool CANNOT read ~/Downloads file contents (macOS TCC, not the harness sandbox — persists with dangerouslyDisableSandbox). `mv`/`cp` fail `Operation not permitted`; `ls`/`stat` work (misleading)
 - Hand the user a `! mv ~/Downloads/"file" ~/docs_gh/<repo>/dest` command instead. Observed 2026-06-24 (llm#670)
+
+## Startup Cost = MCP, Not Hook (see startup-cost-is-mcp-not-hook.md)
+- Slow Claude Code start (>10s) is the r-btw MCP server's `nix-shell default.nix` eval (~10s/launch), NOT session_init.sh (3.5s after #657)
+- Diagnose by timing the MCP command first; fix = boot via GC-rooted drv (PR #673, wrapper r_btw_mcp_launch.sh), then repoint ~/.claude.json. Observed 2026-06-25
