@@ -301,7 +301,8 @@ sec2_block <- collapsible_block(
 # ── Section 3: Cumulative table health ────────────────────────────────────────
 all_tables <- c("sessions", "agent_runs", "hook_events", "errors",
                 "self_review_findings_stage1",
-                "worktree_gc_events", "housekeeping_runs")
+                "worktree_gc_events", "housekeeping_runs",
+                "config_events", "kb_events", "launchd_health_events")
 
 sec3_rows <- lapply(all_tables, function(tbl) {
   ts_col <- switch(tbl,
@@ -311,7 +312,10 @@ sec3_rows <- lapply(all_tables, function(tbl) {
     errors                      = "logged_at",
     self_review_findings_stage1 = "detected_at",
     worktree_gc_events          = "fired_at",
-    housekeeping_runs           = "started_at"
+    housekeeping_runs           = "started_at",
+    config_events               = "fired_at",
+    kb_events                   = "fired_at",
+    launchd_health_events       = "fired_at"
   )
 
   info <- safe_query(sprintf("
@@ -465,6 +469,251 @@ sec3b_block <- collapsible_block(
   wt_table_html
 )
 
+
+# ── Section 3c: Config changes (24h) — llm#552 Phase C ───────────────────────
+cfg_24h <- safe_query("
+  SELECT file_path, change_type, diff_lines, commit_sha, fired_at
+  FROM config_events
+  WHERE fired_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+  ORDER BY fired_at DESC
+  LIMIT 50
+")
+
+if (nrow(cfg_24h) > 0L) {
+  n_added    <- sum(cfg_24h$change_type == "added",    na.rm = TRUE)
+  n_modified <- sum(cfg_24h$change_type == "modified", na.rm = TRUE)
+  n_removed  <- sum(cfg_24h$change_type == "removed",  na.rm = TRUE)
+
+  cfg_rows_html <- paste(apply(cfg_24h, 1, function(r) {
+    ct_col <- switch(r[["change_type"]],
+      "added"    = ACCENT_GREEN,
+      "removed"  = "#ff5252",
+      "modified" = ACCENT_ORANGE,
+      DARK_MUTED
+    )
+    sha_short <- if (!is.na(r[["commit_sha"]]) && nchar(r[["commit_sha"]]) >= 7L)
+      substr(r[["commit_sha"]], 1L, 7L) else "—"
+    sprintf(
+      '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-family:monospace;font-size:12px;max-width:320px;
+   word-break:break-all;">%s</td>
+<td style="padding:5px 10px;font-size:12px;color:%s;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-size:12px;">%s</td>
+<td style="padding:5px 10px;font-family:monospace;font-size:11px;color:%s;">%s</td>
+</tr>',
+      DARK_CARD,
+      r[["file_path"]],
+      ct_col, r[["change_type"]],
+      r[["diff_lines"]] %||% "—",
+      DARK_MUTED, sha_short
+    )
+  }), collapse = "\n")
+
+  cfg_table_html <- sprintf(
+    '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">File</th>
+<th style="padding:5px 10px;text-align:left;">Change</th>
+<th style="padding:5px 10px;text-align:right;">Lines</th>
+<th style="padding:5px 10px;text-align:left;">Commit</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+    DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, cfg_rows_html
+  )
+  sec3c_summary <- sprintf(
+    "added %d · modified %d · removed %d",
+    n_added, n_modified, n_removed
+  )
+} else {
+  cfg_table_html <- sprintf(
+    '<p style="color:%s;font-size:%s;">No config_events in the last 24 h.</p>',
+    DARK_MUTED, EMAIL_FONT_BODY
+  )
+  sec3c_summary <- "no events in last 24h"
+}
+
+sec3c_block <- collapsible_block(
+  "Config changes (24h)",
+  sec3c_summary,
+  cfg_table_html
+)
+
+# ── Section 3d: Knowledge base (24h) — llm#553 Phase C ───────────────────────
+kb_24h <- safe_query("
+  SELECT layer, action, COUNT(*) AS n
+  FROM kb_events
+  WHERE fired_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+  GROUP BY layer, action
+  ORDER BY layer, action
+")
+
+if (nrow(kb_24h) > 0L) {
+  n_kb_total <- sum(kb_24h$n, na.rm = TRUE)
+  n_flagged  <- sum(kb_24h$n[kb_24h$action == "flagged"], na.rm = TRUE)
+
+  kb_rows_html <- paste(apply(kb_24h, 1, function(r) {
+    layer_col <- switch(r[["layer"]],
+      "wiki"    = ACCENT_BLUE,
+      "raw"     = ACCENT_GREEN,
+      "outputs" = ACCENT_PURPLE,
+      DARK_MUTED
+    )
+    act_col <- switch(r[["action"]],
+      "created"  = ACCENT_GREEN,
+      "flagged"  = "#ff5252",
+      "modified" = ACCENT_ORANGE,
+      DARK_MUTED
+    )
+    sprintf(
+      '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-size:12px;color:%s;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;font-size:12px;color:%s;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-weight:bold;">%s</td>
+</tr>',
+      DARK_CARD,
+      layer_col, r[["layer"]],
+      act_col, r[["action"]],
+      r[["n"]]
+    )
+  }), collapse = "\n")
+
+  kb_table_html <- sprintf(
+    '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Layer</th>
+<th style="padding:5px 10px;text-align:left;">Action</th>
+<th style="padding:5px 10px;text-align:right;">Count</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+    DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, kb_rows_html
+  )
+  if (n_flagged > 0L) {
+    kb_table_html <- paste0(
+      kb_table_html,
+      sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-top:8px;">
+  &#9888; %d flagged write(s) to raw/ — review immediately.</p>',
+        EMAIL_FONT_SUBTITLE, n_flagged
+      )
+    )
+  }
+  sec3d_summary <- sprintf(
+    "%d events · %d flagged",
+    n_kb_total, n_flagged
+  )
+} else {
+  kb_table_html <- sprintf(
+    '<p style="color:%s;font-size:%s;">No kb_events in the last 24 h.</p>',
+    DARK_MUTED, EMAIL_FONT_BODY
+  )
+  sec3d_summary <- "no events in last 24h"
+}
+
+sec3d_block <- collapsible_block(
+  "Knowledge base (24h)",
+  sec3d_summary,
+  kb_table_html
+)
+
+# ── Section 3e: Cron health (last fire) — llm#554 Phase C ────────────────────
+cron_health <- safe_query("
+  SELECT plist_label, state, last_exit_code, last_fired_at, next_fire_at
+  FROM (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY plist_label ORDER BY fired_at DESC) AS rn
+    FROM launchd_health_events
+  )
+  WHERE rn = 1
+  ORDER BY
+    CASE state
+      WHEN 'loaded_recent_fail' THEN 0
+      WHEN 'unloaded'           THEN 1
+      WHEN 'missing'            THEN 2
+      ELSE 3
+    END,
+    plist_label
+")
+
+if (nrow(cron_health) > 0L) {
+  n_fail  <- sum(cron_health$state %in% c("loaded_recent_fail", "unloaded", "missing"),
+                 na.rm = TRUE)
+  n_ok    <- sum(cron_health$state == "loaded", na.rm = TRUE)
+  n_plists <- nrow(cron_health)
+
+  cron_rows_html <- paste(apply(cron_health, 1, function(r) {
+    is_fail <- r[["state"]] %in% c("loaded_recent_fail", "unloaded", "missing")
+    row_bg  <- if (is_fail) "#2a0a0a" else DARK_CARD
+    st_col  <- if (is_fail) "#ff5252" else ACCENT_GREEN
+    ec_col  <- {
+      ec <- suppressWarnings(as.integer(r[["last_exit_code"]]))
+      if (!is.na(ec) && ec != 0L) "#ff5252" else DARK_MUTED
+    }
+    sprintf(
+      '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-family:monospace;font-size:11px;max-width:280px;
+   word-break:break-all;">%s</td>
+<td style="padding:5px 10px;font-size:12px;color:%s;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
+</tr>',
+      row_bg,
+      r[["plist_label"]],
+      st_col, r[["state"]],
+      ec_col, r[["last_exit_code"]] %||% "—",
+      DARK_MUTED, r[["last_fired_at"]] %||% "—",
+      DARK_MUTED, r[["next_fire_at"]]  %||% "—"
+    )
+  }), collapse = "\n")
+
+  cron_table_html <- sprintf(
+    '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Plist label</th>
+<th style="padding:5px 10px;text-align:left;">State</th>
+<th style="padding:5px 10px;text-align:right;">Exit code</th>
+<th style="padding:5px 10px;text-align:left;">Last fired</th>
+<th style="padding:5px 10px;text-align:left;">Next fire</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+    DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, cron_rows_html
+  )
+  if (n_fail > 0L) {
+    cron_table_html <- paste0(
+      cron_table_html,
+      sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-top:8px;">
+  &#9888; %d plist(s) failed or unloaded — check launchd status.</p>',
+        EMAIL_FONT_SUBTITLE, n_fail
+      )
+    )
+  }
+  sec3e_summary <- sprintf(
+    "%d plists · %d ok · %d failed/unloaded",
+    n_plists, n_ok, n_fail
+  )
+} else {
+  cron_table_html <- sprintf(
+    '<p style="color:%s;font-size:%s;">No launchd_health_events recorded yet.</p>',
+    DARK_MUTED, EMAIL_FONT_BODY
+  )
+  sec3e_summary <- "no data yet"
+}
+
+sec3e_block <- collapsible_block(
+  "Cron health (last fire)",
+  sec3e_summary,
+  cron_table_html
+)
+
 # ── Section 4: New findings — detail (top 20) ─────────────────────────────────
 sec4_data <- safe_query("
   SELECT
@@ -590,6 +839,9 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   sec2_block, "\n",
   sec3_block, "\n",
   sec3b_block, "\n",
+  sec3c_block, "\n",
+  sec3d_block, "\n",
+  sec3e_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",
