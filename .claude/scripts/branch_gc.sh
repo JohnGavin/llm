@@ -273,19 +273,43 @@ process_branch() {
         action="kept_grace"; reason="closing PR #${closing_pr} squash-merged but age ${age}d < grace ${BRANCH_GC_GRACE_DAYS}d"
       fi
     else
-      action="kept_unmerged"; reason="not patch-id merged, no closing squash-PR detected"
+      # Step 3: unique-strings re-implementation detection
+      local strings n_strings
+      strings="$(sample_unique_strings "$repo" "$branch" "$def")"
+      n_strings="$(printf '%s\n' "$strings" | grep -c . || true)"
+      if [ "${n_strings:-0}" -ge 1 ]; then
+        local all_found=1
+        while IFS= read -r str; do
+          [ -z "$str" ] && continue
+          if ! git -C "$repo" grep -qF "$str" "$def" -- 2>/dev/null; then
+            all_found=0
+            break
+          fi
+        done <<EOF
+$strings
+EOF
+        if [ "$all_found" = "1" ]; then
+          action="deleted_reimpl"
+          reason="all ${n_strings} unique strings found in ${def}"
+        else
+          action="kept_unmerged"; reason="not patch-id merged, no closing squash-PR, strings not all in ${def}"
+        fi
+      else
+        action="kept_unmerged"; reason="not patch-id merged, no closing squash-PR detected"
+      fi
     fi
   fi
 
   # Execute deletion if applicable
-  if [ "$APPLY" = "1" ] && { [ "$action" = "deleted_merged" ] || [ "$action" = "deleted_squash" ]; }; then
+  _is_delete_action() { [ "$1" = "deleted_merged" ] || [ "$1" = "deleted_squash" ] || [ "$1" = "deleted_reimpl" ]; }
+  if [ "$APPLY" = "1" ] && _is_delete_action "$action"; then
     tag_for_recovery "$repo" "$branch" "$sha" "$action"
     # Use -D since squash-merged branches aren't ancestors (-d would refuse)
     if ! git -C "$repo" branch -D "$branch" >/dev/null 2>&1; then
       action="kept_delete_failed"
       reason="git branch -D failed (worktree lock?)"
     fi
-  elif { [ "$action" = "deleted_merged" ] || [ "$action" = "deleted_squash" ]; }; then
+  elif _is_delete_action "$action"; then
     # Dry-run: report would-delete
     action="kept_dryrun"
     reason="${reason} (dry-run, no --apply)"
@@ -296,18 +320,69 @@ process_branch() {
   echo "$action"
 }
 
-# Auto-prune branch-gc notes older than TTL.
+# Extract up to 3 distinctive lines from git diff main...<branch> (added lines
+# only, non-trivial, >= 40 chars). Echoes one candidate string per line.
+# Returns empty output when no qualifying lines found or diff is empty.
+sample_unique_strings() {
+  local repo="$1" branch="$2" def="$3"
+  local diff_out
+  diff_out="$(git -C "$repo" diff --no-ext-diff "${def}...${branch}" 2>/dev/null || true)"
+  [ -z "$diff_out" ] && return 0
+  # Extract added lines: prefix ^+, not the +++ header, not blank, not trivial.
+  # Use -E and [+] for portable grep (works on toybox, BSD, GNU).
+  printf '%s\n' "$diff_out" \
+    | grep -E '^[+]' \
+    | grep -v '^[+][+][+]' \
+    | sed 's/^+//' \
+    | grep -vE '^[[:space:]]*$' \
+    | grep -vE '^[[:space:]]*[{}()]+[[:space:]]*$' \
+    | grep -vE '^[[:space:]]*[#/\-]' \
+    | awk 'length >= 40' \
+    | head -3
+}
+
+# Auto-prune branch-gc notes older than BRANCH_GC_NOTES_TTL_DAYS.
 prune_old_notes() {
   local repo="$1"
   git -C "$repo" rev-parse --verify refs/notes/branch-gc >/dev/null 2>&1 || return 0
-  # Notes themselves are commits; gc'ing them by date is non-trivial.
-  # Skipped for Phase A: 30-day reflog plus the notes ref itself gives recovery.
-  # Phase B will add periodic notes pruning by parsing message timestamps.
+  local ttl_days="${BRANCH_GC_NOTES_TTL_DAYS:-30}"
+  local cutoff_ts now_ts
+  now_ts="$(date +%s)"
+  cutoff_ts=$(( now_ts - ttl_days * 86400 ))
+  local pruned=0
+  # List all notes as "<note-sha> <object-sha>"
+  local note_list
+  note_list="$(git -C "$repo" notes --ref=branch-gc list 2>/dev/null || true)"
+  [ -z "$note_list" ] && return 0
+  while IFS=' ' read -r note_sha obj_sha; do
+    [ -z "$note_sha" ] && continue
+    local msg
+    msg="$(git -C "$repo" notes --ref=branch-gc show "$obj_sha" 2>/dev/null || true)"
+    [ -z "$msg" ] && continue
+    # Parse deleted=<ISO-timestamp> e.g. deleted=2026-05-01T12:00:00Z
+    local del_str
+    del_str="$(printf '%s' "$msg" | grep -oE 'deleted=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' | head -1 || true)"
+    [ -z "$del_str" ] && continue
+    # Convert ISO timestamp to epoch (macOS -j -f syntax; fallback to GNU date -d)
+    local ts_str="${del_str#deleted=}"
+    local del_ts
+    del_ts="$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts_str" '+%s' 2>/dev/null \
+              || date -d "$ts_str" '+%s' 2>/dev/null \
+              || echo 0)"
+    [ "$del_ts" -eq 0 ] && continue
+    if [ "$del_ts" -lt "$cutoff_ts" ]; then
+      git -C "$repo" notes --ref=branch-gc remove "$obj_sha" 2>/dev/null || true
+      pruned=$(( pruned + 1 ))
+    fi
+  done <<EOF
+$note_list
+EOF
+  [ "$pruned" -gt 0 ] && log "  prune_old_notes: removed $pruned notes older than ${ttl_days}d in $(basename "$repo")"
   return 0
 }
 
 # ─── SELFTEST ─────────────────────────────────────────────────────────────────
-# 12 cases against tmp repos. No network. No duckdb writes.
+# 15 cases against tmp repos. No network. No duckdb writes.
 
 selftest() {
   local TMP PASS=0 FAIL=0
@@ -425,6 +500,38 @@ selftest() {
   else
     _case "cherry_all_minus on unmerged" "no" "no"
   fi
+
+  # Case 13: sample_unique_strings returns empty for a branch with no diff
+  local strings result
+  git -C "$REPO" checkout -q -b feat/nodiff
+  git -C "$REPO" checkout -q main
+  strings="$(sample_unique_strings "$REPO" feat/nodiff main)"
+  _case "step3 empty on no-diff" "${#strings}" "0"
+
+  # Case 14: step 3 detects re-implementation when strings are in main
+  # Use APPLY=1 so the action is not downgraded to kept_dryrun
+  APPLY=1
+  git -C "$REPO" checkout -q -b feat/reimpl
+  printf 'UNIQUE_SENTINEL_STRING_FOR_BRANCH_GC_SELFTEST_ABCDEF1234567890_XYZZY_QUUX\n' > "$REPO/reimpl.txt"
+  git -C "$REPO" add reimpl.txt
+  git -C "$REPO" commit -q -m "reimpl"
+  git -C "$REPO" checkout -q main
+  # Now put that string in main too
+  printf 'UNIQUE_SENTINEL_STRING_FOR_BRANCH_GC_SELFTEST_ABCDEF1234567890_XYZZY_QUUX\n' >> "$REPO/a"
+  git -C "$REPO" add a
+  git -C "$REPO" commit -q -m "add sentinel to main"
+  result="$(process_branch "$REPO" testproj feat/reimpl main)"
+  _case "step3 deleted_reimpl when all strings in main" "$result" "deleted_reimpl"
+  APPLY=0
+
+  # Case 15: step 3 keeps branch when strings NOT in main (genuinely unmerged)
+  git -C "$REPO" checkout -q -b feat/genuine
+  printf 'GENUINELY_UNIQUE_STRING_NOT_IN_MAIN_XR7K9M2P_QWERTY_ASDFGH_ZXCVBN_1234567890\n' > "$REPO/genuine.txt"
+  git -C "$REPO" add genuine.txt
+  git -C "$REPO" commit -q -m "genuine"
+  git -C "$REPO" checkout -q main
+  result="$(process_branch "$REPO" testproj feat/genuine main)"
+  _case "step3 kept_unmerged when strings not in main" "$result" "kept_unmerged"
 
   echo
   echo "SELFTEST: $PASS pass, $FAIL fail"
