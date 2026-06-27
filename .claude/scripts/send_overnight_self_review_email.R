@@ -714,6 +714,39 @@ sec3e_block <- collapsible_block(
   cron_table_html
 )
 
+# ── Section 3f: Branch GC (last 24h) — llm#589 Phase B ───────────────────────
+branch_gc_body <- tryCatch({
+  bge <- DBI::dbGetQuery(con, "
+    SELECT action, COUNT(*) AS n
+    FROM branch_gc_events
+    WHERE fired_at >= current_timestamp - INTERVAL 24 HOUR
+    GROUP BY action ORDER BY n DESC
+  ")
+  if (nrow(bge) == 0) {
+    '<p style="color:#888;font-size:13px;">No branch_gc_events in the last 24 h.</p>'
+  } else {
+    n_del  <- sum(bge$n[bge$action %in% c("deleted_merged","deleted_squash","deleted_reimpl")], na.rm=TRUE)
+    n_kept <- sum(bge$n[bge$action %in% c("kept_unmerged","kept_grace")], na.rm=TRUE)
+    rows   <- paste(sprintf('<tr><td>%s</td><td style="text-align:right">%d</td></tr>',
+                            bge$action, bge$n), collapse="\n")
+    sprintf(
+      '<p style="font-size:13px;margin:4px 0">Deleted: <b>%d</b> &nbsp;|&nbsp; Kept (review): <b>%d</b></p>
+       <table style="font-size:12px;border-collapse:collapse">
+         <tr><th style="text-align:left;padding-right:12px">Action</th><th>Count</th></tr>
+         %s
+       </table>',
+      n_del, n_kept, rows)
+  }
+}, error = function(e) {
+  sprintf('<p style="color:#c00;font-size:12px;">branch_gc query error: %s</p>', conditionMessage(e))
+})
+
+sec3f_block <- collapsible_block(
+  title         = "Branch GC (last 24h)",
+  summary_stats = "branch ref GC activity",
+  html_body     = branch_gc_body
+)
+
 # ── Section 4: New findings — detail (top 20) ─────────────────────────────────
 sec4_data <- safe_query("
   SELECT
@@ -842,6 +875,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   sec3c_block, "\n",
   sec3d_block, "\n",
   sec3e_block, "\n",
+  sec3f_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",
