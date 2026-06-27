@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.roborev-bridge.plist
+     Daily roborev SQLite -> unified.duckdb bridge.
+     Runs at 06:00 local time, BEFORE the 06:30 overnight digest reads unified.duckdb.
+     Reads ~/.roborev/reviews.db; writes aggregate rows to roborev_daily_summary
+     in ~/.claude/logs/unified.duckdb. Never writes to roborev's own DB.
+
+     Manual dry-run:
+       BRIDGE_DRY_RUN=1 SKIP_CRON_PULL=1 bash \
+         ~/docs_gh/llm/.claude/scripts/roborev_bridge_to_unified.sh
+
+     Install (orchestrator step after PR merge):
+       cp .claude/launchd/com.claude.roborev-bridge.plist \
+          ~/Library/LaunchAgents/com.claude.roborev-bridge.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.roborev-bridge.plist
+
+     Verify loaded:
+       launchctl list | grep roborev-bridge
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.roborev-bridge.plist
+       rm ~/Library/LaunchAgents/com.claude.roborev-bridge.plist
+
+     Tracked in llm#555 Phase C.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_bridge_to_unified.sh</string>
+    </array>
+
+    <!-- Daily at 06:00 local time (30 min before 06:30 overnight digest) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- PATH must include nix stable profile so git and duckdb resolve.
+         sqlite3 is at /usr/bin/sqlite3 on macOS (system default). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_bridge_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_bridge_launchd.log</string>
+
+    <!-- Retry once after 60 s if job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
