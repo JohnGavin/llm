@@ -4,6 +4,23 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-27 — MCP startup layer-2 fix (#680) + tlang CI green + gap issues
+
+### Completed
+- **#680 (merged) — r-btw MCP boot ~6.4s → ~1.7s warm.** "Still slow" after #673: the GC-rooted drv removed nix *eval*, but `nix-shell <drv> --run` still paid ~4s for its per-launch environment build + shellHook. Diagnostic: `source <(nix print-dev-env <drv>); Rscript` = **0.6s** vs `nix-shell <drv> --run Rscript` = **6.4s**. Fix: `r_btw_mcp_launch.sh` now caches `nix print-dev-env <drv>` (keyed to resolved drv store path since mtimes are 1970 per #596), sources it, execs Rscript directly; fallback chain cached-env → `nix-shell <drv>` → `default.nix`. Verified MCP `initialize` + `tools/list` (22 tools), cache invalidation, live warm boot ~1.4–1.9s. #674 reopened → closed by #680. Memory `startup-cost-is-mcp-not-hook.md` updated (layer 2).
+- **tlang CI fully green (cross-project).** PR #6: gate Cachix push on `env.CACHIX_AUTH_TOKEN` + `fail-fast:false` + push to own cache (`johngavin`, not the unwritable community `rstats-on-nix`); root cause was a custom `run:` step not inheriting `cachix-action` auth + no secret. PR #7: enable GitHub Pages (`enablement:true` + API) for Deploy Documentation, add `--fallback` + `johngavin` substituter to NYC Taxi (transient cache.nixos.org failures), add `johngavin` + public key to `flake.nix` nixConfig. All three workflows verified success; Pages published (HTTP 200), then **Deploy Documentation disabled** via `gh workflow disable` per user request (workflow left intact, instantly re-enablable).
+- **Premortem auto-memory (#659):** confirmed the `file_protection.sh` patch already merged (#660, `6399a4c`) and live — runtime `~/.claude/projects/<proj>/memory/*.md` writes now allowed (verified exit 0). The lost "drop the regex rules" feedback still needs its content to be re-saved.
+- **Gap issues filed:** #681 (testthat-patterns vs Sobolewski "snapshot testing beyond screenshots" — vdiffr/SVG, binary ban, platform variants, naming), #682 (InfoWorld "10 tips" — eval Posit skills repo, plan-mode habit; we already do 8/10), #683 (webR 0.6.0 obsoletes stale shinylive/webr guidance — async `eval_js(await=TRUE)`, httr2/curl, ggplot2/munsell + dplyr/rlang workarounds need re-test).
+
+### Failed Approaches
+- **Forgot `isolation:"worktree"` on the #680 fixer dispatch** — it ran in this session's worktree instead of an isolated one. No harm (committed/pushed/PR clean) but it switched this worktree onto the fix branch. Lesson: always set isolation for Bash-capable agent dispatches.
+- **`gh secret list` + org-secrets endpoint** for tlang returned empty/404 — JohnGavin is a user account, not an org; confirmed zero repo secrets via `actions/secrets` `total_count`.
+
+### Known Limitations
+- #683 items 3–6 (ggplot2/munsell, dplyr/rlang workarounds, exclusion list) gated on browser re-test against webR 0.6.0; not yet done.
+- Recurring **Node 20 deprecation** warnings across tlang actions (checkout@v4, configure-pages@v5, deploy-pages@v4, cachix-action) — warning only, not failing; no issue filed yet.
+- Premortem "drop the regex rules" memory content still unknown / unrestored.
+
 ## 2026-06-25 — roborev silently failing on EVERYTHING (gemini free-tier dead)
 
 ### Completed
