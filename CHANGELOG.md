@@ -4,6 +4,27 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-06-27 (PM) — stale-PR triage + llmtelemetry config-count fixes + roborev gemini cleanup
+
+### Completed
+- **Triaged 4 long-stale open PRs on JohnGavin/llm** (all June 8–15, untriaged ~3 weeks):
+  - #578 (digest Phase C — Config/KB/Cron-health sections) — merged clean.
+  - #638 (`branch_gc` Phase B, #589) — merged after a `fixer` rebased it: #578 landed first and both edit `send_overnight_self_review_email.R`, taking digest-email vars `sec3c/3d/3e`, so #638's Branch-GC block was renamed `sec3f_block`; all five sections kept.
+  - #580 (roborev SQLite→unified.duckdb bridge, #555) — merged after a `fixer` rebased (trivial tracking-comment conflict) AND schema-audited the bridge against the live `~/.roborev/reviews.db`: all 4 tables/columns (`repos`, `review_jobs`, `reviews`, `closures`) still match; `closures.closure_type` CHECK still includes `'stale'`; #677 status-reclassify doesn't break the COALESCE'd LEFT JOINs. Verdict: merge-as-is.
+  - #577 (wiki backlinks, #481) — closed: only changed `CHANGELOG.md`; the 5 wiki pages already live in the local-only `knowledge/` repo, so the 3-week changelog conflict wasn't worth resolving.
+- **Reconciled global-config `.md` counts vs the llmtelemetry dashboard.** `config_pulse.sh` (collector for the Global Config table) had two defects: agents counted from a removed `~/.claude/AGENTS.md` (→ absent from dashboard; real = 12) and skills counted as top-level dirs (74) instead of `SKILL.md` manifests (77, matches the banner). Filed llmtelemetry#318 → implemented + merged llmtelemetry#319 (agents→`agents/*.md`=12, skills→`SKILL.md`=77); #318 auto-closed.
+- **llm#684 (merged):** two clarifying comments in `roborev_bridge_to_unified.sh` (intentional no-`status`-filter post-#677; legitimate 0-`closures`) — #580 follow-up.
+- **roborev gemini cleanup:** `/bye` flagged NOT-CLEAN — 11 failures (9 crash, 2 quota) all attributed to the dead `gemini` agent. Confirmed `~/.roborev/config.toml` has ZERO gemini refs (all stages `claude-code`/`codex`); the 11 were stale earlier-today crashes. `roborev daemon restart` to force clean-config reload; `roborev_agent_health.sh --status` = normal (codex 0 failures). Stale records age out of the summary window.
+- Filed **llm#685** — discussion/ideation issue: leveraged-solo-operator product ideas (Stripe/Shopify/cloud/auto-bookkeeping + AI), grounded in this account's repos (finance/betting, sports analytics, AI agent ops, reproducible data eng, healthcare, dashboards).
+- Ran `export_and_deploy_data.sh` (telemetry → dashboard).
+
+### Failed Approaches
+- First merge of #638 hit a conflict — #578 (sibling PR) landed first and both edit the overnight-digest email R file. Lesson: when merging sibling PRs that touch the same file, expect the second to need a rebase; resolved via `fixer`.
+
+### Known Limitations
+- llmtelemetry agents/skills counts won't reflect the fix until `config_pulse.sh`'s next daily snapshot (today's already ran with the old logic).
+- #679 (auto cross-counter consistency check to catch self-contradictory roborev state, e.g. the gemini stale-failure case) still unbuilt — today's NOT-CLEAN was again caught by eye, not by code.
+
 ## 2026-06-27 — MCP startup layer-2 fix (#680) + tlang CI green + gap issues
 
 ### Completed
