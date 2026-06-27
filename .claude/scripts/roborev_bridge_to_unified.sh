@@ -202,8 +202,14 @@ _ROWS_ATTEMPTED=0
 # Aggregation SQL.
 # Severity is embedded in reviews.output as markdown: "**Severity**: High|Medium|Low".
 # autoclose_today = closures with closure_type='stale' in last 24h.
+#   closures may legitimately have 0 rows (e.g. before any stale auto-closures
+#   accrue); COALESCE(,0) returns 0 in that case -- not a bug.
 # oldest_open_days = max age in days of any open finding via review_jobs.finished_at.
 # Only returns projects with open reviews OR recent activity.
+# LEFT JOIN review_jobs: intentionally no review_jobs.status filter -- jobs that
+#   crashed before producing a reviews row (status='failed' after #677 reclassify)
+#   still surface their reviews rows if present; jobs with no reviews row yield
+#   NULL columns, all handled by the COALESCE(,0) wrappers above.
 _SQLITE_QUERY="
 SELECT
   r.name AS project,
