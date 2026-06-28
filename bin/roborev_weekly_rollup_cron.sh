@@ -21,6 +21,8 @@ export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 SCRIPTS_DIR="$REPO_DIR/.claude/scripts"
+LLM_NIX="$REPO_DIR/default.nix"
+NIX_SHELL_BIN="/nix/var/nix/profiles/default/bin/nix-shell"
 
 LOG="$HOME/.claude/logs/roborev_weekly_rollup.log"
 mkdir -p "$(dirname "$LOG")"
@@ -63,25 +65,16 @@ if [ -z "${SKIP_CRON_PULL:-}" ]; then
 fi
 log "HEAD: $(git -C "${REPO_DIR}" rev-parse --short HEAD) $(git -C "${REPO_DIR}" log -1 --format='%s')"
 
-# ── Locate Rscript ────────────────────────────────────────────────────────────
-RSCRIPT=""
-for candidate in \
-    "$(command -v Rscript 2>/dev/null)" \
-    /nix/var/nix/profiles/default/bin/Rscript \
-    /opt/homebrew/bin/Rscript \
-    /usr/local/bin/Rscript \
-    /usr/bin/Rscript; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    RSCRIPT="$candidate"
-    break
-  fi
-done
-
-if [ -z "$RSCRIPT" ]; then
-  log "ERROR: Rscript not found in PATH — cannot generate rollup"
+# ── Verify nix-shell is accessible (mirrors roborev_daily_cron.sh) ────────────
+if [ ! -f "$LLM_NIX" ]; then
+  log "ERROR: nix file not found at $LLM_NIX"
   exit 1
 fi
-log "using Rscript: $RSCRIPT"
+if [ ! -x "$NIX_SHELL_BIN" ]; then
+  log "ERROR: nix-shell not found at $NIX_SHELL_BIN (PATH=$PATH)"
+  exit 1
+fi
+log "using nix-shell: $NIX_SHELL_BIN"
 
 # ── Step 1: generate rollup markdown ─────────────────────────────────────────
 ROLLUP_SCRIPT="$SCRIPTS_DIR/roborev_weekly_rollup.R"
@@ -90,8 +83,8 @@ if [ ! -f "$ROLLUP_SCRIPT" ]; then
   exit 1
 fi
 
-log "running $ROLLUP_SCRIPT"
-"$RSCRIPT" "$ROLLUP_SCRIPT" 2>&1 | tee -a "$LOG"
+log "running $ROLLUP_SCRIPT via nix-shell"
+"$NIX_SHELL_BIN" "$LLM_NIX" --run "Rscript '${ROLLUP_SCRIPT}'" 2>&1 | tee -a "$LOG"
 rollup_rc=${PIPESTATUS[0]}
 if [ "$rollup_rc" -ne 0 ]; then
   log "WARNING: rollup script exited $rollup_rc — continuing to email step (partial output possible)"
@@ -104,8 +97,8 @@ if [ ! -f "$EMAIL_SCRIPT" ]; then
   exit 1
 fi
 
-log "running $EMAIL_SCRIPT (EMAIL_DRY_RUN=$EMAIL_DRY_RUN)"
-"$RSCRIPT" "$EMAIL_SCRIPT" 2>&1 | tee -a "$LOG"
+log "running $EMAIL_SCRIPT via nix-shell (EMAIL_DRY_RUN=$EMAIL_DRY_RUN)"
+"$NIX_SHELL_BIN" "$LLM_NIX" --run "Rscript '${EMAIL_SCRIPT}'" 2>&1 | tee -a "$LOG"
 email_rc=${PIPESTATUS[0]}
 
 if [ "$email_rc" -ne 0 ]; then
