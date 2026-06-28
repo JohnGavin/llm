@@ -8,8 +8,16 @@
 #   roborev_consistency_check.sh [--verbose] [--json]
 #   roborev_consistency_check.sh --fixture <summary.json> [--backlog-count <n>] [--verbose] [--json]
 #
+# Window:
+#   The live summary is scoped to a recent window (default 24h) via --since, so the
+#   check reflects current pipeline health rather than re-flagging resolved incidents
+#   for the 7-day roborev default.  Override via env var:
+#     ROBOREV_CONSISTENCY_WINDOW=48h roborev_consistency_check.sh
+#   Fixture mode is unaffected (canned JSON, no --since applied).
+#
 # Exit codes:
-#   0 — all invariants pass (or check skipped due to missing tooling)
+#   0 — all invariants pass, check skipped due to missing tooling, OR no reviews
+#       in the window (nothing to assert — healthy by definition)
 #   1 — at least one invariant INCONSISTENT
 #
 # Emits on failure:
@@ -26,6 +34,11 @@ BACKLOG_THRESHOLD=10          # open backlog items above which we expect verdict
 VERDICTS_LOW_THRESHOLD=1      # verdict count at-or-below which we flag if backlog large
 CRASH_RATE_THRESHOLD="0.5"    # fraction of overview.total that is crash+quota → flag
 AGENT_ERROR_RATE_THRESHOLD="0.5"  # per-agent errors/total fraction → flag
+
+# Window for the health check. roborev summary defaults to 7d (good for trend
+# analysis, wrong for a real-time gate — a 1-day outage would flag for a week).
+# 24h reflects current pipeline health; bump to 48h/7d if you want a longer look-back.
+CONSISTENCY_WINDOW="${ROBOREV_CONSISTENCY_WINDOW:-24h}"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 VERBOSE=0
@@ -66,7 +79,7 @@ if [ -n "$FIXTURE_FILE" ]; then
   fi
   SUMMARY_JSON=$(cat "$FIXTURE_FILE")
 else
-  SUMMARY_JSON=$(timeout 5 "$ROBOREV_BIN" summary --json 2>/dev/null) || SUMMARY_JSON=""
+  SUMMARY_JSON=$(timeout 5 "$ROBOREV_BIN" summary --json --since "$CONSISTENCY_WINDOW" 2>/dev/null) || SUMMARY_JSON=""
 fi
 
 if [ -z "$SUMMARY_JSON" ]; then
@@ -95,6 +108,29 @@ VD_TOTAL="${VD_TOTAL:-0}";   VD_TOTAL="${VD_TOTAL/null/0}"
 VD_PASS_RATE="${VD_PASS_RATE:-0}"; VD_PASS_RATE="${VD_PASS_RATE/null/0}"
 CR_CRASH="${CR_CRASH:-0}";   CR_CRASH="${CR_CRASH/null/0}"
 CR_QUOTA="${CR_QUOTA:-0}";   CR_QUOTA="${CR_QUOTA/null/0}"
+
+# ── 0-reviews-in-window: nothing to assert → healthy ─────────────────────────
+# When the summary window contains no reviews (e.g. --since 24h on a quiet day),
+# every ratio invariant would divide by zero and the backlog-vs-verdicts check
+# would spuriously fire.  Exit 0 early: no activity = no evidence of brokenness.
+if [ "$OV_TOTAL" -eq 0 ] 2>/dev/null; then
+  if [ "$JSON_OUT" = "1" ]; then
+    jq -n \
+      --argjson bt "$BACKLOG_THRESHOLD" \
+      --argjson vt "$VERDICTS_LOW_THRESHOLD" \
+      --arg     ct "$CRASH_RATE_THRESHOLD" \
+      --arg     at "$AGENT_ERROR_RATE_THRESHOLD" \
+      --arg     win "$CONSISTENCY_WINDOW" \
+      '{counters:{overview_total:0,overview_failed:0,verdicts_total:0,verdicts_pass_rate:0,crash:0,quota:0,backlog_open:0},
+        thresholds:{backlog_open_gt:$bt,verdicts_total_lte:$vt,crash_rate_gt:($ct|tonumber),agent_error_rate_gt:($at|tonumber)},
+        inconsistencies_fired:[],
+        note:("0 reviews in window="+$win+" — healthy by definition")}' 2>/dev/null || true
+  fi
+  if [ "$VERBOSE" = "1" ]; then
+    echo "roborev:consistent (0 reviews in window=${CONSISTENCY_WINDOW} — nothing to assert)"
+  fi
+  exit 0
+fi
 
 # ── Backlog count ─────────────────────────────────────────────────────────────
 # In fixture mode: use --backlog-count N (or 0 if not provided)
