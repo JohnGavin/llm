@@ -996,6 +996,26 @@ fi
 # Phase 8b: roborev-autoclose visibility
 phase_roborev_autoclose 2>/dev/null || echo "roborev-autoclose: threshold=unknown (error reading counter file)"
 
+# Phase 8c: roborev cross-counter consistency check (#679)
+# Detects self-contradictory state in roborev summary (e.g. large backlog + no verdicts,
+# or 100% pass_rate while many jobs crashed). Separate cache so Phase 8's roborev_status
+# token is unchanged. Failure of this check NEVER breaks session init.
+_rvc_cache="${HOME}/.claude/logs/session_init_roborev_consistency_cache.txt"
+_rvc_script="${CLAUDE_DIR}/scripts/roborev_consistency_check.sh"
+rvc_status=""
+if [ -f "$_rvc_cache" ]; then
+  rvc_status=$(cat "$_rvc_cache" 2>/dev/null) || rvc_status=""
+fi
+if [ -x "$_rvc_script" ] && command -v /usr/local/bin/roborev >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$_rvc_cache")"
+  _rvc_script_snap="$_rvc_script"
+  _rvc_cache_snap="$_rvc_cache"
+  nohup bash -c "
+    _out=\$(timeout 10 bash '${_rvc_script_snap}' 2>/dev/null | head -1 || true)
+    echo \"\${_out:-roborev:consistent}\" > '${_rvc_cache_snap}'
+  " > /dev/null 2>&1 &
+fi
+
 # Phase 9: Burn rate — CodexBar is now primary (#281 Phase 4c; closes llm#420).
 # Soak log (2026-06-05 to 2026-06-16) confirmed CodexBar reliable (burn:78-86%)
 # while ccusage/cmonitor-rs has been dead (BURN GUARD DEAD, 5+ consecutive runs).
@@ -1233,6 +1253,7 @@ summary="$summary | env-class:${env_class_val} | config:ok | ${n_skills:-skills:
 [ "$is_worktree" = "Y" ] && summary="$summary | worktree:active"
 [ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}"
 [ -n "$roborev_status" ] && summary="$summary | $roborev_status"
+[ -n "$rvc_status" ] && summary="$summary | $rvc_status"
 [ -n "$burn_output" ] && summary="$summary | $burn_output"
 echo "$summary"
 
