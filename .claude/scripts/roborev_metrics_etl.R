@@ -582,6 +582,17 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
                   drop = FALSE]
   merged <- merge(reviews, jb, by = "job_id", all.x = TRUE)
 
+  # Drop rows where repo is NA (reviews from non-canonical repos excluded by the
+  # canonical-project guard in jobs_raw leave NA after the LEFT JOIN; inserting
+  # them would violate the NOT NULL constraint on roborev_review_lifecycle.repo).
+  n_null_repo <- sum(is.na(merged$repo))
+  if (n_null_repo > 0L) {
+    log_msg(sprintf(
+      "WARN: dropping %d lifecycle row(s) with NULL repo — non-canonical or fixture reviews excluded by canonical guard",
+      n_null_repo))
+    merged <- merged[!is.na(merged$repo), , drop = FALSE]
+  }
+
   # Join the latest closure marker per job (left join — NAs for open/unmarked reviews)
   if (!is.null(markers) && nrow(markers) > 0L) {
     merged <- merge(merged, markers, by = "job_id", all.x = TRUE)
