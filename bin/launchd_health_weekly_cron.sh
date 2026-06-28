@@ -95,18 +95,22 @@ if [ -z "${SKIP_CRON_PULL:-}" ]; then
 fi
 log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
 
-# ── Bring Nix-shell R into PATH if needed ─────────────────────────────────────
+# ── Verify nix-shell is accessible (mirrors roborev_daily_cron.sh) ────────────
+# All R calls use nix-shell so R_LIBS_SITE and the full package environment
+# are inherited — calling the Rscript binary directly loses those.
 
 LLM_NIX="${REPO_ROOT}/default.nix"
-RSCRIPT="${RSCRIPT:-Rscript}"
-if [[ -f "${LLM_NIX}" ]] && command -v nix-shell >/dev/null 2>&1; then
-  NIX_R="$(nix-shell "${LLM_NIX}" --run "which Rscript" 2>/dev/null || true)"
-  if [[ -n "$NIX_R" ]]; then
-    export PATH="$(dirname "$NIX_R"):$PATH"
-    RSCRIPT="$NIX_R"
-    log "using nix Rscript: $RSCRIPT"
-  fi
+NIX_SHELL_BIN="/nix/var/nix/profiles/default/bin/nix-shell"
+
+if [ ! -f "${LLM_NIX}" ]; then
+  log "ERROR: nix file not found at ${LLM_NIX}"
+  exit 1
 fi
+if [ ! -x "${NIX_SHELL_BIN}" ]; then
+  log "ERROR: nix-shell not found at ${NIX_SHELL_BIN} (PATH=${PATH})"
+  exit 1
+fi
+log "using nix-shell: ${NIX_SHELL_BIN}"
 
 # ── DuckDB availability check (llm#554) ───────────────────────────────────────
 # Gracefully skip all DB writes when duckdb binary or unified.duckdb is absent.
@@ -143,7 +147,7 @@ fi
 # ── Step 1: Generate markdown report ─────────────────────────────────────────
 
 log "Step 1: generating launchd health report → ${REPORT_OUT}"
-"${RSCRIPT}" "${SCRIPTS_DIR}/launchd_health_report.R" --out "${REPORT_OUT}" 2>>"${LOG_FILE}"
+"${NIX_SHELL_BIN}" "${LLM_NIX}" --run "Rscript '${SCRIPTS_DIR}/launchd_health_report.R' --out '${REPORT_OUT}'" 2>>"${LOG_FILE}"
 STEP1_EXIT=$?
 if [ "${STEP1_EXIT}" -ne 0 ]; then
   log "WARNING: launchd_health_report.R exited ${STEP1_EXIT} — continuing"
@@ -271,7 +275,7 @@ fi
 
 export LAUNCHD_SCRIPTS_DIR="${SCRIPTS_DIR}"
 log "Step 2: sending launchd health email..."
-"${RSCRIPT}" "${SCRIPTS_DIR}/send_launchd_health_email.R" 2>>"${LOG_FILE}"
+"${NIX_SHELL_BIN}" "${LLM_NIX}" --run "Rscript '${SCRIPTS_DIR}/send_launchd_health_email.R'" 2>>"${LOG_FILE}"
 STEP2_EXIT=$?
 
 if [ "${STEP2_EXIT}" -ne 0 ]; then
