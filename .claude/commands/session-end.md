@@ -104,6 +104,16 @@ If NOT-CLEAN:
 - Ask user: "Proceed with commit despite unresolved roborev findings? (Y/N)"
 - If no, do NOT commit; suggest fixing failures first or investigating agent health (`roborev_agent_health.sh --status`)
 
+### Cross-counter consistency check (#679)
+
+Also run the automated consistency check — it detects self-contradictory state that the raw counters above might not surface:
+
+```bash
+~/.claude/scripts/roborev_consistency_check.sh --verbose
+```
+
+If it prints any `roborev:INCONSISTENT(<which>)` line, add that to the NOT-CLEAN report above. The check is tolerant — it exits 0 silently if roborev or jq is missing, so it never blocks /bye.
+
 ## ctx.yaml Cache Verification
 
 After commit/push, verify all ctx files are current:
