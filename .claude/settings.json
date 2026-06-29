@@ -390,6 +390,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/worktree_symlink_guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
             "command": "~/.claude/hooks/mermaid_dashboard_guard.sh",
             "timeout": 5
           }
