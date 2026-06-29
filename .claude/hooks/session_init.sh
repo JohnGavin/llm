@@ -844,7 +844,7 @@ _p4_cache="${HOME}/.claude/logs/session_init_phase4_cache.txt"
 n_skills=""
 if [ -f "$_p4_cache" ]; then
   _p4_cached=$(cat "$_p4_cache" 2>/dev/null) || true
-  n_skills=$(echo "$_p4_cached" | grep -oE '[0-9]+ skills' | head -1)
+  n_skills=$(echo "$_p4_cached" | grep -oE '[0-9]+ skills' | head -1) || true
   if echo "$_p4_cached" | grep -qiE "WARNING|OVER"; then
     WARNINGS="${WARNINGS}$(echo "$_p4_cached" | grep -iE 'WARNING|OVER') "
   fi
