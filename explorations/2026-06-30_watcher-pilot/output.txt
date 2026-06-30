@@ -1,0 +1,61 @@
+# watcher pilot — captured output (2026-06-30)
+
+## 1. Nix build (r-lib/watcher v0.2.0 from GitHub)
+
+these 2 derivations will be built:
+  /nix/store/23gkzyk6xjgaqnahq4c98hsr52x8mr12-watcher-ab79639.drv
+  /nix/store/246fcfdpw7c45as13867ic8rw740hzcg-r-watcher.drv
+building '/nix/store/23gkzyk6xjgaqnahq4c98hsr52x8mr12-watcher-ab79639.drv'...
+exporting https://github.com/r-lib/watcher (rev ab79639335c519a9cc7eeca272ea744ade462329)
+[fetched 119 objects, 129.41 KiB]
+building '/nix/store/246fcfdpw7c45as13867ic8rw740hzcg-r-watcher.drv'...
+* installing *source* package 'watcher' version '0.2.0'
+using C compiler: 'clang version 21.1.8'
+using C++ compiler: 'clang version 21.1.8'
+using SDK: 'MacOSX14.4.sdk'
+Compiling bundled 'libfswatch' in place ...
+[compiles: cevent.o libfswatch.o libfswatch_log.o event.o filter.o
+  libfswatch_exception.o monitor.o monitor_factory.o path_utils.o
+  poll_monitor.o string_utils.o fsevents_monitor.o kqueue_monitor.o
+  inotify_monitor.o fanotify_monitor.o fen_monitor.o]
+linker: -lpthread -framework CoreServices  [CoreServices resolved via MacOSX14.4.sdk]
+* DONE (watcher)
+watcher OK:  0.2.0
+
+BUILD STATUS: SUCCESS
+
+## 2. Callback demo (watcher_demo.R)
+
+watcher version: 0.2.0
+later version: 1.4.5
+Platform: unix Darwin
+
+Watch dir: /private/tmp/nix-shell-81076-0/RtmpJGoIEK/watcher_test_84628
+Marker:    /private/tmp/nix-shell-81076-0/RtmpJGoIEK/marker_84628.txt
+
+watcher$start(): TRUE
+watcher$is_running(): TRUE
+watcher$get_path(): /private/tmp/nix-shell-81076-0/RtmpJGoIEK/watcher_test_84628
+
+Wrote trigger file: /private/tmp/.../watcher_test_84628/trigger.txt
+Polling later event loop (max 10s)...
+[callback] fired at 12:41:12 - 1 path(s): watcher_test_84628
+watcher$stop() called. is_running: FALSE
+
+=== RESULT ===
+SUCCESS: callback fired after filesystem change.
+Marker file contents:
+fired_at: 2026-06-30 12:41:12
+n_paths: 1
+paths: /private/tmp/nix-shell-81076-0/RtmpJGoIEK/watcher_test_84628
+
+CALLBACK STATUS: SUCCESS (FSEvents reported directory-level path, not file-level)
+
+## 3. Notable observations
+
+- libfswatch is bundled in the R package (no nix system dep needed)
+- CoreServices framework resolved via MacOSX14.4.sdk (present in nix clang wrapper)
+- rix pin 2026-02-02 + git_pkgs works with watcher v0.2.0
+- FSEvents on macOS reports the containing DIRECTORY, not the modified file
+  (watcher_test_84628 rather than trigger.txt). This is expected FSEvents behaviour.
+- Callback latency: ~200ms debounce fired within the 10s polling window
