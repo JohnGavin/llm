@@ -152,6 +152,36 @@ docker run --rm -v "$(pwd):/pkg" -w /pkg --network=none \
 
 This eliminates macOS-specific behaviour: different `grep`/`sed` flags, system lib versions, locale settings, font availability.
 
+## Performance Profiling with debrief
+
+`debrief` (r-lib/debrief) renders a `profvis` result as text that an agent can
+read without a browser. It follows a two-call pattern because `profvis::profvis()`
+requires a real R session with source files — it cannot be resumed across separate
+`Rscript` calls, but the saved RDS can be inspected in a second call.
+
+**Call 1 — profile and save:**
+
+```r
+# Run inside a nix-shell with profvis and debrief available
+p <- profvis::profvis({
+  pkgload::load_all()
+  # ... code under test ...
+})
+saveRDS(p, "/tmp/profile.rds")
+```
+
+**Call 2 — inspect (separate Rscript, no browser needed):**
+
+```r
+p <- readRDS("/tmp/profile.rds")
+# Text summary agents can read:
+debrief::pv_print_debrief(debrief::pv_debrief(p, has_source = FALSE))
+```
+
+Use `has_source = FALSE` in non-interactive or nix-shell agent calls — source
+files are not re-resolved after `saveRDS`. The `pv_print_debrief()` output lists
+functions by self-time; quote it directly in a bug report or debugging response.
+
 ## Mandatory Verification Block (Required Final Step)
 
 Before reporting completion, you MUST run these checks as your FINAL tool calls and quote their literal output in your end-of-run report. Reports that omit this block, or that report success without these checks passing, are treated as incomplete by the orchestrator.
