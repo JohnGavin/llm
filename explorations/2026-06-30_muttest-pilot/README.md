@@ -81,8 +81,30 @@ re-applied manually each time (or automated via a `default.post.sh`):
 3. `digest` and `usethis` in `propagatedBuildInputs` of the muttest derivation
 4. Comment block at top of `default.nix` documenting the patches
 
-A `default.post.sh` per the `nix-agent-shell-protocol` rule would automate
-re-applying these overlays. Not yet created for this pilot.
+A `default.post.sh` is provided — see **Reproducible env** section below.
+
+---
+
+## Reproducible env (default.post.sh)
+
+`default.post.sh` re-applies all four patches idempotently after every rix regen.
+Each patch is guarded by a marker so re-running is a no-op (file is not written
+unless the patch is absent).
+
+**Regen sequence** (nix-agent-shell-protocol Form A subshell):
+
+```bash
+# Step 1 — regenerate default.nix from default.R using the llm dev shell
+(cd /path/to/explorations/2026-06-30_muttest-pilot \
+   && nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")
+
+# Step 2 — re-apply the four manual patches
+./default.post.sh
+```
+
+The script resolves its own directory via `${BASH_SOURCE[0]}` and operates on
+the `default.nix` beside it, so it can be called from any working directory.
+It prints `[apply]` or `[skip]` for each patch and exits non-zero on any error.
 
 ---
 
@@ -195,6 +217,7 @@ explorations/2026-06-30_muttest-pilot/
 ├── DESCRIPTION             # Minimal package descriptor (required by muttest)
 ├── default.R               # rix driver — generates default.nix
 ├── default.nix             # Nix environment with muttest from GitHub + 4 manual patches
+├── default.post.sh         # Idempotent patcher — re-applies 4 patches after rix regen
 ├── run_muttest.R           # Script to run mutation testing
 ├── output.txt              # Captured muttest output
 ├── R/
