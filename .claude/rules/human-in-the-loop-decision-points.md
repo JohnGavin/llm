@@ -40,11 +40,13 @@ Automation is not wrong. The failure mode is automation that runs **past the bou
 |---|---|---|---|
 | **A** | Catastrophic / irreversible | `DROP TABLE prod`; delete repo; force-push to main; revert a merged PR; rotate production credentials; destroy a volume | Out-of-band ack AND target name supplied from memory (agent must NOT print the target name in the same turn as the prompt) |
 | **B** | Destructive / recoverable | `rm -rf` >100 MB; `git reset --hard`; force-push feature branch; bulk delete issues; revert uncommitted changes across multiple files | Target name included in the user's confirmation phrase |
-| **C** | Cross-boundary visible | PR merge; issue close; email send; `gh comment` posted externally; Slack/webhook notification; public release tag | Explicit action verb in user reply: "merge", "send", "close", "release" — NOT just "yes" or "go ahead" |
+| **C** | **Publish gate** (cross-boundary visible) | PR merge; issue close; email send; `gh comment` posted externally; Slack/webhook notification; public release tag | Explicit action verb in user reply: "merge", "send", "close", "release" — NOT just "yes" or "go ahead" |
 | **D** | Scoped commit / local write | `gh pr create`; branch push (own branch); file Edit/Write in worktree; commit to feature branch; open PR (not merge) | No confirmation — proceed automatically |
 | **E** | Read-only / advisory | `gh issue list`; grep; SQL query; `git log`; `tar_read()`; file Read; test run (no side effects) | No confirmation — proceed silently |
 
 Class D is the key innovation over `destructive-ops-guard` Part 3: it explicitly names the boundary where automation is the CORRECT default. Opening a PR is Class D, merging it is Class C.
+
+> **Working name — "publish gate".** Prefer the plain-language name **"publish gate"** over the jargon label "Class C" when talking to the user or in tooling: a publish-gate action *publishes a change beyond the sandbox into a shared/visible place* (merge to main, close an issue, post an external comment, cut a release) and so requires an explicit action verb, never a bare "yes". "Class C" remains the formal taxonomy label; "publish gate" is its user-facing synonym.
 
 ---
 
