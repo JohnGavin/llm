@@ -100,3 +100,12 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## Destructive-FS Guard Blocks rm (see destructive-guard-blocks-rm.md)
 - Guard denies `rm -rf ~/...` even WITH user confirmation (not bypassed in worktrees); don't retry — hand user `! rm`, verify w/ du/ls (2026-06-27)
+
+## Symlink Worktree-Escape (see config-pulse-symlink-worktree-escape.md)
+- A repo file that symlinks into ANOTHER repo (e.g. llm `.claude/scripts/config_pulse.sh` → llmtelemetry) lets a worktree agent's edit follow the link out of its sandbox and push to the other repo's main (#517 Pattern 2, real 2026-06-28). Memory is NOT a reliable guard — needs a PreToolUse realpath hook (#517) + de-symlinking known traps
+
+## Hook "No stderr output" = pipefail abort (see hook-pipefail-no-stderr.md)
+- SessionStart "Failed with non-blocking status code: No stderr output" = unguarded `var=$(...|grep...)` under `set -euo pipefail`; grep miss → exit 1 aborts hook silently; fix `|| true` (session_init.sh:847, llm#695, 2026-06-29)
+
+## ellmer Can't Use Max Subscription (see ellmer-cannot-use-max-subscription.md)
+- ellmer 0.4.0 has NO OAuth/`chat_claude_code()`; uses pay-per-token ANTHROPIC_API_KEY only; Anthropic blocked 3rd-party Max-sub use 2026-04-04; fund a key, then chat_claude() (#696, 2026-06-30)
