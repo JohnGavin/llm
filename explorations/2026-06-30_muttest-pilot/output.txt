@@ -1,0 +1,180 @@
+=== muttest pilot: classify_score() ===
+Source:  R/classify.R
+Tests:   tests/testthat/test-classify.R
+Mutators: comparison_operators, numeric_literals, negate_condition
+
+ℹ Mutation Testing
+  |   K |   S |   E |   T |   % | Mutator  | File 
+x |   0 |   1 |   1 |   1 |   0 | != → ==  | classify.R 
+x |   0 |   2 |   2 |   2 |   0 | < → >    | classify.R 
+✔ |   1 |   2 |   2 |   3 |  33 | < → >    | classify.R 
+✔ |   2 |   2 |   2 |   4 |  50 | < → >    | classify.R 
+x |   2 |   3 |   2 |   5 |  40 | < → >    | classify.R 
+x |   2 |   4 |   2 |   6 |  33 | < → <=   | classify.R 
+x |   2 |   5 |   2 |   7 |  28 | < → <=   | classify.R 
+x |   2 |   6 |   2 |   8 |  25 | < → <=   | classify.R 
+x |   2 |   7 |   2 |   9 |  22 | < → <=   | classify.R 
+x |   2 |   8 |   3 |  10 |  20 | <conditi | classify.R 
+x |   2 |   9 |   4 |  11 |  18 | <conditi | classify.R 
+✔ |   3 |   9 |   4 |  12 |  25 | <conditi | classify.R 
+✔ |   4 |   9 |   4 |  13 |  30 | <conditi | classify.R 
+x |   4 |  10 |   4 |  14 |  28 | <conditi | classify.R 
+x |   4 |  11 |   4 |  15 |  26 | <n> - 1  | classify.R 
+x |   4 |  12 |   4 |  16 |  25 | <n> - 1  | classify.R 
+x |   4 |  13 |   4 |  17 |  23 | <n> - 1  | classify.R 
+x |   4 |  14 |   4 |  18 |  22 | <n> - 1  | classify.R 
+x |   4 |  15 |   4 |  19 |  21 | <n> - 1  | classify.R 
+x |   4 |  16 |   4 |  20 |  20 | <n> + 1  | classify.R 
+x |   4 |  17 |   4 |  21 |  19 | <n> + 1  | classify.R 
+x |   4 |  18 |   4 |  22 |  18 | <n> + 1  | classify.R 
+x |   4 |  19 |   4 |  23 |  17 | <n> + 1  | classify.R 
+x |   4 |  20 |   4 |  24 |  16 | <n> + 1  | classify.R 
+x |   4 |  21 |   5 |  25 |  16 | > → <    | classify.R 
+x |   4 |  22 |   5 |  26 |  15 | > → >=   | classify.R 
+
+Duration: 2.58 s
+
+── Survived Mutants ────────────────────────────────────────────────────────────
+classify.R  != → ==
+  14-   if (!is.numeric(score) || length(score) != 1L) {
+  14+   if (!is.numeric(score) || length(score) == 1L) {
+classify.R  < → >
+  17-   if (score < 0 || score > 100) {
+  17+   if (score > 0 || score > 100) {
+classify.R  < → >
+  26-   if (score < 85) {
+  26+   if (score > 85) {
+classify.R  < → <=
+  17-   if (score < 0 || score > 100) {
+  17+   if (score <= 0 || score > 100) {
+classify.R  < → <=
+  20-   if (score < 50) {
+  20+   if (score <= 50) {
+classify.R  < → <=
+  23-   if (score < 70) {
+  23+   if (score <= 70) {
+classify.R  < → <=
+  26-   if (score < 85) {
+  26+   if (score <= 85) {
+classify.R  <condition> → !(<condition>)
+  14-   if (!is.numeric(score) || length(score) != 1L) {
+  14+   if (!(!is.numeric(score) || length(score) != 1L)) {
+classify.R  <condition> → !(<condition>)
+  17-   if (score < 0 || score > 100) {
+  17+   if (!(score < 0 || score > 100)) {
+classify.R  <condition> → !(<condition>)
+  26-   if (score < 85) {
+  26+   if (!(score < 85)) {
+classify.R  <n> - 1 → <n> - 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < -1 || score > 100) {
+classify.R  <n> - 1 → <n> - 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score > 99) {
+classify.R  <n> - 1 → <n> - 1
+  20-   if (score < 50) {
+  20+   if (score < 49) {
+classify.R  <n> - 1 → <n> - 1
+  23-   if (score < 70) {
+  23+   if (score < 69) {
+classify.R  <n> - 1 → <n> - 1
+  26-   if (score < 85) {
+  26+   if (score < 84) {
+classify.R  <n> + 1 → <n> + 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 1 || score > 100) {
+classify.R  <n> + 1 → <n> + 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score > 101) {
+classify.R  <n> + 1 → <n> + 1
+  20-   if (score < 50) {
+  20+   if (score < 51) {
+classify.R  <n> + 1 → <n> + 1
+  23-   if (score < 70) {
+  23+   if (score < 71) {
+classify.R  <n> + 1 → <n> + 1
+  26-   if (score < 85) {
+  26+   if (score < 86) {
+classify.R  > → <
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score < 100) {
+classify.R  > → >=
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score >= 100) {
+
+── Results ─────────────────────────────────────────────────────────────────────
+[ KILLED 4 | SURVIVED 22 | ERRORS 5 | TOTAL 26 | SCORE 15.4% ]
+
+
+=== Summary ===
+
+── Results ─────────────────────────────────────────────────────────────────────
+[ KILLED 4 | SURVIVED 22 | ERRORS 5 | TOTAL 26 | SCORE 15.4% ]
+
+── Survived Mutants ────────────────────────────────────────────────────────────
+classify.R  != → ==
+  14-   if (!is.numeric(score) || length(score) != 1L) {
+  14+   if (!is.numeric(score) || length(score) == 1L) {
+classify.R  < → >
+  17-   if (score < 0 || score > 100) {
+  17+   if (score > 0 || score > 100) {
+classify.R  < → >
+  26-   if (score < 85) {
+  26+   if (score > 85) {
+classify.R  < → <=
+  17-   if (score < 0 || score > 100) {
+  17+   if (score <= 0 || score > 100) {
+classify.R  < → <=
+  20-   if (score < 50) {
+  20+   if (score <= 50) {
+classify.R  < → <=
+  23-   if (score < 70) {
+  23+   if (score <= 70) {
+classify.R  < → <=
+  26-   if (score < 85) {
+  26+   if (score <= 85) {
+classify.R  <condition> → !(<condition>)
+  14-   if (!is.numeric(score) || length(score) != 1L) {
+  14+   if (!(!is.numeric(score) || length(score) != 1L)) {
+classify.R  <condition> → !(<condition>)
+  17-   if (score < 0 || score > 100) {
+  17+   if (!(score < 0 || score > 100)) {
+classify.R  <condition> → !(<condition>)
+  26-   if (score < 85) {
+  26+   if (!(score < 85)) {
+classify.R  <n> - 1 → <n> - 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < -1 || score > 100) {
+classify.R  <n> - 1 → <n> - 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score > 99) {
+classify.R  <n> - 1 → <n> - 1
+  20-   if (score < 50) {
+  20+   if (score < 49) {
+classify.R  <n> - 1 → <n> - 1
+  23-   if (score < 70) {
+  23+   if (score < 69) {
+classify.R  <n> - 1 → <n> - 1
+  26-   if (score < 85) {
+  26+   if (score < 84) {
+classify.R  <n> + 1 → <n> + 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 1 || score > 100) {
+classify.R  <n> + 1 → <n> + 1
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score > 101) {
+classify.R  <n> + 1 → <n> + 1
+  20-   if (score < 50) {
+  20+   if (score < 51) {
+classify.R  <n> + 1 → <n> + 1
+  23-   if (score < 70) {
+  23+   if (score < 71) {
+classify.R  <n> + 1 → <n> + 1
+  26-   if (score < 85) {
+  26+   if (score < 86) {
+classify.R  > → <
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score < 100) {
+classify.R  > → >=
+  17-   if (score < 0 || score > 100) {
+  17+   if (score < 0 || score >= 100) {
