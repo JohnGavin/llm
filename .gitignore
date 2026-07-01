@@ -123,6 +123,9 @@ nohup.out
 # Explorations: track conventions doc only, not experimental content
 explorations/*
 !explorations/CONVENTIONS.md
+# Piloted explorations that are PRed for review (remove exception once graduated or archived)
+!explorations/2026-06-30_muttest-pilot/
+!explorations/2026-06-30_muttest-pilot/**
 .claude/plans/
 /.claude/drafts/
 

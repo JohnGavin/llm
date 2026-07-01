@@ -1,0 +1,8 @@
+Package: muttestpilot
+Title: muttest Pilot — classify_score() Demonstration
+Version: 0.1.0
+Description: Minimal toy package for the muttest pilot exploration.
+  Provides classify_score() with intentionally weak tests to demonstrate
+  muttest's ability to surface boundary-condition gaps.
+License: MIT
+Encoding: UTF-8
