@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+# Mark session as scheduled/automated for llmtelemetry_emit.sh (#322 Phase 2).
+# Propagates to any claude process spawned by roborev refine so the Stop hook
+# emits "trigger":"scheduled" without requiring a /bye sentinel.
+export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
+
 PIDFILE="$HOME/.claude/roborev-auto-refine.pid"
 LOGFILE="$HOME/.claude/logs/roborev-auto-refine.log"
 ROBOREV="/usr/local/bin/roborev"

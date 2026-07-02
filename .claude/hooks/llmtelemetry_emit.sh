@@ -19,6 +19,14 @@
 # response, we gate stop emission behind a per-session sentinel written by /bye.
 # Mid-session Stop invocations (non-/bye) skip emit entirely.
 #
+# Scheduled-session bypass (llmtelemetry#322 Phase 2):
+# Headless sessions (launchd/cron, claude -p, /schedule, /loop) never call
+# /bye, so they would emit nothing without the bypass. When CLAUDE_TRIGGER is
+# "scheduled" at Stop time, the sentinel gate is bypassed and emit runs
+# unconditionally. The payload includes "trigger":"scheduled" (vs "interactive"
+# for normal sessions). Set by exporting CLAUDE_TRIGGER=scheduled in launcher
+# scripts before invoking claude.
+#
 # Concurrent-session safety (llm#273):
 #   - SESSION_ID is stable: prefer $CLAUDE_SESSION_ID → PPID-anchored fallback
 #     written at start time. A PPID-keyed anchor file ensures start/stop resolve
@@ -80,6 +88,17 @@ if [ "$MODE" = "start" ]; then
   exit 0
 fi
 
+# ── STOP mode: determine trigger (scheduled vs interactive) ──────────────────
+# CLAUDE_TRIGGER=scheduled is exported by in-repo launcher scripts and launchd
+# entrypoints that invoke claude headlessly (cron jobs, /schedule, /loop).
+# Interactive sessions leave CLAUDE_TRIGGER unset → defaults to "interactive".
+# Validation: any value other than "scheduled" or "interactive" → "interactive".
+_RAW_TRIGGER="${CLAUDE_TRIGGER:-interactive}"
+case "$_RAW_TRIGGER" in
+  scheduled|interactive) TRIGGER="$_RAW_TRIGGER" ;;
+  *) TRIGGER="interactive" ;;
+esac
+
 # ── STOP mode: gate on per-session /bye sentinel (llm#273) ───────────────────
 # /bye writes ~/.claude/.bye-requested.<SESSION_ID> (per-session) AND the
 # legacy ~/.claude/.bye-requested for session_stop.sh pattern detection.
@@ -88,8 +107,18 @@ fi
 _BYE_SENTINEL_PER_SESSION="${HOME}/.claude/.bye-requested.${SESSION_ID}"
 _BYE_SENTINEL_GLOBAL="${HOME}/.claude/.bye-requested"
 
+# Scheduled-session bypass (llmtelemetry#322 Phase 2):
+# Headless sessions spawned by launchd/cron/claude-p never call /bye, so the
+# sentinel gate would permanently suppress their telemetry. When CLAUDE_TRIGGER
+# is "scheduled" at Stop time, bypass the /bye sentinel and emit unconditionally.
+# A headless claude session fires Stop exactly once at its natural exit, so
+# there is no risk of spurious duplicate emission — the bypass is safe.
+# Interactive sessions are unaffected: sentinel gate logic unchanged below.
 _sentinel_found=0
-if [ -f "$_BYE_SENTINEL_PER_SESSION" ]; then
+if [ "$TRIGGER" = "scheduled" ]; then
+  # Scheduled bypass: emit without /bye sentinel
+  _sentinel_found=1
+elif [ -f "$_BYE_SENTINEL_PER_SESSION" ]; then
   _sentinel_found=1
   rm -f "$_BYE_SENTINEL_PER_SESSION" 2>/dev/null || true
 elif [ -f "$_BYE_SENTINEL_GLOBAL" ]; then
@@ -147,8 +176,10 @@ fi
 jsons() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # Build and append the JSONL envelope
+# "trigger" is always written explicitly: "scheduled" for automated/headless
+# sessions (CLAUDE_TRIGGER=scheduled), "interactive" for human-driven sessions.
 JSONL=$(printf \
-  '{"ts":"%s","host":"%s","pid":"%s","payload":{"event_type":"session_stop","session_id":"%s","project":"%s","started_at":"%s","ended_at":"%s","duration_min":%s,"agent":"claude-code","source":"claude-code-hook","working_dir":"%s"}}' \
+  '{"ts":"%s","host":"%s","pid":"%s","payload":{"event_type":"session_stop","session_id":"%s","project":"%s","started_at":"%s","ended_at":"%s","duration_min":%s,"agent":"claude-code","source":"claude-code-hook","trigger":"%s","working_dir":"%s"}}' \
   "$TS_END" \
   "$(jsons "$HOST")" \
   "$$" \
@@ -157,6 +188,7 @@ JSONL=$(printf \
   "$(jsons "${TS_START:-}")" \
   "$TS_END" \
   "$DURATION_MIN" \
+  "$TRIGGER" \
   "$(jsons "$PROJECT_DIR")")
 
 printf '%s\n' "$JSONL" >> "$STAGING_DIR/events-${HOST}-${DATE}.jsonl" 2>/dev/null || true
