@@ -5,6 +5,9 @@ project:
     - "index.qmd"
     - "vignettes/*.qmd"
     - "vignettes/articles/*.qmd"
+  post-render:
+    # Fail the render if any internal link 404s (JohnGavin/llm#715).
+    - .claude/scripts/quarto_post_render_links.sh
 
 website:
   title: "LLM Project"
