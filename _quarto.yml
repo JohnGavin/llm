@@ -8,6 +8,8 @@ project:
   post-render:
     # Fail the render if any internal link 404s (JohnGavin/llm#715).
     - .claude/scripts/quarto_post_render_links.sh
+    # Fail the render on dark-mode contrast violations (dark-mode-completeness rule).
+    - /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh
 
 website:
   title: "LLM Project"
