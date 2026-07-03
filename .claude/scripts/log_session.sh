@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 # log_session.sh — Write session events to unified DuckDB
 # Usage: log_session.sh start|stop [session_id] [project] [summary]
+#
+# CONCURRENCY NOTE (#710):
+#   The `hook` case fires on every PostToolUse (i.e. every tool call).
+#   Using the duckdb CLI here held an EXCLUSIVE write lock on unified.duckdb
+#   for ~100ms per call.  DuckDB's lock model allows no concurrent readers
+#   or writers while that lock is held.  With a busy Claude session firing
+#   dozens of PostToolUse events per minute, the ETL could never acquire a
+#   write connection through its 3 × 10 s retry window.
+#
+#   FIX: the `hook` case now writes to an append-only JSONL staging file
+#   (no lock needed — each printf/>> is an atomic kernel write ≤ PIPE_BUF).
+#   roborev_metrics_etl.sh imports the staging file into hook_events after
+#   the main ETL, when contention is lower.
+#
+#   All other cases (start, stop, error, agent_start, agent_stop) fire at
+#   most once per session boundary and retain the duckdb CLI path.
 set -euo pipefail
 
 DB="$HOME/.claude/logs/unified.duckdb"
@@ -48,10 +64,19 @@ case "$ACTION" in
   hook)
     HOOK_NAME="${5:-unknown}"
     EVENT_TYPE="${6:-unknown}"
-    duckdb -init /dev/null "$DB" -c "
-      INSERT INTO hook_events (session_id, hook_name, event_type, output_preview)
-      VALUES ('$SESSION_ID', '$HOOK_NAME', '$EVENT_TYPE', '$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")');
-    " 2>/dev/null || true
+    # JSONL staging: no duckdb CLI, no exclusive lock (#710 durable fix).
+    # Each >> append is ≤ PIPE_BUF (512 B) and atomic at the kernel level;
+    # no concurrent writer can interleave within a single printf line.
+    # roborev_metrics_etl.sh imports this file into hook_events on each ETL run.
+    _HOOK_STAGING="${HOME}/.claude/logs/hook_events_staging.jsonl"
+    _ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')
+    # JSON-escape the preview: backslashes first, then double-quotes, then strip
+    # control chars (newlines / carriage-returns / tabs) that would break JSONL.
+    _preview=$(echo "$SUMMARY" | head -c 200 | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g')
+    _preview=$(printf '%s' "$_preview" | sed 's/"/\\"/g')
+    printf '{"ts":"%s","session_id":"%s","hook_name":"%s","event_type":"%s","output_preview":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$HOOK_NAME" "$EVENT_TYPE" "$_preview" \
+      >> "${_HOOK_STAGING}" 2>/dev/null || true
     ;;
   agent_start)
     AGENT_TYPE="${5:-unknown}"
