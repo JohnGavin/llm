@@ -4,7 +4,7 @@
 #
 # Reads:  ~/.claude/logs/self_review_stage1.log  (written by stage1 --write)
 #         ~/.claude/logs/unified.duckdb           (DB with findings table)
-# Writes: ~/.claude/logs/self_review_verify.log  (one PASS/FAIL line per run)
+# Writes: ~/.claude/logs/self_review_verify.log  (one PASS/FAIL/STALE line per run)
 #
 # Usage:
 #   self_review_verify.sh                  # normal run (reads log + DB)
@@ -21,9 +21,9 @@ export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:
 # ─── Paths ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NIX_DEFAULT="$(cd "${SCRIPT_DIR}/../.." 2>/dev/null && pwd)/default.nix"
-LOG="${HOME}/.claude/logs/self_review_stage1.log"
-DB="${HOME}/.claude/logs/unified.duckdb"
-VERIFY_LOG="${HOME}/.claude/logs/self_review_verify.log"
+LOG="${SELF_REVIEW_STAGE1_LOG:-${HOME}/.claude/logs/self_review_stage1.log}"
+DB="${SELF_REVIEW_DB:-${HOME}/.claude/logs/unified.duckdb}"
+VERIFY_LOG="${SELF_REVIEW_VERIFY_LOG:-${HOME}/.claude/logs/self_review_verify.log}"
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 log_verify() {
@@ -64,12 +64,15 @@ classify_block() {
     echo "PASS"
 }
 
-# ─── Notify policy: FAIL always; PASS only on state change ──────────────────
-# $1 = current result ("PASS" or "FAIL"), $2 = previous state (or empty).
+# ─── Notify policy: FAIL always; STALE on first occurrence; PASS on state change ─
+# $1 = current result ("PASS", "FAIL", or "STALE"), $2 = previous state (or empty).
 # Outputs "1" to notify, "0" to stay silent.
+# STALE logic: notify on first STALE (prev != STALE); stay silent while stale
+# (prev == STALE); notify on recovery to PASS from STALE.
 should_notify() {
     local current="$1" prev="$2"
     if [ "${current}" = "FAIL" ]; then echo 1; return; fi
+    if [ "${current}" = "STALE" ] && [ "${prev}" != "STALE" ]; then echo 1; return; fi
     if [ "${current}" = "PASS" ] && [ "${prev}" != "PASS" ]; then echo 1; return; fi
     echo 0
 }
@@ -133,6 +136,15 @@ selftest() {
 
     # Test 9: should_notify — PASS on first run (empty prev) notifies
     _assert "should_notify-pass-first-run" "$(should_notify PASS "")" "1"
+
+    # Test 10: should_notify — STALE first occurrence notifies
+    _assert "should_notify-stale-first" "$(should_notify STALE PASS)" "1"
+
+    # Test 11: should_notify — STALE repeated stays silent (avoid daily spam)
+    _assert "should_notify-stale-after-stale" "$(should_notify STALE STALE)" "0"
+
+    # Test 12: should_notify — PASS recovers from STALE, notifies
+    _assert "should_notify-pass-after-stale" "$(should_notify PASS STALE)" "1"
 
     echo "─────────────────────────────"
     echo "Selftest: ${pass} PASS, ${fail} FAIL"
@@ -202,8 +214,43 @@ if [[ "${count}" == "0" ]] || [[ -z "${count}" ]]; then
     verdict="FAIL"
 fi
 
+# ─── Freshness check (llm#705) — STALE when newest finding exceeds threshold ──
+# Default threshold: 48 hours, overridable via SELF_REVIEW_STALE_HOURS env.
+# Only runs when verdict is still PASS (not already FAIL) and count > 0.
+# Uses DuckDB to compute hours since MAX(detected_at); if DuckDB is unavailable
+# or the query errors, freshness_status stays "unknown" and verdict is unchanged
+# (fail-open, backward-compatible). First run with no prior state is never STALE.
+SELF_REVIEW_STALE_HOURS="${SELF_REVIEW_STALE_HOURS:-48}"
+newest_finding=""
+hours_since_newest=""
+freshness_status="unknown"
+
+if [[ "${verdict}" == "PASS" ]] && [[ "${count}" =~ ^[0-9]+$ ]] && [[ "${count}" -gt 0 ]]; then
+    # Ask DuckDB: integer hours between newest finding and now.
+    # datediff('hour', start, end) truncates — sufficient for a 48h threshold.
+    hours_since_newest="$(duck_run "${DB}" -init /dev/null -noheader -list -c \
+        "SELECT datediff('hour', MAX(detected_at), current_timestamp) FROM self_review_findings_stage1" \
+        2>/dev/null | grep -oE '^[0-9]+' | head -n1 || true)"
+    # Capture newest timestamp for the log line (display only).
+    newest_finding="$(duck_run "${DB}" -init /dev/null -noheader -list -c \
+        "SELECT CAST(MAX(detected_at) AS VARCHAR) FROM self_review_findings_stage1" \
+        2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}[^,]*' | head -n1 || true)"
+
+    if [[ "${hours_since_newest}" =~ ^[0-9]+$ ]]; then
+        if [[ "${hours_since_newest}" -ge "${SELF_REVIEW_STALE_HOURS}" ]]; then
+            verdict="STALE"
+            freshness_status="stale"
+        else
+            freshness_status="fresh"
+        fi
+    fi
+    # Non-numeric or empty hours_since_newest → freshness_status stays "unknown";
+    # verdict stays "PASS" — first run after a gap does not falsely report STALE.
+fi
+
 # Step 7: append result line to VERIFY_LOG
-log_verify "${timestamp} [${verdict}] overnight self-review: run_date=${run_date} done=${done_found} errors=${errors} db_rows=${count}"
+# Existing fields are preserved in-order; new freshness fields are appended.
+log_verify "${timestamp} [${verdict}] overnight self-review: run_date=${run_date} done=${done_found} errors=${errors} db_rows=${count} freshness=${freshness_status} newest_finding=${newest_finding:-n/a} stale_threshold_h=${SELF_REVIEW_STALE_HOURS}"
 
 # ─── Email notification via llmtelemetry CI (reuses its GMAIL_* secret) ───────
 # Notify on FAIL always; on PASS only when state changes (first run / recovery),
@@ -215,7 +262,7 @@ printf '%s\n' "${verdict}" > "${STATE_FILE}"
 if [ "$(should_notify "${verdict}" "${prev_state}")" = "1" ] \
    && [ "${SELF_REVIEW_VERIFY_NOTIFY:-1}" = "1" ] \
    && command -v gh >/dev/null 2>&1; then
-    details="run_date=${run_date} done=${done_found} errors=${errors} db_rows=${count}"
+    details="run_date=${run_date} done=${done_found} errors=${errors} db_rows=${count} freshness=${freshness_status} newest=${newest_finding:-n/a}"
     if gh workflow run self-review-email.yml --repo JohnGavin/llmtelemetry \
         -f result="${verdict}" -f count="${count}" -f run_date="${run_date}" \
         -f details="${details}" >/dev/null 2>&1; then
