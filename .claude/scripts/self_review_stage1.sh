@@ -32,6 +32,10 @@ export SELF_REVIEW_DEPTH=$(( SELF_REVIEW_DEPTH + 1 ))
 # ─── Paths ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NIX_DEFAULT="$(cd "${SCRIPT_DIR}/../.." 2>/dev/null && pwd)/default.nix"
+# NIX_TARGET is overridden to the GC-rooted .drv after log() is defined below.
+# Using the drv avoids re-fetching nixpkgs from github.com at 02:30 (llm#704).
+NIX_TARGET="${NIX_DEFAULT}"
+REFRESH="${HOME}/.claude/scripts/nix_gcroot_refresh.sh"
 DB="${HOME}/.claude/logs/unified.duckdb"
 SQL_FILE="${SCRIPT_DIR}/self_review_stage1.sql"
 LOG_DIR="${HOME}/.claude/logs"
@@ -45,6 +49,24 @@ log() {
     echo "${ts} $*" | tee -a "${LOG_FILE}"
 }
 
+# ─── GC-root resolution (offline-safe, llm#704) ─────────────────────────────
+# Best-effort: seed/refresh a GC-rooted derivation when online so that the
+# 02:30 cron run does not trigger a nixpkgs tarball re-fetch from github.com.
+# nix_gcroot_refresh.sh returns exit 0 + the drv path even when offline if a
+# root was previously seeded (llm#596, llm#673). Falls back to NIX_DEFAULT
+# (may need network) when the refresh helper is absent or the root is missing.
+if [ -x "${REFRESH}" ]; then
+    _drv="$("${REFRESH}" "${NIX_DEFAULT}" 2>/dev/null | tail -1 || true)"
+    if [ -n "${_drv:-}" ] && [ -e "${_drv}" ]; then
+        NIX_TARGET="${_drv}"
+        log "INFO: nix target = GC-rooted drv (offline-safe)"
+    else
+        log "WARN: GC root unavailable; falling back to default.nix (may need network)"
+    fi
+else
+    log "INFO: nix_gcroot_refresh not found; using default.nix"
+fi
+
 # ─── duckdb invocation ───────────────────────────────────────────────────────
 # duck_run: run duckdb from the project nix shell so the DuckDB version matches
 # the rest of the pipeline (unified.duckdb is written by nix-shell duckdb 1.4.x
@@ -56,7 +78,7 @@ duck_run() {
     if command -v nix-shell >/dev/null 2>&1 && [[ -f "${NIX_DEFAULT}" ]]; then
         local q="" a
         for a in "$@"; do q+=" $(printf '%q' "$a")"; done
-        nix-shell "${NIX_DEFAULT}" --run "duckdb${q}"
+        nix-shell "${NIX_TARGET}" --run "duckdb${q}"
     else
         duckdb "$@"
     fi
@@ -136,10 +158,11 @@ selftest() {
     [[ -f "${SQL_FILE}" ]] && sql_exists=0
     _assert "sql-file-exists" "${sql_exists}" "0"
 
-    # Test 3: duckdb reachable (via nix shell, or PATH fallback)
+    # Test 3: duckdb reachable (via nix shell, or PATH fallback).
+    # Uses NIX_TARGET (GC-rooted drv when available) to avoid network at test time.
     local db_avail=1
     if command -v nix-shell >/dev/null 2>&1 && [[ -f "${NIX_DEFAULT}" ]]; then
-        nix-shell "${NIX_DEFAULT}" --run "command -v duckdb" >/dev/null 2>&1 && db_avail=0
+        nix-shell "${NIX_TARGET}" --run "command -v duckdb" >/dev/null 2>&1 && db_avail=0
     else
         command -v duckdb >/dev/null 2>&1 && db_avail=0
     fi
