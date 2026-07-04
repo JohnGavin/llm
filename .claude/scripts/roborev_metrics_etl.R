@@ -210,6 +210,23 @@ repo_clause <- if (!is.null(repo)) {
   ""
 }
 
+# ── Guard: review_jobs.source column may be absent in older schema (llm#706) ──
+# review_jobs.source was added post-initial-schema.  If absent, the SELECT
+# below would throw "Referenced column not found", and the tryCatch would
+# return data.frame() for jobs_raw.  A subsequent LEFT JOIN of reviews_raw
+# onto the empty jobs_raw produces NULL in the repo column for every review —
+# violating the NOT NULL constraint on roborev_review_lifecycle.repo.
+# Detect the column before building sql_jobs and substitute NULL when absent.
+has_source_col <- tryCatch({
+  "source" %in% names(dbGetQuery(read_con, "SELECT * FROM src.review_jobs LIMIT 0"))
+}, error = function(e) {
+  log_msg("WARN: cannot introspect review_jobs columns: ", conditionMessage(e))
+  FALSE
+})
+if (!has_source_col) {
+  log_msg("WARN: review_jobs.source column absent — using NULL AS source in sql_jobs (llm#706 Cause-1 guard)")
+}
+
 sql_jobs <- sprintf("
   SELECT
     rj.id          AS job_id,
@@ -221,13 +238,13 @@ sql_jobs <- sprintf("
     rj.enqueued_at,
     rj.started_at,
     rj.finished_at,
-    rj.source
+    %s             AS source
   FROM src.review_jobs rj
   JOIN src.repos rp ON rp.id = rj.repo_id
   WHERE date(rj.enqueued_at) >= DATE '%s'
   %s
   ORDER BY rj.id
-", since_str, repo_clause)
+", if (has_source_col) "rj.source" else "NULL", since_str, repo_clause)
 
 jobs_raw <- tryCatch(
   dbGetQuery(read_con, sql_jobs),
@@ -265,7 +282,10 @@ if (!include_fixtures && nrow(jobs_raw) > 0L && "repo" %in% names(jobs_raw)) {
     },
     error = function(e) {
       log_msg("WARN: canonical_check failed (", conditionMessage(e),
-              ") — skipping guard, all repos pass")
+              ") — skipping guard, all repos pass.",
+              " If error is a DuckDB lock, the r-btw MCP server likely holds",
+              " a persistent write connection to unified.duckdb;",
+              " the main ETL write connection will retry with backoff (llm#706 Cause 2).")
       NULL  # NULL signals "guard unavailable, let everything through"
     }
   )
@@ -582,13 +602,21 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
                   drop = FALSE]
   merged <- merge(reviews, jb, by = "job_id", all.x = TRUE)
 
-  # Drop rows where repo is NA (reviews from non-canonical repos excluded by the
-  # canonical-project guard in jobs_raw leave NA after the LEFT JOIN; inserting
-  # them would violate the NOT NULL constraint on roborev_review_lifecycle.repo).
+  # Drop rows where repo is NA after the LEFT JOIN.
+  # Root causes (llm#706 Cause 1):
+  #   (a) The job was filtered by the canonical-project guard (non-canonical repo).
+  #   (b) The job is outside the --since window so it is absent from jobs_raw.
+  #   (c) sql_jobs failed (e.g. missing source column) and returned an empty df —
+  #       now prevented by the has_source_col guard above, but kept as defence-in-depth.
+  # Inserting NULL would violate the NOT NULL constraint on
+  # roborev_review_lifecycle.repo and abort the entire transaction (pre-#689 bug).
   n_null_repo <- sum(is.na(merged$repo))
   if (n_null_repo > 0L) {
-    log_msg(sprintf(
-      "WARN: dropping %d lifecycle row(s) with NULL repo — non-canonical or fixture reviews excluded by canonical guard",
+    log_msg(sprintf(paste0(
+      "WARN: dropping %d lifecycle row(s) with NULL repo",
+      " (job outside window, non-canonical/fixture repo excluded by guard,",
+      " or sql_jobs schema mismatch).",
+      " These rows cannot be persisted due to NOT NULL constraint on repo (llm#706)."),
       n_null_repo))
     merged <- merged[!is.na(merged$repo), , drop = FALSE]
   }
@@ -2057,13 +2085,24 @@ hk_fail_cli <- function(err) {
   invisible(NULL)
 }
 
-# ── Connect read-write, verified (llm#595 fix 2) ──────────────────────────
+# ── Connect read-write, verified (llm#595 fix 2; backoff improved llm#706) ─
 # dbConnect() can silently join a cached READ-ONLY database instance for the
 # same path (the #595 failure mode), and a concurrent writer can hold the
 # lock (the 02:00 slot collides with other launchd writers). Verify with
 # duckdb_databases().readonly; on read-only or error, disconnect with
 # shutdown = TRUE (evicts the cached instance) and retry with backoff.
-connect_unified_rw <- function(path, attempts = 3L, wait_s = 10L) {
+#
+# Known contending writers for unified.duckdb (llm#706 Cause 2):
+#   - r-btw MCP DuckDB server: keeps a persistent read-write connection.
+#     Managed by ~/.claude/scripts/r_btw_mcp_launch.sh (GC-rooted drv, llm#673).
+#     Fix: r_btw_mcp_launch.sh should open unified.duckdb read-only or via WAL.
+#     Until then, the ETL must tolerate the lock with retry-and-backoff.
+#   - Other launchd ETL slots at 02:00–03:00 (stage1_findings, kb_digest,
+#     self_review_email) that also write to unified.duckdb.
+#
+# Retry strategy: 5 attempts × 15 s = up to ~75 s of waiting.
+# The r-btw MCP query pipeline typically completes within 30 s.
+connect_unified_rw <- function(path, attempts = 5L, wait_s = 15L) {
   last_err <- "unknown"
   for (i in seq_len(attempts)) {
     con <- tryCatch(dbConnect(duckdb::duckdb(), path), error = function(e) e)
@@ -2080,10 +2119,24 @@ connect_unified_rw <- function(path, attempts = 3L, wait_s = 10L) {
     } else {
       last_err <- conditionMessage(con)
     }
-    log_msg(sprintf("WARN: unified.duckdb not writable (attempt %d/%d): %s",
-                    i, attempts, last_err))
+    if (i == 1L) {
+      # First failure: emit diagnostic note naming known contenders (llm#706).
+      log_msg(sprintf(paste0(
+        "WARN: unified.duckdb not writable (attempt %d/%d): %s —",
+        " waiting %ds for lock release. Known contender: r-btw MCP DuckDB",
+        " server (persistent write connection). See llm#706 for serialisation fix."),
+        i, attempts, last_err, wait_s))
+    } else {
+      log_msg(sprintf("WARN: unified.duckdb not writable (attempt %d/%d): %s",
+                      i, attempts, last_err))
+    }
     if (i < attempts) Sys.sleep(wait_s)
   }
+  log_msg(sprintf(paste0(
+    "ERROR: unified.duckdb still not writable after %d attempts (~%ds total).",
+    " Giving up. Check whether r-btw MCP server or another launchd ETL is",
+    " holding the write lock. PID of holder may appear above."),
+    attempts, attempts * wait_s))
   attr(last_err, "failed") <- TRUE
   last_err
 }

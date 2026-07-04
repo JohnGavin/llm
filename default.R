@@ -220,7 +220,7 @@ r_pkgs = c(
   "devtools", "spelling", "gert", "gh", "usethis", # NB devtools will also install usethis
   "styler",
   # https://jcarroll.com.au/2025/09/13/i-vibe-coded-an-r-package/
-  'testthat', 'httptest', 'covr', 
+  'testthat', 'httptest', 'covr', 'profvis', # profvis needed by debrief (dev profiling tool)
   # for nix-shell --pure ...
   "rix"
   ) |>
@@ -304,6 +304,13 @@ gh_pkgs <- list(
     # 26 Nov c562575f01790b38a512ed199345aef695424e48
     # branch = "main"  # rix doesn't support branch properly, use commit
     commit = "78379217b2328dae8d5926dd3025593a34a92545"  # Latest as of 2026-01-19
+  ),
+  # https://github.com/r-lib/debrief — profvis result viewer for agent-readable text output
+  # pilot: explorations/2026-06-30_debrief-pilot/ (PR #698); dev-only, not in DESCRIPTION
+  list(
+    package_name = "debrief",
+    repo_url = "https://github.com/r-lib/debrief",
+    commit = "ce2a45e3a5e8d6e609fbb43ce8233ff4996acfab"  # ce2a45e as of 2026-06-30
   )
   # https://github.com/tidyverse/vitals
   # https://www.simonpcouch.com/blog/2025-05-07-gemini-2-5-pro-new/

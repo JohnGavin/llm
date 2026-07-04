@@ -317,10 +317,29 @@ select_mode() {
   fi
 }
 
+# _cc_bounded <secs> <cmd> [args...]
+# Defense-in-depth timeout for the cc startup path: detects GNU timeout /
+# gtimeout at call time, falls back to perl's alarm(2). If burn_rate_check.sh
+# itself hangs (e.g. internal _bounded fails to kill a child), this outer
+# wrapper still unblocks cc.sh startup within the given timeout.
+_cc_bounded() {
+  local secs="$1"; shift
+  local _tc
+  _tc=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
+  if [ -n "$_tc" ]; then
+    "$_tc" "$secs" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e 'my $t = shift; alarm $t; exec @ARGV or die "exec: $!"' "$secs" "$@"
+  else
+    # Last resort: no timeout mechanism; run unbounded (should never reach here)
+    "$@"
+  fi
+}
+
 get_burn_rate() {
   local script="$HOME/.claude/scripts/burn_rate_check.sh"
   if [[ -x "$script" ]]; then
-    "$script" --percent-only 2>/dev/null || echo "0"
+    _cc_bounded 15 "$script" --percent-only 2>/dev/null || echo "0"
   else
     echo "0"
   fi
