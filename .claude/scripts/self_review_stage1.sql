@@ -345,6 +345,281 @@ FROM pivot_signal_findings
 ON CONFLICT (finding_id) DO NOTHING;
 
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- USAGE-EFFICIENCY DETECTORS (6-10)
+-- Source: Anthropic usage panel signals — efficiency nudges, not correctness bugs.
+-- All severity: info
+-- ═════════════════════════════════════════════════════════════════════════════
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DETECTOR 6: Parallel-session sprawl
+--
+-- Rationale: All Claude Code sessions share one account rate limit (requests/
+-- min). Running ≥4 sessions concurrently risks 429 collisions and inflates
+-- usage metrics. The Anthropic panel shows sessions as the primary billing
+-- unit; queuing is cheaper than parallel sprawl.
+--
+-- Method: Build a global running total of concurrent sessions by processing
+-- session-start (+1) and session-end (-1) events in chronological order.
+-- NULL ended_at is treated as current_timestamp (session still running).
+-- The per-day peak is the maximum of that running total observed across all
+-- event timestamps that fall within the calendar day.
+--
+-- Threshold: ≥ 4 concurrent sessions at any moment on a calendar day.
+-- Finding scope: one finding per flagged calendar day (stable, idempotent).
+-- Recommendation: queue instead of running 4+ at once.
+-- Severity: info
+-- ─────────────────────────────────────────────────────────────────────────────
+WITH parallel_events AS (
+    -- +1 event when a session starts
+    SELECT
+        started_at                                      AS ts,
+        1                                               AS delta
+    FROM sessions
+    WHERE started_at IS NOT NULL
+    UNION ALL
+    -- -1 event when a session ends (NULL ended_at → treat as still running)
+    SELECT
+        COALESCE(ended_at, current_timestamp)           AS ts,
+        -1                                              AS delta
+    FROM sessions
+    WHERE started_at IS NOT NULL
+),
+parallel_running AS (
+    SELECT
+        ts,
+        delta,
+        -- Starts (delta=1) are sorted before ends (delta=-1) at identical
+        -- timestamps so simultaneous starts are all counted before any
+        -- simultaneous end, giving a conservative (higher) peak count.
+        SUM(delta) OVER (
+            ORDER BY ts, CASE WHEN delta = 1 THEN 0 ELSE 1 END
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        )                                               AS concurrent_count
+    FROM parallel_events
+),
+parallel_daily_peak AS (
+    SELECT
+        CAST(ts AS DATE)        AS day_bucket,
+        MAX(concurrent_count)   AS peak_concurrent
+    FROM parallel_running
+    GROUP BY CAST(ts AS DATE)
+    HAVING MAX(concurrent_count) >= 4
+)
+INSERT INTO self_review_findings_stage1
+    BY NAME
+SELECT
+    'parallel_sprawl_' || md5(day_bucket::VARCHAR)  AS finding_id,
+    'parallel_session_sprawl'                        AS finding_type,
+    NULL                                             AS session_id,
+    'info'                                           AS severity,
+    json_object(
+        'day',              day_bucket::VARCHAR,
+        'peak_concurrent',  peak_concurrent::VARCHAR,
+        'threshold',        '4 concurrent sessions',
+        'recommendation',   'All sessions share one rate limit — queue instead of running 4+ at once'
+    )::JSON                                         AS evidence,
+    current_timestamp                               AS detected_at
+FROM parallel_daily_peak
+ON CONFLICT (finding_id) DO NOTHING;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DETECTOR 7: Subagent-heavy session
+--
+-- Rationale: Each subagent dispatch carries overhead (model spin-up, context
+-- transfer, tool permissions). Sessions with ≥ 10 dispatches may indicate:
+--   (a) the bounded-confirm pattern was skipped (scope expanded silently), or
+--   (b) cheap tasks were delegated without choosing the right model tier.
+--
+-- Threshold: ≥ 10 agent_runs per session.
+-- Calibration: typical sessions dispatch 1-3 agents; ≥10 is the ~90th-
+-- percentile heuristic based on observed usage patterns. Lower this constant
+-- if real data shows the 90th-percentile is below 10.
+-- Recommendation: be deliberate about spawning subagents; use a cheaper model
+-- for simple ones.
+-- Severity: info
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Threshold constant: 10 agent_runs per session
+WITH subagent_heavy_sessions AS (
+    SELECT
+        session_id,
+        COUNT(*)                    AS agent_run_count,
+        COUNT(DISTINCT agent_type)  AS distinct_agent_types
+    FROM agent_runs
+    WHERE session_id IS NOT NULL
+    GROUP BY session_id
+    HAVING COUNT(*) >= 10
+)
+INSERT INTO self_review_findings_stage1
+    BY NAME
+SELECT
+    'subagent_heavy_' || md5(session_id)    AS finding_id,
+    'subagent_heavy_session'                AS finding_type,
+    session_id,
+    'info'                                  AS severity,
+    json_object(
+        'agent_run_count',       agent_run_count::VARCHAR,
+        'distinct_agent_types',  distinct_agent_types::VARCHAR,
+        'threshold',             '10 agent dispatches per session',
+        'recommendation',        'Be deliberate about spawning subagents; use a cheaper model for simple ones'
+    )::JSON                                 AS evidence,
+    current_timestamp                       AS detected_at
+FROM subagent_heavy_sessions
+ON CONFLICT (finding_id) DO NOTHING;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DETECTOR 8: Marathon session
+--
+-- Rationale: Sessions lasting ≥ 8 hours are often background processes that
+-- were never closed, or an analyst who left a session running overnight.
+-- The Anthropic panel shows such sessions as disproportionate contributors to
+-- token spend; continuous idle usage adds up.
+--
+-- Threshold: ended_at - started_at >= 8 hours.
+-- Only sessions with both started_at AND ended_at populated are evaluated.
+-- Sessions with NULL ended_at are potential "stuck running" events and are
+-- handled by DETECTOR 1 (stuck_loop) instead.
+-- Recommendation: verify long/background sessions are intentional.
+-- Severity: info
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Threshold: 8 hours of elapsed wall-clock time
+WITH marathon_sessions AS (
+    SELECT
+        session_id,
+        started_at,
+        ended_at,
+        ROUND(
+            DATEDIFF('minute', started_at, ended_at) / 60.0,
+            2
+        )                               AS duration_hours
+    FROM sessions
+    WHERE
+        started_at IS NOT NULL
+        AND ended_at IS NOT NULL
+        AND ended_at - started_at >= INTERVAL '8' HOUR
+)
+INSERT INTO self_review_findings_stage1
+    BY NAME
+SELECT
+    'marathon_session_' || md5(session_id)  AS finding_id,
+    'marathon_session'                       AS finding_type,
+    session_id,
+    'info'                                   AS severity,
+    json_object(
+        'started_at',       started_at::VARCHAR,
+        'ended_at',         ended_at::VARCHAR,
+        'duration_hours',   duration_hours::VARCHAR,
+        'threshold',        '8 hours',
+        'recommendation',   'Verify long/background sessions are intentional — continuous usage adds up'
+    )::JSON                                  AS evidence,
+    current_timestamp                        AS detected_at
+FROM marathon_sessions
+ON CONFLICT (finding_id) DO NOTHING;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DETECTOR 9: Fixer-subagent-heavy day
+--
+-- Rationale: The 'fixer' agent type runs at the worker tier (sonnet model).
+-- A day where the fixer dominates dispatches may indicate:
+--   (a) the critic-fixer review loop is cycling too often (prompts too vague),
+--   (b) work that a haiku quick-fix could handle is being delegated to sonnet.
+-- Tightening fixer prompts or switching simple fixes to quick-fix reduces cost.
+--
+-- Scope: per-calendar-day (more stable than per-session; fixer workloads
+-- typically span several sessions within a single day).
+-- Threshold: fixer_run_count / total_run_count >= 0.40 AND total_runs >= 5.
+-- The minimum total-run guard of 5 prevents noisy small-N days from firing.
+-- Recommendation: configure fixer subagents with a cheaper model / tighten prompts.
+-- Severity: info
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Threshold: fixer share >= 40% of daily dispatches, minimum 5 total dispatches
+WITH daily_fixer_share AS (
+    SELECT
+        CAST(started_at AS DATE)            AS day_bucket,
+        COUNT(*)                            AS total_runs,
+        SUM(CASE WHEN agent_type = 'fixer' THEN 1 ELSE 0 END)
+                                            AS fixer_runs,
+        ROUND(
+            SUM(CASE WHEN agent_type = 'fixer' THEN 1.0 ELSE 0.0 END)
+            / GREATEST(COUNT(*), 1),
+            4
+        )                                   AS fixer_share
+    FROM agent_runs
+    WHERE session_id IS NOT NULL
+    GROUP BY CAST(started_at AS DATE)
+    HAVING
+        COUNT(*) >= 5
+        AND ROUND(
+            SUM(CASE WHEN agent_type = 'fixer' THEN 1.0 ELSE 0.0 END)
+            / GREATEST(COUNT(*), 1),
+            4
+        ) >= 0.40
+)
+INSERT INTO self_review_findings_stage1
+    BY NAME
+SELECT
+    'fixer_heavy_' || md5(day_bucket::VARCHAR)  AS finding_id,
+    'fixer_heavy_day'                            AS finding_type,
+    NULL                                         AS session_id,
+    'info'                                       AS severity,
+    json_object(
+        'day',            day_bucket::VARCHAR,
+        'total_runs',     total_runs::VARCHAR,
+        'fixer_runs',     fixer_runs::VARCHAR,
+        'fixer_share',    fixer_share::VARCHAR,
+        'threshold',      'fixer share >= 40% AND total dispatches >= 5',
+        'recommendation', 'Configure fixer subagents with a cheaper model / tighten their prompts'
+    )::JSON                                     AS evidence,
+    current_timestamp                           AS detected_at
+FROM daily_fixer_share
+ON CONFLICT (finding_id) DO NOTHING;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DETECTOR 10: Context-size signal — DATA GAP (not computable)
+--
+-- The Anthropic usage panel reports that ~54% of sessions reach > 150 k context
+-- tokens. This is a meaningful efficiency signal: large contexts slow every
+-- tool call, increase billing, and indicate sessions that should have been
+-- compacted or split earlier.
+--
+-- However, the `sessions` table has NO context-size column. This metric cannot
+-- be computed from current telemetry. Rather than fabricate a proxy or silently
+-- omit the signal, we emit ONE persistent info finding documenting the gap and
+-- a concrete ETL follow-up recommendation.
+--
+-- This finding is emitted once per DB (ON CONFLICT DO NOTHING keeps it
+-- idempotent across repeated runs). To close the gap:
+--   1. Add max_context_tokens (peak per session) to session_stop.sh / the
+--      usage API poller so it is written to the sessions table.
+--   2. Replace this static INSERT with a real detector:
+--        WHERE max_context_tokens > 150000 per session
+--
+-- Severity: info
+-- ─────────────────────────────────────────────────────────────────────────────
+-- TODO: replace with a real detector once max_context_tokens is in sessions ETL
+INSERT INTO self_review_findings_stage1
+    BY NAME
+SELECT
+    'data_gap_context_size'             AS finding_id,
+    'data_gap'                          AS finding_type,
+    NULL                                AS session_id,
+    'info'                              AS severity,
+    json_object(
+        'gap_description',  'sessions table has no context_size column',
+        'signal_ref',       '54% of sessions reach >150k context tokens (Anthropic usage panel)',
+        'why_not_proxied',  'No reliable proxy exists in hook_events or agent_runs; fabricating one would produce misleading findings',
+        'recommendation',   'Add max_context_tokens (peak per session) to the telemetry ETL — capture it in session_stop.sh or a usage API poller',
+        'follow_up',        'File a GitHub issue to add max_context_tokens to the sessions table schema and ETL writers'
+    )::JSON                             AS evidence,
+    current_timestamp                   AS detected_at
+ON CONFLICT (finding_id) DO NOTHING;
+
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Summary: count findings by type and severity
 -- (Printed to stdout by the bash wrapper for --dry-run reporting)
