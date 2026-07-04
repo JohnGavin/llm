@@ -18,6 +18,10 @@ if [ -x "${_SCRIPT_DIR}/codex_shim/codex" ]; then
   export PATH="${_SCRIPT_DIR}/codex_shim:$PATH"
 fi
 unset _SCRIPT_DIR
+# Mark session as scheduled/automated for llmtelemetry_emit.sh (#322 Phase 2).
+# Propagates to any claude process spawned in this process tree so the Stop
+# hook emits "trigger":"scheduled" without requiring a /bye sentinel.
+export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 # hook missed (remote-merged PRs don't fire local post-commit).
 #
 # For each repo in ~/.roborev/reviews.db's repos table:

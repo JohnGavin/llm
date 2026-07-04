@@ -76,6 +76,24 @@ week_start_ymd=$(date -v-"${days_since}"d +%Y%m%d 2>/dev/null \
 # GNU timeout absent on macOS and under launchd PATH (llm#420)
 TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
 
+# _bounded <secs> <cmd> [args...]
+# Portable bounded execution. Uses $TIMEOUT_CMD (GNU timeout / gtimeout) when
+# available; falls back to perl's alarm(2) built-in, which is always present
+# on macOS. If neither is available the command runs unbounded (last resort).
+# Root-cause fix: on macOS TIMEOUT_CMD is empty, so the old
+# ${TIMEOUT_CMD:+$TIMEOUT_CMD 30} expansion was a no-op — npx ran unbounded.
+_bounded() {
+  local secs="$1"; shift
+  if [ -n "$TIMEOUT_CMD" ]; then
+    "$TIMEOUT_CMD" "$secs" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e 'my $t = shift; alarm $t; exec @ARGV or die "exec: $!"' "$secs" "$@"
+  else
+    # Last resort: no timeout mechanism available; run unbounded
+    "$@"
+  fi
+}
+
 # Cache: reuse if < 5 minutes old AND for the same week window
 CACHE_FILE="/tmp/ccusage_burnweek_${week_start_ymd}_cache.json"
 CACHE_MAX_AGE=300
@@ -92,10 +110,13 @@ if [ "$use_cache" = true ]; then
   daily_json=$(cat "$CACHE_FILE")
 else
   err_tmp=$(mktemp /tmp/burn_rate_err_XXXXXX)
-  daily_json=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 30} npx ccusage daily \
+  # _bounded: always bounded (perl alarm fallback when GNU timeout absent);
+  # --yes: never prompt to install a missing npx package;
+  # </dev/null: stdin is /dev/null so any install prompt gets immediate EOF.
+  daily_json=$(_bounded 30 npx --yes ccusage daily \
     --since "$week_start_ymd" \
     --timezone "$TZ_NAME" \
-    --json --offline 2>"$err_tmp") || {
+    --json --offline </dev/null 2>"$err_tmp") || {
     {
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ccusage daily --since $week_start_ymd failed — stderr:"
       cat "$err_tmp"

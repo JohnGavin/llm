@@ -18,6 +18,9 @@ library(dplyr)
 library(ggplot2)
 library(scales)
 library(gt)
+library(visNetwork)
+library(ggraph)
+library(igraph)
 
 theme_dashboard <- theme_minimal(base_size = 14) +
   theme(
@@ -36,6 +39,16 @@ kb_stats <- tryCatch({
   rds_candidates <- c(
     here::here("inst/extdata/vignettes/vig_kb_stats.rds"),
     "../inst/extdata/vignettes/vig_kb_stats.rds"
+  )
+  rds_hit <- Find(file.exists, rds_candidates)
+  if (!is.null(rds_hit)) readRDS(rds_hit) else NULL
+}, error = function(e) NULL)
+
+# CI-safe topic-graph adjacency — loaded before the live scan below.
+kg_graph <- tryCatch({
+  rds_candidates <- c(
+    here::here("inst/extdata/vignettes/vig_kb_graph.rds"),
+    "../inst/extdata/vignettes/vig_kb_graph.rds"
   )
   rds_hit <- Find(file.exists, rds_candidates)
   if (!is.null(rds_hit)) readRDS(rds_hit) else NULL
@@ -70,6 +83,41 @@ kb_path <- Find(dir.exists, .kb_candidates)
 if (is.null(kb_path)) kb_path <- .kb_candidates[1]  # last-resort
 wiki_dir <- file.path(kb_path, "wiki")
 raw_dir <- file.path(kb_path, "raw")
+
+# Live adjacency scan — runs only when the RDS is absent and wiki_dir is local.
+if (is.null(kg_graph) && dir.exists(wiki_dir)) {
+  .wf <- list.files(wiki_dir, pattern = "\\.md$",
+                    full.names = TRUE, recursive = FALSE)
+  if (length(.wf) > 0L) {
+    .pn <- tools::file_path_sans_ext(basename(.wf))
+    .el <- lapply(.wf, function(f) {
+      src  <- tools::file_path_sans_ext(basename(f))
+      txt  <- paste(readLines(f, warn = FALSE), collapse = "\n")
+      raw  <- regmatches(txt, gregexpr("\\[\\[.+?\\]\\]", txt, perl = TRUE))[[1L]]
+      tgts <- sub("^\\[\\[", "", sub("\\]\\]$", "", raw))
+      if (length(tgts) == 0L) return(NULL)
+      data.frame(from = src, to = tgts, stringsAsFactors = FALSE)
+    })
+    .ed <- do.call(rbind, Filter(Negate(is.null), .el))
+    if (is.null(.ed))
+      .ed <- data.frame(from = character(0L), to = character(0L),
+                        stringsAsFactors = FALSE)
+    .all <- unique(c(.pn, if (nrow(.ed) > 0L) .ed$to else character(0L)))
+    .ib  <- if (nrow(.ed) > 0L) table(.ed$to) else integer(0L)
+    .nd  <- data.frame(
+      id      = .all,
+      label   = .all,
+      domain  = sub("-.*", "", .all),
+      inbound = as.integer(.ib[.all]),
+      broken  = !.all %in% .pn,
+      stringsAsFactors = FALSE
+    )
+    .nd$inbound[is.na(.nd$inbound)] <- 0L
+    .nd$orphan <- .nd$id %in% .pn & .nd$inbound == 0L
+    kg_graph <- list(nodes = .nd, edges = .ed)
+    rm(.wf, .pn, .el, .ed, .all, .ib, .nd)
+  }
+}
 
 if (is.null(kb_data)) {
   if (!is.null(kb_stats)) {
@@ -361,6 +409,96 @@ Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw s
 }
 ```
 
+## Topic Graph
+
+```{r topic-graph-vis}
+#| fig-alt: "Interactive network diagram of wiki topic connections from [[link]] references. Click a node to highlight its neighbours."
+if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
+  .n  <- kg_graph$nodes
+  .e  <- kg_graph$edges
+  .dm <- sort(unique(.n$domain))
+  .pc <- scales::viridis_pal(option = "plasma", end = 0.85)(max(3L, length(.dm)))
+  .dc <- setNames(.pc[seq_along(.dm)], .dm)
+  .col <- .dc[.n$domain]
+  .col[.n$broken] <- "#f08080"
+  .col[.n$orphan] <- "#ffd93d"
+  .vn <- data.frame(
+    id    = .n$id,
+    label = .n$label,
+    value = pmax(10L, 10L + .n$inbound * 8L),
+    color = .col,
+    title = paste0("<b>", .n$id, "</b><br>Domain: ", .n$domain,
+                   "<br>Inbound: ", .n$inbound,
+                   ifelse(.n$broken, "<br><i>Broken target</i>", ""),
+                   ifelse(.n$orphan, "<br><i>Orphan page</i>", "")),
+    stringsAsFactors = FALSE
+  )
+  .ve <- data.frame(from = .e$from, to = .e$to, arrows = "to",
+                    stringsAsFactors = FALSE)
+  .lg <- data.frame(
+    label = c("Wiki page", "Orphan (no inbound)", "Broken target"),
+    color = c(.dc[[1L]], "#ffd93d", "#f08080"),
+    shape = "dot", size = 20L, stringsAsFactors = FALSE
+  )
+  visNetwork::visNetwork(.vn, .ve, width = "100%", height = "500px") |>
+    visNetwork::visOptions(
+      highlightNearest = list(enabled = TRUE, degree = 1L, hover = TRUE),
+      nodesIdSelection = TRUE
+    ) |>
+    visNetwork::visIgraphLayout(layout = "layout_with_fr") |>
+    visNetwork::visLegend(addNodes = .lg, useGroups = FALSE)
+} else {
+  cat("*No topic-graph data available. Run",
+      "`~/.claude/scripts/knowledge_pulse.sh` locally to regenerate",
+      "`vig_kb_graph.rds`.*")
+}
+```
+
+```{r topic-graph-static}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-alt: "Static directed graph of wiki topic connections. Nodes coloured by domain cluster and sized by inbound link count. Yellow nodes are orphan pages with no inbound links."
+#| fig-cap: "Knowledge base topic graph. Node size reflects inbound link count; colour identifies domain cluster; yellow = orphan page."
+if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
+  .n <- kg_graph$nodes
+  .e <- kg_graph$edges
+  .g <- igraph::graph_from_data_frame(
+    d        = .e[, c("from", "to")],
+    vertices = .n[, c("id", "domain", "inbound", "broken", "orphan")],
+    directed = TRUE
+  )
+  .dm  <- sort(unique(.n$domain))
+  .pc  <- scales::viridis_pal(option = "plasma", end = 0.85)(max(3L, length(.dm)))
+  .dc  <- setNames(.pc[seq_along(.dm)], .dm)
+  .vcol <- .dc[igraph::V(.g)$domain]
+  .vcol[igraph::V(.g)$broken] <- "#f08080"
+  .vcol[igraph::V(.g)$orphan] <- "#ffd93d"
+  igraph::V(.g)$fill_color <- .vcol
+  ggraph::ggraph(.g, layout = "fr") +
+    ggraph::geom_edge_link(
+      colour = "#888888", alpha = 0.55,
+      arrow  = grid::arrow(length = grid::unit(2.5, "mm"), type = "closed"),
+      end_cap = ggraph::circle(3, "mm")
+    ) +
+    ggraph::geom_node_point(
+      ggplot2::aes(colour = fill_color, size = pmax(3, inbound + 3))
+    ) +
+    ggraph::geom_node_text(
+      ggplot2::aes(label = name),
+      colour = "white", size = 2.5, repel = TRUE
+    ) +
+    ggplot2::scale_colour_identity() +
+    ggplot2::scale_size_continuous(range = c(3, 10), name = "Inbound links") +
+    ggplot2::labs(
+      title = paste0("Topic graph — ", nrow(.n), " pages, ", nrow(.e), " links")
+    ) +
+    theme_dashboard +
+    ggplot2::theme(legend.position = "bottom")
+} else {
+  cat("*No edges to plot.*")
+}
+```
+
 :::
 
 ---
@@ -446,11 +584,12 @@ A daily digest row maps directly to a dashboard panel: the "Wiki Pages" KPI come
 
 ### What this vignette computes
 
-This vignette tracks the health and growth of the knowledge base at `~/docs_gh/llm/knowledge/` — measuring wiki page count, raw source count, provenance coverage (fraction of pages with `## Sources` sections), and AI-inferred claim density. It reads time-series snapshots from `~/.claude/logs/knowledge/*.parquet` via DuckDB when available, falling back to live `list.files()` counts from `knowledge/wiki/` and `knowledge/raw/` when no snapshots exist.
+This vignette tracks the health and growth of the knowledge base at `~/docs_gh/llm/knowledge/` — measuring wiki page count, raw source count, provenance coverage (fraction of pages with `## Sources` sections), AI-inferred claim density, and topic-graph connectivity from `[[link]]` cross-references. It reads time-series snapshots from `~/.claude/logs/knowledge/*.parquet` via DuckDB when available, falling back to live `list.files()` counts from `knowledge/wiki/` and `knowledge/raw/` when no snapshots exist.
 
 ### Data sources
 
 - `inst/extdata/vignettes/vig_kb_stats.rds`: pre-computed aggregate stats from the `vig_kb_stats` targets pipeline target, committed to the repository; read first in all environments including CI (where `knowledge/` is gitignored); page word counts are anonymized (`page_001`, `page_002`, …) to avoid leaking file paths
+- `inst/extdata/vignettes/vig_kb_graph.rds`: pre-computed topic-graph adjacency data — nodes (id, domain, inbound-link count, orphan/broken flags) and edges (from, to) extracted from `[[link]]` cross-references in `knowledge/wiki/*.md` by [`vignettes/_kb_topic_graph.R`](https://github.com/JohnGavin/llm/blob/main/vignettes/_kb_topic_graph.R#L1); committed so the Topic Graph tab renders in CI without accessing the gitignored `knowledge/` directory
 - `~/.claude/logs/knowledge/*.parquet`: daily snapshots produced by `~/.claude/scripts/knowledge_pulse.sh`; each row is one metric for one category (wiki/raw/quality) at one snapshot date; used when available locally for richer time-series charts
 - Live fallback: `list.files()` on `knowledge/wiki/` and `knowledge/raw/` directories — used only when both the RDS and parquet paths are unavailable; provenance percentage computed by scanning each wiki file for `^## Sources` and `AI-inferred` patterns
 

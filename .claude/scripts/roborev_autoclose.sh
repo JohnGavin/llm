@@ -8,6 +8,10 @@
 #   - mapfile replaced with portable while-read loop (Bash 3.2 compat;
 #     macOS ships Bash 3.2 which lacks the mapfile builtin).
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# Mark session as scheduled/automated for llmtelemetry_emit.sh (#322 Phase 2).
+# Propagates to any claude process spawned in this process tree so the Stop
+# hook emits "trigger":"scheduled" without requiring a /bye sentinel.
+export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 #
 # Two phases:
 #   Phase 1 — `roborev close <id>` for jobs that have a review attached

@@ -31,10 +31,12 @@ Suggests:
     fs,
     gert,
     ggplot2,
+    ggraph,
     gh,
     gridExtra,
     gt,
     gtExtras,
+    igraph,
     knitr,
     lubridate,
     quarto,
@@ -42,6 +44,7 @@ Suggests:
     targets,
     testthat (>= 3.0.0),
     tidyr,
+    visNetwork,
     withr
 Config/testthat/edition: 3
 RoxygenNote: 7.3.3
