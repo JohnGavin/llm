@@ -9,7 +9,10 @@ project:
     # Fail the render if any internal link 404s (JohnGavin/llm#715).
     - .claude/scripts/quarto_post_render_links.sh
     # Fail the render on dark-mode contrast violations (dark-mode-completeness rule).
-    - /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh
+    # Repo-relative so CI can spawn it (the absolute path doesn't exist on the
+    # runner); the wrapper's internal check script is $HOME-absolute and skips
+    # gracefully in CI, while still enforcing locally.
+    - .claude/scripts/quarto_post_render_contrast.sh
 
 website:
   title: "LLM Project"
