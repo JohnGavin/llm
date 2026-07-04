@@ -109,3 +109,6 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## ellmer Can't Use Max Subscription (see ellmer-cannot-use-max-subscription.md)
 - ellmer 0.4.0 has NO OAuth/`chat_claude_code()`; uses pay-per-token ANTHROPIC_API_KEY only; Anthropic blocked 3rd-party Max-sub use 2026-04-04; fund a key, then chat_claude() (#696, 2026-06-30)
+
+## cc Startup Hang = npx/burn-rate no timeout (see cc-startup-hang-npx-timeout.md)
+- `cc` hangs after "Switched to worktree" = unbounded `npx ccusage` in burn_rate_check (GNU timeout absent on macOS → `${TIMEOUT_CMD:+…}` empty); unblock `npx --yes ccusage --version`; fix = perl-alarm fallback + npx --yes + </dev/null (#716, 2026-07-03)
