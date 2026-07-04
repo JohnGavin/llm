@@ -4,6 +4,61 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-01 → 07-04 — overnight self-review hardening, knowledge-evolution Topic Graph, cc startup fix (reconstructed from git)
+
+> Retroactive catch-up: these sessions committed to `main` but were not individually logged here. Reconstructed from commit + PR history on 2026-07-04; failed approaches from those sessions are not captured.
+
+### Completed
+- **Overnight self-review pipeline hardened (02:30 cron).** #707 (#705) added a STALE freshness check to the self-review verifier; #708 (#704) switched `self_review_stage1` to the GC-rooted drv so it needs no network at 02:30; #709 (#706) added a NULL-repo guard + DuckDB lock backoff in the ETL; #712 (#710) eliminated `unified.duckdb` write-lock contention in the hook handler; #719 added usage-efficiency detectors 6–10 to the stage-1 SQL.
+- **cc startup hang fixed (#716).** Portable `timeout` for the `npx ccusage` burn-rate call — GNU `timeout` is absent on macOS, so the unbounded npx call hung after "Switched to worktree". Perl-alarm fallback + `npx --yes` + `</dev/null`. Memory `cc-startup-hang-npx-timeout.md` added.
+- **knowledge-evolution vignette: Topic Graph tab (#714, #711).** New tab; #720 installed visNetwork/ggraph/igraph in CI for it.
+- **Quarto post-render guards.** #717 (#715) added a broken-internal-link post-render guard + wiring; #718 wired the mandated dark-contrast post-render hook; #721 fixed a #718 regression (use a repo-relative path for the contrast hook).
+- **CLAUDE_TRIGGER provenance (#703, #322 Phase 2 Part A).** Stamped `CLAUDE_TRIGGER` in all scheduled roborev launchers.
+- **Tooling explorations (#696).** Piloted ellmer `chat_structured()` for issue triage (#697), r-lib/watcher v0.2.0 nix build (#699), r-lib/debrief profvis-to-text (#698, adopted into the dev shell via #702), and jakubsob/muttest mutation testing (#700). Memory: ellmer-max-sub, hook-pipefail lessons; config-pulse-symlink indexed.
+
+### Known Limitations
+- Entries are commit-derived, not session-narrated. Open follow-ups still live: symlink-escape guard PRs #693/#694 (MERGEABLE/CLEAN, unmerged), #679 consistency check (built + merged), #683 webR 0.6.0 re-test.
+
+## 2026-06-28/29 — roborev observability guards, overnight-job repair, symlink-escape defense
+
+### Completed
+- **roborev silent-failure guard (#679) built + tuned.** #687 added `roborev_consistency_check.sh` — 5 cross-counter invariants (backlog-vs-verdicts, jobs-no-verdicts, high-crash-rate, agent-error-rate, passrate-masks-crashes), wired into session_init banner + /bye, fail-tolerant. #688 windowed it to 24h (env-tunable `ROBOREV_CONSISTENCY_WINDOW`) so it reflects *current* health, not a week-old resolved incident, and guards 0-review windows. Live verification: correctly fired `INCONSISTENT(high-crash-rate/agent:gemini)` on the stale state, goes green on 24h.
+- **Reporting-bug sweep (the session's theme — "a 0 that means the source is empty, not that nothing happened").** Found + filed: llmtelemetry#318 (config_pulse counted agents from a removed AGENTS.md → 0; skills as dirs not SKILL.md) fixed via #319 (agents 0→12, skills 74→77); llmtelemetry#323 (daily-report close-rate 0.0% reads the empty `closures` table; reality = 260 reviews closed/7d via `reviews.closed`); llm#690 (codex-overnight-learning reports 0 sessions — reads only `~/.codex/sessions` (dead/rate-limited) while **92 Claude Code sessions** go unlearned).
+- **Overnight launchd-job audit + repair (#689, merged).** Of 33 scheduled jobs, 4 errored: weekly-rollup-email (`Rscript not found` — launchd PATH), launchd-health-weekly (R namespace load), roborev-metrics-etl (NULL constraint on `roborev_review_lifecycle.repo`), config-pulse (git-context). #689 fixed 3 in-repo (env-source via nix-shell like the working `roborev_daily_cron.sh`; filter NA-repo rows). The metrics-etl fix may also unblock #323 (that ETL was crashing nightly, leaving the lineage stale).
+- **Symlink-escape incident + 3-layer defense.** A fixer editing `config_pulse.sh` (a symlink into llmtelemetry) escaped its llm worktree and pushed `c35ec82` to llmtelemetry main (#517 Pattern 2, made real). Built: #693 (PreToolUse realpath hook — blocks the escaping write, fail-open, 5/5 self-tests, reviewed); #694 (CI check failing on cross-repo symlinks — audit found **5** traps, not 2; allowlists known, fails on new); #692 filed for the hook + Option D (pre-push agent→main guard) deferred. De-symlink of the 5 is a documented handoff (out-of-repo plist edits).
+- **qmd spike (#686).** Installed `@tobilu/qmd@2.5.3` (pinned, isolated), evaluated hybrid search vs our 3a `kb_search()`: semantic broke a BM25 near-tie (63/63 → 90/50/41/38), provenance matches, native MCP. Decision: tiered adopt (keep 3a default, qmd MCP as optional semantic tier); recorded in #686; install + 1.6GB models removed (~2.5GB reclaimed). #645 closed as "Phase 3a done".
+- **Other:** #684 (bridge comments) merged; #685 (solo-operator product ideas) + #691 (scheduled-jobs→pipeline vignette) filed; gemini removed from roborev config + daemon restarted (claude-code primary, codex backup; 0 failures in 24h since); 3 memory lessons saved (npm-in-nix, destructive-guard-rm, symlink-escape) + MEMORY.md compacted 175→102 lines.
+
+### Failed Approaches
+- **qmd-vs-3a hypothesis on the Shinylive crash was wrong** — assumed empty data drove the `label must be non-empty` error; the fixer verified data was clean and found the real cause: a static `toolbar_input_select(label=NULL)` (llmtelemetry#321, merged). Lesson: verify the data claim before blaming data.
+- **Dispatched a fixer to edit `config_pulse.sh` from an llm worktree** — it's a cross-repo symlink, so the edit escaped to llmtelemetry main (push c35ec82, kept as benign). Root of the #692/#693/#694 guard work.
+
+### Known Limitations
+- roborev 7d summary still NOT-CLEAN until the 2026-06-25 gemini crash batch ages out (~07-02); 24h consistency check is green. 3 unaddressed verdict failures (pre-existing).
+- De-symlink of the 5 llm→llmtelemetry script symlinks not yet executed (handoff in #694; needs out-of-repo plist edits + breaks 2 vignette blob-links).
+- Option D (pre-push agent→main guard) deferred (#692). codex backup rate-limited until ~mid-July.
+
+## 2026-06-27 (PM) — stale-PR triage + llmtelemetry config-count fixes + roborev gemini cleanup
+
+### Completed
+- **Triaged 4 long-stale open PRs on JohnGavin/llm** (all June 8–15, untriaged ~3 weeks):
+  - #578 (digest Phase C — Config/KB/Cron-health sections) — merged clean.
+  - #638 (`branch_gc` Phase B, #589) — merged after a `fixer` rebased it: #578 landed first and both edit `send_overnight_self_review_email.R`, taking digest-email vars `sec3c/3d/3e`, so #638's Branch-GC block was renamed `sec3f_block`; all five sections kept.
+  - #580 (roborev SQLite→unified.duckdb bridge, #555) — merged after a `fixer` rebased (trivial tracking-comment conflict) AND schema-audited the bridge against the live `~/.roborev/reviews.db`: all 4 tables/columns (`repos`, `review_jobs`, `reviews`, `closures`) still match; `closures.closure_type` CHECK still includes `'stale'`; #677 status-reclassify doesn't break the COALESCE'd LEFT JOINs. Verdict: merge-as-is.
+  - #577 (wiki backlinks, #481) — closed: only changed `CHANGELOG.md`; the 5 wiki pages already live in the local-only `knowledge/` repo, so the 3-week changelog conflict wasn't worth resolving.
+- **Reconciled global-config `.md` counts vs the llmtelemetry dashboard.** `config_pulse.sh` (collector for the Global Config table) had two defects: agents counted from a removed `~/.claude/AGENTS.md` (→ absent from dashboard; real = 12) and skills counted as top-level dirs (74) instead of `SKILL.md` manifests (77, matches the banner). Filed llmtelemetry#318 → implemented + merged llmtelemetry#319 (agents→`agents/*.md`=12, skills→`SKILL.md`=77); #318 auto-closed.
+- **llm#684 (merged):** two clarifying comments in `roborev_bridge_to_unified.sh` (intentional no-`status`-filter post-#677; legitimate 0-`closures`) — #580 follow-up.
+- **roborev gemini cleanup:** `/bye` flagged NOT-CLEAN — 11 failures (9 crash, 2 quota) all attributed to the dead `gemini` agent. Confirmed `~/.roborev/config.toml` has ZERO gemini refs (all stages `claude-code`/`codex`); the 11 were stale earlier-today crashes. `roborev daemon restart` to force clean-config reload; `roborev_agent_health.sh --status` = normal (codex 0 failures). Stale records age out of the summary window.
+- Filed **llm#685** — discussion/ideation issue: leveraged-solo-operator product ideas (Stripe/Shopify/cloud/auto-bookkeeping + AI), grounded in this account's repos (finance/betting, sports analytics, AI agent ops, reproducible data eng, healthcare, dashboards).
+- Ran `export_and_deploy_data.sh` (telemetry → dashboard).
+
+### Failed Approaches
+- First merge of #638 hit a conflict — #578 (sibling PR) landed first and both edit the overnight-digest email R file. Lesson: when merging sibling PRs that touch the same file, expect the second to need a rebase; resolved via `fixer`.
+
+### Known Limitations
+- llmtelemetry agents/skills counts won't reflect the fix until `config_pulse.sh`'s next daily snapshot (today's already ran with the old logic).
+- #679 (auto cross-counter consistency check to catch self-contradictory roborev state, e.g. the gemini stale-failure case) still unbuilt — today's NOT-CLEAN was again caught by eye, not by code.
+
 ## 2026-06-27 — MCP startup layer-2 fix (#680) + tlang CI green + gap issues
 
 ### Completed
