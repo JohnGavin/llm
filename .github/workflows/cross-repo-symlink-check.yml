@@ -1,0 +1,34 @@
+# cross-repo-symlink-check.yml — CI guard for symlinks that escape this repo.
+#
+# A tracked symlink (git mode 120000) whose real destination is in a different
+# repository creates a sandbox-escape hazard: an agent writing through the
+# symlink modifies files outside its worktree without knowing it (llm#692).
+#
+# This workflow runs check_cross_repo_symlinks.sh on every push and PR.
+# Existing cross-repo symlinks are allowlisted in
+# .claude/scripts/.cross-repo-symlink-allowlist and produce WARNs, not failures.
+# Any NEW non-allowlisted cross-repo symlink causes an immediate failure.
+#
+# No Nix required — pure bash + git.
+name: Cross-Repo Symlink Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  symlink-check:
+    name: Check for cross-repo symlinks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run cross-repo symlink check
+        run: bash .claude/scripts/check_cross_repo_symlinks.sh
