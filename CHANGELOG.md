@@ -4,6 +4,25 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-04 (PM) — worktree/branch housekeeping + monetisation plan
+
+### Completed
+- **Worktree sweep:** removed 13 merged+clean worktrees (11 in the main sweep + 2 stale in triage). Non-harness worktree set reduced to `main` + active session.
+- **CHANGELOG catch-up (#724, merged `a8f37df`):** `main` was stale at 2026-06-27; added 3 entries — 06-27 PM + 06-28/29 ported verbatim from an uncommitted draft stranded in worktree `feat/cc-20260627-102543`, plus a git-reconstructed 07-01→07-04 entry. Redundant branch `feat/cc-20260627-102543` deleted (local + remote) after merge.
+- **Fixed orphaned `worktree-agent-*` branch churn.** Discovered neither GC sweeps them: `branch_gc` explicitly skips `worktree-agent-*` (the harness "manages those"); `worktree_gc` only deletes a branch when removing its live dir, so orphaned refs (dir already gone) fall through both. Safe one-time sweep with a patch-id/ancestor merge check: **81 → 12** (69 merged deleted, 8 unmerged kept for review, 4 checked-out skipped). Durable fix filed **#726**.
+- **Monetisation plan (#725):** provider-agnostic reusable donate/fixed-price support component; no-Stripe start via GitHub Sponsors / Ko-fi (user has no Stripe account). Tier-1 Quarto partial drafted (not yet installed); Tier-2 gated-download design deferred.
+- **`historical` resume investigation:** confirmed no work lost — `main`, `feat/cc-20260703-210149`, and the new worktree all point to `c13df6a`; clarified `--resume` (conversation) vs `cc.sh` worktree (filesystem) vs resume-time compaction.
+- **roborev triage:** closed 3 unaddressed failed-verdict reviews (6612/6611/6581) — all degenerate empty-diff reviews (merge/no-op commits marked failed), not real code issues.
+
+### Failed Approaches
+- Initially asserted orphaned `worktree-agent-*` branches were "for `worktree_gc`/`branch_gc` to sweep" — **wrong**; both GCs skip them by design. Corrected with a one-time merge-checked sweep + issue #726 for the durable pruner.
+- `export_and_deploy_data.sh` hit a transient rebase conflict and bailed without pushing (`run_rollup.R`/`skill_usage_etl.R` non-fatal R errors). Recovered manually: repo was level with origin, committed the 6 regenerated data JSONs, and a background emit folded them in (`ba394e01` → `dfa7c62b`) — dashboard did deploy.
+
+### Known Limitations
+- 8 kept-unmerged `worktree-agent-*` branches await review (may hold uncaptured agent commits) — see #726.
+- #725 Tier-1 partial drafted but not installed; no payment provider onboarded.
+- roborev empty-diff reviews get spuriously marked as failed verdicts (root of the 3 closed above) — a review-quality noise source worth an upstream fix.
+
 ## 2026-07-01 → 07-04 — overnight self-review hardening, knowledge-evolution Topic Graph, cc startup fix (reconstructed from git)
 
 > Retroactive catch-up: these sessions committed to `main` but were not individually logged here. Reconstructed from commit + PR history on 2026-07-04; failed approaches from those sessions are not captured.
