@@ -127,6 +127,11 @@ tokens and credentials sit. An agent running `bypassPermissions` in the main
 checkout can silently overwrite `.Renviron`, `default.nix`, or any other
 file without a confirmation prompt.
 
+`~/.claude/` symlinks and cross-repo symlinks (e.g. a `.claude/scripts/` file
+pointing into a sibling repo) are sandbox-escaping — the path looks
+in-worktree but the bytes land outside it; the `worktree_symlink_guard` hook
+(llm#692) now enforces this at every `PreToolUse:Edit|Write` call.
+
 **Therefore:** ANY Agent dispatch where the agent may invoke Bash MUST be
 called with `isolation: "worktree"`. This includes:
 
