@@ -1,9 +1,15 @@
 # Default agent for this repo when no workflow-specific agent is set.
-agent = ''
+# gemini is the PRIMARY review agent for llm (public repo), restoring roborev's
+# usual gemini-first order (gemini -> codex backup). Enabled via the AI Studio
+# API key (GEMINI_API_KEY) after the CLI auth-type fix (#733); gemini-cli's OAuth
+# tier is still dead (#676). llm is PUBLIC so free-tier "trains on prompts" is moot.
+# GLOBAL default_agent stays 'claude-code' so private repos (no per-repo config)
+# never route to gemini — public-only opt-in.
+agent = 'gemini'
 # Default model for this repo when no workflow-specific model is set.
 model = ''
-# Backup agent for this repo if the primary agent fails.
-# Changed from 'gemini' to 'codex' — gemini free tier permanently dead (#676, IneligibleTierError/UNSUPPORTED_CLIENT, exit 55).
+# Backup agent for this repo if the primary (gemini) fails: codex, then the
+# global default (claude-code) as the final safety net.
 backup_agent = 'codex'
 # Backup model for this repo if the primary model fails.
 backup_model = ''
