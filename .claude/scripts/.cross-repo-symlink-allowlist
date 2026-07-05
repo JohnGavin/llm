@@ -1,0 +1,17 @@
+# Cross-repo symlinks pending de-symlink (see #692 + de-symlink follow-up).
+# Editing these from an llm worktree escapes the sandbox into llmtelemetry.
+# Remove each entry here once its plist + git rm de-symlink step is done
+# (see PR description for the exact runbook commands).
+#
+# Format: one repo-root-relative path per line; # comments; blank lines ignored.
+# The CI check (check_cross_repo_symlinks.sh) WARNs on these but does not fail.
+#
+# Task originally identified config_pulse.sh and knowledge_pulse.sh as the two
+# known traps. Audit at PR creation found 3 additional llmtelemetry symlinks
+# (export_and_deploy_data.sh, git_project_pulse.sh, unified_log_init.sql) that
+# were not documented; all 5 are listed here. See PR body for de-symlink runbook.
+.claude/scripts/config_pulse.sh
+.claude/scripts/knowledge_pulse.sh
+.claude/scripts/export_and_deploy_data.sh
+.claude/scripts/git_project_pulse.sh
+.claude/scripts/unified_log_init.sql
