@@ -170,7 +170,11 @@ refine_agent_thorough = ''
 # Agent override for maximum refine in this repo.
 refine_agent_maximum = ''
 # Model override for standard review in this repo.
-review_model = ''
+# gemini free-tier quota is per-MODEL: the default flash model exhausts its daily
+# quota fast under review-sized prompts (#733, TerminalQuotaError). flash-lite is
+# the high-RPD "cheap high-volume" tier — pin gemini reviews to it. Only applies to
+# the gemini primary; codex backup uses review_backup_model.
+review_model = 'gemini-2.5-flash-lite'
 # Model override for fast review in this repo.
 review_model_fast = ''
 # Model override for standard review in this repo.
@@ -178,7 +182,8 @@ review_model_standard = ''
 # Model override for medium review in this repo.
 review_model_medium = ''
 # Model override for thorough review in this repo.
-review_model_thorough = ''
+# llm reviews at 'thorough' — pin flash-lite here too (see review_model note).
+review_model_thorough = 'gemini-2.5-flash-lite'
 # Model override for maximum review in this repo.
 review_model_maximum = ''
 # Model override for standard refine in this repo.
