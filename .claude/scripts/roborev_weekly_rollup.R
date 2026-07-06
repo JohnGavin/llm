@@ -3,8 +3,15 @@
 #
 # Reads:
 #   1. ~/.claude/logs/roborev_daily_backlog/<date>.md  (last 7 days, from #355 daily aggregator)
-#   2. ~/.roborev/reviews.db                           (SQLite, week-over-week trends)
+#   2. ~/.roborev/reviews.db                           (SQLite; read via DuckDB's sqlite
+#                                                        scanner — NOT RSQLite, which is not
+#                                                        in the llm nix env, see #736)
 #   3. ~/.claude/logs/unified.duckdb roborev_review_lifecycle (close_reason distribution)
+#
+# Fail-loud policy (#736): an empty rollup is only legitimate when reviews.db itself
+# has zero matching rows for the window. If reviews.db has matching rows but the
+# rollup would render as all-zero (e.g. a broken JOIN or missing driver), that is
+# treated as a bug and the script exits non-zero rather than silently emitting zeros.
 #
 # Emits:
 #   - Markdown rollup → $ROBOREV_WEEKLY_DIR/YYYY-MM-DD.md  (default ~/.claude/logs/roborev_weekly_rollup/)
@@ -125,49 +132,85 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     close_rate       = numeric(0),
     stringsAsFactors = FALSE
   )
+  empty_stuck <- data.frame(
+    id = integer(0), repo = character(0),
+    age_days = integer(0), severity = character(0),
+    summary = character(0), stringsAsFactors = FALSE
+  )
   if (!file.exists(db_path)) {
     message("roborev_weekly_rollup: reviews.db not found at ", db_path)
     return(list(per_project = empty, global_close_rate = NA_real_,
                 global_opened = 0L, global_closed = 0L,
                 prev_global_close_rate = NA_real_,
                 median_ttc_hrs = NA_real_,
-                stuck_findings = data.frame(
-                  id = integer(0), repo = character(0),
-                  age_days = integer(0), severity = character(0),
-                  summary = character(0), stringsAsFactors = FALSE
-                )))
+                stuck_findings = empty_stuck,
+                evidence_count = 0L))
   }
 
+  # reviews.db is SQLite. RSQLite is NOT in the llm nix env (#736); read it via
+  # DuckDB's bundled sqlite scanner instead — the same approach already used for
+  # unified.duckdb elsewhere in this script and in roborev_metrics_etl.R.
+  #
+  # Per #736 fail-loud policy: a connect/attach failure here is a hard error
+  # (exit non-zero), NOT a silent empty fallback — an empty rollup must be
+  # evidenced, not assumed.
   con <- tryCatch(
-    DBI::dbConnect(RSQLite::SQLite(), db_path, flags = RSQLite::SQLITE_RO),
+    DBI::dbConnect(duckdb::duckdb(), ":memory:"),
     error = function(e) {
-      message("roborev_weekly_rollup: cannot open reviews.db — ", conditionMessage(e))
-      NULL
+      cat(sprintf("ERROR: cannot open DuckDB in-memory connection — %s\n",
+                   conditionMessage(e)))
+      quit(status = 1L)
     }
   )
-  if (is.null(con)) {
-    return(list(per_project = empty, global_close_rate = NA_real_,
-                global_opened = 0L, global_closed = 0L,
-                prev_global_close_rate = NA_real_,
-                median_ttc_hrs = NA_real_,
-                stuck_findings = data.frame(
-                  id = integer(0), repo = character(0),
-                  age_days = integer(0), severity = character(0),
-                  summary = character(0), stringsAsFactors = FALSE
-                )))
+  on.exit(tryCatch(DBI::dbDisconnect(con, shutdown = TRUE), error = function(e) NULL),
+          add = TRUE)
+
+  attach_ok <- tryCatch({
+    tryCatch({
+      invisible(DBI::dbExecute(con, "LOAD sqlite"))
+    }, error = function(e_load) {
+      invisible(DBI::dbExecute(con, "INSTALL sqlite"))
+      invisible(DBI::dbExecute(con, "LOAD sqlite"))
+    })
+    invisible(DBI::dbExecute(
+      con, sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)", db_path)
+    ))
+    TRUE
+  }, error = function(e) {
+    cat(sprintf("ERROR: cannot attach reviews.db via DuckDB — %s\n",
+                conditionMessage(e)))
+    FALSE
+  })
+  if (!isTRUE(attach_ok)) {
+    quit(status = 1L)
   }
-  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Evidence count (#736): counts review_jobs directly, independent of the
+  # reviews/review_jobs/repos JOIN below. If this is > 0 but the joined
+  # queries render an all-zero rollup, that mismatch is the #736 bug pattern
+  # (e.g. a broken JOIN or driver issue) — checked after this function returns.
+  evidence_count <- tryCatch(
+    as.integer(DBI::dbGetQuery(con, sprintf(
+      "SELECT COUNT(*) AS n FROM src.review_jobs
+       WHERE status = 'done' AND CAST(finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'",
+      week_start_str, week_end_str
+    ))$n[1L]),
+    error = function(e) {
+      cat(sprintf("ERROR: evidence-count query failed — %s\n", conditionMessage(e)))
+      quit(status = 1L)
+    }
+  )
 
   # Per-project opened / closed in current week
   per_proj_sql <- sprintf("
     SELECT
       r.name AS repo_name,
-      COUNT(CASE WHEN date(rj.finished_at) BETWEEN '%s' AND '%s' THEN 1 END) AS opened_this_week,
+      COUNT(CASE WHEN CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS opened_this_week,
       COUNT(CASE WHEN rv.closed = 1
-                   AND date(rv.updated_at) BETWEEN '%s' AND '%s' THEN 1 END) AS closed_this_week
-    FROM reviews rv
-    JOIN review_jobs rj ON rj.id = rv.job_id
-    JOIN repos r ON r.id = rj.repo_id
+                   AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed_this_week
+    FROM src.reviews rv
+    JOIN src.review_jobs rj ON rj.id = rv.job_id
+    JOIN src.repos r ON r.id = rj.repo_id
     WHERE rj.status = 'done'
     GROUP BY r.name
     ORDER BY opened_this_week DESC
@@ -198,11 +241,11 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     SELECT
       COUNT(*) AS opened_this_week,
       COUNT(CASE WHEN rv.closed = 1
-                   AND date(rv.updated_at) BETWEEN '%s' AND '%s' THEN 1 END) AS closed_this_week
-    FROM reviews rv
-    JOIN review_jobs rj ON rj.id = rv.job_id
+                   AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed_this_week
+    FROM src.reviews rv
+    JOIN src.review_jobs rj ON rj.id = rv.job_id
     WHERE rj.status = 'done'
-      AND date(rj.finished_at) BETWEEN '%s' AND '%s'
+      AND CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'
   ", week_start_str, week_end_str,
      week_start_str, week_end_str)
 
@@ -222,11 +265,11 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     SELECT
       COUNT(*) AS opened,
       COUNT(CASE WHEN rv.closed = 1
-                   AND date(rv.updated_at) BETWEEN '%s' AND '%s' THEN 1 END) AS closed
-    FROM reviews rv
-    JOIN review_jobs rj ON rj.id = rv.job_id
+                   AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed
+    FROM src.reviews rv
+    JOIN src.review_jobs rj ON rj.id = rv.job_id
     WHERE rj.status = 'done'
-      AND date(rj.finished_at) BETWEEN '%s' AND '%s'
+      AND CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'
   ", prev_start, prev_end, prev_start, prev_end)
 
   prev_row <- tryCatch(
@@ -241,14 +284,14 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   ttc_sql <- sprintf("
     SELECT
       AVG(
-        CAST((julianday(rv.updated_at) - julianday(rj.finished_at)) * 24.0 AS REAL)
+        CAST(EPOCH(CAST(rv.updated_at AS TIMESTAMP)) - EPOCH(CAST(rj.finished_at AS TIMESTAMP)) AS DOUBLE) / 3600.0
       ) AS median_ttc_hrs
-    FROM reviews rv
-    JOIN review_jobs rj ON rj.id = rv.job_id
+    FROM src.reviews rv
+    JOIN src.review_jobs rj ON rj.id = rv.job_id
     WHERE rj.status = 'done'
       AND rv.closed = 1
-      AND date(rv.updated_at) BETWEEN '%s' AND '%s'
-      AND julianday(rv.updated_at) >= julianday(rj.finished_at)
+      AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'
+      AND CAST(rv.updated_at AS TIMESTAMP) >= CAST(rj.finished_at AS TIMESTAMP)
   ", week_start_str, week_end_str)
 
   ttc_row <- tryCatch(
@@ -262,14 +305,14 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     SELECT
       rv.id,
       r.name AS repo,
-      CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+      CAST((EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 AS INTEGER) AS age_days,
       rv.output
-    FROM reviews rv
-    JOIN review_jobs rj ON rj.id = rv.job_id
-    JOIN repos r ON r.id = rj.repo_id
+    FROM src.reviews rv
+    JOIN src.review_jobs rj ON rj.id = rv.job_id
+    JOIN src.repos r ON r.id = rj.repo_id
     WHERE rj.status = 'done'
       AND rv.closed = 0
-      AND julianday('now') - julianday(rj.finished_at) > 7
+      AND (EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 > 7
     ORDER BY age_days DESC
     LIMIT 10
   "
@@ -322,7 +365,8 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     global_closed        = global_closed,
     prev_global_close_rate = prev_global_close_rate,
     median_ttc_hrs       = median_ttc_hrs,
-    stuck_findings       = stuck_findings
+    stuck_findings       = stuck_findings,
+    evidence_count       = evidence_count
   )
 }
 
@@ -337,23 +381,31 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   a
 }
 
-# Load RSQLite if available; fall back gracefully
-has_rsqlite <- requireNamespace("RSQLite", quietly = TRUE)
-if (!has_rsqlite) {
-  message("roborev_weekly_rollup: RSQLite not available — DB queries skipped")
-  db_data <- list(
-    per_project = data.frame(repo_name = character(0),
-                             opened_this_week = integer(0),
-                             closed_this_week = integer(0),
-                             close_rate = numeric(0), stringsAsFactors = FALSE),
-    global_close_rate = NA_real_, global_opened = 0L, global_closed = 0L,
-    prev_global_close_rate = NA_real_, median_ttc_hrs = NA_real_,
-    stuck_findings = data.frame(id = integer(0), repo = character(0),
-                                age_days = integer(0), severity = character(0),
-                                summary = character(0), stringsAsFactors = FALSE)
-  )
-} else {
-  db_data <- query_reviews_db(REVIEWS_DB, week_start_str, week_end_str)
+# reviews.db is read via DuckDB's sqlite scanner (#736) — NOT RSQLite, which is
+# not in the llm nix env. duckdb is a firm dependency of this script already
+# (used below for unified.duckdb), so its absence is a hard error, not a
+# graceful skip: a silently-skipped DB read is exactly the failure mode #736
+# reported (all-zero rollup with no indication anything went wrong).
+if (!requireNamespace("duckdb", quietly = TRUE)) {
+  cat("ERROR: duckdb package not available — cannot read reviews.db (#736)\n")
+  quit(status = 1L)
+}
+db_data <- query_reviews_db(REVIEWS_DB, week_start_str, week_end_str)
+
+# ── Fail-loud guard (#736 Part B) ─────────────────────────────────────────────
+# evidence_count is queried directly against review_jobs, independent of the
+# reviews/review_jobs/repos JOIN used for global_opened/global_closed. If
+# evidence_count is > 0 but the joined queries render an all-zero rollup, that
+# is a bug (e.g. a broken JOIN or schema drift) — not a legitimately empty
+# week — and must fail loudly rather than emit a misleading all-zero report.
+# A genuinely empty week (evidence_count == 0) is allowed through unchanged.
+if (db_data$evidence_count > 0L &&
+    db_data$global_opened == 0L && db_data$global_closed == 0L) {
+  cat(sprintf(
+    "ERROR: rollup empty but reviews.db has %d done job(s) in window %s..%s — treating as BUG (#736)\n",
+    db_data$evidence_count, week_start_str, week_end_str
+  ))
+  quit(status = 1L)
 }
 
 # ── 2b. Apply canonical-projects filter to per_project and stuck_findings ────
