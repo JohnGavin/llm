@@ -87,7 +87,13 @@ log "running $ROLLUP_SCRIPT via nix-shell"
 "$NIX_SHELL_BIN" "$LLM_NIX" --run "Rscript '${ROLLUP_SCRIPT}'" 2>&1 | tee -a "$LOG"
 rollup_rc=${PIPESTATUS[0]}
 if [ "$rollup_rc" -ne 0 ]; then
-  log "WARNING: rollup script exited $rollup_rc — continuing to email step (partial output possible)"
+  # #736: a non-zero exit from the rollup script means its fail-loud guard
+  # tripped (evidence of done reviews exists but the rollup would render
+  # all-zero) or the reviews.db connection itself failed. Either way this is
+  # a real bug, not a legitimately empty week (which exits 0) — surface the
+  # failure to launchd and do NOT send a misleading all-zero digest email.
+  log "ERROR: rollup script exited $rollup_rc — aborting before email step (#736 fail-loud guard)"
+  exit "$rollup_rc"
 fi
 
 # ── Step 2: send email ────────────────────────────────────────────────────────
