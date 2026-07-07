@@ -63,10 +63,21 @@ cat(sprintf("backfill_skill_usage: dry_run=%s db=%s projects_dir=%s\n",
             dry_run, db_path, projects_dir))
 
 # ── args_hash: fixed-length fingerprint, never store args text itself ───────
+# MUST match log_skill_use.sh's hook-time hash exactly: that hook computes
+# `printf '%s' "$_args" | shasum -a 256 | cut -c1-16` — i.e. it hashes the raw
+# args bytes with NO trailing newline. system2(..., input = x) is NOT
+# equivalent: it writes x via writeLines(), which appends a trailing "\n",
+# producing a different hash for the same string and silently breaking the
+# cross-writer dedup (args_hash never matches a hook-written row). Write the
+# bytes to a temp file with no newline (cat(..., sep = "")) and hash the file
+# instead of piping via stdin, so both writers hash byte-identical input.
 hash_args <- function(x) {
   if (is.null(x) || !nzchar(x)) return(NA_character_)
+  tmp <- tempfile()
+  on.exit(unlink(tmp), add = TRUE)
+  cat(x, file = tmp, sep = "")
   out <- tryCatch(
-    system2("shasum", c("-a", "256"), input = x, stdout = TRUE),
+    system2("shasum", c("-a", "256", tmp), stdout = TRUE),
     error = function(e) character()
   )
   if (!length(out)) return(NA_character_)
