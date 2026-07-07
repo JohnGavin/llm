@@ -15,8 +15,10 @@
 # length hash (never stored as free text) — consistent with
 # log_skill_use.sh's privacy stance.
 #
-# Idempotent: dedupes on (session_id, skill_name, ts) via NOT EXISTS at
-# insert time, so re-running never increases the row count.
+# Idempotent: dedupes on (session_id, skill_name, ts, args_hash) via NOT
+# EXISTS at insert time, so re-running never increases the row count.
+# args_hash is matched with IS NOT DISTINCT FROM (NULL-safe) so two
+# invocations differing only in args are never conflated into one row.
 #
 # Usage:
 #   Rscript backfill_skill_usage.R [--apply] [--db PATH] [--projects-dir PATH]
@@ -198,6 +200,7 @@ if (nrow(events_df) > 0) {
       WHERE u.session_id = s.session_id
         AND u.skill_name = s.skill_name
         AND date_trunc('second', u.ts) = date_trunc('second', CAST(s.ts AS TIMESTAMP))
+        AND u.args_hash IS NOT DISTINCT FROM s.args_hash
     )
   ")
   invisible(dbExecute(con, "DROP TABLE IF EXISTS skill_usage_backfill_staging"))

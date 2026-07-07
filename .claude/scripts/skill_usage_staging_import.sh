@@ -35,8 +35,10 @@
 #   staging_path   Defaults to ~/.claude/logs/skill_usage_staging.jsonl
 #                  (override for tests against a scratch DB/staging file)
 #
-# Idempotent: dedupes on (session_id, skill_name, ts) at insert time via
-# NOT EXISTS, so re-running against a leftover import file is a no-op.
+# Idempotent: dedupes on (session_id, skill_name, ts, args_hash) at insert
+# time via NOT EXISTS, so re-running against a leftover import file is a
+# no-op. args_hash is matched with IS NOT DISTINCT FROM (NULL-safe) so two
+# invocations differing only in args are never conflated into one row.
 # Non-fatal: never aborts the caller — always exits 0.
 set -uo pipefail
 
@@ -100,6 +102,7 @@ if [ -f "${_IMPORT}" ]; then
         WHERE u.session_id = s.session_id
           AND u.skill_name = s.skill_name
           AND date_trunc('second', u.ts) = date_trunc('second', CAST(s.ts AS TIMESTAMP))
+          AND u.args_hash IS NOT DISTINCT FROM s.args_hash
       );
   " 2>/dev/null || log "WARN duckdb insert failed (non-fatal)"
   rm -f "${_IMPORT}" 2>/dev/null || true

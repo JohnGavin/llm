@@ -110,18 +110,21 @@ ROW_COUNT2=$(dq "$TESTDB" "SELECT COUNT(*) FROM skill_usage;")
 assert "drain re-run with no staging file: row count unchanged" "$ROW_COUNT2" "1"
 
 echo ""
-echo "=== Test group 5: drain dedupes on (session_id, skill_name, ts) ==="
+echo "=== Test group 5: drain dedupes on (session_id, skill_name, ts, args_hash) ==="
 
-# Stage the SAME event again (identical ts/session/skill) and re-drain.
+# Stage the SAME event again (identical ts/session/skill/args_hash) and
+# re-drain. Copy both the exact ts AND args_hash from the row already in
+# the DB — this is the true "re-staged identical event" scenario (same
+# args, not just same session+skill+second).
 printf '%s' "$PAYLOAD" | HOME="$T" bash "$HOOK"
-# Force an identical ts by copying the exact ts from the row already in the DB.
 EXISTING_TS=$(dq "$TESTDB" "SELECT CAST(ts AS VARCHAR) FROM skill_usage WHERE session_id='test-session-A';")
-printf '{"ts":"%s","session_id":"test-session-A","skill_name":"cli-package","project_path":"/tmp","args_hash":"deadbeef"}\n' \
-  "$EXISTING_TS" > "$STAGING"
+EXISTING_HASH=$(dq "$TESTDB" "SELECT args_hash FROM skill_usage WHERE session_id='test-session-A';")
+printf '{"ts":"%s","session_id":"test-session-A","skill_name":"cli-package","project_path":"/tmp","args_hash":"%s"}\n' \
+  "$EXISTING_TS" "$EXISTING_HASH" > "$STAGING"
 
 bash "$DRAIN" "$TESTDB" "$STAGING" > /dev/null 2>&1
 ROW_COUNT3=$(dq "$TESTDB" "SELECT COUNT(*) FROM skill_usage;")
-assert "drain: duplicate (session_id,skill_name,ts) not re-inserted" "$ROW_COUNT3" "1"
+assert "drain: duplicate (session_id,skill_name,ts,args_hash) not re-inserted" "$ROW_COUNT3" "1"
 
 echo ""
 echo "=== Test group 5b: drain dedupes across second- vs ms-precision timestamps ==="
@@ -144,6 +147,27 @@ printf '{"ts":"2026-06-01T09:00:05.789Z","session_id":"test-session-B","skill_na
 bash "$DRAIN" "$TESTDB" "$STAGING" > /dev/null 2>&1
 ROW_COUNT_B=$(dq "$TESTDB" "SELECT COUNT(*) FROM skill_usage WHERE session_id='test-session-B';")
 assert "drain: dedup matches across second- vs ms-precision ts (1 row, not 2)" "$ROW_COUNT_B" "1"
+
+echo ""
+echo "=== Test group 5c: drain does NOT dedupe same-second events with different args_hash ==="
+
+# Same session_id + skill_name + same-second timestamp as an existing row,
+# but a DIFFERENT args_hash — these are distinct invocations (different
+# args) and must NOT be collapsed into one row. Before the fix, the dedup
+# predicate keyed only on (session_id, skill_name, ts-truncated-to-second)
+# and silently merged these.
+dq "$TESTDB" "
+  INSERT INTO skill_usage (session_id, skill_name, project_path, args_hash, ts, backfilled)
+  VALUES ('test-session-C', 'cli-package', '/tmp', 'hash-alpha',
+          CAST('2026-06-03T14:00:00' AS TIMESTAMP), FALSE);
+" > /dev/null
+
+printf '{"ts":"2026-06-03T14:00:00.321Z","session_id":"test-session-C","skill_name":"cli-package","project_path":"/tmp","args_hash":"hash-beta"}\n' \
+  > "$STAGING"
+
+bash "$DRAIN" "$TESTDB" "$STAGING" > /dev/null 2>&1
+ROW_COUNT_C=$(dq "$TESTDB" "SELECT COUNT(*) FROM skill_usage WHERE session_id='test-session-C';")
+assert "drain: same-second same-skill DIFFERENT args_hash -> both rows kept (2, not 1)" "$ROW_COUNT_C" "2"
 
 echo ""
 echo "=== Test group 6: etl_freshness registration (defensive, Card 1a coordination) ==="
@@ -224,14 +248,21 @@ EOF
 
   # Pre-populate the DB with a row as the hook/drain path would have written
   # it (second precision, backfilled=FALSE), then run the backfill over a
-  # synthetic transcript recording the SAME (session_id, skill_name) event
-  # with millisecond precision. Before the fix, CAST(...) preserved the
-  # sub-second component so the two never matched and the event was
-  # double-counted.
+  # synthetic transcript recording the SAME (session_id, skill_name, args)
+  # event with millisecond precision. Before the fix, CAST(...) preserved
+  # the sub-second component so the two never matched and the event was
+  # double-counted. The pre-populated args_hash must match what
+  # backfill_skill_usage.R's hash_args() computes for the transcript's
+  # "demo" args string (first 16 hex chars of sha256, matching hash_args()
+  # in backfill_skill_usage.R) — otherwise this is testing "different
+  # args_hash" (see Test group 10), not "same event, different ts
+  # precision".
   XDIR=$(mktemp -d)
   XDB="$XDIR/xwriter_test.duckdb"
   XPROJDIR="$XDIR/projects/-tmp-xwriter"
   mkdir -p "$XPROJDIR"
+
+  XW_ARGS_HASH=$(printf '%s\n' "demo" | shasum -a 256 | awk '{print substr($1,1,16)}')
 
   dq "$XDB" "
     CREATE TABLE IF NOT EXISTS skill_usage (
@@ -239,7 +270,7 @@ EOF
       args_hash VARCHAR, ts TIMESTAMP, backfilled BOOLEAN DEFAULT FALSE
     );
     INSERT INTO skill_usage (session_id, skill_name, project_path, args_hash, ts, backfilled)
-    VALUES ('sess-XWRITER', 'cli-package', '/tmp', 'deadbeef',
+    VALUES ('sess-XWRITER', 'cli-package', '/tmp', '${XW_ARGS_HASH}',
             CAST('2026-06-10T12:00:00' AS TIMESTAMP), FALSE);
   " > /dev/null
 
@@ -256,6 +287,45 @@ EOF
   else
     echo "  SKIP: backfill script did not exit 0 for cross-writer test (see $XDIR/backfill_out.log)"
     cat "$XDIR/backfill_out.log" 2>/dev/null | tail -20
+  fi
+
+  echo ""
+  echo "=== Test group 10: backfill does NOT dedupe same-second events with different args_hash ==="
+
+  # Pre-populate the DB with a row at second precision (as the hook/drain
+  # path would have written it), then run the backfill over a synthetic
+  # transcript recording the SAME (session_id, skill_name, second) but with
+  # DIFFERENT args — a distinct invocation that must NOT be collapsed into
+  # the existing row just because the (session_id, skill_name, ts-second)
+  # triple matches.
+  DIFFDIR=$(mktemp -d)
+  DIFFDB="$DIFFDIR/diffargs_test.duckdb"
+  DIFFPROJDIR="$DIFFDIR/projects/-tmp-diffargs"
+  mkdir -p "$DIFFPROJDIR"
+
+  dq "$DIFFDB" "
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      session_id VARCHAR, skill_name VARCHAR, project_path VARCHAR,
+      args_hash VARCHAR, ts TIMESTAMP, backfilled BOOLEAN DEFAULT FALSE
+    );
+    INSERT INTO skill_usage (session_id, skill_name, project_path, args_hash, ts, backfilled)
+    VALUES ('sess-DIFFARGS', 'cli-package', '/tmp', 'hash-old-value',
+            CAST('2026-06-11T09:30:00' AS TIMESTAMP), FALSE);
+  " > /dev/null
+
+  cat > "$DIFFPROJDIR/sess-DIFFARGS.jsonl" <<'EOF'
+{"type":"assistant","cwd":"/tmp","timestamp":"2026-06-11T09:30:00.000Z","message":{"content":[{"type":"tool_use","id":"toolu_diff1","name":"Skill","input":{"skill":"cli-package","args":"a completely different args string"}}]}}
+EOF
+
+  Rscript "$BACKFILL" --apply --db "$DIFFDB" --projects-dir "$DIFFDIR/projects" > "$DIFFDIR/backfill_out.log" 2>&1
+  DIFF_STATUS=$?
+
+  if [ "$DIFF_STATUS" -eq 0 ]; then
+    DIFF_COUNT=$(dq "$DIFFDB" "SELECT COUNT(*) FROM skill_usage WHERE session_id='sess-DIFFARGS';")
+    assert "backfill: same-second same-skill DIFFERENT args_hash -> both rows kept (2, not 1)" "$DIFF_COUNT" "2"
+  else
+    echo "  SKIP: backfill script did not exit 0 for diff-args test (see $DIFFDIR/backfill_out.log)"
+    cat "$DIFFDIR/backfill_out.log" 2>/dev/null | tail -20
   fi
 else
   echo "  SKIP: Rscript / duckdb / jsonlite R packages not on PATH outside the project nix shell"
