@@ -397,6 +397,21 @@ else
   log "skill_usage_staging_import: SKIP (script not found or not executable: ${SKILL_STAGING_IMPORT})"
 fi
 
+# ── Command usage: drain real-time staging (Card 1e, #745) ──────────────────
+# log_command_use.sh (UserPromptSubmit hook) appends one JSON line per
+# slash-command invocation to command_usage_staging.jsonl (lock-free — same
+# pattern as the skill_usage staging import immediately above). Import it
+# here, right next to that import, using the identical atomic-handoff
+# pattern.
+COMMAND_STAGING_IMPORT="${SCRIPT_DIR}/command_usage_staging_import.sh"
+if [ -x "$COMMAND_STAGING_IMPORT" ]; then
+  log "command_usage_staging_import: start"
+  "$COMMAND_STAGING_IMPORT" "$UNIFIED_DB" >> "$LOGFILE" 2>&1 || true
+  log "command_usage_staging_import: end"
+else
+  log "command_usage_staging_import: SKIP (script not found or not executable: ${COMMAND_STAGING_IMPORT})"
+fi
+
 # ── Skill usage ETL (merged here so both ETL steps share one GC-root refresh
 #    and skill_usage rows are captured by the 03:00 unified.duckdb backup) ──
 SKILL_ETL_SCRIPT="${SCRIPT_DIR}/skill_usage_etl.sh"
