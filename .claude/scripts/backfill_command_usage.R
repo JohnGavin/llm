@@ -44,8 +44,13 @@
 #
 # Idempotent: dedupes on (session_id, command_name, ts, args_hash) via NOT
 # EXISTS at insert time, so re-running never increases the row count.
-# args_hash is matched with IS NOT DISTINCT FROM (NULL-safe) so two
-# invocations differing only in args are never conflated into one row.
+# args_hash is compared with COALESCE(..., '') = COALESCE(..., '') so NULL
+# (this script's hash_args() for a no-args command) and '' (the forward
+# hook's args_hash for a no-args command) are treated as the SAME value —
+# otherwise IS NOT DISTINCT FROM would treat NULL and '' as distinct and
+# double-count every no-args command re-seen across the two writers (#747
+# review). Two invocations differing only in actual (non-empty) args are
+# still never conflated into one row.
 #
 # Usage:
 #   Rscript backfill_command_usage.R [--apply] [--db PATH] [--projects-dir PATH]
@@ -228,7 +233,7 @@ if (nrow(events_df) > 0) {
       WHERE u.session_id = s.session_id
         AND u.command_name = s.command_name
         AND date_trunc('second', u.ts) = date_trunc('second', CAST(s.ts AS TIMESTAMP))
-        AND u.args_hash IS NOT DISTINCT FROM s.args_hash
+        AND COALESCE(u.args_hash, '') = COALESCE(s.args_hash, '')
     )
   ")
   invisible(dbExecute(con, "DROP TABLE IF EXISTS command_usage_backfill_staging"))
