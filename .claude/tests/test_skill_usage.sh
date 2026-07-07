@@ -124,6 +124,28 @@ ROW_COUNT3=$(dq "$TESTDB" "SELECT COUNT(*) FROM skill_usage;")
 assert "drain: duplicate (session_id,skill_name,ts) not re-inserted" "$ROW_COUNT3" "1"
 
 echo ""
+echo "=== Test group 5b: drain dedupes across second- vs ms-precision timestamps ==="
+
+# Simulate a row already written with second precision (the hook's format,
+# no fractional seconds — see log_skill_use.sh) for a NEW session, then stage
+# a "duplicate" event for the same (session_id, skill_name) whose timestamp
+# carries millisecond precision (the format raw transcripts use). Before the
+# fix these compared unequal (CAST(...) preserved the sub-second component)
+# and the row was double-counted.
+dq "$TESTDB" "
+  INSERT INTO skill_usage (session_id, skill_name, project_path, args_hash, ts, backfilled)
+  VALUES ('test-session-B', 'cli-package', '/tmp', 'deadbeef',
+          CAST('2026-06-01T09:00:05' AS TIMESTAMP), FALSE);
+" > /dev/null
+
+printf '{"ts":"2026-06-01T09:00:05.789Z","session_id":"test-session-B","skill_name":"cli-package","project_path":"/tmp","args_hash":"deadbeef"}\n' \
+  > "$STAGING"
+
+bash "$DRAIN" "$TESTDB" "$STAGING" > /dev/null 2>&1
+ROW_COUNT_B=$(dq "$TESTDB" "SELECT COUNT(*) FROM skill_usage WHERE session_id='test-session-B';")
+assert "drain: dedup matches across second- vs ms-precision ts (1 row, not 2)" "$ROW_COUNT_B" "1"
+
+echo ""
 echo "=== Test group 6: etl_freshness registration (defensive, Card 1a coordination) ==="
 
 FRESHNESS_EXISTS=$(dq "$TESTDB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='etl_freshness';")
@@ -165,6 +187,75 @@ EOF
   else
     echo "  SKIP: backfill script did not exit 0 (see $BFDIR/backfill_out.log) — treating as environment gap, not a test failure"
     cat "$BFDIR/backfill_out.log" 2>/dev/null | tail -20
+  fi
+
+  echo ""
+  echo "=== Test group 8: backfill derives project_path from transcript cwd, not a lossy dash-decode ==="
+
+  # The encoded directory name below mimics a real Claude Code transcript
+  # directory for a path containing a literal dash-bearing segment
+  # ("docs_gh" -> "docs-gh" once slashes become dashes). The old
+  # gsub("-", "/") heuristic could not tell that dash apart from an encoded
+  # "/", corrupting the path to ".../docs/gh/llm". Each transcript line
+  # below carries the true `cwd`, which must be used verbatim instead.
+  CWDDIR=$(mktemp -d)
+  CWDDB="$CWDDIR/cwd_test.duckdb"
+  CWDPROJDIR="$CWDDIR/projects/-Users-johngavin-docs-gh-llm"
+  mkdir -p "$CWDPROJDIR"
+
+  cat > "$CWDPROJDIR/sess-CWD.jsonl" <<'EOF'
+{"type":"assistant","cwd":"/Users/johngavin/docs_gh/llm","timestamp":"2026-06-15T08:00:00.000Z","message":{"content":[{"type":"tool_use","id":"toolu_cwd1","name":"Skill","input":{"skill":"cli-package","args":"demo"}}]}}
+EOF
+
+  Rscript "$BACKFILL" --apply --db "$CWDDB" --projects-dir "$CWDDIR/projects" > "$CWDDIR/backfill_out.log" 2>&1
+  CWD_STATUS=$?
+
+  if [ "$CWD_STATUS" -eq 0 ]; then
+    CWD_PROJECT=$(dq "$CWDDB" "SELECT project_path FROM skill_usage WHERE session_id='sess-CWD';")
+    assert "backfill: project_path taken from transcript cwd (not dash-decoded)" \
+      "$CWD_PROJECT" "/Users/johngavin/docs_gh/llm"
+  else
+    echo "  SKIP: backfill script did not exit 0 for cwd test (see $CWDDIR/backfill_out.log)"
+    cat "$CWDDIR/backfill_out.log" 2>/dev/null | tail -20
+  fi
+
+  echo ""
+  echo "=== Test group 9: backfill dedupes against an existing second-precision row (cross-writer ts mismatch) ==="
+
+  # Pre-populate the DB with a row as the hook/drain path would have written
+  # it (second precision, backfilled=FALSE), then run the backfill over a
+  # synthetic transcript recording the SAME (session_id, skill_name) event
+  # with millisecond precision. Before the fix, CAST(...) preserved the
+  # sub-second component so the two never matched and the event was
+  # double-counted.
+  XDIR=$(mktemp -d)
+  XDB="$XDIR/xwriter_test.duckdb"
+  XPROJDIR="$XDIR/projects/-tmp-xwriter"
+  mkdir -p "$XPROJDIR"
+
+  dq "$XDB" "
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      session_id VARCHAR, skill_name VARCHAR, project_path VARCHAR,
+      args_hash VARCHAR, ts TIMESTAMP, backfilled BOOLEAN DEFAULT FALSE
+    );
+    INSERT INTO skill_usage (session_id, skill_name, project_path, args_hash, ts, backfilled)
+    VALUES ('sess-XWRITER', 'cli-package', '/tmp', 'deadbeef',
+            CAST('2026-06-10T12:00:00' AS TIMESTAMP), FALSE);
+  " > /dev/null
+
+  cat > "$XPROJDIR/sess-XWRITER.jsonl" <<'EOF'
+{"type":"assistant","cwd":"/tmp","timestamp":"2026-06-10T12:00:00.456Z","message":{"content":[{"type":"tool_use","id":"toolu_x1","name":"Skill","input":{"skill":"cli-package","args":"demo"}}]}}
+EOF
+
+  Rscript "$BACKFILL" --apply --db "$XDB" --projects-dir "$XDIR/projects" > "$XDIR/backfill_out.log" 2>&1
+  XW_STATUS=$?
+
+  if [ "$XW_STATUS" -eq 0 ]; then
+    XW_COUNT=$(dq "$XDB" "SELECT COUNT(*) FROM skill_usage WHERE session_id='sess-XWRITER';")
+    assert "backfill: cross-writer ts precision mismatch still dedups (1 row, not 2)" "$XW_COUNT" "1"
+  else
+    echo "  SKIP: backfill script did not exit 0 for cross-writer test (see $XDIR/backfill_out.log)"
+    cat "$XDIR/backfill_out.log" 2>/dev/null | tail -20
   fi
 else
   echo "  SKIP: Rscript / duckdb / jsonlite R packages not on PATH outside the project nix shell"
