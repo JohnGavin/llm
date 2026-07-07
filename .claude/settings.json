@@ -543,6 +543,16 @@
         ]
       },
       {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log_skill_use.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Bash|Edit|Write",
         "hooks": [
           {
