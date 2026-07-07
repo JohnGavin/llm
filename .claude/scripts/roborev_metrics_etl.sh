@@ -402,5 +402,12 @@ if [ "${EXIT_CODE}" -eq 0 ]; then
   date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/roborev-metrics-etl.stamp"
 fi
 
+# ETL freshness registry (llm#309 Phase 1a): daily cadence — 24h.
+ETL_FRESHNESS_UPSERT="${SCRIPT_DIR}/etl_freshness_upsert.sh"
+if [ -x "$ETL_FRESHNESS_UPSERT" ]; then
+  "$ETL_FRESHNESS_UPSERT" roborev "$UNIFIED_DB" 24 \
+    --table roborev_daily_metrics --ts-col etl_run_at >/dev/null 2>&1 || true
+fi
+
 echo "roborev_metrics_etl: exit=${EXIT_CODE}"
 exit $EXIT_CODE
