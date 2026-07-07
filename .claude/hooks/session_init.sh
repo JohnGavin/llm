@@ -1548,6 +1548,29 @@ if [ "${CLAUDE_CANONICAL_PROJECTS_AUDIT:-1}" != "0" ]; then
   fi
 fi
 
+# ── Phase 15c: ETL Registry Freshness — BACKGROUND (DuckDB query ≤5s) ──────────
+# Reads the push-based `etl_freshness` registry table (llm#309 Phase 1a):
+# every ETL writer upserts its own status into this table after each run
+# (see .claude/scripts/etl_freshness_upsert.sh). Complementary to Phase 15a
+# (which pulls freshness live from a hardcoded source-table list) — this
+# phase surfaces writer-self-reported staleness instead.
+# Skippable: CLAUDE_ETL_FRESHNESS_CHECK=0 (shared opt-out with Phase 15a).
+# Fail-open by construction: the background script itself never exits
+# non-zero on a query miss (etl_freshness_stale_banner.sh), and any failure
+# here only ever produces an empty cache file — the hook never aborts.
+_etlreg_cache="${HOME}/.claude/logs/session_init_etl_registry_cache.txt"
+if [ "${CLAUDE_ETL_FRESHNESS_CHECK:-1}" != "0" ]; then
+  if [ -f "$_etlreg_cache" ]; then
+    _etlreg_cached=$(cat "$_etlreg_cache" 2>/dev/null) || true
+    [ -n "$_etlreg_cached" ] && echo "$_etlreg_cached"
+  fi
+  _etlreg_script="${CLAUDE_DIR}/scripts/etl_freshness_stale_banner.sh"
+  if [ -x "$_etlreg_script" ]; then
+    mkdir -p "$(dirname "$_etlreg_cache")"
+    nohup bash -c "timeout 5 '$_etlreg_script' 2>/dev/null > '$_etlreg_cache' || printf '' > '$_etlreg_cache'" > /dev/null 2>&1 &
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
