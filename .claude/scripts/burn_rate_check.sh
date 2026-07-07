@@ -22,8 +22,27 @@
 #   stderr of every failed fetch  → ~/.claude/logs/burn_rate_check.err
 #   >= 2 consecutive failures     → loud "BURN GUARD DEAD" line instead of
 #                                   the quiet burn:err that hid this for days
+#
+# npx cache-corruption fix (llm#309 Phase 1a):
+#   burn_rate_check.err showed weeks of repeated
+#   `npm error ENOTEMPTY ... rename ... ccusage-darwin-arm64` failures. Root
+#   cause: the 30s `_bounded` timeout SIGTERMs `npx --yes ccusage` mid
+#   platform-binary extraction on a cold cache, corrupting the shared
+#   ~/.npm/_npx/<hash>/ extraction directory; every subsequent run then
+#   raced on the half-extracted dir and failed the same way, forever (npx
+#   never re-extracts once a package dir exists, corrupt or not).
+#   Fix: install ccusage ONCE to a stable prefix (matching the
+#   npm-global-in-nix-shell convention) and exec the installed binary
+#   directly on every run — this sidesteps npx's resolution/extraction path
+#   entirely, so there is nothing left for the timeout to interrupt. Falls
+#   back to the original bounded `npx --yes` call if the local install is
+#   ever unavailable.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ETL_FRESHNESS_UPSERT="${SCRIPT_DIR}/etl_freshness_upsert.sh"
+UNIFIED_DB="${HOME}/.claude/logs/unified.duckdb"
 
 MODE="${1:-full}"
 CAP="${CLAUDE_WEEKLY_CAP_USD:-150}"
@@ -33,6 +52,17 @@ TZ_NAME="${CLAUDE_TIMEZONE:-Europe/Dublin}"
 ERR_LOG="$HOME/.claude/logs/burn_rate_check.err"
 FAIL_COUNT_FILE="$HOME/.claude/.burn_rate_fail_count"
 
+# ETL freshness registry (llm#309 Phase 1a): 24h cadence. Freshness proxy is
+# CACHE_FILE's mtime — it only updates on a *successful* fetch, so a guard
+# that silently stops fetching (the exact "BURN GUARD DEAD" failure mode
+# above) ages past 24h and flips to status='stale', surfaced at session
+# start even before 2 consecutive failures trip the louder canary.
+_register_burn_freshness() {
+  [ -x "$ETL_FRESHNESS_UPSERT" ] || return 0
+  [ -n "${CACHE_FILE:-}" ] || return 0
+  "$ETL_FRESHNESS_UPSERT" burn_rate "$UNIFIED_DB" 24 --file "$CACHE_FILE" >/dev/null 2>&1 || true
+}
+
 # Consecutive-failure canary (llm#597). A dead guard must get LOUDER, not
 # quieter: after 2 consecutive fetch failures the output stops being a quiet
 # burn:err and names the log to read.
@@ -41,6 +71,7 @@ fail_and_exit() {
   [ -f "$FAIL_COUNT_FILE" ] && n=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
   n=$((n + 1))
   echo "$n" > "$FAIL_COUNT_FILE" 2>/dev/null || true
+  _register_burn_freshness
   if [ "$MODE" = "--percent-only" ]; then
     echo "0"  # Always numeric for scripts
   elif [ "$n" -ge 2 ]; then
@@ -94,6 +125,27 @@ _bounded() {
   fi
 }
 
+# ── Local ccusage install (llm#309) ─────────────────────────────────────────
+# Installs ccusage ONCE to a stable prefix instead of resolving/extracting it
+# through npx on every invocation. Matches the npm-global-in-nix-shell
+# convention: --prefix + --cache to an isolated dir (avoids the read-only
+# store-prefix issue inside a nix shell, and avoids sharing a cache dir with
+# any concurrent install). Returns 0 and leaves $CCUSAGE_BIN executable when
+# a usable install is available; returns 1 (never aborts) otherwise so the
+# caller can fall back to `npx --yes`.
+CCUSAGE_PREFIX="${CCUSAGE_PREFIX:-$HOME/.npm-global}"
+CCUSAGE_BIN="${CCUSAGE_PREFIX}/bin/ccusage"
+
+_ensure_ccusage_installed() {
+  [ -x "$CCUSAGE_BIN" ] && return 0
+  command -v npm >/dev/null 2>&1 || return 1
+  mkdir -p "$CCUSAGE_PREFIX" 2>/dev/null || return 1
+  _bounded 60 npm install --prefix "$CCUSAGE_PREFIX" \
+    --cache "/tmp/ccusage-npm-cache-$$" ccusage@latest \
+    >/dev/null 2>>"$ERR_LOG" || true
+  [ -x "$CCUSAGE_BIN" ]
+}
+
 # Cache: reuse if < 5 minutes old AND for the same week window
 CACHE_FILE="/tmp/ccusage_burnweek_${week_start_ymd}_cache.json"
 CACHE_MAX_AGE=300
@@ -110,26 +162,40 @@ if [ "$use_cache" = true ]; then
   daily_json=$(cat "$CACHE_FILE")
 else
   err_tmp=$(mktemp /tmp/burn_rate_err_XXXXXX)
-  # _bounded: always bounded (perl alarm fallback when GNU timeout absent);
-  # --yes: never prompt to install a missing npx package;
-  # </dev/null: stdin is /dev/null so any install prompt gets immediate EOF.
-  daily_json=$(_bounded 30 npx --yes ccusage daily \
-    --since "$week_start_ymd" \
-    --timezone "$TZ_NAME" \
-    --json --offline </dev/null 2>"$err_tmp") || {
-    {
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ccusage daily --since $week_start_ymd failed — stderr:"
-      cat "$err_tmp"
-    } >> "$ERR_LOG" 2>/dev/null || true
-    rm -f "$err_tmp"
-    fail_and_exit
-  }
+  daily_json=""
+  if _ensure_ccusage_installed; then
+    # Local install (llm#309): bypasses npx's resolution/extraction path —
+    # no repeated cache extraction means no ENOTEMPTY race on a timeout kill.
+    daily_json=$(_bounded 30 "$CCUSAGE_BIN" daily \
+      --since "$week_start_ymd" \
+      --timezone "$TZ_NAME" \
+      --json --offline </dev/null 2>"$err_tmp") || daily_json=""
+  fi
+  if [ -z "$daily_json" ]; then
+    # Fallback: local install unavailable or its run failed — original path.
+    # _bounded: always bounded (perl alarm fallback when GNU timeout absent);
+    # --yes: never prompt to install a missing npx package;
+    # </dev/null: stdin is /dev/null so any install prompt gets immediate EOF.
+    daily_json=$(_bounded 30 npx --yes ccusage daily \
+      --since "$week_start_ymd" \
+      --timezone "$TZ_NAME" \
+      --json --offline </dev/null 2>>"$err_tmp") || {
+      {
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ccusage daily --since $week_start_ymd failed — stderr:"
+        cat "$err_tmp"
+      } >> "$ERR_LOG" 2>/dev/null || true
+      rm -f "$err_tmp"
+      _register_burn_freshness
+      fail_and_exit
+    }
+  fi
   rm -f "$err_tmp"
   echo "$daily_json" > "$CACHE_FILE"
 fi
 
 # Fetch succeeded — reset the consecutive-failure canary
 rm -f "$FAIL_COUNT_FILE" 2>/dev/null || true
+_register_burn_freshness
 
 # Parse: spend = totals.totalCost over the since-window (our cap week)
 result=$(echo "$daily_json" | python3 -c "

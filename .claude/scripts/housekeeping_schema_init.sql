@@ -157,6 +157,23 @@ CREATE TABLE IF NOT EXISTS roborev_daily_summary (
 CREATE INDEX IF NOT EXISTS idx_roborev_daily_summary_fired_at ON roborev_daily_summary(fired_at);
 CREATE INDEX IF NOT EXISTS idx_roborev_daily_summary_project_window ON roborev_daily_summary(project, window_end);
 
+-- etl_freshness: one row per ETL data source, upserted by the source's own
+-- writer after every run via .claude/scripts/etl_freshness_upsert.sh. Makes
+-- silent ETL staleness impossible — session_init.sh Phase 15c surfaces any
+-- row with status='stale' at session start.
+-- status vocabulary: fresh | stale | unknown (unknown = no expected_cadence_hours,
+-- i.e. an event-driven source with no SLA, e.g. sessions/agent_runs).
+-- PK: source_name.
+-- See llm#309 Phase 1a.
+CREATE TABLE IF NOT EXISTS etl_freshness (
+  source_name             VARCHAR PRIMARY KEY,
+  last_row_ts             TIMESTAMP,
+  last_etl_run_ts         TIMESTAMP,
+  expected_cadence_hours  DOUBLE,
+  status                  VARCHAR
+);
+CREATE INDEX IF NOT EXISTS idx_etl_freshness_status ON etl_freshness(status);
+
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_project_branch ON branch_gc_events(project, branch_name);
