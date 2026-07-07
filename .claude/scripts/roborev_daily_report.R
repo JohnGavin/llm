@@ -163,6 +163,83 @@ load_window <- function(con, start_ts, end_ts) {
   )
 }
 
+# ── Closed-in-window counts (throughput) ──────────────────────────────────────
+#
+# llm#738: the created_at-cohort close_rate computed by compute_speed() is
+# right-censored — a review CREATED in the last 24h typically has NOT closed
+# yet (median time-to-close is 13-49h across d3/d7/d14), so a d1 "close rate"
+# over the created-cohort is ~0 by construction even when closure activity is
+# healthy. These helpers count closes independent of when the review was
+# created, to give an honest throughput signal for the window.
+
+# Lifecycle-table version: counts roborev_review_lifecycle rows whose
+# closed_at falls in [start, end). Cheap (reuses the already-open `con`), but
+# can lag behind reality by up to one ETL cadence, because
+# roborev_metrics_etl.R runs on a schedule, not on every close — see
+# load_raw_closed_count() below, which avoids this lag.
+load_lifecycle_closed_count <- function(con, start_ts, end_ts) {
+  sql <- sprintf(
+    "SELECT COUNT(*)::INTEGER AS n
+     FROM roborev_review_lifecycle
+     WHERE closed_at IS NOT NULL
+       AND closed_at::TIMESTAMP >= TIMESTAMP '%s'
+       AND closed_at::TIMESTAMP <  TIMESTAMP '%s'",
+    fmt_ts(start_ts), fmt_ts(end_ts)
+  )
+  tryCatch(
+    as.integer(dbGetQuery(con, sql)$n[1L]),
+    error = function(e) {
+      message("roborev_daily_report.R: lifecycle closed-count query error: ", conditionMessage(e))
+      NA_integer_
+    }
+  )
+}
+
+# Raw-source version: counts reviews.db `reviews` rows with closed=1 whose
+# updated_at falls in [start, end). This is the authoritative source (it is
+# what actually flips the moment roborev closes a review) and does NOT suffer
+# the ETL-cadence lag that roborev_review_lifecycle.closed_at can have
+# (llm#738 residual — confirmed empirically: on 2026-07-06 the lifecycle table
+# showed 0 closes in the trailing 24h while reviews.db showed 171).
+# updated_at is stored as an ISO-8601 string with a local UTC offset (e.g.
+# "+01:00"); TRY_CAST straight to TIMESTAMP silently DISCARDS that offset
+# (verified — do not "simplify" this to TIMESTAMP), so we cast via TIMESTAMPTZ
+# first (which honours the offset) and then drop to a naive UTC TIMESTAMP for
+# comparison against start_ts/end_ts (already UTC).
+load_raw_closed_count <- function(start_ts, end_ts) {
+  if (!file.exists(REVIEWS_DB)) return(NA_integer_)
+  tryCatch({
+    tmp_con <- dbConnect(duckdb::duckdb(), ":memory:")
+    on.exit(
+      tryCatch(dbDisconnect(tmp_con, shutdown = TRUE), error = function(e) NULL),
+      add = TRUE
+    )
+    invisible(tryCatch(
+      dbExecute(tmp_con, "LOAD sqlite"),
+      error = function(e) {
+        invisible(tryCatch(dbExecute(tmp_con, "INSTALL sqlite"), error = function(e2) NULL))
+        invisible(dbExecute(tmp_con, "LOAD sqlite"))
+      }
+    ))
+    dbExecute(tmp_con,
+      sprintf("ATTACH '%s' AS rdb (TYPE sqlite, READ_ONLY)", REVIEWS_DB)
+    )
+    sql <- sprintf(
+      "SELECT COUNT(*)::INTEGER AS n
+       FROM rdb.reviews
+       WHERE closed = 1
+         AND updated_at IS NOT NULL
+         AND TRY_CAST(updated_at AS TIMESTAMPTZ)::TIMESTAMP >= TIMESTAMP '%s'
+         AND TRY_CAST(updated_at AS TIMESTAMPTZ)::TIMESTAMP <  TIMESTAMP '%s'",
+      fmt_ts(start_ts), fmt_ts(end_ts)
+    )
+    as.integer(dbGetQuery(tmp_con, sql)$n[1L])
+  }, error = function(e) {
+    message("roborev_daily_report.R: raw closed-count query error: ", conditionMessage(e))
+    NA_integer_
+  })
+}
+
 # ── Attempts heuristic from reviews.db ────────────────────────────────────────
 #
 # When roborev_finding_lineage_summary is absent, we use retry_count from
@@ -516,6 +593,54 @@ compute_window_slice <- function(con, anchor, days, repo_filter = NULL, has_line
     close_rate = trend_delta(cur_speed$close_rate, pri_speed$close_rate)
   )
 
+  # ── Throughput (llm#738) ────────────────────────────────────────────────────
+  # n_opened_in_window: verdict='F' reviews CREATED in this window — identical
+  #   to compute_speed()'s n_issues_found; re-exposed here under an honest name
+  #   because it is the natural denominator for a throughput ratio.
+  # n_closed_in_window: ALL reviews (any verdict) that CLOSED in this window,
+  #   counted by closed_at/updated_at — independent of when they were created,
+  #   so a fresh d1 window is NOT structurally forced to zero. Global (repo_filter
+  #   is NULL) slices prefer the authoritative reviews.db source (no ETL lag);
+  #   per-repo slices use the lifecycle table only (repo attribution for the
+  #   reviews.db path is not implemented — see PR notes for llm#738).
+  n_opened_in_window <- cur_speed$n_issues_found
+
+  n_closed_lifecycle <- load_lifecycle_closed_count(con, bounds$cur$start, bounds$cur$end)
+  n_closed_raw <- if (is.null(repo_filter)) {
+    load_raw_closed_count(bounds$cur$start, bounds$cur$end)
+  } else {
+    NA_integer_
+  }
+
+  n_closed_in_window <- if (!is.na(n_closed_raw)) {
+    n_closed_raw
+  } else if (!is.na(n_closed_lifecycle)) {
+    n_closed_lifecycle
+  } else {
+    NA_integer_
+  }
+  n_closed_in_window_source <- if (!is.na(n_closed_raw)) {
+    "reviews_db_updated_at"
+  } else if (!is.na(n_closed_lifecycle)) {
+    "lifecycle_closed_at"
+  } else {
+    "unavailable"
+  }
+
+  close_throughput_rate <- if (!is.na(n_closed_in_window) && !is.na(n_opened_in_window) &&
+                               n_opened_in_window > 0L) {
+    n_closed_in_window / n_opened_in_window
+  } else {
+    NA_real_
+  }
+
+  throughput <- list(
+    n_opened_in_window        = n_opened_in_window,
+    n_closed_in_window        = n_closed_in_window,
+    n_closed_in_window_source = n_closed_in_window_source,
+    close_throughput_rate     = close_throughput_rate
+  )
+
   list(
     window_days  = days,
     repo         = if (is.null(repo_filter)) "__all__" else repo_filter,
@@ -523,7 +648,8 @@ compute_window_slice <- function(con, anchor, days, repo_filter = NULL, has_line
     freq_table   = cur_freq,
     speed        = cur_speed,
     trends       = trends,
-    prior_speed  = pri_speed
+    prior_speed  = pri_speed,
+    throughput   = throughput
   )
 }
 
@@ -594,10 +720,35 @@ serialise_slice <- function(sl) {
       ttc_p99_hrs    = sl$speed$ttc_p99,
       att_p50        = sl$speed$att_p50,
       att_p90        = sl$speed$att_p90,
+      # close_rate: KEPT for back-compat with send_roborev_email.R's existing
+      # d1_close_rate reader (llm#738 — that file is outside this PR's write
+      # scope; renaming this key here without also updating the email script
+      # would silently break the email's zero-action guard). This is the
+      # created_at-cohort rate — i.e. "of the reviews CREATED in this window,
+      # what fraction have closed SO FAR" — which is right-censored for short
+      # windows (see cohort_close_rate_created_window below for the honest name).
       close_rate     = sl$speed$close_rate,
+      # cohort_close_rate_created_window: identical value to close_rate above,
+      # under an honest name that can't be mistaken for closure throughput.
+      # It is a valid cohort/maturation metric (llm#738 item 2) — just not the
+      # metric a reader means by "how many closed in the last 24h". See
+      # throughput.close_throughput_rate below for that question.
+      cohort_close_rate_created_window = sl$speed$close_rate,
       n_issues_found = sl$speed$n_issues_found,
       n_closed       = sl$speed$n_closed,
       n_open         = sl$speed$n_open
+    ),
+    # throughput (llm#738): closed_at/updated_at-window metrics, NOT censored
+    # by created_at. n_closed_in_window counts ALL verdicts; n_opened_in_window
+    # is verdict='F' only (same cohort as speed$n_issues_found) — so
+    # close_throughput_rate is a rough backlog-clearance signal (can exceed
+    # 100% when more get closed than were newly opened), not a strict
+    # verdict-matched conversion rate.
+    throughput = list(
+      n_opened_in_window        = sl$throughput$n_opened_in_window,
+      n_closed_in_window        = sl$throughput$n_closed_in_window,
+      n_closed_in_window_source = sl$throughput$n_closed_in_window_source,
+      close_throughput_rate     = sl$throughput$close_throughput_rate
     ),
     trends = list(
       ttc_p50    = sl$trends$ttc_p50,
@@ -650,6 +801,7 @@ fmt_pct  <- function(x) if (is.na(x)) "n/a" else sprintf("%.0f%%", x)
 fmt_hrs  <- function(x) if (is.na(x)) "n/a" else sprintf("%.1fh", x)
 fmt_att  <- function(x) if (is.na(x)) "n/a" else sprintf("%.1f", x)
 fmt_rate <- function(x) if (is.na(x)) "n/a" else sprintf("%.1f%%", x * 100)
+fmt_int0 <- function(x) if (is.na(x)) "n/a" else sprintf("%d", as.integer(x))
 fmt_trend <- function(td) {
   if (is.na(td$pct_delta) && is.na(td$abs_delta)) return("n/a")
   if (is.na(td$pct_delta)) return(sprintf("Δ%.2f", td$abs_delta))
@@ -698,6 +850,30 @@ for (w in names(window_slices_global)) {
                fmt_hrs(sp$ttc_p50), fmt_hrs(sp$ttc_p90), fmt_hrs(sp$ttc_p99),
                fmt_att(sp$att_p50), fmt_att(sp$att_p90),
                fmt_rate(sp$close_rate)))
+}
+catd("")
+
+# §2b Throughput — closed_at/updated_at-window, NOT censored by created_at
+# (llm#738). Fixes the structural d1 zero: a review created 24h ago typically
+# hasn't closed yet (median TTC 13-49h per §2 above), so close_rate ~0 for d1
+# is expected censoring, not a broken pipeline. n_closed_in_window instead
+# counts closes BY closed_at/updated_at, independent of when the review was
+# created.
+catd("§2b THROUGHPUT (closed_at/updated_at-window; not censored by created_at)")
+catd("-------------------------------------------------------")
+catd(sprintf("  %-6s  %8s  %8s  %10s  %s",
+             "Window", "Opened", "Closed", "Thruput%", "Source"))
+catd(sprintf("  %-6s  %8s  %8s  %10s  %s",
+             "------", "------", "------", "--------", "------"))
+for (w in names(window_slices_global)) {
+  sl <- window_slices_global[[w]]
+  th <- sl$throughput
+  catd(sprintf("  %-6s  %8s  %8s  %10s  %s",
+               paste0(sl$window_days, "d"),
+               fmt_int0(th$n_opened_in_window),
+               fmt_int0(th$n_closed_in_window),
+               fmt_rate(th$close_throughput_rate),
+               th$n_closed_in_window_source))
 }
 catd("")
 
