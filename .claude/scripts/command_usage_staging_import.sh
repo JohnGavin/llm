@@ -30,8 +30,13 @@
 #
 # Idempotent: dedupes on (session_id, command_name, ts, args_hash) at
 # insert time via NOT EXISTS, so re-running against a leftover import file
-# is a no-op. args_hash is matched with IS NOT DISTINCT FROM (NULL-safe) so
-# two invocations differing only in args are never conflated into one row.
+# is a no-op. args_hash is compared with COALESCE(..., '') = COALESCE(..., '')
+# so NULL (backfill's hash_args() for a no-args command) and '' (the hook's
+# args_hash for a no-args command) are treated as the SAME value — otherwise
+# IS NOT DISTINCT FROM would treat NULL and '' as distinct and double-count
+# every no-args command re-seen across the two writers (#747 review). Two
+# invocations differing only in actual (non-empty) args are still never
+# conflated into one row.
 # Non-fatal: never aborts the caller — always exits 0.
 set -uo pipefail
 
@@ -91,7 +96,7 @@ if [ -f "${_IMPORT}" ]; then
         WHERE u.session_id = s.session_id
           AND u.command_name = s.command_name
           AND date_trunc('second', u.ts) = date_trunc('second', CAST(s.ts AS TIMESTAMP))
-          AND u.args_hash IS NOT DISTINCT FROM s.args_hash
+          AND COALESCE(u.args_hash, '') = COALESCE(s.args_hash, '')
       );
   " 2>/dev/null || log "WARN duckdb insert failed (non-fatal)"
   rm -f "${_IMPORT}" 2>/dev/null || true
