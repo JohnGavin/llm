@@ -382,6 +382,21 @@ else
   log "hook_events_import: SKIP (no pending events in staging)"
 fi
 
+# ── Skill usage: drain real-time staging (Card 1b, #729) ────────────────────
+# log_skill_use.sh (PostToolUse:Skill hook) appends one JSON line per Skill
+# invocation to skill_usage_staging.jsonl (lock-free — see its header
+# comment / log_session.sh #710). Import it here, right next to the
+# hook_events staging import above, using the identical atomic-handoff
+# pattern.
+SKILL_STAGING_IMPORT="${SCRIPT_DIR}/skill_usage_staging_import.sh"
+if [ -x "$SKILL_STAGING_IMPORT" ]; then
+  log "skill_usage_staging_import: start"
+  "$SKILL_STAGING_IMPORT" "$UNIFIED_DB" >> "$LOGFILE" 2>&1 || true
+  log "skill_usage_staging_import: end"
+else
+  log "skill_usage_staging_import: SKIP (script not found or not executable: ${SKILL_STAGING_IMPORT})"
+fi
+
 # ── Skill usage ETL (merged here so both ETL steps share one GC-root refresh
 #    and skill_usage rows are captured by the 03:00 unified.duckdb backup) ──
 SKILL_ETL_SCRIPT="${SCRIPT_DIR}/skill_usage_etl.sh"
