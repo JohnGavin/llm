@@ -244,6 +244,23 @@ EOF
   fi
 
   echo ""
+  echo "=== Test group 8b: hash_args() (R) parity with log_skill_use.sh's hook hash convention ==="
+
+  # Guard against regression of the cross-writer args_hash bug: extract just
+  # hash_args() from the backfill script (avoids a full --apply run) and
+  # confirm it produces byte-identical output to the hook's shell convention
+  # (printf '%s' "$_args" | shasum -a 256 | cut -c1-16 — no trailing newline)
+  # for the same input string.
+  HASH_GUARD_R=$(mktemp)
+  sed -n '/^hash_args <- function/,/^}/p' "$BACKFILL" > "$HASH_GUARD_R"
+  echo 'cat(hash_args("demo"))' >> "$HASH_GUARD_R"
+
+  R_HASH=$(Rscript "$HASH_GUARD_R" 2>/dev/null)
+  SHELL_HASH=$(printf '%s' "demo" | shasum -a 256 | cut -c1-16)
+  assert "hash_args(\"demo\") in R matches hook's shell hash convention" "$R_HASH" "$SHELL_HASH"
+  rm -f "$HASH_GUARD_R"
+
+  echo ""
   echo "=== Test group 9: backfill dedupes against an existing second-precision row (cross-writer ts mismatch) ==="
 
   # Pre-populate the DB with a row as the hook/drain path would have written
@@ -253,16 +270,19 @@ EOF
   # the sub-second component so the two never matched and the event was
   # double-counted. The pre-populated args_hash must match what
   # backfill_skill_usage.R's hash_args() computes for the transcript's
-  # "demo" args string (first 16 hex chars of sha256, matching hash_args()
-  # in backfill_skill_usage.R) — otherwise this is testing "different
-  # args_hash" (see Test group 10), not "same event, different ts
-  # precision".
+  # "demo" args string — which MUST be byte-identical to the hook's
+  # convention (log_skill_use.sh: `printf '%s' "$_args" | shasum -a 256 |
+  # cut -c1-16`, i.e. NO trailing newline). Using `printf '%s\n'` here would
+  # hash "demo\n" instead of "demo", producing a hash that never matches a
+  # real hook-written row — the exact cross-writer bug this test exists to
+  # catch — otherwise this is testing "different args_hash" (see Test
+  # group 10), not "same event, different ts precision".
   XDIR=$(mktemp -d)
   XDB="$XDIR/xwriter_test.duckdb"
   XPROJDIR="$XDIR/projects/-tmp-xwriter"
   mkdir -p "$XPROJDIR"
 
-  XW_ARGS_HASH=$(printf '%s\n' "demo" | shasum -a 256 | awk '{print substr($1,1,16)}')
+  XW_ARGS_HASH=$(printf '%s' "demo" | shasum -a 256 | cut -c1-16)
 
   dq "$XDB" "
     CREATE TABLE IF NOT EXISTS skill_usage (
