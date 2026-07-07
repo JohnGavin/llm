@@ -4,6 +4,33 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-04 → 07-07 — roborev→gemini migration, reporting-bug sweep, token-min
+
+### Completed
+- roborev fully migrated to gemini: AI Studio API key + gemini-cli auth-type=gemini-api-key
+  + a `gemini` shim stripping the blocked GOOGLE_API_KEY; GEMINI_API_KEY in ~/.zshenv+~/.bashrc.
+  reviews=gemini(flash-lite,standard), refine=gemini, fix=claude-code, backup=claude-code.
+  Codex removed (broken #723). #734/#735.
+- Reporting-bug sweep: weekly rollup → DuckDB read + fail-loud (#736/#737); daily d1 throughput
+  metric (#740) + guard keyed off source-backed throughput (#741); daily "zero-action" root-caused
+  as right-censoring, not empty source (#738). New rule `zero-metric-evidence-or-defect` (#739).
+- Housekeeping: worktree sweep + 81→12 agent branches (#726); CHANGELOG catch-up (#724);
+  grey→white usage email (llmtelemetry#328). Token-min Lever 2: refine→gemini, reasoning→standard.
+- Issues filed: #725/#732 (Ko-fi support component), #729/#730 (R label/labels attr convention),
+  #731 (roborev token split), #726 (GC orphaned agent-refs).
+
+### Failed Approaches
+- Free-tier gemini via gemini-cli OAuth still dead (IneligibleTierError) — the "free now" claim is the
+  AI Studio API, a different product; needed an API key + auth-type switch + GOOGLE_API_KEY shim.
+- Default gemini flash model quota-exhausts under review prompts → pinned flash-lite.
+- Forgot isolation:worktree on the #737 fixer → branched off stale session commit → PR conflicted;
+  rebased onto main. (Recurring #680 lesson.)
+
+### Known Limitations
+- Free-tier gemini daily quota: high-volume repos (llmtelemetry ~235/day) exhaust it → fall back to
+  claude-code. Paid AI Studio key needed for true 100% gemini (and to safely extend to private repos).
+- codex broken (#723); #322 Phase 2 (accurate token attribution) pending; weekly token budget tight.
+
 ## 2026-07-04 (PM) — worktree/branch housekeeping + monetisation plan
 
 ### Completed
