@@ -177,6 +177,9 @@ for (row in d1_freq_rows) {
 d1_sp <- if (!is.null(d1)) d1[["speed"]] else list()
 d1_ttc_p50 <- d1_sp[["ttc_p50_hrs"]]; d1_close_rate <- d1_sp[["close_rate"]]
 d1_att_p50 <- d1_sp[["att_p50"]]
+# Source-of-truth evidence (#740/#738): closes actually recorded in the 24h window,
+# read from reviews.db — independent of the right-censored cohort close_rate above.
+d1_closed_in_window <- if (!is.null(d1)) d1[["throughput"]][["n_closed_in_window"]] else NULL
 
 # ── Build headline summary table (Metric | Value — no bar/pie charts) ─────────
 
@@ -213,8 +216,13 @@ zero_action_fired <- FALSE
 .d1_no_close    <- isTRUE(is.null(d1_close_rate) || is.na(d1_close_rate) || d1_close_rate == 0)
 .d1_no_ttc      <- isTRUE(is.null(d1_ttc_p50) || is.na(d1_ttc_p50))
 .d1_no_att      <- isTRUE(is.null(d1_att_p50) || is.na(d1_att_p50))
+# zero-metric-evidence-or-defect rule (#739): the d1 cohort close_rate/ttc/att are
+# right-censored to ~0 by design (#738) — NOT evidence of a broken pipeline. Only
+# fire the trap when the source-of-truth throughput (closes recorded in-window,
+# reviews.db-backed) is ALSO 0, i.e. genuinely nothing closed.
+.d1_no_throughput <- isTRUE(is.null(d1_closed_in_window) || is.na(d1_closed_in_window) || d1_closed_in_window == 0)
 
-if (.d1_has_reviews && .d1_no_close && .d1_no_ttc && .d1_no_att) {
+if (.d1_has_reviews && .d1_no_throughput) {
   message("send_roborev_email.R: zero-action trap fired — attempting ETL refresh")
   etl_script <- file.path(.scripts_dir_rr, "roborev_metrics_etl.sh")
   if (file.exists(etl_script)) {
@@ -237,14 +245,13 @@ if (.d1_has_reviews && .d1_no_close && .d1_no_ttc && .d1_no_att) {
         d1_close_rate <- d1_sp_new[["close_rate"]]
         d1_att_p50    <- d1_sp_new[["att_p50"]]
         d1_n_reviews  <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
+        d1_closed_in_window <- if (!is.null(d1)) d1[["throughput"]][["n_closed_in_window"]] else NULL
       }
     }
   }
-  # Re-check: if still zero-action, set flag
-  .d1_no_close2 <- isTRUE(is.null(d1_close_rate) || is.na(d1_close_rate) || d1_close_rate == 0)
-  .d1_no_ttc2   <- isTRUE(is.null(d1_ttc_p50) || is.na(d1_ttc_p50))
-  .d1_no_att2   <- isTRUE(is.null(d1_att_p50) || is.na(d1_att_p50))
-  if (.d1_no_close2 && .d1_no_ttc2 && .d1_no_att2) {
+  # Re-check: fire only if the source-of-truth throughput is STILL 0 after refresh.
+  .d1_no_throughput2 <- isTRUE(is.null(d1_closed_in_window) || is.na(d1_closed_in_window) || d1_closed_in_window == 0)
+  if (.d1_no_throughput2) {
     zero_action_fired <- TRUE
     message("send_roborev_email.R: zero-action trap still active after ETL refresh")
   }
