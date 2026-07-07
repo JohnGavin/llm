@@ -40,11 +40,19 @@ assert() {
 # --------------------------------------------------------------------------
 T=$(mktemp -d)
 mkdir -p "$T/.claude/logs"
+mkdir -p "$T/.claude/commands"
 
 TESTDB="$T/.claude/logs/unified.duckdb"
 STAGING="$T/.claude/logs/command_usage_staging.jsonl"
 
 echo "test-session-A" > "$T/.claude/logs/.current_session"
+
+# Fixture: installed-command files for the Fix-2 cross-check gate in
+# log_command_use.sh (a leading-slash token is only staged when it matches
+# an installed command's .md file). Real repo commands used across these
+# tests: check (group 1/5), bye (group 6b).
+echo "# check stub fixture" > "$T/.claude/commands/check.md"
+echo "# bye stub fixture"   > "$T/.claude/commands/bye.md"
 
 echo ""
 echo "=== Test group 1: hook stages a JSONL record for a slash command ==="
@@ -146,6 +154,27 @@ ROW_COUNT_C=$(dq "$TESTDB" "SELECT COUNT(*) FROM command_usage WHERE session_id=
 assert "drain: same-second same-command DIFFERENT args_hash -> both rows kept (2, not 1)" "$ROW_COUNT_C" "2"
 
 echo ""
+echo "=== Test group 5c: drain treats NULL and '' args_hash as the SAME value for a no-args command (cross-writer dedup, #747 review Fix 1) ==="
+
+# Simulates the exact bug found in review: the hook writes args_hash=""
+# (empty string) for a no-args command, while the R backfill's hash_args()
+# writes SQL NULL for the same case. Before the fix, IS NOT DISTINCT FROM
+# treated '' and NULL as different values, so re-running the backfill after
+# the hook was live double-counted every no-args command.
+dq "$TESTDB" "
+  INSERT INTO command_usage (session_id, command_name, project_path, args_hash, ts, backfilled)
+  VALUES ('test-session-D', 'bye', '/tmp', '',
+          CAST('2026-06-04T09:00:00' AS TIMESTAMP), FALSE);
+" > /dev/null
+
+printf '{"ts":"2026-06-04T09:00:00.789Z","session_id":"test-session-D","command_name":"bye","project_path":"/tmp","args_hash":null}\n' \
+  > "$STAGING"
+
+bash "$DRAIN" "$TESTDB" "$STAGING" > /dev/null 2>&1
+ROW_COUNT_D=$(dq "$TESTDB" "SELECT COUNT(*) FROM command_usage WHERE session_id='test-session-D';")
+assert "drain: hook's '' and backfill/staging's NULL args_hash dedup to 1 row (not 2)" "$ROW_COUNT_D" "1"
+
+echo ""
 echo "=== Test group 6: etl_freshness registration (defensive, Card 1a coordination) ==="
 
 FRESHNESS_EXISTS=$(dq "$TESTDB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='etl_freshness';")
@@ -153,6 +182,62 @@ assert "etl_freshness table created" "$FRESHNESS_EXISTS" "1"
 
 FRESHNESS_ROW=$(dq "$TESTDB" "SELECT status FROM etl_freshness WHERE source_name='command_usage';")
 assert "etl_freshness: command_usage registered with status='unknown' (event-driven, no SLA)" "$FRESHNESS_ROW" "unknown"
+
+echo ""
+echo "=== Test group 6b: leading-slash tokens that aren't installed commands are ignored (#747 review Fix 2) ==="
+
+# Before the fix, the hook's regex matched ANY leading "/word" token, so a
+# plain-English prompt like "/tmp needs cleaning" or "/etc is broken" (not a
+# command invocation) staged a bogus "tmp"/"etc" command. The fix requires
+# the extracted name to match an installed command file.
+rm -f "$STAGING"
+
+TMP_PAYLOAD='{"hook_event_name":"UserPromptSubmit","user_prompt":"/tmp needs cleaning"}'
+printf '%s' "$TMP_PAYLOAD" | HOME="$T" bash "$HOOK"
+assert "'/tmp needs cleaning' (not an installed command): no staging file created" \
+  "$([ -f "$STAGING" ] && echo yes || echo no)" "no"
+
+ETC_PAYLOAD='{"hook_event_name":"UserPromptSubmit","user_prompt":"/etc is broken"}'
+printf '%s' "$ETC_PAYLOAD" | HOME="$T" bash "$HOOK"
+assert "'/etc is broken' (not an installed command): no staging file created" \
+  "$([ -f "$STAGING" ] && echo yes || echo no)" "no"
+
+BYE_PAYLOAD='{"hook_event_name":"UserPromptSubmit","user_prompt":"/bye"}'
+printf '%s' "$BYE_PAYLOAD" | HOME="$T" bash "$HOOK"
+BYE_CMD=$([ -f "$STAGING" ] && jq -r '.command_name' < "$STAGING" 2>/dev/null || echo "")
+assert "real installed command '/bye' still records" "$BYE_CMD" "bye"
+
+rm -f "$STAGING"
+
+echo ""
+echo "=== Test group 6c: unrecognized payload shape triggers a throttled debug signal (#747 review Fix 3) ==="
+
+DEBUGLOG="$T/.claude/logs/command_use_debug_test.log"
+rm -f "$DEBUGLOG"
+UNKNOWN_PAYLOAD='{"hook_event_name":"UserPromptSubmit","some_other_field":"/bye"}'
+
+printf '%s' "$UNKNOWN_PAYLOAD" | HOME="$T" CMD_USE_DEBUG_LOG="$DEBUGLOG" bash "$HOOK"
+HOOK_EXIT=$?
+assert "hook exits 0 for unrecognized payload (never blocks prompt submission)" "$HOOK_EXIT" "0"
+
+assert "debug log created when no recognized prompt field is found" \
+  "$([ -f "$DEBUGLOG" ] && echo yes || echo no)" "yes"
+
+if [ -f "$DEBUGLOG" ] && grep -q "some_other_field" "$DEBUGLOG"; then
+  echo "  PASS: debug log records the unrecognized payload's top-level keys"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: debug log missing expected key name"
+  FAIL=$((FAIL + 1))
+fi
+
+LINES_BEFORE=$(wc -l < "$DEBUGLOG" | tr -d ' ')
+printf '%s' "$UNKNOWN_PAYLOAD" | HOME="$T" CMD_USE_DEBUG_LOG="$DEBUGLOG" bash "$HOOK"
+LINES_AFTER=$(wc -l < "$DEBUGLOG" | tr -d ' ')
+assert "debug signal throttled: a second unrecognized payload in the same window adds no new line" \
+  "$LINES_AFTER" "$LINES_BEFORE"
+
+rm -f "$DEBUGLOG"
 
 echo ""
 echo "=== Test group 7: backfill script (R) — skip gracefully if R env unavailable ==="
@@ -314,6 +399,45 @@ EOF
   else
     echo "  SKIP: backfill script did not exit 0 for diff-args test (see $DIFFDIR/backfill_out.log)"
     cat "$DIFFDIR/backfill_out.log" 2>/dev/null | tail -20
+  fi
+
+  echo ""
+  echo "=== Test group 10b: backfill treats NULL and '' args_hash as the SAME value for a no-args command (cross-writer dedup, #747 review Fix 1) ==="
+
+  # Pre-populate the DB with a row exactly as the hook/drain path writes it
+  # for a no-args command: args_hash='' (empty string), NOT NULL. The
+  # synthetic transcript's invoked_skills record has no `args` field (the
+  # real-world shape — see header), so hash_args(NULL) yields SQL NULL.
+  # Before the fix, IS NOT DISTINCT FROM treated '' and NULL as different
+  # values, producing 2 rows instead of 1.
+  NULLDIR=$(mktemp -d)
+  NULLDB="$NULLDIR/nullargs_test.duckdb"
+  NULLPROJDIR="$NULLDIR/projects/-tmp-nullargs"
+  mkdir -p "$NULLPROJDIR"
+
+  dq "$NULLDB" "
+    CREATE TABLE IF NOT EXISTS command_usage (
+      session_id VARCHAR, command_name VARCHAR, project_path VARCHAR,
+      args_hash VARCHAR, ts TIMESTAMP, backfilled BOOLEAN DEFAULT FALSE
+    );
+    INSERT INTO command_usage (session_id, command_name, project_path, args_hash, ts, backfilled)
+    VALUES ('sess-NULLARGS', 'bye', '/tmp', '',
+            CAST('2026-06-12T08:00:00' AS TIMESTAMP), FALSE);
+  " > /dev/null
+
+  cat > "$NULLPROJDIR/sess-NULLARGS.jsonl" <<'EOF'
+{"type":"attachment","cwd":"/tmp","timestamp":"2026-06-12T08:00:00.000Z","attachment":{"type":"invoked_skills","skills":[{"name":"bye","path":"userSettings:bye","content":"..."}]}}
+EOF
+
+  Rscript "$BACKFILL" --apply --db "$NULLDB" --projects-dir "$NULLDIR/projects" > "$NULLDIR/backfill_out.log" 2>&1
+  NULL_STATUS=$?
+
+  if [ "$NULL_STATUS" -eq 0 ]; then
+    NULL_COUNT=$(dq "$NULLDB" "SELECT COUNT(*) FROM command_usage WHERE session_id='sess-NULLARGS';")
+    assert "backfill: hook's '' and backfill's NULL args_hash for a no-args command dedup to 1 row (not 2)" "$NULL_COUNT" "1"
+  else
+    echo "  SKIP: backfill script did not exit 0 for null-args test (see $NULLDIR/backfill_out.log)"
+    cat "$NULLDIR/backfill_out.log" 2>/dev/null | tail -20
   fi
 else
   echo "  SKIP: Rscript / duckdb / jsonlite R packages not on PATH outside the project nix shell"
