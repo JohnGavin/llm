@@ -19,6 +19,7 @@
 #   most once per session boundary and retain the duckdb CLI path.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DB="$HOME/.claude/logs/unified.duckdb"
 ACTION="${1:-}"
 SESSION_ID="${2:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo unknown)}"
@@ -53,6 +54,11 @@ case "$ACTION" in
       WHERE session_id = '$SESSION_ID';
     " 2>/dev/null || true
     rm -f "$HOME/.claude/logs/.current_session"
+    # ETL freshness registry (llm#309 Phase 1a): event-driven, no SLA -> unknown.
+    if [ -x "${SCRIPT_DIR}/etl_freshness_upsert.sh" ]; then
+      "${SCRIPT_DIR}/etl_freshness_upsert.sh" sessions "$DB" "" \
+        --table sessions --ts-col started_at >/dev/null 2>&1 || true
+    fi
     ;;
   error)
     SOURCE="${5:-unknown}"
@@ -115,6 +121,11 @@ case "$ACTION" in
           duration_sec, prompt_preview, status, tool_use_id)
         VALUES ('$SESSION_ID','$AGENT_TYPE','inherited',current_timestamp,
           current_timestamp,0,'$PROMPT_PV','$STATUS',NULLIF('$TOOL_USE_ID',''));" 2>/dev/null || true
+    fi
+    # ETL freshness registry (llm#309 Phase 1a): event-driven, no SLA -> unknown.
+    if [ -x "${SCRIPT_DIR}/etl_freshness_upsert.sh" ]; then
+      "${SCRIPT_DIR}/etl_freshness_upsert.sh" agent_runs "$DB" "" \
+        --table agent_runs --ts-col started_at >/dev/null 2>&1 || true
     fi
     ;;
   *)

@@ -37,6 +37,7 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" 2>/dev/null && pwd)"
 MODE="${1:-stop}"
 LOG_DIR="$HOME/.claude/logs"
 STAGING_DIR="$LOG_DIR/llmtelemetry-staging"
@@ -192,6 +193,14 @@ JSONL=$(printf \
   "$(jsons "$PROJECT_DIR")")
 
 printf '%s\n' "$JSONL" >> "$STAGING_DIR/events-${HOST}-${DATE}.jsonl" 2>/dev/null || true
+
+# ETL freshness registry (llm#309 Phase 1a): event-driven, no SLA -> unknown.
+# Freshness proxy is the staging file's mtime (this is a JSONL sink, not a
+# queryable DB table — the file we just appended to is the source of truth).
+if [ -x "${SCRIPT_DIR}/etl_freshness_upsert.sh" ]; then
+  "${SCRIPT_DIR}/etl_freshness_upsert.sh" llmtelemetry "$LOG_DIR/unified.duckdb" "" \
+    --file "$STAGING_DIR/events-${HOST}-${DATE}.jsonl" >/dev/null 2>&1 || true
+fi
 
 # Clean up per-session state files and PPID anchor (only on real session end)
 rm -f "$STATE_START" "$STATE_SID" "$_PPID_ANCHOR" 2>/dev/null || true
