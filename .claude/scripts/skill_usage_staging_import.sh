@@ -99,7 +99,7 @@ if [ -f "${_IMPORT}" ]; then
         SELECT 1 FROM skill_usage u
         WHERE u.session_id = s.session_id
           AND u.skill_name = s.skill_name
-          AND u.ts = CAST(s.ts AS TIMESTAMP)
+          AND date_trunc('second', u.ts) = date_trunc('second', CAST(s.ts AS TIMESTAMP))
       );
   " 2>/dev/null || log "WARN duckdb insert failed (non-fatal)"
   rm -f "${_IMPORT}" 2>/dev/null || true

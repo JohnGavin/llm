@@ -98,13 +98,32 @@ parse_file <- function(path) {
   lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
   if (!length(lines)) return(NULL)
 
+  # The parent directory name is a lossily-encoded project path (Claude Code
+  # replaces every "/" with "-", so a real "-" in the path, e.g. "docs_gh",
+  # is indistinguishable from an encoded "/"). Reverse-decoding it by
+  # gsub("-", "/") therefore corrupts real paths (docs_gh -> docs/gh). The
+  # transcript's own top-level `cwd` field carries the real, unambiguous
+  # path, so prefer that; only fall back to the (deliberately un-decoded)
+  # encoded directory name when no line in the transcript carries `cwd`.
   project_enc <- basename(dirname(as.character(path)))
-  project     <- sub("^-", "/", gsub("-", "/", project_enc))
   session_id  <- tools::file_path_sans_ext(basename(as.character(path)))
   if (!nzchar(session_id)) return(NULL)
 
-  events <- compact(map(lines, function(line) {
-    msg <- tryCatch(fromJSON(line, simplifyVector = FALSE), error = function(e) NULL)
+  msgs <- map(lines, function(line) {
+    tryCatch(fromJSON(line, simplifyVector = FALSE), error = function(e) NULL)
+  })
+
+  project <- NULL
+  for (msg in msgs) {
+    cwd <- msg$cwd %||% NULL
+    if (!is.null(cwd) && nzchar(cwd)) {
+      project <- cwd
+      break
+    }
+  }
+  if (is.null(project)) project <- project_enc
+
+  events <- compact(map(msgs, function(msg) {
     if (is.null(msg) || !identical(msg$type, "assistant")) return(NULL)
     extract_skill_events(msg, session_id, project)
   }))
@@ -178,7 +197,7 @@ if (nrow(events_df) > 0) {
       SELECT 1 FROM skill_usage u
       WHERE u.session_id = s.session_id
         AND u.skill_name = s.skill_name
-        AND u.ts = CAST(s.ts AS TIMESTAMP)
+        AND date_trunc('second', u.ts) = date_trunc('second', CAST(s.ts AS TIMESTAMP))
     )
   ")
   invisible(dbExecute(con, "DROP TABLE IF EXISTS skill_usage_backfill_staging"))
