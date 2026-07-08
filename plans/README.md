@@ -7,7 +7,7 @@ This folder contains ephemeral planning documents that LLMs work through over mu
 - **Track multi-session work**: Plans that span multiple Claude sessions
 - **Document implementation strategy**: Before diving into code
 - **Link to implementation**: Reference `./R/dev/` scripts as work completes
-- **Support cleanup**: Prune completed sections during `/cleanup`
+- **Support cleanup**: Prune completed sections during periodic session review (`/simplify` skill)
 
 ## Lifecycle
 
@@ -56,7 +56,7 @@ Issue: #[number]
 
 ## Cleanup Rules
 
-During `/cleanup` or project review:
+During `/simplify` or project review:
 
 1. **Completed sections**: Replace verbose details with script links
 2. **Stale plans**: Archive if no updates in 2+ weeks

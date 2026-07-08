@@ -121,5 +121,5 @@ See also [[other-strategy]] and [[related-concept]].
 
 - Skill: `knowledge-base-wiki`
 - Rules: `provenance-mandatory`, `confidence-markers`, `raw-folder-readonly`, `wiki-storage-policy`
-- Command: `/wiki-health`
+- Script: `wiki_health_check.sh <wiki_dir>` (T3 full validation)
 - Agent: `critic` (wiki validation mode for adversarial review)

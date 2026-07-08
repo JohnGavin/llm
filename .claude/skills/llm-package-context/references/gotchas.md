@@ -18,4 +18,11 @@ Before: `dplyr.ctx.yaml` — last project to run ctx_sync wins. After: `dplyr@1.
 
 ## Sessions write ad-hoc checking code instead of using ctx_audit()
 
-Claude ignores CLAUDE.md instructions when asked "tabulate ctx coverage" — it writes its own Rscript that checks locally and finds 0. **Use `/ctx-check` command** to force the correct code path.
+Claude ignores CLAUDE.md instructions when asked "tabulate ctx coverage" — it writes its own Rscript that checks locally and finds 0. **Run this exact snippet** to force the correct code path (the old `/ctx-check` command wrapped nothing more than this — removed as vestigial since it duplicated the session-init ctx banner):
+
+```bash
+timeout 30 Rscript -e '
+  source("~/docs_gh/llm/R/tar_plans/plan_pkgctx.R")
+  ctx_audit("DESCRIPTION")
+'
+```
