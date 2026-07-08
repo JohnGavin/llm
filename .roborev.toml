@@ -281,7 +281,11 @@ classify_backup_agent = ''
 # Override classifier backup model for this repo.
 classify_backup_model = ''
 # Backup agent for review in this repo.
-review_backup_agent = ''
+# #746: primary gemini pin (review_model_thorough) poisons the fallback when these
+# backup keys are empty — the backup inherits gemini's model. Pin the review backup
+# to claude-code/sonnet (the verified-working combo). If roborev's binary still
+# ignores these on the next gemini outage, the per-agent-pin fix is upstream.
+review_backup_agent = 'claude-code'
 # Backup agent for refine in this repo.
 refine_backup_agent = ''
 # Backup agent for fix in this repo.
@@ -291,7 +295,7 @@ security_backup_agent = ''
 # Backup agent for design review in this repo.
 design_backup_agent = ''
 # Backup model for review in this repo.
-review_backup_model = ''
+review_backup_model = 'sonnet'
 # Backup model for refine in this repo.
 refine_backup_model = ''
 # Backup model for fix in this repo.
