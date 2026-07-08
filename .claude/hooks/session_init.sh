@@ -1293,7 +1293,7 @@ fi
 # This phase documents the feature; actual list shown via /btw at runtime
 echo ""
 echo "TIP: Check active loops with: /btw 'Show running loops via /schedule list'"
-echo "     Auto-loop suggestions: /loop 1h /check | /loop 30m /ctx-check"
+echo "     Auto-loop suggestions: /loop 1h /check"
 
 # ── Phase 13d: roborev backlog banner (Component 6, JohnGavin/llm#163) ───────
 # Surfaces open-count + top finding + addressed-rate for the current project.

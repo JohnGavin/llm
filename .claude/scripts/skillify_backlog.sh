@@ -15,8 +15,8 @@
 # its tool-event schema is documented (tracking #137). For now this
 # script is retained as a placeholder and produces an honest report.
 #
-# For live pattern detection use /skillify interactively within a session,
-# or run detect_patterns.sh on a freshly written (uncompacted) transcript.
+# For live pattern detection invoke the `skillify` skill interactively within
+# a session, or run detect_patterns.sh on a freshly written (uncompacted) transcript.
 #
 # Usage:
 #   skillify_backlog.sh [N]  # scan last N transcripts (default: 20)

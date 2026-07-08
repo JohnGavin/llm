@@ -89,10 +89,10 @@ Three layers:
 
 - **T1 (automatic)**: `wiki_health_onwrite.sh` hook fires after every Edit/Write
 - **T2 (pre-commit)**: full provenance + line-range validation
-- **T3 (manual)**: `/wiki-health` for full 7-check report
+- **T3 (manual)**: `wiki_health_check.sh <wiki_dir>` for full 7-check report
 - **T4 (weekly cron)**: optional launchd job, only if user enables
 
-After a batch of compilation, run `/wiki-health` to get a full report.
+After a batch of compilation, run `wiki_health_check.sh <wiki_dir>` to get a full report.
 
 ### 5. Adversarial review
 
@@ -209,7 +209,7 @@ greppable: `grep "^## \[" LOG.md | tail -10` gives the last 10 entries.
 Operations:
 - `ingest` — new raw/ file processed into wiki/
 - `query` — user asked a question against the wiki
-- `lint` — /wiki-health run
+- `lint` — wiki_health_check.sh run
 - `promote` — outputs/ file promoted to wiki/ via /wiki-promote
 - `supersede` — wiki file replaced by a new version
 
@@ -294,6 +294,6 @@ A knowledge base focused on [TOPIC].
 - `wiki-curator` — compiles `raw/` → `wiki/`
 - `critic` (wiki validation mode) — adversarial review
 
-## Related Commands
+## Related Scripts
 
-- `/wiki-health` — T3 full health check
+- `wiki_health_check.sh` — T3 full health check
