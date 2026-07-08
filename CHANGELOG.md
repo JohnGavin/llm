@@ -4,6 +4,33 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-07 → 07-08 — own-your-context evidence layer (Phase 1a/1b/1e), roborev daemon repair
+
+### Completed
+- Plan authored (fable model): 4-phase capture→analytics→evidence roadmap (`.claude/plans/`, gitignored/ephemeral).
+- Phase 1a (#743, #309): `etl_freshness` registry + `etl_freshness_upsert.sh` + session-start stale banner; root-caused & fixed the `burn:err` guard (npx-cache ENOTEMPTY).
+- Phase 1b (#744): `skill_usage` hook (`log_skill_use.sh`) + backfill (`backfill_skill_usage.R`). Roborev caught 4 real bugs across 3 fix rounds (lossy dash path-decode → use transcript `cwd`; dedup second-truncation; `args_hash` missing from key; hook-vs-R `args_hash` newline mismatch). 23 tests.
+- Phase 1e (#747, #745): `command_usage` slash-command hook (`log_command_use.sh`, UserPromptSubmit) + backfill; slash-commands live in `invoked_skills` attachment records, not Skill blocks. Roborev caught 3 more (args_hash NULL/'' dedup; single-segment path false-positive; unverified field-name → detectable-failure signal). 32 tests.
+- Live backfills: `skill_usage` 29→39, `command_usage` 0→11 (/bye×7, /issue-triage×3, /cleanup-worktrees×1).
+- Capability-registry Artifact (Phase 2 preview): published + archived; framing corrected (skill-tool usage genuinely sparse; real signal = slash-commands) + live-backfill commands panel.
+- roborev daemon repaired: `default_backup_agent`→`claude-code`; `--local` escape hatch. Filed #746.
+- #715 reopened then re-closed — verified #717 already fixed it (live site correct via fetch); corrected my inaccurate reopen comment.
+- Memory updated: `roborev-gemini-dead-silent-failure.md` (model-pin recurrence + `--local` escape hatch).
+
+### Failed Approaches
+- roborev daemon IGNORES `--agent`; `config set default_backup_agent` + restart alone did NOT fix (the `review_model` gemini pin poisons whatever fallback agent runs). Only `roborev review --local --agent claude-code --model sonnet` bypasses it.
+- Reopened #715 on incomplete investigation (stale local `docs/` mistaken for a live defect); #717 had already fixed it. Lesson: check for a prior fix PR before asserting "never resolved".
+- Card 1e first dispatch died on a transport error mid-investigation (retried fresh, no work lost).
+
+### Accuracy / Metrics
+- 3 PRs merged (#743/#744/#747). Adversarial review (roborev via `--local` claude-code) caught 7 real telemetry-corrupting bugs that passing unit tests missed.
+
+### Known Limitations
+- Phase 1c (dispatch lineage) and 1d (#325 dashboard CI) not started; #746 (roborev per-agent model pinning) open.
+- #747 needs one live check: type `/check` → confirm a `command_usage` row + empty `command_use_debug.log`.
+- Plan doc + registry snapshot are gitignored (`.claude/plans/`) — ephemeral, not in git.
+- Stray uncommitted `.claude/settings.json` change in the main checkout (origin unknown).
+
 ## 2026-07-04 → 07-07 — roborev→gemini migration, reporting-bug sweep, token-min
 
 ### Completed
