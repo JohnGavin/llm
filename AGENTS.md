@@ -42,7 +42,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **Explorations:** `explorations/` is a scratch area for research experiments. Minimum score 60 (vs 80 for production). Graduate to `R/` or `vignettes/` at >= 80. Archive abandoned explorations with a reason comment. See `explorations/CONVENTIONS.md`.
 
-**Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `/wiki-health` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
+**Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `wiki_health_check.sh <wiki_dir>` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
 
 **Mandatory skills:** `adversarial-qa`, `quality-gates`, `r-package-workflow`, `test-driven-development`, `nix-rix-r-environment`, `llm-package-context`, `readme-qmd-standard`, `subagent-delegation`, `spec-bundled-skills`, `knowledge-base-wiki`.
 **Mandatory rules** (auto-loaded — safety-critical, fire on every session): `verification-before-completion`, `systematic-debugging`, `btw-timeouts`, `git-no-compound-cd`, `nix-agent-shell-protocol`, `worktree-location`, `agent-identity-and-task-scopes`, `human-in-the-loop-decision-points`. Plus `auto-delegation` (governs every dispatch decision).
@@ -88,9 +88,11 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · Targets · Shiny · Quarto · Prose · DevOps · PM · AI · Specialized). Mandatory subset enforced via the `**Mandatory skills:**` line above.
 
-## Commands (21)
+## Commands (14)
 
-`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/ctx-check`, `/pr-status`, `/cleanup`, `/cleanup-worktrees`, `/issue-triage`, `/new-issue`, `/triage`, `/wiki-health`, `/wiki-promote`, `/write-alt-text`, `/skillify`
+`/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/cleanup-worktrees`, `/issue-triage`, `/new-issue`, `/wiki-promote`, `/write-alt-text`, `/roborev`, `/roborev-setup`, `/roborev-clear-backlog`, `/braindump`
+
+Pruned 2026-07-08 (chore/prune-vestigial-slash-commands): `/pr-status`, `/wiki-health`, `/cleanup`, `/triage`, `/skillify`, `/roborev-list-projects`, `/ctx-check` removed — never-typed twins of automated hooks/launchd pulses/skills (`pr_status_pulse.sh`, `wiki_health_onwrite.sh`, `/cleanup-worktrees` + `/simplify`, `/issue-triage`, `skillify_backlog.sh` + the `/skillify` skill, `gh pr list`, the session-init ctx banner). `skillify.sh` script survives — it is still called by the automated backlog scripts.
 
 ## Automation Features (v2.1.72+)
 
@@ -99,7 +101,7 @@ Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · 
 | Command | Syntax | Use Case | Example |
 |---------|--------|----------|---------|
 | `/loop` | `/loop <interval> <command>` | Repeat task at intervals | `/loop 1h /check` — R CMD check hourly |
-| `/schedule` | `/schedule '<cron>' <command>` | Cron-like scheduling | `/schedule '0 9 * * *' /cleanup` — daily 9 AM |
+| `/schedule` | `/schedule '<cron>' <command>` | Cron-like scheduling | `/schedule '0 9 * * *' /cleanup-worktrees` — daily 9 AM |
 | `/btw` | `/btw <question>` | Side query during work | `/btw "pipeline status?"` while tar_make() runs |
 | `/branch` | `/branch` | Fork current session | Alternative to `--fork-session` |
 | `/teleport` | `/teleport` | Pull cloud session local | Resume interrupted remote work |
@@ -107,7 +109,7 @@ Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · 
 
 **Loop intervals:** `30s`, `5m`, `1h`, `2d` (or trailing: `every 30 minutes`). Minimum `/schedule` interval: 1 hour.
 
-**Common loop patterns:** `/loop 30m /check` (continuous R CMD check), `/loop 5m /roborev` (auto code review), `/schedule '0 9 * * 1-5' /pr-status` (weekday AM PR checks). List: `/schedule list`. Stop: `/schedule stop <job-id>`.
+**Common loop patterns:** `/loop 30m /check` (continuous R CMD check), `/loop 5m /roborev` (auto code review), `/schedule '0 9 * * 1-5' /issue-triage` (weekday AM triage). List: `/schedule list`. Stop: `/schedule stop <job-id>`.
 
 **Hooks integration:** R auto-format and dark-contrast checks run via pre-commit scripts; see `~/.claude/scripts/r_code_check.sh` and `~/.claude/scripts/check_dark_contrast.sh`.
 

@@ -156,5 +156,5 @@ Found N candidate(s) from worktree_gc_events.
 - `worktree-location` rule — where worktrees live (3 location patterns)
 - `housekeeping-framework` rule — the overnight housekeeping framework
 - `worktree_gc.sh` — the cron that writes the flagged rows
-- `/cleanup` command — broader session cleanup (includes worktree hygiene)
+- `/simplify` skill — broader session code review and cleanup
 - llm#550 — origin issue (Phase D)

@@ -30,7 +30,7 @@ check catches errors after they've already propagated; T1 (on-write) catches the
 - raw/ folders are append-only (`raw-folder-readonly` rule + `file_protection.sh` hook)
 - AI-inferred claims tagged with `> ⚠ AI-inferred:` (`confidence-markers` rule)
 - Cross-wiki links use `[[topic]]` syntax (Obsidian-compatible, tool-agnostic)
-- Multi-tier health check: T1 on-write hook, T2 pre-commit, T3 `/wiki-health`, T4 weekly cron
+- Multi-tier health check: T1 on-write hook, T2 pre-commit, T3 `wiki_health_check.sh` (manual full report), T4 weekly cron
 - `wiki-curator` agent compiles raw → wiki with mandatory provenance
 - `critic` agent in wiki validation mode does adversarial review (verifies cited content exists in raw)
 

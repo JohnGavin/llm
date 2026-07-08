@@ -15,7 +15,7 @@ Use this skill when:
 - The project feels "messy" or over-engineered
 - Before a release or major refactor
 - Periodically (every few weeks of active development)
-- When `/cleanup` command suggests deeper review is needed
+- When a `/simplify` pass suggests deeper review is needed
 
 ## Why a Skill vs Command
 
@@ -29,7 +29,7 @@ This is a **skill** (not command) because:
 
 ### Level 1: Quick Cleanup (5-10 min)
 
-The `/cleanup` command handles this. Use for:
+The `/simplify` skill handles this. Use for:
 - End-of-session tidying
 - After debugging sessions
 - Quick scan for obvious issues
@@ -170,7 +170,7 @@ Don't spend time on style issues when there are functional problems.
 
 ## Integration Points
 
-- **/cleanup command**: Quick session cleanup
+- **/simplify skill**: Quick session cleanup
 - **verification-before-completion skill**: Ensure fixes are verified
 - **systematic-debugging skill**: For investigating identified issues
 - **architecture-planning skill**: For major refactors

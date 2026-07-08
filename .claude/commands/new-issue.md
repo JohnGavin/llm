@@ -65,5 +65,5 @@ Log file: R/dev/issues/fix_issue_[number].R
 ## Next Steps
 1. Make changes on this branch
 2. Run /check before pushing
-3. Run /pr-status after CI completes
+3. PR + CI status is tracked automatically by pr_status_pulse.sh (launchd)
 ```
