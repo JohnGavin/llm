@@ -32,6 +32,8 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **Versioning:** Semver. Patch=bugfix, Minor=feature, Major=breaking. Pre-1.0: breaking=minor bump. **NEVER ship `0.0.0.9000` to users.** Bump to `0.1.0` before first public deploy (GH Pages, pkgdown, vignette).
 
+**Simplicity — subtractive-first (ALL PROJECTS):** Prefer removing over adding. Automation, config, rules, skills, and commands accrete; nothing reverses that by default. Before building a new mechanism, check whether an existing one already covers it — a hook/pulse/banner field often does (e.g. #750 pruned 7 slash-commands whose deterministic core already ran in hooks/launchd). Periodically census unused surface using the `command_usage`/`skill_usage` tables (#747/#744) via the `housekeeping-framework` rule. **Chesterton guard:** remove something only after verifying it is BOTH unused AND its function is covered elsewhere — essential complexity (provenance redundancy, safety guards) stays; only accidental complexity goes. Advisory, not hook-gated.
+
 **Session:** Start: read `CHANGELOG.md`, avoid failed approaches. End: commit -> append CHANGELOG -> push. **Commits:** After every meaningful unit. Never break tests. Git log = lab notes. Speed must not silence errors.
 
 **Pipeline Validation (ALL PROJECTS):** Before every commit: `parse("_targets.R")` MUST succeed. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash.
