@@ -11,7 +11,7 @@ paths:
 
 ## When This Applies
 
-Every time you consider rebasing, cherry-picking, or "salvaging work from" a stale branch. Triggered by `/cleanup`, manual branch triage, "what should I do with branch X?" questions, or any orchestrator decision to spawn a subagent on a stale branch.
+Every time you consider rebasing, cherry-picking, or "salvaging work from" a stale branch. Triggered by `/cleanup-worktrees`, manual branch triage, "what should I do with branch X?" questions, or any orchestrator decision to spawn a subagent on a stale branch.
 
 ## CRITICAL: `git cherry` Is Necessary But Not Sufficient
 

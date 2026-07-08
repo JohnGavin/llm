@@ -140,7 +140,7 @@ Healthy: >70% source-stated, <20% AI-inferred, <5% each hypothesis/conflicting.
 
 After major sessions (>10 files, >3 vignettes, CI changes):
 
-1. `/wiki-health` flags pages past `fresh_until`
+1. `wiki_health_check.sh <wiki_dir>` flags pages past `fresh_until`
 2. Options: Keep, Update, Supersede, Archive
 
 ---
@@ -171,7 +171,7 @@ After major sessions (>10 files, >3 vignettes, CI changes):
 |---|---|
 | T1 | `wiki_health_onwrite.sh` — frontmatter + `## Sources` |
 | T2 | Pre-commit validation |
-| T3 | `/wiki-health` — full validation |
+| T3 | `wiki_health_check.sh <wiki_dir>` — full validation (manual) |
 
 ---
 
@@ -188,4 +188,4 @@ See also [[congestion]] and [[commodity-vol-carry]].
 ## Related
 
 - `knowledge-base-wiki` skill — full pattern documentation
-- `/wiki-health` command — validation
+- `wiki_health_check.sh` — full validation script (T3)

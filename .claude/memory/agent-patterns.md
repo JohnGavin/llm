@@ -151,7 +151,7 @@ Since `/loop` and `/schedule` are not available, use system schedulers:
         <string>--print</string>
         <string>--model</string>
         <string>haiku</string>
-        <string>/ctx-check</string>
+        <string>/check</string>
     </array>
     <key>StartInterval</key>
     <integer>3600</integer>
@@ -167,11 +167,10 @@ Load with: `launchctl load ~/Library/LaunchAgents/hourly_ctx_check.plist`
 
 **cron pattern (Linux):**
 ```bash
-# Daily cleanup at 9 AM
-0 9 * * * cd ~/docs_gh/llm && claude --bare --print --model haiku "/cleanup" >> /tmp/cleanup.log 2>&1
+# Daily worktree cleanup at 9 AM
+0 9 * * * cd ~/docs_gh/llm && claude --bare --print --model haiku "/cleanup-worktrees" >> /tmp/cleanup.log 2>&1
 
-# Hourly PR status check (weekdays only)
-0 9-17 * * 1-5 cd ~/docs_gh/llm && claude --bare --print "/pr-status" >> /tmp/pr-status.log 2>&1
+# Hourly PR status check (weekdays only) — now handled by pr_status_pulse.sh + launchd instead
 ```
 
 **Existing implementations:**

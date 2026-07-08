@@ -41,7 +41,7 @@ one-off briefings, or session-specific summaries stay in `outputs/`.
 7. **Update `INDEX.md`** with the new topic
 8. **Append to `LOG.md`**:
    `## [YYYY-MM-DD] promote | outputs/<file> → wiki/<file>`
-9. **Run `/wiki-health`** to validate
+9. **Run `wiki_health_check.sh <wiki_dir>`** to validate
 10. **Move or delete the original output file** — prefer delete; if keeping,
     add a line at the top of the output: `> Promoted to [[new-topic]] YYYY-MM-DD`
 
@@ -67,7 +67,7 @@ INPUT: outputs/<file>.md containing a query answer
 7. Append ## Sources section
 8. Update INDEX.md entry
 9. Append LOG.md entry
-10. Run /wiki-health to verify
+10. Run wiki_health_check.sh <wiki_dir> to verify
 11. Delete the original output file (or mark it promoted)
 ```
 
@@ -93,5 +93,5 @@ during backwardation regimes?":
 
 - Skill: `knowledge-base-wiki`
 - Rules: `provenance-mandatory`, `wiki-frontmatter`, `confidence-markers`
-- Command: `/wiki-health` (always run after promotion)
+- Script: `wiki_health_check.sh` (always run after promotion)
 - Agent: `wiki-curator` (for complex multi-page promotions)

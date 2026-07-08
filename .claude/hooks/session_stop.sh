@@ -190,7 +190,7 @@ if [ "$_bye_detected" -eq 1 ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh"
       echo ""
       # No interactive read — hooks run non-interactively; auto-schedule skillify.
       echo "$TRANSCRIPT" > "${CLAUDE_RUNTIME_ROOT}/.pending_skillify"
-      echo "Patterns detected — /skillify will run at next session start."
+      echo "Patterns detected — skillify will run automatically at next session start."
     fi
   fi
 fi

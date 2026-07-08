@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # wiki_health_check.sh - Validate a knowledge-base wiki against its raw sources
-# Used by T1 (on-write hook), T2 (pre-commit), T3 (/wiki-health), T4 (cron)
+# Used by T1 (on-write hook), T2 (pre-commit), T3 (manual full report), T4 (cron)
 #
 # Usage:
 #   wiki_health_check.sh <wiki_dir> [--single FILE] [--quiet] [--json]
