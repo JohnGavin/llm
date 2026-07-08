@@ -178,6 +178,12 @@ Before considering a task "shipped":
 
 ---
 
+## Unused-surface census (subtractive-first enforcement)
+
+Realises the Simplicity principle (see `AGENTS.md` Core Rules). Automation/config surface accretes; periodically flag what is unused so it can be pruned under the Chesterton guard. Data sources: the `command_usage` (#747) and `skill_usage` (#744) tables in `~/.claude/logs/unified.duckdb`. A command/skill/rule with zero recorded invocations is a *candidate*, not an automatic deletion: it must ALSO be confirmed covered elsewhere (a hook, pulse, banner field, or sibling command) before removal. This census is advisory — it produces a review list for a human, never auto-deletes. Follow-up: automate it as a `*-pulse` job (tracked separately).
+
+---
+
 ## Existing Task Inventory
 
 | Task | Script | Launchd plist | Events table | Email section | Session-init phase |
