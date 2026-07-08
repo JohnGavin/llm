@@ -37,3 +37,19 @@ and `session_init.sh` banner to read `overview.failed`/crashes not
 `verdicts.failed`; project `.roborev.toml` `backup_agent='gemini'` → `'codex'`.
 See [[startup-cost-is-mcp-not-hook]] for the sibling "verify the metric, don't
 trust the summary" lesson.
+
+**Recurrence 2026-07-07 — different root cause, same silent-failure surface.**
+All reviews failed with `codex quota exceeded` even for jobs assigned to
+gemini/claude-code, and the daemon **ignored `--agent`**. Root cause: the
+per-reasoning **model pin** `review_model_thorough=gemini-2.5-flash-lite` (from
+#733) is applied to WHATEVER agent runs — so when gemini quota-fails and it
+falls back, the backup agent is handed a gemini model it can't use
+(`404 model_not_found` for claude-code; codex separately quota-dead) and the
+whole job aborts. `default_backup_agent` had also reloaded to `codex` on daemon
+restart. **Escape hatch that WORKS:**
+`roborev review <sha> --local --agent claude-code --model sonnet` — bypasses the
+daemon AND overrides the poisoned model pin, producing a real verdict on
+claude-sonnet-5 (this is how #744/#747 got reviewed). Also set
+`default_backup_agent=claude-code` via `config set --global`. Proper fix
+(per-agent model pinning, so a single-provider outage can't take down all
+reviews) tracked in #746.
