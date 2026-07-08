@@ -68,6 +68,10 @@ Mental check: after reading the phrase, the question to answer is:
 
 Default answer: PR. Override only on explicit "merge" / "merge to main" / "land directly" wording with no qualifier.
 
+## Always embed the issue/PR link
+
+When reporting a merge, PR, or issue action to the user — or in session-end / CHANGELOG-adjacent prose — render the reference as an embedded markdown link to the exact GitHub URL (e.g. `[#750](https://github.com/JohnGavin/llm/pull/750)`), never a bare `#750`. A bare number forces the reader to hunt for the URL; a link is one click. Applies to all projects. Origin: user request 2026-07-08.
+
 ## Origin
 
 [#469](https://github.com/JohnGavin/llm/issues/469) — Show Us Your (Agent) Skills Episode 1, Jeremiah Lowin's `ship-it` skill which "retrains 'ship it' to mean opening a PR rather than merging." This rule applies the same discipline to OUR shorthand vocabulary so the same surprise can't reach us via a future Claude version or a future contributor reading shorthand differently.
