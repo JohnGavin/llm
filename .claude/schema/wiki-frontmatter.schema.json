@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/JohnGavin/llm/main/.claude/schema/wiki-frontmatter.schema.json",
+  "title": "Wiki Page Frontmatter",
+  "description": "Single source of truth for required fields and enum values in ~/docs_gh/llm/knowledge/wiki/*.md YAML frontmatter. Consumed by .claude/scripts/wiki_health_check.sh (jq-driven); the wiki-conventions rule documents the same fields for humans. See llm#759 (Phase 1: knowledge-DAG architecture).",
+  "type": "object",
+  "required": [
+    "title",
+    "canonical_question",
+    "status",
+    "fresh_until",
+    "consensus_level",
+    "sources"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable page title."
+    },
+    "canonical_question": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The single question this page answers — the DAG node's identity."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "stale", "superseded"],
+      "description": "Lifecycle status. active=current, stale=past fresh_until and unreviewed, superseded=replaced by a newer page."
+    },
+    "fresh_until": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "ISO 8601 date (YYYY-MM-DD) after which the page should be reviewed for staleness."
+    },
+    "consensus_level": {
+      "type": "string",
+      "enum": ["high", "direct"],
+      "description": "Page-level agreement across sources. NOTE: this enum reflects the vocabulary actually in use across the 10 conforming wiki pages as of llm#759 Phase 1 (high, direct), NOT the older 5-value vocabulary (unanimous/strong/split/divergent/direct) documented in wiki-conventions.md. Reconciling the two vocabularies is a follow-up — see llm#759 PR discussion."
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "description": "List of raw/ source files this page was compiled from.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Optional free-form tags.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compiled_by": {
+      "type": "string",
+      "description": "Optional. Tier that compiled the page (do not hardcode model IDs — see auto-delegation rule)."
+    },
+    "compiled_on": {
+      "type": "string",
+      "format": "date",
+      "description": "Optional. ISO 8601 date the page was compiled."
+    }
+  }
+}
