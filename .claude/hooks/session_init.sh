@@ -292,15 +292,23 @@ phase_mappings() {
 }
 
 # ── Phase 3: Size Audit ──────────────────────────────────────────────
+# FAIL thresholds are ~2x the WARN limit per category (llm#749 Part B):
+# breaches are no longer scroll-past-only — they are counted (n_fail) and
+# persisted to $HOME/.claude/logs/oversized_config.txt for a future
+# pulse/overnight-email to surface as an owned artifact.
 phase_sizes() {
+  local -a _breaches=()
+
   check_file() {
     local file="$1" warn="$2" fail="$3" label="$4"
     [ -f "$file" ] || return
     local lines; lines=$(timeout 5 wc -l < "$file" 2>/dev/null || echo 0)
     if [ "$lines" -gt "$fail" ]; then
       echo "$label: $lines lines  FAIL (>$fail)"
+      _breaches+=("FAIL  $label  ${lines}/${fail}  $file")
     elif [ "$lines" -gt "$warn" ]; then
       echo "$label: $lines lines  WARN (>$warn)"
+      _breaches+=("WARN  $label  ${lines}/${warn}  $file")
     else
       echo "$label: $lines lines  OK"
     fi
@@ -310,10 +318,11 @@ phase_sizes() {
   [ -n "$MEMORY_DIR" ] && [ -f "$MEMORY_DIR/MEMORY.md" ] && check_file "$MEMORY_DIR/MEMORY.md" 150 200 "MEMORY.md"
 
   # Directory summaries (rules, skills, agents, commands)
-  for dir_info in "$RULES_DIR:150:Rules" "$SKILLS_DIR:500:Skills" "$AGENTS_DIR:300:Agents" "$COMMANDS_DIR:200:Commands"; do
-    IFS=: read -r dir limit label <<< "$dir_info"
+  # dir:warn:fail:label — fail is ~2x warn per category
+  for dir_info in "$RULES_DIR:150:300:Rules" "$SKILLS_DIR:500:800:Skills" "$AGENTS_DIR:300:450:Agents" "$COMMANDS_DIR:200:350:Commands"; do
+    IFS=: read -r dir limit faillimit label <<< "$dir_info"
     [ -d "$dir" ] || continue
-    local n=0 max_l=0 max_f="" total=0 n_warn=0
+    local n=0 max_l=0 max_f="" total=0 n_warn=0 n_fail=0
     local find_pattern="*.md"
     if [ "$label" = "Skills" ]; then
       while IFS= read -r -d '' f; do
@@ -321,7 +330,13 @@ phase_sizes() {
         n=$((n + 1)); total=$((total + l))
         local parent; parent=$(basename "$(dirname "$f")")
         [ "$l" -gt "$max_l" ] && { max_l=$l; max_f="$parent"; }
-        [ "$l" -gt "$limit" ] && n_warn=$((n_warn + 1))
+        if [ "$l" -gt "$faillimit" ]; then
+          n_fail=$((n_fail + 1))
+          _breaches+=("FAIL  $label  ${l}/${faillimit}  $f")
+        elif [ "$l" -gt "$limit" ]; then
+          n_warn=$((n_warn + 1))
+          _breaches+=("WARN  $label  ${l}/${limit}  $f")
+        fi
       done < <(find -L "$dir" -name "SKILL.md" -print0 2>/dev/null)
     else
       for f in "$dir"/*.md; do
@@ -329,16 +344,34 @@ phase_sizes() {
         local l; l=$(timeout 5 wc -l < "$f" 2>/dev/null || echo 0)
         n=$((n + 1)); total=$((total + l))
         [ "$l" -gt "$max_l" ] && { max_l=$l; max_f=$(basename "$f"); }
-        [ "$l" -gt "$limit" ] && n_warn=$((n_warn + 1))
+        if [ "$l" -gt "$faillimit" ]; then
+          n_fail=$((n_fail + 1))
+          _breaches+=("FAIL  $label  ${l}/${faillimit}  $f")
+        elif [ "$l" -gt "$limit" ]; then
+          n_warn=$((n_warn + 1))
+          _breaches+=("WARN  $label  ${l}/${limit}  $f")
+        fi
       done
     fi
     if [ "$n" -gt 0 ]; then
       local avg=$((total / n))
       local msg="$label ($n):  avg $avg, max $max_l ($max_f)"
-      [ "$n_warn" -gt 0 ] && msg="$msg  WARN: $n_warn files >$limit" || msg="$msg  OK"
+      [ "$n_fail" -gt 0 ] && msg="$msg  FAIL: $n_fail files >$faillimit"
+      [ "$n_warn" -gt 0 ] && msg="$msg  WARN: $n_warn files >$limit"
+      [ "$n_fail" -eq 0 ] && [ "$n_warn" -eq 0 ] && msg="$msg  OK"
       echo "$msg"
     fi
   done
+
+  # Persist an actionable oversized-config report (never block/error the hook)
+  {
+    local _report="${HOME}/.claude/logs/oversized_config.txt"
+    mkdir -p "$(dirname "$_report")" 2>/dev/null
+    {
+      echo "# oversized config as of $(date -u '+%Y-%m-%dT%H:%M:%S')"
+      [ "${#_breaches[@]}" -gt 0 ] && printf '%s\n' "${_breaches[@]}"
+    } > "$_report" 2>/dev/null
+  } 2>/dev/null || true
 }
 
 # ── Phase 4: Skill Token Audit ────────────────────────────────────────
