@@ -57,6 +57,35 @@ report=""
 log_error() { errors=$((errors + 1)); report="$report\n  ERROR: $1"; }
 log_warn()  { warnings=$((warnings + 1)); report="$report\n  WARN: $1"; }
 
+# ── Frontmatter schema (llm#759 Phase 1) ──
+# Required fields, status enum, and consensus_level enum are derived from
+# .claude/schema/wiki-frontmatter.schema.json (single source of truth) via
+# jq. If jq or the schema file is unavailable, fail open: fall back to the
+# pre-schema hardcoded lists and skip consensus_level enum validation
+# (matches historical behaviour exactly — do not fail the hook on machines
+# without jq).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+SCHEMA_FILE="$SCRIPT_DIR/../schema/wiki-frontmatter.schema.json"
+
+SCHEMA_OK=0
+if command -v jq >/dev/null 2>&1 && [ -f "$SCHEMA_FILE" ]; then
+  if mapfile -t REQUIRED_FIELDS < <(jq -r '.required[]' "$SCHEMA_FILE" 2>/dev/null) \
+     && [ "${#REQUIRED_FIELDS[@]}" -gt 0 ] \
+     && mapfile -t STATUS_ENUM < <(jq -r '.properties.status.enum[]' "$SCHEMA_FILE" 2>/dev/null) \
+     && [ "${#STATUS_ENUM[@]}" -gt 0 ] \
+     && mapfile -t CONSENSUS_ENUM < <(jq -r '.properties.consensus_level.enum[]' "$SCHEMA_FILE" 2>/dev/null) \
+     && [ "${#CONSENSUS_ENUM[@]}" -gt 0 ]; then
+    SCHEMA_OK=1
+  fi
+fi
+
+if [ "$SCHEMA_OK" -eq 0 ]; then
+  echo "WARN: jq or $SCHEMA_FILE unavailable — falling back to built-in frontmatter lists (no consensus_level enum validation)" >&2
+  REQUIRED_FIELDS=(title canonical_question status fresh_until consensus_level sources)
+  STATUS_ENUM=(active stale superseded)
+  CONSENSUS_ENUM=(unanimous strong split divergent direct)
+fi
+
 # ── Frontmatter extraction ──
 # Extract a single field from YAML frontmatter. Usage: get_fm FILE FIELD
 get_fm() {
@@ -81,8 +110,7 @@ check_frontmatter() {
     return 1
   fi
 
-  local required=("title" "canonical_question" "status" "fresh_until" "consensus_level" "sources")
-  for field in "${required[@]}"; do
+  for field in "${REQUIRED_FIELDS[@]}"; do
     if [ -z "$(get_fm "$file" "$field")" ]; then
       # sources is a list; check differently
       if [ "$field" = "sources" ]; then
@@ -118,11 +146,28 @@ check_lifecycle() {
   local file="$1"
   local status
   status=$(get_fm "$file" "status")
-  case "$status" in
-    active|stale|superseded) ;;
-    "") ;;  # handled by check_frontmatter
-    *) log_error "$file: invalid status '$status' (must be active|stale|superseded)" ;;
-  esac
+  [ -z "$status" ] && return 0  # handled by check_frontmatter
+  local ok=0
+  for v in "${STATUS_ENUM[@]}"; do
+    [ "$status" = "$v" ] && { ok=1; break; }
+  done
+  [ "$ok" -eq 0 ] && log_error "$file: invalid status '$status' (must be one of: ${STATUS_ENUM[*]})"
+}
+
+# Check consensus_level against schema enum (llm#759 Phase 1 — previously
+# unvalidated). No-op in fallback mode (SCHEMA_OK=0) since the fallback
+# vocabulary is display-only, matching pre-schema behaviour exactly.
+check_consensus() {
+  [ "$SCHEMA_OK" -eq 0 ] && return 0
+  local file="$1"
+  local consensus
+  consensus=$(get_fm "$file" "consensus_level")
+  [ -z "$consensus" ] && return 0  # handled by check_frontmatter
+  local ok=0
+  for v in "${CONSENSUS_ENUM[@]}"; do
+    [ "$consensus" = "$v" ] && { ok=1; break; }
+  done
+  [ "$ok" -eq 0 ] && log_error "$file: invalid consensus_level '$consensus' (must be one of: ${CONSENSUS_ENUM[*]})"
 }
 
 # Check 1: Provenance — every wiki/*.md has ## Sources section
@@ -171,6 +216,7 @@ if [ -n "$SINGLE_FILE" ]; then
         check_provenance "$SINGLE_FILE"
         check_staleness "$SINGLE_FILE"
         check_lifecycle "$SINGLE_FILE"
+        check_consensus "$SINGLE_FILE"
       fi
       dead=$(check_wiki_links "$SINGLE_FILE")
       if [ -n "$dead" ]; then
@@ -216,6 +262,7 @@ for f in "$WIKI_DIR"/*.md; do
   if head -1 "$f" 2>/dev/null | grep -q "^---$"; then
     files_with_frontmatter=$((files_with_frontmatter + 1))
     check_frontmatter "$f" 2>/dev/null
+    check_consensus "$f" 2>/dev/null
 
     status=$(get_fm "$f" "status")
     [ "$status" = "stale" ] && stale_pages=$((stale_pages + 1))
@@ -318,7 +365,7 @@ else
   if [ "${#consensus_counts[@]}" -gt 0 ]; then
     echo ""
     echo "Consensus levels (frontmatter):"
-    for level in unanimous strong split divergent direct; do
+    for level in "${CONSENSUS_ENUM[@]}"; do
       count="${consensus_counts[$level]:-0}"
       [ "$count" -gt 0 ] && echo "  $level: $count"
     done
