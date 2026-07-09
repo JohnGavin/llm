@@ -61,6 +61,15 @@ Modifying `raw/` corrupts provenance chain and creates "AI output → input" fee
 
 ## Part 3: Wiki Frontmatter (MANDATORY)
 
+Required fields and enum values (`status`, `consensus_level`) are validated
+against `.claude/schema/wiki-frontmatter.schema.json` — the single source of
+truth `wiki_health_check.sh` reads via `jq` (llm#759 Phase 1). Update the
+schema file, not the hardcoded lists in the script, when the frontmatter
+contract changes. Note: as of Phase 1 the schema's `consensus_level` enum is
+`high | direct` (the vocabulary actually in use across the wiki), which
+diverges from the broader `unanimous | strong | split | divergent | direct`
+vocabulary documented below — reconciling the two is an open follow-up.
+
 Every `wiki/*.md` file starts with:
 
 ```yaml
