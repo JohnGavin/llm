@@ -4,6 +4,31 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-09 — config simplification sweep, roborev fallback fix, cron re-verification
+
+### Completed
+- Reconciled local `main` to `origin/main` (#743–#748); verified #747 command-usage instrumentation (24/0 tests + synthetic `UserPromptSubmit` payload; row stages, debug log stays empty).
+- Pruned 7 vestigial slash commands, 21→14 (#750), after a `command_usage` census showed 18/21 never invoked — all 7 had automated hook/launchd/banner twins already running their deterministic core.
+- Added the **Simplicity / subtractive-first** governing principle + the embed-issue-link rule + an unused-surface census clause (#751); embed-link recall memory (#755).
+- roborev fallback-poisoning fix (#752, refs #746): set `review_backup_agent='claude-code'` / `review_backup_model='sonnet'` so a gemini outage no longer poisons the codex backup with a gemini model pin.
+- `launchd-health-weekly` fix (#753): it exited 1 because Step 2 email lacked GMAIL creds — now sources `~/.claude/env/roborev_email.env` (the working roborev pattern).
+- Config-size audit teeth (#754): added a FAIL tier + a persisted `~/.claude/logs/oversized_config.txt` report; surfaced it as a "Config size" section in the overnight email (#756).
+- Split 3 oversized mandatory rules into `_companions/` (#757): agent-identity 246→190, nix-agent-shell 218→177, auto-delegation 236→217 — **700→584 always-loaded lines** (paid every session AND subagent), all normative content kept.
+- Worktree cleanup: 17→6, via `git cherry` supersession checks (never a blind sweep).
+
+### Failed Approaches
+- **#749 Part A misdiagnosed 2 of 3 cron jobs as dead.** `self-review-stage1` actually ran clean 20/20 days (incl. the claimed death date); `roborev-weekly-rollup-email` exits 0. The diagnosis read an empty `.err` mtime instead of the run log. Only `launchd-health-weekly` genuinely failed. Lesson: verify the metric, not the summary (posted correction to #749).
+- **Subagent dispatch died mid-session on the monthly spend limit.** Recovered by extracting the failed agent's uncommitted `session_init.sh` edit as a `--no-ext-diff` patch (the repo's difftastic driver broke the first attempt) and replaying it onto a clean branch in the main loop → #754.
+
+### Accuracy / Metrics
+- Slash commands 21→14; mandatory-rule always-loaded lines 700→584; worktrees 17→6.
+- 8 PRs merged (#750–#757).
+
+### Known Limitations
+- **Roborev provider outage:** codex quota-dead (14 errors), gemini (6); 18 quota + 2 crash failures. #752's config fix is merged and the daemon was restarted this session end — needs a live review to confirm the claude-code/sonnet backup path works.
+- **Spend limit active** — subagent-based work blocked until raised.
+- Not started: #749 Part B (overnight-email action-first redesign, WIP held in worktree `aabfee71`), Cards 1c (dispatch lineage) / 1d (#325 CI).
+
 ## 2026-07-07 → 07-08 — own-your-context evidence layer (Phase 1a/1b/1e), roborev daemon repair
 
 ### Completed
