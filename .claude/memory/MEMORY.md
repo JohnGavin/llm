@@ -112,3 +112,6 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## cc Startup Hang = npx/burn-rate no timeout (see cc-startup-hang-npx-timeout.md)
 - `cc` hangs after "Switched to worktree" = unbounded `npx ccusage` in burn_rate_check (GNU timeout absent on macOS → `${TIMEOUT_CMD:+…}` empty); unblock `npx --yes ccusage --version`; fix = perl-alarm fallback + npx --yes + </dev/null (#716, 2026-07-03)
+
+## Embed Issue/PR Links on Merge (see feedback_embed-issue-link-on-merge.md)
+- When reporting a merge/PR/issue action, embed a clickable link (`[#750](url)`) never a bare `#750`; codified in pr-shipping-discipline rule (#751, 2026-07-08)
