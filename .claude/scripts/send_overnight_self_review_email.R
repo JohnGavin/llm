@@ -864,6 +864,28 @@ qa_block <- sprintf(
   n_new_findings, n_stale_tables, today_str
 )
 
+# ── Section: oversized-config surface (audit-teeth #754, llm#749) ──────────────
+# session_init.sh writes ~/.claude/logs/oversized_config.txt each run (one
+# "LEVEL category lines/limit path" row per WARN/FAIL breach). Surface it here so
+# config-size drift has an owner instead of scrolling past the startup banner.
+oversized_block <- tryCatch({
+  ocfg <- file.path(Sys.getenv("HOME"), ".claude", "logs", "oversized_config.txt")
+  if (!file.exists(ocfg)) {
+    ""
+  } else {
+    ln <- readLines(ocfg, warn = FALSE)
+    br <- grep("^(WARN|FAIL)", ln, value = TRUE)
+    if (length(br) == 0L) {
+      sprintf('<h2 style="color:%s;">Config size</h2><p style="color:%s;">&#10003; all config files within limits</p>',
+              DARK_TEXT, DARK_TEXT)
+    } else {
+      nf <- sum(grepl("^FAIL", br)); nw <- sum(grepl("^WARN", br))
+      sprintf('<h2 style="color:%s;">Config size &mdash; %d FAIL, %d WARN &gt;limit</h2><pre style="color:%s;background:#111;padding:10px;overflow-x:auto;">%s</pre>',
+              DARK_TEXT, nf, nw, DARK_TEXT, paste(br, collapse = "\n"))
+    }
+  }
+}, error = function(e) "")
+
 email_body <- paste0(
   sprintf('<div style="background-color:%s;color:%s;font-family:Arial,sans-serif;
 padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
@@ -876,6 +898,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   sec3d_block, "\n",
   sec3e_block, "\n",
   sec3f_block, "\n",
+  oversized_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",
