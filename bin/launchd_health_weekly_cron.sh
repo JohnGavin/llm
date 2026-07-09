@@ -80,6 +80,17 @@ if [[ -f "$ENV_FILE" ]]; then
   log "sourced credentials from $ENV_FILE"
 fi
 
+# GMAIL creds for the Step 2 health email live in a separate secured env file
+# (the same one the roborev email cron sources — bin/roborev_weekly_rollup_cron.sh).
+# Without this, send_launchd_health_email.R aborts with "GMAIL_USERNAME or
+# GMAIL_APP_PASSWORD not set" and the whole job exits 1 (#749 Part A).
+EMAIL_ENV_FILE="$HOME/.claude/env/roborev_email.env"
+if [[ -f "$EMAIL_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$EMAIL_ENV_FILE"
+  log "sourced email credentials from $EMAIL_ENV_FILE"
+fi
+
 # ── Deploy: pull latest main before running (llm#510) ─────────────────────────
 # Cron wrappers run against ${REPO_ROOT}; without this step every gh pr merge
 # ships nothing — the cron uses whatever was last manually pulled to the main
