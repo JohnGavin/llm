@@ -141,3 +141,7 @@ explorations/*
 # Credential tier file (real one lives at ~/.claude/credential_tiers.toml — JohnGavin/llm#376)
 # The .example template is tracked; the real file with actual key names is not.
 .claude/credential_tiers.toml
+
+# Capability registry: the template is source-controlled, the regenerated
+# HTML output is not (rewritten daily by com.claude.capability-registry cron).
+.claude/reports/capability-registry.html
