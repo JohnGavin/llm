@@ -170,6 +170,17 @@ check_consensus() {
   [ "$ok" -eq 0 ] && log_error "$file: invalid consensus_level '$consensus' (must be one of: ${CONSENSUS_ENUM[*]})"
 }
 
+# Exempt hub/worksheet pages (llm#759 Phase 2) — a page whose first line is
+# exactly "<!-- wiki:exempt -->" is not source-compiled content (e.g. a hub,
+# index, or worksheet page) and is skipped for frontmatter, provenance,
+# staleness, and lifecycle checks. It still runs the dead-[[wiki-link]] check.
+is_exempt() {
+  local file="$1"
+  local first_line
+  first_line=$(head -1 "$file" 2>/dev/null)
+  [ "$first_line" = "<!-- wiki:exempt -->" ]
+}
+
 # Check 1: Provenance — every wiki/*.md has ## Sources section
 check_provenance() {
   local file="$1"
@@ -210,8 +221,8 @@ if [ -n "$SINGLE_FILE" ]; then
   case "$SINGLE_FILE" in
     */wiki/*.md)
       base=$(basename "$SINGLE_FILE")
-      # INDEX.md and LOG.md don't need frontmatter or provenance
-      if [ "$base" != "INDEX.md" ] && [ "$base" != "LOG.md" ]; then
+      # INDEX.md, LOG.md, and wiki:exempt pages don't need frontmatter or provenance
+      if [ "$base" != "INDEX.md" ] && [ "$base" != "LOG.md" ] && ! is_exempt "$SINGLE_FILE"; then
         check_frontmatter "$SINGLE_FILE"
         check_provenance "$SINGLE_FILE"
         check_staleness "$SINGLE_FILE"
@@ -248,6 +259,7 @@ superseded_pages=0
 total_inferred=0
 total_hypothesis=0
 total_conflicting=0
+exempt_pages=0
 dead_links=()
 declare -A consensus_counts=()
 
@@ -256,6 +268,18 @@ for f in "$WIKI_DIR"/*.md; do
   base=$(basename "$f")
   [ "$base" = "INDEX.md" ] && continue
   [ "$base" = "LOG.md" ] && continue
+
+  # wiki:exempt pages (hub/index/worksheet, not source-compiled content):
+  # skip frontmatter/provenance/staleness/lifecycle checks and exclude from
+  # the frontmatter/sources denominators, but still check dead wiki links.
+  if is_exempt "$f"; then
+    exempt_pages=$((exempt_pages + 1))
+    while IFS= read -r line; do
+      [ -n "$line" ] && dead_links+=("$line")
+    done < <(check_wiki_links "$f")
+    continue
+  fi
+
   total_files=$((total_files + 1))
 
   # Frontmatter check
@@ -332,6 +356,7 @@ fi
 if [ $JSON -eq 1 ]; then
   echo "{"
   echo "  \"total_files\": $total_files,"
+  echo "  \"exempt_pages\": $exempt_pages,"
   echo "  \"files_with_frontmatter\": $files_with_frontmatter,"
   echo "  \"files_with_sources\": $files_with_sources,"
   echo "  \"stale_pages\": $stale_pages,"
@@ -351,6 +376,7 @@ else
   echo "Today:      $TODAY"
   echo ""
   echo "Files:                $total_files"
+  echo "Exempt pages:         $exempt_pages"
   echo "With frontmatter:     $files_with_frontmatter / $total_files"
   echo "With ## Sources:      $files_with_sources / $total_files"
   echo "Stale pages:          $stale_pages"
