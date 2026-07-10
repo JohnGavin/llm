@@ -147,6 +147,13 @@ ttc_p90 <- sp[["ttc_p90_hrs"]]
 close_rate <- sp[["close_rate"]]
 att_p50 <- sp[["att_p50"]]
 att_p90 <- sp[["att_p90"]]
+# 7-day headline aliases (llm#738/#739): the 24h window is right-censored to
+# near-empty because median close latency (13-49h) usually exceeds 24h, so
+# d1_ttc_p50/d1_att_p50 are structurally "n/a" by design, not a defect. The
+# 7d p50s below are shown in the 24h headline block instead, explicitly
+# labelled "(7d)" so the window is unambiguous.
+d7_ttc_p50 <- d7[["speed"]][["ttc_p50_hrs"]]
+d7_att_p50 <- d7[["speed"]][["att_p50"]]
 
 # §3 Trends
 tr <- d7[["trends"]]
@@ -315,8 +322,8 @@ if (is.null(d1) || d1_n_reviews == 0L) {
     c("24h: clean (closed)",          fmt_int(d1_clean_closed)),
     c("24h: clean (open)",            fmt_int(d1_clean_open)),
     c("24h: close rate",              fmt_rate(d1_close_rate)),
-    c("24h: hours to close p50",      fmt_num(d1_ttc_p50)),
-    c("24h: attempts p50",            fmt_att(d1_att_p50))
+    c("hours to close p50 (7d)",      fmt_num(d7_ttc_p50)),
+    c("attempts p50 (7d)",            fmt_att(d7_att_p50))
   )
   # llm#484: append Other verdicts row when there are unmatched entries
   if (d1_other_n > 0L) {
