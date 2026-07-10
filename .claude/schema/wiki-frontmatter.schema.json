@@ -37,8 +37,8 @@
     },
     "consensus_level": {
       "type": "string",
-      "enum": ["high", "direct"],
-      "description": "Page-level agreement across sources. NOTE: this enum reflects the vocabulary actually in use across the 10 conforming wiki pages as of llm#759 Phase 1 (high, direct), NOT the older 5-value vocabulary (unanimous/strong/split/divergent/direct) documented in wiki-conventions.md. Reconciling the two vocabularies is a follow-up — see llm#759 PR discussion."
+      "enum": ["unanimous", "strong", "split", "divergent", "direct"],
+      "description": "Page-level agreement across sources: unanimous=all sources agree, strong=agree on core/differ on edges, split=substantive divergence, divergent=fundamentally different conclusions, direct=single source/summary. Migrated from the interim Phase-1 (high, direct) vocabulary to this 5-value vocabulary in llm#759 Phase 2 — see wiki-conventions.md Part 5."
     },
     "sources": {
       "type": "array",

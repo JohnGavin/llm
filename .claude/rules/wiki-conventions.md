@@ -65,10 +65,10 @@ Required fields and enum values (`status`, `consensus_level`) are validated
 against `.claude/schema/wiki-frontmatter.schema.json` — the single source of
 truth `wiki_health_check.sh` reads via `jq` (llm#759 Phase 1). Update the
 schema file, not the hardcoded lists in the script, when the frontmatter
-contract changes. Note: as of Phase 1 the schema's `consensus_level` enum is
-`high | direct` (the vocabulary actually in use across the wiki), which
-diverges from the broader `unanimous | strong | split | divergent | direct`
-vocabulary documented below — reconciling the two is an open follow-up.
+contract changes. As of llm#759 Phase 2 the schema's `consensus_level` enum
+is `unanimous | strong | split | divergent | direct` — the same vocabulary
+documented below (Part 5). The interim Phase-1 `high | direct` vocabulary is
+retired; existing pages using `high` are migrated to `strong` separately.
 
 Every `wiki/*.md` file starts with:
 
@@ -94,6 +94,24 @@ tags: [list]                        # may
 | Market structure | 30-60 days |
 | Strategy details | 90 days |
 | Historical/theoretical | 1 year |
+
+### Exempt Pages (`<!-- wiki:exempt -->`)
+
+Hub, index, and worksheet pages that are not themselves source-compiled
+content (e.g. a topic-index page listing links, a scratch worksheet) do not
+carry frontmatter or a `## Sources` section. Mark such a page by making its
+**first line** exactly:
+
+```
+<!-- wiki:exempt -->
+```
+
+`wiki_health_check.sh` (llm#759 Phase 2) skips the frontmatter, provenance,
+staleness, and lifecycle checks for exempt pages in both `--single` and full
+mode, and excludes them from the frontmatter/sources denominators in the
+full-mode report (`exempt_pages` count). The dead-`[[wiki-link]]` check still
+runs — exemption is not a license for broken links. Use sparingly: `INDEX.md`
+and `LOG.md` are already exempt by filename and do not need the marker.
 
 ---
 
