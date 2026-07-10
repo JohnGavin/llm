@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.capability-registry.plist
+     Daily regeneration of the "Capability Registry — Own Your Context"
+     self-contained HTML file at .claude/reports/capability-registry.html.
+
+     IMPORTANT: this job regenerates the FILE ON DISK only. Republishing to
+     the live claude.ai artifact URL is a session-only step (the Artifact
+     tool, which needs a Claude Code session + claude.ai auth) — a launchd
+     cron cannot do that. See the header comment in
+     capability_registry_regen_cron.sh and capability_registry_regen.R.
+
+     Runs at 07:05 local time (digest slot, 5 min after the 07:00
+     kb-digest-email job).
+
+     Install:
+       cp .claude/launchd/com.claude.capability-registry.plist \
+          ~/Library/LaunchAgents/com.claude.capability-registry.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.capability-registry.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.capability-registry.plist
+       rm ~/Library/LaunchAgents/com.claude.capability-registry.plist
+
+     Manual dry-run:
+       DRYRUN=1 bash ~/docs_gh/llm/.claude/scripts/capability_registry_regen_cron.sh
+
+     Manual selftest (writes to /tmp only, no repo/db mutation):
+       SELFTEST=1 bash ~/docs_gh/llm/.claude/scripts/capability_registry_regen_cron.sh
+
+     Tracked in this PR (capability-registry-regen).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.capability-registry</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/capability_registry_regen_cron.sh</string>
+    </array>
+
+    <!-- Daily at 07:05 local time (digest slot) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- PATH must include nix stable profile so nix-shell resolves -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/capability_registry_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/capability_registry_launchd.log</string>
+
+    <!-- Retry once after 60 s if job exits non-zero -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

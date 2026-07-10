@@ -20,6 +20,7 @@ canonical, version-controlled copies; the live copies live at
 | `com.claude.wiki-health-pulse` | Daily 09:45 | Runs `wiki_health_check.sh` against the local knowledge wiki. Part of #137 Phase 4. |
 | `com.claude.codex-overnight-learning` | Daily 06:10 | Scans recent Codex sessions and writes a nightly learning digest to `~/.codex/learning/`. Startup surfacing comes from `.claude/scripts/codex-start.sh`. Tracked in #231. |
 | `com.claude.overnight-self-review-email` | Daily 06:30 | Queries unified.duckdb for 24h deltas across 4 ETL source tables (sessions, agent_runs, hook_events, errors); sends collapsible HTML digest surfacing stale/dead tables and new self-review findings. Part of #491. |
+| `com.claude.capability-registry` | Daily 07:05 | Regenerates the "Capability Registry — Own Your Context" self-contained HTML file (`.claude/reports/capability-registry.html`) from the current skill/agent/rule inventory + unified.duckdb usage counters. FILE ONLY — does not republish the live claude.ai artifact; that requires a session using the Artifact tool. See `.claude/scripts/capability_registry_regen_cron.sh` and `capability_registry_regen.R`. |
 
 ## Retired jobs
 

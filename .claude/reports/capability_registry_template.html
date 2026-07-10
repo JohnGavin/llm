@@ -1,0 +1,379 @@
+<title>Capability Registry — Own Your Context</title>
+<style>
+  :root{
+    --ground:#EAEEF2; --surface:#FFFFFF; --surface-2:#F1F5F8;
+    --ink:#1A2028; --ink-2:#3C4650; --muted:#68737F; --line:#D8DFE6;
+    --accent:#B4501A; --accent-soft:#EBD9C9;
+    --h0:#98A4B0; --h1:#E1B268; --h2:#DA9A3E; --h3:#CB7A29; --h4:#AD4C17;
+    --ring:#AAB5C0;
+    --good:#4F7A52; --shadow:0 1px 2px rgba(20,30,42,.05), 0 14px 34px -18px rgba(20,30,42,.22);
+    --serif:Georgia,'Iowan Old Style','Palatino Linotype',Palatino,serif;
+    --mono:ui-monospace,'SF Mono','Cascadia Code','Roboto Mono',Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+    --maxw:1120px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0E1318; --surface:#161D25; --surface-2:#1B242E;
+      --ink:#E4E9EF; --ink-2:#C6CFD8; --muted:#AAB6C2; --line:#28323D;
+      --accent:#E8934A; --accent-soft:#3A2A1B;
+      --h0:#57646F; --h1:#C98F3D; --h2:#D69B43; --h3:#E5923D; --h4:#F2843C;
+      --ring:#5A6773;
+      --good:#79A97D; --shadow:0 1px 2px rgba(0,0,0,.3), 0 16px 40px -20px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#EAEEF2; --surface:#FFFFFF; --surface-2:#F1F5F8;
+    --ink:#1A2028; --ink-2:#3C4650; --muted:#68737F; --line:#D8DFE6;
+    --accent:#B4501A; --accent-soft:#EBD9C9;
+    --h0:#98A4B0; --h1:#E1B268; --h2:#DA9A3E; --h3:#CB7A29; --h4:#AD4C17; --ring:#AAB5C0;
+    --good:#4F7A52; --shadow:0 1px 2px rgba(20,30,42,.05), 0 14px 34px -18px rgba(20,30,42,.22);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E1318; --surface:#161D25; --surface-2:#1B242E;
+    --ink:#E4E9EF; --ink-2:#C6CFD8; --muted:#AAB6C2; --line:#28323D;
+    --accent:#E8934A; --accent-soft:#3A2A1B;
+    --h0:#57646F; --h1:#C98F3D; --h2:#D69B43; --h3:#E5923D; --h4:#F2843C; --ring:#5A6773;
+    --good:#79A97D; --shadow:0 1px 2px rgba(0,0,0,.3), 0 16px 40px -20px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;}
+  .page{
+    background:var(--ground); color:var(--ink); font-family:var(--sans);
+    font-size:15.5px; line-height:1.55; -webkit-font-smoothing:antialiased;
+    min-height:100vh; padding:clamp(20px,4vw,56px) clamp(16px,4vw,40px) 80px;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto;}
+
+  /* masthead */
+  .eyebrow{font-family:var(--mono); font-size:11.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:600;}
+  .thesis{font-family:var(--serif); font-weight:600; letter-spacing:-.01em; text-wrap:balance;
+    font-size:clamp(30px,5.4vw,52px); line-height:1.04; margin:.34em 0 .28em;}
+  .dek{max-width:64ch; color:var(--ink-2); font-size:clamp(15px,1.6vw,17px); margin:0;}
+  .dek b{color:var(--ink); font-weight:600;}
+
+  .rule{height:1px; background:var(--line); border:0; margin:clamp(26px,4vw,40px) 0;}
+
+  /* stat band */
+  .stats{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:clamp(24px,4vw,38px);}
+  @media (max-width:760px){ .stats{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:420px){ .stats{grid-template-columns:1fr;} }
+  .tile{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px 18px 16px; box-shadow:var(--shadow); position:relative; overflow:hidden;}
+  .tile .big{font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600; font-size:clamp(26px,3.4vw,34px); line-height:1; color:var(--ink); letter-spacing:-.02em;}
+  .tile .big .unit{font-size:.5em; color:var(--muted); font-weight:500; letter-spacing:0;}
+  .tile .lab{margin-top:9px; font-size:13px; color:var(--ink-2); font-weight:550;}
+  .tile .note{margin-top:3px; font-size:11.5px; color:var(--ink-2); font-family:var(--mono); letter-spacing:.01em;}
+  .tile.hot .big{color:var(--accent);}
+
+  .sec-label{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:600; margin:0 0 14px;}
+
+  /* gauges */
+  .gauges{display:grid; gap:16px;}
+  .gauge{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:15px 17px; box-shadow:var(--shadow);}
+  .gauge .top{display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:10px;}
+  .gauge .name{font-weight:600; font-size:14.5px;}
+  .gauge .name span{font-family:var(--mono); color:var(--muted); font-weight:500; font-size:12px; margin-left:8px; letter-spacing:.02em;}
+  .gauge .frac{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:13px; color:var(--ink-2); white-space:nowrap;}
+  .gauge .frac b{color:var(--accent);}
+  .segbar{display:flex; flex-wrap:wrap; gap:3px;}
+  .seg{width:14px; height:14px; border-radius:3px; background:var(--h0); flex:0 0 auto;}
+  .seg.lit{background:var(--h3);}
+  .seg.lit.hot{background:var(--h4);}
+  .seg.idle{background:transparent; border:1.5px solid var(--h0);}
+  .seg.unmeasured{background:transparent; border:1.5px dashed var(--ring);}
+  .seg.always{background:var(--surface-2); border:1.5px solid var(--line);}
+  .gauge .cap{margin-top:9px; font-size:12px; color:var(--muted);}
+
+  /* honesty */
+  .honesty-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+  @media (max-width:820px){ .honesty-grid{grid-template-columns:1fr;} }
+  .hcard{background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--edge,var(--line)); border-radius:12px; padding:15px 17px; box-shadow:var(--shadow);}
+  .hcard.measured{--edge:var(--good);}
+  .hcard.partial{--edge:var(--h2);}
+  .hcard.na{--edge:var(--muted);}
+  .hcard h3{margin:0 0 3px; font-size:14.5px; display:flex; align-items:center; gap:8px;}
+  .hcard .tag{font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; padding:2px 7px; border-radius:100px; background:var(--surface-2); color:var(--ink-2); border:1px solid var(--line);}
+  .hcard.measured .tag{color:var(--good);}
+  .hcard.partial .tag{color:var(--h3);}
+  .hcard p{margin:6px 0 0; font-size:13px; color:var(--ink-2); line-height:1.5;}
+  .hcard b{color:var(--ink); font-weight:600;}
+  .cmd-row{display:flex; flex-wrap:wrap; gap:10px;}
+  .cmd{font-family:var(--mono); font-size:13px; color:var(--ink-2); background:var(--surface); border:1px solid var(--line); border-radius:100px; padding:7px 14px; box-shadow:var(--shadow); font-variant-numeric:tabular-nums;}
+  .cmd b{color:var(--accent); font-weight:600;}
+
+  /* controls */
+  .controls{display:flex; flex-wrap:wrap; gap:10px 12px; align-items:center; margin-bottom:14px;}
+  .search{flex:1 1 240px; position:relative; min-width:200px;}
+  .search input{width:100%; font-family:var(--sans); font-size:14px; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:9px 12px 9px 34px; box-shadow:var(--shadow);}
+  .search input::placeholder{color:var(--muted);}
+  .search svg{position:absolute; left:11px; top:50%; transform:translateY(-50%); width:15px; height:15px; color:var(--muted);}
+  .chips{display:flex; gap:6px; flex-wrap:wrap;}
+  .chip{font-family:var(--mono); font-size:12px; letter-spacing:.02em; padding:7px 12px; border-radius:100px; border:1px solid var(--line); background:var(--surface); color:var(--ink-2); cursor:pointer;}
+  .chip[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:#fff;}
+  :root[data-theme="dark"] .chip[aria-pressed="true"]{color:#12161b;}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .chip[aria-pressed="true"]{color:#12161b;} }
+  .toggle{display:inline-flex; align-items:center; gap:7px; font-size:13px; color:var(--ink-2); cursor:pointer; user-select:none;}
+  .toggle input{accent-color:var(--accent); width:15px; height:15px;}
+  select#sort{font-family:var(--mono); font-size:12.5px; color:var(--ink-2); background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:8px 10px; cursor:pointer;}
+
+  /* legend */
+  .legend{display:flex; flex-wrap:wrap; gap:14px; align-items:center; font-size:11.5px; color:var(--muted); font-family:var(--mono); margin-bottom:10px;}
+  .legend .item{display:inline-flex; align-items:center; gap:6px;}
+  .dot{width:11px; height:11px; border-radius:50%; flex:0 0 auto; display:inline-block;}
+  .dot.h1{background:var(--h1);} .dot.h2{background:var(--h2);} .dot.h3{background:var(--h3);} .dot.h4{background:var(--h4);}
+  .dot.dm{background:var(--h0);}
+  .dot.du{background:transparent; border:1.5px dashed var(--ring);}
+  .mark-rule{width:11px; height:2px; border-radius:2px; background:var(--muted); display:inline-block; flex:0 0 auto;}
+
+  /* registry list */
+  .reg-head, .row{display:grid; grid-template-columns:22px minmax(150px,1.1fr) minmax(0,2fr) 96px; gap:14px; align-items:center;}
+  .reg-head{padding:0 14px 8px; font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);}
+  .reg-head .r{text-align:right;}
+  .list{background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); overflow:hidden;}
+  .row{padding:11px 14px; border-top:1px solid var(--line);}
+  .row:first-child{border-top:0;}
+  .row .marker{display:flex; justify-content:center;}
+  .row .idcell{min-width:0;}
+  .row .cap-name{font-family:var(--mono); font-size:13.5px; font-weight:600; color:var(--ink); word-break:break-word;}
+  .row .kind{display:inline-block; margin-top:3px; font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); background:var(--surface-2); border:1px solid var(--line); border-radius:5px; padding:1px 6px;}
+  .row .kind.skill{color:var(--h3);} .row .kind.agent{color:var(--accent);}
+  .row .desc{font-size:12.5px; color:var(--ink-2); line-height:1.45; min-width:0;}
+  .row .desc.empty{color:var(--muted); font-style:italic;}
+  .row .metric{text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  .row .metric .n{font-size:15px; font-weight:600; color:var(--ink);}
+  .row .metric .n.zero{color:var(--muted); font-weight:500;}
+  .row .metric .n.on{font-size:11px; color:var(--good); letter-spacing:.04em;}
+  .row .metric .when{display:block; font-size:10.5px; color:var(--muted); margin-top:2px;}
+  @media (max-width:680px){
+    .reg-head{display:none;}
+    .row{grid-template-columns:20px 1fr auto; grid-template-areas:"m id metric" "m desc metric"; row-gap:4px;}
+    .row .marker{grid-area:m; align-self:start; margin-top:4px;}
+    .row .idcell{grid-area:id;} .row .desc{grid-area:desc;} .row .metric{grid-area:metric; align-self:start;}
+  }
+  .empty-state{padding:26px; text-align:center; color:var(--muted); font-family:var(--mono); font-size:13px;}
+
+  .count{font-family:var(--mono); color:var(--muted); font-size:12px; margin:10px 2px 0; text-align:right;}
+
+  /* build info */
+  .build{margin-top:clamp(30px,5vw,46px); padding-top:18px; border-top:1px solid var(--line); display:flex; flex-wrap:wrap; gap:6px 20px; font-family:var(--mono); font-size:11.5px; color:var(--muted);}
+  .build b{color:var(--ink-2); font-weight:600;}
+  .build .flag{color:var(--h3);}
+
+  a{color:var(--accent); text-underline-offset:2px;}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px;}
+  @media (prefers-reduced-motion:no-preference){
+    .reveal{opacity:0; transform:translateY(6px); animation:rise .5s cubic-bezier(.2,.7,.2,1) forwards;}
+    @keyframes rise{to{opacity:1; transform:none;}}
+  }
+</style>
+
+<div class="page"><div class="wrap">
+  <header>
+    <div class="eyebrow">Own-your-context · Phase&nbsp;2 preview</div>
+    <h1 class="thesis">Which of these actually fire?</h1>
+    <p class="dek"><b>159 capabilities</b> are engineered into this environment — 72 skills, 12 agents, 75 rules. This page is the receipt: what's been exercised, what's dormant, and — the honest part — <b>how confidently we can even tell yet</b>.</p>
+  </header>
+
+  <section class="stats" id="stats" aria-label="Headline figures"></section>
+
+  <hr class="rule">
+
+  <section aria-label="Engineered versus exercised">
+    <h2 class="sec-label">Engineered vs exercised</h2>
+    <div class="gauges" id="gauges"></div>
+  </section>
+
+  <hr class="rule">
+
+  <section aria-label="Confidence of the record">
+    <h2 class="sec-label">Two very different confidences</h2>
+    <div class="honesty-grid">
+      <div class="hcard measured">
+        <h3>Agents <span class="tag">Complete record</span></h3>
+        <p>Every dispatch is logged. <b>8 of 12</b> agents have fired; the four idle ones are <b>genuinely idle</b>, not unmeasured. And <b>84%</b> of all agent work ran through a single agent — <b>fixer</b> — a real signal about how the fleet is actually used.</p>
+      </div>
+      <div class="hcard partial">
+        <h3>Skills <span class="tag">Genuinely sparse</span></h3>
+        <p><b>Phase 1b (merged)</b> backfilled the full transcript archive and found only <b>~10</b> Skill-tool invocations total — so the low count is <b>real, not under-capture</b>. The actual usage signal lives in <b>slash-commands</b> (logged as bare tool names, not skills), being instrumented in <b>#745</b>.</p>
+      </div>
+      <div class="hcard na">
+        <h3>Rules <span class="tag">Always-on</span></h3>
+        <p>The 75 rules don't "fire" on demand — they're always-on or path-scoped, injected when matching files are touched. No invocation count applies; they're shown here for completeness of the corpus.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section aria-label="Slash-commands now captured">
+    <h2 class="sec-label">Slash-commands — now captured (Card 1e, merged)</h2>
+    <p class="dek" style="margin-bottom:14px">Backfilled live on 2026-07-07: <b>11</b> historical slash-command invocations now sit in <b>command_usage</b> — the usage signal that skills-via-Skill-tool were missing. This is where "what I actually do" really shows up.</p>
+    <div class="cmd-row">
+      <span class="cmd"><b>/bye</b> ×7</span>
+      <span class="cmd"><b>/issue-triage</b> ×3</span>
+      <span class="cmd"><b>/cleanup-worktrees</b> ×1</span>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section aria-label="Capability registry">
+    <h2 class="sec-label">The registry — all 159, sorted by heat</h2>
+    <div class="controls">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+        <input id="q" type="search" placeholder="Search names and descriptions…" aria-label="Search capabilities">
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Filter by kind"></div>
+      <label class="toggle"><input type="checkbox" id="dormant"> Dormant only</label>
+      <select id="sort" aria-label="Sort order">
+        <option value="heat">Sort: heat</option>
+        <option value="name">Sort: name A–Z</option>
+        <option value="recent">Sort: recently fired</option>
+      </select>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span class="item"><span class="dot h4"></span>heavily used</span>
+      <span class="item"><span class="dot h2"></span>used</span>
+      <span class="item"><span class="dot dm"></span>idle (measured)</span>
+      <span class="item"><span class="dot du"></span>skill, unrecorded</span>
+      <span class="item"><span class="mark-rule"></span>always-on rule</span>
+    </div>
+    <div class="reg-head"><span></span><span>Capability</span><span>What it does</span><span class="r">Invocations</span></div>
+    <div class="list" id="list"></div>
+    <div class="count" id="count"></div>
+  </section>
+
+  <footer class="build">
+    <span><b>Source</b> ~/.claude/logs/unified.duckdb</span>
+    <span><b>Generated</b> __CAPABILITY_REGISTRY_GENERATED__</span>
+    <span class="flag">Prototype · Phase 1b+1e merged · backfilled live 2026-07-07 — skill_usage 39, command_usage 11</span>
+  </footer>
+</div></div>
+
+<script>(function(){
+const DATA = __CAPABILITY_REGISTRY_DATA_JSON__;
+const RM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const items = (DATA.items||[]).map(function(d){
+  return {kind:d.kind, name:d.name||'', desc:cleanDesc(d.desc||d.description||''),
+          inv:(d.inv!=null?d.inv:(d.invocations!=null?d.invocations:null)),
+          last:d.last_used||null};
+});
+function cleanDesc(d){ if(!d) return ''; var t=String(d).trim();
+  if(t==='' || t==='>.' || t==='>' || /^>?\s*\.?$/.test(t)) return '';
+  return t.replace(/\.\.$/,'.'); }
+function bucket(n){ if(n==null||n<=0) return 0; if(n>=21) return 4; if(n>=6) return 3; if(n>=3) return 2; return 1; }
+function fmtDate(s){ if(!s) return ''; return String(s).slice(0,10); }
+
+// ---- derived stats ----
+var skills=items.filter(function(i){return i.kind==='skill';});
+var agents=items.filter(function(i){return i.kind==='agent';});
+var rules=items.filter(function(i){return i.kind==='rule';});
+var firable=skills.concat(agents);
+var fired=firable.filter(function(i){return (i.inv||0)>0;}).length;
+var darkPct=Math.round((1-fired/firable.length)*100);
+var agentInv=agents.reduce(function(a,i){return a+(i.inv||0);},0);
+var topAgent=agents.slice().sort(function(a,b){return (b.inv||0)-(a.inv||0);})[0]||{name:'—',inv:0};
+var topShare=agentInv?Math.round((topAgent.inv/agentInv)*100):0;
+var skillsFired=skills.filter(function(i){return (i.inv||0)>0;}).length;
+var agentsFired=agents.filter(function(i){return (i.inv||0)>0;}).length;
+
+// ---- stat tiles ----
+var tiles=[
+  {big:items.length, unit:'', lab:'Capabilities engineered', note:skills.length+' skills · '+agents.length+' agents · '+rules.length+' rules'},
+  {big:fired, unit:'/ '+firable.length, lab:'Have a recorded invocation', note:agentsFired+' of 12 agents · '+skillsFired+' of 72 skills'},
+  {big:darkPct, unit:'%', lab:'Dark inventory', note:'no capture yet — see caveat', hot:true},
+  {big:topShare, unit:'%', lab:'Agent work via one agent', note:'through '+topAgent.name+' ('+topAgent.inv+' runs)', hot:true}
+];
+var stats=document.getElementById('stats');
+stats.innerHTML=tiles.map(function(t,i){
+  return '<div class="tile'+(t.hot?' hot':'')+(RM?'':' reveal')+'" style="'+(RM?'':'animation-delay:'+(i*70)+'ms')+'">'+
+    '<div class="big"><span class="cv" data-to="'+t.big+'">'+(RM?t.big:0)+'</span>'+(t.unit?' <span class="unit">'+t.unit+'</span>':'')+'</div>'+
+    '<div class="lab">'+t.lab+'</div><div class="note">'+t.note+'</div></div>';
+}).join('');
+if(!RM){ document.querySelectorAll('.cv').forEach(function(el){
+  var to=+el.getAttribute('data-to'), start=null, dur=850;
+  function step(ts){ if(!start)start=ts; var p=Math.min(1,(ts-start)/dur);
+    el.textContent=Math.round(to*(1-Math.pow(1-p,3))); if(p<1)requestAnimationFrame(step); }
+  requestAnimationFrame(step); }); }
+
+// ---- gauges ----
+function segs(arr, litClass, restClass, hotAt){
+  return arr.slice().sort(function(a,b){return (b.inv||0)-(a.inv||0);}).map(function(i){
+    var n=i.inv||0;
+    if(n>0){ var hot=(hotAt!=null && n>=hotAt); return '<i class="seg lit'+(hot?' hot':'')+'" title="'+i.name+': '+n+'"></i>'; }
+    return '<i class="seg '+restClass+'" title="'+i.name+': not fired"></i>';
+  }).join('');
+}
+document.getElementById('gauges').innerHTML=[
+  {cls:'', name:'Agents', sub:'complete record',
+   frac:'<b>'+agentsFired+'</b> / 12 fired',
+   bar:segs(agents,'lit','idle',21),
+   cap:'Every dispatch logged. The 4 empty squares are genuinely idle agents.'},
+  {cls:'', name:'Skills', sub:'instrumentation partial',
+   frac:'<b>'+skillsFired+'</b> / 72 recorded',
+   bar:segs(skills,'lit','unmeasured',21),
+   cap:'Dashed squares are "not yet measured", not "never used" — a floor that Phase 1b will raise.'},
+  {cls:'', name:'Rules', sub:'always-on / path-scoped',
+   frac:'<b>'+rules.length+'</b> active',
+   bar:rules.map(function(){return '<i class="seg always"></i>';}).join(''),
+   cap:'Injected automatically when matching files are touched — no on-demand firing.'}
+].map(function(g){
+  return '<div class="gauge'+(RM?'':' reveal')+'"><div class="top"><div class="name">'+g.name+
+    '<span>'+g.sub+'</span></div><div class="frac">'+g.frac+'</div></div>'+
+    '<div class="segbar">'+g.bar+'</div><div class="cap">'+g.cap+'</div></div>';
+}).join('');
+
+// ---- registry ----
+var chipsEl=document.getElementById('chips');
+var KINDS=[['all','All'],['skill','Skills'],['agent','Agents'],['rule','Rules']];
+var state={kind:'all', q:'', dormant:false, sort:'heat'};
+chipsEl.innerHTML=KINDS.map(function(k){ return '<button class="chip" data-k="'+k[0]+'" aria-pressed="'+(k[0]==='all')+'">'+k[1]+'</button>'; }).join('');
+chipsEl.addEventListener('click', function(e){ var b=e.target.closest('.chip'); if(!b)return;
+  state.kind=b.getAttribute('data-k');
+  chipsEl.querySelectorAll('.chip').forEach(function(c){ c.setAttribute('aria-pressed', c===b); });
+  render(); });
+document.getElementById('q').addEventListener('input', function(e){ state.q=e.target.value.toLowerCase().trim(); render(); });
+document.getElementById('dormant').addEventListener('change', function(e){ state.dormant=e.target.checked; render(); });
+document.getElementById('sort').addEventListener('change', function(e){ state.sort=e.target.value; render(); });
+
+var listEl=document.getElementById('list'), countEl=document.getElementById('count');
+function marker(i){
+  if(i.kind==='rule') return '<span class="mark-rule" title="always-on"></span>';
+  var n=i.inv||0;
+  if(n>0) return '<span class="dot h'+bucket(n)+'" title="'+n+' invocations"></span>';
+  return i.kind==='skill' ? '<span class="dot du" title="not yet measured"></span>'
+                          : '<span class="dot dm" title="idle"></span>';
+}
+function metric(i){
+  if(i.kind==='rule') return '<span class="n on">always-on</span>';
+  var n=i.inv||0;
+  var when=n>0 && i.last ? '<span class="when">'+fmtDate(i.last)+'</span>' : '';
+  return '<span class="n'+(n>0?'':' zero')+'">'+n+'</span>'+when;
+}
+function render(){
+  var rows=items.filter(function(i){
+    if(state.kind!=='all' && i.kind!==state.kind) return false;
+    if(state.dormant && (i.kind==='rule' || (i.inv||0)>0)) return false;
+    if(state.q){ var hay=(i.name+' '+i.desc+' '+i.kind).toLowerCase(); if(hay.indexOf(state.q)<0) return false; }
+    return true;
+  });
+  rows.sort(function(a,b){
+    if(state.sort==='name') return a.name.localeCompare(b.name);
+    if(state.sort==='recent') return (b.last||'').localeCompare(a.last||'');
+    var d=(b.inv||0)-(a.inv||0); if(d) return d; return a.name.localeCompare(b.name);
+  });
+  if(!rows.length){ listEl.innerHTML='<div class="empty-state">No capabilities match that filter.</div>'; countEl.textContent=''; return; }
+  listEl.innerHTML=rows.map(function(i){
+    var d=i.desc ? '<div class="desc">'+esc(i.desc)+'</div>' : '<div class="desc empty">no description captured</div>';
+    return '<div class="row"><div class="marker">'+marker(i)+'</div>'+
+      '<div class="idcell"><div class="cap-name">'+esc(i.name)+'</div>'+
+      '<span class="kind '+i.kind+'">'+i.kind+'</span></div>'+
+      d+'<div class="metric">'+metric(i)+'</div></div>';
+  }).join('');
+  countEl.textContent=rows.length+' of '+items.length+' shown';
+}
+function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+render();
+})();</script>
