@@ -50,19 +50,15 @@ else
   export EMAIL_DRY_RUN
 fi
 
-# ── Deploy: pull latest main before running (llm#510) ─────────────────────────
+# ── Deploy: pull latest main before running (llm#510, attempt #3) ────────────
 # Cron wrappers run against ${REPO_DIR}; without this step every gh pr merge
 # ships nothing — the cron uses whatever was last manually pulled to the main
-# checkout. The fast-forward is silent on success and never overwrites local
-# work because of --ff-only.
-if [ -z "${SKIP_CRON_PULL:-}" ]; then
-    git -C "${REPO_DIR}" fetch origin main 2>/dev/null
-    if git -C "${REPO_DIR}" merge --ff-only origin/main 2>/dev/null; then
-        log "deploy: ff to $(git -C "${REPO_DIR}" rev-parse --short HEAD)"
-    else
-        log "deploy WARN: ff-only failed — running against $(git -C "${REPO_DIR}" rev-parse --short HEAD)"
-    fi
-fi
+# checkout. cron_deploy_pull is dirty-tolerant: it auto-stashes and retries
+# the ff-only merge instead of silently giving up when the tree is dirty
+# (the previous bug — see cron_deploy_pull.sh header for full rationale).
+# shellcheck disable=SC1091
+source "${REPO_DIR}/.claude/scripts/cron_deploy_pull.sh"
+cron_deploy_pull "${REPO_DIR}" log
 log "HEAD: $(git -C "${REPO_DIR}" rev-parse --short HEAD) $(git -C "${REPO_DIR}" log -1 --format='%s')"
 
 # ── Verify nix-shell is accessible (mirrors roborev_daily_cron.sh) ────────────

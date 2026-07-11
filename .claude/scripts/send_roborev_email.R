@@ -264,6 +264,41 @@ if (.d1_has_reviews && .d1_no_throughput) {
   }
 }
 
+# ── Deploy staleness banner (llm#510 attempt #3) ──────────────────────────────
+# cron_deploy_pull.sh (sourced by bin/roborev_daily_cron.sh) writes a status
+# file every run recording whether the local main checkout was successfully
+# brought up to date with origin/main before this email was generated. If the
+# pull failed, or main is still behind, the metrics below were computed
+# against stale code — surface that prominently instead of silently.
+deploy_status_file <- Sys.getenv(
+  "DEPLOY_STATUS_FILE",
+  file.path(Sys.getenv("HOME"), ".claude", "logs", "cron_deploy_status.json")
+)
+deploy_stale_block <- ""
+if (file.exists(deploy_status_file)) {
+  deploy_status <- tryCatch(
+    jsonlite::fromJSON(deploy_status_file, simplifyVector = TRUE),
+    error = function(e) NULL
+  )
+  if (!is.null(deploy_status)) {
+    .ds_ok     <- isTRUE(deploy_status$ok)
+    .ds_behind <- suppressWarnings(as.integer(deploy_status$behind %||% 0L))
+    .ds_behind_positive <- isTRUE(!is.na(.ds_behind) && .ds_behind > 0L)
+    if (!.ds_ok || .ds_behind_positive) {
+      .ds_behind_str <- if (is.na(.ds_behind)) "an unknown number of" else as.character(.ds_behind)
+      deploy_stale_block <- sprintf(
+        '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
+          border-radius:6px; padding:14px 18px; margin:16px 0; font-size:%s;">
+          <strong style="font-size:15px;">&#9888; DEPLOY STALE</strong><br>
+          <span>Local main is %s commit(s) behind origin/main (reason: %s) —
+          merged fixes are NOT live. See llm#510.</span>
+        </div>',
+        EMAIL_FONT_BODY, .ds_behind_str, deploy_status$reason %||% "unknown"
+      )
+    }
+  }
+}
+
 # Zero-action error block (prepended before dashboard CTA when fired — llm#484)
 zero_action_block <- if (zero_action_fired) {
   sprintf(
@@ -279,8 +314,11 @@ zero_action_block <- if (zero_action_fired) {
   )
 } else ""
 
-# Dashboard link CTA (llm#484: zero_action_block prepended when trap fires)
+# Dashboard link CTA (llm#484: zero_action_block prepended when trap fires;
+# llm#510: deploy_stale_block prepended ahead of that when the deploy pull
+# failed or main is still behind origin)
 dashboard_block <- paste0(
+  deploy_stale_block,
   zero_action_block,
   sprintf(
     '<div style="margin: 16px 0;">
