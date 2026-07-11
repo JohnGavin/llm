@@ -72,19 +72,15 @@ fi
 printf '%d' "$$" > "${LOCK_FILE}"
 trap 'rm -f "${LOCK_FILE}"' EXIT
 
-# ── Deploy: pull latest main before running (llm#510) ─────────────────────────
+# ── Deploy: pull latest main before running (llm#510, attempt #3) ────────────
 # Cron wrappers run against ${REPO_ROOT}; without this step every gh pr merge
 # ships nothing — the cron uses whatever was last manually pulled to the main
-# checkout. The fast-forward is silent on success and never overwrites local
-# work because of --ff-only.
-if [ -z "${SKIP_CRON_PULL:-}" ]; then
-    git -C "${REPO_ROOT}" fetch origin main 2>/dev/null
-    if git -C "${REPO_ROOT}" merge --ff-only origin/main 2>/dev/null; then
-        log "deploy: ff to $(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
-    else
-        log "deploy WARN: ff-only failed — running against $(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
-    fi
-fi
+# checkout. cron_deploy_pull is dirty-tolerant: it auto-stashes and retries
+# the ff-only merge instead of silently giving up when the tree is dirty
+# (the previous bug — see cron_deploy_pull.sh header for full rationale).
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/cron_deploy_pull.sh"
+cron_deploy_pull "${REPO_ROOT}" log
 log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
 
 # ── Load credentials from env file ────────────────────────────────────────────
