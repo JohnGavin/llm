@@ -253,4 +253,22 @@ if [ -x "$_SLUG_SCRIPT" ]; then
   printf '%s\t%s\t%s\n' "$_INDEX_TS" "$_INDEX_BRANCH" "$_INDEX_SLUG" >> "$_SESSION_INDEX_LOG"
 fi
 
+# #770: Batch pending memory/rule prose edits into a PR ───────────────────
+# Root cause (llm#510): orchestrator sessions leave .claude/memory/*.md,
+# .claude/rules/*.md, and CHANGELOG.md edits uncommitted in the main
+# checkout, keeping it chronically dirty and jamming the cron deploy pull
+# (cron_deploy_pull.sh has to autostash/retry instead of a clean
+# fast-forward every run). Route any pending prose edits into a branch + PR
+# here so the checkout returns to clean between sessions. Never blocks
+# session end (non-fatal, bounded by timeout); never pushes to main
+# directly — always opens a PR (pr-shipping-discipline rule).
+# Opt-out: SKIP_MEM_PR=1.
+_MEM_PR_SCRIPT="$CLAUDE_DIR/scripts/mem_pr.sh"
+_MEM_PR_REPO="${CLAUDE_PROJECT_DIR:-$HOME/docs_gh/llm}"
+_MEM_PR_LOG="$CLAUDE_RUNTIME_ROOT/logs/mem_pr.log"
+if [ -x "$_MEM_PR_SCRIPT" ]; then
+  mkdir -p "$(dirname "$_MEM_PR_LOG")"
+  timeout 60 "$_MEM_PR_SCRIPT" "$_MEM_PR_REPO" >> "$_MEM_PR_LOG" 2>&1 || true
+fi
+
 exit 0
