@@ -639,6 +639,33 @@ cron_health <- safe_query("
     plist_label
 ")
 
+# Freshness guard (llm#510 attempt #3): the ROW_NUMBER()-partitioned query
+# above answers "what is the latest known state per plist", which is only
+# trustworthy if the launchd_health_events table itself has been refreshed
+# recently. If the table's sole weekly writer (launchd_health_weekly_cron.sh)
+# has not fired in a while, every row below is stale — a "failed" state may
+# just be old news, not a current problem. Surfaced after the false-positive
+# "5 failed" report on 2026-07-11 (metrics-etl/self-review/weekly-rollup were
+# actually last-exit 0 per `launchctl print`; the table just hadn't refreshed).
+cron_freshness <- safe_query("SELECT MAX(fired_at) AS newest_fired_at FROM launchd_health_events")
+cron_stale_note <- ""
+if (nrow(cron_freshness) > 0L) {
+  .newest_fired_at <- cron_freshness$newest_fired_at[[1]]
+  if (!is.null(.newest_fired_at) && !is.na(.newest_fired_at)) {
+    .cron_age_hours <- as.numeric(difftime(Sys.time(),
+                                            as.POSIXct(.newest_fired_at, tz = "UTC"),
+                                            units = "hours"))
+    if (!is.na(.cron_age_hours) && .cron_age_hours > 48) {
+      cron_stale_note <- sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-bottom:8px;">
+  &#9888; launchd_health_events is stale (newest row %s, %.0fh old) — \'failed\'
+  states below may be historical, not current. Verify with <code>launchctl print</code>.</p>',
+        EMAIL_FONT_SUBTITLE, .newest_fired_at, .cron_age_hours
+      )
+    }
+  }
+}
+
 if (nrow(cron_health) > 0L) {
   n_fail  <- sum(cron_health$state %in% c("loaded_recent_fail", "unloaded", "missing"),
                  na.rm = TRUE)
@@ -671,7 +698,9 @@ if (nrow(cron_health) > 0L) {
     )
   }), collapse = "\n")
 
-  cron_table_html <- sprintf(
+  cron_table_html <- paste0(
+    cron_stale_note,
+    sprintf(
     '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
 <thead>
 <tr style="background-color:%s;">
@@ -685,6 +714,7 @@ if (nrow(cron_health) > 0L) {
 <tbody>%s</tbody>
 </table>',
     DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, cron_rows_html
+    )
   )
   if (n_fail > 0L) {
     cron_table_html <- paste0(
@@ -701,9 +731,12 @@ if (nrow(cron_health) > 0L) {
     n_plists, n_ok, n_fail
   )
 } else {
-  cron_table_html <- sprintf(
-    '<p style="color:%s;font-size:%s;">No launchd_health_events recorded yet.</p>',
-    DARK_MUTED, EMAIL_FONT_BODY
+  cron_table_html <- paste0(
+    cron_stale_note,
+    sprintf(
+      '<p style="color:%s;font-size:%s;">No launchd_health_events recorded yet.</p>',
+      DARK_MUTED, EMAIL_FONT_BODY
+    )
   )
   sec3e_summary <- "no data yet"
 }
