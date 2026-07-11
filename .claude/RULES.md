@@ -4,7 +4,7 @@ Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-r
 
 | Group | Rules |
 |---|---|
-| **Core** | `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`, `cross-cutting-rename`, `branch-harvest-on-fork`, `pr-shipping-discipline`, `skills-vs-mcp` |
+| **Core** | `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`, `cross-cutting-rename`, `branch-harvest-on-fork`, `pr-shipping-discipline`, `skills-vs-mcp`, `press-release-first` |
 | **Nix** | `nix-agent-shell-protocol`, `nix-nested-shell-isolation` |
 | **MCP** | `btw-timeouts` |
 | **Bash** | `bash-safety` |
@@ -17,7 +17,7 @@ Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-r
 | **Knowledge** | `wiki-conventions` |
 | **Quality** | `accessibility`, `analytical-review-checklist`, `analysis-rationale-mandatory`, `braindump-closed-loop` |
 | **Security** | `destructive-fs-guard`, `destructive-ops-guard`, `permission-discipline`, `backup-architecture` |
-| **Other** | `website-index-update`, `t-lang-r-package`, `huggingface-upload`, `gh-pages-nojekyll`, `namespace-discipline`, `portable-paths`, `project-charter`, `roborev-resolution`, `single-change-experiment`, `snapshot-tests-mandatory`, `search-all-pipeline-stages`, `audience-communication` |
+| **Other** | `website-index-update`, `t-lang-r-package`, `huggingface-upload`, `gh-pages-nojekyll`, `namespace-discipline`, `portable-paths`, `project-charter`, `roborev-resolution`, `single-change-experiment`, `snapshot-tests-mandatory`, `search-all-pipeline-stages`, `audience-communication`, `content-licensing` |
 
 ## Adding a new rule
 
