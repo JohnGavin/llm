@@ -26,6 +26,25 @@ silently, with no console error.
 repo already does — a plain ```` ```{mermaid} ```` chunk on a normal
 page renders correctly.
 
+## Dark-mode rendering (mermaid-specific)
+
+Page-level `color-scheme: dark` (see `accessibility.md` Clause 0) is
+necessary but not sufficient — mermaid has its own dark-rendering bug
+independent of the page setting:
+
+- The `%%{init: {theme:'dark'}}%%` directive is honoured for most
+  elements, but mermaid's `<foreignObject>` HTML labels (node/edge text)
+  render with the browser's default **white** background regardless of
+  the theme directive.
+- Fix: set fills explicitly instead of relying on the theme alone —
+  either `themeVariables` (`background`, `primaryColor`,
+  `primaryTextColor`, `clusterBkg`, `clusterBorder`) in
+  `mermaid.initialize()`, or per-node `style ID fill:…,color:…` /
+  `classDef` directives in the diagram source itself.
+- Subgraph backgrounds default to browser white and must be set dark
+  explicitly (e.g. `style SUBGRAPH_ID fill:#000,stroke:#fff`) — a
+  diagram isn't done until subgraph backgrounds are dark, not white.
+
 ## Enforcement
 
 The `mermaid_dashboard_guard.sh` hook (`PreToolUse:Edit|Write`, wired in

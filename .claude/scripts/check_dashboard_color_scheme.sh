@@ -11,8 +11,10 @@
 #   :root { color-scheme: dark; }               (CSS, redundant belt)
 #
 # Origin: premortem issue 0027 (5 merged iterations on the wrong layer),
-# llm#584. See `accessibility` rule Part 2 Clause 0 and
-# `mermaid-dashboard-pattern` Step 0.
+# llm#584. See `accessibility` rule Part 2 Clause 0 (this script checks
+# only the page-level declaration; for the separate mermaid <foreignObject>
+# dark-render bug see `mermaid-dashboard-pattern`'s "Dark-mode rendering
+# (mermaid-specific)" section).
 #
 # Usage:
 #   check_dashboard_color_scheme.sh <dir>     # scan every *.html under <dir>
