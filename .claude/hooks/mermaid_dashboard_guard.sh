@@ -7,8 +7,8 @@
 # is visible, leaving SVGs zero-sized.
 #
 # Rule: mermaid-dashboard-pattern
-# Lessons: L-10, L-11 in JohnGavin/premortem knowledge_base/lessons_learnt.md
-# Reference template: ~/docs_gh/llm/.claude/templates/mermaid-dashboard/
+# Fix: move the diagram outside the panel-tabset onto a flat page — that
+# is what every live vignette in this repo already does.
 #
 # Exit codes:
 #   0  allowed (no .qmd, no problematic content, or escape hatch)
@@ -73,11 +73,12 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   [ "$rc" = "0" ] && _ok "ignores non-.qmd files" \
                   || _fail "wrongly blocked non-.qmd (rc=$rc)"
 
-  # 5. Mount-div pattern (the recommended replacement) → ALLOW
+  # 5. Non-mermaid content (e.g. a plain div) inside a panel-tabset → ALLOW
+  #    (only the specific tabset+mermaid-chunk combo is blocked)
   p5='{"tool":"Write","tool_input":{"file_path":"/tmp/dash2.qmd","content":"::: {.panel-tabset}\n## Architecture\n<div id=\"arch-mount\"></div>\n:::\n"}}'
   rc=$(run_case "$p5")
-  [ "$rc" = "0" ] && _ok "allows mount-div pattern in tabset" \
-                  || _fail "wrongly blocked mount-div (rc=$rc)"
+  [ "$rc" = "0" ] && _ok "allows non-mermaid content in tabset" \
+                  || _fail "wrongly blocked non-mermaid content (rc=$rc)"
 
   # 6. Edit tool variant (not just Write) → BLOCK same payload
   p6='{"tool":"Edit","tool_input":{"file_path":"/tmp/dash.qmd","new_string":"::: {.panel-tabset}\n```{mermaid}\ngraph TD\n  A-->B\n```\n:::"}}'
@@ -143,16 +144,12 @@ This edit would put a \`\`\`{mermaid} chunk inside a
 mode: Quarto's mermaid loader fires on window.load when only the first
 tab is visible, leaving SVGs zero-sized in hidden tabs.
 
-Use the dashboard pattern instead:
-  1. Replace the {mermaid} chunk with a mount div, e.g.
-     <div id="my-arch-mount" style="min-height:520px;"></div>
-  2. Define the diagram in dashboard/<project>-diagrams.js
-  3. Inline-load it via include-after-body in your qmd YAML.
+Fix: move the diagram OUTSIDE the panel-tabset onto a flat page. A plain
+\`\`\`{mermaid} chunk on a normal (non-tabset) page renders correctly —
+this is what every live vignette in this repo already does.
 
 See:
-  - Rule:     ~/docs_gh/llm/.claude/rules/mermaid-dashboard-pattern.md
-  - Template: ~/docs_gh/llm/.claude/templates/mermaid-dashboard/
-  - Lessons:  premortem knowledge_base/lessons_learnt.md L-10/L-11
+  - Rule: ~/docs_gh/llm/.claude/rules/mermaid-dashboard-pattern.md
 
 Bypass for one-off (e.g. you really mean a flat-page diagram you'll
 move outside the tabset later): set CLAUDE_MERMAID_DASHBOARD_GUARD=0
