@@ -24,7 +24,10 @@ query_db <- function(sql, fallback = data.frame()) {
 }
 
 # Compact metric table (2-col) replacing value_box
-metric_table_ui <- function(metrics) {
+# value_colors: optional character vector, one colour per row (recycled to
+# "#fff" when NULL), used to highlight specific rows (e.g. a "% used" row).
+metric_table_ui <- function(metrics, value_colors = NULL) {
+  if (is.null(value_colors)) value_colors <- rep("#fff", nrow(metrics))
   rows <- lapply(seq_len(nrow(metrics)), function(i) {
     shiny::tags$tr(
       shiny::tags$td(
@@ -32,7 +35,7 @@ metric_table_ui <- function(metrics) {
         metrics$metric[i]
       ),
       shiny::tags$td(
-        style = "color:#fff; padding:4px; font-weight:600; font-size:0.95rem;",
+        style = paste0("color:", value_colors[i], "; padding:4px; font-weight:600; font-size:0.95rem;"),
         metrics$value[i]
       )
     )
@@ -41,6 +44,53 @@ metric_table_ui <- function(metrics) {
     style = "border-collapse:collapse; margin-bottom:8px;",
     shiny::tags$tbody(rows)
   )
+}
+
+# Compact horizontal progress bar (used for window/budget cap usage).
+# pct: 0-100 (values above 100 are clamped). cap_label: text after "N% of ".
+progress_bar_ui <- function(pct, cap_label, margin = "margin: 4px 0 8px 0;") {
+  pct <- min(100, pct)
+  bar_color <- if (pct >= 80) "#e74c3c" else if (pct >= 60) "#f39c12" else "#2ecc71"
+  shiny::div(
+    style = margin,
+    shiny::div(
+      style = paste0(
+        "background:#333; border-radius:4px; height:24px; ",
+        "width:100%; position:relative;"
+      ),
+      shiny::div(
+        style = paste0(
+          "background:", bar_color, "; border-radius:4px; height:24px; ",
+          "width:", round(pct, 1), "%; position:absolute; top:0; left:0;"
+        )
+      ),
+      shiny::div(
+        style = paste0(
+          "position:absolute; top:0; left:0; width:100%; height:24px; ",
+          "display:flex; align-items:center; justify-content:center; ",
+          "color:#fff; font-size:0.85rem; font-weight:600;"
+        ),
+        paste0(round(pct, 1), "% of ", cap_label)
+      )
+    )
+  )
+}
+
+# Styled "no data" placeholder for plotly outputs. type/mode select the
+# underlying trace type (needed so the empty canvas matches the real chart).
+empty_plot <- function(msg, type = "bar", mode = NULL) {
+  p <- if (is.null(mode)) {
+    plotly::plot_ly(type = type)
+  } else {
+    plotly::plot_ly(type = type, mode = mode)
+  }
+  p <- plotly::add_annotations(
+    p,
+    text = msg,
+    x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+    showarrow = FALSE, font = list(color = "#aaa", size = 14)
+  )
+  plotly_dark_layout(p)
 }
 
 plotly_dark_layout <- function(p, title = NULL) {
@@ -453,13 +503,7 @@ server <- function(input, output, session) {
   output$daily_cost_bar <- plotly::renderPlotly({
     df <- daily_cost_data()
     if (nrow(df) == 0) {
-      p <- plotly::plot_ly(type = "bar") |>
-        plotly::add_annotations(
-          text = "No cost data for selected range",
-          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-          showarrow = FALSE, font = list(color = "#aaa", size = 14)
-        )
-      return(plotly_dark_layout(p))
+      return(empty_plot("No cost data for selected range"))
     }
     p <- plotly::plot_ly(df, x = ~date) |>
       plotly::add_bars(y = ~opus_cost,   name = "Opus",   marker = list(color = "#e74c3c")) |>
@@ -494,13 +538,7 @@ server <- function(input, output, session) {
   output$daily_sessions_project <- plotly::renderPlotly({
     df <- daily_sessions_proj_data()
     if (nrow(df) == 0) {
-      p <- plotly::plot_ly(type = "bar") |>
-        plotly::add_annotations(
-          text = "No session data for selected range",
-          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-          showarrow = FALSE, font = list(color = "#aaa", size = 14)
-        )
-      return(plotly_dark_layout(p))
+      return(empty_plot("No session data for selected range"))
     }
     projects <- unique(df$project)
     p <- plotly::plot_ly()
@@ -536,13 +574,7 @@ server <- function(input, output, session) {
   output$cumulative_cost_line <- plotly::renderPlotly({
     df <- costs_all()
     if (nrow(df) == 0) {
-      p <- plotly::plot_ly(type = "scatter", mode = "lines") |>
-        plotly::add_annotations(
-          text = "No cost data for selected range",
-          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-          showarrow = FALSE, font = list(color = "#aaa", size = 14)
-        )
-      return(plotly_dark_layout(p))
+      return(empty_plot("No cost data for selected range", type = "scatter", mode = "lines"))
     }
     df$cumcost <- cumsum(df$total_cost)
     cap <- 500
@@ -562,13 +594,7 @@ server <- function(input, output, session) {
   output$model_mix_area <- plotly::renderPlotly({
     df <- costs_all()
     if (nrow(df) == 0) {
-      p <- plotly::plot_ly(type = "scatter", mode = "lines") |>
-        plotly::add_annotations(
-          text = "No cost data for selected range",
-          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-          showarrow = FALSE, font = list(color = "#aaa", size = 14)
-        )
-      return(plotly_dark_layout(p))
+      return(empty_plot("No cost data for selected range", type = "scatter", mode = "lines"))
     }
     p <- plotly::plot_ly(df, x = ~date) |>
       plotly::add_lines(
@@ -711,53 +737,15 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
 
-    rows <- lapply(seq_len(nrow(metrics)), function(i) {
-      val_color <- if (metrics$metric[i] == "% used") pct_col else "#fff"
-      shiny::tags$tr(
-        shiny::tags$td(
-          style = "color:#aaa; padding:4px 12px 4px 4px; font-size:0.85rem;",
-          metrics$metric[i]
-        ),
-        shiny::tags$td(
-          style = paste0("color:", val_color, "; padding:4px; font-weight:600; font-size:0.95rem;"),
-          metrics$value[i]
-        )
-      )
-    })
-    shiny::tags$table(
-      style = "border-collapse:collapse; margin-bottom:8px;",
-      shiny::tags$tbody(rows)
-    )
+    value_colors <- ifelse(metrics$metric == "% used", pct_col, "#fff")
+    metric_table_ui(metrics, value_colors)
   })
 
   output$window_progress_bar <- shiny::renderUI({
-    w         <- window_data()
-    cap       <- 140
-    pct       <- min(100, if (cap > 0) w$total / cap * 100 else 0)
-    bar_color <- if (pct >= 80) "#e74c3c" else if (pct >= 60) "#f39c12" else "#2ecc71"
-    shiny::div(
-      style = "margin: 4px 0 8px 0;",
-      shiny::div(
-        style = paste0(
-          "background:#333; border-radius:4px; height:24px; ",
-          "width:100%; position:relative;"
-        ),
-        shiny::div(
-          style = paste0(
-            "background:", bar_color, "; border-radius:4px; height:24px; ",
-            "width:", round(pct, 1), "%; position:absolute; top:0; left:0;"
-          )
-        ),
-        shiny::div(
-          style = paste0(
-            "position:absolute; top:0; left:0; width:100%; height:24px; ",
-            "display:flex; align-items:center; justify-content:center; ",
-            "color:#fff; font-size:0.85rem; font-weight:600;"
-          ),
-          paste0(round(pct, 1), "% of $140 cap")
-        )
-      )
-    )
+    w   <- window_data()
+    cap <- 140
+    pct <- if (cap > 0) w$total / cap * 100 else 0
+    progress_bar_ui(pct, "$140 cap", margin = "margin: 4px 0 8px 0;")
   })
 
   output$budget_alert <- shiny::renderUI({
@@ -815,52 +803,13 @@ server <- function(input, output, session) {
       ),
       stringsAsFactors = FALSE
     )
-    rows <- lapply(seq_len(nrow(metrics)), function(i) {
-      val_color <- if (metrics$metric[i] == "% used") pct_color else "#fff"
-      shiny::tags$tr(
-        shiny::tags$td(
-          style = "color:#aaa; padding:4px 12px 4px 4px; font-size:0.85rem;",
-          metrics$metric[i]
-        ),
-        shiny::tags$td(
-          style = paste0("color:", val_color, "; padding:4px; font-weight:600; font-size:0.95rem;"),
-          metrics$value[i]
-        )
-      )
-    })
-    shiny::tags$table(
-      style = "border-collapse:collapse; margin-bottom:8px;",
-      shiny::tags$tbody(rows)
-    )
+    value_colors <- ifelse(metrics$metric == "% used", pct_color, "#fff")
+    metric_table_ui(metrics, value_colors)
   })
 
   output$budget_progress_bar <- shiny::renderUI({
-    b   <- budget_projection()
-    pct <- min(100, b$pct_used)
-    bar_color <- if (pct >= 80) "#e74c3c" else if (pct >= 60) "#f39c12" else "#2ecc71"
-    shiny::div(
-      style = "margin: 8px 0 16px 0;",
-      shiny::div(
-        style = paste0(
-          "background:#333; border-radius:4px; height:24px; ",
-          "width:100%; position:relative;"
-        ),
-        shiny::div(
-          style = paste0(
-            "background:", bar_color, "; border-radius:4px; height:24px; ",
-            "width:", round(pct, 1), "%; position:absolute; top:0; left:0;"
-          )
-        ),
-        shiny::div(
-          style = paste0(
-            "position:absolute; top:0; left:0; width:100%; height:24px; ",
-            "display:flex; align-items:center; justify-content:center; ",
-            "color:#fff; font-size:0.85rem; font-weight:600;"
-          ),
-          paste0(round(pct, 1), "% of $", round(b$cap, 0), " cap")
-        )
-      )
-    )
+    b <- budget_projection()
+    progress_bar_ui(b$pct_used, paste0("$", round(b$cap, 0), " cap"), margin = "margin: 8px 0 16px 0;")
   })
 
   # ---- Time tab ------------------------------------------------------------
@@ -891,13 +840,7 @@ server <- function(input, output, session) {
   output$daily_time_project <- plotly::renderPlotly({
     df <- daily_time_proj_data()
     if (nrow(df) == 0) {
-      p <- plotly::plot_ly(type = "bar") |>
-        plotly::add_annotations(
-          text = "No session time data for last 10 days",
-          x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-          showarrow = FALSE, font = list(color = "#aaa", size = 14)
-        )
-      return(plotly_dark_layout(p))
+      return(empty_plot("No session time data for last 10 days"))
     }
     projects <- unique(df$project)
     p <- plotly::plot_ly()
