@@ -93,14 +93,18 @@ empty_plot <- function(msg, type = "bar", mode = NULL) {
   plotly_dark_layout(p)
 }
 
-plotly_dark_layout <- function(p, title = NULL) {
+plotly_dark_layout <- function(p, title = NULL, rangeslider = FALSE) {
+  xaxis <- list(gridcolor = "#333", zerolinecolor = "#333", color = "#fff")
+  if (isTRUE(rangeslider)) {
+    xaxis$rangeslider <- list(visible = TRUE)
+  }
   plotly::layout(
     p,
     title         = if (!is.null(title)) list(text = title, font = list(color = "#fff")) else NULL,
     paper_bgcolor = "#000000",
     plot_bgcolor  = "#000000",
     font          = list(color = "#ffffff"),
-    xaxis         = list(gridcolor = "#333", zerolinecolor = "#333", color = "#fff"),
+    xaxis         = xaxis,
     yaxis         = list(gridcolor = "#333", zerolinecolor = "#333", color = "#fff"),
     legend        = list(
       orientation = "h", xanchor = "center", x = 0.5,
@@ -510,7 +514,7 @@ server <- function(input, output, session) {
       plotly::add_bars(y = ~sonnet_cost, name = "Sonnet", marker = list(color = "#3498db")) |>
       plotly::add_bars(y = ~haiku_cost,  name = "Haiku",  marker = list(color = "#2ecc71")) |>
       plotly::layout(barmode = "stack", yaxis = list(title = "USD"))
-    plotly_dark_layout(p)
+    plotly_dark_layout(p, rangeslider = TRUE)
   })
 
   # Daily sessions by project (stacked bar)
@@ -547,7 +551,7 @@ server <- function(input, output, session) {
       p <- plotly::add_bars(p, x = sub$date, y = sub$n_sessions, name = proj)
     }
     p <- plotly::layout(p, barmode = "stack", yaxis = list(title = "Sessions"))
-    plotly_dark_layout(p)
+    plotly_dark_layout(p, rangeslider = TRUE)
   })
 
   # ---- Costs tab -----------------------------------------------------------
@@ -588,7 +592,7 @@ server <- function(input, output, session) {
         line = list(color = "#e74c3c", dash = "dash", width = 1.5)
       ) |>
       plotly::layout(yaxis = list(title = "USD"))
-    plotly_dark_layout(p, "Cumulative cost vs $500 cap")
+    plotly_dark_layout(p, "Cumulative cost vs $500 cap", rangeslider = TRUE)
   })
 
   output$model_mix_area <- plotly::renderPlotly({
@@ -613,7 +617,7 @@ server <- function(input, output, session) {
         line = list(color = "#2ecc71")
       ) |>
       plotly::layout(yaxis = list(title = "%", range = c(0, 100)))
-    plotly_dark_layout(p, "Model mix (%)")
+    plotly_dark_layout(p, "Model mix (%)", rangeslider = TRUE)
   })
 
   output$costs_tbl <- DT::renderDataTable({
@@ -849,7 +853,7 @@ server <- function(input, output, session) {
       p <- plotly::add_bars(p, x = sub$date, y = sub$total_min, name = proj)
     }
     p <- plotly::layout(p, barmode = "stack", yaxis = list(title = "Minutes"))
-    plotly_dark_layout(p)
+    plotly_dark_layout(p, rangeslider = TRUE)
   })
 
   # Recent sessions table
