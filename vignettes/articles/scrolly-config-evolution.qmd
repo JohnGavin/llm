@@ -13,29 +13,12 @@ execute:
 ---
 
 {{< include /_includes/hover-popups.qmd >}}
+{{< include /_includes/_safe-tar-read.qmd >}}
 
 ```{r setup}
 #| include: false
 library(ggplot2)
 library(dplyr)
-
-safe_tar_read <- function(name) {
-  store <- tryCatch({
-    owd <- setwd(here::here())
-    on.exit(setwd(owd))
-    normalizePath(targets::tar_config_get("store"))
-  }, error = function(e) NULL)
-  if (!is.null(store)) {
-    obj <- tryCatch(targets::tar_read_raw(name, store = store), error = function(e) NULL)
-    if (!is.null(obj)) return(obj)
-  }
-  for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
-              file.path(here::here(), "inst/extdata/vignettes"))) {
-    rds <- file.path(d, paste0(name, ".rds"))
-    if (file.exists(rds)) return(readRDS(rds))
-  }
-  NULL
-}
 
 cfg <- safe_tar_read("vig_scrolly_config")
 if (is.null(cfg)) {
