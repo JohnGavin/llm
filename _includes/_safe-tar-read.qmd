@@ -1,0 +1,44 @@
+<!-- _includes/_safe-tar-read.qmd
+     Shared safe_tar_read() helper. Reads a target from the live targets
+     store when available, else falls back to a pre-computed RDS snapshot
+     under inst/extdata/vignettes/ (used for CRAN/pkgdown builds where no
+     _targets/ store exists).
+     Usage: {{< include /_includes/_safe-tar-read.qmd >}}
+     Set wrap_df = TRUE at call sites that need data.frame results
+     re-wrapped as a DT::datatable() on the RDS-fallback path (the store
+     path never wraps — the live object already carries its own class).
+-->
+
+```{r safe-tar-read-setup}
+#| include: false
+
+safe_tar_read <- function(name, wrap_df = FALSE) {
+  store <- tryCatch({
+    owd <- setwd(here::here())
+    on.exit(setwd(owd))
+    normalizePath(targets::tar_config_get("store"))
+  }, error = function(e) NULL)
+
+  if (!is.null(store)) {
+    obj <- tryCatch(targets::tar_read_raw(name, store = store), error = function(e) NULL)
+    if (!is.null(obj)) return(obj)
+  }
+
+  for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
+              file.path(here::here(), "inst/extdata/vignettes"))) {
+    rds <- file.path(d, paste0(name, ".rds"))
+    if (file.exists(rds)) {
+      obj <- readRDS(rds)
+      if (wrap_df && is.data.frame(obj) && requireNamespace("DT", quietly = TRUE)) {
+        # Re-wrap data.frames as DT widgets (RDS stripped Nix paths)
+        cap <- attr(obj, "dt_caption")
+        return(DT::datatable(obj, rownames = FALSE, filter = "top",
+          options = list(pageLength = 15, scrollX = TRUE),
+          caption = if (!is.null(cap)) htmltools::HTML(cap)))
+      }
+      return(obj)
+    }
+  }
+  invisible(NULL)
+}
+```
