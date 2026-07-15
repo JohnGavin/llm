@@ -25,18 +25,19 @@ website:
     left:
       - href: index.qmd
         text: Home
-      - href: https://johngavin.github.io/llmtelemetry/
-        text: Telemetry
       - text: Dashboards
         menu:
           - href: vignettes/config-evolution.qmd
             text: Config Evolution
           - href: vignettes/knowledge-evolution.qmd
             text: Knowledge Base
-      - href: vignettes/closeread-infrastructure.qmd
-        text: Infrastructure
-      - href: vignettes/articles/closeread-config.qmd
-        text: Config Stack
+          - href: vignettes/closeread-infrastructure.qmd
+            text: Infrastructure
+          - href: vignettes/articles/closeread-config.qmd
+            text: Config Stack
+          - href: https://johngavin.github.io/llmtelemetry/
+            text: Telemetry
+            target: _blank
       - href: vignettes/articles/llm-assisted-tips.qmd
         text: LLM-assisted Tips
       - text: Roborev
