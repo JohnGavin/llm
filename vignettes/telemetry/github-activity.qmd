@@ -1,0 +1,42 @@
+---
+title: "GitHub Activity"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: false
+    page-layout: full
+    code-fold: true
+---
+
+{{< include _setup.qmd >}}
+{{< include ../../_includes/pages-nav.qmd >}}
+
+Repository timeline, commit velocity, issues, pull requests, and CI workflows.
+
+::: {.panel-tabset}
+
+## Commit Velocity
+
+```{r commit-velocity}
+safe_tar_read("vig_commit_velocity_table", wrap_df = TRUE)
+```
+
+## Issues & PRs
+
+```{r github-activity}
+safe_tar_read("vig_github_activity_table", wrap_df = TRUE)
+```
+
+## CI Workflow Runtimes
+
+```{r ci-plot, fig.cap="Box plot of successful GitHub Actions workflow runtimes by workflow name."}
+safe_tar_read("vig_workflow_plot", wrap_df = TRUE)
+```
+
+## Git History
+
+```{r git-hist, fig.cap="Daily commit frequency over the last 100 commits."}
+safe_tar_read("vig_git_history_plot", wrap_df = TRUE)
+```
+
+:::
