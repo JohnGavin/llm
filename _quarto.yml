@@ -5,7 +5,10 @@ project:
     - "index.qmd"
     - "vignettes/*.qmd"
     - "vignettes/telemetry/*.qmd"
+    - "vignettes/config-evolution/*.qmd"
+    - "vignettes/knowledge-evolution/*.qmd"
     - "vignettes/articles/*.qmd"
+    - "vignettes/articles/llm-assisted-tips/*.qmd"
   post-render:
     # Fail the render if any internal link 404s (JohnGavin/llm#715).
     - .claude/scripts/quarto_post_render_links.sh
@@ -28,9 +31,9 @@ website:
         text: Home
       - text: Dashboards
         menu:
-          - href: vignettes/config-evolution.qmd
+          - href: vignettes/config-evolution/index.qmd
             text: Config Evolution
-          - href: vignettes/knowledge-evolution.qmd
+          - href: vignettes/knowledge-evolution/index.qmd
             text: Knowledge Base
           - href: vignettes/closeread-infrastructure.qmd
             text: Infrastructure
@@ -39,7 +42,7 @@ website:
           - href: https://johngavin.github.io/llmtelemetry/
             text: Telemetry
             target: _blank
-      - href: vignettes/articles/llm-assisted-tips.qmd
+      - href: vignettes/articles/llm-assisted-tips/index.qmd
         text: LLM-assisted Tips
       - text: Roborev
         menu:

@@ -1,0 +1,74 @@
+---
+title: "Overview"
+image: man/figures/vignette-config-evolution.svg
+format:
+  html:
+    page-layout: full
+    toc: false
+execute:
+  echo: false
+  warning: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+Track the evolution of Claude Code global configuration: rules, skills, agents, hooks, and memories.
+
+## Current Snapshot
+
+::: {.grid}
+
+::: {.g-col-3}
+### Rules
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "rules", item == "all", metric == "count") |> pull(value)
+  cat("####", n)
+} else {
+  cat("####", fallback_counts$n_rules)
+}
+```
+:::
+
+::: {.g-col-3}
+### Skills
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "skills", item == "all", metric == "count") |> pull(value)
+  cat("####", n)
+} else {
+  cat("####", fallback_counts$n_skills)
+}
+```
+:::
+
+::: {.g-col-3}
+### Hooks
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "hooks", item == "all", metric == "count") |> pull(value)
+  cat("####", n)
+} else {
+  cat("####", fallback_counts$n_hooks)
+}
+```
+:::
+
+::: {.g-col-3}
+### Total Tokens
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "total", metric == "tokens_estimate") |> pull(value)
+  cat("####", comma(n))
+} else {
+  cat("####", comma(fallback_counts$total_tokens))
+}
+```
+:::
+
+:::
