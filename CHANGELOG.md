@@ -4,6 +4,23 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-17 — vignette paging (#778), publish-gate grob/blank-plot fixes, dead telemetry tables
+
+### Completed
+- #778 vignette restructure: every non-closeread vignette (telemetry, config-evolution, knowledge-evolution, llm-assisted-tips, roborev-architecture, hover-popup-demo) now uses top-nav "pages" per top-level section + `.panel-tabset` subsections; mermaid kept flat (never in tabsets); 3 closeread scrollytelling narratives exempt. PRs #779 / #781 / #782.
+- Fixed publish-blocking `#> NULL` leak: `safe_tar_read()` now draws grob/gtable targets via `grid::grid.draw()` (#783), and attaches `ggplot2`/`gtable` so those draw methods dispatch (#786) — the real blank-plot fix.
+- Dead telemetry tables (#784): `agent_runs` logging decoupled from the fragile `.current_session` marker (payload `session_id` → marker → DB self-heal → graceful exit); `errors` retired from freshness tracking (no producer). PR #785, merged + live.
+- Filed #787 (QA gate blind to blank images). Moved + tabulated 27 English subtitles (Normal.People.S01) out of band.
+
+### Failed Approaches
+- Blank prediction plots misdiagnosed twice — first as a gtable/DESCRIPTION issue (#780), then as "version-stale RDS" — before adversarial pixel-level verification proved the RDS were fine and the real cause was `ggplot2` never `library()`-attached in the render chain, so `grid.draw()` silently no-ops → blank canvas. Fix: attach ggplot2 in the shared include (#786). Lesson: the `#> NULL` scanner is blind to blank images, so a text-green gate masked a silently-blank deploy (#787).
+
+### Known Limitations
+- QA publish gate does not detect blank/near-blank plot PNGs (#787).
+- `.current_session` marker regression root cause (~2026-07-14) unpinned; logging is now robust regardless (#784).
+- roborev unhealthy: gemini agent crashes all jobs (564 backlog, 0 verdicts) — needs agent reconfig + daemon restart.
+- ctx cache: 2 missing (`ggraph`, `igraph`), 7 other-version, 11 stale — `ctx_sync` deferred.
+
 ## 2026-07-09 — config simplification sweep, roborev fallback fix, cron re-verification
 
 ### Completed
