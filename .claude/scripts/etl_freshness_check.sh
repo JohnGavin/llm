@@ -66,7 +66,7 @@ THRESH_RED=2592000        # 30 days
 TRACKED_TABLES=(
     # ── Core session infrastructure ────────────────────────────────────────
     "hook_events:fired_at:rate"
-    "errors:logged_at"
+    # errors: retired from tracking — no producer (llm#784); re-add when a producer is wired
     "agent_runs:started_at:rate"
     "sessions:started_at"
     "self_review_findings_stage1:detected_at"

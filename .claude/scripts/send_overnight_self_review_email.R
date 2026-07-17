@@ -174,14 +174,16 @@ sec1_block <- collapsible_block(
 )
 
 # ── Section 2: Source table volume (last 24h) — ETL starvation detector ────────
-source_tables <- c("sessions", "agent_runs", "hook_events", "errors")
+# errors: retired from this DEAD/STALE flagging set — no producer (llm#784);
+# re-add when a producer is wired. Table still appears in Section 3 below
+# (cumulative totals only, no alarm).
+source_tables <- c("sessions", "agent_runs", "hook_events")
 
 sec2_rows <- lapply(source_tables, function(tbl) {
   ts_col <- switch(tbl,
     sessions   = "started_at",
     agent_runs = "started_at",
-    hook_events = "fired_at",
-    errors     = "logged_at"
+    hook_events = "fired_at"
   )
 
   info <- safe_query(sprintf("
