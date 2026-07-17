@@ -1,0 +1,40 @@
+---
+title: "Overview"
+image: ../../man/figures/vignette-llm-assisted-tips.svg
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+A short set of working principles I've converged on after a stretch of building R packages, dashboards, and analyses with Claude Code as a daily collaborator. None of these are novel — they're cribbed and consolidated from people much further along — but they're the ones that actually changed how I work.
+
+## Three load-bearing principles
+
+::: {.callout-important}
+Before you read further: LLM-assisted development only works if you bake in **reproducibility**, **consistency**, and **validation** from day one. These are not optional extras to add later.
+
+- **Reproducibility:** Every output is regenerated from locked source (git + Nix/pip lockfiles). No hand-tweaked CSV exports, no manual edits to deployed assets.
+- **Consistency:** Code style, naming, structure, and test style are enforced mechanically (linters, formatters, pre-commit hooks). An LLM builds to a spec faster when the spec is non-negotiable.
+- **Validation:** Every claim is testable. Tests drive the spec; the spec drives the code. If you can't write a test for it, you don't ship it.
+
+The rest of this site and the [AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md) file at the repo root detail these practices. Start there if you're new to this workflow.
+:::
+
+## The shape of the day
+
+**Plan more than you execute. 60% planning, 40% execution.**
+
+Counter-intuitive at first because LLMs are so fast you assume more execution = more output. In practice the opposite holds: an LLM can implement a clear spec in minutes but struggles for hours against a fuzzy one. Time spent sharpening the spec pays back several times over, because the fast part stays fast and the slow part (rework, blind alleys, conflicting context) shrinks.
+
+The pattern that works for me:
+
+1. **Sketch what you want.** WHAT, not HOW. Success criteria, not step-by-step instructions.
+2. **Hand the sketch to a fresh LLM and ask it to tear the spec apart.** Identify points that are underspecified, inconsistent, or weird. Iterate until the remaining questions are genuinely niche.
+3. **Hand the sharpened plan to a new LLM with a simple prompt.** "Implement this." If you've done step 2 well, the simple prompt is enough.
+
+The rationale for separating step 2 from step 3 is that the LLM doing the critique should not be the one doing the build — different framings, different blind spots.

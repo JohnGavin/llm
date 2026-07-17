@@ -1,0 +1,33 @@
+---
+title: "Methodology"
+format:
+  html:
+    page-layout: full
+    toc: false
+execute:
+  echo: false
+  warning: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Methodology
+
+### What this vignette computes
+
+This vignette tracks the evolution of the Claude Code global configuration — counts and line sizes of rules, skills, and hooks — over time. It reads time-series snapshots from `~/.claude/logs/config/*.parquet` via DuckDB when available, falling back to live `list.files()` counts from the `.claude/` directory tree when no snapshot data exists (CI environment). Key metrics computed include total file counts, average sizes, files over the 150-line threshold, and estimated token usage.
+
+### Data sources
+
+- `~/.claude/logs/config/*.parquet`: daily snapshots produced by `~/.claude/scripts/config_pulse.sh`; each row is one metric for one category (rules/skills/hooks) at one snapshot date
+- Live fallback: `list.files()` on `.claude/rules/`, `.claude/skills/`, `.claude/hooks/` directories — used in CI where no parquet snapshots exist
+- Token estimate: total bytes of all `.md` and `.sh` files under `.claude/` divided by 4
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
+{{< include /_includes/build-info.qmd >}}
+
+{{< include /_includes/qr-footer.qmd >}}

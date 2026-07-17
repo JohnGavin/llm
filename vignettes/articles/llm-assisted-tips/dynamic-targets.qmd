@@ -1,0 +1,138 @@
+---
+title: "Dynamic Target Generation"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Dynamic Target Generation with targets
+
+When building complex data pipelines with `{targets}`, you need to understand how target expressions work and when you might need programmatic target generation.
+
+::: {.panel-tabset}
+
+## How tar_target() Works
+
+The `tar_target()` function uses **non-standard evaluation (NSE)** — it captures expressions without evaluating them immediately:
+
+```r
+# Standard usage: expression is captured, not evaluated
+tar_target(name, mean(c(1, 2, 3)))
+```
+
+This is NOT string evaluation. The expression `mean(c(1, 2, 3))` is captured as an R expression object and evaluated later by the targets framework.
+
+**Common misconception:** Passing a string to `tar_target()` does NOT execute that string as code:
+
+```r
+# This creates a target with value "1+1" (the string), not 2
+tar_target(wrong, "1+1")
+```
+
+## When You Need Programmatic Generation
+
+Sometimes you need to build targets dynamically — generating target names or expressions programmatically. For this, use `tar_target_raw()`:
+
+```r
+# Generate targets programmatically
+target_names <- c("summary_a", "summary_b", "summary_c")
+target_list <- lapply(target_names, function(nm) {
+  tar_target_raw(
+    nm,
+    quote(summarise_data(data)),
+    deps = "data"
+  )
+})
+```
+
+The key difference: `tar_target_raw()` expects:
+- Target name as a **string**
+- Command as a **quoted expression** (via `quote()`)
+- Dependencies as a **character vector**
+
+## Variable Capture in Dynamic Targets
+
+When generating targets programmatically, be careful with variable scoping:
+
+```r
+threshold <- 100
+
+# WRONG: 'threshold' refers to the variable, not the value
+tar_target(filtered, filter(data, value > threshold))
+# If threshold changes later, target invalidates
+
+# RIGHT: Use substitute() to capture the value
+tar_target_raw(
+  "filtered",
+  substitute(filter(data, value > x), list(x = threshold))
+)
+```
+
+## When to Use Each Approach
+
+| Use tar_target() when | Use tar_target_raw() when |
+|---------------------|---------------------|
+| Writing targets by hand | Generating targets in a loop |
+| Target names are known at write time | Target names come from data/config |
+| Expressions are static | Expressions need programmatic assembly |
+| You want IDE support and refactoring | Code generation is unavoidable |
+
+**Default to tar_target().** Programmatic generation adds complexity — use it only when the alternative is repetitive manual code.
+
+## Debugging Challenges
+
+Programmatically generated targets are harder to debug:
+
+1. The target definition is built at runtime, not visible in `_targets.R`
+2. IDE tools (go-to-definition, refactoring) don't work
+3. Errors in `substitute()` or `quote()` produce cryptic messages
+
+When a dynamic target fails:
+1. Use `tar_manifest()` to see the generated target definition
+2. Extract the expression and test it interactively
+3. Consider whether the complexity is justified
+
+## Readability Wins
+
+Even when you CAN generate targets programmatically, ask whether you SHOULD:
+
+```r
+# Programmatic but hard to scan
+datasets <- c("sales", "inventory", "customers")
+lapply(datasets, function(d) {
+  tar_target_raw(
+    paste0("summary_", d),
+    substitute(summarise_data(dat), list(dat = as.name(d)))
+  )
+})
+
+# Explicit and clear
+list(
+  tar_target(summary_sales, summarise_data(sales)),
+  tar_target(summary_inventory, summarise_data(inventory)),
+  tar_target(summary_customers, summarise_data(customers))
+)
+```
+
+If you have three targets, write them out. Save the machinery for when you have dozens.
+
+## Examples from This Project
+
+The `llm` package's pipelines (see `R/tar_plans/plan_*.R`) primarily use explicit `tar_target()` calls rather than programmatic generation. This is intentional — the pipelines are small enough that readability beats abstraction.
+
+When dynamic generation is needed (e.g., in external projects with many similar targets), the pattern is:
+1. Generate with `tar_target_raw()` and `substitute()`
+2. Validate with `tar_manifest()` before committing
+3. Document why generation is needed (repetition? config-driven?)
+
+## Related
+
+- `targets` manual on metaprogramming: <https://books.ropensci.org/targets/dynamic.html>
+- `targets` documentation: <https://books.ropensci.org/targets/>
+
+:::

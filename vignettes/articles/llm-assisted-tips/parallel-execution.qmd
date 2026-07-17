@@ -1,0 +1,23 @@
+---
+title: "Parallel execution"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Parallel execution
+
+Multiple models, multiple worktrees, in parallel:
+
+- A cheap fast model (Haiku) handles mechanical edits — typos, renames, version bumps.
+- A mid-tier model (Sonnet) handles per-file work — debugging, single-feature implementation.
+- A larger model (Opus) handles synthesis, architecture, and conversation with you.
+
+Use `git worktree add` so two sessions can work on independent branches without stepping on each other. The orchestrator session decides what to delegate; the worker sessions just do the work.
+
+The cost gradient matters more than people expect. Doing all your work at the top tier when most of it is mechanical is the single biggest budget leak.

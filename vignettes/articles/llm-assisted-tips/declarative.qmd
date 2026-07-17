@@ -1,0 +1,22 @@
+---
+title: "Declarative beats imperative"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Declarative beats imperative
+
+Tell the LLM what success looks like, not which buttons to press.
+
+- **Imperative:** "Read file X, parse the JSON, filter to dates after Y, write to Z."
+- **Declarative:** "Produce a CSV at Z containing only rows from X where date > Y. Tests should cover empty input, malformed JSON, and the date boundary."
+
+Declarative prompts let the LLM bring its training data to bear. Imperative prompts pin it to your particular sequence and waste that.
+
+This is also why **writing tests first** is so productive in this workflow: tests are declarative by nature. They state success, not procedure. If you can write the test, the LLM can write the implementation.
