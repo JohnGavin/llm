@@ -1,0 +1,39 @@
+---
+title: "Usage Pattern"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Usage Pattern
+
+Include the shared partial at the top of every vignette that uses `tt()`:
+
+````markdown
+{{< include /_includes/hover-popups.qmd >}}
+````
+
+In a knitr chunk with `results = "asis"`, load the package and call `tt()`:
+
+```r
+library(llm)
+cat(tt(
+  "LLM",
+  paste0(
+    "<b>Large Language Model</b>. ... ",
+    "See <a href='https://example.com'>reference</a>."
+  )
+))
+```
+
+Or use Quarto's span syntax directly in markdown:
+
+```markdown
+[LLM]{.tt data-tippy-content="<b>Large Language Model</b>. ...
+See <a href='https://example.com'>reference</a>."}
+```

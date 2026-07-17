@@ -1,0 +1,34 @@
+---
+title: "Configuration layers"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 6. Configuration layers {#config}
+
+| Layer | Path | Fields |
+|-------|------|--------|
+| Global | `~/.roborev/config.toml` | Agent defaults, model defaults, global severity floor, `autoclose_severity_threshold` |
+| Per-repo | `<repo>/.roborev.toml` | `review_guidelines`, `review_min_severity`, `exclude_patterns`, agent/model overrides, `[autoclose] severity_threshold` |
+| Autoclose counters | `~/.claude/.roborev_autoclose_counters.json` | Per-day, per-repo threshold observations (used by the weekly age-based autoclose) |
+| Post-commit hook | `<repo>/.git/hooks/post-commit` | Calls `roborev queue`; installed per-repo via `roborev setup` |
+
+The `exclude_patterns` field prevents session-ledger files (`CHANGELOG.md`,
+`.claude/CURRENT_WORK.md`) from triggering review cascades — see
+[`roborev-exclude-patterns` rule](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-exclude-patterns.md#L1)
+and [#198](https://github.com/JohnGavin/llm/issues/198).
+
+A full governance spec for `.roborev.toml` fields is tracked in
+[#229](https://github.com/JohnGavin/llm/issues/229).

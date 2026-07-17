@@ -1,0 +1,31 @@
+<!-- vignettes/articles/roborev-architecture/_setup.qmd
+     Shared setup partial for the roborev-architecture page set. Included as
+     the FIRST body line of every page in this folder (see index.qmd and
+     siblings). Re-runs the shared hover-popup infrastructure and the
+     original setup chunk — including the PALETTE colour vector — on every
+     page, since each page is now an independent render target
+     (JohnGavin/llm#778 Phase 2). See narrative-colour-persistence rule.
+-->
+
+{{< include /_includes/hover-popups.qmd >}}
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(
+  collapse  = TRUE,
+  comment   = "#>",
+  message   = FALSE,
+  warning   = FALSE,
+  echo      = FALSE
+)
+
+# Colour palette — define ONCE, reuse in every chart
+PALETTE <- c(
+  "open"                 = "#f08080",
+  "closed"               = "#69d4a0",
+  "clean-verdict"        = "#5edaff",
+  "severity-medium"      = "#ffd93d",
+  "manual"               = "#c084fc",
+  "clean-verdict-pre-fix" = "#4ea8de"
+)
+```

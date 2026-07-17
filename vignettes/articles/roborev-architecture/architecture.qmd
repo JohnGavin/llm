@@ -1,0 +1,84 @@
+---
+title: "Architecture"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 3. Architecture diagram {#architecture}
+
+The diagram below shows the full data flow from a git commit to a resolved
+finding. Every node links to the relevant source file or dashboard panel.
+
+::: {aria-label="Architecture diagram of the roborev system. A git commit triggers a post-commit hook which queues work in the roborev daemon. The daemon dispatches an AI agent. The agent produces findings that land in a local SQLite database. Three downstream consumers read the database: the weekly age-based autoclose job, the daily severity-threshold autoclose, and the llmtelemetry dashboard. A separate 15-minute poller catches any commits the hook missed. The daily ETL at 02:00 extracts the database into unified.duckdb for analytics."}
+
+```{mermaid}
+flowchart LR
+  COMMIT["git commit"]
+  HOOK["post-commit hook\n.git/hooks/post-commit"]
+  DAEMON["roborev daemon\n(launchd plist)"]
+  POLL["roborev_poll_merges.sh\nevery 15 min"]
+  DB[("~/.roborev/reviews.db\nSQLite + WAL")]
+  AGENT["AI agent\ncodex / claude-code"]
+  REVIEW["findings + severity\nwritten to DB"]
+  WEEKLY["roborev_weekly_chain.sh\nMon 09:15"]
+  SEVCLOSE["roborev_severity_autoclose.sh\ndaily 09:30"]
+  ETL["roborev_metrics_etl.sh\ndaily 02:00"]
+  UNIFIED[("unified.duckdb\nanalytics layer")]
+  EMAIL["daily digest email\n08:00"]
+  DASHBOARD["llmtelemetry dashboard\nroborev-pulse.html"]
+
+  COMMIT --> HOOK
+  HOOK --> DAEMON
+  POLL -.->|catchup for missed commits| DAEMON
+  DAEMON --> AGENT
+  AGENT --> REVIEW
+  REVIEW --> DB
+  DB --> WEEKLY
+  DB --> SEVCLOSE
+  DB --> ETL
+  ETL --> UNIFIED
+  UNIFIED --> EMAIL
+  UNIFIED --> DASHBOARD
+
+  click HOOK "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_install_auto_verify_hook.sh#L1"
+  click POLL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1"
+  click DAEMON "https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-poll-merges.plist#L1"
+  click DB "https://johngavin.github.io/llmtelemetry/roborev_summary.html#top-problems"
+  click WEEKLY "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1"
+  click SEVCLOSE "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1"
+  click ETL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1"
+  click UNIFIED "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_schema.sql#L1"
+  click EMAIL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1"
+  click DASHBOARD "https://johngavin.github.io/llmtelemetry/roborev_summary.html"
+  click AGENT "https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1"
+  click REVIEW "https://johngavin.github.io/llmtelemetry/roborev_summary.html#pulse"
+```
+
+:::
+
+### Component map
+
+| Component | File path | What it does | When it runs | Established by |
+|-----------|-----------|--------------|--------------|----------------|
+| `post-commit hook` | [`.git/hooks/post-commit`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_install_auto_verify_hook.sh#L1) (per repo) | Calls `roborev queue` on every commit | On every `git commit` | `roborev setup` install |
+| `roborev daemon` | [`com.claude.roborev-poll-merges.plist`](https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-poll-merges.plist#L1) | Dequeues and dispatches AI reviews | Continuous (launchd supervised) | Core roborev |
+| `roborev_poll_merges.sh` | [`.claude/scripts/roborev_poll_merges.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1) | Catchup: reviews commits the hook missed | Every 15 min via launchd | [#217](https://github.com/JohnGavin/llm/issues/217) |
+| `reviews.db` | `~/.roborev/reviews.db` | Single source of truth: all findings, jobs, verdicts | Written by daemon continuously | Core roborev |
+| `roborev_weekly_chain.sh` | [`.claude/scripts/roborev_weekly_chain.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1) | Closes aged low-severity findings | Mon 09:15 via launchd | [#224](https://github.com/JohnGavin/llm/issues/224) |
+| `roborev_severity_autoclose.sh` | [`.claude/scripts/roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1) | Threshold-based close (clean-verdict + severity band) | Daily 09:30 via launchd | [#311](https://github.com/JohnGavin/llm/issues/311)/[#313](https://github.com/JohnGavin/llm/issues/313) |
+| `roborev_metrics_etl.sh` | [`.claude/scripts/roborev_metrics_etl.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1) | SQLite → `unified.duckdb` ETL | Daily 02:00 via launchd | [#226](https://github.com/JohnGavin/llm/issues/226) |
+| `unified.duckdb` | `~/.claude/logs/unified.duckdb` | Analytics DuckDB: 7 roborev_* tables + finding_lineage | Written by ETL | [#226](https://github.com/JohnGavin/llm/issues/226) |
+| `send_roborev_email.R` | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | Composes + sends daily blastula digest | Daily 08:00 via launchd | [#287](https://github.com/JohnGavin/llm/issues/287) |
+| Dashboard | [llmtelemetry roborev_summary](https://johngavin.github.io/llmtelemetry/roborev_summary.html) | Published Quarto site reading unified.duckdb snapshot | Refreshed on data branch push | [#287](https://github.com/JohnGavin/llm/issues/287) |

@@ -1,0 +1,74 @@
+---
+title: "Closure mechanisms"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 4. Closure mechanisms {#closure}
+
+Every finding in `reviews.db` starts as `closed = 0`. Three pathways close it:
+
+::: {.panel-tabset}
+
+## (a) Clean-verdict autoclose
+
+When a review job produces no findings — the
+<abbr title="Large Language Model: a neural network trained to generate, analyse, and summarise text">LLM</abbr>
+concludes "no issues found" — the review carries `verdict_bool = 1`. The daily
+[`roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L748)
+checks `verdict_bool` **before** severity parsing: if `1`, it closes the review
+unconditionally and writes the comment marker `auto-closed: clean verdict [run:...]`.
+This path was added in [#311](https://github.com/JohnGavin/llm/issues/311).
+
+## (b) Severity-threshold autoclose
+
+Reviews with findings (`verdict_bool = 0`) are closed if their maximum severity
+falls at or below the configured threshold (default `medium`). The threshold is
+read in precedence order:
+
+1. `--threshold` flag at call time
+2. `ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD` env var
+3. Per-repo `.roborev.toml` `[autoclose] severity_threshold`
+4. Global `~/.roborev/config.toml` `autoclose_severity_threshold`
+5. Default: `off` (no autoclose)
+
+The `llm` repo runs with `--threshold medium` (see
+[`com.claude.roborev-severity-autoclose.plist`](https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-severity-autoclose.plist#L1)),
+meaning Medium and Low findings are closed automatically when the daily job runs.
+
+## (c) Manual close
+
+A developer explicitly closes a finding — either by running `roborev close <job_id>`
+directly, or by the orchestrator calling `roborev close` after triaging the finding.
+The per-project triage protocol is described in
+[`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1).
+
+## Learned lesson: rv.id vs job_id bug (#312)
+
+::: {.callout-warning}
+**Bug closed in [#313](https://github.com/JohnGavin/llm/issues/313).**
+
+`roborev_severity_autoclose.sh` originally called `roborev close <rv.id>` (the
+review's own integer primary key). The `roborev close` command, however, expects
+a **job_id** — a different integer that happens to occupy the same id space.
+Because the two spaces overlap numerically (job 47 ≠ review 47 in general), the
+wrong review was silently closed. The fix adds `rv.job_id` as the sixth field in
+the candidate query (see [line 659](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L659))
+and passes `$_job_id` to all close and comment calls. The self-test was extended
+to 11/11 PASS, including a new case that asserts `job_id ≠ review_id` for a
+synthetic row with `id=100, job_id=999`.
+:::
+
+:::

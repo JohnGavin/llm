@@ -1,0 +1,43 @@
+---
+title: "Where things live"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 8. Where things live {#cheat-sheet}
+
+Quick-reference table for anyone landing here from the dashboard or needing to
+locate a specific component.
+
+| Thing | Path | Notes |
+|-------|------|-------|
+| Binary | `/usr/local/bin/roborev` | Installed from upstream `roborev-dev/roborev`; not in Nix path |
+| Global config | `~/.roborev/config.toml` | Agent defaults, model defaults, global severity floor |
+| Per-repo config | `<repo>/.roborev.toml` | `review_guidelines`, `review_min_severity`, `exclude_patterns`, agent/model overrides |
+| Findings database | `~/.roborev/reviews.db` | SQLite + WAL; local-only, never pushed to git |
+| Autoclose counters | `~/.claude/.roborev_autoclose_counters.json` | Per-day, per-repo threshold observations for severity autoclose |
+| Post-commit hook | `<repo>/.git/hooks/post-commit` | Calls `roborev queue`; installed per-repo via `roborev setup` |
+| Poller script | [`.claude/scripts/roborev_poll_merges.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_poll_merges.sh#L1) | Catchup for missed commits; fired every 15 min via launchd |
+| Weekly autoclose | [`.claude/scripts/roborev_weekly_chain.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_weekly_chain.sh#L1) | Closes aged low-severity findings; Mon 09:15 |
+| Severity autoclose | [`.claude/scripts/roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1) | Daily threshold-based close; daily 09:30 |
+| Metrics ETL (shell) | [`.claude/scripts/roborev_metrics_etl.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1) | SQLite → unified.duckdb; daily 02:00 |
+| Metrics ETL (R) | [`.claude/scripts/roborev_metrics_etl.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.R#L1) | R side of ETL: lifecycle + lineage population |
+| Metrics schema | [`.claude/scripts/roborev_metrics_schema.sql`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_schema.sql#L1) | 7-table DuckDB schema for analytics |
+| Launchd plists | [`.claude/launchd/`](https://github.com/JohnGavin/llm/tree/main/.claude/launchd) `→ ~/Library/LaunchAgents/` | Daemon + poller + autoclose schedulers |
+| Resolution rule | [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1) | Triage protocol: close vs fix vs escalate |
+| Exclude patterns rule | [`.claude/rules/roborev-exclude-patterns.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-exclude-patterns.md#L1) | Why CHANGELOG.md and CURRENT_WORK.md are excluded |
+| Daily email | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | blastula digest sent daily at 08:00 |
+| Dashboard | [llmtelemetry/roborev_summary.html](https://johngavin.github.io/llmtelemetry/roborev_summary.html) | Published Quarto site |
+| This vignette | `llm/vignettes/articles/roborev-architecture/` | You are here |
