@@ -1,0 +1,37 @@
+---
+title: "Methodology"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Methodology
+
+### What this vignette computes
+
+This vignette does not read from the targets pipeline. It demonstrates the
+`tt()` helper from `R/hover_popup_helper.R` and the `_includes/hover-popups.qmd`
+shared Tippy.js partial. It serves as the pilot for the hover-popup standard
+introduced in Issue #246.
+
+### Data sources
+
+- `llm::tt()`: the hover-popup helper exported from the `llm` package; loaded via `library(llm)` at render time.
+- `_includes/hover-popups.qmd`: the shared Tippy.js CSS + JS partial, included
+  via Quarto's `{{< include >}}` directive.
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7
+and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization
+choices. All analytical decisions and data interpretations are the author's
+responsibility.
+
+{{< include /_includes/build-info.qmd >}}
+
+{{< include /_includes/qr-footer.qmd >}}

@@ -9,6 +9,8 @@ project:
     - "vignettes/knowledge-evolution/*.qmd"
     - "vignettes/articles/*.qmd"
     - "vignettes/articles/llm-assisted-tips/*.qmd"
+    - "vignettes/hover-popup-demo/*.qmd"
+    - "vignettes/articles/roborev-architecture/*.qmd"
   post-render:
     # Fail the render if any internal link 404s (JohnGavin/llm#715).
     - .claude/scripts/quarto_post_render_links.sh
@@ -46,7 +48,7 @@ website:
         text: LLM-assisted Tips
       - text: Roborev
         menu:
-          - href: vignettes/articles/roborev-architecture.qmd
+          - href: vignettes/articles/roborev-architecture/index.qmd
             text: Architecture
 
 format:

@@ -1,0 +1,78 @@
+---
+title: "Overview"
+image: ../../man/figures/vignette-roborev-architecture.svg
+author: "John Gavin"
+date: "`r Sys.Date()`"
+description: >
+  Canonical onboarding doc for roborev — automated agentic code review
+  woven into every commit. Explains the problem roborev solves, how the
+  system is architected, where all the moving parts live, and what remains
+  on the roadmap.
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 1. What roborev is {#what}
+
+Every software project accumulates a gap between "code that was committed" and
+"code that was reviewed". The gap is rarely malicious — it is a product of
+rhythm. A developer commits late in the day, a quick fix gets merged before
+anyone has time to look, a refactor lands under time pressure with a note to
+"review later". Later rarely comes.
+
+Human code review works well when there is a reviewer available, when the
+changeset is small, and when the reviewer has sufficient context to evaluate
+the change against project conventions. All three conditions fail routinely in
+a solo or small-team project, and failing any one of them means findings that
+could be caught in five minutes get missed until they compound into something
+much harder to fix.
+
+<abbr title="Automated agentic code review: every git commit triggers an AI agent to review the diff and write structured findings to a local SQLite database">roborev</abbr>
+([roborev-dev/roborev](https://github.com/roborev-dev/roborev)) fills the gap.
+On every commit it dispatches an
+<abbr title="Artificial Intelligence">AI</abbr> agent to review the diff in the
+context of the full repository, produce findings categorised by severity, and
+write those findings to a local
+<abbr title="Structured Query Language: a standard language for relational databases">SQLite</abbr>
+database. Findings accumulate across commits, are visible in the
+[llmtelemetry dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html),
+and are closed either automatically or by a developer committing a fix.
+
+The practical result, observed over many months of use, is that the
+unreviewed-commit gap shrinks to near zero. Not because every commit gets a
+perfect review, but because every commit gets *some* review — and that compound
+effect changes the shape of the codebase over time.
+
+---
+
+## 2. Why this vignette exists {#why}
+
+The [llmtelemetry roborev dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html)
+shows the *live state*: how many findings are open, how fast they close, which
+projects have the most backlog. This vignette is the *narrative*: it explains
+what each component does, why it was built, and how the pieces connect.
+
+Within the broader
+<abbr title="Quality Assurance: systematic checking that software meets requirements">QA</abbr>
+stack, roborev occupies a specific position:
+
+| Layer | Tool | What it catches |
+|-------|------|-----------------|
+| Automated style | `air` formatter, `jarl` linter | Formatting, naming, R idiom violations |
+| Static analysis | `ast-grep`, R CMD check | Banned patterns, structural anti-patterns |
+| **Agentic review** | **roborev** | **Cross-file consistency, design issues, missed edge cases** |
+| Pre-PR adversarial QA | `adversarial-qa` skill | Attack-mode testing, edge cases, boundary conditions |
+| Analytical correctness | `analytical-review-checklist` rule | Does the analysis answer the right question? |
+| Numeric quality gate | `quality-gates` skill | Bronze / Silver / Gold scoring, per-issue deduction |
