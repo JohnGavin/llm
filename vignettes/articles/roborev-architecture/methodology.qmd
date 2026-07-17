@@ -1,0 +1,58 @@
+---
+title: "Methodology"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Methodology
+
+### What this vignette computes
+
+This is a narrative architecture document. It does not compute values from the
+`targets` pipeline. The content is static prose, Mermaid diagrams, and reference
+tables describing the roborev system as configured in the `llm` repository. The
+colour palette object `PALETTE` is defined in the setup chunk for reuse in any
+future chart additions. Dynamic metrics (addressed rate, median
+<abbr title="Time To Close: wall-clock duration from when a finding is created to when it is closed">TTC</abbr>,
+cost per finding by agent) will be added in a follow-up once
+[#226](https://github.com/JohnGavin/llm/issues/226) and
+[#284](https://github.com/JohnGavin/llm/issues/284) produce stable
+`safe_tar_read()` targets.
+
+### Data sources
+
+- Architecture diagram: drawn from reading
+  [`.claude/scripts/roborev_*.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L1),
+  [`.claude/launchd/*.plist`](https://github.com/JohnGavin/llm/blob/main/.claude/launchd/com.claude.roborev-metrics-etl.plist#L1),
+  [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1),
+  and [`auto-delegation.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1)
+  — all in the `llm` repository
+- Component map (section 3) and cheat-sheet (section 8): hand-verified against
+  the current filesystem layout as of 2026-05-30
+- Roadmap table (section 7): constructed from open GitHub issues in `JohnGavin/llm`
+- Closure mechanisms (section 4): derived from reading
+  [`roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L748)
+  (clean-verdict branch at line 748) and issue summaries for #311, #313, #316
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7
+and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization
+choices. All analytical decisions and data interpretations are the author's
+responsibility.
+
+{{< include /_includes/build-info.qmd >}}
+
+{{< include /_includes/qr-footer.qmd >}}

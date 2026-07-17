@@ -1,0 +1,62 @@
+---
+title: "Daily lifecycle"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 5. Daily lifecycle {#daily-lifecycle}
+
+The diagram below shows the sequence of scheduled jobs that run every 24 hours.
+All times are local.
+
+::: {aria-label="Sequence diagram showing the daily roborev lifecycle. At 02:00 the metrics ETL runs: it reads reviews.db via DuckDB sqlite extension and writes to unified.duckdb. At 09:30 the severity autoclose runs: it reads open reviews from reviews.db, closes clean-verdict and below-threshold severity findings. At 08:00 the daily email job reads unified.duckdb and sends a blastula digest. The llmtelemetry data branch is refreshed after the email job so the dashboard reflects the same numbers as the email."}
+
+```{mermaid}
+sequenceDiagram
+  participant DB as reviews.db (SQLite)
+  participant ETL as roborev_metrics_etl.sh<br/>02:00
+  participant DUCK as unified.duckdb
+  participant CLOSE as roborev_severity_autoclose.sh<br/>09:30
+  participant EMAIL as send_roborev_email.R<br/>08:00
+  participant DASH as llmtelemetry dashboard
+
+  ETL->>DB: ATTACH ... TYPE SQLITE READ_ONLY
+  DB-->>ETL: reviews + jobs + repos + closures
+  ETL->>DUCK: INSERT OR REPLACE roborev_review_lifecycle
+  ETL->>DUCK: INSERT OR REPLACE roborev_finding_lineage
+
+  CLOSE->>DB: SELECT open reviews (verdict_bool, severity, job_id)
+  CLOSE->>DB: roborev close <job_id> (clean-verdict path)
+  CLOSE->>DB: roborev close <job_id> (severity-threshold path)
+
+  EMAIL->>DUCK: read roborev_review_lifecycle, roborev_daily_metrics
+  EMAIL-->>EMAIL: compose blastula digest (dot charts, TTC buckets)
+  EMAIL->>EMAIL: send via Gmail SMTP
+
+  ETL->>DASH: push parquet snapshot to llmtelemetry data branch
+  DASH-->>DASH: quarto render roborev-pulse.qmd
+```
+
+:::
+
+**Note on ordering:** the
+<abbr title="Extract, Transform, Load: the process of moving data from a source system to an analytics store">ETL</abbr>
+runs at 02:00 and writes `unified.duckdb`. The email job runs at 08:00 and reads
+the same
+<abbr title="DuckDB: an in-process analytical database">DuckDB</abbr>
+snapshot. The
+<abbr title="Time To Close: wall-clock duration from finding creation to closure">TTC</abbr>
+values in the email therefore reflect the prior night's data — one batch behind
+the live `reviews.db`.
