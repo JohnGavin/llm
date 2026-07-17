@@ -331,7 +331,6 @@
       "/Users/johngavin/.claude"
     ]
   },
-  "model": "opus",
   "hooks": {
     "SessionStart": [
       {
