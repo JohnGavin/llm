@@ -115,3 +115,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## Embed Issue/PR Links on Merge (see feedback_embed-issue-link-on-merge.md)
 - When reporting a merge/PR/issue action, embed a clickable link (`[#750](url)`) never a bare `#750`; codified in pr-shipping-discipline rule (#751, 2026-07-08)
+
+## Max Plan Can't Share Artifacts (see feedback_max-plan-artifact-sharing.md)
+- Individual Max: artifact Share button INACTIVE, URL grants no access to anyone; needs Teams/Enterprise; share the self-contained HTML out-of-band (email the .html file / GH Pages) (2026-07-10)
+
+## Deploy Gap: Merged ≠ Live (see deploy-gap-stale-main-checkout.md)
+- A merged fix that "isn't live" = local main checkout behind origin/main; cron `--ff-only` auto-pull jams on dirty tree (uncommitted memory edits), swallows the error, runs stale. Check `git -C ~/docs_gh/llm rev-list --count HEAD..origin/main`; also `launchctl print` before trusting "N cron jobs failed" (#510 reopened 2026-07-11)
