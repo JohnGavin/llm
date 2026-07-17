@@ -1,0 +1,21 @@
+<!-- vignettes/hover-popup-demo/_setup.qmd
+     Shared setup partial for the hover-popup-demo page set. Included as the
+     FIRST body line of every page in this folder (see index.qmd and
+     siblings). Re-runs the shared hover-popup infrastructure and the
+     original setup chunk on every page, since each page is now an
+     independent render target (JohnGavin/llm#778 Phase 2).
+-->
+
+{{< include /_includes/hover-popups.qmd >}}
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(
+  collapse  = TRUE,
+  comment   = "#>",
+  message   = FALSE,
+  warning   = FALSE,
+  results   = "asis"
+)
+library(llm)
+```

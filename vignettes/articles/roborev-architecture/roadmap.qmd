@@ -1,0 +1,48 @@
+---
+title: "Open questions and future work"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    fig-alt: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## 7. Open questions and future work {#roadmap}
+
+The list below links every active work item. Status reflects the state as of
+the date at the top of this page.
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| [#149](https://github.com/JohnGavin/llm/issues/149) | Cross-repo handoff protocol | Open — design agreed, implementation in progress |
+| [#150](https://github.com/JohnGavin/llm/issues/150) | Reviewer fallback when primary agent unavailable | Open |
+| [#160](https://github.com/JohnGavin/llm/issues/160) | Severity model formalisation | Open — 5-tier scale in use, docs incomplete |
+| [#163](https://github.com/JohnGavin/llm/issues/163) | Closure-loop automation (`closes roborev #N` convention) | Open — convention not yet enforced |
+| [#181](https://github.com/JohnGavin/llm/issues/181) | Self-review backlog (T2 portability) | Open — hook portability across worktrees |
+| [#217](https://github.com/JohnGavin/llm/issues/217) | Poller redesign (event-driven replacement) | Open |
+| [#241](https://github.com/JohnGavin/llm/issues/241) | Merge gate — block merges with open ≥ High findings | Open |
+| [#245](https://github.com/JohnGavin/llm/issues/245) | This vignette — sections 3–8 full content | In progress |
+| [#246](https://github.com/JohnGavin/llm/issues/246) | Hover-popup standard for vignettes | Open — companion CSS/JS work |
+| [#284](https://github.com/JohnGavin/llm/issues/284) | Daily resolution report (attempts + TTC rolling windows) | Open — ETL foundation shipped in #316, #321 |
+| [#286](https://github.com/JohnGavin/llm/issues/286) | Finding lineage: `parent_job_id` upstream support | Open — heuristic stopgap shipped in #321 |
+| [#287](https://github.com/JohnGavin/llm/issues/287) | Daily email + dashboard link | Partial — email shipped, dashboard link in progress |
+| [#310](https://github.com/JohnGavin/llm/issues/310) | close_reason gap in ETL lifecycle table | Resolved by [#316](https://github.com/JohnGavin/llm/issues/316) |
+| [#311](https://github.com/JohnGavin/llm/issues/311) | Clean-verdict close path | Merged |
+| [#312](https://github.com/JohnGavin/llm/issues/312) | rv.id vs job_id bug in severity autoclose | Resolved by [#313](https://github.com/JohnGavin/llm/issues/313) |
+| [#316](https://github.com/JohnGavin/llm/issues/316) | ETL: populate closed_at + close_reason | Merged |
+| [#318](https://github.com/JohnGavin/llm/issues/318) | Agent worktree push to sibling branch — isolation breach | Resolved by [#326](https://github.com/JohnGavin/llm/issues/326) |
+| [#321](https://github.com/JohnGavin/llm/issues/321) | ETL: heuristic finding lineage | Merged |
+| [#326](https://github.com/JohnGavin/llm/issues/326) | post-verify + SendMessage caveat + cross-repo pattern | Merged |
+| [#332](https://github.com/JohnGavin/llm/issues/332) | ETL BINDER bug on narrow `--since` windows | Open — currently breaking ETL on narrow windows |
+
+The [open findings panel](https://johngavin.github.io/llmtelemetry/roborev_summary.html#top-problems)
+in the dashboard shows the live view of what is currently pending across all repos.
