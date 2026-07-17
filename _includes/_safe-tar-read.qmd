@@ -12,6 +12,21 @@
 ```{r safe-tar-read-setup}
 #| include: false
 
+render_or_return <- function(obj) {
+  # grob/gtable objects (e.g. plots exported via vignette targets) have no
+  # knit_print method of their own; printing the list raw leaks a
+  # `#> NULL`-laced dump into isolated per-page renders (#780). Draw them
+  # explicitly so the chunk emits a figure instead.
+  if (inherits(obj, "grob") || inherits(obj, "gtable")) {
+    # Mirrors ggplot2:::print.ggplot (grid.newpage() + grid.draw()), the
+    # standard way to draw a captured grob/gtable to the active device.
+    grid::grid.newpage()
+    grid::grid.draw(obj)
+    return(invisible(NULL))
+  }
+  obj
+}
+
 safe_tar_read <- function(name, wrap_df = FALSE) {
   store <- tryCatch({
     owd <- setwd(here::here())
@@ -21,7 +36,7 @@ safe_tar_read <- function(name, wrap_df = FALSE) {
 
   if (!is.null(store)) {
     obj <- tryCatch(targets::tar_read_raw(name, store = store), error = function(e) NULL)
-    if (!is.null(obj)) return(obj)
+    if (!is.null(obj)) return(render_or_return(obj))
   }
 
   for (d in c("../inst/extdata/vignettes", "inst/extdata/vignettes",
@@ -36,7 +51,7 @@ safe_tar_read <- function(name, wrap_df = FALSE) {
           options = list(pageLength = 15, scrollX = TRUE),
           caption = if (!is.null(cap)) htmltools::HTML(cap)))
       }
-      return(obj)
+      return(render_or_return(obj))
     }
   }
   invisible(NULL)
