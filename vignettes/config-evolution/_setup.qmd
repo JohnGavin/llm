@@ -1,0 +1,125 @@
+<!-- vignettes/config-evolution/_setup.qmd
+     Shared setup partial for the config-evolution page set. Included as the
+     FIRST body line of every page in this folder (see index.qmd and
+     siblings). Re-runs the shared hover-popup infrastructure and the
+     original data-loading setup chunk on every page, since each page is now
+     an independent render target (JohnGavin/llm#778 Phase 1).
+-->
+
+{{< include /_includes/hover-popups.qmd >}}
+
+```{r setup}
+#| include: false
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(gt)
+
+# Theme for dark mode compatibility
+theme_dashboard <- theme_minimal(base_size = 14) +
+  theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    plot.title = element_text(face = "bold")
+  )
+
+# Try to load from local pulse data, otherwise count files directly
+config_dir <- path.expand("~/.claude/logs/config")
+parquet_files <- list.files(config_dir, pattern = "\\.parquet$", full.names = TRUE)
+
+config_data <- NULL
+if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requireNamespace("duckdb", quietly = TRUE)) {
+  tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb())
+    config_data <- DBI::dbGetQuery(con, sprintf(
+      "SELECT * FROM read_parquet('%s/*.parquet')",
+      config_dir
+    )) |>
+      mutate(
+        snapshot_date = as.Date(snapshot_date),
+        value = as.numeric(value)
+      )
+    DBI::dbDisconnect(con, shutdown = TRUE)
+  }, error = function(e) NULL)
+}
+
+# Fallback: count files directly (works in CI).
+# In CI, ~/.claude doesn't exist — the repo-committed .claude/ does (per #144).
+# Probe in priority order so this also works locally where ~/.claude has the
+# same content via symlinks.
+if (is.null(config_data)) {
+  # Probe repo-relative path first (works in CI and locally via symlink).
+  # The user-level ~/.claude path is excluded: vignettes must be reproducible
+  # from the checked-in source tree alone, not from reviewer-local state.
+  .candidates <- c(here::here(".claude"))
+  claude_dir <- Find(dir.exists, .candidates)
+  if (is.null(claude_dir)) claude_dir <- here::here(".claude")  # last-resort string
+
+  # Count rules
+  rules_dir <- file.path(claude_dir, "rules")
+  if (dir.exists(rules_dir)) {
+    rule_files <- list.files(rules_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE)
+    n_rules <- length(rule_files)
+    rule_lines <- sapply(rule_files, function(f) length(readLines(f, warn = FALSE)))
+  } else {
+    n_rules <- 0
+    rule_lines <- numeric(0)
+  }
+
+ # Count skills
+  skills_dir <- file.path(claude_dir, "skills")
+  if (dir.exists(skills_dir)) {
+    skill_dirs <- list.dirs(skills_dir, recursive = FALSE)
+    n_skills <- length(skill_dirs)
+    skill_files <- list.files(skills_dir, pattern = "SKILL\\.md$", full.names = TRUE, recursive = TRUE)
+    skill_lines <- sapply(skill_files, function(f) length(readLines(f, warn = FALSE)))
+  } else {
+    n_skills <- 0
+    skill_lines <- numeric(0)
+  }
+
+  # Count hooks
+  hooks_dir <- file.path(claude_dir, "hooks")
+  if (dir.exists(hooks_dir)) {
+    hook_files <- list.files(hooks_dir, pattern = "\\.sh$", full.names = TRUE)
+    n_hooks <- length(hook_files)
+    hook_lines <- sapply(hook_files, function(f) length(readLines(f, warn = FALSE)))
+  } else {
+    n_hooks <- 0
+    hook_lines <- numeric(0)
+  }
+
+  # Estimate total tokens
+  all_files <- c(
+    list.files(claude_dir, pattern = "\\.md$", full.names = TRUE, recursive = TRUE),
+    list.files(claude_dir, pattern = "\\.sh$", full.names = TRUE, recursive = TRUE)
+  )
+  all_files <- all_files[!grepl("/logs/", all_files)]
+  total_bytes <- sum(file.info(all_files)$size, na.rm = TRUE)
+  total_tokens <- round(total_bytes / 4)
+
+  # Create summary
+  fallback_counts <- list(
+    n_rules = n_rules,
+    n_skills = n_skills,
+    n_hooks = n_hooks,
+    total_tokens = total_tokens,
+    rule_lines = rule_lines,
+    skill_lines = skill_lines,
+    hook_lines = hook_lines,
+    total_rule_lines = sum(rule_lines),
+    total_skill_lines = sum(skill_lines),
+    total_hook_lines = sum(hook_lines),
+    rules_over_150 = sum(rule_lines > 150),
+    avg_rule_lines = if (n_rules > 0) round(mean(rule_lines)) else 0,
+    avg_skill_lines = if (n_skills > 0) round(mean(skill_lines)) else 0
+  )
+}
+
+# Create latest dataset if config_data exists (used by all metric chunks)
+latest <- NULL
+if (!is.null(config_data)) {
+  latest <- config_data |> filter(snapshot_date == max(snapshot_date))
+}
+```

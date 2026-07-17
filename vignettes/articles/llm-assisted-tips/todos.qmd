@@ -1,0 +1,15 @@
+---
+title: "TODOs"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## TODOs
+
+- Broaden the framing beyond R. The principles apply identically to TypeScript, Rust, Go, and C++ projects — the only thing that changes is which test framework you reach for first. Add explicit examples from a non-R project once one matures here.

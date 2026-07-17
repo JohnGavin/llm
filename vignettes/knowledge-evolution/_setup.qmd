@@ -1,0 +1,181 @@
+<!-- vignettes/knowledge-evolution/_setup.qmd
+     Shared setup partial for the knowledge-evolution page set. Included as
+     the FIRST body line of every page in this folder (see index.qmd and
+     siblings). Re-runs the shared hover-popup infrastructure and the
+     original data-loading setup chunk on every page, since each page is now
+     an independent render target (JohnGavin/llm#778 Phase 1).
+-->
+
+{{< include /_includes/hover-popups.qmd >}}
+
+```{r setup}
+#| include: false
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(gt)
+library(visNetwork)
+library(ggraph)
+library(igraph)
+
+theme_dashboard <- theme_minimal(base_size = 14) +
+  theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    plot.title = element_text(face = "bold")
+  )
+
+# Priority 0: CI-safe path — read pre-computed aggregates from committed RDS.
+# knowledge/ is gitignored (wiki-storage-policy), so live file counts return 0
+# in CI. The committed RDS ships aggregate-only stats from the last local build.
+# Note: return() is invalid at chunk top-level; use Find() to select the first
+# existing path, then readRDS() it outside the for loop.
+kb_stats <- tryCatch({
+  rds_candidates <- c(
+    here::here("inst/extdata/vignettes/vig_kb_stats.rds"),
+    "../inst/extdata/vignettes/vig_kb_stats.rds"
+  )
+  rds_hit <- Find(file.exists, rds_candidates)
+  if (!is.null(rds_hit)) readRDS(rds_hit) else NULL
+}, error = function(e) NULL)
+
+# CI-safe topic-graph adjacency — loaded before the live scan below.
+kg_graph <- tryCatch({
+  rds_candidates <- c(
+    here::here("inst/extdata/vignettes/vig_kb_graph.rds"),
+    "../inst/extdata/vignettes/vig_kb_graph.rds"
+  )
+  rds_hit <- Find(file.exists, rds_candidates)
+  if (!is.null(rds_hit)) readRDS(rds_hit) else NULL
+}, error = function(e) NULL)
+
+# Try to load from local pulse data
+kb_dir <- path.expand("~/.claude/logs/knowledge")
+parquet_files <- list.files(kb_dir, pattern = "\\.parquet$", full.names = TRUE)
+
+kb_data <- NULL
+if (length(parquet_files) > 0 && requireNamespace("DBI", quietly = TRUE) && requireNamespace("duckdb", quietly = TRUE)) {
+  tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb())
+    kb_data <- DBI::dbGetQuery(con, sprintf(
+      "SELECT * FROM read_parquet('%s/*.parquet')",
+      kb_dir
+    )) |>
+      mutate(
+        snapshot_date = as.Date(snapshot_date),
+        value = as.numeric(value)
+      )
+    DBI::dbDisconnect(con, shutdown = TRUE)
+  }, error = function(e) NULL)
+}
+
+# Fallback: count files directly.
+# In CI, ~/docs_gh/llm/knowledge resolves to a non-existent home — the data
+# we want lives at <repo>/knowledge/. Probe the repo-relative path first so
+# this works both in CI and locally (per #144 + portable-paths rule).
+.kb_candidates <- c(here::here("knowledge"), path.expand("~/docs_gh/llm/knowledge"))
+kb_path <- Find(dir.exists, .kb_candidates)
+if (is.null(kb_path)) kb_path <- .kb_candidates[1]  # last-resort
+wiki_dir <- file.path(kb_path, "wiki")
+raw_dir <- file.path(kb_path, "raw")
+
+# Live adjacency scan — runs only when the RDS is absent and wiki_dir is local.
+if (is.null(kg_graph) && dir.exists(wiki_dir)) {
+  .wf <- list.files(wiki_dir, pattern = "\\.md$",
+                    full.names = TRUE, recursive = FALSE)
+  if (length(.wf) > 0L) {
+    .pn <- tools::file_path_sans_ext(basename(.wf))
+    .el <- lapply(.wf, function(f) {
+      src  <- tools::file_path_sans_ext(basename(f))
+      txt  <- paste(readLines(f, warn = FALSE), collapse = "\n")
+      raw  <- regmatches(txt, gregexpr("\\[\\[.+?\\]\\]", txt, perl = TRUE))[[1L]]
+      tgts <- sub("^\\[\\[", "", sub("\\]\\]$", "", raw))
+      if (length(tgts) == 0L) return(NULL)
+      data.frame(from = src, to = tgts, stringsAsFactors = FALSE)
+    })
+    .ed <- do.call(rbind, Filter(Negate(is.null), .el))
+    if (is.null(.ed))
+      .ed <- data.frame(from = character(0L), to = character(0L),
+                        stringsAsFactors = FALSE)
+    .all <- unique(c(.pn, if (nrow(.ed) > 0L) .ed$to else character(0L)))
+    .ib  <- if (nrow(.ed) > 0L) table(.ed$to) else integer(0L)
+    .nd  <- data.frame(
+      id      = .all,
+      label   = .all,
+      domain  = sub("-.*", "", .all),
+      inbound = as.integer(.ib[.all]),
+      broken  = !.all %in% .pn,
+      stringsAsFactors = FALSE
+    )
+    .nd$inbound[is.na(.nd$inbound)] <- 0L
+    .nd$orphan <- .nd$id %in% .pn & .nd$inbound == 0L
+    kg_graph <- list(nodes = .nd, edges = .ed)
+    rm(.wf, .pn, .el, .ed, .all, .ib, .nd)
+  }
+}
+
+if (is.null(kb_data)) {
+  if (!is.null(kb_stats)) {
+    # Priority 1: Use pre-computed RDS aggregates (CI-safe, knowledge/ gitignored).
+    # page_words keys are anonymized (page_001, page_002, …) to avoid path leakage.
+    fallback_kb <- list(
+      n_pages       = kb_stats$n_pages,
+      n_sources     = kb_stats$n_sources,
+      provenance_pct = kb_stats$provenance_pct,
+      ai_inferred   = kb_stats$ai_inferred_markers,
+      page_words    = kb_stats$page_words,
+      with_sources  = kb_stats$with_sources
+    )
+  } else {
+    # Priority 2: Live file counts — only available when knowledge/ exists locally.
+    # Wiki pages
+    if (dir.exists(wiki_dir)) {
+      wiki_files <- list.files(wiki_dir, pattern = "\\.md$", full.names = TRUE)
+      n_pages <- length(wiki_files)
+
+      # Count words per page
+      page_words <- sapply(wiki_files, function(f) {
+        content <- paste(readLines(f, warn = FALSE), collapse = " ")
+        length(strsplit(content, "\\s+")[[1]])
+      })
+
+      # Check for sources and AI-inferred
+      with_sources <- sum(sapply(wiki_files, function(f) {
+        any(grepl("^## Sources", readLines(f, warn = FALSE)))
+      }))
+      ai_inferred <- sum(sapply(wiki_files, function(f) {
+        sum(grepl("AI-inferred", readLines(f, warn = FALSE)))
+      }))
+    } else {
+      n_pages <- 0
+      page_words <- numeric(0)
+      with_sources <- 0
+      ai_inferred <- 0
+    }
+
+    # Raw sources
+    if (dir.exists(raw_dir)) {
+      raw_files <- list.files(raw_dir, recursive = TRUE)
+      n_sources <- length(raw_files)
+    } else {
+      n_sources <- 0
+    }
+
+    fallback_kb <- list(
+      n_pages = n_pages,
+      n_sources = n_sources,
+      provenance_pct = if (n_pages > 0) round(with_sources * 100 / n_pages) else 0,
+      ai_inferred = ai_inferred,
+      page_words = page_words,
+      with_sources = with_sources
+    )
+  }
+}
+
+# Create latest dataset if kb_data exists (used by all metric chunks)
+latest <- NULL
+if (!is.null(kb_data)) {
+  latest <- kb_data |> filter(snapshot_date == max(snapshot_date))
+}
+```

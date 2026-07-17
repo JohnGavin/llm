@@ -1,0 +1,11 @@
+<!-- vignettes/articles/llm-assisted-tips/_setup.qmd
+     Shared setup partial for the llm-assisted-tips page set. Included as the
+     FIRST body line of every page in this folder (see index.qmd and
+     siblings). Re-runs the shared hover-popup infrastructure on every page,
+     since each page is now an independent render target
+     (JohnGavin/llm#778 Phase 1). This vignette is static prose with no
+     targets-pipeline data, so unlike the config/knowledge-evolution sets
+     there is no data-loading chunk to carry over.
+-->
+
+{{< include /_includes/hover-popups.qmd >}}
