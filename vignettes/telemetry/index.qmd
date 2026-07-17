@@ -1,0 +1,23 @@
+---
+title: "Project Telemetry"
+image: man/figures/vignette-telemetry.svg
+author: "John Gavin"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: false
+    page-layout: full
+    code-fold: true
+vignette: >
+  %\VignetteIndexEntry{Project Telemetry}
+  %\VignetteEngine: quarto::html
+  %\VignetteEncoding{UTF-8}
+---
+
+{{< include _setup.qmd >}}
+{{< include ../../_includes/pages-nav.qmd >}}
+
+Telemetry for the `llm` project, split across the pages linked above: LLM
+usage and costs, session efficiency, pipeline metrics, GitHub activity,
+project structure, and prediction calibration. All figures and tables are
+pre-computed by the targets pipeline and read via `safe_tar_read()`.

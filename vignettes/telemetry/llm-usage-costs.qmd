@@ -1,0 +1,46 @@
+---
+title: "LLM Usage & Costs"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: false
+    page-layout: full
+    code-fold: true
+---
+
+{{< include _setup.qmd >}}
+{{< include ../../_includes/pages-nav.qmd >}}
+
+This section tracks costs, token usage, and limits.
+
+```{r dashboard-status}
+safe_tar_read("vig_usage_summary", wrap_df = TRUE)
+```
+
+::: {.panel-tabset}
+
+## Cost Trends
+
+```{r cost-trend, fig.cap="Daily LLM costs over time with LOESS smoothing trend line."}
+safe_tar_read("vig_cost_trend_plot", wrap_df = TRUE)
+```
+
+## Cumulative Cost
+
+```{r cumulative-cost, fig.cap="Cumulative LLM spending over time showing total expenditure trajectory."}
+safe_tar_read("vig_cumulative_cost_plot", wrap_df = TRUE)
+```
+
+## Breakdowns
+
+```{r breakdowns-combined, fig.height=10, fig.cap="Top: Cost breakdown by model. Bottom: Token usage by type (input, output, cache)."}
+safe_tar_read("vig_breakdowns_plot", wrap_df = TRUE)
+```
+
+## Gemini Analytics
+
+```{r gemini-analysis, fig.cap="Gemini daily costs from the Gemini usage database."}
+safe_tar_read("vig_gemini_plot", wrap_df = TRUE)
+```
+
+:::

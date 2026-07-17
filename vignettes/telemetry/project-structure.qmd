@@ -1,0 +1,36 @@
+---
+title: "Project Structure"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: false
+    page-layout: full
+    code-fold: true
+---
+
+{{< include _setup.qmd >}}
+{{< include ../../_includes/pages-nav.qmd >}}
+
+Codebase metrics, file organization, and repository health.
+
+::: {.panel-tabset}
+
+## Codebase
+
+```{r codebase-metrics}
+safe_tar_read("vig_codebase_metrics", wrap_df = TRUE)
+```
+
+## File Counts
+
+```{r file-counts}
+safe_tar_read("vig_file_counts_table", wrap_df = TRUE)
+```
+
+## GitHub Stats
+
+```{r github-stats}
+safe_tar_read("vig_github_stats_table", wrap_df = TRUE)
+```
+
+:::
