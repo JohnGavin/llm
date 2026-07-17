@@ -12,6 +12,19 @@
 ```{r safe-tar-read-setup}
 #| include: false
 
+# grid::grid.draw() on a ggplot2-produced gtable (e.g. via ggplotGrob())
+# dispatches S3/gTree draw methods defined by ggplot2 (grill gTree for panel
+# background/gridlines, etc.). Without ggplot2 attached, those methods never
+# register and grid.draw() silently no-ops -> blank figure, no error (#780).
+# Guarded so a missing package degrades to render_or_return()'s existing
+# grob/gtable branch rather than hard-erroring the render.
+if (requireNamespace("ggplot2", quietly = TRUE)) {
+  library(ggplot2)
+}
+if (requireNamespace("gtable", quietly = TRUE)) {
+  library(gtable)
+}
+
 render_or_return <- function(obj) {
   # grob/gtable objects (e.g. plots exported via vignette targets) have no
   # knit_print method of their own; printing the list raw leaks a
