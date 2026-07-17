@@ -1,0 +1,36 @@
+---
+title: "Pipeline Metrics"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: false
+    page-layout: full
+    code-fold: true
+---
+
+{{< include _setup.qmd >}}
+{{< include ../../_includes/pages-nav.qmd >}}
+
+Targets pipeline composition: plans, target counts, heaviest targets by size and compute time.
+
+::: {.panel-tabset}
+
+## Plans & Targets
+
+```{r pipeline-plans}
+safe_tar_read("vig_pipeline_plans_table", wrap_df = TRUE)
+```
+
+## Top by Size
+
+```{r pipeline-top-size}
+safe_tar_read("vig_pipeline_top_size_table", wrap_df = TRUE)
+```
+
+## Top by Compute Time
+
+```{r pipeline-top-time}
+safe_tar_read("vig_pipeline_top_time_table", wrap_df = TRUE)
+```
+
+:::

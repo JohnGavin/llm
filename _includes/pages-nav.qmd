@@ -1,0 +1,103 @@
+<!-- _includes/pages-nav.qmd
+     Shared "pages nav" partial — a horizontal strip of links across the top
+     of a multi-page vignette, with the current page highlighted. This is the
+     Phase 0 pilot for splitting one long vignette into per-section pages
+     (JohnGavin/llm#778). Currently hardcodes the 8 telemetry pages; a future
+     phase may parameterise the link set via a Lua/shortcode filter so other
+     multi-page vignettes can reuse it without copy-pasting the link list.
+     Usage: {{< include ../../_includes/pages-nav.qmd >}} (adjust relative
+     depth to match the including page's folder depth).
+     See .claude/rules/dark-mode-completeness.md and .claude/rules/uniform-typography.md.
+-->
+
+```{=html}
+<style>
+.pages-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 1.25rem 0;
+  border-radius: 0.375rem;
+  background: rgba(128, 128, 128, 0.12);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.pages-nav a {
+  font-size: 1rem;
+  line-height: 1.5;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pages-nav a:focus {
+  outline: 2px solid #4ea8de;
+  outline-offset: 2px;
+}
+
+/* Light mode */
+body:not(.dark-mode) .pages-nav a {
+  color: #333333;
+}
+body:not(.dark-mode) .pages-nav a:hover {
+  background: rgba(13, 110, 253, 0.12);
+}
+body:not(.dark-mode) .pages-nav a.active {
+  background: #0d6efd;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* Dark mode — mirrors _includes/closeread-navigation.html conventions */
+body.dark-mode .pages-nav {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+body.dark-mode .pages-nav a {
+  color: #e9ecef;
+}
+body.dark-mode .pages-nav a:hover {
+  background: rgba(78, 168, 222, 0.18);
+}
+body.dark-mode .pages-nav a.active {
+  background: #4ea8de;
+  color: #000000;
+  font-weight: 600;
+}
+</style>
+
+<nav class="pages-nav" aria-label="Telemetry section pages">
+  <a href="index.html" data-page="index">Overview</a>
+  <a href="llm-usage-costs.html" data-page="llm-usage-costs">Usage &amp; Costs</a>
+  <a href="session-efficiency.html" data-page="session-efficiency">Session Efficiency</a>
+  <a href="pipeline-metrics.html" data-page="pipeline-metrics">Pipeline Metrics</a>
+  <a href="github-activity.html" data-page="github-activity">GitHub Activity</a>
+  <a href="project-structure.html" data-page="project-structure">Project Structure</a>
+  <a href="prediction-calibration.html" data-page="prediction-calibration">Prediction Calibration</a>
+  <a href="methodology.html" data-page="methodology">Methodology</a>
+</nav>
+
+<script>
+(function () {
+  'use strict';
+  var path = window.location.pathname;
+  var page = 'index';
+  var m = path.match(/\/([^\/]+)\.html?$/i);
+  if (m && m[1]) {
+    page = m[1].toLowerCase();
+  } else if (/\/telemetry\/?$/.test(path) || /\/$/.test(path)) {
+    page = 'index';
+  }
+  var links = document.querySelectorAll('.pages-nav a[data-page]');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-page') === page) {
+      links[i].classList.add('active');
+      links[i].setAttribute('aria-current', 'page');
+    }
+  }
+})();
+</script>
+```
