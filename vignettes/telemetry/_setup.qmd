@@ -1,0 +1,21 @@
+<!-- vignettes/telemetry/_setup.qmd
+     Shared setup partial for the telemetry page set. Included as the FIRST
+     body line of every page in this folder (see index.qmd and siblings).
+     Re-runs the shared hover-popup + safe_tar_read infrastructure on every
+     page, since each page is now an independent render target.
+-->
+
+{{< include /_includes/hover-popups.qmd >}}
+{{< include /_includes/_safe-tar-read.qmd >}}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  echo = FALSE
+)
+```
