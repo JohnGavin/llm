@@ -1,0 +1,34 @@
+---
+title: "Methodology"
+format:
+  html:
+    page-layout: full
+    toc: false
+execute:
+  echo: false
+  warning: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## Methodology
+
+### What this vignette computes
+
+This vignette tracks the health and growth of the knowledge base at `~/docs_gh/llm/knowledge/` — measuring wiki page count, raw source count, provenance coverage (fraction of pages with `## Sources` sections), AI-inferred claim density, and topic-graph connectivity from `[[link]]` cross-references. It reads time-series snapshots from `~/.claude/logs/knowledge/*.parquet` via DuckDB when available, falling back to live `list.files()` counts from `knowledge/wiki/` and `knowledge/raw/` when no snapshots exist.
+
+### Data sources
+
+- `inst/extdata/vignettes/vig_kb_stats.rds`: pre-computed aggregate stats from the `vig_kb_stats` targets pipeline target, committed to the repository; read first in all environments including CI (where `knowledge/` is gitignored); page word counts are anonymized (`page_001`, `page_002`, …) to avoid leaking file paths
+- `inst/extdata/vignettes/vig_kb_graph.rds`: pre-computed topic-graph adjacency data — nodes (id, domain, inbound-link count, orphan/broken flags) and edges (from, to) extracted from `[[link]]` cross-references in `knowledge/wiki/*.md` by [`vignettes/_kb_topic_graph.R`](https://github.com/JohnGavin/llm/blob/main/vignettes/_kb_topic_graph.R#L1); committed so the Topic Graph tab renders in CI without accessing the gitignored `knowledge/` directory
+- `~/.claude/logs/knowledge/*.parquet`: daily snapshots produced by `~/.claude/scripts/knowledge_pulse.sh`; each row is one metric for one category (wiki/raw/quality) at one snapshot date; used when available locally for richer time-series charts
+- Live fallback: `list.files()` on `knowledge/wiki/` and `knowledge/raw/` directories — used only when both the RDS and parquet paths are unavailable; provenance percentage computed by scanning each wiki file for `^## Sources` and `AI-inferred` patterns
+
+### AI disclosure
+
+This vignette was developed with assistance from Anthropic's Claude (model: Opus 4.7 and Sonnet 4.6). AI helped with code structure, prose drafting, and visualization choices. All analytical decisions and data interpretations are the author's responsibility.
+
+{{< include /_includes/build-info.qmd >}}
+
+{{< include /_includes/qr-footer.qmd >}}

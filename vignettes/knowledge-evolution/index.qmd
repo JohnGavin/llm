@@ -1,0 +1,74 @@
+---
+title: "Overview"
+image: man/figures/vignette-knowledge-evolution.svg
+format:
+  html:
+    page-layout: full
+    toc: false
+execute:
+  echo: false
+  warning: false
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+Track the evolution of the knowledge base: wiki pages, raw sources, confidence levels, and topic connections.
+
+## Current Snapshot
+
+::: {.grid}
+
+::: {.g-col-3}
+### Wiki Pages
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "wiki", item == "all", metric == "page_count") |> pull(value)
+  cat("####", n)
+} else {
+  cat("####", fallback_kb$n_pages)
+}
+```
+:::
+
+::: {.g-col-3}
+### Raw Sources
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "raw", item == "all", metric == "source_count") |> pull(value)
+  cat("####", n)
+} else {
+  cat("####", fallback_kb$n_sources)
+}
+```
+:::
+
+::: {.g-col-3}
+### Provenance %
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "wiki", item == "all", metric == "provenance_pct") |> pull(value)
+  cat("####", n, "%")
+} else {
+  cat("####", fallback_kb$provenance_pct, "%")
+}
+```
+:::
+
+::: {.g-col-3}
+### AI-Inferred
+```{r}
+#| results: asis
+if (!is.null(latest)) {
+  n <- latest |> filter(category == "wiki", item == "all", metric == "ai_inferred_markers") |> pull(value)
+  cat("####", n, "markers")
+} else {
+  cat("####", fallback_kb$ai_inferred, "markers")
+}
+```
+:::
+
+:::

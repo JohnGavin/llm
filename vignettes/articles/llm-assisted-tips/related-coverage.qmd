@@ -1,0 +1,19 @@
+---
+title: "What's covered elsewhere"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+---
+
+{{< include _setup.qmd >}}
+{{< include _pages-nav.qmd >}}
+
+## What's covered elsewhere
+
+The three principles above are elaborated in detail across the project:
+
+- **Reproducibility:** Nix + rix workflows, lockfile discipline, package versioning (see `nix-rix-r-environment` skill and `default.nix` patterns)
+- **Consistency:** Code style guides, linters, and pre-commit hooks (see `tidyverse-style`, `accessibility` rules, and `.claude/scripts/r_code_check.sh`)
+- **Validation:** Test-driven development, quality gates, and analytical review checklists (see `test-driven-development`, `quality-gates` skills and `analytical-review-checklist` rule)
