@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.johngavin.roborev-failure-alert</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/johngavin/.local/bin/roborev-failure-alert</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/johngavin/.claude/logs/roborev_failure_alert.err</string>
+</dict>
+</plist>
