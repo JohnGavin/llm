@@ -1,0 +1,74 @@
+#!/bin/bash
+# roborev-failure-alert — loud alert on sustained roborev failure so a silent
+# outage (like the 74h gemini one, llm#791) can't run undetected.
+#
+# Detects: (a) daemon down, or (b) >= FAIL_DELTA NEW failed jobs since the last
+# check (i.e. failures actively accumulating — not a stale 24h count). Deduped
+# via a state file: alerts once on healthy->failing and once on recovery.
+#
+# Channel: macOS notification (with sound) + a log line. Runs every 30 min via
+# com.johngavin.roborev-failure-alert. Override FAIL_DELTA to tune.
+set -uo pipefail
+
+FAIL_DELTA="${ROBOREV_ALERT_FAIL_DELTA:-5}"
+STATE="$HOME/.roborev/alert_state"          # "<state> <failed_total> <completed_total>"
+LOG="$HOME/.claude/logs/roborev_failure_alert.log"
+mkdir -p "$(dirname "$LOG")" "$(dirname "$STATE")" 2>/dev/null
+
+SIGNAL_URL="http://localhost:7583/api/v1/rpc"
+SIGNAL_ACCOUNT="+447521254904"           # signal-cli daemon account (from its plist); note-to-self
+
+log()  { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+signal(){ curl -s -m 5 -X POST "$SIGNAL_URL" -H "Content-Type: application/json" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"send\",\"params\":{\"account\":\"$SIGNAL_ACCOUNT\",\"recipient\":[\"$SIGNAL_ACCOUNT\"],\"message\":\"$1\"},\"id\":1}" >/dev/null 2>&1 || true; }
+# note(): local macOS notification (at-machine) + Signal note-to-self (away-from-machine).
+note() { command -v osascript >/dev/null 2>&1 && \
+           osascript -e "display notification \"$2\" with title \"$1\" sound name \"$3\"" >/dev/null 2>&1 || true
+         signal "$1: $2"; }
+
+status="$(/usr/local/bin/roborev status 2>/dev/null)"
+read -r pstate pfail pcomp <<EOF
+$(cat "$STATE" 2>/dev/null || echo "ok 0 0")
+EOF
+pfail="${pfail:-0}"; pcomp="${pcomp:-0}"; pstate="${pstate:-ok}"
+
+# (a) daemon down
+if [ -z "$status" ] || printf '%s' "$status" | grep -qiE "not running|connection refused"; then
+  if [ "$pstate" != "failing" ]; then
+    log "ALERT: daemon not running"
+    note "roborev DOWN" "Daemon not running — no reviews. Run: roborev daemon start" "Basso"
+    echo "roborev-failure-alert: ALERT — daemon down"
+  fi
+  printf 'failing %s %s\n' "$pfail" "$pcomp" > "$STATE"
+  exit 0
+fi
+
+fail="$(printf '%s' "$status" | grep -oE '[0-9]+ failed'    | grep -oE '^[0-9]+')"; fail="${fail:-0}"
+comp="$(printf '%s' "$status" | grep -oE '[0-9]+ completed' | grep -oE '^[0-9]+')"; comp="${comp:-0}"
+dfail=$(( fail - pfail )); [ "$dfail" -lt 0 ] && dfail=0
+
+# First run: establish baseline, no alert.
+if [ "$pfail" -eq 0 ] && [ "$pcomp" -eq 0 ]; then
+  log "init: baseline failed=$fail completed=$comp"
+  printf 'ok %s %s\n' "$fail" "$comp" > "$STATE"
+  exit 0
+fi
+
+# (b) new failures accumulating
+if [ "$dfail" -ge "$FAIL_DELTA" ]; then
+  if [ "$pstate" != "failing" ]; then
+    log "ALERT: $dfail new failures since last check (failed total=$fail)"
+    note "roborev FAILING" "$dfail new review failures. Check: roborev check-agents" "Basso"
+    echo "roborev-failure-alert: ALERT — $dfail new failures"
+  else
+    log "still failing: +$dfail new (total=$fail)"
+  fi
+  printf 'failing %s %s\n' "$fail" "$comp" > "$STATE"
+else
+  if [ "$pstate" = "failing" ]; then
+    log "RECOVERED: no new failures (+$dfail); healthy"
+    note "roborev recovered" "Reviews healthy again." "Glass"
+    echo "roborev-failure-alert: recovered"
+  fi
+  printf 'ok %s %s\n' "$fail" "$comp" > "$STATE"
+fi
