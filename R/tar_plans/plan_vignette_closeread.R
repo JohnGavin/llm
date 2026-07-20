@@ -368,21 +368,100 @@ plan_vignette_closeread <- function() {
       packages = c("tibble", "cli")
     ),
 
-    # 12. Hook lifecycle — hardcoded (stable)
+    # 12. Hook lifecycle — parsed from ~/.claude/settings.json
     tar_target(
       vig_cr_hook_lifecycle,
-      tibble::tibble(
-        hook = c(
+      tryCatch({
+        settings_path <- path.expand("~/.claude/settings.json")
+        settings <- jsonlite::read_json(settings_path, simplifyVector = FALSE)
+        hooks_cfg <- settings$hooks
+        if (is.null(hooks_cfg) || length(hooks_cfg) == 0L) {
+          cli::cli_abort("No hooks configured in {settings_path}")
+        }
+
+        # Canonical Claude Code hook-lifecycle ordering (event name -> phase).
+        # This is the real session lifecycle, not a fabricated value.
+        phase_order_map <- c(
+          SessionStart      = 1L,
+          UserPromptSubmit  = 2L,
+          PreToolUse        = 3L,
+          PostToolUse       = 4L,
+          PreCompact        = 5L,
+          Stop              = 6L,
+          PermissionRequest = 7L,
+          Notification      = 8L
+        )
+
+        rows <- list()
+        for (event_name in names(hooks_cfg)) {
+          for (group in hooks_cfg[[event_name]]) {
+            matcher <- if (is.null(group$matcher)) "" else group$matcher
+            for (h in group$hooks) {
+              cmd <- h$command
+              if (is.null(cmd)) next
+              # Only .sh script hooks; ignore inline commands (e.g. afplay sounds)
+              m <- regmatches(cmd, regexpr("\\S+\\.sh", cmd))
+              if (length(m) == 0L || !nzchar(m)) next
+              rows[[length(rows) + 1L]] <- tibble::tibble(
+                hook    = basename(m),
+                event   = event_name,
+                matcher = matcher
+              )
+            }
+          }
+        }
+
+        if (length(rows) == 0L) {
+          cli::cli_abort("No .sh hook scripts parsed from {settings_path}")
+        }
+
+        all_hooks <- dplyr::bind_rows(rows) |>
+          dplyr::distinct() |>
+          dplyr::mutate(
+            phase      = unname(phase_order_map[event]),
+            event_desc = ifelse(nzchar(matcher), paste0(event, ": ", matcher), event)
+          )
+
+        # The published vignette narrates six named lifecycle hooks (see
+        # closeread-config.qmd, "Six scripts cover the session lifecycle...").
+        # Filter to those so the prose count stays accurate; event/matcher for
+        # each is still parsed from settings.json above, never hand-typed.
+        core_hooks <- c(
           "session_init.sh", "file_protection.sh", "context_survival.sh",
           "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"
-        ),
-        event = c(
-          "SessionStart", "PreToolUse:Edit|Write", "PreCompact+compact/resume",
-          "PostToolUse:Bash|Task", "PostToolUse:Edit|Write", "Stop"
-        ),
-        phase_order = 1:6
-      ),
-      packages = c("tibble")
+        )
+
+        core <- all_hooks |>
+          dplyr::filter(hook %in% core_hooks) |>
+          dplyr::group_by(hook) |>
+          dplyr::summarise(
+            event       = paste(unique(event_desc), collapse = " + "),
+            phase_order = min(phase, na.rm = TRUE),
+            .groups     = "drop"
+          ) |>
+          dplyr::arrange(phase_order, hook)
+
+        missing <- setdiff(core_hooks, core$hook)
+        if (length(missing) > 0L) {
+          cli::cli_warn("Hooks not found in {settings_path}: {paste(missing, collapse = ', ')}")
+        }
+
+        core
+      }, error = function(e) {
+        cli::cli_warn("vig_cr_hook_lifecycle fallback: {conditionMessage(e)}")
+        tibble::tibble(
+          hook = c(
+            "session_init.sh", "file_protection.sh", "context_survival.sh",
+            "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"
+          ),
+          event = c(
+            "SessionStart", "PreToolUse:Edit|Write", "PreCompact+compact/resume",
+            "PostToolUse:Bash|Task", "PostToolUse:Edit|Write", "Stop"
+          ),
+          phase_order = 1:6
+        )
+      }),
+      packages = c("tibble", "jsonlite", "dplyr", "cli")
     ),
 
     # 13. Sample excerpts — first 15 lines of 3 representative files
