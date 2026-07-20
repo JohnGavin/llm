@@ -137,9 +137,16 @@ if (is.null(rule_data)) {
     )
   )
 }
+rules_caption <- safe_tar_read("vig_cr_rules_caption")
+if (is.null(rules_caption)) {
+  rules_caption <- paste0(
+    "Rule categories across ", sum(rule_data$count),
+    " config files in ", nrow(rule_data), " categories"
+  )
+}
 knitr::kable(rule_data, format = "html",
   col.names = c("Category", "Count", "Examples"),
-  caption = paste0("Rule categories across ", counts$n_rules, " config files"),
+  caption = rules_caption,
   table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
@@ -222,9 +229,16 @@ if (is.null(skill_data)) {
     )
   )
 }
+skills_caption <- safe_tar_read("vig_cr_skills_caption")
+if (is.null(skills_caption)) {
+  skills_caption <- paste0(
+    "Skill modules by domain (", sum(skill_data$count),
+    " total across ", nrow(skill_data), " categories)"
+  )
+}
 knitr::kable(skill_data, format = "html",
   col.names = c("Category", "Count", "Purpose"),
-  caption = paste0("Skill modules by domain (", counts$n_skills, " total)"),
+  caption = skills_caption,
   table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
@@ -273,9 +287,18 @@ if (is.null(agent_data)) {
 } else {
   agent_data <- agent_data[, c("agent", "model", "description")]
 }
+agents_caption <- safe_tar_read("vig_cr_agents_caption")
+if (is.null(agents_caption)) {
+  n_haiku  <- sum(agent_data$model == "haiku", na.rm = TRUE)
+  n_sonnet <- sum(agent_data$model == "sonnet", na.rm = TRUE)
+  agents_caption <- paste0(
+    "Agent model tiers and delegation triggers (", nrow(agent_data),
+    " agents: ", n_haiku, " haiku, ", n_sonnet, " sonnet)"
+  )
+}
 knitr::kable(agent_data, format = "html",
   col.names = c("Agent", "Model", "Trigger"),
-  caption = "Agent model tiers and delegation triggers",
+  caption = agents_caption,
   table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
@@ -361,9 +384,12 @@ if (is.null(cmd_data)) {
     )
   )
 }
+commands_caption <- paste0(
+  "Slash commands for session management (", nrow(cmd_data), " documented)"
+)
 knitr::kable(cmd_data, format = "html",
   col.names = c("Command", "Alias", "What it does"),
-  caption = "Slash commands for session management",
+  caption = commands_caption,
   table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
@@ -389,29 +415,44 @@ Some commands are diagnostic: `/check` runs the full quality gate sweep, `/ctx-c
 #| results: asis
 hook_data <- safe_tar_read("vig_cr_hook_lifecycle")
 if (is.null(hook_data)) {
+  # Small placeholder subset only — used when the targets store is
+  # unavailable (e.g. a fresh checkout before tar_make()). The published
+  # site always serves the full parse of ~/.claude/settings.json.
   hook_data <- tibble::tibble(
-    script = c("session_init.sh", "context_survival.sh", "file_protection.sh",
-               "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"),
-    event  = c("SessionStart", "PreCompact + compact/resume", "PreToolUse: Edit | Write",
-               "PostToolUse: Bash | Task", "PostToolUse: Edit | Write", "Stop"),
-    action = c(
-      "Load context, check Nix shell, orient session",
-      "Preserve critical state before context window compaction",
-      "Block writes to raw/ (append-only), flag protected files",
-      "Track context window usage, warn at thresholds",
-      "T1 health check on every wiki write (frontmatter, Sources)",
-      "Commit pending changes, append CHANGELOG"
-    )
+    hook        = c("session_init.sh", "file_protection.sh", "session_stop.sh"),
+    event       = c("SessionStart", "PreToolUse", "Stop"),
+    matcher     = c("", "Edit|Write", ""),
+    phase_order = c(1L, 3L, 6L)
   )
 }
-knitr::kable(hook_data, format = "html",
-  col.names = c("Script", "Event", "Action"),
-  caption = "Hook lifecycle — event-driven automation",
-  table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
+hooks_caption <- safe_tar_read("vig_cr_hooks_caption")
+if (is.null(hooks_caption)) {
+  hooks_caption <- paste0(
+    nrow(hook_data), " hook scripts across ",
+    length(unique(hook_data$event)), " of 8 lifecycle events"
+  )
+}
+n_hooks_total  <- nrow(hook_data)
+n_events_total <- length(unique(hook_data$event))
+
+# Tabset generated dynamically from hook_data — one tab per event that
+# actually has a registered hook, ordered by the canonical lifecycle phase.
+event_order <- unique(hook_data[order(hook_data$phase_order), c("event", "phase_order")])
+cat("\n::: {.panel-tabset}\n")
+for (i in seq_len(nrow(event_order))) {
+  ev <- event_order$event[i]
+  ev_hooks <- hook_data[hook_data$event == ev, c("hook", "matcher"), drop = FALSE]
+  cat(paste0("\n#### ", ev, "\n\n"))
+  print(knitr::kable(ev_hooks, format = "html",
+    col.names = c("Script", "Matcher"),
+    caption = paste0(hooks_caption, " — ", ev, " (", nrow(ev_hooks), " hooks)"),
+    table.attr = 'class="table table-sm" style="font-size: 0.9rem;"'))
+}
+cat("\n:::\n")
 ```
 :::
 
-Hooks fire on events. Six scripts cover the session lifecycle: initialization, context survival, file protection, context monitoring, wiki health, and session stop. They are invisible when working correctly — you notice them only when they block something.
+Hooks fire on events. `r n_hooks_total` hook scripts cover `r n_events_total` of the eight lifecycle events — every `PreToolUse`, `PostToolUse`, and `SessionStart` call triggers automation. They are invisible when working correctly — you notice them only when they block something.
 
 @cr-hooks
 
@@ -486,9 +527,18 @@ summary_data <- tibble::tibble(
     "Automate enforcement on tool events"
   )
 )
+summary_caption <- safe_tar_read("vig_cr_summary_caption")
+if (is.null(summary_caption)) {
+  summary_caption <- paste0(
+    "The six layers of the config stack: ", counts$n_rules, " rules, ",
+    counts$n_skills, " skills, ", counts$n_agents, " agents, ",
+    counts$n_memory, " memory files, ", counts$n_commands, " commands, ",
+    counts$n_hooks, " hooks"
+  )
+}
 knitr::kable(summary_data, format = "html",
   col.names = c("Layer", "Count", "Role in a request"),
-  caption = "The six layers of the config stack",
+  caption = summary_caption,
   table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
 :::
@@ -523,8 +573,9 @@ This scrollytelling vignette walks through all six layers of the Claude Code con
 - `vig_cr_rule_categories`: rules grouped by category with example rule names
 - `vig_cr_skill_categories`: skills grouped by domain with purpose summaries
 - `vig_cr_agent_tiers`: agent list with model tier and delegation trigger phrase
-- `vig_cr_hook_lifecycle`: hook scripts with event trigger and action description
-- `vig_cr_commands`: slash commands with alias and description; all targets pre-computed at pipeline build time and served from `inst/extdata/vignettes/` in CI
+- `vig_cr_hook_lifecycle`: every `.sh` hook script registered in `~/.claude/settings.json`, with its triggering event, matcher, and lifecycle phase order — parsed directly from the JSON config, not a hand-picked subset
+- `vig_cr_commands`: slash commands with alias and description
+- `vig_cr_rules_caption`, `vig_cr_skills_caption`, `vig_cr_agents_caption`, `vig_cr_hooks_caption`, `vig_cr_summary_caption`: table captions computed from the underlying counts (rule/skill/agent/hook data) rather than hand-typed; all targets pre-computed at pipeline build time and served from `inst/extdata/vignettes/` in CI
 
 ### AI disclosure
 
