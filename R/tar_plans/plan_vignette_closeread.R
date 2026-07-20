@@ -47,6 +47,19 @@ plan_vignette_closeread <- function() {
       cue = tar_cue(mode = "always")
     ),
 
+    # 1b. Summary-table caption — dynamic layer counts, never hand-typed
+    tar_target(
+      vig_cr_summary_caption,
+      {
+        n <- vig_cr_infra_counts
+        paste0(
+          "The six layers of the config stack: ", n$n_rules, " rules, ",
+          n$n_skills, " skills, ", n$n_agents, " agents, ", n$n_memory,
+          " memory files, ", n$n_commands, " commands, ", n$n_hooks, " hooks"
+        )
+      }
+    ),
+
     # 2. Software layer diagram
     tar_target(
       vig_cr_layer_diagram,
@@ -295,6 +308,15 @@ plan_vignette_closeread <- function() {
       cue = tar_cue(mode = "always")
     ),
 
+    # 9b. Rule categories caption — dynamic counts, never hand-typed
+    tar_target(
+      vig_cr_rules_caption,
+      paste0(
+        "Rule categories across ", sum(vig_cr_rule_categories$count),
+        " config files in ", nrow(vig_cr_rule_categories), " categories"
+      )
+    ),
+
     # 10. Skill categories — parsed from MANIFEST.md
     tar_target(
       vig_cr_skill_categories,
@@ -334,6 +356,15 @@ plan_vignette_closeread <- function() {
       packages = c("tibble", "dplyr", "cli")
     ),
 
+    # 10b. Skill categories caption — dynamic counts, never hand-typed
+    tar_target(
+      vig_cr_skills_caption,
+      paste0(
+        "Skill modules by domain (", sum(vig_cr_skill_categories$count),
+        " total across ", nrow(vig_cr_skill_categories), " categories)"
+      )
+    ),
+
     # 11. Agent tiers — parse YAML frontmatter from ~/.claude/agents/*.md
     tar_target(
       vig_cr_agent_tiers,
@@ -366,6 +397,17 @@ plan_vignette_closeread <- function() {
         )
       }),
       packages = c("tibble", "cli")
+    ),
+
+    # 11b. Agent tiers caption — dynamic counts, never hand-typed
+    tar_target(
+      vig_cr_agents_caption,
+      paste0(
+        "Agent model tiers and delegation triggers (",
+        nrow(vig_cr_agent_tiers), " agents: ",
+        sum(vig_cr_agent_tiers$model == "haiku", na.rm = TRUE), " haiku, ",
+        sum(vig_cr_agent_tiers$model == "sonnet", na.rm = TRUE), " sonnet)"
+      )
     ),
 
     # 12. Hook lifecycle — parsed from ~/.claude/settings.json
@@ -417,51 +459,68 @@ plan_vignette_closeread <- function() {
 
         all_hooks <- dplyr::bind_rows(rows) |>
           dplyr::distinct() |>
-          dplyr::mutate(
-            phase      = unname(phase_order_map[event]),
-            event_desc = ifelse(nzchar(matcher), paste0(event, ": ", matcher), event)
-          )
+          dplyr::mutate(phase_order = unname(phase_order_map[event])) |>
+          dplyr::arrange(phase_order, event, hook)
 
-        # The published vignette narrates six named lifecycle hooks (see
-        # closeread-config.qmd, "Six scripts cover the session lifecycle...").
-        # Filter to those so the prose count stays accurate; event/matcher for
-        # each is still parsed from settings.json above, never hand-typed.
-        core_hooks <- c(
-          "session_init.sh", "file_protection.sh", "context_survival.sh",
-          "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"
-        )
-
-        core <- all_hooks |>
-          dplyr::filter(hook %in% core_hooks) |>
-          dplyr::group_by(hook) |>
-          dplyr::summarise(
-            event       = paste(unique(event_desc), collapse = " + "),
-            phase_order = min(phase, na.rm = TRUE),
-            .groups     = "drop"
-          ) |>
-          dplyr::arrange(phase_order, hook)
-
-        missing <- setdiff(core_hooks, core$hook)
-        if (length(missing) > 0L) {
-          cli::cli_warn("Hooks not found in {settings_path}: {paste(missing, collapse = ', ')}")
-        }
-
-        core
+        all_hooks[, c("hook", "event", "matcher", "phase_order")]
       }, error = function(e) {
         cli::cli_warn("vig_cr_hook_lifecycle fallback: {conditionMessage(e)}")
+        # Full 28-row fallback mirrors a parse of ~/.claude/settings.json taken
+        # 2026-07-20; used only if settings.json is missing or unparseable.
         tibble::tibble(
           hook = c(
-            "session_init.sh", "file_protection.sh", "context_survival.sh",
-            "context_monitor.sh", "wiki_health_onwrite.sh", "session_stop.sh"
+            "session_init.sh", "context_survival.sh", "llmtelemetry_emit.sh",
+            "context_survival.sh", "log_command_use.sh",
+            "file_protection.sh", "worktree_symlink_guard.sh", "mermaid_dashboard_guard.sh",
+            "destructive_fs_guard.sh", "destructive_api_guard.sh", "compound_command_guard.sh",
+            "docs_qa_precommit.sh", "agent_push_guard.sh", "log_agent_run.sh", "log_agent_run.sh",
+            "context_monitor.sh", "post_push_qa.sh", "gh_comment_provenance.sh",
+            "wiki_health_onwrite.sh", "skill_quality_onwrite.sh", "log_agent_run.sh",
+            "log_agent_run.sh", "log_skill_use.sh", "nix_gcroot_warm.sh",
+            "llmtelemetry_emit.sh", "loop_continuation.sh", "session_stop.sh",
+            "permission_request.sh"
           ),
           event = c(
-            "SessionStart", "PreToolUse:Edit|Write", "PreCompact+compact/resume",
-            "PostToolUse:Bash|Task", "PostToolUse:Edit|Write", "Stop"
+            "SessionStart", "SessionStart", "SessionStart",
+            "PreCompact", "UserPromptSubmit",
+            "PreToolUse", "PreToolUse", "PreToolUse", "PreToolUse", "PreToolUse",
+            "PreToolUse", "PreToolUse", "PreToolUse", "PreToolUse", "PreToolUse",
+            "PostToolUse", "PostToolUse", "PostToolUse", "PostToolUse", "PostToolUse",
+            "PostToolUse", "PostToolUse", "PostToolUse", "PostToolUse",
+            "Stop", "Stop", "Stop",
+            "PermissionRequest"
           ),
-          phase_order = 1:6
+          matcher = c(
+            "", "compact|resume", "",
+            "", "",
+            "Edit|Write", "Edit|Write", "Edit|Write", "Bash", "Bash",
+            "Bash", "Bash", "Bash", "Agent", "Task",
+            "Bash|Task", "Bash", "Bash", "Edit|Write", "Edit|Write",
+            "Agent", "Task", "Skill", "Bash|Edit|Write",
+            "", "", "",
+            ""
+          ),
+          phase_order = c(
+            1L, 1L, 1L,
+            5L, 2L,
+            3L, 3L, 3L, 3L, 3L, 3L, 3L, 3L, 3L, 3L,
+            4L, 4L, 4L, 4L, 4L, 4L, 4L, 4L, 4L,
+            6L, 6L, 6L,
+            7L
+          )
         )
       }),
       packages = c("tibble", "jsonlite", "dplyr", "cli")
+    ),
+
+    # 12b. Hook lifecycle caption — dynamic hook/event counts, never hand-typed
+    tar_target(
+      vig_cr_hooks_caption,
+      paste0(
+        nrow(vig_cr_hook_lifecycle), " hook scripts across ",
+        length(unique(vig_cr_hook_lifecycle$event)),
+        " of 8 lifecycle events, parsed from ~/.claude/settings.json"
+      )
     ),
 
     # 13. Sample excerpts — first 15 lines of 3 representative files
