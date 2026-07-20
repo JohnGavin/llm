@@ -364,31 +364,28 @@ The memory system works because it is curated, not accumulated. Each feedback fi
 #| results: asis
 cmd_data <- safe_tar_read("vig_cr_commands")
 if (is.null(cmd_data)) {
+  # Small placeholder subset only \u2014 used when the targets store is
+  # unavailable (e.g. a fresh checkout before tar_make()). The published
+  # site always serves the full parse of ~/.claude/commands/*.md.
   cmd_data <- tibble::tibble(
-    command  = c("/hi", "/bye", "/check", "/ctx-check", "/pr-status", "/cleanup",
-                 "/issue-triage", "/new-issue", "/wiki-health", "/wiki-promote", "/write-alt-text"),
-    alias    = c("/session-start", "/session-end", "\u2014", "\u2014", "\u2014", "\u2014",
-                 "/triage", "\u2014", "\u2014", "\u2014", "\u2014"),
-    does     = c(
-      "Read CHANGELOG, check git status, open issues",
-      "Commit, append CHANGELOG, push, wiki staleness check",
-      "R CMD check + code sweep with ast-grep rules",
-      "Check ctx.yaml coverage for all exported functions",
-      "Check open PRs and CI status",
-      "Review and simplify work (critic + fixer pass)",
-      "List GitHub issues by difficulty",
-      "Create GitHub issue with branch",
-      "Validate knowledge base wiki frontmatter and links",
-      "Promote an output into the wiki",
-      "Generate alt text for all figures"
+    command     = c("/hi", "/bye", "/check"),
+    alias       = c("/session-start", "/session-end", NA_character_),
+    description = c(
+      "Initialize Development Session",
+      "End Development Session",
+      "Run R Package Checks + Code Sweep"
     )
   )
 }
-commands_caption <- paste0(
-  "Slash commands for session management (", nrow(cmd_data), " documented)"
-)
+cmd_data$alias[is.na(cmd_data$alias)] <- "\u2014"
+commands_caption <- safe_tar_read("vig_cr_commands_caption")
+if (is.null(commands_caption)) {
+  commands_caption <- paste0(
+    nrow(cmd_data), " slash commands, parsed from ~/.claude/commands/"
+  )
+}
 knitr::kable(cmd_data, format = "html",
-  col.names = c("Command", "Alias", "What it does"),
+  col.names = c("Command", "Alias", "Description"),
   caption = commands_caption,
   table.attr = 'class="table table-sm" style="font-size: 0.9rem;"')
 ```
@@ -402,7 +399,7 @@ The `/hi` to `/bye` lifecycle structures the session. Not every session follows 
 
 @cr-commands
 
-Some commands are diagnostic: `/check` runs the full quality gate sweep, `/ctx-check` verifies API context coverage, `/pr-status` polls GitHub Actions. These are not automated — they run when called. Automation lives in hooks.
+Some commands are diagnostic: `/check` runs the full quality gate sweep, `/roborev` toggles automated code review for the current project, `/issue-triage` lists open GitHub issues by difficulty. These are not automated — they run when called. Automation lives in hooks.
 
 @cr-commands
 
