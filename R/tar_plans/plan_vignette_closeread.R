@@ -523,6 +523,131 @@ plan_vignette_closeread <- function() {
       )
     ),
 
+    # 12c. Slash commands — parsed from ~/.claude/commands/*.md
+    tar_target(
+      vig_cr_commands,
+      tryCatch({
+        cmd_dir   <- path.expand("~/.claude/commands")
+        cmd_files <- list.files(cmd_dir, pattern = "\\.md$", full.names = TRUE)
+        if (length(cmd_files) == 0L) {
+          cli::cli_abort("No command files found in {cmd_dir}")
+        }
+
+        parse_command_file <- function(path) {
+          lines        <- readLines(path, warn = FALSE)
+          filename_cmd <- paste0("/", tools::file_path_sans_ext(basename(path)))
+
+          # Each file's first heading is "# /<name> - <description>"; the one
+          # documented exception (braindump.md) uses YAML frontmatter instead.
+          heading_idx <- which(grepl("^# /", lines))[1]
+          if (!is.na(heading_idx)) {
+            m <- regmatches(
+              lines[heading_idx],
+              regexec("^# (/\\S+)\\s*-\\s*(.*)$", lines[heading_idx])
+            )[[1]]
+            if (length(m) == 3L) {
+              heading_cmd <- m[2]
+              description <- trimws(m[3])
+            } else {
+              heading_cmd <- filename_cmd
+              description <- NA_character_
+            }
+          } else {
+            heading_cmd <- filename_cmd
+            description <- NA_character_
+            if (isTRUE(lines[1] == "---")) {
+              fm_end <- which(lines == "---")
+              if (length(fm_end) >= 2L) {
+                fm_lines  <- lines[seq(fm_end[1] + 1L, fm_end[2] - 1L)]
+                desc_line <- fm_lines[grepl("^description:", fm_lines)][1]
+                if (!is.na(desc_line)) {
+                  description <- trimws(sub("^description:\\s*", "", desc_line))
+                }
+              }
+            }
+          }
+
+          # alias: either the file's heading names a different command than
+          # its filename (e.g. hi.md's heading says "/session-start"), or the
+          # file declares an explicit "**Alias: `/xxx`**" line.
+          alias <- NA_character_
+          if (!identical(heading_cmd, filename_cmd)) {
+            alias <- heading_cmd
+          } else {
+            alias_idx <- which(grepl("^\\*\\*Alias:", lines))[1]
+            if (!is.na(alias_idx)) {
+              am <- regmatches(
+                lines[alias_idx],
+                regexec("`(/[a-zA-Z0-9_-]+)`", lines[alias_idx])
+              )[[1]]
+              if (length(am) == 2L && !identical(am[2], filename_cmd)) {
+                alias <- am[2]
+              }
+            }
+          }
+
+          tibble::tibble(command = filename_cmd, alias = alias, description = description)
+        }
+
+        rows <- lapply(cmd_files, function(p) {
+          tryCatch(parse_command_file(p), error = function(e) {
+            cli::cli_warn("Skipping {basename(p)}: {conditionMessage(e)}")
+            NULL
+          })
+        })
+        rows <- Filter(Negate(is.null), rows)
+        if (length(rows) == 0L) {
+          cli::cli_abort("No slash commands parsed from {cmd_dir}")
+        }
+        dplyr::bind_rows(rows) |> dplyr::arrange(command)
+      }, error = function(e) {
+        cli::cli_warn("vig_cr_commands fallback: {conditionMessage(e)}")
+        # Current 14-file fallback taken 2026-07-20 from ~/.claude/commands/;
+        # used only if the directory is missing or unparseable. No pruned
+        # commands (/ctx-check, /pr-status, /cleanup, /wiki-health removed
+        # 2026-07-08 per llm#750).
+        tibble::tibble(
+          command = c(
+            "/braindump", "/bye", "/check", "/cleanup-worktrees", "/hi",
+            "/issue-triage", "/new-issue", "/roborev", "/roborev-clear-backlog",
+            "/roborev-setup", "/session-end", "/session-start", "/wiki-promote",
+            "/write-alt-text"
+          ),
+          alias = c(
+            NA_character_, "/session-end", NA_character_, NA_character_, "/session-start",
+            NA_character_, NA_character_, NA_character_, NA_character_,
+            NA_character_, "/bye", NA_character_, NA_character_,
+            NA_character_
+          ),
+          description = c(
+            "Process latest brain dump into a structured Claude Code prompt",
+            "End Development Session",
+            "Run R Package Checks + Code Sweep",
+            "Triage Flagged Stale Worktrees",
+            "Initialize Development Session",
+            "List GitHub Issues by Difficulty",
+            "Create GitHub Issue with Branch",
+            "Toggle roborev auto code review",
+            "Clear roborev Backlog for a Project",
+            "Configure roborev for Current Project",
+            "End Development Session",
+            "Initialize Development Session",
+            "Promote an Output into the Wiki",
+            "Generate Alt Text for All Figures"
+          )
+        )
+      }),
+      packages = c("tibble", "dplyr", "cli")
+    ),
+
+    # 12d. Slash commands caption — dynamic count, never hand-typed
+    tar_target(
+      vig_cr_commands_caption,
+      paste0(
+        nrow(vig_cr_commands), " slash commands, parsed from ~/.claude/commands/"
+      )
+    ),
+
     # 13. Sample excerpts — first 15 lines of 3 representative files
     tar_target(
       vig_cr_sample_excerpts,
