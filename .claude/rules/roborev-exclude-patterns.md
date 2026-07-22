@@ -83,11 +83,63 @@ If the file already exists, locate the `exclude_patterns` field (it may
 already be present as `exclude_patterns = []`) and replace the empty list
 with the required entries.
 
+## Second Category: High-Volume Automated / Generated-Data Commits
+
+The session-ledger case above is one instance of a broader principle: **exclude
+paths whose diffs a code-review agent cannot usefully review.** The second, larger
+instance is a repo whose commits are dominated by *machine-generated data*.
+
+### Case study — llmtelemetry (2026-07-22)
+
+`llmtelemetry` receives ~400 commits/week, effectively **100% bot-authored**:
+`data: update telemetry data` (regenerated JSON/parquet under `inst/extdata/**`)
+and `chore: Auto-refresh ccusage cache`. roborev reviewed every one. Result over
+7 days: **234 findings (104 High, 103 Medium) at a 16.7% close rate** — vs single
+digits for every other repo. None were real bugs; a reviewer pointed at
+regenerated data flags spurious churn ("value changed", "count differs").
+
+Fix applied — a `.roborev.toml` excluding the generated-data paths, so a
+data-only commit presents an empty diff and produces no findings, while real
+`R/`/`scripts/` commits are still reviewed:
+
+```toml
+exclude_patterns = [
+  "inst/extdata/**",     # automated telemetry data + ccusage cache
+  "vignettes/data/**",   # dashboard data exports
+  "CHANGELOG.md",
+  ".claude/CURRENT_WORK.md",
+]
+```
+
+~230 already-accumulated open **single-data-commit** findings were bulk-closed
+as won't-fix (`roborev close <id>` per review). **Left untouched — verify before
+mass-closing:**
+
+- `range` batch-reviews (`job_type=range`, `commit_subject=null`, `git_ref=SHA..SHA`):
+  these span a *range* of commits — inspect the range (`git log A..B`) before
+  assuming noise. In llmtelemetry the range reviews covered mostly **real code**
+  (fixes/features from an earlier dev period), not data refreshes — closing them
+  blindly would have destroyed legitimate findings.
+- Single real-code reviews (`fix:`/`feat:`/merges) — genuine triage.
+- Crashed jobs (`verdict=null status=failed`) — the gemini-crash artifacts;
+  `roborev close` cannot address them (no verdict to resolve). They are a
+  separate problem (agent health), not findings, and clear via re-run/purge.
+
+### How to spot this category
+
+`git log --since="7 days ago" --pretty='%s' | sed -E 's/[0-9].*//' | sort | uniq -c | sort -rn`
+
+If one or two automated subjects dominate (data refresh, cache, snapshot,
+leaderboard, auto-format) and touch a stable data/output directory, exclude that
+directory. **Only exclude generated-output paths — never `R/`, `scripts/`, or
+other human-authored source.**
+
 ## Forbidden Patterns
 
 | Pattern | Why wrong |
 |---------|-----------|
 | No `.roborev.toml` in a roborev-enabled repo | exclude_patterns cannot be set |
+| Reviewing bot-authored generated-data commits (data refresh, cache, snapshot) as if code | Floods the queue with noise findings at a near-zero close rate; exclude the generated-data path instead |
 | `exclude_patterns = []` when CHANGELOG.md is committed | Cascade will occur |
 | Excluding only CHANGELOG.md but not `.claude/CURRENT_WORK.md` | Partial — second file still triggers cascade |
 | Suppressing the reviews without excluding the files | Treats symptoms, not root cause |
@@ -110,7 +162,7 @@ Repos checked for `.roborev.toml` + CHANGELOG.md status:
 | `historical` (reference) | Yes | Yes | Yes — `4906b6d` | None — compliant |
 | `llm` | Yes | Yes | No — `exclude_patterns = []` | Add entries |
 | `crypto_solwatch` | Yes | No | n/a | No CHANGELOG to exclude |
-| `llmtelemetry` | No | Yes | n/a — no toml | Create `.roborev.toml` if roborev enabled |
+| `llmtelemetry` | Yes | Yes | Yes — `inst/extdata/**` + `vignettes/data/**` + ledger (2026-07-22) | None — compliant |
 | `mycare` | No | No | n/a | No action needed |
 | `irishbuoys` | No | No | n/a | No action needed |
 | `footbet` | No | No | n/a | No action needed |
