@@ -91,3 +91,81 @@ file with no fallback to the leaked global environment.
 
 All other plists (needs-secrets = no / n/a in the table above) were left
 unmodified.
+
+## Group 4 — live-apply runbook (ORCHESTRATOR ONLY — not run from this worktree)
+
+This PR only changes version-controlled files under `.claude/`. Nothing on
+the live machine is touched until the ORCHESTRATOR (a session running outside
+any agent sandbox, with access to the real `~/Library/LaunchAgents/` and
+`launchctl`) performs the steps below **after** this PR is merged and
+`~/docs_gh/llm` (the main checkout) is pulled to the merge commit.
+
+### Step 1 — sync the 4 wrapped plists to `~/Library/LaunchAgents/` and reload
+
+```bash
+for p in com.claude.config-digest-email \
+         com.claude.kb-digest-email \
+         com.claude.overnight-self-review-email \
+         com.claude.roborev-daily-email; do
+  cp "$HOME/docs_gh/llm/.claude/launchd/${p}.plist" "$HOME/Library/LaunchAgents/${p}.plist"
+  /bin/launchctl unload "$HOME/Library/LaunchAgents/${p}.plist" 2>/dev/null || true
+  /bin/launchctl load "$HOME/Library/LaunchAgents/${p}.plist"
+  /bin/launchctl list "$p"
+done
+```
+
+### Step 2 — unsetenv every key the old load-secrets loop had pushed globally
+
+The exact key list depends on what is in `~/.config/secrets.env` on this
+machine; at minimum the GMAIL/report keys this migration's mapping found are
+known to have been pushed. Run for each key present:
+
+```bash
+/bin/launchctl unsetenv GMAIL_USERNAME
+/bin/launchctl unsetenv GMAIL_APP_PASSWORD
+/bin/launchctl unsetenv REPORT_RECIPIENT
+/bin/launchctl unsetenv ROBOREV_DASHBOARD_URL
+# Repeat for any other key present in ~/.config/secrets.env, e.g.:
+# /bin/launchctl unsetenv OPENAI_API_KEY
+# /bin/launchctl unsetenv GEMINI_API_KEY
+# /bin/launchctl unsetenv GOOGLE_API_KEY
+# /bin/launchctl unsetenv GITHUB_PAT
+# /bin/launchctl unsetenv GH_TOKEN
+```
+
+`launchctl getenv <KEY>` should print nothing for each key afterward.
+
+### Step 3 — bootout the deprecated load-secrets agent
+
+```bash
+/bin/launchctl bootout "gui/$(id -u)/com.johngavin.load-secrets" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/com.johngavin.load-secrets.plist"
+```
+
+(If it was never installed under that exact path, `bootout` will just report
+"No such process" — harmless.)
+
+### Step 4 — verify no leak remains
+
+Run the verify script against one of the newly-wrapped jobs and against a job
+that was never wrapped (to confirm the domain-wide environment itself is
+clean):
+
+```bash
+"$HOME/docs_gh/llm/.claude/scripts/verify_no_launchd_secret_leak.sh" com.claude.roborev-daily-email
+"$HOME/docs_gh/llm/.claude/scripts/verify_no_launchd_secret_leak.sh" com.claude.branch-gc
+```
+
+Both invocations must print `OK: no secret key found ...` and exit 0. Exit
+code 2 with a `LEAK:` line means a key from Step 2 was missed — re-run
+`launchctl unsetenv` for that key and verify again.
+
+### Step 5 — confirm the wrapped jobs still work
+
+Trigger one wrapped job on demand and check its log for a successful (or
+`EMAIL_DRY_RUN`) run, not a "GMAIL_USERNAME not set" failure:
+
+```bash
+/bin/launchctl kickstart -k "gui/$(id -u)/com.claude.roborev-daily-email"
+tail -n 40 "$HOME/.claude/logs/roborev_daily_email_launchd.log"
+```
