@@ -76,3 +76,18 @@ are not coupled to the leak and are left unwrapped.
 4 plists wrapped with `with-secrets` (Group 2); the rest are left alone because
 they either use no secrets or already source a dedicated per-job credentials
 file with no fallback to the leaked global environment.
+
+## Group 2 — wrapped plists + `plutil -lint` results
+
+`with-secrets` was prepended as the first `ProgramArguments` element (program
++ original args kept after it) for:
+
+| Plist | `plutil -lint` |
+|---|---|
+| `com.claude.config-digest-email.plist` | OK |
+| `com.claude.kb-digest-email.plist` | OK |
+| `com.claude.overnight-self-review-email.plist` | OK |
+| `com.claude.roborev-daily-email.plist` | OK |
+
+All other plists (needs-secrets = no / n/a in the table above) were left
+unmodified.
