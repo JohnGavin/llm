@@ -31,31 +31,15 @@ repeatable pattern that makes future tasks predictable.
 
 Every housekeeping task MUST ship all 5 components. A task that ships only some
 components is incomplete — it will either produce no report, produce a silent
-failure, or duplicate infrastructure that already exists.
+failure, or duplicate infrastructure that already exists. Full code templates
+(script skeleton, plist XML, SQL DDL) are in the companion doc.
 
 ### 1. A script under `.claude/scripts/` or `bin/`
 
 Follow `cron-auto-pull-discipline`: auto-pull `origin/main` before running so
 every `gh pr merge` actually ships. Log HEAD SHA after the pull. Script must be
-idempotent — safe to run multiple times without side effects.
-
-```bash
-# Minimum structure for a housekeeping script
-set -euo pipefail
-REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
-
-# Auto-pull (cron-auto-pull-discipline)
-if [ -z "${SKIP_CRON_PULL:-}" ]; then
-  git -C "$REPO_ROOT" fetch origin main 2>/dev/null
-  git -C "$REPO_ROOT" merge --ff-only origin/main 2>/dev/null \
-    && log "deploy: ff to $(git -C "$REPO_ROOT" rev-parse --short HEAD)"
-fi
-log "HEAD: $(git -C "$REPO_ROOT" rev-parse --short HEAD) $(git -C "$REPO_ROOT" log -1 --format='%s')"
-
-# Insert housekeeping_runs start row
-# ... task work ...
-# Update housekeeping_runs end row
-```
+idempotent — safe to run multiple times without side effects. Must insert a
+`housekeeping_runs` start row and update it at the end (see component 3).
 
 ### 2. A launchd plist under `.claude/launchd/`
 
@@ -72,69 +56,16 @@ weekly slots:
 
 Use an existing slot when possible — the 00:04 `com.claude.worktree-gc` plist
 already runs `worktree_gc.sh`. Add a new plist only when no existing slot fits.
-
-Minimum plist structure:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.claude.my-task</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>/Users/johngavin/docs_gh/llm/.claude/scripts/my_task_cron.sh</string>
-  </array>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>  <integer>0</integer>
-    <key>Minute</key><integer>4</integer>
-  </dict>
-  <key>StandardOutPath</key>
-  <string>/Users/johngavin/.claude/logs/my_task.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/johngavin/.claude/logs/my_task.err</string>
-</dict>
-</plist>
-```
+Every plist MUST set both `StandardOutPath` and `StandardErrorPath` (see
+Forbidden Patterns) — otherwise errors are lost silently.
 
 ### 3. An events table in `unified.duckdb`
 
 Follow `unified-observability-schema`: every event row answers WHO / WHAT /
-WHEN / WHERE / HOW using the 5-dim model. Minimum columns:
-
-```sql
-CREATE TABLE IF NOT EXISTS my_task_events (
-  id         TEXT PRIMARY KEY,
-  fired_at   TIMESTAMPTZ NOT NULL,   -- WHEN
-  source     TEXT NOT NULL,           -- WHO (script name)
-  session_id TEXT,                    -- WHO (NULL for cron)
-  action     TEXT NOT NULL,           -- WHAT
-  reason     TEXT,                    -- HOW (why this action)
-  detail_json TEXT                    -- task-specific payload
-);
-```
-
-Use `INSERT OR IGNORE` for idempotency. Write one row per item inspected.
-
-Every script invocation MUST also write to `housekeeping_runs`:
-
-```sql
--- At invocation start
-INSERT OR IGNORE INTO housekeeping_runs
-  (id, task, source_script, started_at, status, rows_written)
-VALUES ('<uuid>', 'my_task', '/path/to/script.sh', current_timestamp, 'ok', 0);
-
--- At invocation end (UPDATE the same row)
-UPDATE housekeeping_runs
-SET ended_at = current_timestamp,
-    rows_written = <N>,
-    status = 'ok'        -- or 'failed' / 'partial'
-WHERE id = '<uuid>';
-```
+WHEN / WHERE / HOW using the 5-dim model, written with `INSERT OR IGNORE` for
+idempotency — one row per item inspected. Every script invocation MUST also
+write a start row to `housekeeping_runs` and update it at the end with
+`ended_at`, `rows_written`, and `status` (`ok` / `failed` / `partial`).
 
 ### 4. A section in the 06:30 digest email
 
@@ -184,18 +115,6 @@ Realises the Simplicity principle (see `AGENTS.md` Core Rules). Automation/confi
 
 ---
 
-## Existing Task Inventory
-
-| Task | Script | Launchd plist | Events table | Email section | Session-init phase |
-|------|--------|---------------|--------------|---------------|--------------------|
-| Worktree GC | `worktree_gc.sh` | `com.claude.worktree-gc` (00:04) | `worktree_gc_events` | Section 3b (24h footprint) | Phase 7f (agent only) |
-| Stage-1 findings | `self_review_stage1.sh` | `com.claude.self-review-stage1` (02:30) | `self_review_findings_stage1` | Section 1 (new findings) | — |
-| Overnight email | `send_overnight_self_review_email.R` | `com.claude.overnight-self-review-email` (06:30) | — (writer) | — (is the email) | — |
-| roborev autoclose | `roborev_autoclose.sh` | `com.claude.roborev-autoclose` (09:15 weekly) | — (roborev DB) | — | Phase 8 (roborev status) |
-| KB digest | `kb_digest_daily_cron.sh` | `com.claude.kb-digest-email` (07:00) | — | — | — |
-
----
-
 ## Forbidden Patterns
 
 | Pattern | Why wrong | Fix |
@@ -211,6 +130,7 @@ Realises the Simplicity principle (see `AGENTS.md` Core Rules). Automation/confi
 
 ## Related
 
+- [`_companions/housekeeping-framework-details.md`](_companions/housekeeping-framework-details.md) — full code templates (script skeleton, plist XML, SQL DDL) and the current task-inventory table
 - `cron-auto-pull-discipline` — auto-pull requirement for every cron wrapper
 - `unified-observability-schema` — 5-dim model for event tables
 - `session-init-phases` — phase inventory; update when adding a session phase
