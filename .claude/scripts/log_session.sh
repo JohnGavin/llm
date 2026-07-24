@@ -34,9 +34,17 @@ fi
 
 case "$ACTION" in
   start)
+    # llm#803: optional 5th arg MODEL. No reliable harness env var carries the
+    # active model at SessionStart time (before any assistant turn exists),
+    # so today's callers (session_init.sh) never pass it and this stays NULL
+    # at start -- it is populated later by `stop`, which can read the model
+    # out of the session's own transcript JSONL once at least one turn has
+    # happened. The param exists so a future caller with a reliable source
+    # can populate it directly without a log_session.sh change.
+    MODEL_START="${5:-}"
     duckdb -init /dev/null "$DB" -c "
-      INSERT OR REPLACE INTO sessions (session_id, project, started_at, summary)
-      VALUES ('$SESSION_ID', '$PROJECT', current_timestamp, '$SUMMARY');
+      INSERT OR REPLACE INTO sessions (session_id, project, started_at, summary, model)
+      VALUES ('$SESSION_ID', '$PROJECT', current_timestamp, '$SUMMARY', NULLIF('$MODEL_START', ''));
     " 2>/dev/null || true
     # Store session ID for stop to read
     echo "$SESSION_ID" > "$HOME/.claude/logs/.current_session"
@@ -46,11 +54,17 @@ case "$ACTION" in
     if [ "$SESSION_ID" = "" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
       SESSION_ID=$(cat "$HOME/.claude/logs/.current_session")
     fi
+    # llm#803: optional 5th arg MODEL, sourced by the caller (session_stop.sh)
+    # from the session's transcript JSONL (each assistant turn embeds a
+    # top-level "model" field). COALESCE means a blank/missing value never
+    # clobbers a model recorded by an earlier `stop` call for this session.
+    MODEL_STOP="${5:-}"
     duckdb -init /dev/null "$DB" -c "
       UPDATE sessions
       SET ended_at = current_timestamp,
           duration_min = EXTRACT(EPOCH FROM (current_timestamp - started_at)) / 60.0,
-          summary = COALESCE(NULLIF('$SUMMARY', ''), summary)
+          summary = COALESCE(NULLIF('$SUMMARY', ''), summary),
+          model = COALESCE(NULLIF('$MODEL_STOP', ''), model)
       WHERE session_id = '$SESSION_ID';
     " 2>/dev/null || true
     rm -f "$HOME/.claude/logs/.current_session"

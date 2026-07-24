@@ -58,11 +58,76 @@ if [ -x "$MIX_SCRIPT" ]; then
   timeout 35 "$MIX_SCRIPT" >/dev/null 2>&1 || true
 fi
 
-# ── Log session stop to unified DuckDB ───────────────────────────────
+# ── Resolve stable session ID (llm#273) ──────────────────────────────────────
+# Priority: CLAUDE_SESSION_ID → PPID-anchored file → .current_session
+# Moved ahead of the DB-stop write below (llm#803) so that write uses the
+# same robust resolution as the rest of this file, instead of trusting the
+# single global `.current_session` marker on its own (see llm#803 rationale
+# in the block below).
+_STOP_SESSION_ID="${CLAUDE_SESSION_ID:-}"
+_STOP_LOG_DIR="$CLAUDE_RUNTIME_ROOT/logs"
+_STOP_PPID_ANCHOR="$_STOP_LOG_DIR/.llmtelemetry_ppid_session.${PPID:-0}"
+if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_PPID_ANCHOR" ]; then
+  _STOP_SESSION_ID=$(cat "$_STOP_PPID_ANCHOR" 2>/dev/null || echo "")
+fi
+if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_LOG_DIR/.current_session" ]; then
+  _STOP_SESSION_ID=$(cat "$_STOP_LOG_DIR/.current_session" 2>/dev/null || echo "")
+fi
+
+# ── One-shot /bye sentinel detection ──────────────────────────────────
+# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
+# Gated on a per-session sentinel (llm#273) that /bye writes before invoking
+# the Stop hook. Non-/bye stops leave `_bye_detected=0`. The per-session
+# sentinel is deleted immediately after use — one-shot. Backward-compat: also
+# accept the legacy global sentinel when no per-session ID resolved above.
+# Moved ahead of the DB-stop write below (llm#803) so both that write and the
+# pattern-detection/refine blocks further down share one resolution.
+_BYE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-requested.${_STOP_SESSION_ID}"
+_BYE_SENTINEL_GLOBAL="${CLAUDE_RUNTIME_ROOT}/.bye-requested"
+_bye_detected=0
+if [ -n "$_STOP_SESSION_ID" ] && [ -f "$_BYE_SENTINEL_PS" ]; then
+  rm -f "$_BYE_SENTINEL_PS"  # consume per-session sentinel — one-shot
+  _bye_detected=1
+elif [ -f "$_BYE_SENTINEL_GLOBAL" ]; then
+  rm -f "$_BYE_SENTINEL_GLOBAL"  # consume global sentinel — one-shot (backward-compat)
+  _bye_detected=1
+fi
+
+# ── Log session stop to unified DuckDB (llm#803) ─────────────────────
+# Root cause of 57% NULL `ended_at` + a median observed duration of only
+# ~36 seconds across 4620 rows: this block used to run UNGATED on every
+# Stop event (which fires after every single response, not just /bye),
+# guarded only by the existence of the single GLOBAL `.current_session`
+# marker file. log_session.sh's own `stop` case deletes that marker as soon
+# as it fires. So the FIRST Stop event of ANY session — often seconds after
+# the very first response — both (a) stamped `ended_at` prematurely, and
+# (b) deleted the one shared marker, starving every other concurrently
+# running session (worktrees, subagents, parallel terminals routinely used
+# in this environment) of the ability to resolve its own session id here,
+# leaving THEIR rows' `ended_at` permanently NULL.
+#
+# Fix: gate this write on the same one-shot `_bye_detected` sentinel used by
+# the pattern-detection/refine blocks further down, and resolve the session
+# id via `_STOP_SESSION_ID` (CLAUDE_SESSION_ID → PPID anchor → marker file)
+# instead of the raw marker file. The write now fires exactly once, at the
+# session's real end. Sessions that never call /bye (crash, kill, /clear)
+# still show `ended_at IS NULL` afterward — that gap is by design, and is
+# closed by the `session_reaper.sql` sweep (see session_init.sh) rather than
+# by guessing at an end time here.
 _log_script="$CLAUDE_DIR/scripts/log_session.sh"
-if [ -x "$_log_script" ] && [ -f "$CLAUDE_RUNTIME_ROOT/logs/.current_session" ]; then
-  _sid=$(cat "$CLAUDE_RUNTIME_ROOT/logs/.current_session" 2>/dev/null || echo "")
-  "$_log_script" stop "$_sid" "$(basename "$(pwd)")" "" 2>/dev/null || true
+if [ "$_bye_detected" -eq 1 ] && [ -x "$_log_script" ] && [ -n "$_STOP_SESSION_ID" ]; then
+  # Best-effort model capture (llm#803): no reliable env var carries the
+  # active model at SessionStart, but by the time /bye fires the session's
+  # transcript almost certainly has at least one assistant turn, and every
+  # turn embeds a top-level "model" field. Scoped by session id (filename),
+  # not "newest transcript across all projects", to stay correct even with
+  # multiple concurrent sessions. Empty is fine — log_session.sh COALESCEs.
+  _stop_transcript=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/"${_STOP_SESSION_ID}.jsonl" 2>/dev/null | head -1)
+  _stop_model=""
+  if [ -n "$_stop_transcript" ] && [ -f "$_stop_transcript" ]; then
+    _stop_model=$(grep -o '"model":"[^"]*"' "$_stop_transcript" 2>/dev/null | tail -1 | cut -d'"' -f4)
+  fi
+  "$_log_script" stop "$_STOP_SESSION_ID" "$(basename "$(pwd)")" "" "$_stop_model" 2>/dev/null || true
 fi
 
 # ── Decision log reminder ────────────────────────────────────────────
@@ -148,38 +213,12 @@ for p in pending:
   fi
 fi
 
-# ── Resolve stable session ID (llm#273) ──────────────────────────────────────
-# Mirrors the resolution in llmtelemetry_emit.sh so both hooks agree on the
-# session ID when checking per-session sentinels.
-# Priority: CLAUDE_SESSION_ID → PPID-anchored file → .current_session
-_STOP_SESSION_ID="${CLAUDE_SESSION_ID:-}"
-_STOP_LOG_DIR="$CLAUDE_RUNTIME_ROOT/logs"
-_STOP_PPID_ANCHOR="$_STOP_LOG_DIR/.llmtelemetry_ppid_session.${PPID:-0}"
-if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_PPID_ANCHOR" ]; then
-  _STOP_SESSION_ID=$(cat "$_STOP_PPID_ANCHOR" 2>/dev/null || echo "")
-fi
-if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_LOG_DIR/.current_session" ]; then
-  _STOP_SESSION_ID=$(cat "$_STOP_LOG_DIR/.current_session" 2>/dev/null || echo "")
-fi
-
 # ── Pattern Detection (Phase 1 Validation, Option 4 Hybrid) ──────────────
 # IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
 # Running pattern detection (paid Opus API call) on every response would be
-# a massive cost regression. We gate on a per-session sentinel that /bye writes
-# before invoking the Stop hook. Non-/bye stops skip this block entirely.
-# The per-session sentinel is deleted immediately after use (llm#273).
-# Backward-compat: also accept the legacy global sentinel when no per-session ID.
-_BYE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-requested.${_STOP_SESSION_ID}"
-_BYE_SENTINEL_GLOBAL="${CLAUDE_RUNTIME_ROOT}/.bye-requested"
-_bye_detected=0
-if [ -n "$_STOP_SESSION_ID" ] && [ -f "$_BYE_SENTINEL_PS" ]; then
-  rm -f "$_BYE_SENTINEL_PS"  # consume per-session sentinel — one-shot
-  _bye_detected=1
-elif [ -f "$_BYE_SENTINEL_GLOBAL" ]; then
-  rm -f "$_BYE_SENTINEL_GLOBAL"  # consume global sentinel — one-shot (backward-compat)
-  _bye_detected=1
-fi
-
+# a massive cost regression. Reuses `_bye_detected` (resolved + consumed once,
+# earlier in this file, alongside the llm#803 DB-stop-write gate) so this
+# block also only runs on the real session end, not every response.
 if [ "$_bye_detected" -eq 1 ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh" ]; then
   TRANSCRIPT=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/*.jsonl 2>/dev/null | head -1)
   if [ -n "$TRANSCRIPT" ]; then
