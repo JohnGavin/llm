@@ -53,9 +53,8 @@ Enforced by:
 | Edit EXISTING file | **No** — blocked by hook |
 | Rename/Delete | Only with user confirmation |
 
-### Why
-
-Modifying `raw/` corrupts provenance chain and creates "AI output → input" feedback loop.
+Modifying `raw/` corrupts the provenance chain and creates an "AI output →
+input" feedback loop.
 
 ---
 
@@ -63,12 +62,11 @@ Modifying `raw/` corrupts provenance chain and creates "AI output → input" fee
 
 Required fields and enum values (`status`, `consensus_level`) are validated
 against `.claude/schema/wiki-frontmatter.schema.json` — the single source of
-truth `wiki_health_check.sh` reads via `jq` (llm#759 Phase 1). Update the
-schema file, not the hardcoded lists in the script, when the frontmatter
-contract changes. As of llm#759 Phase 2 the schema's `consensus_level` enum
-is `unanimous | strong | split | divergent | direct` — the same vocabulary
-documented below (Part 5). The interim Phase-1 `high | direct` vocabulary is
-retired; existing pages using `high` are migrated to `strong` separately.
+truth `wiki_health_check.sh` reads via `jq`. Update the schema file, not the
+hardcoded lists in the script, when the frontmatter contract changes. Current
+`consensus_level` enum: `unanimous | strong | split | divergent | direct`
+(migration history from the interim `high | direct` vocabulary is in the
+companion doc).
 
 Every `wiki/*.md` file starts with:
 
@@ -106,12 +104,12 @@ carry frontmatter or a `## Sources` section. Mark such a page by making its
 <!-- wiki:exempt -->
 ```
 
-`wiki_health_check.sh` (llm#759 Phase 2) skips the frontmatter, provenance,
-staleness, and lifecycle checks for exempt pages in both `--single` and full
-mode, and excludes them from the frontmatter/sources denominators in the
-full-mode report (`exempt_pages` count). The dead-`[[wiki-link]]` check still
+`wiki_health_check.sh` skips the frontmatter, provenance, staleness, and
+lifecycle checks for exempt pages. The dead-`[[wiki-link]]` check still
 runs — exemption is not a license for broken links. Use sparingly: `INDEX.md`
 and `LOG.md` are already exempt by filename and do not need the marker.
+Enforcement-scope detail (`--single` vs full mode, `exempt_pages` denominator)
+is in the companion doc.
 
 ---
 
@@ -214,5 +212,6 @@ See also [[congestion]] and [[commodity-vol-carry]].
 
 ## Related
 
+- [`_companions/wiki-conventions-details.md`](_companions/wiki-conventions-details.md) — `consensus_level` migration history and exempt-page enforcement-scope detail
 - `knowledge-base-wiki` skill — full pattern documentation
 - `wiki_health_check.sh` — full validation script (T3)
