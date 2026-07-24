@@ -1166,6 +1166,18 @@ fi
 # Record session start time for session_stop braindump sweep (fast write, stay sync)
 date '+%Y-%m-%d %H:%M:%S' > "$CLAUDE_RUNTIME_ROOT/logs/.session_start_time"
 
+# ── Phase 12b: Reap stale open sessions — BACKGROUND (llm#803) ────────
+# Closes `sessions` rows whose Stop hook never fired the real session-end
+# write (crash, kill -9, /clear, machine sleep) — the safety net for the
+# abnormal-termination gap that the /bye-gated write in session_stop.sh
+# cannot cover by design. See session_reaper.sql for the staleness rule and
+# imputed-duration rationale. Backgrounded + timeout-bounded: never blocks
+# session start; runs once per new session as an opportunistic sweep.
+_reaper_script="$CLAUDE_DIR/scripts/session_reaper.sh"
+if [ -x "$_reaper_script" ]; then
+  nohup timeout 20 "$_reaper_script" > /dev/null 2>&1 &
+fi
+
 # ── Phase 13: Braindumps + dated issues — BACKGROUND (DuckDB/network; shown cached) ──
 # Cache pattern: background job writes output; next session reads it instantly.
 _p13_cache="${HOME}/.claude/logs/session_init_phase13_cache.txt"

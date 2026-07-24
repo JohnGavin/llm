@@ -2,6 +2,13 @@
 # capability_registry_regen_cron.sh — Wrapper for daily regeneration of the
 # "Capability Registry — Own Your Context" self-contained HTML file.
 #
+# RETIRED (launchd job only, 2026-07-23, #766): the launchd job
+# com.claude.capability-registry was retired because it only regenerates the
+# on-disk HTML — republishing to the live claude.ai artifact needs a session
+# (Artifact tool), which headless cron cannot do. No consumer of the on-disk
+# file existed. This script remains usable as a MANUAL command; see
+# `.claude/launchd/README.md` Retired jobs table for details.
+#
 # IMPORTANT — republish boundary:
 #   Republishing to the LIVE claude.ai artifact URL is a session-only step
 #   (the Artifact tool, which needs a Claude Code session + claude.ai auth).
