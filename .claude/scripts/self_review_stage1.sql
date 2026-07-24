@@ -360,40 +360,72 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- usage metrics. The Anthropic panel shows sessions as the primary billing
 -- unit; queuing is cheaper than parallel sprawl.
 --
--- Method: Build a global running total of concurrent sessions by processing
--- session-start (+1) and session-end (-1) events in chronological order.
--- NULL ended_at is treated as current_timestamp (session still running).
--- The per-day peak is the maximum of that running total observed across all
--- event timestamps that fall within the calendar day.
+-- Fix (#804): The original query had two compounding bugs that made
+-- peak_concurrent grow monotonically forever (133 in May -> 913 in Jun ->
+-- 2585+ in Jul, while ground truth for 2026-07-21 was 86 short sessions,
+-- avg duration 1.2 min, real peak ~1-3):
+--   1. The running SUM(delta) OVER (ORDER BY ts ...) was GLOBAL across all
+--      sessions ever recorded, with no reset per calendar day — so every day
+--      inherited the entire backlog of previously-"open" sessions.
+--   2. The session-end (-1) event used COALESCE(ended_at, current_timestamp),
+--      so every session with NULL ended_at (57% of rows — the session-stop
+--      hook never wrote it back) was counted as still running *right now*,
+--      forever, instead of ending on the day it actually started.
+-- Combined, the backlog of never-closed sessions accumulated across every
+-- day from its start date through "today", inflating every subsequent day's
+-- peak by the same growing amount.
+--
+-- Method (fixed): Partition the running total PER calendar day (day_bucket =
+-- the session's start day) instead of computing one global cumulative sum.
+-- Cap a NULL ended_at session's contribution to started_at + 1 minute (a
+-- short, bounded estimate close to the ~1-2 min median session duration seen
+-- in this telemetry) instead of "now" — so a stale/never-closed session can
+-- inflate at most the single day it started on, never every day since.
+-- The per-day peak is the maximum of that day's own running total.
 --
 -- Threshold: ≥ 4 concurrent sessions at any moment on a calendar day.
 -- Finding scope: one finding per flagged calendar day (stable, idempotent).
 -- Recommendation: queue instead of running 4+ at once.
 -- Severity: info
 -- ─────────────────────────────────────────────────────────────────────────────
-WITH parallel_events AS (
-    -- +1 event when a session starts
+-- Ref: #804 — global unbounded running sum + COALESCE(ended_at, now()) made
+-- peak_concurrent grow without bound; fixed via per-day partitioning + a
+-- bounded (1 min) cap on never-closed sessions.
+WITH session_bounds AS (
     SELECT
-        started_at                                      AS ts,
-        1                                               AS delta
-    FROM sessions
-    WHERE started_at IS NOT NULL
-    UNION ALL
-    -- -1 event when a session ends (NULL ended_at → treat as still running)
-    SELECT
-        COALESCE(ended_at, current_timestamp)           AS ts,
-        -1                                              AS delta
+        session_id,
+        started_at,
+        -- Partition key: the session's own start day. Both of its events
+        -- (start, end) are tagged with this key so the running sum below
+        -- resets per day regardless of what the (possibly capped) end
+        -- timestamp happens to be.
+        CAST(started_at AS DATE)                              AS day_bucket,
+        -- NULL ended_at (session-stop hook never fired / crashed session) is
+        -- capped at +1 minute instead of "now" (#804 fix for bug 2).
+        COALESCE(ended_at, started_at + INTERVAL '1' MINUTE)   AS effective_end
     FROM sessions
     WHERE started_at IS NOT NULL
 ),
+parallel_events AS (
+    -- +1 event when a session starts
+    SELECT day_bucket, started_at    AS ts, 1  AS delta FROM session_bounds
+    UNION ALL
+    -- -1 event when a session ends (real ended_at, or the 1-minute cap above)
+    SELECT day_bucket, effective_end AS ts, -1 AS delta FROM session_bounds
+),
 parallel_running AS (
     SELECT
+        day_bucket,
         ts,
         delta,
         -- Starts (delta=1) are sorted before ends (delta=-1) at identical
         -- timestamps so simultaneous starts are all counted before any
         -- simultaneous end, giving a conservative (higher) peak count.
+        -- PARTITION BY day_bucket resets the running sum at the start of
+        -- each calendar day (#804 fix for bug 1) instead of accumulating
+        -- across the entire history of the table.
         SUM(delta) OVER (
+            PARTITION BY day_bucket
             ORDER BY ts, CASE WHEN delta = 1 THEN 0 ELSE 1 END
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         )                                               AS concurrent_count
@@ -401,10 +433,10 @@ parallel_running AS (
 ),
 parallel_daily_peak AS (
     SELECT
-        CAST(ts AS DATE)        AS day_bucket,
+        day_bucket,
         MAX(concurrent_count)   AS peak_concurrent
     FROM parallel_running
-    GROUP BY CAST(ts AS DATE)
+    GROUP BY day_bucket
     HAVING MAX(concurrent_count) >= 4
 )
 INSERT INTO self_review_findings_stage1
