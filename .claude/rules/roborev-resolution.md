@@ -24,15 +24,7 @@ roborev reviews every commit automatically. Findings persist in its database unt
 priority = severity_weight × category_risk × (1 + log10(days_old)) × (1 + log10(file_touches_30d))
 ```
 
-Weights: `severity_weight` — Critical=10, High=5, Medium=2, Low=1. `category_risk` — security=3, error-handling=2.5, async=2, dependency/test=1.5, performance=1.2, other=1, docs=0.5. `file_touches_30d` counts git commits touching that file in the last 30 days (defaults to 1 when the file path cannot be identified). The backlog table is sorted by `priority DESC`; `age_days` is retained as a transparency column.
-
-At session start, `session_init.sh` Phase 13d emits a one-line banner:
-
-```
-roborev-backlog: open=N (priority-1=sev:cat, top=#id) | addressed=XX%
-```
-
-The banner is silent when `.roborev/reviews.db` is absent (portability — CI, other machines).
+Full weight tables (severity/category) are in the companion doc. The backlog table is sorted by `priority DESC`; `age_days` is retained as a transparency column. At session start, `session_init.sh` Phase 13d emits a `roborev-backlog:` banner (silent when `.roborev/reviews.db` is absent — portability for CI/other machines).
 
 ## Per-Session Workflow (Mandatory)
 
@@ -71,19 +63,7 @@ codex_cmd = '/usr/local/bin/codex'    # npx wrapper (nix strips /usr/local/bin)
 
 When codex hits rate limit: re-run with `--agent gemini`. roborev does not auto-fallback on rate limits.
 
-## Backlog Burn-Down (One-Time per Project)
-
-For projects with large backlogs (>20 open reviews):
-```bash
-roborev refine --agent codex --min-severity high --max-iterations 10 --since <earliest-commit> --quiet
-```
-
-Run in a separate terminal. If codex limit exhausted:
-```bash
-roborev refine --agent gemini --min-severity high --max-iterations 10 --since <earliest-commit> --quiet
-```
-
-Push when done: `git push`
+One-time backlog burn-down for projects with >20 open reviews: see companion.
 
 ## Per-Project Config
 
@@ -115,13 +95,6 @@ max_prompt_size = 200000
 | High | Same session | `--min-severity high` (default) |
 | Medium | When touching same file | `--min-severity medium` |
 | Low | Tech debt session only | `--min-severity low` |
-
-## "Agent Made No Changes — Skipping"
-
-This means the agent couldn't figure out what to change. The review stays open. Options:
-1. Try smarter agent: `roborev fix <job-id> --agent claude-code`
-2. Fix manually
-3. Close if stale: `roborev close <job-id>`
 
 ## Documenting Findings
 
@@ -160,84 +133,43 @@ related issues without triggering the validator. The validator only acts on the
 
 ## Coverage Model (CRITICAL — what roborev does NOT catch)
 
-### Lesson 2026-05-13: remote-merged PRs don't fire post-commit
+`post-commit` only fires on **local** `git commit`. PRs merged on GitHub (web UI, `gh pr merge`, auto-merge) reach the repo via `git fetch` / `git pull` / `git merge --ff` — **none of these trigger `post-commit`**. Projects that do most work via PRs therefore have near-zero roborev coverage from the post-commit hook alone.
 
-`post-commit` only fires on **local** `git commit`. PRs merged on GitHub (web UI, `gh pr merge`, auto-merge) reach the repo via `git fetch` / `git pull` / `git merge --ff` — **none of these trigger `post-commit`**. Projects that do most work via PRs therefore have near-zero roborev coverage despite the hook being installed.
+Diagnosis: compare `git log -1 --pretty=%H` with the latest reviewed `commit_sha` in `~/.roborev/reviews.db` for that repo. If git is ahead → PR merges are uncovered. Backfill: `(cd <repo> && roborev review --since <last_reviewed_sha>)`.
 
-Symptom: roborev DB shows no jobs for a repo for hours/days despite commits being on `origin/main`.
-
-Diagnosis: compare `git log -1 --pretty=%H` with the latest reviewed commit_sha in `~/.roborev/reviews.db` for that repo. If git is ahead → PR merges are uncovered.
-
-Backfill: `(cd <repo> && roborev review --since <last_reviewed_sha>)`.
-
-Long-term fix: a periodic poller (tracked in #148) that fetches each watched repo and runs `roborev review --since` if HEAD is ahead. The post-commit hook alone is insufficient.
+This gap is now closed by the post-merge hook + thrice-daily poller (see "Review Trigger Mechanisms" below). See companion for the original 2026-05-13 diagnosis narrative.
 
 ## Known Issues
 
-- **Remote-merged PRs invisible** (see above) — install local hook + periodic `--since` poll
-- `codex` and `gemini` not in nix shell PATH — wrappers at `/usr/local/bin/` + `codex_cmd` config
-- `--agent codex` silently falls back to claude-code if codex unavailable (no error)
-- `check-agents` uses PATH lookup, but actual commands use `*_cmd` config
-- No `gemini_cmd` config key exists yet
-- `core.hooksPath` shared across repos (e.g., `llm/git-hooks/`) — `roborev install-hook` writes to the shared path, so one install covers many repos but a misconfigured one breaks many at once
-- **`.roborev.toml` is gitignored in some projects** (e.g., micromort line 52) but tracked in others (coMMpass, llm). Edits in gitignored projects are LOCAL-only and silently disappear if `roborev init` regenerates. Check `git check-ignore .roborev.toml` before editing; if ignored, add a top-of-file comment recording the manual value (since the comment is the only durable signal that survives regeneration in the file's own context).
+- **Remote-merged PRs invisible** to the post-commit hook alone (see "Coverage Model" above) — install local hook + periodic `--since` poll
+- **`.roborev.toml` is gitignored in some projects** (e.g., micromort) but tracked in others (coMMpass, llm). Edits in gitignored projects are LOCAL-only and silently disappear if `roborev init` regenerates. Check `git check-ignore .roborev.toml` before editing; if ignored, add a top-of-file comment recording the manual value.
+
+More edge cases (PATH/wrapper quirks, `hooksPath` sharing, silent agent fallback) are in the companion doc.
 
 ## Session-End Refine (Automated)
 
-The session-end refine runs automatically when the user types `/bye`.
-
-### Rollout: SKIP defaulted ON (7-day soak) — COMPLETE
-
-The 7-day soak ran from 2026-05-20 (PR #196 merged) to 2026-05-27. During the soak, `session_stop.sh` invoked `session_end_refine.sh` with `SKIP_SESSION_END_REFINE=1` prefixed so each call exited early with `result=skipped`. The log confirmed:
-
-- `session_init.sh` Phase 14 wrote the start-SHA file correctly
-- `session_stop.sh` fired the script at each `/bye`
-- cwd-detection and project-name sanitisation found the right project
-- Nothing in `/bye` became noticeably slower
-
-The `SKIP_SESSION_END_REFINE=1` prefix was removed in PR #202 (merged 2026-05-27). The refine now runs by default at every `/bye`. The opt-out env var remains available per-session.
+Runs automatically at `/bye`. Rollout completed (7-day soak, PRs #196/#202) — see companion for the soak history.
 
 ### What runs
 
-`~/.claude/scripts/session_end_refine.sh` is invoked by `session_stop.sh` in the background via `nohup`. It reads the session-start SHA recorded by `session_init.sh` (Phase 14) and calls:
+`~/.claude/scripts/session_end_refine.sh`, invoked by `session_stop.sh` in the background via `nohup`, reads the session-start SHA (written by `session_init.sh` Phase 14 to `~/.claude/.session_start_sha_<sanitized-project-name>`) and calls:
 
 ```bash
-timeout 120 roborev refine \
-  --since <session-start-sha> \
-  --max-iterations 3 \
-  --min-severity high \
-  --quiet \
-  --agent codex
+timeout 120 roborev refine --since <session-start-sha> --max-iterations 3 --min-severity high --quiet --agent codex
 ```
 
-### Bounds
+### Bounds and opt-out
 
-| Bound | Value | Effect |
+| Bound / Mechanism | Value | Effect / Scope |
 |-------|-------|--------|
 | `timeout 120` | 2 minutes | Hard wall-clock kill |
 | `--max-iterations 3` | 3 iterations | roborev internal cap |
 | `--min-severity high` | High+ only | Skips low/medium noise |
 | `nohup ... &` | Background | Never blocks `/bye` |
+| Env var `SKIP_SESSION_END_REFINE=1` | Set before `/bye` | Session-level opt-out |
+| TOML flag `session_end_refine = false` | In `.roborev.toml` | Per-project opt-out |
 
-### Opt-out mechanisms
-
-| Mechanism | How to set | Scope |
-|-----------|------------|-------|
-| Env var | `SKIP_SESSION_END_REFINE=1` before `/bye` | Session-level |
-| TOML flag | `session_end_refine = false` in `.roborev.toml` | Per-project |
-
-### Log location
-
-`~/.claude/logs/session_end_refine.log` — one line per session:
-```
-2026-05-20 14:32:01 project=llm start-sha=abc1234 result=ok
-```
-
-Result values: `ok`, `timeout`, `error`, `skipped`.
-
-### State file
-
-`~/.claude/.session_start_sha_<sanitized-project-name>` — written by `session_init.sh` Phase 14 at session start.
+Logs to `~/.claude/logs/session_end_refine.log` (one line per session; result values `ok`, `timeout`, `error`, `skipped`).
 
 ## Review Trigger Mechanisms (Phase 1.7, #217)
 
@@ -256,204 +188,43 @@ had the post-merge hook installed, or for any merge path that bypasses both
 hooks (e.g. direct SHA pushes, force-pushes, `git reset --hard`).
 
 Phase 4 (full poller removal) is deferred until the hook rollout has had a
-7-day soak across all watched repos.
-
-### Installing the post-merge hook per repo
-
-```bash
-# Dry-run to preview
-bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh \
-  --repo <path> --dry-run
-
-# Install
-bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh \
-  --repo <path>
-
-# Verify
-cat <path>/.git/hooks/post-merge
-```
-
-Self-test (validates install + idempotency + fail-open + uninstall):
-```bash
-CLAUDE_HOOK_SELFTEST=1 bash ~/docs_gh/llm/.claude/scripts/roborev_install_post_merge_hook.sh
-```
-
-### Cleaning ephemeral entries from the repos table
-
-```bash
-# Preview
-roborev_poll_merges.sh --clean-repos-table --dry-run
-
-# Apply
-roborev_poll_merges.sh --clean-repos-table
-```
-
-Ephemeral entries (root_path starts with `/private/tmp/` or `/tmp/`) are now
-also silently skipped during every polling run, so the DB cleanup is optional.
-
----
-
-## Poller Schedule Decision (2026-05-23 → 2026-06-01, #217)
-
-### History
-
-| Date | Schedule | Fires/week | Reason for change |
-|------|----------|------------|-------------------|
-| Initial | Every 15 min, 24/7 | ~672 | First implementation |
-| 2026-05-23 | Hourly, Mon–Fri 09:00–22:00 | ~70 | Eliminate overnight no-ops |
-| 2026-06-01 | Thrice-daily, Mon–Fri 09:00/13:00/17:00 | 15 | Post-merge hook now provides primary coverage |
-
-### Current schedule
-
-`com.claude.roborev-poll-merges.plist` fires at 09:00, 13:00, and 17:00 on
-every weekday (Monday–Friday). 3 fires/day × 5 days = 15 fires/week.
-
-The poller is now the **safety net**, not the primary mechanism. The post-merge
-git hook installed per-repo via `roborev_install_post_merge_hook.sh` covers
-the pull-time catchup; the poller covers repos without the hook and any
-exceptional merge paths.
-
-### Why business hours
-
-Issue #217 diagnosed the poller log showing repeated `behind=0 enqueued=0` runs
-during overnight and weekend hours — no PRs are merged outside working hours in
-this solo development context, so every off-hours fire is a no-op that burns
-launchd overhead and pollutes the log.
-
-### Reload instructions (after merge to main)
-
-```bash
-# Unload old plist
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
-
-# Copy updated plist
-cp /Users/johngavin/docs_gh/llm/.claude/launchd/com.claude.roborev-poll-merges.plist \
-   ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
-
-# Load new schedule
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.claude.roborev-poll-merges.plist
-
-# Verify
-launchctl print "gui/$(id -u)/com.claude.roborev-poll-merges" | grep -A2 calendar
-```
-
-### Ephemeral-repos cleanup
-
-The poller reported `total=55` repos because roborev's `repos` table accumulates
-every path that was ever passed to `roborev review`, including ephemeral
-`/private/tmp/` worktree checkouts from agent runs. These entries contribute
-noise to the poller's per-repo scan loop.
-
-Cleanup script: `~/.claude/scripts/cleanup_ephemeral_repos.sql`
-
-To execute (operator step, after reviewing the TO DELETE preview):
-
-```bash
-sqlite3 ~/.roborev/reviews.db < ~/.claude/scripts/cleanup_ephemeral_repos.sql
-```
-
-The script is idempotent and wrapped in a transaction. It shows a dry-run
-preview, deletes matching rows, and then prints surviving entries for
-confirmation.
-
-### Post-merge hook (Phase 1.7, shipped)
-
-The post-merge hook (`roborev_install_post_merge_hook.sh`) was delivered in
-Phase 1.7 (#217). It fires on every `git pull` or `git merge --ff` that changes
-HEAD, calling `roborev review --since ORIG_HEAD --branch <branch>` to cover the
-just-arrived commits.
-
-This is now the primary mechanism for pull-time coverage. The poller has been
-downgraded to a thrice-daily safety net (see "Review Trigger Mechanisms" above).
-
-Phase 4 (full poller removal) is tracked in #217 — deferred until 7-day soak
-confirms the hook is installed and firing on all watched repos.
+7-day soak across all watched repos. Install steps, ephemeral-repos cleanup,
+and the full poller-schedule decision history are in the companion doc.
 
 ## Auto-Verifier (Component 4, JohnGavin/llm#163 Slice 3)
 
-### What it does
+When a commit message cites `closes/fixes roborev #N` (validated by the Component 3
+commit-msg hook), the auto-verifier triggers a re-review of the commit, polls until it
+completes (max 120s), and on **approval** writes to the `closures` table + calls
+`roborev close <id>`; on **rejection** writes to `fix_rejected_queue` for human triage;
+on any failure (binary absent, DB unavailable, poll timeout) exits 0 (**fail-open**).
 
-When a commit message contains a `closes/fixes roborev #N` citation (validated by
-the Component 3 commit-msg hook), the auto-verifier:
-
-1. Parses cited finding IDs.
-2. Triggers a roborev re-review of the commit.
-3. Polls until the re-review completes (max 120 seconds).
-4. On **approval** → writes a row to `closures` table + calls `roborev close <id>`.
-5. On **rejection** → writes a row to `fix_rejected_queue` for human triage.
-6. On any failure (binary absent, DB unavailable, poll timeout) → exits 0 (**fail-open**).
-
-### Opt-in semantics
-
-The verifier is **NOT auto-installed**. To install:
-
-```bash
-# 1. Apply DB migration (one-time per machine)
-sqlite3 ~/.roborev/reviews.db < ~/.claude/scripts/roborev_schema_migration_v2.sql
-
-# 2. Dry-run to preview the hook content
-bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path> --dry-run
-
-# 3. Install (creates .git/hooks/post-commit → roborev_auto_verify.sh --apply)
-bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path>
-```
-
-To uninstall: `bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path> --uninstall`
-
-### Pilot target: t_demos
-
-Pilot on `t_demos` only until ≥3 auto-closures, 0 wrong-closures. Expand to other
-projects after pilot passes. Never expand to a project with open Critical findings
-until the human-gate guardrail ships (Slice 4 / Component 7).
+The verifier is **NOT auto-installed** — see companion for install/uninstall steps,
+the `t_demos` pilot scope, and the triage query.
 
 ### DB schema (migration_v2)
 
-Two new tables added to `~/.roborev/reviews.db` by `roborev_schema_migration_v2.sql`:
+Two new tables added to `~/.roborev/reviews.db` by `roborev_schema_migration_v2.sql`
+(idempotent, `CREATE TABLE IF NOT EXISTS`):
 
 | Table | Purpose |
 |---|---|
 | `closures` | Audit log of auto-close decisions (type: approved / wontfix / manual / stale) |
 | `fix_rejected_queue` | Fix commits that roborev re-reviewed and rejected; requires human triage |
 
-Migration is idempotent (`CREATE TABLE IF NOT EXISTS`). Safe to re-run.
-
-### Triage query (pending rejections)
-
-```sql
-SELECT id, finding_ids_json, fix_commit_sha, rejection_summary, attempted_at
-FROM fix_rejected_queue
-WHERE resolved = 0
-ORDER BY attempted_at DESC
-LIMIT 20;
-```
-
 ### Kill switch
 
-```bash
-# Disable for one commit
-SKIP_ROBOREV_VALIDATOR=1 git commit ...
-
-# Uninstall from a project
-bash ~/.claude/scripts/roborev_install_auto_verify_hook.sh --repo <path> --uninstall
-
-# Reopen a wrongly closed finding
-roborev reopen <finding_id>
-```
-
-### Log
-
-`~/.claude/logs/roborev_auto_verify.log` — one entry per verifier run.
+`SKIP_ROBOREV_VALIDATOR=1 git commit ...` disables for one commit. Uninstall via
+`roborev_install_auto_verify_hook.sh --repo <path> --uninstall`. Reopen a wrongly
+closed finding with `roborev reopen <finding_id>`. Log: `~/.claude/logs/roborev_auto_verify.log`.
 
 ## Merge Gate (dry-run mode)
 
 Tracked in llm#241. MVP ships the dry-run script only — enforcement deferred.
-
-### What it does
-
 `~/.claude/scripts/roborev_merge_gate.sh <pr#>` queries `~/.roborev/reviews.db` for
 open findings whose `commit_sha` is in the PR's commits, then checks whether each
-finding has been cited in a commit message (`closes/fixes/acks roborev #N`) or
-explicitly acked via `roborev_ack.sh`.
+finding has been cited (`closes/fixes/acks roborev #N`) or explicitly acked via
+`roborev_ack.sh`. Usage examples and the ack-flow CLI are in the companion doc.
 
 ### Verdicts
 
@@ -463,58 +234,8 @@ explicitly acked via `roborev_ack.sh`.
 | `[gate-warn]` | Medium-only unresolved findings | exits 0, week-1 signal |
 | `[gate-block]` | High/Critical unresolved findings | dry-run: exits 0, enforce: exits 1 |
 
-### Invoking the gate
-
-```bash
-# Dry-run (default) — always exits 0, prints verdict
-~/.claude/scripts/roborev_merge_gate.sh 253
-
-# Explicit dry-run
-~/.claude/scripts/roborev_merge_gate.sh --dry-run 253
-
-# From branch name (auto-detects PR#)
-~/.claude/scripts/roborev_merge_gate.sh --branch feat/my-feature
-
-# Enforce mode (NOT active yet — for future CI integration)
-~/.claude/scripts/roborev_merge_gate.sh --enforce 253
-```
-
-Logs to `~/.claude/logs/merge_gate.log` (one JSON line per invocation).
-
-### Ack flow for false positives
-
-When a finding is a confirmed false positive or wontfix, use the ack CLI:
-
-```bash
-# Dry-run (default) — shows what would be written, prints commit guidance
-~/.claude/scripts/roborev_ack.sh 42 --reason "false positive — nix-only path" --pr 253
-
-# Apply (writes to ~/.roborev/acks.jsonl)
-~/.claude/scripts/roborev_ack.sh 42 --reason "false positive — nix-only path" --pr 253 --apply
-```
-
-Then include the printed line in your commit message:
-```
-acks roborev #42 --reason "false positive — nix-only path"
-```
-
-The ack does NOT close the finding in `reviews.db`. Closure happens via fix-commit +
-auto-verifier (#163) or manual `roborev close`.
-
-### Week-1 data plan
-
-For the first week, run the gate on every PR before merge and let it log to
-`~/.claude/logs/merge_gate.log`. After 1 week:
-
-1. Review `merge_gate.log` — how many gate-block / gate-warn verdicts?
-2. File a follow-up issue with the enforce-mode decision.
-3. If High/Critical block rate is low, enable `--enforce` for High/Critical only.
-4. Update the PR template to make the checklist row mandatory.
-
-### Threshold
-
-Reads `review_min_severity` from per-repo `.roborev.toml` (default `medium`).
-The gate currently warns on Medium and would block on High/Critical in enforce mode.
+Reads `review_min_severity` from `.roborev.toml` (default `medium`). Logs to
+`~/.claude/logs/merge_gate.log` (one JSON line per invocation).
 
 ### Interaction with severity-autoclose (#224)
 
@@ -524,9 +245,8 @@ autoclosed for age satisfaction is `closed=1` and therefore invisible to the gat
 
 ### Kill switch
 
-Set `SKIP_MERGE_GATE=1` in your shell environment to bypass the gate in dry-run mode
-(the gate script exits 0 immediately). For enforce mode the kill switch is simply
-not invoking `--enforce`.
+`SKIP_MERGE_GATE=1` bypasses the gate in dry-run mode (exits 0 immediately). For
+enforce mode, the kill switch is simply not invoking `--enforce`.
 
 ## Merge-gate policy (#241, pilot HIGH)
 
@@ -547,33 +267,16 @@ not invoking `--enforce`.
 
 1. **Pilot (now):** `bin/roborev_merge_gate.sh` enforces HIGH only. Run before every merge.
 2. **After 1 week of signal:** review `~/.claude/logs/merge_gate.log`. If block rate is low, escalate threshold to MEDIUM.
-3. **Phase 3 (per-repo):** read threshold from `.roborev.toml` `review_min_severity` instead of hardcoded High. Different projects can set different thresholds.
-
-### Local invocation
-
-```bash
-# Check before merging PR #253
-bin/roborev_merge_gate.sh 253
-
-# With explicit severity threshold
-bin/roborev_merge_gate.sh --min-severity High 253
-
-# JSON output (for scripting)
-bin/roborev_merge_gate.sh --json 253
-
-# Explicit repo (when not in a git checkout)
-bin/roborev_merge_gate.sh --repo JohnGavin/llm 253
-```
+3. **Phase 3 (per-repo):** read threshold from `.roborev.toml` `review_min_severity` instead of hardcoded High.
 
 Exit codes: `0` = PASS (no unresolved findings), `1` = BLOCK (unresolved findings found).
-
-The `bin/` script exits 1 on block (enforcing mode). The predecessor
-`~/.claude/scripts/roborev_merge_gate.sh` is dry-run only (always exits 0) and
-is kept for week-1 signal logging. See that script's header for `--dry-run` /
-`--enforce` flags.
+The `bin/` script enforces; the predecessor `~/.claude/scripts/roborev_merge_gate.sh` is
+dry-run only (always exits 0), kept for week-1 signal logging. Local invocation examples
+are in the companion doc.
 
 ## Related
 
+- [`_companions/roborev-resolution-details.md`](_companions/roborev-resolution-details.md) — incident log, rollout history, one-time procedures, verbose CLI usage split out of this rule
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol
@@ -586,23 +289,8 @@ is kept for week-1 signal logging. See that script's header for `--dry-run` /
 
 ## launchd Job Health — Immediate Audit
 
-If roborev or other automated jobs appear to have stopped running (e.g. autoclose log is
-days stale, backlog is not updating), run the ad-hoc audit script to see which plists
-are installed but NOT loaded by launchd:
-
-```bash
-bin/launchd_health_audit.sh --quiet
-```
-
-Output sections:
-- **Section 3** (NOT loaded) — jobs with plists installed but not loaded; these will never fire.
-  Fix with: `launchctl load -w ~/Library/LaunchAgents/<label>.plist`
-- **Section 2** (Loaded, failing) — jobs loaded but last exit code was non-zero.
-- **Section 4** (Stale) — jobs loaded but haven't fired within 1.5× their cadence.
-
-Common trigger: after a macOS update or logout/login cycle, launchd may unload all user
-agents. Use `bin/launchd_health_audit.sh` to confirm, then reload the affected plists.
-
-The weekly health email (llm#300) will automate this check once its `launchd_runs`
-ledger is populated. Until then, run `bin/launchd_health_audit.sh` any time a roborev
-job looks stale.
+If roborev or other automated jobs appear to have stopped running (e.g. autoclose log
+is days stale, backlog is not updating), run `bin/launchd_health_audit.sh --quiet` — it
+reports plists installed-but-not-loaded, loaded-but-failing, and stale jobs. Full
+output-section breakdown and the weekly-health-email follow-up (llm#300) are in the
+companion doc.
