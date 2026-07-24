@@ -11,6 +11,35 @@ canonical, version-controlled copies; the live copies live at
 - Stdout/stderr go to `~/.claude/logs/<short-name>.{out,err}`.
 - `RunAtLoad = false` — only fire on the scheduled interval, not at boot/load.
 
+## Secrets convention: `with-secrets`, not global `setenv` (#791, #615)
+
+Any job whose script needs a value from `~/.config/secrets.env` (or falls
+back to the inherited process environment for one — see
+`SECRETS_MIGRATION.md`) MUST be wrapped by prepending
+`/Users/johngavin/.local/bin/with-secrets` as the **first**
+`ProgramArguments` element, ahead of the real program:
+
+```xml
+<key>ProgramArguments</key>
+<array>
+    <string>/Users/johngavin/.local/bin/with-secrets</string>
+    <string>/bin/bash</string>
+    <string>/Users/johngavin/docs_gh/llm/bin/some_cron.sh</string>
+</array>
+```
+
+`with-secrets` (`.claude/scripts/with-secrets`) sources
+`~/.config/secrets.env` into that one exec'd process only — it never touches
+the shared launchd GUI-domain environment, so `launchctl print
+gui/$UID/<any-job>` cannot leak the values into unrelated processes.
+
+Do NOT reach for the old `launchctl setenv`-loop pattern
+(`com.johngavin.load-secrets`, retired) — it pushed every key from
+`~/.config/secrets.env` into the domain-wide environment, readable by any
+process on the machine as the same user. See `SECRETS_MIGRATION.md` for the
+full plist-by-plist mapping and `.claude/scripts/verify_no_launchd_secret_leak.sh`
+for the post-apply check.
+
 ## Installed jobs
 
 | Label | Schedule | What it does |
@@ -28,6 +57,7 @@ canonical, version-controlled copies; the live copies live at
 |---|---|---|---|
 | `com.claude.stage1-findings-email` | 2026-06-07 | Redundant with 06:30 digest (#551) | The 06:30 `overnight-self-review-email` reads `self_review_findings_stage1` and surfaces the same severity breakdown + finding counts |
 | `com.claude.capability-registry` | 2026-07-23 | Headless cron only regenerates the on-disk HTML; republishing the live claude.ai artifact needs a session (Artifact tool). No consumer of the on-disk file — half a job. | Regenerated + republished manually during a session when the registry is needed. |
+| `com.johngavin.load-secrets` | 2026-07-23 | Pushed `~/.config/secrets.env` into the global launchd GUI-domain environment via `launchctl setenv` — readable by any process on the machine (#615) | Per-job `with-secrets` wrapping (see "Secrets convention" above and `SECRETS_MIGRATION.md`); `.claude/scripts/load-secrets` is now a no-op kept for historical reference only |
 
 Retired plists are renamed `*.plist.deprecated-YYYY-MM-DD` (kept for rollback during the soak period — typically 2 weeks) before deletion.
 

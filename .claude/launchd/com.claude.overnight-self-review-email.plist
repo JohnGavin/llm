@@ -37,6 +37,7 @@
 
     <key>ProgramArguments</key>
     <array>
+        <string>/Users/johngavin/.local/bin/with-secrets</string>
         <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/bws_launcher.sh</string>
         <string>/Users/johngavin/docs_gh/llm/bin/overnight_self_review_email_cron.sh</string>

@@ -31,6 +31,7 @@
 
     <key>ProgramArguments</key>
     <array>
+        <string>/Users/johngavin/.local/bin/with-secrets</string>
         <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/bin/roborev_daily_cron.sh</string>
     </array>
