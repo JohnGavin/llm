@@ -84,10 +84,21 @@ fi
 # (the same one the roborev email cron sources — bin/roborev_weekly_rollup_cron.sh).
 # Without this, send_launchd_health_email.R aborts with "GMAIL_USERNAME or
 # GMAIL_APP_PASSWORD not set" and the whole job exits 1 (#749 Part A).
+#
+# set -a / set +a: the #753 fix sourced this file WITHOUT auto-export, so
+# GMAIL_USERNAME/GMAIL_APP_PASSWORD were set as shell-local variables only —
+# invisible to the nix-shell subprocess that runs send_launchd_health_email.R
+# (Step 2), which reads them via Sys.getenv(). Every run since (2026-07-05,
+# 07-12, 07-19) logged "sourced email credentials..." yet Step 2 still failed
+# with "GMAIL_USERNAME or GMAIL_APP_PASSWORD not set". set -a/set +a matches
+# the already-working pattern in roborev_weekly_rollup_cron.sh and
+# roborev_daily_cron.sh.
 EMAIL_ENV_FILE="$HOME/.claude/env/roborev_email.env"
 if [[ -f "$EMAIL_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
+  set -a
   source "$EMAIL_ENV_FILE"
+  set +a
   log "sourced email credentials from $EMAIL_ENV_FILE"
 fi
 
@@ -159,7 +170,17 @@ STEP1_EXIT=$?
 if [ "${STEP1_EXIT}" -ne 0 ]; then
   log "WARNING: launchd_health_report.R exited ${STEP1_EXIT} — continuing"
 fi
-log "Step 1 done (exit=${STEP1_EXIT}, $(wc -l < "${REPORT_OUT}" 2>/dev/null || echo '?') lines)"
+# Guard against ${REPORT_OUT} not existing (e.g. Step 1 failed before writing
+# output): a bare `wc -l < "${REPORT_OUT}"` fails the *shell's* input redirect
+# before the `2>/dev/null` on the same simple command takes effect, so the
+# "No such file or directory" leaks to real stderr (launchd_health_weekly.err)
+# instead of being swallowed. Observed for 2026-06-14/21/28 at then-line 151.
+if [ -f "${REPORT_OUT}" ]; then
+  _report_lines="$(wc -l < "${REPORT_OUT}" 2>/dev/null || echo '?')"
+else
+  _report_lines="?"
+fi
+log "Step 1 done (exit=${STEP1_EXIT}, ${_report_lines} lines)"
 
 # ── Step 1b: Write launchd_health_events rows (llm#554 Phase A) ──────────────
 # Enumerate every canonical plist (com.claude.*.plist, excluding .deprecated*).
