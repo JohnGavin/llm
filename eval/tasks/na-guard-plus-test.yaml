@@ -1,0 +1,26 @@
+# Golden task: na-guard-plus-test
+#
+# Expected behaviour (from the test-driven-development skill and the
+# general R-package bugfix workflow): a bugfix that adds an NA guard to an
+# exported function must be accompanied by a matching testthat expectation
+# that exercises the NA path. A fix without a test is an incomplete fix.
+#
+# This MVP checks a *unified diff fixture* — the patch text an agent would
+# produce for the fix — for evidence that BOTH an R/ source file gained an
+# is.na() guard AND a tests/ file gained a matching expectation.
+id: na-guard-plus-test
+description: >-
+  A bugfix diff adds an is.na() guard in R/ AND a matching testthat
+  expectation in tests/ in the same change.
+category: test-driven-development
+source_rule: test-driven-development skill
+check_type: deterministic
+fixture: na-guard-plus-test_good.diff
+check:
+  contains_all:
+    - "\\+\\+\\+ b/R/.*\\.R"
+    - "\\+.*is\\.na\\("
+    - "\\+\\+\\+ b/tests/testthat/.*\\.R"
+    - "\\+.*(expect_error|expect_true|expect_identical|expect_equal)\\("
+  contains_none:
+    - "^\\-.*is\\.na\\("

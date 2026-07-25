@@ -1,0 +1,20 @@
+[session transcript excerpt — orchestrator turn]
+
+User: "The na_guard() function in R/validate.R needs an 8-line rewrite to
+handle the new vector-recycling edge case, plus updated docs."
+
+Orchestrator: This is a multi-line correctness-sensitive edit to R/validate.R
+(8 lines, requires reasoning about vector recycling). Per auto-delegation,
+this goes to the worker tier, not handled directly.
+
+  Agent(
+    subagent_type = "fixer",
+    description = "Fix vector-recycling edge case in na_guard()",
+    prompt = "In R/validate.R, na_guard() needs an 8-line rewrite ..."
+  )
+
+[fixer agent runs in isolation:"worktree", edits R/validate.R, commits,
+ reports back]
+
+Orchestrator: Fixer reports the edit is complete and tests pass. Summarizing
+for the user.

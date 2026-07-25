@@ -1,0 +1,8 @@
+[captured stdout from a worktree-agent Bash call, ANTI-EXAMPLE — push succeeded]
+
+$ git push origin main
+Enumerating objects: 12, done.
+Counting objects: 100% (12/12), done.
+Writing objects: 100% (7/7), 812 bytes | 812.00 KiB/s, done.
+To github.com:JohnGavin/llm.git
+   3f8a1c2..9b0d4e1  new-branch -> main

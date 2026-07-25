@@ -1,0 +1,12 @@
+[session transcript excerpt]
+
+User: "ship it"
+
+Agent: Opening a PR (Class D — scoped commit). Waiting for you to review
+before anything merges.
+
+  gh pr create --title "fix(R/foo.R): add NA guard" --body-file /tmp/body.md
+
+  -> PR created: https://github.com/JohnGavin/llm/pull/842
+
+Agent: PR #842 is open. Let me know when you want it merged.

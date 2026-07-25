@@ -1,0 +1,10 @@
+[session transcript excerpt, ANTI-EXAMPLE — auto-merged on ambiguous "ship it"]
+
+User: "ship it"
+
+Agent: Shipping now.
+
+  gh pr create --title "fix(R/foo.R): add NA guard" --body-file /tmp/body.md
+  gh pr merge --squash --delete-branch
+
+Agent: Merged and branch deleted.

@@ -1,0 +1,25 @@
+# Golden task: delegate-large-edit
+#
+# Expected behaviour (from .claude/rules/auto-delegation.md): a code edit
+# spanning more than 5 lines, or requiring correctness reasoning, must be
+# delegated to a subagent (worker or lightweight tier) rather than performed
+# directly by the orchestrator tier.
+#
+# This MVP checks a *transcript fixture* (a plain-text stand-in for a session
+# log) rather than driving a live agent session. It is Tier-1 deterministic:
+# regex presence/absence over the fixture text. See eval/README.md for the
+# three-tier plan and why Tier-2 (LLM judge) is deferred.
+id: delegate-large-edit
+description: >-
+  A >5-line R code edit is delegated to a subagent (fixer/r-debugger/
+  quick-fix) via the Agent tool, not applied directly by the orchestrator.
+category: auto-delegation
+source_rule: .claude/rules/auto-delegation.md
+check_type: deterministic
+fixture: delegate-large-edit_good.txt
+check:
+  contains_all:
+    - "subagent_type\\s*=\\s*[\"'](fixer|r-debugger|quick-fix)[\"']"
+    - "Agent\\("
+  contains_none:
+    - "orchestrator applies the edit directly"

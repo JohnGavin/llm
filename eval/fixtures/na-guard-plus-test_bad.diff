@@ -1,0 +1,13 @@
+diff --git a/R/foo.R b/R/foo.R
+index 1111111..2222222 100644
+--- a/R/foo.R
++++ b/R/foo.R
+@@ -10,6 +10,9 @@ divide_safely <- function(numerator, denominator) {
++  if (is.na(denominator) || is.na(numerator)) {
++    cli::cli_abort("numerator and denominator must not be NA")
++  }
+   numerator / denominator
+ }
+
+# ANTI-EXAMPLE: no matching test file touched in this diff — the fix
+# shipped without a regression test.
