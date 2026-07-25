@@ -186,13 +186,19 @@ sec2_rows <- lapply(source_tables, function(tbl) {
     hook_events = "fired_at"
   )
 
+  # Exclude synthetic health-probe rows (project='ClaudeProbe') from the sessions
+  # volume so this health readout reflects real sessions, not the probe fleet.
+  # Interim email-layer fix pending source-level tagging in llm#812.
+  where_clause <- if (identical(tbl, "sessions")) "WHERE project NOT IN ('ClaudeProbe')" else ""
+
   info <- safe_query(sprintf("
     SELECT
       COUNT(*) AS total,
       COUNT(CASE WHEN %s >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR THEN 1 END) AS last_24h,
       MAX(%s) AS latest_ts
     FROM %s
-  ", ts_col, ts_col, tbl))
+    %s
+  ", ts_col, ts_col, tbl, where_clause))
 
   if (nrow(info) == 0L) {
     return(list(table = tbl, total = 0L, last_24h = 0L,
@@ -292,7 +298,8 @@ sec2_table <- sprintf(
   ACCENT_ORANGE
 )
 
-sec2_summary <- sprintf("%d source tables · %d stale/dead", length(source_tables), n_stale_tables)
+sec2_summary <- sprintf("%d source tables · %d stale/dead · sessions excl. synthetic ClaudeProbe (#812)",
+                        length(source_tables), n_stale_tables)
 
 sec2_block <- collapsible_block(
   "Source table volume (last 24h)",
@@ -671,7 +678,7 @@ if (nrow(cron_freshness) > 0L) {
 if (nrow(cron_health) > 0L) {
   n_fail  <- sum(cron_health$state %in% c("loaded_recent_fail", "unloaded", "missing"),
                  na.rm = TRUE)
-  n_ok    <- sum(cron_health$state == "loaded", na.rm = TRUE)
+  n_ok    <- sum(cron_health$state == "loaded_ok", na.rm = TRUE)
   n_plists <- nrow(cron_health)
 
   cron_rows_html <- paste(apply(cron_health, 1, function(r) {
