@@ -96,6 +96,16 @@ safe_query <- function(sql, fallback = data.frame()) {
   })
 }
 
+# ── Helper: HTML escape (avoids htmltools dependency; matches
+#    send_kb_digest_email.R's local definition) ────────────────────────────────
+htmlEscape <- function(text) {
+  text <- gsub("&", "&amp;", text)
+  text <- gsub("<", "&lt;", text)
+  text <- gsub(">", "&gt;", text)
+  text <- gsub("\"", "&quot;", text)
+  text
+}
+
 # ── Section 1: New self-review findings (last 24h) ────────────────────────────
 sec1_data <- safe_query("
   SELECT
@@ -161,6 +171,123 @@ if (nrow(sec1_data) > 0L) {
     ACCENT_GREEN, EMAIL_FONT_BODY
   )
 }
+
+# ── Section 1b: Drill-down for high-count finding types (llm#817) ─────────────
+# The grouped table above collapses each finding_type × severity combination
+# into a single count, so e.g. 70 parallel_session_sprawl rows render as one
+# uninformative "70". Any finding_type with more than 3 rows in the window
+# gets an expandable per-type detail table nested inside this section.
+sec1_type_totals <- if (nrow(sec1_data) > 0L) {
+  stats::aggregate(n ~ finding_type, data = sec1_data, sum)
+} else {
+  data.frame(finding_type = character(0), n = integer(0))
+}
+sec1_drilldown_types <- sec1_type_totals$finding_type[sec1_type_totals$n > 3L]
+
+# Renders one collapsible sub-table for a given finding_type. parallel_session_
+# sprawl gets a tailored day/peak/threshold breakdown (its evidence JSON has
+# those keys); every other finding_type falls back to a generic session/
+# severity/evidence-preview table, matching the Section 4 detail pattern.
+build_finding_drilldown <- function(ftype, total_n) {
+  if (identical(ftype, "parallel_session_sprawl")) {
+    dd <- safe_query(sprintf("
+      SELECT
+        evidence->>'day' AS day,
+        TRY_CAST(evidence->>'peak_concurrent' AS INTEGER) AS peak,
+        evidence->>'threshold' AS threshold
+      FROM self_review_findings_stage1
+      WHERE finding_type = '%s'
+        AND detected_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+      ORDER BY peak DESC, day
+    ", ftype))
+    if (nrow(dd) == 0L) return(NULL)
+    rows_html <- paste(apply(dd, 1, function(r) {
+      sprintf(
+        '<tr style="background-color:%s;">
+<td style="padding:4px 10px;font-family:monospace;">%s</td>
+<td style="padding:4px 10px;text-align:right;">%s</td>
+<td style="padding:4px 10px;font-size:11px;color:%s;">%s</td>
+</tr>',
+        DARK_CARD, htmlEscape(r[["day"]]), r[["peak"]], DARK_MUTED, htmlEscape(r[["threshold"]])
+      )
+    }), collapse = "\n")
+    table_html <- sprintf(
+      '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:4px 10px;text-align:left;">Day</th>
+<th style="padding:4px 10px;text-align:right;">Peak concurrent</th>
+<th style="padding:4px 10px;text-align:left;">Threshold</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+      DARK_TEXT, EMAIL_FONT_SUBTITLE, DARK_ROW_ALT, rows_html
+    )
+  } else {
+    dd <- safe_query(sprintf("
+      SELECT session_id, severity, evidence
+      FROM self_review_findings_stage1
+      WHERE finding_type = '%s'
+        AND detected_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+      ORDER BY detected_at DESC
+      LIMIT 50
+    ", ftype))
+    if (nrow(dd) == 0L) return(NULL)
+    rows_html <- paste(apply(dd, 1, function(r) {
+      sid <- if (!is.na(r[["session_id"]]) && nchar(r[["session_id"]]) >= 8L)
+        substr(r[["session_id"]], 1L, 8L) else "—"
+      ev_preview <- tryCatch({
+        ev <- jsonlite::fromJSON(r[["evidence"]])
+        paste(
+          mapply(function(k, v) sprintf("<b>%s</b>: %s", k, v),
+                 names(ev), as.character(ev)),
+          collapse = " &nbsp;·&nbsp; "
+        )
+      }, error = function(e) htmlEscape(as.character(r[["evidence"]])))
+      sprintf(
+        '<tr style="background-color:%s;">
+<td style="padding:4px 10px;font-family:monospace;font-size:11px;">%s…</td>
+<td style="padding:4px 10px;">%s</td>
+<td style="padding:4px 10px;font-size:11px;color:%s;max-width:320px;
+   white-space:normal;word-break:break-word;">%s</td>
+</tr>',
+        DARK_CARD, sid, severity_badge(r[["severity"]]), DARK_MUTED, ev_preview
+      )
+    }), collapse = "\n")
+    table_html <- sprintf(
+      '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:4px 10px;text-align:left;">Session</th>
+<th style="padding:4px 10px;text-align:left;">Severity</th>
+<th style="padding:4px 10px;text-align:left;">Evidence</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+      DARK_TEXT, EMAIL_FONT_SUBTITLE, DARK_ROW_ALT, rows_html
+    )
+  }
+  collapsible_block(
+    sprintf("Detail: %s", ftype),
+    sprintf("%d rows", total_n),
+    table_html
+  )
+}
+
+sec1_drilldowns_html <- if (length(sec1_drilldown_types) > 0L) {
+  blocks <- vapply(sec1_drilldown_types, function(ft) {
+    total_n <- sec1_type_totals$n[sec1_type_totals$finding_type == ft]
+    block <- build_finding_drilldown(ft, total_n)
+    if (is.null(block)) "" else block
+  }, character(1))
+  paste(blocks, collapse = "\n")
+} else {
+  ""
+}
+
+sec1_table <- paste(sec1_table, sec1_drilldowns_html, sep = "\n")
 
 sec1_summary <- sprintf(
   "%d new · %d critical · %d major",
@@ -300,6 +427,63 @@ sec2_table <- sprintf(
 
 sec2_summary <- sprintf("%d source tables · %d stale/dead · sessions excl. synthetic ClaudeProbe (#812)",
                         length(source_tables), n_stale_tables)
+
+# ── Section 2b: Sessions by project (last 24h) — llm#818 slice ────────────────
+# The `sessions` row above already excludes the synthetic ClaudeProbe
+# health-probe project (#812) so probe traffic doesn't masquerade as an ETL
+# anomaly. This drill-down deliberately does NOT apply that exclusion — it
+# shows the full per-project breakdown, ClaudeProbe included, so a genuine
+# spike in real project traffic is visible against the synthetic baseline.
+#
+# NOTE: a hook_events-by-source breakdown is intentionally NOT added here —
+# hook_events currently has a single producer (this harness), so a per-source
+# split would be degenerate. It awaits hook instrumentation (llm#818).
+sec2_sessions_by_project <- safe_query("
+  SELECT project, COUNT(*) AS n
+  FROM sessions
+  WHERE started_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+  GROUP BY project
+  ORDER BY n DESC
+")
+
+sec2_sessions_drilldown <- if (nrow(sec2_sessions_by_project) > 0L) {
+  rows_html <- paste(apply(sec2_sessions_by_project, 1, function(r) {
+    is_synthetic <- identical(r[["project"]], "ClaudeProbe")
+    note <- if (is_synthetic) {
+      sprintf(' <span style="color:%s;font-size:10px;">(synthetic health probe)</span>', DARK_MUTED)
+    } else {
+      ""
+    }
+    sprintf(
+      '<tr style="background-color:%s;">
+<td style="padding:4px 10px;font-family:monospace;">%s%s</td>
+<td style="padding:4px 10px;text-align:right;">%s</td>
+</tr>',
+      DARK_CARD, htmlEscape(r[["project"]]), note, r[["n"]]
+    )
+  }), collapse = "\n")
+  table_html <- sprintf(
+    '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:4px 10px;text-align:left;">Project</th>
+<th style="padding:4px 10px;text-align:right;">Sessions (24h)</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+    DARK_TEXT, EMAIL_FONT_SUBTITLE, DARK_ROW_ALT, rows_html
+  )
+  collapsible_block(
+    "Sessions by project (24h)",
+    sprintf("%d project(s)", nrow(sec2_sessions_by_project)),
+    table_html
+  )
+} else {
+  ""
+}
+
+sec2_table <- paste(sec2_table, sec2_sessions_drilldown, sep = "\n")
 
 sec2_block <- collapsible_block(
   "Source table volume (last 24h)",
