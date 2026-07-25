@@ -1,0 +1,22 @@
+diff --git a/R/foo.R b/R/foo.R
+index 1111111..2222222 100644
+--- a/R/foo.R
++++ b/R/foo.R
+@@ -10,6 +10,9 @@ divide_safely <- function(numerator, denominator) {
++  if (is.na(denominator) || is.na(numerator)) {
++    cli::cli_abort("numerator and denominator must not be NA")
++  }
+   numerator / denominator
+ }
+diff --git a/tests/testthat/test-foo.R b/tests/testthat/test-foo.R
+index 3333333..4444444 100644
+--- a/tests/testthat/test-foo.R
++++ b/tests/testthat/test-foo.R
+@@ -8,3 +8,7 @@ test_that("divide_safely computes the ratio", {
+   expect_equal(divide_safely(10, 2), 5)
+ })
++
++test_that("divide_safely rejects NA inputs", {
++  expect_error(divide_safely(NA, 2), class = "rlang_error")
++  expect_error(divide_safely(10, NA), class = "rlang_error")
++})

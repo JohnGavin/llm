@@ -1,0 +1,11 @@
+[captured stderr from a worktree-agent Bash call]
+
+$ git push origin main
+BLOCKED — Agent worktree push to protected branch
+[2026-07-20 10:14:02] BLOCKED push to protected branch: main
+Reason: agents dispatched with isolation:"worktree" may not push directly
+to a protected branch (main). Push to your own feature branch and open a
+PR instead; the orchestrator merges after review.
+
+Command did not reach the network. See
+.claude/rules/agent-no-push-to-main.md and .claude/rules/pr-shipping-discipline.md.
