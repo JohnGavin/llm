@@ -1136,26 +1136,56 @@ if [ -f "$_rdb" ] && [ -x "$_sqlite" ]; then
 fi
 
 # ── Phase 11d: auto-rebootstrap unloaded launchd plists ──
-# Detect known plists that have become unloaded and rebootstrap them.
-# See JohnGavin/llm#148 sub-fix 3. Uses /bin/launchctl (not in nix-shell PATH).
-_KNOWN_LABELS="com.roborev.auto-refine com.claude.roborev-autoclose com.claude.roborev-poll-merges com.claude.pr-status-pulse com.claude.wiki-health-pulse com.claude.config-pulse com.claude.knowledge-pulse"
-_lc=/bin/launchctl
-if [ -x "$_lc" ]; then
-  _uid=$(/usr/bin/id -u)
+# Detect com.claude.* launchd jobs that have become unloaded and rebootstrap
+# them. Broadened (llm#819) from a hardcoded allowlist (originally
+# JohnGavin/llm#148 sub-fix 3) to enumerate every installed
+# com.claude.*.plist, so any legitimately-installed job that got unloaded
+# (e.g. a logout/login cycle) self-heals — not just the original short list.
+# Uses /bin/launchctl (not in nix-shell PATH).
+#
+# A plist is SKIPPED (never touched) if either:
+#   (a) its label appears in $_SELFHEAL_OPTOUT (space-separated, seeded
+#       empty — add a label here only if it has no `.plist.deprecated*`
+#       marker yet but should still be excluded), or
+#   (b) a retirement marker exists for it: $CLAUDE_DIR/launchd/<label>.plist.deprecated*
+#       (the naming convention already used for retired jobs there).
+#
+# Only currently-UNLOADED jobs are re-bootstrapped (existing `launchctl print`
+# existence check, preserved). Loaded-but-failing jobs (non-zero
+# LastExitStatus) are deliberately OUT OF SCOPE for this phase.
+# TODO(llm#819): a `launchctl kickstart` path for loaded-but-failing jobs was
+# considered and explicitly deferred — higher blast radius, needs its own
+# review — do not add it here without a fresh design pass.
+_SELFHEAL_OPTOUT=" "
+phase_11d_selfheal() {
+  _lc=/bin/launchctl
+  [ -x "$_lc" ] || return 0
+  _uid=$(/usr/bin/id -u 2>/dev/null) || true
+  [ -n "${_uid:-}" ] || return 0
   _rebooted=""
-  for _label in $_KNOWN_LABELS; do
-    _plist="$HOME/Library/LaunchAgents/$_label.plist"
+  for _plist in "$HOME"/Library/LaunchAgents/com.claude.*.plist; do
     [ -f "$_plist" ] || continue
+    _label=$(basename "$_plist" .plist)
+    case " $_SELFHEAL_OPTOUT " in
+      *" $_label "*) continue ;;
+    esac
+    _deprecated=0
+    for _marker in "$CLAUDE_DIR"/launchd/"$_label".plist.deprecated*; do
+      [ -e "$_marker" ] && _deprecated=1 && break
+    done
+    [ "$_deprecated" = "1" ] && continue
     if ! "$_lc" print "gui/$_uid/$_label" >/dev/null 2>&1; then
       if "$_lc" bootstrap "gui/$_uid" "$_plist" >/dev/null 2>&1; then
-        _rebooted="${_rebooted}$_label "
+        _rebooted="${_rebooted}${_label} "
       fi
     fi
   done
   if [ -n "$_rebooted" ]; then
     WARNINGS="${WARNINGS}INFO: re-bootstrapped unloaded plists: ${_rebooted}"
   fi
-fi
+  return 0
+}
+phase_11d_selfheal || true
 
 # ── Phase 12: Log session start to unified DuckDB — BACKGROUND (~0.74s DuckDB cost) ──
 _log_script="$CLAUDE_DIR/scripts/log_session.sh"
