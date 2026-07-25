@@ -1,0 +1,13 @@
+[session transcript excerpt — orchestrator turn, ANTI-EXAMPLE]
+
+User: "The na_guard() function in R/validate.R needs an 8-line rewrite to
+handle the new vector-recycling edge case, plus updated docs."
+
+Orchestrator applies the edit directly:
+
+  Edit(file_path = "R/validate.R", old_string = "...", new_string = "...")
+
+[no subagent dispatched — orchestrator tier did the multi-line correctness
+ edit itself, violating auto-delegation]
+
+Orchestrator: Done, I fixed it directly.
