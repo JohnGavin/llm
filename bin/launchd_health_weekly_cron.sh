@@ -306,33 +306,33 @@ log "Step 2: sending launchd health email..."
 "${NIX_SHELL_BIN}" "${LLM_NIX}" --run "Rscript '${SCRIPTS_DIR}/send_launchd_health_email.R'" 2>>"${LOG_FILE}"
 STEP2_EXIT=$?
 
+# The job's exit code reflects Step 1b (the DB write — the useful work),
+# NOT Step 2 (the email). A missing-GMAIL-creds or transient send failure
+# used to `exit "${STEP2_EXIT}"` here, which made the whole cron job report
+# failure (surfacing as loaded_recent_fail in launchd_health_events) even
+# though Step 1b had already landed its rows successfully. Log a warning and
+# continue to Step 3/4 instead (llm#819).
+_email_failed=0
 if [ "${STEP2_EXIT}" -ne 0 ]; then
-  log "ERROR: send_launchd_health_email.R exited ${STEP2_EXIT}"
-  # Update housekeeping_runs with failed status before exiting
-  if [ "${_duckdb_ok}" = "1" ]; then
-    _run_ended="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-    duckdb "${UNIFIED_DB}" "
-      UPDATE housekeeping_runs
-      SET ended_at = TIMESTAMPTZ '${_run_ended}',
-          status = 'failed',
-          rows_written = ${_EVENTS_WRITTEN}
-      WHERE id = '${_run_id}';
-    " 2>/dev/null || true
-  fi
-  exit "${STEP2_EXIT}"
+  log "WARNING: send_launchd_health_email.R exited ${STEP2_EXIT} — email failed, but NOT failing the job (Step 1b DB write already landed)"
+  _email_failed=1
+else
+  log "Step 2 done"
 fi
-log "Step 2 done"
 
 # ── Step 3: Update housekeeping_runs end row ──────────────────────────────────
 if [ "${_duckdb_ok}" = "1" ]; then
   _run_ended="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  _run_status="ok"
+  [ "${_email_failed}" = "1" ] && _run_status="partial"
   duckdb "${UNIFIED_DB}" "
     UPDATE housekeeping_runs
     SET ended_at = TIMESTAMPTZ '${_run_ended}',
+        status = '${_run_status}',
         rows_written = ${_EVENTS_WRITTEN}
     WHERE id = '${_run_id}';
   " 2>/dev/null || log "duckdb WARN: housekeeping_runs UPDATE failed (non-fatal)"
-  log "Step 3: housekeeping_runs updated (rows_written=${_EVENTS_WRITTEN})"
+  log "Step 3: housekeeping_runs updated (status=${_run_status}, rows_written=${_EVENTS_WRITTEN})"
 fi
 
 # ── Step 4: Prune old reports (keep 30 days) ──────────────────────────────────
