@@ -325,9 +325,10 @@ compute_fix_no_kb <- function(llm_repo, since_ts) {
       has_kb_ref <- grepl("knowledge/|\\[\\[|wiki/", full_text, perl = TRUE)
       if (!has_kb_ref) {
         fix_no_kb[[length(fix_no_kb) + 1L]] <- list(
-          sha     = substr(sha, 1L, 8L),
-          subject = if (nchar(subject) > 72L) paste0(substr(subject, 1L, 69L), "...") else subject,
-          author  = author
+          sha      = substr(sha, 1L, 8L),
+          sha_full = sha,
+          subject  = if (nchar(subject) > 72L) paste0(substr(subject, 1L, 69L), "...") else subject,
+          author   = author
         )
       }
     }
@@ -355,12 +356,16 @@ signal_479_html <- if (signal_479$count == 0L) {
   )
 } else {
   rows_html <- paste(vapply(signal_479$rows, function(r) {
+    sha_href <- sprintf("https://github.com/JohnGavin/llm/commit/%s", r$sha_full)
     sprintf(
       '<tr>
-        <td style="padding:4px 8px; font-family:monospace; color:%s;">%s</td>
+        <td style="padding:4px 8px; font-family:monospace;">
+          <a href="%s" style="color:%s; text-decoration:underline;">%s</a>
+        </td>
         <td style="padding:4px 8px; color:%s;">%s</td>
         <td style="padding:4px 8px; color:%s;">%s</td>
       </tr>',
+      htmlEscape(sha_href),
       ACCENT_BLUE, htmlEscape(r$sha),
       DARK_TEXT,   htmlEscape(r$subject),
       DARK_MUTED,  htmlEscape(r$author)
