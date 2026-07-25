@@ -36,12 +36,39 @@ set -euo pipefail
 # ─── launchd-safe PATH ───────────────────────────────────────────────────────
 export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
+# ─── Timeout wrapper (macOS lacks GNU `timeout` by default) ─────────────────
+# Used by is_squash_merged() to bound the `gh pr list` network call. Prefers
+# GNU timeout, falls back to homebrew coreutils' gtimeout, falls back to no
+# wrapper at all (gh calls are still guarded by `|| true` so a hang is the
+# only residual risk, not a crash — see is_squash_merged() below).
+_gc_timeout_bin=""
+if command -v timeout >/dev/null 2>&1; then
+  _gc_timeout_bin="timeout 15"
+elif command -v gtimeout >/dev/null 2>&1; then
+  _gc_timeout_bin="gtimeout 15"
+fi
+
 # ─── Soak gate ───────────────────────────────────────────────────────────────
 # Dry-run only until this date (7 days after first commit).
 # After SOAK_END, --apply actually removes. Before it, --apply is silently
 # ignored and everything is treated as dry-run. Mirrors the soak pattern in
 # ~/.claude/hooks/agent_push_guard.sh.
 SOAK_END="2026-06-02"
+
+# ─── Squash-merge detection soak gate (llm#820) ──────────────────────────────
+# DETECTION / REPORTING ONLY. `git cherry` (patch-id based, see Gate 1 below)
+# cannot see squash-merges — the squash commit's patch-id never matches any
+# commit on the branch — so squash-merged worktrees pile up forever as
+# `skipped_unmerged`. This adds a best-effort check: if a worktree's branch
+# has a merged GitHub PR, log it separately as `would_remove_squash` so a
+# human can see it in the events table — but the worktree is STILL kept; this
+# code path NEVER removes a worktree or branch, even when --apply is passed
+# and even after SQUASH_SOAK_END. Flipping this detection into an actual
+# removal path is a deliberate, SEPARATE follow-up change requiring explicit
+# human sign-off — do not wire `would_remove_squash` into the removal branch
+# below without that sign-off.
+SQUASH_DETECT_ENABLED="${SQUASH_DETECT_ENABLED:-1}"
+SQUASH_SOAK_END="2026-08-25"
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 # Per-pattern age thresholds (days)
@@ -74,6 +101,9 @@ done
 # Use python3 for portability — macOS `date -d` differs from GNU.
 _today=$(python3 -c "import datetime; print(datetime.date.today().isoformat())")
 _past_soak=$(python3 -c "print('yes' if '${_today}' >= '${SOAK_END}' else 'no')")
+# Informational only — squash-merge detection never deletes regardless of
+# this value (see the SQUASH_DETECT_ENABLED comment block above).
+_squash_past_soak=$(python3 -c "print('yes' if '${_today}' >= '${SQUASH_SOAK_END}' else 'no')")
 
 if [ "$_past_soak" = "no" ] && [ "$APPLY" = "1" ]; then
   echo "[worktree_gc] Soak period active until ${SOAK_END} — forcing dry-run (apply ignored)" >&2
@@ -144,6 +174,41 @@ is_main_checkout() {
   [ "$git_dir" = "$git_common_dir" ]
 }
 
+# ─── Helper: squash-merge detection (llm#820) — DETECTION ONLY, never removes
+# Prints a merged PR number to stdout if the given branch has a merged
+# GitHub PR (i.e. was very likely squash-merged, which `git cherry` cannot
+# detect because the squash commit's patch-id differs from every commit on
+# the branch). Prints NOTHING on any failure — gh missing, no remote, no
+# parseable owner/repo slug, API error, or timeout. Callers MUST treat empty
+# stdout as "not detected" and fall back to the existing skipped_unmerged
+# handling unchanged. Always returns 0 (never fails the caller's `set -e`).
+is_squash_merged() {
+  local _repo="$1" _branch="$2"
+  command -v gh >/dev/null 2>&1 || return 0
+
+  local _remote_url _slug
+  _remote_url=$(git -C "$_repo" config --get remote.origin.url 2>/dev/null || true)
+  [ -z "$_remote_url" ] && return 0
+
+  _slug=$(printf '%s' "$_remote_url" | sed -E 's#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##')
+  [[ "$_slug" == */* ]] || return 0
+
+  local _pr_json
+  _pr_json=$($_gc_timeout_bin gh pr list -R "$_slug" --state merged --head "$_branch" --json number,mergedAt --limit 1 2>/dev/null || true)
+  [ -z "$_pr_json" ] && return 0
+
+  printf '%s' "$_pr_json" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    if data:
+        print(data[0].get('number', ''))
+except Exception:
+    pass
+" 2>/dev/null || true
+  return 0
+}
+
 # ─── Helper: mtime of a directory (seconds since epoch) ──────────────────────
 dir_mtime_epoch() {
   python3 -c "import os,stat; print(int(os.stat('$1').st_mtime))"
@@ -202,6 +267,7 @@ _current_pwd=$(pwd -P 2>/dev/null || echo "")
 
 CANDIDATES=0
 WOULD_REMOVE=0
+WOULD_REMOVE_SQUASH=0
 REMOVED=0
 KEPT=0
 EVENTS_WRITTEN=0
@@ -308,6 +374,25 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     cherry_out=$(git -C "$_repo_dir" cherry "$default_br" "$wt_branch" 2>/dev/null || echo "cherry-failed")
     if echo "$cherry_out" | grep -q '^+'; then
       _reason="unmerged patches vs $default_br"
+
+      # ─── Squash-merge detection (llm#820) — DETECTION/REPORTING ONLY ──────
+      # git cherry cannot see squash-merges. Before accepting the unmerged
+      # verdict as final, check whether GitHub shows a merged PR for this
+      # branch. If so, log a SEPARATE would_remove_squash event so it's
+      # visible for human review — the worktree is still kept below; nothing
+      # is removed here regardless of --apply or SQUASH_SOAK_END.
+      if [ "${SQUASH_DETECT_ENABLED}" = "1" ]; then
+        _squash_pr=$(is_squash_merged "$_repo_dir" "$wt_branch" || true)
+        if [ -n "$_squash_pr" ]; then
+          _squash_size_mb=$(dir_size_mb "$wt_path")
+          _squash_reason="squash-merged via PR #${_squash_pr} in $_repo_dir (detection-only until ${SQUASH_SOAK_END}; live removal is a separate, sign-off-gated change)"
+          log "[would-remove-squash] $wt_path branch=$wt_branch pr=#${_squash_pr} repo=$_repo_dir size_mb=$_squash_size_mb"
+          write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "would_remove_squash" "$_squash_reason" "$_squash_size_mb"
+          EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+          WOULD_REMOVE_SQUASH=$(( WOULD_REMOVE_SQUASH + 1 ))
+        fi
+      fi
+
       log "[keep-unmerged] $wt_path (branch $wt_branch has unique patches vs $default_br)"
       write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_unmerged" "$_reason" "$(dir_size_mb "$wt_path")"
       EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
@@ -393,7 +478,7 @@ if [ "$APPLY" = "1" ] && [ "${#CONVENTION_PARENTS[@]}" -gt 0 ]; then
   done
 fi
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE removed=$REMOVED kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak"
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH removed=$REMOVED kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak"
 
 # Stamp for cron_catchup.sh catch-up detection
 mkdir -p "${HOME}/.claude/logs/stamps"
