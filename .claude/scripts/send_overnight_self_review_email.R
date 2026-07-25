@@ -493,8 +493,12 @@ if (nrow(cfg_24h) > 0L) {
       "modified" = ACCENT_ORANGE,
       DARK_MUTED
     )
-    sha_short <- if (!is.na(r[["commit_sha"]]) && nchar(r[["commit_sha"]]) >= 7L)
-      substr(r[["commit_sha"]], 1L, 7L) else "—"
+    sha_cell <- if (!is.na(r[["commit_sha"]]) && nchar(r[["commit_sha"]]) >= 7L) {
+      sprintf(
+        '<a href="https://github.com/JohnGavin/llm/commit/%s" style="color:%s;text-decoration:underline;">%s</a>',
+        r[["commit_sha"]], ACCENT_BLUE, substr(r[["commit_sha"]], 1L, 7L)
+      )
+    } else "—"
     sprintf(
       '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;font-size:12px;max-width:320px;
@@ -507,7 +511,7 @@ if (nrow(cfg_24h) > 0L) {
       r[["file_path"]],
       ct_col, r[["change_type"]],
       r[["diff_lines"]] %||% "—",
-      DARK_MUTED, sha_short
+      DARK_MUTED, sha_cell
     )
   }), collapse = "\n")
 
