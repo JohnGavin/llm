@@ -949,7 +949,7 @@ branch_gc_body <- tryCatch({
   bge <- DBI::dbGetQuery(con, "
     SELECT action, COUNT(*) AS n
     FROM branch_gc_events
-    WHERE fired_at >= current_timestamp - INTERVAL 24 HOUR
+    WHERE fired_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
     GROUP BY action ORDER BY n DESC
   ")
   if (nrow(bge) == 0) {
