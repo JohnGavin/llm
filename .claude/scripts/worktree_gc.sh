@@ -14,8 +14,13 @@
 #   • NOT the current working directory
 #   • NOT protected by a .no-worktree-gc opt-out marker in its repo root
 #
-# Conservative by design — squash-merged branches (unique patch-ids) are left
-# for human review via /cleanup-worktrees. Under-deletes, never over-deletes.
+# Squash-merged branches (unique patch-ids, invisible to `git cherry`) are
+# ALSO eligible for removal (llm#820) once a merged GitHub PR is confirmed for
+# the branch AND the same clean + age-eligible + not-locked/not-cwd guards
+# pass. The branch tip is archived to refs/gc-archive/<branch> before any
+# destructive git call, so it stays recoverable after removal. Disable this
+# path with SQUASH_REMOVE_DISABLE=1 (falls back to would_remove_squash
+# reporting only, never removing). Under-deletes, never over-deletes.
 #
 # Usage:
 #   bash worktree_gc.sh            # dry-run (safe; never removes anything)
@@ -55,19 +60,20 @@ fi
 # ~/.claude/hooks/agent_push_guard.sh.
 SOAK_END="2026-06-02"
 
-# ─── Squash-merge detection soak gate (llm#820) ──────────────────────────────
-# DETECTION / REPORTING ONLY. `git cherry` (patch-id based, see Gate 1 below)
-# cannot see squash-merges — the squash commit's patch-id never matches any
-# commit on the branch — so squash-merged worktrees pile up forever as
-# `skipped_unmerged`. This adds a best-effort check: if a worktree's branch
-# has a merged GitHub PR, log it separately as `would_remove_squash` so a
-# human can see it in the events table — but the worktree is STILL kept; this
-# code path NEVER removes a worktree or branch, even when --apply is passed
-# and even after SQUASH_SOAK_END. Flipping this detection into an actual
-# removal path is a deliberate, SEPARATE follow-up change requiring explicit
-# human sign-off — do not wire `would_remove_squash` into the removal branch
-# below without that sign-off.
+# ─── Squash-merge detection + conservative live removal (llm#820) ───────────
+# `git cherry` (patch-id based, see Gate 1 below) cannot see squash-merges —
+# the squash commit's patch-id never matches any commit on the branch — so
+# squash-merged worktrees used to pile up forever as `skipped_unmerged`. This
+# adds a best-effort check: if a worktree's branch has a merged GitHub PR, it
+# is logged as `would_remove_squash` for visibility, AND — live removal is
+# NOW ACTIVE — the worktree is actually removed once it is ALSO clean, old
+# enough for its location pattern, not locked, and not the current cwd. The
+# branch tip is archived to refs/gc-archive/<branch> via `git update-ref`
+# BEFORE the worktree/branch are deleted, so the pre-squash history is always
+# recoverable. Set SQUASH_REMOVE_DISABLE=1 to fall back to detection/reporting
+# only (no removal) if this path needs to be paused.
 SQUASH_DETECT_ENABLED="${SQUASH_DETECT_ENABLED:-1}"
+SQUASH_REMOVE_DISABLE="${SQUASH_REMOVE_DISABLE:-0}"
 SQUASH_SOAK_END="2026-08-25"
 
 # ─── Config ──────────────────────────────────────────────────────────────────
@@ -269,6 +275,7 @@ CANDIDATES=0
 WOULD_REMOVE=0
 WOULD_REMOVE_SQUASH=0
 REMOVED=0
+REMOVED_SQUASH=0
 KEPT=0
 EVENTS_WRITTEN=0
 
@@ -375,21 +382,67 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
     if echo "$cherry_out" | grep -q '^+'; then
       _reason="unmerged patches vs $default_br"
 
-      # ─── Squash-merge detection (llm#820) — DETECTION/REPORTING ONLY ──────
+      # ─── Squash-merge detection + conservative removal (llm#820) ─────────
       # git cherry cannot see squash-merges. Before accepting the unmerged
       # verdict as final, check whether GitHub shows a merged PR for this
-      # branch. If so, log a SEPARATE would_remove_squash event so it's
-      # visible for human review — the worktree is still kept below; nothing
-      # is removed here regardless of --apply or SQUASH_SOAK_END.
+      # branch. If so, log a would_remove_squash event so it's always visible
+      # — then, unless SQUASH_REMOVE_DISABLE=1, ALSO require the worktree to
+      # be clean and age-eligible (same thresholds as Gates 2/3 below) before
+      # actually removing it. Dry-run (APPLY=0) never removes anything here —
+      # see the `[ "$APPLY" = "1" ]` guard below — so `--dry-run` still only
+      # reports would_remove_squash, exactly as before this change.
       if [ "${SQUASH_DETECT_ENABLED}" = "1" ]; then
         _squash_pr=$(is_squash_merged "$_repo_dir" "$wt_branch" || true)
         if [ -n "$_squash_pr" ]; then
           _squash_size_mb=$(dir_size_mb "$wt_path")
-          _squash_reason="squash-merged via PR #${_squash_pr} in $_repo_dir (detection-only until ${SQUASH_SOAK_END}; live removal is a separate, sign-off-gated change)"
+          _squash_reason="squash-merged via PR #${_squash_pr} in $_repo_dir"
           log "[would-remove-squash] $wt_path branch=$wt_branch pr=#${_squash_pr} repo=$_repo_dir size_mb=$_squash_size_mb"
           write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "would_remove_squash" "$_squash_reason" "$_squash_size_mb"
           EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
           WOULD_REMOVE_SQUASH=$(( WOULD_REMOVE_SQUASH + 1 ))
+
+          if [ "${SQUASH_REMOVE_DISABLE}" != "1" ]; then
+            _squash_dirty=$(git -C "$wt_path" status --porcelain 2>/dev/null || echo "status-failed")
+            _squash_mtime=$(dir_mtime_epoch "$wt_path")
+            _squash_age=$(( _now - _squash_mtime ))
+
+            if [ -z "$_squash_dirty" ] && [ "$_squash_age" -ge "$_age_seconds" ] && [ "$APPLY" = "1" ]; then
+              _tip_sha=$(git -C "$_repo_dir" rev-parse "$wt_branch" 2>/dev/null || true)
+              if [ -z "$_tip_sha" ]; then
+                log "[skip-squash-remove-failed] $wt_path (could not resolve branch tip sha)"
+                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: could not resolve tip sha" "$_squash_size_mb"
+                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+                KEPT=$(( KEPT + 1 ))
+                continue
+              fi
+
+              _archive_ref="refs/gc-archive/${wt_branch}"
+              if ! git -C "$_repo_dir" update-ref "$_archive_ref" "$_tip_sha" 2>/dev/null; then
+                log "[skip-squash-remove-failed] $wt_path (could not archive tip to $_archive_ref — aborting removal)"
+                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: archive update-ref failed" "$_squash_size_mb"
+                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+                KEPT=$(( KEPT + 1 ))
+                continue
+              fi
+
+              log "[removing-squash] $wt_path branch=$wt_branch sha=$_tip_sha pr=#${_squash_pr} repo=$_repo_dir size_mb=$_squash_size_mb archive=$_archive_ref"
+              if git -C "$_repo_dir" worktree remove "$wt_path" 2>/dev/null; then
+                git -C "$_repo_dir" branch -D "$wt_branch" 2>/dev/null && \
+                  log "[branch-deleted-squash] $wt_branch in $_repo_dir (archived at $_archive_ref)" || \
+                  log "[branch-keep] $wt_branch in $_repo_dir (force-delete failed after worktree removal)"
+                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "removed_squash" "squash-merged via PR #${_squash_pr}; archived at $_archive_ref" "$_squash_size_mb"
+                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+                REMOVED_SQUASH=$(( REMOVED_SQUASH + 1 ))
+                continue
+              else
+                log "[remove-squash-failed] $wt_path (worktree remove refused)"
+                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: worktree remove refused" "$_squash_size_mb"
+                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+                KEPT=$(( KEPT + 1 ))
+                continue
+              fi
+            fi
+          fi
         fi
       fi
 
@@ -478,7 +531,7 @@ if [ "$APPLY" = "1" ] && [ "${#CONVENTION_PARENTS[@]}" -gt 0 ]; then
   done
 fi
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH removed=$REMOVED kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak"
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak"
 
 # Stamp for cron_catchup.sh catch-up detection
 mkdir -p "${HOME}/.claude/logs/stamps"
