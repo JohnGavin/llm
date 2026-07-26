@@ -4,6 +4,9 @@ paths:
   - "R/**"
   - "vignettes/**"
   - "*.qmd"
+  - "app*.R"
+  - "ui.R"
+  - "server.R"
 ---
 
 # Rule: Visualization Standards (Core)
@@ -55,6 +58,28 @@ legend adds no information.
 | `theme(legend.position = "top")` | Competes with title |
 | Legend inside the plot area | Overlaps data |
 | Different positions across plots in the same dashboard | Inconsistent reader experience |
+
+## Plotly Dark Theming (MANDATORY for any dark-themed app)
+
+Every `plotly::layout(...)` call in an app/vignette using a dark theme (bslib
+`bootswatch = "darkly"`, dark mode toggles, etc.) MUST set
+`paper_bgcolor = "#000000", plot_bgcolor = "#000000", font = list(color = "#ffffff")`
+(plus `plotly::config(scrollZoom = TRUE)`). Plotly defaults to a **white**
+canvas regardless of the page theme — an unthemed plot inside a dark page
+renders a bright white rectangle, and any marker colour picked to be visible
+against black (e.g. medium grey `#6c757d`) instead reads as near-invisible
+against that unthemed white background.
+
+**Recognise this defect from its symptom, not just by reading code:** a
+chart, or occasionally a whole tab, that "looks blank/wrong in one browser
+but fine in another" is the pattern this produces — check for missing
+`paper_bgcolor`/`plot_bgcolor`/`font` on every `renderPlotly`/`plot_ly()`
+call BEFORE chasing a browser-specific JS theory. See `visualization-detailed`
+skill's "Plotly Theming" section for the audit grep pattern and full writeup
+(origin: mycare dashboard incident, 2026-07-26 — reported as Chrome-only
+blank tabs; confirmed defect was missing theming on every plot in the app,
+found while investigating, though the causal link to the Chrome symptom was
+never proven via a captured console error).
 
 ## Caption Minimum
 
