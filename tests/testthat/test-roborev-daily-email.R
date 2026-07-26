@@ -50,7 +50,10 @@ make_synthetic_snapshot <- function(date = "2026-05-28") {
       )
     ),
     per_repo_7d = list(),
-    outliers_14d = list(
+    # outliers_recent_7d: renamed from outliers_14d (llm#793-followup) — ranked
+    # by closed_at within a 7-day window instead of created_at within 14 days.
+    outliers_recent_7d = list(
+      window_days = 7L,
       by_time = list(
         list(review_id = 975L, repo = "knowledge", n_attempts = 1L,
              time_to_close_hrs = 289.9, close_reason = "fixer", created_at = paste0(date, "T00:00:00Z")),
@@ -60,7 +63,8 @@ make_synthetic_snapshot <- function(date = "2026-05-28") {
       by_attempts = list(
         list(review_id = 4313L, repo = "llmtelemetry", n_attempts = 4L,
              time_to_close_hrs = 48.0, close_reason = "fixer", created_at = paste0(date, "T02:00:00Z"))
-      )
+      ),
+      by_attempts_degenerate = FALSE
     )
   )
 }
@@ -105,6 +109,15 @@ run_email_dry_run <- function(fixture, extra_env = character(0)) {
     extra_env
   )
 
+  # Pre-existing bug fix: `env = c(Sys.getenv(), env_vars)` below used to pass
+  # Sys.getenv()'s bare VALUES (no "NAME=" prefix) to system2()'s `env=`
+  # argument, which expects "NAME=value" strings — garbling the child process's
+  # environment (observed: values containing spaces/tokens got split into
+  # bogus positional args, e.g. "sh: claude-code_2-1-211_agent: command not
+  # found"). system2() already inherits the calling process's environment by
+  # default, and withr::with_envvar() has already set env_vars in THIS
+  # process for the duration of the block — so no explicit `env=` override is
+  # needed at all.
   result <- withr::with_envvar(
     setNames(
       sub("^[^=]+=", "", env_vars),
@@ -113,8 +126,7 @@ run_email_dry_run <- function(fixture, extra_env = character(0)) {
     {
       tryCatch(
         system2("Rscript", args = email_script,
-                stdout = TRUE, stderr = TRUE,
-                env = c(Sys.getenv(), env_vars)),
+                stdout = TRUE, stderr = TRUE),
         error = function(e) as.character(e$message)
       )
     }
@@ -314,7 +326,11 @@ test_that("dry-run output has exactly one <details open> (headline 24h only)", {
     info = sprintf("#527: expected exactly 1 '<details open' but found %d", n_details_open))
 
   n_details_total <- lengths(regmatches(combined, gregexpr("<details", combined, fixed = TRUE)))
-  expect_gte(n_details_total, 5L,
+  # Pre-existing bug fix: expect_gte() does not accept an `info=` argument in
+  # the installed testthat version ("unused argument"), so this assertion was
+  # never actually reached. expect_true() with a computed condition supports
+  # `info=` and preserves the original intent.
+  expect_true(n_details_total >= 5L,
     info = sprintf("#527: expected at least 5 '<details' blocks but found %d", n_details_total))
 })
 
@@ -327,4 +343,105 @@ test_that("dry-run output contains QA:zero_action_trap_fired marker", {
 
   expect_true(grepl("QA:zero_action_trap_fired=", combined),
     info = "#484: QA:zero_action_trap_fired marker missing from dry-run output")
+})
+
+# ── Tests: llm#793-followup — severity Unknown column, project links, ────────
+#   de-frozen outliers, staleness guardrails
+
+test_that("severity table shows Unknown column and flags a Total mismatch", {
+  # Fix 1: the table used to render only High/Medium/Low/Total, silently
+  # under-summing Total (compute_severity_by_project() always includes a 4th
+  # Unknown bucket in Total). Adding the column must make the display
+  # reconcile with Total; a genuinely mismatched row must be flagged (Fix 4.2).
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  snap$severity_by_project_7d <- list(
+    list(repo = "llm", High = 2L, Medium = 3L, Low = 1L, Unknown = 4L, Total = 10L),
+    list(repo = "llmtelemetry", High = 1L, Medium = 1L, Low = 1L, Unknown = 1L, Total = 99L)
+  )
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl(">Unknown<", combined, fixed = TRUE),
+    info = "Severity table must render an Unknown column header")
+  expect_true(grepl("&#9888; 99", combined, fixed = TRUE),
+    info = "Severity row with Total != High+Medium+Low+Unknown must be flagged with a warning glyph")
+})
+
+test_that("degenerate by-attempts outliers table is replaced with a note", {
+  # Fix 3b: when every closed review in the window closed on the first
+  # attempt, "by attempts" is an identical duplicate of "by time" — omit it.
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  snap$outliers_recent_7d$by_attempts <- list(
+    list(review_id = 4313L, repo = "llmtelemetry", n_attempts = 1L,
+         time_to_close_hrs = 48.0, close_reason = "fixer", created_at = "2026-05-28T02:00:00Z")
+  )
+  snap$outliers_recent_7d$by_attempts_degenerate <- TRUE
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("No retry data", combined, fixed = TRUE),
+    info = "Degenerate by-attempts outliers must render the no-retry-data note")
+  expect_false(grepl("Top-5 Outliers by Attempts-to-Close", combined, fixed = TRUE),
+    info = "Degenerate by-attempts outliers must NOT render the normal ranked table")
+})
+
+test_that("known public repo is hyperlinked; unresolvable slug stays plain text", {
+  # Fix 2: every slug used to be hardcoded to
+  # https://github.com/JohnGavin/<slug>, which 404s for non-repo slugs (e.g.
+  # "premortem", a local-only planning folder with no GitHub remote).
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  snap$severity_by_project_7d <- list(
+    list(repo = "llm", High = 0L, Medium = 0L, Low = 0L, Unknown = 0L, Total = 0L),
+    list(repo = "premortem", High = 0L, Medium = 0L, Low = 0L, Unknown = 0L, Total = 0L)
+  )
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl('href="https://github.com/JohnGavin/llm"', combined, fixed = TRUE),
+    info = "Known public repo 'llm' must be hyperlinked")
+  expect_false(grepl('href="https://github.com/JohnGavin/premortem"', combined, fixed = TRUE),
+    info = "Unresolvable slug 'premortem' must NOT be hyperlinked (this was the 404 bug)")
+})
+
+test_that("snapshot older than 24h triggers the staleness banner", {
+  # Fix 4.1: find_latest_json() picks the newest-mtime snapshot with no age
+  # check; a stale snapshot must be surfaced loudly, not rendered silently.
+  skip_if_not_installed("blastula")
+  dir <- tempfile("roborev_stale_test_")
+  dir.create(dir, recursive = TRUE)
+  on.exit(unlink(dir, recursive = TRUE))
+
+  snap <- make_synthetic_snapshot()
+  json_path <- file.path(dir, paste0(snap$report_date, ".json"))
+  writeLines(
+    jsonlite::toJSON(snap, auto_unbox = TRUE, pretty = TRUE, na = "null"),
+    json_path
+  )
+  Sys.setFileTime(json_path, Sys.time() - as.difftime(48, units = "hours"))
+
+  email_script <- system.file("scripts/send_roborev_email.R", package = "llm", mustWork = FALSE)
+  if (!nzchar(email_script) || !file.exists(email_script)) {
+    email_script <- normalizePath(
+      file.path(dirname(dirname(testthat::test_path())),
+                ".claude", "scripts", "send_roborev_email.R"),
+      mustWork = FALSE
+    )
+  }
+  skip_if_not(file.exists(email_script), "send_roborev_email.R not found")
+
+  env_vars <- c(
+    "EMAIL_DRY_RUN=1",
+    paste0("ROBOREV_DAILY_DIR=", dir),
+    "GMAIL_USERNAME=", "GMAIL_APP_PASSWORD=", "REPORT_RECIPIENT="
+  )
+  out <- withr::with_envvar(
+    setNames(sub("^[^=]+=", "", env_vars), sub("=.*$", "", env_vars)),
+    system2("Rscript", args = email_script, stdout = TRUE, stderr = TRUE)
+  )
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("STALE SNAPSHOT", combined, fixed = TRUE),
+    info = "Snapshot older than 24h must trigger the staleness banner")
 })

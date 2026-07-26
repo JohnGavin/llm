@@ -424,7 +424,7 @@ test_that("full script: JSON snapshot written with required top-level keys", {
   payload <- jsonlite::fromJSON(json_path, simplifyVector = FALSE)
 
   required_keys <- c("report_date", "generated_at", "lineage_source",
-                     "global_windows", "per_repo_7d", "outliers_14d")
+                     "global_windows", "per_repo_7d", "outliers_recent_7d")
   for (k in required_keys) {
     expect_true(k %in% names(payload),
                 info = sprintf("JSON must contain top-level key '%s'", k))
@@ -447,9 +447,11 @@ test_that("full script: JSON snapshot written with required top-level keys", {
     }
   }
 
-  # outliers_14d must contain by_attempts and by_time
-  expect_true("by_attempts" %in% names(payload$outliers_14d))
-  expect_true("by_time"     %in% names(payload$outliers_14d))
+  # outliers_recent_7d must contain by_attempts and by_time (renamed from
+  # outliers_14d — llm#793-followup: ranking now uses closed_at within a 7-day
+  # window instead of created_at within 14 days)
+  expect_true("by_attempts" %in% names(payload$outliers_recent_7d))
+  expect_true("by_time"     %in% names(payload$outliers_recent_7d))
 })
 
 test_that("full script: text digest is non-empty", {

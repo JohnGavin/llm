@@ -163,6 +163,51 @@ load_window <- function(con, start_ts, end_ts) {
   )
 }
 
+# ── Load closed-in-window slice for outliers (recency-sensitive) ──────────────
+#
+# Unlike load_window() (filtered on created_at), this filters on closed_at, so
+# a single old bulk-close event does not dominate the outlier leaderboard for
+# up to 14 days after it happened.
+#
+# Root cause of the bug this fixes: five llmtelemetry reviews were bulk-closed
+# at one instant (2026-07-22 08:29:50, reason="manual"). Because §4 outliers
+# used to rank a 14-day window keyed on created_at, those five held the max
+# time-to-close and topped the "by time-to-close" leaderboard every day from
+# 2026-07-23 through ~2026-08-02 — a stale, frozen list that never reflected
+# new activity. Ranking on closed_at within a short (7-day) window means the
+# leaderboard refreshes as new reviews close, instead of being pinned by one
+# old event for two weeks.
+load_window_by_closed_at <- function(con, start_ts, end_ts) {
+  sql <- sprintf(
+    "SELECT
+       review_id, repo,
+       verdict,
+       created_at::TIMESTAMP       AS created_at,
+       closed_at,
+       close_reason,
+       ROUND(EPOCH_MS(closed_at - created_at::TIMESTAMP) / 3600000.0, 4)
+         AS time_to_close_hrs
+     FROM roborev_review_lifecycle
+     WHERE closed_at IS NOT NULL
+       AND closed_at::TIMESTAMP >= TIMESTAMP '%s'
+       AND closed_at::TIMESTAMP <  TIMESTAMP '%s'",
+    fmt_ts(start_ts), fmt_ts(end_ts)
+  )
+  tryCatch(
+    dbGetQuery(con, sql),
+    error = function(e) {
+      message("roborev_daily_report.R: closed-at window query error: ", conditionMessage(e))
+      data.frame(
+        review_id = integer(), repo = character(),
+        verdict = character(), created_at = as.POSIXct(character()),
+        closed_at = as.POSIXct(character()), close_reason = character(),
+        time_to_close_hrs = double(),
+        stringsAsFactors = FALSE
+      )
+    }
+  )
+}
+
 # ── Closed-in-window counts (throughput) ──────────────────────────────────────
 #
 # llm#738: the created_at-cohort close_rate computed by compute_speed() is
@@ -504,15 +549,25 @@ compute_severity_by_project <- function(con, anchor, days,
   pivot[order(-totals)]
 }
 
-# ── §4 Outliers (14-day window) ───────────────────────────────────────────────
+# ── §4 Outliers (recency-sensitive: closed_at within a short window) ─────────
 #
 # Returns list(by_attempts, by_time) — each a data.frame of top-10 closed
 # issues_found reviews for the relevant metric.
+#
+# `bounds` (optional list(start=, end=)) is a belt-and-suspenders filter: it
+# re-confirms every returned row's closed_at falls inside the ranking window,
+# even though the caller's df is already scoped by that window in SQL. This
+# guards against a future caller passing an unfiltered df.
 
-compute_outliers <- function(df) {
+compute_outliers <- function(df, bounds = NULL) {
   found_closed <- df[
     !is.na(df$verdict) & df$verdict == "F" & !is.na(df$closed_at),
   ]
+  if (!is.null(bounds) && nrow(found_closed) > 0L) {
+    found_closed <- found_closed[
+      found_closed$closed_at >= bounds$start & found_closed$closed_at < bounds$end,
+    ]
+  }
 
   format_outlier_row <- function(row) {
     list(
@@ -681,12 +736,28 @@ window_slices_by_repo <- lapply(repos_present, function(r) {
 })
 names(window_slices_by_repo) <- repos_present
 
-# §4 Outliers: 14d global
-cat("roborev_daily_report.R: computing 14d outliers...\n")
-bounds_14d <- window_bounds(anchor_date, 14L)
-df_14d_global <- load_window(con, bounds_14d$cur$start, bounds_14d$cur$end)
-df_14d_global <- enrich_with_attempts(con, df_14d_global, has_lineage_table)
-outliers_14d  <- compute_outliers(df_14d_global)
+# §4 Outliers: recency-sensitive, ranked by closed_at within OUTLIER_WINDOW_DAYS
+# (see load_window_by_closed_at() header comment for why this replaced a
+# 14-day created_at window).
+OUTLIER_WINDOW_DAYS <- 7L
+cat(sprintf("roborev_daily_report.R: computing %dd outliers (by closed_at)...\n",
+            OUTLIER_WINDOW_DAYS))
+outlier_end   <- anchor_date
+outlier_start <- anchor_date - as.difftime(OUTLIER_WINDOW_DAYS, units = "days")
+df_outliers_window <- load_window_by_closed_at(con, outlier_start, outlier_end)
+df_outliers_window <- enrich_with_attempts(con, df_outliers_window, has_lineage_table)
+outliers_recent <- compute_outliers(
+  df_outliers_window,
+  bounds = list(start = outlier_start, end = outlier_end)
+)
+# Fix (llm#793-followup): when every outlier has n_attempts <= 1, the "by
+# attempts" table is a degenerate duplicate of "by time" (nothing to rank).
+# Flag it in the JSON so the email renderer can omit/annotate instead of
+# showing an identical copy of the by-time table under a different heading.
+outliers_by_attempts_degenerate <- (
+  nrow(outliers_recent$by_attempts) == 0L ||
+    all(outliers_recent$by_attempts$n_attempts <= 1L, na.rm = TRUE)
+)
 
 # §5 Severity by project: 7d global (filtered to canonical_projects)
 cat("roborev_daily_report.R: computing 7d per-project severity table...\n")
@@ -765,9 +836,15 @@ json_payload <- list(
   lineage_source = if (has_lineage_table) "roborev_finding_lineage_summary" else "heuristic-retry_count+1",
   global_windows = lapply(window_slices_global, serialise_slice),
   per_repo_7d    = lapply(window_slices_by_repo, serialise_slice),
-  outliers_14d   = list(
-    by_attempts = outliers_14d$by_attempts,
-    by_time     = outliers_14d$by_time
+  # outliers_recent_7d: renamed from the old outliers_14d (llm#793-followup) —
+  # now ranked by closed_at within a 7-day window instead of created_at within
+  # 14 days, so the leaderboard cannot be frozen for two weeks by one old
+  # bulk-close event. See load_window_by_closed_at() for the full rationale.
+  outliers_recent_7d = list(
+    window_days               = OUTLIER_WINDOW_DAYS,
+    by_attempts                = outliers_recent$by_attempts,
+    by_time                    = outliers_recent$by_time,
+    by_attempts_degenerate     = outliers_by_attempts_degenerate
   ),
   severity_by_project_7d     = severity_by_project_7d,      # §5: filtered (llm#534)
   severity_by_project_7d_all = severity_by_project_7d_all   # §5: unfiltered (debug/legacy)
@@ -891,10 +968,13 @@ catd(sprintf("  Close rate: %s   (cur=%s)",
              fmt_trend(tr7$close_rate), fmt_rate(window_slices_global[["d7"]]$speed$close_rate)))
 catd("")
 
-# §4 Outliers — top-5 of each (truncated for email; full data in JSON)
-catd("§4 OUTLIERS — Top-5 by time-to-close (14-day window)")
+# §4 Outliers — top-5 of each (truncated for email; full data in JSON).
+# Ranked by closed_at within OUTLIER_WINDOW_DAYS (not created_at within 14d —
+# see load_window_by_closed_at() header comment).
+catd(sprintf("§4 OUTLIERS — Top-5 by time-to-close (%dd window, by closed_at)",
+             OUTLIER_WINDOW_DAYS))
 catd("-------------------------------------------------------")
-by_ttc <- outliers_14d$by_time
+by_ttc <- outliers_recent$by_time
 if (nrow(by_ttc) > 0L) {
   n_show <- min(5L, nrow(by_ttc))
   catd(sprintf("  %-8s  %-20s  %10s  %8s  %s",
@@ -907,14 +987,18 @@ if (nrow(by_ttc) > 0L) {
                  r$review_id, r$repo, r$time_to_close_hrs, r$n_attempts, r$close_reason))
   }
 } else {
-  catd("  (no closed issues-found reviews in 14-day window)")
+  catd(sprintf("  (no closed issues-found reviews in %dd window)", OUTLIER_WINDOW_DAYS))
 }
 catd("")
 
-catd("§4 OUTLIERS — Top-5 by attempts-to-close (14-day window)")
-catd("-------------------------------------------------------")
-by_att <- outliers_14d$by_attempts
-if (nrow(by_att) > 0L) {
+if (outliers_by_attempts_degenerate) {
+  catd("§4 OUTLIERS — by attempts-to-close: omitted (all reviews closed in a single attempt)")
+  catd("-------------------------------------------------------")
+} else {
+  catd(sprintf("§4 OUTLIERS — Top-5 by attempts-to-close (%dd window, by closed_at)",
+               OUTLIER_WINDOW_DAYS))
+  catd("-------------------------------------------------------")
+  by_att <- outliers_recent$by_attempts
   n_show <- min(5L, nrow(by_att))
   catd(sprintf("  %-8s  %-20s  %8s  %10s  %s",
                "review_id", "repo", "attempts", "TTC(hrs)", "close_reason"))
@@ -925,8 +1009,6 @@ if (nrow(by_att) > 0L) {
     catd(sprintf("  %-8d  %-20s  %8d  %10.1f  %s",
                  r$review_id, r$repo, r$n_attempts, r$time_to_close_hrs, r$close_reason))
   }
-} else {
-  catd("  (no closed issues-found reviews in 14-day window)")
 }
 catd("")
 catd("=======================================================")
