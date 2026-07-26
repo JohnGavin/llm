@@ -102,58 +102,19 @@ accent_red    <- "#f08080"   # script-local: not in email_styles.R palette
 
 # ── Parse report sections ──────────────────────────────────────────────────────
 
-# Split on "---" HR dividers to get section blocks
+# Split on "---" HR dividers to get section blocks. The report begins with a
+# "# Title" block that has its own "---" divider before Section 1, so a plain
+# positional split yields 5 elements, not 4 — drop the leading title block and
+# keep only the real "## N. ..." sections (llm#300 rendering fix).
 sections <- strsplit(report_md, "\n---\n")[[1L]]
+sections <- sections[grepl("^\\s*## ", sections)]
 
 s1 <- if (length(sections) >= 1L) sections[1L] else "(no data)"
 s2 <- if (length(sections) >= 2L) sections[2L] else "(no data)"
 s3 <- if (length(sections) >= 3L) sections[3L] else "(no data)"
 s4 <- if (length(sections) >= 4L) sections[4L] else "(no data)"
 
-# ── Convert markdown tables to simple HTML tables ─────────────────────────────
-
-#' Convert a markdown table block to an HTML table.
-md_table_to_html <- function(md_text, header_bg = dark_row_alt, header_color = "#ffffff",
-                              row_bg1 = dark_card, row_bg2 = dark_row_alt) {
-  lines <- strsplit(md_text, "\n")[[1L]]
-  tbl_lines <- lines[grepl("^\\|", lines)]
-  if (length(tbl_lines) < 2L) return(paste0("<pre>", md_text, "</pre>"))
-
-  # First line = header; second = separator; rest = data
-  header_line <- tbl_lines[1L]
-  data_lines  <- if (length(tbl_lines) > 2L) tbl_lines[-(1L:2L)] else character(0L)
-
-  parse_row <- function(line) {
-    cells <- strsplit(line, "\\|")[[1L]]
-    cells <- trimws(cells[nzchar(trimws(cells))])
-    cells
-  }
-
-  header_cells <- parse_row(header_line)
-  th_html <- paste(sprintf(
-    '<th style="padding:6px 8px; border:1px solid %s; color:%s; text-align:left;">%s</th>',
-    dark_border, header_color, header_cells
-  ), collapse = "")
-
-  rows_html <- character(length(data_lines))
-  for (i in seq_along(data_lines)) {
-    cells <- parse_row(data_lines[i])
-    bg <- if (i %% 2L == 0L) row_bg2 else row_bg1
-    td_html <- paste(sprintf(
-      '<td style="padding:5px 8px; border:1px solid %s; color:%s;">%s</td>',
-      dark_border, dark_text, cells
-    ), collapse = "")
-    rows_html[i] <- sprintf('<tr style="background-color:%s;">%s</tr>', bg, td_html)
-  }
-
-  sprintf(
-    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
-  <tr style="background-color:%s;">%s</tr>
-  %s
-</table>',
-    EMAIL_FONT_BODY, header_bg, th_html, paste(rows_html, collapse = "\n  ")
-  )
-}
+# ── Convert markdown to HTML ────────────────────────────────────────────────────
 
 #' Convert inline markdown code `foo` to <code>foo</code>
 md_inline_code <- function(s) {
@@ -165,59 +126,140 @@ md_bold <- function(s) {
   gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", s)
 }
 
-md_to_simple_html <- function(s) {
-  s <- md_inline_code(s)
-  s <- md_bold(s)
-  s
+md_inline <- function(s) md_bold(md_inline_code(s))
+
+#' Strip the leading "## N. Title" heading line from a section body — the
+#' heading is already shown via the collapsible_block() title, so keeping it
+#' would duplicate the section title inside the body.
+strip_section_heading <- function(s) {
+  sub("^\\s*## [^\n]*\n?", "", s)
 }
 
-# Section 1 tables
-s1_tables_inner <- md_table_to_html(s1, header_bg = dark_row_alt)
-s1_n_rows <- length(grep("^\\|", strsplit(s1, "\n")[[1L]])) - 2L   # minus header + separator
-s1_n_rows <- max(0L, s1_n_rows)
+#' Count data rows across one or more contiguous markdown table blocks in a
+#' section (each block = header + separator + N data rows; only N counts).
+#' Section 1 has three tier tables (### High/Medium/Low), so a naive
+#' "total table lines - 2" undercounts/overcounts once there is more than
+#' one table.
+count_table_data_rows <- function(md_text) {
+  lines   <- strsplit(md_text, "\n")[[1L]]
+  tbl_idx <- grep("^\\|", lines)
+  if (length(tbl_idx) == 0L) return(0L)
+  groups <- cumsum(c(1L, diff(tbl_idx) != 1L))
+  total <- 0L
+  for (g in unique(groups)) total <- total + max(0L, sum(groups == g) - 2L)
+  total
+}
+
+#' General markdown -> HTML converter: handles "## "/"### " headings,
+#' MULTIPLE `|...|` tables per section (opens/closes a <table> around each
+#' contiguous run of table lines), and skips `|---|` separator rows. Ported
+#' from the corrected md_to_simple_html() in
+#' send_roborev_weekly_rollup_email.R (fixed there in #828) — that version
+#' only had to open/close <table> once per run of "|" lines; this adds
+#' "### " heading support since Section 1 has per-tier subheadings.
+md_to_simple_html <- function(md) {
+  lines <- strsplit(md, "\n")[[1L]]
+  html_parts <- character(length(lines))
+  in_table <- FALSE
+
+  for (i in seq_along(lines)) {
+    l <- lines[i]
+
+    if (grepl("^### ", l)) {
+      if (in_table) { html_parts[i - 1L] <- paste0(html_parts[i - 1L], "</table>"); in_table <- FALSE }
+      html_parts[i] <- sprintf(
+        '<h4 style="color:%s; margin-top:16px; margin-bottom:4px;">%s</h4>',
+        dark_text, md_inline(substr(l, 5L, nchar(l)))
+      )
+    } else if (grepl("^## ", l)) {
+      if (in_table) { html_parts[i - 1L] <- paste0(html_parts[i - 1L], "</table>"); in_table <- FALSE }
+      html_parts[i] <- sprintf(
+        '<h3 style="color:%s; margin-top:20px; border-bottom:1px solid %s; padding-bottom:4px;">%s</h3>',
+        accent_orange, dark_border, md_inline(substr(l, 4L, nchar(l)))
+      )
+    } else if (grepl("^\\|", l) && grepl("\\|$", l)) {
+      table_open <- ""
+      if (!in_table) {
+        table_open <- sprintf(
+          '<table style="border-collapse:collapse; width:100%%; font-size:%s; margin:8px 0;">',
+          EMAIL_FONT_BODY
+        )
+        in_table <- TRUE
+      }
+      cells <- strsplit(trimws(sub("^\\|", "", sub("\\|$", "", l))), "\\|")[[1L]]
+      cells <- trimws(cells)
+      # Skip markdown separator rows: every cell looks like ---, :---, ---:, :---:
+      if (length(cells) > 0L && all(grepl("^:?-{2,}:?$", cells))) {
+        html_parts[i] <- table_open  # preserve <table> if a separator was somehow first
+        next
+      }
+      cell_style <- sprintf('style="padding:5px 8px; border:1px solid %s; color:%s;"',
+                             dark_border, dark_text)
+      bg <- if ((i %% 2L) == 0L) dark_row_alt else dark_card
+      cells_html <- paste0(
+        vapply(cells, function(c) sprintf('<td %s>%s</td>', cell_style, md_inline(c)), character(1L)),
+        collapse = ""
+      )
+      html_parts[i] <- paste0(
+        table_open,
+        sprintf('<tr style="background-color:%s;">%s</tr>', bg, cells_html)
+      )
+    } else {
+      if (in_table) {
+        html_parts[i] <- paste0(
+          "</table>\n",
+          if (nzchar(trimws(l))) {
+            sprintf('<p style="color:%s; font-size:%s;">%s</p>', dark_text, EMAIL_FONT_BODY, md_inline(l))
+          } else ""
+        )
+        in_table <- FALSE
+      } else if (nzchar(trimws(l))) {
+        html_parts[i] <- sprintf('<p style="color:%s; font-size:%s; margin:4px 0;">%s</p>',
+                                  dark_text, EMAIL_FONT_BODY, md_inline(l))
+      } else {
+        html_parts[i] <- ""
+      }
+    }
+  }
+  if (in_table) html_parts[length(html_parts)] <- paste0(html_parts[length(html_parts)], "</table>")
+  paste(html_parts[nzchar(html_parts)], collapse = "\n")
+}
+
+# Section 1 — Inventory (three tier tables)
+s1_body   <- strip_section_heading(s1)
+s1_n_rows <- count_table_data_rows(s1_body)
 s1_tables <- collapsible_block(
   "&#x1F534; Section 1 — Inventory (Priority × Time-of-Day)",
   sprintf("%d job%s", s1_n_rows, if (s1_n_rows == 1L) "" else "s"),
-  s1_tables_inner
+  md_to_simple_html(s1_body)
 )
 
-# Section 2 check for placeholder text vs table
-has_s2_table <- grepl("^\\|", trimws(s2))
-s2_html_inner <- if (has_s2_table) {
-  md_table_to_html(s2)
-} else {
-  sprintf('<p style="color:%s; font-style:italic;">%s</p>',
-          dark_muted, md_to_simple_html(gsub("\n", " ", trimws(s2))))
-}
-s2_n_rows <- if (has_s2_table) max(0L, length(grep("^\\|", strsplit(s2, "\n")[[1L]])) - 2L) else 0L
+# Section 2 — Per-job run metrics (single table, or placeholder text)
+s2_body   <- strip_section_heading(s2)
+s2_n_rows <- count_table_data_rows(s2_body)
 s2_html <- collapsible_block(
   "&#x1F4CA; Section 2 — Per-Job Run Metrics (7-Day)",
   sprintf("%d job%s", s2_n_rows, if (s2_n_rows == 1L) "" else "s"),
-  s2_html_inner
+  md_to_simple_html(s2_body)
 )
 
 # Section 3 bullets (not collapsible — suggestions are short, always show)
-s3_bullets <- strsplit(trimws(s3), "\n")[[1L]]
+s3_body <- strip_section_heading(s3)
+s3_bullets <- strsplit(trimws(s3_body), "\n")[[1L]]
 s3_bullets <- s3_bullets[nzchar(s3_bullets)]
 s3_html <- paste(sprintf(
   '<li style="color:%s; margin-bottom:6px;">%s</li>',
   dark_text,
-  vapply(gsub("^[-*] ", "", s3_bullets), md_to_simple_html, character(1L))
+  vapply(gsub("^[-*] ", "", s3_bullets), md_inline, character(1L))
 ), collapse = "\n")
 
-# Section 4
-has_s4_table <- grepl("^\\|", trimws(sub("^[^|]*", "", s4)))
-s4_html_inner <- if (has_s4_table) {
-  md_table_to_html(s4, header_bg = "#2d1b6e")
-} else {
-  sprintf('<p style="color:%s; font-style:italic;">%s</p>',
-          dark_muted, md_to_simple_html(gsub("\n", " ", trimws(s4))))
-}
-s4_n_rows <- if (has_s4_table) max(0L, length(grep("^\\|", strsplit(s4, "\n")[[1L]])) - 2L) else 0L
+# Section 4 — Cloud crons (single table, or placeholder text)
+s4_body   <- strip_section_heading(s4)
+s4_n_rows <- count_table_data_rows(s4_body)
 s4_html <- collapsible_block(
   "&#x2601; Section 4 — Related Cloud Crons (GitHub Actions)",
   sprintf("%d cron%s", s4_n_rows, if (s4_n_rows == 1L) "" else "s"),
-  s4_html_inner
+  md_to_simple_html(s4_body)
 )
 
 # ── Build full HTML body ───────────────────────────────────────────────────────
@@ -252,7 +294,7 @@ email_body <- sprintf(
 
 <p style="color:%s; font-size:%s; margin-top:24px;">
   Tracked in <a href="https://github.com/JohnGavin/llm/issues/300" style="color:%s;">llm#300</a>.
-  Ledger: ~/.claude/logs/launchd_runs.duckdb
+  Ledger: ~/.claude/logs/unified.duckdb (table housekeeping_runs)
 </p>
 %s
 </div>',
