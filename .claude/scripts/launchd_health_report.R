@@ -10,7 +10,8 @@
 #   --dry-run       Alias for --out /dev/stdout; also skips ledger write
 #
 # Env:
-#   LAUNCHD_LEDGER   Path to DuckDB ledger (default: ~/.claude/logs/launchd_runs.duckdb)
+#   LAUNCHD_LEDGER   Path to DuckDB ledger providing per-run metrics
+#                    (default: ~/.claude/logs/unified.duckdb, table housekeeping_runs)
 #   CLOUD_REPOS      Comma-separated list of GitHub repos to inspect (default: see below)
 #
 # Tracked in llm#300.
@@ -45,9 +46,13 @@ has_duckdb <- requireNamespace("duckdb", quietly = TRUE)
 
 LAUNCH_AGENTS_DIR <- file.path(Sys.getenv("HOME"), "Library", "LaunchAgents")
 
+# Route (b): launchd_runs.duckdb is never populated (no plist wraps
+# launchd_run_record.sh), so per-run metrics are read from the already-populated
+# unified.duckdb ledger instead — table `housekeeping_runs` has one row per
+# script invocation (task, source_script, started_at, ended_at, status).
 LEDGER_PATH <- Sys.getenv(
   "LAUNCHD_LEDGER",
-  file.path(Sys.getenv("HOME"), ".claude", "logs", "launchd_runs.duckdb")
+  file.path(Sys.getenv("HOME"), ".claude", "logs", "unified.duckdb")
 )
 
 CLOUD_REPOS_RAW <- Sys.getenv("CLOUD_REPOS", "JohnGavin/llm,JohnGavin/llmtelemetry")
@@ -205,6 +210,11 @@ collect_inventory <- function(launch_dir = LAUNCH_AGENTS_DIR) {
     prog_raw <- pl[["ProgramArguments"]]
     program  <- if (is.null(prog_raw)) pl[["Program"]] %||% "(none)"
                 else paste(prog_raw, collapse = " ")
+    # Some ProgramArguments (e.g. `/bin/sh -c <multi-line script>`) embed raw
+    # newlines/tabs — collapse to single spaces so this stays a one-line
+    # markdown table cell (a literal newline splits the row across multiple
+    # raw text lines and breaks table parsing downstream).
+    program  <- trimws(gsub("[\r\n\t]+", " ", program))
     timeout  <- pl[["TimeOut"]]
     std_out  <- pl[["StandardOutPath"]]
     std_err  <- pl[["StandardErrorPath"]]
@@ -246,15 +256,17 @@ collect_inventory <- function(launch_dir = LAUNCH_AGENTS_DIR) {
 
 # ── Section 2: run metrics from ledger ─────────────────────────────────────────
 
-#' Read per-job run metrics from the DuckDB ledger.
-#' Returns a data.frame with one row per label, or a special "empty" data.frame.
+#' Read per-job run metrics from the unified DuckDB ledger's `housekeeping_runs`
+#' table (one row per script invocation, written by the housekeeping-framework
+#' start/end pattern — see `.claude/rules/_companions/housekeeping-framework-details.md`).
+#' Returns a data.frame with one row per task label, or a special "empty" data.frame.
 read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_DAYS) {
   if (!has_duckdb) {
     message("launchd_health_report.R: duckdb not available — section 2 skipped")
     return(NULL)
   }
   if (!file.exists(ledger)) {
-    message(sprintf("launchd_health_report.R: ledger not found at %s — first run", ledger))
+    message(sprintf("launchd_health_report.R: unified ledger not found at %s", ledger))
     return(data.frame(empty = TRUE, stringsAsFactors = FALSE))
   }
 
@@ -262,8 +274,8 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
   on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
 
   tables <- DBI::dbListTables(con)
-  if (!"runs" %in% tables) {
-    message("launchd_health_report.R: 'runs' table not found in ledger — first run")
+  if (!"housekeeping_runs" %in% tables) {
+    message("launchd_health_report.R: 'housekeeping_runs' table not found in unified ledger")
     return(data.frame(empty = TRUE, stringsAsFactors = FALSE))
   }
 
@@ -271,20 +283,18 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
 
   query <- sprintf(
     "SELECT
-       label,
+       task AS label,
        COUNT(*) AS run_count,
-       SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) AS failures,
-       ROUND(100.0 * SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) / COUNT(*), 1) AS failure_pct,
-       ROUND(MEDIAN(EPOCH(finished_at) - EPOCH(started_at)), 1) AS median_duration_s,
-       ROUND(MAX(EPOCH(finished_at) - EPOCH(started_at)), 1)    AS max_duration_s,
-       ROUND(MEDIAN(peak_rss_mb), 1) AS median_rss_mb,
-       ROUND(MAX(peak_rss_mb), 1)    AS max_rss_mb,
-       MAX(exit_code)                AS last_exit_code,
-       MAX(finished_at)              AS last_run
-     FROM runs
+       SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS failures,
+       ROUND(100.0 * SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) / COUNT(*), 1) AS failure_pct,
+       ROUND(MEDIAN(EPOCH(ended_at) - EPOCH(started_at)), 1) AS median_duration_s,
+       ROUND(MAX(EPOCH(ended_at) - EPOCH(started_at)), 1)    AS max_duration_s,
+       arg_max(status, started_at)   AS last_status,
+       MAX(started_at)               AS last_run
+     FROM housekeeping_runs
      WHERE started_at >= TIMESTAMPTZ '%s'
-     GROUP BY label
-     ORDER BY label",
+     GROUP BY task
+     ORDER BY task",
     cutoff
   )
 
@@ -516,9 +526,10 @@ render_metrics_table <- function(metrics) {
   }
   if ("empty" %in% names(metrics)) {
     return(paste0(
-      "\n> **No run data yet.** The ledger (`~/.claude/logs/launchd_runs.duckdb`) ",
-      "has not been populated yet.\n> Wrap plist commands with `bin/launchd_run_record.sh` ",
-      "to start collecting metrics. Data will appear here after the first runs.\n"
+      "\n> **No run data yet.** The unified ledger (`~/.claude/logs/unified.duckdb`) has ",
+      "no `housekeeping_runs` rows in the reporting window.\n> Run data is written by ",
+      "housekeeping-framework scripts at invocation start/end. Data will appear here ",
+      "after the next scheduled runs.\n"
     ))
   }
   if (nrow(metrics) == 0L) {
@@ -527,22 +538,20 @@ render_metrics_table <- function(metrics) {
 
   lines <- c(
     "",
-    "| Label | Runs | Failures | Fail% | Median Duration (s) | Max Duration (s) | Median RSS (MB) | Max RSS (MB) | Last Exit | Last Run |",
-    "|-------|------|----------|-------|---------------------|------------------|-----------------|--------------|-----------|----------|"
+    "| Label | Runs | Failures | Fail% | Median Duration (s) | Max Duration (s) | Last Status | Last Run |",
+    "|-------|------|----------|-------|---------------------|-------------------|-------------|----------|"
   )
   for (i in seq_len(nrow(metrics))) {
     r <- metrics[i, ]
     lines <- c(lines, sprintf(
-      "| `%s` | %s | %s | %s | %s | %s | %s | %s | %s | %s |",
+      "| `%s` | %s | %s | %s | %s | %s | %s | %s |",
       r$label,
       fmt_val(r$run_count),
       fmt_val(r$failures),
       if (!is.na(r$failure_pct)) sprintf("%.1f%%", r$failure_pct) else "—",
       fmt_val(r$median_duration_s),
       fmt_val(r$max_duration_s),
-      fmt_val(r$median_rss_mb),
-      fmt_val(r$max_rss_mb),
-      fmt_val(r$last_exit_code),
+      fmt_val(r$last_status),
       fmt_val(r$last_run)
     ))
   }

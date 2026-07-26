@@ -174,7 +174,9 @@ test_that("render_metrics_table emits placeholder when ledger is empty", {
   empty_df <- data.frame(empty = TRUE, stringsAsFactors = FALSE)
   output <- render_fn(empty_df)
   expect_true(grepl("No run data yet", output))
-  expect_true(grepl("launchd_run_record", output))
+  # Metrics now come from the unified ledger's housekeeping_runs table
+  # (llm#300 route (b) — launchd_runs.duckdb is never populated).
+  expect_true(grepl("housekeeping_runs", output))
 })
 
 # ── Test 5: Email dry-run has all 4 section QA markers ────────────────────────
