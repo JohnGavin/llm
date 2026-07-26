@@ -152,32 +152,34 @@ md_to_simple_html <- function(md) {
                                 dark_muted, EMAIL_FONT_SUBTITLE, inner)
     } else if (grepl("^\\|", l) && grepl("\\|$", l)) {
       # Table row
+      table_open <- ""
       if (!in_table) {
-        html_parts[i] <- sprintf(
-          '<table style="border-collapse:collapse; width:100%%; font-size:%s; margin:8px 0;">\n',
+        table_open <- sprintf(
+          '<table style="border-collapse:collapse; width:100%%; font-size:%s; margin:8px 0;">',
           EMAIL_FONT_BODY
         )
         in_table <- TRUE
       }
-      # Skip separator rows (|---|...)
-      if (grepl("^\\|[\\s-|]+\\|$", l)) {
-        html_parts[i] <- ""
-        next
-      }
       cells <- strsplit(trimws(sub("^\\|", "", sub("\\|$", "", l))), "\\|")[[1L]]
       cells <- trimws(cells)
-      is_header <- i > 1L && !grepl("^\\|[\\s-|]+\\|$", lines[min(i + 1L, length(lines))])
-      cell_tag <- "td"
+      # Skip markdown separator rows: every cell looks like ---, :---, ---:, :---:
+      if (length(cells) > 0L && all(grepl("^:?-{2,}:?$", cells))) {
+        html_parts[i] <- table_open  # preserve <table> if a separator was somehow first
+        next
+      }
       cell_style <- sprintf('style="padding:5px 8px; border:1px solid %s; color:%s;"',
                              dark_border, dark_text)
       bg <- if ((i %% 2L) == 0L) dark_row_alt else dark_card
       cells_html <- paste0(
         vapply(cells, function(c) {
-          sprintf('<%s %s>%s</%s>', cell_tag, cell_style, c, cell_tag)
+          sprintf('<td %s>%s</td>', cell_style, c)
         }, character(1L)),
         collapse = ""
       )
-      html_parts[i] <- sprintf('<tr style="background-color:%s;">%s</tr>', bg, cells_html)
+      html_parts[i] <- paste0(
+        table_open,
+        sprintf('<tr style="background-color:%s;">%s</tr>', bg, cells_html)
+      )
     } else {
       if (in_table) {
         html_parts[i] <- paste0("</table>\n",
@@ -192,7 +194,7 @@ md_to_simple_html <- function(md) {
     }
   }
   if (in_table) html_parts[length(html_parts)] <- paste0(html_parts[length(html_parts)], "</table>")
-  paste(html_parts, collapse = "\n")
+  paste(html_parts[nzchar(html_parts)], collapse = "\n")
 }
 
 body_inner_html <- md_to_simple_html(rollup_md)
@@ -200,7 +202,8 @@ rollup_lines <- length(strsplit(rollup_md, "\n")[[1L]])
 body_inner <- collapsible_block(
   "&#x1F4CB; Weekly Rollup",
   sprintf("~%d lines", rollup_lines),
-  body_inner_html
+  body_inner_html,
+  open = TRUE
 )
 
 # Dashboard CTA
