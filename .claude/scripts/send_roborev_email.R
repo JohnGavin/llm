@@ -86,6 +86,34 @@ snap <- tryCatch(
   }
 )
 
+# ── Snapshot staleness guardrail ───────────────────────────────────────────────
+# find_latest_json() picks the newest-mtime snapshot with no age check. If
+# nightly generation has been failing silently for days, "latest" can still be
+# stale — surface that loudly instead of quietly rendering old data as fresh.
+snapshot_age_hrs <- tryCatch(
+  as.numeric(difftime(Sys.time(), file.info(json_path)$mtime, units = "hours")),
+  error = function(e) NA_real_
+)
+SNAPSHOT_STALE_THRESHOLD_HRS <- 24
+snapshot_stale_block <- ""
+if (!is.na(snapshot_age_hrs) && snapshot_age_hrs > SNAPSHOT_STALE_THRESHOLD_HRS) {
+  message(sprintf(
+    "send_roborev_email.R: snapshot is %.1fh old (threshold %dh) — flagging as stale",
+    snapshot_age_hrs, SNAPSHOT_STALE_THRESHOLD_HRS
+  ))
+  snapshot_stale_block <- sprintf(
+    '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
+      border-radius:6px; padding:14px 18px; margin:16px 0; font-size:%s;">
+      <strong style="font-size:15px;">&#9888; STALE SNAPSHOT</strong><br>
+      <span>This report is based on a snapshot generated %.1fh ago (threshold:
+      %dh) — nightly generation may have failed or stalled. The data below may
+      not reflect recent activity. Check roborev_daily_report.R / the nightly
+      cron log.</span>
+    </div>',
+    EMAIL_FONT_BODY, snapshot_age_hrs, SNAPSHOT_STALE_THRESHOLD_HRS
+  )
+}
+
 # ── Colour palette — aliases to shared constants from email_styles.R ──────────
 
 dark_bg      <- DARK_BG
@@ -120,6 +148,50 @@ fmt_trend <- function(td) {
   sprintf("%s%.0f%%", dir, abs(pct))
 }
 fmt_int  <- function(x) if (is.null(x) || is.na(x)) "0" else formatC(as.integer(x), format = "d", big.mark = ",")
+
+# ── Project slug → GitHub URL resolution ───────────────────────────────────────
+# Previously every project slug was hardcoded to
+# https://github.com/JohnGavin/<slug> — this 404s for slugs that are not
+# public GitHub repos (e.g. "premortem", a local-only planning folder). Only
+# render a hyperlink when the slug resolves to a KNOWN public repo.
+#
+# To extend: add a line to KNOWN_PUBLIC_REPOS below. resolve_repo_url() also
+# falls back to asking git for the slug's local remote (when the repo exists
+# under ~/docs_gh/<slug>) and uses it ONLY if it resolves to a github.com URL
+# — it never fabricates a URL for an unresolvable slug.
+KNOWN_PUBLIC_REPOS <- c(
+  "llm"          = "https://github.com/JohnGavin/llm",
+  "llmtelemetry" = "https://github.com/JohnGavin/llmtelemetry"
+)
+
+resolve_repo_url <- function(slug) {
+  if (is.null(slug) || !nzchar(slug)) return(NULL)
+  if (slug %in% names(KNOWN_PUBLIC_REPOS)) return(unname(KNOWN_PUBLIC_REPOS[[slug]]))
+  local_path <- file.path(Sys.getenv("HOME"), "docs_gh", slug)
+  if (!dir.exists(file.path(local_path, ".git"))) return(NULL)
+  remote_url <- tryCatch(
+    suppressWarnings(system2(
+      "git", c("-C", local_path, "config", "--get", "remote.origin.url"),
+      stdout = TRUE, stderr = FALSE
+    )),
+    error = function(e) character(0L)
+  )
+  if (length(remote_url) != 1L || !nzchar(remote_url) || !grepl("github\\.com", remote_url)) {
+    return(NULL)
+  }
+  url <- sub("\\.git$", "", remote_url)
+  url <- sub("^git@github\\.com:", "https://github.com/", url)
+  url
+}
+
+# repo_link_or_text(): renders an <a> only when resolve_repo_url() succeeds,
+# otherwise the plain slug — used everywhere a project/repo name is shown.
+repo_link_or_text <- function(slug, colour) {
+  if (is.null(slug) || !nzchar(slug)) return("")
+  url <- resolve_repo_url(slug)
+  if (is.null(url)) return(slug)
+  sprintf('<a href="%s" style="color:%s;">%s</a>', url, colour, slug)
+}
 
 # ── Extract window slices ──────────────────────────────────────────────────────
 
@@ -158,14 +230,27 @@ d7_att_p50 <- d7[["speed"]][["att_p50"]]
 # §3 Trends
 tr <- d7[["trends"]]
 
-# §4 Outliers (top-5 of top-10)
-outliers_by_time <- snap[["outliers_14d"]][["by_time"]]
+# §4 Outliers (top-5 of top-10). outliers_recent_7d replaces the old
+# outliers_14d key (llm#793-followup) — ranked by closed_at within a 7-day
+# window instead of created_at within 14 days, so a single old bulk-close
+# event can no longer freeze the leaderboard for up to two weeks.
+outliers_block   <- snap[["outliers_recent_7d"]]
+outlier_window_days <- (outliers_block[["window_days"]] %||% 7L)
+outliers_by_time <- outliers_block[["by_time"]]
 if (is.null(outliers_by_time)) outliers_by_time <- list()
 n_outliers <- min(5L, length(outliers_by_time))
 
-outliers_by_att <- snap[["outliers_14d"]][["by_attempts"]]
+outliers_by_att <- outliers_block[["by_attempts"]]
 if (is.null(outliers_by_att)) outliers_by_att <- list()
 n_outliers_att <- min(5L, length(outliers_by_att))
+# Fix (llm#793-followup): when every outlier closed in a single attempt, the
+# "by attempts" table is a degenerate duplicate of "by time-to-close" (no
+# retry data to rank on). Prefer the producer's explicit flag; fall back to
+# recomputing it here so this still works against an older snapshot.
+outliers_by_attempts_degenerate <- isTRUE(outliers_block[["by_attempts_degenerate"]]) ||
+  (length(outliers_by_att) > 0L && all(vapply(
+    outliers_by_att, function(r) isTRUE((r[["n_attempts"]] %||% 1L) <= 1L), logical(1L)
+  )))
 
 # ── Extract 1-day metrics for headline (llm#449) ──────────────────────────────
 
@@ -316,8 +401,11 @@ zero_action_block <- if (zero_action_fired) {
 
 # Dashboard link CTA (llm#484: zero_action_block prepended when trap fires;
 # llm#510: deploy_stale_block prepended ahead of that when the deploy pull
-# failed or main is still behind origin)
+# failed or main is still behind origin; llm#793-followup:
+# snapshot_stale_block prepended first — a stale *snapshot* is a more basic
+# problem than a stale *deploy*, so it leads)
 dashboard_block <- paste0(
+  snapshot_stale_block,
   deploy_stale_block,
   zero_action_block,
   sprintf(
@@ -484,14 +572,11 @@ if (n_outliers > 0L) {
     bg <- if (i %% 2 == 0) dark_row_alt else dark_card
     rid  <- r[["review_id"]] %||% ""
     repo <- r[["repo"]] %||% ""
-    id_link   <- if (nzchar(rid) && nzchar(repo))
-      sprintf('<a href="https://github.com/JohnGavin/%s/issues/%s" style="color:%s;">%s</a>',
-              repo, rid, accent_blue, rid)
+    repo_url <- resolve_repo_url(repo)
+    id_link   <- if (nzchar(rid) && !is.null(repo_url))
+      sprintf('<a href="%s/issues/%s" style="color:%s;">%s</a>', repo_url, rid, accent_blue, rid)
     else rid
-    repo_link <- if (nzchar(repo))
-      sprintf('<a href="https://github.com/JohnGavin/%s" style="color:%s;">%s</a>',
-              repo, accent_blue, repo)
-    else repo
+    repo_link <- repo_link_or_text(repo, accent_blue)
     outlier_ttc_inner <- paste0(outlier_ttc_inner, sprintf(
       '<tr style="background-color:%s;">
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
@@ -510,18 +595,35 @@ if (n_outliers > 0L) {
   }
 } else {
   outlier_ttc_inner <- paste0(outlier_ttc_inner,
-    sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in 14-day window)</td></tr>', dark_muted))
+    sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in %dd window)</td></tr>',
+            dark_muted, outlier_window_days))
 }
 outlier_ttc_inner <- paste0(outlier_ttc_inner, "</table>")
 outlier_ttc_html  <- collapsible_block(
-  "Top-5 Outliers by Time-to-Close (14d)",
+  sprintf("Top-5 Outliers by Time-to-Close (%dd, by closed_at)", outlier_window_days),
   sprintf("%d outlier(s) — click to expand", n_outliers),
   outlier_ttc_inner
 )
 
 # §4 Outliers — top-5 by attempts (llm#449: linkified IDs+Repos, renamed TTC header)
-outlier_att_inner <- sprintf(
-  '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
+#
+# Fix (llm#793-followup): when every closed review in the window closed on its
+# first attempt, this table is a degenerate duplicate of the by-time-to-close
+# table above (nothing to rank on). Replace it with a one-line note instead of
+# rendering an identical copy under a different heading.
+if (outliers_by_attempts_degenerate) {
+  outlier_att_html <- collapsible_block(
+    sprintf("Outliers by Attempts-to-Close (%dd)", outlier_window_days),
+    "no retry data",
+    sprintf(
+      '<p style="color:%s; font-size:%s; margin:0;">No retry data — every review in this window closed in a single attempt.</p>',
+      dark_muted, EMAIL_FONT_BODY
+    ),
+    open = FALSE
+  )
+} else {
+  outlier_att_inner <- sprintf(
+    '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
     <th style="padding:5px; border:1px solid %s; color:white;">ID</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Repo</th>
@@ -529,53 +631,59 @@ outlier_att_inner <- sprintf(
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Hours to close (h)</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Reason</th>
   </tr>',
-  EMAIL_FONT_BODY, dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
-)
-if (n_outliers_att > 0L) {
-  for (i in seq_len(n_outliers_att)) {
-    r <- outliers_by_att[[i]]
-    bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-    rid  <- r[["review_id"]] %||% ""
-    repo <- r[["repo"]] %||% ""
-    id_link   <- if (nzchar(rid) && nzchar(repo))
-      sprintf('<a href="https://github.com/JohnGavin/%s/issues/%s" style="color:%s;">%s</a>',
-              repo, rid, accent_blue, rid)
-    else rid
-    repo_link <- if (nzchar(repo))
-      sprintf('<a href="https://github.com/JohnGavin/%s" style="color:%s;">%s</a>',
-              repo, accent_blue, repo)
-    else repo
-    outlier_att_inner <- paste0(outlier_att_inner, sprintf(
-      '<tr style="background-color:%s;">
-        <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
-        <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
-        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
-        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
-        <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
-      </tr>',
-      bg,
-      dark_border, accent_blue, id_link,
-      dark_border, dark_text, repo_link,
-      dark_border, accent_orange, fmt_int(r[["n_attempts"]]),
-      dark_border, dark_text, fmt_num(r[["time_to_close_hrs"]]),
-      dark_border, dark_muted, r[["close_reason"]] %||% ""
-    ))
+    EMAIL_FONT_BODY, dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
+  )
+  if (n_outliers_att > 0L) {
+    for (i in seq_len(n_outliers_att)) {
+      r <- outliers_by_att[[i]]
+      bg <- if (i %% 2 == 0) dark_row_alt else dark_card
+      rid  <- r[["review_id"]] %||% ""
+      repo <- r[["repo"]] %||% ""
+      repo_url <- resolve_repo_url(repo)
+      id_link   <- if (nzchar(rid) && !is.null(repo_url))
+        sprintf('<a href="%s/issues/%s" style="color:%s;">%s</a>', repo_url, rid, accent_blue, rid)
+      else rid
+      repo_link <- repo_link_or_text(repo, accent_blue)
+      outlier_att_inner <- paste0(outlier_att_inner, sprintf(
+        '<tr style="background-color:%s;">
+          <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
+          <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
+          <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
+          <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
+          <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
+        </tr>',
+        bg,
+        dark_border, accent_blue, id_link,
+        dark_border, dark_text, repo_link,
+        dark_border, accent_orange, fmt_int(r[["n_attempts"]]),
+        dark_border, dark_text, fmt_num(r[["time_to_close_hrs"]]),
+        dark_border, dark_muted, r[["close_reason"]] %||% ""
+      ))
+    }
+  } else {
+    outlier_att_inner <- paste0(outlier_att_inner,
+      sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in %dd window)</td></tr>',
+              dark_muted, outlier_window_days))
   }
-} else {
-  outlier_att_inner <- paste0(outlier_att_inner,
-    sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in 14-day window)</td></tr>', dark_muted))
+  outlier_att_inner <- paste0(outlier_att_inner, "</table>")
+  outlier_att_html  <- collapsible_block(
+    sprintf("Top-5 Outliers by Attempts-to-Close (%dd, by closed_at)", outlier_window_days),
+    sprintf("%d outlier(s) — click to expand", n_outliers_att),
+    outlier_att_inner
+  )
 }
-outlier_att_inner <- paste0(outlier_att_inner, "</table>")
-outlier_att_html  <- collapsible_block(
-  "Top-5 Outliers by Attempts-to-Close (14d)",
-  sprintf("%d outlier(s) — click to expand", n_outliers_att),
-  outlier_att_inner
-)
 
 # §5 Per-project severity frequency table (llm#449)
 severity_rows_data <- snap[["severity_by_project_7d"]]
 if (is.null(severity_rows_data)) severity_rows_data <- list()
 
+# Fix (llm#793-followup): the table used to render only High/Medium/Low/Total,
+# but compute_severity_by_project() always includes a fourth "Unknown"
+# (null-severity) bucket in Total — so the displayed columns silently
+# under-summed Total (e.g. observed 103+103+8=214 vs Total=224, the missing
+# 10 being Unknown-severity findings). Add the Unknown column so the display
+# reconciles with Total, and flag any row where it still doesn't (Fix: §4.2
+# self-consistency invariant).
 severity_inner <- sprintf(
   '<table style="border-collapse:collapse; width:100%%; font-size:11px;">
   <tr style="background-color:%s;">
@@ -583,22 +691,29 @@ severity_inner <- sprintf(
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">High</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Medium</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Low</th>
+    <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Unknown</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Total</th>
   </tr>',
-  dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
+  dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border
 )
 if (length(severity_rows_data) > 0L) {
   for (i in seq_along(severity_rows_data)) {
     sr <- severity_rows_data[[i]]
     bg <- if (i %% 2 == 0) dark_row_alt else dark_card
     repo_val <- sr[["repo"]] %||% ""
-    repo_link <- if (nzchar(repo_val))
-      sprintf('<a href="https://github.com/JohnGavin/%s" style="color:%s;">%s</a>',
-              repo_val, accent_blue, repo_val)
-    else repo_val
+    repo_link <- repo_link_or_text(repo_val, accent_blue)
+    sr_high    <- as.integer(sr[["High"]]    %||% 0L)
+    sr_medium  <- as.integer(sr[["Medium"]]  %||% 0L)
+    sr_low     <- as.integer(sr[["Low"]]     %||% 0L)
+    sr_unknown <- as.integer(sr[["Unknown"]] %||% 0L)
+    sr_total   <- as.integer(sr[["Total"]]   %||% 0L)
+    # §4.2 self-consistency invariant: displayed columns must sum to Total.
+    sr_sum_ok <- (sr_high + sr_medium + sr_low + sr_unknown) == sr_total
+    total_display <- if (sr_sum_ok) fmt_int(sr_total) else sprintf("&#9888; %s", fmt_int(sr_total))
     severity_inner <- paste0(severity_inner, sprintf(
       '<tr style="background-color:%s;">
         <td style="padding:4px 8px; border:1px solid %s; color:%s;">%s</td>
+        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
@@ -606,15 +721,16 @@ if (length(severity_rows_data) > 0L) {
       </tr>',
       bg,
       dark_border, dark_text, repo_link,
-      dark_border, accent_orange, fmt_int(sr[["High"]]),
-      dark_border, accent_blue, fmt_int(sr[["Medium"]]),
-      dark_border, dark_muted, fmt_int(sr[["Low"]]),
-      dark_border, dark_text, fmt_int(sr[["Total"]])
+      dark_border, accent_orange, fmt_int(sr_high),
+      dark_border, accent_blue, fmt_int(sr_medium),
+      dark_border, dark_muted, fmt_int(sr_low),
+      dark_border, dark_muted, fmt_int(sr_unknown),
+      dark_border, dark_text, total_display
     ))
   }
 } else {
   severity_inner <- paste0(severity_inner,
-    sprintf('<tr><td colspan="5" style="padding:6px; color:%s;">(no data in 7-day window)</td></tr>', dark_muted))
+    sprintf('<tr><td colspan="6" style="padding:6px; color:%s;">(no data in 7-day window)</td></tr>', dark_muted))
 }
 severity_inner <- paste0(severity_inner, "</table>")
 # llm#527: wrap severity table in collapsible_block(open=FALSE) — collapsed by default
