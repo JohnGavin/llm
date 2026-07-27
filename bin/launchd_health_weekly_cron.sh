@@ -274,24 +274,48 @@ if [ "${_duckdb_ok}" = "1" ]; then
     # Escape single quotes in detail string
     _detail_sql="${_detail//"'"/"''"}"
 
-    duckdb "${UNIFIED_DB}" "
-      INSERT OR IGNORE INTO launchd_health_events
-        (id, fired_at, source, plist_label, state, last_exit_code, last_fired_at, next_fire_at, detail)
-      VALUES (
-        '${_evt_id}',
-        TIMESTAMPTZ '${_fired_at}',
-        'launchd_health_weekly_cron.sh',
-        '${_label}',
-        '${_state}',
-        ${_exit_col},
-        NULL,
-        NULL,
-        '${_detail_sql}'
-      );
-    " 2>/dev/null || log "duckdb WARN: launchd_health_events INSERT failed for ${_label} (non-fatal)"
+    # Retry on failure (llm#554): unified.duckdb is a single-writer file
+    # shared by ~20 launchd jobs, several of which fire at the same 09:00
+    # slot as this one. A `duckdb` CLI invocation opens a brand-new
+    # connection per INSERT, so a peer job holding the write lock at the
+    # instant this loop reaches a given plist causes that INSERT to fail —
+    # previously this was logged as a WARN and then SILENTLY counted as
+    # written anyway (the counter incremented unconditionally below),
+    # so the end-of-loop "N rows written" log lied about how many rows
+    # actually landed. Observed 2026-07-26: log said "23 rows written",
+    # the table only gained 2 — 21 INSERTs failed on lock contention and
+    # were miscounted as successes. Retry with a short backoff and only
+    # count genuine successes.
+    _insert_ok=0
+    for _attempt in 1 2 3; do
+      if duckdb "${UNIFIED_DB}" "
+        INSERT OR IGNORE INTO launchd_health_events
+          (id, fired_at, source, plist_label, state, last_exit_code, last_fired_at, next_fire_at, detail)
+        VALUES (
+          '${_evt_id}',
+          TIMESTAMPTZ '${_fired_at}',
+          'launchd_health_weekly_cron.sh',
+          '${_label}',
+          '${_state}',
+          ${_exit_col},
+          NULL,
+          NULL,
+          '${_detail_sql}'
+        );
+      " 2>/dev/null; then
+        _insert_ok=1
+        break
+      fi
+      sleep 1
+    done
 
-    _EVENTS_WRITTEN=$(( _EVENTS_WRITTEN + 1 ))
-    log "  ${_label}: ${_state} (exit=${_exit_code_val:-never})"
+    if [ "${_insert_ok}" = "1" ]; then
+      _EVENTS_WRITTEN=$(( _EVENTS_WRITTEN + 1 ))
+      log "  ${_label}: ${_state} (exit=${_exit_code_val:-never})"
+    else
+      log "duckdb WARN: launchd_health_events INSERT failed for ${_label} after 3 attempts (non-fatal, lock contention)"
+      log "  ${_label}: ${_state} (exit=${_exit_code_val:-never}) [NOT WRITTEN]"
+    fi
   done
 
   log "Step 1b done: ${_EVENTS_WRITTEN} launchd_health_events rows written"

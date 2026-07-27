@@ -836,6 +836,20 @@ cron_health <- safe_query("
     plist_label
 ")
 
+# Hide retired plists (llm#554): launchd_health_events is append-only, so a
+# plist_label retired/renamed/uninstalled (its .plist file removed from
+# ~/Library/LaunchAgents) still has a last-known row and would otherwise
+# keep appearing here forever as "unloaded" — e.g. com.claude.capability-
+# registry, retired 2026-07-23, showing up in this table long after removal.
+# Filter to labels whose plist file still exists on disk.
+if (nrow(cron_health) > 0L) {
+  .launch_agents_dir <- path.expand("~/Library/LaunchAgents")
+  .plist_installed <- vapply(cron_health$plist_label, function(lbl) {
+    file.exists(file.path(.launch_agents_dir, paste0(lbl, ".plist")))
+  }, logical(1))
+  cron_health <- cron_health[.plist_installed, , drop = FALSE]
+}
+
 # Freshness guard (llm#510 attempt #3): the ROW_NUMBER()-partitioned query
 # above answers "what is the latest known state per plist", which is only
 # trustworthy if the launchd_health_events table itself has been refreshed

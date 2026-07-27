@@ -5,20 +5,23 @@
     <key>Label</key>
     <string>com.claude.launchd-health-weekly</string>
 
-    <!-- Run bin/launchd_health_weekly_cron.sh every Sunday at 09:00 local time -->
+    <!-- Run bin/launchd_health_weekly_cron.sh every day at 08:00 local time
+         (now daily per llm#554; was Sunday-only). 08:00 deliberately does
+         NOT overlap the 09:00 peak (worktree-gc, roborev-poll-merges,
+         roborev-project-backlog, config-pulse all fire then) — that
+         contention was implicated in silent duckdb write failures
+         (see the writer script's Step 1b retry-logic comment). -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/bin/launchd_health_weekly_cron.sh</string>
     </array>
 
-    <!-- Sunday = Weekday 0; Hour 9; Minute 0 -->
+    <!-- Daily; Hour 8; Minute 0 -->
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Weekday</key>
-        <integer>0</integer>
         <key>Hour</key>
-        <integer>9</integer>
+        <integer>8</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
