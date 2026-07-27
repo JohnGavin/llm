@@ -27,6 +27,19 @@
         <string>--apply</string>
     </array>
 
+    <!-- Fix: launchd's default PATH (/usr/bin:/bin:/usr/sbin:/sbin) omits gh   -->
+    <!-- (Homebrew), so squash-merge detection in worktree_gc.sh's             -->
+    <!-- is_squash_merged() silently found nothing under the scheduler even    -->
+    <!-- though interactive runs (full PATH) detected merges correctly. HOME   -->
+    <!-- is set so gh reads ~/.config/gh for auth.                            -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
     <!-- Daily 09:00 (Mac reliably awake) -->
     <key>StartCalendarInterval</key>
     <dict>
