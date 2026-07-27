@@ -572,10 +572,6 @@ if (n_outliers > 0L) {
     bg <- if (i %% 2 == 0) dark_row_alt else dark_card
     rid  <- r[["review_id"]] %||% ""
     repo <- r[["repo"]] %||% ""
-    repo_url <- resolve_repo_url(repo)
-    id_link   <- if (nzchar(rid) && !is.null(repo_url))
-      sprintf('<a href="%s/issues/%s" style="color:%s;">%s</a>', repo_url, rid, accent_blue, rid)
-    else rid
     repo_link <- repo_link_or_text(repo, accent_blue)
     outlier_ttc_inner <- paste0(outlier_ttc_inner, sprintf(
       '<tr style="background-color:%s;">
@@ -586,7 +582,7 @@ if (n_outliers > 0L) {
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
       </tr>',
       bg,
-      dark_border, accent_blue, id_link,
+      dark_border, accent_blue, rid,
       dark_border, dark_text, repo_link,
       dark_border, accent_orange, fmt_num(r[["time_to_close_hrs"]]),
       dark_border, dark_text, fmt_int(r[["n_attempts"]]),
@@ -639,10 +635,6 @@ if (outliers_by_attempts_degenerate) {
       bg <- if (i %% 2 == 0) dark_row_alt else dark_card
       rid  <- r[["review_id"]] %||% ""
       repo <- r[["repo"]] %||% ""
-      repo_url <- resolve_repo_url(repo)
-      id_link   <- if (nzchar(rid) && !is.null(repo_url))
-        sprintf('<a href="%s/issues/%s" style="color:%s;">%s</a>', repo_url, rid, accent_blue, rid)
-      else rid
       repo_link <- repo_link_or_text(repo, accent_blue)
       outlier_att_inner <- paste0(outlier_att_inner, sprintf(
         '<tr style="background-color:%s;">
@@ -653,7 +645,7 @@ if (outliers_by_attempts_degenerate) {
           <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
         </tr>',
         bg,
-        dark_border, accent_blue, id_link,
+        dark_border, accent_blue, rid,
         dark_border, dark_text, repo_link,
         dark_border, accent_orange, fmt_int(r[["n_attempts"]]),
         dark_border, dark_text, fmt_num(r[["time_to_close_hrs"]]),
