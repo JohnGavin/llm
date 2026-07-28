@@ -11,7 +11,21 @@ format:
 {{< include _setup.qmd >}}
 {{< include ../../_includes/pages-nav.qmd >}}
 
-Analysis of session durations and cost efficiency, including Claude Max5 blocks.
+```{r duration-sparkline, include=FALSE}
+# Pilot: derive an inline datatype sparkline from the same vig_session_metrics
+# target that feeds the Duration Trends / Max5 tabs below (JohnGavin/llm#841).
+# NULL/empty-safe so the pkgdown-fallback and live-store paths both degrade
+# gracefully when no blocks data is available yet.
+vig_metrics_for_spark <- safe_tar_read("vig_session_metrics")
+dt_duration_spark <- if (!is.null(vig_metrics_for_spark) && nrow(vig_metrics_for_spark) > 0) {
+  ordered <- dplyr::arrange(vig_metrics_for_spark, start)
+  dt_spec(utils::tail(ordered$duration_mins, 12), "l")
+} else {
+  "(no data available)"
+}
+```
+
+Analysis of session durations and cost efficiency, including Claude Max5 blocks. Recent session durations trended `r dt_duration_spark` over the last dozen sessions.
 
 ::: {.panel-tabset}
 
