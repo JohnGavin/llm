@@ -1,0 +1,46 @@
+<!-- _includes/datatype.qmd
+     Pilot: inline text-native micro-charts via the `datatype` OpenType font
+     (SIL OFL 1.1; vendored at assets/datatype.woff2, license text at
+     assets/datatype-OFL.txt — see https://github.com/franktisellano/datatype).
+     The font renders `{b:v,...}` (bars) and `{l:v,...}` (sparkline) glyphs
+     via OpenType ligatures for values 0-100 (<=20 points). Pie glyphs are
+     deliberately unsupported (hard to read). Scoped to `.dt` spans ONLY —
+     never applied to body text, since the ligatures would otherwise corrupt
+     ordinary `{}` braces appearing in prose or code chunks.
+     Usage: {{< include /_includes/datatype.qmd >}}
+     Helper: dt_spec(x, type = c("l", "b")) returns a ready-to-splice
+     <span class="dt" title="...">{type:v,...}</span> string; the title
+     attribute is a plain-text fallback for alt-text / font-load failure.
+     See JohnGavin/llm#841.
+-->
+
+```{=html}
+<style>
+@font-face {
+  font-family: "Datatype";
+  src: url("/assets/datatype.woff2") format("woff2");
+  font-display: swap;
+}
+.dt {
+  font-family: "Datatype", monospace;
+  font-feature-settings: "liga" 1, "calt" 1;
+  font-variation-settings: "wght" 500;
+  font-size: 1.15em;
+  line-height: 1;
+}
+</style>
+```
+
+```{r datatype-helper, include=FALSE}
+# Bars ({b:}) and sparklines ({l:}) only — pie deliberately unsupported (hard to read).
+dt_spec <- function(x, type = c("l", "b")) {
+  type <- match.arg(type)
+  rng <- range(x, na.rm = TRUE)
+  v <- if (diff(rng) == 0) rep(50, length(x))
+       else round(100 * (x - rng[1]) / diff(rng))
+  v <- utils::head(v, 20)
+  spec <- sprintf("{%s:%s}", type, paste(v, collapse = ","))
+  sprintf('<span class="dt" title="%s">%s</span>',
+          paste(round(x, 1), collapse = " "), spec)
+}
+```

@@ -7,6 +7,7 @@
 
 {{< include /_includes/hover-popups.qmd >}}
 {{< include /_includes/_safe-tar-read.qmd >}}
+{{< include /_includes/datatype.qmd >}}
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
