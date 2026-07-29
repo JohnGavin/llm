@@ -193,6 +193,35 @@ repo_link_or_text <- function(slug, colour) {
   sprintf('<a href="%s" style="color:%s;">%s</a>', url, colour, slug)
 }
 
+# id_link_for_outlier(): renders an outlier-table finding ID as a link to the
+# GitHub commit (or compare view, for range reviews) roborev actually
+# reviewed, using review_jobs.git_ref (persisted in the JSON snapshot as
+# commit_sha — see roborev_daily_report.R's load_commit_sha()). Falls back to
+# a plain-text ID when the repo slug doesn't resolve to a known public GitHub
+# URL, or when commit_sha is missing/NA/blank — llm#835 established that
+# fabricating a link (there: <repo>/issues/<review_id>, a 404) is worse than
+# no link, since review_id is a roborev DB primary key, not a GitHub issue
+# number.
+id_link_for_outlier <- function(rid, commit_sha, repo, colour) {
+  if (is.null(rid) || !nzchar(as.character(rid))) return("")
+  if (is.null(commit_sha) || is.na(commit_sha) || !nzchar(commit_sha)) {
+    return(as.character(rid))
+  }
+  repo_url <- resolve_repo_url(repo)
+  if (is.null(repo_url)) return(as.character(rid))
+
+  target_url <- if (grepl("\\.\\.", commit_sha)) {
+    shas <- strsplit(commit_sha, "\\.\\.")[[1]]
+    if (length(shas) != 2L || !nzchar(shas[1]) || !nzchar(shas[2])) {
+      return(as.character(rid))
+    }
+    sprintf("%s/compare/%s...%s", repo_url, shas[1], shas[2])
+  } else {
+    sprintf("%s/commit/%s", repo_url, commit_sha)
+  }
+  sprintf('<a href="%s" style="color:%s;">%s</a>', target_url, colour, rid)
+}
+
 # ── Extract window slices ──────────────────────────────────────────────────────
 
 d1 <- snap[["global_windows"]][["d1"]]  # 1-day window — llm#449
@@ -572,6 +601,8 @@ if (n_outliers > 0L) {
     bg <- if (i %% 2 == 0) dark_row_alt else dark_card
     rid  <- r[["review_id"]] %||% ""
     repo <- r[["repo"]] %||% ""
+    commit_sha <- r[["commit_sha"]] %||% NA_character_
+    id_link <- id_link_for_outlier(rid, commit_sha, repo, accent_blue)
     repo_link <- repo_link_or_text(repo, accent_blue)
     outlier_ttc_inner <- paste0(outlier_ttc_inner, sprintf(
       '<tr style="background-color:%s;">
@@ -582,7 +613,7 @@ if (n_outliers > 0L) {
         <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
       </tr>',
       bg,
-      dark_border, accent_blue, rid,
+      dark_border, accent_blue, id_link,
       dark_border, dark_text, repo_link,
       dark_border, accent_orange, fmt_num(r[["time_to_close_hrs"]]),
       dark_border, dark_text, fmt_int(r[["n_attempts"]]),
@@ -635,6 +666,8 @@ if (outliers_by_attempts_degenerate) {
       bg <- if (i %% 2 == 0) dark_row_alt else dark_card
       rid  <- r[["review_id"]] %||% ""
       repo <- r[["repo"]] %||% ""
+      commit_sha <- r[["commit_sha"]] %||% NA_character_
+      id_link <- id_link_for_outlier(rid, commit_sha, repo, accent_blue)
       repo_link <- repo_link_or_text(repo, accent_blue)
       outlier_att_inner <- paste0(outlier_att_inner, sprintf(
         '<tr style="background-color:%s;">
@@ -645,7 +678,7 @@ if (outliers_by_attempts_degenerate) {
           <td style="padding:4px 5px; border:1px solid %s; color:%s;">%s</td>
         </tr>',
         bg,
-        dark_border, accent_blue, rid,
+        dark_border, accent_blue, id_link,
         dark_border, dark_text, repo_link,
         dark_border, accent_orange, fmt_int(r[["n_attempts"]]),
         dark_border, dark_text, fmt_num(r[["time_to_close_hrs"]]),
