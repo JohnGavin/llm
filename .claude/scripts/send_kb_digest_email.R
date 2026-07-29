@@ -404,7 +404,9 @@ signal_479_qa <- sprintf(
 # ── Signal #480: raw/ files awaiting wiki promotion (>14d) ────────────────────
 #
 # Files under knowledge/raw/ where mtime > 14 days AND no wiki/ file references
-# the filename. Table: file | days_old | size.
+# the filename AND the file is not marked `# KEEP:` in its first 5 lines
+# (permanent append-only source the user keeps indefinitely — see
+# compute_stale_raw() below). Table: file | days_old | size.
 # QA marker: <!-- QA:kb_signal_480=N -->
 
 compute_stale_raw <- function(knowledge_repo) {
@@ -447,6 +449,17 @@ compute_stale_raw <- function(knowledge_repo) {
       is_referenced <- grepl(fname, wiki_text, fixed = TRUE)
       if (is_referenced) next
 
+      # `# KEEP:` opt-out marker: a raw file whose first 5 lines contain a
+      # line matching `^#\s*KEEP:` (case-insensitive) is permanent append-only
+      # source material the user intends to keep indefinitely — never flag it
+      # as awaiting promotion, even if unreferenced and past the 14d window.
+      # An unreadable/binary file falls through to normal staleness logic
+      # rather than erroring the whole digest.
+      head_lines <- tryCatch(readLines(f, n = 5L, warn = FALSE),
+                              error = function(e) character(0L))
+      is_keep <- any(grepl("^#\\s*KEEP:", head_lines, ignore.case = TRUE))
+      if (is_keep) next
+
       # Format size
       size_bytes <- info$size
       size_str <- if (size_bytes > 1024 * 1024) {
@@ -478,7 +491,7 @@ signal_480_html <- if (signal_480$count == 0L) {
     title         = "raw/ files awaiting wiki promotion (>14d)",
     summary_stats = "0 found — all raw files promoted or referenced",
     html_body     = sprintf(
-      '<p style="color:%s; font-style:italic;">No raw files older than 14 days are awaiting wiki promotion.</p>',
+      '<p style="color:%s; font-style:italic;">No raw files older than 14 days are awaiting wiki promotion. Files with a "# KEEP:" header line are treated as permanent source and excluded.</p>',
       DARK_MUTED
     )
   )
