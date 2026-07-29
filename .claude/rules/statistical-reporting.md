@@ -90,11 +90,7 @@ Every fitted model MUST report:
 
 ## 6. Dynamic Values Only (see `dynamic-prose-values` rule)
 
-All reported numbers MUST come from code, never hardcoded:
-```r
-# WRONG: "The mean was 42.3"
-# RIGHT: paste0("The mean was ", round(mean(x), 1))
-```
+All reported numbers MUST come from code, never hardcoded. WRONG: `"The mean was 42.3"`. RIGHT: `paste0("The mean was ", round(mean(x), 1))`.
 
 ## 7. Structured Experiment Commit Messages (MANDATORY for modelling)
 

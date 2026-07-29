@@ -325,3 +325,69 @@ self-checks:
 
 Fix R/foo.R line 42 — add NA check before division.""")
 ```
+
+---
+
+## Sections Moved from the Rule Body (2026-07-29 line-limit pass, llm#749)
+
+### Cross-Repo Writes — dispatch-prompt detail
+
+For cross-repo writes (e.g. llm session edits llmtelemetry): pre-create the target
+repo's worktree via `cc-worktree.sh`, set `$WORKTREE_PATH` to that path in the
+dispatch prompt, and run dual-repo post-verify after completion.
+
+### Read-Only Cross-Repo Verify → Parallel, NO Worktree (full section)
+
+The `isolation: "worktree"` requirement is a WRITE-safety guard (stop a
+`bypassPermissions` agent clobbering the main checkout). It does NOT apply to
+read-only agents, and when the target files live in a **different repo** from the
+session cwd, worktree isolation is actively HARMFUL — the harness worktrees the
+*session's* repo, so the agent cannot reach the other repo at all (the #182
+cross-repo failure). This is common when a project session verifies content in the
+local-only knowledge hub (`~/docs_gh/llm/knowledge/**`).
+
+**Rule:** dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or
+`general-purpose` restricted to Read/Grep/Glob) that target a separate repo:
+
+- **in parallel** — multiple `Agent` calls in ONE message, each a distinct
+  adversarial lens (e.g. citation-faithfulness · domain-correctness ·
+  schema/structural-integrity). Parallelism belongs in *verification*.
+- **WITHOUT `isolation: "worktree"`** — read-only needs no write sandbox, and a
+  worktree would sever cross-repo access.
+
+**Corollary for the write side.** The fixer/curator half of a cross-repo
+*local-hub* task (a repo that is never pushed, e.g. the knowledge hub) also runs
+**without worktree**, restricted to file-tools (no Bash, no git), with the
+orchestrator doing the commit afterward. Do NOT parallelise a single-file fix —
+concurrent edits to one file conflict; the parallelism was spent in verification.
+(For cross-repo writes to a *pushed* repo, use the `$WORKTREE_PATH` pre-create
+pattern above instead.)
+
+| Cross-repo task | Isolation | Concurrency |
+|---|---|---|
+| Read-only verify (separate repo) | none (read-only) | parallel, diverse lenses |
+| Write to local-only hub (never pushed) | none; file-tools + no Bash; orchestrator commits | serial per file |
+| Write to a pushed repo | pre-created `$WORKTREE_PATH` worktree (#182) | per dual-repo post-verify |
+
+Origin: 2026-07-03/04 oncology-hub immunoparesis note — curator/fixer written and
+critic-verified across the mycare→knowledge-hub boundary; a 3-lens parallel
+read-only re-audit ran with no worktrees. See `agent-identity-and-task-scopes`
+(scope propagation) and `worktree-location` (harness worktree conventions).
+
+### Mandatory: isolation:"worktree" — bypassPermissions rationale
+
+Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside
+worktrees and `/tmp/*`. It is NEVER safe in the main checkout, where live API
+tokens and credentials sit. An agent running `bypassPermissions` in the main
+checkout can silently overwrite `.Renviron`, `default.nix`, or any other
+file without a confirmation prompt.
+
+`~/.claude/` symlinks and cross-repo symlinks (e.g. a `.claude/scripts/` file
+pointing into a sibling repo) are sandbox-escaping — the path looks
+in-worktree but the bytes land outside it; the `worktree_symlink_guard` hook
+(llm#692) now enforces this at every `PreToolUse:Edit|Write` call.
+
+### Canonical worktree path cross-reference
+
+For the canonical path to use when creating worktrees, see the `worktree-location`
+rule and `~/.claude/scripts/cc-worktree.sh`.

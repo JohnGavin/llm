@@ -16,15 +16,8 @@ before any new work begins on user-facing surfaces.
 
 ## Source
 
-JohnGavin/premortem session 30, 2026-06-02. Lessons learnt L-4 (stranded-
-branch harvesting): a previous session made substantive UI improvements on
-`feat/cc-20260531-185103` (donut → DT table, bar → Cleveland dot plot, 13
-inline `tt()` popups with embedded `<a href>` to GOV.UK + source code,
-per-cell drilldown links). Several commits on that branch were tagged
-"(session-limit-interrupted)". The branch was never merged to `main`. When
-this session forked a new worktree from `main`, it inherited the OLD layout
-and the user saw the regression as "you reverted my changes". Three full
-re-do sessions followed before the discipline was added.
+JohnGavin/premortem session 30, 2026-06-02, Lessons learnt L-4. See the
+companion doc for the full stranded-branch incident narrative.
 
 ## CRITICAL: Silence Is What Caused L-4
 
@@ -37,20 +30,11 @@ requires a triage decision in this session.
 
 ### Step 1 — Audit runs at session start
 
-`session_init.sh` Phase 7g calls
-`~/.claude/scripts/branch_harvest_audit.sh`. The audit:
-
-1. Resolves the upstream default branch:
-   `git rev-parse --abbrev-ref origin/HEAD 2>/dev/null` →
-   falls back to `main` if the symbolic-ref is unset.
-2. Lists `git branch --no-merged <upstream-default>` for each name that
-   matches `^[[:space:]]*feat/cc-`.
-3. For each unmerged branch:
-   - Reads the last 5 commit subjects via
-     `git log -5 --format="%h %s" <branch>`.
-   - Reads the tip date via `git log -1 --format=%cI <branch>`.
-   - Sets flags from the patterns table below.
-4. Emits one block per FLAGGED branch (silent if none).
+`session_init.sh` Phase 7g calls `~/.claude/scripts/branch_harvest_audit.sh`,
+which resolves the upstream default branch, lists unmerged `feat/cc-*`
+branches, reads each one's recent commits and tip date, sets flags from the
+patterns table below, and emits one block per FLAGGED branch (silent if
+none). The full 4-substep breakdown is in the companion doc.
 
 ### Step 2 — Flag patterns
 
@@ -68,31 +52,16 @@ A branch is REPORTED if it has `SESSION_INTERRUPTED` OR
 dashboard|vignette|readme|\.qmd|\.css|\.scss|model/|R/|app/|plumber|shiny|figure|chart|plot|table|caption|font|render|website|docs/
 ```
 
-Projects MAY extend this via a single line in their project-level
-`.claude/CLAUDE.md`:
-```
-branch-harvest-keywords: vetiver|plumber2|mlops|mycare-letters
-```
-The extension is OR-joined with the default; never replaces it.
+Projects MAY extend this via a `branch-harvest-keywords:` line in their
+project-level `.claude/CLAUDE.md`. The extension is OR-joined with the
+default; never replaces it.
 
 ### Step 3 — Output format
 
-For each FLAGGED branch (silent if none):
-
-```
-branch-harvest: 2 unmerged feat branches flagged
-  feat/cc-20260531-185103 (12d stale) [SURFACE_TOUCHED, SESSION_INTERRUPTED]
-    c389d1d  fix(dashboard): re-add mermaid-header.html CDN loader
-    f0372c8  WIP: agent V UI overhaul (session-limit-interrupted)
-    7db8be3  WIP: agent M server-side mermaid (session-limit-interrupted)
-  feat/cc-20260530-201802 (3d stale) [SURFACE_TOUCHED]
-    fe5c1d4  fix(model): v4.6 — charity-metric bug fix + SIPP-growth sensitivity
-→ Triage: harvest | archive | discard.
-  See branch-harvest-on-fork rule. Log: ~/.claude/logs/branch_harvest.log
-```
-
-The last line is the call-to-action. Sessions MUST pick one of the three
-outcomes per flagged branch BEFORE starting work on a flagged surface.
+For each FLAGGED branch (silent if none), the audit emits a block ending in
+a call-to-action line. Sessions MUST pick one of the three outcomes per
+flagged branch BEFORE starting work on a flagged surface. A worked output
+example is in the companion doc.
 
 ### Step 4 — Triage outcomes (mandatory choice)
 
@@ -108,11 +77,9 @@ Doing nothing is forbidden — silence is the failure mode that caused L-4.
 
 ### Per-branch silence (git notes)
 
-To permanently silence the audit for a known-archived branch:
-
-```bash
-git notes --ref=harvest add -m "archived 2026-06-02 — improvements re-implemented in feat/cc-20260602-175001" <branch-tip-sha>
-```
+To permanently silence the audit for a known-archived branch, add a
+`git notes --ref=harvest` note to the branch tip SHA. A worked command is in
+the companion doc.
 
 The audit reads `git notes --ref=harvest show <sha>` for each flagged
 branch's tip and skips any branch with a note whose body starts with
@@ -164,16 +131,11 @@ something unrelated where the audit noise is a distraction. Logged.
 
 ## Verification
 
-After landing this rule:
-1. `~/.claude/scripts/branch_harvest_audit.sh --selftest` → `N/N PASS`
-2. Run the audit on a known-clean repo → zero output
-3. Run the audit on the premortem worktree → SHOULD flag
-   `feat/cc-20260531-185103` (the L-4 reference case)
-4. `git notes --ref=harvest add -m "archived ..."` on a flagged branch's
-   tip → next audit run skips it
+Selftest + a 4-step manual verification checklist are in the companion doc.
 
 ## Related
 
+- [`_companions/branch-harvest-on-fork-details.md`](_companions/branch-harvest-on-fork-details.md) — incident narrative and worked examples split out of this rule
 - `cross-cutting-rename` — the SECOND ask of the same rename was a
   symptom of stranded improvements; harvest catches them earlier
 - `branch-salvage-workflow` — what to do AFTER you've decided to look at
