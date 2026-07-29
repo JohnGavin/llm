@@ -337,6 +337,81 @@ load_attempts_heuristic <- function(lifecycle_df) {
   })
 }
 
+# ── Load commit SHA (git_ref) for outlier IDs ─────────────────────────────────
+#
+# review_id -> reviews.job_id -> review_jobs.git_ref. git_ref holds either a
+# single commit SHA (the common case) or a "SHA_A..SHA_B" range (roborev
+# range reviews — e.g. a post-merge catch-up covering several commits).
+# commit_sha travels into the JSON snapshot's outlier tables so the email
+# renderer can link each finding ID to the exact GitHub commit/compare view
+# roborev reviewed (llm#835 fixed the prior — wrong — attempt that linked IDs
+# to <repo>/issues/<id>, a 404 since review_id is a roborev DB primary key,
+# not a GitHub issue number).
+#
+# Returns a data.frame(review_id, commit_sha) or NULL on any failure — the
+# caller must treat NULL/NA as "no link available", never fabricate a SHA.
+
+load_commit_sha <- function(lifecycle_df) {
+  if (nrow(lifecycle_df) == 0L || !file.exists(REVIEWS_DB)) {
+    return(NULL)
+  }
+  review_ids <- lifecycle_df$review_id[!is.na(lifecycle_df$review_id)]
+  if (length(review_ids) == 0L) return(NULL)
+
+  tryCatch({
+    tmp_con <- dbConnect(duckdb::duckdb(), ":memory:")
+    on.exit(
+      tryCatch(dbDisconnect(tmp_con, shutdown = TRUE), error = function(e) NULL),
+      add = TRUE
+    )
+    invisible(tryCatch(
+      dbExecute(tmp_con, "LOAD sqlite"),
+      error = function(e) {
+        invisible(tryCatch(dbExecute(tmp_con, "INSTALL sqlite"), error = function(e2) NULL))
+        invisible(dbExecute(tmp_con, "LOAD sqlite"))
+      }
+    ))
+    dbExecute(tmp_con,
+      sprintf("ATTACH '%s' AS rdb (TYPE sqlite, READ_ONLY)", REVIEWS_DB)
+    )
+
+    id_list <- paste(review_ids, collapse = ", ")
+    sql <- sprintf("
+      SELECT
+        rv.id AS review_id,
+        rj.git_ref AS commit_sha
+      FROM rdb.reviews rv
+      LEFT JOIN rdb.review_jobs rj ON rj.id = rv.job_id
+      WHERE rv.id IN (%s)
+    ", id_list)
+    df <- dbGetQuery(tmp_con, sql)
+    if (nrow(df) == 0L) return(NULL)
+    df
+  }, error = function(e) {
+    message("roborev_daily_report.R: commit_sha query error: ", conditionMessage(e))
+    NULL
+  })
+}
+
+# ── Join commit SHA to lifecycle slice ────────────────────────────────────────
+
+enrich_with_commit_sha <- function(lifecycle_df) {
+  if (nrow(lifecycle_df) == 0L) {
+    lifecycle_df$commit_sha <- character(0L)
+    return(lifecycle_df)
+  }
+
+  sha_df <- load_commit_sha(lifecycle_df)
+  if (is.null(sha_df)) {
+    sha_df <- data.frame(review_id = integer(), commit_sha = character(),
+                          stringsAsFactors = FALSE)
+  }
+
+  # Left-join: reviews without a resolvable git_ref get commit_sha = NA
+  # (rendered as plain-text ID downstream — never a broken link).
+  merge(lifecycle_df, sha_df, by = "review_id", all.x = TRUE)
+}
+
 # ── Join attempts to lifecycle slice ──────────────────────────────────────────
 
 enrich_with_attempts <- function(con, lifecycle_df, has_lineage) {
@@ -585,10 +660,20 @@ compute_outliers <- function(df, bounds = NULL) {
       review_id = integer(), repo = character(),
       n_attempts = integer(), time_to_close_hrs = double(),
       close_reason = character(), created_at = character(),
+      commit_sha = character(),
       stringsAsFactors = FALSE
     )
     return(list(by_attempts = empty_df, by_time = empty_df))
   }
+
+  # commit_sha may be absent if enrich_with_commit_sha() was never called on
+  # the input df (e.g. an older caller) — default to NA rather than error.
+  sha_col <- if (!is.null(found_closed$commit_sha)) {
+    as.character(found_closed$commit_sha)
+  } else {
+    rep(NA_character_, nrow(found_closed))
+  }
+  found_closed$commit_sha <- sha_col
 
   # Top-10 by attempts
   by_att <- found_closed[order(-found_closed$n_attempts, -found_closed$time_to_close_hrs), ]
@@ -600,6 +685,7 @@ compute_outliers <- function(df, bounds = NULL) {
     time_to_close_hrs = round(as.numeric(by_att$time_to_close_hrs), 2),
     close_reason      = as.character(by_att$close_reason),
     created_at        = format(by_att$created_at, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+    commit_sha        = as.character(by_att$commit_sha),
     stringsAsFactors  = FALSE
   )
 
@@ -613,6 +699,7 @@ compute_outliers <- function(df, bounds = NULL) {
     time_to_close_hrs = round(as.numeric(by_ttc$time_to_close_hrs), 2),
     close_reason      = as.character(by_ttc$close_reason),
     created_at        = format(by_ttc$created_at, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+    commit_sha        = as.character(by_ttc$commit_sha),
     stringsAsFactors  = FALSE
   )
 
@@ -746,6 +833,7 @@ outlier_end   <- anchor_date
 outlier_start <- anchor_date - as.difftime(OUTLIER_WINDOW_DAYS, units = "days")
 df_outliers_window <- load_window_by_closed_at(con, outlier_start, outlier_end)
 df_outliers_window <- enrich_with_attempts(con, df_outliers_window, has_lineage_table)
+df_outliers_window <- enrich_with_commit_sha(df_outliers_window)
 outliers_recent <- compute_outliers(
   df_outliers_window,
   bounds = list(start = outlier_start, end = outlier_end)
