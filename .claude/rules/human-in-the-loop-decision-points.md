@@ -10,8 +10,6 @@ description: 5-class decision taxonomy — Classes A/B/C stop for the human; D/E
 
 Generalises the 3-class op taxonomy in `destructive-ops-guard` Part 3 to a project-wide 5-class decision taxonomy covering ALL human-in-the-loop checkpoints — not just destructive operations.
 
----
-
 ## When This Applies
 
 Any orchestrator or agent decision that has one or more of:
@@ -23,16 +21,12 @@ Any orchestrator or agent decision that has one or more of:
 
 Purely local, read-only, or sandboxed operations (file reads, grep, query) do not require HITL.
 
----
-
 ## CRITICAL: Automation Runs by Default; HITL Is the Override
 
 Automation is not wrong. The failure mode is automation that runs **past the boundary** of what the human authorised. The taxonomy below names the boundary for each class and requires the appropriate checkpoint before crossing it.
 
 > If a decision touches Classes A, B, or C: **STOP and wait** for the human before executing.
 > If the decision is Class D or E: **proceed** — no confirmation needed.
-
----
 
 ## The 5-Class Decision Taxonomy
 
@@ -48,8 +42,6 @@ Class D is the key innovation over `destructive-ops-guard` Part 3: it explicitly
 
 > **Working name — "publish gate".** Prefer the plain-language name **"publish gate"** over the jargon label "Class C" when talking to the user or in tooling: a publish-gate action *publishes a change beyond the sandbox into a shared/visible place* (merge to main, close an issue, post an external comment, cut a release) and so requires an explicit action verb, never a bare "yes". "Class C" remains the formal taxonomy label; "publish gate" is its user-facing synonym.
 
----
-
 ## Application Across Tool Surfaces
 
 | Tool surface | Class A/B (STOP) | Class C (stop + verb) | Class D (proceed) | Class E (silent) |
@@ -60,8 +52,6 @@ Class D is the key innovation over `destructive-ops-guard` Part 3: it explicitly
 | **Agent dispatch** | Agent deleting data or force-pushing main | Agent merging PRs or closing issues | Agent creating PRs, committing, pushing own branch | Agent reading, grepping, running read-only checks |
 | **MCP tool** | Destructive write (classified `destructive`) | External publish (`write` tier) | Local write (`write` tier, sandboxed) | Read-only (`read` tier) |
 
----
-
 ## The Default-PR-Not-Merge Principle
 
 `pr-shipping-discipline` establishes that "ship it" means **open a PR**, not merge. This rule provides the taxonomic reason: **PR open is Class D** (scoped, reversible, local to the PR surface) while **PR merge is Class C** (cross-boundary visible, explicit verb required).
@@ -69,8 +59,6 @@ Class D is the key innovation over `destructive-ops-guard` Part 3: it explicitly
 Any ambiguous phrasing — "ship it", "land this", "let's push" — resolves to Class D (open PR) unless the user supplies an explicit Class C verb ("merge", "merge to main", "land directly").
 
 See `pr-shipping-discipline` for the full verb decision table.
-
----
 
 ## Class D Bounded-Confirm Pattern (New)
 
@@ -90,8 +78,6 @@ Confirm? (or say 'stop' to cancel)"
 
 The bounded-confirm is NOT a confirmation prompt for individual Class D ops. It is a **scope declaration** so the human can redirect before the work begins.
 
----
-
 ## Forbidden Patterns
 
 | Pattern | Class violated | Why wrong | Fix |
@@ -104,67 +90,11 @@ The bounded-confirm is NOT a confirmation prompt for individual Class D ops. It 
 | Agent silently does 7 Class D ops when user said "tidy these up" | D | Scope expanded without bounded-confirm | Emit bounded-confirm for ≥ 3 Class D ops |
 | Agent classifies PR merge as Class D | C | Merge is cross-boundary visible | Reclassify as C; require explicit verb |
 
----
-
 ## Worked Example
 
-### Wrong — auto-merge on "ship it"
-
-```
-User:  "ship it"
-Agent: [calls gh pr merge --squash --delete-branch]
-       → Merged. Branch deleted.
-```
-
-Problem: "ship it" is ambiguous. The agent treated it as Class C authorisation without an explicit verb.
-
-### Right — PR open + wait
-
-```
-User:  "ship it"
-Agent: "Opening PR #42 (Class D — scoped commit). Waiting for you to
-        review before merge."
-       [calls gh pr create --title "..." --body-file /tmp/body.md]
-       → PR created: https://github.com/JohnGavin/llm/pull/42
-
-User:  "merge this"
-Agent: "Merging PR #42 (Class C — cross-boundary visible).
-        Confirm: type 'merge pr 42' to proceed."
-       [waits for next turn]
-
-User:  "merge pr 42"
-Agent: [calls gh pr merge 42 --squash]
-       → Merged.
-```
-
-### Wrong — scope expansion without bounded-confirm
-
-```
-User:  "tidy these up"
-Agent: [silently creates 7 PRs across 4 worktrees, closes 3 issues]
-       → Done.
-```
-
-Problem: scope expanded beyond the implicit authorisation. Class D but at large scale without bounded-confirm.
-
-### Right — bounded-confirm before scale
-
-```
-User:  "tidy these up"
-Agent: "I'll make these Class D changes:
-  1. R/foo.R — replace stop() with cli_abort()
-  2. R/bar.R — same pattern
-  3. R/baz.R — same pattern
-  4. tests/test-foo.R — update expectation
-  5. commit + push feat/tidy-cli-errors
-Confirm or redirect?"
-
-User:  "yes, do it"
-Agent: [executes the 5 bounded Class D ops]
-       → Done.
-```
-
----
+See [`_companions/human-in-the-loop-decision-points-details.md`](_companions/human-in-the-loop-decision-points-details.md)
+for the full worked examples (wrong/right auto-merge, wrong/right scope
+expansion). The normative rule above is complete without it.
 
 ## Related
 

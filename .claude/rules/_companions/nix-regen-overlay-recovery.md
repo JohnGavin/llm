@@ -46,6 +46,50 @@ Fallback — when no `default.post.sh` exists yet:
 Survey for hand-crafted overlays before regen with:
 `grep -E "extend|overrideScope|overridePythonAttrs|disabledTestPaths" default.nix`
 
+## Sections Moved from the Rule Body (2026-07-29 line-limit pass, llm#749)
+
+### Agent Delegation — worked example
+
+```
+Agent(subagent_type="r-debugger",
+      prompt="Run tests in the mycare project. Enter the project nix shell first:
+              nix-shell /Users/johngavin/.../mycare/default.nix --run 'Rscript -e devtools::test()'")
+```
+
+### Regenerating default.nix — rix loadability sanity-check
+
+```bash
+nix-shell ~/docs_gh/llm/default.nix --run \
+  "Rscript -e 'cat(\"rix:\", requireNamespace(\"rix\"), packageVersion(\"rix\"))'"
+```
+
+### Worktree-Isolated rix Regenerations — CORRECT/WRONG example
+
+```bash
+# CORRECT: subshell isolates cd, rix sees the worktree's cwd
+(cd /private/tmp/<agent-worktree> && \
+   nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")
+
+# CORRECT: pass cwd explicitly via Rscript -e setwd()
+nix-shell ~/docs_gh/llm/default.nix --run \
+  "Rscript -e 'setwd(\"/private/tmp/<agent-worktree>\"); source(\"default.R\")'"
+
+# WRONG: cwd inherits from caller, default.nix may land in orchestrator's checkout
+nix-shell ~/docs_gh/llm/default.nix --run \
+  "Rscript /private/tmp/<agent-worktree>/default.R"
+```
+
+### Symptom of the bug
+
+If you see "udunits build failed" or "library(sf) segfault" after a worktree-isolated agent ran, suspect that the orchestrator's `default.nix` was overwritten. Check:
+
+```bash
+git -C <main-checkout> diff default.nix    # are the patches still there?
+grep -c gnu89 <main-checkout>/default.nix  # 0 means patches were stripped
+```
+
+Recovery: `git -C <main-checkout> checkout HEAD -- default.nix`.
+
 Known projects with `default.post.sh`:
 
 | Project | Overlay re-applied | Reason |

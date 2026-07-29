@@ -7,10 +7,6 @@ paths:
 
 # Rule: Quarto Vignette Standards
 
-Consolidated from: `quarto-vignette-format`, `quarto-vignette-layout`, `quarto-vignette-data`, `quarto-vignette-evidence`, `quarto-vignette-validation`, `vignette-targets-export`.
-
----
-
 ## Part 1: Format Requirements
 
 ### MANDATORY: Quarto Only
@@ -38,44 +34,23 @@ Consolidated from: `quarto-vignette-format`, `quarto-vignette-layout`, `quarto-v
 - DT dark mode via `pkgdown/extra.css` (not per-widget JS)
 - Table targets return `data.frame`, NOT DT widgets (contains Nix paths)
 
----
-
 ## Part 2: Layout Standards
 
 ### Full-Width (100% Relative)
 
-```css
-/* pkgdown/extra.css */
-body > .container { max-width: 100% !important; width: 100% !important; }
-.col-md-9 { flex: 0 0 85% !important; }
-```
+Vignette body width is 100% relative (`pkgdown/extra.css`). A worked CSS snippet is in the companion doc.
 
 **Forbidden:** Fixed pixel widths (`max-width: 1200px`)
 
 ### Code Folding (MANDATORY)
 
-```yaml
-format:
-  html:
-    code-fold: true       # MANDATORY
-    code-summary: "Show code"
-```
+Every vignette's YAML sets `code-fold: true` and `code-summary: "Show code"`. A worked YAML snippet is in the companion doc.
 
 **FORBIDDEN:** `echo = FALSE` globally when `code-fold: true` is active.
 
 ### Sub-Bullet Formatting
 
-```markdown
-# REQUIRED:
-- **DALY:** Disease burden combining:
-    - **YLL:** Premature mortality
-    - **YLD:** Morbidity component
-
-# FORBIDDEN:
-- **DALY:** Disease burden = YLL + YLD.
-```
-
----
+Nested detail belongs in sub-bullets, not collapsed into one line. A worked REQUIRED/FORBIDDEN example is in the companion doc.
 
 ## Part 3: Data Rules
 
@@ -87,10 +62,7 @@ format:
 
 ### Zero Inline Computation
 
-Every chunk is ONE expression:
-```r
-show_target("vig_target_name")
-```
+Every chunk is ONE expression, e.g. `show_target("vig_target_name")`.
 
 **Forbidden in non-setup chunks:** `<-`, `print()`, `ggplot()`, `if/else`, `for`.
 
@@ -100,15 +72,7 @@ Never use `head()`, `sample_n()`, `slice()` without explicit user approval and d
 
 ### CI Pattern: Pre-Computed RDS
 
-CI NEVER runs `tar_make()`. Export vignette targets as RDS:
-```r
-vignette_targets <- grep("^vig_", tar_manifest()$name, value = TRUE)
-for (name in vignette_targets) {
-  saveRDS(tar_read_raw(name), file.path("inst/extdata/vignettes", paste0(name, ".rds")))
-}
-```
-
----
+CI NEVER runs `tar_make()`. Export vignette targets as RDS. A worked export loop is in the companion doc.
 
 ## Part 4: Evidence Rules
 
@@ -126,8 +90,6 @@ Every `##`/`###` heading MUST have prose before any code chunk.
 
 Every vignette MUST have at least one captioned table or plot.
 
----
-
 ## Part 5: Deployment Validation
 
 ### Post-Publish Validation Table
@@ -144,11 +106,7 @@ After every deployment, produce:
 
 ### Error Pattern Check (MANDATORY)
 
-```bash
-for pattern in "MISSING EVIDENCE" "target not available" "#> NULL"; do
-  grep -FHc "$pattern" docs/articles/*.html | grep -v ':0$' && exit 1
-done
-```
+Grep every rendered article for `"MISSING EVIDENCE"`, `"target not available"`, and `"#> NULL"`; exit 1 on any hit. A worked bash loop is in the companion doc.
 
 ### Dark Mode Toggle (MANDATORY)
 
@@ -156,13 +114,7 @@ All pkgdown sites MUST have dark/light toggle defaulting to dark.
 
 ### Build-Info Footer (MANDATORY)
 
-```
-pkgname 0.1.0 | Git abc1234 | R 4.5.2 | Built 2026-04-13
-```
-
-Each element hyperlinked to GitHub release/commit/CRAN.
-
----
+Every article footer states pkg version, git SHA, R version, and build date, each hyperlinked to GitHub release/commit/CRAN. A worked example is in the companion doc.
 
 ## Fence Parity (Mandatory)
 
@@ -170,24 +122,13 @@ Every `.qmd` file MUST have balanced code fences. An orphan triple-backtick
 (unmatched fence) causes Quarto to silently interpret all subsequent markdown as
 raw code, breaking headings, prose, and R chunks below the orphan.
 
-**QA gate:** `~/.claude/scripts/check_qmd_fence_parity.sh` — run automatically
-by `r_code_check.sh` on `vignettes/` and `docs/` at pre-commit time.
-
-```bash
-# Manual check
-~/.claude/scripts/check_qmd_fence_parity.sh vignettes/
-~/.claude/scripts/check_qmd_fence_parity.sh --selftest  # 4/4 expected
-```
+**QA gate:** `~/.claude/scripts/check_qmd_fence_parity.sh` — run automatically by `r_code_check.sh` on `vignettes/` and `docs/` at pre-commit time. Manual check + selftest invocation is in the companion doc.
 
 | Pattern | Allowed? |
 |---------|----------|
 | Triple-backtick code fences (` ``` `) | Yes — must be balanced (even count) |
 | Quadruple-backtick escape fences (` ```` `) | Yes — valid for prose showing markdown syntax |
 | Orphan opening or closing triple-backtick | **No** — caught by QA gate, exit 1 |
-
-See JohnGavin/llm#465.
-
----
 
 ## Pre-Commit Checklist
 
@@ -199,9 +140,8 @@ See JohnGavin/llm#465.
 - [ ] Dark mode toggle present
 - [ ] `check_qmd_fence_parity.sh vignettes/` exits 0
 
----
-
 ## Related
 
+- [`_companions/quarto-vignettes-details.md`](_companions/quarto-vignettes-details.md) — worked code examples split out of this rule (llm#465)
 - `accessibility` — WCAG contrast, alt text
 - `visualization` — chart standards, captions

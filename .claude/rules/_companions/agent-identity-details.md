@@ -54,6 +54,53 @@ Agent-Type: fixer
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ```
 
+## Sections Moved from the Rule Body (2026-07-29 line-limit pass, llm#749)
+
+### Why four places
+
+One is not enough. The prompt can be ignored (agent still exposes the env var).
+The commit footer survives rebases. The git note survives branch deletion (until
+`git notes prune`). The state file is the orchestrator's ground truth for
+post-verify reconciliation.
+
+### Symlink-trapped paths
+
+`~/.claude/scripts/` and `~/.claude/hooks/` are symlinks that resolve into the
+orchestrator's main checkout (`~/docs_gh/llm/.claude/scripts/`). An agent writing
+to these paths via their `~/.claude/` address is writing OUTSIDE its worktree
+sandbox — the write lands in the orchestrator's working tree, not the agent's PR
+diff. This is the Pattern 2 failure from llm#517.
+
+The `PreToolUse:Edit|Write` hook (future: llm#517) will resolve symlinks before
+the boundary check.
+
+### Environment variables for hooks (Phase 2)
+
+```bash
+CLAUDE_DISPATCH_ID=<uuid>
+CLAUDE_AGENT_TYPE=fixer
+CLAUDE_WORKTREE_PATH=/path/to/worktree
+CLAUDE_ESCALATION_SCOPE=pr-create,issue-create
+CLAUDE_DISPATCH_EXPIRES_AT=2026-06-05T14:30:00Z
+```
+
+Hooks read these variables to make policy decisions. Currently `agent_push_guard.sh`
+and `destructive_fs_guard.sh` use workspace path only. When Phase 2 lands, they
+will also check `CLAUDE_DISPATCH_EXPIRES_AT` and `CLAUDE_ESCALATION_SCOPE`.
+
+### Audit Trail — worked commands
+
+```bash
+# All commits from a dispatch
+git log --all --grep="Dispatch-Id: abc123ef" --format="%h %s"
+
+# All paths touched
+git log --all --grep="Dispatch-Id: abc123ef" --name-only --format="" | sort -u
+
+# Post-verify outcome
+cat ~/.claude/logs/agent_post_verify_abc123ef.json
+```
+
 ## Phase Roadmap
 
 | Phase | What lands | Status |

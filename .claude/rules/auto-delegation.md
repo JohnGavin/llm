@@ -8,9 +8,6 @@ Every orchestrator decision about whether to do work directly or delegate.
 
 ## Model Tier Lookup
 
-> **This table is the single source of truth for model IDs.** All prose in this rule uses tier names. Update only this table when Anthropic releases new models — nothing else in this rule needs to change.
-> <!-- current as of 2026-06; verify at https://docs.anthropic.com/en/docs/models-overview -->
-
 | Tier | Role | Current model alias |
 |------|------|---------------------|
 | **Orchestrator** | Plan, decompose, synthesise; main loop | `opus` |
@@ -21,9 +18,7 @@ In Agent() calls use the alias (`model="haiku"`, `model="sonnet"`, `model="opus"
 
 ## CRITICAL: Orchestrator-Tier Role — Plan, Decompose, Synthesise (+ bounded prose exceptions)
 
-**Default rule:** the orchestrator tier delegates all code, script, and configuration edits to subagents. This includes everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree.
-
-> **Clarification:** "delegate code/script edits" does NOT mean the orchestrator tier never uses Edit/Write. It DOES use Edit/Write directly for the bounded exceptions listed below (prose files, memory, rules, CHANGELOG, CURRENT_WORK.md). The constraint is on code-level edits to the package source tree, not on all file writes.
+**Default rule:** the orchestrator tier delegates all code, script, and configuration edits to subagents. This includes everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree. See the companion doc for the "Clarification" note on when the orchestrator tier still uses Edit/Write directly.
 
 | Work type | Delegate to |
 |-----------|-------------|
@@ -47,11 +42,6 @@ The orchestrator tier retains write access for these — they are too small/dial
 
 What "prose edit" means: text/markdown content where no code parses or executes from the change. Editing a shell snippet inside a markdown code fence is NOT a prose edit — delegate that to a subagent so the snippet is actually tested.
 
-### Three-tier model
-- **Orchestrator tier:** plan + decompose + synthesise + prose exceptions above
-- **Worker tier:** all multi-step edits, new files, complex content
-- **Lightweight tier:** single-file edits, doc updates, version bumps
-
 ## CRITICAL: Do Not Use Orchestrator Tier for Lightweight Work
 
 If ALL of these are true, MUST use `quick-fix` agent (lightweight tier):
@@ -60,10 +50,8 @@ If ALL of these are true, MUST use `quick-fix` agent (lightweight tier):
 - No reasoning about correctness needed (typo, rename, version bump, URL fix)
 - No test verification required after the change
 
-```
-Agent(subagent_type="quick-fix", model="haiku",  # lightweight tier
-      prompt="In <file>, change <old> to <new>. Reason: <why>")
-```
+See the companion doc for the "Three-tier model" summary and a worked
+`Agent(subagent_type="quick-fix", ...)` dispatch example.
 
 ## Lightweight Tier for Context Summarisation (Cost Compression)
 
@@ -108,19 +96,7 @@ When `burn_rate_check.sh` reports WARN or CRITICAL:
 
 ## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
 
-For the canonical path to use when creating worktrees, see the `worktree-location`
-rule and `~/.claude/scripts/cc-worktree.sh`.
-
-Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside
-worktrees and `/tmp/*`. It is NEVER safe in the main checkout, where live API
-tokens and credentials sit. An agent running `bypassPermissions` in the main
-checkout can silently overwrite `.Renviron`, `default.nix`, or any other
-file without a confirmation prompt.
-
-`~/.claude/` symlinks and cross-repo symlinks (e.g. a `.claude/scripts/` file
-pointing into a sibling repo) are sandbox-escaping — the path looks
-in-worktree but the bytes land outside it; the `worktree_symlink_guard` hook
-(llm#692) now enforces this at every `PreToolUse:Edit|Write` call.
+Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Full rationale (main-checkout credential risk, `~/.claude/` symlink sandbox-escape, `worktree_symlink_guard` hook llm#692) is in the companion doc.
 
 **Therefore:** ANY Agent dispatch where the agent may invoke Bash MUST be
 called with `isolation: "worktree"`. This includes:
@@ -139,7 +115,7 @@ called with `isolation: "worktree"`. This includes:
 | `quick-fix` (lightweight tier) | No | Optional |
 | `critic` (read-only) | No | Optional |
 
-> **Lightweight-tier (`quick-fix`) tool limitation:** the quick-fix agent has Read, Grep, Glob, Edit — but NO Bash. It cannot `git commit`, `git push`, `gh pr create`, or `roborev close`. Dispatching quick-fix for tasks that require any of these is a dispatch error — use fixer (worker tier) instead. Documented to prevent the recurrence pattern from #223.
+See the companion doc for the quick-fix tool-limitation note (#223 recurrence pattern).
 
 ### Mandatory Agent Dispatch Prefixes (BOTH required)
 
@@ -150,67 +126,24 @@ See [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegatio
 ### CRITICAL — SendMessage Continuations for Write Operations (#304)
 
 When the follow-up work for an agent involves any **write** (edit, commit, push),
-do NOT use `SendMessage` to continue the agent. SendMessage continuations may
-fall back to the orchestrator's cwd when the original harness worktree is gone or
-when the harness restarts — writing to the main checkout or to the orchestrator's
-session branch (`feat/cc-*`) on a stale base.
+do NOT use `SendMessage` to continue the agent.
 
-| Continuation | Action |
-|---|---|
-| Write (edit/commit/push) | Dispatch a **fresh `isolation: "worktree"` agent** |
-| Read-only / advisory | SendMessage is safe |
-| Original worktree verifiably live (confirm pwd) | SendMessage MAY be used |
-
-See the "SendMessage Continuations" section in the companion doc for the full
-anti-pattern table and evidence from llm#304.
+See the "SendMessage Continuations" section in the companion doc for the full anti-pattern table and evidence from llm#304.
 
 ### Cross-Repo Writes (#182 resolution)
 
 Agents dispatched with `isolation: "worktree"` cannot write outside their sandbox.
-For cross-repo writes (e.g. llm session edits llmtelemetry): pre-create the target
-repo's worktree via `cc-worktree.sh`, set `$WORKTREE_PATH` to that path in the
-dispatch prompt, and run dual-repo post-verify after completion.
 
 See the "Cross-Repo Writes" section in the companion doc for the full pattern,
 dual-repo post-verify example, and the #182 decision rationale.
 
 ### Read-Only Cross-Repo Verify → Parallel, NO Worktree
 
-The `isolation: "worktree"` requirement is a WRITE-safety guard (stop a
-`bypassPermissions` agent clobbering the main checkout). It does NOT apply to
-read-only agents, and when the target files live in a **different repo** from the
-session cwd, worktree isolation is actively HARMFUL — the harness worktrees the
-*session's* repo, so the agent cannot reach the other repo at all (the #182
-cross-repo failure). This is common when a project session verifies content in the
-local-only knowledge hub (`~/docs_gh/llm/knowledge/**`).
-
-**Rule:** dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or
-`general-purpose` restricted to Read/Grep/Glob) that target a separate repo:
-
-- **in parallel** — multiple `Agent` calls in ONE message, each a distinct
-  adversarial lens (e.g. citation-faithfulness · domain-correctness ·
-  schema/structural-integrity). Parallelism belongs in *verification*.
-- **WITHOUT `isolation: "worktree"`** — read-only needs no write sandbox, and a
-  worktree would sever cross-repo access.
-
-**Corollary for the write side.** The fixer/curator half of a cross-repo
-*local-hub* task (a repo that is never pushed, e.g. the knowledge hub) also runs
-**without worktree**, restricted to file-tools (no Bash, no git), with the
-orchestrator doing the commit afterward. Do NOT parallelise a single-file fix —
-concurrent edits to one file conflict; the parallelism was spent in verification.
-(For cross-repo writes to a *pushed* repo, use the `$WORKTREE_PATH` pre-create
-pattern above instead.)
-
-| Cross-repo task | Isolation | Concurrency |
-|---|---|---|
-| Read-only verify (separate repo) | none (read-only) | parallel, diverse lenses |
-| Write to local-only hub (never pushed) | none; file-tools + no Bash; orchestrator commits | serial per file |
-| Write to a pushed repo | pre-created `$WORKTREE_PATH` worktree (#182) | per dual-repo post-verify |
-
-Origin: 2026-07-03/04 oncology-hub immunoparesis note — curator/fixer written and
-critic-verified across the mycare→knowledge-hub boundary; a 3-lens parallel
-read-only re-audit ran with no worktrees. See `agent-identity-and-task-scopes`
-(scope propagation) and `worktree-location` (harness worktree conventions).
+Dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or `general-purpose`
+restricted to Read/Grep/Glob) that target a separate repo in parallel, WITHOUT
+`isolation: "worktree"`. See the companion doc for the full rule, the cross-repo
+task/isolation/concurrency table, the write-side corollary, and the 2026-07-03/04
+origin incident.
 
 ## Parallel Worktree Sessions
 
