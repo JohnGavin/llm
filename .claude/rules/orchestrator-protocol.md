@@ -10,8 +10,7 @@ Auto-coordinates agents after plan approval. Implements verify→review→fix→
 
 ## Activation
 
-Triggers when user approves a plan ("approved", "looks good", "go ahead", "just do it").
-Does NOT activate for: trivial edits (<3 files), single-function fixes, docs-only changes.
+Triggers when user approves a plan ("approved", "looks good", "go ahead", "just do it"). Does NOT activate for: trivial edits (<3 files), single-function fixes, docs-only changes.
 
 ## The Loop
 
@@ -135,10 +134,7 @@ When mtime stale + no commits >5 min + live process with high CPU → agent bloc
 
 ## Contrast Gate (post-render, MANDATORY)
 
-After Quarto/pkgdown render or CSS edit, run:
-```bash
-~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh "file://$(pwd)/$html"
-```
+After Quarto/pkgdown render or CSS edit, run `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh "file://$(pwd)/$html"`.
 Non-zero exit BLOCKS commit. When user reports contrast bug → sweep ALL uncovered elements in same commit (not just the one named). See `dark-mode-completeness` rule.
 
 ## Guardrails
