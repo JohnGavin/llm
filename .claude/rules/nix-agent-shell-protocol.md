@@ -58,13 +58,9 @@ Nix builds can fail due to test suite regressions in transitive dependencies (e.
 
 ## Agent Delegation
 
-When delegating to agents that need project-specific packages:
-
-```
-Agent(subagent_type="r-debugger",
-      prompt="Run tests in the mycare project. Enter the project nix shell first:
-              nix-shell /Users/johngavin/.../mycare/default.nix --run 'Rscript -e devtools::test()'")
-```
+When delegating to agents that need project-specific packages, instruct them to
+enter the project nix shell first. A worked `Agent(subagent_type="r-debugger", ...)`
+dispatch example is in the companion doc.
 
 ## Regenerating default.nix (NEVER Manual)
 
@@ -99,11 +95,7 @@ default.R  →  default.nix  →  nix-shell (via default.sh)
    # WRONG — bare path inherits caller cwd, overwrites wrong checkout
    # nix-shell ~/docs_gh/llm/default.nix --run "Rscript /path/to/project/default.R"
    ```
-   Verify rix is loadable inside the shell once before relying on it:
-   ```bash
-   nix-shell ~/docs_gh/llm/default.nix --run \
-     "Rscript -e 'cat(\"rix:\", requireNamespace(\"rix\"), packageVersion(\"rix\"))'"
-   ```
+   A worked `rix` loadability sanity-check command is in the companion doc.
 4. **Verify** — enter the new shell and confirm the package loads:
    ```bash
    nix-shell /absolute/path/to/project/default.nix --run "Rscript -e 'library(newpkg)'"
@@ -126,32 +118,11 @@ config file, then regenerate the environment. Check for:
 
 ### MANDATORY pattern when an agent regenerates a worktree's `default.nix`
 
-Use a subshell (the documented exception in `git-no-compound-cd`) to set cwd correctly:
-
-```bash
-# CORRECT: subshell isolates cd, rix sees the worktree's cwd
-(cd /private/tmp/<agent-worktree> && \
-   nix-shell ~/docs_gh/llm/default.nix --run "Rscript default.R")
-
-# CORRECT: pass cwd explicitly via Rscript -e setwd()
-nix-shell ~/docs_gh/llm/default.nix --run \
-  "Rscript -e 'setwd(\"/private/tmp/<agent-worktree>\"); source(\"default.R\")'"
-
-# WRONG: cwd inherits from caller, default.nix may land in orchestrator's checkout
-nix-shell ~/docs_gh/llm/default.nix --run \
-  "Rscript /private/tmp/<agent-worktree>/default.R"
-```
-
-### Symptom of the bug
-
-If you see "udunits build failed" or "library(sf) segfault" after a worktree-isolated agent ran, suspect that the orchestrator's `default.nix` was overwritten. Check:
-
-```bash
-git -C <main-checkout> diff default.nix    # are the patches still there?
-grep -c gnu89 <main-checkout>/default.nix  # 0 means patches were stripped
-```
-
-Recovery: `git -C <main-checkout> checkout HEAD -- default.nix`.
+Use a subshell (the documented exception in `git-no-compound-cd`) to set cwd
+correctly — the same Form A / Form B pattern shown above, applied to the
+worktree's path instead of the project root. A worked CORRECT/WRONG example
+for the worktree case, the diagnostic symptom check, and the recovery command
+are in the companion doc.
 
 ### Incident log + overlay-recovery workflow
 
