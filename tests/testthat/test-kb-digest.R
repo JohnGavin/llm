@@ -618,6 +618,106 @@ test_that("compute_stale_raw() returns list(count, rows) excluding recent files 
               info = paste("compute_stale_raw() failed:", combined))
 })
 
+test_that("compute_stale_raw() excludes files marked with a '# KEEP:' header (#298)", {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines("## Test\nDummy digest.", tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  # Synthetic knowledge repo with:
+  #   kept.txt    — old, unreferenced, marked "# KEEP:" — must NOT be flagged
+  #   unkept.txt  — old, unreferenced, no marker        — must be flagged
+  synth_kb <- tempfile("kb_test_")
+  dir.create(file.path(synth_kb, "raw"), recursive = TRUE)
+  dir.create(file.path(synth_kb, "wiki"), recursive = TRUE)
+
+  kept_file <- file.path(synth_kb, "raw", "kept.txt")
+  writeLines(c("# KEEP: source archive", "permanent source content"), kept_file)
+
+  unkept_file <- file.path(synth_kb, "raw", "unkept.txt")
+  writeLines(c("no marker here", "stale unreferenced content"), unkept_file)
+
+  old_mtime <- Sys.time() - 20 * 86400
+  Sys.setFileTime(kept_file, old_mtime)
+  Sys.setFileTime(unkept_file, old_mtime)
+
+  on.exit(unlink(synth_kb, recursive = TRUE), add = TRUE)
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    "knowledge_repo <- '", synth_kb, "'\n",
+    "res <- compute_stale_raw(knowledge_repo)\n",
+    "stopifnot(is.list(res))\n",
+    "found_kept <- any(sapply(res$rows, function(r) grepl('kept.txt', r$file)))\n",
+    "found_unkept <- any(sapply(res$rows, function(r) grepl('unkept.txt', r$file)))\n",
+    "stopifnot(!found_kept)\n",
+    "stopifnot(found_unkept)\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r), add = TRUE)
+
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("compute_stale_raw() KEEP-marker exclusion failed:", combined))
+})
+
+test_that("compute_stale_raw() '# KEEP:' marker is case-insensitive and tolerates spacing (#298)", {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines("## Test\nDummy digest.", tmp_digest)
+  on.exit(unlink(tmp_digest))
+
+  synth_kb <- tempfile("kb_test_")
+  dir.create(file.path(synth_kb, "raw"), recursive = TRUE)
+  dir.create(file.path(synth_kb, "wiki"), recursive = TRUE)
+
+  # Variant spacing/casing: no space after '#', lowercase 'keep', extra spaces.
+  nospace_file <- file.path(synth_kb, "raw", "nospace.txt")
+  writeLines(c("#KEEP: tight header", "content"), nospace_file)
+
+  lower_file <- file.path(synth_kb, "raw", "lower.txt")
+  writeLines(c("#   keep: loose lowercase header", "content"), lower_file)
+
+  old_mtime <- Sys.time() - 20 * 86400
+  Sys.setFileTime(nospace_file, old_mtime)
+  Sys.setFileTime(lower_file, old_mtime)
+
+  on.exit(unlink(synth_kb, recursive = TRUE), add = TRUE)
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    "knowledge_repo <- '", synth_kb, "'\n",
+    "res <- compute_stale_raw(knowledge_repo)\n",
+    "stopifnot(is.list(res))\n",
+    "found_nospace <- any(sapply(res$rows, function(r) grepl('nospace.txt', r$file)))\n",
+    "found_lower <- any(sapply(res$rows, function(r) grepl('lower.txt', r$file)))\n",
+    "stopifnot(!found_nospace)\n",
+    "stopifnot(!found_lower)\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r), add = TRUE)
+
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = c(Sys.getenv(), env_vars))
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("compute_stale_raw() KEEP-marker case/spacing tolerance failed:", combined))
+})
+
 test_that("compute_broken_backlinks() detects missing [[topic]] targets (#481)", {
   email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
   skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
