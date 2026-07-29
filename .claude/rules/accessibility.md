@@ -11,11 +11,7 @@ paths:
 
 # Rule: Accessibility Standards
 
-Consolidated from: `accessibility-standards`, `dark-mode-completeness`.
-
 Source: DSTT Ch5 (Turner). WCAG 2.2, Section 508.
-
----
 
 ## Part 1: WCAG 2.1 AA Requirements
 
@@ -46,11 +42,8 @@ All outputs must be Perceivable, Operable, Understandable, and Robust.
 
 ### HTML Accessibility
 
-```yaml
-format:
-  html:
-    axe: true  # MANDATORY
-```
+Every Quarto `format: html:` block MUST set `axe: true`. A worked YAML
+snippet is in the companion doc.
 
 ### Shiny Apps
 
@@ -58,8 +51,6 @@ format:
 - ARIA labels on dynamic content
 - Visible focus rings
 - Labels on all inputs
-
----
 
 ## Part 2: Dark Mode Completeness
 
@@ -81,11 +72,10 @@ and silently inverts the page's lightness — black backgrounds → white,
 deep palettes → pastels, in plots, tables AND diagrams. Safari/Edge/Brave
 are unaffected, so the breakage is Chrome-only and easy to miss.
 
-Worked example (premortem issue 0027): **5 merged iterations** fixed the
-wrong layer (mermaid theme override, CSS catch-all, vendored mermaid 10,
-per-diagram `%%{init}%%`, http-server workaround) before the meta tag was
-identified as the root cause. Check this clause FIRST, before any other
-dark-mode debugging.
+Check this clause FIRST, before any other dark-mode debugging — see the
+companion doc for the premortem issue 0027 worked example (5 merged
+iterations fixed the wrong layer before this meta tag was identified as the
+root cause).
 
 Verification: `~/.claude/scripts/check_dashboard_color_scheme.sh <dir>`
 (greps every rendered HTML for both signals; exit 1 on any miss). Wire it
@@ -98,13 +88,7 @@ See llm#584.
 
 ### Clause 1: Inline `style=` requires `!important`
 
-```css
-/* RIGHT */
-body.dark-mode #element {
-  background: #000000 !important;
-  color: #ffffff !important;
-}
-```
+A worked `body.dark-mode #element { ... !important; }` CSS snippet is in the companion doc.
 
 ### Clause 2: Audit, don't patch
 
@@ -116,11 +100,8 @@ Per-element commits are a process violation.
 
 ### Clause 3: Catch-all selector required
 
-```css
-body.dark-mode [style*="background:#fff"],
-body.dark-mode [style*="background:#f8"]
-{ background: #000000 !important; color: #ffffff !important; }
-```
+A worked `body.dark-mode [style*="background:#fff"] { ... }` catch-all CSS
+snippet is in the companion doc.
 
 ### Clause 4: Verification gate
 
@@ -139,8 +120,6 @@ Script at `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh`. Projects refer
 | `#0dcaf0` (cyan) | `#5edaff` |
 | `#0d6efd` (primary) | `#4ea8de` |
 
----
-
 ## Part 3: Mandatory Vignette Toolbar
 
 Every vignette MUST have toolbar with:
@@ -153,8 +132,6 @@ Every vignette MUST have toolbar with:
 
 ONE shared partial per project.
 
----
-
 ## Forbidden Patterns
 
 | Pattern | Fix |
@@ -165,9 +142,8 @@ ONE shared partial per project.
 | Per-element contrast fix | Sweep PR with full audit |
 | Vignette missing dark toggle | Include shared toolbar |
 
----
-
 ## Related
 
+- [`_companions/accessibility-details.md`](_companions/accessibility-details.md) — worked code examples split out of this rule
 - `visualization` — chart contrast, captions
 - `quarto-vignettes` — vignette structure
