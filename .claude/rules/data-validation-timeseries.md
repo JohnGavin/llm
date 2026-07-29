@@ -69,62 +69,22 @@ cause is type-storage mismatch, not date-value mismatch.
 
 **Required:**
 
-1. **Defensively coerce date-like join keys at every cross-series boundary:**
-   ```r
-   x |> dplyr::mutate(date = as.Date(date)) |>
-     dplyr::full_join(y |> dplyr::mutate(date = as.Date(date)), by = "date")
-   ```
-   This is cheap (no-op if already `Date`) and converts the silent-failure case
-   into a no-op success.
+1. **Defensively coerce date-like join keys at every cross-series boundary** — cheap (no-op if already `Date`), converts the silent-failure case into a no-op success.
+2. **Add a `dv_join_key_types` validation target** when the project has ≥ 2 independently-sourced time series that will eventually be joined.
+3. **Diagnostic when a join produces 0 complete cases**, ALWAYS check types FIRST.
 
-2. **Add a `dv_join_key_types` validation target** when the project has ≥ 2
-   independently-sourced time series that will eventually be joined:
-   ```r
-   targets::tar_target(dv_join_key_types, {
-     series_targets <- c("series_a", "series_b", "series_c")  # populate per project
-     types <- purrr::map_chr(series_targets, function(nm) {
-       df <- targets::tar_read_raw(nm)
-       paste(class(df$date), collapse = "/")
-     })
-     if (length(unique(types)) > 1L) {
-       cli::cli_abort(c(
-         "x" = "Inconsistent date-key types across {length(series_targets)} series.",
-         "i" = "{paste(paste(series_targets, types, sep = ': '), collapse = '; ')}",
-         "i" = "Coerce to a common type ({.code as.Date()}) at the producing target."
-       ))
-     }
-     tibble::tibble(target = series_targets, date_class = types)
-   })
-   ```
-
-3. **Diagnostic when a join produces 0 complete cases**, ALWAYS check types FIRST:
-   ```r
-   cat("Left date class:",  paste(class(left$date),  collapse = "/"), "\n")
-   cat("Right date class:", paste(class(right$date), collapse = "/"), "\n")
-   ```
-
-**Common upstream sources of POSIXct contamination:**
-
-| Source | Returns POSIXct |
-|--------|-----------------|
-| `arrow::read_parquet()` on TIMESTAMP columns | Yes (sometimes; depends on schema) |
-| HuggingFace parquet via DuckDB | TIMESTAMP loads as POSIXct |
-| `lubridate::ymd_hms()` and friends | Always |
-| FRED / yfinance helpers that don't coerce | Often (check the package) |
-| `as.POSIXct(...)` anywhere upstream | Always |
+Worked code for all three (the `as.Date()` coercion, the `dv_join_key_types`
+target, and the diagnostic `cat()` check), plus the table of common upstream
+sources of POSIXct contamination, are in the companion doc.
 
 **Generalisation:** the same trap exists for any join key where storage type can
 silently differ between sources — integer/double, character/factor, character/UUID,
 Date/POSIXct. Date/POSIXct is the most common because date-math functions preserve
 input type and the failure mode (0 matches, no error) is identical to "no overlap".
 
----
-
 ## Configuration Constants
 
 Every `plan_data_validation.R` MUST define at the top: `EXPECTED_FREQUENCY_HOURS`, `ENTITY_ID_COLUMN`, `TIMESTAMP_COLUMN`, `MIN_COVERAGE_ABORT` (30%), `MIN_COVERAGE_WARN` (80%), `MAX_GAP_HOURS`, `MAX_STALE_HOURS`, `LOOKBACK_DAYS_VALIDATION`.
-
----
 
 ## Required Targets
 
@@ -141,8 +101,6 @@ Every `plan_data_validation.R` MUST define at the top: `EXPECTED_FREQUENCY_HOURS
 | `dv_report` | Combines all above | No (summary) |
 
 All targets MUST use `cue = tar_cue(mode = "always")`.
-
----
 
 ## Data Provenance (MANDATORY)
 
@@ -174,14 +132,6 @@ Validate with `setdiff(expected_cols, names(df))` immediately after fetch. **Ant
 - The "69 vs 168 records" blind spot: pipeline succeeds silently with 41% coverage
 - The "0 complete cases after join" blind spot: type mismatch (Date vs POSIXct) on the join key produces 0 matches with no warning, indistinguishable from a frequency/range mismatch (Section 9)
 
----
-
-## Reference Implementation
-
-- `irishbuoys/R/tar_plans/plan_data_validation.R` (8 targets, all dplyr, no raw SQL)
-
----
-
 ## Checklist Before Commit
 
 - [ ] `plan_data_validation.R` exists with all 9 targets
@@ -193,3 +143,7 @@ Validate with `setdiff(expected_cols, names(df))` immediately after fetch. **Ant
 - [ ] Physical value ranges checked
 - [ ] **Join-key types consistent across cross-joinable series (`dv_join_key_types`)**
 - [ ] Registered in `_targets.R` after `plan_data_acquisition`
+
+## Related
+
+- [`_companions/data-validation-timeseries-details.md`](_companions/data-validation-timeseries-details.md) — Section 9 worked code examples split out of this rule
