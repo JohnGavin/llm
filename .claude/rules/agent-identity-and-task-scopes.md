@@ -15,8 +15,6 @@ agent type. Applies to: `fixer`, `r-debugger`, `nix-env`, `targets-runner`,
 Does NOT apply to read-only agents (`critic`, `reviewer`) or haiku `quick-fix`
 dispatches with no Bash access.
 
----
-
 ## CRITICAL: Identity Is Propagated End-to-End; Scope Is Explicit and Expiring
 
 Every dispatched agent carries an identity bundle minted by the orchestrator.
@@ -30,8 +28,6 @@ Permissions are scoped and time-limited. An agent authorised at minute 0 to open
 a PR is NOT authorised at minute 61 without a fresh dispatch. An agent authorised
 to edit `R/foo.R` is NOT authorised to edit `~/.claude/scripts/` — even if that
 path happens to be accessible via symlink.
-
----
 
 ## Dispatch ID Propagation
 
@@ -50,12 +46,7 @@ This ID appears in FOUR places:
 | Post-verify state file | `~/.claude/logs/agent_post_verify_${DISPATCH_ID}.json` |
 | Every commit footer | `Dispatch-Id: abc123ef` on every commit the agent creates |
 
-### Why four places
-
-One is not enough. The prompt can be ignored (agent still exposes the env var).
-The commit footer survives rebases. The git note survives branch deletion (until
-`git notes prune`). The state file is the orchestrator's ground truth for
-post-verify reconciliation.
+See the companion doc for "Why four places".
 
 ### Commit footer format
 
@@ -68,8 +59,6 @@ Agent-Type: <fixer|r-debugger|nix-env|...>
 
 The orchestrator can then query: `git log --grep="Dispatch-Id: abc123ef"` to
 enumerate every commit the agent made without having to track branch names.
-
----
 
 ## Task Scope Declaration
 
@@ -97,17 +86,12 @@ TASK SCOPE (dispatch_id=<uuid>, expires=<ISO-8601 timestamp>):
 
 ### Symlink-trapped paths
 
-`~/.claude/scripts/` and `~/.claude/hooks/` are symlinks that resolve into the
-orchestrator's main checkout (`~/docs_gh/llm/.claude/scripts/`). An agent writing
-to these paths via their `~/.claude/` address is writing OUTSIDE its worktree
-sandbox — the write lands in the orchestrator's working tree, not the agent's PR
-diff. This is the Pattern 2 failure from llm#517.
+See the companion doc for why `~/.claude/scripts/` and `~/.claude/hooks/` are
+symlink-trapped (the Pattern 2 failure from llm#517).
 
 The scope block MUST list `~/.claude/` as forbidden in `forbidden-external-ops`.
 The `PreToolUse:Edit|Write` hook (future: llm#517) will resolve symlinks before
 the boundary check.
-
----
 
 ## Expiring Permissions
 
@@ -120,42 +104,16 @@ The TTL is advisory in Phase 1 — the orchestrator checks expiry after the agen
 returns. In Phase 2, hooks will check `CLAUDE_DISPATCH_EXPIRES_AT` (ISO
 timestamp) before allowing each Bash call and reject calls after expiry.
 
-### Environment variables for hooks (Phase 2)
-
-```bash
-CLAUDE_DISPATCH_ID=<uuid>
-CLAUDE_AGENT_TYPE=fixer
-CLAUDE_WORKTREE_PATH=/path/to/worktree
-CLAUDE_ESCALATION_SCOPE=pr-create,issue-create
-CLAUDE_DISPATCH_EXPIRES_AT=2026-06-05T14:30:00Z
-```
-
-Hooks read these variables to make policy decisions. Currently `agent_push_guard.sh`
-and `destructive_fs_guard.sh` use workspace path only. When Phase 2 lands, they
-will also check `CLAUDE_DISPATCH_EXPIRES_AT` and `CLAUDE_ESCALATION_SCOPE`.
-
----
+See the companion doc for the "Environment variables for hooks (Phase 2)" list.
 
 ## Audit Trail
 
-The orchestrator can reconstruct a full audit of any dispatch:
-
-```bash
-# All commits from a dispatch
-git log --all --grep="Dispatch-Id: abc123ef" --format="%h %s"
-
-# All paths touched
-git log --all --grep="Dispatch-Id: abc123ef" --name-only --format="" | sort -u
-
-# Post-verify outcome
-cat ~/.claude/logs/agent_post_verify_abc123ef.json
-```
+The orchestrator can reconstruct a full audit of any dispatch. See the companion
+doc for the worked `git log --grep="Dispatch-Id: ..."` audit commands.
 
 The post-verify state file (`agent-post-verify.sh capture/check`) is written
 with the dispatch ID in its path, making dispatch-to-outcome reconciliation
 unambiguous.
-
----
 
 ## Forbidden Patterns
 
@@ -169,15 +127,11 @@ unambiguous.
 | Commit footer missing `Dispatch-Id:` | Cannot audit what agent touched | Always include footer |
 | SendMessage continuation after TTL expires | Continuation carries expired identity | Fresh dispatch with new ID and TTL |
 
----
-
 ## Worked Example & Phase Roadmap
 
 See [`_companions/agent-identity-details.md`](_companions/agent-identity-details.md)
 for the full dispatch worked example (mint → dispatch → post-verify → audit) and
 the phase roadmap. The normative protocol above is complete without it.
-
----
 
 ## Related
 
