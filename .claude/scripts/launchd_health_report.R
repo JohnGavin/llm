@@ -76,6 +76,42 @@ parse_plist <- function(path) {
   )
 }
 
+#' Format a (possibly very long, duplicated) vector of "HH:MM" time strings
+#' into a compact display string.
+#'  - Dedupe identical times first (plists often carry duplicate
+#'    StartCalendarInterval entries for the same clock time).
+#'  - If the deduped times are all on the hour and form a contiguous run,
+#'    render as a range: "hourly HH:00–HH:00 (N×/day)".
+#'  - Else if there are more than 6 distinct times, summarise as
+#'    "N times/day (first–last)" rather than listing every one.
+#'  - Otherwise render the plain sorted comma list.
+format_calendar_times <- function(times) {
+  uniq <- sort(unique(times))
+  n <- length(uniq)
+  if (n == 0L) return("")
+  if (n == 1L) return(uniq)
+
+  is_on_hour <- all(grepl(":00$", uniq)) && !any(grepl("^NA", uniq))
+  if (is_on_hour) {
+    hours <- suppressWarnings(as.integer(substr(uniq, 1L, 2L)))
+    if (!anyNA(hours)) {
+      hours_sorted <- sort(hours)
+      if (all(diff(hours_sorted) == 1L)) {
+        return(sprintf(
+          "hourly %02d:00–%02d:00 (%d×/day)",
+          hours_sorted[1L], hours_sorted[length(hours_sorted)], n
+        ))
+      }
+    }
+  }
+
+  if (n > 6L) {
+    return(sprintf("%d times/day (%s–%s)", n, uniq[1L], uniq[n]))
+  }
+
+  paste(uniq, collapse = ", ")
+}
+
 #' Extract canonical schedule info from a parsed plist.
 #' Returns a named list: type, display, raw (for cadence math).
 extract_schedule <- function(pl) {
@@ -93,7 +129,7 @@ extract_schedule <- function(pl) {
         m <- if (!is.na(r[["Minute"]])) as.integer(r[["Minute"]]) else 0L
         sprintf("%02d:%02d", h, m)
       })
-      list(type = "calendar", display = paste(times, collapse = ", "), raw = sci)
+      list(type = "calendar", display = format_calendar_times(times), raw = sci)
     } else if (is.list(sci) && !is.data.frame(sci)) {
       h <- sci[["Hour"]]
       m <- if (!is.null(sci[["Minute"]])) sci[["Minute"]] else 0L
@@ -307,6 +343,86 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
   )
 }
 
+#' Read per-script run/failure counts from the ledger, keyed by
+#' `source_script` (the full path recorded by the housekeeping-framework
+#' start/end pattern). This is the join key used to attach counts to the
+#' plist inventory's `script_path` column — `housekeeping_runs$task` is a
+#' short slug (e.g. "worktree_gc") that does not match a launchd Label, so
+#' `read_run_metrics()`'s task-keyed rows cannot be used for that join.
+#' Returns NULL if duckdb/the ledger/the table are unavailable.
+read_run_counts_by_script <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_DAYS) {
+  if (!has_duckdb) return(NULL)
+  if (!file.exists(ledger)) return(NULL)
+
+  con <- duckdb::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = TRUE)
+  on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
+
+  tables <- DBI::dbListTables(con)
+  if (!"housekeeping_runs" %in% tables) return(NULL)
+
+  cutoff <- format(Sys.time() - window_days * 86400, "%Y-%m-%d %H:%M:%S")
+
+  query <- sprintf(
+    "SELECT
+       source_script,
+       COUNT(*) AS n_runs,
+       SUM(CASE WHEN status IS NULL OR status != 'ok' THEN 1 ELSE 0 END) AS n_fail
+     FROM housekeeping_runs
+     WHERE started_at >= TIMESTAMPTZ '%s'
+       AND source_script IS NOT NULL
+     GROUP BY source_script",
+    cutoff
+  )
+
+  result <- tryCatch(
+    DBI::dbGetQuery(con, query),
+    error = function(e) {
+      message("launchd_health_report.R: script-count ledger query error — ", conditionMessage(e))
+      NULL
+    }
+  )
+  if (!is.null(result) && nrow(result) > 0L) {
+    # Some ledger rows carry a path separator recorded as an embedded
+    # newline/tab instead of "/" (a known upstream data-quality issue, e.g.
+    # worktree_gc's writer produces ".../scripts\nworktree_gc.sh") — repair
+    # it to "/" (the same defensive-normalisation spirit as `program`'s
+    # `trimws(gsub("[\r\n\t]+", " ", program))` above, but path-shaped) so
+    # the basename join in attach_run_counts() isn't silently defeated.
+    result$source_script <- gsub("/+", "/", gsub("[\r\n\t]+", "/", trimws(result$source_script)))
+  }
+  result
+}
+
+#' Attach n_runs/n_fail columns to the plist inventory by matching
+#' `script_path` against the ledger's `source_script` — full-path match
+#' first, falling back to a basename match (worktree-prefixed source_script
+#' values, e.g. a run captured from an agent worktree, won't full-path-match
+#' the canonical plist Program path but do share the script's basename).
+#' Jobs with no matching ledger rows keep NA (rendered as "—", not 0, so
+#' "no telemetry" stays distinct from "0 failures").
+attach_run_counts <- function(inventory, script_counts) {
+  inventory$n_runs <- NA_integer_
+  inventory$n_fail <- NA_integer_
+  if (is.null(script_counts) || nrow(script_counts) == 0L) return(inventory)
+
+  sc_basename <- basename(script_counts$source_script)
+
+  for (i in seq_len(nrow(inventory))) {
+    sp <- inventory$script_path[i]
+    if (is.na(sp)) next
+
+    idx <- which(script_counts$source_script == sp)
+    if (length(idx) == 0L) {
+      idx <- which(sc_basename == basename(sp))
+    }
+    if (length(idx) > 0L) {
+      inventory$n_runs[i] <- sum(script_counts$n_runs[idx])
+      inventory$n_fail[i] <- sum(script_counts$n_fail[idx])
+    }
+  }
+  inventory
+}
+
 # ── Section 3: auto-generated suggestions ─────────────────────────────────────
 
 #' Compute peak-contention: jobs firing at the same clock minute.
@@ -503,17 +619,22 @@ render_inventory_table <- function(inventory) {
     sub <- inventory[inventory$tier == tier, ]
     if (nrow(sub) == 0L) next
 
-    lines <- c(lines, sprintf("\n### %s %s Tier", tier_emoji[tier], tier), "")
+    tier_runs <- if ("n_runs" %in% names(sub)) sum(sub$n_runs, na.rm = TRUE) else 0L
+    tier_fail <- if ("n_fail" %in% names(sub)) sum(sub$n_fail, na.rm = TRUE) else 0L
+    lines <- c(lines, sprintf(
+      "\n### %s %s Tier — %d jobs · %d runs · %d fails (7d)",
+      tier_emoji[tier], tier, nrow(sub), tier_runs, tier_fail
+    ), "")
     lines <- c(lines,
-      "| Label | Schedule | Program | Timeout |",
-      "|-------|----------|---------|---------|"
+      "| Label | Schedule | Runs (7d) | Fails (7d) | Program | Timeout |",
+      "|-------|----------|-----------|------------|---------|---------|"
     )
     for (i in seq_len(nrow(sub))) {
       r <- sub[i, ]
       prog_short <- if (nchar(r$program) > 80) paste0(substr(r$program, 1L, 77L), "...") else r$program
       timeout_s <- if (!is.na(r$timeout_s)) sprintf("%ds", r$timeout_s) else "—"
-      lines <- c(lines, sprintf("| `%s` | %s | `%s` | %s |",
-        r$label, r$schedule, prog_short, timeout_s
+      lines <- c(lines, sprintf("| `%s` | %s | %s | %s | `%s` | %s |",
+        r$label, r$schedule, fmt_val(r$n_runs), fmt_val(r$n_fail), prog_short, timeout_s
       ))
     }
   }
@@ -599,6 +720,10 @@ if (isTRUE(getOption("launchd_health_source_only"))) {
 message("launchd_health_report.R: collecting inventory from ", LAUNCH_AGENTS_DIR)
 inventory <- collect_inventory(LAUNCH_AGENTS_DIR)
 message(sprintf("  found %d owned plists", nrow(inventory)))
+
+message("launchd_health_report.R: reading per-script run/fail counts from ", LEDGER_PATH)
+script_counts <- read_run_counts_by_script(LEDGER_PATH, REPORT_WINDOW_DAYS)
+inventory <- attach_run_counts(inventory, script_counts)
 
 message("launchd_health_report.R: reading run metrics from ", LEDGER_PATH)
 metrics <- read_run_metrics(LEDGER_PATH, REPORT_WINDOW_DAYS)
