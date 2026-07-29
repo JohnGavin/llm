@@ -12,15 +12,7 @@ paths:
 
 # Rule: Nix Nested Shell Isolation (All R Projects)
 
-## What R_LIBS_SITE Is (and Is Not)
-
-`R_LIBS_SITE` is R's **search path for pre-built package libraries** — it lists
-`/nix/store/.../library` directories so R can find packages. It is NOT an
-installation mechanism. All R packages are pre-built in the Nix store by
-`default.nix`; R_LIBS_SITE just tells R where to look.
-
-Nix sets this variable automatically when a shell is entered. The problem arises
-only when shells are **nested**.
+See the companion doc for "What R_LIBS_SITE Is (and Is Not)".
 
 ## The Problem
 
@@ -39,21 +31,11 @@ The shellHook fix **corrects contamination** — it discards the inherited outer
 paths and rebuilds R_LIBS_SITE from the inner shell's own closure. It does not
 install anything.
 
-This is NOT a date-pin issue. It happens even when both shells pin the same
-date, because `rix::rix()` generates a fresh derivation each time.
-
 ## The Symptom
 
-```
-*** caught segfault ***
-address 0x0, cause 'invalid permissions'
-Traceback:
- 1: dyn.load(file, DLLpath = DLLpath, ...)
- 2: library.dynam(lib, package, package.lib)
- 3: loadNamespace(package, lib.loc)
-```
-
-Crashes in Rcpp, lme4, brms, Matrix, or any package with compiled C/C++/Fortran.
+A `*** caught segfault ***` at `dyn.load()` inside `loadNamespace()`. Crashes
+in Rcpp, lme4, brms, Matrix, or any package with compiled C/C++/Fortran. The
+full traceback is in the companion doc.
 
 ## The Fix
 
@@ -117,36 +99,14 @@ re-applies the patch after `t update`. The script must:
 3. Be committed to the project root alongside `flake.nix`
 
 Reference implementation: `JohnGavin/historical` repo root `default.post.sh`.
-
-### Required Workflow After Every `t update`
-
-```bash
-t update                # regenerates flake.nix -- strips the shellHook patch
-bash default.post.sh   # re-applies closure-rebuild (idempotent)
-exit
-nix develop            # re-enter with patched flake.nix
-```
-
 Run `bash default.post.sh` **immediately** after every `t update`. Never commit
-after `t update` without running `default.post.sh` first.
+after `t update` without running `default.post.sh` first. The worked
+required-workflow commands and the CI marker-check script are in the
+companion doc.
 
-### CI Marker Check
-
-Add this to CI (or a pre-commit hook) to catch missing patches:
-
-```bash
-grep -q "Closure-rebuild" flake.nix || {
-  echo "ERROR: closure-rebuild shellHook missing from flake.nix"
-  echo "  Fix: bash default.post.sh"
-  exit 1
-}
-```
-
-### When T-lang Template Is Fixed (llm#303)
-
-Once the T-lang template bakes in the closure-rebuild block, `default.post.sh`
-is no longer needed for this purpose. The CI check above passes unconditionally
-after `t update`. Update this rule and `t-lang-r-package.md` when that happens.
+Once the T-lang template bakes in the closure-rebuild block (llm#303),
+`default.post.sh` is no longer needed for this purpose. Update this rule and
+`t-lang-r-package.md` when that happens.
 
 ## Fix Options (Choose One)
 
@@ -170,13 +130,9 @@ can't be guaranteed) and for interactive use via `default.sh`.
 
 ## Verification
 
-After adding the shellHook, this must work from inside any nix-shell:
-
-```bash
-nix-shell default.nix --run 'Rscript -e "library(lme4); cat(\"OK\n\")"'
-```
-
-No `env -u` prefix needed.
+After adding the shellHook, `library(lme4)` must load from inside any
+nix-shell with no `env -u` prefix needed. A worked verification command is in
+the companion doc.
 
 ## Performance
 
@@ -185,11 +141,5 @@ one-time cost per `nix-shell` invocation and is acceptable.
 
 ## Cross-references
 
-- footbet commit 0002842: first rix implementation of this fix
-- rix GitHub: https://github.com/ropensci/rix (does not include this fix as of 2026-04)
-- T-lang source: https://github.com/b-rodrigues/tlang --
-  `src/package_manager/nix_generator.ml` generates `flake.nix`; closure-rebuild
-  NOT in template as of 2026-05-28
-- JohnGavin/historical#282 -- first T-lang incident (`t update` stripped shellHook)
-- JohnGavin/historical `default.post.sh` -- reference implementation for T-lang workaround
+- [`_companions/nix-nested-shell-isolation-details.md`](_companions/nix-nested-shell-isolation-details.md) — worked code examples and the full cross-reference list split out of this rule
 - JohnGavin/llm#303 -- upstream T-lang template fix request
