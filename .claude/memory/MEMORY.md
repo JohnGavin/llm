@@ -124,3 +124,6 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## Deploy Gap: Merged ≠ Live (see deploy-gap-stale-main-checkout.md)
 - A merged fix that "isn't live" = local main checkout behind origin/main; cron `--ff-only` auto-pull jams on dirty tree (uncommitted memory edits), swallows the error, runs stale. Check `git -C ~/docs_gh/llm rev-list --count HEAD..origin/main`; also `launchctl print` before trusting "N cron jobs failed" (#510 reopened 2026-07-11)
+
+## Pre-rendered docs/ ≠ Live (see feedback_prerendered-docs-deploy-verification.md)
+- Repos that commit pre-rendered `docs/` (deploy CI only publishes, renders nothing) — a source/.qmd fix is INERT until docs/ is re-rendered + committed. "PR merged + deploy green" ≠ live. Verify the DEPLOYED artifact (curl live HTML / git grep origin/main docs/**), not the source or deploy status. Shinylive: app embedded in rendered HTML. (origin: micromort quiz \d fix appeared merged+green but live app still broken, 2026-07-27)
