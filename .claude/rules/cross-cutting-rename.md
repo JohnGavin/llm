@@ -10,10 +10,7 @@ paths:
 
 ## When This Applies
 
-Any user-ask that involves renaming a user-facing noun — a scenario label, a
-column header, a chart title, a tab name, a metric name, a project codename,
-an acronym expansion. Triggered when a single label appears in user-facing
-prose in more than one file.
+Any user-ask that involves renaming a user-facing noun — a scenario label, a column header, a chart title, a tab name, a metric name, a project codename, an acronym expansion. Triggered when a single label appears in user-facing prose in more than one file.
 
 ## Source
 
@@ -26,10 +23,7 @@ test labels and historical issue text. Full failure analysis in
 
 ## CRITICAL: Rename via a Single Source of Truth, Not by Search-and-Replace
 
-A user-facing label that appears in two files must be defined in ONE file
-and read from a map by every other surface. If the rename is implemented as
-"find and replace this string in the file you're editing right now", the
-next session will be the third ask.
+A user-facing label that appears in two files must be defined in ONE file and read from a map by every other surface. If the rename is implemented as "find and replace this string in the file you're editing right now", the next session will be the third ask.
 
 ## The Discipline (5 steps)
 

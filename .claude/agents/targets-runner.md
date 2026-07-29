@@ -103,32 +103,17 @@ file.exists(tar_read(file_target))
 
 ### Issue: Memory Error
 
-**Fix:**
-```r
-# Use crew for parallel workers with memory limits
-library(crew)
-
-tar_option_set(
-  controller = crew_controller_local(
-    workers = 2,  # Reduce workers
-    seconds_idle = 60
-  ),
-  memory = "transient",  # Don't keep objects in memory
-  garbage_collection = TRUE
-)
-```
+**Fix:** Reduce crew worker count (see "Crew Integration" > "Basic Setup"
+below) and add `memory = "transient", garbage_collection = TRUE` to
+`tar_option_set()` so objects don't stay resident between targets.
 
 ### Issue: Target Works Locally, Fails in CI
 
 **Diagnosis:**
 ```r
-# Check for path issues
+# Check for path issues (common causes: absolute paths that don't exist in
+# CI, missing packages in the CI environment, different working directory)
 tar_meta() |> dplyr::filter(!is.na(error)) |> pull(error)
-
-# Common issues:
-# - Absolute paths that don't exist in CI
-# - Missing packages in CI environment
-# - Different working directory
 ```
 
 **Fix:**
@@ -248,17 +233,11 @@ tar_prune()
 
 ### Small Targets
 
-```r
-# ❌ BAD: Giant monolithic target
-tar_target(everything, {
-  data <- read_csv("data.csv")
-  clean <- clean_data(data)
-  model <- fit_model(clean)
-  plot <- make_plot(model)
-  list(data, clean, model, plot)
-})
+Avoid giant monolithic targets that bundle read + clean + model + plot into
+one step — split into separate targets so each stage is independently
+cacheable and re-runs only when its own inputs change:
 
-# ✅ GOOD: Separate targets
+```r
 tar_target(data, read_csv("data.csv")),
 tar_target(clean, clean_data(data)),
 tar_target(model, fit_model(clean)),
@@ -267,12 +246,10 @@ tar_target(plot, make_plot(model))
 
 ### File Tracking
 
-```r
-# Track input files
-tar_target(input_file, "data/raw.csv", format = "file"),
-tar_target(data, read_csv(input_file))
+Track input files the same way as shown in "Issue: Target Works Locally,
+Fails in CI" above (`format = "file"`). To track an OUTPUT file:
 
-# Track output files
+```r
 tar_target(
   output_file,
   {

@@ -48,54 +48,14 @@ untracked alias — invisible until it produces a silent wrong answer.
 ### 1. Glossary file (single source of truth for canonical names)
 
 Create `data/glossary.yaml` (or `inst/glossary.yaml` for R packages). One
-entry per business entity:
-
-```yaml
-# data/glossary.yaml
-entities:
-  repo_id:
-    canonical: repo_id
-    description: "Unique repository identifier — owner/repo form, lowercase"
-    example: "johngavin/llm"
-  severity_level:
-    canonical: severity_level
-    description: "Roborev finding severity: critical | major | minor | info"
-    values: [critical, major, minor, info]
-  account_name:
-    canonical: account_name
-    description: "Canonical account name (ALLCAPS short form)"
-    example: "ACME"
-```
+entry per business entity, each with `canonical:` and `description:` fields.
+A worked `data/glossary.yaml` example is in the companion doc.
 
 ### 2. Entity-resolution map (alias → canonical)
 
-Create `data/entity_resolution.yaml`:
-
-```yaml
-# data/entity_resolution.yaml
-# format: alias: canonical_value
-repo_id:
-  - alias: "JohnGavin/llm"
-    canonical: "johngavin/llm"
-  - alias: "johngavin/LLM"
-    canonical: "johngavin/llm"
-severity_level:
-  - alias: "sev"
-    canonical: "severity_level"
-  - alias: "HIGH"
-    canonical: "critical"
-  - alias: "high"
-    canonical: "critical"
-  - alias: "MEDIUM"
-    canonical: "major"
-account_name:
-  - alias: "Acme Corp"
-    canonical: "ACME"
-  - alias: "Acme Corporation"
-    canonical: "ACME"
-  - alias: "ACME-NA"
-    canonical: "ACME"
-```
+Create `data/entity_resolution.yaml` mapping each alias to its canonical
+value, one block per entity. A worked `data/entity_resolution.yaml` example
+is in the companion doc.
 
 ### 3. Load both as pipeline inputs (R / targets)
 
@@ -104,20 +64,7 @@ account_name:
 up each value and `cli::cli_abort()` on any unmapped alias.
 
 Expose both as `targets` inputs so downstream targets rebuild on glossary
-changes:
-
-```r
-# _targets.R (fragment)
-tar_target(glossary,         load_glossary()),
-tar_target(entity_resolution, load_entity_resolution()),
-tar_target(findings_normalised, {
-  findings_raw |>
-    dplyr::mutate(
-      repo_id        = resolve_entity(repo, "repo_id", entity_resolution),
-      severity_level = resolve_entity(severity, "severity_level", entity_resolution)
-    )
-}),
-```
+changes. A worked `_targets.R` fragment is in the companion doc.
 
 ### 4. SQL / DuckDB equivalent (duckplyr)
 
@@ -139,41 +86,9 @@ fast on any unmapped values — see Worked Example 2 below for the full pattern.
 
 ## Worked Examples
 
-### Example 1 — roborev cross-repo joins (R / targets)
-
-```r
-# Context: roborev DB uses "johngavin/llm"; GitHub API returns "JohnGavin/llm"
-
-# WRONG — silent mismatch; zero rows joined
-findings |> dplyr::left_join(commits, by = c("repo" = "repo_name"))
-
-# RIGHT — resolve both sides to canonical before joining
-findings_norm <- findings |>
-  dplyr::mutate(repo_id = resolve_entity(repo, "repo_id", entity_resolution))
-commits_norm  <- commits  |>
-  dplyr::mutate(repo_id = resolve_entity(repo_name, "repo_id", entity_resolution))
-findings_norm |> dplyr::left_join(commits_norm, by = "repo_id")
-```
-
-### Example 2 — severity mapping in DuckDB SQL
-
-```sql
--- WRONG: ad-hoc CASE WHEN, not in the glossary
-SELECT CASE
-  WHEN sev = 'HIGH' THEN 'critical'
-  WHEN sev = 'MEDIUM' THEN 'major'
-  ELSE sev
-END AS severity_level
-FROM findings;
-
--- RIGHT: load entity_resolution as a reference table, then join
--- (materialise resolution_tbl from data/entity_resolution.yaml via R before this query)
-SELECT f.*, r.canonical AS severity_level
-FROM findings f
-LEFT JOIN resolution_tbl r
-  ON r.entity = 'severity_level' AND r.alias = f.sev;
--- Follow with a validation query: any unmatched sev values should error
-```
+See [`_companions/data-glossary-and-entity-resolution-details.md`](_companions/data-glossary-and-entity-resolution-details.md)
+for the full worked examples: roborev cross-repo joins (R / targets) and
+severity mapping in DuckDB SQL. The normative rule above is complete without it.
 
 ## Related
 

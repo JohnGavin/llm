@@ -28,3 +28,31 @@ git worktree add ../<repo>-<task> feat/<task>
 
 Worktrees share `.git` and `.claude/` config. Each gets its own branch.
 Use `tar_config_set(store = "_targets_<branch>")` to isolate targets stores.
+
+## Sections Moved from the Rule Body (2026-07-29 line-limit pass, llm#749)
+
+### Model Tier Lookup — maintenance note
+
+> **This table is the single source of truth for model IDs.** All prose in this rule uses tier names. Update only this table when Anthropic releases new models — nothing else in this rule needs to change.
+> <!-- current as of 2026-06; verify at https://docs.anthropic.com/en/docs/models-overview -->
+
+### Orchestrator-Tier Role — Clarification
+
+> **Clarification:** "delegate code/script edits" does NOT mean the orchestrator tier never uses Edit/Write. It DOES use Edit/Write directly for the bounded exceptions listed below (prose files, memory, rules, CHANGELOG, CURRENT_WORK.md). The constraint is on code-level edits to the package source tree, not on all file writes.
+
+### Three-tier model
+
+- **Orchestrator tier:** plan + decompose + synthesise + prose exceptions above
+- **Worker tier:** all multi-step edits, new files, complex content
+- **Lightweight tier:** single-file edits, doc updates, version bumps
+
+### Do Not Use Orchestrator Tier for Lightweight Work — dispatch example
+
+```
+Agent(subagent_type="quick-fix", model="haiku",  # lightweight tier
+      prompt="In <file>, change <old> to <new>. Reason: <why>")
+```
+
+### quick-fix tool-limitation note
+
+> **Lightweight-tier (`quick-fix`) tool limitation:** the quick-fix agent has Read, Grep, Glob, Edit — but NO Bash. It cannot `git commit`, `git push`, `gh pr create`, or `roborev close`. Dispatching quick-fix for tasks that require any of these is a dispatch error — use fixer (worker tier) instead. Documented to prevent the recurrence pattern from #223.
