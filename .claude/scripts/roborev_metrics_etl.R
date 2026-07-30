@@ -711,76 +711,188 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
   )
 }
 
-# ── Pricing constants for cost_usd computation ────────────────────────────
+# ==== PRICING_BLOCK_START (llm#795) ═══════════════════════════════════════
+# tests/test_model_pricing.R sources this exact block in isolation (by
+# extracting the text between the START/END markers into a temp .R file),
+# so it can exercise the real production pricing logic against a controlled
+# fixture DB without running the rest of the ETL. Do NOT add code in this
+# block that depends on later top-level state (jobs_raw, duck_con, args,
+# etc.) — it must remain self-contained aside from UNIFIED_DB, DBI, and
+# duckdb, all of which the test also provides.
 #
-# Source: Anthropic API pricing as of 2026-05-31, plus codex/gemini estimates.
-# Units: USD per 1M tokens.
-# Update this table when pricing changes.  A follow-up issue will move this
-# to a versioned pricing table in unified.duckdb (#380).
+# ── Model pricing: versioned, date-effective, DB-backed ──────────────────
 #
-# Matching is prefix-based: longest-matching prefix wins.
-# Default (unknown model): sonnet-tier pricing.
+# Prices used to live in a hand-typed PRICING_TABLE literal here, with a
+# comment promising a migration to a versioned pricing table "under #380".
+# #380 was closed and unrelated — that promise never happened (a marker
+# with no expiry became a lie). Prices now live in the `model_pricing`
+# table in unified.duckdb (see roborev_metrics_schema.sql), which carries
+# an effective_from date and a source_url per row, so historical
+# agent_runs price at the rate that was actually in effect and every rate
+# is provenance-linked to the provider's pricing page. See llm#795.
+#
+# PRICING_SEED below is the CURRENT rate list. It is the single point of
+# truth for what gets upserted into model_pricing (via seed_model_pricing(),
+# called on every --apply run — the ETL's "schema init" skips ALL DDL/INSERT
+# once every expected table already exists, so a plain schema-file INSERT
+# alone would only ever fire once, at first table creation) and is also the
+# in-memory fallback used when unified.duckdb has no model_pricing rows yet
+# (e.g. a fresh DB in --dry-run mode before the first --apply has run).
+#
+# Units: USD per 1M tokens. Matching: longest-matching model_prefix wins;
+# among ties, the greatest effective_from <= the record's date wins.
+# model_prefix "__default__" is the fallback for unmatched/unknown models
+# (sonnet-tier pricing) — unchanged behaviour from before #795.
 
-PRICING_TABLE <- list(
-  # Anthropic Claude 4 Opus
-  list(prefix = "claude-opus-4",     input = 15.00, output = 75.00),
-  # Anthropic Claude 4 Sonnet
-  list(prefix = "claude-sonnet-4",   input =  3.00, output = 15.00),
-  # Anthropic Claude 4 Haiku
-  list(prefix = "claude-haiku-4",    input =  0.80, output =  4.00),
+PRICING_SEED_FLOOR_DATE <- "2024-01-01"  # conservative: prices ALL history at today's rates
+
+PRICING_SEED <- list(
+  # Anthropic Claude 4 series
+  list(prefix = "claude-opus-4",     input = 15.00,  output = 75.00,  src = "https://www.anthropic.com/pricing"),
+  list(prefix = "claude-sonnet-4",   input =  3.00,  output = 15.00,  src = "https://www.anthropic.com/pricing"),
+  list(prefix = "claude-haiku-4",    input =  0.80,  output =  4.00,  src = "https://www.anthropic.com/pricing"),
   # Anthropic Claude 3.7 series
-  list(prefix = "claude-opus-3-7",   input = 15.00, output = 75.00),
-  list(prefix = "claude-sonnet-3-7", input =  3.00, output = 15.00),
-  list(prefix = "claude-haiku-3-7",  input =  0.80, output =  4.00),
+  list(prefix = "claude-opus-3-7",   input = 15.00,  output = 75.00,  src = "https://www.anthropic.com/pricing"),
+  list(prefix = "claude-sonnet-3-7", input =  3.00,  output = 15.00,  src = "https://www.anthropic.com/pricing"),
+  list(prefix = "claude-haiku-3-7",  input =  0.80,  output =  4.00,  src = "https://www.anthropic.com/pricing"),
   # Anthropic Claude 3.5 series
-  list(prefix = "claude-opus-3-5",   input = 15.00, output = 75.00),
-  list(prefix = "claude-sonnet-3-5", input =  3.00, output = 15.00),
-  list(prefix = "claude-haiku-3-5",  input =  0.80, output =  4.00),
+  list(prefix = "claude-opus-3-5",   input = 15.00,  output = 75.00,  src = "https://www.anthropic.com/pricing"),
+  list(prefix = "claude-sonnet-3-5", input =  3.00,  output = 15.00,  src = "https://www.anthropic.com/pricing"),
+  list(prefix = "claude-haiku-3-5",  input =  0.80,  output =  4.00,  src = "https://www.anthropic.com/pricing"),
   # OpenAI / Codex
-  list(prefix = "gpt-5",             input =  0.15, output =  0.60),
-  list(prefix = "gpt-4",             input =  2.50, output = 10.00),
-  list(prefix = "gpt-3",             input =  0.50, output =  1.50),
-  list(prefix = "o1",                input = 15.00, output = 60.00),
-  list(prefix = "o3",                input = 10.00, output = 40.00),
+  list(prefix = "gpt-5",             input =  0.15,  output =  0.60,  src = "https://openai.com/api/pricing"),
+  list(prefix = "gpt-4",             input =  2.50,  output = 10.00,  src = "https://openai.com/api/pricing"),
+  list(prefix = "gpt-3",             input =  0.50,  output =  1.50,  src = "https://openai.com/api/pricing"),
+  list(prefix = "o1",                input = 15.00,  output = 60.00,  src = "https://openai.com/api/pricing"),
+  list(prefix = "o3",                input = 10.00,  output = 40.00,  src = "https://openai.com/api/pricing"),
   # Google Gemini
-  list(prefix = "gemini-2.5",        input =  0.075, output =  0.30),
-  list(prefix = "gemini-2",          input =  0.10,  output =  0.40),
-  list(prefix = "gemini-1",          input =  0.125, output =  0.375)
+  list(prefix = "gemini-2.5",        input =  0.075, output =  0.30,  src = "https://ai.google.dev/gemini-api/docs/pricing"),
+  list(prefix = "gemini-2",          input =  0.10,  output =  0.40,  src = "https://ai.google.dev/gemini-api/docs/pricing"),
+  list(prefix = "gemini-1",          input =  0.125, output =  0.375, src = "https://ai.google.dev/gemini-api/docs/pricing"),
+  # Default (unmatched/unknown model) — sonnet-tier, unchanged from before #795
+  list(prefix = "__default__",       input =  3.00,  output = 15.00,  src = "https://www.anthropic.com/pricing")
 )
 
-# Default pricing when no prefix matches (sonnet-tier)
+# Fallback-of-fallback only: used if the __default__ seed row is somehow
+# absent from both the DB and PRICING_SEED at lookup time.
 PRICING_DEFAULT_INPUT  <- 3.00
 PRICING_DEFAULT_OUTPUT <- 15.00
 
-# Return pricing (input, output) in USD per 1M tokens for a given model id.
-# Longest-prefix match wins.
-model_pricing <- function(model_id) {
-  if (is.na(model_id) || !nzchar(model_id) || model_id == "unknown") {
-    return(list(input = PRICING_DEFAULT_INPUT, output = PRICING_DEFAULT_OUTPUT))
-  }
-  # Sort by prefix length descending so longest prefix wins
-  sorted <- PRICING_TABLE[order(vapply(PRICING_TABLE,
-                                       function(x) nchar(x$prefix),
-                                       integer(1L)),
-                                decreasing = TRUE)]
-  for (entry in sorted) {
-    if (startsWith(tolower(model_id), tolower(entry$prefix))) {
-      return(list(input = entry$input, output = entry$output))
-    }
-  }
-  list(input = PRICING_DEFAULT_INPUT, output = PRICING_DEFAULT_OUTPUT)
+pricing_seed_df <- function() {
+  data.frame(
+    model_prefix        = vapply(PRICING_SEED, `[[`, character(1L), "prefix"),
+    input_usd_per_mtok  = vapply(PRICING_SEED, `[[`, double(1L),    "input"),
+    output_usd_per_mtok = vapply(PRICING_SEED, `[[`, double(1L),    "output"),
+    effective_from      = as.Date(PRICING_SEED_FLOOR_DATE),
+    source_url          = vapply(PRICING_SEED, `[[`, character(1L), "src"),
+    stringsAsFactors    = FALSE
+  )
 }
 
-# Compute cost in USD given token counts and model id.
+# Load the versioned pricing table ONCE at ETL start, via a short-lived
+# read-only connection that is fully shut down before returning (same
+# llm#595 pattern as the canonical-project guard above: a lingering
+# read-only instance would otherwise force every later dbConnect() to the
+# same path read-only too). Falls back to the embedded seed when the table
+# is absent or empty (e.g. a brand-new unified.duckdb).
+load_pricing_df <- function(db_path) {
+  seed_df <- pricing_seed_df()
+  if (!file.exists(db_path)) return(seed_df)
+  df <- tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb(), db_path, read_only = TRUE)
+    tryCatch(
+      DBI::dbGetQuery(con, "
+        SELECT model_prefix, input_usd_per_mtok, output_usd_per_mtok,
+               effective_from, source_url
+        FROM model_pricing"),
+      error = function(e) NULL,
+      finally = tryCatch(DBI::dbDisconnect(con, shutdown = TRUE), error = function(e) NULL)
+    )
+  }, error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0L) return(seed_df)
+  df$effective_from <- as.Date(df$effective_from)
+  df
+}
+
+PRICING_DF <- load_pricing_df(UNIFIED_DB)
+
+# Return pricing (input, output) in USD per 1M tokens for a given model id,
+# priced at the rate in effect on `at_date` (defaults to today when
+# NULL/NA — current behaviour for records with no usable timestamp).
+# Longest-matching model_prefix wins; ties broken by the greatest
+# effective_from <= at_date.
+model_pricing <- function(model_id, at_date = NULL, pricing_df = PRICING_DF) {
+  default_row <- pricing_df[pricing_df$model_prefix == "__default__", , drop = FALSE]
+  default_pricing <- if (nrow(default_row) > 0L) {
+    list(input = default_row$input_usd_per_mtok[[1L]],
+         output = default_row$output_usd_per_mtok[[1L]])
+  } else {
+    list(input = PRICING_DEFAULT_INPUT, output = PRICING_DEFAULT_OUTPUT)
+  }
+
+  if (is.null(model_id) || is.na(model_id) || !nzchar(model_id) || model_id == "unknown") {
+    return(default_pricing)
+  }
+
+  at_date <- if (is.null(at_date) || is.na(at_date)) Sys.Date() else as.Date(at_date)
+
+  candidates <- pricing_df[
+    pricing_df$model_prefix != "__default__" &
+      pricing_df$effective_from <= at_date &
+      startsWith(tolower(model_id), tolower(pricing_df$model_prefix)),
+    ,
+    drop = FALSE
+  ]
+  if (nrow(candidates) == 0L) return(default_pricing)
+
+  # Longest-matching prefix wins; among ties, the most recent effective_from.
+  ord <- order(-nchar(candidates$model_prefix), -as.numeric(candidates$effective_from))
+  candidates <- candidates[ord, , drop = FALSE]
+  list(input = candidates$input_usd_per_mtok[[1L]], output = candidates$output_usd_per_mtok[[1L]])
+}
+
+# Compute cost in USD given token counts, model id, and the record's date
+# (selects the price in effect at that time — see model_pricing()).
 # Tokens are approximate (from byte-count heuristic when CLI doesn't expose them).
-compute_cost_usd <- function(prompt_tokens, completion_tokens, model_id) {
-  p <- model_pricing(model_id)
+compute_cost_usd <- function(prompt_tokens, completion_tokens, model_id, at_date = NULL) {
+  p <- model_pricing(model_id, at_date)
   cost_in  <- if (!is.na(prompt_tokens)     && prompt_tokens > 0L)
                 (prompt_tokens     / 1e6) * p$input  else 0.0
   cost_out <- if (!is.na(completion_tokens) && completion_tokens > 0L)
                 (completion_tokens / 1e6) * p$output else 0.0
   cost_in + cost_out
 }
+
+# Upsert PRICING_SEED into model_pricing, idempotently, on every --apply run.
+# Called after schema init (see the "Schema init" section below) rather than
+# relying solely on the schema file's seed INSERT, because schema init is
+# skipped entirely once every expected table already exists (llm#595 fix 1) —
+# so a schema-file-only seed would never re-run in steady state.
+seed_model_pricing <- function(con) {
+  seed_df <- pricing_seed_df()
+  ok <- tryCatch({
+    for (i in seq_len(nrow(seed_df))) {
+      dbExecute(con, "
+        INSERT INTO model_pricing
+          (model_prefix, input_usd_per_mtok, output_usd_per_mtok, effective_from, source_url)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (model_prefix, effective_from) DO NOTHING",
+        params = list(seed_df$model_prefix[i], seed_df$input_usd_per_mtok[i],
+                      seed_df$output_usd_per_mtok[i],
+                      as.character(seed_df$effective_from[i]),
+                      seed_df$source_url[i]))
+    }
+    TRUE
+  }, error = function(e) {
+    log_msg("WARN: model_pricing seed failed: ", conditionMessage(e))
+    FALSE
+  })
+  if (isTRUE(ok)) {
+    cat(sprintf("roborev_metrics_etl.R: model_pricing seed — %d rows ensured\n", nrow(seed_df)))
+  }
+  invisible(ok)
+}
+# ==== PRICING_BLOCK_END (llm#795) ═════════════════════════════════════════
 
 # Bytes-to-tokens approximation: 4 bytes ≈ 1 token (English/code prose).
 # Used when the CLI does not expose token counts.  Conservative — actual token
@@ -874,15 +986,17 @@ read_codex_fallback_jsonl <- function(log_dir) {
       prompt_tok  <- bytes_to_tokens(prompt_bytes)
       complet_tok <- bytes_to_tokens(resp_bytes)
 
-      # Cost computation
-      cost <- compute_cost_usd(prompt_tok, complet_tok, model_id)
-
-      # Parse timestamp
+      # Parse timestamp (moved ahead of cost computation, llm#795: the
+      # record's date selects which model_pricing effective_from row applies)
       ts_val <- tryCatch({
         ts_norm <- sub("Z$", "+0000", ts_raw)
         ts_norm <- sub("([+-][0-9]{2}):([0-9]{2})$", "\\1\\2", ts_norm)
         as.POSIXct(ts_norm, tz = "UTC", format = "%Y-%m-%dT%H:%M:%S%z")
       }, error = function(e) as.POSIXct(NA_real_, origin = "1970-01-01"))
+
+      # Cost computation, priced at the rate in effect on the record's date
+      cost <- compute_cost_usd(prompt_tok, complet_tok, model_id,
+                                at_date = if (is.na(ts_val)) NA else as.Date(ts_val))
 
       rows[[length(rows) + 1L]] <- data.frame(
         invocation_id          = as.character(inv_id),
@@ -2199,6 +2313,10 @@ if (length(expected_tables) > 0L && all(expected_tables %in% existing_tables)) {
     quit(status = 1L)
   })
 }
+
+# Always (re-)seed model_pricing, regardless of whether schema init ran or
+# was skipped above — see seed_model_pricing()'s docstring (llm#795).
+seed_model_pricing(duck_con)
 
 # ── Upsert helper using DuckDB INSERT OR REPLACE ──────────────────────────
 
