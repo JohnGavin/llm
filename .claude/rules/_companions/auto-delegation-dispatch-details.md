@@ -391,3 +391,34 @@ in-worktree but the bytes land outside it; the `worktree_symlink_guard` hook
 
 For the canonical path to use when creating worktrees, see the `worktree-location`
 rule and `~/.claude/scripts/cc-worktree.sh`.
+
+### Relocated reference tables (from auto-delegation.md, llm#749 trim)
+
+**Per-agent `isolation:"worktree"` requirement.** ANY Agent dispatch where the
+agent may invoke Bash MUST use `isolation: "worktree"`:
+
+| Agent | Bash? | Worktree required? |
+|-------|-------|--------------------|
+| `fixer` | Yes | **Yes** |
+| `r-debugger` | Yes | **Yes** |
+| `targets-runner` | Yes | **Yes** |
+| `nix-env` | Yes | **Yes** |
+| `shiny-async-debugger` | Yes | **Yes** |
+| `data-quality-guardian` | Yes | **Yes** |
+| `data-engineer` | Yes | **Yes** |
+| `shinylive-builder` | Yes | **Yes** |
+| `wiki-curator` | Yes | **Yes** |
+| `quick-fix` (lightweight tier) | No | Optional |
+| `critic` (read-only) | No | Optional |
+
+> **quick-fix tool limitation (#223 recurrence pattern):** the lightweight tier
+> `quick-fix` agent has Read/Grep/Glob/Edit but NO Bash — it cannot `git commit`,
+> `git push`, `gh pr create`, or `roborev close`. Dispatching it for tasks needing
+> any of those is a dispatch error — use `fixer` (worker tier) instead.
+
+**Burn-Rate-Aware Escalation.** When `burn_rate_check.sh` reports WARN or CRITICAL:
+
+| Severity | Orchestrator action |
+|----------|---------------------|
+| WARN | Prefer worker-tier agents. Use lightweight tier for all single-file edits. Defer speculative exploration. |
+| CRITICAL | Orchestrator tier for user dialogue only. ALL code work via worker/lightweight agents. Suggest worktree: `git worktree add ../<repo>-worker feat/<task>` then `claude --model sonnet` in that tree |
