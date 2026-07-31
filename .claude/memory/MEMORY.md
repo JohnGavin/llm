@@ -95,6 +95,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 ## roborev Silent Failure (see roborev-gemini-dead-silent-failure.md)
 - "0 failed" can lie: read overview.failed + failures.errors not verdicts.failed (0 when reviews crash); gemini dead → config codex/claude-code + daemon restart; #679 consistency check open (2026-06-25)
 
+## roborev .roborev.toml Empty-String Shadows Global (see roborev-toml-empty-string-shadows-global.md)
+- A per-repo `.roborev.toml` key set to `''` OVERRIDES global config.toml to empty; only an ABSENT key inherits. To un-shadow a global default per-repo, set the explicit value (not ''). Daemon reads MAIN checkout's toml (#723, 2026-07-31)
+
 ## roborev Automated-Data Noise (see roborev-automated-data-noise.md)
 - llmtelemetry ~400 bot commits/wk flooded roborev (234 findings/7d); fix = per-repo .roborev.toml exclude_patterns for inst/extdata/**; crashed jobs (verdict=null) ≠ closeable findings; range reviews (SHA..SHA) often real code — don't mass-close (2026-07-22)
 
