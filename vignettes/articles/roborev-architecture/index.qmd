@@ -24,7 +24,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 1. What roborev is {#what}
+## What roborev is {#what}
 
 Every software project accumulates a gap between "code that was committed" and
 "code that was reviewed". The gap is rarely malicious — it is a product of
@@ -47,7 +47,7 @@ context of the full repository, produce findings categorised by severity, and
 write those findings to a local
 <abbr title="Structured Query Language: a standard language for relational databases">SQLite</abbr>
 database. Findings accumulate across commits, are visible in the
-[llmtelemetry dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html),
+[llmtelemetry dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html){target="_blank"},
 and are closed either automatically or by a developer committing a fix.
 
 The practical result, observed over many months of use, is that the
@@ -57,9 +57,9 @@ effect changes the shape of the codebase over time.
 
 ---
 
-## 2. Why this vignette exists {#why}
+## Why this vignette exists {#why}
 
-The [llmtelemetry roborev dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html)
+The [llmtelemetry roborev dashboard](https://johngavin.github.io/llmtelemetry/roborev_summary.html){target="_blank"}
 shows the *live state*: how many findings are open, how fast they close, which
 projects have the most backlog. This vignette is the *narrative*: it explains
 what each component does, why it was built, and how the pieces connect.

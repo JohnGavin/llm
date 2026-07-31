@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 6. Configuration layers {#config}
+## Configuration layers {#config}
 
 | Layer | Path | Fields |
 |-------|------|--------|
