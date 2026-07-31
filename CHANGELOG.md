@@ -4,6 +4,25 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-07-31 — roborev cluster closeout (#676/#746 verified+closed, #723 backup-chain fix), vignette tab styling
+
+### Completed
+- Verified + **closed #676 and #746**. Both had merged PRs (#677, #752) but stayed open. Confirmed the health checks now read `overview.failed` + `failures.errors` (not just `verdicts.failed`) across the session-init banner, `/bye`/`session-end.md`, and `roborev_agent_health.sh` (which swaps to claude-code, never gemini); gemini is live-healthy via the AI Studio `GEMINI_API_KEY` path (#733/#734). #746's repo-side backup pin (`review_backup_agent/model`) is in place; the per-agent-model-pin proper fix is upstream in the roborev binary.
+- **Fixed #723** (live backup-chain bug). codex's plan is billing-dead (`Quota exceeded`) yet refine/fix backups still routed to it. Two-layer root cause: global `~/.roborev/config.toml` had `refine_backup_agent`/`fix_backup_agent='codex'`, AND the llm `.roborev.toml` shadowed the global to empty via `''` (empty-string overrides, does not inherit). Fixed both: global config → `claude-code`/`sonnet` (live, daemon restarted) + PR #854 un-shadowed the repo `.roborev.toml`. Result: agents crash=0, quota=0, agent_errors=none.
+- **Vignette tab styling** (PR #855): stripped hardcoded `N.` prefixes from 8 roborev-architecture headings + repointed `methodology.qmd`'s dangling `(section N)` cross-refs to page links; a single global tab-CSS block in `_includes/toolbar.html` (site-wide include) makes tab labels white (overriding the `a:visited` purple bleed) and selected tabs black (replacing the blueish primary), covering both `.pages-nav` and `.panel-tabset`; telemetry dashboard links → `target="_blank"`.
+
+### Failed Approaches
+- Initially framed #723 as the `codex_with_fallback.sh` 429-only fallback (the issue's premise). Wrong lever: the wrapper is **unwired** for the live path (roborev `codex_cmd` points at the raw binary; `~/.claude/logs/codex_fallback/` is empty), and codex's actual error (`Quota exceeded`) already classifies as 429. The real bug was config routing to a dead agent + the `.roborev.toml` empty-string shadowing the global defaults.
+
+### Accuracy / Metrics
+- roborev agents: crash=0, quota=0, agent_errors=none (was "gemini crashes all jobs" on 2026-07-17). Verdict resolution 21/28 addressed; 582 standing backlog.
+
+### Known Limitations
+- #723 residual (deferred): `codex_with_fallback.sh` is still 429-only — optional defense-in-depth follow-up (unwired for the live path; both fallback targets can be quota-dead the same day).
+- Vignette selected-tab is black in BOTH light and dark mode (per instruction); light mode may want a lighter selected style — awaiting user call.
+- Vignette changes go live only after CI re-renders `docs/` (gitignored) on the deploy run.
+- 7 unaddressed roborev verdict findings remain (standing backlog).
+
 ## 2026-07-17 — vignette paging (#778), publish-gate grob/blank-plot fixes, dead telemetry tables
 
 ### Completed
