@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 3. Architecture diagram {#architecture}
+## Architecture diagram {#architecture}
 
 The diagram below shows the full data flow from a git commit to a resolved
 finding. Every node links to the relevant source file or dashboard panel.
@@ -61,7 +61,7 @@ flowchart LR
   click ETL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1"
   click UNIFIED "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_schema.sql#L1"
   click EMAIL "https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1"
-  click DASHBOARD "https://johngavin.github.io/llmtelemetry/roborev_summary.html"
+  click DASHBOARD "https://johngavin.github.io/llmtelemetry/roborev_summary.html" _blank
   click AGENT "https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1"
   click REVIEW "https://johngavin.github.io/llmtelemetry/roborev_summary.html#pulse"
 ```
@@ -81,4 +81,4 @@ flowchart LR
 | `roborev_metrics_etl.sh` | [`.claude/scripts/roborev_metrics_etl.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_metrics_etl.sh#L1) | SQLite → `unified.duckdb` ETL | Daily 02:00 via launchd | [#226](https://github.com/JohnGavin/llm/issues/226) |
 | `unified.duckdb` | `~/.claude/logs/unified.duckdb` | Analytics DuckDB: 7 roborev_* tables + finding_lineage | Written by ETL | [#226](https://github.com/JohnGavin/llm/issues/226) |
 | `send_roborev_email.R` | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | Composes + sends daily blastula digest | Daily 08:00 via launchd | [#287](https://github.com/JohnGavin/llm/issues/287) |
-| Dashboard | [llmtelemetry roborev_summary](https://johngavin.github.io/llmtelemetry/roborev_summary.html) | Published Quarto site reading unified.duckdb snapshot | Refreshed on data branch push | [#287](https://github.com/JohnGavin/llm/issues/287) |
+| Dashboard | [llmtelemetry roborev_summary](https://johngavin.github.io/llmtelemetry/roborev_summary.html){target="_blank"} | Published Quarto site reading unified.duckdb snapshot | Refreshed on data branch push | [#287](https://github.com/JohnGavin/llm/issues/287) |
