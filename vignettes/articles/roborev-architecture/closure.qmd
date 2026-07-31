@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 4. Closure mechanisms {#closure}
+## Closure mechanisms {#closure}
 
 Every finding in `reviews.db` starts as `closed = 0`. Three pathways close it:
 

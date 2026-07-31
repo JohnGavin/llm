@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 8. Where things live {#cheat-sheet}
+## Where things live {#cheat-sheet}
 
 Quick-reference table for anyone landing here from the dashboard or needing to
 locate a specific component.
@@ -39,5 +39,5 @@ locate a specific component.
 | Resolution rule | [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1) | Triage protocol: close vs fix vs escalate |
 | Exclude patterns rule | [`.claude/rules/roborev-exclude-patterns.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-exclude-patterns.md#L1) | Why CHANGELOG.md and CURRENT_WORK.md are excluded |
 | Daily email | [`.claude/scripts/send_roborev_email.R`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/send_roborev_email.R#L1) | blastula digest sent daily at 08:00 |
-| Dashboard | [llmtelemetry/roborev_summary.html](https://johngavin.github.io/llmtelemetry/roborev_summary.html) | Published Quarto site |
+| Dashboard | [llmtelemetry/roborev_summary.html](https://johngavin.github.io/llmtelemetry/roborev_summary.html){target="_blank"} | Published Quarto site |
 | This vignette | `llm/vignettes/articles/roborev-architecture/` | You are here |

@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 5. Daily lifecycle {#daily-lifecycle}
+## Daily lifecycle {#daily-lifecycle}
 
 The diagram below shows the sequence of scheduled jobs that run every 24 hours.
 All times are local.

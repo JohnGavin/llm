@@ -209,6 +209,31 @@ body.dark-mode .text-success, body.dark-mode .alert-success { color: #69d4a0 !im
 body.dark-mode .text-danger, body.dark-mode .alert-danger { color: #f08080 !important; }
 body.dark-mode .text-info, body.dark-mode .alert-info { color: #5edaff !important; }
 body.dark-mode .text-primary, body.dark-mode .alert-primary { color: #4ea8de !important; }
+
+/* ===== Uniform tab styling: white labels, black selected tab (user request 2026-07-31) =====
+   Covers the co-located .pages-nav strip AND Quarto .panel-tabset on every page
+   (this file is include-in-header site-wide). Overrides (a) the a:visited purple
+   that bleeds onto visited tab labels, and (b) the blueish .active background. */
+body.dark-mode .pages-nav a,
+body.dark-mode .pages-nav a:visited,
+body.dark-mode .panel-tabset .nav-link,
+body.dark-mode .panel-tabset .nav-link:visited {
+  color: #ffffff !important;
+}
+body:not(.dark-mode) .pages-nav a,
+body:not(.dark-mode) .pages-nav a:visited,
+body:not(.dark-mode) .panel-tabset .nav-link,
+body:not(.dark-mode) .panel-tabset .nav-link:visited {
+  color: #333333 !important;
+}
+/* Selected/active tab: black background + white text (both modes) */
+.pages-nav a.active,
+.panel-tabset .nav-link.active {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border-color: #444444 !important;
+}
 </style>
 
 <script>
