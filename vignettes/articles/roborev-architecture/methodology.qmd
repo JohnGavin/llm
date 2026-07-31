@@ -39,10 +39,10 @@ cost per finding by agent) will be added in a follow-up once
   [`.claude/rules/roborev-resolution.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/roborev-resolution.md#L1),
   and [`auto-delegation.md`](https://github.com/JohnGavin/llm/blob/main/.claude/rules/auto-delegation.md#L1)
   — all in the `llm` repository
-- Component map (section 3) and cheat-sheet (section 8): hand-verified against
+- [Component map](architecture.html) and [cheat-sheet](cheat-sheet.html): hand-verified against
   the current filesystem layout as of 2026-05-30
-- Roadmap table (section 7): constructed from open GitHub issues in `JohnGavin/llm`
-- Closure mechanisms (section 4): derived from reading
+- [Roadmap table](roadmap.html): constructed from open GitHub issues in `JohnGavin/llm`
+- [Closure mechanisms](closure.html): derived from reading
   [`roborev_severity_autoclose.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/roborev_severity_autoclose.sh#L748)
   (clean-verdict branch at line 748) and issue summaries for #311, #313, #316
 
