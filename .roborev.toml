@@ -286,10 +286,13 @@ classify_backup_model = ''
 # to claude-code/sonnet (the verified-working combo). If roborev's binary still
 # ignores these on the next gemini outage, the per-agent-pin fix is upstream.
 review_backup_agent = 'claude-code'
+#723: codex backup is billing-dead ('Quota exceeded'); route refine/fix backups to
+# claude-code (only reliably-working agent). backup_model='sonnet' so the claude-code
+# backup does not inherit the global gemini refine_model pin (#746 poison → 404).
 # Backup agent for refine in this repo.
-refine_backup_agent = ''
+refine_backup_agent = 'claude-code'
 # Backup agent for fix in this repo.
-fix_backup_agent = ''
+fix_backup_agent = 'claude-code'
 # Backup agent for security review in this repo.
 security_backup_agent = ''
 # Backup agent for design review in this repo.
@@ -297,9 +300,9 @@ design_backup_agent = ''
 # Backup model for review in this repo.
 review_backup_model = 'sonnet'
 # Backup model for refine in this repo.
-refine_backup_model = ''
+refine_backup_model = 'sonnet'
 # Backup model for fix in this repo.
-fix_backup_model = ''
+fix_backup_model = 'sonnet'
 # Backup model for security review in this repo.
 security_backup_model = ''
 # Backup model for design review in this repo.
