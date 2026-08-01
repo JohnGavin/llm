@@ -4,6 +4,57 @@
 
 library(targets)
 
+# Shared black-background / white-ink ggplot theme for every telemetry plot
+# (accessibility: dark-mode-completeness rule — black #000000, white #ffffff,
+# never dark blue/grey placeholders). Defined here (not exported) so it is
+# available inside every tar_target() expression across the telemetry plans,
+# since all R/ files compile into one package namespace.
+theme_dashboard <- function(base_size = 14) {
+  ggplot2::theme_minimal(base_size = base_size) +
+    ggplot2::theme(
+      plot.background    = ggplot2::element_rect(fill = "#000000", color = NA),
+      panel.background   = ggplot2::element_rect(fill = "#000000", color = NA),
+      legend.background  = ggplot2::element_rect(fill = "#000000", color = NA),
+      strip.background   = ggplot2::element_rect(fill = "#000000", color = "#ffffff"),
+      panel.grid.major   = ggplot2::element_line(color = "#ffffff", linewidth = 0.3),
+      panel.grid.minor   = ggplot2::element_line(color = "#ffffff", linewidth = 0.15),
+      text          = ggplot2::element_text(color = "#ffffff"),
+      axis.text     = ggplot2::element_text(color = "#ffffff"),
+      axis.title    = ggplot2::element_text(color = "#ffffff"),
+      plot.title    = ggplot2::element_text(color = "#ffffff", face = "bold"),
+      plot.subtitle = ggplot2::element_text(color = "#ffffff"),
+      strip.text    = ggplot2::element_text(color = "#ffffff"),
+      legend.text   = ggplot2::element_text(color = "#ffffff"),
+      legend.title  = ggplot2::element_text(color = "#ffffff"),
+      legend.position = "bottom"
+    )
+}
+
+# Shared named palette for the LLM Usage/GitHub Activity telemetry pages
+# (narrative-colour-persistence rule: same entity -> same colour everywhere).
+# All hex values are >=4.5:1 contrast on #000000.
+TELEMETRY_PALETTE <- c(
+  "accent"      = "#4ea8de", # single-series lines/points (cost, commits, gemini, model-cost dots)
+  "trend"       = "#f08080", # LOESS/trend overlay lines
+  "Input"       = "#69d4a0", # token-type breakdown
+  "Output"      = "#4ea8de",
+  "Cache"       = "#ffd93d",
+  "Last Week"   = "#69d4a0", # session-recency period
+  "Older"       = "#c084fc"
+)
+
+# Fixed-size accessible qualitative palette used to colour dynamic, unbounded
+# category sets (e.g. project names) that cannot be enumerated in a fixed
+# named vector ahead of time. Recycled and named per-plot via setNames().
+ACCESSIBLE_QUALITATIVE_COLORS <- c(
+  "#4ea8de", "#69d4a0", "#ffd93d", "#f08080",
+  "#c084fc", "#f4a261", "#2dd4bf", "#fb7185"
+)
+
+# Ratio/rate labeller (e.g. $/min): at most signif(x, 3) to avoid spurious
+# precision on computed rates (visualization number-formatting rule).
+label_dollar_signif <- function(x) paste0("$", signif(x, 3))
+
 #' Vignette Output Targets
 #'
 #' All computation for vignettes/telemetry.qmd lives here.
@@ -43,7 +94,13 @@ plan_vignette_outputs <- function() {
         if (nrow(summary_stats) == 0) return(NULL)
         DT::datatable(
           summary_stats,
-          caption = "Current Usage Status",
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf(
+              "This table summarises the current Claude usage status across %d day(s) of cached ccusage data. Values are computed by llm::summarize_llm_usage() directly from the daily usage records ingested into inst/extdata. Use it to check whether spend, token usage, or session counts have drifted from recent norms before drilling into the trend charts below.",
+              length(unique(vig_daily_data$date))
+            )
+          ),
           extensions = "Buttons",
           rownames = FALSE,
           options = list(
@@ -55,7 +112,7 @@ plan_vignette_outputs <- function() {
           )
         )
       },
-      packages = c("DT")
+      packages = c("DT", "htmltools")
     ),
 
     # Daily cost trend plot
@@ -68,11 +125,12 @@ plan_vignette_outputs <- function() {
           dplyr::group_by(date) |>
           dplyr::summarise(daily_cost = sum(totalCost, na.rm = TRUE), .groups = "drop") |>
           ggplot2::ggplot(ggplot2::aes(x = date, y = daily_cost)) +
-          ggplot2::geom_col(fill = "steelblue", alpha = 0.7) +
-          ggplot2::geom_smooth(method = "loess", se = FALSE, color = "darkred") +
+          ggplot2::geom_line(color = TELEMETRY_PALETTE[["accent"]], linewidth = 0.8) +
+          ggplot2::geom_point(color = TELEMETRY_PALETTE[["accent"]], size = 1.5) +
+          ggplot2::geom_smooth(method = "loess", se = FALSE, color = TELEMETRY_PALETTE[["trend"]]) +
           ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
           ggplot2::labs(title = "Daily Costs", x = "Date", y = "Cost (USD)") +
-          ggplot2::theme_minimal()
+          theme_dashboard()
       },
       packages = c("ggplot2", "dplyr", "scales")
     ),
@@ -89,11 +147,11 @@ plan_vignette_outputs <- function() {
           dplyr::arrange(date) |>
           dplyr::mutate(cumulative_cost = cumsum(daily_cost)) |>
           ggplot2::ggplot(ggplot2::aes(x = date, y = cumulative_cost)) +
-          ggplot2::geom_area(fill = "steelblue", alpha = 0.3) +
-          ggplot2::geom_line(color = "steelblue") +
+          ggplot2::geom_area(fill = TELEMETRY_PALETTE[["accent"]], alpha = 0.3) +
+          ggplot2::geom_line(color = TELEMETRY_PALETTE[["accent"]]) +
           ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
           ggplot2::labs(title = "Cumulative Spending", x = "Date", y = "Cumulative Cost (USD)") +
-          ggplot2::theme_minimal()
+          theme_dashboard()
       },
       packages = c("ggplot2", "dplyr", "scales")
     ),
@@ -106,32 +164,67 @@ plan_vignette_outputs <- function() {
 
         model_stats <- llm::get_model_breakdown(vig_daily_data)
         if (!is.null(model_stats) && nrow(model_stats) > 0 && "modelName" %in% names(model_stats)) {
-          p1 <- ggplot2::ggplot(model_stats, ggplot2::aes(x = reorder(modelName, total_cost), y = total_cost)) +
-            ggplot2::geom_col(fill = "steelblue") +
-            ggplot2::coord_flip() +
-            ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
-            ggplot2::labs(title = "Cost by Model", x = NULL, y = "USD") +
-            ggplot2::theme_minimal()
+          p1 <- ggplot2::ggplot(
+            model_stats,
+            ggplot2::aes(x = total_cost, y = reorder(modelName, total_cost))
+          ) +
+            ggplot2::geom_segment(
+              ggplot2::aes(x = 0, xend = total_cost, yend = reorder(modelName, total_cost)),
+              color = TELEMETRY_PALETTE[["accent"]]
+            ) +
+            ggplot2::geom_point(color = TELEMETRY_PALETTE[["accent"]], size = 4) +
+            ggplot2::geom_text(
+              ggplot2::aes(label = scales::dollar(total_cost)),
+              hjust = -0.3, color = "#ffffff", size = 3.2
+            ) +
+            ggplot2::scale_x_continuous(
+              labels = scales::dollar_format(),
+              expand = ggplot2::expansion(mult = c(0, 0.15))
+            ) +
+            ggplot2::labs(title = "Cost by Model", x = "USD", y = NULL) +
+            theme_dashboard()
         } else {
-          p1 <- ggplot2::ggplot() + ggplot2::labs(title = "No model breakdown data available") + ggplot2::theme_void()
+          p1 <- ggplot2::ggplot() +
+            ggplot2::labs(title = "No model breakdown data available") +
+            ggplot2::theme_void() +
+            ggplot2::theme(
+              plot.background = ggplot2::element_rect(fill = "#000000", color = NA),
+              text = ggplot2::element_text(color = "#ffffff")
+            )
         }
 
+        # Aggregate token usage by type across the full tracked period, so
+        # the "breakdown" reads as a categorical comparison (input vs output
+        # vs cache) rather than an undifferentiated stacked-bar wall of dates.
         token_data <- vig_daily_data |>
-          dplyr::mutate(date = as.Date(as.character(date))) |>
-          dplyr::group_by(date) |>
           dplyr::summarise(
             Input = sum(inputTokens, na.rm = TRUE),
             Output = sum(outputTokens, na.rm = TRUE),
-            Cache = sum(cacheCreationTokens + cacheReadTokens, na.rm = TRUE),
-            .groups = "drop"
+            Cache = sum(cacheCreationTokens + cacheReadTokens, na.rm = TRUE)
           ) |>
-          tidyr::pivot_longer(-date, names_to = "type", values_to = "tokens")
+          tidyr::pivot_longer(dplyr::everything(), names_to = "type", values_to = "tokens")
 
-        p2 <- ggplot2::ggplot(token_data, ggplot2::aes(x = date, y = tokens / 1e6, fill = type)) +
-          ggplot2::geom_col() +
-          ggplot2::scale_y_continuous(labels = scales::label_comma(suffix = "M")) +
-          ggplot2::labs(title = "Token Usage", y = "Millions") +
-          ggplot2::theme_minimal()
+        p2 <- ggplot2::ggplot(
+          token_data,
+          ggplot2::aes(x = tokens / 1e6, y = reorder(type, tokens), color = type)
+        ) +
+          ggplot2::geom_segment(
+            ggplot2::aes(x = 0, xend = tokens / 1e6, yend = reorder(type, tokens)),
+            linewidth = 1
+          ) +
+          ggplot2::geom_point(size = 4) +
+          ggplot2::geom_text(
+            ggplot2::aes(label = scales::comma(tokens, scale = 1e-6, suffix = "M", accuracy = 0.1)),
+            hjust = -0.3, color = "#ffffff", size = 3.2
+          ) +
+          ggplot2::scale_color_manual(values = TELEMETRY_PALETTE) +
+          ggplot2::scale_x_continuous(
+            labels = scales::label_comma(suffix = "M"),
+            expand = ggplot2::expansion(mult = c(0, 0.2))
+          ) +
+          ggplot2::labs(title = "Total Token Usage by Type", x = "Millions", y = NULL) +
+          theme_dashboard() +
+          ggplot2::theme(legend.position = "none")
 
         gridExtra::grid.arrange(p1, p2, ncol = 1)
       },
@@ -151,11 +244,26 @@ plan_vignette_outputs <- function() {
             dplyr::arrange(date) |>
             dplyr::collect()
           if (nrow(gm_daily) == 0) return(NULL)
-          ggplot2::ggplot(gm_daily, ggplot2::aes(x = as.Date(date), y = total_cost)) +
-            ggplot2::geom_col(fill = "#4fc3f7") +
-            ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
-            ggplot2::labs(title = "Gemini Daily Costs", x = "Date", y = "USD") +
-            ggplot2::theme_minimal()
+          gm_daily <- gm_daily |> dplyr::mutate(date = as.Date(date))
+          ggplot2::ggplot(
+            gm_daily,
+            ggplot2::aes(x = total_cost, y = reorder(as.character(date), total_cost))
+          ) +
+            ggplot2::geom_segment(
+              ggplot2::aes(x = 0, xend = total_cost, yend = reorder(as.character(date), total_cost)),
+              color = TELEMETRY_PALETTE[["accent"]]
+            ) +
+            ggplot2::geom_point(color = TELEMETRY_PALETTE[["accent"]], size = 4) +
+            ggplot2::geom_text(
+              ggplot2::aes(label = scales::dollar(total_cost)),
+              hjust = -0.3, color = "#ffffff", size = 3
+            ) +
+            ggplot2::scale_x_continuous(
+              labels = scales::dollar_format(),
+              expand = ggplot2::expansion(mult = c(0, 0.15))
+            ) +
+            ggplot2::labs(title = "Gemini Daily Costs", x = "USD", y = "Date") +
+            theme_dashboard()
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("ggplot2", "dplyr", "DBI", "duckdb", "scales")
@@ -196,10 +304,11 @@ plan_vignette_outputs <- function() {
           dplyr::group_by(date, period) |>
           dplyr::summarise(avg_dur = mean(duration_mins), .groups = "drop") |>
           ggplot2::ggplot(ggplot2::aes(x = date, y = avg_dur)) +
-          ggplot2::geom_point(ggplot2::aes(color = period)) +
-          ggplot2::geom_smooth(method = "loess", se = FALSE) +
-          ggplot2::labs(title = "Avg Session Duration", y = "Minutes") +
-          ggplot2::theme_minimal()
+          ggplot2::geom_point(ggplot2::aes(color = period), size = 2) +
+          ggplot2::geom_smooth(method = "loess", se = FALSE, color = TELEMETRY_PALETTE[["trend"]]) +
+          ggplot2::scale_color_manual(values = TELEMETRY_PALETTE) +
+          ggplot2::labs(title = "Avg Session Duration", y = "Minutes", color = "Period") +
+          theme_dashboard()
       },
       packages = c("ggplot2", "dplyr")
     ),
@@ -213,11 +322,12 @@ plan_vignette_outputs <- function() {
           dplyr::group_by(date, period) |>
           dplyr::summarise(avg_cost = mean(cost_per_min), .groups = "drop") |>
           ggplot2::ggplot(ggplot2::aes(x = date, y = avg_cost)) +
-          ggplot2::geom_point(ggplot2::aes(color = period)) +
-          ggplot2::geom_smooth(method = "loess", se = FALSE) +
-          ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
-          ggplot2::labs(title = "Cost per Minute", y = "$/min") +
-          ggplot2::theme_minimal()
+          ggplot2::geom_point(ggplot2::aes(color = period), size = 2) +
+          ggplot2::geom_smooth(method = "loess", se = FALSE, color = TELEMETRY_PALETTE[["trend"]]) +
+          ggplot2::scale_color_manual(values = TELEMETRY_PALETTE) +
+          ggplot2::scale_y_continuous(labels = label_dollar_signif) +
+          ggplot2::labs(title = "Cost per Minute", y = "$/min", color = "Period") +
+          theme_dashboard()
       },
       packages = c("ggplot2", "dplyr", "scales")
     ),
@@ -229,15 +339,17 @@ plan_vignette_outputs <- function() {
         if (is.null(vig_session_metrics) || nrow(vig_session_metrics) == 0) return(NULL)
         ggplot2::ggplot(vig_session_metrics, ggplot2::aes(x = duration_mins, y = cost_per_min)) +
           ggplot2::geom_point(ggplot2::aes(color = period), alpha = 0.6) +
-          ggplot2::geom_smooth(method = "loess", color = "red") +
-          ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
+          ggplot2::geom_smooth(method = "loess", color = TELEMETRY_PALETTE[["trend"]]) +
+          ggplot2::scale_color_manual(values = TELEMETRY_PALETTE) +
+          ggplot2::scale_y_continuous(labels = label_dollar_signif) +
           ggplot2::labs(
             title = "Cost Intensity vs Duration",
             subtitle = "Are longer sessions more cost efficient?",
             x = "Duration (mins)",
-            y = "Cost/Min ($)"
+            y = "Cost/Min ($)",
+            color = "Period"
           ) +
-          ggplot2::theme_minimal()
+          theme_dashboard()
       },
       packages = c("ggplot2", "scales")
     ),
@@ -255,12 +367,12 @@ plan_vignette_outputs <- function() {
             dplyr::mutate(model_clean = gsub("claude-", "", models, fixed = TRUE))
 
           ggplot2::ggplot(model_usage, ggplot2::aes(x = date, y = cost_per_min)) +
-            ggplot2::geom_point(alpha = 0.4, color = "steelblue") +
-            ggplot2::geom_smooth(method = "loess", se = FALSE, color = "darkred") +
+            ggplot2::geom_point(alpha = 0.4, color = TELEMETRY_PALETTE[["accent"]]) +
+            ggplot2::geom_smooth(method = "loess", se = FALSE, color = TELEMETRY_PALETTE[["trend"]]) +
             ggplot2::facet_wrap(~model_clean, scales = "free_y", ncol = 2) +
-            ggplot2::scale_y_continuous(labels = scales::dollar_format()) +
+            ggplot2::scale_y_continuous(labels = label_dollar_signif) +
             ggplot2::labs(title = "Cost Efficiency by Model", y = "Cost/Min ($)") +
-            ggplot2::theme_minimal()
+            theme_dashboard()
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
       packages = c("ggplot2", "dplyr", "tidyr", "scales")
@@ -282,7 +394,13 @@ plan_vignette_outputs <- function() {
 
         DT::datatable(
           tbl_data,
-          caption = "Max5 Usage Blocks",
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf(
+              "This table lists the %d most recent Max5 usage blocks, each block representing one continuous Claude session window. Duration is shown as HH:MM, cost in USD, and tokens as a comma-formatted count. Rows are sorted by session start time, most recent first, so you can spot unusually long or expensive sessions quickly.",
+              nrow(tbl_data)
+            )
+          ),
           extensions = "Buttons",
           rownames = FALSE,
           options = list(
@@ -294,7 +412,7 @@ plan_vignette_outputs <- function() {
           )
         )
       },
-      packages = c("DT", "dplyr", "scales")
+      packages = c("DT", "dplyr", "scales", "htmltools")
     ),
 
     # === CI & Git Stats section ===
@@ -329,10 +447,10 @@ plan_vignette_outputs <- function() {
         vig_workflow_runs |>
           dplyr::filter(conclusion == "success", !is.na(duration_mins)) |>
           ggplot2::ggplot(ggplot2::aes(x = reorder(name, duration_mins), y = duration_mins)) +
-          ggplot2::geom_boxplot(fill = "steelblue", alpha = 0.7) +
+          ggplot2::geom_boxplot(fill = TELEMETRY_PALETTE[["accent"]], alpha = 0.7, color = "#ffffff") +
           ggplot2::coord_flip() +
           ggplot2::labs(title = "Workflow Runtimes", x = NULL, y = "Minutes") +
-          ggplot2::theme_minimal()
+          theme_dashboard()
       },
       packages = c("ggplot2", "dplyr")
     ),
@@ -347,13 +465,25 @@ plan_vignette_outputs <- function() {
           git_log |>
             dplyr::mutate(date = as.Date(time)) |>
             dplyr::count(date) |>
-            ggplot2::ggplot(ggplot2::aes(x = date, y = n)) +
-            ggplot2::geom_col(fill = "steelblue") +
-            ggplot2::labs(title = "Recent Commits", y = "Count") +
-            ggplot2::theme_minimal()
+            ggplot2::ggplot(ggplot2::aes(x = n, y = reorder(as.character(date), n))) +
+            ggplot2::geom_segment(
+              ggplot2::aes(x = 0, xend = n, yend = reorder(as.character(date), n)),
+              color = TELEMETRY_PALETTE[["accent"]]
+            ) +
+            ggplot2::geom_point(color = TELEMETRY_PALETTE[["accent"]], size = 4) +
+            ggplot2::geom_text(
+              ggplot2::aes(label = n),
+              hjust = -0.3, color = "#ffffff", size = 3
+            ) +
+            ggplot2::scale_x_continuous(
+              labels = scales::comma,
+              expand = ggplot2::expansion(mult = c(0, 0.15))
+            ) +
+            ggplot2::labs(title = "Recent Commits", x = "Count", y = "Date") +
+            theme_dashboard()
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
-      packages = c("ggplot2", "dplyr", "gert"),
+      packages = c("ggplot2", "dplyr", "gert", "scales"),
       cue = tar_cue(mode = "always")
     ),
 
@@ -372,7 +502,13 @@ plan_vignette_outputs <- function() {
             dplyr::count(ext, sort = TRUE)
           DT::datatable(
             tbl_data,
-            caption = "File Types",
+            caption = htmltools::tags$caption(
+              style = "caption-side: bottom; text-align: left;",
+              sprintf(
+                "This table counts every tracked file in the repository by extension, excluding .git, _targets, and renv directories. It covers %s files across %d distinct extensions and is recomputed on every pipeline run. Use it to sanity-check that the repository's file mix (R source, vignettes, config, data) matches expectations.",
+                scales::comma(sum(tbl_data$n)), nrow(tbl_data)
+              )
+            ),
             extensions = "Buttons",
             rownames = FALSE,
             options = list(
@@ -385,7 +521,7 @@ plan_vignette_outputs <- function() {
           )
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
-      packages = c("DT", "dplyr", "tibble", "fs")
+      packages = c("DT", "dplyr", "tibble", "fs", "htmltools", "scales")
     ),
 
     # === Pipeline Metrics section ===
@@ -464,9 +600,11 @@ plan_vignette_outputs <- function() {
           vig_pipeline_summary$plan_tbl,
           caption = htmltools::tags$caption(
             style = "caption-side: bottom; text-align: left;",
-            sprintf("Pipeline has %d plans with %d total targets.",
-                    vig_pipeline_summary$total_plans,
-                    vig_pipeline_summary$total_targets)
+            sprintf(
+              "This table lists every targets plan file under R/tar_plans and how many tar_target()/tar_quarto() calls each one defines. The pipeline currently has %d plans with %d total targets, sorted by target count descending. Use it to spot which plan files are growing large enough to warrant splitting.",
+              vig_pipeline_summary$total_plans,
+              vig_pipeline_summary$total_targets
+            )
           ),
           rownames = FALSE,
           options = list(dom = "t", pageLength = 20, order = list(list(1, "desc")))
@@ -481,12 +619,15 @@ plan_vignette_outputs <- function() {
         if (is.null(vig_pipeline_summary)) return(NULL)
         DT::datatable(
           vig_pipeline_summary$top_size |> dplyr::select(target, size),
-          caption = "Top 5 targets by stored size.",
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            "This table ranks the five largest targets currently stored in the _targets cache by their serialized size on disk. Size is reported in the most readable unit (KB, MB, or GB) depending on magnitude. Large targets here are the best candidates for storage-format optimisation (e.g. switching to qs or parquet) if the pipeline's disk footprint becomes a concern."
+          ),
           rownames = FALSE,
           options = list(dom = "t", pageLength = 5)
         )
       },
-      packages = c("DT", "dplyr")
+      packages = c("DT", "dplyr", "htmltools")
     ),
 
     tar_target(
@@ -495,12 +636,15 @@ plan_vignette_outputs <- function() {
         if (is.null(vig_pipeline_summary)) return(NULL)
         DT::datatable(
           vig_pipeline_summary$top_time |> dplyr::select(target, time),
-          caption = "Top 5 targets by compute time.",
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            "This table ranks the five slowest targets in the most recent pipeline run by wall-clock compute time, shown in minutes or seconds depending on magnitude. Compute time is read from targets::tar_meta() metadata captured after tar_make() completes. Targets appearing here repeatedly are the best candidates for caching, parallelisation via crew, or algorithmic optimisation."
+          ),
           rownames = FALSE,
           options = list(dom = "t", pageLength = 5)
         )
       },
-      packages = c("DT", "dplyr")
+      packages = c("DT", "dplyr", "htmltools")
     ),
 
     # === GitHub Activity section ===
@@ -555,10 +699,12 @@ plan_vignette_outputs <- function() {
           tbl,
           caption = htmltools::tags$caption(
             style = "caption-side: bottom; text-align: left;",
-            sprintf("Total: %d commits over %d days (started %s).",
-                    vig_commit_velocity$total_commits,
-                    vig_commit_velocity$age_days,
-                    vig_commit_velocity$started)
+            sprintf(
+              "This table shows weekly commit counts for the repository since it was created. Across %d days (started %s) the project has accumulated %d total commits, giving a sense of overall development velocity. Use it alongside the pipeline metrics table to see whether commit activity and pipeline growth are moving together.",
+              vig_commit_velocity$age_days,
+              vig_commit_velocity$started,
+              vig_commit_velocity$total_commits
+            )
           ),
           rownames = FALSE,
           options = list(dom = "t", pageLength = 20, order = list(list(1, "desc")))
@@ -635,12 +781,20 @@ plan_vignette_outputs <- function() {
         )
         DT::datatable(
           tbl,
-          caption = "GitHub issues, pull requests, and CI workflows.",
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf(
+              "This table summarises the repository's GitHub issue, pull request, and CI workflow activity as of the last pipeline run. There are currently %d open and %d closed issues (%d total), %d open and %d merged pull requests (%d total), and %d active CI workflow(s). Use it as a quick health check before diving into the individual issue and PR lists.",
+              ga$issues_open, ga$issues_closed, ga$issues_total,
+              ga$prs_open, ga$prs_merged, ga$prs_total,
+              ga$workflows_active
+            )
+          ),
           rownames = FALSE,
           options = list(dom = "t", pageLength = 5)
         )
       },
-      packages = c("DT", "tibble")
+      packages = c("DT", "tibble", "htmltools")
     ),
 
     # Codebase metrics
@@ -685,13 +839,19 @@ plan_vignette_outputs <- function() {
 
           DT::datatable(
             tbl,
-            caption = sprintf("%s codebase metrics.", pkg_name),
+            caption = htmltools::tags$caption(
+              style = "caption-side: bottom; text-align: left;",
+              sprintf(
+                "This table reports structural metrics for the %s package (version %s): counts of R source files, test files, vignettes, targets plan files, and exported functions, plus total non-comment lines of R code. Metrics are recomputed directly from the repository tree and NAMESPACE on every pipeline run, so they always reflect the current checkout. Use it to track codebase growth over time alongside the commit velocity and pipeline metrics tables.",
+                pkg_name, version
+              )
+            ),
             rownames = FALSE,
             options = list(dom = "t", pageLength = 10)
           )
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
-      packages = c("DT", "tibble")
+      packages = c("DT", "tibble", "htmltools")
     ),
 
     # GitHub stats table
@@ -717,7 +877,10 @@ plan_vignette_outputs <- function() {
           )
           DT::datatable(
             stats_data,
-            caption = "GitHub Stats",
+            caption = htmltools::tags$caption(
+              style = "caption-side: bottom; text-align: left;",
+              "This table shows top-level GitHub repository statistics: star and fork counts, the number of open issues, the number of branches, and the date of the most recent commit. Values are fetched live from the GitHub API on every pipeline run, so they reflect the repository's current state rather than a cached snapshot. Use it as a quick external-visibility check alongside the internal codebase and pipeline metrics tables."
+            ),
             extensions = "Buttons",
             rownames = FALSE,
             options = list(
@@ -730,7 +893,7 @@ plan_vignette_outputs <- function() {
           )
         }, error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL })
       },
-      packages = c("DT", "gh", "lubridate", "tibble"),
+      packages = c("DT", "gh", "lubridate", "tibble", "htmltools"),
       cue = tar_cue(mode = "always")
     )
   )
