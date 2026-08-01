@@ -57,6 +57,7 @@ httr2::req_auth_bearer_token(req, Sys.getenv("API_TOKEN"))
 | API key in committed `.R` file | Visible to anyone with repo access | `.Renviron` + `.gitignore` |
 | Credentials in `_quarto.yml` | Committed to version control | Environment variable |
 | `.Renviron` not in `.gitignore` | Credentials committed with project | Add `.Renviron` to `.gitignore` |
+| `echo "${VAR:+yes}${VAR:-no}"` as an is-it-set check | **Prints the secret.** When `VAR` is set, `:+` yields `yes` and `:-` yields the *value* | `[ -n "${VAR:-}" ] && echo set \|\| echo unset` |
 | Credentials in Docker image layers | Persist in image history | Multi-stage build or runtime env vars |
 
 ### Pre-commit Check
