@@ -126,7 +126,8 @@ More edge cases (PATH/wrapper quirks, `hooksPath` sharing, silent agent fallback
 
 ## Related
 
-- [`_companions/roborev-resolution-details.md`](_companions/roborev-resolution-details.md) — incident log, rollout history, one-time procedures, verbose CLI usage, the automation-does/does-not table, session-end refine bounds, review trigger tiers, auto-verifier, merge-gate policy, and the launchd health audit, split out of this rule
+- [`_companions/roborev-resolution-details.md`](_companions/roborev-resolution-details.md) — verbose CLI usage, the automation-does/does-not table, session-end refine bounds, review trigger tiers, auto-verifier, merge-gate policy, and the launchd health audit, split out of this rule
+- [`_companions/roborev-resolution-incidents.md`](_companions/roborev-resolution-incidents.md) — dated incident narratives and one-time rollout history (poller schedule decision, session-end-refine soak, remote-merged-PR coverage-gap lesson), split out of the details companion
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol

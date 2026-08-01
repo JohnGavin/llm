@@ -30,17 +30,10 @@ Use `git -C <path>` for git operations. For multi-step shell logic, write a
 script file and run it.
 ```
 
-**Substitution table referenced in Prefix 1** — orchestrators MUST point agents to this table when handing off Bash-heavy work:
-
-| Don't write              | Write instead                                |
-|--------------------------|----------------------------------------------|
-| `cat F \| head -N`         | `Read(F, limit=N)`                           |
-| `grep -rn P path \| head`  | `Grep(pattern=P, path=path, head_limit=N)`   |
-| `find ... \| head`         | `Glob(pattern)`                              |
-| `cmd 2>&1 \| head -50`     | `cmd >/tmp/x 2>&1`, then `Read(/tmp/x)`      |
-| `cmd \|\| echo "missing"` | plain `cmd`; check exit code in next call    |
-
-Single trailing `\| head` / `\| tail` / `\| wc` / `\| sort -u` / `\| uniq` is allowed by the compound guard since #393 Phase 1.
+Orchestrators MUST point agents to the Bash substitution table when handing
+off Bash-heavy work — see the table in `~/.claude/CLAUDE.md` ("Bash
+substitution table — substitute BEFORE every Bash call", issue #393); it is
+not reproduced here to avoid drift between the two copies.
 
 **Prefix 2 — Worktree isolation** (closes `JohnGavin/llm#191`; strengthened
 for `llm#304` and `llm#318`):
@@ -146,18 +139,16 @@ work involves any write (edit, commit, push).
 
 ### Why
 
-SendMessage continues an existing agent. When the original agent's worktree has
-been cleaned (branch merged, harness worktree removed) or when the harness
-restarts, the continuation falls back to the **orchestrator's cwd** and writes
-to the main checkout or to the orchestrator's session branch (`feat/cc-*`). This
-happened twice in a 2026-05-25 llmtelemetry session (#304):
-
-- Case 1: merged branch cleaned → continuation committed to main checkout.
-- Case 2: live branch, continuation ran in orchestrator checkout → stale commit
-  on `feat/cc-*`, 40 commits behind main, re-creating already-deleted files.
-
-Fresh `isolation: "worktree"` dispatches were always correctly isolated. Only
-SendMessage continuations failed.
+SendMessage continues an existing agent. When the original agent's worktree
+has been cleaned (branch merged, harness worktree removed) or when the
+harness restarts, the continuation falls back to the **orchestrator's cwd**
+and writes to the main checkout or the orchestrator's session branch
+(`feat/cc-*`). This happened twice in a 2026-05-25 llmtelemetry session
+(#304): once where a merged branch's cleanup left the continuation committing
+to the main checkout, and once where a live-branch continuation ran in the
+orchestrator checkout and produced a stale commit 40 commits behind main,
+re-creating already-deleted files. Fresh `isolation: "worktree"` dispatches
+were always correctly isolated — only SendMessage continuations failed.
 
 ### Rule
 
@@ -187,24 +178,14 @@ pre-create a target-repo worktree that the agent uses as its `$WORKTREE_PATH`.
 ### Pattern
 
 1. **Orchestrator pre-creates a target-repo worktree:**
-   ```bash
-   ~/.claude/scripts/cc-worktree.sh llmtelemetry feat/my-fix
-   # → ~/worktrees/llmtelemetry/feat/my-fix/
-   ```
-
+   `~/.claude/scripts/cc-worktree.sh llmtelemetry feat/my-fix` →
+   `~/worktrees/llmtelemetry/feat/my-fix/`
 2. **Dispatch the agent with `isolation: "worktree"`.** The harness creates an
-   llm worktree that the agent ignores. The dispatch prompt explicitly overrides
-   `$WORKTREE_PATH` to the target-repo worktree and authorises ALL writes only
-   under that path:
-   ```
-   **CRITICAL — Worktree isolation:** Your worktree is
-   /Users/johngavin/worktrees/llmtelemetry/feat/my-fix/
-   ALL writes target that path only ...
-   ```
-
+   llm worktree that the agent ignores. The dispatch prompt explicitly
+   overrides `$WORKTREE_PATH` in Prefix 2 to the target-repo worktree path
+   above, so ALL writes are authorised only under that path.
 3. **Agent commits + pushes** to the target repo's feature branch; opens PR
    in the target repo (not in llm).
-
 4. **Orchestrator captures BOTH repos' states** (main + current branch) before
    dispatch; calls `agent-post-verify.sh check` on **both repos** after the
    agent finishes.
@@ -242,12 +223,12 @@ in any `gh` CLI call. Use `--body-file <path>` instead.
 ### Why
 
 `--body "$(cat /tmp/file.md)"` is a command substitution. Claude Code's static
-analyser cannot see inside `$(...)`, so every such call triggers an approval prompt
-("Contains shell syntax that cannot be statically analysed"). With `--body-file`,
-the path is visible in the command and the allowlist works correctly — zero prompts.
-
-The same applies to `--body "$multiline_var"` when the variable contains markdown
-with pipes, backticks, or tables (heredoc-body failures, see llm#200).
+analyser cannot see inside `$(...)`, so every such call triggers an approval
+prompt ("Contains shell syntax that cannot be statically analysed"). With
+`--body-file`, the path is visible in the command and the allowlist works
+correctly — zero prompts. Same applies to `--body "$multiline_var"` when the
+variable contains markdown with pipes, backticks, or tables (heredoc-body
+failures, see llm#200).
 
 ### Supported commands
 
@@ -304,90 +285,15 @@ Agent(subagent_type="fixer",
       isolation="worktree",
       prompt="Fix R/foo.R line 42 — add NA check before division.")
 
-# RIGHT: isolation set + BOTH prefixes injected + FOUR self-checks required
+# RIGHT: isolation set + Prefix 1 + Prefix 2 (verbatim, as given above) + task
 Agent(subagent_type="fixer",
       isolation="worktree",
-      prompt="""**CRITICAL — Bash discipline:** Compound bash commands
-(`&&`/`||`/`;`/`|`) are HOOK-REJECTED in block mode. Every Bash tool call
-must contain exactly ONE command. The ONLY exception is subshell `(cd dir && cmd)`
-for atomic cd+cmd. Use `git -C <path>` for git operations. For multi-step
-shell logic, write a script file and run it.
+      prompt="""<Prefix 1 — Bash discipline, verbatim>
 
-**CRITICAL — Worktree isolation:** Your worktree is /Users/johngavin/docs_gh/<repo>/.claude/worktrees/agent-<id>.
-ALL writes MUST target paths under that worktree. NEVER write to the main checkout
-at /Users/johngavin/docs_gh/<repo>. Git operations MUST use git -C <worktree-path>.
-NEVER git checkout to a different branch. End-of-run report MUST include FOUR
-self-checks:
-  1. pwd — must start with the worktree path above
-  2. git rev-parse --abbrev-ref HEAD — must NOT be main, must NOT be feat/cc-*
-  3. Last commit SHA (git log -1 --format=%H)
-  4. Exact git push ref used — must equal self-check (2)
+<Prefix 2 — Worktree isolation, verbatim, with $WORKTREE_PATH substituted>
 
 Fix R/foo.R line 42 — add NA check before division.""")
 ```
 
----
-
-## Sections Moved from the Rule Body (2026-07-29 line-limit pass, llm#749)
-
-### Cross-Repo Writes — dispatch-prompt detail
-
-For cross-repo writes (e.g. llm session edits llmtelemetry): pre-create the target
-repo's worktree via `cc-worktree.sh`, set `$WORKTREE_PATH` to that path in the
-dispatch prompt, and run dual-repo post-verify after completion.
-
-### Read-Only Cross-Repo Verify → Parallel, NO Worktree (full section)
-
-The `isolation: "worktree"` requirement is a WRITE-safety guard (stop a
-`bypassPermissions` agent clobbering the main checkout). It does NOT apply to
-read-only agents, and when the target files live in a **different repo** from the
-session cwd, worktree isolation is actively HARMFUL — the harness worktrees the
-*session's* repo, so the agent cannot reach the other repo at all (the #182
-cross-repo failure). This is common when a project session verifies content in the
-local-only knowledge hub (`~/docs_gh/llm/knowledge/**`).
-
-**Rule:** dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or
-`general-purpose` restricted to Read/Grep/Glob) that target a separate repo:
-
-- **in parallel** — multiple `Agent` calls in ONE message, each a distinct
-  adversarial lens (e.g. citation-faithfulness · domain-correctness ·
-  schema/structural-integrity). Parallelism belongs in *verification*.
-- **WITHOUT `isolation: "worktree"`** — read-only needs no write sandbox, and a
-  worktree would sever cross-repo access.
-
-**Corollary for the write side.** The fixer/curator half of a cross-repo
-*local-hub* task (a repo that is never pushed, e.g. the knowledge hub) also runs
-**without worktree**, restricted to file-tools (no Bash, no git), with the
-orchestrator doing the commit afterward. Do NOT parallelise a single-file fix —
-concurrent edits to one file conflict; the parallelism was spent in verification.
-(For cross-repo writes to a *pushed* repo, use the `$WORKTREE_PATH` pre-create
-pattern above instead.)
-
-| Cross-repo task | Isolation | Concurrency |
-|---|---|---|
-| Read-only verify (separate repo) | none (read-only) | parallel, diverse lenses |
-| Write to local-only hub (never pushed) | none; file-tools + no Bash; orchestrator commits | serial per file |
-| Write to a pushed repo | pre-created `$WORKTREE_PATH` worktree (#182) | per dual-repo post-verify |
-
-Origin: 2026-07-03/04 oncology-hub immunoparesis note — curator/fixer written and
-critic-verified across the mycare→knowledge-hub boundary; a 3-lens parallel
-read-only re-audit ran with no worktrees. See `agent-identity-and-task-scopes`
-(scope propagation) and `worktree-location` (harness worktree conventions).
-
-### Mandatory: isolation:"worktree" — bypassPermissions rationale
-
-Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside
-worktrees and `/tmp/*`. It is NEVER safe in the main checkout, where live API
-tokens and credentials sit. An agent running `bypassPermissions` in the main
-checkout can silently overwrite `.Renviron`, `default.nix`, or any other
-file without a confirmation prompt.
-
-`~/.claude/` symlinks and cross-repo symlinks (e.g. a `.claude/scripts/` file
-pointing into a sibling repo) are sandbox-escaping — the path looks
-in-worktree but the bytes land outside it; the `worktree_symlink_guard` hook
-(llm#692) now enforces this at every `PreToolUse:Edit|Write` call.
-
-### Canonical worktree path cross-reference
-
-For the canonical path to use when creating worktrees, see the `worktree-location`
-rule and `~/.claude/scripts/cc-worktree.sh`.
+"Read-Only Cross-Repo Verify" and the "bypassPermissions" rationale live only
+in the parent [`auto-delegation`](../auto-delegation.md) rule body.
