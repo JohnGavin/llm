@@ -44,6 +44,15 @@ LEDGER="${LAUNCHD_LEDGER:-$HOME/.claude/logs/launchd_runs.duckdb}"
 LOG_DIR="$(dirname "$LEDGER")"
 TIMELOG="$(mktemp /tmp/launchd_time.XXXXXX)"
 DUCKDB_BIN="${DUCKDB_BIN:-duckdb}"
+# launchd jobs run with a minimal PATH (no Homebrew/nix dirs), so `duckdb` on PATH
+# resolves interactively but NOT under launchd — the recorder would silently no-op
+# ("duckdb not found — metrics not recorded"). Fall back to common absolute install
+# locations so metrics still record for scheduled jobs (llm#300).
+if ! command -v "$DUCKDB_BIN" &>/dev/null; then
+  for _duckdb_cand in /opt/homebrew/bin/duckdb /usr/local/bin/duckdb; do
+    if [ -x "$_duckdb_cand" ]; then DUCKDB_BIN="$_duckdb_cand"; break; fi
+  done
+fi
 
 # ── Ensure ledger + schema exist ───────────────────────────────────────────────
 
