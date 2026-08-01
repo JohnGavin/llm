@@ -4,6 +4,24 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-01 — vignette visualization compliance sweep, companion size trims, KB backlinks, launchd diagnosis
+
+### Completed
+- **Vignette viz compliance** (PR #859): 7 bar charts → Cleveland dot plots; black `#000000` bg + white `#ffffff` axes/gridlines/labels in the shared `theme_dashboard` (was transparent → invisible ink in dark mode); one named `PALETTE` per page (narrative-colour-persistence) replacing per-chart `scale_*_viridis_d`; mandatory 3+ sentence `fig-cap`/`tbl-cap` on plots/tables/diagrams; config-evolution & knowledge-evolution architecture mermaids `flowchart LR → TB`; excluded `_companions/` from the rule/skill file counts in `config-evolution/_setup.qmd` (dashboard was mislabeling companions as oversized rules); `$/min` ratio precision → `signif(x,3)`.
+- **Full vignette audit:** 61 visual objects, 31 without a caption (10 plots / 17 tables / 4 diagrams); 7 bar charts; 0 plots with a black background.
+- **Companion size trims** (PR #858): `roborev-resolution-details` 474→294 (new `roborev-resolution-incidents.md`, 86), `auto-delegation-dispatch-details` 393→300 — duplication removed only, no normative content lost. All top-level rules already ≤150; the flagged files were companions.
+- **KB backlinks:** fixed the `[[target|alias]]` false-positive in the digest checker (PR #857); unlinked 8 non-existent `[[topic]]` links in the two steve-newman wiki pages (local knowledge repo commit).
+- Reopened **#463** (config-size tracker) + filed **#856** (enforce a `_companions/` limit + fix the dashboard companion-count bug).
+- **launchd diagnosis:** all 25 `com.claude` jobs are loaded with last-exit-status 0; the report's "—" run counts = empty `launchd_runs` ledger (0 plists wrap `launchd_run_record.sh`) — the known llm#300 instrumentation gap, not job failures.
+
+### Failed Approaches
+- **Telemetry `.rds` regeneration** (PR #859 commit 2, telemetry SOURCE only): tried to regenerate the committed `inst/extdata/vignettes/*.rds` via `tar_make` in the worktree nix shell. (1) First run lacked `pkgload::load_all()` → "no package called llm". (2) Per-target `tar_make(names = all_of(n))` failed — the loop variable doesn't survive `tar_make`'s tidyselect eval boundary ("object 'n' not found"). (3) Corrected literal `starts_with("vig_")` build + `load_all` built only **3 of 56** vig_ targets (the DAG halts early on upstream data targets needing full local pipeline data); the fixed dark-dot-plot snapshots did NOT regenerate, and the 3 that changed were unrelated data drift (discarded, not committed). Conclusion: telemetry snapshots must be regenerated in a full-data maintainer environment; there is **no committed reproducible exporter** (originally hand-exported in #64) — a reproducibility gap worth its own issue.
+
+### Known Limitations
+- **Telemetry vignette plots:** SOURCE fixed in #859, but the committed `.rds` snapshots are stale — the deployed telemetry plots keep the old bar-chart/light styling until the snapshots are regenerated in a full-data env.
+- `dashboard-filter-placement-details.md` still 171 lines (>150 warn, <300 hard) — left as-is.
+- PRs #857/#858/#859 are open, **not merged**.
+
 ## 2026-07-31 — roborev cluster closeout (#676/#746 verified+closed, #723 backup-chain fix), vignette tab styling
 
 ### Completed
