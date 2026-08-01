@@ -29,13 +29,13 @@ safe_tar_read("vig_github_activity_table", wrap_df = TRUE)
 
 ## CI Workflow Runtimes
 
-```{r ci-plot, fig.cap="Box plot of successful GitHub Actions workflow runtimes by workflow name."}
+```{r ci-plot, fig.cap="Distribution of successful GitHub Actions workflow runtimes, one box per workflow name, ordered by typical duration. Each box spans the interquartile range of run times in minutes, with whiskers showing the typical range and points marking outlier runs. Use this to spot which workflows have grown slow or unpredictable and would benefit from caching or splitting.", fig.alt="Boxplot of GitHub Actions workflow runtimes in minutes, one box per workflow, sorted by typical duration."}
 safe_tar_read("vig_workflow_plot", wrap_df = TRUE)
 ```
 
 ## Git History
 
-```{r git-hist, fig.cap="Daily commit frequency over the last 100 commits."}
+```{r git-hist, fig.cap="Daily commit counts for the repository's most recent 100 commits, shown as a Cleveland dot plot with one dot per day sorted by commit count. The x-axis gives the number of commits made on that date, with the exact count labeled beside each dot. Days with unusually high commit counts typically mark bulk auto-generated commits, such as telemetry data refreshes, rather than manual development bursts.", fig.alt="Dot plot of commit counts by date, ranked from highest to lowest, with each dot labeled by its exact commit count."}
 safe_tar_read("vig_git_history_plot", wrap_df = TRUE)
 ```
 

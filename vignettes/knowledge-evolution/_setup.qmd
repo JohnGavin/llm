@@ -20,11 +20,45 @@ library(igraph)
 
 theme_dashboard <- theme_minimal(base_size = 14) +
   theme(
-    plot.background = element_rect(fill = "transparent", color = NA),
-    panel.background = element_rect(fill = "transparent", color = NA),
-    legend.background = element_rect(fill = "transparent", color = NA),
-    plot.title = element_text(face = "bold")
+    plot.background   = element_rect(fill = "#000000", color = NA),
+    panel.background  = element_rect(fill = "#000000", color = NA),
+    legend.background = element_rect(fill = "#000000", color = NA),
+    panel.grid.major  = element_line(color = "#ffffff", linewidth = 0.3),
+    panel.grid.minor  = element_line(color = "#ffffff", linewidth = 0.15),
+    text        = element_text(color = "#ffffff"),
+    axis.text   = element_text(color = "#ffffff"),
+    axis.title  = element_text(color = "#ffffff"),
+    plot.title  = element_text(color = "#ffffff", face = "bold"),
+    plot.subtitle = element_text(color = "#ffffff"),
+    legend.text = element_text(color = "#ffffff"),
+    legend.title = element_text(color = "#ffffff"),
+    legend.position = "bottom"
   )
+
+# Shared named palette (narrative-colour-persistence rule): one colour per
+# category across every chart on this page set. Every entry is >=4.5:1
+# contrast on the #000000 black backgrounds set by theme_dashboard above.
+PALETTE <- c(
+  "Fully Sourced"             = "#69d4a0",
+  "With Sources"               = "#69d4a0",
+  "Partial (has AI-inferred)" = "#ffd93d",
+  "Unsourced"                  = "#f08080",
+  "Wiki Pages"                 = "#4ea8de",
+  "Raw Sources"                = "#69d4a0",
+  "Total Words (÷100)"    = "#c084fc",
+  "Wiki page"                  = "#4ea8de",
+  "Orphan (no inbound)"        = "#ffd93d",
+  "Broken target"              = "#f08080"
+)
+
+# Cycling palette for data-driven categories whose names aren't known ahead
+# of time (topic-graph domain clusters). Reuses the same five PALETTE hues,
+# so a given domain gets a stable colour across both topic-graph chunks and
+# every hue keeps the >=4.5:1 contrast on #000000.
+DOMAIN_PALETTE <- unname(PALETTE[c(
+  "Wiki Pages", "Raw Sources", "Partial (has AI-inferred)",
+  "Unsourced", "Total Words (÷100)"
+)])
 
 # Priority 0: CI-safe path — read pre-computed aggregates from committed RDS.
 # knowledge/ is gitignored (wiki-storage-policy), so live file counts return 0
