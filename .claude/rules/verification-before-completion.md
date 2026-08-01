@@ -61,6 +61,28 @@ done
 
 All articles must show 0 for nulls, errors, #> (except intentional #> in code examples).
 
+## One Change Per Verification Run
+
+When verifying fix A, do not fold in change B "while we're here". A single
+green result then proves them **jointly**, with no way to attribute the
+outcome.
+
+If a second change is already available and tempting to bundle:
+
+| | |
+|---|---|
+| **Keep** the slower/older run as a control | It isolates what fix A did |
+| **Then** apply change B and re-run | The delta is attributable to B |
+
+Worked case (2026-08-01): a slow CI run verifying a dependency fix was left to
+finish rather than cancelled in favour of a combined run. That control proved
+(a) the dependency fix reached the previously-failing step, and (b) the
+*separate* repo change produced an 11× speedup. Bundled, a fast green run
+would have proved neither individually.
+
+This is `single-change-experiment` discipline applied to verification runs, not
+just modelling experiments.
+
 ## Before Any Commit
 
 ```r

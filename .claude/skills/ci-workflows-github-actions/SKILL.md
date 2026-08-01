@@ -124,6 +124,58 @@ See [workflow-templates.md](references/workflow-templates.md) for YAML examples 
 4. **Artifact upload on failure** -- Debug failed checks easily
 5. **Native R for web tools** -- bslib/pkgdown don't work in Nix
 6. **Test r-universe locally** -- Catch issues before deployment
+7. **Never hardcode `repos=` on Linux CI** -- see below; measured 11x penalty
+
+## R Package Install: Use RSPM Binaries, Not CRAN Source
+
+`r-lib/actions/setup-r@v2` exports `RSPM`, the Posit Package Manager binary
+repo matching the runner's Ubuntu release:
+
+```
+RSPM: https://packagemanager.posit.co/cran/__linux__/noble/latest
+```
+
+Passing an explicit `repos=` **discards it**, and `cloud.r-project.org` serves
+**source tarballs only** for Linux. Every package then compiles from scratch on
+every job.
+
+```r
+# WRONG on Linux CI -- forces source builds
+install.packages(pkgs, repos = "https://cloud.r-project.org")
+
+# RIGHT -- binaries in CI, graceful fallback elsewhere
+repos <- Sys.getenv("RSPM", unset = "")
+if (!nzchar(repos)) repos <- "https://cloud.r-project.org"
+install.packages(pkgs, repos = repos)
+```
+
+Measured on `JohnGavin/historical` 2026-08-01, one matrix job installing 20
+packages including `duckdb`, `arrow`, `duckplyr`, `ggplot2`:
+
+| repo | install step |
+|---|---|
+| `cloud.r-project.org` (source) | **51m 37s** |
+| `RSPM` (binaries) | **~4m 30s** |
+
+Audit every R workflow for a hardcoded `repos=`. The symptom is a slow job that
+**passes**, so it is easy to never look at.
+
+### Derive the package list from DESCRIPTION
+
+A hand-written install list beside a `DESCRIPTION` is a twin that will drift.
+Adding one Import to `DESCRIPTION` and not the workflow broke a scheduled job
+on the same repo:
+
+```
+Error in load_imports(path) : The package "digest" is required.
+```
+
+```r
+dcf <- read.dcf("packages/<pkg>/DESCRIPTION", fields = "Imports")
+imports <- trimws(sub("\\(.*\\)", "", strsplit(dcf[1L, 1L], ",")[[1]]))
+need <- setdiff(unique(c(script_only_deps, imports)),
+                rownames(installed.packages(priority = "base")))
+```
 
 ## GitHub Pages Deployment Gotcha
 

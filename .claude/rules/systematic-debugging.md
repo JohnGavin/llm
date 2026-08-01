@@ -49,6 +49,37 @@ Test hypothesis WITHOUT changing source:
 | "Command not found" in nix | Not in nix-shell | `Sys.getenv("IN_NIX_SHELL")`, enter shell |
 | CI fails, local passes | Dirty local env or version mismatch | Re-run `source("default.R")`, reboot shell |
 
+## Measure the Baseline Before Claiming a Regression
+
+**A recent change is visible. The baseline is not. So the recent change gets blamed.**
+
+Before asserting that a change caused a problem, measure the same quantity
+**without** the change. Usually one command.
+
+| Symptom | Wrong first move | Right first move |
+|---|---|---|
+| CI job slow after your PR | "My PR slowed it down" | Time the same step on the last run before your PR |
+| Check fails right after your merge | "My merge broke it" | Read the failure; check whether it fails on the parent commit too |
+| Data looks stale | "The refresh broke" | Confirm a refresh ever existed and when it last ran |
+| Test fails on your branch | "I broke it" | Run it on `main` — it may be a known baseline failure |
+
+**A step that passes is not a step that is fine.** In the 2026-08-01 incident a
+CI install step had taken ~51 minutes for months. Nobody had looked, because it
+had always *succeeded*. It was only questioned when a PR touched it — and then
+wrongly blamed on that PR.
+
+Timing evidence is usually one API call:
+
+```bash
+gh run view <run-id> --json jobs \
+  --jq '.jobs[] | "\(.name): \(.startedAt) -> \(.completedAt)"'
+```
+
+Correlation in time is not evidence of causation. A merge that *triggers* a
+scheduled check is not the cause of what that check finds.
+
+See `knowledge/wiki/lessons-learned-false-attribution.md` for three worked cases.
+
 ## Never Accept Unverified Justifications
 
 **Red flags:** "expected", "normal", "probably fine", "should be okay"
