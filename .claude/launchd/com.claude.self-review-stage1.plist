@@ -15,6 +15,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.self-review-stage1</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/self_review_stage1.sh</string>
         <string>--write</string>
     </array>
