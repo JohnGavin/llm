@@ -31,7 +31,14 @@ version control.
 ::: {aria-label="Pipeline diagram showing two flows. Top: config_pulse.sh writes daily Parquet snapshots to logs/config/; the config-evolution dashboard reads those snapshots via DuckDB. Bottom: git history feeds config_change_digest.R; that R script produces a markdown digest; send_config_digest_email.R sends the digest via blastula and Gmail credentials; the email arrives in the inbox. A separate overnight chain shows self-review-stage1 at 02:30 running the overnight Claude review; self-review-verify at 08:00 running the email dispatch; and a scheduled-task health email cross-linking to issue 300."}
 
 ```{mermaid}
-flowchart LR
+%%| fig-cap: >
+%%|   This diagram traces the two pipelines that turn the `.claude/` git
+%%|   history into observable output. The pulse pipeline (top) runs
+%%|   config_pulse.sh daily, writes Parquet snapshots, and feeds this
+%%|   dashboard. The digest pipeline (bottom) runs config_change_digest.R,
+%%|   sends a markdown summary by email, and is cross-checked by an
+%%|   overnight self-review chain before delivery.
+flowchart TB
     A[".claude/ tree\n(git history)"] --> B["config_pulse.sh\n(daily, launchd)"]
     B --> C["logs/config/*.parquet\n(DuckDB snapshots)"]
     C --> D["config-evolution\ndashboard\n(this page)"]
