@@ -19,6 +19,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.self-review-verify</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/self_review_verify.sh</string>
     </array>
 

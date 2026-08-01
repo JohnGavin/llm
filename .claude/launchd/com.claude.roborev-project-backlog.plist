@@ -6,6 +6,10 @@
     <string>com.claude.roborev-project-backlog</string>
     <key>ProgramArguments</key>
     <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.roborev-project-backlog</string>
+        <string>--</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_project_backlog.sh</string>
         <string>--repo</string>
         <string>llm</string>
