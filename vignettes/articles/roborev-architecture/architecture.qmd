@@ -24,6 +24,7 @@ finding. Every node links to the relevant source file or dashboard panel.
 ::: {aria-label="Architecture diagram of the roborev system. A git commit triggers a post-commit hook which queues work in the roborev daemon. The daemon dispatches an AI agent. The agent produces findings that land in a local SQLite database. Three downstream consumers read the database: the weekly age-based autoclose job, the daily severity-threshold autoclose, and the llmtelemetry dashboard. A separate 15-minute poller catches any commits the hook missed. The daily ETL at 02:00 extracts the database into unified.duckdb for analytics."}
 
 ```{mermaid}
+%%| fig-cap: "This diagram traces the full data flow from a single git commit to a resolved finding in the roborev review system. A commit triggers a post-commit hook that queues work for the roborev daemon, which dispatches an AI agent (codex or claude-code) to produce findings written into a local SQLite database; a 15-minute poller catches any commits the hook missed. Three downstream consumers then read that database — a weekly age-based autoclose job, a daily severity-threshold autoclose, and a daily 02:00 ETL that extracts everything into unified.duckdb for the llmtelemetry dashboard and email digest."
 flowchart LR
   COMMIT["git commit"]
   HOOK["post-commit hook\n.git/hooks/post-commit"]
