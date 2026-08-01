@@ -37,6 +37,10 @@
 
     <key>ProgramArguments</key>
     <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.overnight-self-review-email</string>
+        <string>--</string>
         <string>/Users/johngavin/.local/bin/with-secrets</string>
         <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/bws_launcher.sh</string>

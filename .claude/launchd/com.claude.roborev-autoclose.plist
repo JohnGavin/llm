@@ -7,6 +7,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.roborev-autoclose</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_weekly_chain.sh</string>
     </array>
     <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
