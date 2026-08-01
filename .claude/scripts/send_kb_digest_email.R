@@ -569,6 +569,8 @@ compute_broken_backlinks <- function(knowledge_repo) {
         targets <- gsub("^\\[\\[|\\]\\]$", "", matches)
 
         for (tgt in targets) {
+          # Strip the display alias from [[target|alias]] before resolving.
+          tgt <- trimws(sub("\\|.*$", "", tgt))
           # Try candidate filenames
           tgt_slug <- gsub(" ", "-", tolower(tgt))
           candidates <- c(
