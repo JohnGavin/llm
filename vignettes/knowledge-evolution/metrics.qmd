@@ -110,7 +110,12 @@ if (!is.null(latest)) {
 ## Wiki Pages
 
 ```{r wiki-pages-table}
-#| tbl-cap: !expr wiki_tbl_cap
+#| tbl-cap: >
+#|   Every wiki page in the knowledge base, ranked by word count in descending order.
+#|   Word counts come from the anonymised `vig_kb_stats.rds` aggregate, so page
+#|   identifiers are pseudonymous (e.g. `page_001`) and titles never leak into CI
+#|   output. The longest pages are the most-developed topics; the shortest are
+#|   typically stubs still awaiting promotion.
 
 if (!is.null(latest)) {
   wiki_pages <- latest |>
@@ -162,7 +167,13 @@ if (!is.null(latest)) {
 ## Raw Sources
 
 ```{r raw-sources}
-#| tbl-cap: !expr raw_tbl_cap
+#| tbl-cap: >
+#|   Summary of the append-only `raw/` folder of the knowledge base — the unedited
+#|   source material (transcripts, notes, articles) that wiki pages cite back to. It
+#|   reports the total source count, total size, and how many sources were added in
+#|   the last 7 days, broken down by file extension where available. All values are
+#|   counts or byte totals with zero decimal places, since raw sources are discrete
+#|   files, never fractional.
 
 if (!is.null(latest)) {
   raw_summary <- latest |>
