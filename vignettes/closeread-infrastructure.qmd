@@ -56,7 +56,7 @@ if (is.null(counts)) {
 ## Software Layers
 
 ```{mermaid}
-%%| fig-cap: "Software stack from OS through [Nix](https://nixos.org/){target='_blank'} to project outputs. [rix](https://docs.ropensci.org/rix/){target='_blank'} translates `default.R` into `default.nix`. [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://cran.r-project.org/package=mirai){target='_blank'} orchestrate computation."
+%%| fig-cap: "Software stack showing how a Nix-based reproducible environment supports the full pipeline: [Nix](https://nixos.org/){target='_blank'} plus [rix](https://docs.ropensci.org/rix/){target='_blank'} sit at the base, translating declarative `default.R` files into pinned `default.nix` derivations. On top of that sit versioned R and Python packages, which [targets](https://docs.ropensci.org/targets/){target='_blank'}, [crew](https://wlandau.github.io/crew/){target='_blank'}, and [mirai](https://cran.r-project.org/package=mirai){target='_blank'} orchestrate into parallel pipelines. The LLM harness — Claude Code guided by rules, skills, and agents — runs at the top of this stack and produces the project outputs shown on the right. Each layer depends on the one below it being reproducible, so a change to `default.R` propagates through every layer above it."
 graph LR
   OS["OS: macOS / Linux"] --> Nix["Nix + rix"] --> Pkgs["R / Python<br/>packages"]
   Pkgs --> Orch["targets + crew<br/>+ mirai"]
@@ -95,7 +95,7 @@ At the top, `r counts$n_rules` rules, `r counts$n_skills` skills, `r counts$n_ag
 ## LLM Harness
 
 ```{mermaid}
-%%| fig-cap: "[AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md){target='_blank'} is the entry point — indexing rules, skills, agents, hooks, commands, and memory files."
+%%| fig-cap: "[AGENTS.md](https://github.com/JohnGavin/llm/blob/main/AGENTS.md){target='_blank'} is the single entry point every Claude Code session reads first, indexing all six categories of project configuration: rules, skills, agents, hooks, commands, and memory files. Each category is a distinct directory under `.claude/`, and this diagram shows AGENTS.md fanning out to all six rather than any hierarchy among them. Clicking a node opens the corresponding directory on GitHub, so this diagram doubles as a navigable map of the harness."
 graph LR
   A["AGENTS.md<br/>Entry point"] --> R["Rules"]
   A --> S["Skills"]
@@ -139,11 +139,19 @@ if (!is.na(rules_dir)) {
     data.frame(Rule = paste0("`", name, "`"), Description = desc, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(rules_df, caption = paste0("All ", nrow(rules_df), " rules in `", rules_dir, "`"))
+  knitr::kable(rules_df, caption = paste0(
+    "All ", nrow(rules_df), " rule files found in `", rules_dir, "`, one row per file. ",
+    "Rule is the file's base name without the `.md` extension; Description is the first non-heading line of prose in that file, truncated to 60 characters. ",
+    "Rules are hard constraints, not suggestions — each one applies regardless of context unless its own trigger clause says otherwise."
+  ))
 } else {
   knitr::kable(
     data.frame(Rule = character(0), Description = character(0)),
-    caption = "Rules directory not found (checked .claude/rules/ and ~/.claude/rules/)"
+    caption = paste0(
+      "Rules directory not found — checked `.claude/rules/` and `~/.claude/rules/`. ",
+      "This placeholder appears only when the pipeline runs outside a full checkout. ",
+      "The published site always serves the live directory scan."
+    )
   )
 }
 ```
@@ -172,8 +180,12 @@ if (!is.null(skill_cats)) {
 
   skill_cats |>
     dplyr::select(Category = category, Count = count, Examples) |>
-    knitr::kable(caption = paste0("All ", sum(skill_cats$count),
-                                  " skills from ~/.claude/skills/MANIFEST.md"))
+    knitr::kable(caption = paste0(
+      "All ", sum(skill_cats$count), " skill modules from `~/.claude/skills/MANIFEST.md`, grouped into ",
+      nrow(skill_cats), " domain categories. ",
+      "Count is the number of skill modules in that category; Examples names a few representative packages or tools the category covers. ",
+      "Skills supply the how — the domain knowledge a rule's what-not-to-do constraint doesn't provide."
+    ))
 } else {
   cat("*Run `tar_make()` locally to generate skill counts*")
 }
@@ -210,11 +222,19 @@ if (!is.na(agents_dir)) {
     data.frame(Agent = paste0("`", name, "`"), Model = model, Trigger = trigger, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(agents_df, caption = paste0("All ", nrow(agents_df), " agents in `", agents_dir, "`"))
+  knitr::kable(agents_df, caption = paste0(
+    "All ", nrow(agents_df), " agent definitions found in `", agents_dir, "`, one row per agent. ",
+    "Model is the Claude tier parsed from the agent's own frontmatter, defaulting to sonnet when unspecified; Trigger is the first use-case line extracted from the file. ",
+    "Delegating to the right agent keeps mechanical work on the cheap tier and reserves the orchestrator for planning and synthesis."
+  ))
 } else {
   knitr::kable(
     data.frame(Agent = character(0), Model = character(0), Trigger = character(0)),
-    caption = "Agents directory not found (checked .claude/agents/ and ~/.claude/agents/)"
+    caption = paste0(
+      "Agents directory not found — checked `.claude/agents/` and `~/.claude/agents/`. ",
+      "This placeholder appears only when the pipeline runs outside a full checkout. ",
+      "The published site always serves the live directory scan."
+    )
   )
 }
 ```
@@ -255,11 +275,19 @@ if (!is.na(hooks_dir)) {
     data.frame(Hook = paste0("`", name, "`"), Event = event, Purpose = purpose, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(hooks_df, caption = paste0("All ", nrow(hooks_df), " hooks in `", hooks_dir, "`"))
+  knitr::kable(hooks_df, caption = paste0(
+    "All ", nrow(hooks_df), " hook scripts found in `", hooks_dir, "`, one row per script. ",
+    "Event is inferred from the script's filename pattern (session start, pre-edit, pre-compact, and so on); Purpose is the first comment line in the file. ",
+    "Hooks automate enforcement that would otherwise depend on the model remembering a rule on every single tool call."
+  ))
 } else {
   knitr::kable(
     data.frame(Hook = character(0), Event = character(0), Purpose = character(0)),
-    caption = "Hooks directory not found (checked .claude/hooks/ and ~/.claude/hooks/)"
+    caption = paste0(
+      "Hooks directory not found — checked `.claude/hooks/` and `~/.claude/hooks/`. ",
+      "This placeholder appears only when the pipeline runs outside a full checkout. ",
+      "The published site always serves the live directory scan."
+    )
   )
 }
 ```
@@ -287,11 +315,19 @@ if (!is.na(memory_dir)) {
     data.frame(File = paste0("`", name, "`"), Purpose = purpose, stringsAsFactors = FALSE)
   }) |> do.call(rbind, args = _)
 
-  knitr::kable(memory_df, caption = paste0("All ", nrow(memory_df), " memory files in `", memory_dir, "`"))
+  knitr::kable(memory_df, caption = paste0(
+    "All ", nrow(memory_df), " memory files found in `", memory_dir, "`, one row per file. ",
+    "File is the base name of the memory file; Purpose is the first non-heading line, truncated to 50 characters, summarising what that file records. ",
+    "Memory persists lessons — failed approaches, incident write-ups, standing conventions — that a fresh session context would otherwise lose."
+  ))
 } else {
   knitr::kable(
     data.frame(File = character(0), Purpose = character(0)),
-    caption = "Memory directory not found (lives outside the repo; tracked in #144)"
+    caption = paste0(
+      "Memory directory not found — it lives outside the repository, tracked in #144. ",
+      "This placeholder appears when the pipeline cannot locate `~/.claude/projects/.../memory/`, which is common on a machine other than the primary development laptop. ",
+      "The published site always serves the live directory scan."
+    )
   )
 }
 ```
@@ -304,7 +340,7 @@ if (!is.na(memory_dir)) {
 The <a href="https://github.com/JohnGavin/irishbuoys" target="_blank">irishbuoys</a> R package is an independent project that monitors wave conditions at Marine Institute buoy stations around Ireland. Its <a href="https://johngavin.github.io/irishbuoys/" target="_blank">pkgdown site</a> is deployed separately. The pipeline below illustrates how the software layers described above come together in practice — from <a href="https://erddap.marine.ie/" target="_blank">ERDDAP</a> data acquisition through QA validation to multiple output formats.
 
 ```{mermaid}
-%%| fig-cap: "[irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} pipeline ([pkgdown site](https://johngavin.github.io/irishbuoys/){target='_blank'}). 19 plan files, ~294 [targets](https://docs.ropensci.org/targets/){target='_blank'}. Data from [ERDDAP](https://erddap.marine.ie/){target='_blank'}, stored in [DuckDB](https://duckdb.org/){target='_blank'}."
+%%| fig-cap: "The [irishbuoys](https://github.com/JohnGavin/irishbuoys){target='_blank'} pipeline is an independently deployed R package (see its [pkgdown site](https://johngavin.github.io/irishbuoys/){target='_blank'}) that monitors Irish wave-buoy conditions end to end. It comprises 19 [targets](https://docs.ropensci.org/targets/){target='_blank'} plan files totalling roughly 294 individual targets, moving data from acquisition through validation, wave analysis, and prediction to dashboard and API outputs. Raw observations are pulled from the [ERDDAP](https://erddap.marine.ie/){target='_blank'} API and staged in [DuckDB](https://duckdb.org/){target='_blank'} before quality-control bounds checks run, so every downstream target inherits the same validated source table."
 graph LR
   acq["ERDDAP<br/>API"] --> val["Validation<br/>8 targets"] --> qc["QC<br/>bounds"]
   qc --> wave["Wave Analysis<br/>61 targets"]
@@ -332,7 +368,7 @@ graph LR
 **Simplified flow:**
 
 ```{mermaid}
-%%| fig-cap: "Simplified: [ERDDAP](https://erddap.marine.ie/){target='_blank'} → validation → wave analysis → outputs. [QA gates](https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_qa_gates.R){target='_blank'} score Bronze/Silver/Gold before merge."
+%%| fig-cap: "Simplified view of the same irishbuoys pipeline, collapsing the 19 detailed plan files into four stages: [ERDDAP](https://erddap.marine.ie/){target='_blank'} acquisition, validation, wave analysis, and final outputs. Wave analysis is the pivot point — it feeds three parallel downstream paths (storm alerts and email, the dashboard, and the pkgdown site) rather than a single linear chain. Independent [QA gates](https://github.com/JohnGavin/irishbuoys/blob/main/R/tar_plans/plan_qa_gates.R){target='_blank'} score each build Bronze, Silver, or Gold before the site is allowed to merge, so quality is checked in parallel with the analysis rather than only at the very end."
 graph LR
   acq["ERDDAP"] --> val["8 validation"] --> wave["61 analysis"]
   wave --> alert["Alerts + email"]
@@ -354,8 +390,12 @@ graph LR
 walkthrough <- safe_tar_read("vig_cr_pipeline_walkthrough")
 if (!is.null(walkthrough)) {
   knitr::kable(walkthrough,
-    caption = paste0("irishbuoys pipeline: ", nrow(walkthrough),
-                     " plan files across data, QA, analysis, and output layers."))
+    caption = paste0(
+      "irishbuoys pipeline: ", nrow(walkthrough),
+      " plan files spanning data acquisition, QA, analysis, and output layers, one row per plan file. ",
+      "Each row corresponds to one `R/tar_plans/*.R` file and the pipeline stage it implements. ",
+      "The table demonstrates, with a real external project, how the layered Nix-to-outputs architecture described above looks in practice."
+    ))
 }
 ```
 
@@ -365,7 +405,7 @@ if (!is.null(walkthrough)) {
 ## FOCUS Framework
 
 ```{mermaid}
-%%| fig-cap: "FOCUS: how [Claude Code](https://claude.com/claude-code){target='_blank'} navigates a project. Each phase maps to specific agents, rules, and skills."
+%%| fig-cap: "FOCUS is the five-phase framework — Find, Organize, Condense, Understand, Synthesize — that structures how [Claude Code](https://claude.com/claude-code){target='_blank'} navigates an unfamiliar or large project. Each phase maps to a distinct set of tools and specialists: Find uses Glob/Grep/Explore, Organize centres on AGENTS.md and the Plan agent, Condense relies on memory files, Understand delegates to r-debugger and critic, and Synthesize hands off to fixer and targets-runner. The phases run roughly in sequence within a session but are not strictly linear — Condense in particular can trigger at any point when context needs compacting."
 flowchart LR
   F["Find<br/>Glob, Grep, Explore"] --> O["Organize<br/>AGENTS.md, Plan"]
   O --> C["Condense<br/>Memory, ctx.yaml"]
