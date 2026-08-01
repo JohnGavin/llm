@@ -26,6 +26,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.roborev-metrics-etl</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/.claude/scripts/roborev_metrics_etl.sh</string>
         <string>--apply</string>
     </array>

@@ -32,6 +32,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.roborev-bridge</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_bridge_to_unified.sh</string>
     </array>
 

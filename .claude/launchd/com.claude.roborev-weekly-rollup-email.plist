@@ -33,6 +33,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.roborev-weekly-rollup-email</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/bin/roborev_weekly_rollup_cron.sh</string>
     </array>
 

@@ -34,6 +34,10 @@
 
     <key>ProgramArguments</key>
     <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.kb-digest-email</string>
+        <string>--</string>
         <string>/Users/johngavin/.local/bin/with-secrets</string>
         <string>/bin/bash</string>
         <string>/Users/johngavin/docs_gh/llm/bin/kb_digest_daily_cron.sh</string>
