@@ -40,6 +40,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.unified-duckdb-backup</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>/Users/johngavin/.claude/scripts/unified_duckdb_backup.sh</string>
         <string>--apply</string>
         <string>--prune</string>
