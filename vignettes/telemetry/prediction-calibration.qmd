@@ -30,13 +30,13 @@ safe_tar_read("vig_pred_global_calibration_table", wrap_df = TRUE)
 
 ## Rolling Brier Score
 
-```{r pred-rolling-brier, fig.cap="Cumulative Brier score across all projects over time. Lower is better; 0.25 is the uninformative baseline."}
+```{r pred-rolling-brier, fig.cap="Cumulative Brier score across all tracked projects over time, plotted as one line per project against prediction sequence number. Lower values indicate better-calibrated probability forecasts; a dashed reference line at 0.25 marks the score an uninformative forecaster (always predicting 50%) would achieve. Lines that trend downward and stay below the reference line show a project's forecasts improving and beating a naive baseline.", fig.alt="Line chart of cumulative Brier score by prediction number, one line per project, with a 0.25 uninformative-baseline reference line."}
 safe_tar_read("vig_pred_global_brier_plot", wrap_df = TRUE)
 ```
 
 ## Predicted vs Actual
 
-```{r pred-success-rate, fig.cap="Comparison of mean predicted probability vs actual success rate by project."}
+```{r pred-success-rate, fig.cap="Mean predicted probability versus actual observed success rate for each project, shown as a grouped Cleveland dot plot with two coloured dots per project connected by a line. The x-axis is a percentage rate; a well-calibrated project should have its two dots close together. Wide gaps between the dots for a given project indicate systematic over- or under-confidence in that project's predictions.", fig.alt="Grouped dot plot comparing mean predicted probability against actual success rate as percentages, one pair of dots per project."}
 safe_tar_read("vig_pred_success_rate_plot", wrap_df = TRUE)
 ```
 
