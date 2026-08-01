@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.config-pulse</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
+        <string>com.claude.config-pulse</string>
+        <string>--</string>
+        <string>/nix/var/nix/profiles/default/bin/nix-shell</string>
+        <string>/Users/johngavin/docs_gh/llm/default.nix</string>
+        <string>--run</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/config_pulse.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/config_pulse.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/config_pulse.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
