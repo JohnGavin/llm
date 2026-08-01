@@ -4,6 +4,17 @@
 
 library(targets)
 
+# Named palette for the two fixed metric series compared on this page
+# (narrative-colour-persistence rule). Contrast >=4.5:1 on #000000, shared
+# hues with TELEMETRY_PALETTE (see plan_vignette_outputs.R) for consistency
+# across telemetry pages. theme_dashboard() and ACCESSIBLE_QUALITATIVE_COLORS
+# are also defined in plan_vignette_outputs.R and are available here since
+# both files compile into the same package namespace.
+PRED_PALETTE <- c(
+  "Mean Predicted" = "#4ea8de",
+  "Actual Success" = "#f08080"
+)
+
 #' Prediction Calibration Targets
 #'
 #' Cross-project prediction tracking with Brier scores,
@@ -114,7 +125,13 @@ plan_predictions <- function() {
           )
         DT::datatable(
           display,
-          caption = "Prediction calibration by project.",
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf(
+              "This table breaks down cross-project prediction calibration by project name, covering %d project(s). For each project it reports the number of predictions logged, how many have resolved to a known outcome, the observed success rate among resolved predictions, and the Brier score (lower is better, 0 is perfect). Projects with few resolved predictions show 'N/A' for rate and score until more outcomes are recorded.",
+              nrow(display)
+            )
+          ),
           extensions = "Buttons",
           rownames = FALSE,
           options = list(
@@ -125,7 +142,7 @@ plan_predictions <- function() {
           )
         )
       },
-      packages = c("DT", "dplyr")
+      packages = c("DT", "dplyr", "htmltools")
     ),
 
     tar_target(
@@ -141,15 +158,18 @@ plan_predictions <- function() {
           )
         DT::datatable(
           display,
-          caption = sprintf(
-            "Global calibration (Brier: %.3f, n=%d resolved).",
-            cal$brier_score, cal$n_resolved
+          caption = htmltools::tags$caption(
+            style = "caption-side: bottom; text-align: left;",
+            sprintf(
+              "This table groups all resolved cross-project predictions into probability buckets and compares the mean predicted probability against the mean observed outcome in each bucket. A well-calibrated forecaster should show a gap near zero in every row; large positive gaps mean predictions were too confident, large negative gaps mean predictions were under-confident. Across all %d resolved predictions, the overall Brier score is %.3f (0 is perfect, 0.25 is the uninformative baseline).",
+              cal$n_resolved, cal$brier_score
+            )
           ),
           rownames = FALSE,
           options = list(dom = "t", pageLength = 10)
         )
       },
-      packages = c("DT", "dplyr")
+      packages = c("DT", "dplyr", "htmltools")
     ),
 
     # === Vignette plots ===
@@ -160,6 +180,16 @@ plan_predictions <- function() {
         if (is.null(pred_global_rolling_brier) ||
             nrow(pred_global_rolling_brier) == 0) return(NULL)
 
+        # project_name is a dynamic, unbounded set (new projects appear over
+        # time), so it cannot be enumerated in a fixed named PALETTE ahead of
+        # time. Build a scale_color_manual() vector at plot-build time from
+        # the shared accessible qualitative colours instead of viridis.
+        projects <- sort(unique(pred_global_rolling_brier$project_name))
+        proj_palette <- stats::setNames(
+          rep_len(ACCESSIBLE_QUALITATIVE_COLORS, length(projects)),
+          projects
+        )
+
         ggplot2::ggplot(
           pred_global_rolling_brier,
           ggplot2::aes(x = prediction_num, y = cumulative_brier,
@@ -167,11 +197,12 @@ plan_predictions <- function() {
         ) +
           ggplot2::geom_line() +
           ggplot2::geom_hline(yintercept = 0.25, linetype = "dashed",
-                              color = "red", alpha = 0.5) +
+                              color = "#ffd93d", alpha = 0.7) +
           ggplot2::annotate("text", x = 1, y = 0.26,
                             label = "Uninformative baseline",
-                            hjust = 0, size = 3, color = "red") +
+                            hjust = 0, size = 3, color = "#ffd93d") +
           ggplot2::scale_y_continuous(limits = c(0, 0.5)) +
+          ggplot2::scale_color_manual(values = proj_palette) +
           ggplot2::labs(
             title = "Cross-Project Rolling Brier Score",
             subtitle = "Cumulative calibration over time (lower is better)",
@@ -179,7 +210,7 @@ plan_predictions <- function() {
             y = "Cumulative Brier Score",
             color = "Project"
           ) +
-          ggplot2::theme_minimal()
+          theme_dashboard()
       },
       packages = c("ggplot2")
     ),
@@ -208,21 +239,30 @@ plan_predictions <- function() {
             values_to = "rate"
           )
 
+        # Order projects by their actual success rate so the grouped dot
+        # plot reads top-to-bottom from best to worst observed outcome.
+        order_basis <- plot_data |>
+          dplyr::filter(metric == "Actual Success") |>
+          dplyr::arrange(rate) |>
+          dplyr::pull(project_name)
+        plot_data <- plot_data |>
+          dplyr::mutate(project_name = factor(project_name, levels = order_basis))
+
         ggplot2::ggplot(
           plot_data,
-          ggplot2::aes(x = project_name, y = rate, fill = metric)
+          ggplot2::aes(x = rate, y = project_name, color = metric)
         ) +
-          ggplot2::geom_col(position = "dodge") +
-          ggplot2::scale_y_continuous(labels = scales::percent_format()) +
-          ggplot2::scale_fill_manual(
-            values = c("Mean Predicted" = "steelblue", "Actual Success" = "coral")
+          ggplot2::geom_line(
+            ggplot2::aes(group = project_name), color = "#ffffff", linewidth = 0.4
           ) +
-          ggplot2::coord_flip() +
+          ggplot2::geom_point(size = 4) +
+          ggplot2::scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+          ggplot2::scale_color_manual(values = PRED_PALETTE) +
           ggplot2::labs(
             title = "Predicted vs Actual Success Rate by Project",
-            x = NULL, y = "Rate", fill = NULL
+            x = "Rate", y = NULL, color = NULL
           ) +
-          ggplot2::theme_minimal()
+          theme_dashboard()
       },
       packages = c("ggplot2", "dplyr", "tidyr", "scales")
     )

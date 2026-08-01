@@ -19,7 +19,16 @@ execute:
 ```{r size-distribution}
 #| fig-width: 10
 #| fig-height: 6
-#| fig-alt: "Bar chart showing line counts by category: rules, skills, hooks"
+#| fig-cap: >
+#|   This dot plot ranks configuration categories — rules, skills, scripts,
+#|   hooks, and memory — by total lines of code in the checked-in `.claude/`
+#|   tree, sorted from largest to smallest so the ranking itself surfaces
+#|   which part of the configuration surface currently carries the most
+#|   content. The horizontal dot-and-stem layout keeps every value legible
+#|   even when categories differ by an order of magnitude, avoiding the
+#|   heavier visual weight of a bar chart. Labels give the exact line count
+#|   for each category at the latest available snapshot.
+#| fig-alt: "Horizontal dot plot ranking rules, skills, scripts, hooks, and memory by total lines of code, sorted from largest to smallest category"
 
 if (!is.null(latest)) {
   latest |>
@@ -28,17 +37,17 @@ if (!is.null(latest)) {
       metric == "total_lines",
       category %in% c("rules", "skills", "hooks", "scripts", "memory")
     ) |>
-    mutate(category = factor(category, levels = c("skills", "rules", "scripts", "hooks", "memory"))) |>
-    ggplot(aes(x = category, y = value, fill = category)) +
-    geom_col() +
-    geom_text(aes(label = comma(value)), vjust = -0.5, size = 4) +
-    scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
-    scale_fill_viridis_d(option = "plasma", end = 0.85) +
+    ggplot(aes(x = value, y = reorder(category, value), color = category)) +
+    geom_segment(aes(x = 0, xend = value, yend = category), linewidth = 0.8) +
+    geom_point(size = 4) +
+    geom_text(aes(label = comma(round(value))), hjust = -0.3, color = "#ffffff", size = 4) +
+    scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+    scale_color_manual(values = PALETTE) +
     labs(
       title = "Config Size by Category",
       subtitle = paste("Snapshot:", max(config_data$snapshot_date)),
-      x = NULL,
-      y = "Lines of Code"
+      x = "Lines of Code",
+      y = NULL
     ) +
     theme_dashboard +
     theme(legend.position = "none")
@@ -48,17 +57,17 @@ if (!is.null(latest)) {
     category = c("skills", "rules", "hooks"),
     value = c(fallback_counts$total_skill_lines, fallback_counts$total_rule_lines, fallback_counts$total_hook_lines)
   ) |>
-    mutate(category = factor(category, levels = c("skills", "rules", "hooks"))) |>
-    ggplot(aes(x = category, y = value, fill = category)) +
-    geom_col() +
-    geom_text(aes(label = comma(value)), vjust = -0.5, size = 4) +
-    scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
-    scale_fill_viridis_d(option = "plasma", end = 0.85) +
+    ggplot(aes(x = value, y = reorder(category, value), color = category)) +
+    geom_segment(aes(x = 0, xend = value, yend = category), linewidth = 0.8) +
+    geom_point(size = 4) +
+    geom_text(aes(label = comma(round(value))), hjust = -0.3, color = "#ffffff", size = 4) +
+    scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+    scale_color_manual(values = PALETTE) +
     labs(
       title = "Config Size by Category",
       subtitle = paste("Live count:", Sys.Date()),
-      x = NULL,
-      y = "Lines of Code"
+      x = "Lines of Code",
+      y = NULL
     ) +
     theme_dashboard +
     theme(legend.position = "none")
@@ -68,6 +77,15 @@ if (!is.null(latest)) {
 ## Top Rules
 
 ```{r top-rules}
+#| tbl-cap: >
+#|   This table lists the fifteen largest rule files in `.claude/rules/`,
+#|   ranked by line count from the shared config-pulse snapshot (or a live
+#|   file count when no snapshot exists in CI). The colour scale flags files
+#|   approaching or past the two-hundred-line domain used for the red/yellow/
+#|   green banding, with 150 lines marking the CLAUDE.md-documented threshold
+#|   where a rule should be split into a companion doc. Files already split
+#|   via the `_companions/` convention are excluded here so companion detail
+#|   is not mislabeled as an oversized rule.
 if (!is.null(latest)) {
   latest |>
     filter(category == "rules", metric == "lines", item != "all") |>
@@ -131,6 +149,14 @@ if (!is.null(latest)) {
 ## Top Skills
 
 ```{r top-skills}
+#| tbl-cap: >
+#|   This table lists the fifteen largest skill files (`SKILL.md`) in
+#|   `.claude/skills/`, ranked by line count from the shared config-pulse
+#|   snapshot or a live file-count fallback. The blue colour scale highlights
+#|   which skills carry the most instructional content, making it easy to
+#|   spot a skill that has grown past what a single file should hold. Skill
+#|   size here uses the same per-file line-count convention as the Top Rules
+#|   table above, so the two are directly comparable.
 if (!is.null(latest)) {
   latest |>
     filter(category == "skills", metric == "lines", item != "all") |>
@@ -168,6 +194,16 @@ if (!is.null(latest)) {
 ## Quality Metrics
 
 ```{r quality-table}
+#| tbl-cap: >
+#|   This table summarises headline configuration-quality metrics: total
+#|   rule and skill counts, their average sizes, how many rules exceed the
+#|   150-line threshold, and the estimated total token footprint of the
+#|   whole `.claude/` tree. These figures are computed identically in both
+#|   the live-snapshot and CI-fallback code paths, so the numbers stay
+#|   consistent regardless of which data source is available at render
+#|   time. Read this table alongside the Evolution panel below to see
+#|   whether the configuration is growing faster than its quality controls
+#|   (frontmatter coverage, threshold compliance) are keeping up.
 if (!is.null(latest)) {
   quality_metrics <- latest |>
     filter(item == "all") |>
@@ -212,7 +248,16 @@ if (!is.null(latest)) {
 ```{r evolution-chart}
 #| fig-width: 10
 #| fig-height: 5
-#| fig-alt: "Line chart showing config evolution over time"
+#| fig-cap: >
+#|   This line chart tracks how the counts of rules, skills, and hooks
+#|   change across daily configuration snapshots collected by
+#|   `config_pulse.sh`. Each line is one category, coloured consistently
+#|   with the Size Distribution panel above, so a rising or falling trend
+#|   is easy to follow over time. Because snapshots are taken once per day,
+#|   at least two of them are needed before a trend becomes visible; a
+#|   missing chart usually means the pulse pipeline has not yet
+#|   accumulated enough history.
+#| fig-alt: "Line chart of daily rules, skills, and hooks counts, one coloured line per category, trending over the available snapshot history"
 
 if (!is.null(latest) && n_distinct(config_data$snapshot_date) > 1) {
   config_data |>
@@ -224,7 +269,7 @@ if (!is.null(latest) && n_distinct(config_data$snapshot_date) > 1) {
     ggplot(aes(x = snapshot_date, y = value, color = category)) +
     geom_line(linewidth = 1.2) +
     geom_point(size = 3) +
-    scale_color_viridis_d(option = "plasma", end = 0.85) +
+    scale_color_manual(values = PALETTE) +
     labs(
       title = "Config Growth Over Time",
       x = NULL,

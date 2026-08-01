@@ -140,8 +140,10 @@ if (is.null(rule_data)) {
 rules_caption <- safe_tar_read("vig_cr_rules_caption")
 if (is.null(rules_caption)) {
   rules_caption <- paste0(
-    "Rule categories across ", sum(rule_data$count),
-    " config files in ", nrow(rule_data), " categories"
+    "Rule categories covering all ", sum(rule_data$count),
+    " constraint files across ", nrow(rule_data), " categories, one row per category. ",
+    "Count is the number of rule files in that category; Examples lists two or three representative rule names. ",
+    "Core workflow and Quarto/vignettes are the largest categories, reflecting how much of the config stack is dedicated to session discipline and reproducible reporting."
   )
 }
 knitr::kable(rule_data, format = "html",
@@ -232,8 +234,10 @@ if (is.null(skill_data)) {
 skills_caption <- safe_tar_read("vig_cr_skills_caption")
 if (is.null(skills_caption)) {
   skills_caption <- paste0(
-    "Skill modules by domain (", sum(skill_data$count),
-    " total across ", nrow(skill_data), " categories)"
+    "Skill modules grouped by domain, covering all ", sum(skill_data$count),
+    " skills across ", nrow(skill_data), " categories, one row per category. ",
+    "Count is the number of skill modules in that domain; Purpose summarises what the category teaches the model to do. ",
+    "R package development and data & analysis are the two largest domains, together accounting for roughly a third of all skills."
   )
 }
 knitr::kable(skill_data, format = "html",
@@ -292,8 +296,11 @@ if (is.null(agents_caption)) {
   n_haiku  <- sum(agent_data$model == "haiku", na.rm = TRUE)
   n_sonnet <- sum(agent_data$model == "sonnet", na.rm = TRUE)
   agents_caption <- paste0(
-    "Agent model tiers and delegation triggers (", nrow(agent_data),
-    " agents: ", n_haiku, " haiku, ", n_sonnet, " sonnet)"
+    "Agent model tiers and delegation triggers for all ", nrow(agent_data),
+    " specialist agents, one row per agent. ",
+    "Model is the Claude tier the agent runs on (haiku for mechanical single-file edits, sonnet for everything requiring reasoning); Trigger is the phrase or task type that causes the orchestrator to delegate to it. ",
+    "Only ", n_haiku, " of ", nrow(agent_data), " agents run on the cheaper haiku tier; the remaining ", n_sonnet,
+    " run on sonnet, reflecting a policy that reserves the lightweight model for work with no correctness reasoning required."
   )
 }
 knitr::kable(agent_data, format = "html",
@@ -381,7 +388,9 @@ cmd_data$alias[is.na(cmd_data$alias)] <- "\u2014"
 commands_caption <- safe_tar_read("vig_cr_commands_caption")
 if (is.null(commands_caption)) {
   commands_caption <- paste0(
-    nrow(cmd_data), " slash commands, parsed from ~/.claude/commands/"
+    "All ", nrow(cmd_data), " slash commands parsed directly from `~/.claude/commands/`, one row per command. ",
+    "Alias lists an alternate invocation name where one exists (a dash means none); Description is the one-line summary from the command's own file. ",
+    "Commands are user-triggered workflows — unlike hooks, which fire automatically on tool events, a command only runs when explicitly typed."
   )
 }
 knitr::kable(cmd_data, format = "html",
@@ -425,8 +434,10 @@ if (is.null(hook_data)) {
 hooks_caption <- safe_tar_read("vig_cr_hooks_caption")
 if (is.null(hooks_caption)) {
   hooks_caption <- paste0(
-    nrow(hook_data), " hook scripts across ",
-    length(unique(hook_data$event)), " of 8 lifecycle events"
+    "Hook scripts registered in `~/.claude/settings.json`, covering ", nrow(hook_data),
+    " scripts across ", length(unique(hook_data$event)), " of the eight lifecycle events. ",
+    "Each row lists the script name and the matcher pattern, if any, that restricts which tool calls trigger it. ",
+    "Hooks are invisible when everything is working; they only become visible when one blocks a tool call."
   )
 }
 n_hooks_total  <- nrow(hook_data)
@@ -527,10 +538,12 @@ summary_data <- tibble::tibble(
 summary_caption <- safe_tar_read("vig_cr_summary_caption")
 if (is.null(summary_caption)) {
   summary_caption <- paste0(
-    "The six layers of the config stack: ", counts$n_rules, " rules, ",
+    "Summary of the six layers of the config stack: ", counts$n_rules, " rules, ",
     counts$n_skills, " skills, ", counts$n_agents, " agents, ",
-    counts$n_memory, " memory files, ", counts$n_commands, " commands, ",
-    counts$n_hooks, " hooks"
+    counts$n_memory, " memory files, ", counts$n_commands, " commands, and ",
+    counts$n_hooks, " hooks, one row per layer. ",
+    "Count is the number of files in that layer; Role describes what the layer contributes when a request is processed. ",
+    "All six layers activate simultaneously on every request — none of them operates in isolation from the others."
   )
 }
 knitr::kable(summary_data, format = "html",

@@ -21,25 +21,25 @@ safe_tar_read("vig_usage_summary", wrap_df = TRUE)
 
 ## Cost Trends
 
-```{r cost-trend, fig.cap="Daily LLM costs over time with LOESS smoothing trend line."}
+```{r cost-trend, fig.cap="Daily LLM spend over time, shown as a line with one point per day and a LOESS-smoothed trend overlaid in a contrasting colour. The y-axis is in US dollars per day, aggregated across all tracked models and projects. Use the trend line to see whether spend is rising, falling, or holding steady week over week.", fig.alt="Line chart of daily LLM cost in dollars over time, with a smoothed trend line overlaid."}
 safe_tar_read("vig_cost_trend_plot", wrap_df = TRUE)
 ```
 
 ## Cumulative Cost
 
-```{r cumulative-cost, fig.cap="Cumulative LLM spending over time showing total expenditure trajectory."}
+```{r cumulative-cost, fig.cap="Running total of LLM spending since tracking began, shown as a filled area under a cumulative-sum line. The y-axis is cumulative cost in US dollars and the x-axis is calendar date. The slope of the curve indicates the current burn rate: a steepening slope means costs are accelerating, a flattening slope means spend has slowed.", fig.alt="Area chart of cumulative LLM cost in dollars from the start of tracking to the present."}
 safe_tar_read("vig_cumulative_cost_plot", wrap_df = TRUE)
 ```
 
 ## Breakdowns
 
-```{r breakdowns-combined, fig.height=10, fig.cap="Top: Cost breakdown by model. Bottom: Token usage by type (input, output, cache)."}
+```{r breakdowns-combined, fig.height=10, fig.cap="Two stacked Cleveland dot plots: the top panel ranks Claude models by total cost in US dollars, and the bottom panel ranks token categories (input, output, cache) by total tokens consumed in millions. Both panels sort categories from highest to lowest value and label each dot with its exact figure. Together they show which model and which token type are driving the largest share of usage.", fig.alt="Two dot plots: model cost ranking in dollars on top, token-type totals in millions on bottom."}
 safe_tar_read("vig_breakdowns_plot", wrap_df = TRUE)
 ```
 
 ## Gemini Analytics
 
-```{r gemini-analysis, fig.cap="Gemini daily costs from the Gemini usage database."}
+```{r gemini-analysis, fig.cap="Gemini daily costs pulled from the local Gemini usage database, shown as a Cleveland dot plot with one dot per date sorted by cost. The x-axis is cost in US dollars, with the exact figure labeled beside each dot. This chart tracks a cost stream separate from the Claude usage charts above, since Gemini billing is recorded independently.", fig.alt="Dot plot of Gemini daily cost in dollars, ranked from highest to lowest spending day."}
 safe_tar_read("vig_gemini_plot", wrap_df = TRUE)
 ```
 

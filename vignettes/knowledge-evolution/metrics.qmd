@@ -19,7 +19,8 @@ execute:
 ```{r confidence-chart}
 #| fig-width: 8
 #| fig-height: 4
-#| fig-alt: "Stacked bar showing confidence distribution"
+#| fig-cap: !expr conf_cap
+#| fig-alt: !expr conf_alt
 
 if (!is.null(latest)) {
   confidence <- latest |>
@@ -34,53 +35,95 @@ if (!is.null(latest)) {
       label = factor(label, levels = c("Fully Sourced", "Partial (has AI-inferred)", "Unsourced"))
     )
 
-  ggplot(confidence, aes(x = "Pages", y = value, fill = label)) +
-    geom_col(width = 0.6) +
-    geom_text(aes(label = value), position = position_stack(vjust = 0.5), size = 5, color = "white") +
-    scale_fill_manual(values = c(
-      "Fully Sourced" = "#69d4a0",
-      "Partial (has AI-inferred)" = "#ffd93d",
-      "Unsourced" = "#f08080"
-    )) +
-    coord_flip() +
+  n_total_conf <- sum(confidence$value)
+  n_fully_conf <- confidence$value[confidence$label == "Fully Sourced"]
+  pct_fully_conf <- if (n_total_conf > 0) round(100 * n_fully_conf / n_total_conf) else 0
+
+  conf_cap <- paste0(
+    "This Cleveland dot plot ranks knowledge-base pages by confidence level, ",
+    "from fully sourced (a `## Sources` section citing raw material) down to unsourced. ",
+    "Of ", scales::comma(n_total_conf, accuracy = 1), " pages tracked, ",
+    scales::comma(n_fully_conf, accuracy = 1), " (", pct_fully_conf, "%) are fully sourced. ",
+    "Categories are sorted descending by page count so the balance between well-cited ",
+    "and un-cited content is visible at a glance."
+  )
+  conf_alt <- paste0(
+    "Dot plot: ",
+    paste(sprintf("%s %s pages", confidence$label, scales::comma(confidence$value, accuracy = 1)),
+          collapse = "; "), "."
+  )
+
+  ggplot(confidence, aes(x = value, y = reorder(label, value), color = label)) +
+    geom_segment(aes(x = 0, xend = value, y = label, yend = label), linewidth = 1) +
+    geom_point(size = 4) +
+    geom_text(aes(label = scales::comma(value, accuracy = 1)), hjust = -0.4, color = "#ffffff", size = 4) +
+    scale_color_manual(values = PALETTE) +
     labs(
       title = "Knowledge Base Quality",
       subtitle = "Pages by confidence level",
-      x = NULL,
-      y = "Number of Pages",
-      fill = "Confidence"
+      x = "Number of Pages",
+      y = NULL,
+      color = "Confidence"
     ) +
     theme_dashboard +
-    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+    theme(legend.position = "none") +
+    expand_limits(x = max(confidence$value) * 1.15)
 } else {
   # Fallback: categorize pages
   n_with_src <- fallback_kb$with_sources
   n_ai <- if (fallback_kb$ai_inferred > 0) min(fallback_kb$ai_inferred, fallback_kb$n_pages - n_with_src) else 0
   n_unsourced <- fallback_kb$n_pages - n_with_src
 
-  tibble(
+  fallback_conf <- tibble(
     label = factor(c("With Sources", "Unsourced"),
                    levels = c("With Sources", "Unsourced")),
     value = c(n_with_src, n_unsourced)
-  ) |>
-    ggplot(aes(x = "Pages", y = value, fill = label)) +
-    geom_col(width = 0.6) +
-    geom_text(aes(label = value), position = position_stack(vjust = 0.5), size = 5, color = "white") +
-    scale_fill_manual(values = c("With Sources" = "#69d4a0", "Unsourced" = "#f08080")) +
-    coord_flip() +
-    labs(title = "Knowledge Base Quality", x = NULL, y = "Pages", fill = "Status") +
+  )
+
+  conf_cap <- paste0(
+    "This Cleveland dot plot ranks knowledge-base pages by confidence level, ",
+    "from pages with sources down to unsourced pages. ",
+    "Of ", scales::comma(fallback_kb$n_pages, accuracy = 1), " pages tracked, ",
+    scales::comma(n_with_src, accuracy = 1), " carry a `## Sources` section. ",
+    "Categories are sorted descending by page count so the balance between well-cited ",
+    "and un-cited content is visible at a glance."
+  )
+  conf_alt <- paste0(
+    "Dot plot: ",
+    paste(sprintf("%s %s pages", fallback_conf$label, scales::comma(fallback_conf$value, accuracy = 1)),
+          collapse = "; "), "."
+  )
+
+  fallback_conf |>
+    ggplot(aes(x = value, y = reorder(label, value), color = label)) +
+    geom_segment(aes(x = 0, xend = value, y = label, yend = label), linewidth = 1) +
+    geom_point(size = 4) +
+    geom_text(aes(label = scales::comma(value, accuracy = 1)), hjust = -0.4, color = "#ffffff", size = 4) +
+    scale_color_manual(values = PALETTE) +
+    labs(title = "Knowledge Base Quality", x = "Pages", y = NULL, color = "Status") +
     theme_dashboard +
-    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+    theme(legend.position = "none") +
+    expand_limits(x = max(fallback_conf$value) * 1.15)
 }
 ```
 
 ## Wiki Pages
 
 ```{r wiki-pages-table}
+#| tbl-cap: !expr wiki_tbl_cap
+
 if (!is.null(latest)) {
   wiki_pages <- latest |>
     filter(category == "wiki", metric == "words", item != "all") |>
     arrange(desc(value))
+
+  wiki_tbl_cap <- paste0(
+    "This table lists every wiki page in the knowledge base, ranked by word count in ",
+    "descending order. There are ", scales::comma(nrow(wiki_pages), accuracy = 1),
+    " pages tracked in the latest snapshot. ",
+    "Word counts come from the anonymised `vig_kb_stats.rds` aggregate (page identifiers ",
+    "are pseudonymous, e.g. `page_001`), so page titles never leak into CI output."
+  )
 
   if (nrow(wiki_pages) > 0) {
     wiki_pages |>
@@ -93,6 +136,13 @@ if (!is.null(latest)) {
     cat("*No wiki pages found*")
   }
 } else {
+  wiki_tbl_cap <- paste0(
+    "This table lists every wiki page in the knowledge base, ranked by word count in ",
+    "descending order. There are ", scales::comma(fallback_kb$n_pages, accuracy = 1),
+    " pages counted directly from the local `wiki/` directory (no time-series snapshot ",
+    "is available, so this is a live file-count fallback rather than the RDS aggregate)."
+  )
+
   if (length(fallback_kb$page_words) > 0) {
     tibble(
       page = basename(names(fallback_kb$page_words)) |> tools::file_path_sans_ext(),
@@ -112,6 +162,8 @@ if (!is.null(latest)) {
 ## Raw Sources
 
 ```{r raw-sources}
+#| tbl-cap: !expr raw_tbl_cap
+
 if (!is.null(latest)) {
   raw_summary <- latest |>
     filter(category == "raw") |>
@@ -126,12 +178,29 @@ if (!is.null(latest)) {
     ) |>
     select(label, value)
 
+  raw_tbl_cap <- paste0(
+    "This table summarises the append-only `raw/` folder of the knowledge base — the ",
+    "unedited source material (transcripts, notes, articles) that wiki pages cite back to. ",
+    "It reports the total source count, total size, and how many sources were added in the ",
+    "last 7 days, broken down by file extension where available. ",
+    "All values are counts or byte totals with zero decimal places, since raw sources are ",
+    "discrete files, never fractional."
+  )
+
   raw_summary |>
     gt() |>
     cols_label(label = "Metric", value = "Value") |>
     fmt_number(columns = value, decimals = 0, use_seps = TRUE) |>
     tab_header(title = "Raw Sources")
 } else {
+  raw_tbl_cap <- paste0(
+    "This table summarises the append-only `raw/` folder of the knowledge base — the ",
+    "unedited source material that wiki pages cite back to. No time-series snapshot is ",
+    "available, so this reports a single live file count from the local `raw/` directory ",
+    "rather than the multi-metric RDS aggregate. ",
+    "The value is a whole-file count, so it is shown with zero decimal places."
+  )
+
   tibble(
     label = c("Total Sources"),
     value = c(fallback_kb$n_sources)
@@ -148,10 +217,11 @@ if (!is.null(latest)) {
 ```{r evolution-chart}
 #| fig-width: 10
 #| fig-height: 5
-#| fig-alt: "Line chart showing knowledge base growth"
+#| fig-cap: !expr evo_cap
+#| fig-alt: !expr evo_alt
 
 if (!is.null(latest) && n_distinct(kb_data$snapshot_date) > 1) {
-  kb_data |>
+  evo_data <- kb_data |>
     filter(
       item == "all",
       metric %in% c("page_count", "source_count", "word_count")
@@ -163,14 +233,44 @@ if (!is.null(latest) && n_distinct(kb_data$snapshot_date) > 1) {
         metric == "word_count" ~ "Total Words (÷100)"
       ),
       value = if_else(metric == "word_count", value / 100, value)
-    ) |>
+    )
+
+  n_snapshots_evo <- n_distinct(evo_data$snapshot_date)
+  date_range_evo <- range(evo_data$snapshot_date)
+  latest_pages_evo <- evo_data$value[evo_data$label == "Wiki Pages" & evo_data$snapshot_date == max(evo_data$snapshot_date)]
+
+  evo_cap <- paste0(
+    "This line chart tracks knowledge-base growth over time, plotting wiki page count, ",
+    "raw source count, and total word count (divided by 100 to share a common y-axis) ",
+    "as separate coloured series. It spans ", scales::comma(n_snapshots_evo, accuracy = 1),
+    " daily snapshots from ", format(date_range_evo[1]), " to ", format(date_range_evo[2]), ". ",
+    "The most recent snapshot shows ", scales::comma(latest_pages_evo, accuracy = 1), " wiki pages, ",
+    "and an upward trend across series indicates the knowledge base is still actively growing."
+  )
+  evo_alt <- paste0(
+    "Line chart, ", scales::comma(n_snapshots_evo, accuracy = 1), " snapshots from ",
+    format(date_range_evo[1]), " to ", format(date_range_evo[2]),
+    "; latest wiki page count ", scales::comma(latest_pages_evo, accuracy = 1), "."
+  )
+
+  evo_data |>
     ggplot(aes(x = snapshot_date, y = value, color = label)) +
     geom_line(linewidth = 1.2) +
     geom_point(size = 3) +
-    scale_color_viridis_d(option = "plasma", end = 0.85) +
+    scale_color_manual(values = PALETTE) +
     labs(title = "Knowledge Base Growth", x = NULL, y = "Count", color = "Metric") +
     theme_dashboard
 } else {
+  evo_cap <- paste0(
+    "This panel would show a line chart tracking knowledge-base growth over time — wiki page ",
+    "count, raw source count, and total word count as separate series. ",
+    "No time-series snapshot is available yet, so only a single-point-in-time count can be shown. ",
+    "Run `~/.claude/scripts/knowledge_pulse.sh` daily to start collecting the history this chart needs."
+  )
+  evo_alt <- paste0(
+    "No time-series data yet. Current snapshot: ", scales::comma(fallback_kb$n_pages, accuracy = 1),
+    " wiki pages, ", scales::comma(fallback_kb$n_sources, accuracy = 1), " raw sources."
+  )
   cat("*Run `~/.claude/scripts/knowledge_pulse.sh` daily to collect time-series data.*
 
 Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw sources")
@@ -180,21 +280,22 @@ Current: ", fallback_kb$n_pages, " wiki pages, ", fallback_kb$n_sources, " raw s
 ## Topic Graph
 
 ```{r topic-graph-vis}
-#| fig-alt: "Interactive network diagram of wiki topic connections from [[link]] references. Click a node to highlight its neighbours."
+#| fig-cap: !expr vis_cap
+#| fig-alt: !expr vis_alt
 if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
   .n  <- kg_graph$nodes
   .e  <- kg_graph$edges
   .dm <- sort(unique(.n$domain))
-  .pc <- scales::viridis_pal(option = "plasma", end = 0.85)(max(3L, length(.dm)))
-  .dc <- setNames(.pc[seq_along(.dm)], .dm)
+  .dc <- setNames(rep_len(DOMAIN_PALETTE, length(.dm)), .dm)
   .col <- .dc[.n$domain]
-  .col[.n$broken] <- "#f08080"
-  .col[.n$orphan] <- "#ffd93d"
+  .col[.n$broken] <- PALETTE[["Broken target"]]
+  .col[.n$orphan] <- PALETTE[["Orphan (no inbound)"]]
   .vn <- data.frame(
     id    = .n$id,
     label = .n$label,
     value = pmax(10L, 10L + .n$inbound * 8L),
     color = .col,
+    font.color = "#ffffff",
     title = paste0("<b>", .n$id, "</b><br>Domain: ", .n$domain,
                    "<br>Inbound: ", .n$inbound,
                    ifelse(.n$broken, "<br><i>Broken target</i>", ""),
@@ -205,10 +306,30 @@ if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
                     stringsAsFactors = FALSE)
   .lg <- data.frame(
     label = c("Wiki page", "Orphan (no inbound)", "Broken target"),
-    color = c(.dc[[1L]], "#ffd93d", "#f08080"),
+    color = c(.dc[[1L]], PALETTE[["Orphan (no inbound)"]], PALETTE[["Broken target"]]),
     shape = "dot", size = 20L, stringsAsFactors = FALSE
   )
-  visNetwork::visNetwork(.vn, .ve, width = "100%", height = "500px") |>
+  n_broken_vis <- sum(.n$broken)
+  n_orphan_vis <- sum(.n$orphan)
+
+  vis_cap <- paste0(
+    "This interactive network diagram plots every wiki page as a node, connected by the ",
+    "`[[link]]` cross-references found in each page's body. Node colour encodes the domain ",
+    "cluster derived from the page's filename prefix, node size scales with inbound-link ",
+    "count, and yellow/red flag orphan pages (", scales::comma(n_orphan_vis, accuracy = 1),
+    " with no inbound links) and broken link targets (", scales::comma(n_broken_vis, accuracy = 1),
+    ") respectively. Click any node to highlight its immediate neighbours."
+  )
+  vis_alt <- paste0(
+    "Interactive network: ", scales::comma(nrow(.n), accuracy = 1), " wiki pages, ",
+    scales::comma(nrow(.e), accuracy = 1), " links, ",
+    scales::comma(n_orphan_vis, accuracy = 1), " orphan pages, ",
+    scales::comma(n_broken_vis, accuracy = 1), " broken targets."
+  )
+
+  visNetwork::visNetwork(.vn, .ve, width = "100%", height = "500px",
+                          background = "#000000") |>
+    visNetwork::visNodes(font = list(color = "#ffffff")) |>
     visNetwork::visOptions(
       highlightNearest = list(enabled = TRUE, degree = 1L, hover = TRUE),
       nodesIdSelection = TRUE
@@ -216,6 +337,13 @@ if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
     visNetwork::visIgraphLayout(layout = "layout_with_fr") |>
     visNetwork::visLegend(addNodes = .lg, useGroups = FALSE)
 } else {
+  vis_cap <- paste0(
+    "This panel would show an interactive network diagram of wiki pages connected by ",
+    "`[[link]]` cross-references, coloured by domain cluster and sized by inbound-link count. ",
+    "No topic-graph data is available in this build. ",
+    "Run `~/.claude/scripts/knowledge_pulse.sh` locally to regenerate `vig_kb_graph.rds`."
+  )
+  vis_alt <- "No topic-graph data available."
   cat("*No topic-graph data available. Run",
       "`~/.claude/scripts/knowledge_pulse.sh` locally to regenerate",
       "`vig_kb_graph.rds`.*")
@@ -225,8 +353,8 @@ if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
 ```{r topic-graph-static}
 #| fig-width: 8
 #| fig-height: 6
-#| fig-alt: "Static directed graph of wiki topic connections. Nodes coloured by domain cluster and sized by inbound link count. Yellow nodes are orphan pages with no inbound links."
-#| fig-cap: "Knowledge base topic graph. Node size reflects inbound link count; colour identifies domain cluster; yellow = orphan page."
+#| fig-cap: !expr static_cap
+#| fig-alt: !expr static_alt
 if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
   .n <- kg_graph$nodes
   .e <- kg_graph$edges
@@ -236,15 +364,37 @@ if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
     directed = TRUE
   )
   .dm  <- sort(unique(.n$domain))
-  .pc  <- scales::viridis_pal(option = "plasma", end = 0.85)(max(3L, length(.dm)))
-  .dc  <- setNames(.pc[seq_along(.dm)], .dm)
+  .dc  <- setNames(rep_len(DOMAIN_PALETTE, length(.dm)), .dm)
   .vcol <- .dc[igraph::V(.g)$domain]
-  .vcol[igraph::V(.g)$broken] <- "#f08080"
-  .vcol[igraph::V(.g)$orphan] <- "#ffd93d"
+  .vcol[igraph::V(.g)$broken] <- PALETTE[["Broken target"]]
+  .vcol[igraph::V(.g)$orphan] <- PALETTE[["Orphan (no inbound)"]]
   igraph::V(.g)$fill_color <- .vcol
+
+  n_broken_static <- sum(.n$broken)
+  n_orphan_static <- sum(.n$orphan)
+  n_domains_static <- length(.dm)
+
+  static_cap <- paste0(
+    "This static directed graph is a print-friendly rendering of the same wiki topic ",
+    "connections shown in the interactive panel above: ", scales::comma(nrow(.n), accuracy = 1),
+    " pages and ", scales::comma(nrow(.e), accuracy = 1), " `[[link]]` references across ",
+    scales::comma(n_domains_static, accuracy = 1), " domain clusters. ",
+    "Node size reflects inbound-link count, node colour identifies domain cluster, and ",
+    "yellow/red mark the ", scales::comma(n_orphan_static, accuracy = 1), " orphan pages and ",
+    scales::comma(n_broken_static, accuracy = 1), " broken link targets respectively. ",
+    "Force-directed layout groups densely cross-linked pages together, so isolated clusters ",
+    "indicate topics with weak connections to the rest of the knowledge base."
+  )
+  static_alt <- paste0(
+    "Static directed graph: ", scales::comma(nrow(.n), accuracy = 1), " pages, ",
+    scales::comma(nrow(.e), accuracy = 1), " links, ",
+    scales::comma(n_orphan_static, accuracy = 1), " orphan pages, ",
+    scales::comma(n_broken_static, accuracy = 1), " broken targets, coloured by domain cluster."
+  )
+
   ggraph::ggraph(.g, layout = "fr") +
     ggraph::geom_edge_link(
-      colour = "#888888", alpha = 0.55,
+      colour = "#cccccc", alpha = 0.6,
       arrow  = grid::arrow(length = grid::unit(2.5, "mm"), type = "closed"),
       end_cap = ggraph::circle(3, "mm")
     ) +
@@ -253,7 +403,7 @@ if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
     ) +
     ggraph::geom_node_text(
       ggplot2::aes(label = name),
-      colour = "white", size = 2.5, repel = TRUE
+      colour = "#ffffff", size = 2.5, repel = TRUE
     ) +
     ggplot2::scale_colour_identity() +
     ggplot2::scale_size_continuous(range = c(3, 10), name = "Inbound links") +
@@ -263,6 +413,13 @@ if (!is.null(kg_graph) && nrow(kg_graph$edges) > 0L) {
     theme_dashboard +
     ggplot2::theme(legend.position = "bottom")
 } else {
+  static_cap <- paste0(
+    "This static directed graph would show wiki topic connections coloured by domain ",
+    "cluster and sized by inbound-link count. ",
+    "No edges are available to plot in this build. ",
+    "Run `~/.claude/scripts/knowledge_pulse.sh` locally to regenerate `vig_kb_graph.rds`."
+  )
+  static_alt <- "No topic-graph edges available."
   cat("*No edges to plot.*")
 }
 ```

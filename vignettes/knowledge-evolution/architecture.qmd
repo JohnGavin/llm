@@ -21,9 +21,10 @@ The knowledge base (KB) is a **private "second brain"** — a local-only git rep
 The diagram below shows the three-layer structure and where the privacy boundary sits. Clickable nodes link to the relevant source files and rules.
 
 ```{mermaid}
+%%| fig-cap: "This diagram traces how a piece of knowledge moves from raw capture to public dashboard while a privacy boundary blocks its content from ever leaving the local machine. Raw material lands append-only in raw/, gets distilled with provenance and cross-links into wiki/, and only then feeds outputs/; separately, knowledge_pulse.sh reads wiki/ and extracts counts, titles, and themes — never page bodies — into the committed vig_kb_stats.rds aggregate. The Public / CI subgraph (the dashboard and the daily digest email) can only ever see that aggregate, and the crossed-out arrow to 'Raw content NEVER here' marks the boundary that is structurally, not just procedurally, enforced."
 %%| fig-alt: "Knowledge base data flow: raw (append-only) feeds wiki (provenance + cross-links) feeds outputs. A privacy boundary prevents raw content from reaching CI, the dashboard, or the digest email. knowledge_pulse.sh extracts aggregate metrics only."
 
-flowchart LR
+flowchart TB
   subgraph LOCAL ["🔒 Local only (PRIVATE + pre-push block)"]
     RAW["raw/\n(append-only)"]
     WIKI["wiki/\n(provenance + [[links]])"]

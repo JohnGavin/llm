@@ -49,25 +49,41 @@ if (is.null(scope)) {
   )
 }
 
-# Stable colour palette — used unchanged across all 5 scenes
+# Stable colour palette — used unchanged across all 5 scenes.
+# Every entry is checked to be >= 4.5:1 contrast against a #000000 background.
 category_palette <- c(
-  rules    = "#e6194b",
+  rules    = "#ff4d6d",
   skills   = "#3cb44b",
-  agents   = "#4363d8",
+  agents   = "#6495ed",
   hooks    = "#f58231",
-  memory   = "#911eb4",
+  memory   = "#c77dff",
   commands = "#46f0f0",
   scripts  = "#aaffc3"
 )
 
 n_files <- nrow(cfg)
 
+# Dynamic hotspot count, computed once here so it can be reused both in the
+# scene4-plot fig-cap chunk option (evaluated before the chunk body runs) and
+# in the chunk body itself, without duplicating the filter logic.
+n_hotspot_rules <- sum(cfg$category == "rules" & cfg$n_lines > 150)
+
 base_theme <- theme_minimal(base_size = 13) +
   theme(
-    panel.background  = element_rect(fill = "transparent", colour = NA),
-    plot.background   = element_rect(fill = "transparent", colour = NA),
-    legend.background = element_rect(fill = "transparent", colour = NA),
-    legend.key        = element_rect(fill = "transparent", colour = NA)
+    plot.background   = element_rect(fill = "#000000", colour = NA),
+    panel.background  = element_rect(fill = "#000000", colour = NA),
+    legend.background = element_rect(fill = "#000000", colour = NA),
+    legend.key        = element_rect(fill = "#000000", colour = NA),
+    panel.grid.major  = element_line(colour = "#ffffff", linewidth = 0.3),
+    panel.grid.minor  = element_line(colour = "#ffffff", linewidth = 0.15),
+    text              = element_text(colour = "#ffffff"),
+    axis.text         = element_text(colour = "#ffffff"),
+    axis.title        = element_text(colour = "#ffffff"),
+    plot.title        = element_text(colour = "#ffffff", face = "bold"),
+    plot.subtitle     = element_text(colour = "#ffffff"),
+    legend.text       = element_text(colour = "#ffffff"),
+    legend.title      = element_text(colour = "#ffffff"),
+    legend.position   = "bottom"
   )
 ```
 
@@ -76,6 +92,7 @@ base_theme <- theme_minimal(base_size = 13) +
 :::{#cr-scene1 .sticky}
 ```{r scene1-plot}
 #| fig-alt: !expr scope$alt
+#| fig-cap: !expr paste0("Scatter plot of file size in bytes against line count for all ", n_files, " tracked configuration files under `.claude/`, shown in a single uniform colour with no category encoding yet. Each point represents one file; the dense cluster near the origin holds short hook and command scripts, while the sparse upper region holds long rule documents that exceed 300 lines. This unencoded view establishes the full inventory before category, age, and hotspot encodings are layered on in later scenes.")
 ggplot(cfg, aes(x = n_bytes, y = n_lines)) +
   geom_point(colour = "#888888", alpha = 0.6, size = 2) +
   scale_x_continuous(labels = scales::label_number(suffix = " B")) +
@@ -103,6 +120,7 @@ The spread along the y-axis is striking. A handful of files exceed 300 lines; mo
 :::{#cr-scene2 .sticky}
 ```{r scene2-plot}
 #| fig-alt: "The same config files now coloured by category. Rules are red and the largest cluster; skills are green and slightly smaller; scripts are light green; commands are cyan. Agents and hooks form smaller groups."
+#| fig-cap: "Scatter plot of file size against line count, now coloured by each file's configuration category (rules, skills, agents, hooks, memory, commands, scripts) using the palette that stays constant for the rest of the story. Rules (red) and skills (green) form the two largest and most spread-out clusters, together accounting for over half of all tracked files. Commands and hooks cluster tightly in the lower-left, reflecting their by-design brevity, while agents and memory form smaller, more compact groups."
 ggplot(cfg, aes(x = n_bytes, y = n_lines, colour = category)) +
   geom_point(alpha = 0.65, size = 2.5) +
   scale_colour_manual(values = category_palette, name = "Category") +
@@ -131,6 +149,7 @@ Skills lean smaller — a SKILL.md is typically a focused capability document. R
 :::{#cr-scene3 .sticky}
 ```{r scene3-plot}
 #| fig-alt: "The same colour-coded dots now have size proportional to git_age_days, so older files appear as larger circles. Several large red dots in the rules category indicate long-standing constraint files."
+#| fig-cap: "Scatter plot of file size against line count with a third encoding added: point size represents `git_age_days`, capped at 200 days for display, so larger points are older files. The largest red points sit within the rules category, identifying long-standing constraint files that have remained stable for months. Smaller points scattered across every category mark files added or substantially edited in the last few weeks, showing that the config stack accumulates in layers rather than all at once."
 ggplot(
   cfg |> mutate(age_clamped = pmin(git_age_days, 200)),
   aes(x = n_bytes, y = n_lines, colour = category, size = age_clamped)
@@ -167,6 +186,7 @@ Age and size together tell a different story than either alone. A large, old, la
 :::{#cr-scene4 .sticky}
 ```{r scene4-plot}
 #| fig-alt: "Files with more than 150 lines in the rules category are highlighted in red with full opacity. All other files are shown in grey at low opacity, drawing attention to the six outlier rule documents that dominate by line count."
+#| fig-cap: !expr paste0("Hotspot view highlighting the ", n_hotspot_rules, " rule files that exceed 150 lines, shown at full opacity in red while the remaining config files render in faded grey. These outliers are the load-bearing constraints a new agent encounters first, and each one documents a codified incident rather than being long for its own sake. The faded background shows what the hotspots sit among — dozens of shorter files that together form the surrounding texture of the constraint set.")
 hotspot_threshold <- 150L
 cfg_hot <- cfg |>
   mutate(
@@ -214,6 +234,7 @@ The greyed-out mass shows what those hotspots sit within: dozens of shorter file
 :::{#cr-scene5 .sticky}
 ```{r scene5-plot}
 #| fig-alt: "Small multiples showing the line count distribution for each of the seven config categories. Rules have the widest spread and highest maximum. Scripts and hooks cluster near zero. Skills and commands fall in the middle range."
+#| fig-cap: "Small-multiples histogram of line count, faceted into one panel per configuration category with independent y-axis scales and coloured using the same palette as the previous scenes. Rules and skills show the widest spread, ranging from short focused files to long comprehensive ones, while hooks and scripts cluster tightly near zero lines, reflecting their preference for brevity over completeness. Agents, memory, and commands fall in an intermediate range, with commands showing a mild bimodal shape that separates simple one-line triggers from multi-step workflow files."
 ggplot(cfg, aes(x = n_lines, fill = category)) +
   geom_histogram(binwidth = 20, colour = NA, alpha = 0.8) +
   facet_wrap(~category, scales = "free_y", ncol = 2) +
