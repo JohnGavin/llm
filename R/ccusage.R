@@ -159,15 +159,37 @@ ccusage_cache_file <- function(type = c("daily", "session", "blocks"),
 
 #' Load cached ccusage data from JSON files
 #'
+#' For `type = "daily"` with the default `cache_dir = NULL`, this reads
+#' *every* available daily cache window (this package's own copy and, if
+#' present, the `llmtelemetry` checkout's copy) and unions them via
+#' [merge_ccusage_daily()] rather than reading a single source (llm#870).
+#' The two windows are disjoint in date, use different project-naming
+#' schemes, and the boundary between them is a real, unrecoverable gap — see
+#' [merge_ccusage_daily()] and [canonicalize_ccusage_project()] for how that
+#' is handled. Passing an explicit `cache_dir` opts out of the merge and
+#' reads exactly that one file, preserving the original single-source
+#' behaviour for callers that need it (e.g. tests pointed at a fixture
+#' directory).
+#'
+#' `session` and `blocks` are unaffected by this change and keep reading a
+#' single resolved file, as before.
+#'
 #' @param type One of "daily", "session", "blocks"
-#' @param project_filter Project name pattern to filter (NULL for all projects)
-#' @param cache_dir Directory containing cached JSON files
+#' @param project_filter Project name pattern to filter (NULL for all
+#'   projects). Matched against the raw (pre-canonicalisation) project name,
+#'   so existing filter patterns keep working unchanged.
+#' @param cache_dir Directory containing cached JSON files. If supplied,
+#'   disables the multi-source daily merge and reads only this directory.
 #' @return tibble of usage data
 #' @export
 load_cached_ccusage <- function(type = c("daily", "session", "blocks"),
                                  project_filter = NULL,
                                  cache_dir = NULL) {
   type <- match.arg(type)
+
+  if (type == "daily" && is.null(cache_dir)) {
+    return(load_cached_ccusage_daily_merged(project_filter))
+  }
 
   cache_file <- if (is.null(cache_dir)) {
     ccusage_cache_file(type)
@@ -189,6 +211,51 @@ load_cached_ccusage <- function(type = c("daily", "session", "blocks"),
   }
 
   parse_ccusage_json(json_data, project_filter)
+}
+
+#' Load and merge every available ccusage daily cache window
+#'
+#' Helper for the default (`cache_dir = NULL`) branch of
+#' [load_cached_ccusage()] for `type = "daily"`. Reads every window
+#' [ccusage_daily_cache_paths()] finds, parses each with
+#' [parse_ccusage_json()] (unfiltered, so cross-source canonical-project
+#' matching sees the full raw name), unions them with
+#' [merge_ccusage_daily()], then applies `project_filter` against the raw
+#' (pre-canonicalisation) project name for backward compatibility with
+#' existing callers.
+#'
+#' If only one window is present (e.g. `llmtelemetry` not checked out
+#' locally), the single-source result is still canonicalised and tagged
+#' with `source_window`/`project_raw` for a consistent return shape.
+#'
+#' @param project_filter Project name pattern to filter (NULL for all).
+#' @return tibble of usage data, or `NULL` if no cache file was found.
+#' @keywords internal
+load_cached_ccusage_daily_merged <- function(project_filter = NULL) {
+  paths <- ccusage_daily_cache_paths()
+
+  if (length(paths) == 0L) {
+    message("Cache file not found: ccusage_daily_all.json")
+    return(NULL)
+  }
+
+  read_one <- function(f) {
+    if (is.na(f)) return(NULL)
+    parse_ccusage_json(jsonlite::fromJSON(f), project_filter = NULL)
+  }
+
+  merged <- merge_ccusage_daily(
+    llm_data         = read_one(paths["llm"]),
+    telemetry_data   = read_one(paths["llmtelemetry"])
+  )
+
+  if (is.null(merged) || nrow(merged) == 0L) return(merged)
+
+  if (!is.null(project_filter)) {
+    merged <- merged[grepl(project_filter, merged$project_raw, fixed = TRUE), , drop = FALSE]
+  }
+
+  merged
 }
 
 #' Get summary statistics for LLM usage
