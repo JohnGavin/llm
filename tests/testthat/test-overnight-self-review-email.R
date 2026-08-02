@@ -29,11 +29,16 @@ library(testthat)
     package  = "llm",
     mustWork = FALSE
   )
-  # Fallback: dev-time source tree
+  # Fallback: dev-time source tree.
+  # pkgload::pkg_path() resolves the package root regardless of the working
+  # directory; dirname(dirname(test_path())) did not — under test_local()
+  # test_path() errors with "Can't find 'tests/testthat'", so this fallback
+  # never produced a usable path and every test here failed to locate the
+  # script. See #871.
   if (!nzchar(s) || !file.exists(s)) {
     s <- normalizePath(
       file.path(
-        dirname(dirname(testthat::test_path())),
+        pkgload::pkg_path(),
         ".claude", "scripts", "send_overnight_self_review_email.R"
       ),
       mustWork = FALSE
@@ -44,7 +49,7 @@ library(testthat)
 
 .plist_path <- normalizePath(
   file.path(
-    dirname(dirname(testthat::test_path())),
+    pkgload::pkg_path(),
     ".claude", "launchd", "com.claude.overnight-self-review-email.plist"
   ),
   mustWork = FALSE
@@ -67,12 +72,18 @@ run_dry_run <- function(db_path = .real_db, extra_env = character(0)) {
     "REPORT_RECIPIENT=",
     extra_env
   )
+  # env = env_vars, NOT c(Sys.getenv(), env_vars) — same defect #848/#851 fixed
+  # in test-kb-digest.R. system2() renders `env` as `env NAME=VAL ... cmd`, and
+  # `env` already inherits the parent environment, so splicing all of
+  # Sys.getenv() in only produces a vast command line whose quoting mangles the
+  # invocation. The script then produced no usable output and the QA-marker and
+  # source-table assertions failed against an empty string. See #871.
   system2(
     "Rscript",
     args   = .email_script,
     stdout = TRUE,
     stderr = TRUE,
-    env    = c(Sys.getenv(), env_vars)
+    env    = env_vars
   )
 }
 
@@ -92,8 +103,11 @@ test_that("dry-run output is non-empty when DB present", {
 
   out      <- run_dry_run()
   combined <- paste(out, collapse = "\n")
+  # expect_gt() has no `info` argument (signature is object/expected/label/
+  # expected.label) — passing one raised "unused argument" instead of asserting,
+  # so this check never actually ran. Context goes in `label`. See #871.
   expect_gt(nchar(combined), 200L,
-            info = "dry-run output is too short — likely an early error")
+            label = "dry-run output length (short output usually means an early error)")
 })
 
 test_that("dry-run output contains required QA markers", {
@@ -122,9 +136,13 @@ test_that("dry-run output contains at least 4 collapsible <details> blocks", {
   out      <- run_dry_run()
   combined <- paste(out, collapse = "\n")
 
-  n_details <- length(gregexpr("<details", combined)[[1]])
-  expect_gte(n_details, 4L,
-             info = paste("Expected ≥4 <details> blocks, found:", n_details))
+  # gregexpr() returns -1 for "no match", and length(-1) is 1 — so the old
+  # `length(gregexpr(...)[[1]])` reported 1 block when there were none. Count
+  # actual match positions instead. See #871.
+  n_details <- sum(gregexpr("<details", combined)[[1]] > 0)
+  # Same as above: expect_gte() takes no `info`. testthat already reports the
+  # actual value, so `label` only needs to name the quantity. See #871.
+  expect_gte(n_details, 4L, label = "number of <details> blocks")
 })
 
 test_that("dry-run output contains all 4 source table names in Section 2", {
