@@ -390,8 +390,82 @@ check_build_info_blocks <- function(vignettes_dir = "docs/articles",
   invisible(html_files)
 }
 
+#' Check committed vig_*.rds snapshots are not older than their targets
+#'
+#' The telemetry vignettes read via `safe_tar_read()`, which falls back to the
+#' committed `inst/extdata/vignettes/vig_*.rds` snapshots when there is no
+#' `_targets` store (i.e. on deploy). A pipeline-source fix therefore stays
+#' invisible on the deployed site until the snapshots are re-exported.
+#'
+#' That is exactly what happened in #859/#860: the plots were fixed in source,
+#' merged, and CI went green, but the deployed vignettes kept rendering the old
+#' snapshots for weeks because nothing compared the two.
+#'
+#' This gate compares each `vig_` target's last build time in `tar_meta()`
+#' against its snapshot's mtime and fails when the target is newer.
+#'
+#' @param store targets store to read metadata from.
+#' @param snapshot_dir Directory holding the committed `.rds` snapshots.
+#' @param tolerance_sec Grace period; a snapshot written moments before the
+#'   target's recorded build time is not stale in any meaningful sense.
+#' @return Invisibly, a tibble of target/snapshot times.
+#' @keywords internal
+check_rds_freshness <- function(store = targets::tar_config_get("store"),
+                                 snapshot_dir = "inst/extdata/vignettes",
+                                 tolerance_sec = 60) {
+  if (!dir.exists(store)) {
+    cli::cli_alert_info("No targets store at {.path {store}} — skipping snapshot-freshness gate.")
+    return(invisible(NULL))
+  }
+  if (!dir.exists(snapshot_dir)) {
+    cli::cli_alert_info("No snapshot dir at {.path {snapshot_dir}} — skipping snapshot-freshness gate.")
+    return(invisible(NULL))
+  }
+
+  meta <- targets::tar_meta(store = store)
+  meta <- meta[grepl("^vig_", meta$name) & !is.na(meta$time), c("name", "time")]
+  if (nrow(meta) == 0) {
+    cli::cli_alert_info("No built vig_* targets in {.path {store}} — skipping snapshot-freshness gate.")
+    return(invisible(NULL))
+  }
+
+  meta$rds <- file.path(snapshot_dir, paste0(meta$name, ".rds"))
+  meta$rds_mtime <- file.mtime(meta$rds)
+
+  missing <- meta$name[is.na(meta$rds_mtime)]
+  stale <- meta$name[
+    !is.na(meta$rds_mtime) &
+      as.numeric(difftime(meta$time, meta$rds_mtime, units = "secs")) > tolerance_sec
+  ]
+
+  if (length(missing) || length(stale)) {
+    cli::cli_abort(c(
+      "x" = "Committed vig_*.rds snapshots are out of date with the pipeline.",
+      "i" = if (length(stale)) {
+        "Target newer than snapshot ({length(stale)}): {paste(stale, collapse = ', ')}"
+      },
+      "i" = if (length(missing)) {
+        "Built target with no snapshot ({length(missing)}): {paste(missing, collapse = ', ')}"
+      },
+      "i" = "The deployed vignettes read these snapshots, not the pipeline.",
+      "i" = "Fix: Rscript data-raw/export_vignette_snapshots.R"
+    ))
+  }
+
+  cli::cli_alert_success(
+    "All {nrow(meta)} vig_* snapshot{?s} at least as new as their target{?s}."
+  )
+  invisible(meta)
+}
+
 plan_qa_gates <- function() {
   list(
+    targets::tar_target(
+      qa_rds_freshness,
+      check_rds_freshness(),
+      packages = c("cli"),
+      cue = targets::tar_cue(mode = "always")
+    ),
     targets::tar_target(
       qa_html_no_errors,
       scan_html_for_errors(),
