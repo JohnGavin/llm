@@ -4,6 +4,41 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-02 (session 2) — telemetry snapshot exporter + cache reconnection, QA freshness gate, test-suite repair, parallel-agent salvage
+
+### Completed
+- **knowledge_pulse quality metrics repaired** (llmtelemetry#339): `grep -c` prints `0` AND exits 1 on no-match, so `$(grep -c … || echo "0")` yielded the two-line string `"0\n0"` and every `[ ]` test aborted with "integer expected". Not just log noise — pages with `## Sources` but no `AI-inferred` marker fell through both branches into `else`, so `quality,all,fully_sourced` was pinned at **0 in every daily snapshot ever recorded**. Now `3/14/2`, summing to `page_count=19`. Fixed with `grep -q` (no count parsing).
+- **Reproducible vig_*.rds exporter** (#860 → #868): `data-raw/export_vignette_snapshots.R` with a NULL guard; `_targets.R` now loads the package; `_targets.yaml` store repointed from `finance/data/etfs/etfdata/_targets` (a path from an unrelated project) to `_targets`; `_targets/` gitignored.
+- **Orphaned caches reconnected** (#869): #32 moved `ccusage_blocks_all.json` + `gemini_usage.duckdb` to llmtelemetry but left `here::here()` paths behind — silent NULL since 2026-02-25. Added `llm_extdata_file()` (package-copy-first, llmtelemetry fallback). **vig_* non-NULL went 44/56 → 56/56.**
+- **ccusage disjoint-window merge** (#870 → #875): `canonicalize_ccusage_project()` + `merge_ccusage_daily()`. Cost/tokens conserved exactly (8847.35; 12,785,360,015).
+- **qa_rds_freshness gate** (#872): fails when a `vig_` target outruns its snapshot. Fills the `qa_rds_sync` slot.
+- **Test suite green**: #873 (5 defects in test-overnight-self-review-email.R), #876 (the 5 pre-existing failures). 74 blocks, zero failures.
+- **ast-grep rule for `system2(env = c(Sys.getenv(), …))`** (#874) — found a **third** occurrence while building it. Rule copied to `~/.config/ast-grep/rules/`; verified firing.
+- **Session grain retired** (#877 → #879): CodexBar has no session grain at all (verified at the CLI), so its empty placeholder is correct, not a bug.
+- Plist invalid-XML fixed + launchd job reloaded (06:30 intact). Memory: ast-grep lesson 8, agent-salvage lesson.
+- Filed #881 (stale-input QA gap), #870. Merged 11 PRs.
+
+### Failed Approaches
+- **#860's own diagnosis was wrong.** It blamed "upstream data targets need full local pipeline data" for the ~3/56 build rate. The real cause: `_targets.R` never loaded the package, so every `llm::`-calling target died with "there is no package called 'llm'". Adding `pkgload::load_all()` gave 48/56 on a dev laptop — **no full-data environment was ever needed.** Prior session's "stays stale until regenerated in a full-data env" was a dead end.
+- **#877's premise was wrong.** Claimed the session-efficiency plots served frozen 2026-05-09 data; they read `vig_blocks_data` (fresh daily). Only one *unused* target read the frozen file. Option (a) was therefore scoped to retiring dead code, not re-expressing working plots — a dispatched agent caught this and refused the downgrade.
+- **Naive `saveRDS` export would have destroyed data**: verified an unguarded loop would have overwritten **11 snapshots holding real data with NULL**.
+- **Naive union of the two ccusage windows would have dropped 4 months of history** (disjoint windows, incompatible project naming, 84 vs 24 keys). Resolved per-file, package-copy-first instead.
+- **ast-grep `--rule` without `-c sgconfig.yml`** reports `Cannot parse rule … SgLang`, which reads as a broken rule. R is a custom grammar. Nearly reverted a correct rule over this.
+- **Bare `$$$` metavars** degrade to literal R extract-operator tokens in some positions — a pattern can parse yet never match.
+
+### Accuracy / Metrics
+- Tests: 74 blocks, **0 failures** (was 5 pre-existing)
+- `vig_*` targets non-NULL: 44/56 → **56/56**; snapshots 58/58 pass `qa_rds_freshness`
+- `quality,all,fully_sourced`: 0 → 3 (was structurally impossible to be non-zero)
+- ccusage daily series: 407 rows (frozen at 2026-05-09) → 426 rows spanning 2026-01-10..2026-08-01
+
+### Known Limitations
+- **#881 — stale/absent INPUTS are unguarded, and mandated `qa_no_nulls` (P0) was never built** (nor `qa_plot_valid`, `qa_target_qmd_sync`). Every stale-data failure this session was invisible to every gate. Layer 1 should be done while the baseline is clean (56/56).
+- **#870 open** — full canonicalisation defers to #652; the 3-entry override table is a stopgap. 2026-05-10..06-28 gap is **permanently unrecoverable** (verified against parquet, unified.duckdb, and rotated JSONL).
+- `ccusage_session_all.json` now unreferenced — deletion candidate.
+- #876's roborev fixes are verified green but their **root-cause rationale was never delivered** (agent killed by spend limit).
+- 3 of 5 dispatched agents stopped before committing; all salvaged. See `feedback_agent-salvage-unlanded-work.md`.
+
 ## 2026-08-02 — launchd run-recorder rollout + descriptive Login-Items names, AgentsView fix, Quarto hotfix, telemetry-exporter issue
 
 ### Completed
