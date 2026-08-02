@@ -111,6 +111,47 @@ plotly::layout(...,
 .bslib-card .plotly .main-svg { background: #000000 !important; }
 ```
 
+#### Why this is MANDATORY, not optional polish
+
+`plotly::plot_ly()` / `plotly::layout()` default to a **white** canvas
+(`paper_bgcolor`/`plot_bgcolor` unset → white) regardless of the surrounding
+page theme. Every `renderPlotly({...})` in a dark-themed app (bslib
+`bootswatch = "darkly"`, `page_navbar` dark mode, etc.) that omits the three
+lines above renders a bright-white rectangle inside a black page, and any
+marker/line colour chosen to be visible against black (e.g. `"#6c757d"`
+medium grey) becomes low-contrast or reads as **"black dots"** against that
+unthemed white background instead. This is exactly the kind of defect a
+developer testing in only ONE browser/window size can miss — the white
+plot area may be partially masked by other CSS, scroll further off-screen,
+or simply not draw the reporter's attention, and reads differently across
+browsers' default widget/WebGL fallback rendering. Symptom pattern to
+recognise: **"a chart or whole tab looks blank/wrong in one browser but
+fine in another"** — before chasing a browser-specific JS bug, first grep
+every `renderPlotly`/`plot_ly(` call in the file for a missing
+`paper_bgcolor`/`plot_bgcolor`/`font` triplet. This is a cheap, high-yield
+check to make BEFORE speculative fixes.
+
+> ⚠ Confidence note: in the mycare dashboard incident (2026-07-26) that
+> prompted this expansion, the missing theming was found and fixed as a
+> confirmed, independently-verified defect (plots had zero explicit
+> bg/font styling). The user's separately-reported "Chrome shows blank
+> tabs, Edge doesn't" symptom cleared after a round of fixes that included
+> this one, but no browser console error was ever captured to prove this
+> specific defect was the (sole) cause — treat the causal link as
+> plausible, not certain, and still ask for DevTools console/network
+> output FIRST on any future cross-browser-only report (see Related).
+
+**Audit pattern** (run before considering a Shiny/plotly dashboard file
+done):
+```bash
+grep -n "renderPlotly({" app.R                # locate each block
+grep -c "paper_bgcolor" app.R                 # should be >= number of renderPlotly() blocks
+```
+A quicker structural check: every `plotly::layout(` call in a dark-themed
+app should have `paper_bgcolor`/`plot_bgcolor`/`font` somewhere in the same
+call or piped immediately after it. Missing count = number of untested
+white-on-black plots.
+
 ## Part 3: Mermaid Diagrams
 
 ### Technology Choice
@@ -243,3 +284,4 @@ paste0("Average cost was ", dollar(mean(data$cost)))
 
 - `accessibility` rule — contrast, alt text
 - `quarto-vignettes` rule — vignette structure
+- `visualization` rule — Core visualization standards; Plotly Dark Theming section cross-references this skill
