@@ -13,13 +13,30 @@ load_cached_ccusage(
 \arguments{
 \item{type}{One of "daily", "session", "blocks"}
 
-\item{project_filter}{Project name pattern to filter (NULL for all projects)}
+\item{project_filter}{Project name pattern to filter (NULL for all
+projects). Matched against the raw (pre-canonicalisation) project name,
+so existing filter patterns keep working unchanged.}
 
-\item{cache_dir}{Directory containing cached JSON files}
+\item{cache_dir}{Directory containing cached JSON files. If supplied,
+disables the multi-source daily merge and reads only this directory.}
 }
 \value{
 tibble of usage data
 }
 \description{
-Load cached ccusage data from JSON files
+For `type = "daily"` with the default `cache_dir = NULL`, this reads
+*every* available daily cache window (this package's own copy and, if
+present, the `llmtelemetry` checkout's copy) and unions them via
+[merge_ccusage_daily()] rather than reading a single source (llm#870).
+The two windows are disjoint in date, use different project-naming
+schemes, and the boundary between them is a real, unrecoverable gap — see
+[merge_ccusage_daily()] and [canonicalize_ccusage_project()] for how that
+is handled. Passing an explicit `cache_dir` opts out of the merge and
+reads exactly that one file, preserving the original single-source
+behaviour for callers that need it (e.g. tests pointed at a fixture
+directory).
+}
+\details{
+`session` and `blocks` are unaffected by this change and keep reading a
+single resolved file, as before.
 }
