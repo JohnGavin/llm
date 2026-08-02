@@ -32,12 +32,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.roborev-weekly-rollup-email</string>
-        <string>--</string>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/roborev_weekly_rollup_cron.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-weekly-rollup-email</string>
     </array>
 
     <!-- Sunday at 09:15 local time (Weekday 0 = Sunday) -->

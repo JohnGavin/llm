@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.overnight-self-review-email" -- "/Users/johngavin/.local/bin/with-secrets" "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/bws_launcher.sh" "/Users/johngavin/docs_gh/llm/bin/overnight_self_review_email_cron.sh"

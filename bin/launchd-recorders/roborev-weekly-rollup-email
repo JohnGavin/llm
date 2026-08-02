@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-weekly-rollup-email" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/bin/roborev_weekly_rollup_cron.sh"

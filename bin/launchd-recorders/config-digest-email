@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.config-digest-email" -- "/Users/johngavin/.local/bin/with-secrets" "/bin/bash" "/Users/johngavin/docs_gh/llm/bin/config_digest_cron.sh"

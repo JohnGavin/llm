@@ -6,11 +6,7 @@
     <string>com.claude.codex-overnight-learning</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.codex-overnight-learning</string>
-        <string>--</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/codex_overnight_learning.py</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/codex-overnight-learning</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
