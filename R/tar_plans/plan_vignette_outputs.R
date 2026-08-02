@@ -70,10 +70,22 @@ plan_vignette_outputs <- function() {
       llm::load_cached_ccusage("daily", project_filter = NULL)
     ),
 
-    tar_target(
-      vig_session_data,
-      llm::load_cached_ccusage("session", project_filter = NULL)
-    ),
+    # `vig_session_data` (`load_cached_ccusage("session", ...)`) was retired
+    # here (JohnGavin/llm#877). It read this package's own bundled
+    # `ccusage_session_all.json`, which is frozen at 2026-05-09 and has no
+    # mechanism to refresh (the resolver deliberately keeps `session` reading
+    # the local copy rather than falling back to llmtelemetry -- see
+    # `ccusage_cache_file()` in R/ccusage.R). It is also structurally
+    # unusable even if refreshed: `sessionId` holds a raw project path
+    # rather than a unique identifier, and `projectPath` is a literal
+    # placeholder (see #870). Nothing in this package or the vignettes ever
+    # consumed the target -- confirmed via a full-repo grep before removal --
+    # so retiring it drops dead weight rather than a working feature.
+    # `vig_session_metrics` below is unaffected: it is built from
+    # `vig_blocks_data` (ccusage Max5 blocks), a *different* file that
+    # llmtelemetry refreshes daily and which is NOT frozen (#860/#869).
+    # Do not reintroduce a target that reads `ccusage_session_all.json`
+    # without first fixing its underlying freshness.
 
     # Resolved via llm:::ccusage_cache_dir() rather than here::here() -- the
     # blocks cache lives in llmtelemetry (#32) and was never restored to this
@@ -428,6 +440,67 @@ plan_vignette_outputs <- function() {
         )
       },
       packages = c("DT", "dplyr", "scales", "htmltools")
+    ),
+
+    # CodexBar per-project cost (day/project grain, JohnGavin/llm#877).
+    # This is a separate, forward-looking cost source from `vig_blocks_data`
+    # above: CodexBar has no session-grain export at all (confirmed against
+    # the raw CLI -- see R/ccusage.R::load_codexbar_project_cost() roxygen),
+    # so the finest honest grain it can offer is project-per-day. It is also
+    # an ESTIMATE, apportioned from CodexBar's day-level cost total via
+    # session-duration weighting -- not measured per project. The exporter
+    # (llmtelemetry) has been observed to emit an empty `[]` placeholder on
+    # some runs; NULL-safe throughout, same pattern as every other target in
+    # this file.
+    tar_target(
+      vig_codexbar_project_cost_data,
+      llm::load_codexbar_project_cost()
+    ),
+
+    tar_target(
+      vig_codexbar_project_cost_summary,
+      llm::summarise_codexbar_project_cost(vig_codexbar_project_cost_data)
+    ),
+
+    tar_target(
+      vig_codexbar_project_cost_plot,
+      {
+        if (is.null(vig_codexbar_project_cost_summary) ||
+            nrow(vig_codexbar_project_cost_summary) == 0) {
+          return(NULL)
+        }
+        d <- vig_codexbar_project_cost_summary
+        window_lo <- min(d$date_min, na.rm = TRUE)
+        window_hi <- max(d$date_max, na.rm = TRUE)
+        ggplot2::ggplot(
+          d,
+          ggplot2::aes(x = total_est_cost, y = reorder(canonical_project, total_est_cost))
+        ) +
+          ggplot2::geom_segment(
+            ggplot2::aes(
+              x = 0, xend = total_est_cost,
+              yend = reorder(canonical_project, total_est_cost)
+            ),
+            color = TELEMETRY_PALETTE[["accent"]]
+          ) +
+          ggplot2::geom_point(color = TELEMETRY_PALETTE[["accent"]], size = 3.5) +
+          ggplot2::geom_text(
+            ggplot2::aes(label = scales::dollar(total_est_cost)),
+            hjust = -0.3, color = "#ffffff", size = 3
+          ) +
+          ggplot2::scale_x_continuous(
+            labels = scales::dollar_format(),
+            expand = ggplot2::expansion(mult = c(0, 0.18))
+          ) +
+          ggplot2::labs(
+            title = sprintf("CodexBar Cost by Project (estimate, %s to %s)", window_lo, window_hi),
+            subtitle = "Day x project grain -- apportioned from CodexBar's daily total by session-duration share, not measured per project",
+            x = "Estimated cost (USD)",
+            y = NULL
+          ) +
+          theme_dashboard()
+      },
+      packages = c("ggplot2", "scales")
     ),
 
     # === CI & Git Stats section ===

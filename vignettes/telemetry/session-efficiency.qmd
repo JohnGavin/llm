@@ -65,4 +65,22 @@ Recent history of usage blocks. "Max5" refers to the **Claude 5-hour usage limit
 safe_tar_read("vig_max5_table", wrap_df = TRUE)
 ```
 
+## Cost by Project (CodexBar estimate)
+
+CodexBar has no session-grain cost export at all (confirmed directly against
+the installed CLI while investigating [#877](https://github.com/JohnGavin/llm/issues/877)) --
+its `cost` command output carries at most a date and a per-model breakdown,
+never a session or project identifier. The plot below is therefore a
+**day/project-grain estimate**, not a per-session measurement: it apportions
+CodexBar's daily total cost across projects using session-duration weighting
+against `unified.duckdb.sessions`, then sums to a project total over
+whatever date window the export currently covers. It is a different data
+source from the Max5-block panels above (which remain fresh, per-block, and
+unrelated to CodexBar) and is included here as a forward-looking
+supplement, not a replacement.
+
+```{r codexbar-project-cost, fig.cap="Estimated total cost per project over the currently available CodexBar export window, apportioned from CodexBar's day-level cost total via session-duration weighting. This is a day/project-grain estimate, not a per-session measurement -- CodexBar's raw CLI output has no session or project identifier.", fig.alt="Cleveland dot plot of estimated total cost in dollars per project, based on CodexBar's daily cost apportioned by session-duration share."}
+safe_tar_read("vig_codexbar_project_cost_plot", wrap_df = TRUE)
+```
+
 :::
