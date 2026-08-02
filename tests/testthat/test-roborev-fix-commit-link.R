@@ -160,10 +160,10 @@ test_that("find_fix_commit: commit with 'roborev #<id>' in message → commit_re
   system2("git", args = c("-C", tmp_repo, "add", "file.txt"))
   system2("git", args = c(
     "-C", tmp_repo,
-    "commit", "-m", "fix: address roborev review #1234 finding in R/foo.R",
+    "commit", "-m", shQuote("fix: address roborev review #1234 finding in R/foo.R"),
     "--date", "2026-05-27T17:30:00+00:00",
     "--no-gpg-sign"
-  ))
+  ), env = c("GIT_COMMITTER_DATE=2026-05-27T17:30:00+00:00"))
 
   # Get the commit SHA
   sha_raw <- system2("git", args = c("-C", tmp_repo, "log", "--format=%H", "-1"),
@@ -202,10 +202,10 @@ test_that("find_fix_commit: commit within 6h before closure → manual (time-pro
   system2("git", args = c("-C", tmp_repo, "add", "fix.R"))
   system2("git", args = c(
     "-C", tmp_repo,
-    "commit", "-m", "refactor: general cleanup",
+    "commit", "-m", shQuote("refactor: general cleanup"),
     "--date", "2026-05-27T15:00:00+00:00",
     "--no-gpg-sign"
-  ))
+  ), env = c("GIT_COMMITTER_DATE=2026-05-27T15:00:00+00:00"))
 
   sha_raw <- system2("git", args = c("-C", tmp_repo, "log", "--format=%H", "-1"),
                      stdout = TRUE)
@@ -242,10 +242,10 @@ test_that("find_fix_commit: no commits in window → unknown", {
   system2("git", args = c("-C", tmp_repo, "add", "old.R"))
   system2("git", args = c(
     "-C", tmp_repo,
-    "commit", "-m", "chore: old unrelated commit",
+    "commit", "-m", shQuote("chore: old unrelated commit"),
     "--date", "2026-05-27T10:00:00+00:00",
     "--no-gpg-sign"
-  ))
+  ), env = c("GIT_COMMITTER_DATE=2026-05-27T10:00:00+00:00"))
 
   # closed_at = 18:00; only commit is at 10:00 → 8h gap, outside window
   closed_at <- as.POSIXct("2026-05-27 18:00:00", tz = "UTC")
