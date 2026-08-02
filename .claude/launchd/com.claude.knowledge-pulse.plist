@@ -6,14 +6,7 @@
     <string>com.claude.knowledge-pulse</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.knowledge-pulse</string>
-        <string>--</string>
-        <string>/nix/var/nix/profiles/default/bin/nix-shell</string>
-        <string>/Users/johngavin/docs_gh/llm/default.nix</string>
-        <string>--run</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/knowledge_pulse.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/knowledge-pulse</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

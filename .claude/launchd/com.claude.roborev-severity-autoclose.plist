@@ -6,14 +6,7 @@
     <string>com.claude.roborev-severity-autoclose</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.roborev-severity-autoclose</string>
-        <string>--</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_severity_autoclose.sh</string>
-        <string>--apply</string>
-        <string>--threshold</string>
-        <string>medium</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-severity-autoclose</string>
     </array>
     <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
          primary shim (#386) intercepts all roborev invocations from severity-autoclose. -->

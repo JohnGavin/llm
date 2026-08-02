@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.knowledge-pulse" -- "/nix/var/nix/profiles/default/bin/nix-shell" "/Users/johngavin/docs_gh/llm/default.nix" "--run" "/Users/johngavin/docs_gh/llm/.claude/scripts/knowledge_pulse.sh"
