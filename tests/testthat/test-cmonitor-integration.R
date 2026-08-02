@@ -53,6 +53,25 @@ test_that("cmonitor execution inside nix-shell produces expected output", {
   
   # Capture the output for the snapshot
   output_content <- readLines(output_file)
+
+  # Positron terminal sessions wrap nix-shell invocations through
+  # ~/.config/positron/nix-terminal-wrapper.sh, which prints a
+  # "Setup complete" / "Terminal wrapper: ..." / "RSTUDIO_TERM_EXEC set to
+  # execute new shell with Nix environment." preamble before handing off to
+  # the real command. Plain nix-shell (e.g. this test run under CI or a
+  # bare terminal) has no such preamble, so a snapshot recorded inside
+  # Positron does not match one recorded outside it (llm#874). Depending on
+  # which shell runs the wrapper's `echo`, the preamble lines arrive either
+  # as real newlines or as a single line with literal two-character "\\n"
+  # sequences embedded -- normalise both forms to real lines before
+  # filtering, so the snapshot is independent of the terminal that produced
+  # the raw output.
+  output_content <- unlist(strsplit(output_content, "\\n", fixed = TRUE))
+  positron_banner_pattern <- paste0(
+    "^(Setup complete|Terminal wrapper:.*|",
+    "RSTUDIO_TERM_EXEC set to execute new shell with Nix environment\\.)$"
+  )
+  output_content <- output_content[!grepl(positron_banner_pattern, output_content, perl = TRUE)]
   
   # We expect some output, even if it fails (stderr is captured)
   expect_true(length(output_content) > 0)
@@ -71,6 +90,23 @@ test_that("cmonitor execution inside nix-shell produces expected output", {
   sanitized_output <- gsub("\033\\[[0-9;]*m", "", sanitized_output)
   # Filter out nix download/unpacking lines that depend on cache state
   sanitized_output <- sanitized_output[!grepl("^(unpacking |copying path |these \\d+ paths|  /nix/store/)", sanitized_output)]
+  # Token counts, session limits, and running dollar costs (e.g.
+  # "607,208 tokens", "5,514,144,157", "$5,123.38") are LIVE
+  # ccusage/cmonitor values that grow continuously and differ on every run
+  # -- the same instability class as the Positron banner above, just from
+  # data instead of environment. Mask them so the snapshot tracks output
+  # *structure* (per the original intent: "Snapshot the type of output ...
+  # to track changes"), not the moving-target values. Dollar-cost figures
+  # are masked FIRST because they carry a decimal-cents suffix that the
+  # comma-integer mask below does not touch.
+  sanitized_output <- gsub("\\$[0-9,]+\\.[0-9]{2}", "$N,NNN.NN", sanitized_output)
+  sanitized_output <- gsub("[0-9]{1,3}(,[0-9]{3})+", "N,NNN", sanitized_output)
+  # Box-drawn table padding (e.g. the Summary panel) was column-aligned for
+  # the original digit count of the masked numbers above; after masking,
+  # the right border no longer lines up. Collapse runs of 2+ spaces before
+  # a box-drawing vertical border so the snapshot does not depend on how
+  # many digits the pre-masked number happened to have.
+  sanitized_output <- gsub(" {2,}\u2502", " \u2502", sanitized_output)
 
   expect_snapshot(head(sanitized_output, 10))
   
