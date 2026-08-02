@@ -24,8 +24,10 @@
        Machine account: claude-cron  Project: claude-llm-creds
        Secrets: GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT
        Token in macOS Keychain (service=claude-cron, account=bws).
-       bws_launcher.sh retrieves token + calls `bws run --` so secrets
-       are injected as env vars and never written to disk.
+       bws_launcher.sh retrieves the token and invokes the `bws run`
+       subcommand so secrets are injected as env vars, never written to
+       disk. (The literal double-hyphen separator is omitted here: XML
+       comments may not contain it, and xmllint rejects the file.)
        Falls back to ~/.claude/env/overnight_self_review.env if bws unavailable.
 
      Tracked in llm#491, llm#559, llm#615.
