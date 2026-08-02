@@ -14,13 +14,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.self-review-stage1</string>
-        <string>--</string>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/self_review_stage1.sh</string>
-        <string>--write</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/self-review-stage1</string>
     </array>
 
     <!-- 02:30 daily: after roborev-metrics-etl (~02:00), before backup (~03:00) -->

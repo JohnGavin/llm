@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.unified-duckdb-backup" -- "/bin/bash" "/Users/johngavin/.claude/scripts/unified_duckdb_backup.sh" "--apply" "--prune"
