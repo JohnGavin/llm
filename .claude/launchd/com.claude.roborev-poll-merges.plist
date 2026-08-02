@@ -6,12 +6,7 @@
     <string>com.claude.roborev-poll-merges</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.roborev-poll-merges</string>
-        <string>--</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_poll_merges.sh</string>
-        <string>--apply</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-poll-merges</string>
     </array>
     <!-- Business-hours safety-net poller (Phase 1.7, #217):
          Fires thrice per weekday at 09:00, 13:00, 17:00 — 3 runs/day × 5 days = 15/week.

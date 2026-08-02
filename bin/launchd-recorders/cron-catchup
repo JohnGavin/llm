@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.cron-catchup" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/cron_catchup.sh"

@@ -6,14 +6,7 @@
     <string>com.claude.roborev-project-backlog</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.roborev-project-backlog</string>
-        <string>--</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_project_backlog.sh</string>
-        <string>--repo</string>
-        <string>llm</string>
-        <string>--apply</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-project-backlog</string>
     </array>
     <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
          primary shim (#386) intercepts all roborev invocations from project-backlog. -->
