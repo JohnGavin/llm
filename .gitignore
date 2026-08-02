@@ -145,3 +145,8 @@ explorations/*
 # Capability registry: the template is source-controlled, the regenerated
 # HTML output is not (rewritten daily by com.claude.capability-registry cron).
 .claude/reports/capability-registry.html
+
+# targets store: local build artefacts. The deployable outputs are the
+# vig_*.rds snapshots under inst/extdata/vignettes/, exported by
+# data-raw/export_vignette_snapshots.R.
+_targets/

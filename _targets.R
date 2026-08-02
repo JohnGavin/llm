@@ -4,6 +4,12 @@
 library(targets)
 library(tarchetypes)
 
+# Load the package under development into the target worker process.
+# Almost every target calls `llm::...`, but `llm` is not installed in the nix
+# shell -- without this, each of those targets fails with "there is no package
+# called 'llm'" and only the handful of targets that avoid `llm::` can build.
+pkgload::load_all(quiet = TRUE)
+
 # Source all plan files
 tar_source("R/tar_plans/")
 
