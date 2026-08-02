@@ -1,0 +1,51 @@
+# r-no-system2-getenv-splice.yml
+#
+# NOT YET REGISTERED: the 8 existing ast-grep rules for this project live at
+# ~/.config/ast-grep/rules/ (laptop-local, manually installed, NOT git-backed
+# -- see CLAUDE.md "Code Quality (ast-grep + jarl)"). There is no in-repo
+# mirror of that directory, so this rule cannot be auto-discovered by
+# r_code_check.sh / `/check` until it is copied there:
+#
+#   cp .claude/ast-grep-rules/r-no-system2-getenv-splice.yml \
+#     ~/.config/ast-grep/rules/r-no-system2-getenv-splice.yml
+#
+# This file is kept in-repo so the rule is reviewable and version-controlled;
+# the orchestrator (or a human) must perform the one-time copy above outside
+# this worktree's sandbox.
+#
+# Rationale: system2() renders its `env` argument as `env NAME=VAL ... cmd`.
+# The `env` command already inherits the parent environment, so splicing all
+# of Sys.getenv() in produces an enormous command line whose quoting mangles
+# the invocation -- the child then produces no usable output and downstream
+# assertions silently test an empty string. Correct form: env = env_vars
+# (just the overrides).
+#
+# This exact defect has been fixed THREE times now:
+#   - tests/testthat/test-kb-digest.R              (llm#848 / PR #851)
+#   - tests/testthat/test-overnight-self-review-email.R (llm#871 / PR #873)
+#   - tests/testthat/test-roborev-daily-email.R     (found + fixed by this rule's
+#     own verification sweep, dispatch 4dd486d1)
+id: r-no-system2-getenv-splice
+language: r
+rule:
+  pattern: system2($$$)
+  has:
+    kind: argument
+    stopBy: end
+    all:
+      - has:
+          field: name
+          regex: ^env$
+      - has:
+          field: value
+          pattern: c($$$)
+          has:
+            pattern: Sys.getenv($$$)
+            stopBy: end
+message: |
+  system2(env = c(Sys.getenv(), ...)) mangles the child invocation.
+  env already inherits the parent environment -- splicing all of
+  Sys.getenv() in produces a command line whose quoting corrupts the call,
+  and the child silently produces no usable output.
+severity: error
+note: "Fix: env = env_vars (overrides only, e.g. c(\"FOO=bar\")). See llm#848, llm#871."

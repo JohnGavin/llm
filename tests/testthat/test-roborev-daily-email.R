@@ -253,11 +253,18 @@ test_that("publish_roborev_data.sh DRYRUN=1 exits 0 with expected log lines", {
   fake_json <- file.path(dir, "2026-05-28.json")
   writeLines('{"report_date":"2026-05-28"}', fake_json)
 
+  # NOTE: env = <overrides only>, NOT c(Sys.getenv(), ...) -- system2()
+  # renders `env` as `env NAME=VAL ... cmd`, and `env` already inherits the
+  # parent environment, so splicing all of Sys.getenv() in produces a vast
+  # command line whose quoting mangles the invocation. Same defect fixed in
+  # test-kb-digest.R (llm#848) and test-overnight-self-review-email.R (llm#871).
+  env_vars <- c(
+    "DRYRUN=1",
+    paste0("ROBOREV_DAILY_DIR=", dir)
+  )
   out <- system2("bash", args = publish_script,
                  stdout = TRUE, stderr = TRUE,
-                 env = c(Sys.getenv(),
-                   "DRYRUN=1",
-                   paste0("ROBOREV_DAILY_DIR=", dir)))
+                 env = env_vars)
   combined <- paste(out, collapse = "\n")
 
   expect_true(grepl("DRYRUN", combined), info = "DRYRUN log line not emitted")
