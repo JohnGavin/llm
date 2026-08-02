@@ -4,6 +4,27 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-02 — launchd run-recorder rollout + descriptive Login-Items names, AgentsView fix, Quarto hotfix, telemetry-exporter issue
+
+### Completed
+- **Quarto Publish hotfix** (#861): #859 broke the live render — `#| tbl-cap: !expr` is evaluated BEFORE the chunk body, so knowledge-evolution `wiki_tbl_cap`/`raw_tbl_cap` were "object not found" and the site build halted. Converted those two table captions to static `>` blocks (`fig-cap: !expr` is fine — evaluated AFTER the body). Rendered locally + CI deploy run green.
+- **launchd run-recorder (llm#300)** — wired `launchd_run_record.sh` into every launchd cron job so the health report gets real run counts: **#862** (wrapped 23 tracked plists), **#864** (recorder resolves duckdb by absolute path — launchd's minimal PATH made it silently no-op, caught in the staged pilot), **#865** (version-controlled + wired `config-pulse`/`knowledge-pulse`, previously live-only). Deployed + reloaded all 25 live; `config-pulse`/`pr-status-pulse`/`cron-catchup` verified recording to `~/.claude/logs/launchd_runs.duckdb`.
+- **Descriptive Login-Items names** (#866): #862's `/bin/bash …` wrapping made all 25 jobs show as "bash" in macOS Login Items (BTM `Name` = basename of `ProgramArguments[0]`, confirmed via `sfltool dumpbtm`). Added per-job named launchers (`bin/launchd-recorders/<job>`); verified on `pr-status-pulse`, rolled out to all 25 — 22/25 show descriptive names, the 3 stale ones clear on next login.
+- **Telemetry-exporter issue** (#860): filed — no committed reproducible exporter for `inst/extdata/vignettes/vig_*.rds`.
+- **AgentsView 127.0.0.1:8080 auto-open**: diagnosed NOT roborev (roborev = 7373, no browser-open). Updated v0.12.1 → v0.39.0; fixed its config-migration bug (`port = 8080.0` float → integer) and the launchd plist for v0.39.0's new flag syntax (`serve --no-browser`); `-no-browser` daemon now runs cleanly.
+- Prior-`/bye` PRs #857/#858/#859 merged; plus #861/#862/#864/#865/#866.
+
+### Failed Approaches
+- **Telemetry `.rds` regeneration**: local `tar_make(names = starts_with("vig_"))` builds only 3/56 targets (upstream data targets need full pipeline data); the fixed dark-dot-plot snapshots don't regenerate. First attempts failed on missing `pkgload::load_all()` and on `tar_make(names = all_of(n))` (loop var doesn't survive tidyselect's eval boundary). Telemetry plots stay stale until regenerated in a full-data env (#860).
+- **launchd wrapping via a generic `/bin/bash`**: fixed run-counts but homogenized every macOS Login Item to "bash" — a legibility regression that needed the named-launcher fix (#866). Lesson: check the Login-Items/BTM surface before wrapping cron commands in a shared interpreter.
+- **Over-using `sfltool dumpbtm`**: it prompts the user for a password on every call (reads a protected system DB). Verify once, not repeatedly.
+
+### Known Limitations
+- Telemetry `vig_*.rds` stale until a full-data rebuild (#860).
+- 3 launchd jobs (`roborev-agent-health`/`-autoclose`/`-bridge`) show a stale duplicate "bash" BTM record; clears on next logout/login (do NOT `sfltool resetbtm` — wipes all Login Items).
+- `knowledge_pulse.sh:149` has a pre-existing `[: integer expected` bug — didn't record cleanly; separate fix.
+- roborev backlog standing: 587 open (verdicts.failed=24, addressed=15); not from this session's PRs.
+
 ## 2026-08-01 — vignette visualization compliance sweep, companion size trims, KB backlinks, launchd diagnosis
 
 ### Completed
