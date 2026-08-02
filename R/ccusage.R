@@ -77,6 +77,86 @@ parse_ccusage_json <- function(json_data, project_filter = NULL) {
   })
 }
 
+#' Resolve this package's own ccusage cache directory
+#'
+#' @return Path to `inst/extdata`, or NULL if not found.
+#' @keywords internal
+ccusage_pkg_cache_dir <- function() {
+  pkg_dir <- system.file("extdata", package = "llm")
+  if (nzchar(pkg_dir) && dir.exists(pkg_dir)) return(pkg_dir)
+  Find(dir.exists, c("inst/extdata", "../inst/extdata", here::here("inst/extdata")))
+}
+
+#' Resolve an `inst/extdata` file, falling back to the llmtelemetry checkout
+#'
+#' #32 moved several telemetry data files out of this package into
+#' `llmtelemetry` but left the code here pointing at the old in-package paths.
+#' Those lookups have silently missed ever since, so the targets reading them
+#' returned NULL (#860). This resolver checks the package copy first, then the
+#' `llmtelemetry` checkout.
+#'
+#' Package-first is deliberate: it preserves existing behaviour for every file
+#' still shipped here, and only files genuinely absent resolve elsewhere.
+#'
+#' @param fname Bare file name, e.g. `"gemini_usage.duckdb"`.
+#' @param quiet Suppress the message naming the source used.
+#' @return Path to the file, or NULL if it exists in neither location.
+#' @keywords internal
+llm_extdata_file <- function(fname, quiet = TRUE) {
+  pkg_dir <- ccusage_pkg_cache_dir()
+  if (!is.null(pkg_dir) && file.exists(file.path(pkg_dir, fname))) {
+    return(file.path(pkg_dir, fname))
+  }
+
+  telemetry_dir <- file.path(
+    Sys.getenv("LLM_PROJECTS_ROOT", file.path(Sys.getenv("HOME"), "docs_gh")),
+    "llmtelemetry", "inst", "extdata"
+  )
+  if (file.exists(file.path(telemetry_dir, fname))) {
+    if (!quiet) message(fname, ": llmtelemetry")
+    return(file.path(telemetry_dir, fname))
+  }
+
+  NULL
+}
+
+#' Resolve a ccusage cache file, falling back to the llmtelemetry checkout
+#'
+#' The ccusage caches were migrated out of this package into `llmtelemetry`
+#' (#32), which refreshes them daily. `ccusage_blocks_all.json` was never
+#' restored here, so every target reading it returned NULL and the
+#' session-efficiency vignette silently ran on stale snapshots (#860).
+#'
+#' Resolution is **per file, package copy first**, deliberately:
+#'
+#' 1. `LLM_CCUSAGE_DIR` — explicit override (tests, CI, non-standard checkouts)
+#' 2. this package's `inst/extdata` — used whenever the file is present
+#' 3. the `llmtelemetry` checkout — only for files absent here
+#'
+#' Package-first matters because the two sources cover **disjoint** date
+#' windows: the copies here run 2026-01-10..2026-05-09 (84 projects) while
+#' llmtelemetry runs 2026-06-29..2026-08-01 (24 projects). Preferring
+#' llmtelemetry wholesale would silently drop four months of history from the
+#' cost-trend and cumulative-cost plots. So `daily`/`session` keep reading the
+#' local copies (unchanged behaviour) and only `blocks` — which exists nowhere
+#' else — resolves to llmtelemetry. Reconciling the two windows is a separate
+#' data-ingestion decision, not something to smuggle into a path lookup.
+#'
+#' @param type One of "daily", "session", "blocks".
+#' @param quiet Suppress the message naming the source used.
+#' @return Path to the cache file, or NULL if it exists in neither location.
+#' @keywords internal
+ccusage_cache_file <- function(type = c("daily", "session", "blocks"),
+                                quiet = TRUE) {
+  type <- match.arg(type)
+  fname <- sprintf("ccusage_%s_all.json", type)
+
+  env_dir <- Sys.getenv("LLM_CCUSAGE_DIR")
+  if (nzchar(env_dir) && dir.exists(env_dir)) return(file.path(env_dir, fname))
+
+  llm_extdata_file(fname, quiet = quiet)
+}
+
 #' Load cached ccusage data from JSON files
 #'
 #' @param type One of "daily", "session", "blocks"
@@ -89,32 +169,14 @@ load_cached_ccusage <- function(type = c("daily", "session", "blocks"),
                                  cache_dir = NULL) {
   type <- match.arg(type)
 
-  # Find cache directory (handle installed package and development contexts)
-  if (is.null(cache_dir)) {
-    # Try installed package location first
-    pkg_dir <- system.file("extdata", package = "llm")
-    if (nzchar(pkg_dir) && dir.exists(pkg_dir)) {
-      cache_dir <- pkg_dir
-    } else {
-      # Fall back to development locations
-      candidates <- c(
-        "inst/extdata",
-        "../inst/extdata",
-        here::here("inst/extdata")
-      )
-      cache_dir <- Find(dir.exists, candidates)
-    }
-    if (is.null(cache_dir)) {
-      message("Could not find cache directory")
-      return(NULL)
-    }
+  cache_file <- if (is.null(cache_dir)) {
+    ccusage_cache_file(type)
+  } else {
+    file.path(cache_dir, sprintf("ccusage_%s_all.json", type))
   }
 
-  # Find cache file
-  cache_file <- file.path(cache_dir, sprintf("ccusage_%s_all.json", type))
-
-  if (!file.exists(cache_file)) {
-    message("Cache file not found: ", cache_file)
+  if (is.null(cache_file) || !file.exists(cache_file)) {
+    message("Cache file not found: ", cache_file %||% sprintf("ccusage_%s_all.json", type))
     return(NULL)
   }
 
