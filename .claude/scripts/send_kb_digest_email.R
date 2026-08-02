@@ -30,7 +30,13 @@ suppressPackageStartupMessages({
 
 # ── Shared email styles (font sizes, palette, collapsible_block helper) ───────
 
-.scripts_dir_kb <- tryCatch(
+.scripts_dir_kb <- if (nzchar(Sys.getenv("KB_SCRIPTS_DIR"))) {
+  # Test/wrapper override: when this script is sourced from a temp runner in a
+  # tmpdir, commandArgs(--file=) resolves to the tmpdir, not the real scripts
+  # dir, so email_styles.R can't be found. KB_SCRIPTS_DIR lets the caller
+  # declare where the sibling scripts (email_styles.R, kb_digest.R) live.
+  Sys.getenv("KB_SCRIPTS_DIR")
+} else tryCatch(
   dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
   error = function(e) {
     args <- commandArgs(trailingOnly = FALSE)
@@ -46,6 +52,12 @@ source(file.path(.scripts_dir_kb, "email_styles.R"))
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 dry_run <- identical(Sys.getenv("EMAIL_DRY_RUN"), "1")
+
+# Define-only mode: when KB_DIGEST_DEFINE_ONLY is set, source() this file to get
+# its compute_*/helper functions and skip the side-effecting tail (dry-run print,
+# SMTP send, quit()). Used by test-kb-digest.R to unit-test the functions without
+# the CLI running to completion and terminating the child process.
+.kb_define_only <- nzchar(Sys.getenv("KB_DIGEST_DEFINE_ONLY"))
 
 knowledge_repo <- Sys.getenv(
   "KB_KNOWLEDGE_REPO",
@@ -844,6 +856,9 @@ email_body <- sprintf(
   qa_markers
 )
 
+# ── Side-effecting tail (skipped in define-only mode) ─────────────────────────
+if (!.kb_define_only) {
+
 # ── Dry-run mode ───────────────────────────────────────────────────────────────
 
 if (dry_run) {
@@ -904,3 +919,5 @@ tryCatch({
   cat(email_body, "\n")
   quit(status = 1L)
 })
+
+}  # end !.kb_define_only
