@@ -35,6 +35,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 ## Session Conventions
 - Commit with gert (not bash git); append CHANGELOG.md at /bye; CURRENT_WORK.md is ephemeral
 
+## ast-grep Lessons (see feedback_ast-grep-lessons.md)
+- R is a CUSTOM grammar: always `-c ~/.config/ast-grep/sgconfig.yml`, else a valid rule errors as "Cannot parse rule / SgLang"; binary is nix-shell-only; rules live laptop-local at `~/.config/ast-grep/rules/` so merging ≠ deploying; bare `$$$` can silently never match — prove a rule fires before trusting it
+
 ## Safe Deletion (see feedback_safe-deletion.md)
 - NEVER delete untracked >1MB without size/age/diff/user-approval (origin: 522MB worktree loss 2026-03-27)
 
