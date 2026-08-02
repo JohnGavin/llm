@@ -7,16 +7,19 @@
 #   3. Idempotence: running twice yields identical results
 #   4. No silent NULLs: all closed=1 reviews have non-NA closed_at + close_reason
 #
-# Strategy: source only lines 350-585 of the ETL script (the pure function
-# block — SEVERITY constants + parse_max_severity + derive_close_reason +
+# Strategy: source only the pure-function block (SEVERITY constants +
+# parse_max_severity + build_daily_metrics + derive_close_reason +
 # build_review_lifecycle).  These lines have no I/O side effects.
+#
+# The block boundaries are found DYNAMICALLY (grep anchor + brace-depth walk)
+# rather than hardcoded line numbers, because the ETL script grows over time
+# and fixed offsets silently drift out from under the test (llm#874: this
+# test broke when unrelated commits added ~150 lines above the sourced
+# block). See test-roborev-fix-commit-link.R for the same pattern.
 
 library(testthat)
 
 # ── Load ETL function block ─────────────────────────────────────────────────
-
-.etl_fn_start <- 358L   # SEVERITY_PATTERN <- line (first assignment, no leading comment)
-.etl_fn_end   <- 605L   # closing } of build_review_lifecycle
 
 etl_script <- file.path(pkgload::pkg_path(),
                          ".claude", "scripts", "roborev_metrics_etl.R")
@@ -24,7 +27,23 @@ etl_script <- file.path(pkgload::pkg_path(),
 skip_if_not(file.exists(etl_script), "ETL script not found at expected path")
 
 all_lines <- readLines(etl_script)
-fn_block  <- all_lines[.etl_fn_start:.etl_fn_end]
+
+start_line <- grep("^SEVERITY_PATTERN <- ", all_lines)[[1L]]
+
+fn_line <- grep("^build_review_lifecycle <- function", all_lines)[[1L]]
+depth   <- 0L
+end_line <- fn_line
+for (li in fn_line:length(all_lines)) {
+  opens  <- nchar(gsub("[^{]", "", all_lines[[li]]))
+  closes <- nchar(gsub("[^}]", "", all_lines[[li]]))
+  depth  <- depth + opens - closes
+  if (li > fn_line && depth == 0L) {
+    end_line <- li
+    break
+  }
+}
+
+fn_block <- all_lines[start_line:end_line]
 eval(parse(text = paste(fn_block, collapse = "\n")), envir = globalenv())
 
 # ── DuckDB / SQLite fixture ─────────────────────────────────────────────────

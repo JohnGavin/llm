@@ -10,29 +10,45 @@
 #   4. Idempotence: re-running build_finding_lineage produces identical rows.
 #
 # Strategy: source only the two pure-function blocks from the ETL script
-# (build_finding_lineage + coalesce_int, lines ~1032-1215).
+# (log_msg + build_finding_lineage + coalesce_int).
 # These blocks have no I/O side effects and depend only on:
 #   - a DBI connection pointing at an in-memory SQLite fixture
-#   - the log_msg helper (stubbed below)
+#   - the log_msg helper (sourced from the script, not stubbed)
 #   - since_date / repo_clause (plain strings)
+#
+# Block boundaries are found DYNAMICALLY (grep anchor + brace-depth walk)
+# rather than hardcoded line numbers, because the ETL script grows over time
+# and fixed offsets silently drift out from under the test (llm#874: this
+# test broke when unrelated commits added ~450 lines above the sourced
+# block). See test-roborev-fix-commit-link.R for the same pattern.
 
 library(testthat)
 library(DBI)
 library(duckdb)
 
-# ── Source the lineage function block ─────────────────────────────────────
+# Source the lineage function block
 #
 # Two separate eval blocks:
-#   Block 1: lines 100-108  — log_msg helper (required by build_finding_lineage)
-#   Block 2: lines 1032-end — build_finding_lineage + coalesce_int
+#   Block 1: log_msg helper (required by build_finding_lineage)
+#   Block 2: build_finding_lineage + coalesce_int
 #
-# We source log_msg from the script rather than stubbing it, so the dependency
-# is explicit and the stub doesn't drift if the signature changes.
+# log_msg is sourced from the script rather than stubbed, so the dependency
+# is explicit and the stub does not drift if the signature changes.
 
-.log_msg_start  <- 100L   # log_msg <- function(...)
-.log_msg_end    <- 108L   # closing } of log_msg
-.etl_fn_start   <- 1032L  # "# ── Build roborev_finding_lineage"
-.etl_fn_end     <- 1215L  # closing } of coalesce_int
+.brace_walk_end <- function(lines, fn_start_line) {
+  depth <- 0L
+  end_line <- fn_start_line
+  for (li in fn_start_line:length(lines)) {
+    opens  <- nchar(gsub("[^{]", "", lines[[li]]))
+    closes <- nchar(gsub("[^}]", "", lines[[li]]))
+    depth  <- depth + opens - closes
+    if (li > fn_start_line && depth == 0L) {
+      end_line <- li
+      break
+    }
+  }
+  end_line
+}
 
 etl_script <- file.path(pkgload::pkg_path(),
                          ".claude", "scripts", "roborev_metrics_etl.R")
@@ -41,9 +57,16 @@ skip_if_not(file.exists(etl_script), "ETL script not found at expected path")
 
 all_lines <- readLines(etl_script)
 
-# log_file is referenced inside log_msg — provide a tempfile so it doesn't
+# log_file is referenced inside log_msg -- provide a tempfile so it does not
 # try to write to ~/.claude/logs/ during tests.
 log_file <- tempfile(fileext = ".log")
+
+.log_msg_start <- grep("^log_msg <- function", all_lines)[[1L]]
+.log_msg_end   <- .brace_walk_end(all_lines, .log_msg_start)
+
+.etl_fn_start  <- grep("^# .*Build roborev_finding_lineage", all_lines)[[1L]]
+.coalesce_fn_start <- grep("^coalesce_int <- function", all_lines)[[1L]]
+.etl_fn_end    <- .brace_walk_end(all_lines, .coalesce_fn_start)
 
 eval(parse(text = paste(all_lines[.log_msg_start:.log_msg_end], collapse = "\n")),
      envir = globalenv())
