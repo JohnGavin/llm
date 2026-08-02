@@ -421,7 +421,7 @@ test_that("send_kb_digest_email.R dry-run produces HTML with QA markers", {
 
   out <- system2("Rscript", args = email_script,
                   stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
   combined <- paste(out, collapse = "\n")
 
   expect_true(grepl("QA:kb_digest_date=", combined),
@@ -467,7 +467,7 @@ test_that("CRITICAL: email body dry-run does NOT leak raw wiki content", {
 
   out <- system2("Rscript", args = email_script,
                   stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
   combined <- paste(out, collapse = "\n")
 
   pins <- get_fixture_body_pins(repo)
@@ -552,9 +552,11 @@ test_that("compute_fix_no_kb() returns list(count, rows) with correct structure 
   writeLines(rcode, tmp_r)
   on.exit(unlink(tmp_r), add = TRUE)
 
-  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1",
+                paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
   out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
   exit_code <- attr(out, "status") %||% 0L
 
   # exit 77 = llm repo not found on this machine — acceptable skip
@@ -609,9 +611,11 @@ test_that("compute_stale_raw() returns list(count, rows) excluding recent files 
   writeLines(rcode, tmp_r)
   on.exit(unlink(tmp_r), add = TRUE)
 
-  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1",
+                paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
   out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
 
   combined <- paste(out, collapse = "\n")
   expect_true(grepl("OK", combined),
@@ -650,8 +654,8 @@ test_that("compute_stale_raw() excludes files marked with a '# KEEP:' header (#2
     "knowledge_repo <- '", synth_kb, "'\n",
     "res <- compute_stale_raw(knowledge_repo)\n",
     "stopifnot(is.list(res))\n",
-    "found_kept <- any(sapply(res$rows, function(r) grepl('kept.txt', r$file)))\n",
-    "found_unkept <- any(sapply(res$rows, function(r) grepl('unkept.txt', r$file)))\n",
+    "found_kept <- any(sapply(res$rows, function(r) basename(r$file) == 'kept.txt'))\n",
+    "found_unkept <- any(sapply(res$rows, function(r) basename(r$file) == 'unkept.txt'))\n",
     "stopifnot(!found_kept)\n",
     "stopifnot(found_unkept)\n",
     "cat('OK\\n')\n"
@@ -660,9 +664,11 @@ test_that("compute_stale_raw() excludes files marked with a '# KEEP:' header (#2
   writeLines(rcode, tmp_r)
   on.exit(unlink(tmp_r), add = TRUE)
 
-  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1",
+                paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
   out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
 
   combined <- paste(out, collapse = "\n")
   expect_true(grepl("OK", combined),
@@ -709,9 +715,11 @@ test_that("compute_stale_raw() '# KEEP:' marker is case-insensitive and tolerate
   writeLines(rcode, tmp_r)
   on.exit(unlink(tmp_r), add = TRUE)
 
-  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1",
+                paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
   out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
 
   combined <- paste(out, collapse = "\n")
   expect_true(grepl("OK", combined),
@@ -761,9 +769,11 @@ test_that("compute_broken_backlinks() detects missing [[topic]] targets (#481)",
   writeLines(rcode, tmp_r)
   on.exit(unlink(tmp_r), add = TRUE)
 
-  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1",
+                paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
   out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
 
   combined <- paste(out, collapse = "\n")
   expect_true(grepl("OK", combined),
@@ -804,9 +814,11 @@ test_that("compute_new_no_wiki() returns list(count, rows) with correct structur
   writeLines(rcode, tmp_r)
   on.exit(unlink(tmp_r), add = TRUE)
 
-  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1")
+  env_vars <- c(paste0("KB_DIGEST_FILE=", tmp_digest), "EMAIL_DRY_RUN=1",
+                paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
   out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
 
   combined <- paste(out, collapse = "\n")
   expect_true(grepl("OK", combined),
@@ -833,7 +845,7 @@ test_that("dry-run email HTML includes all four KB-digest signal QA markers (#47
 
   out <- system2("Rscript", args = email_script,
                   stdout = TRUE, stderr = TRUE,
-                  env = c(Sys.getenv(), env_vars))
+                  env = env_vars)
   combined <- paste(out, collapse = "\n")
 
   # Each signal must embed its QA marker in the HTML output

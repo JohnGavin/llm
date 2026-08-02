@@ -6,8 +6,7 @@
     <string>com.claude.wiki-health-pulse</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/wiki_health_check.sh</string>
-        <string>/Users/johngavin/docs_gh/llm/knowledge/wiki</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/wiki-health-pulse</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

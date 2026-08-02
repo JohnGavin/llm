@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-metrics-etl" -- "/bin/bash" "/Users/johngavin/.claude/scripts/roborev_metrics_etl.sh" "--apply"

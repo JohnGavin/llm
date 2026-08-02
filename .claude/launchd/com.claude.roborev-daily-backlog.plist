@@ -31,8 +31,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_daily_backlog_aggregator.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-daily-backlog</string>
     </array>
 
     <!-- PATH must include ~/.local/bin (roborev shim — #386) and /usr/local/bin

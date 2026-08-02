@@ -22,9 +22,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/worktree_gc.sh</string>
-        <string>--apply</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/worktree-gc</string>
     </array>
 
     <!-- Fix: launchd's default PATH (/usr/bin:/bin:/usr/sbin:/sbin) omits gh   -->

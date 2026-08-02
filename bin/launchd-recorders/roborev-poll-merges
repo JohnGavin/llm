@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-poll-merges" -- "/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_poll_merges.sh" "--apply"

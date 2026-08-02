@@ -31,8 +31,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_bridge_to_unified.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-bridge</string>
     </array>
 
     <!-- Daily at 06:00 local time (30 min before 06:30 overnight digest) -->

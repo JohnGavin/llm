@@ -4,6 +4,64 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-02 — launchd run-recorder rollout + descriptive Login-Items names, AgentsView fix, Quarto hotfix, telemetry-exporter issue
+
+### Completed
+- **Quarto Publish hotfix** (#861): #859 broke the live render — `#| tbl-cap: !expr` is evaluated BEFORE the chunk body, so knowledge-evolution `wiki_tbl_cap`/`raw_tbl_cap` were "object not found" and the site build halted. Converted those two table captions to static `>` blocks (`fig-cap: !expr` is fine — evaluated AFTER the body). Rendered locally + CI deploy run green.
+- **launchd run-recorder (llm#300)** — wired `launchd_run_record.sh` into every launchd cron job so the health report gets real run counts: **#862** (wrapped 23 tracked plists), **#864** (recorder resolves duckdb by absolute path — launchd's minimal PATH made it silently no-op, caught in the staged pilot), **#865** (version-controlled + wired `config-pulse`/`knowledge-pulse`, previously live-only). Deployed + reloaded all 25 live; `config-pulse`/`pr-status-pulse`/`cron-catchup` verified recording to `~/.claude/logs/launchd_runs.duckdb`.
+- **Descriptive Login-Items names** (#866): #862's `/bin/bash …` wrapping made all 25 jobs show as "bash" in macOS Login Items (BTM `Name` = basename of `ProgramArguments[0]`, confirmed via `sfltool dumpbtm`). Added per-job named launchers (`bin/launchd-recorders/<job>`); verified on `pr-status-pulse`, rolled out to all 25 — 22/25 show descriptive names, the 3 stale ones clear on next login.
+- **Telemetry-exporter issue** (#860): filed — no committed reproducible exporter for `inst/extdata/vignettes/vig_*.rds`.
+- **AgentsView 127.0.0.1:8080 auto-open**: diagnosed NOT roborev (roborev = 7373, no browser-open). Updated v0.12.1 → v0.39.0; fixed its config-migration bug (`port = 8080.0` float → integer) and the launchd plist for v0.39.0's new flag syntax (`serve --no-browser`); `-no-browser` daemon now runs cleanly.
+- Prior-`/bye` PRs #857/#858/#859 merged; plus #861/#862/#864/#865/#866.
+
+### Failed Approaches
+- **Telemetry `.rds` regeneration**: local `tar_make(names = starts_with("vig_"))` builds only 3/56 targets (upstream data targets need full pipeline data); the fixed dark-dot-plot snapshots don't regenerate. First attempts failed on missing `pkgload::load_all()` and on `tar_make(names = all_of(n))` (loop var doesn't survive tidyselect's eval boundary). Telemetry plots stay stale until regenerated in a full-data env (#860).
+- **launchd wrapping via a generic `/bin/bash`**: fixed run-counts but homogenized every macOS Login Item to "bash" — a legibility regression that needed the named-launcher fix (#866). Lesson: check the Login-Items/BTM surface before wrapping cron commands in a shared interpreter.
+- **Over-using `sfltool dumpbtm`**: it prompts the user for a password on every call (reads a protected system DB). Verify once, not repeatedly.
+
+### Known Limitations
+- Telemetry `vig_*.rds` stale until a full-data rebuild (#860).
+- 3 launchd jobs (`roborev-agent-health`/`-autoclose`/`-bridge`) show a stale duplicate "bash" BTM record; clears on next logout/login (do NOT `sfltool resetbtm` — wipes all Login Items).
+- `knowledge_pulse.sh:149` has a pre-existing `[: integer expected` bug — didn't record cleanly; separate fix.
+- roborev backlog standing: 587 open (verdicts.failed=24, addressed=15); not from this session's PRs.
+
+## 2026-08-01 — vignette visualization compliance sweep, companion size trims, KB backlinks, launchd diagnosis
+
+### Completed
+- **Vignette viz compliance** (PR #859): 7 bar charts → Cleveland dot plots; black `#000000` bg + white `#ffffff` axes/gridlines/labels in the shared `theme_dashboard` (was transparent → invisible ink in dark mode); one named `PALETTE` per page (narrative-colour-persistence) replacing per-chart `scale_*_viridis_d`; mandatory 3+ sentence `fig-cap`/`tbl-cap` on plots/tables/diagrams; config-evolution & knowledge-evolution architecture mermaids `flowchart LR → TB`; excluded `_companions/` from the rule/skill file counts in `config-evolution/_setup.qmd` (dashboard was mislabeling companions as oversized rules); `$/min` ratio precision → `signif(x,3)`.
+- **Full vignette audit:** 61 visual objects, 31 without a caption (10 plots / 17 tables / 4 diagrams); 7 bar charts; 0 plots with a black background.
+- **Companion size trims** (PR #858): `roborev-resolution-details` 474→294 (new `roborev-resolution-incidents.md`, 86), `auto-delegation-dispatch-details` 393→300 — duplication removed only, no normative content lost. All top-level rules already ≤150; the flagged files were companions.
+- **KB backlinks:** fixed the `[[target|alias]]` false-positive in the digest checker (PR #857); unlinked 8 non-existent `[[topic]]` links in the two steve-newman wiki pages (local knowledge repo commit).
+- Reopened **#463** (config-size tracker) + filed **#856** (enforce a `_companions/` limit + fix the dashboard companion-count bug).
+- **launchd diagnosis:** all 25 `com.claude` jobs are loaded with last-exit-status 0; the report's "—" run counts = empty `launchd_runs` ledger (0 plists wrap `launchd_run_record.sh`) — the known llm#300 instrumentation gap, not job failures.
+
+### Failed Approaches
+- **Telemetry `.rds` regeneration** (PR #859 commit 2, telemetry SOURCE only): tried to regenerate the committed `inst/extdata/vignettes/*.rds` via `tar_make` in the worktree nix shell. (1) First run lacked `pkgload::load_all()` → "no package called llm". (2) Per-target `tar_make(names = all_of(n))` failed — the loop variable doesn't survive `tar_make`'s tidyselect eval boundary ("object 'n' not found"). (3) Corrected literal `starts_with("vig_")` build + `load_all` built only **3 of 56** vig_ targets (the DAG halts early on upstream data targets needing full local pipeline data); the fixed dark-dot-plot snapshots did NOT regenerate, and the 3 that changed were unrelated data drift (discarded, not committed). Conclusion: telemetry snapshots must be regenerated in a full-data maintainer environment; there is **no committed reproducible exporter** (originally hand-exported in #64) — a reproducibility gap worth its own issue.
+
+### Known Limitations
+- **Telemetry vignette plots:** SOURCE fixed in #859, but the committed `.rds` snapshots are stale — the deployed telemetry plots keep the old bar-chart/light styling until the snapshots are regenerated in a full-data env.
+- `dashboard-filter-placement-details.md` still 171 lines (>150 warn, <300 hard) — left as-is.
+- PRs #857/#858/#859 are open, **not merged**.
+
+## 2026-07-31 — roborev cluster closeout (#676/#746 verified+closed, #723 backup-chain fix), vignette tab styling
+
+### Completed
+- Verified + **closed #676 and #746**. Both had merged PRs (#677, #752) but stayed open. Confirmed the health checks now read `overview.failed` + `failures.errors` (not just `verdicts.failed`) across the session-init banner, `/bye`/`session-end.md`, and `roborev_agent_health.sh` (which swaps to claude-code, never gemini); gemini is live-healthy via the AI Studio `GEMINI_API_KEY` path (#733/#734). #746's repo-side backup pin (`review_backup_agent/model`) is in place; the per-agent-model-pin proper fix is upstream in the roborev binary.
+- **Fixed #723** (live backup-chain bug). codex's plan is billing-dead (`Quota exceeded`) yet refine/fix backups still routed to it. Two-layer root cause: global `~/.roborev/config.toml` had `refine_backup_agent`/`fix_backup_agent='codex'`, AND the llm `.roborev.toml` shadowed the global to empty via `''` (empty-string overrides, does not inherit). Fixed both: global config → `claude-code`/`sonnet` (live, daemon restarted) + PR #854 un-shadowed the repo `.roborev.toml`. Result: agents crash=0, quota=0, agent_errors=none.
+- **Vignette tab styling** (PR #855): stripped hardcoded `N.` prefixes from 8 roborev-architecture headings + repointed `methodology.qmd`'s dangling `(section N)` cross-refs to page links; a single global tab-CSS block in `_includes/toolbar.html` (site-wide include) makes tab labels white (overriding the `a:visited` purple bleed) and selected tabs black (replacing the blueish primary), covering both `.pages-nav` and `.panel-tabset`; telemetry dashboard links → `target="_blank"`.
+
+### Failed Approaches
+- Initially framed #723 as the `codex_with_fallback.sh` 429-only fallback (the issue's premise). Wrong lever: the wrapper is **unwired** for the live path (roborev `codex_cmd` points at the raw binary; `~/.claude/logs/codex_fallback/` is empty), and codex's actual error (`Quota exceeded`) already classifies as 429. The real bug was config routing to a dead agent + the `.roborev.toml` empty-string shadowing the global defaults.
+
+### Accuracy / Metrics
+- roborev agents: crash=0, quota=0, agent_errors=none (was "gemini crashes all jobs" on 2026-07-17). Verdict resolution 21/28 addressed; 582 standing backlog.
+
+### Known Limitations
+- #723 residual (deferred): `codex_with_fallback.sh` is still 429-only — optional defense-in-depth follow-up (unwired for the live path; both fallback targets can be quota-dead the same day).
+- Vignette selected-tab is black in BOTH light and dark mode (per instruction); light mode may want a lighter selected style — awaiting user call.
+- Vignette changes go live only after CI re-renders `docs/` (gitignored) on the deploy run.
+- 7 unaddressed roborev verdict findings remain (standing backlog).
+
 ## 2026-07-17 — vignette paging (#778), publish-gate grob/blank-plot fixes, dead telemetry tables
 
 ### Completed

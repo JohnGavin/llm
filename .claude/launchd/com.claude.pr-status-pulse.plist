@@ -6,7 +6,7 @@
     <string>com.claude.pr-status-pulse</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/pr_status_pulse.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/pr-status-pulse</string>
     </array>
     <key>StartCalendarInterval</key>
     <array>

@@ -39,10 +39,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/.claude/scripts/unified_duckdb_backup.sh</string>
-        <string>--apply</string>
-        <string>--prune</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/unified-duckdb-backup</string>
     </array>
 
     <!-- Daily at 03:00 local time (one hour after roborev ETL at 02:00) -->

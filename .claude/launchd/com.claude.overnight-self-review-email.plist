@@ -37,10 +37,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/johngavin/.local/bin/with-secrets</string>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/bws_launcher.sh</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/overnight_self_review_email_cron.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/overnight-self-review-email</string>
     </array>
 
     <!-- Daily at 06:30 local time (after self-review-stage1 at 02:30) -->

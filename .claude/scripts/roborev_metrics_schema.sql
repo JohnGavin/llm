@@ -5,12 +5,15 @@
 -- Do NOT modify column names or types without a coordinated bump across both repos.
 -- Tracked in llm#226.
 --
--- All 8 tables are created on every ETL invocation (idempotent).
+-- All 9 tables are created on every ETL invocation (idempotent).
 -- Slice 1 populates: roborev_daily_metrics, roborev_review_lifecycle.
 -- Slice 2 populates: roborev_agent_performance, roborev_threshold_changes,
 --   roborev_cadence_efficacy, codex_provider_invocations (#380).
 -- Slice 3 (#286) populates: roborev_finding_lineage;
 --   view roborev_finding_lineage_summary is rebuilt as CREATE OR REPLACE VIEW.
+-- model_pricing (llm#795) is seeded on every ETL --apply run via
+--   seed_model_pricing() in roborev_metrics_etl.R (not just at first
+--   table creation — see that function's docstring).
 
 -- ── roborev_daily_metrics ─────────────────────────────────────────────────
 -- Per-day × per-repo rollup.
@@ -134,7 +137,7 @@ CREATE TABLE IF NOT EXISTS roborev_finding_lineage (
 -- One row per codex_with_fallback.sh invocation (from ~/.claude/logs/codex_fallback/*.jsonl).
 -- Populated by roborev_metrics_etl.R via read_codex_fallback_jsonl().
 -- Token counts are approximated from byte sizes (4 bytes ≈ 1 token).
--- Cost is computed from embedded pricing constants in the ETL.
+-- Cost is computed via the versioned model_pricing table below (llm#795).
 -- PK: invocation_id
 CREATE TABLE IF NOT EXISTS codex_provider_invocations (
   invocation_id          VARCHAR   NOT NULL,
@@ -153,6 +156,60 @@ CREATE TABLE IF NOT EXISTS codex_provider_invocations (
   cost_usd               DOUBLE,
   PRIMARY KEY (invocation_id)
 );
+
+-- ── model_pricing ─────────────────────────────────────────────────────────
+-- Versioned, date-effective LLM pricing (llm#795). Replaces the previously
+-- hand-typed PRICING_TABLE literal that lived in roborev_metrics_etl.R —
+-- that literal carried a stale comment promising a migration "under #380"
+-- (closed, unrelated) that never happened.
+--
+-- Seeded here (first table creation only) AND by roborev_metrics_etl.R's
+-- seed_model_pricing() on every --apply run — the ETL's schema-init step
+-- skips ALL DDL/INSERT once every expected table already exists, so this
+-- seed INSERT below would otherwise only ever fire once.
+--
+-- Matching: longest-matching model_prefix wins; among ties, the greatest
+-- effective_from <= the record's date wins. model_prefix = '__default__'
+-- is the fallback for unmatched/unknown models (sonnet-tier pricing,
+-- unchanged behaviour from before #795).
+-- PK: (model_prefix, effective_from)
+CREATE TABLE IF NOT EXISTS model_pricing (
+  model_prefix         VARCHAR NOT NULL,
+  input_usd_per_mtok   DOUBLE  NOT NULL,
+  output_usd_per_mtok  DOUBLE  NOT NULL,
+  effective_from       DATE    NOT NULL,
+  source_url           VARCHAR,
+  PRIMARY KEY (model_prefix, effective_from)
+);
+
+-- Seed rows — behaviour-preserving migration: identical input/output pairs
+-- to the PRICING_TABLE literal this replaces. effective_from is a single
+-- conservative floor date (2024-01-01) for every row, so ALL historical
+-- agent_runs rows price at today's rates — identical to the prior embedded-
+-- constant behaviour. source_url points at the provider's official pricing
+-- page as of 2026-07-30.
+INSERT INTO model_pricing
+  (model_prefix, input_usd_per_mtok, output_usd_per_mtok, effective_from, source_url)
+VALUES
+  ('claude-opus-4',     15.00,  75.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-sonnet-4',    3.00,  15.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-haiku-4',     0.80,   4.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-opus-3-7',   15.00,  75.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-sonnet-3-7',  3.00,  15.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-haiku-3-7',   0.80,   4.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-opus-3-5',   15.00,  75.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-sonnet-3-5',  3.00,  15.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('claude-haiku-3-5',   0.80,   4.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing'),
+  ('gpt-5',              0.15,   0.60,  DATE '2024-01-01', 'https://openai.com/api/pricing'),
+  ('gpt-4',              2.50,  10.00,  DATE '2024-01-01', 'https://openai.com/api/pricing'),
+  ('gpt-3',              0.50,   1.50,  DATE '2024-01-01', 'https://openai.com/api/pricing'),
+  ('o1',                15.00,  60.00,  DATE '2024-01-01', 'https://openai.com/api/pricing'),
+  ('o3',                10.00,  40.00,  DATE '2024-01-01', 'https://openai.com/api/pricing'),
+  ('gemini-2.5',         0.075,  0.30,  DATE '2024-01-01', 'https://ai.google.dev/gemini-api/docs/pricing'),
+  ('gemini-2',           0.10,   0.40,  DATE '2024-01-01', 'https://ai.google.dev/gemini-api/docs/pricing'),
+  ('gemini-1',           0.125,  0.375, DATE '2024-01-01', 'https://ai.google.dev/gemini-api/docs/pricing'),
+  ('__default__',        3.00,  15.00,  DATE '2024-01-01', 'https://www.anthropic.com/pricing')
+ON CONFLICT (model_prefix, effective_from) DO NOTHING;
 
 -- ── roborev_finding_lineage_summary (view) ────────────────────────────────
 -- Per-finding summary: attempt count, time-to-close, verdict chain.

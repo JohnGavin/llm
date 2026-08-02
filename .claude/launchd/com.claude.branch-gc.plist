@@ -22,9 +22,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/branch_gc.sh</string>
-        <string>--apply</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/branch-gc</string>
     </array>
 
     <!-- Daily 09:08 (after worktree-gc at 09:00) -->

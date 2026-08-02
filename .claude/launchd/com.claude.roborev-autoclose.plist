@@ -6,8 +6,7 @@
     <string>com.claude.roborev-autoclose</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_weekly_chain.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-autoclose</string>
     </array>
     <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
          primary shim (#386) intercepts all roborev invocations from autoclose. -->

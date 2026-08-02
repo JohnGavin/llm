@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 5. Daily lifecycle {#daily-lifecycle}
+## Daily lifecycle {#daily-lifecycle}
 
 The diagram below shows the sequence of scheduled jobs that run every 24 hours.
 All times are local.
@@ -24,6 +24,7 @@ All times are local.
 ::: {aria-label="Sequence diagram showing the daily roborev lifecycle. At 02:00 the metrics ETL runs: it reads reviews.db via DuckDB sqlite extension and writes to unified.duckdb. At 09:30 the severity autoclose runs: it reads open reviews from reviews.db, closes clean-verdict and below-threshold severity findings. At 08:00 the daily email job reads unified.duckdb and sends a blastula digest. The llmtelemetry data branch is refreshed after the email job so the dashboard reflects the same numbers as the email."}
 
 ```{mermaid}
+%%| fig-cap: "This sequence diagram shows the four scheduled jobs that run every 24 hours to keep roborev's dashboard and email digest current. At 02:00 the metrics ETL attaches reviews.db read-only and writes two summary tables into unified.duckdb; at 09:30 the severity autoclose job reads open reviews from the same SQLite database and closes findings that are either clean-verdict or below the severity threshold. At 08:00 the daily email job reads unified.duckdb and sends a blastula digest, and the llmtelemetry dashboard is refreshed afterward so it reports the same numbers as the email rather than a live, one-batch-ahead view of reviews.db."
 sequenceDiagram
   participant DB as reviews.db (SQLite)
   participant ETL as roborev_metrics_etl.sh<br/>02:00

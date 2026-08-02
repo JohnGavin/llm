@@ -34,9 +34,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/johngavin/.local/bin/with-secrets</string>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/kb_digest_daily_cron.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/kb-digest-email</string>
     </array>
 
     <!-- Daily at 08:05 local time (5-min offset from roborev-daily-email) -->

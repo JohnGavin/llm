@@ -31,9 +31,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/johngavin/.local/bin/with-secrets</string>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/roborev_daily_cron.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-daily-email</string>
     </array>
 
     <!-- Daily at 08:00 local time (after 02:00 metrics-etl job) -->

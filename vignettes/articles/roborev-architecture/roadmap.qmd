@@ -16,7 +16,7 @@ execute:
 {{< include _setup.qmd >}}
 {{< include _pages-nav.qmd >}}
 
-## 7. Open questions and future work {#roadmap}
+## Open questions and future work {#roadmap}
 
 The list below links every active work item. Status reflects the state as of
 the date at the top of this page.
@@ -44,5 +44,5 @@ the date at the top of this page.
 | [#326](https://github.com/JohnGavin/llm/issues/326) | post-verify + SendMessage caveat + cross-repo pattern | Merged |
 | [#332](https://github.com/JohnGavin/llm/issues/332) | ETL BINDER bug on narrow `--since` windows | Open — currently breaking ETL on narrow windows |
 
-The [open findings panel](https://johngavin.github.io/llmtelemetry/roborev_summary.html#top-problems)
+The [open findings panel](https://johngavin.github.io/llmtelemetry/roborev_summary.html#top-problems){target="_blank"}
 in the dashboard shows the live view of what is currently pending across all repos.

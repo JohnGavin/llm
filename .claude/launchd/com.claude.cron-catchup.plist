@@ -8,8 +8,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/cron_catchup.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/cron-catchup</string>
     </array>
 
     <key>StartInterval</key>

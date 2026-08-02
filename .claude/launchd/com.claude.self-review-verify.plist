@@ -18,8 +18,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/self_review_verify.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/self-review-verify</string>
     </array>
 
     <!-- 08:00 daily: after 02:30 stage1 run and ~03:00 backup -->
