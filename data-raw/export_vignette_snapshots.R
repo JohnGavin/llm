@@ -56,10 +56,21 @@ for (nm in vig) {
   ## Writing that NULL over a committed snapshot that still holds real data
   ## silently blanks a plot on the deployed site. Never overwrite real data
   ## with NULL; report it instead so the missing input can be fixed.
+  ##
+  ## That protection only applies when a *prior* snapshot exists to protect.
+  ## A brand-new target (no snapshot committed yet) that legitimately builds
+  ## as NULL -- e.g. an upstream export whose source flips between populated
+  ## and an empty `[]` placeholder across cron runs, see JohnGavin/llm#877 --
+  ## must still get a snapshot written, or check_rds_freshness() reports it
+  ## forever as "built target with no snapshot" with no way to clear.
   if (is.null(obj)) {
-    if (file.exists(rds) && !is.null(readRDS(rds))) {
-      skipped <- c(skipped, nm)
+    if (file.exists(rds)) {
+      if (!is.null(readRDS(rds))) skipped <- c(skipped, nm)
+      next
     }
+    created <- c(created, nm)
+    saveRDS(obj, rds)
+    written <- c(written, nm)
     next
   }
 

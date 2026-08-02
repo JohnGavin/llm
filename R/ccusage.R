@@ -157,6 +157,118 @@ ccusage_cache_file <- function(type = c("daily", "session", "blocks"),
   llm_extdata_file(fname, quiet = quiet)
 }
 
+#' Load CodexBar's per-project cost export (day x project grain)
+#'
+#' Reads `codexbar_cost_per_project.json`, exported by llmtelemetry's
+#' `export_dashboard_data.R` (Section 9b) from the CodexBar day-level cost
+#' total (`codexbar cost --provider all --json`), apportioned to projects via
+#' session-duration weighting against `unified.duckdb.sessions`. This is an
+#' **estimate**, not a native CodexBar per-project or per-session export --
+#' CodexBar's raw CLI output (confirmed against the installed binary,
+#' `codexbar cost --group-by project --json`) has no project or session
+#' identifier field at all; llmtelemetry infers project share from session
+#' duration overlap (see JohnGavin/llm#877 for the investigation).
+#'
+#' The exporter runs on a frequent cron and was observed, during development
+#' of this function, to toggle between populated (~89 rows) and an empty `[]`
+#' placeholder within minutes on the same machine -- the placeholder is
+#' written whenever a given run finds no date overlap between CodexBar's
+#' cost window and the session-duration table. Callers MUST treat an empty
+#' or missing file as a normal, expected state, not an error.
+#'
+#' @param path Character(1). Path to `codexbar_cost_per_project.json`.
+#'   Defaults to the file resolved via [llm_extdata_file()].
+#' @return A [tibble::tibble()] with columns `date`, `canonical_project`,
+#'   `est_cost`, `duration_min`, `share`. Zero rows if the file is absent,
+#'   empty, or unparseable.
+#' @export
+load_codexbar_project_cost <- function(path = NULL) {
+  if (is.null(path)) path <- llm_extdata_file("codexbar_cost_per_project.json")
+
+  empty_tbl <- tibble::tibble(
+    date              = character(),
+    canonical_project = character(),
+    est_cost          = numeric(),
+    duration_min      = numeric(),
+    share             = numeric()
+  )
+
+  if (is.null(path) || !file.exists(path)) return(empty_tbl)
+
+  df <- tryCatch(
+    jsonlite::fromJSON(path, simplifyDataFrame = TRUE),
+    error = function(e) NULL
+  )
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0L) return(empty_tbl)
+  if (!all(c("date", "canonical_project", "est_cost") %in% names(df))) {
+    return(empty_tbl)
+  }
+
+  # duration_min/share are informational only -- fill with NA if the
+  # exporter's schema ever drops them rather than erroring out.
+  if (!"duration_min" %in% names(df)) df$duration_min <- NA_real_
+  if (!"share" %in% names(df)) df$share <- NA_real_
+
+  tibble::as_tibble(df) |>
+    dplyr::mutate(
+      date              = as.character(date),
+      canonical_project = as.character(canonical_project),
+      est_cost          = as.numeric(est_cost),
+      duration_min      = as.numeric(duration_min),
+      share             = as.numeric(share)
+    )
+}
+
+#' Summarise CodexBar per-project cost at project grain
+#'
+#' Collapses the day x project rows from [load_codexbar_project_cost()] to
+#' one row per `canonical_project`, summed over whatever date window the
+#' export currently covers. This is the day/project-grain replacement
+#' content for JohnGavin/llm#877 -- session-level CodexBar cost does not
+#' exist as a data source, so the finest honest grain available is
+#' project-per-day, aggregated here to project totals for a single plot.
+#'
+#' @param df A tibble as returned by [load_codexbar_project_cost()], or any
+#'   data frame with `canonical_project`, `est_cost`, and `duration_min`
+#'   columns.
+#' @return A [tibble::tibble()] with one row per `canonical_project`:
+#'   `total_est_cost`, `total_duration_min`, `n_days`, `date_min`,
+#'   `date_max`. Zero rows if `df` is `NULL`, empty, or missing the
+#'   required columns. Rows with `NA`/empty `canonical_project` are dropped
+#'   -- an unattributed project cannot be plotted honestly by project.
+#' @export
+summarise_codexbar_project_cost <- function(df) {
+  empty_tbl <- tibble::tibble(
+    canonical_project  = character(),
+    total_est_cost     = numeric(),
+    total_duration_min = numeric(),
+    n_days             = integer(),
+    date_min           = character(),
+    date_max           = character()
+  )
+
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0L) return(empty_tbl)
+  required <- c("date", "canonical_project", "est_cost")
+  if (!all(required %in% names(df))) return(empty_tbl)
+
+  df |>
+    dplyr::filter(!is.na(canonical_project), nzchar(canonical_project)) |>
+    dplyr::group_by(canonical_project) |>
+    dplyr::summarise(
+      total_est_cost     = sum(est_cost, na.rm = TRUE),
+      total_duration_min = if ("duration_min" %in% names(df)) {
+        sum(duration_min, na.rm = TRUE)
+      } else {
+        NA_real_
+      },
+      n_days   = dplyr::n_distinct(date),
+      date_min = min(date, na.rm = TRUE),
+      date_max = max(date, na.rm = TRUE),
+      .groups  = "drop"
+    ) |>
+    dplyr::arrange(dplyr::desc(total_est_cost))
+}
+
 #' Load cached ccusage data from JSON files
 #'
 #' For `type = "daily"` with the default `cache_dir = NULL`, this reads
