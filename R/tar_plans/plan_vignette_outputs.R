@@ -75,10 +75,22 @@ plan_vignette_outputs <- function() {
       llm::load_cached_ccusage("session", project_filter = NULL)
     ),
 
+    # Resolved via llm:::ccusage_cache_dir() rather than here::here() -- the
+    # blocks cache lives in llmtelemetry (#32) and was never restored to this
+    # package, so the hardcoded path always missed and every downstream
+    # session-efficiency target returned NULL (#860).
     tar_target(
       vig_blocks_data,
       tryCatch(
-        jsonlite::fromJSON(here::here("inst/extdata/ccusage_blocks_all.json")),
+        {
+          f <- llm:::ccusage_cache_file("blocks")
+          if (is.null(f)) {
+            cli::cli_warn("ccusage_blocks_all.json not found in package or llmtelemetry")
+            NULL
+          } else {
+            jsonlite::fromJSON(f)
+          }
+        },
         error = function(e) { cli::cli_warn("Target failed: {conditionMessage(e)}"); NULL }
       )
     ),
@@ -235,8 +247,11 @@ plan_vignette_outputs <- function() {
     tar_target(
       vig_gemini_plot,
       {
-        gm_db_path <- here::here("inst/extdata/gemini_usage.duckdb")
-        if (!file.exists(gm_db_path)) return(NULL)
+        # Resolved rather than hardcoded: #32 moved this DB to llmtelemetry and
+        # left the here::here() path behind, so this target had been silently
+        # returning NULL ever since (#860).
+        gm_db_path <- llm:::llm_extdata_file("gemini_usage.duckdb")
+        if (is.null(gm_db_path) || !file.exists(gm_db_path)) return(NULL)
         tryCatch({
           con <- DBI::dbConnect(duckdb::duckdb(), dbdir = gm_db_path, read_only = TRUE)
           on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
