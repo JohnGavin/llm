@@ -87,35 +87,18 @@ If the task matches a named agent's trigger, MUST delegate:
 
 ## Burn-Rate-Aware Escalation
 
-When `burn_rate_check.sh` reports WARN or CRITICAL:
-
-| Severity | Orchestrator action |
-|----------|---------------------|
-| WARN | Prefer worker-tier agents. Use lightweight tier for all single-file edits. Defer speculative exploration. |
-| CRITICAL | Orchestrator tier for user dialogue only. ALL code work via worker/lightweight agents. Suggest worktree: `git worktree add ../<repo>-worker feat/<task>` then `claude --model sonnet` in that tree |
+When `burn_rate_check.sh` reports **WARN**, prefer worker/lightweight agents, use the lightweight tier for all single-file edits, and defer speculative exploration. At **CRITICAL**, the orchestrator tier handles user dialogue only — ALL code work goes to worker/lightweight agents (or a `claude --model sonnet` worktree). Full severity→action table: [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
 
 ## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
 
 Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Full rationale (main-checkout credential risk, `~/.claude/` symlink sandbox-escape, `worktree_symlink_guard` hook llm#692) is in the companion doc.
 
-**Therefore:** ANY Agent dispatch where the agent may invoke Bash MUST be
-called with `isolation: "worktree"`. This includes:
-
-| Agent | Bash? | Worktree required? |
-|-------|-------|--------------------|
-| `fixer` | Yes | **Yes** |
-| `r-debugger` | Yes | **Yes** |
-| `targets-runner` | Yes | **Yes** |
-| `nix-env` | Yes | **Yes** |
-| `shiny-async-debugger` | Yes | **Yes** |
-| `data-quality-guardian` | Yes | **Yes** |
-| `data-engineer` | Yes | **Yes** |
-| `shinylive-builder` | Yes | **Yes** |
-| `wiki-curator` | Yes | **Yes** |
-| `quick-fix` (lightweight tier) | No | Optional |
-| `critic` (read-only) | No | Optional |
-
-See the companion doc for the quick-fix tool-limitation note (#223 recurrence pattern).
+**Therefore:** ANY Agent dispatch where the agent may invoke Bash — `fixer`,
+`r-debugger`, `targets-runner`, `nix-env`, `shiny-async-debugger`,
+`data-quality-guardian`, `data-engineer`, `shinylive-builder`, `wiki-curator` —
+MUST be called with `isolation: "worktree"`. `quick-fix` (no Bash) and `critic`
+(read-only) are exempt. Per-agent table + the quick-fix tool-limitation note
+(#223) are in [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
 
 ### Mandatory Agent Dispatch Prefixes (BOTH required)
 
