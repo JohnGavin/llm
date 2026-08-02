@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.kb-digest-email" -- "/Users/johngavin/.local/bin/with-secrets" "/bin/bash" "/Users/johngavin/docs_gh/llm/bin/kb_digest_daily_cron.sh"

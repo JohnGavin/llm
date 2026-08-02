@@ -13,12 +13,7 @@
          (see the writer script's Step 1b retry-logic comment). -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh</string>
-        <string>com.claude.launchd-health-weekly</string>
-        <string>--</string>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/bin/launchd_health_weekly_cron.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/launchd-health-weekly</string>
     </array>
 
     <!-- Daily; Hour 8; Minute 0 -->

@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-bridge" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_bridge_to_unified.sh"
