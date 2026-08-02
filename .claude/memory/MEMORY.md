@@ -65,6 +65,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 ## Delegation Under Pressure (see feedback_delegation-under-pressure.md)
 - After FIRST fix in a CI-fail→fix loop, delegate subsequent fixes to fixer/quick-fix (6 opus edits ≈$30 vs sonnet ≈$3)
 
+## Agent Salvage: Unlanded Work (see feedback_agent-salvage-unlanded-work.md)
+- 3/5 agents (2026-08-02) stopped before committing — work complete, just unlanded; a `failed`/truncated report is NOT evidence work is missing. Check the worktree, verify the outcome yourself, commit with provenance + what reasoning was never delivered. Never re-dispatch (pays twice). Push guard misparses `push -u` — name the branch explicitly
+
 ## Parallel Model Allocation (see feedback_parallel-model-allocation.md)
 - Cheapest sufficient model per task; dispatch independent tasks in parallel (one message, multiple Agent uses); even 1-line edits → quick-fix
 
