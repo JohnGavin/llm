@@ -21,7 +21,8 @@ This vignette presents six categories of telemetry for the `llm` project: LLM us
 
 - `vig_usage_summary`, `vig_cost_trend_plot`, `vig_cumulative_cost_plot`, `vig_breakdowns_plot`: Claude API usage data from `~/.claude/logs/ccusage/` parquet files, aggregated by the `plan_telemetry.R` pipeline
 - `vig_gemini_plot`: Gemini usage data from the Gemini usage database
-- `vig_duration_trend_plot`, `vig_cost_efficiency_plot`, `vig_cost_duration_plot`, `vig_model_session_plot`, `vig_max5_table`: session-level metrics derived from Claude API usage logs, including Claude Max5 5-hour window tracking
+- `vig_duration_trend_plot`, `vig_cost_efficiency_plot`, `vig_cost_duration_plot`, `vig_model_session_plot`, `vig_max5_table`: session-level metrics derived from `ccusage_blocks_all.json` (Claude Max5 5-hour window tracking, refreshed daily via the `llmtelemetry` checkout); each block is one continuous usage window, treated as a session
+- `vig_codexbar_project_cost_plot`: day/project-grain **estimate** (not per-session) from `codexbar_cost_per_project.json`, apportioning CodexBar's daily cost total across projects by session-duration weighting; CodexBar has no session- or project-level cost export of its own (see [#877](https://github.com/JohnGavin/llm/issues/877))
 - `vig_pipeline_plans_table`, `vig_pipeline_top_size_table`, `vig_pipeline_top_time_table`: targets pipeline manifest queried via `targets::tar_manifest()` with size and timing metadata
 - `vig_commit_velocity_table`, `vig_github_activity_table`, `vig_workflow_plot`, `vig_git_history_plot`: GitHub API data via `gh::gh()` for repository commits, issues, PRs, and Actions workflow runs
 - `vig_codebase_metrics`, `vig_file_counts_table`, `vig_github_stats_table`: static repository metrics from `list.files()` and GitHub API
