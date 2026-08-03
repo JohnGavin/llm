@@ -235,17 +235,29 @@ The greyed-out mass shows what those hotspots sit within: dozens of shorter file
 ```{r scene5-plot}
 #| fig-alt: "Small multiples showing the line count distribution for each of the seven config categories. Rules have the widest spread and highest maximum. Scripts and hooks cluster near zero. Skills and commands fall in the middle range."
 #| fig-cap: "Small-multiples histogram of line count, faceted into one panel per configuration category with independent y-axis scales and coloured using the same palette as the previous scenes. Rules and skills show the widest spread, ranging from short focused files to long comprehensive ones, while hooks and scripts cluster tightly near zero lines, reflecting their preference for brevity over completeness. Agents, memory, and commands fall in an intermediate range, with commands showing a mild bimodal shape that separates simple one-line triggers from multi-step workflow files."
-ggplot(cfg, aes(x = n_lines, fill = category)) +
-  geom_histogram(binwidth = 20, colour = NA, alpha = 0.8) +
-  facet_wrap(~category, scales = "free_y", ncol = 2) +
-  scale_fill_manual(values = category_palette, guide = "none") +
-  labs(
-    title = "Line-count distribution by category",
-    x     = "Lines",
-    y     = "Count"
-  ) +
-  base_theme +
-  theme(strip.text = element_text(face = "bold"))
+if (nrow(cfg) == 0L) {
+  # facet_wrap(~category) errors with "Faceting variables must have at
+  # least one value" on a zero-row frame (#889) — degrade to a blank
+  # placeholder panel rather than aborting the whole site build.
+  ggplot() +
+    labs(
+      title    = "Line-count distribution by category",
+      subtitle = "No config file data available for this build"
+    ) +
+    base_theme
+} else {
+  ggplot(cfg, aes(x = n_lines, fill = category)) +
+    geom_histogram(binwidth = 20, colour = NA, alpha = 0.8) +
+    facet_wrap(~category, scales = "free_y", ncol = 2) +
+    scale_fill_manual(values = category_palette, guide = "none") +
+    labs(
+      title = "Line-count distribution by category",
+      x     = "Lines",
+      y     = "Count"
+    ) +
+    base_theme +
+    theme(strip.text = element_text(face = "bold"))
+}
 ```
 :::
 
