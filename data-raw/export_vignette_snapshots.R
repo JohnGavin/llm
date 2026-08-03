@@ -36,6 +36,7 @@ cli::cli_h1("Exporting {length(vig)} vig_* target{?s} to {.path {snapdir}}")
 written <- character()
 skipped <- character()
 created <- character()
+refused <- character()
 
 for (nm in vig) {
   obj <- tryCatch(
@@ -48,35 +49,46 @@ for (nm in vig) {
 
   rds <- file.path(snapdir, paste0(nm, ".rds"))
 
-  ## NULL guard -- the reason this script exists rather than a bare saveRDS loop.
+  ## NULL guard -- the reason this script exists rather than a bare saveRDS
+  ## loop. Decision delegated to vig_snapshot_action() (R/vig_snapshot.R) so
+  ## it is unit-testable independently of a real _targets store.
   ##
-  ## A partial build (only the vig_* targets) or a machine missing an upstream
-  ## input -- e.g. `inst/extdata/ccusage_blocks_all.json`, which every
-  ## session-efficiency target depends on -- yields NULL for those targets.
-  ## Writing that NULL over a committed snapshot that still holds real data
-  ## silently blanks a plot on the deployed site. Never overwrite real data
-  ## with NULL; report it instead so the missing input can be fixed.
+  ## A partial build (only the vig_* targets) or a machine missing an
+  ## upstream input -- e.g. `inst/extdata/ccusage_blocks_all.json`, which
+  ## every session-efficiency target depends on -- yields NULL for those
+  ## targets. Writing that NULL over a committed snapshot that still holds
+  ## real data would silently blank a plot on the deployed site, so a NULL
+  ## build never overwrites an existing non-NULL snapshot -- it is reported
+  ## as skipped instead.
   ##
-  ## That protection only applies when a *prior* snapshot exists to protect.
-  ## A brand-new target (no snapshot committed yet) that legitimately builds
-  ## as NULL -- e.g. an upstream export whose source flips between populated
-  ## and an empty `[]` placeholder across cron runs, see JohnGavin/llm#877 --
-  ## must still get a snapshot written, or check_rds_freshness() reports it
-  ## forever as "built target with no snapshot" with no way to clear.
-  if (is.null(obj)) {
-    if (file.exists(rds)) {
-      if (!is.null(readRDS(rds))) skipped <- c(skipped, nm)
-      next
-    }
-    created <- c(created, nm)
-    saveRDS(obj, rds)
-    written <- c(written, nm)
-    next
-  }
+  ## A brand-new target with no prior snapshot that builds NULL is NEVER
+  ## written either, even though that was #879's original relaxation (to
+  ## stop check_rds_freshness() reporting "built target with no snapshot"
+  ## forever). That relaxation shipped a real defect: the first NULL build of
+  ## `vig_codexbar_project_cost_plot` -- caught while its upstream JSON
+  ## source was mid-toggle to an empty placeholder, see #877 -- was committed
+  ## as-is and rendered a blank chart on the deployed site. The `qa_no_nulls`
+  ## gate (`R/tar_plans/plan_qa_gates.R`, #881) now treats ANY NULL vig_*
+  ## value, in the store or in a snapshot, as a P0 build-aborting failure --
+  ## so there is no longer a legitimate NULL state for this exporter to
+  ## accommodate. A NULL build with no protective snapshot is now a refusal:
+  ## the script does not write it, and reports it loudly so the missing
+  ## upstream input gets fixed instead of silently masked.
+  action <- vig_snapshot_action(obj, rds)
 
-  if (!file.exists(rds)) created <- c(created, nm)
-  saveRDS(obj, rds)
-  written <- c(written, nm)
+  switch(action,
+    write = {
+      if (!file.exists(rds)) created <- c(created, nm)
+      saveRDS(obj, rds)
+      written <- c(written, nm)
+    },
+    skip = {
+      skipped <- c(skipped, nm)
+    },
+    refuse = {
+      refused <- c(refused, nm)
+    }
+  )
 }
 
 cli::cli_h2("Summary")
@@ -92,4 +104,21 @@ if (length(skipped)) {
     "This machine is missing an upstream input for those targets. Re-run on a \\
      full-data environment to refresh them."
   )
+}
+
+if (length(refused)) {
+  cli::cli_alert_danger(
+    "Refused to write {length(refused)} NULL snapshot{?s} -- no protective \\
+     non-NULL snapshot exists for {?this target/these targets}."
+  )
+  cli::cli_ul(refused)
+  cli::cli_alert_info(
+    "The upstream input for {?this target/these targets} is missing or \\
+     empty. Fix the input, re-run tar_make(), then re-run this script."
+  )
+  cli::cli_abort(c(
+    "x" = "{length(refused)} vig_* target{?s} built NULL with no snapshot to protect.",
+    "i" = "A NULL snapshot would trip the qa_no_nulls P0 gate (#881).",
+    "i" = "Fix the upstream input for: {paste(refused, collapse = ', ')}"
+  ))
 }
