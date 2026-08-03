@@ -4,6 +4,37 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-03 (session 2) — site unblocked after 3 stacked failures; all 25 launchd jobs found dead
+
+### Completed
+- **Site is live again** — first successful `quarto-publish` since 2026-08-01. Verified by fetching the deployed page *and* the chart image (299 kB of real data), not by trusting a green run, per `prerendered-docs-deploy-verification`.
+- **[#882](https://github.com/JohnGavin/llm/pull/882) merged** — `qa_no_nulls` gate + the NULL snapshot it found + the exporter hole that produced it. `vig_codexbar_project_cost_plot.rds` 44 B → 416 kB. Root cause was the *snapshot*, not the pipeline: the store built all three codexbar targets non-NULL; #879's export ran while `codexbar_cost_per_project.json` held its documented empty `[]` placeholder. `vig_snapshot_action()` now returns write/skip/**refuse** — NULL is never written and `refuse` aborts rather than exiting 0. #879's relaxation is reversed, not patched around: `qa_no_nulls` makes a NULL `vig_` target P0, so the "legitimately NULL new target" it accommodated no longer exists.
+- **[#885](https://github.com/JohnGavin/llm/pull/885) merged** — `repair_widget_deps()`. `DT::datatable()` records JS assets as an **absolute** `html_dependency` path and `saveRDS()` preserves it, so 13 committed snapshots carried this laptop's `/nix/store/…` prefix. Rendered locally, died in CI. Repaired at **read** time: regenerating only re-acquires the new machine's path. Also added `inst/extdata/vignettes/**` to `quarto-publish.yaml`'s `paths:` — the directory the vignettes actually read from was not a publish trigger, so #882 merged and published nothing.
+- **[#888](https://github.com/JohnGavin/llm/pull/888) merged** — `bin/launchd_run_record.sh` was committed **100644**. All 25 named launchers `exec` it, so **every `com.claude.*` launchd job had been dead since 2026-08-02** with `exit 126`. Verified fixed by kickstarting a job: `last exit code = 0`.
+- **[#890](https://github.com/JohnGavin/llm/pull/890) merged** — the worktree-exclusion regex matched its own scan root. `vig_scrolly_config` regenerated **222 rows → 0** by #868 and shipped silently; snapshot 195 B → 18 kB, 374 rows across all 7 categories.
+- **[#891](https://github.com/JohnGavin/llm/pull/891) merged** — new path-scoped rule `portable-build-artifacts` + memory entries, so other projects inherit both lessons. Written as **one** rule because #885 and #890 are the same bug: the checkout that built a committed artifact leaked into the artifact.
+- **Issues filed with plans, not just complaints:** [#883](https://github.com/JohnGavin/llm/issues/883) (deploy gap), [#884](https://github.com/JohnGavin/llm/issues/884) (`~/.claude/` 7.9 GB audit), [#886](https://github.com/JohnGavin/llm/issues/886) (launchd), [#887](https://github.com/JohnGavin/llm/issues/887) (74 MB poller log), [#889](https://github.com/JohnGavin/llm/issues/889) (scrolly), [#892](https://github.com/JohnGavin/llm/issues/892) (gates test existence not content), [#893](https://github.com/JohnGavin/llm/issues/893) (staleness consolidation), [#894](https://github.com/JohnGavin/llm/issues/894) (live chart shows test fixtures).
+
+### Failed Approaches
+- **Three wrong readings of `unified.duckdb`, in sequence.** First guess: fat payloads. Second: reclaimable dead space (`free_blocks = 97` disproved it). Actual: 61,635 rows over 29,091 × 256 kB blocks — `hook_events` is 13,681 rows in 6,172 blocks, **~2 rows per block** — because every hook appends one row in its own transaction and DuckDB allocates a row group per append. The `housekeeping-framework` rule mandates that write pattern, so it is systemic. Lesson: `sum(length(col))` before theorising about size.
+- **My `projects/` orphan-detection was invalid.** Claude Code's dir encoding maps **both** `/` and `_` to `-`, so `docs_gh` and `docs/gh` are indistinguishable and the mapping is not reversible by string substitution. My first pass produced ~20 false "MISSING" hits. Reported as unreliable rather than as a delete list.
+- **My first `here::here()` probe was an artifact of the probe.** I looped two roots inside one R session; `here` caches its root on first call, so the worktree case returned the main checkout's answer and looked fine. Re-testing in a **fresh** session showed 98 files → 0 after exclusion. Nearly closed the investigation on a false negative.
+- **#882's own PR body was wrong about live impact.** It asserted the NULL chart was "blank on the deployed site right now". `curl` of the live page returned **0** matches for "codexbar" — publishing had been broken since *before* those targets existed, so it was never on the site. Corrected in the merge commit rather than carried forward.
+
+### Accuracy / Metrics
+- Tests: 675 → **693 pass, 0 fail** across the session
+- 5 PRs merged (#882, #885, #888, #890, #891); 8 issues filed
+- Snapshots: 60 on disk, **0 NULL**; `vig_scrolly_config` 0 → 374 rows
+- launchd: 24/25 jobs at `exit 126` → verified `exit 0`
+- **7 of 7 dispatched agents** stopped before committing; all salvaged, Tier-3 post-verify clean every time (main HEAD never moved)
+
+### Known Limitations
+- **[#893](https://github.com/JohnGavin/llm/issues/893) in progress** — staleness consolidation. Three defects evidenced: `status` is *stored* so the freshness table goes stale itself (`roborev` reads `fresh` at 38 h against a 24 h cadence); NULL cadence degrades to `unknown`, which reads as benign (`sessions` stale **11 days**, reporting `unknown`); and every checker is a launchd job, so `launchd_health_events` died at 2026-08-02 08:00 alongside what it monitors. Highest-value piece is the collector heartbeat checked from `session_init.sh` — a different trigger class, so a total launchd outage becomes visible.
+- **[#892](https://github.com/JohnGavin/llm/issues/892) open** — every gate answers *"does it exist / is it recent?"*, never *"is it still what it was?"*. Agreed next step: a **plain-text manifest committed beside each `.rds`**, since binary diffs are unreviewable and that is why 222 → 0 passed review at all.
+- **`~/.claude/` untouched** ([#884](https://github.com/JohnGavin/llm/issues/884)): 7.9 GB, 593 top-level entries, 461 orphaned `.session_start_sha_*` sentinels never deleted by anything.
+- **#886 options A + C not implemented** — no CI mode assertion over `bin/**`, and the launchd health blind spot (a monitor that runs through what it monitors) is still open.
+- The live codexbar chart shows `kb_fixture_*` test temp dirs and unresolved aliases ([#894](https://github.com/JohnGavin/llm/issues/894)) — same ephemeral-registration family as [#887](https://github.com/JohnGavin/llm/issues/887), now public.
+
 ## 2026-08-03 — qa_no_nulls implemented; it immediately found a shipped NULL snapshot
 
 ### Completed
