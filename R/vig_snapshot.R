@@ -56,3 +56,61 @@ vig_snapshot_action <- function(obj, rds_path) {
 
   "refuse"
 }
+
+#' Repair absolute nix-store paths in a htmlwidget's `html_dependency` list
+#'
+#' `DT::datatable()` (and other htmlwidgets) record their JS/CSS assets as an
+#' **absolute** filesystem path in each `htmltools::htmlDependency()`'s
+#' `src$file`. `saveRDS()` preserves that path verbatim into the committed
+#' `inst/extdata/vignettes/*.rds` snapshot, so the path baked in is whichever
+#' machine last ran `export_vignette_snapshots.R` — typically a
+#' `/nix/store/<hash>-r-<pkg>-<version>/library/<PKG>/...` path on the
+#' snapshot author's laptop. CI installs the same package fresh from Posit
+#' Package Manager at a different path, so `quarto render` fails with
+#' `path for html_dependency not found` (#883).
+#'
+#' Regenerating the snapshot does not fix this — it only re-acquires
+#' whichever path the exporting machine happens to have. Instead, repair the
+#' path at *read* time: for each dependency whose recorded `src$file` does
+#' not exist on the current machine, re-resolve it via [system.file()] using
+#' the trailing `library/<PKG>/<rest>` portion of the recorded path. This
+#' makes the object portable across machines without ever touching the
+#' committed `.rds` file.
+#'
+#' @param obj Any R object. Non-htmlwidgets (or htmlwidgets with no
+#'   `dependencies`) are returned unchanged.
+#' @return `obj`, with any resolvable absolute dependency paths repaired.
+#'   Dependencies that already resolve on this machine — including
+#'   package-relative ones (`dep$package` set) — are left untouched, so this
+#'   is a no-op on the machine that exported the snapshot. A dependency whose
+#'   package cannot be resolved via `system.file()` is left at its original
+#'   (broken) path, so the failure stays visible rather than becoming a
+#'   silently-missing widget asset.
+#' @keywords internal
+#' @export
+repair_widget_deps <- function(obj) {
+  if (!inherits(obj, "htmlwidget") || is.null(obj$dependencies)) {
+    return(obj)
+  }
+
+  obj$dependencies <- lapply(obj$dependencies, function(dep) {
+    if (!is.null(dep$package)) return(dep)
+
+    file <- dep$src$file
+    if (is.null(file) || !nzchar(file)) return(dep)
+    if (file.exists(file) || dir.exists(file)) return(dep)
+
+    m <- regmatches(file, regexec("/library/([^/]+)/(.*)$", file))[[1]]
+    if (length(m) != 3L) return(dep)
+
+    pkg <- m[2]
+    rest <- m[3]
+    resolved <- system.file(rest, package = pkg)
+    if (nzchar(resolved)) {
+      dep$src$file <- resolved
+    }
+    dep
+  })
+
+  obj
+}
