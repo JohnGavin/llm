@@ -57,8 +57,15 @@ safe_tar_read <- function(name, wrap_df = FALSE) {
     rds <- file.path(d, paste0(name, ".rds"))
     if (file.exists(rds)) {
       obj <- readRDS(rds)
+      # Snapshots exported as plain data.frames carry no widget dependencies
+      # to repair — they get re-wrapped as a fresh DT::datatable() below,
+      # built fresh on this machine. Snapshots exported as fully-built
+      # htmlwidgets (e.g. DT::datatable() targets) DO carry dependencies with
+      # absolute paths baked in by saveRDS() on the exporting machine; repair
+      # those here so a render on a different machine (CI) does not fail
+      # with "path for html_dependency not found" (#883).
+      if (requireNamespace("llm", quietly = TRUE)) obj <- llm::repair_widget_deps(obj)
       if (wrap_df && is.data.frame(obj) && requireNamespace("DT", quietly = TRUE)) {
-        # Re-wrap data.frames as DT widgets (RDS stripped Nix paths)
         cap <- attr(obj, "dt_caption")
         return(DT::datatable(obj, rownames = FALSE, filter = "top",
           options = list(pageLength = 15, scrollX = TRUE),
