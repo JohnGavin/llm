@@ -97,8 +97,20 @@ plan_scrolly_config <- function() {
             recursive = spec$recurse,
             full.names = TRUE
           )
-          # Skip archive/ and worktrees/ subtrees
-          files <- files[!grepl("/(archive|worktrees)/", files, fixed = FALSE)]
+          # Skip archive/ and worktrees/ subtrees — nested UNDER this
+          # category's scan root, never the root itself. Matching against
+          # `files` (absolute paths built from `spec$path`) was wrong: when
+          # this target is built from an agent worktree (any dispatched
+          # agent, or a manual worktree under `.claude/worktrees/` or
+          # `~/docs_gh/worktrees/`), `here::here(".claude")` itself resolves
+          # to a path containing "/worktrees/", so the regex matched EVERY
+          # file and silently returned 0 rows instead of the ~222+ expected.
+          # #868 regenerated the committed snapshot from a worktree and
+          # replaced 222 rows with 0 without anyone noticing (#889). Compute
+          # the match against the path relative to `spec$path` so only
+          # genuinely nested archive/worktrees subtrees are excluded.
+          rel_files <- fs::path_rel(files, spec$path)
+          files <- files[!grepl("(^|/)(archive|worktrees)/", rel_files, fixed = FALSE)]
           if (length(files) == 0L) return(tibble::tibble())
 
           tibble::tibble(
@@ -109,9 +121,14 @@ plan_scrolly_config <- function() {
 
         all_files <- dplyr::bind_rows(rows)
         if (nrow(all_files) == 0L) {
+          # A genuinely empty scan (e.g. no matching files under any
+          # category) must still carry the 7 known category levels so
+          # downstream facet_wrap(~category) degrades to empty panels
+          # instead of hard-erroring with "Faceting variables must have
+          # at least one value" (#889).
           return(tibble::tibble(
             path         = character(0),
-            category     = factor(character(0)),
+            category     = factor(character(0), levels = names(scrolly_scan_specs)),
             n_lines      = integer(0),
             n_bytes      = integer(0),
             git_age_days = numeric(0)
