@@ -1646,6 +1646,32 @@ if [ "${CLAUDE_ETL_FRESHNESS_CHECK:-1}" != "0" ]; then
   fi
 fi
 
+# ── Phase 15d: Consolidated Staleness Heartbeat — BACKGROUND (DuckDB query ≤5s) ─
+# Out-of-band check for llm#893 defect 3: every existing freshness checker
+# (Phase 15a/15c above, launchd_health_events) was itself a launchd job, so a
+# total launchd outage (llm#886, all 25 jobs dead for 2 days) silenced the
+# monitor along with everything it watched. This phase fires on session
+# start — a different trigger class from launchd — so a dead collector
+# (.claude/scripts/staleness_collect.sh, com.claude.staleness-collect) is
+# visible the next time a session opens, not after days of silence.
+# staleness_banner.sh itself implements the priority rule: if the collector's
+# own heartbeat is stale, print ONLY that (nothing else in the table is
+# trustworthy); otherwise print a capped summary of other stale assets;
+# otherwise silent. See that script and staleness_schema.sql for detail.
+# Skippable: CLAUDE_STALENESS_CHECK=0
+_staleness_cache="${HOME}/.claude/logs/session_init_staleness_cache.txt"
+if [ "${CLAUDE_STALENESS_CHECK:-1}" != "0" ]; then
+  if [ -f "$_staleness_cache" ]; then
+    _staleness_cached=$(cat "$_staleness_cache" 2>/dev/null) || true
+    [ -n "$_staleness_cached" ] && echo "$_staleness_cached"
+  fi
+  _staleness_script="${CLAUDE_DIR}/scripts/staleness_banner.sh"
+  if [ -x "$_staleness_script" ]; then
+    mkdir -p "$(dirname "$_staleness_cache")"
+    nohup bash -c "timeout 5 '$_staleness_script' 2>/dev/null > '$_staleness_cache' || printf '' > '$_staleness_cache'" > /dev/null 2>&1 &
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.

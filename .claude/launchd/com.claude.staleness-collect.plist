@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Populate the unified `staleness` fact table daily (llm#893 step 2):   -->
+    <!-- carries over etl_freshness rows (assigning a mandatory cadence to    -->
+    <!-- the sources that previously had none), derives one row per deployed  -->
+    <!-- com.claude.* launchd job from its own schedule, and writes this      -->
+    <!-- script's own heartbeat row. session_init.sh Phase 15d reads the      -->
+    <!-- resulting staleness_status view out-of-band (a different trigger     -->
+    <!-- class than launchd) so a dead collector is visible at next session   -->
+    <!-- start, not after days of silence (the llm#886 failure mode).        -->
+    <!--                                                                       -->
+    <!-- 08:15 deliberately follows launchd-health-weekly (08:00) and         -->
+    <!-- precedes the 09:00 peak (worktree-gc, roborev-poll-merges,           -->
+    <!-- roborev-project-backlog, config-pulse) — same contention-avoidance   -->
+    <!-- reasoning as that job's plist comment.                               -->
+    <!--                                                                       -->
+    <!-- This collector's own expected_cadence_hours (24, see                 -->
+    <!-- staleness_collect.sh's collect_self_heartbeat()) assumes this daily  -->
+    <!-- schedule — keep the two in sync if this changes.                     -->
+    <!--                                                                       -->
+    <!-- Install / reload:                                                    -->
+    <!--   launchctl bootout gui/$(id -u)/com.claude.staleness-collect 2>/dev/null -->
+    <!--   cp .claude/launchd/com.claude.staleness-collect.plist               -->
+    <!--        ~/Library/LaunchAgents/                                        -->
+    <!--   launchctl bootstrap gui/$(id -u)                                   -->
+    <!--        ~/Library/LaunchAgents/com.claude.staleness-collect.plist     -->
+
+    <key>Label</key>
+    <string>com.claude.staleness-collect</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/staleness-collect</string>
+    </array>
+
+    <!-- launchd's default PATH omits Homebrew/nix dirs; duckdb resolution is -->
+    <!-- handled inside staleness_collect.sh's duck_run() (direct binary,     -->
+    <!-- else nix-shell fallback), so only HOME is needed here. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Daily 08:15 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/staleness_collect.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/staleness_collect.err</string>
+
+    <key>TimeOut</key>
+    <integer>60</integer>
+
+    <!-- Do NOT run on load — only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
