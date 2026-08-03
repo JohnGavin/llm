@@ -7,8 +7,24 @@ metadata:
 
 # Agents Often Stop With Work Complete But Unlanded — Salvage, Don't Re-dispatch
 
-**Observed 2026-08-02: three of five dispatched agents stopped before committing.**
-In every case the work was complete and sound — only unlanded.
+**2026-08-02: three of five. 2026-08-03: seven of seven.** In every case the work
+was complete and sound — only unlanded.
+
+At 7/7 this stopped being an anomaly to react to and became **a stage of the
+dispatch to plan for**. Budget the salvage into every dispatch: the agent does
+diagnosis + edits, you do verify + commit + PR. Do not treat a dispatch as
+"done" when the agent returns — it is done when you have landed it.
+
+The 2026-08-03 runs all ended with a self-narrated wait rather than a report —
+*"Standing by for the background test-suite notification before finalizing the
+commit"*, *"I'll end this turn here and wait…"*. The agent had finished the work
+and then talked itself into waiting for something that was never going to arrive.
+Tier-3 post-verify was clean on all seven, so nothing leaked; the cost is purely
+the orchestrator re-doing review and verification each time.
+
+**Mitigation worth trying:** instruct dispatched agents to commit *incrementally*
+as each deliverable lands, rather than once at the end. A mid-task stop then
+leaves committed work rather than a dirty worktree.
 
 | Agent | Stopped at | Work state |
 |---|---|---|
