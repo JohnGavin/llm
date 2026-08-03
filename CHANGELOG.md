@@ -4,6 +4,29 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-03 — qa_no_nulls implemented; it immediately found a shipped NULL snapshot
+
+### Completed
+- **`qa_no_nulls` implemented** ([#882](https://github.com/JohnGavin/llm/pull/882), #881 Layer 1) — the P0 gate `qa-targets-pipeline.md` has always mandated ("All `vig_*` targets return non-NULL", "Fails Build? Yes — abort") and which was never built. Ships **strict, no allowlist**; checks BOTH the `_targets` store AND the committed `inst/extdata/vignettes/*.rds`, reporting which surface failed; fails open on **absence** only (fresh clone skips), aborts on emptiness; `tar_cue(mode = "always")`.
+- **Roborev backlog for this repo/branch cleared to 0 open** — #10639 closed as a false positive (`pkgload::load_all(quiet=TRUE)` suppresses progress *messages*, not errors, so the "hinders debugging" finding was wrong); #9795 closed as having no `Review Findings:` section at all.
+- Session-2 CHANGELOG committed + pushed (`131d6b7`); telemetry export confirmed landed (`bd4073dd8` in llmtelemetry) by a concurrent process holding the lock.
+- Handoff + NULL-handling design analysis written to [#882](https://github.com/JohnGavin/llm/pull/882#issuecomment-5164212889).
+
+### Failed Approaches
+- **"Verified" did not mean what I reported.** I stated #879 was verified and the baseline was 58/58 clean. `qa_no_nulls` disproved it within minutes: `vig_codexbar_project_cost_plot.rds` is **NULL on main**, shipped by #879 — that chart is blank on the live site. The gap: `qa_rds_freshness` compares snapshot **times**, never **values**, and the NULL audit run during #869 predates #879's three new targets. "58/58 snapshots pass" was true and meaningless for this failure mode. Lesson: name which property a gate actually checks before citing it as assurance.
+- **Probable regression path (verify, do not assume):** #868's export NULL guard refused to overwrite an *existing non-NULL* snapshot; #879 relaxed it to permit brand-new targets, which removed NULL protection for exactly those targets.
+
+### Accuracy / Metrics
+- Tests: green, zero failures (incl. 6 new `test-qa-no-nulls.R` cases)
+- roborev this repo/branch: 2 open → **0 open**; global unaddressed 10 → 9 (remainder is cross-repo)
+- Known-bad snapshots: **1** (`vig_codexbar_project_cost_plot`) — previously 0 *believed*, undetectable before this gate
+
+### Known Limitations
+- **[#882](https://github.com/JohnGavin/llm/pull/882) deliberately NOT merged** — it fails on `main` because it found a real defect. Merge order agreed: (1) fix `vig_codexbar_project_cost_plot` and re-export, (2) re-tighten the export guard so brand-new targets cannot be written NULL, (3) merge the gate on a genuinely clean baseline.
+- **NULL-vs-placeholder architecture undecided.** Recommendation recorded on #882: placeholder plot **plus** a class/`llm_status` attribute, tagged centrally in the exporter (one site, not 58). Critical constraint — an *untagged* placeholder is strictly worse than NULL: it renders, passes `qa_no_nulls`, and restores silent degradation. Any placeholder change must ship with the gate change in the same commit.
+- **#881 Layers 2–4 untouched** (input manifest, `qa_input_freshness`, daily surfacing, coverage continuity). This gate catches the symptom; the manifest catches the cause.
+- 4th of 5 dispatched agents stopped before committing — salvaged per `feedback_agent-salvage-unlanded-work.md`. The pattern is now consistent enough to expect.
+
 ## 2026-08-02 (session 2) — telemetry snapshot exporter + cache reconnection, QA freshness gate, test-suite repair, parallel-agent salvage
 
 ### Completed
