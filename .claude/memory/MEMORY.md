@@ -134,5 +134,11 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 ## Deploy Gap: Merged ≠ Live (see deploy-gap-stale-main-checkout.md)
 - A merged fix that "isn't live" = local main checkout behind origin/main; cron `--ff-only` auto-pull jams on dirty tree (uncommitted memory edits), swallows the error, runs stale. Check `git -C ~/docs_gh/llm rev-list --count HEAD..origin/main`; also `launchctl print` before trusting "N cron jobs failed" (#510 reopened 2026-07-11)
 
+## Portable Build Artifacts (see portable-build-artifacts.md)
+- A committed artifact must not depend on the checkout that built it: (1) absolute paths serialised inside objects (DT html_dependency) — repair on READ, regenerating only re-acquires the new machine's path; (2) path filters matched on absolute paths swallow their own scan root (every worktree path contains `/worktrees/`) — match relative, and this one returns EMPTY not an error. Diff regenerated artifacts by content, never mtime (llm#883/#889, 2026-08-03)
+
+## Deploy Trigger Excludes Vignette Data (see deploy-trigger-excludes-vignette-data.md)
+- A publish workflow's `paths:` filter can omit `inst/extdata/vignettes/**` — the data vignettes actually read — so a snapshot-only fix merges green and never deploys; check for a run AT your merge SHA, and check recent run history (3 consecutive failures = site pinned at last green, so the "live" defect may not be live at all) (llm#881, 2026-08-03)
+
 ## Pre-rendered docs/ ≠ Live (see feedback_prerendered-docs-deploy-verification.md)
 - Repos that commit pre-rendered `docs/` (deploy CI only publishes, renders nothing) — a source/.qmd fix is INERT until docs/ is re-rendered + committed. "PR merged + deploy green" ≠ live. Verify the DEPLOYED artifact (curl live HTML / git grep origin/main docs/**), not the source or deploy status. Shinylive: app embedded in rendered HTML. (origin: micromort quiz \d fix appeared merged+green but live app still broken, 2026-07-27)
