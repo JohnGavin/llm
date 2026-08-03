@@ -458,8 +458,108 @@ check_rds_freshness <- function(store = targets::tar_config_get("store"),
   invisible(meta)
 }
 
+#' Check that all built vig_* targets and their committed snapshots are non-NULL
+#'
+#' Implements the P0 gate mandated by `.claude/rules/qa-targets-pipeline.md`
+#' ("All vig_* targets return non-NULL") and requested by #881: none of the
+#' existing gates check the pipeline's inputs or its target *values* — they
+#' only check the rendered HTML tail (`qa_html_no_errors`, `qa_methodology_blocks`,
+#' `qa_hover_popups`, `qa_build_info_blocks`) or snapshot mtimes
+#' (`qa_rds_freshness`, #872). None of them would catch the #869 failure mode:
+#' an upstream input file goes missing, the target silently returns NULL, and
+#' the committed `.rds` snapshot masks it from every downstream check.
+#'
+#' Checks two independent surfaces, because they have different causes and
+#' different fixes:
+#'   1. Every built `vig_*` target in the `_targets` store — a NULL here means
+#'      the pipeline itself produced NULL on the last `tar_make()`.
+#'   2. Every committed `inst/extdata/vignettes/vig_*.rds` snapshot — a NULL
+#'      here means a NULL was exported and committed, independent of whether
+#'      the current store still reproduces it.
+#'
+#' Ships strict with no allowlist (#881 Layer 1) by design: there is no
+#' grandfathered exception carried in this function. If a `vig_*` target has
+#' a legitimate reason to return NULL (e.g. an upstream export that is
+#' sometimes empty by design, per #877), that decision belongs in the
+#' target's own logic (a documented early-return) and its exported snapshot
+#' must be refreshed once real data is available — never in an allowlist
+#' here. Verification while writing this gate found exactly one pre-existing
+#' violation of that discipline: the committed
+#' `vig_codexbar_project_cost_plot.rds` snapshot is NULL (captured during a
+#' run with no CodexBar data, #877/#879), while the target itself now builds
+#' a real plot. This gate correctly flags that snapshot as stale/wrong; the
+#' fix is a snapshot re-export (`Rscript data-raw/export_vignette_snapshots.R`),
+#' out of scope for the commit that introduces this gate.
+#'
+#' @param store targets store to read metadata and target values from.
+#' @param snapshot_dir Directory holding the committed `.rds` snapshots.
+#' @return Invisibly, a character vector of checked target names when all
+#'   pass. Calls `cli::cli_abort()` naming every offending target when any
+#'   built target or committed snapshot is NULL.
+#' @keywords internal
+check_no_nulls <- function(store = targets::tar_config_get("store"),
+                           snapshot_dir = "inst/extdata/vignettes") {
+  if (!dir.exists(store)) {
+    cli::cli_alert_info("No targets store at {.path {store}} — skipping no-nulls gate.")
+    return(invisible(NULL))
+  }
+
+  meta <- targets::tar_meta(store = store)
+  meta <- meta[grepl("^vig_", meta$name) & !is.na(meta$time), ]
+  vig_names <- meta$name
+  if (length(vig_names) == 0L) {
+    cli::cli_alert_info("No built vig_* targets in {.path {store}} — skipping no-nulls gate.")
+    return(invisible(NULL))
+  }
+
+  # Surface 1: the built target value in the _targets store.
+  store_null <- vig_names[vapply(vig_names, function(nm) {
+    is.null(targets::tar_read_raw(nm, store = store))
+  }, logical(1L))]
+
+  # Surface 2: the committed .rds snapshot the deployed vignettes actually
+  # read via safe_tar_read(). Only checked when the snapshot exists — a
+  # missing snapshot is qa_rds_freshness's concern, not this gate's.
+  snapshot_null <- character(0L)
+  if (dir.exists(snapshot_dir)) {
+    for (nm in vig_names) {
+      rds <- file.path(snapshot_dir, paste0(nm, ".rds"))
+      if (file.exists(rds)) {
+        val <- readRDS(rds)
+        if (is.null(val)) snapshot_null <- c(snapshot_null, nm)
+      }
+    }
+  }
+
+  if (length(store_null) || length(snapshot_null)) {
+    cli::cli_abort(c(
+      "x" = "NULL vig_* target(s) detected — the pipeline is silently producing empty output.",
+      "i" = if (length(store_null)) {
+        "Built target is NULL in the _targets store ({length(store_null)}): {paste(store_null, collapse = ', ')}"
+      },
+      "i" = if (length(snapshot_null)) {
+        "Committed snapshot is NULL ({length(snapshot_null)}): {paste(snapshot_null, collapse = ', ')}"
+      },
+      "i" = "A NULL vig_ target usually means an upstream input file went missing or stale.",
+      "i" = "Check the target's input resolution via llm_extdata_file() / ccusage_cache_file().",
+      "i" = "Fix the input, re-run tar_make(), then re-export: Rscript data-raw/export_vignette_snapshots.R"
+    ))
+  }
+
+  cli::cli_alert_success(
+    "All {length(vig_names)} vig_* target{?s} non-NULL in store and snapshot{?s}."
+  )
+  invisible(vig_names)
+}
+
 plan_qa_gates <- function() {
   list(
+    targets::tar_target(
+      qa_no_nulls,
+      check_no_nulls(),
+      packages = c("cli"),
+      cue = targets::tar_cue(mode = "always")
+    ),
     targets::tar_target(
       qa_rds_freshness,
       check_rds_freshness(),
