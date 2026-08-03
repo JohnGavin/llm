@@ -18,6 +18,13 @@ on:
       - 'index.qmd'
       - 'R/ccusage.R'
       - 'inst/extdata/ccusage_*.json'
+      # This is where safe_tar_read() (_includes/_safe-tar-read.qmd) falls
+      # back to reading pre-computed plots/tables when no live _targets/
+      # store exists (CI, pkgdown). A snapshot-only commit changes what the
+      # site renders and MUST trigger a publish — omitting this path was
+      # exactly how #883 went two days without publishing (#882 merged a
+      # snapshot fix that touched no other listed path). Do not drop it.
+      - 'inst/extdata/vignettes/**'
       - 'DESCRIPTION'
       - '.github/workflows/quarto-publish.yaml'
   workflow_dispatch:
