@@ -57,6 +57,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 - Quarto / vignettes: `dark-mode-completeness`, `narrative-evidence-block`, `narrative-colour-persistence`, `vignette-build-info-block`, `uniform-typography`
 - Dashboards / viz: `dashboard-table-styling`, `dashboard-filter-placement`, `mermaid-click-anchors`, `mermaid-dashboard-pattern`
 - Data / analysis: `cross-cutting-rename`, `data-glossary-and-entity-resolution`, `unified-observability-schema`, `survival-reporting`
+- Build artifacts: `portable-build-artifacts` (committed artifacts must not depend on which checkout built them — absolute paths in serialised objects; path filters matching their own scan root)
 - Tooling: `roborev-exclude-patterns`
 
 **Dark-mode contrast (every Quarto project):** Single global script at `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh` (public mirror: `https://raw.githubusercontent.com/JohnGavin/llm/main/.claude/scripts/check_dark_contrast.sh`). NEVER copy into a project. EVERY `_quarto.yml` MUST add this line under `project: post-render:` — `- /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh`. Render fails on any uncovered light inline background. See `dark-mode-completeness` rule.
