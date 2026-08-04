@@ -50,6 +50,7 @@ for the post-apply check.
 | `com.claude.codex-overnight-learning` | Daily 06:10 | Scans recent Codex sessions and writes a nightly learning digest to `~/.codex/learning/`. Startup surfacing comes from `.claude/scripts/codex-start.sh`. Tracked in #231. |
 | `com.claude.overnight-self-review-email` | Daily 06:30 | Queries unified.duckdb for 24h deltas across 4 ETL source tables (sessions, agent_runs, hook_events, errors); sends collapsible HTML digest surfacing stale/dead tables and new self-review findings. Part of #491. |
 | `com.claude.roborev-bridge` | Daily 06:00 | Read-only mirror of roborev SQLite (`~/.roborev/reviews.db`) → unified.duckdb::roborev_daily_summary. #555/#580. |
+| `com.claude.roborev-weekly-update` | Weekly, Thu 23:30 | Installs any new roborev release, restarts the daemon itself (`update --no-restart`), then polls `roborev status` and **exits 2 if the daemon never comes back** — the failure the 2026-08-03 manual v0.63.0 update logged as a warning and then exited 0 on. See `.claude/scripts/roborev_weekly_update.sh`. |
 
 ## Retired jobs
 
