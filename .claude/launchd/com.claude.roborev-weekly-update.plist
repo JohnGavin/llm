@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-weekly-update</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-weekly-update</string>
+    </array>
+    <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
+         primary shim (#386) intercepts roborev invocations, matching
+         com.claude.roborev-agent-health. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <!-- Weekly, Thursday 23:30. Weekday 4 = Thursday. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>4</integer>
+        <key>Hour</key>   <integer>23</integer>
+        <key>Minute</key> <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_weekly_update.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_weekly_update.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
