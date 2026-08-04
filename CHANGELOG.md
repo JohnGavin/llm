@@ -4,6 +4,37 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-04 — telemetry ETL unfrozen, unified.duckdb 7.37 GB → 0.02 GB, two sites repaired
+
+### Completed
+- **llmtelemetry ETL unfrozen** ([llmtelemetry#341](https://github.com/JohnGavin/llmtelemetry/pull/341), #340) — dashboard had been stuck at `Data through: 2026-08-01 17:08` for two days. Not a crash: the #131 privacy guard was fail-closed and **could never be satisfied**. `sensitive_id_pattern()` (sanitise) anchored the tmp classes (`^-tmp-`); `sensitive_verify_patterns()` (verify) did not. A macOS per-user temp id `-private-var-folders-…-T-tmp-msqYsMoZTd` carries `-tmp-` **mid-string**, so sanitise never touched it and verify flagged it every run. Fixed by unanchoring, adding `-private-var-folders-`, and mirroring into the standalone fallback copy that cron actually executes. The stated invariant was also wrong — "every sanitise class has a verify entry" is satisfiable *while broken*; replaced with containment (verify ⊆ sanitise) plus a property test embedding each verify substring at start/middle/end.
+- **`unified.duckdb` compacted in place: 7.37 GB → 0.021 GB** (#884 step 1). Integrity proven by per-table `COUNT(*)` **and** order-independent row-content checksums across all 32 tables: 65,740 rows in / out, **0 mismatches**. Sequence continuity verified with a live insert (`hook_events.id` is `nextval`-backed; export/import can silently reset sequences and every later hook insert would then collide).
+- **Housekeeping leaks closed** ([#906](https://github.com/JohnGavin/llm/pull/906), #884 steps 2–3) — age-based sentinel sweep + size-based log rotation wired into the daily GC. `~/.claude/` top-level entries 593 → 140.
+- **footbet landing page** ([footbet#98](https://github.com/JohnGavin/footbet/pull/98)) — mermaid diagram rendered (page never loaded mermaid.js; the fence was always correct), project tree collapsed and `_targets`-filtered.
+- **Site 404s fixed** ([JohnGavin.github.io#12](https://github.com/JohnGavin/JohnGavin.github.io/pull/12)) — `historical/examples.html` and `dashboard.html` had been retired to `archive/`; repointed to live pages with prose rewritten. All 14 links verified 200.
+- **Issues filed with plans:** #897 (kb-digest shape regression), #898 (0h-cadence bug still live in `launchd_health_audit.sh`), #900 (five-month silent no-op), #901 (PDF ingestion scoping), #905 (rsonar/air gap analysis), [footbet#99](https://github.com/JohnGavin/footbet/issues/99).
+
+### Failed Approaches
+- **Three successive wrong readings of the DuckDB bloat.** First "fat payloads" (disproved: `sum(length(output_preview))` = 0), then "reclaimable dead space" (disproved: `free_blocks = 97`). Actual cause: tables appended **one row per transaction** get one row group — and one 256 KB block — each. `branch_gc_events` held **10,819 blocks for 10,818 rows**. Batch-written ETL tables were already dense (`config_access`: 1,602 rows/block). Lesson: measure block occupancy before theorising about size.
+- **Nearly reported a disk-doubling bug in working code.** A fixture built with macOS `base64` produced a **single 16 MB line**, so `tail -n 2000` legitimately returned the whole file and rotation appeared to copy-without-truncating. The script was correct (65.6 MB → 146 KB on realistic input). It did surface a real minor limit: line-based rotation cannot shrink a single-line log.
+- **An agent's `_targets` filter looked right and wasn't** — grepping rendered `dir_tree` lines removes the header but not the children (printed as bare indented basenames). 1193 → 1188 lines with the subtree intact; `regexp`/`invert` gives 1193 → 936.
+- **A `^[a-z_]+$` verification loop silently skipped `self_review_findings_stage1`** (digit in the name), checking 31 of 32 tables. Caught before the swap. Third filter-that-narrows-itself of the session.
+- **`gh pr edit` needs `read:org`**; the REST fallback is blocked by the destructive-API guard. Merge commit bodies must be supplied via `--body-file` on `gh pr merge` instead.
+
+### Accuracy / Metrics
+- `unified.duckdb`: 7.37 GB → 0.021 GB (99.7%); `total_blocks` 30,185 → 101; 0 rows lost across 32 tables
+- `~/.claude/` top-level entries: 593 → 140; sentinels 476 → 60; stale `.bye-*` 58 → 0; orphaned `.claude.json.tmp.*` 12 → 1
+- llmtelemetry data recency: 2026-08-01 → **2026-08-04**; refresh job exit 1 → 0
+- Tests: llm 693 → 724 pass (0 fail); llmtelemetry new suites 39/39 + 70/70
+- launchd: 27 jobs, 22 exit 0, 2 stale pre-#888 codes, 3 never-run
+
+### Known Limitations
+- **7.4 GB backup retained** at `~/.claude/logs/unified.duckdb.pre-compact-20260804` — disk saving not yet realised. Earliest safe deletion **2026-08-06**; reminder recorded on #884 (deliberately not via session cron, which is session-only and would have evaporated — the #900 failure mode).
+- **Compaction is not durable.** The DB grew 21 MB → 33 MB within two hours of the swap. The per-row-append pattern is mandated by `housekeeping-framework`, so #884 step 4 (batch the appends) is the real fix.
+- **`launchd_health_audit.sh` still derives a 0h cadence** for weekday-repeated schedules (#898) — fixed in the new collector, not in the audit script.
+- **roborev NOT-CLEAN at session end**: 29 verdict failures / 18 addressed, 1 job failure, 1 crash (`claude-code`). The consistency check disagrees (`crash+quota=0`, `verdicts=4`) — the two counters use different scopes, itself worth investigating.
+- #892/#893 remain the important open work: every defect this session was invisible to gates that test existence rather than content.
+
 ## 2026-08-03 (session 2) — site unblocked after 3 stacked failures; all 25 launchd jobs found dead
 
 ### Completed
