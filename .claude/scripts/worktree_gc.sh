@@ -41,6 +41,17 @@ set -euo pipefail
 # ─── launchd-safe PATH ───────────────────────────────────────────────────────
 export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
+# ─── Sentinel sweep + log rotation helpers (JohnGavin/llm#884 steps 2-3) ─────
+# Pure functions, sourced rather than duplicated so tests can exercise them
+# directly against a fixture directory. sweep_stale_sentinels()/rotate_logs()
+# defined there are called near the end of this script's main flow, gated on
+# the SAME --apply flag as worktree removal (see APPLY below).
+_gc_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -f "${_gc_script_dir}/sentinel_log_sweep.sh" ]; then
+  # shellcheck source=./sentinel_log_sweep.sh
+  source "${_gc_script_dir}/sentinel_log_sweep.sh"
+fi
+
 # ─── Timeout wrapper (macOS lacks GNU `timeout` by default) ─────────────────
 # Used by is_squash_merged() to bound the `gh pr list` network call. Prefers
 # GNU timeout, falls back to homebrew coreutils' gtimeout, falls back to no
@@ -90,6 +101,12 @@ WORKTREES_BASE_LEGACY="${WORKTREES_BASE_LEGACY:-$HOME/worktrees}"
 UNIFIED_DB="${UNIFIED_DB_PATH:-$HOME/.claude/logs/unified.duckdb}"
 LOG_FILE="$HOME/.claude/logs/worktree_gc.log"
 APPLY=0
+
+# ─── Sentinel sweep + log rotation config (JohnGavin/llm#884) ───────────────
+CLAUDE_RUNTIME_ROOT="${CLAUDE_RUNTIME_ROOT:-$HOME/.claude}"
+SENTINEL_AGE_DAYS="${SENTINEL_AGE_DAYS:-7}"
+LOG_ROTATE_THRESHOLD_BYTES="${LOG_ROTATE_THRESHOLD_BYTES:-10485760}"  # 10 MB
+LOG_ROTATE_KEEP_LINES="${LOG_ROTATE_KEEP_LINES:-2000}"
 
 # Sweep patterns: "glob|age_days_var_name"
 SWEEP_PATTERNS=(
@@ -531,7 +548,26 @@ if [ "$APPLY" = "1" ] && [ "${#CONVENTION_PARENTS[@]}" -gt 0 ]; then
   done
 fi
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak"
+# ─── Sentinel sweep + log rotation (JohnGavin/llm#884 steps 2-3) ─────────────
+# Gated on the same --apply flag as worktree removal: dry-run by default (so
+# manual/test invocations of this script never mutate ~/.claude/), the real
+# sweep/rotation only runs when --apply is passed (the launchd job always
+# passes --apply — see bin/launchd-recorders/worktree-gc).
+SENTINELS_SWEPT=0
+LOGS_ROTATED=0
+if [ "$APPLY" = "1" ]; then
+  sweep_stale_sentinels "$CLAUDE_RUNTIME_ROOT" "$SENTINEL_AGE_DAYS" 0 || true
+  log "[sentinel-sweep] dir=$CLAUDE_RUNTIME_ROOT age_days=$SENTINEL_AGE_DAYS swept=$SENTINELS_SWEPT"
+  rotate_logs "$CLAUDE_RUNTIME_ROOT/logs" "$LOG_ROTATE_THRESHOLD_BYTES" "$LOG_ROTATE_KEEP_LINES" 0 log || true
+  log "[log-rotate] dir=$CLAUDE_RUNTIME_ROOT/logs threshold_bytes=$LOG_ROTATE_THRESHOLD_BYTES keep_lines=$LOG_ROTATE_KEEP_LINES rotated=$LOGS_ROTATED"
+else
+  sweep_stale_sentinels "$CLAUDE_RUNTIME_ROOT" "$SENTINEL_AGE_DAYS" 1 || true
+  log "[sentinel-sweep-dryrun] dir=$CLAUDE_RUNTIME_ROOT age_days=$SENTINEL_AGE_DAYS would_sweep=$SENTINELS_SWEPT"
+  rotate_logs "$CLAUDE_RUNTIME_ROOT/logs" "$LOG_ROTATE_THRESHOLD_BYTES" "$LOG_ROTATE_KEEP_LINES" 1 log || true
+  log "[log-rotate-dryrun] dir=$CLAUDE_RUNTIME_ROOT/logs threshold_bytes=$LOG_ROTATE_THRESHOLD_BYTES keep_lines=$LOG_ROTATE_KEEP_LINES would_rotate=$LOGS_ROTATED"
+fi
+
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED"
 
 # Stamp for cron_catchup.sh catch-up detection
 mkdir -p "${HOME}/.claude/logs/stamps"
@@ -672,6 +708,77 @@ if [ "${SELFTEST:-0}" = "1" ]; then
   mkdir -p "$_conv_parent"
   rmdir "$_conv_parent" 2>/dev/null && _rmdir_ok=1 || _rmdir_ok=0
   _check "empty convention parent can be rmdir'd" "1" "$_rmdir_ok"
+
+  # --- Tests: sweep_stale_sentinels (JohnGavin/llm#884 Finding 2) ────────────
+  if command -v sweep_stale_sentinels >/dev/null 2>&1; then
+    _sentinel_dir="$tmpdir/sentinels"
+    mkdir -p "$_sentinel_dir"
+    touch -t 202601010000 "$_sentinel_dir/.session_start_sha_old_proj"
+    touch -t 202601010000 "$_sentinel_dir/.bye-requested.oldsid"
+    touch -t 202601010000 "$_sentinel_dir/.bye-session-end-refine.oldsid"
+    touch "$_sentinel_dir/.session_start_sha_new_proj"
+    touch "$_sentinel_dir/.bye-requested"
+
+    sweep_stale_sentinels "$_sentinel_dir" 7 1
+    _check "sentinel dry-run counts 3 stale files" "3" "$SENTINELS_SWEPT"
+    _check "sentinel dry-run leaves all 5 files in place" "5" "$(ls -A "$_sentinel_dir" | wc -l | tr -d '[:space:]')"
+
+    sweep_stale_sentinels "$_sentinel_dir" 7 0
+    _check "sentinel real sweep removes 3 stale files" "3" "$SENTINELS_SWEPT"
+    _check "sentinel real sweep leaves the 2 fresh files" "2" "$(ls -A "$_sentinel_dir" | wc -l | tr -d '[:space:]')"
+
+    sweep_stale_sentinels "$tmpdir/does_not_exist" 7 0
+    _check "sentinel sweep on missing dir is a silent no-op" "0" "$SENTINELS_SWEPT"
+
+    mkdir -p "$tmpdir/empty_sentinels"
+    sweep_stale_sentinels "$tmpdir/empty_sentinels" 7 0
+    _check "sentinel sweep on empty dir is a no-op" "0" "$SENTINELS_SWEPT"
+  else
+    echo "SKIP: sweep_stale_sentinels not sourced (sentinel_log_sweep.sh missing?)"
+  fi
+
+  # --- Tests: rotate_log_file / rotate_logs (JohnGavin/llm#884 Finding 3) ────
+  if command -v rotate_logs >/dev/null 2>&1; then
+    _logs_dir="$tmpdir/logs"
+    mkdir -p "$_logs_dir"
+    python3 -c "
+for i in range(3000):
+    print('line %d ' % i + 'x' * 50)
+" > "$_logs_dir/big.log"
+    echo "small" > "$_logs_dir/small.log"
+    python3 -c "
+for i in range(3000):
+    print('line %d ' % i + 'x' * 50)
+" > "$_logs_dir/unified.duckdb"
+
+    _rot_thresh=10000
+    _rot_keep=10
+
+    rotate_logs "$_logs_dir" "$_rot_thresh" "$_rot_keep" 1
+    _check "log-rotate dry-run counts 1 oversized file" "1" "$LOGS_ROTATED"
+    _check "log-rotate dry-run leaves big.log untouched" "3000" "$(wc -l < "$_logs_dir/big.log" | tr -d '[:space:]')"
+    _check "log-rotate dry-run never touches .duckdb" "3000" "$(wc -l < "$_logs_dir/unified.duckdb" | tr -d '[:space:]')"
+
+    rotate_logs "$_logs_dir" "$_rot_thresh" "$_rot_keep" 0
+    _check "log-rotate real run rotates 1 file" "1" "$LOGS_ROTATED"
+    _check "log-rotate truncates big.log to keep_lines" "10" "$(wc -l < "$_logs_dir/big.log" | tr -d '[:space:]')"
+    _check "log-rotate keeps exactly one .1 generation with full prior content" "3000" "$(wc -l < "$_logs_dir/big.log.1" | tr -d '[:space:]')"
+    _check "log-rotate leaves small.log under threshold untouched" "1" "$(wc -l < "$_logs_dir/small.log" | tr -d '[:space:]')"
+    _check "log-rotate NEVER touches .duckdb files" "3000" "$(wc -l < "$_logs_dir/unified.duckdb" | tr -d '[:space:]')"
+    _check "log-rotate never creates a .duckdb.1 generation" "0" "$([ -f "$_logs_dir/unified.duckdb.1" ] && echo 1 || echo 0)"
+
+    rotate_logs "$_logs_dir" "$_rot_thresh" "$_rot_keep" 0
+    _check "log-rotate is idempotent (second run is a no-op)" "0" "$LOGS_ROTATED"
+
+    mkdir -p "$tmpdir/empty_logs"
+    rotate_logs "$tmpdir/empty_logs" "$_rot_thresh" "$_rot_keep" 0
+    _check "log-rotate on empty dir is a no-op" "0" "$LOGS_ROTATED"
+
+    rotate_logs "$tmpdir/does_not_exist_logs" "$_rot_thresh" "$_rot_keep" 0
+    _check "log-rotate on missing dir is a silent no-op" "0" "$LOGS_ROTATED"
+  else
+    echo "SKIP: rotate_logs not sourced (sentinel_log_sweep.sh missing?)"
+  fi
 
   echo ""
   echo "$_pass PASS, $_fail FAIL"
