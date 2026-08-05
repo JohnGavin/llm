@@ -18,8 +18,11 @@
 # start, keyed by PROJECT SLUG (not session id) — two concurrent sessions on
 # the same project share one file, so deleting it on consume (in
 # session_end_refine.sh) would break the other session. Same story for
-# .bye-requested(.<sid>) / .bye-session-end-refine(.<sid>), written by
-# session_stop.sh at every /bye. Nothing ever deletes any of these; they are
+# .bye-requested(.<sid>) / .bye-session-stop(.<sid>) / .bye-session-end-refine(.<sid>),
+# written by /bye at every session end (llm#913: each Stop-chain consumer —
+# llmtelemetry_emit.sh, session_stop.sh, the session-end-refine block — owns
+# its own dedicated sentinel basename so they don't compete for one token).
+# Nothing ever deletes any of these; they are
 # fully re-derivable state (session_init.sh recreates them every session
 # start), so an AGE-BASED sweep is the safe cleanup — anything untouched for
 # the threshold is orphaned regardless of "consumed" status.
@@ -42,7 +45,7 @@ sweep_stale_sentinels() {
     fi
   done < <(find "$_dir" -maxdepth 1 -type f \
              \( -name '.session_start_sha_*' -o -name '.bye-requested*' \
-                -o -name '.bye-session-end-refine*' \) \
+                -o -name '.bye-session-stop*' -o -name '.bye-session-end-refine*' \) \
              -mtime "+${_age_days}" -print0 2>/dev/null || true)
 
   SENTINELS_SWEPT=$_count
