@@ -102,9 +102,18 @@ esac
 
 # ── STOP mode: gate on per-session /bye sentinel (llm#273) ───────────────────
 # /bye writes ~/.claude/.bye-requested.<SESSION_ID> (per-session) AND the
-# legacy ~/.claude/.bye-requested for session_stop.sh pattern detection.
+# legacy global ~/.claude/.bye-requested.
 # We check ONLY the per-session sentinel so concurrent sessions cannot steal
 # each other's stop events.
+#
+# Ownership (llm#913): this hook OWNS `.bye-requested` exclusively. It is
+# registered ahead of session_stop.sh in the Stop chain (settings.json), so
+# if any other Stop-chain consumer tried to `rm -f` this same sentinel, this
+# hook would always win the race and the other consumer's gated logic would
+# silently never fire (exactly what happened to session_stop.sh from
+# 2026-07-24 until the llm#913 fix). Other Stop-chain consumers MUST define
+# their own dedicated sentinel (e.g. session_stop.sh now uses
+# `.bye-session-stop`) rather than share this one.
 _BYE_SENTINEL_PER_SESSION="${HOME}/.claude/.bye-requested.${SESSION_ID}"
 _BYE_SENTINEL_GLOBAL="${HOME}/.claude/.bye-requested"
 

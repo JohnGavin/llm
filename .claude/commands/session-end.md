@@ -4,13 +4,25 @@
 
 Run the end-of-session checklist from AGENTS.md Section 6.
 
-## First: Write the /bye sentinels (llm#273 — per-session)
+## First: Write the /bye sentinels (llm#273 — per-session; llm#913 — one sentinel per consuming hook)
 
 Before any other step, run this shell command so session_stop.sh and
 llmtelemetry_emit.sh know this Stop event comes from /bye (not a normal reply).
 Both hooks now use per-session sentinels to prevent concurrent sessions from
 consuming each other's sentinels. The legacy global sentinels are also written
 for backward compatibility with any consumer not yet updated.
+
+**Each consuming hook owns its own sentinel file (llm#913).** A shared
+one-shot token is consumed by whichever hook in the Stop chain runs first —
+`llmtelemetry_emit.sh` is registered ahead of `session_stop.sh` in
+`settings.json`, so when both hooks tried to `rm -f` the same
+`.bye-requested` sentinel, `llmtelemetry_emit.sh` always won and
+`session_stop.sh` always saw the token already gone. That silently starved
+four gated blocks in `session_stop.sh` (DB session-stop write, telemetry
+export, pattern detection, mem_pr) from 2026-07-24 onward. The fix is one
+dedicated sentinel per consumer: `.bye-requested` stays owned exclusively by
+`llmtelemetry_emit.sh`; `session_stop.sh` gets its own `.bye-session-stop`;
+the session-end-refine block already had its own `.bye-session-end-refine`.
 
 ```bash
 # Resolve session ID (mirrors llmtelemetry_emit.sh resolution)
@@ -22,13 +34,15 @@ if [ -z "$_bye_sid" ] && [ -f "${HOME}/.claude/logs/.current_session" ]; then
   _bye_sid=$(cat "${HOME}/.claude/logs/.current_session" 2>/dev/null || echo "")
 fi
 
-# Write per-session sentinels (primary — llm#273)
+# Write per-session sentinels (primary — llm#273; one per consuming hook — llm#913)
 if [ -n "$_bye_sid" ]; then
   touch "${HOME}/.claude/.bye-requested.${_bye_sid}"
+  touch "${HOME}/.claude/.bye-session-stop.${_bye_sid}"
   touch "${HOME}/.claude/.bye-session-end-refine.${_bye_sid}"
 fi
 # Write legacy global sentinels (backward-compat for hooks not yet updated)
 touch "${HOME}/.claude/.bye-requested"
+touch "${HOME}/.claude/.bye-session-stop"
 touch "${HOME}/.claude/.bye-session-end-refine"
 ```
 

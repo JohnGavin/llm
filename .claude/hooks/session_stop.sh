@@ -78,12 +78,25 @@ fi
 # IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
 # Gated on a per-session sentinel (llm#273) that /bye writes before invoking
 # the Stop hook. Non-/bye stops leave `_bye_detected=0`. The per-session
-# sentinel is deleted immediately after use — one-shot. Backward-compat: also
-# accept the legacy global sentinel when no per-session ID resolved above.
+# sentinel is deleted immediately after use — one-shot.
 # Moved ahead of the DB-stop write below (llm#803) so both that write and the
 # pattern-detection/refine blocks further down share one resolution.
-_BYE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-requested.${_STOP_SESSION_ID}"
-_BYE_SENTINEL_GLOBAL="${CLAUDE_RUNTIME_ROOT}/.bye-requested"
+#
+# This hook MUST NOT share `.bye-requested` with llmtelemetry_emit.sh
+# (llm#913). `llmtelemetry_emit.sh stop` is registered ahead of this hook in
+# the Stop chain (settings.json), so when both hooks tried to `rm -f` the
+# same one-shot `.bye-requested` token, llmtelemetry_emit.sh always consumed
+# it first and `_bye_detected` here was effectively always 0. That silently
+# starved four gated blocks below (the DB session-stop write, telemetry
+# export, pattern detection, mem_pr) from 2026-07-24 onward — measured impact:
+# of the 2033 `sessions` rows started since then, 2003 carry the synthetic
+# `session_reaper.sql` estimate `duration_min = 120.0` and ZERO carry a real
+# duration (the remaining 30 were still unreaped at time of measurement),
+# because the real stop-write never fired. Each consuming hook now
+# owns its own dedicated sentinel: llmtelemetry_emit.sh keeps
+# `.bye-requested`; this hook uses `.bye-session-stop`.
+_BYE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-session-stop.${_STOP_SESSION_ID}"
+_BYE_SENTINEL_GLOBAL="${CLAUDE_RUNTIME_ROOT}/.bye-session-stop"
 _bye_detected=0
 if [ -n "$_STOP_SESSION_ID" ] && [ -f "$_BYE_SENTINEL_PS" ]; then
   rm -f "$_BYE_SENTINEL_PS"  # consume per-session sentinel — one-shot
