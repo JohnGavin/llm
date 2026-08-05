@@ -174,10 +174,15 @@ fi
 # ── Telemetry data export + deploy (Calibration + Sessions tabs) ────
 # Background the export so /bye returns instantly. Output to dated log
 # for post-hoc inspection. See llm#381.
+# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
+# This block runs a full R export + git commit + push to the llmtelemetry
+# repo and triggers a Shinylive deploy — expensive if run per-response.
+# Gated on the same one-shot `_bye_detected` sentinel used elsewhere in this
+# file (see llm#910).
 EXPORT_SCRIPT="$CLAUDE_DIR/scripts/export_and_deploy_data.sh"
 EXPORT_LOG_DIR="$CLAUDE_DIR/logs"
 EXPORT_LOG="$EXPORT_LOG_DIR/export_and_deploy.$(date +%Y%m%d).log"
-if [ -x "$EXPORT_SCRIPT" ]; then
+if [ "$_bye_detected" -eq 1 ] && [ -x "$EXPORT_SCRIPT" ]; then
   mkdir -p "$EXPORT_LOG_DIR"
   nohup timeout 180 "$EXPORT_SCRIPT" > "$EXPORT_LOG" 2>&1 &
   disown
@@ -301,11 +306,15 @@ fi
 # here so the checkout returns to clean between sessions. Never blocks
 # session end (non-fatal, bounded by timeout); never pushes to main
 # directly — always opens a PR (pr-shipping-discipline rule).
+# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
+# mem_pr.sh creates a branch, commits, and opens a PR — a per-response PR
+# storm if left ungated. Gated on the same one-shot `_bye_detected` sentinel
+# used elsewhere in this file (see llm#910).
 # Opt-out: SKIP_MEM_PR=1.
 _MEM_PR_SCRIPT="$CLAUDE_DIR/scripts/mem_pr.sh"
 _MEM_PR_REPO="${CLAUDE_PROJECT_DIR:-$HOME/docs_gh/llm}"
 _MEM_PR_LOG="$CLAUDE_RUNTIME_ROOT/logs/mem_pr.log"
-if [ -x "$_MEM_PR_SCRIPT" ]; then
+if [ "$_bye_detected" -eq 1 ] && [ -x "$_MEM_PR_SCRIPT" ]; then
   mkdir -p "$(dirname "$_MEM_PR_LOG")"
   timeout 60 "$_MEM_PR_SCRIPT" "$_MEM_PR_REPO" >> "$_MEM_PR_LOG" 2>&1 || true
 fi
