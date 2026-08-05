@@ -142,3 +142,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## Pre-rendered docs/ ≠ Live (see feedback_prerendered-docs-deploy-verification.md)
 - Repos that commit pre-rendered `docs/` (deploy CI only publishes, renders nothing) — a source/.qmd fix is INERT until docs/ is re-rendered + committed. "PR merged + deploy green" ≠ live. Verify the DEPLOYED artifact (curl live HTML / git grep origin/main docs/**), not the source or deploy status. Shinylive: app embedded in rendered HTML. (origin: micromort quiz \d fix appeared merged+green but live app still broken, 2026-07-27)
+
+## Verify Causal Claims, Not Just Facts (see feedback_verify-causal-claims.md)
+- Counts/mechanisms get verified; the STORY connecting them doesn't — that's where errors hide. Assert a cause, date, or blast radius only with a query behind it. 4 corrections in one session (llm#913): hand-summed count, guessed affected surfaces, merge-time≠onset (break preceded it 4h), and "0 affected today" = not-yet-reaped. Adjacent dates ≠ causation; verify the TRANSITION. A marker written by a delayed process understates the present (2026-08-05)
+
+## Probe Must Not Share the Writer's Path (see probe-must-not-share-writer-path.md)
+- A freshness/health probe called from INSIDE the producer's code path measures its own liveness, not the data's — fails silently both ways (writer dies + data fine → false "13d idle"; data dies + writer fine → false "fresh"). Stored `status` makes it worse: it cannot detect the ABSENCE of a write. Compute status at read time from facts; read the asset directly, from a different trigger class. If a registry says a source is idle, confirm against the source (llm#913/#915, 2026-08-05)
