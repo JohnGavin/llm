@@ -4,6 +4,106 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-05 (session 2) — #910 + #909 fixed and deployed; the #909 fix shipped the very defect it was fixing
+
+### Completed
+
+- **[llm#908](https://github.com/JohnGavin/llm/pull/908) merged** — 2026-08-04 +
+  2026-08-05 CHANGELOG entries. Merge gate passed (CHANGELOG-only).
+- **[llm#910](https://github.com/JohnGavin/llm/issues/910) fixed, merged,
+  deployed** via [llm#911](https://github.com/JohnGavin/llm/pull/911). Gated the
+  telemetry export/deploy block on `_bye_detected`. Also gated `mem_pr.sh`
+  (creates a branch + commits + opens a PR) — same defect class, verified
+  **latent not active**: zero `chore/memory-*` branches exist and the log is
+  entirely "nothing to route", because it also requires dirty prose *and* being
+  on `main`.
+- **[llm#909](https://github.com/JohnGavin/llm/issues/909) fixed, merged,
+  deployed** via [llmtelemetry#345](https://github.com/JohnGavin/llmtelemetry/pull/345).
+  Generalised `run_rscript_with_nix()` with an optional nix-file override and
+  argument forwarding; routed the `skill_usage_etl.R --apply` step through it.
+- **Both verified live, not merely merged.** Fast-forwarded both main checkouts
+  and confirmed through the symlink paths the hooks actually read: 4
+  `_bye_detected` gates in `~/.claude/hooks/session_stop.sh`, nix fallback
+  present in `~/.claude/scripts/export_and_deploy_data.sh`. `bash -n` clean on
+  both; the `CLAUDE_HOOK_SELFTEST=1` suite re-run independently at 4/4 PASS
+  rather than trusting the agent's report.
+- **7.4 GB `unified.duckdb.pre-compact-20260804` deleted** after verifying the
+  compaction was sound: identical 35 tables in backup and live, 6,729 sessions
+  and 393 agent_runs intact, 7.9 GB → 188 MB. Live DB confirmed healthy and
+  still taking writes afterwards (counts had advanced to 6,739 / 394).
+
+### Failed approaches / corrections made
+
+- **The QA gate delivered for llm#909 does not work. Reported to the user as
+  working; that was wrong.** The design was specified in the orchestrator's own
+  dispatch prompt — "on failure, skip the upsert so the row ages out and
+  `etl_freshness_stale_banner.sh` surfaces it" — and the agent implemented
+  exactly that. roborev review 9291 caught it High-severity on `2450b47`, after
+  merge. Three independent reasons it cannot fire: `cadence_hours=""` forces
+  `status='unknown'`; the banner filters on `status`, a **stored** column
+  computed only at write time; and the upsert runs only on success, so a dead
+  producer never rewrites its row. **A push-based registry with a stored status
+  column cannot detect the absence of a write** — that requires evaluating age
+  at *read* time. Filed as
+  [llm#913](https://github.com/JohnGavin/llm/issues/913); roborev 9291 closed
+  with the finding accepted, not disputed. The nix-fallback half of the commit
+  is sound and stays.
+- **Evidence it is not hypothetical:** the `sessions` producer stopped writing
+  on 2026-07-23 — 13 days — and the banner never said a word. 5 of 7 registered
+  sources carry NULL cadence and are permanently `unknown`, so the banner only
+  ever watches 2 of 7. The llm#909 change added a *sixth* invisible source.
+- **First llm#909 dispatch produced zero edits, correctly.**
+  `export_and_deploy_data.sh` in the llm repo is a symlink into
+  `~/docs_gh/llmtelemetry/inst/scripts/`. The Edit tool **hard-refused** the
+  symlink write and the agent stopped and escalated rather than resolving past
+  it — #517 Pattern 2 blocked at the tool layer, not just by prose. Re-dispatched
+  via the documented cross-repo pattern (`cc-worktree.sh` on the *target* repo +
+  `WORKTREE_PATH` override) and it landed first try. Memory
+  `config-pulse-symlink-worktree-escape` updated: it had claimed no such guard
+  existed.
+
+### Recurring theme — now six, and one of them is a fix for another
+
+The llm#909 *fix* is the sixth instance of the table in the entry below, which
+is the part worth recording:
+
+| Mechanism | Tests | Misses |
+|---|---|---|
+| `etl_freshness` banner (llm#913) | stored `status` column | producer stopped writing |
+
+llm#909, llm#900 and llmtelemetry#907 were all filed as "a step that cannot
+succeed, reporting in a way that reads as tolerable". The remedy shipped for
+llm#909 reproduced that shape one layer up — an indicator asserting detection it
+could not perform. Writing the fix does not exempt the fix from the class.
+The check that caught it was an adversarial review of the *fix*, not of the bug.
+
+### Accuracy / metrics
+
+- 3 PRs merged (llm#908, llm#911, llmtelemetry#345); 2 issues auto-closed
+  (llm#910, llm#909); 3 issues filed (llm#912, llm#913, plus the audit finding).
+- Stop-hook side effects gated: 3 of 4 (export, mem_pr, + 2 pre-existing);
+  1 deliberately deferred (llm#912).
+- Disk reclaimed: 7.4 GB.
+
+### Known limitations
+
+- **[llm#913](https://github.com/JohnGavin/llm/issues/913)** — staleness
+  detection broken for 5 of 7 sources. Fix touches a shared component used by
+  ~8 producers; deferred to a proper TDD pass rather than a rushed session-end
+  change.
+- **`sessions` producer idle since 2026-07-23** — filed inside llm#913 as a
+  follow-on. Unknown whether a real regression (possible interaction with
+  llm#803 gating the DB stop-write) or intentional. The detection bug is why it
+  went unnoticed for 13 days.
+- **[llm#912](https://github.com/JohnGavin/llm/issues/912)** —
+  `session_index.log` written per turn, not per session (~93% duplicate rows;
+  164 rows vs 12 real sessions on 2026-08-04). Deliberately not gated with the
+  others: gating loses crashed sessions entirely, which is a design fork
+  (llm#803 precedent) and the user's call.
+- roborev still NOT-CLEAN: `verdicts.failed=14` (4 addressed), 1 `claude-code`
+  crash. 13 pre-date this session; the 1 from this session is llm#913, now
+  tracked and closed in roborev.
+
 ## 2026-08-05 — costs ETL landed and proven; three "indicator that cannot indicate" defects found
 
 ### Completed
