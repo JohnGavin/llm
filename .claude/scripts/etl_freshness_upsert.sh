@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# etl_freshness_upsert.sh — record ETL freshness for a data source in unified.duckdb
+# etl_freshness_upsert.sh — record ETL freshness FACTS for a data source in unified.duckdb
 #
 # Makes silent ETL staleness impossible (llm#309 Phase 1a): every ETL writer
 # calls this helper after it finishes writing, so a single registry table
-# (`etl_freshness`) always answers "when did each source last update, and is
-# that within its expected cadence?" without any writer having to build its
-# own freshness logic.
+# (`etl_freshness`) always records "when did each source last update, and
+# when did its writer last run" without any writer having to build its own
+# freshness logic.
+#
+# This script records FACTS ONLY (last_row_ts, last_etl_run_ts,
+# expected_cadence_hours). It does NOT compute a staleness verdict — the
+# `status` column it once wrote is retired (llm#893/#913). The authoritative
+# staleness answer is the `staleness_status` view, which recomputes status at
+# every READ from facts collected by `.claude/scripts/staleness_collect.sh`
+# (one of whose inputs is this table). Recomputing at read time instead of
+# write time catches a producer that stops running entirely, which a
+# write-time status column structurally cannot detect.
 #
 # Usage:
 #   etl_freshness_upsert.sh <source_name> <db_path> [cadence_hours] \
@@ -15,7 +24,8 @@
 #                    'roborev', 'burn_rate'. Primary key in etl_freshness.
 #   db_path          Path to the unified DuckDB (or a scratch DB for tests).
 #   cadence_hours    Expected refresh interval in hours. Omit (or pass "")
-#                    for event-driven sources with no SLA -> status='unknown'.
+#                    to leave expected_cadence_hours NULL for event-driven
+#                    sources with no SLA.
 #   --table/--ts-col Derive last_row_ts from MAX(ts_col) FROM table. Silently
 #                    skipped (last_row_ts stays NULL) if the table does not
 #                    exist yet — never errors.
@@ -31,7 +41,7 @@
 # cases. It exits 1 only on a genuine usage error (missing required args),
 # so callers should still guard invocations with `|| true`.
 #
-# Tracked in llm#309 Phase 1a.
+# Tracked in llm#309 Phase 1a; status column retired in llm#893/#913.
 
 set -uo pipefail
 
@@ -94,7 +104,7 @@ elif [ -n "$TABLE" ] && [ -n "$TS_COL" ]; then
 fi
 
 # ── Determine the cadence SQL literal ───────────────────────────────────────
-# Empty or non-numeric -> NULL (event-driven source, no SLA -> status='unknown')
+# Empty or non-numeric -> NULL (event-driven source, no SLA)
 CADENCE_SQL="NULL"
 case "$CADENCE_HOURS" in
   ''|*[!0-9.]*) CADENCE_SQL="NULL" ;;
@@ -111,19 +121,12 @@ CREATE TABLE IF NOT EXISTS etl_freshness (
 );
 
 INSERT OR REPLACE INTO etl_freshness
-  (source_name, last_row_ts, last_etl_run_ts, expected_cadence_hours, status)
+  (source_name, last_row_ts, last_etl_run_ts, expected_cadence_hours)
 SELECT
   '${_source_esc}',
   lrt.last_row_ts,
   current_timestamp,
-  ${CADENCE_SQL},
-  CASE
-    WHEN ${CADENCE_SQL} IS NULL THEN 'unknown'
-    WHEN lrt.last_row_ts IS NULL THEN 'unknown'
-    WHEN EXTRACT(EPOCH FROM (current_timestamp - lrt.last_row_ts)) / 3600.0 > ${CADENCE_SQL}
-      THEN 'stale'
-    ELSE 'fresh'
-  END
+  ${CADENCE_SQL}
 FROM (SELECT ${LAST_ROW_TS_EXPR} AS last_row_ts) lrt;
 " 2>/dev/null || { echo "etl_freshness_upsert: WARN duckdb upsert failed for source=${SOURCE_NAME}" >&2; exit 0; }
 
