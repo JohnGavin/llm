@@ -9,6 +9,7 @@
 --   kb_events              -- one row per knowledge-base change detected by kb_digest_daily_cron.sh
 --   launchd_health_events  -- one row per launchd plist's last-observed state (llm#554)
 --   roborev_daily_summary  -- per-project daily summary mirrored from roborev SQLite (llm#555)
+--   data_quality_incidents -- one row per known untrustworthy-data window (llm#913, llm#915)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -176,6 +177,29 @@ CREATE TABLE IF NOT EXISTS etl_freshness (
   expected_cadence_hours  DOUBLE,
   status                  VARCHAR
 );
+
+-- data_quality_incidents: one row per known window where a table/column's
+-- values are not trustworthy (e.g. imputed/estimated data that would
+-- otherwise be silently read as observed data). Written once per incident
+-- by whoever diagnoses it (human or agent) -- NOT a continuously-firing
+-- event writer like the tables above. Consumers of the named asset/column
+-- MUST check this table (or the incident marker it documents, e.g. a
+-- `summary` tag) before presenting an aggregate as real.
+-- PK is a fixed, human-chosen string (not gen_random_uuid) so re-seeding an
+-- incident record is idempotent -- one row per incident, not one per apply.
+-- See unified-observability-schema rule "Data Quality Incidents" section,
+-- llm#913, llm#915.
+CREATE TABLE IF NOT EXISTS data_quality_incidents (
+  id            TEXT PRIMARY KEY,
+  asset         TEXT NOT NULL,             -- e.g. 'sessions'
+  column_name   TEXT,                      -- e.g. 'duration_min'; NULL = whole asset
+  window_start  TIMESTAMP NOT NULL,
+  window_end    TIMESTAMP,                 -- NULL = still open
+  reason        TEXT NOT NULL,
+  issue_ref     TEXT,                      -- e.g. 'llm#913 / llm#915'
+  recorded_at   TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_data_quality_incidents_asset ON data_quality_incidents(asset, window_start);
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);
