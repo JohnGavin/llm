@@ -337,6 +337,7 @@ ui <- bslib::page_sidebar(
         shiny::column(
           12,
           shiny::h6("Daily session time by project (last 10 days)", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("duration_quality_note"),
           plotly::plotlyOutput("daily_time_project", height = "280px")
         )
       ),
@@ -819,6 +820,18 @@ server <- function(input, output, session) {
   # ---- Time tab ------------------------------------------------------------
 
   # Daily session time by project (last 10 days)
+  #
+  # llm#913/#915: session_stop.sh's DB stop-write silently never fired from
+  # 2026-07-24 to 2026-08-04 (a /bye sentinel was consumed earlier in the
+  # Stop hook chain). session_reaper.sql backfilled the affected `sessions`
+  # rows with a synthetic duration_min = 120.0 and tagged `summary` with the
+  # marker below so the estimate is never mistaken for an observed duration.
+  # Excluded here (not just labeled) because a 120.0-minute constant summed
+  # into "total minutes" would silently inflate the real total. See the
+  # `data_quality_incidents` table (unified-observability-schema rule) for
+  # the durable incident record; the marker check is used directly here
+  # (rather than joining that table) so this chart still works even before
+  # the incidents-table migration has been applied to a given DB.
   daily_time_proj_data <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
@@ -830,6 +843,7 @@ server <- function(input, output, session) {
         "ROUND(SUM(COALESCE(duration_min, 0)), 1) AS total_min ",
         "FROM sessions ",
         "WHERE CAST(started_at AS DATE) >= '", cutoff, "'",
+        " AND (summary IS NULL OR summary NOT LIKE '%llm#803 reaper%')",
         project_clause(),
         " GROUP BY date, project ORDER BY date DESC"
       ),
@@ -837,6 +851,37 @@ server <- function(input, output, session) {
         date      = as.Date(character(0)),
         project   = character(0),
         total_min = numeric(0)
+      )
+    )
+  })
+
+  # Count of sessions excluded from daily_time_proj_data above because their
+  # duration is llm#803-reaper-imputed rather than observed (llm#913/#915).
+  duration_excluded_data <- shiny::reactive({
+    shiny::invalidateLater(30000, session)
+    input$refresh
+    cutoff <- as.character(Sys.Date() - 10)
+    query_db(
+      paste0(
+        "SELECT count(*) AS n_excluded FROM sessions ",
+        "WHERE CAST(started_at AS DATE) >= '", cutoff, "'",
+        " AND summary LIKE '%llm#803 reaper%'",
+        project_clause()
+      ),
+      data.frame(n_excluded = 0L)
+    )
+  })
+
+  output$duration_quality_note <- shiny::renderUI({
+    n <- duration_excluded_data()$n_excluded[1]
+    if (is.na(n) || n == 0) {
+      return(NULL)
+    }
+    shiny::div(
+      style = "color:#f39c12; font-size:0.78rem; margin:2px 0 6px 0;",
+      paste0(
+        "⚠ ", n, " session(s) in this window excluded from the total ",
+        "-- duration is an estimate, session-end event not observed (llm#913)."
       )
     )
   })
@@ -876,10 +921,28 @@ server <- function(input, output, session) {
 
   output$recent_sessions_tbl <- DT::renderDataTable({
     df <- recent_sessions_data()
-    if (nrow(df) == 0) df <- data.frame(message = "No sessions found")
+    tbl_caption <- "Recent sessions"
+    if (nrow(df) == 0) {
+      df <- data.frame(message = "No sessions found")
+    } else {
+      # llm#913/#915: mark llm#803-reaper-imputed durations so an estimate
+      # (session-end event not observed) is never read as an observed one.
+      is_estimated <- grepl("llm#803 reaper", df$summary, fixed = TRUE)
+      df$duration_min <- ifelse(
+        is_estimated,
+        paste0(df$duration_min, "*"),
+        as.character(df$duration_min)
+      )
+      if (any(is_estimated)) {
+        tbl_caption <- paste0(
+          tbl_caption,
+          " (* = estimated duration, session-end event not observed -- see llm#913)"
+        )
+      }
+    }
     DT::datatable(
       df,
-      caption   = "Recent sessions",
+      caption   = tbl_caption,
       rownames  = FALSE,
       options   = list(
         pageLength = 10, dom = "t", scrollX = TRUE,
