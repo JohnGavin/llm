@@ -89,9 +89,10 @@ fi
 # it first and `_bye_detected` here was effectively always 0. That silently
 # starved four gated blocks below (the DB session-stop write, telemetry
 # export, pattern detection, mem_pr) from 2026-07-24 onward — measured impact:
-# every one of 2,158 `sessions` rows since then has the synthetic
-# `session_reaper.sql` estimate `duration_min = 120.0` instead of a real
-# duration, because the real stop-write never fired. Each consuming hook now
+# of the 2033 `sessions` rows started since then, 2003 carry the synthetic
+# `session_reaper.sql` estimate `duration_min = 120.0` and ZERO carry a real
+# duration (the remaining 30 were still unreaped at time of measurement),
+# because the real stop-write never fired. Each consuming hook now
 # owns its own dedicated sentinel: llmtelemetry_emit.sh keeps
 # `.bye-requested`; this hook uses `.bye-session-stop`.
 _BYE_SENTINEL_PS="${CLAUDE_RUNTIME_ROOT}/.bye-session-stop.${_STOP_SESSION_ID}"
