@@ -4,6 +4,96 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-05 — costs ETL landed and proven; three "indicator that cannot indicate" defects found
+
+### Completed
+
+- **llmtelemetry#343 merged** (`456a183`) — the `costs` table never refreshed:
+  bare `jsonlite::fromJSON` under `sys.source(envir = new.env(parent =
+  baseenv()))` (search path invisible, so the bare call could not resolve), and
+  five `quit()` calls that would terminate the *parent* process. Namespace-
+  qualified the calls, replaced `quit()` with a `refresh_costs_unified()`
+  wrapper returning status via `.refresh_result`. `parent = baseenv()` kept
+  deliberately — the isolation is wanted; the bare calls were the bug.
+- **Fix proven end-to-end, not just merged.** First post-merge export printed
+  `upserted 34 dates | Total cost: $11773.18` and `costs table now covers up to
+  2026-08-05`, where every prior run printed `JSON parse failed: could not find
+  function "fromJSON"` and then exited 0.
+- **Telemetry export run** — pushed `22b0195fb`; verified live by confirming it
+  is an ancestor of `8cdb9cf8`, the run that actually deployed. The run at our
+  own SHA was *cancelled* (superseded by a newer push), so "our deploy was
+  cancelled" was not the same as "our data is not live".
+- **CHANGELOG PR** [#908](https://github.com/JohnGavin/llm/pull/908) opened for
+  the 2026-08-04 entry; this entry appended to the same branch.
+
+### Found, filed, not yet fixed
+
+- **[llm#910](https://github.com/JohnGavin/llm/issues/910) — `session_stop.sh`
+  runs the telemetry export + push on EVERY turn.** Presented as "cron is
+  pushing every few minutes"; it is not cron (both launchd jobs are
+  `StartInterval = 43200`, i.e. 12-hourly). The Stop hook fires after every
+  assistant response, and the export block at lines 174–185 is ungated. The
+  gate already exists in the same file: `_bye_detected` is computed at lines
+  87–94 and used by the DuckDB write and the refine block, but not by this one.
+  llm#803 fixed this exact pattern for the neighbouring block and left this
+  one. ~11 pushes/day/session instead of 1; deploys continuously cancelling
+  each other. One-line fix.
+- **[llm#909](https://github.com/JohnGavin/llm/issues/909) —
+  `export_and_deploy_data.sh` `skill_usage_etl` step bypasses the nix
+  fallback.** The script defines `run_rscript_with_nix()` for exactly this
+  case and uses it for the export step, but line 177 calls bare `timeout 60
+  Rscript`. With no `Rscript` on PATH the step no-ops and prints
+  "(non-fatal)". Worse: the very next step's QA gate reported
+  `config_staleness.json (0 rows — empty array is valid)` — **OK on a zero-row
+  table whose producer had failed two lines earlier**.
+- **[llmtelemetry#344](https://github.com/JohnGavin/llmtelemetry/issues/344) —
+  live `last_updated.txt` is written but read by nothing, and always reports
+  `-1`.** `vignettes/data/` is gitignored, so the file is regenerated on the CI
+  runner where the count sections do not run and fall back to the `-1`
+  sentinel. Its timestamp records when CI last ran, not when data was exported.
+  Nothing consumes it — not the dashboard, not the email.
+
+### Failed approaches / corrections made
+
+- **Claimed the daily-email STALE DATA banner might be driven by
+  `last_updated.txt`. It is not.** `send_daily_email.R:270-298` derives its age
+  from the newest record *in the data*, with a comment explicitly rejecting
+  file mtime because "mtime equals checkout time in CI and would mask
+  staleness". The banner is well built. Tracing it is what established this —
+  the hedge ("I have not checked whether the banner reads this file") was the
+  thing that stopped a wrong claim from shipping.
+- **Read `upserted 34 dates` as "the backlog clearing in one pass". It is
+  not.** `34` is `nrow(wide)` — the count of dates *presented* to the upsert,
+  not the count changed. A healthy run prints 34 too. `ON CONFLICT` does not
+  return an insert/update split, so the line says nothing about how much was
+  stale. Worth changing the message, since it reads like a change count.
+
+### Recurring theme this session and last
+
+Five distinct instances now of **a gate or indicator that measures a property
+the defect does not violate**:
+
+| Mechanism | Tests | Misses |
+|---|---|---|
+| `qa_no_nulls` (llm#882) | value is NULL | zero-row result |
+| `config_staleness` QA (llm#909) | row count ≥ 0 | producer never ran |
+| `last_updated.txt` (llmtelemetry#344) | CI run time | data age |
+| launchd exit status (llm#900) | exit 0 | five months of failure |
+| `qa_rds_freshness` | mtime | content |
+
+The general form: *an "empty/absent is valid" rule is unsound unless it can
+also see that the producer succeeded.* Recorded here because the next instance
+will look different in the particulars and identical in shape.
+
+### Known limitations
+
+- llm#910 unfixed — expect continued push churn in `llmtelemetry` until gated.
+- roborev at `/bye`: `verdicts.failed=14` (4 addressed), `overview.failed=1`,
+  1 `claude-code` crash. Consistency check passes and backlog is `open=0`, so
+  these are historical verdicts outside the backlog window, not new findings.
+- 7.4 GB `~/.claude/logs/unified.duckdb.pre-compact-20260804` still retained —
+  delete on/after 2026-08-06.
+
 ## 2026-08-04 — telemetry ETL unfrozen, unified.duckdb 7.37 GB → 0.02 GB, two sites repaired
 
 ### Completed
