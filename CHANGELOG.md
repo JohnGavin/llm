@@ -4,6 +4,127 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-05 — costs ETL landed and proven; three "indicator that cannot indicate" defects found
+
+### Completed
+
+- **llmtelemetry#343 merged** (`456a183`) — the `costs` table never refreshed:
+  bare `jsonlite::fromJSON` under `sys.source(envir = new.env(parent =
+  baseenv()))` (search path invisible, so the bare call could not resolve), and
+  five `quit()` calls that would terminate the *parent* process. Namespace-
+  qualified the calls, replaced `quit()` with a `refresh_costs_unified()`
+  wrapper returning status via `.refresh_result`. `parent = baseenv()` kept
+  deliberately — the isolation is wanted; the bare calls were the bug.
+- **Fix proven end-to-end, not just merged.** First post-merge export printed
+  `upserted 34 dates | Total cost: $11773.18` and `costs table now covers up to
+  2026-08-05`, where every prior run printed `JSON parse failed: could not find
+  function "fromJSON"` and then exited 0.
+- **Telemetry export run** — pushed `22b0195fb`; verified live by confirming it
+  is an ancestor of `8cdb9cf8`, the run that actually deployed. The run at our
+  own SHA was *cancelled* (superseded by a newer push), so "our deploy was
+  cancelled" was not the same as "our data is not live".
+- **CHANGELOG PR** [#908](https://github.com/JohnGavin/llm/pull/908) opened for
+  the 2026-08-04 entry; this entry appended to the same branch.
+
+### Found, filed, not yet fixed
+
+- **[llm#910](https://github.com/JohnGavin/llm/issues/910) — `session_stop.sh`
+  runs the telemetry export + push on EVERY turn.** Presented as "cron is
+  pushing every few minutes"; it is not cron (both launchd jobs are
+  `StartInterval = 43200`, i.e. 12-hourly). The Stop hook fires after every
+  assistant response, and the export block at lines 174–185 is ungated. The
+  gate already exists in the same file: `_bye_detected` is computed at lines
+  87–94 and used by the DuckDB write and the refine block, but not by this one.
+  llm#803 fixed this exact pattern for the neighbouring block and left this
+  one. ~11 pushes/day/session instead of 1; deploys continuously cancelling
+  each other. One-line fix.
+- **[llm#909](https://github.com/JohnGavin/llm/issues/909) —
+  `export_and_deploy_data.sh` `skill_usage_etl` step bypasses the nix
+  fallback.** The script defines `run_rscript_with_nix()` for exactly this
+  case and uses it for the export step, but line 177 calls bare `timeout 60
+  Rscript`. With no `Rscript` on PATH the step no-ops and prints
+  "(non-fatal)". Worse: the very next step's QA gate reported
+  `config_staleness.json (0 rows — empty array is valid)` — **OK on a zero-row
+  table whose producer had failed two lines earlier**.
+- **[llmtelemetry#344](https://github.com/JohnGavin/llmtelemetry/issues/344) —
+  live `last_updated.txt` is written but read by nothing, and always reports
+  `-1`.** `vignettes/data/` is gitignored, so the file is regenerated on the CI
+  runner where the count sections do not run and fall back to the `-1`
+  sentinel. Its timestamp records when CI last ran, not when data was exported.
+  Nothing consumes it — not the dashboard, not the email.
+
+### Failed approaches / corrections made
+
+- **Claimed the daily-email STALE DATA banner might be driven by
+  `last_updated.txt`. It is not.** `send_daily_email.R:270-298` derives its age
+  from the newest record *in the data*, with a comment explicitly rejecting
+  file mtime because "mtime equals checkout time in CI and would mask
+  staleness". The banner is well built. Tracing it is what established this —
+  the hedge ("I have not checked whether the banner reads this file") was the
+  thing that stopped a wrong claim from shipping.
+- **Read `upserted 34 dates` as "the backlog clearing in one pass". It is
+  not.** `34` is `nrow(wide)` — the count of dates *presented* to the upsert,
+  not the count changed. A healthy run prints 34 too. `ON CONFLICT` does not
+  return an insert/update split, so the line says nothing about how much was
+  stale. Worth changing the message, since it reads like a change count.
+
+### Recurring theme this session and last
+
+Five distinct instances now of **a gate or indicator that measures a property
+the defect does not violate**:
+
+| Mechanism | Tests | Misses |
+|---|---|---|
+| `qa_no_nulls` (llm#882) | value is NULL | zero-row result |
+| `config_staleness` QA (llm#909) | row count ≥ 0 | producer never ran |
+| `last_updated.txt` (llmtelemetry#344) | CI run time | data age |
+| launchd exit status (llm#900) | exit 0 | five months of failure |
+| `qa_rds_freshness` | mtime | content |
+
+The general form: *an "empty/absent is valid" rule is unsound unless it can
+also see that the producer succeeded.* Recorded here because the next instance
+will look different in the particulars and identical in shape.
+
+### Known limitations
+
+- llm#910 unfixed — expect continued push churn in `llmtelemetry` until gated.
+- roborev at `/bye`: `verdicts.failed=14` (4 addressed), `overview.failed=1`,
+  1 `claude-code` crash. Consistency check passes and backlog is `open=0`, so
+  these are historical verdicts outside the backlog window, not new findings.
+- 7.4 GB `~/.claude/logs/unified.duckdb.pre-compact-20260804` still retained —
+  delete on/after 2026-08-06.
+
+## 2026-08-04 — telemetry ETL unfrozen, unified.duckdb 7.37 GB → 0.02 GB, two sites repaired
+
+### Completed
+- **llmtelemetry ETL unfrozen** ([llmtelemetry#341](https://github.com/JohnGavin/llmtelemetry/pull/341), #340) — dashboard had been stuck at `Data through: 2026-08-01 17:08` for two days. Not a crash: the #131 privacy guard was fail-closed and **could never be satisfied**. `sensitive_id_pattern()` (sanitise) anchored the tmp classes (`^-tmp-`); `sensitive_verify_patterns()` (verify) did not. A macOS per-user temp id `-private-var-folders-…-T-tmp-msqYsMoZTd` carries `-tmp-` **mid-string**, so sanitise never touched it and verify flagged it every run. Fixed by unanchoring, adding `-private-var-folders-`, and mirroring into the standalone fallback copy that cron actually executes. The stated invariant was also wrong — "every sanitise class has a verify entry" is satisfiable *while broken*; replaced with containment (verify ⊆ sanitise) plus a property test embedding each verify substring at start/middle/end.
+- **`unified.duckdb` compacted in place: 7.37 GB → 0.021 GB** (#884 step 1). Integrity proven by per-table `COUNT(*)` **and** order-independent row-content checksums across all 32 tables: 65,740 rows in / out, **0 mismatches**. Sequence continuity verified with a live insert (`hook_events.id` is `nextval`-backed; export/import can silently reset sequences and every later hook insert would then collide).
+- **Housekeeping leaks closed** ([#906](https://github.com/JohnGavin/llm/pull/906), #884 steps 2–3) — age-based sentinel sweep + size-based log rotation wired into the daily GC. `~/.claude/` top-level entries 593 → 140.
+- **footbet landing page** ([footbet#98](https://github.com/JohnGavin/footbet/pull/98)) — mermaid diagram rendered (page never loaded mermaid.js; the fence was always correct), project tree collapsed and `_targets`-filtered.
+- **Site 404s fixed** ([JohnGavin.github.io#12](https://github.com/JohnGavin/JohnGavin.github.io/pull/12)) — `historical/examples.html` and `dashboard.html` had been retired to `archive/`; repointed to live pages with prose rewritten. All 14 links verified 200.
+- **Issues filed with plans:** #897 (kb-digest shape regression), #898 (0h-cadence bug still live in `launchd_health_audit.sh`), #900 (five-month silent no-op), #901 (PDF ingestion scoping), #905 (rsonar/air gap analysis), [footbet#99](https://github.com/JohnGavin/footbet/issues/99).
+
+### Failed Approaches
+- **Three successive wrong readings of the DuckDB bloat.** First "fat payloads" (disproved: `sum(length(output_preview))` = 0), then "reclaimable dead space" (disproved: `free_blocks = 97`). Actual cause: tables appended **one row per transaction** get one row group — and one 256 KB block — each. `branch_gc_events` held **10,819 blocks for 10,818 rows**. Batch-written ETL tables were already dense (`config_access`: 1,602 rows/block). Lesson: measure block occupancy before theorising about size.
+- **Nearly reported a disk-doubling bug in working code.** A fixture built with macOS `base64` produced a **single 16 MB line**, so `tail -n 2000` legitimately returned the whole file and rotation appeared to copy-without-truncating. The script was correct (65.6 MB → 146 KB on realistic input). It did surface a real minor limit: line-based rotation cannot shrink a single-line log.
+- **An agent's `_targets` filter looked right and wasn't** — grepping rendered `dir_tree` lines removes the header but not the children (printed as bare indented basenames). 1193 → 1188 lines with the subtree intact; `regexp`/`invert` gives 1193 → 936.
+- **A `^[a-z_]+$` verification loop silently skipped `self_review_findings_stage1`** (digit in the name), checking 31 of 32 tables. Caught before the swap. Third filter-that-narrows-itself of the session.
+- **`gh pr edit` needs `read:org`**; the REST fallback is blocked by the destructive-API guard. Merge commit bodies must be supplied via `--body-file` on `gh pr merge` instead.
+
+### Accuracy / Metrics
+- `unified.duckdb`: 7.37 GB → 0.021 GB (99.7%); `total_blocks` 30,185 → 101; 0 rows lost across 32 tables
+- `~/.claude/` top-level entries: 593 → 140; sentinels 476 → 60; stale `.bye-*` 58 → 0; orphaned `.claude.json.tmp.*` 12 → 1
+- llmtelemetry data recency: 2026-08-01 → **2026-08-04**; refresh job exit 1 → 0
+- Tests: llm 693 → 724 pass (0 fail); llmtelemetry new suites 39/39 + 70/70
+- launchd: 27 jobs, 22 exit 0, 2 stale pre-#888 codes, 3 never-run
+
+### Known Limitations
+- **7.4 GB backup retained** at `~/.claude/logs/unified.duckdb.pre-compact-20260804` — disk saving not yet realised. Earliest safe deletion **2026-08-06**; reminder recorded on #884 (deliberately not via session cron, which is session-only and would have evaporated — the #900 failure mode).
+- **Compaction is not durable.** The DB grew 21 MB → 33 MB within two hours of the swap. The per-row-append pattern is mandated by `housekeeping-framework`, so #884 step 4 (batch the appends) is the real fix.
+- **`launchd_health_audit.sh` still derives a 0h cadence** for weekday-repeated schedules (#898) — fixed in the new collector, not in the audit script.
+- **roborev NOT-CLEAN at session end**: 29 verdict failures / 18 addressed, 1 job failure, 1 crash (`claude-code`). The consistency check disagrees (`crash+quota=0`, `verdicts=4`) — the two counters use different scopes, itself worth investigating.
+- #892/#893 remain the important open work: every defect this session was invisible to gates that test existence rather than content.
+
 ## 2026-08-03 (session 2) — site unblocked after 3 stacked failures; all 25 launchd jobs found dead
 
 ### Completed
