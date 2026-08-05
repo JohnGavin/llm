@@ -71,7 +71,7 @@ these before proposing a new table:
 
 `data_quality_incidents` records windows where an asset/column's values are
 known to be untrustworthy (imputed, estimated, or otherwise not observed) —
-e.g. `sessions.duration_min` between 2026-07-24 and 2026-08-04, backfilled by
+e.g. `sessions.duration_min` between 2026-07-24 and 2026-08-05, backfilled by
 `session_reaper.sql` (llm#803) when `session_stop.sh`'s DB write silently
 stopped firing (llm#913, llm#915). Add a row when you diagnose such a window;
 it is a one-time incident record, not a continuously-firing event table. Any
