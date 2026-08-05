@@ -67,6 +67,22 @@ these before proposing a new table:
 | `roborev_findings` | Individual finding rows | `id`, `review_id`, `file`, `line`, `severity`, `body` |
 | `self_review_findings_stage1` | Overnight detector findings | `finding_id`, `finding_type`, `session_id`, `severity`, `evidence`, `detected_at` |
 
+## Data Quality Incidents
+
+`data_quality_incidents` records windows where an asset/column's values are
+known to be untrustworthy (imputed, estimated, or otherwise not observed) —
+e.g. `sessions.duration_min` between 2026-07-24 and 2026-08-04, backfilled by
+`session_reaper.sql` (llm#803) when `session_stop.sh`'s DB write silently
+stopped firing (llm#913, llm#915). Add a row when you diagnose such a window;
+it is a one-time incident record, not a continuously-firing event table. Any
+consumer of an affected asset/column (dashboard query, vignette, exported
+JSON) MUST check this table — or the incident's own marker if one exists
+(e.g. a `summary` tag) — and exclude or visibly flag affected rows rather
+than presenting an estimate as observed data. Schema:
+`.claude/scripts/housekeeping_schema_init.sql`; seed pattern:
+`.claude/scripts/data_quality_incidents_seed.sql` +
+`data_quality_incidents_seed_apply.sh`.
+
 ## How to Add a New Event Type
 
 1. **Check the canonical table list above.** If an existing table covers
