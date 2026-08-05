@@ -180,8 +180,11 @@ echo "=== Test group 6: etl_freshness registration (defensive, Card 1a coordinat
 FRESHNESS_EXISTS=$(dq "$TESTDB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='etl_freshness';")
 assert "etl_freshness table created" "$FRESHNESS_EXISTS" "1"
 
-FRESHNESS_ROW=$(dq "$TESTDB" "SELECT status FROM etl_freshness WHERE source_name='command_usage';")
-assert "etl_freshness: command_usage registered with status='unknown' (event-driven, no SLA)" "$FRESHNESS_ROW" "unknown"
+FRESHNESS_ROW=$(dq "$TESTDB" "SELECT COUNT(*) FROM etl_freshness WHERE source_name='command_usage';")
+assert "etl_freshness: command_usage row exists" "$FRESHNESS_ROW" "1"
+
+FRESHNESS_RUN_TS=$(dq "$TESTDB" "SELECT COUNT(*) FROM etl_freshness WHERE source_name='command_usage' AND last_etl_run_ts IS NOT NULL;")
+assert "etl_freshness: command_usage last_etl_run_ts is non-NULL" "$FRESHNESS_RUN_TS" "1"
 
 echo ""
 echo "=== Test group 6b: leading-slash tokens that aren't installed commands are ignored (#747 review Fix 2) ==="
