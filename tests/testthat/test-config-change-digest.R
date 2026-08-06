@@ -85,6 +85,13 @@ make_git_fixture <- function() {
     paste0("set -e"),
     paste0("cd '", dir, "'"),
     "git init -b main",
+    # Disable inherited hooks in the fixture (llm#923). core.hooksPath is set
+    # GLOBALLY to ~/docs_gh/llm/git-hooks, so without this the fixture's commits
+    # fire roborev's post-commit hook, which registers this tempdir as a repo and
+    # enqueues a review per commit. testthat then deletes the dir and every one
+    # of those jobs fails `chdir: no such file or directory`. Local config beats
+    # global, so this makes the fixture hermetic.
+    "git config core.hooksPath /dev/null",
     "git config user.email 'test@example.com'",
     "git config user.name  'Test User'",
 
