@@ -201,6 +201,42 @@ roborev_status <- function() {
   }, error = function(e) "roborev not available")
 }
 
+# Repository-coverage counts, read from roborev's own SQLite DB (llm#923).
+#
+# `roborev repo list` has no --json flag and no created_at, so the counts below
+# come straight from the DB. sqlite3 ships with macOS; if it or the DB is
+# missing every field returns NA and the UI renders "n/a" rather than a
+# misleading 0 (see zero-metric-evidence-or-defect rule).
+#
+# `deleted` is deliberately absent: `repos` has no tombstone, so a removed repo
+# leaves no trace and a decrease is NOT observable. `active_7d` is the honest
+# substitute -- repos that actually saw a review in the window.
+roborev_repo_stats <- function() {
+  na_result <- list(total = NA_integer_, new_7d = NA_integer_,
+                    active_7d = NA_integer_, ephemeral = NA_integer_)
+  db <- Sys.getenv("ROBOREV_DB", unset = path.expand("~/.roborev/reviews.db"))
+  if (!file.exists(db) || !nzchar(Sys.which("sqlite3"))) return(na_result)
+
+  sql <- paste(
+    "SELECT (SELECT count(*) FROM repos),",
+    "(SELECT count(*) FROM repos WHERE created_at >= date('now','-7 days')),",
+    "(SELECT count(DISTINCT repo_id) FROM review_jobs",
+    " WHERE enqueued_at >= date('now','-7 days')),",
+    "(SELECT count(*) FROM repos WHERE root_path LIKE '/tmp/%'",
+    " OR root_path LIKE '/private/tmp/%' OR root_path LIKE '/var/folders/%'",
+    " OR root_path LIKE '/private/var/folders/%');"
+  )
+  tryCatch({
+    raw <- system2("sqlite3", c("-readonly", shQuote(db), shQuote(sql)),
+                   stdout = TRUE, stderr = FALSE)
+    if (length(raw) == 0L || !nzchar(raw[1])) return(na_result)
+    parts <- as.integer(strsplit(raw[1], "|", fixed = TRUE)[[1]])
+    if (length(parts) != 4L || anyNA(parts)) return(na_result)
+    list(total = parts[1], new_7d = parts[2],
+         active_7d = parts[3], ephemeral = parts[4])
+  }, error = function(e) na_result)
+}
+
 # ---- UI ---------------------------------------------------------------------
 
 ui <- bslib::page_sidebar(
@@ -358,7 +394,15 @@ ui <- bslib::page_sidebar(
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::h6("roborev status", style = "color:#aaa; margin-top:8px;"),
+          shiny::h6("Repository coverage", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("roborev_repo_metrics_ui")
+        )
+      ),
+
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::h6("roborev status", style = "color:#aaa; margin-top:16px;"),
           shiny::uiOutput("roborev_status_ui")
         )
       ),
@@ -989,6 +1033,43 @@ server <- function(input, output, session) {
         "max-height:140px; overflow-y:auto;"
       ),
       txt
+    )
+  })
+
+  output$roborev_repo_metrics_ui <- shiny::renderUI({
+    roborev_refresh()
+    s <- roborev_repo_stats()
+    fmt <- function(x) if (is.na(x)) "n/a" else as.character(x)
+
+    metrics <- data.frame(
+      metric = c("Repositories tracked", "New (7d)", "Active (7d)"),
+      value  = c(fmt(s$total), fmt(s$new_7d), fmt(s$active_7d)),
+      stringsAsFactors = FALSE
+    )
+    # Ephemeral repos are the llm#923 phantom class: throwaway temp-dir repos
+    # that inherited the global core.hooksPath. Steady state is 0; anything
+    # above that means the guard has regressed, so surface it only when non-zero.
+    if (!is.na(s$ephemeral) && s$ephemeral > 0L) {
+      metrics <- rbind(metrics, data.frame(
+        metric = "Ephemeral (should be 0)",
+        value  = as.character(s$ephemeral),
+        stringsAsFactors = FALSE
+      ))
+    }
+    value_colors <- c(
+      "#ffffff", "#ffffff", "#ffffff",
+      if (!is.na(s$ephemeral) && s$ephemeral > 0L) "#f08080"
+    )
+    shiny::tagList(
+      metric_table_ui(metrics, value_colors),
+      shiny::p(
+        style = "color:#aaa; margin-top:6px;",
+        paste(
+          "Repository deletions are not observable -- `repos` keeps no",
+          "tombstone -- so only increases are reported. \"Active\" counts",
+          "repos with a review enqueued in the window."
+        )
+      )
     )
   })
 
