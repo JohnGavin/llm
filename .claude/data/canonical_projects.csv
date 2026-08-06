@@ -19,3 +19,10 @@ rix.setup,rix Setup,JohnGavin/rix.setup,meta-config,true,
 urban_planning,Urban Planning,JohnGavin/urban_planning,analysis,true,
 eis6,EIS 6,,analysis,true,SENSITIVE — local git only; NEVER push to GitHub
 t-demos,T-lang demos (archived),,analysis,false,defunct; archived to proj/data/tlang/t_demos.zip 2026-06-20
+knowledge,Knowledge Base,,other,true,llm#652 — kind=knowledge-base but CHECK allows only r-package/quarto-website/dashboard/analysis/meta-config/other; path docs_gh/llm/knowledge; LOCAL git only per wiki-storage-policy; 526 roborev jobs were being dropped
+travel,Travel,,analysis,true,llm#652 — path docs_gh/proj/pers/travel; 42 roborev jobs dropped; still active 2026-08-06
+tennis,Tennis,,analysis,true,llm#652 — path docs_gh/proj/pers/tennis; NB a second repo row also named tennis at docs_gh/tennis — verify which is live
+ideas,Ideas,,analysis,true,llm#652 — path docs_gh/proj/stats/ideas
+content,LLM Content Cache,,other,true,llm#652 — kind=cache but CHECK allows only the six listed kinds; path docs_gh/proj/data/llm/content; pkgctx external-context cache
+hello_t,T-lang hello (archived),,analysis,false,llm#652 — path docs_gh/proj/data/tlang/hello_t; same defunct family as t-demos
+my_t_project,T-lang my_t_project (archived),,analysis,false,llm#652 — path docs_gh/proj/data/tlang/my_t_project; same defunct family as t-demos
