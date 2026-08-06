@@ -223,6 +223,20 @@ has_source_col <- tryCatch({
   log_msg("WARN: cannot introspect review_jobs columns: ", conditionMessage(e))
   FALSE
 })
+
+# ── Guard: review_jobs.error (llm#928) ────────────────────────────────────────
+# The ETL previously selected `status` but not `error`, so a job's failure was
+# recorded while the REASON was discarded. That made llm#923 undiagnosable from
+# our own metrics: 1,121 of 1,137 failures were phantom (reviews enqueued
+# against deleted temp dirs) and 16 were genuine quota exhaustion, and nothing
+# downstream could tell the two apart. Same guard pattern as `source` above —
+# absent column degrades to NULL rather than throwing.
+has_error_col <- tryCatch({
+  "error" %in% names(dbGetQuery(read_con, "SELECT * FROM src.review_jobs LIMIT 0"))
+}, error = function(e) FALSE)
+if (!has_error_col) {
+  log_msg("WARN: review_jobs.error column absent — failure_category will be 'unknown' for all rows (llm#928)")
+}
 if (!has_source_col) {
   log_msg("WARN: review_jobs.source column absent — using NULL AS source in sql_jobs (llm#706 Cause-1 guard)")
 }
@@ -238,13 +252,16 @@ sql_jobs <- sprintf("
     rj.enqueued_at,
     rj.started_at,
     rj.finished_at,
-    %s             AS source
+    %s             AS source,
+    %s             AS error
   FROM src.review_jobs rj
   JOIN src.repos rp ON rp.id = rj.repo_id
   WHERE date(rj.enqueued_at) >= DATE '%s'
   %s
   ORDER BY rj.id
-", if (has_source_col) "rj.source" else "NULL", since_str, repo_clause)
+", if (has_source_col) "rj.source" else "NULL",
+   if (has_error_col) "rj.error" else "NULL",
+   since_str, repo_clause)
 
 jobs_raw <- tryCatch(
   dbGetQuery(read_con, sql_jobs),
@@ -454,6 +471,55 @@ parse_max_severity <- function(text) {
   }, error = function(e) NA_character_)
 }
 
+# ── Classify a job failure from review_jobs.error (llm#928) ──────────────────
+#
+# Vocabulary (4 values). Deliberately coarse: the question these answer is
+# "is roborev working?", and that only needs to separate our-fault, their-fault,
+# and real.
+#
+#   ephemeral  — review enqueued against a temp dir that no longer exists.
+#                Not a roborev failure at all: a repo under /tmp, /private/tmp,
+#                /var/folders or /private/var/folders was registered by a test
+#                fixture inheriting the global core.hooksPath, then deleted
+#                (llm#923). 1,121 of 1,137 failures in the 16 days to
+#                2026-08-06 were this. Should be ~0 now the guard is deployed;
+#                a non-zero count means the guard has regressed.
+#   quota      — agent spend/quota/rate limit. NOT an agent-quality signal:
+#                billing state. Currently terminal, so the commit is dropped
+#                entirely (llm#927), and misfiled as `crash` by
+#                `roborev summary --json` (llm#904).
+#   agent      — the agent ran and failed (crash, stream error, timeout).
+#                The only category that says anything about agent reliability.
+#   other      — anything unmatched. A rising `other` means this vocabulary
+#                needs extending, so it is kept as an explicit bucket rather
+#                than folded into `agent`.
+#
+# NA for non-failed jobs. Order matters: ephemeral is tested first because a
+# deleted-tempdir error also mentions git, and quota before agent because a
+# quota rejection arrives as a stream error.
+classify_failure <- function(status, error) {
+  n <- length(status)
+  out <- rep(NA_character_, n)
+  if (n == 0L) return(out)
+
+  is_failed <- !is.na(status) & status == "failed"
+  if (!any(is_failed)) return(out)
+
+  err <- ifelse(is.na(error), "", as.character(error))
+
+  ephemeral <- grepl("(/private)?/tmp/|(/private)?/var/folders/", err)
+  quota     <- grepl("spend limit|quota|rate limit|too many requests|429",
+                     err, ignore.case = TRUE)
+  agent     <- grepl("agent:|stream error|exit status|timeout|panic",
+                     err, ignore.case = TRUE)
+
+  out[is_failed]                          <- "other"
+  out[is_failed & agent]                  <- "agent"
+  out[is_failed & quota]                  <- "quota"
+  out[is_failed & ephemeral]              <- "ephemeral"
+  out
+}
+
 # ── Build roborev_daily_metrics ────────────────────────────────────────────
 
 build_daily_metrics <- function(jobs, reviews) {
@@ -468,6 +534,13 @@ build_daily_metrics <- function(jobs, reviews) {
     parse_fail_count            = integer(),
     threshold_effective         = character(),
     etl_run_at                  = as.POSIXct(character()),
+    # llm#928 — additive; see the schema file's FROZEN note. `reviews_failed`
+    # is verdict-failed and is NOT renamed (llmtelemetry#144 reads it by name).
+    jobs_failed                 = integer(),
+    jobs_failed_ephemeral       = integer(),
+    jobs_failed_quota           = integer(),
+    jobs_failed_agent           = integer(),
+    jobs_failed_other           = integer(),
     stringsAsFactors            = FALSE
   )
 
@@ -498,6 +571,14 @@ build_daily_metrics <- function(jobs, reviews) {
     job_ids   <- day_jobs$job_id
     day_rv    <- rv_slim[rv_slim$job_id %in% job_ids, ]
 
+    # llm#928. "none" rather than NA so the sums below need no na.rm and a
+    # miscount cannot hide behind it.
+    day_fail_cat <- classify_failure(
+      day_jobs$status,
+      if ("error" %in% names(day_jobs)) day_jobs$error else NA_character_
+    )
+    day_fail_cat[is.na(day_fail_cat)] <- "none"
+
     data.frame(
       date                        = as.Date(d),
       repo                        = rep,
@@ -509,6 +590,16 @@ build_daily_metrics <- function(jobs, reviews) {
       parse_fail_count            = get_parse_fail(d, rep),
       threshold_effective         = get_threshold_effective(d, rep),
       etl_run_at                  = etl_run_at,
+      # llm#928 — job-level failure, which `reviews_passed`/`reviews_failed`
+      # cannot express: those come from `verdict_bool`, and a job that fails
+      # never produces a review row, so it lands in `reviews_created` and in
+      # neither of the other two. On 2026-08-03 that read as
+      # `reviews_failed = 5` for llm against 582 actually-failed jobs.
+      jobs_failed                 = sum(day_fail_cat != "none"),
+      jobs_failed_ephemeral       = sum(day_fail_cat == "ephemeral"),
+      jobs_failed_quota           = sum(day_fail_cat == "quota"),
+      jobs_failed_agent           = sum(day_fail_cat == "agent"),
+      jobs_failed_other           = sum(day_fail_cat == "other"),
       stringsAsFactors            = FALSE
     )
   })
