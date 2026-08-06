@@ -25,6 +25,24 @@ The last one is the tell: the *fix* for an absence-of-evidence bug shipped the
 same error one layer down. Plausibility is not evidence, and being mid-way
 through fixing this exact failure mode is no protection against repeating it.
 
+**Third layer, found 2026-08-06.** Row 3's correction was itself only half
+right. "The break precedes the merge by ~4h" was query-backed and stands; the
+*explanation* shipped alongside it — "the gating change was evidently live from
+a local branch before the PR merged" — was pure inference, and is false. Three
+queries kill it: `~/.claude/hooks` is a symlink to the main checkout so hooks
+resolve nowhere else; that checkout's `git reflog` shows HEAD frozen from
+2026-07-22 09:35 to the ff-pull at 2026-07-24 10:34; and 103 affected sessions
+ran before that pull. Nothing under version control changed across the onset at
+all — the trigger is still unidentified.
+
+The lesson is narrower and nastier than "verify causes": **an explanation
+attached to a verified fact inherits the fact's credibility without earning
+it.** The reader (and the writer) sees one sentence carrying a timestamp and a
+`WHERE` clause and waves the whole thing through. Split them — state the
+queried fact, then state the explanation separately and mark it inferred, or
+run the query that would falsify it. Preferring "trigger unidentified" over a
+tidy story is the correct output, not a failure to finish the analysis.
+
 **How to apply:**
 
 - Before writing a causal sentence, name the query that would falsify it and run
