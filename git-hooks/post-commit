@@ -1,10 +1,30 @@
 #!/bin/sh
-# roborev post-commit hook v4 - auto-reviews every commit
+# roborev post-commit hook v5 - auto-reviews every commit
+#
+# Ephemeral-path guard (llm#923): core.hooksPath is set GLOBALLY to this
+# directory, so EVERY git repo on this machine inherits this hook -- including
+# throwaway repos that test suites and agent runs create under a temp dir. Those
+# repos commit (firing this hook, which registers them and enqueues a review),
+# then get deleted moments later, so every queued job fails with
+# "chdir ...: no such file or directory". Between 2026-07-21 and 2026-08-06 that
+# produced 1,121 phantom failures -- 98.6% of all roborev failures -- and 1,722
+# phantom rows in roborev's `repos` table, burying the 16 genuine failures.
+#
+# Skip roborev for any repo whose toplevel is under a temp root. Set
+# ROBOREV_ALLOW_TMP_REPOS=1 to override (used by this hook's self-test).
 _roborev_hook() {
 ROBOREV="/usr/local/bin/roborev"
 if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && return 0
+fi
+if [ -z "${ROBOREV_ALLOW_TMP_REPOS:-}" ]; then
+    _top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+    case "$_top" in
+        /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
+            return 0
+            ;;
+    esac
 fi
 "$ROBOREV" post-commit 2>/dev/null
 }
