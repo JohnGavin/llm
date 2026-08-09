@@ -21,6 +21,26 @@
 
 set -euo pipefail
 
+# ── Secrets (llm#791 / llm#936) ───────────────────────────────────────────────
+# Every job that runs through this wrapper inherits the environment loaded here.
+# ~/.config/secrets.env is the single source of truth; ~/.zshenv sources it for
+# zsh, but launchd does not run a shell, so without this line a launchd job sees
+# only its plist's EnvironmentVariables (typically just PATH).
+#
+# This is the one edit point that covers every job using the recorder. Daemons
+# started outside it — e.g. com.roborev.auto-refine — must load it themselves.
+#
+# Deliberately NOT fail-loud here: this wrapper is generic and most jobs need no
+# secrets at all. Jobs with a hard requirement assert their own (see
+# roborev_auto_refine.sh). Missing-file is silent by design; the file is
+# optional on a machine that has no secrets.
+if [ -r "$HOME/.config/secrets.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.config/secrets.env"
+  set +a
+fi
+
 # ── Arg parsing ────────────────────────────────────────────────────────────────
 
 if [[ $# -lt 3 ]]; then
