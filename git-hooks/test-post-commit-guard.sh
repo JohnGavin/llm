@@ -1,7 +1,15 @@
 #!/bin/bash
 # Two-sided test of the post-commit ephemeral-path guard (llm#923).
+#
+# HOOK resolves from this script's OWN directory. It must never be an absolute
+# path to a particular checkout: the first version of this file hardcoded a
+# worktree path, so running it from the main checkout silently tested the
+# worktree's copy of the hook instead of its own. It reported 3/3 PASS while
+# that worktree happened to hold the fixed hook, then FAILed once the worktree
+# moved to a branch predating it -- a green result that was never evidence
+# about the file shipped alongside it (portable-build-artifacts).
 set -u
-HOOK="/Users/johngavin/docs_gh/worktrees/llm/feat/cc-20260802-120510/git-hooks/post-commit"
+HOOK="$(cd "$(dirname "$0")" && pwd)/post-commit"
 WORK=$(mktemp -d)
 MARKER="$WORK/roborev_was_called"
 
