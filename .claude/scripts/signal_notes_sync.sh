@@ -13,7 +13,19 @@ elif [ -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]; then
 fi
 export PATH="$JAVA_HOME/bin:/opt/homebrew/bin:$PATH"
 
-SIGNAL_CLI="/opt/homebrew/Cellar/signal-cli/0.14.2/libexec/bin/signal-cli"
+# Version-STABLE path (llm#937). This was pinned to the 0.14.2 Cellar directory;
+# Homebrew upgraded signal-cli to 0.14.3_1 on 2026-05-10 12:03 and that directory
+# ceased to exist. The `receive` below is wrapped in `2>/dev/null || echo ""`, so
+# "command not found" became an empty message list — indistinguishable from "no
+# new messages". Capture stopped silently at 11:54 the same morning; the job kept
+# exiting 0 for three months.
+# Never pin a Cellar version here: /opt/homebrew/bin/signal-cli is the symlink
+# Homebrew repoints on upgrade.
+SIGNAL_CLI="${SIGNAL_CLI:-/opt/homebrew/bin/signal-cli}"
+if [ ! -x "$SIGNAL_CLI" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') FATAL: signal-cli not executable at $SIGNAL_CLI" >> "$HOME/.claude/logs/signal_sync.log"
+  exit 1
+fi
 ACCOUNT="+447521254904"
 DUMP_DIR="$HOME/docs_gh/llm/knowledge/raw/braindumps"
 ATTACH_DIR="$HOME/.local/share/signal-cli/attachments"
@@ -30,7 +42,19 @@ mkdir -p "$DUMP_DIR"
 touch "$PROCESSED_LOG"
 
 # Receive messages (timeout 30s)
-MESSAGES=$(timeout 30 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive 2>/dev/null || echo "")
+# llm#937: distinguish "receive failed" from "no new messages". These were
+# previously the same empty string, which is how a dead binary path masqueraded
+# as three months of silence. stderr is captured rather than discarded so the
+# reason survives into the log.
+_recv_err=$(mktemp)
+MESSAGES=$(timeout 30 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive 2>"$_recv_err") || _recv_rc=$?
+_recv_rc=${_recv_rc:-0}
+if [ "$_recv_rc" -ne 0 ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') RECEIVE FAILED rc=$_recv_rc: $(head -c 300 "$_recv_err" | tr '\n' ' ')" >> "$LOG"
+  rm -f "$_recv_err"
+  exit "$_recv_rc"
+fi
+rm -f "$_recv_err"
 
 if [ -z "$MESSAGES" ]; then
   # Even with no new messages, check for unprocessed voice attachments
