@@ -10,7 +10,10 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LIVE_DB="$HOME/.claude/logs/unified.duckdb"
+# UNIFIED_DB override (llm#652) so the migration can be exercised end-to-end
+# against a copy before touching the live warehouse. Same variable name the
+# ETL already honours (roborev_metrics_etl.R), so one export covers both.
+LIVE_DB="${UNIFIED_DB:-$HOME/.claude/logs/unified.duckdb}"
 PROJECTS_CSV="$REPO_ROOT/.claude/data/canonical_projects.csv"
 ALIASES_CSV="$REPO_ROOT/.claude/data/canonical_project_aliases.csv"
 NIX_DEFAULT="$REPO_ROOT/default.nix"
@@ -143,22 +146,32 @@ if [ "$MODE" = "selftest" ]; then
     result=$(duck_query "$FIXTURE_DB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('canonical_projects','canonical_project_aliases');")
     assert_eq "DDL creates both tables" "2" "$result"
 
-    # Test 2 — UPSERT loads 18 projects
+    # Expected counts are DERIVED from the CSVs, not hardcoded (llm#652).
+    # They were previously fixed at 18 and 1, and had silently rotted to
+    # failing against 20 and 12 — a test that asserts a constant against a
+    # file designed to grow will always end up asserting the past. Deriving
+    # them keeps the real property under test: every CSV row lands exactly
+    # once, and a second run changes nothing.
+    expect_projects=$(($(grep -c '' "$PROJECTS_CSV") - 1))
+    expect_aliases=$(($(grep -c '' "$ALIASES_CSV") - 1))
+
+    # Test 2 — UPSERT loads every project row
     duck_query "$FIXTURE_DB" "$(upsert_sql "$PROJECTS_CSV" "$ALIASES_CSV")" > /dev/null
     count_projects=$(duck_query "$FIXTURE_DB" "SELECT COUNT(*) FROM canonical_projects;")
-    assert_eq "18 projects after first UPSERT" "18" "$count_projects"
+    assert_eq "all $expect_projects CSV projects after first UPSERT" "$expect_projects" "$count_projects"
 
-    # Test 3 — UPSERT loads 1 alias
+    # Test 3 — UPSERT loads every alias row
     count_aliases=$(duck_query "$FIXTURE_DB" "SELECT COUNT(*) FROM canonical_project_aliases;")
-    assert_eq "1 alias after first UPSERT" "1" "$count_aliases"
+    assert_eq "all $expect_aliases CSV aliases after first UPSERT" "$expect_aliases" "$count_aliases"
 
     # Test 4 — idempotency: second UPSERT leaves counts unchanged
     duck_query "$FIXTURE_DB" "$(upsert_sql "$PROJECTS_CSV" "$ALIASES_CSV")" > /dev/null
     count_projects2=$(duck_query "$FIXTURE_DB" "SELECT COUNT(*) FROM canonical_projects;")
-    assert_eq "18 projects after second UPSERT (idempotency)" "18" "$count_projects2"
+    assert_eq "$expect_projects projects after second UPSERT (idempotency)" "$expect_projects" "$count_projects2"
 
-    # Test 5 — alias slug exists (coMMpass → commpass)
-    alias_check=$(duck_query "$FIXTURE_DB" "SELECT alias FROM canonical_project_aliases WHERE slug='coMMpass';")
+    # Test 5 — a known alias resolves. coMMpass has several aliases, so match
+    # the one under test rather than taking whichever row comes back first.
+    alias_check=$(duck_query "$FIXTURE_DB" "SELECT alias FROM canonical_project_aliases WHERE slug='coMMpass' AND alias='commpass';")
     assert_eq "alias commpass exists for coMMpass" "commpass" "$alias_check"
 
     rm -f "$FIXTURE_DB"
