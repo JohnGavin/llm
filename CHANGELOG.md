@@ -4,6 +4,122 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-08 — roborev's failure signal was 98.6% noise; the guard that cleaned it was eating live repos
+
+Session opened 2026-08-06. Theme: every defect below was found **by hand**, none
+by a metric — which became the reason P0 is now "monitoring that reports success
+while broken" ([#932](https://github.com/JohnGavin/llm/issues/932)).
+
+### Completed
+
+- **Article gap-review** — 7 URLs read (VentureBeat 429'd five times; read via a
+  syndicated mirror, flagged second-hand). Grouped into 2 issues + 2 comments
+  rather than 7: [#920](https://github.com/JohnGavin/llm/issues/920)
+  (metric-definition drift — llm#917's reaper exclusion landed in `app.R` only,
+  so llmtelemetry still weights **cost attribution** on synthetic `duration_min`,
+  giving the synthetic `ClaudeProbe` project 63.7% of attributed spend for 12
+  days), [#921](https://github.com/JohnGavin/llm/issues/921) (the dashboard has
+  `sum()` and `round()` and *no* median/percentile anywhere), plus smevals →
+  [#816](https://github.com/JohnGavin/llm/issues/816) and GraphRAG/pgGraph →
+  [#419](https://github.com/JohnGavin/llm/issues/419).
+- **[#922](https://github.com/JohnGavin/llm/pull/922) merged** — retracted the
+  llm#913 seed's onset explanation. See Failed Approaches.
+- **[#924](https://github.com/JohnGavin/llm/pull/924) merged** —
+  [#923](https://github.com/JohnGavin/llm/issues/923): `core.hooksPath` is set
+  **globally**, so a testthat fixture that `git init`s under a tempdir and
+  commits ~24 times enqueued ~24 roborev reviews against a path testthat then
+  deleted. Fixture opt-out + path guard in `git-hooks/post-commit` + two-sided
+  self-test. Cleanup applied to the live DB: **1,723 repos, 3,032 review_jobs,
+  3,032 commits, 617 reviews, 588 responses** removed, 27 real repos kept, 0
+  orphans, backup retained.
+- **[#925](https://github.com/JohnGavin/llm/pull/925) merged** — repo-coverage
+  block on the Reviews tab. No "deleted" metric: `repos` has no tombstone, so a
+  decrease is genuinely unobservable; reports increases + "Active (7d)" instead,
+  and says so. A red "Ephemeral (should be 0)" row appears only when non-zero.
+- **[#926](https://github.com/JohnGavin/llm/pull/926) opened** — the self-test
+  shipped in #924 hardcoded an absolute worktree path, so it tested a stale copy
+  of the hook. Now resolves from its own directory, verified two-sided.
+- **[#930](https://github.com/JohnGavin/llm/issues/930) + job unloaded** —
+  verifying #886's fix revealed the restored `roborev-autoclose` would create
+  **221+ GitHub issues, 184 with an empty commit SHA, 189 on the public
+  JohnGavin.github.io**, on the next Monday run. Partial count — the dry run
+  timed out at 180s. Job unloaded (`launchctl bootout`); plist untouched.
+- **[#933](https://github.com/JohnGavin/llm/pull/933) opened** — first P0 item:
+  the ETL selected `status` but not `error`, so `roborev_daily_metrics` had **no
+  job-failure column at all**. New `classify_failure()` →
+  ephemeral/quota/agent/other, five additive columns.
+- **[#934](https://github.com/JohnGavin/llm/pull/934) opened** — see below.
+- **Backlog triage** — 168 open issues grouped into P0–P9
+  ([#932](https://github.com/JohnGavin/llm/issues/932)); `P0-blind-spots` label
+  applied to 17. Closed #923, #439 (duplicate of #406), #184 (superseded by
+  #307). [#931](https://github.com/JohnGavin/llm/issues/931) inventories the
+  ~38-issue "evaluate X" graveyard (24% of open, zero completions since
+  2026-05-16) with a cap + named-trigger policy.
+  [#929](https://github.com/JohnGavin/llm/issues/929): `~/.roborev` at 5.3 GB,
+  ~3.5 GB of it unpruned weekly backups.
+
+### Failed Approaches
+
+- **"The llm#913 onset predates #809's merge because the gating change was live
+  from a local branch."** Refuted. `~/.claude/hooks` symlinks only to the main
+  checkout, whose HEAD did not move between 2026-07-22 09:35 and the ff-pull at
+  2026-07-24 10:34, and 103 affected sessions ran before that pull. Nothing under
+  version control changed across the onset; the trigger is **unidentified** and is
+  now recorded that way rather than replaced with a second guess. The timing was
+  query-backed and stands; the *explanation* attached to it never was — an
+  explanation inherits the credibility of the fact it rides on without earning it.
+- **Planned "delete non-canonical rows from the metrics mirror" — abandoned, and
+  the abandonment was the finding.** The safety check first: nine repos in the
+  mirror were *live* (`knowledge` 526 jobs, `travel` 42 and active that day) but
+  missing from `canonical_projects`, so the #536 guard had been silently dropping
+  them — 591 jobs invisible to every metric. The planned delete would have
+  destroyed their real history. Fixed instead in #934.
+- **Four wrong hypotheses on a "0 projects" selftest result** (CSV parse, ON
+  CONFLICT, worktree nix-shell path, `$REPO_ROOT` resolution) before instrumenting.
+  Actual cause: `canonical_projects` has `CHECK(kind IN (...six values...))` and I
+  had invented `knowledge-base` and `cache`. The insert failed wholesale, the
+  aliases FK then failed, and `duck_query` sends stderr to `/dev/null` — so a
+  **rejected value** presented as an **empty file**. Should have instrumented at
+  failure two, per `pivot-signal`.
+- **`sqlite3 -readonly` on the backup** returned "unable to open database file";
+  worked without the flag. Not diagnosed — noted so the next session doesn't burn
+  time on it.
+
+### Accuracy / Metrics
+
+- roborev failed jobs, trailing 16 days: **1,137 → 17** (the 17 are genuine).
+- Phantom repos in `~/.roborev`: **1,723 → 0**; real repos 27; orphans 0.
+- Open reviews: 622 → 599 (25 phantom removed from the backlog).
+- `classify_failure()` over all 12,319 jobs in the pre-cleanup backup: ephemeral
+  2,410 · agent 391 · quota 89 · other 5. NA count **exactly** matched the
+  non-failed row count.
+- Cross-validation, mirror vs source of truth: `SUM(jobs_failed) = 25` vs
+  `COUNT(*) status='failed' = 25`.
+- `canonical_projects_migrate.sh --selftest`: **1/5 → 5/5** (the 4 failures were
+  pre-existing rot — hardcoded `18` against a CSV that had grown to 20).
+- New test file `test-roborev-failure-category.R`: 15 passing, snapshot stable.
+
+### Known Limitations
+
+- **gemini is failing ~34% and is `default_agent`** — 19 done / 10 failed since
+  2026-08-06, `exit status 41 (parse error: no valid stream-json events)`. Not
+  filed yet.
+- **`com.claude.roborev-autoclose` is unloaded.** Deliberate (#930), but this also
+  stops the weekly `reviews.db` backup (#929). Re-enable only after the
+  empty-commit guard and per-run cap land.
+- **35 commits were never reviewed by anything, ever**
+  ([#927](https://github.com/JohnGavin/llm/issues/927)) — quota failures are
+  terminal, and nothing re-enqueues them. Blocked on
+  [#904](https://github.com/JohnGavin/llm/issues/904): roborev cannot *classify* a
+  quota error, so it cannot *defer* one.
+- **The metrics mirror still holds 720 dead repo names** (60% of rows). Deferred
+  deliberately until #934 lands, so the delete can exclude the newly-canonical
+  repos.
+- **`duck_query`'s `2>/dev/null`** turns any SQL error into an empty result — the
+  zero-metric-evidence pattern inside our own tooling. Not filed.
+- PRs #926, #933, #934 open and unmerged; #934 needs
+  `canonical_projects_migrate.sh` run against the live DB after merge (llm#510).
+
 ## 2026-08-05 — costs ETL landed and proven; three "indicator that cannot indicate" defects found
 
 ### Completed
