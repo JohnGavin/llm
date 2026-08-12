@@ -106,7 +106,9 @@ audit() {
             echo "UNSCOPED: $rel ($(wc -c < "$f" | tr -d ' ') bytes) — add paths: frontmatter (see llm#590)"
             fail_a=1
         fi
-    done < <(find "$dir" -name '*.md' -type f | sort)
+    # Companion documents are loaded on demand via explicit Read, not auto-injected
+    # by paths: matching, so they don't need (and must not carry) paths: frontmatter.
+    done < <(find "$dir" -name '*.md' -type f -not -path '*/_companions/*' | sort)
 
     for m in $mandatory; do
         if [ ! -f "$dir/$m.md" ]; then
