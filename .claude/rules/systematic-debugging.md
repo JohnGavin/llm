@@ -1,17 +1,19 @@
----
-paths:
-  - "R/**"
-  - "tests/**"
----
-# Systematic Debugging for R Packages
+# Systematic Debugging
 
-Scientific method for `R CMD check` failures, test failures, and Nix issues. Replaces "try random fixes" with "Hypothesis → Experiment → Conclusion".
+Scientific method for `R CMD check` failures, test failures, Nix issues, shell
+scripts, SQL, and config debugging. Replaces "try random fixes" with
+"Hypothesis → Experiment → Conclusion" — the discipline is language-agnostic;
+the worked examples below happen to be R-heavy because that is where it was
+first codified.
 
 ## When to Use
 
 - `devtools::check()` or `devtools::test()` fails
 - CI/CD workflows fail
 - "Object not found" in `nix-shell`
+- A shell script exits non-zero or produces unexpected output
+- A SQL query returns the wrong rows/count or errors
+- A config file (YAML/TOML/JSON) fails to parse or produces wrong behavior downstream
 - Stuck in repeated error cycle
 
 ## The Protocol
