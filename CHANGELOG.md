@@ -4,6 +4,31 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-13 — removed the plaintext environment dump from default.sh
+
+`default.sh` regenerated a file under `~/.config/positron/` on every dev-shell
+entry by piping `export -p` (the **entire** exported environment) through a
+**denylist** of Nix/bash internals (`BASH*`, `SHLVL`, `PWD`, `OLDPWD`, ...,
+`NIX_BUILD`). Credentials were never on the denylist, so every credential in
+scope was written to disk in plaintext. Measured on the live artifact before
+deletion: **169 variables, 114 KB, mode 644 (world-readable), 11 live
+credentials**.
+
+Verified the file had **zero consumers**: the only code referencing it was
+the block that wrote it; the Positron terminal wrapper script
+(`nix-terminal-wrapper.sh`, generated further down in the same `default.sh`)
+sources `/etc/profile.d/nix-shell.sh` directly and never reads the dump.
+Removed the write rather than adding an allowlist, since nothing depends on
+the output.
+
+**Lesson:** any future environment capture must use a positive **allowlist**
+of variable names, never a denylist — a denylist fails open by default, and
+a credential is exactly the kind of variable an author forgets to list.
+
+Handoff: the stale `~/.config/positron/nix_env.sh` artifact this code
+produced on past runs still exists on disk outside any git worktree and
+needs manual deletion by whoever has access to that path.
+
 ## 2026-08-08 — roborev's failure signal was 98.6% noise; the guard that cleaned it was eating live repos
 
 Session opened 2026-08-06. Theme: every defect below was found **by hand**, none

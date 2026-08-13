@@ -321,17 +321,16 @@ if ! source "$ENV_SCRIPT"; then
 fi
 export IN_NIX_SHELL=impure
 
-# Generate a clean environment file using export -p to properly handle multi-line variables
-# We filter out BASH*, SHLVL, PWD, OLDPWD, and Nix internals
-CLEAN_ENV_FILE="$WRAPPER_DIR/nix_env.sh"
-rm -f "$CLEAN_ENV_FILE"
-echo "Generating clean environment using export -p..."
-
-# Use export -p which properly quotes all values, then filter and reformat
-export -p | \
-grep -vE "^declare -[a-zA-Z-]+ (BASH|SHLVL|PWD|OLDPWD|HOME|SHELL|TERM|USER|LOGNAME|DISPLAY|SSH_|Apple_|_|buildPhase|shellHook|builder|configureFlags|deps|doCheck|mesonFlags|name|nativeBuildInputs|out|outputs|patches|phases|preferLocalBuild|propagated|stdenv|strictDeps|system|TEMP|TMP|TMPDIR|NIX_BUILD)=" | \
-sed 's/^declare -x /export /' | \
-sed 's/^declare -[a-zA-Z-]* /export /' > "$CLEAN_ENV_FILE"
+# NOTE (2026-08-13): This used to dump the entire exported environment to
+# a generated dotfile under $WRAPPER_DIR, filtered by a DENYLIST of
+# Nix/bash internals (BASH*, SHLVL, PWD, ..., NIX_BUILD). Measured exposure
+# before removal: 169 variables / 114 KB, file mode 644 (world-readable),
+# including 11 live credentials — because credentials were never on the
+# denylist, denylists fail open. The file had zero consumers: the Positron
+# terminal wrapper script created below sources /etc/profile.d/nix-shell.sh
+# directly and never reads that generated file. Removed rather than
+# repaired. If a future environment capture is needed, it MUST use a
+# positive ALLOWLIST of variable names, never a denylist.
 
 # Restore HOME and append system PATH (to fix locale, direnv, etc.)
 export HOME="$USER_HOME"
