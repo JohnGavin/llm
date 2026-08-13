@@ -2387,8 +2387,38 @@ existing_tables <- tolower(tryCatch(
   error = function(e) character(0)
 ))
 
+# ALTER statements must run even when the skip below fires (llm#941).
+#
+# The skip only inspects CREATE TABLE statements: if every table exists it
+# skips ALL statements, so an additive `ALTER TABLE ... ADD COLUMN IF NOT
+# EXISTS` could never reach an existing database. Any schema evolution after
+# first creation was silently unapplied, and the failure surfaced far away as
+#   INTERNAL Error: Column with name "jobs_failed" does not exist
+# mid-transaction, after the ETL had done all its work.
+#
+# Every ALTER in the schema file is idempotent (IF NOT EXISTS / IF EXISTS), so
+# running them unconditionally is safe and cheap.
+alter_stmts <- stmts[grepl("^[[:space:]]*[Aa][Ll][Tt][Ee][Rr][[:space:]]+[Tt][Aa][Bb][Ll][Ee]", stmts)]
+if (length(alter_stmts) > 0L) {
+  n_alter_ok <- 0L
+  for (stmt in alter_stmts) {
+    tryCatch({
+      dbExecute(duck_con, stmt)
+      n_alter_ok <- n_alter_ok + 1L
+    }, error = function(e) {
+      # Do not abort: a failed ALTER on one table must not block the run. Log
+      # loudly — a silent skip here is what llm#941 was.
+      log_msg("WARN: ALTER failed (schema evolution incomplete): ",
+              substr(gsub("[\n ]+", " ", stmt), 1L, 120L),
+              " — ", conditionMessage(e))
+    })
+  }
+  cat(sprintf("roborev_metrics_etl.R: applied %d/%d ALTER statement(s)\n",
+              n_alter_ok, length(alter_stmts)))
+}
+
 if (length(expected_tables) > 0L && all(expected_tables %in% existing_tables)) {
-  cat(sprintf("roborev_metrics_etl.R: schema init skipped — all %d tables present\n",
+  cat(sprintf("roborev_metrics_etl.R: schema init skipped — all %d tables present (ALTERs already applied above)\n",
               length(expected_tables)))
 } else {
   tryCatch({

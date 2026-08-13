@@ -1,8 +1,3 @@
----
-paths:
-  - "R/**"
-  - "tests/**"
----
 # Verification Before Completion
 
 ## The Iron Law
