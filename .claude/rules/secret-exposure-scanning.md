@@ -44,7 +44,7 @@ understands the four detectors and does not accidentally defeat them.
 | # | What it catches | Scope | Auto-fixed by `--fix`? |
 |---|---|---|---|
 | 1 | Whole-environment capture (`export -p`, `declare -x`, `set -o posix`, bare `printenv`/`env`) routed to a file or pipe, in `*.sh`/`*.R`/`*.py`/`*.plist` source | repo working tree | No — report only |
-| 2 | Plaintext credential at rest: a literal credential-shaped value (`ghp_`, `sk-ant-`, `AKIA`, PEM key, etc.) OR a `KEY\|TOKEN\|SECRET\|PASSWORD\|PASSWD\|PAT\|CREDENTIAL`-named variable assigned a literal (non-`$`) value | dotfiles/config + repo | No — report only, with the exact removal command |
+| 2 | Plaintext credential at rest: a literal credential-shaped value (`ghp_`, `sk-ant-`, `AKIA`, PEM key, etc.) OR a **credential-assignment** — see below for the name-AND-value heuristic | dotfiles/config + repo | No — report only, with the exact removal command |
 | 3 | Bad permissions (not `600`/`400`) on a file Detector 2 flagged | any Detector-2-flagged file | **Yes** — `chmod 600` |
 | 4 | A Detector-2-shaped assignment sitting on a **comment** line | dotfiles/config + repo | No — report only |
 
@@ -117,6 +117,76 @@ api_token = "TEST_FAKE_0000000000000000"
 api_token = "zK7wPlqRstUvWxYzAB12mQ9nR3sT"
 ```
 
+## credential-assignment: NAME and VALUE (Detectors 2 + 4)
+
+The original credential-assignment heuristic fired on **NAME alone**: any
+substring match of `KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIAL` in the
+variable name, plus a value test that only checked "does not start with
+`$`" — meaningless outside bash, and it treated `compat_mode` (contains
+`PAT`), `date_key` (contains `KEY`), `KEYWORDS`, and `API_KEY_HEADER = "x-
+api-key"` as credentials. On the llm repo this was ~89% of all detector-2
+findings (295 of 331) at 2026-08 tuning, almost none of it real. The
+heuristic now requires **BOTH**:
+
+1. **`name_segment_matches`** — the name, split on `_`, `-`, `.`, and
+   camelCase boundaries, has a whole SEGMENT (not substring) equal to
+   `key`, `token`, `secret`, `password`, `passwd`, `pat`, `credential`, or
+   `apikey`. `compat_mode` → `compat`,`mode` → no match. `date_key` →
+   `date`,`key` → matches (name alone is still not sufficient — see below).
+2. **`looks_like_credential_value`** — the VALUE itself looks
+   credential-shaped:
+   - ≥16 characters after extracting the actual literal (see "Value
+     extraction" below)
+   - contains at least one letter (excludes pure-numeric/date values)
+   - not a `$VAR` reference, filesystem path, URL, template/placeholder
+     (`{{`, `${`, `%s`, `<`, `>`), or code expression (contains `(`, `)`,
+     `[`, `]`, or `,` — a Python/R `key_x = fn(a, b)` RHS is not a literal)
+   - Shannon entropy (order-0, over the value's own character histogram)
+     ≥ `CRED_ENTROPY_THRESHOLD` (**3.0** bits/char)
+
+```bash
+# NO finding -- name has no whole-word credential segment
+compat_mode = "something"
+
+# NO finding -- name matches ("key") but value is only 10 chars
+date_key = "2026-08-13"
+
+# NO finding -- name matches, value is only 9 chars
+API_KEY_HEADER = "x-api-key"
+
+# FINDING -- name matches, value is a real 16-char mixed-case+digit token
+API_KEY = "aB3xK9mQ2pL7vN4t"
+
+# FINDING -- 16-char ALL-LOWERCASE value, no digit at all
+GMAIL_APP_PASSWORD = "wjqzxvkbmtynfcgh"
+```
+
+### Why no digit requirement
+
+A real Gmail app password is 16 lowercase letters with **no digit** —
+requiring a digit would silence exactly the kind of real secret this
+scanner exists to catch. Entropy is the signal that actually separates a
+random secret from dictionary/config text (common letters `e`,`t`,`a`,`o`,
+`n` skew a natural-language string's character frequency well below
+uniform, pulling its order-0 entropy under ~3 bits/char even in short
+samples), and it works the same way whether the string mixes case+digits
+or is pure lowercase. A digit-presence test was a bash-specific proxy that
+never worked for `.py`/`.R` assignments in the first place (see the old
+"Known residual noise" note below, now resolved).
+
+### Value extraction
+
+The coarse `ASSIGN_RE` grep can match a whole shell line, not just a bare
+`NAME=value` pair — e.g. `HF_TOKEN='hf_xxx' hf auth whoami  # comment` (a
+foreground env-assignment idiom) or `NAME="$OTHER_VAR"` (indirection).
+`strip_assignment_value` extracts: the content between the FIRST matching
+pair of quotes if the value is quoted (not "the rest of the line", which
+would wrongly absorb `hf auth whoami # comment` into the value); otherwise
+the first whitespace-delimited token. A quoted `"$OTHER_VAR"` still starts
+with `$` after quote-stripping and is excluded by the `$VAR indirection`
+check in `looks_like_credential_value` — quoting a variable reference does
+not make it a literal.
+
 ## What `--fix` Will and Will Not Do
 
 **Will** (safe, reversible, no data change): `chmod 600` a Detector-3-flagged file.
@@ -139,35 +209,61 @@ authored here: `.git`, `node_modules`, `_targets`, `worktrees`, `renv`,
 of these is a copy of one that exists in a source file we already scan;
 pruning them removes noise without removing coverage.
 
-Tuning note (2026-08): day-1 signal was 615 findings at ~5% precision,
-dominated by vendored/minified JS (pdfmake.js × 3 copies across `.quarto`,
-`_freeze`, `docs`), the scanner's own pattern definitions, and R test
-fixtures using `=`-style keyword-argument assignment (`totalTokens = tokens`)
-that trips the same `TOKEN=<literal>` shape as a real credential. The prune
-list, self-reference exemption, and fixture-value heuristic above address
-the first two; the third is addressed per-fixture via the fixture-value
-heuristic, not by pruning `tests/`. Combining the 13 credential-shape
-patterns into a single `grep -e ... -e ...` pass (was one full-tree walk
-per pattern) cut runtime from ~10s to ~6.6s on this repo (~1455 files
-post-prune) — still short of the ~3s target; the remaining cost is three
-full-tree passes (source-capture, cred-shape, assign-scan), and collapsing
-those further needs merging their differing classification logic, left as
-a follow-up.
+Tuning note (2026-08, round 1): day-1 signal was 615 findings at ~5%
+precision, dominated by vendored/minified JS (pdfmake.js × 3 copies across
+`.quarto`, `_freeze`, `docs`), the scanner's own pattern definitions, and R
+test fixtures using `=`-style keyword-argument assignment (`totalTokens =
+tokens`) that trips the same `TOKEN=<literal>` shape as a real credential.
+The prune list, self-reference exemption, and fixture-value heuristic above
+address the first two; the third is addressed per-fixture via the
+fixture-value heuristic, not by pruning `tests/`. Combining the 13
+credential-shape patterns into a single `grep -e ... -e ...` pass (was one
+full-tree walk per pattern) cut runtime from ~10s to ~6.6s on this repo
+(~1455 files post-prune).
+
+Tuning note (2026-08, round 2 — credential-assignment redesign): round 1
+left the detector-2 "any substring name match, any non-`$` value" heuristic
+in place, which the round-1 note above already flagged as the dominant
+remaining false-positive source (~27% of findings — `compat_mode`,
+`date_key`, `KEYWORDS`, and any `.py`/`.R` assignment with a KEY/TOKEN/PAT-
+shaped name, literal or not). That heuristic is replaced by the
+name-AND-value check in the "credential-assignment: NAME and VALUE" section
+above. Measured against the main `llm` checkout (pinned via
+`REPO_ROOT=/path/to/checkout secret_exposure_scan.sh --scan`, since
+`REPO_ROOT` otherwise auto-detects from the scanner's own location — see
+the script's `REPO_ROOT` comment): `credential-assignment` findings dropped
+from 295 to 28 (plus 2 `commented-credential-assignment`); total findings
+dropped from 421 (measured pre-fix, this worktree) to 67; `bad-permissions`
+(downstream of detector 2) dropped from 118 to 5. Runtime went from ~7.5s
+to ~10.1s (`cred-shape` and detector 1/3 unchanged; the added per-candidate
+name-segment + value-entropy computation costs more than it saves even
+after collapsing each helper to a single `awk` call — see the
+`name_segment_matches`/`looks_like_credential_value` comments in the
+script for the subprocess-count accounting; still short of the ~3s target
+from the round-1 tuning note, now further out of reach — correctness cost
+more than the original headroom). All previously-known real findings were
+re-verified present after the redesign:
+`secrets.env` + both `.bak-*` copies, the three `~/.claude/env/*.env`
+files, and `~/.zshenv` (via `cred-shape`). Two files in the original "must
+survive" list, `~/.zshrc` and `~/.config/qBittorrent/qBittorrent.ini`, no
+longer produce a finding — direct inspection (length/entropy computed
+without printing the value, consistent with the no-leak contract) shows
+neither currently holds a live secret: `qBittorrent.ini`'s `Password`
+fields are empty, and `~/.zshrc`'s only prior candidate was a 9-character,
+all-lowercase, low-entropy (2.64 bits/char) placeholder on an
+already-commented line — this predates the credential-assignment redesign
+entirely, since an empty value never matched `ASSIGN_RE` under the old
+heuristic either.
 
 Known residual noise NOT addressed by this pass (flagged for a follow-up
-decision, not fixed here): (1) `roborev_commit_msg_validator.sh` needs the
-self-reference marker added — it defines the same credential-shaped
-literals this scanner looks for but was out of this dispatch's write-scope;
-(2) the detector-2/4 "non-`$`-prefixed value = literal" heuristic is a
-bash-specific proxy for "not indirection" — Python and R don't use `$` for
-variable references, so `KEY`/`TOKEN`/`PAT`-named assignments in `.py`/`.R`
-files (including ordinary English words like `date_key` or `compat_mode`
-that happen to contain those substrings) are almost always flagged
-regardless of whether the value is a literal or just another variable.
-This was ~27% of the post-tune finding count on the llm repo. Fixing it
-properly is an architecture decision (e.g. restrict detector 2/4 literal-
-assignment matching to shell-family files, or add a real string-literal
-check for `.py`/`.R`), not a tuning knob — out of scope here.
+decision, not fixed here): `roborev_commit_msg_validator.sh`,
+`secrets_to_bws.sh`, and `verify_no_launchd_secret_leak.sh` all need the
+self-reference marker added — each defines the same credential-shaped
+NAME literals this scanner looks for (a list of secret variable names to
+check/migrate), which is exactly the "security tooling embeds the pattern
+it detects" case the self-reference exemption exists for, but adding the
+marker to those three files is out of this dispatch's write-scope
+(`.claude/scripts/secret_exposure_scan.sh` and this rule doc only).
 
 ## Correctness Requirement (Non-Negotiable)
 
@@ -195,6 +291,19 @@ in stdout, stderr, or the log after a full scan + fix run).
 .claude/scripts/secret_exposure_scan.sh --selftest   # N/N PASS
 .claude/scripts/secret_exposure_scan.sh --scan        # dry-run report
 .claude/scripts/secret_exposure_scan.sh --fix          # safe remediation + report
+```
+
+### Measuring against a specific checkout
+
+`REPO_ROOT` normally auto-detects from the scanner's own file location
+(`git -C "$SCRIPT_DIR" rev-parse --show-toplevel`), so a copy of the script
+running inside a worktree measures that worktree, not the main checkout —
+relevant when tuning a detector and comparing before/after counts. Pin it
+explicitly to measure a specific checkout regardless of where the script
+itself lives:
+
+```bash
+REPO_ROOT=/absolute/path/to/checkout .claude/scripts/secret_exposure_scan.sh --scan
 ```
 
 ## Related
