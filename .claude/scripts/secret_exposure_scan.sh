@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# secret-exposure-scan: pattern-definitions -- this file legitimately embeds
+# the credential-shaped regex/name literals it exists to detect. The
+# detector-2/4 self-reference exemption (see the rule doc's "Self-Reference
+# Exemption" section) skips literal-value matching for THIS file only.
+# Detectors 1 (source-capture patterns) and 3 (permissions) still apply.
 # secret_exposure_scan.sh — aggressive, auto-triggered secret-exposure scanner.
 #
 # Why this exists (not a rule, not a memory note): three incidents in one
@@ -43,12 +48,32 @@
 #      a KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIAL-named variable
 #      assigned a non-$-prefixed literal. Report only — deleting user data
 #      is not a safe automatic action; the report prints the exact removal
-#      command.
+#      command. Skipped for a file carrying the `pattern-definitions`
+#      self-reference marker (see below), and for a literal whose value
+#      looks like an obviously-fake test/doc fixture (see below).
 #   3. bad permissions on a Detector-2-flagged file (not 600/400).
 #      `--fix` DOES `chmod 600` this automatically — reversible, no data
 #      change.
 #   4. a Detector-2-shaped assignment sitting on a COMMENT line —
-#      "commented out" is not "removed". Report only.
+#      "commented out" is not "removed". Same skip rules as detector 2.
+#
+# Self-reference exemption: a file that must legitimately contain the
+# credential-shaped patterns THIS scanner looks for (i.e. security tooling
+# defining the same regex/name literals) can declare
+# `# secret-exposure-scan: pattern-definitions` anywhere in its first 40
+# lines. Detectors 2/4 then skip literal-value matching for that file only;
+# detectors 1 and 3 are unaffected. An explicit opt-in marker is preferred
+# over a hardcoded filename list — a list silently goes stale, a marker
+# travels with the file that needs it.
+#
+# Fixture-value heuristic (detectors 2/4 only): a matched value is treated
+# as an obviously-fake test/doc fixture — and skipped — when it contains
+# EXAMPLE, FAKE, DUMMY, TEST, xxxx, AAAA, 0000 (case-insensitive), or a run
+# of 8+ identical characters. This is a VALUE heuristic, not a path
+# heuristic: tests/ is deliberately never pruned by directory, because a
+# real credential accidentally committed to a test file must still be
+# caught. Files/paths that still trip on real-looking fixture values are
+# reported so a marker can be added to the fixture, not the rule widened.
 #
 # CRITICAL correctness requirement: this scanner must NEVER print a
 # credential value, in --scan, --fix, --json, or the log file. Findings
@@ -56,18 +81,30 @@
 # the matched line text. Verified by --selftest's sentinel-value check.
 #
 # Performance: pruned dirs are .git, node_modules, _targets, worktrees
-# (covers .claude/worktrees), renv, library (covers renv/library). Target
-# is ~3s on this repo; not yet verified against every possible repo size
-# — if a future repo blows the budget, use --fast for the session-start
-# path and reserve the full scan for the scheduled launchd job (which is
-# exactly what --fast is for today).
+# (covers .claude/worktrees), renv, library (covers renv/library), plus
+# generated/vendored build output that only ever mirrors a source file we
+# already scan: .quarto, _freeze, docs, libs, site_libs, and any
+# *.min.js/*.map file regardless of directory. The cred-shape pattern set
+# runs as ONE grep pass (all patterns as -e alternatives) instead of one
+# pass per pattern -- that was the single largest contributor to the
+# pre-tune runtime. Target is ~3s on this repo; measured ~6.6s on the
+# actual llm checkout (~1455 files post-prune) after the 2026-08 tuning
+# pass -- down from ~10s pre-tune, but still short of target. The three
+# remaining full-tree grep passes (source-capture scan, combined cred-shape
+# scan, assign-scan) are the dominant cost; collapsing further would mean
+# merging detector classification logic that currently differs per pass
+# (comment-vs-literal, name-pattern-vs-value-pattern) -- left as a follow-up
+# rather than done here. If a future repo blows the budget further, use
+# --fast for the session-start path and reserve the full scan for the
+# scheduled launchd job (which is exactly what --fast is for today).
 #
 # Log: ~/.claude/logs/secret_exposure_scan.log (one line per --fix action;
 # ISO-8601 UTC timestamp, detector id, path, action taken). Log failures
 # never abort the scan (best-effort, `|| true` throughout).
 #
 # Origin: three incidents, 2026-08 (see header above and the companion
-# rule file for full incident detail).
+# rule file for full incident detail). Tuned 2026-08 after day-1 signal
+# showed 615 findings / ~5% precision — see the rule doc's "Tuning" note.
 
 set -uo pipefail
 # Deliberately NOT `set -e`: a single non-matching grep (exit 1) or a
@@ -104,6 +141,13 @@ PRUNE_ARGS=(
     --exclude-dir=worktrees
     --exclude-dir=renv
     --exclude-dir=library
+    --exclude-dir=.quarto
+    --exclude-dir=_freeze
+    --exclude-dir=docs
+    --exclude-dir=libs
+    --exclude-dir=site_libs
+    --exclude='*.min.js'
+    --exclude='*.map'
 )
 
 # Literal credential-shaped value patterns. Overlap between generic and
@@ -190,6 +234,29 @@ file_mode() {
     stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null || echo ""
 }
 
+# is_pattern_definitions_file FILE
+# A file may opt out of detector-2/4 literal-value matching by declaring
+# `# secret-exposure-scan: pattern-definitions` in its first 40 lines --
+# security tooling legitimately embeds the credential-shaped regex/name
+# literals it exists to detect. Detectors 1 and 3 are unaffected -- this
+# only suppresses detector-2/4 findings FOR THIS FILE.
+is_pattern_definitions_file() {
+    head -n 40 "$1" 2>/dev/null | grep -qF '# secret-exposure-scan: pattern-definitions'
+}
+
+# looks_like_fixture_value LINE
+# Classifies a matched line (never printed -- see the no-leaked-value
+# contract at the top of this file) as an obviously-fake test/doc fixture:
+# EXAMPLE, FAKE, DUMMY, TEST, xxxx, AAAA, 0000 (case-insensitive), or a run
+# of 8+ identical characters. A VALUE heuristic, not a path heuristic --
+# tests/ is never pruned by directory.
+looks_like_fixture_value() {
+    if printf '%s' "$1" | grep -qiE 'EXAMPLE|FAKE|DUMMY|TEST|xxxx|AAAA|0000'; then
+        return 0
+    fi
+    printf '%s' "$1" | grep -qE '(.)\1{7,}'
+}
+
 # ---------------------------------------------------------------------------
 # Detector 1 — whole-environment capture in source
 # ---------------------------------------------------------------------------
@@ -234,19 +301,35 @@ scan_at_rest() {
 
     # Literal credential shapes -- always detector 2 regardless of comment
     # status; an exposed value is exposed whether or not a `#` precedes it.
+    # Skipped for a self-referencing pattern-definitions file, and for a
+    # value that looks like an obviously-fake test/doc fixture.
+    #
+    # One grep pass with all patterns as -e alternatives, not one pass per
+    # pattern -- 13 separate full-tree walks was the largest single
+    # contributor to the pre-tune ~10s runtime. A line matching more than
+    # one CRED_SHAPE_PATTERNS entry (e.g. both sk- and sk-ant-) is now
+    # reported once instead of once per matching pattern -- a deliberate,
+    # welcome side effect (fewer duplicate findings), not a detection gap:
+    # the line is still caught, just not double-counted.
+    local cred_pattern_args=()
     local pat
     for pat in "${CRED_SHAPE_PATTERNS[@]}"; do
-        while IFS=: read -r file lnum rest; do
-            [ -n "${file:-}" ] || continue
-            append_finding "2" "critical" "$file" "$lnum" "cred-shape" \
-                "literal credential-shaped value detected (value redacted -- see rule doc for the pattern class)"
-        done < <(grep -rnIE "${PRUNE_ARGS[@]}" -e "$pat" "${paths[@]}" 2>/dev/null)
+        cred_pattern_args+=(-e "$pat")
     done
-
-    # Credential-shaped NAME assigned a literal value -- comment line goes
-    # to detector 4, everything else to detector 2.
     while IFS=: read -r file lnum rest; do
         [ -n "${file:-}" ] || continue
+        is_pattern_definitions_file "$file" && continue
+        looks_like_fixture_value "$rest" && continue
+        append_finding "2" "critical" "$file" "$lnum" "cred-shape" \
+            "literal credential-shaped value detected (value redacted -- see rule doc for the pattern class)"
+    done < <(grep -rnIE "${PRUNE_ARGS[@]}" "${cred_pattern_args[@]}" "${paths[@]}" 2>/dev/null)
+
+    # Credential-shaped NAME assigned a literal value -- comment line goes
+    # to detector 4, everything else to detector 2. Same skip rules as above.
+    while IFS=: read -r file lnum rest; do
+        [ -n "${file:-}" ] || continue
+        is_pattern_definitions_file "$file" && continue
+        looks_like_fixture_value "$rest" && continue
         if printf '%s' "$rest" | grep -qE '^[[:space:]]*#'; then
             append_finding "4" "high" "$file" "$lnum" "commented-credential-assignment" \
                 "credential-shaped NAME with a literal value left on a comment line -- commenting out is NOT removal"
@@ -373,7 +456,8 @@ run_selftest() {
     local tmp
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest.XXXXXX")"
 
-    mkdir -p "$tmp/repo" "$tmp/dotfiles"
+    mkdir -p "$tmp/repo" "$tmp/dotfiles" "$tmp/repo/tests/testthat" \
+        "$tmp/repo/vendor/_freeze/site_libs" "$tmp/repo/vendor/dist"
 
     # 1: denylist-filtered export -p redirect -> FINDING (detector 1)
     cat > "$tmp/repo/bad_denylist.sh" <<'EOF'
@@ -417,6 +501,35 @@ EOF
 AWS_SECRET_ACCESS_KEY=${sentinel}
 EOF
 
+    # 13: vendored/minified build output under a pruned dir + pruned filename
+    #     -> NO finding (directory prune AND filename exclude both apply)
+    cat > "$tmp/repo/vendor/_freeze/site_libs/pdfmake.min.js" <<'EOF'
+var t = "AKIAABCDEFGHIJKLMNOP";
+EOF
+
+    # 14: self-reference marker in a would-be scanner file -> NO finding
+    #     (detector 2/4 exempted; detector 1 still runs but this file has
+    #     no env-capture pattern so it would not fire anyway).
+    cat > "$tmp/repo/fake_scanner.sh" <<'EOF'
+#!/usr/bin/env bash
+# secret-exposure-scan: pattern-definitions
+GITHUB_TOKEN=ghp_ZYXWVUTSRQPONMLKJIHGFEDCBA0123456789
+EOF
+
+    # 15: fake/fixture-shaped token value assigned to a credential-shaped
+    #     NAME (R keyword-arg style, matches ASSIGN_RE the way ccusage
+    #     test fixtures do) -> NO finding (fixture-value heuristic).
+    cat > "$tmp/repo/tests/testthat/test-fixture-token.R" <<'EOF'
+api_token = "TEST_FAKE_0000000000000000"
+EOF
+
+    # 16: a REAL-looking (no fake marker) credential-shaped assignment
+    #     sitting in a tests/ path -> STILL a finding (detector 2). tests/
+    #     is deliberately never pruned by directory.
+    cat > "$tmp/repo/tests/testthat/test-real-leak.R" <<'EOF'
+api_token = "zK7wPlqRstUvWxYzAB12mQ9nR3sT"
+EOF
+
     REPO_ROOT="$tmp/repo"
     DEFAULT_DOTFILES=("$tmp/dotfiles")
     FAST=0
@@ -452,6 +565,30 @@ EOF
         pass=$((pass + 1))
     else
         echo "FAIL: mode-644 credential file not flagged (detector 3)"
+    fi
+
+    if awk -F'\t' '$3 ~ /pdfmake\.min\.js$/' "$f1" | grep -q .; then
+        echo "FAIL: vendored/minified build output under a pruned dir was flagged"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /fake_scanner\.sh$/' "$f1" | grep -q .; then
+        echo "FAIL: self-reference pattern-definitions marker not honoured"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /test-fixture-token\.R$/' "$f1" | grep -q .; then
+        echo "FAIL: fake/fixture-shaped token value was flagged"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$1=="2" && $3 ~ /test-real-leak\.R$/' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: unmarked credential-shaped assignment in a tests/ path not flagged"
     fi
 
     local out
@@ -523,8 +660,8 @@ EOF
 
     rm -rf "$tmp" "$f1" "$f2" 2>/dev/null || true
 
-    echo "selftest: ${pass}/12 PASS"
-    [ "$pass" -eq 12 ]
+    echo "selftest: ${pass}/16 PASS"
+    [ "$pass" -eq 16 ]
 }
 
 # ---------------------------------------------------------------------------
