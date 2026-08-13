@@ -145,8 +145,22 @@ def main():
                     )
 
     # ── Rule 3 — env/printenv dump routed toward a publish/transport path. Bypassable. ──
-    bare_printenv = re.search(r'\bprintenv\b\s*(?=$|[;&|])', cmd)
-    bare_env = re.search(r'\benv\b\s*(?=$|[;&|])', cmd)
+    # `env`/`printenv` must be in COMMAND POSITION — start of string, or just
+    # after a ;/&/| separator — not merely a word anywhere in the command.
+    # Without this, `\benv\b` matches the `env` inside a filename such as
+    # `~/.config/secrets.env;` (because `.` is a word boundary and the trailing
+    # `;` satisfies the lookahead), and any quoted occurrence like
+    # `grep 'env' file | ...` fires too. That produced three false positives
+    # within minutes of the hook going live (2026-08-13) — including blocking
+    # inspection of this very file. See llm secrets-sprawl issue.
+    # The trailing lookahead must also accept a REDIRECT. The original form
+    # only accepted [;&|], so `printenv > /tmp/all.txt` — a complete
+    # environment dump straight to a file — was silently ALLOWED. Found by the
+    # regression cases added below, not by the original 23.
+    _cmdpos = r'(?:^|[;&|]\s*)'
+    _dumpend = r'\s*(?=$|[;&|>])'
+    bare_printenv = re.search(_cmdpos + r'printenv\b' + _dumpend, cmd)
+    bare_env = re.search(_cmdpos + r'env\b' + _dumpend, cmd)
     transport = any(t in cmd for t in ('gh ', 'curl ', '|', '>', 'tee'))
     if (bare_printenv or bare_env) and transport:
         block(
@@ -273,6 +287,27 @@ if [ "${1:-}" = "--selftest" ]; then
   _case "unrelated duckdb query" \
     'duckdb /tmp/x.db "SELECT 1"' \
     "ALLOW"
+
+  # ── Rule 3 command-position regressions (real false positives, 2026-08-13) ──
+  # All three fired within minutes of the hook going live. `\benv\b` matched
+  # the `env` inside a *filename* or inside *quotes*, because `.` and `'` are
+  # word boundaries. Keep these: they are the difference between a guard that
+  # is used and one that gets disabled.
+  _case "a .env FILENAME followed by ; and a pipe is not an env dump" \
+    'for f in ~/.claude/env/kb_digest.env; do shasum "$f" | cut -c1-16; done' \
+    "ALLOW"
+  _case "the word env QUOTED as a grep pattern is not an env dump" \
+    'grep -n '"'"'env'"'"' ~/.claude/hooks/secret_leak_guard.sh | head -20' \
+    "ALLOW"
+  _case "reading a .env path with a redirect is not an env dump" \
+    'grep -nE "^export" /Users/johngavin/.config/secrets.env > /tmp/inv.txt' \
+    "ALLOW"
+  _case "a REAL bare env dump into a pipe still blocks" \
+    'env | cut -d= -f1' \
+    "BLOCK"
+  _case "a REAL bare printenv dump into a redirect still blocks" \
+    'printenv > /tmp/all_env.txt' \
+    "BLOCK"
 
   # ── Additional regression / coverage cases ───────────────────────────────
   _case "gh --body with literal text, no substitution" \
