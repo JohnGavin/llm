@@ -45,12 +45,19 @@
 #   1. whole-environment capture in *.sh/*.R/*.py/*.plist source, routed to
 #      a file/pipe. Report only — never auto-rewrite source.
 #   2. plaintext credential at rest: a literal credential-shaped value, OR
-#      a KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIAL-named variable
-#      assigned a non-$-prefixed literal. Report only — deleting user data
-#      is not a safe automatic action; the report prints the exact removal
-#      command. Skipped for a file carrying the `pattern-definitions`
-#      self-reference marker (see below), and for a literal whose value
-#      looks like an obviously-fake test/doc fixture (see below).
+#      a credential-assignment -- a variable whose NAME has a whole
+#      underscore/camelCase SEGMENT equal to key|token|secret|password|
+#      passwd|pat|credential|apikey (not a substring match -- `compat_mode`
+#      and `date_key` no longer match on name alone) AND whose VALUE itself
+#      looks credential-shaped: >=16 chars, Shannon entropy >=3.0 bits/char,
+#      and not a path/URL/template/pure-number (see the rule doc's
+#      "credential-assignment: name AND value" section for the full
+#      heuristic and why a digit is NOT required). Report only — deleting
+#      user data is not a safe automatic action; the report prints the
+#      exact removal command. Skipped for a file carrying the
+#      `pattern-definitions` self-reference marker (see below), and for a
+#      literal whose value looks like an obviously-fake test/doc fixture
+#      (see below).
 #   3. bad permissions on a Detector-2-flagged file (not 600/400).
 #      `--fix` DOES `chmod 600` this automatically — reversible, no data
 #      change.
@@ -119,7 +126,15 @@ LOG_DIR="${HOME_DIR}/.claude/logs"
 LOG_FILE="${LOG_DIR}/secret_exposure_scan.log"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+# REPO_ROOT is normally auto-detected from this script's own location (so the
+# session-init/launchd callers never need to think about it). It can be
+# pinned via a pre-set REPO_ROOT env var -- used to measure/tune this
+# detector against a specific checkout regardless of which worktree the
+# script itself lives in (see the rule doc's "Measuring against a specific
+# checkout" note).
+if [ -z "${REPO_ROOT:-}" ]; then
+    REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
 if [ -z "$REPO_ROOT" ]; then
     REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
@@ -169,11 +184,33 @@ CRED_SHAPE_PATTERNS=(
     '\-\-\-\-\-BEGIN[A-Z ]*PRIVATE KEY\-\-\-\-\-'
 )
 
-# Credential-shaped variable NAME (case-insensitive).
+# Credential-shaped variable NAME (case-insensitive) -- COARSE candidate
+# filter only. This substring regex is deliberately over-inclusive (it also
+# matches `compat_mode`, `date_key`, `KEYWORDS`); every candidate it selects
+# is re-checked by name_segment_matches() below, which requires a whole
+# underscore/camelCase SEGMENT to equal a credential word, not a substring.
 ASSIGN_NAME_RE='[A-Za-z_][A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIAL)[A-Za-z0-9_]*'
 # A literal (non-$) value follows `=`. Matches with OR without a leading
 # `#` comment marker — classified into detector 2 vs 4 after the match.
 ASSIGN_RE="^[[:space:]]*#?[[:space:]]*(export[[:space:]]+)?${ASSIGN_NAME_RE}[[:space:]]*=[[:space:]]*[^\$[:space:]]"
+
+# Whole-segment credential words for name_segment_matches(). "apikey" is
+# listed separately because it has no internal separator/camelCase boundary
+# to split on (it is one segment, not two).
+CRED_NAME_SEGMENTS_RE='^(key|token|secret|password|passwd|pat|credential|apikey)$'
+
+# Shannon-entropy floor (bits/char) for a value to be treated as
+# credential-shaped in the credential-assignment heuristic below. 3.0 was
+# chosen empirically against this repo's real findings: natural-language /
+# dictionary-derived strings (config descriptions, prose, repeated-letter
+# words) score below it once folded into per-character frequency (common
+# letters e/t/a/o/n dominate, pulling entropy down); random tokens -- even
+# pure-lowercase ones such as a 16-char Gmail app password, which is 16
+# independently-random letters from a 26-symbol alphabet -- land at or
+# above it because their character histogram is close to uniform. See the
+# rule doc for the worked calculation on both a real token and a
+# dictionary-word control string.
+CRED_ENTROPY_THRESHOLD="3.0"
 
 # Whole-environment capture trigger tokens (detector 1).
 ENV_CAPTURE_RE='(^|[;&|[:space:]])(export[[:space:]]+-p|declare[[:space:]]+-x|set[[:space:]]+-o[[:space:]]+posix|printenv|env)([[:space:]]|$)'
@@ -258,6 +295,121 @@ looks_like_fixture_value() {
 }
 
 # ---------------------------------------------------------------------------
+# credential-assignment value/name heuristic (detectors 2 + 4)
+#
+# The old heuristic fired on NAME alone (any substring match) with a value
+# test that only checked "does not start with $" -- meaningless outside
+# bash, and it treated `compat_mode`/`date_key`/`API_KEY_HEADER` as
+# credentials. It is replaced by requiring BOTH:
+#   (a) name_segment_matches   -- a whole name SEGMENT, not a substring
+#   (b) looks_like_credential_value -- the VALUE itself is credential-shaped
+# See the rule doc's "credential-assignment: name AND value" section.
+# ---------------------------------------------------------------------------
+
+# name_segment_matches NAME
+# Splits NAME on `_`, `-`, `.`, and camelCase boundaries; TRUE if any whole
+# segment (case-insensitive) equals a credential word. `compat_mode` ->
+# compat,mode -> no match. `date_key` -> date,key -> matches (name alone is
+# not sufficient -- the value heuristic below is what actually excludes it).
+# Single awk call (camelCase split + lowercase + segment lookup all in one
+# subprocess) -- this runs once per ASSIGN_RE candidate (hundreds per scan
+# on this repo), so collapsing what was 3 sed/tr calls plus a per-segment
+# grep loop into one process is a measurable chunk of the scan's runtime.
+name_segment_matches() {
+    printf '%s' "$1" | awk -v words="key token secret password passwd pat credential apikey" '
+        BEGIN { n = split(words, w, " "); for (i = 1; i <= n; i++) target[w[i]] = 1 }
+        {
+            s = $0; out = ""; len = length(s)
+            for (i = 1; i <= len; i++) {
+                c = substr(s, i, 1)
+                if (i > 1) {
+                    prev = substr(s, i - 1, 1)
+                    if (prev ~ /[a-z0-9]/ && c ~ /[A-Z]/) out = out "_"
+                }
+                if (c == "." || c == "-") c = "_"
+                out = out c
+            }
+            m = split(tolower(out), segs, "_")
+            for (i = 1; i <= m; i++) { if (segs[i] in target) exit 0 }
+            exit 1
+        }'
+}
+
+# strip_assignment_value RAW_VALUE
+# Extracts the actual assigned value from everything the coarse grep
+# captured after `=` -- which may include a following shell command (e.g.
+# `HF_TOKEN='hf_xxx' hf auth whoami  # comment`, a common foreground
+# env-assignment idiom). If the value is quoted, take only the content
+# between the FIRST matching pair of quotes (not "the whole rest of the
+# line", which would wrongly absorb `hf auth whoami # comment` as part of
+# the value and inflate its entropy/length). If unquoted, stop at the
+# first whitespace -- shell word-splitting semantics. Does not attempt to
+# strip a trailing `# comment` from an unquoted value beyond that
+# whitespace boundary -- under-stripping past the first word cannot hide a
+# credential, since the credential itself would already be the first word.
+strip_assignment_value() {
+    local v
+    v="$(printf '%s' "$1" | sed -E 's/^[[:space:]]+//')"
+    case "$v" in
+        \"*) v="${v#\"}"; v="${v%%\"*}" ;;
+        \'*) v="${v#\'}"; v="${v%%\'*}" ;;
+        *)   v="${v%%[[:space:]]*}" ;;
+    esac
+    printf '%s' "$v"
+}
+
+# value_entropy VALUE -> prints Shannon entropy in bits/char (order-0, over
+# the value's own character histogram). Kept as a standalone function for
+# --selftest / manual tuning use; looks_like_credential_value below inlines
+# the same computation to avoid a second subprocess per candidate.
+value_entropy() {
+    printf '%s' "$1" | awk '
+        { n = length($0)
+          if (n == 0) { print 0; exit }
+          for (i = 1; i <= n; i++) { c = substr($0, i, 1); count[c]++ }
+          e = 0
+          for (c in count) { p = count[c] / n; e -= p * log(p) / log(2) }
+          printf "%.4f", e }'
+}
+
+# looks_like_credential_value VALUE
+# TRUE if VALUE is long enough, entropy-dense enough, and not obviously a
+# path/URL/template/pure-number. Deliberately does NOT require a digit: a
+# 16-char all-lowercase Gmail app password is a real credential with no
+# digit at all, and a digit requirement would silence it. Entropy is the
+# signal that actually separates random secrets from dictionary/config
+# text; the digit test was a bash-only proxy that never worked for .py/.R.
+#
+# The cheap structural checks (length via bash `${#v}`, and the `$`/path/
+# URL/template/code-expression shapes via bash `case`) run first and cost
+# no subprocess at all. Only a value that survives all of them pays for
+# ONE awk call that does letter-presence + pure-numeric + entropy together
+# -- this used to be 4 separate subprocess calls (2x grep, 2x awk); one
+# candidate line, one subprocess, once per ASSIGN_RE match.
+looks_like_credential_value() {
+    local v="$1"
+    [ "${#v}" -ge 16 ] || return 1
+    case "$v" in
+        \$*) return 1 ;;                                  # $VAR indirection, not a literal
+        /*|./*|~*) return 1 ;;                           # path
+        *'://'*) return 1 ;;                              # URL (http/https/hf/ftp/...)
+        *'{{'*|*'${'*|*'%s'*|*'<'*|*'>'*) return 1 ;;      # template/placeholder
+        *'('*|*')'*|*'['*|*']'*|*','*) return 1 ;;         # code expression, not a literal
+                                                           # (a Python/R `key_x = fn(a, b)`
+                                                           # RHS -- real credential values do
+                                                           # not contain parens/brackets/commas)
+    esac
+    printf '%s' "$v" | awk -v thr="$CRED_ENTROPY_THRESHOLD" '
+        { n = length($0)
+          if ($0 !~ /[A-Za-z]/) exit 1                         # pure-numeric/symbol
+          if ($0 ~ /^[0-9]+([.:\/_-][0-9]+)*$/) exit 1          # date/number
+          for (i = 1; i <= n; i++) { c = substr($0, i, 1); count[c]++ }
+          e = 0
+          for (c in count) { p = count[c] / n; e -= p * log(p) / log(2) }
+          exit !(e >= thr) }'
+}
+
+# ---------------------------------------------------------------------------
 # Detector 1 — whole-environment capture in source
 # ---------------------------------------------------------------------------
 
@@ -324,18 +476,34 @@ scan_at_rest() {
             "literal credential-shaped value detected (value redacted -- see rule doc for the pattern class)"
     done < <(grep -rnIE "${PRUNE_ARGS[@]}" "${cred_pattern_args[@]}" "${paths[@]}" 2>/dev/null)
 
-    # Credential-shaped NAME assigned a literal value -- comment line goes
-    # to detector 4, everything else to detector 2. Same skip rules as above.
+    # Credential-shaped NAME assigned a credential-SHAPED value -- comment
+    # line goes to detector 4, everything else to detector 2. The initial
+    # grep (ASSIGN_RE) is a coarse candidate filter only; every candidate
+    # must then pass BOTH name_segment_matches (whole segment, not
+    # substring) AND looks_like_credential_value (length/entropy/not-a-
+    # path-or-URL-or-template) before it is reported. Same skip rules as
+    # above, applied first since they are cheaper than the parse below.
     while IFS=: read -r file lnum rest; do
         [ -n "${file:-}" ] || continue
         is_pattern_definitions_file "$file" && continue
         looks_like_fixture_value "$rest" && continue
+
+        stripped_line="$(printf '%s' "$rest" | sed -E 's/^[[:space:]]*#?[[:space:]]*//; s/^export[[:space:]]+//')"
+        # NAME may have trailing whitespace before `=` (e.g. `foo = "..."`)
+        # -- trim it, or the last split segment carries a stray space and
+        # never equals a bare credential word.
+        assign_name="$(printf '%s' "${stripped_line%%=*}" | sed -E 's/[[:space:]]+$//')"
+        assign_value="$(strip_assignment_value "${stripped_line#*=}")"
+
+        name_segment_matches "$assign_name" || continue
+        looks_like_credential_value "$assign_value" || continue
+
         if printf '%s' "$rest" | grep -qE '^[[:space:]]*#'; then
             append_finding "4" "high" "$file" "$lnum" "commented-credential-assignment" \
-                "credential-shaped NAME with a literal value left on a comment line -- commenting out is NOT removal"
+                "credential-shaped NAME with a credential-shaped literal value left on a comment line -- commenting out is NOT removal"
         else
             append_finding "2" "critical" "$file" "$lnum" "credential-assignment" \
-                "credential-shaped variable NAME assigned a literal (non-\$) value"
+                "credential-shaped variable NAME assigned a credential-shaped literal value"
         fi
     done < <(grep -rnIiE "${PRUNE_ARGS[@]}" -e "$ASSIGN_RE" "${paths[@]}" 2>/dev/null)
 }
@@ -530,6 +698,48 @@ EOF
 api_token = "zK7wPlqRstUvWxYzAB12mQ9nR3sT"
 EOF
 
+    # 17-24: credential-assignment name-AND-value heuristic, one case per
+    # line so each assertion below checks a specific reason for its
+    # pass/fail, not just "some finding somewhere in the file".
+    #   L1 compat_mode      -- name has no whole-word credential segment
+    #   L2 date_key         -- name matches ("key"), value too short (10<16)
+    #   L3 API_KEY_HEADER   -- name matches, value too short (9<16)
+    #   L4 TOKEN_PATTERN    -- name matches, value too short (5<16)
+    #   L5 API_KEY          -- name matches, value is a real 16-char
+    #                          mixed-case+digit token -> FINDING
+    #   L6 GMAIL_APP_PASSWORD -- name matches ("password"), value is a
+    #                          16-char ALL-LOWERCASE token with NO digit --
+    #                          this is the regression case: a digit
+    #                          requirement would have silenced a real
+    #                          Gmail app password -> FINDING
+    #   L7 SECRET_PATH      -- name matches ("secret"), value is a path
+    #   L8 API_KEY_URL      -- name matches ("key"), value is a URL
+    #   L9 HF_TOKEN         -- quoted value followed by a trailing shell
+    #                          command + comment (a common foreground
+    #                          env-assignment idiom); the quoted literal
+    #                          itself is only 6 chars -- must extract JUST
+    #                          "hf_xxx", not "hf_xxx' hf auth whoami # ..."
+    #                          (which would be long/entropy-dense enough to
+    #                          wrongly pass)
+    #   L10 API_SECRET      -- value is a quoted $VAR reference -- quote
+    #                          stripping must not hide the indirection
+    #   L11 key_strength    -- value is a Python code expression (parens/
+    #                          brackets/comma), not a string literal --
+    #                          real credentials never contain these chars
+    cat > "$tmp/dotfiles/value_heuristic_cases.env" <<'EOF'
+compat_mode = "something"
+date_key = "2026-08-13"
+API_KEY_HEADER = "x-api-key"
+TOKEN_PATTERN = '^ghp_'
+API_KEY = "aB3xK9mQ2pL7vN4t"
+GMAIL_APP_PASSWORD = "wjqzxvkbmtynfcgh"
+SECRET_PATH = "/usr/local/bin/thing"
+API_KEY_URL = "https://example.com/aVeryLongPath"
+HF_TOKEN='hf_xxx' hf auth whoami   # must print your username, not an error
+API_SECRET="$OTHER_SECRET_VAR"
+key_strength = max((channels[idx] for idx in non_spill), default=0.0)
+EOF
+
     REPO_ROOT="$tmp/repo"
     DEFAULT_DOTFILES=("$tmp/dotfiles")
     FAST=0
@@ -589,6 +799,72 @@ EOF
         pass=$((pass + 1))
     else
         echo "FAIL: unmarked credential-shaped assignment in a tests/ path not flagged"
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="1"' "$f1" | grep -q .; then
+        echo "FAIL: compat_mode wrongly flagged (name has no whole-word credential segment)"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="2"' "$f1" | grep -q .; then
+        echo "FAIL: date_key wrongly flagged (name matches but value is only 10 chars)"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="3"' "$f1" | grep -q .; then
+        echo "FAIL: API_KEY_HEADER wrongly flagged (value \"x-api-key\" is only 9 chars)"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="4"' "$f1" | grep -q .; then
+        echo "FAIL: TOKEN_PATTERN wrongly flagged (value is a 5-char regex fragment)"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$1=="2" && $3 ~ /value_heuristic_cases\.env$/ && $4=="5"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: API_KEY with a real 16-char mixed-case+digit value not flagged"
+    fi
+
+    if awk -F'\t' '$1=="2" && $3 ~ /value_heuristic_cases\.env$/ && $4=="6"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: REGRESSION -- 16-char all-lowercase Gmail-app-password-style value not flagged (a digit requirement would silence real Gmail app passwords)"
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="7"' "$f1" | grep -q .; then
+        echo "FAIL: SECRET_PATH wrongly flagged (value is a filesystem path)"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="8"' "$f1" | grep -q .; then
+        echo "FAIL: API_KEY_URL wrongly flagged (value is a URL)"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="9"' "$f1" | grep -q .; then
+        echo "FAIL: HF_TOKEN wrongly flagged -- quote extraction absorbed the trailing 'hf auth whoami # comment' shell text instead of stopping at the closing quote"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="10"' "$f1" | grep -q .; then
+        echo "FAIL: API_SECRET wrongly flagged -- quoted \$VAR indirection not recognised as non-literal"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$3 ~ /value_heuristic_cases\.env$/ && $4=="11"' "$f1" | grep -q .; then
+        echo "FAIL: key_strength wrongly flagged -- Python code expression (parens/brackets/comma) treated as a credential literal"
+    else
+        pass=$((pass + 1))
     fi
 
     local out
@@ -660,8 +936,8 @@ EOF
 
     rm -rf "$tmp" "$f1" "$f2" 2>/dev/null || true
 
-    echo "selftest: ${pass}/16 PASS"
-    [ "$pass" -eq 16 ]
+    echo "selftest: ${pass}/27 PASS"
+    [ "$pass" -eq 27 ]
 }
 
 # ---------------------------------------------------------------------------
