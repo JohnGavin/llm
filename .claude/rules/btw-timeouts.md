@@ -1,7 +1,3 @@
----
-paths:
-  - "**"
----
 # btw MCP Tool Timeout Rules (GLOBAL — ALL PROJECTS)
 
 ## CRITICAL: MCP r-btw Tools Have NO Timeout

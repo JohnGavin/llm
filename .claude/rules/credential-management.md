@@ -3,7 +3,27 @@ name: credential-management
 description: Never embed credentials in code; retrieve from environment, enforce small-number suppression, and manage data use agreements
 type: rule
 paths:
+  # Safety-critical scope. This rule's anti-pattern table is only useful if it
+  # loads WHERE SECRETS ARE ACTUALLY HANDLED. Until 2026-08-12 the scope was
+  # ["**/.Renviron*", ".github/**", "R/**"], which excluded every shell script,
+  # dotfile, secrets file and launchd plist — i.e. all of them. The forbidden
+  # `${VAR:-...}` is-it-set construct documented below was consequently used
+  # verbatim, printing a live key, one step in the chain that ended with 14
+  # credentials published to a public repo.
+  # See .claude/incidents/2026-08-11-credential-leak.md §4.
+  # Do NOT narrow this list to save context. Add paths, never remove them.
   - "**/.Renviron*"
+  - "**/.zshenv"
+  - "**/.zshrc"
+  - "**/.bashrc"
+  - "**/.bash_profile"
+  - "**/secrets.env"
+  - "**/*.plist"
+  - "**/*.sh"
+  - ".claude/hooks/**"
+  - ".claude/scripts/**"
+  - ".claude/settings*.json"
+  - "bin/**"
   - ".github/**"
   - "R/**"
 ---
