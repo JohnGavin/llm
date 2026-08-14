@@ -1649,6 +1649,29 @@ if [ "${CLAUDE_STALENESS_CHECK:-1}" != "0" ]; then
   fi
 fi
 
+# ── Phase 15e: Rule Scoping Audit — BACKGROUND (fast local file scan) ──────────
+# Backstop for rule_scoping_precommit.sh: that hook only fires on commits
+# made from this checkout. A mandatory-rule-loading defect can also arrive
+# via a pulled merge, a stash pop, or a direct edit outside git — none of
+# which trigger pre-commit. This phase re-runs the same checker at session
+# start so drift surfaces within one session instead of being found by hand,
+# days later (llm#952 origin). Only the safety-direction findings
+# (MANDATORY-BUT-*, exit 3) are surfaced here — the noisy context-bloat
+# direction (exit 1) is left to `/check` and the pre-commit hook's WARN path.
+# Skippable: CLAUDE_RULE_SCOPING_CHECK=0
+_rulescope_cache="${HOME}/.claude/logs/session_init_rulescope_cache.txt"
+if [ "${CLAUDE_RULE_SCOPING_CHECK:-1}" != "0" ]; then
+  if [ -f "$_rulescope_cache" ]; then
+    _rulescope_cached=$(cat "$_rulescope_cache" 2>/dev/null) || true
+    echo "$_rulescope_cached" | grep -q "MANDATORY-BUT" && echo "$_rulescope_cached"
+  fi
+  _rulescope_script="${CLAUDE_DIR}/scripts/check_rule_scoping.sh"
+  if [ -x "$_rulescope_script" ]; then
+    mkdir -p "$(dirname "$_rulescope_cache")"
+    nohup bash -c "timeout 5 '$_rulescope_script' 2>/dev/null > '$_rulescope_cache' || true" > /dev/null 2>&1 &
+  fi
+fi
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
