@@ -114,6 +114,17 @@ into `~/.claude/logs/unified.duckdb`:
   false-negative trap that let 27 rules drift out of `RULES.md` unnoticed —
   verify use before drawing a conclusion from absence.
 
+Confirming the tool actually ran is harder than it looks, and is the step most
+likely to be skipped: if the matcher does not fire there is, by construction, no
+record that the tool was used, so the two hypotheses leave identical evidence.
+Do not wait for incidental use. **Deliberately invoke each tool once in a fresh
+session** (publish a throwaway Artifact; fetch any URL with `WebFetch`), note the
+time, and check for rows at that timestamp. One confirmed invocation with no
+matching row is a real negative; a quiet day is not. Note also that the spool
+only drains into `unified.duckdb` on the nightly 02:00 ETL, so check
+`~/.claude/logs/hook_events_staging.jsonl` directly if you want the answer the
+same day.
+
 Query once data exists:
 
 ```sql
