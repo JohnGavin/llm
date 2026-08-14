@@ -132,6 +132,10 @@ severity_badge <- function(sev) {
     critical = "#ff5252",
     major    = "#ff9800",
     minor    = "#ffd54f",
+    # secret_exposure_scan.sh (llm#951) uses 'high'/'critical' vocabulary,
+    # not 'major'/'minor' -- map 'high' onto the same orange as 'major'
+    # rather than falling through to the generic grey.
+    high     = "#ff9800",
     "#a0a0a0"
   )
   sprintf(
@@ -1304,6 +1308,148 @@ sec_hooks_block <- collapsible_block(
   hook_liveness_block
 )
 
+# ── Section: Secret-exposure scan (llm#951) ───────────────────────────────────
+# secret_exposure_scan.sh runs nightly at 03:40 (com.claude.secret-exposure-
+# scan.plist) and writes one housekeeping_runs row per invocation (task=
+# 'secret_exposure_scan') plus one secret_scan_findings row per finding,
+# batched. Placed adjacent to the hook-liveness section above -- both exist
+# for the same reason (zero-metric-evidence-or-defect, llm#913/#695/#950):
+# without a heartbeat, a scanner that stopped firing is indistinguishable
+# from a scanner reporting zero findings, and "0 findings" is exactly the
+# number this scan would most like readers to trust blindly. Shows findings
+# by detector for the latest run, the delta vs the PREVIOUS run (the
+# actionable signal -- a rise in detector 2 means a new plaintext credential
+# appeared on disk since yesterday), and when the scanner last fired, with a
+# loud line if that is over 48h ago.
+secret_scan_section <- tryCatch({
+  # Deliberately does NOT use %||% here for the same reason
+  # derive_registered_hooks() above avoids it: %||% calls is.na()/nzchar() on
+  # a[[1L]], which is only safe for a length-1 scalar. latest_runs$started_at
+  # etc. below are data.frame columns pulled via `[[i]]` (already scalar), so
+  # %||% IS safe for those -- but the query result itself (0 vs >=1 rows)
+  # is a structural branch, checked with nrow()/is.null(), not %||%.
+  latest_runs <- safe_query("
+    SELECT id, started_at, ended_at, status, rows_written
+    FROM housekeeping_runs
+    WHERE task = 'secret_exposure_scan'
+    ORDER BY started_at DESC
+    LIMIT 2
+  ")
+
+  if (is.null(latest_runs) || nrow(latest_runs) == 0L) {
+    list(
+      body    = sprintf('<p style="color:%s;">No secret_exposure_scan runs recorded yet -- expected nightly at 03:40.</p>', DARK_MUTED),
+      summary = "no runs recorded yet"
+    )
+  } else {
+    latest_id      <- latest_runs$id[[1]]
+    latest_status  <- latest_runs$status[[1]]
+    latest_n       <- suppressWarnings(as.integer(latest_runs$rows_written[[1]]))
+    if (is.na(latest_n)) latest_n <- 0L
+    latest_started <- latest_runs$started_at[[1]]
+
+    has_prev <- nrow(latest_runs) >= 2L
+    prev_n <- if (has_prev) suppressWarnings(as.integer(latest_runs$rows_written[[2]])) else NA_integer_
+
+    # Freshness uses the LATEST run regardless of status -- a stuck or
+    # failed scanner should still surface here, not just a successful one.
+    hours_since <- if (!is.null(latest_started) && !is.na(latest_started)) {
+      as.numeric(difftime(Sys.time(), as.POSIXct(latest_started, tz = "UTC"), units = "hours"))
+    } else {
+      NA_real_
+    }
+
+    stale_note <- if (!is.na(hours_since) && hours_since > 48) {
+      sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-bottom:8px;">
+  &#9888; secret_exposure_scan has not run in %.0fh (last: %s) -- expected nightly
+  at 03:40. Check com.claude.secret-exposure-scan.plist via launchd_health_audit.sh.</p>',
+        EMAIL_FONT_SUBTITLE, hours_since, latest_started
+      )
+    } else {
+      ""
+    }
+
+    by_detector <- safe_query(sprintf("
+      SELECT detector, severity, count(*) AS n
+      FROM secret_scan_findings
+      WHERE run_id = '%s'
+      GROUP BY detector, severity
+      ORDER BY detector
+    ", latest_id))
+
+    detector_table <- if (nrow(by_detector) > 0L) {
+      rows_html <- paste(apply(by_detector, 1, function(r) {
+        sprintf(
+          '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-family:monospace;">det %s</td>
+<td style="padding:5px 10px;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-weight:bold;">%s</td>
+</tr>',
+          DARK_CARD, htmlEscape(r[["detector"]]), severity_badge(r[["severity"]]), r[["n"]]
+        )
+      }), collapse = "\n")
+      sprintf(
+        '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead><tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Detector</th>
+<th style="padding:5px 10px;text-align:left;">Severity</th>
+<th style="padding:5px 10px;text-align:right;">Count</th>
+</tr></thead><tbody>%s</tbody></table>',
+        DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, rows_html
+      )
+    } else {
+      sprintf('<p style="color:%s;font-size:%s;">0 findings on the latest run.</p>', ACCENT_GREEN, EMAIL_FONT_BODY)
+    }
+
+    delta_html <- if (!has_prev || is.na(prev_n)) {
+      '<span style="color:#888;">no previous run to compare</span>'
+    } else {
+      delta <- latest_n - prev_n
+      if (delta > 0L) {
+        sprintf('<span style="color:#ff5252;font-weight:bold;">+%d vs previous run (%d &rarr; %d)</span>', delta, prev_n, latest_n)
+      } else if (delta < 0L) {
+        sprintf('<span style="color:%s;">%d vs previous run (%d &rarr; %d)</span>', ACCENT_GREEN, delta, prev_n, latest_n)
+      } else {
+        sprintf('<span style="color:%s;">unchanged vs previous run (%d)</span>', DARK_MUTED, latest_n)
+      }
+    }
+
+    status_col <- if (identical(latest_status, "ok")) ACCENT_GREEN else "#ff5252"
+
+    body <- paste0(
+      stale_note,
+      sprintf(
+        '<p style="font-size:%s;color:%s;margin:4px 0 8px 0;">Latest run: <b style="color:%s;">%s</b>
+&nbsp;&middot;&nbsp; %d finding(s) &nbsp;&middot;&nbsp; %s &nbsp;&middot;&nbsp; fired %s</p>',
+        EMAIL_FONT_SUBTITLE, DARK_TEXT, status_col, latest_status, latest_n, delta_html,
+        if (!is.null(latest_started) && !is.na(latest_started)) latest_started else "unknown"
+      ),
+      detector_table
+    )
+
+    list(
+      body    = body,
+      summary = sprintf(
+        "%d finding(s) · %s · last run %s",
+        latest_n, latest_status,
+        if (!is.na(hours_since)) sprintf("%.0fh ago", hours_since) else "unknown"
+      )
+    )
+  }
+}, error = function(e) {
+  list(
+    body    = sprintf('<p style="color:#ff5252;">secret-exposure-scan section failed: %s</p>', htmlEscape(conditionMessage(e))),
+    summary = "error"
+  )
+})
+
+sec_secret_scan_block <- collapsible_block(
+  "Secret-exposure scan (nightly, 03:40)",
+  secret_scan_section$summary,
+  secret_scan_section$body
+)
+
 email_body <- paste0(
   sprintf('<div style="background-color:%s;color:%s;font-family:Arial,sans-serif;
 padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
@@ -1318,6 +1464,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   sec3f_block, "\n",
   oversized_block, "\n",
   sec_hooks_block, "\n",
+  sec_secret_scan_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",
