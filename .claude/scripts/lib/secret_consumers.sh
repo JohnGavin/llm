@@ -33,11 +33,20 @@
 # are self-daemonized processes with no launchd job; `launchd:` consumers are
 # restarted via `launchctl kickstart -k`.
 #
-# CONSUMERS_GEMINI_API_KEY keeps `daemon:roborev` — the non-launchd consumer
-# whose omission caused llm#936 (a launchd-only restart reported success
-# while the self-daemonized `roborev daemon run` process kept the stale key
-# for hours).
-CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine daemon:roborev"
+# CONSUMERS_GEMINI_API_KEY lists BOTH roborev consumers as `launchd:` since
+# com.roborev.daemon was installed and verified (llm#956, 2026-08-14). It
+# previously read `daemon:roborev` — a `kind: daemon` consumer restarted via
+# `roborev daemon restart`, added because the review daemon was then an
+# unsupervised process that a launchd-only restart could not reach. That gap
+# is llm#936: the rotation restarted com.roborev.auto-refine, reported
+# success, exited 0, and a separate `roborev daemon run` process kept the
+# stale key for a week.
+#
+# `launchctl kickstart -k gui/<uid>/com.roborev.daemon` now restarts it, and
+# roborev_daemon_launcher.sh re-sources ~/.config/secrets.env on every start
+# launchd performs — so a rotation reaches the daemon by construction, not by
+# anyone remembering to keep a second consumer kind listed here.
+CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine launchd:com.roborev.daemon"
 CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email"
 
 # ── consumer restart mechanisms — table-driven: a new kind is one `case` arm
