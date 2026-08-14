@@ -13,6 +13,22 @@
 
 set -euo pipefail
 
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for why this is not a direct duckdb write).
+# Resolved relative to this script's own location (not a hardcoded
+# ~/.claude/scripts/... path) so it works identically under test in a
+# worktree and in production, where ~/.claude/{hooks,scripts}/ are symlinks
+# into the main checkout. Pure parameter expansion — no subshell — so it
+# costs nothing on the (common) allow path.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  # Args: event_type [preview]. Never allowed to affect the block decision.
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" destructive_api_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # Read the full hook input JSON from stdin
 INPUT=$(cat)
 
@@ -108,6 +124,7 @@ block_match() {
     fi
     printf '\n(full command, truncated to 200 chars):\n' >&2
     printf '%.200s\n' "$COMMAND" >&2
+    _emit_hook_event "PreToolUse:blocked" "${description}: ${target}"
     exit 2
   fi
 }

@@ -62,6 +62,22 @@ LOG_FILE="$HOME/.claude/logs/agent_push_blocked.log"
 WOULD_BLOCK_LOG="$HOME/.claude/logs/agent_push_would_block.log"
 CROSSBRANCH_LOG="$HOME/.claude/logs/agent_push_blocked_crossbranch.log"
 
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path (worktree-vs-symlink rationale, see
+# secret_leak_guard.sh). Pure parameter expansion — no subshell — costs
+# nothing on the allow path. Only called from the "NORMAL HOOK OPERATION"
+# section below, which the selftest never reaches (selftest calls decide()
+# directly), so no HOOK_EVENTS_SPOOL override is needed for the selftest.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" agent_push_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 log_blocked() {
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED push to protected branch: $1" >> "$LOG_FILE"
@@ -486,6 +502,7 @@ EOF
 EOF
 
   log_blocked_crossbranch "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH, current=$CURRENT_BRANCH)"
+  _emit_hook_event "PreToolUse:blocked" "cross-worktree push target=${TARGET_BRANCH} current=${CURRENT_BRANCH}"
 
   # ── Log to unified DuckDB errors table (llm#491-a) ──
   _log_script="$HOME/.claude/scripts/log_session.sh"
@@ -546,6 +563,7 @@ cat >&2 <<EOF
 EOF
 
 log_blocked "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH)"
+_emit_hook_event "PreToolUse:blocked" "push to protected branch ${TARGET_BRANCH}"
 
 # ── Log to unified DuckDB errors table (llm#491-a) ──
 _log_script="$HOME/.claude/scripts/log_session.sh"

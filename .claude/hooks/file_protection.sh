@@ -12,10 +12,28 @@
 
 set -euo pipefail
 
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path (worktree-vs-symlink rationale, see
+# secret_leak_guard.sh). Pure parameter expansion — no subshell — costs
+# nothing on the (common) allow path.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" file_protection "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # ─── Self-test harness (CLAUDE_HOOK_SELFTEST=1) ──────────────────────────────
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   PASS=0; FAIL=0; TOTAL=12
   HOOK_PATH="$0"
+  # llm#950: several cases below spawn a real subprocess that reaches a real
+  # block path (exit 2), which now emits. Redirect to a throwaway spool for
+  # the duration of this selftest.
+  _SELFTEST_SPOOL=$(mktemp /tmp/file_protection_selftest_spool_XXXXXX)
 
   # Run the hook in a subprocess with synthetic JSON input.
   # Returns "block" if hook exits 2, "warn" if exits 0 with WARN output,
@@ -28,7 +46,7 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
     printf '{"tool_name": "%s", "tool_input": {"file_path": "%s"}}' \
       "$tool_name" "$file_path" > "$tmpjson"
     rc=0
-    out=$(CLAUDE_HOOK_SELFTEST=0 bash "$HOOK_PATH" < "$tmpjson" 2>&1) || rc=$?
+    out=$(CLAUDE_HOOK_SELFTEST=0 HOOK_EVENTS_SPOOL="$_SELFTEST_SPOOL" bash "$HOOK_PATH" < "$tmpjson" 2>&1) || rc=$?
     rm -f "$tmpjson"
     if [ "$rc" = "2" ]; then
       echo "block"
@@ -122,6 +140,7 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   else _fail "runtime projects memory expected allow, got $r"; fi
 
   printf '\nfile_protection selftest: %d/%d PASS\n' "$PASS" "$TOTAL"
+  rm -f "$_SELFTEST_SPOOL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
 fi
 
@@ -225,6 +244,7 @@ case "$TARGET_PATH" in
       echo "Orchestrator prose exceptions: CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md, projects/*/memory/*.md."
       echo "See: agent-identity-and-task-scopes rule, llm#572, llm#601."
     } >&2
+    _emit_hook_event "PreToolUse:blocked" "canonical .claude/ in main checkout: $TARGET_PATH"
     exit 2
     ;;
 esac
@@ -238,6 +258,7 @@ for pattern in "${BLOCK_PATTERNS[@]}"; do
       echo "BLOCKED: $FILE_PATH is auto-generated (matched: $pattern)"
       echo "Run devtools::document() instead of editing directly."
     } >&2
+    _emit_hook_event "PreToolUse:blocked" "auto-generated file: $FILE_PATH (matched: $pattern)"
     exit 2
   fi
 done
@@ -253,6 +274,7 @@ if [[ "$TARGET_PATH" == *"/raw/"* ]] && [ -f "$TARGET_PATH" ]; then
       echo "raw/ files are the source of truth and must not be overwritten."
       echo "See: raw-folder-readonly rule. To redact PHI, save to raw/anonymized/."
     } >&2
+    _emit_hook_event "PreToolUse:blocked" "raw/ append-only violation: $FILE_PATH"
     exit 2
   fi
 fi

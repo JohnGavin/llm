@@ -14,6 +14,22 @@
 
 set -euo pipefail
 
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path — see destructive_api_guard.sh/secret_leak_guard.sh
+# for the identical worktree-vs-symlink rationale. Pure parameter expansion —
+# no subshell — costs nothing on the (common) allow path. The selftest block
+# above tests is_destructive()/targets_protected() directly and never reaches
+# the block path below, so no HOOK_EVENTS_SPOOL override is needed there.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" destructive_fs_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # In selftest mode, skip stdin reading — functions are defined below, selftest runs after them
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" != "1" ]; then
   # Get the command from Claude's tool input
@@ -227,6 +243,7 @@ EOF
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED (code: $EXPECTED_CODE): $COMMAND" >> "$LOG_FILE"
 
+  _emit_hook_event "PreToolUse:blocked" "$DISPLAY_CMD"
   exit 1
 fi
 
