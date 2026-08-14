@@ -115,7 +115,10 @@ reported explicitly as unverified and the script exits non-zero — per
 
 ### Consumer map — declare every reader of a secret
 
-`rotate_secret.sh` declares consumers per secret name as
+The consumer map and its restart/verify machinery live in one shared,
+import-safe file, `.claude/scripts/lib/secret_consumers.sh` (llm#958),
+sourced by both `rotate_secret.sh` and `rotate_gmail_password.sh`. It
+declares consumers per secret name as
 `CONSUMERS_<SECRET_NAME>="kind:label kind:label ..."`, e.g.:
 
 ```bash
@@ -133,13 +136,18 @@ secret in memory, which is a different fact than "nothing does".
 `kind:label` pair, a comma-separated list, or repeated flags — all
 accumulate into one consumer list.
 
-`rotate_gmail_password.sh` duplicates the same table-driven restart +
-verify functions rather than sourcing them from `rotate_secret.sh` (no
-shared-lib file exists for the two to import from); its
-`CONSUMERS_GMAIL_APP_PASSWORD` entry lists the five launchd email jobs
-that read the fallback `~/.claude/env/*.env` files. Keep that list in
-sync with `ENV_FILES` in the script if a new job starts reading
+`CONSUMERS_GMAIL_APP_PASSWORD` lists the five launchd email jobs that read
+the fallback `~/.claude/env/*.env` files. Keep that list in sync with
+`ENV_FILES` in `rotate_gmail_password.sh` if a new job starts reading
 `GMAIL_APP_PASSWORD`.
+
+The two rotation scripts previously carried byte-identical copies of this
+map and its functions — the same drift risk one layer up from the
+2026-08-11..14 GMAIL_APP_PASSWORD incident that motivated this file's
+architecture (a name in two places, silently disagreeing). `rotate_secret.sh
+--selftest` now asserts that every `CONSUMERS_*` name is defined exactly
+once under `.claude/scripts/**`, so a reintroduced duplicate fails the
+selftest rather than drifting invisibly.
 
 ## Related
 
@@ -150,3 +158,7 @@ sync with `ENV_FILES` in the script if a new job starts reading
 - `.claude/scripts/with-secrets`, `.claude/scripts/verify_no_launchd_secret_leak.sh`
 - `.claude/scripts/secrets_to_bws.sh`, `.claude/scripts/secrets_cache_regen.sh`
   — this rule's two scripts.
+- `.claude/scripts/rotate_secret.sh`, `.claude/scripts/rotate_gmail_password.sh`
+  — rotation scripts; both source the shared consumer map below.
+- `.claude/scripts/lib/secret_consumers.sh` — shared `CONSUMERS_*` map +
+  restart/verify functions (llm#958).

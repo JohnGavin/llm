@@ -42,7 +42,8 @@
 # per `zero-metric-evidence-or-defect`, "not verified" must never look like
 # "verified".
 #
-# Consumers are declared in the CONSUMERS_<SECRET_NAME> table below as
+# Consumers are declared in the CONSUMERS_<SECRET_NAME> table in
+# lib/secret_consumers.sh (shared with rotate_gmail_password.sh, llm#958) as
 # space-separated "kind:label" tokens (kind = launchd | daemon). A secret
 # with no map entry and no --restart produces an explicit WARNING, not a
 # silent no-op — an absent map entry means nobody has yet audited what holds
@@ -55,7 +56,8 @@
 # <spec> is a bare launchd label (kind defaults to "launchd") or an explicit
 # "kind:label" pair (kind = launchd | daemon). Repeat --restart or pass a
 # comma-separated list to name multiple consumers. When --restart is omitted
-# entirely, the CONSUMERS_<SECRET_NAME> map below supplies the consumer list.
+# entirely, the CONSUMERS_<SECRET_NAME> map in lib/secret_consumers.sh
+# supplies the consumer list.
 #
 # Examples:
 #   rotate_secret.sh CACHIX_AUTH_TOKEN
@@ -101,100 +103,16 @@ LOG="$HOME/.claude/logs/rotate_secret.log"
 h12() { printf '%s' "$1" | shasum -a 256 | cut -c1-12; }
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true; }
 
-# ── consumer map: secret name -> space-separated "kind:label" tokens ────────
-# A secret NOT listed here is a WARNING at rotation time, not a silent pass:
-# it means nobody has audited what holds it in memory yet. Add an entry the
-# first time you find (or add) a consumer for a secret. `daemon:` consumers
-# are self-daemonized processes with no launchd job; `launchd:` consumers are
-# restarted via `launchctl kickstart -k`.
-CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine daemon:roborev"
-CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email"
-
-# ── consumer restart mechanisms — table-driven: a new kind is one `case` arm
-#    in each of the three functions below, not a new code path. ─────────────
-kind_get_pid() {
-    case "$1" in
-        launchd)
-            launchctl list "$2" 2>/dev/null \
-              | awk -F'= ' '/"PID"/{gsub(/[; \t]/,"",$2); print $2; exit}'
-            ;;
-        daemon)
-            pgrep -f "$2 daemon" 2>/dev/null | head -1
-            ;;
-        *) return 1 ;;
-    esac
-}
-
-kind_restart() {
-    case "$1" in
-        launchd) launchctl kickstart -k "gui/$(id -u)/$2" >/dev/null 2>&1 ;;
-        daemon)  "$2" daemon restart >/dev/null 2>&1 ;;
-        *)       return 1 ;;
-    esac
-}
-
-pid_start_time() {
-    local pid="$1"
-    [ -n "$pid" ] || return 1
-    ps -o lstart= -p "$pid" 2>/dev/null | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
-}
-
-# ── restart + VERIFY a single consumer ───────────────────────────────────────
-# Never treats "restart command exited 0" as proof. Captures PID + process
-# start-time before and after; only reports success when both changed.
-CONSUMER_ROWS=()
-
-restart_and_verify_consumer() {
-    local spec="$1" kind label pid_before pid_after t_before t_after
-    if [[ "$spec" == *:* ]]; then
-        kind="${spec%%:*}"; label="${spec#*:}"
-    else
-        kind="launchd"; label="$spec"
-    fi
-
-    case "$kind" in
-        launchd|daemon) : ;;
-        *)
-            echo "  $spec  UNKNOWN CONSUMER KIND '$kind' — skipping"
-            CONSUMER_ROWS+=("$spec|$kind|no|no|unknown-kind")
-            return 1
-            ;;
-    esac
-
-    pid_before="$(kind_get_pid "$kind" "$label")"
-    if [ -z "$pid_before" ]; then
-        echo "  $spec  CANNOT VERIFY — no running process found before restart"
-        CONSUMER_ROWS+=("$spec|$kind|no|no|cannot-determine-pid")
-        return 1
-    fi
-    t_before="$(pid_start_time "$pid_before")"
-
-    if ! kind_restart "$kind" "$label"; then
-        echo "  $spec  RESTART COMMAND FAILED"
-        CONSUMER_ROWS+=("$spec|$kind|no|no|restart-command-failed")
-        return 1
-    fi
-
-    sleep "${ROTATE_SECRET_RESTART_DELAY:-2}"
-
-    pid_after="$(kind_get_pid "$kind" "$label")"
-    if [ -z "$pid_after" ]; then
-        echo "  $spec  CANNOT VERIFY — no running process found after restart"
-        CONSUMER_ROWS+=("$spec|$kind|yes|no|cannot-determine-pid-after")
-        return 1
-    fi
-    t_after="$(pid_start_time "$pid_after")"
-
-    if [ "$pid_before" = "$pid_after" ] && [ "$t_before" = "$t_after" ]; then
-        echo "  $spec  RESTART DID NOT TAKE EFFECT — pid+start-time unchanged (pid=$pid_before, start=$t_before)"
-        CONSUMER_ROWS+=("$spec|$kind|yes|no|not-cycled")
-        return 1
-    fi
-
-    echo "  $spec  restarted and verified (pid $pid_before -> $pid_after)"
-    CONSUMER_ROWS+=("$spec|$kind|yes|yes|ok")
-    return 0
-}
+# ── consumer map + restart/verify machinery — shared with
+#    rotate_gmail_password.sh (llm#958). Defines CONSUMERS_*, kind_get_pid,
+#    kind_restart, pid_start_time, CONSUMER_ROWS, restart_and_verify_consumer.
+#    Path resolved relative to THIS script's location, not the caller's cwd —
+#    both scripts run from arbitrary directories (launchd, cron, interactive).
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SECRET_CONSUMERS_LIB="$SCRIPTS_DIR/lib/secret_consumers.sh"
+[ -r "$SECRET_CONSUMERS_LIB" ] || { echo "FATAL: $SECRET_CONSUMERS_LIB not found" >&2; exit 1; }
+# shellcheck source=lib/secret_consumers.sh
+source "$SECRET_CONSUMERS_LIB"
 
 # ── resolve which consumers to restart: explicit --restart wins, else the map ──
 RESOLVED_RESTART_LIST=()
@@ -262,6 +180,18 @@ if [ "$MODE" = "--selftest" ]; then
     # and deliberately NOT generalised.
     okshort=no; [ ${#SENTINEL} -gt 0 ] && okshort=yes
     _t "no fixed-length constraint imposed" "$okshort" "yes"
+
+    # ── llm#958: guard against the consumer map re-duplicating across scripts.
+    #    Each CONSUMERS_<NAME> assignment must appear exactly once under
+    #    .claude/scripts/** (in lib/secret_consumers.sh). A second copy
+    #    re-creates the exact drift risk this dedup was meant to close: add a
+    #    consumer to one copy and not the other, and a rotation reports
+    #    success while a consumer keeps the old secret. ──────────────────────
+    dup_report="$(find "$SCRIPTS_DIR" -name '*.sh' -print0 2>/dev/null \
+        | xargs -0 grep -hoE '^CONSUMERS_[A-Za-z0-9_]+=' 2>/dev/null \
+        | sort | uniq -c | awk '$1 != 1 {print}')"
+    dup_bad=no; [ -n "$dup_report" ] && dup_bad=yes
+    _t "each CONSUMERS_* name defined exactly once under scripts/" "$dup_bad" "no"
 
     # ── llm#955: multi-consumer restart + verification ──────────────────────
     STUBDIR="$(mktemp -d)"
