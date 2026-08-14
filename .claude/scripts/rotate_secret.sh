@@ -22,22 +22,72 @@
 #   visible in `ps` to processes running as you. bws exposes no stdin form
 #   (verified: `bws secret edit --help`). Stated, not hidden.
 #
+# MULTI-CONSUMER RESTART + VERIFICATION (llm#955)
+# ------------------------------------------------
+# A rotated secret is often held in memory by more than one running process
+# (e.g. GEMINI_API_KEY is read by both the `com.roborev.auto-refine` launchd
+# job AND the self-daemonized `roborev daemon run` process, which is NOT a
+# launchd job and cannot be cycled with `launchctl kickstart`). The 2026-08-13
+# rotation restarted only the launchd job, reported "restarted" and exited 0,
+# while the daemon kept running with the stale value for hours (llm#936) —
+# because a KeepAlive launchd job can return success from `kickstart -k`
+# without actually cycling, and exit-code-0 was trusted as evidence.
+#
+# This script never treats "the restart command exited 0" as proof of a
+# restart. For every consumer it captures a PID + process start-time BEFORE
+# issuing the restart, and again AFTER, and only reports "restarted" when
+# BOTH changed. If a consumer's PID cannot be determined, or the restart
+# command reports success but the process never cycled, that consumer is
+# reported explicitly as unverified/failed and the script exits non-zero —
+# per `zero-metric-evidence-or-defect`, "not verified" must never look like
+# "verified".
+#
+# Consumers are declared in the CONSUMERS_<SECRET_NAME> table below as
+# space-separated "kind:label" tokens (kind = launchd | daemon). A secret
+# with no map entry and no --restart produces an explicit WARNING, not a
+# silent no-op — an absent map entry means nobody has yet audited what holds
+# that secret in memory, which is different from "nothing does".
+#
 # Usage:
-#   rotate_secret.sh <SECRET_NAME> [--apply] [--restart <launchd-label>]
+#   rotate_secret.sh <SECRET_NAME> [--apply] [--restart <spec>[,<spec>...]] [--restart <spec> ...]
 #   rotate_secret.sh --selftest
+#
+# <spec> is a bare launchd label (kind defaults to "launchd") or an explicit
+# "kind:label" pair (kind = launchd | daemon). Repeat --restart or pass a
+# comma-separated list to name multiple consumers. When --restart is omitted
+# entirely, the CONSUMERS_<SECRET_NAME> map below supplies the consumer list.
 #
 # Examples:
 #   rotate_secret.sh CACHIX_AUTH_TOKEN
-#   rotate_secret.sh GEMINI_API_KEY --apply --restart com.roborev.auto-refine
+#   rotate_secret.sh GEMINI_API_KEY --apply
+#   rotate_secret.sh GEMINI_API_KEY --apply --restart com.roborev.auto-refine --restart daemon:roborev
 set -uo pipefail
 
-NAME=""; MODE="--dry-run"; RESTART=""
+# ── --restart accumulation (defined before arg parsing so both the CLI loop
+#    and --selftest exercise the same code) ──────────────────────────────────
+RESTART_LIST=()
+add_restart_spec() {
+    # Splits a comma-separated value and appends each piece to RESTART_LIST.
+    # Called once per --restart flag, so repeated flags accumulate rather
+    # than overwrite, and a single flag may still carry a comma-separated list.
+    local val="$1"
+    local parts=()
+    IFS=',' read -r -a parts <<< "$val"
+    RESTART_LIST+=("${parts[@]}")
+}
+
+NAME=""; MODE="--dry-run"
 while [ $# -gt 0 ]; do
     case "$1" in
         --apply)    MODE="--apply" ;;
         --dry-run)  MODE="--dry-run" ;;
         --selftest) MODE="--selftest" ;;
-        --restart)  shift; RESTART="${1:-}" ;;
+        --restart)
+            shift
+            val="${1:-}"
+            [ -n "$val" ] || { echo "FATAL: --restart requires a value" >&2; exit 1; }
+            add_restart_spec "$val"
+            ;;
         -*)         echo "unknown flag: $1" >&2; exit 1 ;;
         *)          NAME="$1" ;;
     esac
@@ -50,6 +100,133 @@ LOG="$HOME/.claude/logs/rotate_secret.log"
 
 h12() { printf '%s' "$1" | shasum -a 256 | cut -c1-12; }
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true; }
+
+# ── consumer map: secret name -> space-separated "kind:label" tokens ────────
+# A secret NOT listed here is a WARNING at rotation time, not a silent pass:
+# it means nobody has audited what holds it in memory yet. Add an entry the
+# first time you find (or add) a consumer for a secret. `daemon:` consumers
+# are self-daemonized processes with no launchd job; `launchd:` consumers are
+# restarted via `launchctl kickstart -k`.
+CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine daemon:roborev"
+CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email"
+
+# ── consumer restart mechanisms — table-driven: a new kind is one `case` arm
+#    in each of the three functions below, not a new code path. ─────────────
+kind_get_pid() {
+    case "$1" in
+        launchd)
+            launchctl list "$2" 2>/dev/null \
+              | awk -F'= ' '/"PID"/{gsub(/[; \t]/,"",$2); print $2; exit}'
+            ;;
+        daemon)
+            pgrep -f "$2 daemon" 2>/dev/null | head -1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+kind_restart() {
+    case "$1" in
+        launchd) launchctl kickstart -k "gui/$(id -u)/$2" >/dev/null 2>&1 ;;
+        daemon)  "$2" daemon restart >/dev/null 2>&1 ;;
+        *)       return 1 ;;
+    esac
+}
+
+pid_start_time() {
+    local pid="$1"
+    [ -n "$pid" ] || return 1
+    ps -o lstart= -p "$pid" 2>/dev/null | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+# ── restart + VERIFY a single consumer ───────────────────────────────────────
+# Never treats "restart command exited 0" as proof. Captures PID + process
+# start-time before and after; only reports success when both changed.
+CONSUMER_ROWS=()
+
+restart_and_verify_consumer() {
+    local spec="$1" kind label pid_before pid_after t_before t_after
+    if [[ "$spec" == *:* ]]; then
+        kind="${spec%%:*}"; label="${spec#*:}"
+    else
+        kind="launchd"; label="$spec"
+    fi
+
+    case "$kind" in
+        launchd|daemon) : ;;
+        *)
+            echo "  $spec  UNKNOWN CONSUMER KIND '$kind' — skipping"
+            CONSUMER_ROWS+=("$spec|$kind|no|no|unknown-kind")
+            return 1
+            ;;
+    esac
+
+    pid_before="$(kind_get_pid "$kind" "$label")"
+    if [ -z "$pid_before" ]; then
+        echo "  $spec  CANNOT VERIFY — no running process found before restart"
+        CONSUMER_ROWS+=("$spec|$kind|no|no|cannot-determine-pid")
+        return 1
+    fi
+    t_before="$(pid_start_time "$pid_before")"
+
+    if ! kind_restart "$kind" "$label"; then
+        echo "  $spec  RESTART COMMAND FAILED"
+        CONSUMER_ROWS+=("$spec|$kind|no|no|restart-command-failed")
+        return 1
+    fi
+
+    sleep "${ROTATE_SECRET_RESTART_DELAY:-2}"
+
+    pid_after="$(kind_get_pid "$kind" "$label")"
+    if [ -z "$pid_after" ]; then
+        echo "  $spec  CANNOT VERIFY — no running process found after restart"
+        CONSUMER_ROWS+=("$spec|$kind|yes|no|cannot-determine-pid-after")
+        return 1
+    fi
+    t_after="$(pid_start_time "$pid_after")"
+
+    if [ "$pid_before" = "$pid_after" ] && [ "$t_before" = "$t_after" ]; then
+        echo "  $spec  RESTART DID NOT TAKE EFFECT — pid+start-time unchanged (pid=$pid_before, start=$t_before)"
+        CONSUMER_ROWS+=("$spec|$kind|yes|no|not-cycled")
+        return 1
+    fi
+
+    echo "  $spec  restarted and verified (pid $pid_before -> $pid_after)"
+    CONSUMER_ROWS+=("$spec|$kind|yes|yes|ok")
+    return 0
+}
+
+# ── resolve which consumers to restart: explicit --restart wins, else the map ──
+RESOLVED_RESTART_LIST=()
+resolve_restart_list() {
+    local name="$1"
+    RESOLVED_RESTART_LIST=()
+    if [ ${#RESTART_LIST[@]} -gt 0 ]; then
+        RESOLVED_RESTART_LIST=("${RESTART_LIST[@]}")
+        return 0
+    fi
+    local mapvar="CONSUMERS_${name}"
+    local mapval="${!mapvar:-}"
+    if [ -n "$mapval" ]; then
+        read -r -a RESOLVED_RESTART_LIST <<< "$mapval"
+    fi
+}
+
+run_consumer_restarts() {
+    local name="$1"
+    resolve_restart_list "$name"
+    if [ ${#RESOLVED_RESTART_LIST[@]} -eq 0 ]; then
+        echo "  WARNING: no consumers configured for $name and no --restart given."
+        echo "           If a running process holds the old value in memory, restart it manually."
+        log "$name rotation: no consumers configured — none restarted"
+        return 0
+    fi
+    local bad=0 spec
+    for spec in "${RESOLVED_RESTART_LIST[@]}"; do
+        restart_and_verify_consumer "$spec" || bad=1
+    done
+    return "$bad"
+}
 
 # ── selftest ────────────────────────────────────────────────────────────────
 if [ "$MODE" = "--selftest" ]; then
@@ -86,6 +263,134 @@ if [ "$MODE" = "--selftest" ]; then
     okshort=no; [ ${#SENTINEL} -gt 0 ] && okshort=yes
     _t "no fixed-length constraint imposed" "$okshort" "yes"
 
+    # ── llm#955: multi-consumer restart + verification ──────────────────────
+    STUBDIR="$(mktemp -d)"
+    STUB_STATE_DIR="$(mktemp -d)"
+    export STUB_STATE_DIR
+    cleanup_stubs() { rm -rf "$STUBDIR" "$STUB_STATE_DIR"; }
+    trap cleanup_stubs EXIT
+
+    # stub launchctl: `list <label>` prints a fake PID block read from a state
+    # file (created on first read); `kickstart -k gui/<uid>/<label>` bumps the
+    # PID in that state file UNLESS the label matches STUB_NOCYCLE_LABEL, and
+    # `list <label>` for STUB_MISSING_LABEL reports no PID at all (simulates
+    # a job that isn't loaded / can't be found).
+    cat > "$STUBDIR/launchctl" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  list)
+    label="$2"
+    if [ "$label" = "${STUB_MISSING_LABEL:-}" ]; then
+      echo "Could not find service \"$label\"" >&2
+      exit 1
+    fi
+    pidfile="${STUB_STATE_DIR}/${label}.pid"
+    [ -f "$pidfile" ] || echo "12340" > "$pidfile"
+    printf '{\n\t"PID" = %s;\n\t"Label" = "%s";\n};\n' "$(cat "$pidfile")" "$label"
+    ;;
+  kickstart)
+    ref="${3:-$4}"
+    label="${ref##*/}"
+    if [ "$label" = "${STUB_NOCYCLE_LABEL:-}" ]; then
+      exit 0
+    fi
+    pidfile="${STUB_STATE_DIR}/${label}.pid"
+    old="$(cat "$pidfile" 2>/dev/null || echo 12340)"
+    echo "$((old+1))" > "$pidfile"
+    ;;
+esac
+STUB
+    chmod +x "$STUBDIR/launchctl"
+
+    # stub ps: `ps -o lstart= -p <pid>` returns a fake timestamp derived from
+    # the PID, so a changed PID always implies a changed start-time.
+    cat > "$STUBDIR/ps" <<'STUB'
+#!/usr/bin/env bash
+pid=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-p" ] && pid="$a"
+  prev="$a"
+done
+echo "faketime-$pid"
+STUB
+    chmod +x "$STUBDIR/ps"
+
+    # stub pgrep: `pgrep -f "<label> daemon"` returns a PID from a state file
+    # keyed by label, created on first read.
+    cat > "$STUBDIR/pgrep" <<'STUB'
+#!/usr/bin/env bash
+pattern=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-f" ] && pattern="$a"
+  prev="$a"
+done
+label="${pattern%% daemon*}"
+pidfile="${STUB_STATE_DIR}/daemon-${label}.pid"
+[ -f "$pidfile" ] || echo "9000" > "$pidfile"
+cat "$pidfile"
+STUB
+    chmod +x "$STUBDIR/pgrep"
+
+    # stub roborev: `roborev daemon restart` bumps the daemon pidfile.
+    cat > "$STUBDIR/roborev" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = "daemon" ] && [ "$2" = "restart" ]; then
+  pidfile="${STUB_STATE_DIR}/daemon-roborev.pid"
+  old="$(cat "$pidfile" 2>/dev/null || echo 9000)"
+  echo "$((old+1))" > "$pidfile"
+  exit 0
+fi
+exit 1
+STUB
+    chmod +x "$STUBDIR/roborev"
+
+    export PATH="$STUBDIR:$PATH"
+    export ROTATE_SECRET_RESTART_DELAY=0
+
+    # Case: two consumers, both restart and both verify.
+    out_a="$(restart_and_verify_consumer "launchd:com.test.one" 2>&1)"; rc_a=$?
+    _t "consumer restarts and verifies (consumer 1)" "$rc_a" "0"
+    out_b="$(restart_and_verify_consumer "launchd:com.test.two" 2>&1)"; rc_b=$?
+    _t "consumer restarts and verifies (consumer 2)" "$rc_b" "0"
+
+    # Case: a consumer that silently does not cycle (pid/start-time unchanged).
+    export STUB_NOCYCLE_LABEL="com.test.stuck"
+    out_c="$(restart_and_verify_consumer "launchd:com.test.stuck" 2>&1)"; rc_c=$?
+    unset STUB_NOCYCLE_LABEL
+    _t "consumer that does not cycle is reported unverified" "$rc_c" "1"
+    case "$out_c" in *"DID NOT TAKE EFFECT"*) notcycled=yes;; *) notcycled=no;; esac
+    _t "not-cycled consumer message present" "$notcycled" "yes"
+
+    # Case: a consumer whose PID cannot be determined.
+    export STUB_MISSING_LABEL="com.test.missing"
+    out_d="$(restart_and_verify_consumer "launchd:com.test.missing" 2>&1)"; rc_d=$?
+    unset STUB_MISSING_LABEL
+    _t "consumer with undeterminable PID is non-zero" "$rc_d" "1"
+    case "$out_d" in *"CANNOT VERIFY"*) cvmsg=yes;; *) cvmsg=no;; esac
+    _t "cannot-verify message present for missing PID" "$cvmsg" "yes"
+
+    # Case: a secret with no map entry and no --restart -> WARNING, not silent.
+    RESTART_LIST=()
+    out_e="$(run_consumer_restarts "UNMAPPED_SECRET_ZZZ_NOT_REAL" 2>&1)"; rc_e=$?
+    case "$out_e" in *"WARNING"*"no consumers"*) warnmsg=yes;; *) warnmsg=no;; esac
+    _t "unmapped secret prints WARNING (not a silent pass)" "$warnmsg" "yes"
+    _t "unmapped secret does not fail the run" "$rc_e" "0"
+
+    # Case: a non-launchd daemon: consumer restarts via its own mechanism.
+    out_f="$(restart_and_verify_consumer "daemon:roborev" 2>&1)"; rc_f=$?
+    _t "daemon consumer restarts via its own mechanism" "$rc_f" "0"
+    case "$out_f" in *"restarted and verified"*) dmsg=yes;; *) dmsg=no;; esac
+    _t "daemon restart success message present" "$dmsg" "yes"
+
+    # Case: repeated --restart flags accumulate rather than overwrite.
+    RESTART_LIST=()
+    add_restart_spec "a"
+    add_restart_spec "b,c"
+    _t "repeated --restart flags accumulate" "${RESTART_LIST[*]}" "a b c"
+
+    trap - EXIT
+    cleanup_stubs
+
     echo ""
     echo "selftest: ${pass}/${total} PASS"
     [ "$pass" -eq "$total" ]
@@ -93,7 +398,7 @@ if [ "$MODE" = "--selftest" ]; then
 fi
 
 if [ -z "$NAME" ]; then
-    echo "usage: rotate_secret.sh <SECRET_NAME> [--apply] [--restart <launchd-label>]" >&2
+    echo "usage: rotate_secret.sh <SECRET_NAME> [--apply] [--restart <spec>[,<spec>...]]" >&2
     exit 1
 fi
 
@@ -195,24 +500,30 @@ rm -f "$tmp2"
 v=$(grep -m1 -E "^[[:space:]]*(export[[:space:]]+)?${NAME}=" "$SECRETS" 2>/dev/null | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
 [ "$(h12 "$v")" = "$want" ] && echo "  secrets.env OK" || { echo "  secrets.env MISMATCH"; bad=1; }
 
-# ── optional daemon restart ─────────────────────────────────────────────────
-if [ -n "$RESTART" ]; then
+# ── restart & VERIFY consumers (llm#955) ─────────────────────────────────────
+echo ""
+echo "=== restart & verify consumers ==="
+consumer_bad=0
+run_consumer_restarts "$NAME" || consumer_bad=1
+
+if [ ${#CONSUMER_ROWS[@]} -gt 0 ]; then
     echo ""
-    echo "=== restarting $RESTART (holds the old value in memory) ==="
-    if launchctl kickstart -k "gui/$(id -u)/$RESTART" 2>&1; then
-        echo "  restarted"; log "$NAME restarted $RESTART"
-    else
-        echo "  WARN: restart failed — do it manually:"
-        echo "    launchctl kickstart -k gui/\$(id -u)/$RESTART"
-    fi
+    echo "=== consumer restart summary ==="
+    printf '  %-50s %-8s %-10s %-9s %s\n' "CONSUMER" "KIND" "RESTARTED" "VERIFIED" "NOTE"
+    for row in "${CONSUMER_ROWS[@]}"; do
+        IFS='|' read -r c_spec c_kind c_restarted c_verified c_note <<< "$row"
+        printf '  %-50s %-8s %-10s %-9s %s\n' "$c_spec" "$c_kind" "$c_restarted" "$c_verified" "$c_note"
+    done
 fi
 
 echo ""
-if [ "$bad" -eq 0 ]; then
+if [ "$bad" -eq 0 ] && [ "$consumer_bad" -eq 0 ]; then
     echo "$NAME rotated. All copies share sha=$want"
     echo "NEXT: revoke the OLD value at the provider, then exercise whatever uses it."
     log "$NAME rotation complete"
 else
-    echo "MISMATCH — investigate before trusting this rotation." >&2
-    log "$NAME rotation INCOMPLETE"; exit 1
+    [ "$bad" -eq 0 ] || echo "MISMATCH — BWS/cache copies disagree; investigate before trusting this rotation." >&2
+    [ "$consumer_bad" -eq 0 ] || echo "CONSUMER RESTART FAILED/UNVERIFIED — see summary above; a process may still hold the old value." >&2
+    log "$NAME rotation INCOMPLETE (bad=$bad consumer_bad=$consumer_bad)"
+    exit 1
 fi

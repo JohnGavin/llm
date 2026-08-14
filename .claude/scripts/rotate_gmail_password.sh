@@ -32,6 +32,20 @@
 #   (checked `bws secret edit --help`). That exposure is local, transient, and
 #   unavoidable with this tool — stated here rather than hidden.
 #
+# MULTI-CONSUMER RESTART + VERIFICATION (llm#955)
+# ------------------------------------------------
+# rotate_secret.sh (the generic sibling of this script) was found to report a
+# false success: it restarted one launchd consumer of a secret, exited 0, and
+# left a second, non-launchd consumer holding the stale value for hours
+# (llm#936). This script has the same weakness — it never restarted anything,
+# it only told the caller to go test a job by hand. Rather than sourcing
+# rotate_secret.sh's restart machinery (this dispatch's write-scope is this
+# file, rotate_secret.sh, and the rules doc only — no new shared-lib file), the
+# same consumer-map + verify-by-PID-and-start-time design is duplicated below.
+# GMAIL_APP_PASSWORD's consumers are all launchd jobs (no self-daemonized
+# process reads it), so only the `launchd:` kind is exercised here, but the
+# same `kind:label` shape is kept for consistency with rotate_secret.sh.
+#
 # Usage:
 #   rotate_gmail_password.sh --dry-run   (default) — validate, change nothing
 #   rotate_gmail_password.sh --apply
@@ -52,6 +66,120 @@ LOG="$HOME/.claude/logs/rotate_gmail_password.log"
 
 h12() { printf '%s' "$1" | shasum -a 256 | cut -c1-12; }
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true; }
+
+# ── consumers of GMAIL_APP_PASSWORD — every launchd job that reads it via
+#    the ~/.claude/env fallback files above. Restarted + VERIFIED after every
+#    rotation (llm#955): a consumer NOT listed here is invisible to this
+#    check, so keep this list in sync with the ENV_FILES readers. ───────────
+CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email"
+
+# ── consumer restart mechanisms — table-driven: a new kind is one `case` arm
+#    in each of the three functions below, not a new code path. Duplicated
+#    from rotate_secret.sh (see the MULTI-CONSUMER header comment above for
+#    why this is a duplication rather than a shared import). ────────────────
+kind_get_pid() {
+    case "$1" in
+        launchd)
+            launchctl list "$2" 2>/dev/null \
+              | awk -F'= ' '/"PID"/{gsub(/[; \t]/,"",$2); print $2; exit}'
+            ;;
+        daemon)
+            pgrep -f "$2 daemon" 2>/dev/null | head -1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+kind_restart() {
+    case "$1" in
+        launchd) launchctl kickstart -k "gui/$(id -u)/$2" >/dev/null 2>&1 ;;
+        daemon)  "$2" daemon restart >/dev/null 2>&1 ;;
+        *)       return 1 ;;
+    esac
+}
+
+pid_start_time() {
+    local pid="$1"
+    [ -n "$pid" ] || return 1
+    ps -o lstart= -p "$pid" 2>/dev/null | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+# Never treats "restart command exited 0" as proof. Captures PID + process
+# start-time before and after; only reports success when both changed.
+CONSUMER_ROWS=()
+
+restart_and_verify_consumer() {
+    local spec="$1" kind label pid_before pid_after t_before t_after
+    if [[ "$spec" == *:* ]]; then
+        kind="${spec%%:*}"; label="${spec#*:}"
+    else
+        kind="launchd"; label="$spec"
+    fi
+
+    case "$kind" in
+        launchd|daemon) : ;;
+        *)
+            echo "  $spec  UNKNOWN CONSUMER KIND '$kind' — skipping"
+            CONSUMER_ROWS+=("$spec|$kind|no|no|unknown-kind")
+            return 1
+            ;;
+    esac
+
+    pid_before="$(kind_get_pid "$kind" "$label")"
+    if [ -z "$pid_before" ]; then
+        echo "  $spec  CANNOT VERIFY — no running process found before restart"
+        CONSUMER_ROWS+=("$spec|$kind|no|no|cannot-determine-pid")
+        return 1
+    fi
+    t_before="$(pid_start_time "$pid_before")"
+
+    if ! kind_restart "$kind" "$label"; then
+        echo "  $spec  RESTART COMMAND FAILED"
+        CONSUMER_ROWS+=("$spec|$kind|no|no|restart-command-failed")
+        return 1
+    fi
+
+    sleep "${ROTATE_SECRET_RESTART_DELAY:-2}"
+
+    pid_after="$(kind_get_pid "$kind" "$label")"
+    if [ -z "$pid_after" ]; then
+        echo "  $spec  CANNOT VERIFY — no running process found after restart"
+        CONSUMER_ROWS+=("$spec|$kind|yes|no|cannot-determine-pid-after")
+        return 1
+    fi
+    t_after="$(pid_start_time "$pid_after")"
+
+    if [ "$pid_before" = "$pid_after" ] && [ "$t_before" = "$t_after" ]; then
+        echo "  $spec  RESTART DID NOT TAKE EFFECT — pid+start-time unchanged (pid=$pid_before, start=$t_before)"
+        CONSUMER_ROWS+=("$spec|$kind|yes|no|not-cycled")
+        return 1
+    fi
+
+    echo "  $spec  restarted and verified (pid $pid_before -> $pid_after)"
+    CONSUMER_ROWS+=("$spec|$kind|yes|yes|ok")
+    return 0
+}
+
+run_consumer_restarts() {
+    local name="$1"
+    local mapvar="CONSUMERS_${name}"
+    local mapval="${!mapvar:-}"
+    local list=()
+    if [ -n "$mapval" ]; then
+        read -r -a list <<< "$mapval"
+    fi
+    if [ ${#list[@]} -eq 0 ]; then
+        echo "  WARNING: no consumers configured for $name."
+        echo "           If a running process holds the old value in memory, restart it manually."
+        log "$name rotation: no consumers configured — none restarted"
+        return 0
+    fi
+    local bad=0 spec
+    for spec in "${list[@]}"; do
+        restart_and_verify_consumer "$spec" || bad=1
+    done
+    return "$bad"
+}
 
 # ── selftest ────────────────────────────────────────────────────────────────
 if [ "$MODE" = "--selftest" ]; then
@@ -84,6 +212,78 @@ if [ "$MODE" = "--selftest" ]; then
     out="$(printf 'len=%s sha=%s\n' "${#v2}" "$hv")"
     case "$out" in *"$v2"*) leak="yes";; *) leak="no";; esac
     _t "sentinel absent from reported output" "$leak" "no"
+
+    # ── llm#955: multi-consumer restart + verification ──────────────────────
+    STUBDIR="$(mktemp -d)"
+    STUB_STATE_DIR="$(mktemp -d)"
+    export STUB_STATE_DIR
+    cleanup_stubs() { rm -rf "$STUBDIR" "$STUB_STATE_DIR"; }
+    trap cleanup_stubs EXIT
+
+    # stub launchctl: `list <label>` prints a fake PID block read from a state
+    # file (created on first read); `kickstart -k gui/<uid>/<label>` bumps the
+    # PID UNLESS the label matches STUB_NOCYCLE_LABEL; `list <label>` for
+    # STUB_MISSING_LABEL reports no PID at all (job not loaded).
+    cat > "$STUBDIR/launchctl" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  list)
+    label="$2"
+    if [ "$label" = "${STUB_MISSING_LABEL:-}" ]; then
+      echo "Could not find service \"$label\"" >&2
+      exit 1
+    fi
+    pidfile="${STUB_STATE_DIR}/${label}.pid"
+    [ -f "$pidfile" ] || echo "5550" > "$pidfile"
+    printf '{\n\t"PID" = %s;\n\t"Label" = "%s";\n};\n' "$(cat "$pidfile")" "$label"
+    ;;
+  kickstart)
+    ref="${3:-$4}"
+    label="${ref##*/}"
+    if [ "$label" = "${STUB_NOCYCLE_LABEL:-}" ]; then
+      exit 0
+    fi
+    pidfile="${STUB_STATE_DIR}/${label}.pid"
+    old="$(cat "$pidfile" 2>/dev/null || echo 5550)"
+    echo "$((old+1))" > "$pidfile"
+    ;;
+esac
+STUB
+    chmod +x "$STUBDIR/launchctl"
+
+    cat > "$STUBDIR/ps" <<'STUB'
+#!/usr/bin/env bash
+pid=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-p" ] && pid="$a"
+  prev="$a"
+done
+echo "faketime-$pid"
+STUB
+    chmod +x "$STUBDIR/ps"
+
+    export PATH="$STUBDIR:$PATH"
+    export ROTATE_SECRET_RESTART_DELAY=0
+
+    out_g="$(restart_and_verify_consumer "launchd:com.claude.overnight-self-review-email" 2>&1)"; rc_g=$?
+    _t "consumer restarts and verifies" "$rc_g" "0"
+
+    export STUB_NOCYCLE_LABEL="com.claude.kb-digest-email"
+    out_h="$(restart_and_verify_consumer "launchd:com.claude.kb-digest-email" 2>&1)"; rc_h=$?
+    unset STUB_NOCYCLE_LABEL
+    _t "consumer that does not cycle is reported unverified (non-zero)" "$rc_h" "1"
+    case "$out_h" in *"DID NOT TAKE EFFECT"*) notcycled=yes;; *) notcycled=no;; esac
+    _t "not-cycled consumer message present" "$notcycled" "yes"
+
+    export STUB_MISSING_LABEL="com.claude.config-digest-email"
+    out_i="$(restart_and_verify_consumer "launchd:com.claude.config-digest-email" 2>&1)"; rc_i=$?
+    unset STUB_MISSING_LABEL
+    _t "consumer with undeterminable PID is non-zero" "$rc_i" "1"
+    case "$out_i" in *"CANNOT VERIFY"*) cvmsg=yes;; *) cvmsg=no;; esac
+    _t "cannot-verify message present for missing PID" "$cvmsg" "yes"
+
+    trap - EXIT
+    cleanup_stubs
 
     echo ""
     echo "selftest: ${pass}/${total} PASS"
@@ -206,16 +406,31 @@ for f in "${ENV_FILES[@]}"; do
     [ "$(h12 "$v")" = "$want" ] && printf '  %-20s OK\n' "$(basename "$f")" || { printf '  %-20s MISMATCH\n' "$(basename "$f")"; bad=1; }
 done
 
+# ── restart & VERIFY consumers (llm#955) ─────────────────────────────────────
 echo ""
-if [ "$bad" -eq 0 ]; then
+echo "=== restart & verify consumers ==="
+consumer_bad=0
+run_consumer_restarts "GMAIL_APP_PASSWORD" || consumer_bad=1
+
+if [ ${#CONSUMER_ROWS[@]} -gt 0 ]; then
+    echo ""
+    echo "=== consumer restart summary ==="
+    printf '  %-50s %-8s %-10s %-9s %s\n' "CONSUMER" "KIND" "RESTARTED" "VERIFIED" "NOTE"
+    for row in "${CONSUMER_ROWS[@]}"; do
+        IFS='|' read -r c_spec c_kind c_restarted c_verified c_note <<< "$row"
+        printf '  %-50s %-8s %-10s %-9s %s\n' "$c_spec" "$c_kind" "$c_restarted" "$c_verified" "$c_note"
+    done
+fi
+
+echo ""
+if [ "$bad" -eq 0 ] && [ "$consumer_bad" -eq 0 ]; then
     echo "All copies now share sha=$want"
     echo ""
-    echo "NEXT: live-test one email job, e.g."
-    echo "  bash ~/docs_gh/llm/bin/overnight_self_review_email_cron.sh"
-    echo "Then delete the .bak files once it succeeds."
+    echo "NEXT: delete the .bak files once you've confirmed the jobs above are healthy."
     log "rotation complete sha=$want"
 else
-    echo "ONE OR MORE COPIES MISMATCH — investigate before trusting the rotation." >&2
-    log "rotation INCOMPLETE"
+    [ "$bad" -eq 0 ] || echo "ONE OR MORE COPIES MISMATCH — investigate before trusting the rotation." >&2
+    [ "$consumer_bad" -eq 0 ] || echo "CONSUMER RESTART FAILED/UNVERIFIED — see summary above; a process may still hold the old value." >&2
+    log "rotation INCOMPLETE (bad=$bad consumer_bad=$consumer_bad)"
     exit 1
 fi

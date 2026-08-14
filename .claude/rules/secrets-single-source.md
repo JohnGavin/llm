@@ -92,6 +92,55 @@ caused by a missing trailing newline on an append). Backs up the previous
 cache to `~/.config/secrets.env.bak-<UTC timestamp>` (mode 600) before
 installing atomically.
 
+## CRITICAL: A Restart Is Not Verified Until PID + Start-Time Both Change
+
+`rotate_secret.sh --apply` and `rotate_gmail_password.sh --apply` restart
+every known consumer of the secret they just rotated, and never trust
+`launchctl kickstart`'s exit code as proof the restart happened. A
+`KeepAlive` launchd job can return success from `kickstart -k` without
+actually cycling — this is exactly what happened on 2026-08-13: the
+`GEMINI_API_KEY` rotation restarted `com.roborev.auto-refine`, reported
+"restarted", and exited 0, while the separate self-daemonized
+`roborev daemon run` process — not a launchd job, invisible to
+`launchctl kickstart` — kept running with the stale key for hours
+(llm#936).
+
+Both scripts now capture each consumer's PID and process start-time
+**before** issuing the restart and **again after**, and report a consumer
+as restarted only when both changed. A consumer whose PID cannot be
+determined, or whose restart command reports success but never cycles, is
+reported explicitly as unverified and the script exits non-zero — per
+`zero-metric-evidence-or-defect`, "unverified" must never look like
+"verified".
+
+### Consumer map — declare every reader of a secret
+
+`rotate_secret.sh` declares consumers per secret name as
+`CONSUMERS_<SECRET_NAME>="kind:label kind:label ..."`, e.g.:
+
+```bash
+CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine daemon:roborev"
+```
+
+`kind` is `launchd` (restarted via `launchctl kickstart -k`, verified via
+`launchctl list <label>`) or `daemon` (a self-daemonized process with no
+launchd job, restarted via `<label> daemon restart`, verified via
+`pgrep -f "<label> daemon"`). A secret with **no** map entry and no
+`--restart` flag prints an explicit WARNING rather than silently doing
+nothing — an absent entry means nobody has yet audited what holds that
+secret in memory, which is a different fact than "nothing does".
+`--restart` accepts a bare label (kind defaults to `launchd`), an explicit
+`kind:label` pair, a comma-separated list, or repeated flags — all
+accumulate into one consumer list.
+
+`rotate_gmail_password.sh` duplicates the same table-driven restart +
+verify functions rather than sourcing them from `rotate_secret.sh` (no
+shared-lib file exists for the two to import from); its
+`CONSUMERS_GMAIL_APP_PASSWORD` entry lists the five launchd email jobs
+that read the fallback `~/.claude/env/*.env` files. Keep that list in
+sync with `ENV_FILES` in the script if a new job starts reading
+`GMAIL_APP_PASSWORD`.
+
 ## Related
 
 - `.claude/launchd/SECRETS_MIGRATION.md` — the `with-secrets` per-job
