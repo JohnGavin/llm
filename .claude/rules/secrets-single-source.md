@@ -122,13 +122,28 @@ declares consumers per secret name as
 `CONSUMERS_<SECRET_NAME>="kind:label kind:label ..."`, e.g.:
 
 ```bash
-CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine daemon:roborev"
+CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine launchd:com.roborev.daemon"
 ```
 
 `kind` is `launchd` (restarted via `launchctl kickstart -k`, verified via
-`launchctl list <label>`) or `daemon` (a self-daemonized process with no
+`launchctl list <label>`) or `daemon` (an unsupervised process with no
 launchd job, restarted via `<label> daemon restart`, verified via
-`pgrep -f "<label> daemon"`). A secret with **no** map entry and no
+`pgrep -f "<label> daemon"`).
+
+**Prefer bringing a `daemon:` consumer under launchd over keeping the map
+entry.** The `daemon:` kind exists to reach a process no `launchctl
+kickstart` can touch — it makes a rotation correct, but it leaves the
+underlying process unsupervised, unbounded in age, and absent from every
+health check. `CONSUMERS_GEMINI_API_KEY` listed `daemon:roborev` for exactly
+this reason until `com.roborev.daemon` was installed and verified on
+2026-08-14 (llm#956); both consumers are now `launchd:`, and the launcher
+re-sources this cache on every start launchd performs, so a rotation reaches
+the daemon by construction rather than by anyone remembering to list a
+second consumer kind. See `long-running-process-supervision` for the
+migration, including the measured finding that a roborev *client* auto-spawns
+a daemon when none is reachable — so the spawning job must be stopped first.
+
+A secret with **no** map entry and no
 `--restart` flag prints an explicit WARNING rather than silently doing
 nothing — an absent entry means nobody has yet audited what holds that
 secret in memory, which is a different fact than "nothing does".

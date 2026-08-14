@@ -20,16 +20,42 @@
      through launchd: `launchctl kickstart -k gui/$(id -u)/com.roborev.daemon`.
 
      See .claude/rules/long-running-process-supervision.md for the general
-     invariant. Full migration sequence below is descriptive only — the
-     orchestrator runs it after review, this file does not execute anything.
+     invariant.
+
+     HOW THE DAEMON ACTUALLY GETS STARTED (measured 2026-08-14, corrects two
+     wrong premises this header previously carried)
+       Any roborev CLIENT auto-spawns a daemon when none is reachable. The
+       instance running before this migration was NOT an orphan from a hand-
+       typed `daemon start`: its parent was `roborev stream` (a client),
+       whose parent was roborev_auto_refine.sh, whose parent was launchd via
+       com.roborev.auto-refine. Whole tree started in the same second.
+
+         4574 roborev daemon run          <- PPID 4572
+         4572 roborev stream              <- PPID 4561, spawned the daemon
+         4561 roborev_auto_refine.sh run  <- PPID 1 (com.roborev.auto-refine)
+
+       Two consequences for the sequence below:
+         a) Stop com.roborev.auto-refine FIRST. Killing only the daemon
+            leaves its `stream` client running, which immediately spawns a
+            replacement and races the launchd one.
+         b) The race is bounded but not free: the daemon binds
+            127.0.0.1:7373, so a second instance cannot bind and exits.
+            Whoever holds the port wins; the loser dies. With KeepAlive +
+            ThrottleInterval that means a client-spawned rival can hold the
+            port for up to a minute while launchd's copy crash-loops.
+
+       `roborev daemon stop` DOES exist in this version and works (verified:
+       prints "Daemon stopped", exit 0). An earlier draft of this header
+       claimed otherwise and told the operator to `kill` by PID.
 
      MIGRATION SEQUENCE (orchestrator step, after PR review)
-       1. Identify and stop the OLD self-daemonized instance (there is no
-          confirmed `daemon stop` subcommand in this roborev version, so
-          stop it by PID, not by CLI verb):
-            pgrep -fl "roborev daemon run"
-            kill <pid from above>
-          Confirm it is gone: pgrep -f "roborev daemon run" (no output).
+       1. Stop the job whose client spawns the daemon, so nothing respawns
+          one mid-migration:
+            launchctl bootout gui/$(id -u)/com.roborev.auto-refine
+          Then stop the daemon itself and confirm the port is free:
+            roborev daemon stop
+            pgrep -fl roborev                       # expect no output
+            lsof -nP -iTCP:7373 -sTCP:LISTEN        # expect no output
 
        2. Install this plist:
             cp .claude/launchd/com.roborev.daemon.plist \
@@ -39,12 +65,21 @@
             launchctl bootstrap gui/$(id -u) \
               ~/Library/LaunchAgents/com.roborev.daemon.plist
 
-       4. Verify a NEW pid appears (must differ from step 1's pid, and
-          command line should read "roborev daemon run"):
+       4. Verify a NEW pid appears, that launchd's supervised pid IS the
+          daemon's pid (proves the launcher exec'd rather than forked), and
+          that its parent is launchd:
             launchctl print gui/$(id -u)/com.roborev.daemon | grep pid
             pgrep -fl "roborev daemon run"
+            ps -o pid,ppid,command -p <pid>          # PPID must be 1
+            lsof -nP -iTCP:7373 -sTCP:LISTEN         # must be the new pid
 
-       5. Verify the daemon actually processes work, not just that a PID
+       5. Restore auto-refine and confirm its client CONNECTS rather than
+          spawning a rival — exactly one "daemon run" must remain:
+            launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.roborev.auto-refine.plist
+            pgrep -fl roborev
+
+       6. Verify the daemon actually processes work, not just that a PID
           exists — make one small commit in a repo with roborev's
           post-commit hook installed, then confirm a new row lands in
           ~/.roborev/reviews.db for that commit within a couple of minutes:
@@ -52,13 +87,14 @@
               "SELECT id, status, agent, enqueued_at FROM review_jobs \
                ORDER BY enqueued_at DESC LIMIT 3;"
 
-       ROLLBACK (only if step 4 or 5 fails)
+       ROLLBACK (only if step 4, 5 or 6 fails)
             launchctl bootout gui/$(id -u)/com.roborev.daemon
           This returns to NO supervised daemon running — the safe failure
-          mode. Only as a temporary stopgap, and only if reviews must keep
-          flowing before the plist is fixed, fall back to the old
-          self-daemonizing entrypoint (`roborev daemon start`) and reopen
-          llm#956; do not treat that fallback as the resolved state.
+          mode. Note that bootstrapping com.roborev.auto-refine again is by
+          itself enough to get an UNsupervised daemon back (its client
+          spawns one), which is the pre-migration state; treat that as a
+          temporary stopgap only, and reopen llm#956 rather than calling it
+          resolved.
 -->
 <plist version="1.0">
 <dict>

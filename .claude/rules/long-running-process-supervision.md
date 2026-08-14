@@ -119,16 +119,43 @@ the process started) warrants `launchctl kickstart`.
 | Secrets sourced once at daemon startup by a parent shell that then runs for days | Silently stale after any rotation until something else happens to restart it | Launcher re-sources on every launchd-triggered start, which happens on every crash-restart and reboot |
 | Telling an operator to run `<tool> daemon start` when the daemon fires "not running" | Recreates the self-daemonizing process this rule removed | Point at `launchctl kickstart -k gui/$(id -u)/<label>` instead |
 
+## A Client Can Spawn the Daemon You Are Trying to Supervise
+
+Installing the plist is not sufficient on its own. Many daemon-backed CLIs
+**auto-start a daemon from any client command** when none is reachable —
+roborev does this from `stream`, and the pre-migration process was not an
+orphan from a hand-typed `daemon start` at all: it was a child of
+`roborev stream`, itself a child of the `com.roborev.auto-refine` launchd
+job. So the process was transitively supervised by the *wrong* job, which is
+why a restart of that job appeared to fix llm#936 and why nothing looked like
+an orphan when someone went looking for one.
+
+Before migrating, establish two facts about the tool:
+
+| Question | How to answer it | Why it matters |
+|---|---|---|
+| What actually spawns the running process? | `ps -o pid,ppid,lstart,command` up the PPID chain until PPID 1 | A "self-daemonized orphan" may in fact be a grandchild of another job; killing the process alone lets its parent respawn it |
+| Is there a single-binder lock? | `lsof -nP -p <pid> -a -i` / `-a -U` | A fixed port or socket bounds the damage: a rival cannot bind and exits. Without one, two daemons can serve the same queue indefinitely |
+
+Then stop the **spawning job first**, not the daemon first. Killing the
+daemon while its client keeps running just hands the port to a fresh rival.
+
+A single-binder lock bounds the race but does not remove it: while a
+client-spawned rival holds the port, the launchd copy fails to bind, exits,
+and is held off by `ThrottleInterval` before retrying — so a rival can own
+the queue for up to that interval. Supervision is not a substitute for
+knowing what else starts the process.
+
 ## Known Follow-Up (Not This Change)
 
-`rotate_secret.sh`'s `CONSUMERS_GEMINI_API_KEY` map
-(`secrets-single-source`) currently lists `daemon:roborev` — a
-`kind: daemon` consumer restarted via `roborev daemon restart` and verified
-via `pgrep -f "roborev daemon"`, built specifically to work around the
-self-daemonized process this rule removes. Once `com.roborev.daemon` is
-installed and verified, that entry should become a `launchd:` consumer
-(`launchctl kickstart -k`) instead. Left for a separate change so this PR
-stays scoped to supervision, not secret-rotation plumbing.
+None outstanding. `CONSUMERS_GEMINI_API_KEY` became
+`launchd:com.roborev.auto-refine launchd:com.roborev.daemon` when
+`com.roborev.daemon` was installed and verified (2026-08-14); the
+`kind: daemon` consumer type that existed only to reach the unsupervised
+process now has no users. The type itself is kept in
+`lib/secret_consumers.sh` — it is the correct mechanism for any *future*
+unsupervised consumer found before it can be migrated, and deleting it would
+mean the next such discovery has nowhere to be recorded.
 
 ## Related
 
