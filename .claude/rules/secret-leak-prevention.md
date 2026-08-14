@@ -151,8 +151,40 @@ matchers `Artifact` and `WebFetch`, both invoking the existing
 `artifact_probe` / `webfetch_probe`, `event_type` `PreToolUse:fired`) — so the
 system answers the question itself instead of us guessing from docs.
 
-**How to read the result**, once `hook_events_load.sh` has drained the spool
-into `~/.claude/logs/unified.duckdb`:
+### ANSWERED 2026-08-14 — both matchers fire
+
+The probe resolved within minutes of landing, so the interpretation guidance
+below is retained for the next matcher question rather than this one.
+
+| Matcher | Evidence |
+|---|---|
+| `WebFetch` | `webfetch_probe` rows at `18:53:30Z` (a **subagent**'s fetch) and `22:06:06Z` (main session) |
+| `Artifact` | `artifact_probe` row at `22:08:33Z` on a real publish |
+
+Three things this settles, two of which contradict what was assumed here:
+
+1. **Both are valid `PreToolUse` matchers**, despite neither appearing in the
+   documented matcher list. A research pass had recommended treating them as
+   unsupported *because* they were undocumented; that inference was wrong, in
+   the same way it was wrong for `Agent`/`Task`/`Skill`.
+2. **Hook config is read live, not cached at session start.** The `18:53:30Z`
+   row predates any restart — it fired in a session that had already been
+   running when `settings.json` changed. The claim that a restart was required
+   (stated in the original commit for this section) was never tested.
+3. The hook fires **before** the tool runs, so it fires even when the tool then
+   fails — the `22:06:06Z` row came from a `WebFetch` that died on DNS
+   resolution. That is correct `PreToolUse` semantics and means a guard here
+   cannot be evaded by a call that was going to fail anyway.
+
+**Therefore llm#960 Part 3 is feasible and unblocked**: a content-inspecting
+guard on `Artifact` (the sharper of the two — it publishes to a hosted URL)
+can be wired the same way Rule 5 inspects `--body-file`. The open question is
+no longer *whether* the matcher fires but *what `tool_input` carries* — the
+observers record no payload, so confirm a `file_path` (or equivalent) is
+present before designing the guard around reading it.
+
+**How to read the result** of a future matcher probe, once `hook_events_load.sh`
+has drained the spool into `~/.claude/logs/unified.duckdb`:
 
 - **Rows appear** for `hook_name = 'artifact_probe'` or `'webfetch_probe'` ⇒
   the matcher fires ⇒ a content-inspecting guard on that tool (mirroring this
