@@ -1450,6 +1450,181 @@ sec_secret_scan_block <- collapsible_block(
   secret_scan_section$body
 )
 
+# ── Section: Agent failed with empty stdout — cause unknown (llm#954) ────────
+# roborev's own error message for this failure class is FABRICATED: when an
+# agent process exits non-zero with EMPTY stdout, roborev cannot parse the
+# stream-json response it expected and reports
+#   "agent: <agent> failed: exit status N (parse error: no valid stream-json)"
+# -- describing its OWN parsing step, not the agent's actual failure. The
+# real cause (e.g. a missing/expired API key) is on the agent's STDERR, which
+# roborev discards. See roborev-resolution.md's "no valid stream-json" note
+# for the diagnostic procedure (run the agent's command manually, read
+# stderr).
+#
+# Consecutive failures from ONE agent are the signal worth alerting on --
+# sporadic single failures are noise (transient network blip, rate limit);
+# an unbroken run means the agent is wholly broken for every job it claims.
+# Reads ~/.roborev/reviews.db (SQLite, read-only) via DuckDB's bundled sqlite
+# extension -- same ROBOREV_DB env var + LOAD-then-INSTALL-fallback pattern
+# as roborev_metrics_etl.R.
+AGENT_FAILURE_STREAK_ALERT_THRESHOLD <- 3L  # consecutive failures -> loud alert (llm#954)
+
+# Gaps-and-islands: within the window, order each agent's jobs by
+# enqueued_at and flag ones matching the failure signature; the difference
+# between two ROW_NUMBER()s (overall vs within-flag) is constant across a
+# contiguous run of the same flag value, so grouping on it isolates runs.
+agent_failure_stats <- function(con, interval_sql) {
+  sql <- sprintf("
+    WITH ordered AS (
+      SELECT agent, enqueued_at::TIMESTAMP AS enqueued_at,
+        CASE WHEN status = 'failed' AND error LIKE '%%no valid stream-json%%'
+             THEN 1 ELSE 0 END AS is_sig
+      FROM roborev_src.review_jobs
+      WHERE enqueued_at::TIMESTAMP >= current_timestamp::TIMESTAMP - INTERVAL %s
+    ),
+    grp AS (
+      SELECT agent, is_sig,
+        ROW_NUMBER() OVER (PARTITION BY agent ORDER BY enqueued_at)
+        - ROW_NUMBER() OVER (PARTITION BY agent, is_sig ORDER BY enqueued_at) AS grp_id
+      FROM ordered
+    ),
+    runs AS (
+      SELECT agent, grp_id, COUNT(*) AS run_length
+      FROM grp
+      WHERE is_sig = 1
+      GROUP BY agent, grp_id
+    ),
+    streaks AS (
+      SELECT agent, MAX(run_length) AS max_streak
+      FROM runs
+      GROUP BY agent
+    ),
+    counts AS (
+      SELECT agent, SUM(is_sig) AS n_failures
+      FROM ordered
+      GROUP BY agent
+      HAVING SUM(is_sig) > 0
+    )
+    SELECT c.agent, c.n_failures, COALESCE(s.max_streak, 0) AS max_streak
+    FROM counts c
+    LEFT JOIN streaks s USING (agent)
+    ORDER BY c.n_failures DESC
+  ", interval_sql)
+  DBI::dbGetQuery(con, sql)
+}
+
+agent_failure_section <- tryCatch({
+  roborev_db_path <- Sys.getenv("ROBOREV_DB",
+                                 file.path(Sys.getenv("HOME"), ".roborev", "reviews.db"))
+  if (!file.exists(roborev_db_path)) {
+    list(
+      body    = sprintf('<p style="color:%s;">reviews.db not found at %s.</p>',
+                        DARK_MUTED, htmlEscape(roborev_db_path)),
+      summary = "reviews.db not found"
+    )
+  } else {
+    # Independent :memory: DuckDB connection (not the main `con`) so this
+    # section's ATTACH/LOAD activity cannot interact with the unified.duckdb
+    # read-only connection above -- matches roborev_metrics_etl.R.
+    roborev_con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+    on.exit(tryCatch(DBI::dbDisconnect(roborev_con, shutdown = TRUE),
+                      error = function(e) NULL), add = TRUE)
+
+    tryCatch({
+      invisible(DBI::dbExecute(roborev_con, "LOAD sqlite"))
+    }, error = function(e_load) {
+      invisible(DBI::dbExecute(roborev_con, "INSTALL sqlite"))
+      invisible(DBI::dbExecute(roborev_con, "LOAD sqlite"))
+    })
+    invisible(DBI::dbExecute(roborev_con, sprintf(
+      "ATTACH '%s' AS roborev_src (TYPE sqlite, READ_ONLY)", roborev_db_path
+    )))
+
+    stats_24h <- agent_failure_stats(roborev_con, "'24' HOUR")
+    stats_7d  <- agent_failure_stats(roborev_con, "'7' DAY")
+
+    if (is.null(stats_7d) || nrow(stats_7d) == 0L) {
+      list(
+        body    = sprintf('<p style="color:%s;">No agent-failed-with-empty-stdout signature in the last 7 days.</p>',
+                          ACCENT_GREEN),
+        summary = "0 in last 7d"
+      )
+    } else {
+      merged <- merge(stats_7d, stats_24h, by = "agent", all.x = TRUE,
+                       suffixes = c("_7d", "_24h"))
+      merged$n_failures_24h <- ifelse(is.na(merged$n_failures_24h), 0L, merged$n_failures_24h)
+      merged$max_streak_24h <- ifelse(is.na(merged$max_streak_24h), 0L, merged$max_streak_24h)
+      merged <- merged[order(-merged$max_streak_7d), , drop = FALSE]
+
+      max_streak_overall <- max(merged$max_streak_7d, na.rm = TRUE)
+      alert_agents <- merged$agent[merged$max_streak_7d >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD]
+
+      rows_html <- paste(apply(merged, 1, function(r) {
+        is_alert   <- as.integer(r[["max_streak_7d"]]) >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD
+        row_bg     <- if (is_alert) "#2a0a0a" else DARK_CARD
+        streak_col <- if (is_alert) "#ff5252" else DARK_TEXT
+        sprintf(
+          '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-family:monospace;">%s</td>
+<td style="padding:5px 10px;text-align:right;">%s</td>
+<td style="padding:5px 10px;text-align:right;">%s</td>
+<td style="padding:5px 10px;text-align:right;">%s</td>
+<td style="padding:5px 10px;text-align:right;color:%s;font-weight:bold;">%s</td>
+</tr>',
+          row_bg, htmlEscape(r[["agent"]]),
+          r[["n_failures_24h"]], r[["max_streak_24h"]],
+          r[["n_failures_7d"]],
+          streak_col, r[["max_streak_7d"]]
+        )
+      }), collapse = "\n")
+
+      table_html <- sprintf(
+        '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead><tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Agent</th>
+<th style="padding:5px 10px;text-align:right;">Failures 24h</th>
+<th style="padding:5px 10px;text-align:right;">Max streak 24h</th>
+<th style="padding:5px 10px;text-align:right;">Failures 7d</th>
+<th style="padding:5px 10px;text-align:right;">Max streak 7d</th>
+</tr></thead><tbody>%s</tbody></table>',
+        DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, rows_html
+      )
+
+      alert_html <- if (length(alert_agents) > 0L) {
+        sprintf(
+          '<p style="color:#ff5252;font-size:%s;margin-top:8px;font-weight:bold;">
+  &#9888; %s: streak &ge; %d consecutive agent failures with empty stdout --
+  CAUSE UNKNOWN, NOT a parse error (roborev\'s own message is fabricated --
+  see roborev-resolution.md). Run the agent\'s command manually with the same
+  flags and read stderr.</p>',
+          EMAIL_FONT_SUBTITLE, paste(alert_agents, collapse = ", "),
+          AGENT_FAILURE_STREAK_ALERT_THRESHOLD
+        )
+      } else {
+        ""
+      }
+
+      list(
+        body    = paste0(table_html, alert_html),
+        summary = sprintf("%d agent(s) affected · max streak %d (threshold %d)",
+                          nrow(merged), max_streak_overall, AGENT_FAILURE_STREAK_ALERT_THRESHOLD)
+      )
+    }
+  }
+}, error = function(e) {
+  list(
+    body    = sprintf('<p style="color:#ff5252;">agent-failed-empty-stdout section failed: %s</p>',
+                      htmlEscape(conditionMessage(e))),
+    summary = "error"
+  )
+})
+
+sec_agent_failure_block <- collapsible_block(
+  "Agent failed with empty stdout (cause unknown, llm#954)",
+  agent_failure_section$summary,
+  agent_failure_section$body
+)
+
 email_body <- paste0(
   sprintf('<div style="background-color:%s;color:%s;font-family:Arial,sans-serif;
 padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
@@ -1465,6 +1640,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   oversized_block, "\n",
   sec_hooks_block, "\n",
   sec_secret_scan_block, "\n",
+  sec_agent_failure_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",
