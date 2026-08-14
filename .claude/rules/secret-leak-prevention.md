@@ -75,6 +75,54 @@ recreate the incident inside a log file.
 | `printenv \| gh ... --body-file -` | Dumps every env var into a `gh` argument | Never pipe `printenv`/`env` into anything that leaves the shell |
 | Hardcoding a token literal in a curl/gh command for "quick testing" | Committed to shell history, logs, and possibly git | `Sys.getenv()` / `${VAR}` from `.Renviron` / CI secrets — see `credential-management.md` |
 
+## Egress-Matcher Feasibility Probe (llm#960 Part 3)
+
+This guard covers `Bash`. Two other tools also move data out of the sandbox —
+`Artifact` (publishes a page to a hosted URL) and `WebFetch` (reads an
+external URL back into the transcript) — and Part 3 of
+[llm#960](https://github.com/JohnGavin/llm/issues/960) asks whether a
+content-inspecting guard, analogous to this one, can be extended to them.
+
+The official Claude Code docs list `Bash`, `Edit`, `Write`, `Read`, `Glob`,
+`Grep`, `Notebook*`, and `mcp__*` as `PreToolUse` matchers — `Artifact` and
+`WebFetch` are absent from that list. **"Undocumented" is not evidence of
+"non-functional."** `settings.json` already registers `Agent`, `Task`
+(`PreToolUse` and `PostToolUse`), and `Skill` (`PostToolUse`) — none of which
+appear in the documented list either — and all three demonstrably fire
+(`agent_runs` rows in `~/.claude/logs/unified.duckdb` line up with real
+dispatch timestamps; `skill_usage` is populated). Whether `Artifact` and
+`WebFetch` match is an empirical question, not a documentation question, so
+`settings.json` now carries two non-blocking `PreToolUse` observers —
+matchers `Artifact` and `WebFetch`, both invoking the existing
+`~/.claude/scripts/hook_event_emit.sh` directly (`hook_name` values
+`artifact_probe` / `webfetch_probe`, `event_type` `PreToolUse:fired`) — so the
+system answers the question itself instead of us guessing from docs.
+
+**How to read the result**, once `hook_events_load.sh` has drained the spool
+into `~/.claude/logs/unified.duckdb`:
+
+- **Rows appear** for `hook_name = 'artifact_probe'` or `'webfetch_probe'` ⇒
+  the matcher fires ⇒ a content-inspecting guard on that tool (mirroring this
+  file's Four Rules) is feasible, and llm#960 Part 3 can proceed.
+- **No rows after a day of normal use ⇒ inconclusive, NOT proof the matcher
+  doesn't work.** Absence of rows is equally consistent with "the matcher
+  doesn't fire" and "neither tool was invoked all day." Do not conclude
+  non-matchability from a silent table — first confirm the tool actually ran
+  during the observation window (check whether any session that day actually
+  called `Artifact` or `WebFetch` at all) before treating silence as a
+  negative result. A silent table misread as "doesn't work" is the same
+  false-negative trap that let 27 rules drift out of `RULES.md` unnoticed —
+  verify use before drawing a conclusion from absence.
+
+Query once data exists:
+
+```sql
+SELECT hook_name, event_type, count(*) AS n, max(fired_at) AS last_seen
+FROM hook_events
+WHERE hook_name IN ('artifact_probe', 'webfetch_probe')
+GROUP BY hook_name, event_type;
+```
+
 ## Related
 
 - `credential-management` rule — the broader retrieve-from-environment

@@ -494,6 +494,26 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/hook_event_emit.sh artifact_probe PreToolUse:fired",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/hook_event_emit.sh webfetch_probe PreToolUse:fired",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
