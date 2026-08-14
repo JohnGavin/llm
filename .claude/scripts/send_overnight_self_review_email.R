@@ -1473,20 +1473,36 @@ AGENT_FAILURE_STREAK_ALERT_THRESHOLD <- 3L  # consecutive failures -> loud alert
 # enqueued_at and flag ones matching the failure signature; the difference
 # between two ROW_NUMBER()s (overall vs within-flag) is constant across a
 # contiguous run of the same flag value, so grouping on it isolates runs.
+# `max_streak` is HISTORICAL (the longest run anywhere in the window) and is
+# NOT sufficient to alert on: a run that ended days ago is a resolved
+# incident, not a live one (llm#(this fix) -- caught when a fixed 2026-08-06
+# -> 08-14 gemini episode kept alerting after the daemon restart because the
+# 7-day window still contained the old streak). `current_streak` is the run
+# ending at the agent's MOST RECENT job -- counted back from the newest row
+# until the first non-failure -- and is 0 whenever that latest job did not
+# match the failure signature, however large the historical max was.
+# `latest_status`/`latest_enqueued_at` (the newest job's status and
+# timestamp, regardless of is_sig) are what let a reader tell live from
+# resolved at a glance.
 agent_failure_stats <- function(con, interval_sql) {
   sql <- sprintf("
     WITH ordered AS (
-      SELECT agent, enqueued_at::TIMESTAMP AS enqueued_at,
+      SELECT agent, enqueued_at::TIMESTAMP AS enqueued_at, status,
         CASE WHEN status = 'failed' AND error LIKE '%%no valid stream-json%%'
              THEN 1 ELSE 0 END AS is_sig
       FROM roborev_src.review_jobs
       WHERE enqueued_at::TIMESTAMP >= current_timestamp::TIMESTAMP - INTERVAL %s
     ),
-    grp AS (
-      SELECT agent, is_sig,
-        ROW_NUMBER() OVER (PARTITION BY agent ORDER BY enqueued_at)
-        - ROW_NUMBER() OVER (PARTITION BY agent, is_sig ORDER BY enqueued_at) AS grp_id
+    ranked AS (
+      SELECT agent, enqueued_at, status, is_sig,
+        ROW_NUMBER() OVER (PARTITION BY agent ORDER BY enqueued_at DESC) AS rn_desc,
+        ROW_NUMBER() OVER (PARTITION BY agent ORDER BY enqueued_at) AS rn_asc
       FROM ordered
+    ),
+    grp AS (
+      SELECT agent, is_sig, rn_asc,
+        rn_asc - ROW_NUMBER() OVER (PARTITION BY agent, is_sig ORDER BY rn_asc) AS grp_id
+      FROM ranked
     ),
     runs AS (
       SELECT agent, grp_id, COUNT(*) AS run_length
@@ -1504,10 +1520,43 @@ agent_failure_stats <- function(con, interval_sql) {
       FROM ordered
       GROUP BY agent
       HAVING SUM(is_sig) > 0
+    ),
+    latest AS (
+      -- the newest job per agent, any status -- the one fact that
+      -- distinguishes 'broken now' from 'was broken'
+      SELECT agent, status AS latest_status, enqueued_at AS latest_enqueued_at
+      FROM ranked
+      WHERE rn_desc = 1
+    ),
+    first_nonfail AS (
+      -- counting back from the newest job (rn_desc = 1), the first row that
+      -- is NOT the failure signature; everything newer than it (rn_desc 1..
+      -- first_ok_rn-1) is the current unbroken run
+      SELECT agent, MIN(rn_desc) AS first_ok_rn
+      FROM ranked
+      WHERE is_sig = 0
+      GROUP BY agent
+    ),
+    agent_totals AS (
+      SELECT agent, COUNT(*) AS n_total
+      FROM ranked
+      GROUP BY agent
+    ),
+    current_streak AS (
+      -- no non-failure row in the window at all -> the whole window is the
+      -- current streak (COALESCE falls back to n_total)
+      SELECT t.agent,
+        COALESCE(f.first_ok_rn - 1, t.n_total) AS current_streak
+      FROM agent_totals t
+      LEFT JOIN first_nonfail f USING (agent)
     )
-    SELECT c.agent, c.n_failures, COALESCE(s.max_streak, 0) AS max_streak
+    SELECT c.agent, c.n_failures, COALESCE(s.max_streak, 0) AS max_streak,
+           COALESCE(cs.current_streak, 0) AS current_streak,
+           l.latest_status, l.latest_enqueued_at
     FROM counts c
     LEFT JOIN streaks s USING (agent)
+    LEFT JOIN current_streak cs USING (agent)
+    LEFT JOIN latest l USING (agent)
     ORDER BY c.n_failures DESC
   ", interval_sql)
   DBI::dbGetQuery(con, sql)
@@ -1554,27 +1603,48 @@ agent_failure_section <- tryCatch({
                        suffixes = c("_7d", "_24h"))
       merged$n_failures_24h <- ifelse(is.na(merged$n_failures_24h), 0L, merged$n_failures_24h)
       merged$max_streak_24h <- ifelse(is.na(merged$max_streak_24h), 0L, merged$max_streak_24h)
-      merged <- merged[order(-merged$max_streak_7d), , drop = FALSE]
+      # The 7-day window is the widest we retain, so its current_streak /
+      # latest_status / latest_enqueued_at are the authoritative "is this
+      # agent broken RIGHT NOW" facts -- the 24h-window versions of the same
+      # columns (now suffixed _24h by merge()) are not used below.
+      merged <- merged[order(-merged$current_streak_7d, -merged$max_streak_7d), , drop = FALSE]
 
       max_streak_overall <- max(merged$max_streak_7d, na.rm = TRUE)
-      alert_agents <- merged$agent[merged$max_streak_7d >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD]
+      # CRITICAL: alert on the CURRENT streak (the run ending at each agent's
+      # most recent job), never the historical max_streak. A max streak that
+      # ended before the agent's latest job is a RESOLVED incident -- alerting
+      # on it fires for days after a fix lands (the daemon-restart fix in
+      # llm#936 left gemini's 7-day max_streak at 62 for a week even though
+      # the very next job after the restart succeeded).
+      alert_agents <- merged$agent[merged$current_streak_7d >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD]
+
+      fmt_last_job_ts <- function(ts) {
+        if (is.null(ts) || is.na(ts) || !nzchar(ts)) return("—")
+        substr(ts, 1, 16)  # "YYYY-MM-DD HH:MM", drop seconds
+      }
 
       rows_html <- paste(apply(merged, 1, function(r) {
-        is_alert   <- as.integer(r[["max_streak_7d"]]) >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD
+        is_alert   <- as.integer(r[["current_streak_7d"]]) >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD
         row_bg     <- if (is_alert) "#2a0a0a" else DARK_CARD
         streak_col <- if (is_alert) "#ff5252" else DARK_TEXT
+        last_job   <- sprintf("%s @ %s",
+                               r[["latest_status_7d"]] %||% "—",
+                               fmt_last_job_ts(r[["latest_enqueued_at_7d"]]))
         sprintf(
           '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;">%s</td>
 <td style="padding:5px 10px;text-align:right;">%s</td>
 <td style="padding:5px 10px;text-align:right;">%s</td>
 <td style="padding:5px 10px;text-align:right;">%s</td>
+<td style="padding:5px 10px;text-align:right;">%s</td>
 <td style="padding:5px 10px;text-align:right;color:%s;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;">%s</td>
 </tr>',
           row_bg, htmlEscape(r[["agent"]]),
           r[["n_failures_24h"]], r[["max_streak_24h"]],
-          r[["n_failures_7d"]],
-          streak_col, r[["max_streak_7d"]]
+          r[["n_failures_7d"]], r[["max_streak_7d"]],
+          streak_col, r[["current_streak_7d"]],
+          htmlEscape(last_job)
         )
       }), collapse = "\n")
 
@@ -1583,20 +1653,50 @@ agent_failure_section <- tryCatch({
 <thead><tr style="background-color:%s;">
 <th style="padding:5px 10px;text-align:left;">Agent</th>
 <th style="padding:5px 10px;text-align:right;">Failures 24h</th>
-<th style="padding:5px 10px;text-align:right;">Max streak 24h</th>
+<th style="padding:5px 10px;text-align:right;">Max streak 24h (history)</th>
 <th style="padding:5px 10px;text-align:right;">Failures 7d</th>
-<th style="padding:5px 10px;text-align:right;">Max streak 7d</th>
+<th style="padding:5px 10px;text-align:right;">Max streak 7d (history)</th>
+<th style="padding:5px 10px;text-align:right;">Current streak</th>
+<th style="padding:5px 10px;text-align:left;">Last job</th>
 </tr></thead><tbody>%s</tbody></table>',
         DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, rows_html
+      )
+
+      # Per-agent prose so a reader can tell live vs resolved at a glance
+      # without cross-referencing table columns -- the historical max_streak
+      # figure is preserved here (never dropped) so the evidence that an
+      # episode happened is not lost, it is just labelled as history.
+      per_agent_lines <- paste(apply(merged, 1, function(r) {
+        cur      <- as.integer(r[["current_streak_7d"]])
+        is_alert <- cur >= AGENT_FAILURE_STREAK_ALERT_THRESHOLD
+        status_note <- if (is_alert) {
+          sprintf("CURRENT STREAK: %d consecutive failures ongoing", cur)
+        } else {
+          "no current streak"
+        }
+        sprintf(
+          '<li style="color:%s;">%s: %s such failures in the last 7&nbsp;d (max run %s); most recent job: %s @ %s &mdash; %s</li>',
+          if (is_alert) "#ff5252" else DARK_TEXT,
+          htmlEscape(r[["agent"]]),
+          r[["n_failures_7d"]], r[["max_streak_7d"]],
+          htmlEscape(r[["latest_status_7d"]] %||% "—"),
+          htmlEscape(fmt_last_job_ts(r[["latest_enqueued_at_7d"]])),
+          status_note
+        )
+      }), collapse = "\n")
+      per_agent_html <- sprintf(
+        '<ul style="font-size:%s;margin-top:6px;padding-left:20px;">%s</ul>',
+        EMAIL_FONT_BODY, per_agent_lines
       )
 
       alert_html <- if (length(alert_agents) > 0L) {
         sprintf(
           '<p style="color:#ff5252;font-size:%s;margin-top:8px;font-weight:bold;">
-  &#9888; %s: streak &ge; %d consecutive agent failures with empty stdout --
-  CAUSE UNKNOWN, NOT a parse error (roborev\'s own message is fabricated --
-  see roborev-resolution.md). Run the agent\'s command manually with the same
-  flags and read stderr.</p>',
+  &#9888; %s: CURRENT streak &ge; %d consecutive agent failures with empty
+  stdout, including the most recent job -- this is happening NOW, not a past
+  episode. CAUSE UNKNOWN, NOT a parse error (roborev\'s own message is
+  fabricated -- see roborev-resolution.md). Run the agent\'s command manually
+  with the same flags and read stderr.</p>',
           EMAIL_FONT_SUBTITLE, paste(alert_agents, collapse = ", "),
           AGENT_FAILURE_STREAK_ALERT_THRESHOLD
         )
@@ -1605,9 +1705,14 @@ agent_failure_section <- tryCatch({
       }
 
       list(
-        body    = paste0(table_html, alert_html),
-        summary = sprintf("%d agent(s) affected · max streak %d (threshold %d)",
-                          nrow(merged), max_streak_overall, AGENT_FAILURE_STREAK_ALERT_THRESHOLD)
+        body    = paste0(table_html, per_agent_html, alert_html),
+        summary = if (length(alert_agents) > 0L) {
+          sprintf("%d agent(s) with history · %d CURRENTLY alerting (threshold %d)",
+                  nrow(merged), length(alert_agents), AGENT_FAILURE_STREAK_ALERT_THRESHOLD)
+        } else {
+          sprintf("%d agent(s) with history (max streak %d) · none currently alerting",
+                  nrow(merged), max_streak_overall)
+        }
       )
     }
   }
