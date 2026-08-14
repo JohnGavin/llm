@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.roborev.daemon.plist
+     launchd supervision for the roborev review daemon (llm#936, llm#956).
+
+     WHY THIS EXISTS
+     `roborev daemon start` self-daemonizes: forks, detaches, and returns a
+     shell prompt. Nothing then owns its lifecycle, nothing restarts it,
+     nothing bounds its age, and it appears in no health check. That
+     self-daemonized process ran for 7 days holding a stale GEMINI_API_KEY
+     after a rotation; every review failed the whole time and nobody knew
+     (llm#936). This plist replaces the self-daemonizing entrypoint with
+     launchd supervision via roborev_daemon_launcher.sh, which re-reads
+     secrets fresh on every start (RunAtLoad, and every KeepAlive restart)
+     and execs `roborev daemon run` in the foreground so its PID is the one
+     launchd actually supervises.
+
+     Once installed, never run `roborev daemon start` again on this
+     machine — the two would race for the same job queue. Restarts go
+     through launchd: `launchctl kickstart -k gui/$(id -u)/com.roborev.daemon`.
+
+     See .claude/rules/long-running-process-supervision.md for the general
+     invariant. Full migration sequence below is descriptive only — the
+     orchestrator runs it after review, this file does not execute anything.
+
+     MIGRATION SEQUENCE (orchestrator step, after PR review)
+       1. Identify and stop the OLD self-daemonized instance (there is no
+          confirmed `daemon stop` subcommand in this roborev version, so
+          stop it by PID, not by CLI verb):
+            pgrep -fl "roborev daemon run"
+            kill <pid from above>
+          Confirm it is gone: pgrep -f "roborev daemon run" (no output).
+
+       2. Install this plist:
+            cp .claude/launchd/com.roborev.daemon.plist \
+               ~/Library/LaunchAgents/com.roborev.daemon.plist
+
+       3. Bootstrap it:
+            launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.roborev.daemon.plist
+
+       4. Verify a NEW pid appears (must differ from step 1's pid, and
+          command line should read "roborev daemon run"):
+            launchctl print gui/$(id -u)/com.roborev.daemon | grep pid
+            pgrep -fl "roborev daemon run"
+
+       5. Verify the daemon actually processes work, not just that a PID
+          exists — make one small commit in a repo with roborev's
+          post-commit hook installed, then confirm a new row lands in
+          ~/.roborev/reviews.db for that commit within a couple of minutes:
+            sqlite3 ~/.roborev/reviews.db \
+              "SELECT id, status, agent, enqueued_at FROM review_jobs \
+               ORDER BY enqueued_at DESC LIMIT 3;"
+
+       ROLLBACK (only if step 4 or 5 fails)
+            launchctl bootout gui/$(id -u)/com.roborev.daemon
+          This returns to NO supervised daemon running — the safe failure
+          mode. Only as a temporary stopgap, and only if reviews must keep
+          flowing before the plist is fixed, fall back to the old
+          self-daemonizing entrypoint (`roborev daemon start`) and reopen
+          llm#956; do not treat that fallback as the resolved state.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.roborev.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/.claude/scripts/roborev_daemon_launcher.sh</string>
+    </array>
+
+    <!-- Same PATH as com.roborev.auto-refine.plist — the daemon resolves
+         `gemini`/`codex` review-agent binaries from PATH, and this is the
+         one already known to work for that resolution. Copied deliberately,
+         not re-derived. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Perpetual process, not a scheduled task: restart on crash or
+         reboot, never exit on its own. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Bound a crash-loop: if the daemon exits within 10s of starting
+         (e.g. GEMINI_API_KEY genuinely absent, exit 78 from the launcher),
+         wait at least this many seconds before the next KeepAlive restart
+         rather than spinning. Matches roborev_bridge's precedent value. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev-daemon.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev-daemon.log</string>
+</dict>
+</plist>
