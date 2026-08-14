@@ -1130,6 +1130,180 @@ oversized_block <- tryCatch({
   }
 }, error = function(e) "")
 
+# ── Section: hook liveness — registered vs firing (llm#950) ─────────────────
+# Prior to llm#950, only 1 of ~15 registered hooks (context_monitor) wrote to
+# hook_events, so a hook that silently stopped firing was indistinguishable
+# from a hook with nothing to report — the exact failure mode that already
+# bit llm#913 and llm#695. This section cross-references EVERY hook script
+# registered in settings.json against hook_events fire counts.
+#
+# The registered set is derived by PARSING settings.json's hooks block, not
+# a hardcoded list — llm#944 showed a hardcoded rule list silently drifting
+# out of sync with policy while its checker kept passing. A hook here with
+# ZERO fires in 7 days IS the alert (zero-metric-evidence-or-defect rule):
+# it means either the hook was never wired to emit, or it was wired and has
+# since gone silent — both worth knowing, and indistinguishable without this
+# table.
+
+# Walk every event-type array -> matcher-group -> hooks[] -> command,
+# extracting the basename of any command that targets a .claude/hooks/<name>.sh
+# script. Inline one-liners (afplay/osascript sound triggers etc.) have no
+# hook_name to match against hook_events and are intentionally excluded, not
+# counted as "silent". Returns character(0) (not an error) if settings.json is
+# missing or unparseable — callers decide how to report that.
+derive_registered_hooks <- function(settings_path) {
+  # NOTE: deliberately does NOT use the file's %||% operator here. %||% reads
+  # a[[1L]] and calls is.na()/nzchar() on it, which is only safe for scalar
+  # values. hooks_cfg / event_groups / grp$hooks are nested LISTS (multiple
+  # event types, each with multiple matcher-groups, each with multiple hook
+  # entries) -- calling is.na() on a multi-field list element throws
+  # "the condition has length > 1" (found via `EMAIL_DRY_RUN=1` smoke test,
+  # llm#950). Use explicit is.null() checks for anything structural instead.
+  if (!file.exists(settings_path)) return(character(0))
+  settings_cfg <- jsonlite::fromJSON(settings_path, simplifyVector = FALSE)
+  hooks_cfg <- settings_cfg$hooks
+  if (is.null(hooks_cfg)) hooks_cfg <- list()
+  registered <- character(0)
+  for (event_groups in hooks_cfg) {
+    for (grp in event_groups) {
+      hlist <- grp$hooks
+      if (is.null(hlist)) hlist <- list()
+      for (h in hlist) {
+        cmd <- h$command
+        if (is.null(cmd) || !is.character(cmd) || length(cmd) != 1L) cmd <- ""
+        m <- regmatches(cmd, regexpr("\\.claude/hooks/[A-Za-z0-9_]+\\.sh", cmd))
+        if (length(m) && nzchar(m)) {
+          registered <- c(registered, sub("^.*/([A-Za-z0-9_]+)\\.sh$", "\\1", m))
+        }
+      }
+    }
+  }
+  sort(unique(registered))
+}
+
+.hook_liveness_settings_path <- path.expand("~/.claude/settings.json")
+.hook_liveness_registered <- tryCatch(
+  derive_registered_hooks(.hook_liveness_settings_path),
+  error = function(e) character(0)
+)
+
+hook_liveness_block <- tryCatch({
+  if (!file.exists(.hook_liveness_settings_path)) {
+    sprintf('<p style="color:%s;">settings.json not found at %s.</p>',
+            DARK_MUTED, htmlEscape(.hook_liveness_settings_path))
+  } else {
+    registered <- .hook_liveness_registered
+
+    if (length(registered) == 0L) {
+      sprintf('<p style="color:%s;">No hook scripts found under settings.json\'s hooks block.</p>', DARK_MUTED)
+    } else {
+      # Independent evidence check (zero-metric-evidence-or-defect): confirm
+      # hook_events itself is reachable and has SOME rows before trusting any
+      # per-hook zero below — a query that silently returns empty because the
+      # table/db is unreachable must not be reported as "0 registered hooks
+      # fired", which would misleadingly imply every hook is broken.
+      evidence <- safe_query("SELECT count(*) AS n FROM hook_events", fallback = data.frame(n = NA_integer_))
+      evidence_n <- if (nrow(evidence) > 0L) evidence$n[[1]] else NA_integer_
+
+      fire_counts <- safe_query("
+        SELECT
+          hook_name,
+          SUM(CASE WHEN fired_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR THEN 1 ELSE 0 END) AS fires_24h,
+          SUM(CASE WHEN fired_at >= current_timestamp::TIMESTAMP - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d,
+          MAX(fired_at) AS last_fired_at
+        FROM hook_events
+        GROUP BY hook_name
+      ")
+
+      reg_df <- data.frame(hook_name = registered, stringsAsFactors = FALSE)
+      merged <- merge(reg_df, fire_counts, by = "hook_name", all.x = TRUE)
+      merged$fires_24h <- ifelse(is.na(merged$fires_24h), 0L, merged$fires_24h)
+      merged$fires_7d  <- ifelse(is.na(merged$fires_7d), 0L, merged$fires_7d)
+      merged <- merged[order(merged$fires_7d, merged$hook_name), , drop = FALSE]
+      n_silent <- sum(merged$fires_7d == 0L)
+
+      if (!is.na(evidence_n) && evidence_n > 0L && all(merged$fires_7d == 0L)) {
+        # The raw table has rows but every registered hook shows zero — the
+        # per-hook aggregation (not the hooks) is broken. Fail loud rather
+        # than rendering a table that looks like "every hook is dead".
+        sprintf(
+          '<p style="color:#ff5252;">INCONSISTENT: hook_events has %d row(s) but the
+per-hook aggregation returned zero for all %d registered hooks — the query, not the
+hooks, is likely broken. See zero-metric-evidence-or-defect rule.</p>',
+          evidence_n, length(registered)
+        )
+      } else {
+        rows_html <- paste(apply(merged, 1, function(r) {
+          is_silent <- as.integer(r[["fires_7d"]]) == 0L
+          row_bg <- if (is_silent) "#2a0a0a" else DARK_CARD
+          f7_col <- if (is_silent) "#ff5252" else DARK_TEXT
+          sprintf(
+            '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-family:monospace;font-size:12px;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;">%s</td>
+<td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
+</tr>',
+            row_bg,
+            htmlEscape(r[["hook_name"]]),
+            DARK_TEXT, r[["fires_24h"]],
+            f7_col, r[["fires_7d"]],
+            DARK_MUTED, r[["last_fired_at"]] %||% "never"
+          )
+        }), collapse = "\n")
+
+        paste0(
+          sprintf(
+            '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead><tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Hook</th>
+<th style="padding:5px 10px;text-align:right;">Fires 24h</th>
+<th style="padding:5px 10px;text-align:right;">Fires 7d</th>
+<th style="padding:5px 10px;text-align:left;">Last fired</th>
+</tr></thead><tbody>%s</tbody></table>',
+            DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, rows_html
+          ),
+          sprintf(
+            '<p style="color:%s;font-size:%s;margin-top:8px;">
+%d/%d registered hooks silent (0 fires) in the last 7 days. Some guards only emit
+on their own BLOCK path and only when not in an off/log mode (e.g.
+compound_command_guard under COMPOUND_GUARD_MODE=log) — a persistent zero there
+reflects configuration, not a dead hook. Cross-check the guard\'s own
+~/.claude/logs/*.log before filing an issue. Emitter: hook_event_emit.sh ·
+Loader: hook_events_load.sh · llm#950.</p>',
+            if (n_silent > 0L) "#ff5252" else DARK_MUTED, EMAIL_FONT_SUBTITLE,
+            n_silent, length(registered)
+          )
+        )
+      }
+    }
+  }
+}, error = function(e) {
+  sprintf('<p style="color:#ff5252;">hook liveness section failed: %s</p>',
+          htmlEscape(conditionMessage(e)))
+})
+
+hook_liveness_summary <- tryCatch({
+  registered <- .hook_liveness_registered
+  if (length(registered) == 0L) {
+    "settings.json not found or no hook scripts registered"
+  } else {
+    fc <- safe_query("
+      SELECT hook_name,
+             SUM(CASE WHEN fired_at >= current_timestamp::TIMESTAMP - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d
+      FROM hook_events GROUP BY hook_name
+    ")
+    silent <- sum(!(registered %in% fc$hook_name[fc$fires_7d > 0L]))
+    sprintf("%d registered · %d silent 7d", length(registered), silent)
+  }
+}, error = function(e) "unavailable")
+
+sec_hooks_block <- collapsible_block(
+  "Hook liveness (registered vs firing)",
+  hook_liveness_summary,
+  hook_liveness_block
+)
+
 email_body <- paste0(
   sprintf('<div style="background-color:%s;color:%s;font-family:Arial,sans-serif;
 padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
@@ -1143,6 +1317,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   sec3e_block, "\n",
   sec3f_block, "\n",
   oversized_block, "\n",
+  sec_hooks_block, "\n",
   sec4_block, "\n",
   footer_html,
   "\n", qa_block, "\n",

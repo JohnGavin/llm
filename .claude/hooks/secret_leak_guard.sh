@@ -18,6 +18,19 @@
 
 set -uo pipefail
 
+# llm#950: resolve hook_event_emit.sh relative to THIS script's own location
+# (not a hardcoded ~/.claude/scripts/... expanduser path). ~/.claude/hooks/
+# and ~/.claude/scripts/ are symlinks into the main checkout in production,
+# so a hardcoded path would silently point at the main checkout's copy even
+# when this script is under test inside a worktree. Mirrors the SCRIPT_DIR
+# pattern already used by llmtelemetry_emit.sh, but as PURE parameter
+# expansion (no `cd`/`pwd` subshell) so this line costs nothing on the fast
+# (no-match, no-python) path — a `$(...)` subshell here measurably regressed
+# the fast path from ~11ms to ~14-15ms/call when profiled (llm#950). Leaves
+# a harmless "../" component in the path; python's os.path.exists() and
+# `bash <path>` both resolve that without needing realpath.
+export HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+
 # ─── Rule detection + logging, all in one python3 process ──────────────────
 # Reads the hook JSON on stdin, extracts tool_input.command (falls back to a
 # top-level "command" key), applies Rules 1-4, writes the block/bypass log
@@ -25,7 +38,7 @@ set -uo pipefail
 # or 0 to ALLOW. ANY internal error is swallowed and treated as ALLOW
 # (fail-open) — a broken guard must never wedge the session.
 PY_CODE=$(cat <<'PYEOF'
-import sys, json, re, os, datetime
+import sys, json, re, os, datetime, subprocess
 
 # Literal credential token shapes (Rule 4). Order matters: more specific
 # prefixes (sk-ant-) must be checked before their generic parents (sk-) so
@@ -82,6 +95,24 @@ def log_bypass(cmd):
     _append(BYPASS_FILE, '%s\t%s' % (_utc_ts(), redact(cmd)[:200]))
 
 
+def emit_hook_event(event_type, preview):
+    # llm#950 — fire-and-forget telemetry so a dead guard is visible (hooks
+    # registered but never firing). Spool-only write (see hook_event_emit.sh
+    # header); NEVER allowed to affect the block decision, so every failure
+    # mode here is swallowed locally rather than propagating to main()'s
+    # outer try/except (which would turn a BLOCK into a silent ALLOW).
+    try:
+        script = os.environ.get('HOOK_EVENT_EMIT_SCRIPT', '') \
+            or os.path.expanduser('~/.claude/scripts/hook_event_emit.sh')
+        if script and os.path.exists(script):
+            subprocess.run(
+                ['bash', script, 'secret_leak_guard', event_type, preview],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+            )
+    except Exception:
+        pass
+
+
 def block(rule_num, message, cmd, bypassable):
     if bypassable and os.environ.get('SECRET_GUARD_BYPASS') == '1':
         log_bypass(cmd)
@@ -90,6 +121,7 @@ def block(rule_num, message, cmd, bypassable):
     sys.stderr.write('Command (redacted, truncated to 200 chars): %s\n' % redact(cmd)[:200])
     sys.stderr.write('Log: %s\n' % LOG_FILE)
     log_block(rule_num, cmd)
+    emit_hook_event('PreToolUse:blocked', redact(cmd)[:200])
     sys.exit(2)
 
 
@@ -216,6 +248,11 @@ run_guard() {
 if [ "${1:-}" = "--selftest" ]; then
   TMP_LOG_DIR=$(mktemp -d /tmp/secret_leak_guard_selftest_XXXXXX)
   export SECRET_GUARD_LOG_DIR="$TMP_LOG_DIR"
+  # llm#950: block() now emits a hook_events telemetry line via
+  # hook_event_emit.sh. Redirect that to a throwaway spool for the duration
+  # of this selftest so its ~14 BLOCK cases never touch the real spool at
+  # ~/.claude/logs/hook_events_staging.jsonl.
+  export HOOK_EVENTS_SPOOL="$TMP_LOG_DIR/hook_events_staging.jsonl"
   unset SECRET_GUARD_BYPASS
 
   TOTAL=0
