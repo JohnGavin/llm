@@ -38,13 +38,15 @@
 # false success: it restarted one launchd consumer of a secret, exited 0, and
 # left a second, non-launchd consumer holding the stale value for hours
 # (llm#936). This script has the same weakness — it never restarted anything,
-# it only told the caller to go test a job by hand. Rather than sourcing
-# rotate_secret.sh's restart machinery (this dispatch's write-scope is this
-# file, rotate_secret.sh, and the rules doc only — no new shared-lib file), the
-# same consumer-map + verify-by-PID-and-start-time design is duplicated below.
-# GMAIL_APP_PASSWORD's consumers are all launchd jobs (no self-daemonized
-# process reads it), so only the `launchd:` kind is exercised here, but the
-# same `kind:label` shape is kept for consistency with rotate_secret.sh.
+# it only told the caller to go test a job by hand. The consumer map +
+# verify-by-PID-and-start-time machinery now lives in the shared
+# lib/secret_consumers.sh (llm#958), sourced by both this script and
+# rotate_secret.sh — a hand-maintained duplicate of the consumer map is
+# exactly the failure shape the 2026-08-11..14 GMAIL_APP_PASSWORD incident was
+# about (the same name in two places, silently drifting). GMAIL_APP_PASSWORD's
+# consumers are all launchd jobs (no self-daemonized process reads it), so
+# only the `launchd:` kind is exercised here, but the same `kind:label` shape
+# is kept for consistency with rotate_secret.sh.
 #
 # Usage:
 #   rotate_gmail_password.sh --dry-run   (default) — validate, change nothing
@@ -67,98 +69,18 @@ LOG="$HOME/.claude/logs/rotate_gmail_password.log"
 h12() { printf '%s' "$1" | shasum -a 256 | cut -c1-12; }
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true; }
 
-# ── consumers of GMAIL_APP_PASSWORD — every launchd job that reads it via
-#    the ~/.claude/env fallback files above. Restarted + VERIFIED after every
-#    rotation (llm#955): a consumer NOT listed here is invisible to this
-#    check, so keep this list in sync with the ENV_FILES readers. ───────────
-CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email"
-
-# ── consumer restart mechanisms — table-driven: a new kind is one `case` arm
-#    in each of the three functions below, not a new code path. Duplicated
-#    from rotate_secret.sh (see the MULTI-CONSUMER header comment above for
-#    why this is a duplication rather than a shared import). ────────────────
-kind_get_pid() {
-    case "$1" in
-        launchd)
-            launchctl list "$2" 2>/dev/null \
-              | awk -F'= ' '/"PID"/{gsub(/[; \t]/,"",$2); print $2; exit}'
-            ;;
-        daemon)
-            pgrep -f "$2 daemon" 2>/dev/null | head -1
-            ;;
-        *) return 1 ;;
-    esac
-}
-
-kind_restart() {
-    case "$1" in
-        launchd) launchctl kickstart -k "gui/$(id -u)/$2" >/dev/null 2>&1 ;;
-        daemon)  "$2" daemon restart >/dev/null 2>&1 ;;
-        *)       return 1 ;;
-    esac
-}
-
-pid_start_time() {
-    local pid="$1"
-    [ -n "$pid" ] || return 1
-    ps -o lstart= -p "$pid" 2>/dev/null | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
-}
-
-# Never treats "restart command exited 0" as proof. Captures PID + process
-# start-time before and after; only reports success when both changed.
-CONSUMER_ROWS=()
-
-restart_and_verify_consumer() {
-    local spec="$1" kind label pid_before pid_after t_before t_after
-    if [[ "$spec" == *:* ]]; then
-        kind="${spec%%:*}"; label="${spec#*:}"
-    else
-        kind="launchd"; label="$spec"
-    fi
-
-    case "$kind" in
-        launchd|daemon) : ;;
-        *)
-            echo "  $spec  UNKNOWN CONSUMER KIND '$kind' — skipping"
-            CONSUMER_ROWS+=("$spec|$kind|no|no|unknown-kind")
-            return 1
-            ;;
-    esac
-
-    pid_before="$(kind_get_pid "$kind" "$label")"
-    if [ -z "$pid_before" ]; then
-        echo "  $spec  CANNOT VERIFY — no running process found before restart"
-        CONSUMER_ROWS+=("$spec|$kind|no|no|cannot-determine-pid")
-        return 1
-    fi
-    t_before="$(pid_start_time "$pid_before")"
-
-    if ! kind_restart "$kind" "$label"; then
-        echo "  $spec  RESTART COMMAND FAILED"
-        CONSUMER_ROWS+=("$spec|$kind|no|no|restart-command-failed")
-        return 1
-    fi
-
-    sleep "${ROTATE_SECRET_RESTART_DELAY:-2}"
-
-    pid_after="$(kind_get_pid "$kind" "$label")"
-    if [ -z "$pid_after" ]; then
-        echo "  $spec  CANNOT VERIFY — no running process found after restart"
-        CONSUMER_ROWS+=("$spec|$kind|yes|no|cannot-determine-pid-after")
-        return 1
-    fi
-    t_after="$(pid_start_time "$pid_after")"
-
-    if [ "$pid_before" = "$pid_after" ] && [ "$t_before" = "$t_after" ]; then
-        echo "  $spec  RESTART DID NOT TAKE EFFECT — pid+start-time unchanged (pid=$pid_before, start=$t_before)"
-        CONSUMER_ROWS+=("$spec|$kind|yes|no|not-cycled")
-        return 1
-    fi
-
-    echo "  $spec  restarted and verified (pid $pid_before -> $pid_after)"
-    CONSUMER_ROWS+=("$spec|$kind|yes|yes|ok")
-    return 0
-}
+# ── consumer map + restart/verify machinery — shared with rotate_secret.sh
+#    (llm#958). Defines CONSUMERS_GMAIL_APP_PASSWORD, kind_get_pid,
+#    kind_restart, pid_start_time, CONSUMER_ROWS, restart_and_verify_consumer.
+#    Keep the map in lib/secret_consumers.sh in sync with the ENV_FILES
+#    readers above if a new job starts reading GMAIL_APP_PASSWORD. Path
+#    resolved relative to THIS script's location, not the caller's cwd — both
+#    scripts run from arbitrary directories (launchd, cron, interactive).
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SECRET_CONSUMERS_LIB="$SCRIPTS_DIR/lib/secret_consumers.sh"
+[ -r "$SECRET_CONSUMERS_LIB" ] || { echo "FATAL: $SECRET_CONSUMERS_LIB not found" >&2; exit 1; }
+# shellcheck source=lib/secret_consumers.sh
+source "$SECRET_CONSUMERS_LIB"
 
 run_consumer_restarts() {
     local name="$1"
