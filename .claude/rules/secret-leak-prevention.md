@@ -45,11 +45,11 @@ is unaffected and still never spawns a subprocess.
 | # | Catches | Bypass |
 |---|---------|--------|
 | 1 | `gh (issue\|pr\|release\|gist\|api) ... --body/-b` containing a backtick or `$(` — the shell evaluates it before `gh` sees it | **None** — fix is trivial: use `--body-file <path>` |
-| 2 | `echo`/`printf` in the same command segment as a `${NAME}` expansion where NAME matches `KEY\|TOKEN\|SECRET\|PASSWORD\|PASSWD\|PAT\|CREDENTIAL` (catches `echo "${VAR:+SET}${VAR:-UNSET}"` — `:-` yields the VALUE when set) | `SECRET_GUARD_BYPASS=1` |
-| 3 | A bare `printenv`/`env` (no argument, i.e. an actual dump) routed toward `gh `, `curl `, `\|`, `>`, or `tee`; or `printenv`/`env` appearing literally inside a `gh --body` argument | `SECRET_GUARD_BYPASS=1` |
+| 2 | `echo`/`printf` in the same command segment as a `${NAME}` expansion where NAME matches `KEY\|TOKEN\|SECRET\|PASSWORD\|PASSWD\|PAT\|CREDENTIAL` (catches `echo "${VAR:+SET}${VAR:-UNSET}"` — `:-` yields the VALUE when set) | `SECRET_GUARD_BYPASS=1 ` prefix — see Bypass |
+| 3 | A bare `printenv`/`env` (no argument, i.e. an actual dump) routed toward `gh `, `curl `, `\|`, `>`, or `tee`; or `printenv`/`env` appearing literally inside a `gh --body` argument | `SECRET_GUARD_BYPASS=1 ` prefix — see Bypass |
 | 4 | A literal credential token in argv: `ghp_`/`gho_`/`ghs_`/`github_pat_`/`sk-ant-`/`sk-<20+ chars>`/`hf_<20+>`/`xoxb-`/`xoxp-`/`AIza<30+>`/`AKIA<16>`/`glpat-`/a PEM `-----BEGIN...PRIVATE KEY-----` block | **None** |
 | 5 | The **contents** of a `gh (issue\|pr\|release\|gist\|api) ... --body-file <path>` file — same Rule-4 shape patterns, applied to what's actually in the file, not just the command string. `--body-file -` (stdin) is untouched here; Rule 3 already covers a piped dump into it. A missing/unreadable/directory/huge path fails OPEN (no block, no output) — capped at the first 256 KiB read | **None** — same rationale as Rule 4: a spliced credential is a spliced credential regardless of which side of `--body-file` it's read from |
-| 6 | A high-entropy (Shannon entropy ≥ 3.0 bits/char, ≥16 chars, no vendor prefix) unprefixed value passed as an argument to `gh`/`curl`/`hf`/`aws` — the egress commands that actually send local data off the machine. Reuses `secret_exposure_scan.sh`'s entropy heuristic rather than growing Rule 4's prefix list (a prefix list only ever knows yesterday's vendors). Deliberately narrow: an entropy test over ALL argv would trip constantly on git SHAs, base64 blobs, nix store hashes, and UUIDs and get the guard disabled | `SECRET_GUARD_BYPASS=1` — heuristic, will have false positives Rule 4 never does |
+| 6 | A high-entropy (Shannon entropy ≥ 3.0 bits/char, ≥16 chars, no vendor prefix) unprefixed value passed as an argument to `gh`/`curl`/`hf`/`aws` — the egress commands that actually send local data off the machine. Reuses `secret_exposure_scan.sh`'s entropy heuristic rather than growing Rule 4's prefix list (a prefix list only ever knows yesterday's vendors). Deliberately narrow: an entropy test over ALL argv would trip constantly on git SHAs, base64 blobs, nix store hashes, and UUIDs and get the guard disabled | `SECRET_GUARD_BYPASS=1 ` prefix — see Bypass; heuristic, will have false positives Rule 4 never does |
 
 Rule 2's safe idiom is `[ -n "${VAR:-}" ] && echo set` — the expansion never
 reaches an `echo`/`printf` argument, so it stays allowed. This is the
@@ -57,7 +57,12 @@ recommended pattern in `credential-management.md`.
 
 Rule 6's entropy check excludes any token containing a `/` (paths and
 relative `gh api owner/repo/...` endpoints are the single most common false
-trigger) and any token that is entirely hex digits/hyphens (git SHAs, nix
+trigger), any token containing `%{` (curl's `-w`/`--write-out` format syntax,
+e.g. `%{http_code} %{size_download}\n` — found in real use 2026-08-14: a
+plain `curl -o <scratchpad-path> -w "%{http_code} %{size_download}\n" <url>`
+was blocked because that `-w` token has entropy 4.196 bits/char and no
+vendor prefix; the `-o` path token was already correctly excluded by the `/`
+check), and any token that is entirely hex digits/hyphens (git SHAs, nix
 store hashes, UUIDs) — see the `looks_like_credential_value()` docstring in
 the hook source for the full exclusion list. It is intentionally scoped to
 `gh`/`curl`/`hf`/`aws` only; a bare `echo` of an unprefixed high-entropy
@@ -66,14 +71,42 @@ allowed — Rule 2 already covers the *named*-variable echo case, and widening
 Rule 6 to non-egress commands was rejected as too wide a false-positive
 surface for the observed incident class.
 
+**Known blind spot:** these are *structural* exclusions (does this token look
+like a path/URL/format-string?), not content inspection. A real secret that
+happens to contain a `/`, a hex-only shape, or the literal substring `%{`
+will evade Rule 6 the same way a legitimate path or curl format string does.
+This is an accepted trade-off, not an oversight — the alternative (no
+exclusions) reintroduced the original problem: an entropy test over every
+argv token trips constantly on paths, SHAs, and format strings and gets the
+whole guard disabled within a day (llm#960 Part 2). Rule 4's vendor-prefix
+patterns have no such gap and remain unbypassable; Rule 6 is a heuristic
+safety net for prefixless credentials, not a completeness guarantee.
+
 ## Bypass
 
-For Rules 2, 3, and 6: set `SECRET_GUARD_BYPASS=1` on the command. The
-attempt is still logged (never silently allowed) to
-`~/.claude/logs/secret_leak_guard_bypass.log`. Rules 1, 4, and 5 have **no**
-bypass — a `--body-file` rewrite, removing a literal credential from argv, or
-removing one from a body-file's contents is always the correct fix, never a
-judgment call.
+For Rules 2, 3, and 6: prefix the **same command string** with
+`SECRET_GUARD_BYPASS=1 `, e.g.
+`SECRET_GUARD_BYPASS=1 curl -X POST -d wjqzxvkbmtynfcgh https://example.com`.
+This is the **only** form a Bash-tool call can actually use: the hook parses
+`tool_input.command` and decides BLOCK/ALLOW before any shell evaluates that
+string, and shell state (an `export` made in one Bash call) does not persist
+into a separate, later Bash call — so setting the real environment variable
+from inside a session has no effect on the next command. The prefix is
+recognised only in **command-prefix position**: at the very start of the
+string, optionally after `env`, optionally after other `NAME=value`
+assignments. It is NOT recognised as bare text anywhere later in the command
+— `echo "SECRET_GUARD_BYPASS=1"`, or the string appearing inside a quoted
+argument or after the command name, does **not** bypass anything. The
+bypass is confined to Rules 2, 3, and 6 regardless of which form is used; it
+never releases Rules 1, 4, or 5. The attempt is still logged (never silently
+allowed) to `~/.claude/logs/secret_leak_guard_bypass.log`. Rules 1, 4, and 5
+have **no** bypass by either form — a `--body-file` rewrite, removing a
+literal credential from argv, or removing one from a body-file's contents is
+always the correct fix, never a judgment call.
+
+A real `SECRET_GUARD_BYPASS=1` environment variable set in the process that
+launched the harness is also honoured (kept for compatibility), but an
+ordinary Bash-tool caller has no way to set that.
 
 ## Logging
 
@@ -93,7 +126,7 @@ recreate the incident inside a log file.
 | `printenv \| gh ... --body-file -` | Dumps every env var into a `gh` argument | Never pipe `printenv`/`env` into anything that leaves the shell |
 | Hardcoding a token literal in a curl/gh command for "quick testing" | Committed to shell history, logs, and possibly git | `Sys.getenv()` / `${VAR}` from `.Renviron` / CI secrets — see `credential-management.md` |
 | `Write /tmp/body.md` (containing a credential) then `gh issue comment N --body-file /tmp/body.md` | Rule 1 tells you to use `--body-file`; obeying that advice with a credential still in the file used to sail straight through uninspected | Rule 5 now reads the file's contents before allowing the command |
-| `curl -d "$UNPREFIXED_APP_PASSWORD" https://api.example.com` where the value has no vendor prefix (e.g. a 16-char Gmail app password) | Rule 4 only matches enumerated vendor prefixes; a prefixless credential passed to an egress command was invisible | Rule 6's entropy check catches it; if it's a genuine false positive, `SECRET_GUARD_BYPASS=1` |
+| `curl -d "$UNPREFIXED_APP_PASSWORD" https://api.example.com` where the value has no vendor prefix (e.g. a 16-char Gmail app password) | Rule 4 only matches enumerated vendor prefixes; a prefixless credential passed to an egress command was invisible | Rule 6's entropy check catches it; if it's a genuine false positive, retry with a `SECRET_GUARD_BYPASS=1 ` prefix — see Bypass |
 
 ## Egress-Matcher Feasibility Probe (llm#960 Part 3)
 
