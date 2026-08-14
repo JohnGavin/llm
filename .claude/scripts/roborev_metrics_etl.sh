@@ -341,45 +341,24 @@ _invoke_r
 ROBOREV_EXIT=$?
 log "roborev ETL end: exit=${ROBOREV_EXIT}"
 
-# ── Import hook_events from JSONL staging (#710 durable fix) ─────────────────
-# log_session.sh no longer calls the duckdb CLI in the `hook` case (which held
-# an exclusive write lock on unified.duckdb for ~100ms on every PostToolUse).
-# Instead it appends one JSON line per event to hook_events_staging.jsonl.
-# We import that file here, at a time when Claude sessions are typically quiet
-# (02:00 launchd run) and duckdb contention is low.
-# Non-fatal: if the import fails (e.g. contention at the 08:00 daily-email run),
-# events accumulate in the staging file and are imported on the next ETL cycle.
-HOOK_STAGING="${HOME}/.claude/logs/hook_events_staging.jsonl"
-if [ -f "${HOOK_STAGING}" ] && [ -s "${HOOK_STAGING}" ]; then
-  log "hook_events_import: start"
-  # Atomic hand-off: rename the staging file so new hook events during this
-  # import go to a fresh staging file rather than being imported mid-read.
-  _HOOK_IMPORT="${HOME}/.claude/logs/hook_events_import_$(date +%s).jsonl"
-  mv "${HOOK_STAGING}" "${_HOOK_IMPORT}" 2>/dev/null || true
-  if [ -f "${_HOOK_IMPORT}" ]; then
-    duckdb -init /dev/null "${UNIFIED_DB}" -c "
-      INSERT INTO hook_events (session_id, hook_name, event_type, output_preview, fired_at)
-      SELECT
-        session_id,
-        hook_name,
-        event_type,
-        output_preview,
-        CAST(ts AS TIMESTAMP) AS fired_at
-      FROM read_json(
-        '${_HOOK_IMPORT}',
-        format        = 'newline_delimited',
-        columns       = {ts: 'VARCHAR', session_id: 'VARCHAR',
-                         hook_name: 'VARCHAR', event_type: 'VARCHAR',
-                         output_preview: 'VARCHAR'},
-        ignore_errors = true
-      )
-      WHERE session_id IS NOT NULL;
-    " 2>/dev/null || log "hook_events_import: duckdb insert failed (non-fatal)"
-    rm -f "${_HOOK_IMPORT}" 2>/dev/null || true
-    log "hook_events_import: end"
-  fi
+# ── Import hook_events from JSONL staging (#710 durable fix; extracted to a
+# standalone, independently self-tested script in llm#950) ──────────────────
+# log_session.sh's `hook` case AND hook_event_emit.sh (llm#950 — used by the
+# safety-critical PreToolUse guards) both append JSONL to
+# hook_events_staging.jsonl rather than writing duckdb directly (avoids the
+# exclusive-lock contention documented in log_session.sh's #710 header). We
+# drain that file here, at a time when Claude sessions are typically quiet
+# (this script's existing ~02:00 launchd run) and duckdb contention is low.
+# hook_events_load.sh is fail-open and always exits 0: if the import fails
+# (e.g. contention at the 08:00 daily-email run), events accumulate in the
+# staging file and are imported on the next ETL cycle. See its own header for
+# the atomic hand-off / idempotency design, and `hook_events_load.sh
+# --selftest` for the test coverage of that design.
+_HOOK_EVENTS_LOAD="${SCRIPT_DIR}/hook_events_load.sh"
+if [ -x "${_HOOK_EVENTS_LOAD}" ]; then
+  "${_HOOK_EVENTS_LOAD}" --db "${UNIFIED_DB}" 2>/dev/null || log "hook_events_load: failed (non-fatal)"
 else
-  log "hook_events_import: SKIP (no pending events in staging)"
+  log "hook_events_load: SKIP (script not found or not executable: ${_HOOK_EVENTS_LOAD})"
 fi
 
 # ── Skill usage: drain real-time staging (Card 1b, #729) ────────────────────
