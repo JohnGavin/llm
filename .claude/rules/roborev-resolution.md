@@ -117,6 +117,26 @@ Diagnosis: compare `git log -1 --pretty=%H` with the latest reviewed `commit_sha
 
 This gap is now closed by the post-merge hook + thrice-daily poller (see "Review Trigger Mechanisms" in the companion). See companion for the original 2026-05-13 diagnosis narrative.
 
+## Requeue Dropped Quota Failures (llm#927)
+
+roborev retries a job internally, but once `retry_count` exhausts its cap, `status='failed'` is TERMINAL — nothing revisits the commit after the agent's quota resets. `roborev_poll_merges.sh` only looks for *unreviewed commits since a ref*, not *failed jobs to retry*, so a quota-exhausted commit is DROPPED, not deferred.
+
+`.claude/scripts/roborev_requeue_dropped.sh` finds `review_jobs` rows with `status='failed'`, `commit_id IS NOT NULL`, whose `error` matches a verified quota/spend pattern (`spend limit`, `quota`, `usage limit`, `hit your limit`, `session limit`, `rate limit` — confirmed against the real DB, not guessed), and whose commit has no successful review (`done`/`applied`/`rebased`) and no job already in flight (`queued`/`running`). It re-enqueues up to `--limit` (default 5) of them via `roborev review --sha <sha> --repo <root_path>`.
+
+**The exclude_patterns trap:** before enqueueing, every candidate's changed-file list is checked against its OWN repo's `.roborev.toml` `exclude_patterns` (see `roborev-exclude-patterns` rule). A commit that touches ONLY excluded paths (e.g. llmtelemetry's regenerated `inst/extdata/**`) is skipped, not enqueued — otherwise the sweep would re-automate exactly the noise `exclude_patterns` exists to remove (see that rule's llmtelemetry case study). When the check cannot be made reliably (repo checkout missing locally, or the commit's git object is missing/history was rewritten since the job was recorded) the candidate is ALSO skipped and reported — never guessed into an enqueue.
+
+```bash
+.claude/scripts/roborev_requeue_dropped.sh                 # dry-run (default), --limit=5
+.claude/scripts/roborev_requeue_dropped.sh --apply --limit=3
+.claude/scripts/roborev_requeue_dropped.sh --selftest       # fixture-based suite
+```
+
+Measured 2026-08-14 against the real DB: 153 candidates, 87 correctly skipped as excluded (mostly llmtelemetry bot-data commits, plus 2 `historical` CHANGELOG-only commits), 10 skipped as unavailable (missing checkout / rewritten history), 51 held back by the default `--limit=5`, 5 offered for enqueue — all real code, in `coMMpass`, which has no `exclude_patterns` configured.
+
+**Not yet scheduled.** No new launchd plist was added, per the `housekeeping-framework` rule's "check for an existing slot first" discipline. Recommended slot: `com.claude.roborev-poll-merges` (fires thrice daily, Mon–Fri 09:00/13:00/17:00) — it already exports the PATH/codex-shim/`CLAUDE_TRIGGER` environment this script needs and already treats "coverage gap" as its job. Wiring it in means appending a call to `roborev_poll_merges.sh` (or its plist's `ProgramArguments`) — left for a follow-up commit, not done here.
+
+Housekeeping heartbeat: a `task='roborev_requeue_dropped'` row in `housekeeping_runs` (`~/.claude/logs/unified.duckdb`), written on every invocation including a zero-candidate run, per the `housekeeping-framework` rule.
+
 ## Known Issues
 
 - **Remote-merged PRs invisible** to the post-commit hook alone (see "Coverage Model" above) — install local hook + periodic `--since` poll
@@ -128,12 +148,15 @@ More edge cases (PATH/wrapper quirks, `hooksPath` sharing, silent agent fallback
 
 - [`_companions/roborev-resolution-details.md`](_companions/roborev-resolution-details.md) — verbose CLI usage, the automation-does/does-not table, session-end refine bounds, review trigger tiers, auto-verifier, merge-gate policy, and the launchd health audit, split out of this rule
 - [`_companions/roborev-resolution-incidents.md`](_companions/roborev-resolution-incidents.md) — dated incident narratives and one-time rollout history (poller schedule decision, session-end-refine soak, remote-merged-PR coverage-gap lesson), split out of the details companion
+- `roborev-exclude-patterns` — the exclude_patterns config `roborev_requeue_dropped.sh` reads before enqueueing; its llmtelemetry case study is the trap that script's filtering exists to respect
+- `housekeeping-framework` — the hk_run_start/hk_run_end heartbeat pattern `roborev_requeue_dropped.sh` follows, and the "check for an existing slot before adding a plist" discipline behind its scheduling recommendation
 - `auto-delegation` — model selection for Claude Code agents (separate from roborev agents)
 - `btw-timeouts` — MCP tool timeout pattern (similar "bounded execution" principle)
 - `orchestrator-protocol` — background agent timeout protocol
 - llm#110 — tracking issue
 - llm#241 — merge gate policy (Merge Gate sections in the companion)
 - llm#163 — closure-loop automation (Auto-Verifier section in the companion — Component 4, Slice 3)
+- llm#927 — quota failures are terminal; `roborev_requeue_dropped.sh` origin issue
 - llm#224 — severity autoclose (sibling policy)
 - llm#217 — poller schedule + ephemeral-repos cleanup
 - llm#300 — weekly launchd health email (long-term solution); see companion for the launchd health audit procedure
