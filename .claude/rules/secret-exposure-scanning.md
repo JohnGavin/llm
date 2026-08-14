@@ -285,6 +285,45 @@ in stdout, stderr, or the log after a full scan + fix run).
 - `--fast` scans the dotfile/config set only (skips the repo walk) for a
   session-start path; the full scan (default) is for the scheduled job.
 
+## Heartbeat and Persistence (llm#951)
+
+The flat log above only records `--fix` actions — a `--scan` run that finds
+nothing (or that stops firing entirely) leaves no trace there, which is
+exactly the `zero-metric-evidence-or-defect` failure mode: "0 findings"
+becomes indistinguishable from "the scanner didn't run." Every `--scan`/
+`--fix` invocation therefore also writes to `~/.claude/logs/unified.duckdb`
+(override via `UNIFIED_DB_PATH`), following `housekeeping-framework`:
+
+- **`housekeeping_runs`** — one heartbeat row per invocation (`task =
+  'secret_exposure_scan'`), inserted at start and updated at the end with
+  `ended_at`, `rows_written`, and `status` (`ok` on a completed scan —
+  including a clean 0-finding one — or `failed` when the scan's findings
+  tempfile could not even be created, e.g. `/tmp` unwritable or full).
+- **`secret_scan_findings`** — one row per finding, batched (a single
+  `INSERT ... SELECT` sourced from `read_csv()` per run, never one `INSERT`
+  per finding), joined to `housekeeping_runs.id` via `run_id`. Carries
+  exactly the same 6-tuple (detector, severity, file, line, name, note)
+  `print_report()` already renders — the Correctness Requirement above
+  applies unchanged: `note` is the fixed, generic, non-credential
+  description; no column ever holds a matched value. Deterministic
+  `md5(run_id:detector:file_path:line_num:name)` primary key makes
+  replaying the write step for the same run idempotent.
+
+Both writes are guarded exactly like the rest of this scanner: `duckdb`
+absent, the DB missing, or any write failure is swallowed (`|| true`) and
+never aborts the scan itself. See `write_findings_to_db`/`hk_run_start`/
+`hk_run_end` in the script for the implementation, and `--selftest` for the
+coverage (heartbeat on a zero-finding run, `status='failed'` on a forced
+tempfile-creation failure, per-finding persistence + idempotent replay, the
+sentinel absent from the DB, and the scan completing with `duckdb` entirely
+off `PATH`).
+
+The nightly digest email (`send_overnight_self_review_email.R`, "Secret-
+exposure scan" section) reads this data: findings by detector for the
+latest run, the delta vs the previous run (a rise in detector 2 means a new
+plaintext credential appeared on disk since yesterday — the actionable
+signal), and a loud line when the scanner has not fired in over 48h.
+
 ## Verification
 
 ```bash

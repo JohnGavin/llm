@@ -109,6 +109,24 @@
 # ISO-8601 UTC timestamp, detector id, path, action taken). Log failures
 # never abort the scan (best-effort, `|| true` throughout).
 #
+# Housekeeping heartbeat (llm#951, housekeeping-framework rule): every
+# --scan/--fix invocation writes a housekeeping_runs start row (task=
+# 'secret_exposure_scan') and updates it at the end with ended_at,
+# rows_written, and status ('ok'|'failed') -- including a clean 0-finding
+# run, so a scanner that silently stopped firing at its 03:40 launchd slot
+# is distinguishable from a scanner reporting zero findings
+# (zero-metric-evidence-or-defect). Every finding is ALSO persisted to
+# secret_scan_findings, batched (one INSERT...SELECT per run, not one per
+# finding) -- same 6-tuple already printed by print_report(), so the
+# no-leaked-value contract carries over unchanged: no column ever holds a
+# credential value. Target DB: ~/.claude/logs/unified.duckdb (override via
+# UNIFIED_DB_PATH). Guarded throughout -- duckdb absent, DB missing, or any
+# write failure never aborts the scan itself; the housekeeping_runs write
+# itself only ever fails to 'failed' status when the SCAN cannot run at all
+# (currently: its findings tempfile could not be created). See
+# `write_findings_to_db`/`hk_run_start`/`hk_run_end` below and the digest
+# email section in send_overnight_self_review_email.R.
+#
 # Origin: three incidents, 2026-08 (see header above and the companion
 # rule file for full incident detail). Tuned 2026-08 after day-1 signal
 # showed 615 findings / ~5% precision — see the rule doc's "Tuning" note.
@@ -215,6 +233,12 @@ CRED_ENTROPY_THRESHOLD="3.0"
 # Whole-environment capture trigger tokens (detector 1).
 ENV_CAPTURE_RE='(^|[;&|[:space:]])(export[[:space:]]+-p|declare[[:space:]]+-x|set[[:space:]]+-o[[:space:]]+posix|printenv|env)([[:space:]]|$)'
 
+# Housekeeping heartbeat target (llm#951) -- see the header comment's
+# "Housekeeping heartbeat" section. UNIFIED_DB_PATH lets --selftest (and any
+# manual measurement run) redirect writes to a throwaway DB; it must NEVER
+# default to anything but the real unified.duckdb in production.
+UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME_DIR}/.claude/logs/unified.duckdb}"
+
 MODE="scan"
 JSON=0
 QUIET=0
@@ -292,6 +316,97 @@ looks_like_fixture_value() {
         return 0
     fi
     printf '%s' "$1" | grep -qE '(.)\1{7,}'
+}
+
+# ---------------------------------------------------------------------------
+# Housekeeping heartbeat + batched persistence (llm#951)
+#
+# All three functions below are guarded by _duckdb_ok / a non-empty _run_id
+# and are best-effort ( `|| true` ) -- a DB write failure NEVER aborts the
+# scan. _duckdb_ok, _run_id, _run_started are plain globals (not `local`)
+# so --selftest can override them to point at a throwaway DB and call these
+# functions directly, without ever touching the real unified.duckdb.
+# ---------------------------------------------------------------------------
+
+_duckdb_ok=0
+if command -v duckdb >/dev/null 2>&1 && [ -f "$UNIFIED_DB" ]; then
+    _duckdb_ok=1
+fi
+_run_id=""
+_run_started=""
+
+# hk_run_start — insert the housekeeping_runs start row for this invocation.
+# No-op (leaves _run_id empty) if duckdb/the DB is unavailable; hk_run_end
+# and write_findings_to_db both check _run_id before doing anything, so
+# downstream calls stay safe even when this is skipped.
+hk_run_start() {
+    [ "$_duckdb_ok" = "1" ] || return 0
+    _run_id="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    [ -n "$_run_id" ] || return 0
+    _run_started="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+    duckdb -init /dev/null "$UNIFIED_DB" -c "
+        INSERT OR IGNORE INTO housekeeping_runs
+          (id, task, source_script, started_at, status, rows_written)
+        VALUES (
+          '${_run_id}',
+          'secret_exposure_scan',
+          '${SCRIPT_DIR}/secret_exposure_scan.sh',
+          TIMESTAMPTZ '${_run_started}',
+          'ok',
+          0
+        );
+    " >/dev/null 2>&1 || true
+}
+
+# hk_run_end STATUS ROWS_WRITTEN — update the housekeeping_runs row opened
+# by hk_run_start. No-op if hk_run_start never ran (duckdb/DB unavailable).
+hk_run_end() {
+    [ "$_duckdb_ok" = "1" ] || return 0
+    [ -n "$_run_id" ] || return 0
+    local status="$1" rows="${2:-0}" ended
+    ended="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+    duckdb -init /dev/null "$UNIFIED_DB" -c "
+        UPDATE housekeeping_runs
+        SET ended_at = TIMESTAMPTZ '${ended}',
+            status = '${status}',
+            rows_written = ${rows}
+        WHERE id = '${_run_id}';
+    " >/dev/null 2>&1 || true
+}
+
+# write_findings_to_db — batch-insert every row currently in $FINDINGS_FILE
+# into secret_scan_findings via ONE INSERT...SELECT sourced from read_csv()
+# (not one INSERT per finding — see the housekeeping-framework rule's
+# "Performance" guidance and the header comment above). `quote=''` disables
+# CSV quote handling: findings are plain tab-separated text written by
+# append_finding() (printf, no CSV escaping applied), so a literal `"`
+# inside a note (e.g. the denylist-capture note, which embeds a grep -E
+# pattern in double quotes) must not be misread as a quote-open. `note` is
+# ALREADY the fixed, generic, non-credential description from
+# append_finding's no-leaked-value contract -- this persists exactly the
+# same 6-tuple print_report() already renders, never anything wider.
+# INSERT OR IGNORE on the deterministic md5-based id makes replaying this
+# call for the same _run_id (e.g. a retried write) idempotent.
+write_findings_to_db() {
+    [ "$_duckdb_ok" = "1" ] || return 0
+    [ -n "$_run_id" ] || return 0
+    [ -s "${FINDINGS_FILE:-}" ] || return 0
+    duckdb -init /dev/null "$UNIFIED_DB" -c "
+        INSERT OR IGNORE INTO secret_scan_findings
+        SELECT
+          md5(run_id || ':' || detector || ':' || file_path || ':' || line_num || ':' || name) AS id,
+          run_id, fired_at, detector, severity, file_path, line_num, name, note
+        FROM (
+          SELECT
+            '${_run_id}' AS run_id,
+            TIMESTAMPTZ '${_run_started}' AS fired_at,
+            column0 AS detector, column1 AS severity, column2 AS file_path,
+            column3 AS line_num, column4 AS name, column5 AS note
+          FROM read_csv('${FINDINGS_FILE}', delim='\t', header=false, quote='',
+            columns={'column0':'VARCHAR','column1':'VARCHAR','column2':'VARCHAR',
+                     'column3':'VARCHAR','column4':'VARCHAR','column5':'VARCHAR'})
+        );
+    " >/dev/null 2>&1 || true
 }
 
 # ---------------------------------------------------------------------------
@@ -746,7 +861,7 @@ EOF
     JSON=0
     QUIET=0
 
-    local f1 f2 pass=0
+    local f1 f2 pass=0 total=27
     f1="$(mktemp "${TMPDIR:-/tmp}/secret_scan_selftest_f1.XXXXXX")"
     FINDINGS_FILE="$f1"
     scan_source_patterns
@@ -936,8 +1051,213 @@ EOF
 
     rm -rf "$tmp" "$f1" "$f2" 2>/dev/null || true
 
-    echo "selftest: ${pass}/27 PASS"
-    [ "$pass" -eq 27 ]
+    # -----------------------------------------------------------------------
+    # Housekeeping heartbeat + persistence (llm#951) — NEVER touches the real
+    # ~/.claude/logs/unified.duckdb. Every DB used below is a throwaway temp
+    # file created by this block and removed at the end. Skipped (not
+    # failed) when duckdb is not in PATH — the "duckdb-absent path still
+    # completes the scan" property is instead proven by the subprocess check
+    # further down, which needs no DB at all.
+    # -----------------------------------------------------------------------
+    if ! command -v duckdb >/dev/null 2>&1; then
+        echo "SKIP: duckdb not in PATH -- 5 heartbeat/persistence checks skipped"
+    else
+        local hk_dir hk_db hk_sentinel="SENTINEL_hk8pQmXwR3fZaLg_neverPrintMe"
+        hk_dir="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_hk.XXXXXX")"
+        hk_db="${hk_dir}/unified.duckdb"
+        duckdb -init /dev/null "$hk_db" < "${SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
+
+        # Override the heartbeat globals to point at the throwaway DB.
+        UNIFIED_DB="$hk_db"
+        _duckdb_ok=1
+
+        # Run the REAL detectors (not a hand-written findings file) against a
+        # mode-644 dotfile whose VALUE is the sentinel -- same shape as the
+        # existing sentinel.env fixture above, so this exercises detector 2
+        # (credential-assignment: AWS_SECRET_ACCESS_KEY name-segment match +
+        # entropy-qualifying value) AND detector 3 (bad-permissions) in one
+        # pass. Critically, the sentinel lives ONLY in the file's CONTENT --
+        # never in its path or name -- matching how a real leak looks, so
+        # the "sentinel absent from DB" check below is a genuine assertion
+        # about redaction, not a check against a self-inflicted plant.
+        local hk_repo hk_dot hk_prior_repo_root="$REPO_ROOT"
+        local hk_prior_dotfiles=("${DEFAULT_DOTFILES[@]}")
+        hk_repo="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_hkrepo.XXXXXX")"
+        hk_dot="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_hkdot.XXXXXX")"
+        cat > "${hk_dot}/hk_sentinel.env" <<EOF
+AWS_SECRET_ACCESS_KEY=${hk_sentinel}
+EOF
+        chmod 644 "${hk_dot}/hk_sentinel.env"
+
+        REPO_ROOT="$hk_repo"
+        DEFAULT_DOTFILES=("$hk_dot")
+
+        local hk_findings
+        hk_findings="$(mktemp "${TMPDIR:-/tmp}/secret_scan_selftest_hkfind.XXXXXX")"
+        FINDINGS_FILE="$hk_findings"
+        scan_source_patterns
+        scan_at_rest
+        check_permissions
+
+        REPO_ROOT="$hk_prior_repo_root"
+        DEFAULT_DOTFILES=("${hk_prior_dotfiles[@]}")
+
+        local hk_total
+        hk_total=$(wc -l < "$hk_findings" | tr -d ' ')
+
+        _run_id=""
+        _run_started=""
+        hk_run_start
+        if [ -z "$_run_id" ]; then
+            echo "FAIL: hk_run_start did not set _run_id with duckdb available"
+        else
+            total=$((total + 1)); pass=$((pass + 1))
+        fi
+
+        write_findings_to_db
+        hk_run_end "ok" "$hk_total"
+
+        # Check: heartbeat row persisted ok/<hk_total>, and hk_total is the
+        # expected 2 findings (detector 2 + detector 3 on the one fixture
+        # file) -- if this drifts to 0 the rest of the block is testing
+        # nothing, so assert the count explicitly rather than trusting it.
+        total=$((total + 1))
+        local hb_row
+        hb_row="$(duckdb -init /dev/null -noheader -list "$hk_db" -c "
+            SELECT status || '|' || rows_written FROM housekeeping_runs WHERE id='${_run_id}';
+        " 2>/dev/null)"
+        if [ "$hb_row" = "ok|${hk_total}" ] && [ "$hk_total" = "2" ]; then
+            pass=$((pass + 1))
+        else
+            echo "FAIL: expected an 'ok|2' heartbeat row from the fixture (got '$hb_row', hk_total=$hk_total)"
+        fi
+
+        # Check: per-finding rows persisted (one per line in FINDINGS_FILE).
+        total=$((total + 1))
+        local finding_count
+        finding_count="$(duckdb -init /dev/null -noheader -list "$hk_db" -c "
+            SELECT count(*) FROM secret_scan_findings WHERE run_id='${_run_id}';
+        " 2>/dev/null)"
+        if [ "$finding_count" = "$hk_total" ]; then
+            pass=$((pass + 1))
+        else
+            echo "FAIL: expected $hk_total secret_scan_findings rows for run_id, got '$finding_count'"
+        fi
+
+        # Check: replaying write_findings_to_db for the SAME run_id/tempfile
+        # is idempotent (INSERT OR IGNORE on the deterministic md5 id) --
+        # count must stay the same, not double.
+        total=$((total + 1))
+        write_findings_to_db
+        local finding_count2
+        finding_count2="$(duckdb -init /dev/null -noheader -list "$hk_db" -c "
+            SELECT count(*) FROM secret_scan_findings WHERE run_id='${_run_id}';
+        " 2>/dev/null)"
+        if [ "$finding_count2" = "$finding_count" ]; then
+            pass=$((pass + 1))
+        else
+            echo "FAIL: replaying write_findings_to_db duplicated rows (before=$finding_count, after='$finding_count2')"
+        fi
+
+        # Check: the planted sentinel (the CREDENTIAL VALUE, embedded only in
+        # the fixture file's content) never reaches the DB in ANY column --
+        # extends the stdout/stderr/log-file sentinel checks above to the
+        # fourth sink this dispatch adds.
+        total=$((total + 1))
+        local sentinel_hits
+        sentinel_hits="$(duckdb -init /dev/null -noheader -list "$hk_db" -c "
+            SELECT count(*) FROM secret_scan_findings
+            WHERE run_id='${_run_id}' AND (
+              file_path LIKE '%${hk_sentinel}%' OR name LIKE '%${hk_sentinel}%'
+              OR note LIKE '%${hk_sentinel}%'
+            );
+        " 2>/dev/null)"
+        if [ "$sentinel_hits" = "0" ]; then
+            pass=$((pass + 1))
+        else
+            echo "FAIL: sentinel value reached secret_scan_findings ($sentinel_hits row(s))"
+        fi
+
+        rm -rf "$hk_dir" "$hk_repo" "$hk_dot" 2>/dev/null || true
+        rm -f "$hk_findings" 2>/dev/null || true
+    fi
+
+    # -----------------------------------------------------------------------
+    # Full-process checks (llm#951) — invoke the script as a real subprocess
+    # so the top-level MODE=scan wiring (hk_run_start / mktemp-failure guard
+    # / write_findings_to_db / hk_run_end) is exercised end-to-end, not just
+    # the functions in isolation above. Each gets its own throwaway DB and
+    # fixture dirs; the real ~/.claude/logs/unified.duckdb is never touched
+    # (UNIFIED_DB_PATH is always overridden).
+    # -----------------------------------------------------------------------
+    local sp_script="${SCRIPT_DIR}/secret_exposure_scan.sh"
+    local sp_repo sp_dot
+    sp_repo="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_sprepo.XXXXXX")"
+    sp_dot="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_spdot.XXXXXX")"
+
+    if command -v duckdb >/dev/null 2>&1; then
+        # Check: a ZERO-finding run (empty repo, no dotfiles) still writes a
+        # heartbeat row -- 'a run finds nothing must still leave proof it ran'.
+        total=$((total + 1))
+        local sp_db sp_dir
+        sp_dir="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_spdb.XXXXXX")"
+        sp_db="${sp_dir}/unified.duckdb"
+        duckdb -init /dev/null "$sp_db" < "${SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
+        REPO_ROOT="$sp_repo" HOME="$sp_dot" UNIFIED_DB_PATH="$sp_db" \
+            bash "$sp_script" --scan --quiet >/dev/null 2>&1
+        local zero_row
+        zero_row="$(duckdb -init /dev/null -noheader -list "$sp_db" -c "
+            SELECT status || '|' || rows_written FROM housekeeping_runs
+            WHERE task='secret_exposure_scan' LIMIT 1;
+        " 2>/dev/null)"
+        if [ "$zero_row" = "ok|0" ]; then
+            pass=$((pass + 1))
+        else
+            echo "FAIL: zero-finding real-process run did not write an 'ok|0' heartbeat row (got '$zero_row')"
+        fi
+        rm -rf "$sp_dir" 2>/dev/null || true
+
+        # Check: a genuine scan-tempfile failure (TMPDIR pointing at a
+        # nonexistent directory, so mktemp fails) records status='failed',
+        # not a silently-open or missing row.
+        total=$((total + 1))
+        local ff_db ff_dir
+        ff_dir="$(mktemp -d "${TMPDIR:-/tmp}/secret_scan_selftest_ffdb.XXXXXX")"
+        ff_db="${ff_dir}/unified.duckdb"
+        duckdb -init /dev/null "$ff_db" < "${SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
+        TMPDIR="${ff_dir}/does-not-exist" REPO_ROOT="$sp_repo" HOME="$sp_dot" UNIFIED_DB_PATH="$ff_db" \
+            bash "$sp_script" --scan --quiet >/dev/null 2>&1
+        local ff_status
+        ff_status="$(duckdb -init /dev/null -noheader -list "$ff_db" -c "
+            SELECT status FROM housekeeping_runs WHERE task='secret_exposure_scan' LIMIT 1;
+        " 2>/dev/null)"
+        if [ "$ff_status" = "failed" ]; then
+            pass=$((pass + 1))
+        else
+            echo "FAIL: forced tempfile-creation failure did not record status='failed' (got '$ff_status')"
+        fi
+        rm -rf "$ff_dir" 2>/dev/null || true
+    else
+        echo "SKIP: duckdb not in PATH -- 2 real-process heartbeat checks skipped"
+    fi
+
+    # Check: with duckdb entirely OFF the subprocess's PATH, the scan still
+    # completes cleanly (never crashes on a missing telemetry sink).
+    total=$((total + 1))
+    local noduck_exit
+    PATH="/usr/bin:/bin" REPO_ROOT="$sp_repo" HOME="$sp_dot" \
+        bash "$sp_script" --scan --quiet >/dev/null 2>&1
+    noduck_exit=$?
+    if [ "$noduck_exit" -eq 0 ]; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: duckdb-absent scan did not complete cleanly (exit=$noduck_exit, expected 0 for an empty fixture repo)"
+    fi
+
+    rm -rf "$sp_repo" "$sp_dot" 2>/dev/null || true
+
+    echo "selftest: ${pass}/${total} PASS"
+    [ "$pass" -eq "$total" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -949,12 +1269,27 @@ if [ "$MODE" = "selftest" ]; then
     exit $?
 fi
 
+# Heartbeat start row -- written BEFORE the findings tempfile exists so a
+# tempfile-creation failure (disk full, /tmp missing/unwritable, TMPDIR
+# pointing nowhere) still gets a heartbeat row, closed out as 'failed'
+# below rather than leaving an eternally-open 'ok' row.
+hk_run_start
+
 FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/secret_exposure_scan.XXXXXX")"
+if [ -z "$FINDINGS_FILE" ] || [ ! -f "$FINDINGS_FILE" ]; then
+    echo "secret_exposure_scan: ERROR could not create a findings tempfile (TMPDIR=${TMPDIR:-/tmp})" >&2
+    hk_run_end "failed" 0
+    exit 1
+fi
 trap 'rm -f "$FINDINGS_FILE"' EXIT
 
 scan_source_patterns
 scan_at_rest
 check_permissions
+
+total=$(wc -l < "$FINDINGS_FILE" | tr -d ' ')
+write_findings_to_db
+hk_run_end "ok" "$total"
 
 if [ "$MODE" = "fix" ]; then
     apply_fixes
@@ -964,7 +1299,6 @@ if [ "$MODE" = "fix" ]; then
     exit $?
 fi
 
-total=$(wc -l < "$FINDINGS_FILE" | tr -d ' ')
 print_report
 [ "$total" -eq 0 ]
 exit $?

@@ -10,6 +10,7 @@
 --   launchd_health_events  -- one row per launchd plist's last-observed state (llm#554)
 --   roborev_daily_summary  -- per-project daily summary mirrored from roborev SQLite (llm#555)
 --   data_quality_incidents -- one row per known untrustworthy-data window (llm#913, llm#915)
+--   secret_scan_findings   -- one row per finding from secret_exposure_scan.sh (llm#951)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS worktree_gc_events (
 
 CREATE TABLE IF NOT EXISTS housekeeping_runs (
   id              TEXT PRIMARY KEY,
-  task            TEXT NOT NULL,             -- 'worktree_gc' | 'branch_gc' | 'config_digest' | 'kb_digest' | 'launchd_health' | 'roborev_bridge' | 'stage1_findings' | 'self_review_verify'
+  task            TEXT NOT NULL,             -- 'worktree_gc' | 'branch_gc' | 'config_digest' | 'kb_digest' | 'launchd_health' | 'roborev_bridge' | 'stage1_findings' | 'self_review_verify' | 'secret_exposure_scan'
   source_script   TEXT NOT NULL,             -- absolute path to script
   started_at      TIMESTAMPTZ NOT NULL,
   ended_at        TIMESTAMPTZ,
@@ -200,6 +201,41 @@ CREATE TABLE IF NOT EXISTS data_quality_incidents (
   recorded_at   TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_data_quality_incidents_asset ON data_quality_incidents(asset, window_start);
+
+-- secret_scan_findings: one row per finding from secret_exposure_scan.sh
+-- (see the four detectors in secret-exposure-scanning.md), batched -- one
+-- INSERT...SELECT per invocation via write_findings_to_db(), NOT one INSERT
+-- per finding. Joins to housekeeping_runs(id) via run_id (task=
+-- 'secret_exposure_scan') for the run-level heartbeat/status.
+--
+-- NEVER stores a credential value. `note` is the SAME fixed, detector-
+-- specific description append_finding() already prints to stdout/--json/the
+-- log file under the scanner's no-leaked-value contract; `name` is a
+-- finding-class label (e.g. 'cred-shape', 'bad-permissions'), never the
+-- matched literal. This table persists exactly the same 6-tuple the
+-- existing reporters already emit -- nothing wider.
+--
+-- Deterministic PK: md5(run_id:detector:file_path:line_num:name) --
+-- replaying the same run's write step (write_findings_to_db called twice
+-- for the same run_id) is idempotent via INSERT OR IGNORE. A later run
+-- (new run_id) for the same finding gets a new id, by design -- each run is
+-- a distinct observation for the digest email's delta-vs-previous-run
+-- section, not a dedup target.
+-- See llm#951 (scanner half); llm#950 (guard half, same detector set).
+CREATE TABLE IF NOT EXISTS secret_scan_findings (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
+  fired_at    TIMESTAMPTZ NOT NULL,
+  detector    TEXT NOT NULL,             -- '1' | '2' | '3' | '4'
+  severity    TEXT NOT NULL,             -- 'high' | 'critical'
+  file_path   TEXT NOT NULL,
+  line_num    TEXT,                      -- '-' for detector 3 (file-level, no line)
+  name        TEXT NOT NULL,             -- finding-class label, e.g. 'cred-shape'
+  note        TEXT NOT NULL              -- fixed generic description -- NEVER a credential value
+);
+CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_run_id ON secret_scan_findings(run_id);
+CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_fired_at ON secret_scan_findings(fired_at);
+CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_detector ON secret_scan_findings(detector, fired_at);
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);
