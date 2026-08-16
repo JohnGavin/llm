@@ -198,7 +198,9 @@ test_that("staleness_banner.sh prints ONLY the collector-stale line when the col
   skip_if_not(duckdb_available(), "duckdb not available")
 
   sql <- schema_and_data("
-    INSERT INTO staleness VALUES
+    INSERT INTO staleness
+      (asset_kind, asset_id, project, last_seen_ts, expected_cadence_hours, last_exit_code, observed_at)
+    VALUES
       ('collector', 'staleness_collect', NULL, current_timestamp - INTERVAL 72 HOUR, 24, 0, current_timestamp),
       ('launchd_job', 'com.claude.worktree-gc', NULL, current_timestamp - INTERVAL 100 HOUR, 24, 0, current_timestamp);
   ")
@@ -218,7 +220,9 @@ test_that("staleness_banner.sh summarises other stale assets when the collector 
   skip_if_not(duckdb_available(), "duckdb not available")
 
   sql <- schema_and_data("
-    INSERT INTO staleness VALUES
+    INSERT INTO staleness
+      (asset_kind, asset_id, project, last_seen_ts, expected_cadence_hours, last_exit_code, observed_at)
+    VALUES
       ('collector', 'staleness_collect', NULL, current_timestamp, 24, 0, current_timestamp),
       ('launchd_job', 'com.claude.worktree-gc', NULL, current_timestamp - INTERVAL 100 HOUR, 24, 0, current_timestamp),
       ('etl_source', 'sessions', NULL, current_timestamp - INTERVAL 300 HOUR, 72, NULL, current_timestamp);
@@ -239,7 +243,9 @@ test_that("staleness_banner.sh is silent when everything is fresh", {
   skip_if_not(duckdb_available(), "duckdb not available")
 
   sql <- schema_and_data("
-    INSERT INTO staleness VALUES
+    INSERT INTO staleness
+      (asset_kind, asset_id, project, last_seen_ts, expected_cadence_hours, last_exit_code, observed_at)
+    VALUES
       ('collector', 'staleness_collect', NULL, current_timestamp, 24, 0, current_timestamp),
       ('launchd_job', 'com.claude.worktree-gc', NULL, current_timestamp, 24, 0, current_timestamp);
   ")
