@@ -450,6 +450,45 @@ font-size:12px;font-weight:bold;">%s</span>',
   )
 }
 
+# ── content_status badge (llm#893 step 4, section D) ──────────────────────────
+# `content_status` is a SECOND, independent verdict from the shared
+# staleness_status view -- magnitude ("did this grow unusually?"), not
+# recency. It is meaningful only for asset_kind IN ('log_growth', 'db_bloat');
+# every other row's content_status is permanently NULL there (never
+# content-checked) and is rendered as the plain "N/A" dash below, distinct
+# from a genuine pending verdict.
+#
+# NULL on a content-checked row means "no prior observation yet" (a
+# delta-based detector's first-ever run has nothing to diff against) --
+# rendered PENDING, an orange badge distinct from both the red FIRED badges
+# and the quiet green NORMAL badge. This is deliberate: an absent verdict
+# must never read the same as a clean one, or a check that has never run
+# looks identical to a check that passed (the gap this whole render exists
+# to close -- see the content_status doc block in staleness_schema.sql).
+content_status_color <- function(s) {
+  switch(s,
+    "ABNORMAL_GROWTH" = "#ff5252",
+    "BLOAT"           = "#ff5252",
+    "NORMAL"          = ACCENT_GREEN,
+    "PENDING"         = ACCENT_ORANGE,
+    DARK_MUTED
+  )
+}
+
+content_status_badge <- function(s) {
+  if (identical(s, "N/A")) {
+    return(sprintf('<span style="color:%s;">&mdash;</span>', DARK_MUTED))
+  }
+  col <- content_status_color(s)
+  sprintf(
+    '<span style="background-color:%s;color:%s;padding:2px 8px;border-radius:3px;
+font-size:12px;font-weight:bold;">%s</span>',
+    col,
+    if (s %in% c("ABNORMAL_GROWTH", "BLOAT")) "#fff" else "#000",
+    s
+  )
+}
+
 sec2_rows_html <- paste(lapply(sec2_rows, function(r) {
   sprintf(
     '<tr style="background-color:%s;">
@@ -612,7 +651,7 @@ gap, not a clean bill of health.</p>'),
   } else {
     rows <- safe_query("
       SELECT
-        asset_kind, asset_id, status,
+        asset_kind, asset_id, status, content_status,
         last_seen_ts,
         FLOOR(EXTRACT(EPOCH FROM observation_age) / 60.0) AS observation_age_min
       FROM staleness_status
@@ -634,14 +673,29 @@ trustworthy yet.</p>'),
       collector_row <- rows[rows$asset_kind == "collector" & rows$asset_id == "staleness_collect", , drop = FALSE]
       collector_stale <- nrow(collector_row) > 0L && identical(collector_row$status[[1]], "stale")
 
+      # content_status (llm#893 step 4) is a SECOND, independent verdict --
+      # meaningful only for asset_kind IN ('log_growth', 'db_bloat'). Every
+      # other row's content_status is permanently NULL there and is labelled
+      # "N/A" (not content-checked), never "PENDING" (which is reserved for
+      # a content-checked row with no prior observation yet -- see
+      # content_status_badge() above for why the two must not be conflated).
+      content_label_for <- function(asset_kind, content_status) {
+        if (!(asset_kind %in% c("log_growth", "db_bloat"))) return("N/A")
+        if (is.na(content_status)) return("PENDING")
+        toupper(content_status)
+      }
+
       rows_html <- paste(apply(rows, 1, function(r) {
         is_stale <- identical(r[["status"]], "stale")
-        row_bg <- if (is_stale) "#2a0a0a" else DARK_CARD
+        content_label <- content_label_for(r[["asset_kind"]], r[["content_status"]])
+        is_content_flagged <- content_label %in% c("ABNORMAL_GROWTH", "BLOAT")
+        row_bg <- if (is_stale || is_content_flagged) "#2a0a0a" else DARK_CARD
         sprintf(
           '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
 <td style="padding:5px 10px;font-family:monospace;font-size:12px;max-width:280px;
    word-break:break-all;">%s</td>
+<td style="padding:5px 10px;text-align:center;">%s</td>
 <td style="padding:5px 10px;text-align:center;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;text-align:right;">%s</td>
@@ -650,6 +704,7 @@ trustworthy yet.</p>'),
           DARK_MUTED, r[["asset_kind"]],
           htmlEscape(r[["asset_id"]]),
           status_badge(toupper(r[["status"]])),
+          content_status_badge(content_label),
           DARK_MUTED, r[["last_seen_ts"]] %||% "never",
           DARK_MUTED, fmt_observation_age(suppressWarnings(as.numeric(r[["observation_age_min"]]))) %||% "—"
         )
@@ -661,6 +716,7 @@ trustworthy yet.</p>'),
 <th style="padding:5px 10px;text-align:left;">Kind</th>
 <th style="padding:5px 10px;text-align:left;">Asset</th>
 <th style="padding:5px 10px;text-align:center;">Status</th>
+<th style="padding:5px 10px;text-align:center;">Content</th>
 <th style="padding:5px 10px;text-align:left;">Last seen</th>
 <th style="padding:5px 10px;text-align:right;">Observed</th>
 </tr></thead><tbody>%s</tbody></table>',
@@ -669,6 +725,10 @@ trustworthy yet.</p>'),
 
       n_stale <- sum(rows$status == "stale", na.rm = TRUE)
       n_total <- nrow(rows)
+
+      content_labels <- mapply(content_label_for, rows[["asset_kind"]], rows[["content_status"]])
+      n_content_flagged <- sum(content_labels %in% c("ABNORMAL_GROWTH", "BLOAT"))
+      n_content_pending <- sum(content_labels == "PENDING")
 
       collector_warning <- if (collector_stale) {
         sprintf(
@@ -690,6 +750,22 @@ until the collector fires again (see staleness_banner.sh, llm#893 step 2).</p>',
       } else {
         sprintf("%d assets · %d stale%s", n_total, n_stale,
                 if (collector_stale) " · COLLECTOR STALE" else "")
+      }
+
+      # Content-axis counts (llm#893 step 4) appended to the same summary
+      # line, same "only mention what's non-trivial" discipline as the
+      # time-axis n_stale clause above. PENDING is reported alongside
+      # flagged findings, not silently dropped, per the content_status NULL
+      # discipline documented on content_status_badge() above.
+      content_note_parts <- character(0)
+      if (n_content_flagged > 0L) {
+        content_note_parts <- c(content_note_parts, sprintf("%d content flagged", n_content_flagged))
+      }
+      if (n_content_pending > 0L) {
+        content_note_parts <- c(content_note_parts, sprintf("%d pending", n_content_pending))
+      }
+      if (length(content_note_parts) > 0L) {
+        summary <- paste0(summary, " · ", paste(content_note_parts, collapse = ", "))
       }
 
       list(body = body, summary = summary)
