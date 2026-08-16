@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 # test_agent_run_hook.sh — Hermetic tests for log_agent_run.sh + log_session.sh
+#   + agent_events_staging_import.sh
 # Tests use a temp HOME so the hook's hardcoded $HOME/.claude/... paths are safe.
 # Requires: duckdb, jq on PATH.
+#
+# llm#956: log_session.sh's agent_start/agent_stop cases no longer write to
+# `agent_runs` via the duckdb CLI directly (that write held an exclusive
+# whole-file lock — see log_session.sh's #710/#956 header). They now append
+# lock-free JSONL to agent_events_staging.jsonl; agent_events_staging_
+# import.sh drains that file into `agent_runs`. Test groups 1-3 below were
+# updated to reflect this: each hook call is followed by an explicit call to
+# the import script before the DB is queried, and a new assertion in group 1
+# proves the hook call itself does NOT touch agent_runs synchronously
+# (the durability property this fix exists to provide).
 
 set -uo pipefail
 
 WT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$WT/.claude/hooks/log_agent_run.sh"
 LOG_SCRIPT="$WT/.claude/scripts/log_session.sh"
+IMPORT_SCRIPT="$WT/.claude/scripts/agent_events_staging_import.sh"
+FRESHNESS_SCRIPT="$WT/.claude/scripts/etl_freshness_upsert.sh"
 BACKFILL="$WT/.claude/scripts/backfill_agent_runs_270.sh"
 
 PASS=0
@@ -63,10 +76,15 @@ mkdir -p "$T/.claude/hooks"
 
 cp "$LOG_SCRIPT" "$T/.claude/scripts/log_session.sh"
 chmod +x "$T/.claude/scripts/log_session.sh"
+cp "$IMPORT_SCRIPT" "$T/.claude/scripts/agent_events_staging_import.sh"
+chmod +x "$T/.claude/scripts/agent_events_staging_import.sh"
+[ -f "$FRESHNESS_SCRIPT" ] && cp "$FRESHNESS_SCRIPT" "$T/.claude/scripts/etl_freshness_upsert.sh" && chmod +x "$T/.claude/scripts/etl_freshness_upsert.sh"
 cp "$HOOK" "$T/.claude/hooks/log_agent_run.sh"
 chmod +x "$T/.claude/hooks/log_agent_run.sh"
 
 TESTDB="$T/.claude/logs/unified.duckdb"
+STAGING="$T/.claude/logs/agent_events_staging.jsonl"
+_drain() { bash "$T/.claude/scripts/agent_events_staging_import.sh" "$TESTDB" "$STAGING" > /dev/null 2>&1; }
 
 # Create minimal schema
 duckdb -init /dev/null "$TESTDB" -c "
@@ -105,8 +123,18 @@ PRE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_use_id":"
 
 printf '%s' "$PRE_PAYLOAD" | HOME="$T" bash "$T/.claude/hooks/log_agent_run.sh"
 
+# llm#956: the hook call above only appends to the staging JSONL — it must
+# NOT touch agent_runs synchronously (that's the whole point of the fix:
+# no duckdb CLI call on the hot path, so no lock contention).
+ROW_COUNT_PRE_DRAIN=$(dq "$TESTDB" "SELECT COUNT(*) FROM agent_runs;")
+assert "PreToolUse: agent_runs untouched before drain (durability property)" "$ROW_COUNT_PRE_DRAIN" "0"
+
+assert_nonempty "PreToolUse: staging file has a pending record" "$([ -s "$STAGING" ] && echo yes)"
+
+_drain
+
 ROW_COUNT=$(dq "$TESTDB" "SELECT COUNT(*) FROM agent_runs;")
-assert "PreToolUse: exactly 1 row inserted" "$ROW_COUNT" "1"
+assert "PreToolUse: exactly 1 row inserted (after drain)" "$ROW_COUNT" "1"
 
 AGENT_TYPE=$(dq "$TESTDB" "SELECT agent_type FROM agent_runs WHERE tool_use_id='toolu_TEST1';")
 assert "PreToolUse: agent_type='fixer'" "$AGENT_TYPE" "fixer"
@@ -127,6 +155,7 @@ echo "=== Test group 2: PostToolUse -> agent_stop (same tool_use_id, no error) =
 POST_PAYLOAD='{"hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"toolu_TEST1","tool_input":{"subagent_type":"fixer","model":"sonnet","description":"demo"},"tool_response":{"is_error":false}}'
 
 printf '%s' "$POST_PAYLOAD" | HOME="$T" bash "$T/.claude/hooks/log_agent_run.sh"
+_drain
 
 ROW_COUNT2=$(dq "$TESTDB" "SELECT COUNT(*) FROM agent_runs;")
 assert "PostToolUse: still exactly 1 row (updated, not inserted)" "$ROW_COUNT2" "1"
@@ -159,9 +188,10 @@ echo "=== Test group 3: PostToolUse with NEW tool_use_id + is_error=true (self-c
 POST_ERR='{"hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"toolu_NEWERR","tool_input":{"subagent_type":"r-debugger","model":"sonnet","description":"error run"},"tool_response":{"is_error":true}}'
 
 printf '%s' "$POST_ERR" | HOME="$T" bash "$T/.claude/hooks/log_agent_run.sh"
+_drain
 
 ROW_COUNT3=$(dq "$TESTDB" "SELECT COUNT(*) FROM agent_runs;")
-assert "Error PostToolUse: 2 rows total (new INSERT)" "$ROW_COUNT3" "2"
+assert "Error PostToolUse: 2 rows total (new INSERT via orphan-stop fallback)" "$ROW_COUNT3" "2"
 
 STATUS3=$(dq "$TESTDB" "SELECT status FROM agent_runs WHERE tool_use_id='toolu_NEWERR';")
 assert "Error PostToolUse: status='failed'" "$STATUS3" "failed"
