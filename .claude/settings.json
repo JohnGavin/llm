@@ -500,7 +500,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/scripts/hook_event_emit.sh artifact_probe PreToolUse:fired",
+            "command": "~/.claude/hooks/tool_input_probe.sh artifact_probe",
             "timeout": 5
           }
         ]
@@ -510,7 +510,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/scripts/hook_event_emit.sh webfetch_probe PreToolUse:fired",
+            "command": "~/.claude/hooks/tool_input_probe.sh webfetch_probe",
             "timeout": 5
           }
         ]
