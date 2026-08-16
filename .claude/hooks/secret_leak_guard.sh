@@ -31,6 +31,17 @@ set -uo pipefail
 # `bash <path>` both resolve that without needing realpath.
 export HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
 
+# llm#960 Part 3: CRED_PATTERNS (Rules 4/5's credential-shape catalogue) now
+# lives in ONE shared file — lib/cred_patterns.py — imported by this script
+# AND artifact_secret_guard.sh, instead of being defined here directly. Same
+# resolve-relative-to-this-script's-own-location rationale as
+# HOOK_EVENT_EMIT_SCRIPT above: ~/.claude/hooks/ is a symlink into the main
+# checkout in production, so a hardcoded ~/.claude/... import path would
+# silently point at the main checkout's copy even under worktree-isolated
+# testing. See lib/cred_patterns.py's header for why a second copy of the
+# pattern list would recreate the drift risk llm#958 was raised to fix.
+export CRED_PATTERNS_LIB_DIR="${BASH_SOURCE[0]%/*}/lib"
+
 # ─── Rule detection + logging, all in one python3 process ──────────────────
 # Reads the hook JSON on stdin, extracts tool_input.command (falls back to a
 # top-level "command" key), applies Rules 1-4, writes the block/bypass log
@@ -40,25 +51,26 @@ export HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.s
 PY_CODE=$(cat <<'PYEOF'
 import sys, json, re, os, datetime, subprocess, shlex, math
 
-# Literal credential token shapes (Rule 4, reused verbatim by Rule 5 against
-# --body-file CONTENTS). Order matters: more specific prefixes (sk-ant-) must
-# be checked before their generic parents (sk-) so the reported description
-# is the most useful one.
-CRED_PATTERNS = [
-    (r'ghp_[A-Za-z0-9]{20,}',            'GitHub personal access token (ghp_)'),
-    (r'gho_[A-Za-z0-9]{20,}',            'GitHub OAuth token (gho_)'),
-    (r'ghs_[A-Za-z0-9]{20,}',            'GitHub server-to-server token (ghs_)'),
-    (r'github_pat_[A-Za-z0-9_]{20,}',    'GitHub fine-grained PAT (github_pat_)'),
-    (r'sk-ant-[A-Za-z0-9\-_]{20,}',      'Anthropic API key (sk-ant-)'),
-    (r'sk-[A-Za-z0-9]{20,}',             'API key (sk-...)'),
-    (r'hf_[A-Za-z0-9]{20,}',             'HuggingFace token (hf_)'),
-    (r'xoxb-[A-Za-z0-9\-]{10,}',         'Slack bot token (xoxb-)'),
-    (r'xoxp-[A-Za-z0-9\-]{10,}',         'Slack user token (xoxp-)'),
-    (r'AIza[A-Za-z0-9_\-]{30,}',         'Google API key (AIza)'),
-    (r'AKIA[A-Z0-9]{16}',                'AWS access key ID (AKIA)'),
-    (r'glpat-[A-Za-z0-9\-_]{15,}',       'GitLab personal access token (glpat-)'),
-    (r'-----BEGIN[ A-Z]*PRIVATE KEY-----', 'PEM private key block'),
-]
+# CRED_PATTERNS (Rule 4, reused verbatim by Rule 5 against --body-file
+# CONTENTS) is imported from the single shared definition in
+# lib/cred_patterns.py (llm#960 Part 3) — NOT redefined here. See
+# CRED_PATTERNS_LIB_DIR (set above this heredoc, before PY_CODE is captured)
+# for the path-resolution rationale.
+_CRED_LIB_DIR = os.environ.get('CRED_PATTERNS_LIB_DIR', '')
+if _CRED_LIB_DIR and _CRED_LIB_DIR not in sys.path:
+    sys.path.insert(0, _CRED_LIB_DIR)
+try:
+    from cred_patterns import CRED_PATTERNS, redact
+except Exception:
+    # Fail-open (matches the try/except wrapping main() at the bottom of this
+    # file): a missing/unreadable shared lib must never crash the hook. This
+    # disables Rules 4/5 rather than reintroducing a second copy of the
+    # pattern list here — CRED_PATTERNS stays absent from this file, full
+    # stop, so the "defined in exactly one place" selftest assertion in
+    # artifact_secret_guard.sh stays true even in this failure mode.
+    CRED_PATTERNS = []
+    def redact(text):
+        return text
 
 LOG_DIR = os.environ.get('SECRET_GUARD_LOG_DIR') or os.path.expanduser('~/.claude/logs')
 LOG_FILE = os.path.join(LOG_DIR, 'secret_leak_guard.log')
@@ -170,14 +182,6 @@ def looks_like_credential_value(v):
     if re.fullmatch(r'[0-9]+(?:[.:/_-][0-9]+)*', v):
         return False                                     # date/number
     return _shannon_entropy(v) >= CRED_ENTROPY_THRESHOLD
-
-
-def redact(text):
-    """Replace any Rule-4-shaped literal with <REDACTED> — never log a real credential."""
-    out = text
-    for pat, _ in CRED_PATTERNS:
-        out = re.sub(pat, '<REDACTED>', out)
-    return out
 
 
 def _append(path, line):

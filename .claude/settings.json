@@ -506,6 +506,16 @@
         ]
       },
       {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/artifact_secret_guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "WebFetch",
         "hooks": [
           {
