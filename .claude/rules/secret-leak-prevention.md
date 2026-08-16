@@ -242,6 +242,54 @@ WHERE hook_name IN ('artifact_probe', 'webfetch_probe')
 GROUP BY hook_name, event_type;
 ```
 
+### Content guard on `Artifact` publishes (llm#960 Part 3, 2026-08-16)
+
+`~/.claude/hooks/artifact_secret_guard.sh` is a `PreToolUse:Artifact` hook that
+reads the file named by `tool_input.file_path` (proven present by a real
+2026-08-16 publish — see "ANSWERED 2026-08-14" above) and blocks the publish
+if the file's contents contain a literal credential shape. It is Rule 5
+(`--body-file` contents) pointed at a different input source: same
+credential-shape catalogue, same 256 KiB read cap, same fail-open behaviour
+on a missing/unreadable/directory path, same no-bypass policy, same
+redaction discipline (file + line number + credential *description* only —
+never the matched value). It runs **alongside** `tool_input_probe.sh` on the
+`Artifact` matcher, not in place of it — `settings.json` already carries six
+separate hooks on the `Bash` matcher, so a second, differently-scoped hook on
+`Artifact` (telemetry shape probe vs. content security guard) follows an
+established pattern rather than inventing one.
+
+**Single source of truth for the pattern catalogue.** `CRED_PATTERNS`
+previously lived only inside `secret_leak_guard.sh`'s embedded python
+heredoc. It now lives in `~/.claude/hooks/lib/cred_patterns.py`, imported by
+BOTH `secret_leak_guard.sh` (Rules 4/5) and `artifact_secret_guard.sh` — never
+redefined in either. `artifact_secret_guard.sh --selftest` asserts the
+pattern definitions appear in exactly one file under `.claude/hooks/**`
+(mirroring `rotate_secret.sh`'s "each `CONSUMERS_*` name defined exactly
+once" check from llm#958, applied to this catalogue instead of the consumer
+map) — a regression guard against the exact duplication llm#958 was raised
+to fix. `secret_leak_guard.sh --selftest` was re-run after the extraction and
+is still 53/53 — the regression proof that Rules 1-6 are unaffected by moving
+their shared data out of the file.
+
+**UNVERIFIED: which block mechanism actually stops an `Artifact` publish.**
+For `Bash`, blocking is exit 2. The documented mechanism for non-Bash
+`PreToolUse` matchers is exit 0 plus a JSON body on stdout
+(`hookSpecificOutput.permissionDecision = "deny"`), and that is what
+`artifact_secret_guard.sh` emits — chosen because it is the one with
+documented support for tools other than `Bash`; exit 2 is documented
+specifically for `Bash`. **Whether exit 2 also blocks an `Artifact` call, and
+whether the JSON-deny form this guard actually uses works in practice, is
+UNVERIFIED from inside a worktree dispatch** — doing so would require a real
+`Artifact` publish, which a sandboxed agent cannot safely trigger as a side
+effect of writing this guard. The selftest proves the guard's own logic
+(detection, fail-open paths, redaction, dedup) but does **not** prove Claude
+Code actually honours the JSON it emits. Until a real publish of a file
+containing a fixture credential is attempted and confirmed blocked, treat
+this guard as **logging-and-attempting-to-block, not confirmed-blocking** —
+a guard that only logs would read as protection in every subsequent audit
+while doing nothing, which is worse than no guard at all. Update this
+paragraph with the outcome once verified.
+
 ## Related
 
 - `credential-management` rule — the broader retrieve-from-environment
