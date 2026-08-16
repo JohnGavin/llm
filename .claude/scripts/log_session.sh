@@ -2,24 +2,36 @@
 # log_session.sh — Write session events to unified DuckDB
 # Usage: log_session.sh start|stop [session_id] [project] [summary]
 #
-# CONCURRENCY NOTE (#710):
-#   The `hook` case fires on every PostToolUse (i.e. every tool call).
-#   Using the duckdb CLI here held an EXCLUSIVE write lock on unified.duckdb
-#   for ~100ms per call.  DuckDB's lock model allows no concurrent readers
-#   or writers while that lock is held.  With a busy Claude session firing
-#   dozens of PostToolUse events per minute, the ETL could never acquire a
-#   write connection through its 3 × 10 s retry window.
+# CONCURRENCY NOTE (#710, extended #956):
+#   unified.duckdb has many concurrent writers (roborev ETL, staleness
+#   collector, hook_events loader, telemetry). Writing via the duckdb CLI
+#   takes an EXCLUSIVE whole-file lock — DuckDB allows no concurrent readers
+#   or writers while it is held. A throwaway-DB experiment with 12 concurrent
+#   CLI writers landed only 1: "IO Error: Could not set lock on file ...
+#   Conflicting lock is held ... by ...". Every one of the 11 lost writes
+#   failed with exactly the error this script used to suppress three times
+#   over: `2>/dev/null` here, `|| true` here, and the caller backgrounding the
+#   whole hook with `nohup ... &`.
 #
-#   FIX: the `hook` case now writes to an append-only JSONL staging file
-#   (no lock needed — each printf/>> is an atomic kernel write ≤ PIPE_BUF).
-#   roborev_metrics_etl.sh imports the staging file into hook_events after
-#   the main ETL, when contention is lower.
+#   FIX (#710 for `hook`, #956 for start/stop/error/agent_start/agent_stop):
+#   every case below writes to an append-only JSONL staging file instead of
+#   the duckdb CLI (no lock needed — each printf/>> is an atomic kernel write
+#   <= PIPE_BUF). The corresponding `*_staging_import.sh` script drains its
+#   staging file into the real table from roborev_metrics_etl.sh, at a time
+#   when duckdb contention is lower:
+#     hook        -> hook_events_staging.jsonl   -> hook_events_load.sh
+#     start/stop  -> session_events_staging.jsonl -> session_events_staging_import.sh
+#     agent_start/agent_stop -> agent_events_staging.jsonl -> agent_events_staging_import.sh
+#     error       -> error_events_staging.jsonl  -> error_events_staging_import.sh
 #
-#   All other cases (start, stop, error, agent_start, agent_stop) fire at
-#   most once per session boundary and retain the duckdb CLI path.
+#   This script no longer calls the duckdb CLI at all — every case is a
+#   lock-free append. The etl_freshness registry updates for `sessions` and
+#   `agent_runs` moved out of the `stop`/`agent_stop` cases (which fired
+#   before the data had actually landed, and were themselves subject to the
+#   same lock) into the corresponding *_staging_import.sh scripts, which call
+#   them right after the real write lands.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DB="$HOME/.claude/logs/unified.duckdb"
 ACTION="${1:-}"
 SESSION_ID="${2:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo unknown)}"
@@ -32,6 +44,18 @@ if [ ! -f "$DB" ]; then
   exit 0
 fi
 
+# ── JSON-escape a single field for embedding in a JSONL string literal ─────
+# Order matters: strip control chars that would break a single JSONL line
+# (newline/CR/tab -> space) FIRST, then escape backslashes, then quotes —
+# mirrors the `hook` case's original escaping (kept byte-for-byte).
+_json_escape() {
+  printf '%s' "$1" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+_now_ts() {
+  date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ'
+}
+
 case "$ACTION" in
   start)
     # llm#803: optional 5th arg MODEL. No reliable harness env var carries the
@@ -42,10 +66,14 @@ case "$ACTION" in
     # happened. The param exists so a future caller with a reliable source
     # can populate it directly without a log_session.sh change.
     MODEL_START="${5:-}"
-    duckdb -init /dev/null "$DB" -c "
-      INSERT OR REPLACE INTO sessions (session_id, project, started_at, summary, model)
-      VALUES ('$SESSION_ID', '$PROJECT', current_timestamp, '$SUMMARY', NULLIF('$MODEL_START', ''));
-    " 2>/dev/null || true
+    _STAGING="${HOME}/.claude/logs/session_events_staging.jsonl"
+    _ts=$(_now_ts)
+    _proj_esc=$(_json_escape "$PROJECT")
+    _summary_esc=$(_json_escape "$(echo "$SUMMARY" | head -c 500)")
+    _model_esc=$(_json_escape "$MODEL_START")
+    printf '{"type":"start","ts":"%s","session_id":"%s","project":"%s","summary":"%s","model":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$_proj_esc" "$_summary_esc" "$_model_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
     # Store session ID for stop to read
     echo "$SESSION_ID" > "$HOME/.claude/logs/.current_session"
     ;;
@@ -56,91 +84,82 @@ case "$ACTION" in
     fi
     # llm#803: optional 5th arg MODEL, sourced by the caller (session_stop.sh)
     # from the session's transcript JSONL (each assistant turn embeds a
-    # top-level "model" field). COALESCE means a blank/missing value never
-    # clobbers a model recorded by an earlier `stop` call for this session.
+    # top-level "model" field). The import side applies the identical
+    # COALESCE(NULLIF(...), existing) guard the old direct-duckdb UPDATE
+    # used, so a blank/missing staged value never clobbers a model recorded
+    # by an earlier `stop` for this session — see
+    # session_events_staging_import.sh.
     MODEL_STOP="${5:-}"
-    duckdb -init /dev/null "$DB" -c "
-      UPDATE sessions
-      SET ended_at = current_timestamp,
-          duration_min = EXTRACT(EPOCH FROM (current_timestamp - started_at)) / 60.0,
-          summary = COALESCE(NULLIF('$SUMMARY', ''), summary),
-          model = COALESCE(NULLIF('$MODEL_STOP', ''), model)
-      WHERE session_id = '$SESSION_ID';
-    " 2>/dev/null || true
+    _STAGING="${HOME}/.claude/logs/session_events_staging.jsonl"
+    _ts=$(_now_ts)
+    _summary_esc=$(_json_escape "$(echo "$SUMMARY" | head -c 500)")
+    _model_esc=$(_json_escape "$MODEL_STOP")
+    printf '{"type":"stop","ts":"%s","session_id":"%s","summary":"%s","model":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$_summary_esc" "$_model_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
     rm -f "$HOME/.claude/logs/.current_session"
-    # ETL freshness registry (llm#309 Phase 1a): event-driven, no SLA -> unknown.
-    if [ -x "${SCRIPT_DIR}/etl_freshness_upsert.sh" ]; then
-      "${SCRIPT_DIR}/etl_freshness_upsert.sh" sessions "$DB" "" \
-        --table sessions --ts-col started_at >/dev/null 2>&1 || true
-    fi
+    # etl_freshness for `sessions` is now updated by
+    # session_events_staging_import.sh AFTER the staged stop actually lands
+    # in the table (llm#956) -- calling it here, before the write has landed,
+    # was itself another duckdb CLI call subject to the same lock, which is
+    # why etl_freshness.sessions had been frozen for weeks.
     ;;
   error)
     SOURCE="${5:-unknown}"
-    duckdb -init /dev/null "$DB" -c "
-      INSERT INTO errors (session_id, source, error_text, context)
-      VALUES ('$SESSION_ID', '$SOURCE', '$(echo "$SUMMARY" | sed "s/'/''/g")', '$PROJECT');
-    " 2>/dev/null || true
+    _STAGING="${HOME}/.claude/logs/error_events_staging.jsonl"
+    _ts=$(_now_ts)
+    _source_esc=$(_json_escape "$SOURCE")
+    _errtext_esc=$(_json_escape "$(echo "$SUMMARY" | head -c 1000)")
+    _context_esc=$(_json_escape "$PROJECT")
+    printf '{"ts":"%s","session_id":"%s","source":"%s","error_text":"%s","context":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$_source_esc" "$_errtext_esc" "$_context_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
     ;;
   hook)
     HOOK_NAME="${5:-unknown}"
     EVENT_TYPE="${6:-unknown}"
     # JSONL staging: no duckdb CLI, no exclusive lock (#710 durable fix).
-    # Each >> append is ≤ PIPE_BUF (512 B) and atomic at the kernel level;
+    # Each >> append is <= PIPE_BUF (512 B) and atomic at the kernel level;
     # no concurrent writer can interleave within a single printf line.
     # roborev_metrics_etl.sh imports this file into hook_events on each ETL run.
     _HOOK_STAGING="${HOME}/.claude/logs/hook_events_staging.jsonl"
-    _ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')
-    # JSON-escape the preview: backslashes first, then double-quotes, then strip
-    # control chars (newlines / carriage-returns / tabs) that would break JSONL.
-    _preview=$(echo "$SUMMARY" | head -c 200 | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g')
-    _preview=$(printf '%s' "$_preview" | sed 's/"/\\"/g')
+    _preview=$(echo "$SUMMARY" | head -c 200)
+    _preview_esc=$(_json_escape "$_preview")
     printf '{"ts":"%s","session_id":"%s","hook_name":"%s","event_type":"%s","output_preview":"%s"}\n' \
-      "$_ts" "$SESSION_ID" "$HOOK_NAME" "$EVENT_TYPE" "$_preview" \
+      "$(_now_ts)" "$SESSION_ID" "$HOOK_NAME" "$EVENT_TYPE" "$_preview_esc" \
       >> "${_HOOK_STAGING}" 2>/dev/null || true
     ;;
   agent_start)
     AGENT_TYPE="${5:-unknown}"
     MODEL="${6:-unknown}"
     TOOL_USE_ID="${7:-}"
-    duckdb -init /dev/null "$DB" -c "
-      INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id)
-      VALUES ('$SESSION_ID', '$AGENT_TYPE', '$MODEL', current_timestamp,
-              '$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")', 'running',
-              NULLIF('$TOOL_USE_ID',''));
-    " 2>/dev/null || true
+    _STAGING="${HOME}/.claude/logs/agent_events_staging.jsonl"
+    _ts=$(_now_ts)
+    _agent_esc=$(_json_escape "$AGENT_TYPE")
+    _model_esc=$(_json_escape "$MODEL")
+    _preview_esc=$(_json_escape "$(echo "$SUMMARY" | head -c 200)")
+    _tuid_esc=$(_json_escape "$TOOL_USE_ID")
+    printf '{"type":"agent_start","ts":"%s","session_id":"%s","agent_type":"%s","model":"%s","prompt_preview":"%s","status":"running","tool_use_id":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$_agent_esc" "$_model_esc" "$_preview_esc" "$_tuid_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
     ;;
   agent_stop)
     AGENT_TYPE="${5:-unknown}"
     STATUS="${6:-done}"
     TOOL_USE_ID="${7:-}"
-    PROMPT_PV="$(echo "$SUMMARY" | head -c 200 | sed "s/'/''/g")"
-    _hit=""
-    if [ -n "$TOOL_USE_ID" ]; then
-      _hit=$(duckdb -init /dev/null "$DB" -noheader -list -c "
-        UPDATE agent_runs SET ended_at=current_timestamp,
-          duration_sec=EXTRACT(EPOCH FROM (current_timestamp-started_at)), status='$STATUS'
-        WHERE tool_use_id='$TOOL_USE_ID' AND status='running' RETURNING id;" 2>/dev/null || echo "")
-    fi
-    if [ -z "$_hit" ]; then
-      _hit=$(duckdb -init /dev/null "$DB" -noheader -list -c "
-        UPDATE agent_runs SET ended_at=current_timestamp,
-          duration_sec=EXTRACT(EPOCH FROM (current_timestamp-started_at)), status='$STATUS'
-        WHERE id=(SELECT id FROM agent_runs WHERE session_id='$SESSION_ID'
-          AND agent_type='$AGENT_TYPE' AND status='running'
-          ORDER BY started_at DESC LIMIT 1) RETURNING id;" 2>/dev/null || echo "")
-    fi
-    if [ -z "$_hit" ]; then
-      duckdb -init /dev/null "$DB" -c "
-        INSERT INTO agent_runs (session_id, agent_type, model, started_at, ended_at,
-          duration_sec, prompt_preview, status, tool_use_id)
-        VALUES ('$SESSION_ID','$AGENT_TYPE','inherited',current_timestamp,
-          current_timestamp,0,'$PROMPT_PV','$STATUS',NULLIF('$TOOL_USE_ID',''));" 2>/dev/null || true
-    fi
-    # ETL freshness registry (llm#309 Phase 1a): event-driven, no SLA -> unknown.
-    if [ -x "${SCRIPT_DIR}/etl_freshness_upsert.sh" ]; then
-      "${SCRIPT_DIR}/etl_freshness_upsert.sh" agent_runs "$DB" "" \
-        --table agent_runs --ts-col started_at >/dev/null 2>&1 || true
-    fi
+    _STAGING="${HOME}/.claude/logs/agent_events_staging.jsonl"
+    _ts=$(_now_ts)
+    _agent_esc=$(_json_escape "$AGENT_TYPE")
+    _status_esc=$(_json_escape "$STATUS")
+    _preview_esc=$(_json_escape "$(echo "$SUMMARY" | head -c 200)")
+    _tuid_esc=$(_json_escape "$TOOL_USE_ID")
+    printf '{"type":"agent_stop","ts":"%s","session_id":"%s","agent_type":"%s","model":"","prompt_preview":"%s","status":"%s","tool_use_id":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$_agent_esc" "$_preview_esc" "$_status_esc" "$_tuid_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
+    # etl_freshness for `agent_runs` is now updated by
+    # agent_events_staging_import.sh AFTER the staged stop actually lands
+    # (llm#956) -- see the `stop` case comment above for why calling it here
+    # (before the write lands) was itself lock-prone.
     ;;
   *)
     echo "Usage: log_session.sh start|stop|error|hook|agent_start|agent_stop [session_id] [project] [summary] [extra_args...]" >&2

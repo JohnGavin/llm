@@ -361,6 +361,40 @@ else
   log "hook_events_load: SKIP (script not found or not executable: ${_HOOK_EVENTS_LOAD})"
 fi
 
+# ── Session/agent/error events: drain real-time staging (#710/#956) ─────────
+# log_session.sh's `start`/`stop`, `agent_start`/`agent_stop`, and `error`
+# cases used to write to sessions/agent_runs/errors via the duckdb CLI
+# directly, taking the same exclusive whole-file lock that motivated the
+# `hook` case's #710 fix above -- confirmed by a throwaway-DB experiment
+# (12 concurrent duckdb-CLI writers, 11 lost to lock contention, every
+# failure previously suppressed 3x: 2>/dev/null, || true, nohup). They now
+# append lock-free JSONL to their own staging files; drain them here, right
+# next to the hook_events import, using the identical atomic-handoff
+# pattern. Unlike hook_events_load.sh, these three scripts do NOT suppress
+# the critical write's stderr -- a real duckdb failure is captured into
+# ${LOGFILE} below (not discarded), since silently-swallowed errors are
+# exactly what let this bug run undetected for weeks.
+_SESSION_EVENTS_IMPORT="${SCRIPT_DIR}/session_events_staging_import.sh"
+if [ -x "${_SESSION_EVENTS_IMPORT}" ]; then
+  "${_SESSION_EVENTS_IMPORT}" "${UNIFIED_DB}" >> "$LOGFILE" 2>&1 || log "session_events_staging_import: failed (see ${LOGFILE} for detail)"
+else
+  log "session_events_staging_import: SKIP (script not found or not executable: ${_SESSION_EVENTS_IMPORT})"
+fi
+
+_AGENT_EVENTS_IMPORT="${SCRIPT_DIR}/agent_events_staging_import.sh"
+if [ -x "${_AGENT_EVENTS_IMPORT}" ]; then
+  "${_AGENT_EVENTS_IMPORT}" "${UNIFIED_DB}" >> "$LOGFILE" 2>&1 || log "agent_events_staging_import: failed (see ${LOGFILE} for detail)"
+else
+  log "agent_events_staging_import: SKIP (script not found or not executable: ${_AGENT_EVENTS_IMPORT})"
+fi
+
+_ERROR_EVENTS_IMPORT="${SCRIPT_DIR}/error_events_staging_import.sh"
+if [ -x "${_ERROR_EVENTS_IMPORT}" ]; then
+  "${_ERROR_EVENTS_IMPORT}" "${UNIFIED_DB}" >> "$LOGFILE" 2>&1 || log "error_events_staging_import: failed (see ${LOGFILE} for detail)"
+else
+  log "error_events_staging_import: SKIP (script not found or not executable: ${_ERROR_EVENTS_IMPORT})"
+fi
+
 # ── Skill usage: drain real-time staging (Card 1b, #729) ────────────────────
 # log_skill_use.sh (PostToolUse:Skill hook) appends one JSON line per Skill
 # invocation to skill_usage_staging.jsonl (lock-free — see its header
