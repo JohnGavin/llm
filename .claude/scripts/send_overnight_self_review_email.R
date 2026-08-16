@@ -88,6 +88,28 @@ if (!file.exists(db_path)) {
 con <- DBI::dbConnect(duckdb::duckdb(), db_path, read_only = TRUE)
 on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
+# The `staleness_status` view (llm#893) computes `now() - observed_at` on
+# TIMESTAMPTZ columns. A fresh R duckdb::duckdb() connection does NOT have
+# the icu extension auto-loaded, and TIMESTAMPTZ subtraction has no builtin
+# implementation without it -- every query against staleness_status fails
+# with a BINDER error ("No function matches -(TIMESTAMP WITH TIME ZONE, ...)")
+# even though the same query works fine from the `duckdb` CLI (which does
+# load icu). Found live 2026-08-16 while wiring this connection to the shared
+# view for llm#893 step 3. LOAD is a no-op if already loaded; INSTALL is a
+# no-op if already cached (confirmed present under
+# ~/Library/Application Support/org.R-project.R/R/duckdb/extensions/ on this
+# machine, so this does not require network access in the common case).
+# Best-effort: if this fails (offline + never cached), later
+# staleness_status queries fail closed via safe_query()'s fallback and the
+# unified-staleness section reports "view absent" rather than crashing.
+tryCatch({
+  DBI::dbExecute(con, "INSTALL icu")
+  DBI::dbExecute(con, "LOAD icu")
+}, error = function(e) {
+  message(sprintf("  [WARN] could not load duckdb icu extension (staleness_status queries will fail-closed): %s",
+                   conditionMessage(e)))
+})
+
 # ── Helper: safe query ────────────────────────────────────────────────────────
 safe_query <- function(sql, fallback = data.frame()) {
   tryCatch(DBI::dbGetQuery(con, sql), error = function(e) {
@@ -310,6 +332,39 @@ sec1_block <- collapsible_block(
 # (cumulative totals only, no alarm).
 source_tables <- c("sessions", "agent_runs", "hook_events")
 
+# ── Shared staleness view lookup (llm#893 step 3) ─────────────────────────────
+# `sessions` and `agent_runs` are tracked as `etl_source` assets in the
+# consolidated `staleness` fact table (see staleness_collect.sh, which carries
+# them forward from etl_freshness with cadences of 72h / 48h respectively).
+# Their STALE verdict below is read from the single shared `staleness_status`
+# view instead of a locally recomputed "0 rows in 24h AND gap<48h" rule, so
+# this section can never disagree with the session-start banner
+# (staleness_banner.sh) about the same two assets -- the exact drift the
+# issue's motivating incident was about.
+#
+# `hook_events` has no row in `staleness` (no cadence has ever been assigned
+# to it) so it keeps the local hours_since-based fallback below unchanged --
+# see the llm#893 step-3 dispatch report for why that gap is not closed here
+# (assigning it a cadence is a schema-widening decision left to the issue).
+staleness_lookup <- function(asset_id) {
+  row <- safe_query(sprintf("
+    SELECT status,
+           FLOOR(EXTRACT(EPOCH FROM observation_age) / 60.0) AS observation_age_min
+    FROM staleness_status
+    WHERE asset_kind = 'etl_source' AND asset_id = '%s'
+  ", gsub("'", "''", asset_id, fixed = TRUE)))
+  if (nrow(row) == 0L) return(NULL)
+  list(status = row$status[[1]], observation_age_min = row$observation_age_min[[1]])
+}
+
+# Renders the "how old is this VERDICT" fact (llm#893's `observation_age`) in
+# a form a human reads at a glance, never raw seconds/minutes.
+fmt_observation_age <- function(minutes) {
+  if (is.null(minutes) || is.na(minutes)) return(NA_character_)
+  if (minutes < 60) return(sprintf("%.0fm ago", minutes))
+  sprintf("%.0fh ago", minutes / 60)
+}
+
 sec2_rows <- lapply(source_tables, function(tbl) {
   ts_col <- switch(tbl,
     sessions   = "started_at",
@@ -331,9 +386,14 @@ sec2_rows <- lapply(source_tables, function(tbl) {
     %s
   ", ts_col, ts_col, tbl, where_clause))
 
+  sv <- if (tbl %in% c("sessions", "agent_runs")) staleness_lookup(tbl) else NULL
+  obs_age_txt <- if (!is.null(sv)) (fmt_observation_age(sv$observation_age_min) %||% "—") else NA_character_
+
   if (nrow(info) == 0L) {
+    fallback_status <- if (!is.null(sv)) toupper(sv$status) else "DEAD"
     return(list(table = tbl, total = 0L, last_24h = 0L,
-                latest_ts = NA_character_, status = "DEAD"))
+                latest_ts = NA_character_, status = fallback_status,
+                observation_age = obs_age_txt))
   }
 
   n24      <- as.integer(info$last_24h[[1]])
@@ -352,6 +412,11 @@ sec2_rows <- lapply(source_tables, function(tbl) {
     "live"
   } else if (n24 >= 1L) {
     "sparse"
+  } else if (!is.null(sv)) {
+    # llm#893: verdict comes from the shared staleness_status view (per-asset
+    # cadence), NOT a local hardcoded 48h gap rule. Replaces the old
+    # `hours_since <= 48 -> STALE else DEAD` branch for tracked assets.
+    toupper(sv$status)
   } else if (hours_since <= 48) {
     "STALE"
   } else {
@@ -359,13 +424,15 @@ sec2_rows <- lapply(source_tables, function(tbl) {
   }
 
   list(table = tbl, total = total, last_24h = n24,
-       latest_ts = as.character(latest), status = status)
+       latest_ts = as.character(latest), status = status,
+       observation_age = obs_age_txt)
 })
 
 status_color <- function(s) {
   switch(s,
     "live"   = ACCENT_GREEN,
     "sparse" = ACCENT_ORANGE,
+    "FRESH"  = ACCENT_GREEN,   # llm#893: shared-view verdict for tracked assets
     "STALE"  = "#ff5252",
     "DEAD"   = "#ff5252",
     DARK_MUTED
@@ -391,6 +458,7 @@ sec2_rows_html <- paste(lapply(sec2_rows, function(r) {
 <td style="padding:6px 10px;text-align:right;">%s</td>
 <td style="padding:6px 10px;font-size:11px;color:%s;">%s</td>
 <td style="padding:6px 10px;text-align:center;">%s</td>
+<td style="padding:6px 10px;font-size:11px;color:%s;text-align:right;">%s</td>
 </tr>',
     DARK_CARD,
     r$table,
@@ -398,7 +466,9 @@ sec2_rows_html <- paste(lapply(sec2_rows, function(r) {
     format(r$last_24h, big.mark = ","),
     DARK_MUTED,
     r$latest_ts %||% "—",
-    status_badge(r$status)
+    status_badge(r$status),
+    DARK_MUTED,
+    r$observation_age %||% "—"
   )
 }), collapse = "\n")
 
@@ -413,6 +483,7 @@ sec2_table <- sprintf(
 <th style="padding:6px 10px;text-align:right;">Last 24h</th>
 <th style="padding:6px 10px;text-align:left;">Latest row</th>
 <th style="padding:6px 10px;text-align:center;">Status</th>
+<th style="padding:6px 10px;text-align:right;">Observed (llm#893)</th>
 </tr>
 </thead>
 <tbody>%s</tbody>
@@ -420,13 +491,24 @@ sec2_table <- sprintf(
 <p style="color:%s;font-size:%s;margin-top:8px;">
   Status: <b>live</b> ≥10 rows/24h &nbsp;|&nbsp;
   <b style="color:%s;">sparse</b> 1–9 rows/24h &nbsp;|&nbsp;
-  <b style="color:#ff5252;">STALE</b> 0 rows, gap &lt;48h &nbsp;|&nbsp;
-  <b style="color:#ff5252;">DEAD</b> 0 rows, gap ≥48h
+  <b style="color:%s;">FRESH</b>/<b style="color:#ff5252;">STALE</b> 0 rows/24h,
+  verdict from the shared <code>staleness_status</code> view for tracked
+  assets (sessions, agent_runs) &nbsp;|&nbsp;
+  <b style="color:#ff5252;">DEAD</b> 0 rows/24h, untracked asset (hook_events),
+  gap &ge;48h
+</p>
+<p style="color:%s;font-size:%s;margin-top:4px;">
+  "Observed" is the shared view\'s <code>observation_age</code> -- how old the
+  underlying fact is, not how old the row is. A verdict with a large
+  "Observed" age is itself untrustworthy (the collector has not run
+  recently) even if it reads FRESH. "—" = asset not tracked in
+  <code>staleness</code> (see the unified staleness section below).
 </p>',
   DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT,
   sec2_rows_html,
   DARK_MUTED, EMAIL_FONT_SUBTITLE,
-  ACCENT_ORANGE
+  ACCENT_ORANGE, ACCENT_GREEN,
+  DARK_MUTED, EMAIL_FONT_SUBTITLE
 )
 
 sec2_summary <- sprintf("%d source tables · %d stale/dead · sessions excl. synthetic ClaudeProbe (#812)",
@@ -493,6 +575,138 @@ sec2_block <- collapsible_block(
   "Source table volume (last 24h)",
   sec2_summary,
   sec2_table
+)
+
+# ── Section: Unified staleness (llm#893 shared view) ──────────────────────────
+# The single `staleness_status` view (llm#893 steps 1-2) is now the ONE
+# definition of "is this asset stale" -- this section is the "several
+# renderings, one surface" step (llm#893 step 3): every tracked etl_source /
+# launchd_job / collector asset, with the SAME status computation used by
+# session_init.sh's staleness_banner.sh (a different trigger class from this
+# nightly email, so the two can never quietly disagree).
+#
+# `observation_age` (how old the OBSERVATION is, not the asset) is rendered
+# next to every status -- without it a verdict that is hours old reads as
+# current. Verified live 2026-08-16: the table showed
+# com.claude.roborev-weekly-rollup-email as "stale, observed 172h ago" and
+# com.claude.roborev-severity-autoclose as "stale, observed 28h ago" while
+# BOTH had actually run successfully that morning -- the collector had simply
+# not re-observed since 08:15. observation_age makes that visible instead of
+# reading as two false alarms.
+staleness_section <- tryCatch({
+  view_exists <- safe_query("
+    SELECT count(*) AS n FROM information_schema.tables
+    WHERE table_name = 'staleness_status'
+  ", fallback = data.frame(n = 0L))
+  view_present <- nrow(view_exists) > 0L && isTRUE(as.integer(view_exists$n[[1]]) > 0L)
+
+  if (!view_present) {
+    list(
+      body = sprintf(
+        '<p style="color:#ff5252;">The <code>staleness_status</code> view is not
+present in this database &mdash; llm#893 steps 1-2 have not run here, or the DB
+path is wrong. No staleness verdict is available; this is a configuration
+gap, not a clean bill of health.</p>'),
+      summary = "view absent"
+    )
+  } else {
+    rows <- safe_query("
+      SELECT
+        asset_kind, asset_id, status,
+        last_seen_ts,
+        FLOOR(EXTRACT(EPOCH FROM observation_age) / 60.0) AS observation_age_min
+      FROM staleness_status
+      ORDER BY
+        CASE WHEN asset_kind = 'collector' THEN 0 ELSE 1 END,
+        CASE WHEN status = 'stale' THEN 0 ELSE 1 END,
+        asset_kind, asset_id
+    ")
+
+    if (nrow(rows) == 0L) {
+      list(
+        body = sprintf(
+          '<p style="color:#ff5252;">staleness_status exists but has zero rows
+&mdash; staleness_collect.sh has never written a heartbeat here. Nothing is
+trustworthy yet.</p>'),
+        summary = "empty (no collector runs yet)"
+      )
+    } else {
+      collector_row <- rows[rows$asset_kind == "collector" & rows$asset_id == "staleness_collect", , drop = FALSE]
+      collector_stale <- nrow(collector_row) > 0L && identical(collector_row$status[[1]], "stale")
+
+      rows_html <- paste(apply(rows, 1, function(r) {
+        is_stale <- identical(r[["status"]], "stale")
+        row_bg <- if (is_stale) "#2a0a0a" else DARK_CARD
+        sprintf(
+          '<tr style="background-color:%s;">
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
+<td style="padding:5px 10px;font-family:monospace;font-size:12px;max-width:280px;
+   word-break:break-all;">%s</td>
+<td style="padding:5px 10px;text-align:center;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;text-align:right;">%s</td>
+</tr>',
+          row_bg,
+          DARK_MUTED, r[["asset_kind"]],
+          htmlEscape(r[["asset_id"]]),
+          status_badge(toupper(r[["status"]])),
+          DARK_MUTED, r[["last_seen_ts"]] %||% "never",
+          DARK_MUTED, fmt_observation_age(suppressWarnings(as.numeric(r[["observation_age_min"]]))) %||% "—"
+        )
+      }), collapse = "\n")
+
+      table_html <- sprintf(
+        '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead><tr style="background-color:%s;">
+<th style="padding:5px 10px;text-align:left;">Kind</th>
+<th style="padding:5px 10px;text-align:left;">Asset</th>
+<th style="padding:5px 10px;text-align:center;">Status</th>
+<th style="padding:5px 10px;text-align:left;">Last seen</th>
+<th style="padding:5px 10px;text-align:right;">Observed</th>
+</tr></thead><tbody>%s</tbody></table>',
+        DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, rows_html
+      )
+
+      n_stale <- sum(rows$status == "stale", na.rm = TRUE)
+      n_total <- nrow(rows)
+
+      collector_warning <- if (collector_stale) {
+        sprintf(
+          '<p style="color:#ff5252;font-size:%s;font-weight:bold;margin-bottom:8px;">
+&#9888; COLLECTOR STALE &mdash; staleness_collect has not run recently. Every
+verdict below may be out of date; treat this whole section as untrustworthy
+until the collector fires again (see staleness_banner.sh, llm#893 step 2).</p>',
+          EMAIL_FONT_SUBTITLE
+        )
+      } else {
+        ""
+      }
+
+      body <- paste0(collector_warning, table_html)
+
+      summary <- if (n_stale == 0L) {
+        sprintf("%d assets · all fresh%s", n_total,
+                if (collector_stale) " (but collector stale -- do not trust this)" else "")
+      } else {
+        sprintf("%d assets · %d stale%s", n_total, n_stale,
+                if (collector_stale) " · COLLECTOR STALE" else "")
+      }
+
+      list(body = body, summary = summary)
+    }
+  }
+}, error = function(e) {
+  list(
+    body    = sprintf('<p style="color:#ff5252;">Unified staleness section failed: %s</p>',
+                      htmlEscape(conditionMessage(e))),
+    summary = "error"
+  )
+})
+
+sec_staleness_block <- collapsible_block(
+  "Unified staleness (shared view, llm#893)",
+  staleness_section$summary,
+  staleness_section$body
 )
 
 # ── Section 3: Cumulative table health ────────────────────────────────────────
@@ -1736,6 +1950,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   header_html,
   sec1_block, "\n",
   sec2_block, "\n",
+  sec_staleness_block, "\n",
   sec3_block, "\n",
   sec3b_block, "\n",
   sec3c_block, "\n",
