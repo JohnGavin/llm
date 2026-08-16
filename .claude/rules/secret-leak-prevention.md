@@ -183,6 +183,29 @@ no longer *whether* the matcher fires but *what `tool_input` carries* — the
 observers record no payload, so confirm a `file_path` (or equivalent) is
 present before designing the guard around reading it.
 
+### Shape probe replaces the bare observers (2026-08-16)
+
+The two `PreToolUse` entries above now call
+`~/.claude/hooks/tool_input_probe.sh <hook_name>` instead of
+`hook_event_emit.sh` directly. The new script reads `tool_input` and emits
+one `hook_events` row recording its **shape only**: sorted top-level key
+names, each key's JSON type, and — for strings — its length (e.g.
+`keys=[description=string:23,favicon=string:5,file_path=string:16,
+title=string:11,file_path_exists=False]`). It never records a value, a
+substring of a value, or file contents; `file_path` additionally gets an
+existence check (`file_path_exists=True/False`) against the path it names,
+without ever opening what the path points at. `hook_name` values
+(`artifact_probe` / `webfetch_probe`) are unchanged, so existing rows stay
+comparable across the switchover. Selftest: `bash
+~/.claude/hooks/tool_input_probe.sh --selftest` (7 cases, including a
+sentinel-value proof that no value ever reaches the emitted row).
+
+This still does **not** answer the open question above — it only sharpens
+it. It needs a real `Artifact` publish after this change merges to confirm
+which keys `tool_input` actually carries in production (the design above
+assumes `file_path` is present; that assumption is unverified until a live
+row shows it).
+
 **How to read the result** of a future matcher probe, once `hook_events_load.sh`
 has drained the spool into `~/.claude/logs/unified.duckdb`:
 
