@@ -46,6 +46,14 @@ export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 #   during the per-repo loop (these are agent worktree artefacts, never real
 #   projects). The --clean-repos-table flag deletes matching rows from the DB.
 #
+# Requeue dropped quota failures (llm#927, bolt-on sweep — see the dedicated
+# comment block near the end of this file):
+#   After the primary per-repo catchup work above, this script also calls
+#   roborev_requeue_dropped.sh (mode mirrors this poller's own dry-run/--apply,
+#   --limit=5) to re-enqueue a small batch of review_jobs that died on an
+#   exhausted agent quota and were otherwise DROPPED forever. Fully fail-open;
+#   opt out with SKIP_ROBOREV_REQUEUE=1.
+#
 # Exit codes:
 #   0 ok (including "nothing to do" and "roborev/sqlite missing")
 #   1 unexpected error
@@ -236,3 +244,57 @@ done
 mode="dry-run"; [ "$DRY_RUN" -eq 0 ] && mode="applied"
 log "summary [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped"
 echo "roborev_poll_merges [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped"
+
+# ── Requeue dropped quota failures (llm#927 bolt-on sweep) ───────────────────
+# roborev_requeue_dropped.sh finds review_jobs stuck in the TERMINAL
+# status='failed' state left behind by an exhausted agent quota/spend limit
+# and re-enqueues a small, rate-limited batch of them (see that script's
+# header and the roborev-resolution.md "Requeue Dropped Quota Failures"
+# section for the full design, including the exclude_patterns trap it
+# defends against). This poller is the host per that section's "use an
+# existing slot, don't add a new plist" recommendation: it already fires
+# thrice daily on weekdays and already exports the PATH/codex-shim/
+# CLAUDE_TRIGGER environment the sweep needs.
+#
+# This section is a bolt-on: it runs strictly AFTER the primary per-repo
+# catchup work above (whose summary has already been logged/echoed) and is
+# fully fail-open — nothing here may change this poller's own exit code.
+# `set +e`/`set -e` bracket the capture explicitly so a missing `timeout`
+# binary, a missing/non-executable requeue script, or any non-zero exit from
+# it is caught here rather than tripping this script's `set -eo pipefail`.
+#
+# Kill switch: SKIP_ROBOREV_REQUEUE=1 (naming mirrors SKIP_SESSION_END_REFINE
+# in session_end_refine.sh).
+#
+# Mode mirrors this poller's own mode: dry-run stays dry-run, --apply stays
+# --apply, with a conservative --limit=5 (roborev_requeue_dropped.sh's own
+# default) — draining the backlog slowly is the correct behaviour, not a
+# compromise, since these jobs died on exhausted agent quota in the first
+# place; see that script's header for the full rationale.
+if [ "${SKIP_ROBOREV_REQUEUE:-}" = "1" ]; then
+  log "requeue-sweep: skipped (SKIP_ROBOREV_REQUEUE=1)"
+else
+  _req_script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+  REQUEUE_SCRIPT="${REQUEUE_SCRIPT:-${_req_script_dir}/roborev_requeue_dropped.sh}"
+  unset _req_script_dir
+
+  if [ ! -x "$REQUEUE_SCRIPT" ] || ! command -v timeout >/dev/null 2>&1; then
+    log "requeue-sweep: skipped (REQUEUE_SCRIPT=$REQUEUE_SCRIPT missing/non-executable, or 'timeout' binary unavailable)"
+  else
+    req_mode="--dry-run"; [ "$DRY_RUN" -eq 0 ] && req_mode="--apply"
+
+    set +e
+    req_out="$(timeout 120 "$REQUEUE_SCRIPT" "$req_mode" --limit=5 2>&1)"
+    req_status=$?
+    set -e
+
+    req_summary="$(printf '%s\n' "$req_out" | tail -1)"
+    if [ "$req_status" -eq 0 ]; then
+      log "requeue-sweep: $req_summary"
+      echo "requeue-sweep: $req_summary"
+    else
+      log "requeue-sweep: non-zero exit ($req_status): $req_summary"
+      echo "requeue-sweep: FAILED (exit $req_status) — see $LOG"
+    fi
+  fi
+fi
