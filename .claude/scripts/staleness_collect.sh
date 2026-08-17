@@ -118,14 +118,42 @@ FAIL_COUNT=0
 #                  repo's read scope — no in-repo history to derive a cadence
 #                  from. Documented default: 24h, matching its sibling
 #                  cron-fed sources (roborev, burn_rate) in the same table.
+#   config_staleness  (added llm#928 defect 2) refreshed only as a side
+#                  effect of /bye (session_stop.sh -> export_and_deploy_data.sh
+#                  -> skill_usage_etl.R --apply), not on a launchd schedule —
+#                  so its real cadence is the observed gap BETWEEN /bye
+#                  events, not a fixed clock. Derived 2026-08-17 from
+#                  command_usage (WITH b AS (SELECT ts FROM command_usage
+#                  WHERE command_name='bye' ORDER BY ts), g AS (SELECT
+#                  date_diff('hour', LAG(ts) OVER (ORDER BY ts), ts) AS
+#                  gap_hours FROM b) SELECT ...): n=60 bye events
+#                  2026-06-07..2026-08-10, median gap 5h, p90 94.2h, p95
+#                  118.9h, max 234h. The 234h/165h/127h outlier gaps were
+#                  checked against their timestamps and all fall in
+#                  late-June/mid-July — genuine multi-day gaps between work
+#                  sessions on this repo, predating the current dead-feed
+#                  incident, not artifacts of it. 120h (5d) rounds the p95 up
+#                  — comfortably inside the range of gaps this repo's owner
+#                  has produced before without anything being wrong, while
+#                  sitting well below the two rarer >150h gaps.
+#                  KNOWN CONSEQUENCE: as of 2026-08-17 this source reads
+#                  'stale' under this cadence — last_row_ts is 2026-08-08
+#                  (~9d ago, ~216h > 120h). That is correct: llm#829
+#                  documents that config_staleness's refresh has no reliable
+#                  hook-firing feed (a /bye fired 2026-08-10 without a
+#                  matching etl_freshness update), so it IS a dead producer
+#                  right now. 120h was chosen from the gap data, not
+#                  inflated to suppress this — a larger number would have
+#                  hidden a real defect.
 _etl_cadence_override() {
   case "$1" in
-    sessions)      echo "72" ;;
-    skill_usage)   echo "336" ;;
-    command_usage) echo "168" ;;
-    agent_runs)    echo "48" ;;
-    llmtelemetry)  echo "24" ;;
-    *)             echo "" ;;
+    sessions)          echo "72" ;;
+    skill_usage)       echo "336" ;;
+    command_usage)     echo "168" ;;
+    agent_runs)        echo "48" ;;
+    llmtelemetry)      echo "24" ;;
+    config_staleness)  echo "120" ;;
+    *)                 echo "" ;;
   esac
 }
 
@@ -558,6 +586,7 @@ selftest() {
   _assert "override-command_usage" "$(_etl_cadence_override command_usage)" "168"
   _assert "override-agent_runs" "$(_etl_cadence_override agent_runs)" "48"
   _assert "override-llmtelemetry" "$(_etl_cadence_override llmtelemetry)" "24"
+  _assert "override-config_staleness" "$(_etl_cadence_override config_staleness)" "120"
   _assert "override-unknown-source-empty" "$(_etl_cadence_override some_new_source)" ""
 
   if ! command -v duckdb >/dev/null 2>&1; then
