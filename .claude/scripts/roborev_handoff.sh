@@ -305,6 +305,58 @@ All checks passed."
   done < "$_meta_tmp_15"
   rm -f "$_meta_tmp_15"
 
+  # ── llm#930+ fail-safe dead-branch regression ─────────────────────────────
+  # Reproduced 2026-08: gh_repo_info() deliberately `return 1`s on failure
+  # (its own fail-safe design), but under this script's `set -euo pipefail`
+  # an UNPROTECTED `x=$(fn)` assignment aborts the whole script the instant
+  # fn returns non-zero — it never reaches the "if empty, treat as UNKNOWN"
+  # fallback logic. Verified: with a broken `gh` credential the script died
+  # silently at the first repo, printing NOTHING (no summary, no partial
+  # counts), and `skip_visibility_unknown` could never increment because the
+  # code that increments it is unreachable once the script is already dead.
+  # The fix wraps both command-substitution assignments in the fail-safe
+  # chain (`json=$(...) || json=""` inside gh_repo_info; `repo_info=$(gh_repo_info
+  # ...) || true` at its call site) so a signalled failure is tolerated and
+  # the run continues to the next repo/job instead of aborting.
+  #
+  # These tests use mock functions shaped exactly like the real fail-safe
+  # (echo a fallback value, then `return 1`) so the regression is provable
+  # without a network dependency on `gh`. If either protective idiom
+  # regresses back to unprotected, `set -e` (active for this whole selftest
+  # block, per line 72) kills the script AT THE ASSIGNMENT — no PASS/FAIL
+  # line for that test prints, the immediately-following "still running"
+  # test never prints either, and the final "selftest: N PASS" summary is
+  # missing entirely. Reaching test 19 below is therefore itself part of
+  # the proof, not just its own assertion. ──────────────────────────────────
+
+  # ── 16. Mirrors the internal `json=$(...) || json=""` idiom in
+  # gh_repo_info(): a failing inner command must not abort under set -e. ────
+  _mock_failing_cmd() { return 1; }
+  _json_probe=$(_mock_failing_cmd) || _json_probe=""
+  [ -z "$_json_probe" ] \
+    && _assert "16. fail-safe: internal json=\$(...) idiom survives command failure" "ok" \
+    || _assert "16. fail-safe: internal json=\$(...) idiom survives command failure" "got '$_json_probe'"
+
+  # ── 17. Proof-of-life: selftest is still executing after test 16. ────────
+  _assert "17. selftest reached this line — set -e did not abort at test 16" "ok"
+
+  # ── 18. Mirrors the external `repo_info=$(gh_repo_info ...) || true` idiom
+  # at the call site: a function that echoes a fallback value THEN returns
+  # non-zero (gh_repo_info's exact shape) must not abort under set -e, and
+  # the echoed value must still be captured. ────────────────────────────────
+  _mock_gh_repo_info() {
+    echo "UNKNOWN|UNKNOWN"
+    return 1
+  }
+  _fs_repo_info=$(_mock_gh_repo_info) || true
+  [ "$_fs_repo_info" = "UNKNOWN|UNKNOWN" ] \
+    && _assert "18. fail-safe: external x=\$(fn) || true idiom survives fn's non-zero return" "ok" \
+    || _assert "18. fail-safe: external x=\$(fn) || true idiom survives fn's non-zero return" "got '$_fs_repo_info'"
+
+  # ── 19. Proof-of-life: selftest is still executing after test 18 — the
+  # summary line below is only ever reached if BOTH protective idioms hold. ─
+  _assert "19. selftest reached this line — set -e did not abort at test 18" "ok"
+
   echo ""
   echo "selftest: ${PASS} PASS, ${FAIL} FAIL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
@@ -462,7 +514,14 @@ gh_owner_repo() {
 gh_repo_info() {
   local owner_repo="$1" json
   [ -z "$owner_repo" ] && { echo "UNKNOWN|UNKNOWN"; return 1; }
-  json=$("$GH" repo view "$owner_repo" --json hasIssuesEnabled,visibility 2>/dev/null)
+  # set -e note: `gh repo view` returning non-zero (auth/network/repo-not-
+  # found) must NOT abort the script here — that would make the
+  # `if [ -z "$json" ]` fallback below unreachable and defeat the fail-safe
+  # entirely (this exact bug shipped once already: the script died silently
+  # at THIS line, before ever reaching the UNKNOWN|UNKNOWN echo). `|| json=""`
+  # neutralises the failing exit status while still capturing whatever gh
+  # produced on stdout (normally nothing, on failure).
+  json=$("$GH" repo view "$owner_repo" --json hasIssuesEnabled,visibility 2>/dev/null) || json=""
   if [ -z "$json" ]; then
     echo "UNKNOWN|UNKNOWN"
     return 1
@@ -554,11 +613,30 @@ while IFS= read -r repo_json; do
       log "warn: $repo_name — no GitHub remote (identity=$identity), falling back to inbox mode"
       mode="inbox"
     else
-      repo_info=$(gh_repo_info "$owner_repo")
+      # set -e note: gh_repo_info deliberately returns 1 when it cannot
+      # determine visibility (see its own fail-safe comment above); capturing
+      # the real exit status via `&& gh_repo_info_rc=0 || gh_repo_info_rc=$?`
+      # (rather than a blanket `|| true`) neutralises the non-zero status so
+      # the run continues, while still letting us tell "call failed entirely"
+      # apart from "call succeeded, hasIssuesEnabled=false" below. gh_repo_info
+      # already echoes "UNKNOWN|UNKNOWN" to stdout before returning 1, and
+      # command substitution captures stdout regardless of exit status, so
+      # $repo_info is correctly populated either way.
+      repo_info=$(gh_repo_info "$owner_repo") && gh_repo_info_rc=0 || gh_repo_info_rc=$?
       repo_issues_enabled="${repo_info%%|*}"
       repo_visibility="${repo_info##*|}"
-      if [ "$repo_issues_enabled" != "true" ]; then
-        log "warn: $repo_name — GH issues disabled or undetermined, falling back to inbox mode"
+      if [ "$gh_repo_info_rc" -ne 0 ]; then
+        # The gh call itself failed (auth/network/repo-not-found) — visibility
+        # is genuinely undetermined. Do NOT reroute to inbox mode here: leave
+        # mode="gh" so guard 3 below blocks the repo and counts it in
+        # skip_visibility_unknown, per this file's documented fail-safe intent
+        # ("blocked, NOT silently rerouted to inbox mode" — see the llm#930
+        # guards comment near the top of this file). Rerouting to inbox here
+        # would make skip_visibility_unknown permanently unreachable for the
+        # one case it exists to count.
+        log "warn: $repo_name — gh_repo_info call failed; visibility undetermined, deferring to guard3 fail-safe"
+      elif [ "$repo_issues_enabled" != "true" ]; then
+        log "warn: $repo_name — GH issues disabled, falling back to inbox mode"
         mode="inbox"
       fi
     fi
