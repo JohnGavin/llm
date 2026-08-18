@@ -300,8 +300,8 @@ if (!is.null(lagged_rows)) {
 # happened — exactly the cry-wolf failure #961 exists to remove, just with a
 # truer label. It also conflated two different problems under one number: a
 # High/Critical finding (a triage backlog for a human) and an unparseable
-# severity (a data-quality signal about the `**Severity**:` regex, not
-# something to triage). Both are now split:
+# severity (a data-quality signal about the `Severity:` / `**Severity**:`
+# regex, not something to triage). Both are now split:
 #   - above-threshold vs unparseable: disjoint counts, separate wording
 #   - total (standing backlog, shown as context only) vs new (created since
 #     the previous report — this is what the alarm fires on)
@@ -316,7 +316,15 @@ AUTOCLOSE_THRESHOLD_ORD <- unname(SEVERITY_ORDINAL[[AUTOCLOSE_THRESHOLD_STR]])
 
 parse_max_severity_ordinal <- function(text) {
   if (is.null(text) || is.na(text) || !nzchar(text)) return(NA_integer_)
-  m <- gregexpr("(?i)\\*\\*Severity\\*\\*:\\s*(Critical|High|Medium|Low)", text, perl = TRUE)
+  # llm#972 cause 1: some agents emit "- Severity: High" (no bold markers)
+  # instead of "- **Severity**: High". The `\\*{0,2}` on both sides of
+  # "Severity" makes the markdown bold markers optional so both shapes
+  # parse, while still anchoring on "Severity" + colon + one of the four
+  # levels — a bare mention of the word "severity" in prose (no colon
+  # immediately after) still does not match.
+  # Mirrored in roborev_severity_autoclose.sh's `_parse_max_severity()` —
+  # keep both patterns in sync; see the comment there.
+  m <- gregexpr("(?i)\\*{0,2}Severity\\*{0,2}:\\s*(Critical|High|Medium|Low)", text, perl = TRUE)
   words <- regmatches(text, m)[[1]]
   if (length(words) == 0L) return(NA_integer_)
   words <- tolower(sub(".*:\\s*", "", words))
@@ -326,8 +334,8 @@ parse_max_severity_ordinal <- function(text) {
 # classify_open_findings(): splits a set of open-findings rows (each with
 # `output`/`review_id`/`repo`) into two DISJOINT buckets — above-threshold
 # (parseable severity > AUTOCLOSE_THRESHOLD_ORD) and unparseable (no
-# `**Severity**:` marker found at all). A row lands in at most one bucket, so
-# the two counts never double-count the same finding.
+# `Severity:` marker, bold or plain, found at all). A row lands in at most
+# one bucket, so the two counts never double-count the same finding.
 classify_open_findings <- function(rows) {
   above_n    <- 0L
   above_rows <- list()
@@ -586,8 +594,8 @@ above_threshold_block <- if (above_threshold_fired) {
   )
 } else ""
 
-# Unparseable-severity block — a DATA-QUALITY signal (the `**Severity**:`
-# marker was not found in the agent's output), not a triage backlog. Kept
+# Unparseable-severity block — a DATA-QUALITY signal (no `Severity:` marker,
+# bold or plain, was found in the agent's output), not a triage backlog. Kept
 # separate from above_threshold_block per llm#961 follow-up requirement 2,
 # and rendered with muted/informational styling rather than the red alarm —
 # it is not something a human needs to triage the way a High/Critical
@@ -602,7 +610,7 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
       border-radius:6px; padding:10px 14px; margin:10px 0; font-size:%s;">
       <strong>&#8505; Unparseable severity (data-quality, not triage):</strong>
       %s new in the last %dh, %s open in total.
-      The severity parser found no <code>**Severity**:</code> marker in
+      The severity parser found no <code>Severity:</code> marker in
       these findings&#39; output — a signal about the parser/agent output
       format, not a backlog to close.
     </div>',

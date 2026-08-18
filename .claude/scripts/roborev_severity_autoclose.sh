@@ -55,8 +55,16 @@ if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
   }
 
   _parse_max_severity() {
-    # Extract **Severity**: <word> lines (case-insensitive), return max ordinal.
+    # Extract Severity: <word> lines (case-insensitive), return max ordinal.
     # Returns empty string if none found.
+    # llm#972 cause 1: some agents emit "- Severity: High" (no bold markers)
+    # instead of "- **Severity**: High" — `\*{0,2}` makes the markdown bold
+    # markers optional on both sides of "Severity" so both shapes match,
+    # while still anchoring on "Severity" + colon so bare prose mentions of
+    # the word "severity" (no colon immediately after) do not match.
+    # This is a SELFTEST-local copy of the real `_parse_max_severity()`
+    # defined later in this file (outside the selftest block) — keep both
+    # patterns in sync when editing either.
     local text="$1"
     local max=-1
     local word ord
@@ -66,7 +74,7 @@ if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
         ord=$(_sev_ordinal "$word")
         [ "$ord" -gt "$max" ] && max=$ord
       fi
-    done < <(echo "$text" | grep -iE '\*\*Severity\*\*:\s*(Critical|High|Medium|Low)')
+    done < <(echo "$text" | grep -iE '\*{0,2}Severity\*{0,2}:\s*(Critical|High|Medium|Low)')
     [ "$max" -ge 0 ] && echo "$max" || echo ""
   }
 
@@ -248,7 +256,15 @@ _sev_name() {
   esac
 }
 
-# Parse **Severity**: <word> lines from text; echo the max ordinal or "" if none.
+# Parse Severity: <word> lines from text; echo the max ordinal or "" if none.
+# llm#972 cause 1: some agents emit "- Severity: High" (no bold markers)
+# instead of "- **Severity**: High" — `\*{0,2}` makes the markdown bold
+# markers optional on both sides of "Severity" so both shapes match, while
+# still anchoring on "Severity" + colon so bare prose mentions of the word
+# "severity" (no colon immediately after) do not match.
+# Mirrored in the SELFTEST-local `_parse_max_severity()` above and in
+# send_roborev_email.R's `parse_max_severity_ordinal()` — keep all three in
+# sync when editing any one of them.
 _parse_max_severity() {
   local text="$1"
   local max=-1
@@ -259,7 +275,7 @@ _parse_max_severity() {
       ord=$(_sev_ordinal "$word")
       [ "$ord" -gt "$max" ] && max=$ord
     fi
-  done < <(echo "$text" | grep -iE '\*\*Severity\*\*:[[:space:]]*(Critical|High|Medium|Low)')
+  done < <(echo "$text" | grep -iE '\*{0,2}Severity\*{0,2}:[[:space:]]*(Critical|High|Medium|Low)')
   [ "$max" -ge 0 ] && echo "$max" || echo ""
 }
 

@@ -638,3 +638,96 @@ test_that("snapshot older than 24h triggers the staleness banner", {
   expect_true(grepl("STALE SNAPSHOT", combined, fixed = TRUE),
     info = "Snapshot older than 24h must trigger the staleness banner")
 })
+
+# ── Tests: llm#972 cause 1 — unbolded "Severity:" marker must also parse ──────
+#
+# Diagnosed on the live DB: agents emit two shapes for the same marker,
+#   "- **Severity**: Medium"   (parses under the old regex)
+#   "- Severity: High"         (did NOT parse under the old regex — cause 1)
+# Structurally identical apart from the markdown bold markers; not
+# agent-specific (gemini and claude-code both produce the plain form).
+# `parse_max_severity_ordinal()` (send_roborev_email.R) now makes the `**`
+# optional on both sides of "Severity" via `\*{0,2}`. These tests pin: (a)
+# the bold form still parses (no regression on the ~58 open reviews that
+# already worked), (b) the plain form now parses (the fix, ~21 reviews),
+# (c) output with no severity marker at all stays unparseable (cause 2 is a
+# SEPARATE, out-of-scope problem — 39 reviews with no findings block at all;
+# this test pins the boundary so a later over-broad change cannot silently
+# swallow cause 2 too), and (d) prose that merely contains the word
+# "severity" (no colon-anchored marker) is not mistaken for a finding.
+PLAIN_HIGH_SEV_OUTPUT <- paste(
+  "Review Findings:",
+  "- Severity: High",
+  "- Location: `inst/extdata/codexbar_cost_daily.json`",
+  "- Problem: something bad.",
+  sep = "\n"
+)
+PROSE_SEVERITY_NO_MARKER_OUTPUT <- paste(
+  "This review discusses the severity of the issue at length, but does not",
+  "include a structured severity marker anywhere in its output.",
+  "Overall assessment: needs more investigation.",
+  sep = "\n"
+)
+
+test_that("llm#972: bold '**Severity**: High' still parses as above-threshold (no regression)", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = HIGH_SEV_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_above_threshold_open_n=1", combined, fixed = TRUE),
+    info = "bold '**Severity**: High' must still classify as above-threshold at the medium default")
+  expect_true(grepl("QA:total_unparseable_open_n=0", combined, fixed = TRUE),
+    info = "bold form must not land in the unparseable bucket")
+})
+
+test_that("llm#972 cause 1 fix: plain 'Severity: High' (no bold markers) now parses", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = PLAIN_HIGH_SEV_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_above_threshold_open_n=1", combined, fixed = TRUE),
+    info = paste(
+      "llm#972: plain 'Severity: High' (no bold markers) must now classify",
+      "as above-threshold instead of unparseable"
+    ))
+  expect_true(grepl("QA:total_unparseable_open_n=0", combined, fixed = TRUE),
+    info = "llm#972: plain-form severity must not land in the unparseable bucket after the fix")
+})
+
+test_that("llm#972: output with no severity marker at all stays unparseable (cause 2 boundary)", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = NO_SEV_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_unparseable_open_n=1", combined, fixed = TRUE),
+    info = paste(
+      "llm#972: output with no severity marker at all must remain",
+      "unparseable -- this is cause 2 territory (no findings block at",
+      "all), which is explicitly out of scope for the cause-1 regex fix"
+    ))
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "must not be misclassified as above-threshold")
+})
+
+test_that("llm#972: prose mentioning the word 'severity' without a marker is not treated as a finding", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = PROSE_SEVERITY_NO_MARKER_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_unparseable_open_n=1", combined, fixed = TRUE),
+    info = paste(
+      "prose containing the bare word 'severity' (no colon-anchored",
+      "marker) must NOT be treated as a parsed finding -- guards against",
+      "the optional-bold regex over-matching beyond the evidence"
+    ))
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "prose mention of 'severity' must never be classified above-threshold")
+})
