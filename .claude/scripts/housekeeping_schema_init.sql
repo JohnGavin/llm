@@ -11,6 +11,7 @@
 --   roborev_daily_summary  -- per-project daily summary mirrored from roborev SQLite (llm#555)
 --   data_quality_incidents -- one row per known untrustworthy-data window (llm#913, llm#915)
 --   secret_scan_findings   -- one row per finding from secret_exposure_scan.sh (llm#951)
+--   roborev_retention_events -- one row per item-type pruned by roborev_retention.sh (llm#929)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -240,6 +241,24 @@ CREATE TABLE IF NOT EXISTS secret_scan_findings (
 CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_run_id ON secret_scan_findings(run_id);
 CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_fired_at ON secret_scan_findings(fired_at);
 CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_detector ON secret_scan_findings(detector, fired_at);
+
+-- roborev_retention_events: one row per item-type removed by
+-- roborev_retention.sh (llm#929) — 'backup' (DB snapshot) or 'joblog'
+-- (logs/jobs/<id>.log). Written on --apply only (never on --dry-run), so
+-- this table's absence of rows for a given day means the dry-run ran, not
+-- that nothing needed pruning. Joins to housekeeping_runs.id via run_id.
+CREATE TABLE IF NOT EXISTS roborev_retention_events (
+  id          TEXT PRIMARY KEY,
+  fired_at    TIMESTAMPTZ NOT NULL,
+  source      TEXT NOT NULL,             -- 'roborev_retention.sh'
+  run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
+  item_type   TEXT NOT NULL,             -- 'backup' | 'joblog'
+  action      TEXT NOT NULL,             -- 'removed'
+  count       INTEGER NOT NULL,          -- number of files removed
+  bytes       BIGINT NOT NULL            -- cumulative bytes reclaimed
+);
+CREATE INDEX IF NOT EXISTS idx_roborev_retention_events_run_id ON roborev_retention_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_roborev_retention_events_fired_at ON roborev_retention_events(fired_at);
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);
