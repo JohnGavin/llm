@@ -288,11 +288,23 @@ if (!is.null(lagged_rows)) {
   if (lagged_cohort_n > 0L) lagged_close_rate <- lagged_closed_n / lagged_cohort_n
 }
 
-# ── Above-threshold open findings — the actionable backlog count ──────────────
+# ── Above-threshold / unparseable open findings — actionable backlog metrics ──
 # Mirrors the severity parse + threshold comparison in
 # roborev_severity_autoclose.sh (`_parse_max_severity` / `_should_close`) so
-# this count matches what the autocloser will (not) act on — i.e. exactly the
-# open findings that need a human, regardless of when the closer last ran.
+# these counts match what the autocloser will (not) act on.
+#
+# llm#961 follow-up: the original version of this block alerted on the
+# STANDING total (measured at 105 of 125 open reviews the day this was
+# diagnosed — 84% of the whole backlog). That total barely moves day to day,
+# so the banner fired every single day regardless of whether anything new
+# happened — exactly the cry-wolf failure #961 exists to remove, just with a
+# truer label. It also conflated two different problems under one number: a
+# High/Critical finding (a triage backlog for a human) and an unparseable
+# severity (a data-quality signal about the `**Severity**:` regex, not
+# something to triage). Both are now split:
+#   - above-threshold vs unparseable: disjoint counts, separate wording
+#   - total (standing backlog, shown as context only) vs new (created since
+#     the previous report — this is what the alarm fires on)
 SEVERITY_ORDINAL <- c(critical = 4L, high = 3L, medium = 2L, low = 1L)
 AUTOCLOSE_THRESHOLD_STR <- local({
   v <- tolower(Sys.getenv("ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD", "medium"))
@@ -311,33 +323,85 @@ parse_max_severity_ordinal <- function(text) {
   max(unname(SEVERITY_ORDINAL[words]), na.rm = TRUE)
 }
 
-above_threshold_open_n <- NA_integer_
-above_threshold_rows   <- list()
-open_findings_sql <- paste(
-  "SELECT rv.id AS review_id, rv.output AS output, rp.name AS repo",
-  "FROM reviews rv",
-  "JOIN review_jobs rj ON rj.id = rv.job_id",
-  "JOIN repos rp ON rp.id = rj.repo_id",
-  "WHERE rv.closed = 0 AND rv.verdict_bool = 0;"
-)
-open_findings <- query_reviews_db(open_findings_sql)
-if (!is.null(open_findings)) {
-  above_threshold_open_n <- 0L
-  for (r in open_findings) {
+# classify_open_findings(): splits a set of open-findings rows (each with
+# `output`/`review_id`/`repo`) into two DISJOINT buckets — above-threshold
+# (parseable severity > AUTOCLOSE_THRESHOLD_ORD) and unparseable (no
+# `**Severity**:` marker found at all). A row lands in at most one bucket, so
+# the two counts never double-count the same finding.
+classify_open_findings <- function(rows) {
+  above_n    <- 0L
+  above_rows <- list()
+  unparse_n  <- 0L
+  for (r in rows) {
     ord <- parse_max_severity_ordinal(r[["output"]])
-    if (is.na(ord) || ord > AUTOCLOSE_THRESHOLD_ORD) {
-      above_threshold_open_n <- above_threshold_open_n + 1L
-      sev_label <- if (is.na(ord)) "UNKNOWN" else names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
-      above_threshold_rows[[length(above_threshold_rows) + 1L]] <- list(
+    if (is.na(ord)) {
+      unparse_n <- unparse_n + 1L
+    } else if (ord > AUTOCLOSE_THRESHOLD_ORD) {
+      above_n <- above_n + 1L
+      sev_label <- names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
+      above_rows[[length(above_rows) + 1L]] <- list(
         review_id    = r[["review_id"]],
         repo         = if (is.null(r[["repo"]])) "" else r[["repo"]],
         max_severity = sev_label
       )
     }
   }
+  list(above_n = above_n, above_rows = above_rows, unparse_n = unparse_n)
+}
+
+# NEW_WINDOW_HOURS: the report runs once/day, so "new since the previous
+# report" is approximated as "created within the last 24h" — a fixed
+# lookback tied directly to the report's own daily cadence (see
+# bin/roborev_daily_cron.sh), not an arbitrary magic number. Checked directly
+# against the production DB before writing this: reviews.created_at is
+# stored space-separated with NO timezone suffix (observed format
+# "2026-08-18 15:06:41", not the "T"+offset ISO-8601 form some older rows in
+# this codebase were assumed to use) — consistent with sqlite's own
+# CURRENT_TIMESTAMP default, which is UTC, matching datetime('now'). sqlite's
+# datetime()/'now' modifier pair already handles this format correctly — the
+# same pattern is proven in lagged_sql above. Every label below states this
+# window explicitly so the reader never has to guess what "new" means or
+# assume UTC vs local.
+NEW_WINDOW_HOURS <- 24L
+
+open_findings_sql_base <- paste(
+  "SELECT rv.id AS review_id, rv.output AS output, rp.name AS repo",
+  "FROM reviews rv",
+  "JOIN review_jobs rj ON rj.id = rv.job_id",
+  "JOIN repos rp ON rp.id = rj.repo_id",
+  "WHERE rv.closed = 0 AND rv.verdict_bool = 0"
+)
+total_open_findings_sql <- paste0(open_findings_sql_base, ";")
+new_open_findings_sql <- paste0(
+  open_findings_sql_base,
+  sprintf(" AND datetime(rv.created_at) >= datetime('now', '-%d hours');", NEW_WINDOW_HOURS)
+)
+
+total_above_threshold_open_n <- NA_integer_
+total_unparseable_open_n     <- NA_integer_
+new_above_threshold_open_n   <- NA_integer_
+new_above_threshold_rows     <- list()
+new_unparseable_open_n       <- NA_integer_
+
+total_open_findings <- query_reviews_db(total_open_findings_sql)
+if (!is.null(total_open_findings)) {
+  cls_total <- classify_open_findings(total_open_findings)
+  total_above_threshold_open_n <- cls_total$above_n
+  total_unparseable_open_n     <- cls_total$unparse_n
 } else {
   message("send_roborev_email.R: could not query open findings from reviews.db — ",
-          "above-threshold count unavailable (rendering nothing rather than a false alert)")
+          "standing backlog counts unavailable")
+}
+
+new_open_findings <- query_reviews_db(new_open_findings_sql)
+if (!is.null(new_open_findings)) {
+  cls_new <- classify_open_findings(new_open_findings)
+  new_above_threshold_open_n <- cls_new$above_n
+  new_above_threshold_rows   <- cls_new$above_rows
+  new_unparseable_open_n     <- cls_new$unparse_n
+} else {
+  message("send_roborev_email.R: could not query new open findings from reviews.db — ",
+          "delta counts unavailable (rendering nothing rather than a false alert)")
 }
 
 # ── Extract window slices ──────────────────────────────────────────────────────
@@ -452,9 +516,12 @@ d1_n_reviews <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
 # regardless of pipeline health, so the trap was alerting on its own scheduling,
 # not on a fault (llm#961). The staleness banner below (snapshot age > 24h)
 # already covers genuine "nightly generation stalled" failures independently of
-# window semantics. The replacement signal is above_threshold_open_n, computed
-# above directly from reviews.db.
-above_threshold_fired <- isTRUE(!is.na(above_threshold_open_n) && above_threshold_open_n > 0L)
+# window semantics. The replacement signal is new_above_threshold_open_n,
+# computed above directly from reviews.db — and it is itself the DELTA since
+# the previous report (last NEW_WINDOW_HOURS), not the standing total,
+# because the standing total was found to fire on ~84% of the whole open
+# backlog every day (llm#961 follow-up).
+above_threshold_fired <- isTRUE(!is.na(new_above_threshold_open_n) && new_above_threshold_open_n > 0L)
 
 # ── Deploy staleness banner (llm#510 attempt #3) ──────────────────────────────
 # cron_deploy_pull.sh (sourced by bin/roborev_daily_cron.sh) writes a status
@@ -492,38 +559,69 @@ if (file.exists(deploy_status_file)) {
 }
 
 # Above-threshold-open-findings block (prepended before dashboard CTA when
-# fired — llm#961, replaces the #484 zero-action block). Fires on a count the
-# reader can act on — open findings the autocloser will never close by itself
-# — rather than on a close-rate number that is structurally ~0 by schedule.
+# fired — llm#961, replaces the #484 zero-action block). Fires on the DELTA
+# — new above-threshold findings since the previous report (last
+# NEW_WINDOW_HOURS) — not the standing total, so it stops firing on days
+# when nothing new arrived (llm#961 follow-up). The standing total is shown
+# as parenthetical context, not as part of the alarm condition.
 above_threshold_block <- if (above_threshold_fired) {
-  detail_items <- vapply(above_threshold_rows, function(x) {
+  detail_items <- vapply(new_above_threshold_rows, function(x) {
     sprintf("#%s %s (%s)", x$review_id, x$repo, x$max_severity)
   }, character(1L))
-  shown   <- utils::head(detail_items, 10L)
-  more_n  <- above_threshold_open_n - length(shown)
+  shown    <- utils::head(detail_items, 10L)
+  more_n   <- new_above_threshold_open_n - length(shown)
   more_str <- if (more_n > 0L) sprintf(" (+%d more)", more_n) else ""
+  total_str <- if (is.na(total_above_threshold_open_n)) "" else
+    sprintf(" (%s open in total)", fmt_int(total_above_threshold_open_n))
   sprintf(
     '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
       border-radius:6px; padding:14px 18px; margin:16px 0; font-size:%s;">
-      <strong style="font-size:15px;">&#9888; %d Above-Threshold Open Finding(s)</strong><br>
-      <span>These open findings are at or above the autoclose severity
-      threshold (%s) or have unparseable severity, so roborev will not close
-      them automatically — they need human triage: %s%s</span>
+      <strong style="font-size:15px;">&#9888; %d New Above-Threshold Open Finding(s) (created in the last %dh)%s</strong><br>
+      <span>New open findings at or above the autoclose severity threshold
+      (%s) since the previous report — roborev will not close them
+      automatically, so they need human triage: %s%s</span>
     </div>',
-    EMAIL_FONT_BODY, above_threshold_open_n, AUTOCLOSE_THRESHOLD_STR,
-    paste(shown, collapse = "; "), more_str
+    EMAIL_FONT_BODY, new_above_threshold_open_n, NEW_WINDOW_HOURS, total_str,
+    AUTOCLOSE_THRESHOLD_STR, paste(shown, collapse = "; "), more_str
   )
 } else ""
 
-# Dashboard link CTA (llm#961: above_threshold_block prepended when it fires;
-# llm#510: deploy_stale_block prepended ahead of that when the deploy pull
-# failed or main is still behind origin; llm#793-followup:
+# Unparseable-severity block — a DATA-QUALITY signal (the `**Severity**:`
+# marker was not found in the agent's output), not a triage backlog. Kept
+# separate from above_threshold_block per llm#961 follow-up requirement 2,
+# and rendered with muted/informational styling rather than the red alarm —
+# it is not something a human needs to triage the way a High/Critical
+# finding is, and giving it its own red banner would just relocate the
+# cry-wolf problem rather than remove it. Shown whenever there is a standing
+# total to report (context, requirement 3), with the new-since-last-report
+# count called out inline.
+unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unparseable_open_n > 0L)) {
+  new_str <- if (is.na(new_unparseable_open_n)) "n/a" else fmt_int(new_unparseable_open_n)
+  sprintf(
+    '<div style="background-color:%s; color:%s; border:1px solid %s;
+      border-radius:6px; padding:10px 14px; margin:10px 0; font-size:%s;">
+      <strong>&#8505; Unparseable severity (data-quality, not triage):</strong>
+      %s new in the last %dh, %s open in total.
+      The severity parser found no <code>**Severity**:</code> marker in
+      these findings&#39; output — a signal about the parser/agent output
+      format, not a backlog to close.
+    </div>',
+    dark_card, dark_text, accent_purple, EMAIL_FONT_BODY,
+    new_str, NEW_WINDOW_HOURS, fmt_int(total_unparseable_open_n)
+  )
+} else ""
+
+# Dashboard link CTA (llm#961: above_threshold_block prepended when it fires,
+# followed by unparseable_block — llm#961 follow-up, always separate from the
+# alarm; llm#510: deploy_stale_block prepended ahead of that when the deploy
+# pull failed or main is still behind origin; llm#793-followup:
 # snapshot_stale_block prepended first — a stale *snapshot* is a more basic
 # problem than a stale *deploy*, so it leads)
 dashboard_block <- paste0(
   snapshot_stale_block,
   deploy_stale_block,
   above_threshold_block,
+  unparseable_block,
   sprintf(
     '<div style="margin: 16px 0;">
   <a href="%s"
@@ -569,7 +667,19 @@ if (is.null(d1) || d1_n_reviews == 0L) {
     c(sprintf("close rate (aged %d-%dd)", LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS),
                                        fmt_rate(lagged_close_rate)),
     c("hours to close p50 (7d)",      fmt_num(d7_ttc_p50)),
-    c("attempts p50 (7d)",            fmt_att(d7_att_p50))
+    c("attempts p50 (7d)",            fmt_att(d7_att_p50)),
+    # llm#961 follow-up: standing backlog totals shown as CONTEXT (not an
+    # alarm — see above_threshold_block/unparseable_block for the delta-only
+    # alert), each split above-threshold vs unparseable and each labelled
+    # with its exact window.
+    c("open above-threshold (standing backlog)",
+                                       fmt_int(total_above_threshold_open_n)),
+    c("open unparseable severity (standing backlog)",
+                                       fmt_int(total_unparseable_open_n)),
+    c(sprintf("new above-threshold (last %dh)", NEW_WINDOW_HOURS),
+                                       fmt_int(new_above_threshold_open_n)),
+    c(sprintf("new unparseable severity (last %dh)", NEW_WINDOW_HOURS),
+                                       fmt_int(new_unparseable_open_n))
   )
   # llm#484: append Other verdicts row when there are unmatched entries
   if (d1_other_n > 0L) {
@@ -861,14 +971,22 @@ severity_html <- collapsible_block(
 # QA markers (tested by test-roborev-daily-email.R)
 # llm#484: added n_reviews and d1_n_reviews markers for diagnostic visibility
 # llm#961: zero_action_trap_fired is kept as the marker KEY (test compat) but
-# now reflects the above-threshold-open-findings alert, not the retired
-# 24h-close-rate trap. above_threshold_open_n and the lagged-window bounds are
-# new markers for the replacement metric.
+# now reflects the above-threshold-open-findings DELTA alert, not the retired
+# 24h-close-rate trap.
+# llm#961 follow-up: the single above_threshold_open_n marker is replaced by
+# four markers — new/total x above-threshold/unparseable — plus the window
+# (new_window_hours) the "new" figures were computed over, since the original
+# marker conflated a standing-backlog total with a triage delta and merged
+# two different problem types (severity vs parse-failure) into one number.
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:above_threshold_open_n=%s --><!-- QA:lagged_close_rate_window=%d-%dd -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd -->',
   report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL,
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
-  if (is.na(above_threshold_open_n)) "NA" else as.character(above_threshold_open_n),
+  if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
+  if (is.na(total_above_threshold_open_n)) "NA" else as.character(total_above_threshold_open_n),
+  if (is.na(new_unparseable_open_n)) "NA" else as.character(new_unparseable_open_n),
+  if (is.na(total_unparseable_open_n)) "NA" else as.character(total_unparseable_open_n),
+  NEW_WINDOW_HOURS,
   LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS
 )
 
