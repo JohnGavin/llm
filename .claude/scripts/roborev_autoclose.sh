@@ -80,16 +80,34 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"; }
 # anything appended after them would silently stop running whenever those
 # phases find nothing to do. Rides this script's existing weekly
 # com.claude.roborev-autoclose launchd schedule; no new launchd job. Uses
-# the same --apply/--dry-run flag already parsed above. A retention
+# --dry-run unconditionally — see the pin note at the call site below. A retention
 # failure must never block Phase 1/2, hence `|| log ...` instead of letting
 # `set -e` abort the whole script.
 RETENTION_SCRIPT="$(dirname "$0")/roborev_retention.sh"
 if [ -x "$RETENTION_SCRIPT" ]; then
-  if [ "$APPLY" -eq 1 ]; then
-    "$RETENTION_SCRIPT" --apply >>"$LOGFILE" 2>&1 || log "phase0: retention script failed rc=$?"
-  else
-    "$RETENTION_SCRIPT" --dry-run >>"$LOGFILE" 2>&1 || log "phase0: retention dry-run failed rc=$?"
-  fi
+  # PINNED TO --dry-run (llm#929, user decision 2026-08-18).
+  #
+  # Deliberately does NOT inherit this script's $APPLY. The weekly launchd
+  # chain runs roborev_autoclose.sh --apply (roborev_weekly_chain.sh:58), so
+  # inheriting it would have deleted ~3.7 GB (5 DB backups + 8033 job logs)
+  # on the first scheduled run after merge, with no human in the loop. That
+  # is a Class B destructive operation under human-in-the-loop-decision-points
+  # and requires explicit confirmation naming the target.
+  #
+  # The policy therefore REPORTS ONLY for now. Read a week of
+  # "roborev_retention: would reclaim ..." lines in this script's log, confirm
+  # the selection is what you expect, THEN enable deletion by restoring the
+  # $APPLY-inheriting form:
+  #
+  #   if [ "$APPLY" -eq 1 ]; then
+  #     "$RETENTION_SCRIPT" --apply  >>"$LOGFILE" 2>&1 || log "phase0: retention script failed rc=$?"
+  #   else
+  #     "$RETENTION_SCRIPT" --dry-run >>"$LOGFILE" 2>&1 || log "phase0: retention dry-run failed rc=$?"
+  #   fi
+  #
+  # Until then this line is the only thing standing between a scheduled job
+  # and 3.7 GB of irreversible deletion — do not "simplify" it back.
+  "$RETENTION_SCRIPT" --dry-run >>"$LOGFILE" 2>&1 || log "phase0: retention dry-run failed rc=$?"
 else
   log "phase0 skipped: roborev_retention.sh not found or not executable at $RETENTION_SCRIPT"
 fi
