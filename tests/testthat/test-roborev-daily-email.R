@@ -413,6 +413,192 @@ test_that("known public repo is hyperlinked; unresolvable slug stays plain text"
     info = "Unresolvable slug 'premortem' must NOT be hyperlinked (this was the 404 bug)")
 })
 
+# ── Tests: llm#961 regression guard — delta-vs-standing above-threshold banner ─
+#
+# The defect llm#961 fixed: the above-threshold-open-findings alert used to
+# fire on the STANDING backlog total (84% of the whole open backlog on the
+# day this was diagnosed), so the red banner rendered every single day
+# regardless of whether anything new happened. The fix computes the banner
+# off the DAILY DELTA (new_above_threshold_open_n) instead. These tests pin
+# that behaviour against a fixture reviews.db (never the live DB, whose
+# contents drift hourly) via the ROBOREV_DB env var — the same seam
+# query_reviews_db() already reads, wired through run_email_dry_run()'s
+# existing extra_env parameter (no script changes needed).
+
+# make_reviews_db_fixture(): builds a genuine sqlite3-readable reviews.db
+# fixture (repos/review_jobs/reviews, minimal columns) using DuckDB's sqlite
+# extension to ATTACH and write a real .db file on disk — the same mechanism
+# already used for reviews.db-shaped fixtures in test-roborev-etl-lifecycle.R
+# (reused rather than inventing a second fixture-DB mechanism; the `sqlite3`
+# CLI that query_reviews_db() shells out to reads this file directly).
+#
+#   findings: rows counted by the open-findings query (closed=0, verdict_bool=0)
+#     each: list(output=<string>, age_hours=<numeric>)
+#   lagged: extra rows for the 2-8 day aged close-rate query only
+#     (closed can be either value; verdict_bool is fixed at 1 so these never
+#     leak into the open-findings counts above)
+#     each: list(age_hours=<numeric>, closed=<0L|1L>)
+make_reviews_db_fixture <- function(findings = list(), lagged = list()) {
+  skip_if_not_installed("duckdb")
+  dir <- tempfile("roborev_db_fixture_")
+  dir.create(dir, recursive = TRUE)
+  db_path <- file.path(dir, "reviews_fixture.db")
+
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbExecute(con, "LOAD sqlite")
+  DBI::dbExecute(con, sprintf("ATTACH '%s' AS fix (TYPE sqlite)", db_path))
+
+  DBI::dbExecute(con, "CREATE TABLE fix.repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+  DBI::dbExecute(con, "CREATE TABLE fix.review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER)")
+  DBI::dbExecute(con, "
+    CREATE TABLE fix.reviews (
+      id INTEGER PRIMARY KEY,
+      job_id INTEGER,
+      output TEXT DEFAULT '',
+      created_at TEXT,
+      closed INTEGER DEFAULT 0,
+      verdict_bool INTEGER
+    )
+  ")
+  DBI::dbExecute(con, "INSERT INTO fix.repos VALUES (1, 'llm')")
+
+  now <- as.POSIXct(format(Sys.time(), tz = "UTC"), tz = "UTC")
+  row_id <- 0L
+  insert_row <- function(output, age_hours, closed, verdict_bool) {
+    row_id <<- row_id + 1L
+    DBI::dbExecute(con, sprintf("INSERT INTO fix.review_jobs VALUES (%d, 1)", row_id))
+    ts <- format(now - age_hours * 3600, "%Y-%m-%d %H:%M:%S", tz = "UTC")
+    output_escaped <- gsub("'", "''", output, fixed = TRUE)
+    DBI::dbExecute(con, sprintf(
+      "INSERT INTO fix.reviews (id, job_id, output, created_at, closed, verdict_bool) VALUES (%d, %d, '%s', '%s', %d, %d)",
+      row_id, row_id, output_escaped, ts, closed, verdict_bool
+    ))
+  }
+  for (f in findings) insert_row(f$output, f$age_hours, 0L, 0L)
+  for (l in lagged)   insert_row("", l$age_hours, l$closed, 1L)
+
+  db_path
+}
+
+HIGH_SEV_OUTPUT <- "Review found an issue.\n\n**Severity**: High\n\nDetails: something bad."
+NO_SEV_OUTPUT   <- "Review crashed before emitting a severity marker."
+
+test_that("zero delta: standing above-threshold findings exist but none are new -> no banner, marker is 0", {
+  # The single most important property of the llm#961 fix: when nothing NEW
+  # arrived, the banner must not render at all -- regardless of how large the
+  # standing backlog is.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(
+      list(output = HIGH_SEV_OUTPUT, age_hours = 240),  # 10d old -- standing, NOT new
+      list(output = HIGH_SEV_OUTPUT, age_hours = 240),
+      list(output = HIGH_SEV_OUTPUT, age_hours = 240)
+    )
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_false(grepl("New Above-Threshold Open Finding", combined, fixed = TRUE),
+    info = "llm#961: banner must NOT render when the delta is zero, even with a large standing backlog")
+  expect_true(grepl("QA:new_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "llm#961: new_above_threshold_open_n marker must be 0 when nothing new arrived")
+})
+
+test_that("non-zero delta: banner fires on the delta count, not the standing total", {
+  skip_if_not_installed("blastula")
+  standing <- lapply(1:12, function(i) list(output = HIGH_SEV_OUTPUT, age_hours = 240))
+  new_ones <- lapply(1:2,  function(i) list(output = HIGH_SEV_OUTPUT, age_hours = 1))
+  db_path <- make_reviews_db_fixture(findings = c(standing, new_ones))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("2 New Above-Threshold Open Finding", combined, fixed = TRUE),
+    info = "llm#961: banner header must show the delta count (2)")
+  expect_false(grepl("14 New Above-Threshold Open Finding", combined, fixed = TRUE),
+    info = paste(
+      "llm#961: banner header must NOT show the standing total (14) --",
+      "a regression to the standing-total banner would pass this test's",
+      "old assertion but fail this one"
+    ))
+  expect_true(grepl("QA:new_above_threshold_open_n=2", combined, fixed = TRUE),
+    info = "new_above_threshold_open_n marker must equal the delta (2), not the standing total")
+  expect_true(grepl("QA:total_above_threshold_open_n=14", combined, fixed = TRUE),
+    info = "total_above_threshold_open_n marker must equal the full standing+new total (12+2=14)")
+})
+
+test_that("unparseable findings never inflate the above-threshold buckets", {
+  # The two buckets are disjoint: an unparseable-severity finding is a
+  # data-quality signal about the parser, not a triage backlog item, and must
+  # never be counted as above-threshold in either the new or total marker.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(
+      list(output = NO_SEV_OUTPUT, age_hours = 1),
+      list(output = NO_SEV_OUTPUT, age_hours = 1),
+      list(output = NO_SEV_OUTPUT, age_hours = 1),
+      list(output = NO_SEV_OUTPUT, age_hours = 1)
+    )
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:new_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "unparseable findings must not count as above-threshold (new)")
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "unparseable findings must not count as above-threshold (total)")
+  expect_true(grepl("QA:new_unparseable_open_n=4", combined, fixed = TRUE),
+    info = "all 4 unparseable findings must be counted as new_unparseable_open_n")
+  expect_true(grepl("QA:total_unparseable_open_n=4", combined, fixed = TRUE),
+    info = "all 4 unparseable findings must be counted as total_unparseable_open_n")
+  expect_true(grepl("Unparseable severity", combined, fixed = TRUE),
+    info = "unparseable block must render (informational, not the red alarm)")
+  expect_false(grepl("New Above-Threshold Open Finding", combined, fixed = TRUE),
+    info = "unparseable findings must never trigger the above-threshold red banner")
+})
+
+test_that("headline close-rate row states its aged window explicitly", {
+  # A metric whose label disagrees with its computation is the defect family
+  # llm#961 belongs to -- the row must name the window (aged 2-8d) it was
+  # actually computed over.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    lagged = list(
+      list(age_hours = 96, closed = 1L),
+      list(age_hours = 96, closed = 1L),
+      list(age_hours = 96, closed = 0L),
+      list(age_hours = 96, closed = 0L),
+      list(age_hours = 96, closed = 0L)
+    )
+  )
+  snap <- make_synthetic_snapshot()
+  # headline_1d_rows (where the close-rate row lives) only renders when d1 is
+  # present with n_reviews > 0 -- otherwise the empty-state row is shown instead.
+  snap$global_windows$d1 <- list(
+    window_days = 1L,
+    n_reviews = 5L,
+    freq_table = list(
+      list(verdict_label = "issues_found", status = "closed", n = 1L),
+      list(verdict_label = "issues_found", status = "open",   n = 2L),
+      list(verdict_label = "clean",        status = "closed", n = 1L),
+      list(verdict_label = "clean",        status = "open",   n = 1L)
+    )
+  )
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("close rate (aged 2-8d)", combined, fixed = TRUE),
+    info = paste(
+      "llm#961: the close-rate row must name its window (aged 2-8d) so the",
+      "label can't silently disagree with its computation"
+    ))
+  expect_true(grepl("40.0%", combined, fixed = TRUE),
+    info = "close rate for the fixture cohort (2 closed / 5 total) must be 40.0%")
+})
+
 test_that("snapshot older than 24h triggers the staleness banner", {
   # Fix 4.1: find_latest_json() picks the newest-mtime snapshot with no age
   # check; a stale snapshot must be surfaced loudly, not rendered silently.
