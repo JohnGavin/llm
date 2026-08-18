@@ -39,7 +39,12 @@ fi
 
 # ── Uncommitted config ────────────────────────────────────────────────
 if [ -d "$CLAUDE_DIR/.git" ] || git -C "$CLAUDE_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-  changes=$(git -C "$CLAUDE_DIR" status -s 2>/dev/null | head -5)
+  # `|| true` guards against pipefail + set -e: `git status` can fail even
+  # inside a validated repo (locked index, transient I/O error); `head`
+  # always exits 0, so pipefail would otherwise propagate git's failure
+  # through the pipe and abort this advisory-only check. Empty is fine —
+  # the `[ -n "$changes" ]` guard below handles it.
+  changes=$(git -C "$CLAUDE_DIR" status -s 2>/dev/null | head -5) || true
   if [ -n "$changes" ]; then
     n_changes=$(echo "$changes" | wc -l | tr -d ' ')
     echo "Config: $n_changes uncommitted changes in $CLAUDE_DIR/"
@@ -135,10 +140,21 @@ if [ "$_bye_detected" -eq 1 ] && [ -x "$_log_script" ] && [ -n "$_STOP_SESSION_I
   # turn embeds a top-level "model" field. Scoped by session id (filename),
   # not "newest transcript across all projects", to stay correct even with
   # multiple concurrent sessions. Empty is fine — log_session.sh COALESCEs.
-  _stop_transcript=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/"${_STOP_SESSION_ID}.jsonl" 2>/dev/null | head -1)
+  # `|| true` guards against pipefail + set -e: `ls` exits non-zero when the
+  # glob matches no file (no transcript yet for this session id); `2>/dev/null`
+  # hides the stderr message but not the exit code, and pipefail propagates
+  # that failure through `head` to this assignment, which would otherwise
+  # abort the whole hook (the root cause of the "No stderr output" Stop-hook
+  # failure — the file's own comment above already says "Empty is fine", but
+  # without this guard that fail-safe was unreachable). Empty is fine — the
+  # `[ -n "$_stop_transcript" ]` guard below handles it.
+  _stop_transcript=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/"${_STOP_SESSION_ID}.jsonl" 2>/dev/null | head -1) || true
   _stop_model=""
   if [ -n "$_stop_transcript" ] && [ -f "$_stop_transcript" ]; then
-    _stop_model=$(grep -o '"model":"[^"]*"' "$_stop_transcript" 2>/dev/null | tail -1 | cut -d'"' -f4)
+    # Same pipefail + set -e hazard as above: `grep` exits 1 when the
+    # transcript has no "model" field yet (e.g. before the first assistant
+    # turn). Empty is fine — `log_session.sh` COALESCEs a blank model.
+    _stop_model=$(grep -o '"model":"[^"]*"' "$_stop_transcript" 2>/dev/null | tail -1 | cut -d'"' -f4) || true
   fi
   "$_log_script" stop "$_STOP_SESSION_ID" "$(basename "$(pwd)")" "" "$_stop_model" 2>/dev/null || true
 fi
@@ -238,7 +254,11 @@ fi
 # earlier in this file, alongside the llm#803 DB-stop-write gate) so this
 # block also only runs on the real session end, not every response.
 if [ "$_bye_detected" -eq 1 ] && [ -f "${CLAUDE_DIR}/scripts/detect_patterns.sh" ]; then
-  TRANSCRIPT=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/*.jsonl 2>/dev/null | head -1)
+  # `|| true` guards against the same pipefail + set -e hazard as the
+  # `_stop_transcript` resolution above: `ls` exits non-zero when no
+  # transcript file exists yet. Empty is fine — the `[ -n "$TRANSCRIPT" ]`
+  # guard below handles it.
+  TRANSCRIPT=$(ls -t "${CLAUDE_RUNTIME_ROOT}/projects/"*/*.jsonl 2>/dev/null | head -1) || true
   if [ -n "$TRANSCRIPT" ]; then
     PATTERNS=$(timeout 30 "${CLAUDE_DIR}/scripts/detect_patterns.sh" "$TRANSCRIPT" 2>&1) || PATTERNS=""
     if echo "$PATTERNS" | grep -q "Detected workflow patterns"; then
