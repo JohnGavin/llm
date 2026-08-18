@@ -222,6 +222,124 @@ id_link_for_outlier <- function(rid, commit_sha, repo, colour) {
   sprintf('<a href="%s" style="color:%s;">%s</a>', target_url, colour, rid)
 }
 
+# ── reviews.db read-only helpers (llm#961) ─────────────────────────────────────
+# The daily report runs at 07:00 UTC, 90 minutes BEFORE
+# roborev_severity_autoclose (08:30 UTC — see
+# bin/launchd-recorders/roborev-severity-autoclose). Any metric computed over
+# "the last 24h" therefore shows ~0 closes on almost every run, by
+# construction of the schedule, not because anything is broken. #738/#739
+# narrowed the old zero-action check to the source-of-truth throughput field,
+# but that field is STILL a 24h/right-censored count and fires just as
+# reliably. These helpers read ~/.roborev/reviews.db directly (read-only —
+# NEVER writes) for two metrics that do not depend on same-day job ordering:
+#   1. close rate over a 2-8 day AGED cohort (the closer has had a full
+#      schedule cycle to act on these by the time they are 2 days old)
+#   2. currently-open findings the autocloser will never touch automatically
+#      (severity above its threshold, or unparseable) — the actionable count.
+
+ROBOREV_DB <- Sys.getenv(
+  "ROBOREV_DB",
+  file.path(Sys.getenv("HOME"), ".roborev", "reviews.db")
+)
+
+# query_reviews_db(): read-only query via the sqlite3 CLI (-json mode, so
+# embedded newlines/quotes in review `output` text round-trip correctly),
+# parsed with jsonlite. Returns NULL on any failure (missing binary, missing
+# DB, query error, timeout) — callers must degrade gracefully rather than
+# crash the report on a DB hiccup.
+query_reviews_db <- function(sql, timeout_sec = 15L) {
+  if (!nzchar(ROBOREV_DB) || !file.exists(ROBOREV_DB)) return(NULL)
+  out <- tryCatch(
+    system2("sqlite3", args = c("-json", shQuote(ROBOREV_DB), shQuote(sql)),
+            stdout = TRUE, stderr = TRUE, timeout = timeout_sec),
+    error = function(e) NULL
+  )
+  if (is.null(out)) return(NULL)
+  status <- attr(out, "status")
+  if (!is.null(status) && !identical(status, 0L)) {
+    message("send_roborev_email.R: reviews.db query failed: ", paste(out, collapse = " "))
+    return(NULL)
+  }
+  txt <- paste(out, collapse = "\n")
+  if (!nzchar(trimws(txt))) return(list())
+  tryCatch(jsonlite::fromJSON(txt, simplifyVector = FALSE), error = function(e) NULL)
+}
+
+# ── Lagged close rate (reviews aged 2-8 days) — replaces the 24h close rate ───
+LAGGED_WINDOW_MIN_DAYS <- 2L
+LAGGED_WINDOW_MAX_DAYS <- 8L
+lagged_close_rate <- NA_real_
+lagged_cohort_n   <- NA_integer_
+lagged_sql <- sprintf(
+  "SELECT closed, count(*) AS n FROM reviews WHERE datetime(created_at) >= datetime('now','-%d days') AND datetime(created_at) < datetime('now','-%d days') GROUP BY closed;",
+  LAGGED_WINDOW_MAX_DAYS, LAGGED_WINDOW_MIN_DAYS
+)
+lagged_rows <- query_reviews_db(lagged_sql)
+if (!is.null(lagged_rows)) {
+  lagged_closed_n <- 0L
+  lagged_open_n   <- 0L
+  for (row in lagged_rows) {
+    n <- as.integer(row[["n"]])
+    if (is.na(n)) n <- 0L
+    if (isTRUE(row[["closed"]] == 1)) lagged_closed_n <- n
+    if (isTRUE(row[["closed"]] == 0)) lagged_open_n   <- n
+  }
+  lagged_cohort_n <- lagged_closed_n + lagged_open_n
+  if (lagged_cohort_n > 0L) lagged_close_rate <- lagged_closed_n / lagged_cohort_n
+}
+
+# ── Above-threshold open findings — the actionable backlog count ──────────────
+# Mirrors the severity parse + threshold comparison in
+# roborev_severity_autoclose.sh (`_parse_max_severity` / `_should_close`) so
+# this count matches what the autocloser will (not) act on — i.e. exactly the
+# open findings that need a human, regardless of when the closer last ran.
+SEVERITY_ORDINAL <- c(critical = 4L, high = 3L, medium = 2L, low = 1L)
+AUTOCLOSE_THRESHOLD_STR <- local({
+  v <- tolower(Sys.getenv("ROBOREV_SEVERITY_AUTOCLOSE_THRESHOLD", "medium"))
+  # "medium" matches the current production invocation — see
+  # bin/launchd-recorders/roborev-severity-autoclose ("--threshold" "medium").
+  if (v %in% names(SEVERITY_ORDINAL)) v else "medium"
+})
+AUTOCLOSE_THRESHOLD_ORD <- unname(SEVERITY_ORDINAL[[AUTOCLOSE_THRESHOLD_STR]])
+
+parse_max_severity_ordinal <- function(text) {
+  if (is.null(text) || is.na(text) || !nzchar(text)) return(NA_integer_)
+  m <- gregexpr("(?i)\\*\\*Severity\\*\\*:\\s*(Critical|High|Medium|Low)", text, perl = TRUE)
+  words <- regmatches(text, m)[[1]]
+  if (length(words) == 0L) return(NA_integer_)
+  words <- tolower(sub(".*:\\s*", "", words))
+  max(unname(SEVERITY_ORDINAL[words]), na.rm = TRUE)
+}
+
+above_threshold_open_n <- NA_integer_
+above_threshold_rows   <- list()
+open_findings_sql <- paste(
+  "SELECT rv.id AS review_id, rv.output AS output, rp.name AS repo",
+  "FROM reviews rv",
+  "JOIN review_jobs rj ON rj.id = rv.job_id",
+  "JOIN repos rp ON rp.id = rj.repo_id",
+  "WHERE rv.closed = 0 AND rv.verdict_bool = 0;"
+)
+open_findings <- query_reviews_db(open_findings_sql)
+if (!is.null(open_findings)) {
+  above_threshold_open_n <- 0L
+  for (r in open_findings) {
+    ord <- parse_max_severity_ordinal(r[["output"]])
+    if (is.na(ord) || ord > AUTOCLOSE_THRESHOLD_ORD) {
+      above_threshold_open_n <- above_threshold_open_n + 1L
+      sev_label <- if (is.na(ord)) "UNKNOWN" else names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
+      above_threshold_rows[[length(above_threshold_rows) + 1L]] <- list(
+        review_id    = r[["review_id"]],
+        repo         = if (is.null(r[["repo"]])) "" else r[["repo"]],
+        max_severity = sev_label
+      )
+    }
+  }
+} else {
+  message("send_roborev_email.R: could not query open findings from reviews.db — ",
+          "above-threshold count unavailable (rendering nothing rather than a false alert)")
+}
+
 # ── Extract window slices ──────────────────────────────────────────────────────
 
 d1 <- snap[["global_windows"]][["d1"]]  # 1-day window — llm#449
@@ -295,12 +413,11 @@ for (row in d1_freq_rows) {
   if (identical(v, "clean")        && identical(s, "open"))   { d1_clean_open   <- n; matched <- TRUE }
   if (!matched) d1_other_n <- d1_other_n + n
 }
-d1_sp <- if (!is.null(d1)) d1[["speed"]] else list()
-d1_ttc_p50 <- d1_sp[["ttc_p50_hrs"]]; d1_close_rate <- d1_sp[["close_rate"]]
-d1_att_p50 <- d1_sp[["att_p50"]]
-# Source-of-truth evidence (#740/#738): closes actually recorded in the 24h window,
-# read from reviews.db — independent of the right-censored cohort close_rate above.
-d1_closed_in_window <- if (!is.null(d1)) d1[["throughput"]][["n_closed_in_window"]] else NULL
+# llm#961: d1_ttc_p50/d1_att_p50/d1_close_rate/d1_closed_in_window (the
+# right-censored 24h cohort speed metrics and source-of-truth throughput) are
+# no longer read here — they fed the retired zero-action trap (see below) and
+# are structurally near-zero by schedule, not signal. The 24h "close rate"
+# headline row now uses lagged_close_rate (reviews aged 2-8 days) instead.
 
 # ── Build headline summary table (Metric | Value — no bar/pie charts) ─────────
 
@@ -327,56 +444,17 @@ d1_window_caption  <- sprintf(
 
 d1_n_reviews <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
 
-# ── #484: zero-action trap ─────────────────────────────────────────────────────
-# When n_reviews > 0 but all action metrics are zero/NA, the JSON is likely stale.
-# Attempt an ETL refresh; if it stays zero-action, emit a loud error block.
-
-zero_action_fired <- FALSE
-
-.d1_has_reviews <- isTRUE(!is.null(d1_n_reviews) && d1_n_reviews > 0L)
-.d1_no_close    <- isTRUE(is.null(d1_close_rate) || is.na(d1_close_rate) || d1_close_rate == 0)
-.d1_no_ttc      <- isTRUE(is.null(d1_ttc_p50) || is.na(d1_ttc_p50))
-.d1_no_att      <- isTRUE(is.null(d1_att_p50) || is.na(d1_att_p50))
-# zero-metric-evidence-or-defect rule (#739): the d1 cohort close_rate/ttc/att are
-# right-censored to ~0 by design (#738) — NOT evidence of a broken pipeline. Only
-# fire the trap when the source-of-truth throughput (closes recorded in-window,
-# reviews.db-backed) is ALSO 0, i.e. genuinely nothing closed.
-.d1_no_throughput <- isTRUE(is.null(d1_closed_in_window) || is.na(d1_closed_in_window) || d1_closed_in_window == 0)
-
-if (.d1_has_reviews && .d1_no_throughput) {
-  message("send_roborev_email.R: zero-action trap fired — attempting ETL refresh")
-  etl_script <- file.path(.scripts_dir_rr, "roborev_metrics_etl.sh")
-  if (file.exists(etl_script)) {
-    system2("bash", args = c(etl_script, "--apply"),
-            stdout = FALSE, stderr = FALSE, timeout = 30L)
-    # Re-read latest JSON after ETL refresh
-    json_path_new <- find_latest_json(ROBOREV_DAILY_DIR)
-    if (!is.null(json_path_new)) {
-      snap_new <- tryCatch(
-        jsonlite::fromJSON(json_path_new, simplifyVector = FALSE),
-        error = function(e) NULL
-      )
-      if (!is.null(snap_new)) {
-        snap <- snap_new
-        json_path <- json_path_new
-        # Re-extract d1 after refresh; also update n_reviews
-        d1 <- snap[["global_windows"]][["d1"]]
-        d1_sp_new <- if (!is.null(d1)) d1[["speed"]] else list()
-        d1_ttc_p50    <- d1_sp_new[["ttc_p50_hrs"]]
-        d1_close_rate <- d1_sp_new[["close_rate"]]
-        d1_att_p50    <- d1_sp_new[["att_p50"]]
-        d1_n_reviews  <- if (!is.null(d1)) as.integer(d1[["n_reviews"]] %||% 0L) else 0L
-        d1_closed_in_window <- if (!is.null(d1)) d1[["throughput"]][["n_closed_in_window"]] else NULL
-      }
-    }
-  }
-  # Re-check: fire only if the source-of-truth throughput is STILL 0 after refresh.
-  .d1_no_throughput2 <- isTRUE(is.null(d1_closed_in_window) || is.na(d1_closed_in_window) || d1_closed_in_window == 0)
-  if (.d1_no_throughput2) {
-    zero_action_fired <- TRUE
-    message("send_roborev_email.R: zero-action trap still active after ETL refresh")
-  }
-}
+# ── #961: retired zero-action trap ─────────────────────────────────────────────
+# The #484/#738/#739 "zero-action trap" fired whenever the 24h source-of-truth
+# throughput (d1_closed_in_window) was 0 and attempted a self-healing ETL
+# refresh before alerting. That check is retired: given the 07:00/08:30 UTC
+# schedule gap documented above, d1_closed_in_window is 0 on almost every run
+# regardless of pipeline health, so the trap was alerting on its own scheduling,
+# not on a fault (llm#961). The staleness banner below (snapshot age > 24h)
+# already covers genuine "nightly generation stalled" failures independently of
+# window semantics. The replacement signal is above_threshold_open_n, computed
+# above directly from reviews.db.
+above_threshold_fired <- isTRUE(!is.na(above_threshold_open_n) && above_threshold_open_n > 0L)
 
 # ── Deploy staleness banner (llm#510 attempt #3) ──────────────────────────────
 # cron_deploy_pull.sh (sourced by bin/roborev_daily_cron.sh) writes a status
@@ -413,22 +491,31 @@ if (file.exists(deploy_status_file)) {
   }
 }
 
-# Zero-action error block (prepended before dashboard CTA when fired — llm#484)
-zero_action_block <- if (zero_action_fired) {
+# Above-threshold-open-findings block (prepended before dashboard CTA when
+# fired — llm#961, replaces the #484 zero-action block). Fires on a count the
+# reader can act on — open findings the autocloser will never close by itself
+# — rather than on a close-rate number that is structurally ~0 by schedule.
+above_threshold_block <- if (above_threshold_fired) {
+  detail_items <- vapply(above_threshold_rows, function(x) {
+    sprintf("#%s %s (%s)", x$review_id, x$repo, x$max_severity)
+  }, character(1L))
+  shown   <- utils::head(detail_items, 10L)
+  more_n  <- above_threshold_open_n - length(shown)
+  more_str <- if (more_n > 0L) sprintf(" (+%d more)", more_n) else ""
   sprintf(
     '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
       border-radius:6px; padding:14px 18px; margin:16px 0; font-size:%s;">
-      <strong style="font-size:15px;">&#9888; Zero-Action Data Detected</strong><br>
-      <span>%d review(s) were recorded in the 24h window but all action metrics
-      (close rate, time-to-close, attempt count) are zero or missing. ETL refresh
-      was attempted but the issue persists. Check the roborev daemon and ETL
-      pipeline for upstream errors before acting on this report.</span>
+      <strong style="font-size:15px;">&#9888; %d Above-Threshold Open Finding(s)</strong><br>
+      <span>These open findings are at or above the autoclose severity
+      threshold (%s) or have unparseable severity, so roborev will not close
+      them automatically — they need human triage: %s%s</span>
     </div>',
-    EMAIL_FONT_BODY, d1_n_reviews
+    EMAIL_FONT_BODY, above_threshold_open_n, AUTOCLOSE_THRESHOLD_STR,
+    paste(shown, collapse = "; "), more_str
   )
 } else ""
 
-# Dashboard link CTA (llm#484: zero_action_block prepended when trap fires;
+# Dashboard link CTA (llm#961: above_threshold_block prepended when it fires;
 # llm#510: deploy_stale_block prepended ahead of that when the deploy pull
 # failed or main is still behind origin; llm#793-followup:
 # snapshot_stale_block prepended first — a stale *snapshot* is a more basic
@@ -436,7 +523,7 @@ zero_action_block <- if (zero_action_fired) {
 dashboard_block <- paste0(
   snapshot_stale_block,
   deploy_stale_block,
-  zero_action_block,
+  above_threshold_block,
   sprintf(
     '<div style="margin: 16px 0;">
   <a href="%s"
@@ -476,7 +563,11 @@ if (is.null(d1) || d1_n_reviews == 0L) {
     c("24h: issues found (open)",     fmt_int(d1_found_open)),
     c("24h: clean (closed)",          fmt_int(d1_clean_closed)),
     c("24h: clean (open)",            fmt_int(d1_clean_open)),
-    c("24h: close rate",              fmt_rate(d1_close_rate)),
+    # llm#961: NOT a 24h metric — the 07:00 report runs before the 08:30
+    # autocloser, so a 24h close rate is ~0 by schedule, not by defect. Shown
+    # as an aged cohort instead, same convention as the 7d rows below.
+    c(sprintf("close rate (aged %d-%dd)", LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS),
+                                       fmt_rate(lagged_close_rate)),
     c("hours to close p50 (7d)",      fmt_num(d7_ttc_p50)),
     c("attempts p50 (7d)",            fmt_att(d7_att_p50))
   )
@@ -767,12 +858,18 @@ severity_html <- collapsible_block(
   open = FALSE
 )
 
-# QA markers (tested by test-send-roborev-email.R)
+# QA markers (tested by test-roborev-daily-email.R)
 # llm#484: added n_reviews and d1_n_reviews markers for diagnostic visibility
+# llm#961: zero_action_trap_fired is kept as the marker KEY (test compat) but
+# now reflects the above-threshold-open-findings alert, not the retired
+# 24h-close-rate trap. above_threshold_open_n and the lagged-window bounds are
+# new markers for the replacement metric.
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:above_threshold_open_n=%s --><!-- QA:lagged_close_rate_window=%d-%dd -->',
   report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL,
-  d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(zero_action_fired))
+  d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
+  if (is.na(above_threshold_open_n)) "NA" else as.character(above_threshold_open_n),
+  LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS
 )
 
 # Assemble full body
