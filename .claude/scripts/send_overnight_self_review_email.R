@@ -128,6 +128,43 @@ htmlEscape <- function(text) {
   text
 }
 
+# ── Helper: UTC-baseline SQL fragment for "now" (llm#959) ─────────────────────
+# DuckDB's `current_timestamp::TIMESTAMP` yields the session's LOCAL
+# wall-clock (TimeZone is auto-detected from the OS -- Europe/Dublin on this
+# machine, currently UTC+1 under IST/BST). Several producer columns are
+# NAIVE TIMESTAMP (no tz tag) but hold a UTC clock VALUE, because the writing
+# shell script computed the timestamp with `date -u` before casting it in:
+#   - sessions.started_at / agent_runs.started_at (log_session.sh, via
+#     `date -u '+%Y-%m-%dT%H:%M:%SZ'`, then `CAST(ts AS TIMESTAMP)` in
+#     session_events_staging_import.sh / agent_events_staging_import.sh)
+#   - hook_events.fired_at (hook_event_emit.sh's `date -u`, then
+#     `CAST(ts AS TIMESTAMP)` in hook_events_load.sh)
+#   - roborev's review_jobs.enqueued_at (the roborev binary; confirmed by
+#     sampling: the latest row was numerically ~1h behind this machine's
+#     `date -u` reading, consistent with a UTC clock value read as text)
+# Comparing a UTC-valued naive column against a LOCAL naive baseline makes
+# every "last N hours" window short by the local UTC offset (0 under GMT,
+# 1h under IST/BST -- seasonally invisible; see llm#959). sql_utc_now()
+# returns a SQL FRAGMENT (re-evaluated by DuckDB at query time, same as the
+# `current_timestamp::TIMESTAMP` call sites it replaces), so every affected
+# call site subtracts its INTERVAL from the same UTC clock basis the
+# producer wrote.
+#
+# NOT every timestamp column is UTC -- verified per-column, not assumed:
+#   - self_review_findings_stage1.detected_at is written via a BARE
+#     `current_timestamp` inside a `duckdb` CLI session on this same
+#     machine (self_review_stage1.sql) -- i.e. LOCAL, same as the reader's
+#     existing baseline. Left unchanged; routing it through sql_utc_now()
+#     would introduce a NEW 1h skew rather than fix one.
+#   - worktree_gc_events.fired_at, config_events.fired_at, kb_events.fired_at,
+#     branch_gc_events.fired_at are genuine TIMESTAMPTZ columns (not naive).
+#     DuckDB reattaches the session's local tz when comparing a TIMESTAMPTZ
+#     against a naive TIMESTAMP, so the CAST-then-subtract round-trip
+#     cancels out -- empirically confirmed identical row counts against
+#     `current_timestamp::TIMESTAMP`, `now() AT TIME ZONE 'UTC'`, and bare
+#     `now()` baselines. Left unchanged.
+sql_utc_now <- function() "(now() AT TIME ZONE 'UTC')"
+
 # ── Section 1: New self-review findings (last 24h) ────────────────────────────
 sec1_data <- safe_query("
   SELECT
@@ -377,14 +414,17 @@ sec2_rows <- lapply(source_tables, function(tbl) {
   # Interim email-layer fix pending source-level tagging in llm#812.
   where_clause <- if (identical(tbl, "sessions")) "WHERE project NOT IN ('ClaudeProbe')" else ""
 
+  # sessions.started_at, agent_runs.started_at, hook_events.fired_at are all
+  # UTC-valued naive TIMESTAMP columns (see sql_utc_now() doc comment,
+  # llm#959) -- use the UTC baseline for all three source_tables.
   info <- safe_query(sprintf("
     SELECT
       COUNT(*) AS total,
-      COUNT(CASE WHEN %s >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR THEN 1 END) AS last_24h,
+      COUNT(CASE WHEN %s >= %s - INTERVAL '24' HOUR THEN 1 END) AS last_24h,
       MAX(%s) AS latest_ts
     FROM %s
     %s
-  ", ts_col, ts_col, tbl, where_clause))
+  ", ts_col, sql_utc_now(), ts_col, tbl, where_clause))
 
   sv <- if (tbl %in% c("sessions", "agent_runs")) staleness_lookup(tbl) else NULL
   obs_age_txt <- if (!is.null(sv)) (fmt_observation_age(sv$observation_age_min) %||% "—") else NA_character_
@@ -563,13 +603,14 @@ sec2_summary <- sprintf("%d source tables · %d stale/dead · sessions excl. syn
 # NOTE: a hook_events-by-source breakdown is intentionally NOT added here —
 # hook_events currently has a single producer (this harness), so a per-source
 # split would be degenerate. It awaits hook instrumentation (llm#818).
-sec2_sessions_by_project <- safe_query("
+# sessions.started_at is UTC-valued (see sql_utc_now() doc comment, llm#959).
+sec2_sessions_by_project <- safe_query(sprintf("
   SELECT project, COUNT(*) AS n
   FROM sessions
-  WHERE started_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+  WHERE started_at >= %s - INTERVAL '24' HOUR
   GROUP BY project
   ORDER BY n DESC
-")
+", sql_utc_now()))
 
 sec2_sessions_drilldown <- if (nrow(sec2_sessions_by_project) > 0L) {
   rows_html <- paste(apply(sec2_sessions_by_project, 1, function(r) {
@@ -1112,9 +1153,9 @@ sec3d_block <- collapsible_block(
   kb_table_html
 )
 
-# ── Section 3e: Cron health (last fire) — llm#554 Phase C ────────────────────
+# ── Section 3e: Cron health (last fire) — llm#554 Phase C, llm#962 Part 1 ────
 cron_health <- safe_query("
-  SELECT plist_label, state, last_exit_code, last_fired_at, next_fire_at
+  SELECT plist_label, state, last_exit_code, last_fired_at, next_fire_at, fired_at
   FROM (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY plist_label ORDER BY fired_at DESC) AS rn
     FROM launchd_health_events
@@ -1124,6 +1165,7 @@ cron_health <- safe_query("
     CASE state
       WHEN 'loaded_recent_fail' THEN 0
       WHEN 'unloaded'           THEN 1
+      WHEN 'unknown'            THEN 2
       WHEN 'missing'            THEN 2
       ELSE 3
     END,
@@ -1172,23 +1214,104 @@ if (nrow(cron_freshness) > 0L) {
 }
 
 if (nrow(cron_health) > 0L) {
-  n_fail  <- sum(cron_health$state %in% c("loaded_recent_fail", "unloaded", "missing"),
-                 na.rm = TRUE)
-  n_ok    <- sum(cron_health$state == "loaded_ok", na.rm = TRUE)
-  n_plists <- nrow(cron_health)
+  # ── llm#962 Part 1: never render "unknown" as failed ────────────────────
+  # Two independent reasons a plist's row can be untrustworthy WITHOUT being
+  # a confirmed failure:
+  #   (a) state == 'unknown'/'missing' (writer-side rename, see
+  #       bin/launchd_health_weekly_cron.sh): launchctl's output could not be
+  #       parsed at all -- we genuinely do not know the outcome.
+  #   (b) the row itself is stale relative to its peers in the SAME run.
+  #       Step 1b's own comment documents that a concurrent job holding
+  #       unified.duckdb's write lock can make ONE plist's INSERT fail after
+  #       3 retries while every other plist's row refreshes fine -- so the
+  #       table-wide freshness guard above (gated on the newest row across
+  #       ALL plists) does not catch it. A row more than 36h older than the
+  #       freshest row in its own batch is a straggler, not a fresh reading.
+  .batch_newest_dt <- if (!is.null(.newest_fired_at) && !is.na(.newest_fired_at)) {
+    as.POSIXct(.newest_fired_at, tz = "UTC")
+  } else {
+    as.POSIXct(NA)
+  }
+  cron_health$row_age_hours <- if (!is.na(.batch_newest_dt)) {
+    as.numeric(difftime(.batch_newest_dt,
+                        as.POSIXct(cron_health$fired_at, tz = "UTC"),
+                        units = "hours"))
+  } else {
+    rep(NA_real_, nrow(cron_health))
+  }
+  cron_health$is_stale_row <- !is.na(cron_health$row_age_hours) & cron_health$row_age_hours > 36
+
+  # ── llm#962 Part 1: per-job exit-code semantics via housekeeping_runs ───
+  # Some scripts use a nonzero exit code to carry a RESULT, not a failure
+  # (secret_exposure_scan.sh: exit 1 == "scan completed, found N findings" --
+  # a genuine crash is recorded separately as status='failed'). Prefer the
+  # script's own housekeeping_runs heartbeat over the raw exit code for any
+  # plist that writes one; fall back to the exit code otherwise. Matching is
+  # by name-normalisation (plist label -> task), not a hardcoded per-job
+  # list, so any future job that wires up a heartbeat is covered for free.
+  hk_latest <- safe_query("
+    SELECT task, status, rows_written
+    FROM (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY task ORDER BY started_at DESC) AS rn
+      FROM housekeeping_runs
+    )
+    WHERE rn = 1
+  ")
+
+  normalize_plist_label <- function(lbl) gsub("-", "_", sub("^com\\.claude\\.", "", lbl))
+
+  find_heartbeat <- function(lbl) {
+    if (nrow(hk_latest) == 0L) return(NULL)
+    norm <- normalize_plist_label(lbl)
+    hit <- hk_latest[hk_latest$task == norm, , drop = FALSE]
+    if (nrow(hit) == 0L) {
+      hit <- hk_latest[startsWith(norm, paste0(hk_latest$task, "_")), , drop = FALSE]
+    }
+    if (nrow(hit) == 0L) return(NULL)
+    list(status = hit$status[[1]], rows_written = hit$rows_written[[1]])
+  }
+
+  interpret_cron_row <- function(i) {
+    r <- cron_health[i, ]
+    if (isTRUE(r$is_stale_row)) {
+      return(list(bucket = "unknown",
+                  label  = sprintf("unknown — stale (%.0fh behind latest run)", r$row_age_hours)))
+    }
+    if (r$state %in% c("unknown", "missing")) {
+      return(list(bucket = "unknown", label = "unknown — state unreadable"))
+    }
+    hb <- find_heartbeat(r$plist_label)
+    if (!is.null(hb)) {
+      bucket <- switch(hb$status, ok = "ok", failed = "failed", partial = "failed", "ok")
+      label  <- if (!is.na(hb$rows_written) && hb$rows_written > 0L) {
+        sprintf("%s — %d row(s)", hb$status, hb$rows_written)
+      } else {
+        hb$status
+      }
+      return(list(bucket = bucket, label = label))
+    }
+    if (r$state == "loaded_ok") return(list(bucket = "ok", label = "ok"))
+    return(list(bucket = "failed", label = r$state))
+  }
+
+  .cron_interp <- lapply(seq_len(nrow(cron_health)), interpret_cron_row)
+  cron_health$bucket             <- vapply(.cron_interp, function(x) x$bucket, character(1))
+  cron_health$interpreted_label  <- vapply(.cron_interp, function(x) x$label, character(1))
+
+  n_fail    <- sum(cron_health$bucket == "failed",  na.rm = TRUE)
+  n_ok      <- sum(cron_health$bucket == "ok",      na.rm = TRUE)
+  n_unknown <- sum(cron_health$bucket == "unknown", na.rm = TRUE)
+  n_plists  <- nrow(cron_health)
 
   cron_rows_html <- paste(apply(cron_health, 1, function(r) {
-    is_fail <- r[["state"]] %in% c("loaded_recent_fail", "unloaded", "missing")
-    row_bg  <- if (is_fail) "#2a0a0a" else DARK_CARD
-    st_col  <- if (is_fail) "#ff5252" else ACCENT_GREEN
-    ec_col  <- {
-      ec <- suppressWarnings(as.integer(r[["last_exit_code"]]))
-      if (!is.na(ec) && ec != 0L) "#ff5252" else DARK_MUTED
-    }
+    bucket  <- r[["bucket"]]
+    row_bg  <- switch(bucket, failed = "#2a0a0a", unknown = "#2a2205", DARK_CARD)
+    st_col  <- switch(bucket, failed = "#ff5252", unknown = ACCENT_ORANGE, ACCENT_GREEN)
     sprintf(
       '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;font-size:11px;max-width:280px;
    word-break:break-all;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
 <td style="padding:5px 10px;font-size:12px;color:%s;font-weight:bold;">%s</td>
 <td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
@@ -1196,8 +1319,9 @@ if (nrow(cron_health) > 0L) {
 </tr>',
       row_bg,
       r[["plist_label"]],
-      st_col, r[["state"]],
-      ec_col, r[["last_exit_code"]] %||% "—",
+      DARK_MUTED, r[["state"]],
+      st_col, htmlEscape(r[["interpreted_label"]]),
+      DARK_MUTED, r[["last_exit_code"]] %||% "—",
       DARK_MUTED, r[["last_fired_at"]] %||% "—",
       DARK_MUTED, r[["next_fire_at"]]  %||% "—"
     )
@@ -1210,7 +1334,8 @@ if (nrow(cron_health) > 0L) {
 <thead>
 <tr style="background-color:%s;">
 <th style="padding:5px 10px;text-align:left;">Plist label</th>
-<th style="padding:5px 10px;text-align:left;">State</th>
+<th style="padding:5px 10px;text-align:left;">Raw state</th>
+<th style="padding:5px 10px;text-align:left;">Result</th>
 <th style="padding:5px 10px;text-align:right;">Exit code</th>
 <th style="padding:5px 10px;text-align:left;">Last fired</th>
 <th style="padding:5px 10px;text-align:left;">Next fire</th>
@@ -1226,14 +1351,26 @@ if (nrow(cron_health) > 0L) {
       cron_table_html,
       sprintf(
         '<p style="color:#ff5252;font-size:%s;margin-top:8px;">
-  &#9888; %d plist(s) failed or unloaded — check launchd status.</p>',
+  &#9888; %d plist(s) failed — check launchd status.</p>',
         EMAIL_FONT_SUBTITLE, n_fail
       )
     )
   }
+  if (n_unknown > 0L) {
+    cron_table_html <- paste0(
+      cron_table_html,
+      sprintf(
+        '<p style="color:%s;font-size:%s;margin-top:8px;">
+  %d plist(s) unknown — state unreadable or the row is stale relative to
+  its peers (see Result column). Not counted as failed; verify with
+  <code>launchctl print</code> before treating as a problem.</p>',
+        ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, n_unknown
+      )
+    )
+  }
   sec3e_summary <- sprintf(
-    "%d plists · %d ok · %d failed/unloaded",
-    n_plists, n_ok, n_fail
+    "%d plists · %d ok · %d failed · %d unknown",
+    n_plists, n_ok, n_fail, n_unknown
   )
 } else {
   cron_table_html <- paste0(
@@ -1499,15 +1636,16 @@ hook_liveness_block <- tryCatch({
       evidence <- safe_query("SELECT count(*) AS n FROM hook_events", fallback = data.frame(n = NA_integer_))
       evidence_n <- if (nrow(evidence) > 0L) evidence$n[[1]] else NA_integer_
 
-      fire_counts <- safe_query("
+      # hook_events.fired_at is UTC-valued (see sql_utc_now() doc comment, llm#959).
+      fire_counts <- safe_query(sprintf("
         SELECT
           hook_name,
-          SUM(CASE WHEN fired_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR THEN 1 ELSE 0 END) AS fires_24h,
-          SUM(CASE WHEN fired_at >= current_timestamp::TIMESTAMP - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d,
+          SUM(CASE WHEN fired_at >= %s - INTERVAL '24' HOUR THEN 1 ELSE 0 END) AS fires_24h,
+          SUM(CASE WHEN fired_at >= %s - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d,
           MAX(fired_at) AS last_fired_at
         FROM hook_events
         GROUP BY hook_name
-      ")
+      ", sql_utc_now(), sql_utc_now()))
 
       reg_df <- data.frame(hook_name = registered, stringsAsFactors = FALSE)
       merged <- merge(reg_df, fire_counts, by = "hook_name", all.x = TRUE)
@@ -1582,11 +1720,12 @@ hook_liveness_summary <- tryCatch({
   if (length(registered) == 0L) {
     "settings.json not found or no hook scripts registered"
   } else {
-    fc <- safe_query("
+    # hook_events.fired_at is UTC-valued (see sql_utc_now() doc comment, llm#959).
+    fc <- safe_query(sprintf("
       SELECT hook_name,
-             SUM(CASE WHEN fired_at >= current_timestamp::TIMESTAMP - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d
+             SUM(CASE WHEN fired_at >= %s - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d
       FROM hook_events GROUP BY hook_name
-    ")
+    ", sql_utc_now()))
     silent <- sum(!(registered %in% fc$hook_name[fc$fires_7d > 0L]))
     sprintf("%d registered · %d silent 7d", length(registered), silent)
   }
@@ -1775,13 +1914,16 @@ AGENT_FAILURE_STREAK_ALERT_THRESHOLD <- 3L  # consecutive failures -> loud alert
 # timestamp, regardless of is_sig) are what let a reader tell live from
 # resolved at a glance.
 agent_failure_stats <- function(con, interval_sql) {
+  # roborev's review_jobs.enqueued_at is UTC-valued text cast to a naive
+  # TIMESTAMP (see sql_utc_now() doc comment, llm#959) -- use the UTC
+  # baseline, not the reader's local `current_timestamp::TIMESTAMP`.
   sql <- sprintf("
     WITH ordered AS (
       SELECT agent, enqueued_at::TIMESTAMP AS enqueued_at, status,
         CASE WHEN status = 'failed' AND error LIKE '%%no valid stream-json%%'
              THEN 1 ELSE 0 END AS is_sig
       FROM roborev_src.review_jobs
-      WHERE enqueued_at::TIMESTAMP >= current_timestamp::TIMESTAMP - INTERVAL %s
+      WHERE enqueued_at::TIMESTAMP >= %s - INTERVAL %s
     ),
     ranked AS (
       SELECT agent, enqueued_at, status, is_sig,
@@ -1848,7 +1990,7 @@ agent_failure_stats <- function(con, interval_sql) {
     LEFT JOIN current_streak cs USING (agent)
     LEFT JOIN latest l USING (agent)
     ORDER BY c.n_failures DESC
-  ", interval_sql)
+  ", sql_utc_now(), interval_sql)
   DBI::dbGetQuery(con, sql)
 }
 

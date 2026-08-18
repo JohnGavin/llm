@@ -114,7 +114,11 @@ CREATE TABLE IF NOT EXISTS launchd_health_events (
   fired_at        TIMESTAMPTZ NOT NULL,
   source          TEXT NOT NULL,           -- 'launchd_health_weekly_cron.sh'
   plist_label     TEXT NOT NULL,           -- e.g. 'com.claude.worktree-gc'
-  state           TEXT NOT NULL,           -- 'loaded_ok' | 'loaded_recent_fail' | 'unloaded' | 'missing' | 'orphan'
+  state           TEXT NOT NULL,           -- 'loaded_ok' | 'loaded_recent_fail' | 'unloaded' | 'unknown' | 'orphan'
+                                            -- 'unknown' (llm#962 Part 1): launchctl output could not be parsed --
+                                            -- MUST NOT be counted as a failure by readers. 'missing' is the
+                                            -- pre-rename spelling of the same state; readers still accept it
+                                            -- for rows written before the rename.
   last_exit_code  INTEGER,
   last_fired_at   TIMESTAMPTZ,             -- from launchctl print (NULL when not parseable)
   next_fire_at    TIMESTAMPTZ,             -- from launchctl print (NULL when not scheduled/parseable)
