@@ -44,6 +44,15 @@ unset _SCRIPT_DIR
 
 set -euo pipefail
 
+# --- grep portability (llm: ugrep-on-PATH) ---------------------------------
+# `grep` on this machine resolves to ugrep, which does NOT honour \b / \< / \>
+# word boundaries in -E mode. A pattern using them silently never matches — no
+# error, no exit code, just a check that always says "clean". Pin to the system
+# grep, which does support them. Override with GREP= if needed.
+GREP="${GREP:-/usr/bin/grep}"
+[ -x "$GREP" ] || GREP="grep"   # fail soft on non-macOS
+
+
 LOGFILE="${HOME}/.claude/logs/roborev_auto_verify.log"
 ROBOREV_DB="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
 ROBOREV_BIN="${ROBOREV:-$(command -v roborev 2>/dev/null || echo /usr/local/bin/roborev)}"
@@ -345,7 +354,7 @@ log "INFO: ${COMMIT_SHA} cites ${N_IDS} finding(s): $(printf '%s' "$CITED_IDS" |
 # ── Detect wontfix pattern (skip re-review) ───────────────────────────────────
 
 IS_WONTFIX=0
-if echo "$COMMIT_MSG" | grep -qiE '\bwontfix\s+roborev\s*#'; then
+if echo "$COMMIT_MSG" | "$GREP" -qiE '\bwontfix\s+roborev\s*#'; then
   IS_WONTFIX=1
 fi
 
