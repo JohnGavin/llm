@@ -235,8 +235,13 @@ if [ "${_duckdb_ok}" = "1" ]; then
       _last_exit_code_raw="$(printf '%s' "${_lctl_out}" | grep 'last exit code' | head -1 | sed 's/.*last exit code = //' | tr -d '[:space:]')"
 
       if [ -z "${_last_exit_code_raw}" ]; then
-        # Could not parse exit code — service is loaded but state unknown
-        _state="missing"
+        # Could not parse exit code — service is loaded but state unknown.
+        # Renamed from 'missing' to 'unknown' (llm#962 Part 1): the READER
+        # must never bucket this alongside a confirmed failure — it means
+        # "we could not determine the outcome", not "the outcome was bad".
+        # 'missing' is still accepted by the reader for any pre-existing
+        # rows written before this rename.
+        _state="unknown"
         _detail="launchctl output parsed but 'last exit code' line not found"
       elif [ "${_last_exit_code_raw}" = "(neverexited)" ] || [ "${_last_exit_code_raw}" = "(never" ]; then
         # Never exited → loaded, never run → loaded_ok (exit code is effectively 0)
