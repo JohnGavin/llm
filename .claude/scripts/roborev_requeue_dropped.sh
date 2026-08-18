@@ -30,16 +30,32 @@
 # 2026-07-22 case study for the full incident this mirrors.
 #
 # Candidate definition:
-#   review_jobs row with status='failed', commit_id IS NOT NULL (single-
-#   commit `review` jobs only — range/compact job_types are out of scope,
-#   see "Scope" below), whose error text matches a verified quota/spend
-#   pattern (see QUOTA_ERROR_SQL — strings taken from an actual query
-#   against ~/.roborev/reviews.db on 2026-08-14, not guessed), AND whose
-#   (repo_id, commit_id) has no row with status IN ('done','applied',
+#   For each (repo_id, commit_id) pair, look at its MOST RECENT review_jobs
+#   row (by enqueued_at, tie-break id — see "Latest-job-wins" below). That
+#   row must have status='failed', commit_id IS NOT NULL (single-commit
+#   `review` jobs only — range/compact job_types are out of scope, see
+#   "Scope" below), and error text matching a verified quota/spend pattern
+#   (see QUOTA_ERROR_SQL — strings taken from an actual query against
+#   ~/.roborev/reviews.db on 2026-08-14, not guessed). The pair must ALSO
+#   have no row (any status, any age) with status IN ('done','applied',
 #   'rebased') (successful outcomes broader than just 'done' — a job that
 #   got applied or rebased was reviewed) and no row with status IN
 #   ('queued','running') (already in flight — re-enqueueing would duplicate
 #   it; this is the idempotency check required by requirement 5).
+#
+# Latest-job-wins (llm#964): earlier versions of this script matched ANY
+# failed+quota row, so a pair that failed on quota once and then failed
+# again on a DIFFERENT terminal error on every subsequent requeue (e.g. a
+# revoked API key producing HTTP 401) was selected forever — the original
+# quota row never left the result set. Verified on the real DB 2026-08-14:
+# repo coMMpass (repo_id=3), commit 0e787dfe... — job 261 failed on a
+# genuine quota error 2026-03-24; four later requeues (12469/12478/12485/
+# 12491) each failed with "401 Unauthorized: Incorrect API key", yet the
+# pair was still being re-selected on every run because job 261 still
+# matched. Checking only the LATEST job per pair fixes this: once the
+# latest attempt fails for a non-quota reason, the pair stops being
+# offered — retrying further cannot help until something about the error
+# itself changes, which a human/other automation must address separately.
 #
 # Scope: only job_type='review' jobs with a populated commit_id are
 # considered. review_jobs.diff_content/dirty_files are NOT populated for
@@ -324,7 +340,8 @@ run_selftest() {
   local git_bin="${GIT_BIN}"
 
   # ---- fixture git repo: one commit touching only an excluded path, one
-  # touching real code, one touching both. ----
+  # touching real code, one touching both, plus three more real-code
+  # commits reserved for the llm#964 latest-job-wins cases (f/h/i below). ----
   mkdir -p "$fake_git_repo"
   "$git_bin" -C "$fake_git_repo" init -q -b main
   "$git_bin" -C "$fake_git_repo" config user.email "test@example.com"
@@ -349,6 +366,42 @@ run_selftest() {
   local sha_real
   sha_real="$("$git_bin" -C "$fake_git_repo" rev-parse HEAD)"
 
+  # Case (f) fixture commit: proves a non-quota-only failure never becomes
+  # a candidate. Deliberately a SEPARATE commit from sha_real above — an
+  # earlier version of this fixture reused commit_id=3 (sha_real's own
+  # commit row) for this case, which only worked because the OLD code
+  # matched ANY failed+quota row for a pair. Under llm#964's
+  # latest-job-wins rule that collision would have wrongly killed case (a)
+  # too (job 105 would become the pair's "latest" job and it is
+  # non-quota), so this is now its own commit.
+  echo 'nq <- function() 0' > "$fake_git_repo/R/nonquota.R"
+  "$git_bin" -C "$fake_git_repo" add -A
+  "$git_bin" -C "$fake_git_repo" commit -q -m "feat: real code (non-quota only)"
+  local sha_nonquota
+  sha_nonquota="$("$git_bin" -C "$fake_git_repo" rev-parse HEAD)"
+
+  # Case (h) fixture commit (llm#964): earlier quota failure, LATER
+  # non-quota failure -> latest job wins, pair must NOT be a candidate.
+  # This is the coMMpass shape (job 261 quota-failed 2026-03-24; four later
+  # requeues all failed on "401 Unauthorized: Incorrect API key" yet the
+  # old query kept re-selecting the pair forever because job 261 still
+  # matched the quota pattern).
+  echo 'h <- function() 0' > "$fake_git_repo/R/caseh.R"
+  "$git_bin" -C "$fake_git_repo" add -A
+  "$git_bin" -C "$fake_git_repo" commit -q -m "feat: real code (case h)"
+  local sha_h
+  sha_h="$("$git_bin" -C "$fake_git_repo" rev-parse HEAD)"
+
+  # Case (i) fixture commit (llm#964): earlier non-quota failure, LATER
+  # quota failure -> latest job wins the OTHER direction too: pair MUST
+  # remain a candidate. Proves the rule looks at the latest job, not "any
+  # quota row ever" and not "any non-quota row ever".
+  echo 'i <- function() 0' > "$fake_git_repo/R/casei.R"
+  "$git_bin" -C "$fake_git_repo" add -A
+  "$git_bin" -C "$fake_git_repo" commit -q -m "feat: real code (case i)"
+  local sha_i
+  sha_i="$("$git_bin" -C "$fake_git_repo" rev-parse HEAD)"
+
   cat > "$fake_git_repo/.roborev.toml" <<'EOF'
 exclude_patterns = [
   "inst/extdata/**",
@@ -368,7 +421,8 @@ CREATE TABLE review_jobs (
   commit_id INTEGER,
   git_ref TEXT NOT NULL,
   status TEXT NOT NULL,
-  error TEXT
+  error TEXT,
+  enqueued_at TEXT NOT NULL DEFAULT '2026-01-01 00:00:00'
 );
 
 INSERT INTO repos VALUES (1, '${fake_git_repo}', 'fixture-repo');
@@ -379,24 +433,39 @@ INSERT INTO commits VALUES (2, 1, '${sha_data2}', 'data: refresh');
 INSERT INTO commits VALUES (3, 1, '${sha_real}',  'feat: real code');
 INSERT INTO commits VALUES (4, 2, 'deadbeef',      'commit in a repo whose checkout is gone');
 INSERT INTO commits VALUES (5, 1, '${sha_real}2',  'later-succeeded commit placeholder');
+INSERT INTO commits VALUES (8, 1, '${sha_nonquota}', 'feat: real code (non-quota only)');
+INSERT INTO commits VALUES (9, 1, '${sha_h}', 'feat: real code (case h)');
+INSERT INTO commits VALUES (10, 1, '${sha_i}', 'feat: real code (case i)');
 
--- Case (a): quota-failed, no successful review anywhere -> candidate.
-INSERT INTO review_jobs VALUES (100, 1, 3, '${sha_real}', 'failed', 'quota: agent: codex failed: exit status 1 (parse error: codex stream reported failure: Quota exceeded. Check your plan.');
+-- Case (a): quota-failed, sole job for the pair -> candidate.
+INSERT INTO review_jobs VALUES (100, 1, 3, '${sha_real}', 'failed', 'quota: agent: codex failed: exit status 1 (parse error: codex stream reported failure: Quota exceeded. Check your plan.', '2026-01-01 00:00:00');
 
--- Case (b): quota-failed but a LATER done row exists for the same ref -> NOT a candidate.
+-- Case (b): quota-failed but a LATER 'done' row exists for the same pair -> NOT a candidate.
 INSERT INTO review_jobs VALUES (101, 1, 2, '${sha_data2}', 'failed', 'agent: claude-code failed
-stream: stream errors: You''ve hit your monthly spend limit');
-INSERT INTO review_jobs VALUES (102, 1, 2, '${sha_data2}', 'done', NULL);
+stream: stream errors: You''ve hit your monthly spend limit', '2026-01-01 00:01:00');
+INSERT INTO review_jobs VALUES (102, 1, 2, '${sha_data2}', 'done', NULL, '2026-01-01 00:02:00');
 
 -- Case (c): candidate whose commit touches ONLY excluded paths -> skipped(excluded).
 INSERT INTO review_jobs VALUES (103, 1, 1, '${sha_data}', 'failed', 'agent: claude-code failed
-stream: stream errors: You''ve hit your session limit');
+stream: stream errors: You''ve hit your session limit', '2026-01-01 00:03:00');
 
 -- Case: repo_unavailable (checkout missing on disk).
-INSERT INTO review_jobs VALUES (104, 2, 4, 'deadbeef', 'failed', 'quota: agent: gemini failed: Quota exceeded.');
+INSERT INTO review_jobs VALUES (104, 2, 4, 'deadbeef', 'failed', 'quota: agent: gemini failed: Quota exceeded.', '2026-01-01 00:04:00');
 
--- Case (f): non-quota failure -> not a candidate at all.
-INSERT INTO review_jobs VALUES (105, 1, 3, '${sha_real}x', 'failed', 'build prompt: get commit info: git log: fork/exec /opt/homebrew/bin/git: resource temporarily unavailable');
+-- Case (f): non-quota failure, sole job for its own pair -> never a candidate.
+INSERT INTO review_jobs VALUES (105, 1, 8, '${sha_nonquota}', 'failed', 'build prompt: get commit info: git log: fork/exec /opt/homebrew/bin/git: resource temporarily unavailable', '2026-01-01 00:05:00');
+
+-- Case (h) — llm#964 latest-job-wins: earlier quota failure, LATER
+-- non-quota failure -> latest job is non-quota, pair must NOT be a
+-- candidate even though a quota row exists in its history.
+INSERT INTO review_jobs VALUES (200, 1, 9, '${sha_h}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-02-01 00:00:00');
+INSERT INTO review_jobs VALUES (201, 1, 9, '${sha_h}', 'failed', '401 Unauthorized: Incorrect API key provided', '2026-02-02 00:00:00');
+
+-- Case (i) — llm#964 latest-job-wins, other direction: earlier non-quota
+-- failure, LATER quota failure -> latest job is quota, pair MUST remain a
+-- candidate.
+INSERT INTO review_jobs VALUES (210, 1, 10, '${sha_i}', 'failed', 'build prompt: get commit info: git log: fork/exec /opt/homebrew/bin/git: resource temporarily unavailable', '2026-02-01 00:00:00');
+INSERT INTO review_jobs VALUES (211, 1, 10, '${sha_i}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-02-02 00:00:00');
 SQL
 
   # ---- fake `roborev` binary: records invocations, never touches network ----
@@ -445,10 +514,35 @@ EOF
 
   # ---- Check 4: non-quota failure never becomes a candidate ----
   total=$((total + 1))
-  if ! echo "$out" | grep -q "${sha_real}x"; then
+  if ! echo "$out" | grep -q "${sha_nonquota}"; then
     pass=$((pass + 1))
   else
     echo "FAIL: a non-quota failure was treated as a candidate. Output:"
+    echo "$out"
+  fi
+
+  # ---- Check 4c (llm#964 case h): earlier quota failure, later non-quota
+  # failure -> latest job wins, pair must NOT be a candidate at all — not
+  # even reported as a skip line, since it should never enter the result
+  # set (this is the exact coMMpass shape this dispatch fixes; against the
+  # pre-fix candidate query this check fails because the stale quota row
+  # keeps the pair eligible forever). ----
+  total=$((total + 1))
+  if ! echo "$out" | grep -q "${sha_h}"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL: a pair whose LATEST job is a non-quota failure was still treated as a candidate (llm#964 case h — stale quota row keeps it eligible). Output:"
+    echo "$out"
+  fi
+
+  # ---- Check 4d (llm#964 case i): earlier non-quota failure, later quota
+  # failure -> latest job wins the OTHER direction: pair MUST remain a
+  # candidate. ----
+  total=$((total + 1))
+  if echo "$out" | grep -q "would enqueue.*${sha_i}"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL: a pair whose LATEST job is a quota failure (despite an earlier non-quota failure) was not offered as a candidate (llm#964 case i). Output:"
     echo "$out"
   fi
 
@@ -482,8 +576,8 @@ EOF
   "$sqlite_bin" "$fixture_db" <<SQL
 INSERT INTO commits VALUES (6, 1, '${sha_real2}', 'feat: real code 2');
 INSERT INTO commits VALUES (7, 1, '${sha_real3}', 'feat: real code 3');
-INSERT INTO review_jobs VALUES (106, 1, 6, '${sha_real2}', 'failed', 'quota: agent: codex failed: Quota exceeded.');
-INSERT INTO review_jobs VALUES (107, 1, 7, '${sha_real3}', 'failed', 'quota: agent: codex failed: Quota exceeded.');
+INSERT INTO review_jobs VALUES (106, 1, 6, '${sha_real2}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-03-01 00:00:00');
+INSERT INTO review_jobs VALUES (107, 1, 7, '${sha_real3}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-03-01 00:01:00');
 SQL
 
   total=$((total + 1))
@@ -504,7 +598,7 @@ SQL
   # ---- Check 6: idempotency — a pre-existing queued job for the SAME ref
   # must not be re-enqueued (excluded from candidates entirely). ----
   total=$((total + 1))
-  "$sqlite_bin" "$fixture_db" "INSERT INTO review_jobs VALUES (108, 1, 6, '${sha_real2}', 'queued', NULL);"
+  "$sqlite_bin" "$fixture_db" "INSERT INTO review_jobs VALUES (108, 1, 6, '${sha_real2}', 'queued', NULL, '2026-03-02 00:00:00');"
   local idem_out
   idem_out="$(ROBOREV_DB="$fixture_db" SQLITE="$sqlite_bin" ROBOREV="$fake_roborev" GIT_BIN="$git_bin" \
     UNIFIED_DB_PATH="$fake_hk_db" LOG_FILE_PATH="${tmp_root}/log3.log" FAKE_ROBOREV_LOG="$fake_roborev_log" \
@@ -522,7 +616,7 @@ SQL
   "$sqlite_bin" "$empty_db" <<'SQL'
 CREATE TABLE repos (id INTEGER PRIMARY KEY, root_path TEXT UNIQUE NOT NULL, name TEXT NOT NULL);
 CREATE TABLE commits (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, sha TEXT NOT NULL, subject TEXT NOT NULL);
-CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, commit_id INTEGER, git_ref TEXT NOT NULL, status TEXT NOT NULL, error TEXT);
+CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, commit_id INTEGER, git_ref TEXT NOT NULL, status TEXT NOT NULL, error TEXT, enqueued_at TEXT NOT NULL DEFAULT '2026-01-01 00:00:00');
 SQL
   local empty_hk_db="${tmp_root}/empty_unified.duckdb"
   duckdb -init /dev/null "$empty_hk_db" < "${_SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
@@ -537,6 +631,83 @@ SQL
     pass=$((pass + 1))
   else
     echo "FAIL: expected an 'ok|0' heartbeat row on a zero-candidate run, got '$hb_row'"
+  fi
+
+  # ---- Check 8 (llm#964 defect 2): round-robin ordering across repos ----
+  # Two independent repos, 'aaa' and 'zzz', each with 3 eligible
+  # quota-failed candidates and NOTHING else in this isolated DB (kept
+  # separate from fixture_db above so repo-1/repo-2's own candidates can't
+  # skew which repo's turn it is). With --limit=2, one candidate from EACH
+  # repo must be selected — not two from whichever repo sorts first
+  # alphabetically. This mirrors the measured real-DB starvation:
+  # candidates=153 enqueued=5 skipped_rate_limit=51 on two consecutive
+  # thrice-daily runs, same 51 skipped both times, because 'coMMpass'
+  # (sorts before every other repo name) consumed the entire --limit=5
+  # budget on every single run.
+  total=$((total + 1))
+  local rr_root="${tmp_root}/roundrobin"
+  mkdir -p "$rr_root"
+  local rr_repo_aaa="${rr_root}/aaa"
+  local rr_repo_zzz="${rr_root}/zzz"
+  local rr_repo_path
+  for rr_repo_path in "$rr_repo_aaa" "$rr_repo_zzz"; do
+    mkdir -p "$rr_repo_path/R"
+    "$git_bin" -C "$rr_repo_path" init -q -b main
+    "$git_bin" -C "$rr_repo_path" config user.email "test@example.com"
+    "$git_bin" -C "$rr_repo_path" config user.name "Test"
+    local rr_n
+    for rr_n in 1 2 3; do
+      echo "v${rr_n} <- function() ${rr_n}" > "$rr_repo_path/R/v${rr_n}.R"
+      "$git_bin" -C "$rr_repo_path" add -A
+      "$git_bin" -C "$rr_repo_path" commit -q -m "feat: candidate ${rr_n}"
+    done
+  done
+  local sha_aaa1 sha_aaa2 sha_aaa3 sha_zzz1 sha_zzz2 sha_zzz3
+  sha_aaa1="$("$git_bin" -C "$rr_repo_aaa" log --format=%H --reverse | sed -n '1p')"
+  sha_aaa2="$("$git_bin" -C "$rr_repo_aaa" log --format=%H --reverse | sed -n '2p')"
+  sha_aaa3="$("$git_bin" -C "$rr_repo_aaa" log --format=%H --reverse | sed -n '3p')"
+  sha_zzz1="$("$git_bin" -C "$rr_repo_zzz" log --format=%H --reverse | sed -n '1p')"
+  sha_zzz2="$("$git_bin" -C "$rr_repo_zzz" log --format=%H --reverse | sed -n '2p')"
+  sha_zzz3="$("$git_bin" -C "$rr_repo_zzz" log --format=%H --reverse | sed -n '3p')"
+
+  local rr_db="${rr_root}/reviews.db"
+  "$sqlite_bin" "$rr_db" <<SQL
+CREATE TABLE repos (id INTEGER PRIMARY KEY, root_path TEXT UNIQUE NOT NULL, name TEXT NOT NULL);
+CREATE TABLE commits (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, sha TEXT NOT NULL, subject TEXT NOT NULL);
+CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, commit_id INTEGER, git_ref TEXT NOT NULL, status TEXT NOT NULL, error TEXT, enqueued_at TEXT NOT NULL DEFAULT '2026-04-01 00:00:00');
+
+INSERT INTO repos VALUES (1, '${rr_repo_aaa}', 'aaa');
+INSERT INTO repos VALUES (2, '${rr_repo_zzz}', 'zzz');
+
+INSERT INTO commits VALUES (1, 1, '${sha_aaa1}', 'feat: candidate 1');
+INSERT INTO commits VALUES (2, 1, '${sha_aaa2}', 'feat: candidate 2');
+INSERT INTO commits VALUES (3, 1, '${sha_aaa3}', 'feat: candidate 3');
+INSERT INTO commits VALUES (4, 2, '${sha_zzz1}', 'feat: candidate 1');
+INSERT INTO commits VALUES (5, 2, '${sha_zzz2}', 'feat: candidate 2');
+INSERT INTO commits VALUES (6, 2, '${sha_zzz3}', 'feat: candidate 3');
+
+INSERT INTO review_jobs VALUES (1, 1, 1, '${sha_aaa1}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-04-01 00:00:00');
+INSERT INTO review_jobs VALUES (2, 1, 2, '${sha_aaa2}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-04-01 00:00:00');
+INSERT INTO review_jobs VALUES (3, 1, 3, '${sha_aaa3}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-04-01 00:00:00');
+INSERT INTO review_jobs VALUES (4, 2, 4, '${sha_zzz1}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-04-01 00:00:00');
+INSERT INTO review_jobs VALUES (5, 2, 5, '${sha_zzz2}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-04-01 00:00:00');
+INSERT INTO review_jobs VALUES (6, 2, 6, '${sha_zzz3}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-04-01 00:00:00');
+SQL
+
+  local rr_hk_db="${rr_root}/unified.duckdb"
+  duckdb -init /dev/null "$rr_hk_db" < "${_SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
+  local rr_out
+  rr_out="$(ROBOREV_DB="$rr_db" SQLITE="$sqlite_bin" ROBOREV="$fake_roborev" GIT_BIN="$git_bin" \
+    UNIFIED_DB_PATH="$rr_hk_db" LOG_FILE_PATH="${tmp_root}/log_rr.log" FAKE_ROBOREV_LOG="$fake_roborev_log" \
+    bash "$0" --dry-run --limit=2 2>&1)"
+  local rr_aaa_count rr_zzz_count
+  rr_aaa_count="$(echo "$rr_out" | grep -c "would enqueue: aaa ")"
+  rr_zzz_count="$(echo "$rr_out" | grep -c "would enqueue: zzz ")"
+  if [ "$rr_aaa_count" = "1" ] && [ "$rr_zzz_count" = "1" ]; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL: round-robin ordering not honoured (expected 1 aaa + 1 zzz 'would enqueue' line, got aaa=$rr_aaa_count zzz=$rr_zzz_count). Output:"
+    echo "$rr_out"
   fi
 
   rm -rf "$tmp_root" 2>/dev/null || true
@@ -564,14 +735,43 @@ for cmd in "$DB" "$SQLITE" "$ROBOREV" "$GIT_BIN"; do
   fi
 done
 
+# llm#964: both the latest-job-wins candidate filter and the round-robin
+# ordering below depend on SQLite window functions (ROW_NUMBER() OVER ...),
+# available since SQLite 3.25 (2018-09). Probe once, fail loudly rather than
+# silently falling back to an unordered/unfiltered query — a silent
+# degrade here would quietly reintroduce either defect on whatever machine
+# lacks a modern sqlite3 binary.
+if ! "$SQLITE" ":memory:" "SELECT ROW_NUMBER() OVER (ORDER BY 1);" >/dev/null 2>&1; then
+  echo "roborev_requeue_dropped: sqlite3 ($SQLITE) lacks window-function support (need 3.25+); refusing to run rather than silently degrade candidate selection (llm#964)" >&2
+  log "abort: sqlite3 lacks window function support"
+  exit 1
+fi
+
 hk_run_start
 
 CANDIDATES_SQL="
-WITH quota_failed AS (
-  SELECT DISTINCT repo_id, commit_id
+WITH ranked AS (
+  -- llm#964 latest-job-wins: rank every job for a (repo_id, commit_id)
+  -- pair by recency; rn=1 is that pair's single most-recent attempt.
+  -- enqueued_at has only second-level resolution and rapid requeues can
+  -- collide, so tie-break on id DESC (higher id == inserted later).
+  SELECT
+    repo_id, commit_id, status, error,
+    ROW_NUMBER() OVER (
+      PARTITION BY repo_id, commit_id
+      ORDER BY enqueued_at DESC, id DESC
+    ) AS rn
   FROM review_jobs
-  WHERE status='failed' AND commit_id IS NOT NULL
-    AND ${QUOTA_ERROR_SQL}
+  WHERE commit_id IS NOT NULL
+),
+quota_failed AS (
+  -- Only a pair whose LATEST job is itself a quota failure is still worth
+  -- retrying — see the 'Latest-job-wins' header comment above for the
+  -- coMMpass case this fixes (a stale quota row must not keep a pair
+  -- eligible once its most recent attempt failed for a different reason).
+  SELECT DISTINCT repo_id, commit_id
+  FROM ranked
+  WHERE rn = 1 AND status='failed' AND ${QUOTA_ERROR_SQL}
 ),
 ok AS (
   SELECT DISTINCT repo_id, commit_id FROM review_jobs
@@ -580,15 +780,28 @@ ok AS (
 pending AS (
   SELECT DISTINCT repo_id, commit_id FROM review_jobs
   WHERE status IN ('queued','running') AND commit_id IS NOT NULL
+),
+candidates AS (
+  SELECT r.id AS repo_id, r.name AS repo_name, r.root_path AS root_path,
+         c.id AS commit_row_id, c.sha AS sha, c.subject AS subject
+  FROM quota_failed qf
+  JOIN repos r ON r.id = qf.repo_id
+  JOIN commits c ON c.id = qf.commit_id
+  LEFT JOIN ok o ON o.repo_id = qf.repo_id AND o.commit_id = qf.commit_id
+  LEFT JOIN pending p ON p.repo_id = qf.repo_id AND p.commit_id = qf.commit_id
+  WHERE o.repo_id IS NULL AND p.repo_id IS NULL
 )
-SELECT r.id, r.name, r.root_path, c.id, c.sha, c.subject
-FROM quota_failed qf
-JOIN repos r ON r.id = qf.repo_id
-JOIN commits c ON c.id = qf.commit_id
-LEFT JOIN ok o ON o.repo_id = qf.repo_id AND o.commit_id = qf.commit_id
-LEFT JOIN pending p ON p.repo_id = qf.repo_id AND p.commit_id = qf.commit_id
-WHERE o.repo_id IS NULL AND p.repo_id IS NULL
-ORDER BY r.name, c.sha;
+-- llm#964 round-robin: without this, ORDER BY r.name, c.sha lets whichever
+-- repo sorts alphabetically first (e.g. 'coMMpass') consume the entire
+-- --limit budget on every single run, starving every other repo's
+-- candidates permanently (measured: candidates=153 enqueued=5
+-- skipped_rate_limit=51 on two consecutive real runs, same 51 skipped both
+-- times). Interleaving the Nth candidate of every repo before the (N+1)th
+-- of any repo means the rate limit spends its budget across repos instead
+-- of exhausting itself on one.
+SELECT repo_id, repo_name, root_path, commit_row_id, sha, subject
+FROM candidates
+ORDER BY ROW_NUMBER() OVER (PARTITION BY repo_name ORDER BY sha), repo_name, sha;
 "
 
 candidates=0
