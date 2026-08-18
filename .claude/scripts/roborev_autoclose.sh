@@ -13,7 +13,11 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 # hook emits "trigger":"scheduled" without requiring a /bye sentinel.
 export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 #
-# Two phases:
+# Three phases:
+#   Phase 0 — prune ~/.roborev DB backups + stale job logs. See
+#             roborev_retention.sh (llm#929) for the policy; delegated to
+#             that script and invoked unconditionally, before Phase 1/2,
+#             since both of those have early exit-0 paths.
 #   Phase 1 — `roborev close <id>` for jobs that have a review attached
 #             (status='done', the agent ran and emitted findings).
 #   Phase 2 — direct DB UPDATE status='canceled' for jobs that don't
@@ -69,6 +73,26 @@ case "${1:-}" in
 esac
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"; }
+
+# ── Phase 0: prune ~/.roborev DB backups + stale job logs (llm#929) ──────
+# Runs FIRST, unconditionally, on every invocation — Phase 1 and Phase 2
+# below both have early `exit 0` paths (0 stale jobs, missing DB, etc.), so
+# anything appended after them would silently stop running whenever those
+# phases find nothing to do. Rides this script's existing weekly
+# com.claude.roborev-autoclose launchd schedule; no new launchd job. Uses
+# the same --apply/--dry-run flag already parsed above. A retention
+# failure must never block Phase 1/2, hence `|| log ...` instead of letting
+# `set -e` abort the whole script.
+RETENTION_SCRIPT="$(dirname "$0")/roborev_retention.sh"
+if [ -x "$RETENTION_SCRIPT" ]; then
+  if [ "$APPLY" -eq 1 ]; then
+    "$RETENTION_SCRIPT" --apply >>"$LOGFILE" 2>&1 || log "phase0: retention script failed rc=$?"
+  else
+    "$RETENTION_SCRIPT" --dry-run >>"$LOGFILE" 2>&1 || log "phase0: retention dry-run failed rc=$?"
+  fi
+else
+  log "phase0 skipped: roborev_retention.sh not found or not executable at $RETENTION_SCRIPT"
+fi
 
 # Quietly succeed if roborev isn't installed (laptop vs CI portability)
 if [ ! -x "$ROBOREV" ]; then
