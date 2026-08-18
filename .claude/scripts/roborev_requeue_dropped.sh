@@ -80,6 +80,14 @@
 # "would enqueue" past the limit, so the printed preview matches what --apply
 # would actually do).
 #
+# Reported "actionable" count (llm#966): raw `candidates` includes pairs
+# this sweep can never enqueue — excluded-path-only commits and commits
+# whose repo checkout is gone from disk are permanently un-enqueueable, not
+# merely waiting their turn. Reporting `candidates` alone overstates the
+# real backlog by exactly those pairs. `actionable = candidates -
+# skipped_excluded - skipped_unavailable` is the size of the backlog this
+# sweep can actually work through.
+#
 # Idempotency: re-running with --apply must never double-enqueue a ref that
 # is already queued/running from a prior invocation (or from any other
 # roborev caller) — enforced by the `pending` CTE in the candidate query
@@ -503,6 +511,30 @@ EOF
     echo "$out"
   fi
 
+  # ---- Check 2b (llm#966): summary line's `actionable` field is honest —
+  # candidates minus the permanently-un-enqueueable skip reasons (excluded,
+  # unavailable). Parses the actual numbers out of the summary line rather
+  # than hardcoding a total, so this does not go brittle as other fixture
+  # cases are added. The same $out from Check 1/2 already exercises both
+  # skip reasons (case c -> excluded, the missing-checkout case -> repo
+  # unavailable) alongside real candidates (case a, case i), so no new run
+  # is needed here. ----
+  total=$((total + 1))
+  local summary_line sc_candidates sc_excluded sc_unavailable sc_actionable
+  summary_line="$(echo "$out" | grep '^roborev_requeue_dropped \[dry-run\]: candidates=')"
+  sc_candidates="$(echo "$summary_line" | grep -oE 'candidates=[0-9]+' | cut -d= -f2)"
+  sc_excluded="$(echo "$summary_line" | grep -oE 'skipped_excluded=[0-9]+' | cut -d= -f2)"
+  sc_unavailable="$(echo "$summary_line" | grep -oE 'skipped_unavailable=[0-9]+' | cut -d= -f2)"
+  sc_actionable="$(echo "$summary_line" | grep -oE 'actionable=[0-9]+' | cut -d= -f2)"
+  if [ -n "$sc_candidates" ] && [ -n "$sc_actionable" ] \
+     && [ "${sc_excluded:-0}" -gt 0 ] && [ "${sc_unavailable:-0}" -gt 0 ] \
+     && [ "$sc_actionable" = "$((sc_candidates - sc_excluded - sc_unavailable))" ]; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL: actionable count wrong, or fixture no longer produces both an excluded and an unavailable candidate (candidates=$sc_candidates skipped_excluded=$sc_excluded skipped_unavailable=$sc_unavailable actionable=$sc_actionable). Summary line:"
+    echo "$summary_line"
+  fi
+
   # ---- Check 3: repo_unavailable case is skipped, not enqueued ----
   total=$((total + 1))
   if echo "$out" | grep -q "skip.*repo_unavailable.*deadbeef"; then
@@ -858,11 +890,15 @@ while IFS=$'\x1f' read -r repo_id repo_name root_path commit_id sha subject; do
 done < <("$SQLITE" -separator $'\x1f' "$DB" "$CANDIDATES_SQL")
 
 mode_label="dry-run"; [ "$MODE" = "apply" ] && mode_label="applied"
-summary="roborev_requeue_dropped [$mode_label]: candidates=$candidates enqueued=$enqueued skipped_excluded=$skipped_excluded skipped_unavailable=$skipped_unavailable skipped_rate_limit=$skipped_rate_limit limit=$LIMIT"
+# llm#966: actionable excludes candidates that can NEVER be enqueued
+# (permanently excluded-path-only, or repo checkout unavailable) — see the
+# "Reported actionable count" header comment above.
+actionable=$((candidates - skipped_excluded - skipped_unavailable))
+summary="roborev_requeue_dropped [$mode_label]: candidates=$candidates enqueued=$enqueued skipped_excluded=$skipped_excluded skipped_unavailable=$skipped_unavailable skipped_rate_limit=$skipped_rate_limit limit=$LIMIT actionable=$actionable"
 log "summary: $summary"
 echo "$summary"
 
-detail_json="{\"mode\":\"${MODE}\",\"limit\":${LIMIT},\"candidates\":${candidates},\"enqueued\":${enqueued},\"skipped_excluded\":${skipped_excluded},\"skipped_unavailable\":${skipped_unavailable},\"skipped_rate_limit\":${skipped_rate_limit}}"
+detail_json="{\"mode\":\"${MODE}\",\"limit\":${LIMIT},\"candidates\":${candidates},\"enqueued\":${enqueued},\"skipped_excluded\":${skipped_excluded},\"skipped_unavailable\":${skipped_unavailable},\"skipped_rate_limit\":${skipped_rate_limit},\"actionable\":${actionable}}"
 hk_run_end "ok" "$enqueued" "$detail_json"
 
 exit 0
