@@ -4,6 +4,125 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-18/19 — the monitoring cluster: eight PRs, and a missing PATH entry behind the "broken" fallback
+
+A day spent on issues whose common shape is *the arithmetic is right and the
+claim attached to it is false*. Every finding below came from checking a number
+that had already been reported, not from new symptoms.
+
+### Completed
+
+**Requeue sweep had a fixed point (#964 → PR #965).** It re-enqueued the same
+five March commits every run, forever. Three defects reinforcing each other:
+`coMMpass` was the only repo pinned to a broken agent so the only one that could
+fail; failures were classified `outage` so only failures returned to the pool;
+and the pool sorted `ORDER BY r.name` with `--limit=5`, and it sorts first. Two
+consecutive runs were byte-identical — `candidates=153 enqueued=5
+skipped_rate_limit=51` — while 51 candidates from live repos were never reached.
+Fixed by requeueing only when a pair's **latest** job is a quota failure
+(generalises past enumerating auth patterns) plus round-robin ordering.
+
+**Backlog counter overstated by 3× (#966 → PR #968).** `candidates=148` read as
+"148 waiting"; only 51 could ever be enqueued — 87 permanently excluded, 10 with
+missing checkouts. Added `actionable=`. Rejected a verdict cache (invalidation
+complexity for ~87 git calls/run on a static set) and rejected dropping excluded
+pairs (excluded ≠ reviewed).
+
+**Stop hook aborted silently on every stop (PR #967).** `set -euo pipefail` plus
+`ls -t <glob> 2>/dev/null | head -1` — the glob misses, `ls` exits 1, stderr is
+suppressed, `set -e` kills the hook. Hence "No stderr output". The fail-safe
+existed two lines below and was unreachable. Four such sites fixed.
+
+**Cron-health reported healthy jobs as failed (#962 → PR #969).** Unknown state
+rendered as failure, and `secret-exposure-scan`'s exit-1-means-findings contract
+read as a crash. Now buckets `unknown` separately and prefers
+`housekeeping_runs.status` over raw exit codes. The count stayed 2 and the
+identity inverted: two false failures cleared, two real ones surfaced —
+including `launchd-health-weekly`, exit code 0 with a `partial` heartbeat for
+four days (#970).
+
+**UTC windows short by the tz offset (#959 → PR #969).** Every `INTERVAL '24'
+HOUR` compared a UTC column against a local baseline. Seasonally invisible —
+correct under GMT, wrong Mar–Oct. One `sql_utc_now()` helper, 6 call sites, and
+a test that pins `TimeZone` to a non-UTC zone.
+
+**Daily report alleged an ETL fault from a guaranteed-zero number (#961 → PR
+#971).** Report runs 07:00, autocloser 08:30 — the 24h close-rate was
+structurally 0. Replaced with a lagged 2–8d window (66.7%). Then the *fix*
+reintroduced the defect: the new alert fired on 105 of 125 open reviews, daily.
+Corrected to fire on the delta (2 new) with the total as context, unparseable
+split into its own bucket.
+
+**Severity regex missed the unbolded form (#972 → PR #975).** Sampling split
+"51% unparseable" into two causes: 21 emit `Severity:` without `**` (fixed), 39
+have no findings block at all and read as passes despite `verdict_bool=0` (left
+alone, boundary pinned by test). Measured effect next morning: plain-form open
+reviews 21 → 6, and **15 of the day's 50 autocloses were plain-form** — findings
+previously stuck permanently.
+
+**`~/.roborev` retention (#929 → PR #973).** 6.1 GB and growing; 7 unpruned
+backups, 11k job logs. Landed **report-only**: Phase 0 pinned to `--dry-run`
+because it inherited `--apply` from the weekly chain and merging would have
+deleted 3.7 GB unattended.
+
+**The fallback was never broken (#746 reopened → PR #978).** roborev's
+`gemini → claude-code` waterfall never engaged. Config was correct, daemon not
+stale, `check-agents` said `claude-code OK`. Root cause: the daemon's launchd
+`PATH` lacked `~/.local/bin`, where `claude` lives. Under `env -i` with the
+daemon's exact PATH, `which claude` exits 1. The waterfall had nowhere to fall.
+The plist comment had recorded it years-of-context ago — *"the daemon resolves
+`gemini`/`codex` … Copied deliberately, not re-derived"* — a third agent was
+added later and the PATH was never revisited.
+
+Also: removed dead `agent = "codex"` pins from `coMMpass` and `micromort` (both
+401'ing since the credential rotation); coMMpass reviewed successfully for the
+first time since March.
+
+### Failed approaches
+
+- **Loosening the severity regex as the whole fix.** Would have recovered 21 of
+  60 and left 39 looking like a smaller version of the same bug. Sampling first
+  showed two unrelated causes.
+- **Alerting on the above-threshold backlog.** True, and useless — 84% of open
+  reviews, every morning. Replacing a false daily banner with a true daily
+  banner leaves the reader's experience unchanged.
+- **`launchctl bootout` to stop a calendar job** (earlier, #930). Does not
+  persist; the XPC activity respawns it. `disable` is the durable verb.
+- **`roborev daemon stop` to reload a plist.** `KeepAlive` restarts it within
+  seconds still holding the old in-memory config. `bootout` + `bootstrap`.
+
+### Accuracy / Metrics
+
+- Package suite 760 → **794 PASS**, `FAIL 1` throughout (pre-existing
+  `test-kb-digest.R:824`, reproduced on `main` at the same base commit)
+- `roborev_requeue_dropped.sh` selftest 11/11 → 12/12 → 15/15
+- New tests mutation-proven, not merely green: reverting each fix fails its test
+- Requeue sweep now spans 5 distinct repos/run instead of 5 commits from one
+
+### Known limitations
+
+- **#746 not closed.** The PATH fix is verified by a forced override
+  (`--agent claude-code` → job 12545 → `done`), which proves the binary
+  resolves, not that roborev *chooses* it unprompted. Needs a natural quota
+  failure observed recovering.
+- **Retention is report-only.** `~/.roborev` keeps gaining ~750 MB per
+  backup-producing run. The dry-run week is a decision deadline, not a soak.
+- **#974** — the severity marker is parsed in 5 places across 3 languages; 3
+  fixed. The two left include the **severity downgrade-attack guard**, which now
+  disagrees with the autocloser on the same text.
+- **#972 cause 2** — 39 reviews recorded as having findings, reading as passes,
+  with nothing machine-classifiable. Cause undetermined.
+- Gemini free-tier quota still throttles (~72% success on 18 Aug).
+
+### Corrections made during the session
+
+Recorded because several looked decisive and were not: "the fallback has never
+fired" (unsupportable — an empty column is not an absent mechanism); "18 commits
+prove fallback works" (they were the requeue sweep, months apart); "reviews are
+failing outright" (72% success); "#819 cause 1 still open" (the plist fires
+daily, not weekly); and misreading a cron-health table by keying on the raw
+state column rather than the computed bucket.
+
 ## 2026-08-13 — removed the plaintext environment dump from default.sh
 
 `default.sh` regenerated a file under `~/.config/positron/` on every dev-shell

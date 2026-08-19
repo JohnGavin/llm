@@ -134,6 +134,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 ## Deploy Gap: Merged ≠ Live (see deploy-gap-stale-main-checkout.md)
 - A merged fix that "isn't live" = local main checkout behind origin/main; cron `--ff-only` auto-pull jams on dirty tree (uncommitted memory edits), swallows the error, runs stale. Check `git -C ~/docs_gh/llm rev-list --count HEAD..origin/main`; also `launchctl print` before trusting "N cron jobs failed" (#510 reopened 2026-07-11)
 
+## `exec zsh` Does NOT Clear Env (see exec-zsh-does-not-clear-env.md)
+- Deleting `export FOO=` from a dotfile only affects FUTURE shells; `exec zsh` inherits the environment and keeps it. A revoked GH_TOKEN survived file-deletion + `exec zsh`, so `gh auth login` refused to store its own credential. Diagnostic order: files → `launchctl getenv` → process-tree inheritance. Fix: `unset FOO`, or `env -u FOO <cmd>` for one command (works even in a tainted session). Never print the value while diagnosing (2026-08-13)
+
 ## Portable Build Artifacts (see portable-build-artifacts.md)
 - A committed artifact must not depend on the checkout that built it: (1) absolute paths serialised inside objects (DT html_dependency) — repair on READ, regenerating only re-acquires the new machine's path; (2) path filters matched on absolute paths swallow their own scan root (every worktree path contains `/worktrees/`) — match relative, and this one returns EMPTY not an error. Diff regenerated artifacts by content, never mtime (llm#883/#889, 2026-08-03)
 
@@ -145,6 +148,9 @@ One hook line per topic; full detail lives in the linked file. Keep under ~140 l
 
 ## Verify Causal Claims, Not Just Facts (see feedback_verify-causal-claims.md)
 - Counts/mechanisms get verified; the STORY connecting them doesn't — that's where errors hide. Assert a cause, date, or blast radius only with a query behind it. 4 corrections in one session (llm#913): hand-summed count, guessed affected surfaces, merge-time≠onset (break preceded it 4h), and "0 affected today" = not-yet-reaped. Adjacent dates ≠ causation; verify the TRANSITION. A marker written by a delayed process understates the present (2026-08-05)
+
+## Health Check Inherits a Different PATH (see health-check-inherits-a-different-path.md)
+- A health check run by hand resolves binaries from YOUR shell's PATH, not the daemon's, so it passes on tools the daemon cannot see. `roborev check-agents` said `claude-code OK` for days while the launchd daemon returned "no configured agent available" — its plist PATH lacked `~/.local/bin`. Resolve with `env -i PATH="<daemon's exact PATH>" which <tool>`; get that PATH from `ps eww -p <pid>`. Also: `bootout`+`bootstrap` (not stop) to load an edited plist, and verify by `status=done`, not by "Enqueued" (llm#746, 2026-08-18)
 
 ## Probe Must Not Share the Writer's Path (see probe-must-not-share-writer-path.md)
 - A freshness/health probe called from INSIDE the producer's code path measures its own liveness, not the data's — fails silently both ways (writer dies + data fine → false "13d idle"; data dies + writer fine → false "fresh"). Stored `status` makes it worse: it cannot detect the ABSENCE of a write. Compute status at read time from facts; read the asset directly, from a different trigger class. If a registry says a source is idle, confirm against the source (llm#913/#915, 2026-08-05)
