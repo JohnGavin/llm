@@ -106,14 +106,35 @@
         <string>/Users/johngavin/.claude/scripts/roborev_daemon_launcher.sh</string>
     </array>
 
-    <!-- Same PATH as com.roborev.auto-refine.plist — the daemon resolves
-         `gemini`/`codex` review-agent binaries from PATH, and this is the
-         one already known to work for that resolution. Copied deliberately,
-         not re-derived. -->
+    <!-- The daemon resolves review-agent binaries from PATH. Originally
+         copied from com.roborev.auto-refine.plist, which only ever needed
+         `gemini`/`codex` — so `claude-code` was never in scope and
+         ~/.local/bin was omitted.
+
+         Measured 2026-08-18: with the old PATH,
+           env -i PATH=<old> /usr/bin/which claude codex gemini
+         resolved codex and gemini but NOT claude (~/.local/bin/claude).
+         The configured backup agent was therefore unreachable, and every
+         gemini quota failure died with
+
+           no review agent available: no configured agent available
+           (preferred: "claude-code", backups: claude-code)
+
+         instead of falling back to claude-code. The waterfall was
+         configured correctly and had nowhere to fall. Verified after
+         adding ~/.local/bin: the same forced-override review that
+         previously errored returned
+           Enqueued job 12545 for c228cb3 (agent: claude-code)
+         and ran under claude-code. See llm#746.
+
+         If a new review agent is added, verify it resolves from THIS PATH,
+         not from an interactive shell's — `roborev check-agents` run by
+         hand passes on binaries the daemon cannot see, which is exactly
+         how this stayed hidden. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
     <key>RunAtLoad</key>
