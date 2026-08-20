@@ -26,9 +26,18 @@
 # roborev_severity_autoclose.sh or roborev_auto_close.sh directly also runs
 # their argument-parsing / exit logic at the bottom of the file.
 #
-# Exits 0 if all consumers agree on all three fixtures, 1 otherwise.
-# The R consumer is skipped (not failed) when Rscript is unavailable, since
-# this test may run outside the project nix shell.
+# Exits 0 if all consumers agree on all three fixtures AND no consumer was
+# skipped, 1 otherwise. A skipped consumer (e.g. the R consumer when
+# Rscript is not on PATH, which happens whenever this test runs outside the
+# project nix shell) means that consumer's parser went UNVERIFIED — exactly
+# the kind of narrowed-scope pass this test exists to catch (llm#746: a
+# check that silently checks less than it claims can go green while the
+# thing it was meant to catch sits in the part it skipped). The default is
+# therefore fail-closed: any skip is a non-zero exit, and the summary names
+# which consumer(s) were skipped. Set ALLOW_SKIPPED_CONSUMERS=1 to opt into
+# the old lenient behaviour (exit 0 despite skips) for a deliberate local
+# partial-coverage run — the summary line still states coverage was
+# partial, it never reads like a clean pass.
 
 set -uo pipefail
 
@@ -39,9 +48,14 @@ SQLITE3="${SQLITE3:-$(command -v sqlite3 2>/dev/null || echo /usr/bin/sqlite3)}"
 PASS=0
 FAIL=0
 SKIP=0
+SKIPPED_NAMES=""
 pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
-skip() { echo "SKIP: $1"; SKIP=$((SKIP + 1)); }
+skip() {
+  echo "SKIP: $1"
+  SKIP=$((SKIP + 1))
+  SKIPPED_NAMES="${SKIPPED_NAMES:+${SKIPPED_NAMES}; }$1"
+}
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -261,10 +275,20 @@ fi
 
 TOTAL=$((PASS + FAIL))
 echo ""
-if [ "${FAIL}" -eq 0 ]; then
-  echo "${PASS}/${TOTAL} PASS (${SKIP} skipped)"
+if [ "${FAIL}" -ne 0 ]; then
+  echo "${PASS}/${TOTAL} PASS — ${FAIL} FAILED (${SKIP} skipped)"
+  exit 1
+elif [ "${SKIP}" -eq 0 ]; then
+  echo "${PASS}/${TOTAL} PASS (0 skipped)"
+  exit 0
+elif [ "${ALLOW_SKIPPED_CONSUMERS:-0}" = "1" ]; then
+  echo "*** PARTIAL COVERAGE — ${SKIP} consumer(s) NOT verified: ${SKIPPED_NAMES} ***"
+  echo "*** Cross-consumer agreement is NOT fully proven. Allowed via ALLOW_SKIPPED_CONSUMERS=1. ***"
+  echo "${PASS}/${TOTAL} PASS (${SKIP} skipped — coverage partial, see above)"
   exit 0
 else
-  echo "${PASS}/${TOTAL} PASS — ${FAIL} FAILED (${SKIP} skipped)"
+  echo "${PASS}/${TOTAL} PASS, but ${SKIP} consumer(s) went UNVERIFIED: ${SKIPPED_NAMES}"
+  echo "Treating unverified consumers as a failure (fail-closed default)."
+  echo "Run inside the project nix shell for full coverage, or set ALLOW_SKIPPED_CONSUMERS=1 to explicitly accept partial coverage."
   exit 1
 fi
