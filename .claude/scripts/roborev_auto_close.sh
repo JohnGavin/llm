@@ -5,9 +5,10 @@
 # re-review produces a verdict.  Can also be called directly.
 #
 # FOUR HARD SAFETY GUARDS (in evaluation order):
-#   1. Severity downgrade-attack guard:
+#   1. Severity downgrade-attack guard (llm#974 widened to fail closed):
 #      NEVER auto-close a Critical or High severity finding when the
-#      approving review is Medium-only severity.
+#      approving review's severity is Medium/Low (downgrade) OR unparseable
+#      (cannot verify safety, so refuse rather than assume it's fine).
 #   2. Security / error-handling queue guard:
 #      Security and error-handling findings are NOT auto-closed. They are
 #      inserted into fix_rejected_queue for human dispatch.
@@ -64,7 +65,15 @@ _parse_max_severity() {
 import sys, re
 
 text = sys.argv[1] if len(sys.argv) > 1 else ""
-PATTERN = r'\*\*Severity\*\*:\s*(Critical|High|Medium|Low)'
+# llm#972 cause 1 / llm#974: some agents emit "- Severity: High" (no bold
+# markers) instead of "- **Severity**: High". `\*{0,2}` on both sides of
+# "Severity" makes the markdown bold markers optional so both shapes parse,
+# while still anchoring on "Severity" + colon + one of the four levels — a
+# bare mention of the word "severity" in prose does not match.
+# Mirrored in roborev_severity_autoclose.sh's `_parse_max_severity()` and
+# send_roborev_email.R's `parse_max_severity_ordinal()` — keep all three (plus
+# the SQL copy in roborev_bridge_to_unified.sh) in sync when editing any one.
+PATTERN = r'\*{0,2}Severity\*{0,2}:\s*(Critical|High|Medium|Low)'
 LEVELS   = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
 
 matches = re.findall(PATTERN, text, re.IGNORECASE)
@@ -169,6 +178,41 @@ INSERT INTO reviews VALUES (6, 6, 0, 1, '**Severity**: High
 INSERT INTO review_jobs VALUES (7, 1, 'done');
 INSERT INTO reviews VALUES (7, 7, 0, 1, '**Severity**: Medium
 **Problem**: fine', NULL);
+-- llm#974 bypass A: finding severity in PLAIN form (no bold markers) —
+-- reproduces the downgrade-attack guard bypass caused by the old regex
+-- (\*\*Severity\*\*:) failing to match "Severity: High" so FINDING_ORD read
+-- as 0 (unknown) and the guard's precondition never fired.
+INSERT INTO review_jobs VALUES (8, 1, 'done');
+INSERT INTO reviews VALUES (8, 8, 0, 0, 'Severity: High
+Problem: issue found', NULL);
+-- approving review for bypass A (review_id=9): bold Medium — a genuine
+-- downgrade once the finding's plain-form severity parses correctly.
+INSERT INTO review_jobs VALUES (9, 1, 'done');
+INSERT INTO reviews VALUES (9, 9, 0, 1, '**Severity**: Medium
+**Problem**: fine', NULL);
+-- llm#974 bypass B: finding severity is bold High (parses fine either way);
+-- the approving review's severity is in PLAIN form — reproduces the second
+-- bypass where APPROVING_ORD read as 0 (unknown) under the old regex and
+-- the old guard's `-gt 0` clause exempted ord=0 from rejection.
+INSERT INTO review_jobs VALUES (10, 1, 'done');
+INSERT INTO reviews VALUES (10, 10, 0, 0, '**Severity**: High
+**Problem**: issue found', NULL);
+-- approving review for bypass B (review_id=11): plain Medium.
+INSERT INTO review_jobs VALUES (11, 1, 'done');
+INSERT INTO reviews VALUES (11, 11, 0, 1, 'Severity: Medium
+Problem: fine', NULL);
+-- llm#974 Change 2 regression: finding is bold High; approving review has
+-- NO severity marker of any shape (genuinely unparseable, not a regex bug —
+-- this is the llm#972 cause 2 shape: no findings block at all). This case
+-- is independent of the Change 1 regex fix and specifically exercises the
+-- removed `-gt 0` exemption: it must fail closed (REJECTED) regardless of
+-- how well the regex parses markup, because there is no marker to parse.
+INSERT INTO review_jobs VALUES (12, 1, 'done');
+INSERT INTO reviews VALUES (12, 12, 0, 0, '**Severity**: High
+**Problem**: issue found', NULL);
+-- approving review for the unparseable case (review_id=13): no marker at all.
+INSERT INTO review_jobs VALUES (13, 1, 'done');
+INSERT INTO reviews VALUES (13, 13, 0, 1, 'LGTM, looks fine to me. No issues found.', NULL);
 SQL
 
   # ── Test 1: High severity + High approve → closes ─────────────────────────
@@ -190,12 +234,67 @@ SQL
   fi
 
   # ── Test 2: High severity + Medium approve → does NOT close (guard 1) ─────
+  # This is the CONTROL case (both texts bold) — proves the guard fires when
+  # both severities parse correctly. See llm#974 for the two bypasses below.
   OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
     --finding-id 2 --approving-review-id 7 --commit "bbb222" --type approved 2>&1)
   if echo "$OUT" | grep -q "^REJECTED=1"; then
     _check "high-severity-medium-approve-rejected" "pass"
+    if echo "$OUT" | grep -q "reject_reason=severity_downgrade_guard"; then
+      _check "control-reject-reason-is-downgrade" "pass"
+    else
+      _check "control-reject-reason-is-downgrade" "fail: got '$OUT'"
+    fi
   else
     _check "high-severity-medium-approve-rejected" "fail: got '$OUT'"
+    _check "control-reject-reason-is-downgrade" "fail: not rejected"
+  fi
+
+  # ── llm#974 Test 2a: bypass A — plain-form FINDING severity ───────────────
+  # "- Severity: High" (finding) + "- **Severity**: Medium" (approving).
+  # Under the pre-fix regex this closed: the finding's plain-form severity
+  # failed to parse as High (read as unknown/ord=0), so the guard's
+  # precondition (finding ord >= 3) never fired. This test isolates the
+  # Change 1 regex fix (\*{0,2}Severity\*{0,2}).
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 8 --approving-review-id 9 --commit "bypassA111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^REJECTED=1"; then
+    _check "bypass-a-plain-finding-bold-approve-rejected" "pass"
+  else
+    _check "bypass-a-plain-finding-bold-approve-rejected" "fail: got '$OUT' (llm#974 regex bypass A not fixed)"
+  fi
+
+  # ── llm#974 Test 2b: bypass B — plain-form APPROVING severity ─────────────
+  # "- **Severity**: High" (finding) + "- Severity: Medium" (approving).
+  # Under the pre-fix regex this closed: the approving review's plain-form
+  # severity failed to parse (read as unknown/ord=0), and the old guard's
+  # `-gt 0` clause exempted ord=0 from rejection. This test isolates the
+  # Change 1 regex fix for the APPROVING side specifically.
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 10 --approving-review-id 11 --commit "bypassB111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^REJECTED=1"; then
+    _check "bypass-b-bold-finding-plain-approve-rejected" "pass"
+  else
+    _check "bypass-b-bold-finding-plain-approve-rejected" "fail: got '$OUT' (llm#974 regex bypass B not fixed)"
+  fi
+
+  # ── llm#974 Test 2c: genuinely unparseable approving severity ─────────────
+  # Finding is bold High; approving review has NO severity marker at all
+  # (not a markup bug — the llm#972 cause 2 shape). This is independent of
+  # the Change 1 regex fix: no marker means ord=0 regardless of how well the
+  # regex parses markup. Isolates the Change 2 fix (removing `-gt 0`).
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 12 --approving-review-id 13 --commit "unparseable111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^REJECTED=1"; then
+    _check "unparseable-approving-severity-rejected" "pass"
+    if echo "$OUT" | grep -q "reject_reason=approving_severity_unparseable"; then
+      _check "unparseable-reject-reason-distinct" "pass"
+    else
+      _check "unparseable-reject-reason-distinct" "fail: got '$OUT'"
+    fi
+  else
+    _check "unparseable-approving-severity-rejected" "fail: got '$OUT' (llm#974 Change 2 not applied)"
+    _check "unparseable-reject-reason-distinct" "fail: not rejected"
   fi
 
   # ── Test 3: security finding → queued to fix_rejected_queue (guard 2) ────
@@ -407,17 +506,42 @@ SQL
   fi
 fi
 
-# ── Guard 1: severity downgrade-attack ───────────────────────────────────────
+# ── Guard 1: severity downgrade-attack + unparseable-approving-severity ──────
 #
-# NEVER auto-close a Critical or High severity finding when the approving
-# review is Medium-only severity.
+# NEVER auto-close a Critical or High severity finding unless the approving
+# review's severity is verifiably Critical/High. Two distinct failure modes,
+# reported with distinct reject_reason values so triage isn't left guessing
+# which one fired:
+#   - approving severity parses as Medium/Low  → genuine downgrade attempt
+#     (reject_reason=severity_downgrade_guard)
+#   - approving severity is unparseable (ord=0) → cannot verify safety, so
+#     fail CLOSED rather than treat "I don't know" as "it's fine"
+#     (reject_reason=approving_severity_unparseable)
+#
+# llm#974: the original guard exempted ord=0 (unknown) via an `-gt 0` clause,
+# which meant ANY approving review the parser could not read — whether from
+# the markdown-markup regex bug (llm#972 cause 1, fixed above) or from a
+# genuinely marker-less review (llm#972 cause 2) — silently bypassed the
+# guard and closed. "Could not determine the approving severity" is a reason
+# to refuse the closure, not to permit it. Removing the `-gt 0` clause here
+# survives any future regex fix: a marker-less approving review will always
+# read as ord=0, and this guard now refuses it unconditionally. Known
+# consequence: the ~39 reviews from llm#972 cause 2 (no findings block at
+# all) parse as unknown and become un-auto-closable pending human triage —
+# that is the intended outcome, not a regression.
 
 FINDING_ORD=$(_severity_ordinal "$FINDING_SEVERITY")
 APPROVING_ORD=$(_severity_ordinal "$APPROVING_SEVERITY")
 
-# Guard fires when: finding is High/Critical (ord >= 3) AND approving review
-# is Medium or lower (ord <= 2).
-if [ "$FINDING_ORD" -ge 3 ] && [ "$APPROVING_ORD" -le 2 ] && [ "$APPROVING_ORD" -gt 0 ]; then
+# Finding is High/Critical (ord >= 3) is the precondition for both branches.
+if [ "$FINDING_ORD" -ge 3 ] && [ "$APPROVING_ORD" -eq 0 ]; then
+  log "REJECTED: finding_id=${FINDING_ID} finding_severity=${FINDING_SEVERITY} approving_severity=unknown — approving severity unparseable, failing closed"
+  printf 'REJECTED=1  reject_reason=approving_severity_unparseable  finding_severity=%s  approving_severity=%s  finding_id=%s\n' \
+    "$FINDING_SEVERITY" "$APPROVING_SEVERITY" "$FINDING_ID"
+  exit 1
+fi
+
+if [ "$FINDING_ORD" -ge 3 ] && [ "$APPROVING_ORD" -le 2 ]; then
   log "REJECTED: finding_id=${FINDING_ID} finding_severity=${FINDING_SEVERITY} approving_severity=${APPROVING_SEVERITY} — downgrade-attack guard"
   printf 'REJECTED=1  reject_reason=severity_downgrade_guard  finding_severity=%s  approving_severity=%s  finding_id=%s\n' \
     "$FINDING_SEVERITY" "$APPROVING_SEVERITY" "$FINDING_ID"
