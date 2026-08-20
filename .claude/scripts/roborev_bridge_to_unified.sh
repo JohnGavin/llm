@@ -199,6 +199,19 @@ _ROWS_ATTEMPTED=0
 
 # Aggregation SQL.
 # Severity is embedded in reviews.output as markdown: "**Severity**: High|Medium|Low".
+# llm#972 cause 1 / llm#974: some agents emit the plain form "Severity: High"
+# (no bold markers) instead of "**Severity**: High". The LIKE alternatives
+# below add a plain-form pattern per level so those rows are not silently
+# dropped from the severity attribution feeding the dashboards. Dialect is
+# SQLite via the `sqlite3` CLI against ROBOREV_DB (established: this query is
+# executed by `sqlite3 "${ROBOREV_DB}" "${_SQLITE_QUERY}"` below) — SQLite's
+# LIKE has no optional-group syntax and no REGEXP function is registered by
+# default, so this cannot mirror the `\*{0,2}Severity\*{0,2}` regex used in
+# the R/shell/Python copies (roborev_severity_autoclose.sh, send_roborev_email.R,
+# roborev_auto_close.sh); explicit alternation is the only portable option.
+# Note SQLite's LIKE is case-insensitive for ASCII by default, so the
+# lowercase variants below are redundant with the mixed-case ones but kept
+# for consistency with this file's existing defensive-duplication style.
 # autoclose_today = closures with closure_type='stale' in last 24h.
 #   closures may legitimately have 0 rows (e.g. before any stale auto-closures
 #   accrue); COALESCE(,0) returns 0 in that case -- not a bug.
@@ -220,19 +233,25 @@ SELECT
     WHEN rv.closed = 0
      AND (rv.output LIKE '%Severity**: High%'
        OR rv.output LIKE '%severity**: high%'
-       OR rv.output LIKE '%**Severity**: High%')
+       OR rv.output LIKE '%**Severity**: High%'
+       OR rv.output LIKE '%Severity: High%'
+       OR rv.output LIKE '%severity: high%')
     THEN 1 ELSE 0 END), 0) AS high_open,
   COALESCE(SUM(CASE
     WHEN rv.closed = 0
      AND (rv.output LIKE '%Severity**: Medium%'
        OR rv.output LIKE '%severity**: medium%'
-       OR rv.output LIKE '%**Severity**: Medium%')
+       OR rv.output LIKE '%**Severity**: Medium%'
+       OR rv.output LIKE '%Severity: Medium%'
+       OR rv.output LIKE '%severity: medium%')
     THEN 1 ELSE 0 END), 0) AS medium_open,
   COALESCE(SUM(CASE
     WHEN rv.closed = 0
      AND (rv.output LIKE '%Severity**: Low%'
        OR rv.output LIKE '%severity**: low%'
-       OR rv.output LIKE '%**Severity**: Low%')
+       OR rv.output LIKE '%**Severity**: Low%'
+       OR rv.output LIKE '%Severity: Low%'
+       OR rv.output LIKE '%severity: low%')
     THEN 1 ELSE 0 END), 0) AS low_open,
   COALESCE(MAX(CASE
     WHEN rv.closed = 0 AND rj.finished_at IS NOT NULL
@@ -283,8 +302,10 @@ while IFS='|' read -r _project _total_open _closed_today _high _medium _low _old
     WHERE r.name = '${_project}' AND rv.closed = 0
     ORDER BY
       CASE
-        WHEN rv.output LIKE '%Severity**: High%' OR rv.output LIKE '%severity**: high%' THEN 1
-        WHEN rv.output LIKE '%Severity**: Medium%' OR rv.output LIKE '%severity**: medium%' THEN 2
+        WHEN rv.output LIKE '%Severity**: High%' OR rv.output LIKE '%severity**: high%'
+          OR rv.output LIKE '%Severity: High%' OR rv.output LIKE '%severity: high%' THEN 1
+        WHEN rv.output LIKE '%Severity**: Medium%' OR rv.output LIKE '%severity**: medium%'
+          OR rv.output LIKE '%Severity: Medium%' OR rv.output LIKE '%severity: medium%' THEN 2
         ELSE 3
       END,
       rv.created_at DESC
