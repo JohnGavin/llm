@@ -8,7 +8,10 @@
 #   1. Severity downgrade-attack guard (llm#974 widened to fail closed):
 #      NEVER auto-close a Critical or High severity finding when the
 #      approving review's severity is Medium/Low (downgrade) OR unparseable
-#      (cannot verify safety, so refuse rather than assume it's fine).
+#      (cannot verify safety, so refuse rather than assume it's fine). Also
+#      refuses closure outright when the FINDING's own severity is
+#      unparseable — an unreadable finding severity might itself be
+#      Critical/High, so it cannot be shown safe to auto-close either.
 #   2. Security / error-handling queue guard:
 #      Security and error-handling findings are NOT auto-closed. They are
 #      inserted into fix_rejected_queue for human dispatch.
@@ -213,6 +216,26 @@ INSERT INTO reviews VALUES (12, 12, 0, 0, '**Severity**: High
 -- approving review for the unparseable case (review_id=13): no marker at all.
 INSERT INTO review_jobs VALUES (13, 1, 'done');
 INSERT INTO reviews VALUES (13, 13, 0, 1, 'LGTM, looks fine to me. No issues found.', NULL);
+-- llm#974b: finding severity itself unparseable (no marker at all),
+-- approved by a valid bold-Medium review. Reproduces the fail-open this
+-- dispatch fixes: FINDING_ORD=0 matched neither `-ge 3` branch above, so
+-- the finding closed unexamined even though an unreadable severity might
+-- have been Critical/High.
+INSERT INTO review_jobs VALUES (14, 1, 'done');
+INSERT INTO reviews VALUES (14, 14, 0, 0, 'Problem: something odd, no severity line at all.', NULL);
+-- approving review for the finding-unparseable case (review_id=15): a
+-- genuinely valid, well-formed bold-Medium approval — must NOT be enough to
+-- close a finding whose own severity cannot be read.
+INSERT INTO review_jobs VALUES (15, 1, 'done');
+INSERT INTO reviews VALUES (15, 15, 0, 1, '**Severity**: Medium
+**Problem**: fine', NULL);
+-- llm#974b regression guard: a genuinely Low/Medium finding (parseable,
+-- below the High/Critical threshold, no security/error-handling category)
+-- must still close on a valid approval — the new finding-unparseable
+-- branch must not turn into "refuse everything".
+INSERT INTO review_jobs VALUES (16, 1, 'done');
+INSERT INTO reviews VALUES (16, 16, 0, 0, '**Severity**: Medium
+**Problem**: minor cosmetic issue', NULL);
 SQL
 
   # ── Test 1: High severity + High approve → closes ─────────────────────────
@@ -295,6 +318,55 @@ SQL
   else
     _check "unparseable-approving-severity-rejected" "fail: got '$OUT' (llm#974 Change 2 not applied)"
     _check "unparseable-reject-reason-distinct" "fail: not rejected"
+  fi
+
+  # ── llm#974b Test 2d: finding severity itself unparseable → REJECTED ──────
+  # This is the case that currently closes unexamined before this fix: no
+  # marker on the finding side, valid bold-Medium approving review.
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 14 --approving-review-id 15 --commit "findingunparse111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^REJECTED=1"; then
+    _check "finding-severity-unparseable-rejected" "pass"
+    if echo "$OUT" | grep -q "reject_reason=finding_severity_unparseable"; then
+      _check "finding-unparseable-reject-reason-distinct" "pass"
+    else
+      _check "finding-unparseable-reject-reason-distinct" "fail: got '$OUT'"
+    fi
+  else
+    _check "finding-severity-unparseable-rejected" "fail: got '$OUT' (llm#974b fix not applied)"
+    _check "finding-unparseable-reject-reason-distinct" "fail: not rejected"
+  fi
+
+  # ── llm#974b Test 2e: both finding AND approving severity unparseable ─────
+  # Ordering pin: finding_id=14 (no marker) + approving_review_id=13 (no
+  # marker, from Test 2c's fixture). The finding-unparseable check runs
+  # first and its precondition doesn't depend on the approving side at all,
+  # so this must report reject_reason=finding_severity_unparseable — not
+  # approving_severity_unparseable, which requires FINDING_ORD >= 3 (not
+  # knowable here).
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 14 --approving-review-id 13 --commit "bothunparse111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^REJECTED=1"; then
+    _check "both-unparseable-rejected" "pass"
+    if echo "$OUT" | grep -q "reject_reason=finding_severity_unparseable"; then
+      _check "both-unparseable-reason-is-finding-side" "pass"
+    else
+      _check "both-unparseable-reason-is-finding-side" "fail: got '$OUT'"
+    fi
+  else
+    _check "both-unparseable-rejected" "fail: got '$OUT'"
+    _check "both-unparseable-reason-is-finding-side" "fail: not rejected"
+  fi
+
+  # ── llm#974b Test 2f: regression — parseable Low/Medium finding still closes ──
+  # Proves the new branch is scoped to ord=0 only, not "refuse everything":
+  # a genuinely Medium finding with a valid High approving review must close.
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 16 --approving-review-id 6 --commit "regression111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^CLOSED=1"; then
+    _check "parseable-medium-finding-still-closes" "pass"
+  else
+    _check "parseable-medium-finding-still-closes" "fail: got '$OUT' (over-tightened guard?)"
   fi
 
   # ── Test 3: security finding → queued to fix_rejected_queue (guard 2) ────
@@ -506,32 +578,53 @@ SQL
   fi
 fi
 
-# ── Guard 1: severity downgrade-attack + unparseable-approving-severity ──────
+# ── Guard 1: severity downgrade-attack + unparseable-severity guards ─────────
 #
-# NEVER auto-close a Critical or High severity finding unless the approving
-# review's severity is verifiably Critical/High. Two distinct failure modes,
-# reported with distinct reject_reason values so triage isn't left guessing
-# which one fired:
-#   - approving severity parses as Medium/Low  → genuine downgrade attempt
-#     (reject_reason=severity_downgrade_guard)
-#   - approving severity is unparseable (ord=0) → cannot verify safety, so
-#     fail CLOSED rather than treat "I don't know" as "it's fine"
-#     (reject_reason=approving_severity_unparseable)
+# NEVER auto-close a finding unless its own severity is readable AND, if it
+# reads as Critical/High, the approving review's severity is verifiably
+# Critical/High too. Three distinct failure modes, each reported with its
+# own reject_reason so triage isn't left guessing which one fired:
+#   - the FINDING's own severity is unparseable (ord=0) → we cannot rule out
+#     Critical/High, so refuse unconditionally, regardless of the approving
+#     review (reject_reason=finding_severity_unparseable). Checked FIRST,
+#     before the two branches below: their precondition is "finding is
+#     High/Critical", which is not yet knowable when the finding's own
+#     severity can't be read at all.
+#   - finding is High/Critical AND approving severity parses as Medium/Low
+#     → genuine downgrade attempt (reject_reason=severity_downgrade_guard)
+#   - finding is High/Critical AND approving severity is unparseable (ord=0)
+#     → cannot verify safety, so fail CLOSED rather than treat "I don't
+#     know" as "it's fine" (reject_reason=approving_severity_unparseable)
 #
 # llm#974: the original guard exempted ord=0 (unknown) via an `-gt 0` clause,
 # which meant ANY approving review the parser could not read — whether from
 # the markdown-markup regex bug (llm#972 cause 1, fixed above) or from a
 # genuinely marker-less review (llm#972 cause 2) — silently bypassed the
-# guard and closed. "Could not determine the approving severity" is a reason
-# to refuse the closure, not to permit it. Removing the `-gt 0` clause here
-# survives any future regex fix: a marker-less approving review will always
-# read as ord=0, and this guard now refuses it unconditionally. Known
-# consequence: the ~39 reviews from llm#972 cause 2 (no findings block at
-# all) parse as unknown and become un-auto-closable pending human triage —
-# that is the intended outcome, not a regression.
+# guard and closed. "Could not determine the severity" is a reason to refuse
+# the closure, not to permit it. Removing the `-gt 0` clause on the
+# APPROVING side survives any future regex fix: a marker-less approving
+# review will always read as ord=0, and this guard now refuses it
+# unconditionally. The same fail-open existed symmetrically on the FINDING
+# side: because both `-ge 3` branches require FINDING_ORD >= 3, a finding
+# whose own severity is unparseable (FINDING_ORD=0) matched neither branch
+# and closed unexamined — an earlier revision of this comment claimed the
+# ~39 llm#972 cause-2 reviews (no findings block at all) were already
+# un-auto-closable, but that was only true for findings that *approved*
+# something; a cause-2 finding with no severity marker of its own slipped
+# through. The finding_severity_unparseable branch below is what actually
+# makes that claim true now.
 
 FINDING_ORD=$(_severity_ordinal "$FINDING_SEVERITY")
 APPROVING_ORD=$(_severity_ordinal "$APPROVING_SEVERITY")
+
+# The finding's own severity is unparseable — it might be Critical/High, so
+# we cannot show it safe to auto-close no matter how the approval reads.
+if [ "$FINDING_ORD" -eq 0 ]; then
+  log "REJECTED: finding_id=${FINDING_ID} finding_severity=unknown approving_severity=${APPROVING_SEVERITY} — finding severity unparseable, failing closed"
+  printf 'REJECTED=1  reject_reason=finding_severity_unparseable  finding_severity=%s  approving_severity=%s  finding_id=%s\n' \
+    "$FINDING_SEVERITY" "$APPROVING_SEVERITY" "$FINDING_ID"
+  exit 1
+fi
 
 # Finding is High/Critical (ord >= 3) is the precondition for both branches.
 if [ "$FINDING_ORD" -ge 3 ] && [ "$APPROVING_ORD" -eq 0 ]; then
