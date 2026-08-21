@@ -7,7 +7,10 @@
 #
 # Tracks: llm#184
 #
-# Mirrors: ~/docs_gh/llm/bin/refresh_ccusage_and_commit.sh
+# Mirrors (historically): ~/docs_gh/llm/bin/refresh_ccusage_and_commit.sh,
+# removed llm#900 — the R script it called (R/scripts/refresh_ccusage_cache.R)
+# was deleted in #32 and the ccusage caches this package bundles are now a
+# deliberately frozen historical snapshot (see R/ccusage.R::ccusage_cache_file()).
 #
 # INTERIM #229: publishes sanitised data to the unprotected `data` branch
 # (main is protected by required pr-checks). Clean up when #229 is resolved.
