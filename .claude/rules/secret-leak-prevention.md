@@ -271,24 +271,28 @@ to fix. `secret_leak_guard.sh --selftest` was re-run after the extraction and
 is still 53/53 — the regression proof that Rules 1-6 are unaffected by moving
 their shared data out of the file.
 
-**UNVERIFIED: which block mechanism actually stops an `Artifact` publish.**
-For `Bash`, blocking is exit 2. The documented mechanism for non-Bash
-`PreToolUse` matchers is exit 0 plus a JSON body on stdout
-(`hookSpecificOutput.permissionDecision = "deny"`), and that is what
-`artifact_secret_guard.sh` emits — chosen because it is the one with
-documented support for tools other than `Bash`; exit 2 is documented
-specifically for `Bash`. **Whether exit 2 also blocks an `Artifact` call, and
-whether the JSON-deny form this guard actually uses works in practice, is
-UNVERIFIED from inside a worktree dispatch** — doing so would require a real
-`Artifact` publish, which a sandboxed agent cannot safely trigger as a side
-effect of writing this guard. The selftest proves the guard's own logic
-(detection, fail-open paths, redaction, dedup) but does **not** prove Claude
-Code actually honours the JSON it emits. Until a real publish of a file
-containing a fixture credential is attempted and confirmed blocked, treat
-this guard as **logging-and-attempting-to-block, not confirmed-blocking** —
-a guard that only logs would read as protection in every subsequent audit
-while doing nothing, which is worse than no guard at all. Update this
-paragraph with the outcome once verified.
+**VERIFIED 2026-08-21 (llm#960 dispatch 015ee83e): the JSON-deny block
+mechanism actually stops a real `Artifact` publish.** For `Bash`, blocking is
+exit 2. The documented mechanism for non-Bash `PreToolUse` matchers is exit 0
+plus a JSON body on stdout (`hookSpecificOutput.permissionDecision = "deny"`),
+and that is what `artifact_secret_guard.sh` emits — chosen because it is the
+one with documented support for tools other than `Bash`; exit 2 is documented
+specifically for `Bash`.
+
+Two live `Artifact` calls confirmed both directions:
+- A file containing the fixture literal `ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123`
+  (the same literal the selftest uses) was rejected with the tool call
+  itself returning the guard's `BLOCKED (artifact_secret_guard): ...` message
+  — no page was published, no URL was returned.
+- A clean control file with no credential-shaped content published
+  successfully (`https://claude.ai/code/artifact/...` returned), confirming
+  the guard is not fail-closed on everything.
+
+This closes the open question: the JSON-deny form is confirmed-blocking, not
+merely logging-and-attempting-to-block. The selftest already proved the
+guard's own logic (detection, fail-open paths, redaction, dedup); this
+confirms Claude Code actually honours the JSON it emits on the `Artifact`
+matcher specifically.
 
 ## Related
 
