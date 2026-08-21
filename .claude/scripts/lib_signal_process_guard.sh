@@ -101,3 +101,43 @@ _signal_daemon_listening() {
   command -v "$lsof_bin" >/dev/null 2>&1 || return 1
   "$lsof_bin" -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
 }
+
+# _signal_daemon_stdout_log
+#
+# Prints the signal-cli daemon's stdout log path, resolved from its launchd
+# plist's StandardOutPath (the plist is the single source of truth for where
+# the daemon actually writes — llm#989). Returns 0 if the plist resolved
+# cleanly, 1 if it fell back to a hardcoded guess (callers should log this
+# distinctly; this function has no logging side effects of its own so it
+# stays independently testable).
+#
+# Origin: process_daemon_messages() in signal_braindump_handler.sh used to
+# hardcode /tmp/signal_cli_daemon_stdout.log — a path the daemon's plist
+# never pointed at (it writes to
+# ~/.claude/logs/signal_cli_daemon_stdout.log per StandardOutPath), so the
+# daemon-path message collector silently read nothing for every run since
+# the daemon path was introduced. Resolving from the plist means a future
+# StandardOutPath change (or a differently-configured machine) can't cause
+# the same silent drift.
+#
+# SIGNAL_DAEMON_PLIST and PLUTIL_BIN are overridable for tests (point
+# SIGNAL_DAEMON_PLIST at a fixture plist with a custom StandardOutPath to
+# prove resolution actually reads the plist, rather than only ever
+# returning the fallback guess).
+_signal_daemon_stdout_log() {
+  local plist="${SIGNAL_DAEMON_PLIST:-$HOME/Library/LaunchAgents/com.johngavin.signal-cli-daemon.plist}"
+  local plutil_bin="${PLUTIL_BIN:-plutil}"
+  local fallback="$HOME/.claude/logs/signal_cli_daemon_stdout.log"
+  local resolved=""
+
+  if [ -f "$plist" ] && command -v "$plutil_bin" >/dev/null 2>&1; then
+    resolved=$("$plutil_bin" -extract StandardOutPath raw -o - "$plist" 2>/dev/null || true)
+  fi
+
+  if [ -n "$resolved" ]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  printf '%s\n' "$fallback"
+  return 1
+}
