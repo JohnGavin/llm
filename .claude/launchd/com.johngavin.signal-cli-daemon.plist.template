@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>JAVA_HOME</key>
+		<string>/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.johngavin.signal-cli-daemon</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/signal-cli</string>
+		<string>-a</string>
+		<string>__SIGNAL_ACCOUNT__</string>
+		<string>--output=json</string>
+		<string>daemon</string>
+		<string>--http</string>
+		<string>localhost:7583</string>
+		<string>--receive-mode</string>
+		<string>on-start</string>
+		<string>--ignore-stories</string>
+		<string>--ignore-stickers</string>
+		<string>--ignore-avatars</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/johngavin/.claude/logs/signal_cli_daemon_stderr.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/johngavin/.claude/logs/signal_cli_daemon_stdout.log</string>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+</dict>
+</plist>

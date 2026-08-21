@@ -40,6 +40,56 @@ process on the machine as the same user. See `SECRETS_MIGRATION.md` for the
 full plist-by-plist mapping and `.claude/scripts/verify_no_launchd_secret_leak.sh`
 for the post-apply check.
 
+## PII convention: `.plist.template`, not `.plist` (llm#946)
+
+The three `com.johngavin.signal-*` jobs (`signal-cli-daemon`,
+`signal-braindump-handler`, `signal-notes-sync`) talk to a real Signal
+account. `signal-cli-daemon` embeds the account's phone number as a literal
+`-a` argument in `ProgramArguments` — that value can never be committed
+as-is, since this repo is public. Unlike the `with-secrets` convention above
+(which wraps a *script's* environment), this is a literal value baked into
+the plist's own XML, so it needs a different mechanism: a template with a
+placeholder, rendered at install time.
+
+- Source-controlled: `.claude/launchd/com.johngavin.signal-*.plist.template`
+  — the `signal-cli-daemon` template has `__SIGNAL_ACCOUNT__` in place of the
+  phone number; the other two have no PII and are templated only so all
+  three share one render/install/drift-check pipeline.
+- Secret: `SIGNAL_ACCOUNT` in `~/.config/secrets.env` (llm#949 single source
+  of truth for credentials). Never committed, never printed by the render
+  script.
+- Render/install/drift-check: `.claude/scripts/render_signal_launchd_plists.sh`
+  — see its header comment for the full `--dry-run` / `--check` / `--apply`
+  contract. `--dry-run` writes nothing persistent and is safe to run inside
+  an agent worktree sandbox; `--apply` writes outside the repo
+  (`~/Library/LaunchAgents/`) and reloads via `launchctl`, so it is
+  ORCHESTRATOR ONLY, matching the Group 4 runbook convention in
+  `SECRETS_MIGRATION.md`.
+- Rendered output (real account, real PII) lands only in the gitignored
+  `.claude/state/signal-launchd/` staging directory, immediately before
+  `--apply` copies it to `~/Library/LaunchAgents/`. It is never written by
+  `--dry-run` or `--check`.
+- Drift + defect check: `--check` also flags any live plist that still
+  hardcodes a versioned Homebrew Cellar path (e.g.
+  `/opt/homebrew/Cellar/signal-cli/0.14.3_1/bin/signal-cli`) instead of the
+  version-stable `/opt/homebrew/bin/signal-cli` symlink — the exact failure
+  mode from llm#937/#989, where a `brew upgrade` silently broke both
+  `signal_notes_sync.sh` and this daemon plist for months.
+
+To install/refresh the live copies after editing a template:
+
+```bash
+# Preview (safe, no writes) — what would change and why
+.claude/scripts/render_signal_launchd_plists.sh --dry-run
+
+# Apply + reload (ORCHESTRATOR ONLY — writes to ~/Library/LaunchAgents/)
+.claude/scripts/render_signal_launchd_plists.sh --apply --reload
+```
+
+Requires `SIGNAL_ACCOUNT="+..."` to be present in `~/.config/secrets.env`
+before `--apply` can render `signal-cli-daemon`; the script fails loudly
+(exit 1, no value printed) if it is missing.
+
 ## Installed jobs
 
 | Label | Schedule | What it does |
