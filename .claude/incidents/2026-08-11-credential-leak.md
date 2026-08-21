@@ -80,8 +80,11 @@ and launchd plists. **None of those match.** The rule that governs secret
 handling excluded every file where secret handling happens.
 
 This is not unique. An audit of all 79 rules found the same shape elsewhere —
-see `.claude/rules/rule-loading-integrity.md` and the bidirectional checker in
-`.claude/scripts/check_rule_scoping.sh`.
+see `.claude/rules/rule-scoping-guard.md` and the bidirectional checker in
+`.claude/scripts/check_rule_scoping.sh`. (This paragraph originally cited a
+`rule-loading-integrity.md` that was never created — the doc that actually
+landed is `rule-scoping-guard.md`; corrected during the llm#943/#944
+follow-up, 2026-08-21.)
 
 ## 5. Why prose controls were structurally insufficient
 
@@ -106,10 +109,18 @@ The corrective controls are therefore deterministic and run outside the model:
 - [x] `secret_leak_guard.sh` PreToolUse guard
 - [x] `check_rule_scoping.sh` made bidirectional; mandatory-rule defects fixed
 - [x] `credential-management.md` re-scoped to cover shell/config/dotfile paths
+- [x] Follow-up (llm#943/#944, 2026-08-21): `credential-management`,
+      `external-code-zero-trust`, `permission-discipline`, and
+      `destructive-ops-guard` moved to a new safety-critical tier (AGENTS.md
+      "Safety-critical rules" line) and now carry no `paths:` at all — the
+      widened-but-still-scoped fix above was a first step, not the final
+      state. `check_rule_scoping.sh` enforces the tier (exit 3, blocks
+      commits touching rule files) and the pre-commit/session-init wiring
+      from llm#952 was confirmed already landed.
 - [ ] **User action:** delete the offending comment (assistant cannot — tokens revoked, and `destructive_api_guard` blocks `gh api -X DELETE`)
 - [ ] Rotate all 14 credentials — see `.claude/incidents/2026-08-11-rotation-runbook.md`
 - [ ] Regenerate `GH_TOKEN` / `GITHUB_PAT` to unblock `gh`
-- [ ] File the tracking issues queued in `.claude/incidents/queued-issues/`
+- [ ] File the tracking issues queued in `.claude/incidents/queued-issues/` (Issues 1 and 2 already filed as llm#943 and llm#944)
 
 ## 7. Lessons
 

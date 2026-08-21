@@ -20,6 +20,13 @@ violated during incident response before anyone noticed. A check nobody runs
 is the same failure mode as a rule nobody reads — this rule documents the
 two triggers that close that gap.
 
+[llm#943](https://github.com/JohnGavin/llm/issues/943) added a second tier —
+**safety-critical** — governed by an "AGENTS.md `**Safety-critical rules**`
+line, same "never scoped" contract as mandatory. Origin: the 2026-08-11
+credential leak, where `credential-management.md`'s `paths:` scope excluded
+every shell script and dotfile where secrets are actually handled. The
+checker's checks B and C (below) apply identically to both tiers.
+
 ## When This Applies
 
 Whenever `.claude/rules/**`, `AGENTS.md`, or a `CLAUDE.md` is edited, and
@@ -27,22 +34,29 @@ whenever a session starts in this repo.
 
 ## CRITICAL: Only the Safety Direction Blocks
 
-`check_rule_scoping.sh` checks two directions (see its own header for the
-full A/B/C breakdown): **context bloat** (a non-mandatory rule missing
-`paths:` — noisy, cosmetic) and **safety** (a rule declared mandatory that is
-not actually loading unconditionally — a real defect). Only the safety
-direction may block a commit. A guard that blocks on noise gets
-`--no-verify`'d or deleted within a day; then the safety direction it also
-carries is lost along with it.
+`check_rule_scoping.sh` runs four checks (see its own header for the full
+A/B/C/D breakdown): **context bloat** (check A — a rule outside both tiers
+missing `paths:` — noisy, cosmetic), **safety** (checks B/C — a rule
+declared mandatory OR safety-critical that is not actually loading
+unconditionally, or is missing entirely — a real defect), and an **advisory
+content heuristic** (check D — a rule outside both tiers with dense
+credential/destruction keyword hits and no `scoping-justification:`
+field). Only checks B/C (the safety direction, tagged
+`MANDATORY-BUT-*`/`SAFETY-CRITICAL-BUT-*`) may block a commit. A guard that
+blocks on noise gets `--no-verify`'d or deleted within a day; then the
+safety direction it also carries is lost along with it. Check D is
+deliberately never blocking — see `content_heuristic_check`'s own header
+comment in the script for why a keyword-density threshold is too
+approximate a signal to gate a commit on.
 
 ## Exit-Code Contract
 
 | `check_rule_scoping.sh` exit | Meaning | Pre-commit (`rule_scoping_precommit.sh`) | Session-init (Phase 15e) |
 |---|---|---|---|
-| 0 | clean | silent, allow | silent |
-| 1 | context-bloat only (non-mandatory rule missing `paths:`) | WARN to stderr, allow | not surfaced (left to `/check`) |
+| 0 | clean (check-D advisories, if any, do not change this) | silent, allow | silent |
+| 1 | context-bloat only (a rule outside both tiers missing `paths:`) | WARN to stderr, allow | not surfaced (left to `/check`) |
 | 2 | bad rules dir / tooling failure | WARN to stderr, allow | not surfaced |
-| 3 | a MANDATORY rule is not loading unconditionally | **BLOCK, exit 1** | surfaced (`MANDATORY-BUT-*` line) |
+| 3 | a MANDATORY or SAFETY-CRITICAL rule is not loading unconditionally | **BLOCK, exit 1** | surfaced (`MANDATORY-BUT-*`/`SAFETY-CRITICAL-BUT-*` line) |
 
 ## Two Triggers
 
@@ -88,8 +102,9 @@ that doesn't touch rule files emits nothing at all (the check never ran).
 
 ## Selftests
 
-- `check_rule_scoping.sh --selftest` — 11/11, unchanged by this rule; covers
-  the checker's own A/B/C logic.
+- `check_rule_scoping.sh --selftest` — 23/23 (llm#943 added the
+  safety-critical-tier and content-heuristic cases; the original 11 mandatory-
+  tier cases are unchanged). Covers the checker's own A/B/C/D logic.
 - `rule_scoping_precommit.sh --selftest` — covers the wiring: exit 3 blocks,
   exit 1 warns and allows, exit 0 is silent and allows, a commit touching no
   rule files skips entirely (checker never invoked), the kill switch

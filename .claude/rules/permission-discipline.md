@@ -1,12 +1,15 @@
----
-description: Permission mode binding, MCP tool classification, environment declaration, credential discovery policy
-paths:
-  - ".claude/settings*.json"
-  - ".claude/hooks/**"
-  - "**/.mcp.json"
----
-
 # Rule: Permission and Security Discipline
+
+## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
+
+This rule was scoped to `.claude/settings*.json`, `.claude/hooks/**`,
+`**/.mcp.json` — it did not load when running arbitrary Bash, which is when
+permission decisions (Part 1: `bypassPermissions` binding) are actually
+made. Per [llm#943](https://github.com/JohnGavin/llm/issues/943), this rule
+is now in the **safety-critical tier** declared in AGENTS.md's
+"Safety-critical rules" line and carries no `paths:` frontmatter — it loads
+into every session and every subagent, matching the mandatory tier's
+contract.
 
 Consolidated from: `permission-mode-discipline`, `mcp-destructive-scope`, `prod-staging-context-guard`, `secret-discovery-policy`.
 
