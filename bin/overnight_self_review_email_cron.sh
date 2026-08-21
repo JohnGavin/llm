@@ -112,6 +112,47 @@ if ! command -v nix-shell > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── Wait for DNS before touching the network (llm#947, llm#970) ──────────────
+# Scheduled jobs fire before this machine's network is reliably up. A job
+# that cannot resolve DNS within the bound has NOT failed -- its precondition
+# (network) was absent -- so this defers rather than attempting nix
+# evaluation / SMTP that would otherwise die with "Could not resolve host".
+# See .claude/scripts/wait_for_resolvable_host.sh. This script has no
+# housekeeping_runs heartbeat row to mark 'deferred' -- it simply logs and
+# exits 0, matching the "no false failure" contract without a DB write.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/wait_for_resolvable_host.sh"
+if ! wait_for_resolvable_host "" log; then
+  log "DEFER: DNS not up within bound — skipping this run (not a failure)"
+  exit 0
+fi
+
+# ── Resolve nix target: GC-rooted drv preferred (llm#596) ─────────────────────
+# Evaluating ${LLM_NIX} re-fetches the unhashed nixpkgs tarball once the
+# tarball TTL lapses; the launchd environment cannot resolve github.com, so
+# the job dies before doing any work. `nix-shell <drv>` skips evaluation
+# entirely — no network at runtime. The drv root is maintained by
+# .claude/scripts/nix_gcroot_refresh.sh (best-effort refresh below; a stale
+# root still runs the previously-pinned shell, which beats dying).
+GCROOT_DRV="${HOME}/.claude/nix-gcroots/llm-shell.drv"
+GCROOT_STAMP="${GCROOT_DRV}.stamp"
+# Freshness compares against the .stamp file, NOT the drv symlink — store
+# paths have mtime=1970 so the symlink always reads stale.
+if [ ! -e "${GCROOT_DRV}" ] || [ ! -e "${GCROOT_STAMP}" ] || [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+  "${REPO_ROOT}/.claude/scripts/nix_gcroot_refresh.sh" "${LLM_NIX}" >> "${LOG_FILE}" 2>&1 || true
+fi
+if [ -e "${GCROOT_DRV}" ]; then
+  NIX_TARGET="${GCROOT_DRV}"
+  if [ -e "${GCROOT_STAMP}" ] && [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+    log "nix WARN: gcroot stale — running stale-but-cached shell (llm#596)"
+  else
+    log "nix: using GC-rooted drv (no network needed)"
+  fi
+else
+  NIX_TARGET="${LLM_NIX}"
+  log "nix WARN: no gcroot — falling back to nix-shell evaluation (needs network, llm#596)"
+fi
+
 # ── Run digest ────────────────────────────────────────────────────────────────
 log "Running send_overnight_self_review_email.R via nix-shell..."
 
@@ -122,7 +163,7 @@ if [ ! -f "${R_SCRIPT}" ]; then
 fi
 
 set +e
-nix-shell "${LLM_NIX}" --run "Rscript ${R_SCRIPT}" >> "${LOG_FILE}" 2>&1
+nix-shell "${NIX_TARGET}" --run "Rscript ${R_SCRIPT}" >> "${LOG_FILE}" 2>&1
 rc=$?
 set -e
 
