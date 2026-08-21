@@ -1,12 +1,19 @@
----
-description: Block destructive API calls, require recovery trails for scripts, two-key confirmation for irreversible ops
-paths:
-  - ".claude/hooks/**"
-  - "bin/**"
-  - ".claude/scripts/**"
----
-
 # Rule: Destructive Operations Guard
+
+## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
+
+This rule was scoped to `.claude/hooks/**`, `bin/**`, `.claude/scripts/**`.
+Parts 1-2 (hook-level API blocking, recovery trails) are backed by
+deterministic hooks (`destructive_api_guard.sh`, `destructive_fs_guard.sh`)
+that fire regardless of what the rule loads for — but Part 3 (two-key
+confirmation for `git reset --hard`, force-push, and other irreversible ops)
+applies to any Bash call and has no equivalent hook; it depends entirely on
+the model recalling this rule at the moment of the call. Scoped to
+hooks/bin/scripts paths, it never loaded when Part 3 actually mattered. Per
+[llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is now in
+the **safety-critical tier** declared in AGENTS.md's "Safety-critical rules"
+line and carries no `paths:` frontmatter — it loads into every session and
+every subagent, matching the mandatory tier's contract.
 
 Consolidated from: `destructive-api-calls`, `script-destructive-ops`, `two-key-irreversible-ops`.
 
