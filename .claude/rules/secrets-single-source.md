@@ -1,5 +1,6 @@
 ---
 description: Bitwarden Secrets Manager (BWS) is the single system of record for credentials; ~/.config/secrets.env is a derived, regenerable cache — never hand-edited, never the target of a rotation
+scoping-justification: unlike credential-management (generic "don't leak a secret via any shell command", which can happen anywhere), this rule's guidance only becomes actionable when editing a file already in this list (secrets.env, dotfiles, the two named regen/migration scripts) — broadening further adds context cost without closing a gap; see llm#943 item 3
 paths:
   - "**/secrets.env"
   - "**/.zshenv"

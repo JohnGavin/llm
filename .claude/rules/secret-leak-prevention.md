@@ -1,5 +1,6 @@
 ---
 description: Hook-enforced guard against shell command-substitution / echo patterns that splice live credentials into a Bash command before it runs
+scoping-justification: enforced by secret_leak_guard.sh (a PreToolUse:Bash hook, not advisory LLM recall) — the hook fires on every Bash call regardless of what this rule text loads for, so it does not need the mandatory/safety-critical "never scoped" contract; see llm#943 item 3
 paths:
   - ".claude/hooks/**"
   - ".claude/scripts/**"
