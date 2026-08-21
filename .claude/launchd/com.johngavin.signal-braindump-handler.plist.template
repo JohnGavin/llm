@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.johngavin.signal-braindump-handler</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>~/.claude/scripts/signal_braindump_handler.sh</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>/Users/johngavin/.local/share/signal-cli/attachments</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>600</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/signal_braindump_handler_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/signal_braindump_handler_stderr.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

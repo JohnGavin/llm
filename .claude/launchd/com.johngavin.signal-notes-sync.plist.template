@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.johngavin.signal-notes-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>~/.claude/scripts/signal_notes_sync.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/signal_sync_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/signal_sync_stderr.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
