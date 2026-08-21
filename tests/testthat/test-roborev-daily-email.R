@@ -731,3 +731,143 @@ test_that("llm#972: prose mentioning the word 'severity' without a marker is not
   expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
     info = "prose mention of 'severity' must never be classified above-threshold")
 })
+
+# ── Tests: llm#972 cause 2 — unparseable bucket split into not_reviewed / ────
+#   passed / unclassified (agent-health vs no-op vs genuine residual)
+#
+# Diagnosed on the live DB: `verdict_bool` is not a function of the review
+# output (identical "SEVERITY_THRESHOLD_MET" bytes appear with verdict_bool=1
+# AND verdict_bool=0), so a row in the "unparseable" bucket does not mean
+# "needs triage". These tests pin the three-way split added to
+# classify_open_findings()/classify_unparseable_finding().
+
+NOT_REVIEWED_EXACT_OUTPUT <- "No review output generated"
+NOT_REVIEWED_AGENT_FAILURE_OUTPUT <- paste(
+  "I am unable to access the diff file at",
+  "`/private/tmp/roborev-snapshot-content.diff` because it is ignored by",
+  "configured ignore patterns. Consequently, I cannot perform the requested",
+  "code review."
+)
+PASSED_THRESHOLD_MET_OUTPUT <- "SEVERITY_THRESHOLD_MET"
+# Deliberately wraps "issues found" across a line break to prove the
+# tolerant-matching requirement -- a naive substring match on raw text fails
+# this case.
+PASSED_NO_ISSUES_LINEBREAK_OUTPUT <- "No\nissues found"
+UNCLASSIFIED_PROSE_OUTPUT <- paste(
+  "This review comment matches none of the known agent-failure or",
+  "pass-through shapes and should remain visible as a genuine residual."
+)
+
+test_that("llm#972 cause 2: exact 'No review output generated' classifies as not_reviewed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = NOT_REVIEWED_EXACT_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE),
+    info = "'No review output generated' must classify as not_reviewed")
+  expect_true(grepl("QA:total_unparseable_open_n=1", combined, fixed = TRUE),
+    info = "not_reviewed rows must still count toward the unparseable total")
+  expect_true(grepl("QA:total_passed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
+
+test_that("llm#972 cause 2: agent-failure prose classifies as not_reviewed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = NOT_REVIEWED_AGENT_FAILURE_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE),
+    info = "an agent-failure prose sample ('I am unable to access...') must classify as not_reviewed")
+})
+
+test_that("llm#972 cause 2: 'SEVERITY_THRESHOLD_MET' alone classifies as passed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_passed_open_n=1", combined, fixed = TRUE),
+    info = "'SEVERITY_THRESHOLD_MET' alone must classify as passed (inferred, see code comment)")
+  expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
+
+test_that("llm#972 cause 2: 'No issues found' wrapped across a line break still classifies as passed (tolerant matching)", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = PASSED_NO_ISSUES_LINEBREAK_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_passed_open_n=1", combined, fixed = TRUE),
+    info = paste(
+      "'No\\nissues found' (line break mid-phrase) must still classify as",
+      "passed -- a naive literal-substring matcher would miss this and is",
+      "exactly the failure mode this test guards against"
+    ))
+})
+
+test_that("llm#972 cause 2: unrecognised prose classifies as unclassified and is reported, not swallowed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE),
+    info = "unrecognised prose must classify as unclassified")
+  expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_passed_open_n=0", combined, fixed = TRUE))
+  # Requirement 2: the residual must be VISIBLE, not silently absorbed into
+  # the aggregate total -- assert the breakdown text actually renders in the
+  # email body, not just in the QA marker.
+  expect_true(grepl("unclassified", combined, fixed = TRUE),
+    info = "the unclassified count must be reported in the rendered email body, not only the QA marker")
+})
+
+test_that("llm#972 cause 2: a real bold-severity finding is still counted as a finding (regression guard)", {
+  # A classifier that tidies everything away into not_reviewed/passed/
+  # unclassified would be a worse bug than the one being fixed -- this pins
+  # that a genuine above-threshold finding is untouched by the new logic.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(list(output = HIGH_SEV_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_above_threshold_open_n=1", combined, fixed = TRUE),
+    info = "a genuine bold-severity finding must still be classified above-threshold")
+  expect_true(grepl("QA:total_unparseable_open_n=0", combined, fixed = TRUE),
+    info = "a genuine bold-severity finding must not fall into the unparseable bucket at all")
+  expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_passed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
+
+test_that("llm#972 cause 2: mixed population reconciles -- sub-counts sum to the unparseable total", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = NOT_REVIEWED_EXACT_OUTPUT, age_hours = 1),
+    list(output = NOT_REVIEWED_AGENT_FAILURE_OUTPUT, age_hours = 1),
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 1),
+    list(output = PASSED_NO_ISSUES_LINEBREAK_OUTPUT, age_hours = 1),
+    list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1),
+    list(output = HIGH_SEV_OUTPUT, age_hours = 1)
+  ))
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:total_not_reviewed_open_n=2", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_passed_open_n=2", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unparseable_open_n=5", combined, fixed = TRUE),
+    info = "not_reviewed(2) + passed(2) + unclassified(1) must equal unparseable total(5)")
+  expect_true(grepl("QA:total_above_threshold_open_n=1", combined, fixed = TRUE),
+    info = "the one real finding must remain above-threshold, untouched by the new split")
+})

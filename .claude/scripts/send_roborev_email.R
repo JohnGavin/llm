@@ -331,19 +331,102 @@ parse_max_severity_ordinal <- function(text) {
   max(unname(SEVERITY_ORDINAL[words]), na.rm = TRUE)
 }
 
+# llm#972 cause 2: `verdict_bool` is NOT a function of the review output —
+# identical bytes ("SEVERITY_THRESHOLD_MET") are recorded with verdict_bool=1
+# AND verdict_bool=0 in the live DB, so a row landing in the "unparseable"
+# bucket (no `Severity:` marker found) does NOT mean "this review found
+# something that needs triage". Three very different situations were being
+# reported as one undifferentiated number:
+#   - the agent produced nothing usable at all (crash / refusal / env
+#     problem) — an AGENT-HEALTH signal, not a code finding
+#   - the review ran and explicitly found nothing — not a triage item
+#   - genuinely unrecognised text — the real residual that still needs eyes
+# classify_unparseable_finding() below splits exactly those three apart for
+# any row whose severity could not be parsed. It does NOT touch parseable
+# rows (those go through the above-threshold path in
+# classify_open_findings() unchanged) — this is purely a finer-grained
+# sub-classification of the existing "unparseable" bucket, so
+# total_unparseable_open_n / new_unparseable_open_n keep meaning exactly what
+# they meant before (== not_reviewed_n + passed_n + unclassified_n, always,
+# by construction of the loop below).
+
+# normalize_ws(): the stored `output` text can wrap mid-phrase (observed live:
+# "No\n issues found" instead of one line), so a literal substring match on
+# raw text silently misses exactly the cases this classifier exists to catch.
+# Collapse all whitespace runs (including embedded newlines) to a single
+# space before matching.
+normalize_ws <- function(text) {
+  if (is.null(text) || is.na(text)) return("")
+  gsub("\\s+", " ", trimws(text))
+}
+
+# NOT_REVIEWED_PATTERNS: the review agent produced nothing usable — an
+# AGENT-HEALTH signal (crash / refusal / environment problem), not a code
+# finding. Matched against lower-cased, whitespace-normalised text.
+NOT_REVIEWED_PATTERNS <- c(
+  "no review output generated",
+  "unable to access",
+  "cannot perform the requested code review"
+)
+
+# PASSED_PATTERNS: the review ran and explicitly found nothing — not a
+# triage backlog item.
+#   "severity_threshold_met" — 96 of 120 identical-byte rows are recorded
+#   closed=1 with no findings text at all, vs 14 stuck open with the SAME
+#   bytes; treating it as "passed" is INFERRED from that distribution, not
+#   documented roborev semantics — the name could plausibly mean the
+#   opposite. Do not build anything load-bearing on this inference beyond
+#   "not a thing a human needs to triage".
+PASSED_PATTERNS <- c(
+  "severity_threshold_met",
+  "no issues found",
+  "no code changes were provided"
+)
+
+.pattern_matches <- function(text_norm, patterns) {
+  any(vapply(patterns, function(p) grepl(p, text_norm, fixed = TRUE), logical(1L)))
+}
+
+# classify_unparseable_finding(): only called for rows whose severity could
+# NOT be parsed (parse_max_severity_ordinal() returned NA). Returns one of
+# "not_reviewed" | "passed" | "unclassified". "unclassified" is the
+# deliberate residual — matches neither known shape — and MUST stay visible
+# on its own rather than being folded into either named bucket, so a
+# genuinely new failure mode doesn't disappear into a total.
+classify_unparseable_finding <- function(text) {
+  norm <- tolower(normalize_ws(text))
+  if (.pattern_matches(norm, NOT_REVIEWED_PATTERNS)) return("not_reviewed")
+  if (.pattern_matches(norm, PASSED_PATTERNS)) return("passed")
+  "unclassified"
+}
+
 # classify_open_findings(): splits a set of open-findings rows (each with
-# `output`/`review_id`/`repo`) into two DISJOINT buckets — above-threshold
-# (parseable severity > AUTOCLOSE_THRESHOLD_ORD) and unparseable (no
-# `Severity:` marker, bold or plain, found at all). A row lands in at most
-# one bucket, so the two counts never double-count the same finding.
+# `output`/`review_id`/`repo`) into two DISJOINT top-level buckets —
+# above-threshold (parseable severity > AUTOCLOSE_THRESHOLD_ORD) and
+# unparseable (no `Severity:` marker, bold or plain, found at all). A row
+# lands in at most one top-level bucket, so the two counts never
+# double-count the same finding. Unparseable rows are further split into
+# not_reviewed / passed / unclassified via classify_unparseable_finding()
+# (llm#972 cause 2) — those three sub-counts always sum to unparse_n.
 classify_open_findings <- function(rows) {
   above_n    <- 0L
   above_rows <- list()
   unparse_n  <- 0L
+  not_reviewed_n <- 0L
+  passed_n       <- 0L
+  unclassified_n <- 0L
   for (r in rows) {
     ord <- parse_max_severity_ordinal(r[["output"]])
     if (is.na(ord)) {
       unparse_n <- unparse_n + 1L
+      sub_cls <- classify_unparseable_finding(r[["output"]])
+      if (identical(sub_cls, "not_reviewed")) {
+        not_reviewed_n <- not_reviewed_n + 1L
+      } else if (identical(sub_cls, "passed")) {
+        passed_n <- passed_n + 1L
+      } else {
+        unclassified_n <- unclassified_n + 1L
+      }
     } else if (ord > AUTOCLOSE_THRESHOLD_ORD) {
       above_n <- above_n + 1L
       sev_label <- names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
@@ -354,7 +437,11 @@ classify_open_findings <- function(rows) {
       )
     }
   }
-  list(above_n = above_n, above_rows = above_rows, unparse_n = unparse_n)
+  list(
+    above_n = above_n, above_rows = above_rows, unparse_n = unparse_n,
+    not_reviewed_n = not_reviewed_n, passed_n = passed_n,
+    unclassified_n = unclassified_n
+  )
 }
 
 # NEW_WINDOW_HOURS: the report runs once/day, so "new since the previous
@@ -387,15 +474,24 @@ new_open_findings_sql <- paste0(
 
 total_above_threshold_open_n <- NA_integer_
 total_unparseable_open_n     <- NA_integer_
+total_not_reviewed_open_n    <- NA_integer_
+total_passed_open_n          <- NA_integer_
+total_unclassified_open_n    <- NA_integer_
 new_above_threshold_open_n   <- NA_integer_
 new_above_threshold_rows     <- list()
 new_unparseable_open_n       <- NA_integer_
+new_not_reviewed_open_n      <- NA_integer_
+new_passed_open_n            <- NA_integer_
+new_unclassified_open_n      <- NA_integer_
 
 total_open_findings <- query_reviews_db(total_open_findings_sql)
 if (!is.null(total_open_findings)) {
   cls_total <- classify_open_findings(total_open_findings)
   total_above_threshold_open_n <- cls_total$above_n
   total_unparseable_open_n     <- cls_total$unparse_n
+  total_not_reviewed_open_n    <- cls_total$not_reviewed_n
+  total_passed_open_n          <- cls_total$passed_n
+  total_unclassified_open_n    <- cls_total$unclassified_n
 } else {
   message("send_roborev_email.R: could not query open findings from reviews.db — ",
           "standing backlog counts unavailable")
@@ -407,6 +503,9 @@ if (!is.null(new_open_findings)) {
   new_above_threshold_open_n <- cls_new$above_n
   new_above_threshold_rows   <- cls_new$above_rows
   new_unparseable_open_n     <- cls_new$unparse_n
+  new_not_reviewed_open_n    <- cls_new$not_reviewed_n
+  new_passed_open_n          <- cls_new$passed_n
+  new_unclassified_open_n    <- cls_new$unclassified_n
 } else {
   message("send_roborev_email.R: could not query new open findings from reviews.db — ",
           "delta counts unavailable (rendering nothing rather than a false alert)")
@@ -605,6 +704,28 @@ above_threshold_block <- if (above_threshold_fired) {
 # count called out inline.
 unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unparseable_open_n > 0L)) {
   new_str <- if (is.na(new_unparseable_open_n)) "n/a" else fmt_int(new_unparseable_open_n)
+  # llm#972 cause 2: break the undifferentiated total down into its three
+  # sub-populations so each stays visible on its own — see the comment on
+  # classify_unparseable_finding() for why this matters (agent-health vs
+  # no-op vs genuine residual).
+  breakdown_str <- sprintf(
+    "Breakdown (standing): not-reviewed (agent-health) %s &nbsp;|&nbsp; passed (no findings) %s &nbsp;|&nbsp; unclassified %s.",
+    fmt_int(total_not_reviewed_open_n), fmt_int(total_passed_open_n), fmt_int(total_unclassified_open_n)
+  )
+  # Requirement 2: if "unclassified" is absorbing most of the bucket, say so
+  # explicitly rather than letting it hide inside the total — a genuinely
+  # mis-parsed finding disappearing into a named-but-vague bucket is exactly
+  # how this issue cluster (llm#972) started.
+  unclassified_warn <- if (isTRUE(
+    !is.na(total_unclassified_open_n) && !is.na(total_unparseable_open_n) &&
+    total_unparseable_open_n > 0L &&
+    (total_unclassified_open_n / total_unparseable_open_n) > 0.5
+  )) {
+    sprintf(
+      '<br><strong style="color:#f08080;">&#9888; %s of %s unparseable findings (&gt;50%%) are unclassified — the classifier patterns in send_roborev_email.R may need updating.</strong>',
+      fmt_int(total_unclassified_open_n), fmt_int(total_unparseable_open_n)
+    )
+  } else ""
   sprintf(
     '<div style="background-color:%s; color:%s; border:1px solid %s;
       border-radius:6px; padding:10px 14px; margin:10px 0; font-size:%s;">
@@ -612,10 +733,12 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
       %s new in the last %dh, %s open in total.
       The severity parser found no <code>Severity:</code> marker in
       these findings&#39; output — a signal about the parser/agent output
-      format, not a backlog to close.
+      format, not a backlog to close.<br>
+      %s%s
     </div>',
     dark_card, dark_text, accent_purple, EMAIL_FONT_BODY,
-    new_str, NEW_WINDOW_HOURS, fmt_int(total_unparseable_open_n)
+    new_str, NEW_WINDOW_HOURS, fmt_int(total_unparseable_open_n),
+    breakdown_str, unclassified_warn
   )
 } else ""
 
@@ -986,14 +1109,24 @@ severity_html <- collapsible_block(
 # (new_window_hours) the "new" figures were computed over, since the original
 # marker conflated a standing-backlog total with a triage delta and merged
 # two different problem types (severity vs parse-failure) into one number.
+# llm#972 cause 2: the unparseable total is further split into
+# not_reviewed/passed/unclassified (new + total, six markers) — these three
+# always sum to new_unparseable_open_n / total_unparseable_open_n
+# respectively, by construction of classify_open_findings().
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd -->',
   report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL,
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
   if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
   if (is.na(total_above_threshold_open_n)) "NA" else as.character(total_above_threshold_open_n),
   if (is.na(new_unparseable_open_n)) "NA" else as.character(new_unparseable_open_n),
   if (is.na(total_unparseable_open_n)) "NA" else as.character(total_unparseable_open_n),
+  if (is.na(new_not_reviewed_open_n)) "NA" else as.character(new_not_reviewed_open_n),
+  if (is.na(total_not_reviewed_open_n)) "NA" else as.character(total_not_reviewed_open_n),
+  if (is.na(new_passed_open_n)) "NA" else as.character(new_passed_open_n),
+  if (is.na(total_passed_open_n)) "NA" else as.character(total_passed_open_n),
+  if (is.na(new_unclassified_open_n)) "NA" else as.character(new_unclassified_open_n),
+  if (is.na(total_unclassified_open_n)) "NA" else as.character(total_unclassified_open_n),
   NEW_WINDOW_HOURS,
   LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS
 )
