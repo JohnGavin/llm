@@ -317,12 +317,17 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
 
   cutoff <- format(Sys.time() - window_days * 86400, "%Y-%m-%d %H:%M:%S")
 
+  # status NOT IN ('ok', 'deferred'): 'deferred' (llm#947, llm#970) means the
+  # job declined to run because DNS was not up within the bound -- NOT a
+  # failure. Bucketing it as a failure here would exactly reproduce the
+  # "8 partial / 0 ok" misleading-signal problem this change set out to fix
+  # (same rationale as 'unknown' in launchd_health_events.state, llm#962).
   query <- sprintf(
     "SELECT
        task AS label,
        COUNT(*) AS run_count,
-       SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS failures,
-       ROUND(100.0 * SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) / COUNT(*), 1) AS failure_pct,
+       SUM(CASE WHEN status NOT IN ('ok', 'deferred') THEN 1 ELSE 0 END) AS failures,
+       ROUND(100.0 * SUM(CASE WHEN status NOT IN ('ok', 'deferred') THEN 1 ELSE 0 END) / COUNT(*), 1) AS failure_pct,
        ROUND(MEDIAN(EPOCH(ended_at) - EPOCH(started_at)), 1) AS median_duration_s,
        ROUND(MAX(EPOCH(ended_at) - EPOCH(started_at)), 1)    AS max_duration_s,
        arg_max(status, started_at)   AS last_status,
@@ -362,11 +367,13 @@ read_run_counts_by_script <- function(ledger = LEDGER_PATH, window_days = REPORT
 
   cutoff <- format(Sys.time() - window_days * 86400, "%Y-%m-%d %H:%M:%S")
 
+  # status NOT IN ('ok', 'deferred'): see the matching comment in
+  # read_run_metrics() above -- 'deferred' (llm#947, llm#970) is not a failure.
   query <- sprintf(
     "SELECT
        source_script,
        COUNT(*) AS n_runs,
-       SUM(CASE WHEN status IS NULL OR status != 'ok' THEN 1 ELSE 0 END) AS n_fail
+       SUM(CASE WHEN status IS NULL OR status NOT IN ('ok', 'deferred') THEN 1 ELSE 0 END) AS n_fail
      FROM housekeeping_runs
      WHERE started_at >= TIMESTAMPTZ '%s'
        AND source_script IS NOT NULL
