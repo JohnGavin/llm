@@ -13,6 +13,11 @@ elif [ -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]; then
 fi
 export PATH="$JAVA_HOME/bin:/opt/homebrew/bin:$PATH"
 
+# Shared SIGKILL-escalating timeout wrapper + stale-process guard (llm#957).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib_signal_process_guard.sh
+. "$SCRIPT_DIR/lib_signal_process_guard.sh"
+
 # Version-STABLE path (llm#937). This was pinned to the 0.14.2 Cellar directory;
 # Homebrew upgraded signal-cli to 0.14.3_1 on 2026-05-10 12:03 and that directory
 # ceased to exist. The `receive` below is wrapped in `2>/dev/null || echo ""`, so
@@ -23,6 +28,7 @@ export PATH="$JAVA_HOME/bin:/opt/homebrew/bin:$PATH"
 # Homebrew repoints on upgrade.
 SIGNAL_CLI="${SIGNAL_CLI:-/opt/homebrew/bin/signal-cli}"
 if [ ! -x "$SIGNAL_CLI" ]; then
+  mkdir -p "$HOME/.claude/logs"
   echo "$(date '+%Y-%m-%d %H:%M:%S') FATAL: signal-cli not executable at $SIGNAL_CLI" >> "$HOME/.claude/logs/signal_sync.log"
   exit 1
 fi
@@ -39,15 +45,34 @@ WHISPER_MODEL="small"
 WHISPER_PROMPT="duckplyr Nix rix dagitty targets Quarto DuckDB Parquet bslib tidyverse pkgdown Claude signal-cli whisper"
 
 mkdir -p "$DUMP_DIR"
+mkdir -p "$(dirname "$LOG")"
 touch "$PROCESSED_LOG"
 
-# Receive messages (timeout 30s)
+# Refuse to start if a signal-cli receive is already running (stale-lock
+# guard, llm#957). A prior run's `receive` that outlived its timeout wrapper
+# holds the signal-cli config lock, so a second `receive` here would simply
+# block behind it. We never kill the existing process automatically —
+# killing mid-`receive` can consume-and-discard messages server-side —
+# we only refuse and log loudly so the stale process is visible in the
+# health report (see launchd_health_report.R's stale-process section).
+if _signal_cli_already_running "signal-cli.*receive"; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') REFUSED: signal-cli receive already running — not starting a second receive (stale-process guard, llm#957)" >> "$LOG"
+  exit 0
+fi
+
+# Receive messages. Two layers of timeout now guard this call (llm#957):
+#   -t 20   signal-cli's OWN internal timeout — lets it exit cleanly before
+#           the external wrapper ever needs to intervene.
+#   30/10   _bounded_kill's external timeout/kill-grace — SIGTERM at 30s,
+#           SIGKILL at 40s if the process is still alive (signal-cli is known
+#           to log receipt of SIGTERM and then not actually exit — see
+#           lib_signal_process_guard.sh for the full incident writeup).
 # llm#937: distinguish "receive failed" from "no new messages". These were
 # previously the same empty string, which is how a dead binary path masqueraded
 # as three months of silence. stderr is captured rather than discarded so the
 # reason survives into the log.
 _recv_err=$(mktemp)
-MESSAGES=$(timeout 30 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive 2>"$_recv_err") || _recv_rc=$?
+MESSAGES=$(_bounded_kill 30 10 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive -t 20 2>"$_recv_err") || _recv_rc=$?
 _recv_rc=${_recv_rc:-0}
 if [ "$_recv_rc" -ne 0 ]; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') RECEIVE FAILED rc=$_recv_rc: $(head -c 300 "$_recv_err" | tr '\n' ' ')" >> "$LOG"

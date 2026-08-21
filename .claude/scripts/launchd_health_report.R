@@ -611,6 +611,150 @@ collect_cloud_crons <- function(repos = CLOUD_REPOS) {
   do.call(rbind, lapply(rows, as.data.frame, stringsAsFactors = FALSE))
 }
 
+# ── Section 5: stale/wedged process detection (llm#957) ───────────────────────
+#
+# A process invoked as `timeout <N> <cmd>...` (optionally `timeout -k <grace>
+# <N> ...`) that is still alive well past N seconds is definitionally wedged:
+# plain `timeout N cmd` sends SIGTERM once and returns even if the child
+# ignores it. This is exactly how a `timeout 30 signal-cli ... receive`
+# process survived for ~40 hours holding the signal-cli config lock
+# (llm#937/#957 — signal-cli logs "Shutdown - Received SIGTERM signal,
+# shutting down ..." and then does not exit). The rule generalises beyond
+# Signal to any `timeout`-wrapped invocation and needs no per-tool allowlist.
+# This is additive to the existing report — no second health system.
+
+#' Parse a `ps` "etime"/"etimes" style elapsed-time string into seconds.
+#' Handles the BSD/macOS `[[dd-]hh:]mm:ss` form as well as a bare integer
+#' (GNU `etimes`, already in seconds).
+parse_etime_to_seconds <- function(etime) {
+  etime <- trimws(as.character(etime))
+  if (is.na(etime) || !nzchar(etime)) return(NA_integer_)
+  if (grepl("^[0-9]+$", etime)) return(as.integer(etime))
+
+  dd <- 0L
+  rest <- etime
+  if (grepl("-", etime, fixed = TRUE)) {
+    parts <- strsplit(etime, "-", fixed = TRUE)[[1L]]
+    dd <- suppressWarnings(as.integer(parts[1L]))
+    if (is.na(dd)) dd <- 0L
+    rest <- parts[2L]
+  }
+  hms <- suppressWarnings(as.integer(strsplit(rest, ":", fixed = TRUE)[[1L]]))
+  hms[is.na(hms)] <- 0L
+  secs <- switch(as.character(length(hms)),
+    "1" = hms[1L],
+    "2" = hms[1L] * 60L + hms[2L],
+    "3" = hms[1L] * 3600L + hms[2L] * 60L + hms[3L],
+    0L
+  )
+  dd * 86400L + secs
+}
+
+#' Redact phone numbers embedded in a command line (llm#946 — PII exposure).
+#' The Signal account number (e.g. "+15550001111") must never appear
+#' unredacted in a generated report. Matches a leading "+" followed by 6+
+#' digits, which also covers any other E.164-style number that might show up
+#' in a future `timeout`-wrapped command line.
+redact_phone_numbers <- function(x) {
+  gsub("\\+[0-9]{6,}", "+[REDACTED]", x)
+}
+
+#' Extract the declared timeout budget (in seconds) from a `timeout <N> ...`
+#' or `timeout -k <grace> <N> ...` invocation embedded in a command string.
+#' Returns NA_integer_ if the command does not contain a `timeout`/`gtimeout`
+#' invocation followed by a numeric budget.
+extract_timeout_budget <- function(command) {
+  m <- regmatches(command, regexpr(
+    "(^|[/[:space:]])(g?timeout)[[:space:]]+(-k[[:space:]]+[0-9]+[[:space:]]+)?[0-9]+",
+    command
+  ))
+  if (length(m) == 0L || !nzchar(m)) return(NA_integer_)
+  nums <- regmatches(m, gregexpr("[0-9]+", m))[[1L]]
+  if (length(nums) == 0L) return(NA_integer_)
+  as.integer(nums[length(nums)])
+}
+
+#' Detect stale/wedged processes from a process table.
+#'
+#' @param proc_table data.frame with columns pid (integer), etime (character,
+#'   ps-style elapsed time or bare seconds), command (character, full command
+#'   line). Pass a synthetic data.frame in tests; production use goes through
+#'   collect_process_table().
+#' @param slack_multiplier numeric — a process is flagged only once its
+#'   elapsed time exceeds `slack_multiplier * declared_timeout_budget`
+#'   (default 2x — tolerates the -k grace window plus ordinary scheduling
+#'   jitter without false-flagging a process that is merely finishing up).
+#' @return data.frame: pid, elapsed_s, budget_s, command (phone-redacted).
+#'   Zero rows (not NULL) when nothing is flagged.
+detect_stale_processes <- function(proc_table, slack_multiplier = 2) {
+  empty <- data.frame(
+    pid = integer(), elapsed_s = integer(), budget_s = integer(),
+    command = character(), stringsAsFactors = FALSE
+  )
+  if (is.null(proc_table) || nrow(proc_table) == 0L) return(empty)
+
+  budgets <- vapply(proc_table$command, extract_timeout_budget, integer(1L))
+  elapsed <- vapply(proc_table$etime, parse_etime_to_seconds, integer(1L))
+
+  flagged <- !is.na(budgets) & !is.na(elapsed) & elapsed > (budgets * slack_multiplier)
+  if (!any(flagged)) return(empty)
+
+  data.frame(
+    pid       = proc_table$pid[flagged],
+    elapsed_s = elapsed[flagged],
+    budget_s  = budgets[flagged],
+    command   = redact_phone_numbers(proc_table$command[flagged]),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Collect the live process table via `ps -eo pid=,etime=,command=`.
+#' Returns a data.frame shaped for detect_stale_processes(), or NULL if `ps`
+#' is unavailable or returns nothing (never errors — this must never break
+#' the rest of the report).
+collect_process_table <- function() {
+  out <- tryCatch(
+    system2("ps", c("-eo", "pid=,etime=,command="), stdout = TRUE, stderr = FALSE),
+    error = function(e) character(0L)
+  )
+  if (length(out) == 0L) return(NULL)
+
+  rows <- lapply(out, function(line) {
+    m <- regmatches(line, regexpr("^[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+", line))
+    if (length(m) == 0L || !nzchar(m)) return(NULL)
+    parts <- strsplit(trimws(m), "[[:space:]]+")[[1L]]
+    pid   <- suppressWarnings(as.integer(parts[1L]))
+    etime <- parts[2L]
+    cmd   <- trimws(sub("^[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]*", "", line))
+    if (is.na(pid)) return(NULL)
+    list(pid = pid, etime = etime, command = cmd)
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (length(rows) == 0L) return(NULL)
+  do.call(rbind, lapply(rows, as.data.frame, stringsAsFactors = FALSE))
+}
+
+render_stale_processes_table <- function(stale) {
+  if (is.null(stale) || nrow(stale) == 0L) {
+    return("\n_No stale/wedged `timeout`-wrapped processes detected._\n")
+  }
+  lines <- c(
+    "",
+    "| PID | Elapsed | Budget | Command |",
+    "|-----|---------|--------|---------|"
+  )
+  for (i in seq_len(nrow(stale))) {
+    r <- stale[i, ]
+    cmd_short <- if (nchar(r$command) > 100) {
+      paste0(substr(r$command, 1L, 97L), "...")
+    } else {
+      r$command
+    }
+    lines <- c(lines, sprintf("| %d | %ds | %ds | `%s` |", r$pid, r$elapsed_s, r$budget_s, cmd_short))
+  }
+  paste(lines, collapse = "\n")
+}
+
 # ── Markdown rendering ─────────────────────────────────────────────────────────
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
@@ -741,6 +885,9 @@ suggestions <- build_suggestions(inventory, metrics)
 message("launchd_health_report.R: enumerating cloud crons")
 cloud_crons <- collect_cloud_crons(CLOUD_REPOS)
 
+message("launchd_health_report.R: scanning for stale/wedged timeout-wrapped processes")
+stale_processes <- detect_stale_processes(collect_process_table())
+
 # ── Assemble report ────────────────────────────────────────────────────────────
 
 now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M UTC", tz = "UTC")
@@ -760,6 +907,9 @@ report_md <- paste0(
   "\n\n---\n\n",
   "## 4. Related Cloud Crons (GitHub Actions)\n",
   render_cloud_crons_table(cloud_crons),
+  "\n\n---\n\n",
+  "## 5. Stale/Wedged Processes\n",
+  render_stale_processes_table(stale_processes),
   "\n"
 )
 
