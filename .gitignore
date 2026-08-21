@@ -142,6 +142,12 @@ explorations/*
 # The .example template is tracked; the real file with actual key names is not.
 .claude/credential_tiers.toml
 
+# Rendered Signal launchd plists — contain the real account (PII) substituted
+# from ~/.config/secrets.env by render_signal_launchd_plists.sh --apply. Only
+# the .plist.template files (with a __SIGNAL_ACCOUNT__ placeholder) are
+# source-controlled (llm#946).
+.claude/state/signal-launchd/
+
 # Capability registry: the template is source-controlled, the regenerated
 # HTML output is not (rewritten daily by com.claude.capability-registry cron).
 .claude/reports/capability-registry.html
