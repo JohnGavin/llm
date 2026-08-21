@@ -63,6 +63,21 @@ touch -m -t "$(date -v-72H '+%Y%m%d%H%M.%S')" "$LOG_DIR/stale_job.out" 2>/dev/nu
 
 # not-loaded: no log file (never fired)
 
+# weekday-repeated (llm#898 regression): thrice-daily x 5-weekday schedule,
+# last fired 3h ago. 3h sits strictly between the pre-fix threshold (cadence
+# wrongly computed as 0s -> clamped floor of 2h -> STALE) and the correct
+# post-fix threshold (cadence 4h=14400s -> 1.5x = 6h -> NOT stale). This
+# fixture only passes under the fixed expected_cadence_seconds().
+#
+# Written at the fixture plist's literal StandardOutPath (Priority 1 in
+# find_log_file()), not under $LOG_DIR (Priority 2/3) -- the Priority 2/3
+# suffix derivation uses a GNU-sed-only `\|` alternation that is a silent
+# no-op under macOS's BSD sed, so it never strips the `com.claude.` prefix
+# on this platform (separate, pre-existing bug, not fixed here).
+mkdir -p /tmp/launchd_audit_test
+echo "2026-05-29 13:00:01 done exit 0" > /tmp/launchd_audit_test/weekday_repeated.out
+touch -m -t "$(date -v-3H '+%Y%m%d%H%M.%S')" /tmp/launchd_audit_test/weekday_repeated.out 2>/dev/null || true
+
 # ── Set up mock launchctl list file ───────────────────────────────────────────
 # The mock returns JSON-like output for labels that ARE loaded.
 # For labels not in this file, launchctl_info() returns empty → not loaded.
@@ -73,6 +88,7 @@ cat > "$MOCK_LIST" <<'EOF'
 {"PID": 1234, "LastExitStatus": 0, "Label": "com.claude.loaded-ok"}
 {"PID": 0, "LastExitStatus": 256, "Label": "com.claude.loaded-failing"}
 {"PID": 5678, "LastExitStatus": 0, "Label": "com.claude.stale-job"}
+{"PID": 9012, "LastExitStatus": 0, "Label": "com.claude.weekday-repeated"}
 EOF
 # not-loaded intentionally absent → returns empty
 
@@ -132,6 +148,20 @@ assert "Output contains com.claude.loaded-ok" \
 assert "Section 4 contains com.claude.stale-job" \
   "com.claude.stale-job" "$output"
 
+# llm#898 regression: a weekday-repeated thrice-daily schedule (matches
+# com.claude.roborev-poll-merges) must derive a 4h cadence, not 0s. At 3h
+# since last fire it must NOT be flagged STALE (pre-fix: cadence=0 ->
+# 2h floor -> would wrongly show STALE(3h)).
+weekday_row="$(printf '%s\n' "$output" | grep 'weekday-repeated' || true)"
+if [[ -n "$weekday_row" && "$weekday_row" != *"STALE"* ]]; then
+  echo "  PASS: com.claude.weekday-repeated is not flagged STALE (llm#898)"
+  PASS=$(( PASS + 1 ))
+else
+  echo "  FAIL: com.claude.weekday-repeated should not be STALE (llm#898)"
+  echo "        row: $weekday_row"
+  FAIL=$(( FAIL + 1 ))
+fi
+
 # Headers present
 assert "Section 3 header present" "## 3. NOT loaded" "$output"
 assert "Section 2 header present" "## 2. Loaded — Recent failures" "$output"
@@ -185,6 +215,8 @@ fi
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 rm -rf "$TMP"
+rm -f /tmp/launchd_audit_test/weekday_repeated.out
+rmdir /tmp/launchd_audit_test 2>/dev/null || true
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -143,17 +143,21 @@ if sci is None:
     print(86400)  # unknown → assume daily
     sys.exit()
 if isinstance(sci, list):
-    # Multiple slots: smallest gap between consecutive hours
+    # Multiple entries commonly repeat the same Hour:Minute across different
+    # Weekdays (e.g. Mon/Tue/Wed all at 09:00) — sorting by minute-of-day
+    # alone then yields adjacent duplicates and a diff of 0, which makes the
+    # cadence 0s (=> permanently 'stale', llm#898). Only strictly-positive
+    # diffs between distinct minute-of-day slots count; an all-duplicate
+    # list falls back to the daily default, same as a single-entry list.
     entries = sorted(sci, key=lambda x: x.get('Hour',0)*60+x.get('Minute',0))
-    if len(entries) > 1:
-        diffs = []
-        for i in range(1, len(entries)):
-            a = entries[i-1].get('Hour',0)*60 + entries[i-1].get('Minute',0)
-            b = entries[i].get('Hour',0)*60 + entries[i].get('Minute',0)
-            diffs.append((b-a)*60)
-        print(min(diffs))
-    else:
-        print(86400)
+    diffs = []
+    for i in range(1, len(entries)):
+        a = entries[i-1].get('Hour',0)*60 + entries[i-1].get('Minute',0)
+        b = entries[i].get('Hour',0)*60 + entries[i].get('Minute',0)
+        gap = (b-a)*60
+        if gap > 0:
+            diffs.append(gap)
+    print(min(diffs) if diffs else 86400)
     sys.exit()
 if isinstance(sci, dict):
     # Daily or weekly
