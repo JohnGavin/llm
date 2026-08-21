@@ -198,6 +198,134 @@ assert_contains "logs an explicit else-branch daemon-up line (llm#957 missing-el
   "Daemon listening on 7583" "$log5"
 assert_contains "logs a loud GAP warning instead of a silent no-op" "GAP:" "$log5"
 
+# ── Scenario 6: daemon up + real stdout log at the plist-resolved fallback
+#    location (~/.claude/logs/signal_cli_daemon_stdout.log, no explicit
+#    SIGNAL_DAEMON_PLIST) -> message ingested, exception logged distinctly
+#    and NOT parsed as a message, byte offset advances to end of file
+#    (llm#989: the historical bug was that this path resolved to
+#    /tmp/signal_cli_daemon_stdout.log and so NEVER found this file).
+
+echo ""
+echo "-- Test: daemon up + stdout log at the real fallback path, containing an exception envelope AND a message -> message ingested, exception logged distinctly, no GAP"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+FIXTURE_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+{
+  printf '%s\n' '{"exception":{"message":"getServerGuid(...) must not be null","type":"NullPointerException"},"envelope":{"source":null,"sourceNumber":null,"sourceUuid":null,"sourceName":null,"sourceDevice":null,"timestamp":1787335255053,"serverReceivedTimestamp":1787335253948,"serverDeliveredTimestamp":1787335253996},"account":"+447521254904"}'
+  printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+447521254904","message":"hello from daemon tail"}}}}'
+} > "$FIXTURE_LOG"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log6=$(read_log)
+
+assert_contains "logs an explicit else-branch daemon-up line" "Daemon listening on 7583" "$log6"
+assert_not_contains "does not log a GAP now that the real stdout log path resolves" "GAP:" "$log6"
+assert_contains "logs the exception envelope distinctly (EXCEPTION marker)" "EXCEPTION" "$log6"
+assert_contains "exception log line names the actual NPE type/message" "NullPointerException" "$log6"
+
+dump_dir6="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+saved6=$(find "$dump_dir6" -name "*-signal.md" 2>/dev/null)
+if [ -n "$saved6" ] && grep -ql "hello from daemon tail" $saved6 2>/dev/null; then
+  echo "  PASS: normal message content ingested from daemon stdout tail (path-resolution fix works)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: normal message content NOT ingested from daemon stdout tail"
+  FAIL=$((FAIL + 1))
+fi
+if [ -n "$saved6" ] && grep -ql "getServerGuid" $saved6 2>/dev/null; then
+  echo "  FAIL: exception envelope was written to a braindump file as if it were a message"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: exception envelope was NOT written to a braindump file"
+  PASS=$((PASS + 1))
+fi
+
+pos_file="$FAKE_HOME/.claude/logs/.signal_daemon_pos"
+expected_size=$(wc -c < "$FIXTURE_LOG" | tr -d ' ')
+actual_pos=$(cat "$pos_file" 2>/dev/null || echo "MISSING")
+if [ "$actual_pos" = "$expected_size" ]; then
+  echo "  PASS: byte offset advanced to end of fixture log ($actual_pos)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: byte offset mismatch (expected $expected_size, got $actual_pos)"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 7: log truncated since last run -> offset resets to 0 instead
+#    of reading garbage or silently skipping the new content (llm#989).
+
+echo ""
+echo "-- Test: daemon stdout log truncated since last run -> offset resets to 0, new content still ingested"
+printf '%s\n' '{"envelope":{"timestamp":1750000100000,"syncMessage":{"sentMessage":{"destinationNumber":"+447521254904","message":"post-truncation message"}}}}' > "$FIXTURE_LOG"
+echo 999999 > "$pos_file"   # bogus large offset simulating a pre-truncation position
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log7=$(read_log)
+assert_contains "logs a truncation-detected line" "truncated" "$log7"
+
+saved7=$(find "$dump_dir6" -name "*-signal.md" 2>/dev/null)
+if [ -n "$saved7" ] && grep -ql "post-truncation message" $saved7 2>/dev/null; then
+  echo "  PASS: message after truncation was re-read from offset 0, not skipped"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: message after truncation was NOT read — offset did not reset"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 8: SIGNAL_DAEMON_PLIST override with a custom StandardOutPath
+#    -> resolution actually reads the plist (not just the hardcoded
+#    fallback guess). This is the mutation-test target for the path
+#    resolution fix: reverting to a hardcoded path makes this fail.
+
+echo ""
+echo "-- Test: SIGNAL_DAEMON_PLIST points at a fixture plist with a custom StandardOutPath -> that path is used, not the default fallback"
+FIXTURE_CUSTOM_LOG="$FAKE_HOME/.claude/logs/custom_daemon_stdout.log"
+printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+447521254904","message":"hello from custom plist path"}}}}' > "$FIXTURE_CUSTOM_LOG"
+
+FIXTURE_PLIST="$TMP/fixture_daemon.plist"
+cat > "$FIXTURE_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>StandardOutPath</key>
+	<string>$FIXTURE_CUSTOM_LOG</string>
+</dict>
+</plist>
+PLIST
+
+# Remove the default-fallback file so a pass here can ONLY be explained by
+# the plist actually being read (if resolution silently fell back, the
+# fallback file wouldn't exist and this would hit the GAP branch instead).
+rm -f "$FIXTURE_LOG"
+rm -f "$pos_file"
+
+# read_log() returns the FULL cumulative log across every scenario sharing
+# $FAKE_HOME (deliberately not reset between scenarios 6-8, to model the
+# daemon staying up across runs) — scenario 6 legitimately logged a
+# FALLBACK: line, so asserting its absence against the cumulative log would
+# be checking the wrong thing. Scope this scenario's assertions to only the
+# lines appended by THIS run.
+log_lines_before8=$(wc -l < "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/null | tr -d ' ')
+log_lines_before8="${log_lines_before8:-0}"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_DAEMON_PLIST="$FIXTURE_PLIST" bash "$SCRIPT" >/dev/null 2>&1
+log8=$(tail -n "+$((log_lines_before8 + 1))" "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/null)
+assert_not_contains "no GAP when plist resolves to a real file" "GAP:" "$log8"
+assert_not_contains "no FALLBACK line when plist resolution succeeds" "FALLBACK:" "$log8"
+
+saved8=$(find "$dump_dir6" -name "*-signal.md" 2>/dev/null)
+if [ -n "$saved8" ] && grep -ql "hello from custom plist path" $saved8 2>/dev/null; then
+  echo "  PASS: message ingested from the plist-resolved custom path (not the default fallback)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: message NOT ingested — plist resolution did not pick up the custom StandardOutPath"
+  FAIL=$((FAIL + 1))
+fi
+
 rm -rf "$TMP"
 
 echo ""
