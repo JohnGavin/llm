@@ -48,38 +48,56 @@ mkdir -p "$DUMP_DIR"
 mkdir -p "$(dirname "$LOG")"
 touch "$PROCESSED_LOG"
 
-# Refuse to start if a signal-cli receive is already running (stale-lock
-# guard, llm#957). A prior run's `receive` that outlived its timeout wrapper
-# holds the signal-cli config lock, so a second `receive` here would simply
-# block behind it. We never kill the existing process automatically —
-# killing mid-`receive` can consume-and-discard messages server-side —
-# we only refuse and log loudly so the stale process is visible in the
-# health report (see launchd_health_report.R's stale-process section).
-if _signal_cli_already_running "signal-cli.*receive"; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') REFUSED: signal-cli receive already running — not starting a second receive (stale-process guard, llm#957)" >> "$LOG"
-  exit 0
-fi
+# Skip the direct-receive call entirely when the daemon already holds the
+# signal-cli config lock (llm#989). The pre-flight stale-process guard below
+# only catches an in-flight `receive`; it does NOT catch a healthy,
+# long-running daemon holding the lock permanently — which is exactly why a
+# direct `receive` here collided with the daemon roughly every 5.5 minutes
+# ("Config file is in use by another instance", rc=124 — see
+# signal_sync.log entries 2026-08-21 18:54-20:22, immediately preceding the
+# daemon coming up). This is a deliberate, expected skip, not a failure —
+# logged as SKIP (not RECEIVE FAILED/FATAL) so it doesn't read like an error
+# in the health report. The voice-attachment backlog scan below still runs
+# even when skipped: it only reads files already on disk under ATTACH_DIR
+# and never touches the signal-cli lock, so it stays safe and useful
+# regardless of daemon state.
+MESSAGES=""
+if _signal_daemon_listening 7583; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') SKIP: daemon listening on 7583 — direct receive skipped, daemon path (signal_braindump_handler.sh) handles message collection" >> "$LOG"
+else
+  # Refuse to start if a signal-cli receive is already running (stale-lock
+  # guard, llm#957). A prior run's `receive` that outlived its timeout wrapper
+  # holds the signal-cli config lock, so a second `receive` here would simply
+  # block behind it. We never kill the existing process automatically —
+  # killing mid-`receive` can consume-and-discard messages server-side —
+  # we only refuse and log loudly so the stale process is visible in the
+  # health report (see launchd_health_report.R's stale-process section).
+  if _signal_cli_already_running "signal-cli.*receive"; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') REFUSED: signal-cli receive already running — not starting a second receive (stale-process guard, llm#957)" >> "$LOG"
+    exit 0
+  fi
 
-# Receive messages. Two layers of timeout now guard this call (llm#957):
-#   -t 20   signal-cli's OWN internal timeout — lets it exit cleanly before
-#           the external wrapper ever needs to intervene.
-#   30/10   _bounded_kill's external timeout/kill-grace — SIGTERM at 30s,
-#           SIGKILL at 40s if the process is still alive (signal-cli is known
-#           to log receipt of SIGTERM and then not actually exit — see
-#           lib_signal_process_guard.sh for the full incident writeup).
-# llm#937: distinguish "receive failed" from "no new messages". These were
-# previously the same empty string, which is how a dead binary path masqueraded
-# as three months of silence. stderr is captured rather than discarded so the
-# reason survives into the log.
-_recv_err=$(mktemp)
-MESSAGES=$(_bounded_kill 30 10 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive -t 20 2>"$_recv_err") || _recv_rc=$?
-_recv_rc=${_recv_rc:-0}
-if [ "$_recv_rc" -ne 0 ]; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') RECEIVE FAILED rc=$_recv_rc: $(head -c 300 "$_recv_err" | tr '\n' ' ')" >> "$LOG"
+  # Receive messages. Two layers of timeout now guard this call (llm#957):
+  #   -t 20   signal-cli's OWN internal timeout — lets it exit cleanly before
+  #           the external wrapper ever needs to intervene.
+  #   30/10   _bounded_kill's external timeout/kill-grace — SIGTERM at 30s,
+  #           SIGKILL at 40s if the process is still alive (signal-cli is known
+  #           to log receipt of SIGTERM and then not actually exit — see
+  #           lib_signal_process_guard.sh for the full incident writeup).
+  # llm#937: distinguish "receive failed" from "no new messages". These were
+  # previously the same empty string, which is how a dead binary path masqueraded
+  # as three months of silence. stderr is captured rather than discarded so the
+  # reason survives into the log.
+  _recv_err=$(mktemp)
+  MESSAGES=$(_bounded_kill 30 10 "$SIGNAL_CLI" -a "$ACCOUNT" --output=json receive -t 20 2>"$_recv_err") || _recv_rc=$?
+  _recv_rc=${_recv_rc:-0}
+  if [ "$_recv_rc" -ne 0 ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') RECEIVE FAILED rc=$_recv_rc: $(head -c 300 "$_recv_err" | tr '\n' ' ')" >> "$LOG"
+    rm -f "$_recv_err"
+    exit "$_recv_rc"
+  fi
   rm -f "$_recv_err"
-  exit "$_recv_rc"
 fi
-rm -f "$_recv_err"
 
 if [ -z "$MESSAGES" ]; then
   # Even with no new messages, check for unprocessed voice attachments

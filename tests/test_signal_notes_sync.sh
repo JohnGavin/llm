@@ -71,13 +71,36 @@ exit 0
 EOF
 chmod +x "$FAKE_PGREP_MATCH"
 
+# LSOF_BIN fakes so daemon-up/daemon-down are deterministic regardless of
+# whether the real signal-cli daemon happens to be listening on this
+# machine (llm#989) — every scenario below is about the direct-receive
+# path, which only runs when the daemon is DOWN, so all of them force
+# LSOF_BIN to the "down" fake unless the scenario is specifically testing
+# the daemon-up skip.
+FAKE_LSOF_DOWN="$TMP/lsof_down.sh"
+cat > "$FAKE_LSOF_DOWN" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$FAKE_LSOF_DOWN"
+
+FAKE_LSOF_UP="$TMP/lsof_up.sh"
+cat > "$FAKE_LSOF_UP" <<'EOF'
+#!/usr/bin/env bash
+echo "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME"
+echo "java 1 me 10u IPv4 0x0 0t0 TCP localhost:7583 (LISTEN)"
+exit 0
+EOF
+chmod +x "$FAKE_LSOF_UP"
+
 FAKE_HOME="$TMP/home"
 
 run_sync() {
-  # $1 = PGREP_BIN, $2 = SIGNAL_CLI
+  # $1 = PGREP_BIN, $2 = SIGNAL_CLI, $3 = LSOF_BIN (default: daemon DOWN)
   rm -rf "$FAKE_HOME"
   mkdir -p "$FAKE_HOME"
-  HOME="$FAKE_HOME" PGREP_BIN="$1" SIGNAL_CLI="$2" bash "$SCRIPT" >/dev/null 2>&1
+  HOME="$FAKE_HOME" PGREP_BIN="$1" SIGNAL_CLI="$2" LSOF_BIN="${3:-$FAKE_LSOF_DOWN}" \
+    bash "$SCRIPT" >/dev/null 2>&1
   echo "$?"
 }
 
@@ -176,6 +199,39 @@ if [ -n "$saved_files" ] && grep -ql "hello from notes sync" $saved_files 2>/dev
   PASS=$((PASS + 1))
 else
   echo "  FAIL: message content was NOT found in any braindump file"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 5: daemon listening -> direct receive skipped entirely (llm#989)
+
+echo ""
+echo "-- Test: daemon listening on 7583 -> direct receive skipped (SKIP, not REFUSED/RECEIVE FAILED), signal-cli never invoked"
+FAKE_SIGNAL_CLI_SHOULD_NOT_RUN2="$TMP/should_not_run2.sh"
+cat > "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN2" <<EOF
+#!/usr/bin/env bash
+echo "I SHOULD NOT HAVE RUN (daemon was listening)" >> "$TMP/violation2.log"
+echo '{}'
+EOF
+chmod +x "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN2"
+rm -f "$TMP/violation2.log"
+
+rc5=$(run_sync "$FAKE_PGREP_NONE" "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN2" "$FAKE_LSOF_UP")
+log5=$(read_log)
+assert_contains "logs a SKIP line naming the daemon" "SKIP: daemon listening on 7583" "$log5"
+assert_not_contains "does not log REFUSED for the daemon-up case (that's a different guard)" "REFUSED" "$log5"
+assert_not_contains "does not log RECEIVE FAILED — the receive call never happened" "RECEIVE FAILED" "$log5"
+if [ -f "$TMP/violation2.log" ]; then
+  echo "  FAIL: signal-cli fake WAS invoked despite the daemon-listening skip"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: signal-cli fake was NOT invoked (daemon-listening skip worked)"
+  PASS=$((PASS + 1))
+fi
+if [ "$rc5" = "0" ]; then
+  echo "  PASS: script exits 0 on a deliberate daemon-up skip (rc=$rc5)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should exit 0 on a deliberate skip, got rc=$rc5"
   FAIL=$((FAIL + 1))
 fi
 
