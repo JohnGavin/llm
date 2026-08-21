@@ -41,7 +41,18 @@ CREATE TABLE IF NOT EXISTS housekeeping_runs (
   source_script   TEXT NOT NULL,             -- absolute path to script
   started_at      TIMESTAMPTZ NOT NULL,
   ended_at        TIMESTAMPTZ,
-  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial'
+  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial' | 'deferred'
+                                              -- 'deferred' (llm#947, llm#970): the job declined to
+                                              -- run because its precondition (network/DNS) was
+                                              -- absent within the bound -- NOT a failure. Written by
+                                              -- callers of .claude/scripts/wait_for_resolvable_host.sh
+                                              -- when it returns 2. Readers MUST NOT bucket 'deferred'
+                                              -- alongside 'failed' -- same rationale as the 'unknown'
+                                              -- state added to launchd_health_events.state above.
+                                              -- No CHECK constraint enforces this enum (verified via
+                                              -- duckdb_constraints() on the live table -- only
+                                              -- PRIMARY KEY + NOT NULL exist), so no migration was
+                                              -- required to add this value.
   rows_written    INTEGER DEFAULT 0,
   error_text      TEXT,
   detail_json     TEXT
