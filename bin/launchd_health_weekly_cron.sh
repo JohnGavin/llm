@@ -130,6 +130,65 @@ if [ ! -x "${NIX_SHELL_BIN}" ]; then
 fi
 log "using nix-shell: ${NIX_SHELL_BIN}"
 
+# ── Wait for DNS before touching the network (llm#947, llm#970) ──────────────
+# Scheduled jobs fire before this machine's network is reliably up. A job
+# that cannot resolve DNS within the bound has NOT failed -- its precondition
+# (network) was absent -- so this defers rather than attempting nix
+# evaluation / SMTP that would otherwise die with "Could not resolve host".
+# This is the job whose housekeeping_runs status went "8 partial / 0 ok"
+# since 14 Aug (llm#970) -- Step 2's SMTP send was failing every week because
+# nothing waited for DNS first. See .claude/scripts/wait_for_resolvable_host.sh.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/wait_for_resolvable_host.sh"
+if ! wait_for_resolvable_host "" log; then
+  log "DEFER: DNS not up within bound — skipping this run (not a failure)"
+  if command -v duckdb >/dev/null 2>&1 && [ -f "${UNIFIED_DB}" ]; then
+    _defer_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    _defer_ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    _defer_script_abs="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)/launchd_health_weekly_cron.sh"
+    duckdb "${UNIFIED_DB}" "
+      INSERT OR IGNORE INTO housekeeping_runs
+        (id, task, source_script, started_at, ended_at, status, rows_written)
+      VALUES (
+        '${_defer_id}',
+        'launchd_health',
+        '${_defer_script_abs}',
+        TIMESTAMPTZ '${_defer_ts}',
+        TIMESTAMPTZ '${_defer_ts}',
+        'deferred',
+        0
+      );
+    " 2>/dev/null || log "duckdb WARN: housekeeping_runs deferred-row INSERT failed (non-fatal)"
+  fi
+  exit 0
+fi
+
+# ── Resolve nix target: GC-rooted drv preferred (llm#596) ─────────────────────
+# Evaluating ${LLM_NIX} re-fetches the unhashed nixpkgs tarball once the
+# tarball TTL lapses; the launchd environment cannot resolve github.com, so
+# the job dies before doing any work. `nix-shell <drv>` skips evaluation
+# entirely — no network at runtime. The drv root is maintained by
+# .claude/scripts/nix_gcroot_refresh.sh (best-effort refresh below; a stale
+# root still runs the previously-pinned shell, which beats dying).
+GCROOT_DRV="${HOME}/.claude/nix-gcroots/llm-shell.drv"
+GCROOT_STAMP="${GCROOT_DRV}.stamp"
+# Freshness compares against the .stamp file, NOT the drv symlink — store
+# paths have mtime=1970 so the symlink always reads stale.
+if [ ! -e "${GCROOT_DRV}" ] || [ ! -e "${GCROOT_STAMP}" ] || [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+  "${REPO_ROOT}/.claude/scripts/nix_gcroot_refresh.sh" "${LLM_NIX}" >> "${LOG_FILE}" 2>&1 || true
+fi
+if [ -e "${GCROOT_DRV}" ]; then
+  NIX_TARGET="${GCROOT_DRV}"
+  if [ -e "${GCROOT_STAMP}" ] && [ "${LLM_NIX}" -nt "${GCROOT_STAMP}" ]; then
+    log "nix WARN: gcroot stale — running stale-but-cached shell (llm#596)"
+  else
+    log "nix: using GC-rooted drv (no network needed)"
+  fi
+else
+  NIX_TARGET="${LLM_NIX}"
+  log "nix WARN: no gcroot — falling back to nix-shell evaluation (needs network, llm#596)"
+fi
+
 # ── DuckDB availability check (llm#554) ───────────────────────────────────────
 # Gracefully skip all DB writes when duckdb binary or unified.duckdb is absent.
 # Same defensive pattern as config_digest_cron.sh (llm#552).
@@ -165,7 +224,7 @@ fi
 # ── Step 1: Generate markdown report ─────────────────────────────────────────
 
 log "Step 1: generating launchd health report → ${REPORT_OUT}"
-"${NIX_SHELL_BIN}" "${LLM_NIX}" --run "Rscript '${SCRIPTS_DIR}/launchd_health_report.R' --out '${REPORT_OUT}'" 2>>"${LOG_FILE}"
+"${NIX_SHELL_BIN}" "${NIX_TARGET}" --run "Rscript '${SCRIPTS_DIR}/launchd_health_report.R' --out '${REPORT_OUT}'" 2>>"${LOG_FILE}"
 STEP1_EXIT=$?
 if [ "${STEP1_EXIT}" -ne 0 ]; then
   log "WARNING: launchd_health_report.R exited ${STEP1_EXIT} — continuing"
@@ -332,7 +391,7 @@ fi
 
 export LAUNCHD_SCRIPTS_DIR="${SCRIPTS_DIR}"
 log "Step 2: sending launchd health email..."
-"${NIX_SHELL_BIN}" "${LLM_NIX}" --run "Rscript '${SCRIPTS_DIR}/send_launchd_health_email.R'" 2>>"${LOG_FILE}"
+"${NIX_SHELL_BIN}" "${NIX_TARGET}" --run "Rscript '${SCRIPTS_DIR}/send_launchd_health_email.R'" 2>>"${LOG_FILE}"
 STEP2_EXIT=$?
 
 # The job's exit code reflects Step 1b (the DB write — the useful work),
