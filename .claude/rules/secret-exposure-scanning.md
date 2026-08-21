@@ -1,5 +1,6 @@
 ---
 description: Aggressive, auto-triggered secret-exposure scanning via secret_exposure_scan.sh — never a rule/memory-only guard
+scoping-justification: enforced by secret_exposure_scan.sh (a deterministic script, not advisory LLM recall), so it does not need the mandatory/safety-critical "never scoped" contract — see llm#943 item 3
 paths:
   - "**/*.sh"
   - ".claude/scripts/**"
