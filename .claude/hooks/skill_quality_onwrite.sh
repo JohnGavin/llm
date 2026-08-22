@@ -5,6 +5,15 @@
 
 set -uo pipefail
 
+# --- grep portability (llm: ugrep-on-PATH) ---------------------------------
+# `grep` on this machine resolves to ugrep, which does NOT honour \b / \< / \>
+# word boundaries in -E mode. A pattern using them silently never matches — no
+# error, no exit code, just a check that always says "clean". Pin to the system
+# grep, which does support them. Override with GREP= if needed.
+GREP="${GREP:-/usr/bin/grep}"
+[ -x "$GREP" ] || GREP="grep"   # fail soft on non-macOS
+
+
 # Only process skill files
 FILE="${CLAUDE_TOOL_INPUT_FILE:-}"
 if [ -z "$FILE" ]; then
@@ -44,7 +53,7 @@ if [ -z "$DESC" ]; then
   ERRORS=$((ERRORS + 1))
 else
   # Count trigger verbs
-  TRIGGERS=$(echo "$DESC" | grep -oiE '\b(use when|create|build|implement|debug|configure|add|write|set up|deploy|fix|test|review)\b' | wc -l | tr -d ' ')
+  TRIGGERS=$(echo "$DESC" | "$GREP" -oiE '\b(use when|create|build|implement|debug|configure|add|write|set up|deploy|fix|test|review)\b' | wc -l | tr -d ' ')
   if [ "$TRIGGERS" -lt 2 ]; then
     echo "SKILL WARN [$SKILL_NAME]: Description has few trigger phrases ($TRIGGERS found, want >= 3)"
     WARNINGS=$((WARNINGS + 1))
