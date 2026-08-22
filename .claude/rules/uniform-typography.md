@@ -18,7 +18,7 @@ text, table cells, methodology blocks, callout boxes.
 
 ## Source
 
-JohnGavin/premortem session 30, 2026-06-02. User report (paraphrased):
+A private personal-finance project, session 30, 2026-06-02. User report (paraphrased):
 "make all text font size the same ... do this everywhere through the
 document ... no exceptions ... this was asked before so reopen all closed
 issues related to this request and start tracking your failures
@@ -117,5 +117,5 @@ After applying:
 - `narrative-evidence-block` — methodology block follows this rule
 - `narrative-colour-persistence` — same single-source-of-truth principle
   applied to colour
-- premortem `knowledge_base/lessons_learnt.md` L-3 — origin failure log
-- premortem issue 0021 — reference implementation
+- private-repo `knowledge_base/lessons_learnt.md` L-3 — origin failure log (same project as the Source above)
+- private-repo issue tracker (same project) — reference implementation

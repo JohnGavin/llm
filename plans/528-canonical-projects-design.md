@@ -92,7 +92,7 @@ the DB's plausibly-real values, and the user's mental model from #528:
 | `llm` | LLM meta-config | `JohnGavin/llm` | `r-package` | `true` | This repo; cross-project authority |
 | `llmtelemetry` | LLM Telemetry | `JohnGavin/llmtelemetry` | `r-package` | `true` | Live dashboard; production |
 | `historical` | Historical (finance) | `JohnGavin/historical` | `r-package` | `true` | T-lang project; under `~/docs_gh/proj/finance/data/historical/` |
-| `mycare` | MyCare (medical) | private/local | `analysis` | `true` | Local-only repo at `~/docs_/pers/NHS_health/data/antigravity/mycare/` |
+| `mycare` | MyCare | private/local | `analysis` | `true` | Local-only repo; not on GitHub (private-repo boundary — see `public-private-repo-boundary` rule) |
 | `premortem` | Premortem (planning) | `JohnGavin/premortem` ? | `analysis` | `true` | Local at `~/docs_gh/proj/pers/premortem/`, no remote origin set — verify in sub-issue 1 |
 | `randomwalk` | Random Walk | `JohnGavin/randomwalk` | `analysis` | `true` | Stats simulation; under `~/docs_gh/proj/stats/simulations/randomwalk/` |
 | `urban_planning` | Urban Planning | `JohnGavin/urban_planning` | `quarto-website` | `true` | Under `~/docs_gh/proj/data/urban_planning/` |
