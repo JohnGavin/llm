@@ -9,7 +9,7 @@ on demand.
 
 ## Source — full incident narrative
 
-JohnGavin/premortem session 30, 2026-06-02. Lessons learnt L-4 (stranded-
+A private personal-finance project, session 30, 2026-06-02. Lessons learnt L-4 (stranded-
 branch harvesting): a previous session made substantive UI improvements on
 `feat/cc-20260531-185103` (donut → DT table, bar → Cleveland dot plot, 13
 inline `tt()` popups with embedded `<a href>` to GOV.UK + source code,
@@ -51,7 +51,7 @@ branch-harvest: 2 unmerged feat branches flagged
     f0372c8  WIP: agent V UI overhaul (session-limit-interrupted)
     7db8be3  WIP: agent M server-side mermaid (session-limit-interrupted)
   feat/cc-20260530-201802 (3d stale) [SURFACE_TOUCHED]
-    fe5c1d4  fix(model): v4.6 — charity-metric bug fix + SIPP-growth sensitivity
+    fe5c1d4  fix(model): v4.6 — output-metric bug fix + scenario-sensitivity tweak
 → Triage: harvest | archive | discard.
   See branch-harvest-on-fork rule. Log: ~/.claude/logs/branch_harvest.log
 ```
@@ -67,7 +67,7 @@ git notes --ref=harvest add -m "archived 2026-06-02 — improvements re-implemen
 After landing this rule:
 1. `~/.claude/scripts/branch_harvest_audit.sh --selftest` → `N/N PASS`
 2. Run the audit on a known-clean repo → zero output
-3. Run the audit on the premortem worktree → SHOULD flag
+3. Run the audit on the private-repo worktree from the incident above → SHOULD flag
    `feat/cc-20260531-185103` (the L-4 reference case)
 4. `git notes --ref=harvest add -m "archived ..."` on a flagged branch's
    tip → next audit run skips it

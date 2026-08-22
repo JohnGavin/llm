@@ -10,7 +10,7 @@
 #   <meta name="color-scheme" content="dark">   (head)
 #   :root { color-scheme: dark; }               (CSS, redundant belt)
 #
-# Origin: premortem issue 0027 (5 merged iterations on the wrong layer),
+# Origin: issue 0027 in a private project's tracker (5 merged iterations on the wrong layer),
 # llm#584. See `accessibility` rule Part 2 Clause 0 (this script checks
 # only the page-level declaration; for the separate mermaid <foreignObject>
 # dark-render bug see `mermaid-dashboard-pattern`'s "Dark-mode rendering
