@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Full-history PII audit -- Layer 5 of private-data-scanning.md.       -->
+    <!-- Weekly (not daily): scans every blob changed across ALL reachable    -->
+    <!-- history via `git cat-file` per changed path per commit, which is     -->
+    <!-- materially more expensive than the daily secret_exposure_scan.sh's   -->
+    <!-- dotfile+source-tree sweep. Sunday 03:15 is deliberately off the      -->
+    <!-- other scheduled slots (00:04 worktree-gc, 02:30 self-review-stage1,  -->
+    <!-- 06:30 overnight-email, 07:00 kb-digest, 09:15 roborev-autoclose) so  -->
+    <!-- this does not contend with them for disk/CPU on the same wake.       -->
+    <!--                                                                       -->
+    <!-- NOT a named-launcher wrapper (bin/launchd-recorders/*) -- that       -->
+    <!-- directory was outside this dispatch's write scope (.claude/scripts,  -->
+    <!-- .claude/hooks, .github/workflows, tests, .claude/rules only). Login  -->
+    <!-- Items will show "bash" rather than a descriptive name until a        -->
+    <!-- follow-up adds bin/launchd-recorders/private-data-history-audit      -->
+    <!-- mirroring worktree-gc's wrapper -- functionally identical either     -->
+    <!-- way, this is a display-name nicety only.                            -->
+    <!--                                                                       -->
+    <!-- THIS PLIST IS DELIVERED, NOT INSTALLED. Install / reload:            -->
+    <!--   launchctl bootout gui/$(id -u)/com.claude.private-data-history-audit 2>/dev/null -->
+    <!--   cp .claude/launchd/com.claude.private-data-history-audit.plist     -->
+    <!--        ~/Library/LaunchAgents/                                       -->
+    <!--   launchctl bootstrap gui/$(id -u)                                   -->
+    <!--        ~/Library/LaunchAgents/com.claude.private-data-history-audit.plist -->
+    <!--                                                                       -->
+    <!-- Tracks: 2026-08-22 PII incident. See private-data-scanning.md.       -->
+
+    <key>Label</key>
+    <string>com.claude.private-data-history-audit</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/private_data_history_audit.sh</string>
+    </array>
+
+    <!-- launchd's default PATH omits Homebrew/duckdb -- same fix as         -->
+    <!-- worktree-gc's plist. HOME is set so gh reads ~/.config/gh for auth  -->
+    <!-- (public/private repo detection) and private_data_scan.sh reads      -->
+    <!-- ~/.config/private_values.env (the deny-list).                       -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Weekly, Sunday 03:15 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/private_data_history_audit.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/private_data_history_audit.err</string>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Do NOT run on load -- only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
