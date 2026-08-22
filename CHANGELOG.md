@@ -2372,7 +2372,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 ### Completed
 
 - **#156 closed** — estate planning Q-list compiled (`knowledge/wiki/estate-planning-questions.md`, 17.7 KB, 10 sections, 65 questions, 4 AI-inferred markers). YouTube transcript captured via `yt-dlp` from Wade Pfau / Alex Magia "Retire with Style" podcast Ch11. Local-only.
-- **#157 closed** — MyExpatSIPP wiki page (`knowledge/wiki/sipp-offshore.md`, 3 raw docs / 9.6 KB total, 5 independent sources cited, 10 AI-inferred claims tagged, bidirectional cross-link with #156). FCA register lookup hit CSS error — flagged for manual verification.
+- **#157 closed** — offshore/expat SIPP provider wiki page (`knowledge/wiki/sipp-offshore.md`, 3 raw docs / 9.6 KB total, 5 independent sources cited, 10 AI-inferred claims tagged, bidirectional cross-link with #156). FCA register lookup hit CSS error — flagged for manual verification.
 - **#158 closed** — Roborev evaluation. Step 1 quantitative: 1,694 reviews, 24.4% approval, **15.5% addressed rate** (`knowledge/wiki/roborev-evaluation.md`). Step 2 stratified 30-finding sample (`knowledge/wiki/roborev-eval-sample.md`). User classification: 30/30 = TP-actioned. **Decision: KEEP roborev.** Signal is excellent; bottleneck is the addressed-rate.
 - **#159 filed** — Close config gaps vs MachineLearningMastery agentic-patterns + LLM-observability articles
 - **#160 filed** — Roborev never uses Critical or Info severity (prompt investigation + add Critical tier)
@@ -2420,7 +2420,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 - **#154 closed** — `b85bb59` (worktree-isolated fixer agent). New target `vig_kb_stats` in `R/tar_plans/plan_kb_stats.R`; pre-computed RDS (267 B, aggregates only) at `inst/extdata/vignettes/vig_kb_stats.rds`. knowledge-evolution.qmd now renders in CI with real numbers despite gitignored `knowledge/`.
 - **#153 attempted-closed-then-reopened** — `b9283ab` (Option B: Homebrew bash shebang) merged ff-only; verification showed state-T persisted. Three further fixes attempted same session: plist `ProcessType=Background` + `AbandonProcessGroup=true`, `trap '' SIGTSTP SIGTTIN SIGTTOU`, external wrapper watchdog. All failed. Issue reopened with full findings.
 - **#156 filed** — estate / legacy / incapacity planning Q-list (10 sections from YouTube takeaways, work tracked for fresh session)
-- **#157 filed** — MyExpatSIPP knowledge-base addition
+- **#157 filed** — offshore/expat SIPP provider knowledge-base addition
 
 ### Failed Approaches
 
@@ -2911,7 +2911,7 @@ None this session.
   - `JohnGavin/irishbuoys` — `527c7e9` pushed; file moved INTO the package subfolder at `proj/data/weather/irish_buoy_network/irishbuoys/RECOVERY.md` (the parent path is not a git repo; the package is); paths within the file are relative to the package root.
   - `JohnGavin/llmtelemetry` — `3f3a901` rebased over 4 origin auto-refresh commits and pushed; bundled `.claude/CLAUDE.md` (declares `Environment: prod`) + `RECOVERY.md` (predictions/duckdb/dashboard JSON) + the pre-existing `model_daily.json` refresh per user direction.
   - `JohnGavin/JohnGavin.github.io` — `e05f9fc` (`.claude/CLAUDE.md` with `Environment: prod`, deploy notes, dark-mode + `.nojekyll` reminders); pushed by user from a non-nix terminal (nix shell has no `ssh`).
-  - `mycare` — `RECOVERY.md` written at `/Users/johngavin/docs_/pers/NHS_health/data/antigravity/mycare/RECOVERY.md`. NOT a git repo (intentional — PHI). File documents PHI-specific encryption-at-rest requirements and a no-cloud-without-DUA constraint.
+  - `mycare` — `RECOVERY.md` written at its local project root (path withheld — PHI project, see `public-private-repo-boundary` rule). NOT a git repo (intentional — PHI). File documents PHI-specific encryption-at-rest requirements and a no-cloud-without-DUA constraint.
 
 ### Failed approaches / sharp edges
 
@@ -3036,7 +3036,7 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   - Fixed early-exit bug in `r_code_check.sh`: ast-grep empty output no longer `exit 0`, so jarl always runs
   - Added jarl integration block to `r_code_check.sh` with graceful skip if jarl not in PATH
   - Updated `/check` command (step 4, bash block, output format) to reference `r_code_check.sh` and show ast-grep + jarl results
-  - Braindump #32 (statin note): processed as informational for mycare project
+  - Braindump #32 (health note): processed as informational for mycare project
 
 ### Failed approaches
 - **Adding `jarl` to `default.nix` directly**: bypassed the rix workflow (`default.R` → `rix::rix()` → `default.nix`). Build failed because nixpkgs only ships jarl 0.3.0 and its `insta-1.43.1` snapshot tests fail (5 of 109): `test_assignment_wrong_value_from_toml`, `test_default_exclude_wrong_values`, `test_exclude_wrong_values`, `test_malformed_toml_syntax`, `test_unknown_toml_field`. Even if it built, 0.3.0 predates the rule set `r_code_check.sh` relies on. Manual edit also violated `feedback_never-edit-default-nix`, `nix-agent-shell-protocol`, `auto-delegation` (should have used `nix-env` agent), and `verification-before-completion` rules. **Resolution:** keep manual install at `/usr/local/bin/jarl` until nixpkgs catches up; tracked in #99.
