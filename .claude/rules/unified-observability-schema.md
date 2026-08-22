@@ -107,31 +107,9 @@ than presenting an estimate as observed data. Schema:
 
 ## Worked Example
 
-```bash
-# hook_events writer (pure bash, ~15 lines)
-_db="${HOME}/.claude/logs/unified.duckdb"
-_session="${CLAUDE_SESSION_ID:-unknown}"
-_fired="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-_hook="compound_guard.sh"
-_type="compound_command_blocked"
-_preview="${1:-}" # first 120 chars of the blocked command
-
-duckdb "$_db" <<SQL
-INSERT OR IGNORE INTO hook_events
-  (id, session_id, hook_name, event_type, fired_at, duration_ms, output_preview)
-VALUES (
-  gen_random_uuid()::VARCHAR,
-  '${_session}',
-  '${_hook}',
-  '${_type}',
-  TIMESTAMPTZ '${_fired}',
-  NULL,
-  '${_preview}'
-);
-SQL
-```
-
-The same pattern applies in R using `DBI::dbExecute()` against the same path.
+A ~15-line pure-bash `hook_events` writer (INSERT OR IGNORE, TIMESTAMPTZ,
+`gen_random_uuid()`) is in the companion doc. The same pattern applies in R
+using `DBI::dbExecute()` against the same path.
 
 ## Forbidden Patterns
 
@@ -146,6 +124,8 @@ The same pattern applies in R using `DBI::dbExecute()` against the same path.
 
 ## Related
 
+- [`_companions/unified-observability-schema-details.md`](_companions/unified-observability-schema-details.md)
+  — the worked `hook_events` writer example, split out of this rule
 - `external-code-zero-trust` — no custom log writers from third-party SaaS
 - `permission-discipline` — unified.duckdb is a user-level file; no project
   should have write access via a credential other than the shell user

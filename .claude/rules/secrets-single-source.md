@@ -50,12 +50,10 @@ untouched either way.
 
 ### The incident that motivates this
 
-`secrets.env` held `GMAIL_APP_PASSWORD` as a 21-character value — quotes
-and spaces baked in by a bad prior migration. BWS already held the
-correct 16-character app password. Six cron email jobs depend on the BWS
-value. Had `secrets_to_bws.sh` "helpfully" pushed the `secrets.env` value
-into BWS to keep them in sync, it would have overwritten the correct
-credential with a corrupted one and broken every wrapped job. The
+A prior bad migration corrupted `secrets.env`'s copy of a credential while
+BWS still held the correct value; had the migration script pushed the
+corrupted local copy into BWS to "sync" them, it would have broken every
+consumer of the real credential. Full narrative in the companion. The
 never-overwrite rule exists so this class of accident is structurally
 impossible, not merely discouraged.
 
@@ -99,12 +97,10 @@ installing atomically.
 every known consumer of the secret they just rotated, and never trust
 `launchctl kickstart`'s exit code as proof the restart happened. A
 `KeepAlive` launchd job can return success from `kickstart -k` without
-actually cycling — this is exactly what happened on 2026-08-13: the
-`GEMINI_API_KEY` rotation restarted `com.roborev.auto-refine`, reported
-"restarted", and exited 0, while the separate self-daemonized
-`roborev daemon run` process — not a launchd job, invisible to
-`launchctl kickstart` — kept running with the stale key for hours
-(llm#936).
+actually cycling — see the companion for the 2026-08-13 incident (llm#936)
+that proved this the hard way: a rotation reported "restarted" and exited 0
+while a self-daemonized consumer, invisible to `launchctl kickstart`, kept
+running with the stale key for hours.
 
 Both scripts now capture each consumer's PID and process start-time
 **before** issuing the restart and **again after**, and report a consumer
@@ -135,14 +131,11 @@ launchd job, restarted via `<label> daemon restart`, verified via
 entry.** The `daemon:` kind exists to reach a process no `launchctl
 kickstart` can touch — it makes a rotation correct, but it leaves the
 underlying process unsupervised, unbounded in age, and absent from every
-health check. `CONSUMERS_GEMINI_API_KEY` listed `daemon:roborev` for exactly
-this reason until `com.roborev.daemon` was installed and verified on
-2026-08-14 (llm#956); both consumers are now `launchd:`, and the launcher
-re-sources this cache on every start launchd performs, so a rotation reaches
-the daemon by construction rather than by anyone remembering to list a
-second consumer kind. See `long-running-process-supervision` for the
-migration, including the measured finding that a roborev *client* auto-spawns
-a daemon when none is reachable — so the spawning job must be stopped first.
+health check. See the companion for the `CONSUMERS_GEMINI_API_KEY` migration
+off this kind, and `long-running-process-supervision` for the general
+migration pattern (including the finding that a roborev *client*
+auto-spawns a daemon when none is reachable — so the spawning job must be
+stopped first).
 
 A secret with **no** map entry and no
 `--restart` flag prints an explicit WARNING rather than silently doing
@@ -158,15 +151,17 @@ the fallback `~/.claude/env/*.env` files. Keep that list in sync with
 `GMAIL_APP_PASSWORD`.
 
 The two rotation scripts previously carried byte-identical copies of this
-map and its functions — the same drift risk one layer up from the
-2026-08-11..14 GMAIL_APP_PASSWORD incident that motivated this file's
-architecture (a name in two places, silently disagreeing). `rotate_secret.sh
---selftest` now asserts that every `CONSUMERS_*` name is defined exactly
-once under `.claude/scripts/**`, so a reintroduced duplicate fails the
-selftest rather than drifting invisibly.
+map and its functions — see the companion for why that drift risk was
+closed by moving both into one shared file. `rotate_secret.sh --selftest`
+now asserts every `CONSUMERS_*` name is defined exactly once under
+`.claude/scripts/**`, so a reintroduced duplicate fails the selftest rather
+than drifting invisibly.
 
 ## Related
 
+- [`_companions/secrets-single-source-details.md`](_companions/secrets-single-source-details.md)
+  — the GMAIL_APP_PASSWORD and GEMINI_API_KEY restart-verification incident
+  narratives, and the consumer-map deduplication history, split out of this rule
 - `.claude/launchd/SECRETS_MIGRATION.md` — the `with-secrets` per-job
   wrapper design that replaced global `launchctl setenv` (#791, #615);
   this rule's cache-file trust model builds on the same `chmod 600` +

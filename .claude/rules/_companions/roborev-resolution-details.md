@@ -35,6 +35,13 @@ This means the agent couldn't figure out what to change. The review stays open. 
 - `check-agents` uses PATH lookup, but actual commands use `*_cmd` config
 - No `gemini_cmd` config key exists yet
 - `core.hooksPath` shared across repos (e.g., `llm/git-hooks/`) — `roborev install-hook` writes to the shared path, so one install covers many repos but a misconfigured one breaks many at once
+- **`.roborev.toml` is gitignored in some projects** (e.g., micromort) but tracked in others (coMMpass, llm). Edits in gitignored projects are LOCAL-only and silently disappear if `roborev init` regenerates. Check `git check-ignore .roborev.toml` before editing; if ignored, add a top-of-file comment recording the manual value.
+- **`"parse error: no valid stream-json"` is a FABRICATED cause, not a real diagnosis (llm#954).** roborev is a compiled third-party binary we cannot patch. When an agent process exits non-zero with EMPTY stdout, roborev cannot parse the stream-json it expected and reports this message — describing its *own* parsing step, not the agent's actual failure. The real cause (missing/expired API key, network failure, quota exhaustion, anything on the agent's stderr) is discarded and never logged. Diagnosis: **run the agent's exact command manually with the same flags and read stderr** — that single step finds the real cause; the roborev log line cannot. Detection: the overnight email (`send_overnight_self_review_email.R`) reports, per agent over 24h/7d, the count of `review_jobs` rows matching `status='failed' AND error LIKE '%no valid stream-json%'` and the max **consecutive** run for that agent (query: gaps-and-islands over `review_jobs` ordered by `enqueued_at`, joined via DuckDB's sqlite extension against `~/.roborev/reviews.db`) — an unbroken streak ≥ 3 means that agent is wholly broken, not intermittently flaky. Origin: a gemini episode ran 22+ consecutive failures (2026-08-06 onward) before being found by manual process archaeology, not by any roborev log line.
+
+## Requeue Dropped Quota Failures — scheduling and measured results
+
+See [`roborev-resolution-incidents.md`](roborev-resolution-incidents.md) for
+the 2026-08-14 measured rollout numbers and the full scheduling rationale.
 
 ## Backlog Burn-Down (One-Time per Project)
 
