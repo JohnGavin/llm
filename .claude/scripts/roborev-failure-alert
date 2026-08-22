@@ -25,17 +25,40 @@ DAEMON_AGE_STATE="$HOME/.roborev/alert_state_daemon_age"
 DAEMON_MAX_AGE_DAYS="${ROBOREV_DAEMON_MAX_AGE_DAYS:-7}"
 
 SIGNAL_URL="http://localhost:7583/api/v1/rpc"
-SIGNAL_ACCOUNT="+15550001111"           # signal-cli daemon account (from its plist); note-to-self
+
+# Overridable for tests (never touch the real machine when set):
+ROBOREV_BIN="${ROBOREV_BIN:-/usr/local/bin/roborev}"
+OSASCRIPT_BIN="${OSASCRIPT_BIN:-osascript}"
 
 log()  { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+
+# Signal account number — read at runtime, NEVER hardcoded (llm#946). A git
+# history rewrite replaced the real value with a fictional placeholder
+# across all history after it was exposed in this public repo for four
+# months. Accept an already-exported SIGNAL_ACCOUNT (e.g. set by the
+# `with-secrets` wrapper) or source SECRETS_ENV_FILE directly when invoked
+# without it — this script runs via launchd, which does not source shell rc
+# files. Same override convention as render_signal_launchd_plists.sh.
+SECRETS_ENV_FILE="${SECRETS_ENV_FILE:-$HOME/.config/secrets.env}"
+if [ -z "${SIGNAL_ACCOUNT:-}" ] && [ -r "$SECRETS_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SECRETS_ENV_FILE"
+  set +a
+fi
+if [ -z "${SIGNAL_ACCOUNT:-}" ]; then
+  log "FATAL: SIGNAL_ACCOUNT is unset/empty -- refusing to run against an unknown Signal account. Set it in $SECRETS_ENV_FILE (llm#946)."
+  exit 1
+fi
+
 signal(){ curl -s -m 5 -X POST "$SIGNAL_URL" -H "Content-Type: application/json" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"send\",\"params\":{\"account\":\"$SIGNAL_ACCOUNT\",\"recipient\":[\"$SIGNAL_ACCOUNT\"],\"message\":\"$1\"},\"id\":1}" >/dev/null 2>&1 || true; }
 # note(): local macOS notification (at-machine) + Signal note-to-self (away-from-machine).
-note() { command -v osascript >/dev/null 2>&1 && \
-           osascript -e "display notification \"$2\" with title \"$1\" sound name \"$3\"" >/dev/null 2>&1 || true
+note() { command -v "$OSASCRIPT_BIN" >/dev/null 2>&1 && \
+           "$OSASCRIPT_BIN" -e "display notification \"$2\" with title \"$1\" sound name \"$3\"" >/dev/null 2>&1 || true
          signal "$1: $2"; }
 
-status="$(/usr/local/bin/roborev status 2>/dev/null)"
+status="$("$ROBOREV_BIN" status 2>/dev/null)"
 read -r pstate pfail pcomp <<EOF
 $(cat "$STATE" 2>/dev/null || echo "ok 0 0")
 EOF
