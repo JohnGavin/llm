@@ -16,8 +16,8 @@
 # user-initiated action.
 #
 # Usage:
-#   private_values_sync.sh --dry-run [--keys KEY1,KEY2,...]
-#   private_values_sync.sh --apply   [--keys KEY1,KEY2,...]
+#   private_values_sync.sh --dry-run [--keys KEY1,KEY2,...] [--include-project-names]
+#   private_values_sync.sh --apply   [--keys KEY1,KEY2,...] [--include-project-names]
 #   private_values_sync.sh --selftest
 #
 # Default --keys: SIGNAL_ACCOUNT (the value JohnGavin/llm#946 flagged as
@@ -31,6 +31,34 @@
 # Existing manually-added entries (no "# synced from secrets.env" marker)
 # are PRESERVED across re-runs -- this script only ever adds/updates its
 # own synced block, never touches lines it did not write.
+#
+# ─── --include-project-names (private-repo-name seeding, OFF by default) ──
+# `.claude/data/canonical_projects.csv` carries a `visibility` column
+# (`public`/`private`). private_data_scan.sh's deny-list is an EXACT-MATCH,
+# UNCONDITIONAL BLOCK on any public repo (see its main(): any finding + a
+# public repo's `gh repo view` visibility = exit 1, no severity carve-out).
+# Seeding every `visibility=private` project slug (e.g. `premortem`,
+# `mycare`) into that same deny-list would therefore block EVERY future
+# commit touching any of the dozens of files across this repo that
+# legitimately name those projects as engineering-pattern examples (nix
+# overlays, permission tiers, CHANGELOG session logs, RECOVERY.md rows) --
+# see the audit that shipped alongside this flag (JohnGavin/llm audit,
+# 2026-08) for the file count. Enabling this by default would have turned a
+# routine CHANGELOG append into a blocked push.
+#
+# So project-name seeding is opt-in and OFF by default: this script's
+# normal `--apply` run (no flag) behaves EXACTLY as before -- only the
+# named --keys secrets are synced. Passing `--include-project-names`
+# additionally reads canonical_projects.csv and syncs every
+# `visibility=private` slug as its own KEY=value pair (KEY is a synthetic
+# `PROJECT_<slug>` name; VALUE is the bare slug -- the literal string
+# private_data_scan.sh's scan_denylist() exact-matches against). This is
+# the documented switch: run once WITHOUT the flag (current, safe,
+# ships today); flip to WITH the flag only after a project-by-project
+# audit confirms every remaining plain-text mention of a private slug in
+# this repo is an intentional, accepted disclosure (see
+# public-private-repo-boundary.md) -- otherwise the next commit touching
+# any of those files is blocked.
 
 set -uo pipefail
 
@@ -38,17 +66,24 @@ SECRETS_ENV_FILE="${SECRETS_ENV_FILE:-$HOME/.config/secrets.env}"
 PRIVATE_VALUES_FILE="${PRIVATE_VALUES_FILE:-$HOME/.config/private_values.env}"
 SYNC_MARKER="# synced from secrets.env by private_values_sync.sh"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECTS_CSV_FILE="${PROJECTS_CSV_FILE:-$REPO_ROOT/.claude/data/canonical_projects.csv}"
+SYNC_MARKER_PROJECTS="# synced from canonical_projects.csv by private_values_sync.sh"
+
 MODE=""
 KEYS="SIGNAL_ACCOUNT"
 SELFTEST=0
+INCLUDE_PROJECT_NAMES=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) MODE="dry-run"; shift ;;
         --apply) MODE="apply"; shift ;;
         --keys) shift; KEYS="${1:-$KEYS}"; shift || true ;;
+        --include-project-names) INCLUDE_PROJECT_NAMES=1; shift ;;
         --selftest) SELFTEST=1; shift ;;
-        -h|--help) echo "Usage: private_values_sync.sh --dry-run|--apply [--keys K1,K2] | --selftest"; exit 0 ;;
+        -h|--help) echo "Usage: private_values_sync.sh --dry-run|--apply [--keys K1,K2] [--include-project-names] | --selftest"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -118,6 +153,67 @@ sync_one() {
     echo "  Wrote $private_file (mode 600)."
 }
 
+# sync_project_names PROJECTS_CSV PRIVATE_FILE MODE -> prints what changed
+# Reads canonical_projects.csv (slug is column 1, visibility is the LAST
+# column -- see .claude/data/canonical_projects.csv header) and syncs every
+# `visibility=private` slug as its own KEY=value deny-list entry, using a
+# SEPARATE marker from sync_one() so the two synced blocks coexist without
+# clobbering each other or any manually-added lines. OFF by default -- see
+# the --include-project-names header comment for why.
+sync_project_names() {
+    local projects_csv="$1" private_file="$2" mode="$3"
+    if [ ! -r "$projects_csv" ]; then
+        echo "  $projects_csv not readable -- nothing to sync." >&2
+        return 1
+    fi
+
+    local slug visibility rest
+    local -a lines=()
+    local header_skipped=0
+    while IFS=',' read -r slug rest; do
+        if [ "$header_skipped" -eq 0 ]; then
+            header_skipped=1
+            continue
+        fi
+        [ -n "$slug" ] || continue
+        # visibility is the LAST comma-separated field on the line.
+        visibility="${rest##*,}"
+        if [ "$visibility" != "private" ]; then
+            continue
+        fi
+        echo "  $slug: visibility=private -- would sync"
+        lines+=("${SYNC_MARKER_PROJECTS} (${slug}, $(date -u +%Y-%m-%dT%H:%M:%SZ))")
+        lines+=("PROJECT_${slug}=${slug}")
+    done < "$projects_csv"
+
+    if [ "${#lines[@]}" -eq 0 ]; then
+        echo "  Nothing to sync (no visibility=private rows found)."
+        return 0
+    fi
+
+    if [ "$mode" = "dry-run" ]; then
+        echo "  [dry-run] would write ${#lines[@]} line(s) into $private_file"
+        return 0
+    fi
+
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/private_values_sync_proj.XXXXXX")"
+    if [ -f "$private_file" ]; then
+        awk -v marker="$SYNC_MARKER_PROJECTS" '
+            BEGIN { skip = 0 }
+            index($0, marker) == 1 { skip = 1; next }
+            skip > 0 { skip--; next }
+            { print }
+        ' "$private_file" > "$tmp"
+    fi
+    {
+        cat "$tmp" 2>/dev/null
+        printf '%s\n' "${lines[@]}"
+    } > "$private_file"
+    chmod 600 "$private_file"
+    rm -f "$tmp"
+    echo "  Wrote $private_file (mode 600) -- ${#lines[@]} project-name line(s)."
+}
+
 if [ "$SELFTEST" -eq 1 ]; then
     pass=0; total=0
     _check() { total=$((total + 1)); if [ "$1" = "0" ]; then pass=$((pass + 1)); echo "PASS  $2"; else echo "FAIL  $2"; fi; }
@@ -167,6 +263,72 @@ if [ "$SELFTEST" -eq 1 ]; then
     set -e
     [ "$rc" -ne 0 ] && _check 0 "missing secrets.env returns non-zero" || _check 1 "missing secrets.env should return non-zero"
 
+    # ── sync_project_names (--include-project-names) ──────────────────────
+    proj_csv="$tmp/canonical_projects.csv"
+    printf 'slug,display_name,repo,kind,is_active,notes,visibility\n' > "$proj_csv"
+    printf 'llm,LLM,JohnGavin/llm,meta-config,true,this repo,public\n' >> "$proj_csv"
+    printf 'privateproj,Private Proj,,analysis,true,test fixture,private\n' >> "$proj_csv"
+    proj_priv="$tmp/private_values_proj.env"
+
+    # 6: dry-run writes nothing for project names either
+    out="$(sync_project_names "$proj_csv" "$proj_priv" "dry-run" 2>&1)"
+    if [ -f "$proj_priv" ]; then _check 1 "project-names dry-run must not create the file"; else _check 0 "project-names dry-run creates no file"; fi
+    case "$out" in *"privateproj"*"would sync"*) _check 0 "dry-run reports the private slug would sync" ;; *) _check 1 "dry-run did not mention the private slug"; esac
+
+    # 7: apply writes only the private-visibility slug, never the public one
+    sync_project_names "$proj_csv" "$proj_priv" "apply" >/dev/null 2>&1
+    if grep -qF "PROJECT_privateproj=privateproj" "$proj_priv" 2>/dev/null; then
+        _check 0 "apply writes the private-visibility slug"
+    else
+        _check 1 "apply did not write the private-visibility slug"
+    fi
+    if grep -qF "PROJECT_llm=llm" "$proj_priv" 2>/dev/null; then
+        _check 1 "REGRESSION: apply wrote a public-visibility slug into the deny-list"
+    else
+        _check 0 "apply never writes a public-visibility slug"
+    fi
+
+    # 8: re-sync does not duplicate, and coexists with a secret-derived block
+    sync_one "$tmp/secrets.env" "$proj_priv" "SIGNAL_ACCOUNT" "apply" >/dev/null 2>&1
+    sync_project_names "$proj_csv" "$proj_priv" "apply" >/dev/null 2>&1
+    if [ "$(grep -cF 'PROJECT_privateproj=' "$proj_priv")" -eq 1 ]; then
+        _check 0 "re-sync does not duplicate the project-name key"
+    else
+        _check 1 "re-sync duplicated the project-name key"
+    fi
+    if grep -qF "SIGNAL_ACCOUNT=+19998887766" "$proj_priv" 2>/dev/null; then
+        _check 0 "project-name sync coexists with a pre-existing secrets-derived block"
+    else
+        _check 1 "project-name sync clobbered the secrets-derived block"
+    fi
+
+    # 9: --include-project-names is OFF by default -- a full end-to-end
+    # `--apply` run WITHOUT the flag must not write any PROJECT_* line, even
+    # though canonical_projects.csv (via PROJECTS_CSV_FILE override) has a
+    # private-visibility row available to sync. This is the enforcement of
+    # the ship-warn-only decision, not just documentation of it.
+    default_priv="$tmp/private_values_default.env"
+    PRIVATE_VALUES_FILE="$default_priv" SECRETS_ENV_FILE="$tmp/secrets.env" \
+        PROJECTS_CSV_FILE="$proj_csv" bash "$0" --apply --keys SIGNAL_ACCOUNT >/dev/null 2>&1
+    if [ -f "$default_priv" ] && grep -qF "PROJECT_privateproj=" "$default_priv" 2>/dev/null; then
+        _check 1 "REGRESSION: project names were synced WITHOUT --include-project-names being passed"
+    else
+        _check 0 "a default --apply run (no --include-project-names) never touches the project-names deny-list"
+    fi
+
+    # 10: passing --include-project-names on the SAME end-to-end invocation
+    # DOES write the private slug -- proves the flag is the only gate (not
+    # some other silent default) and that main()'s wiring actually calls
+    # sync_project_names when asked.
+    flagged_priv="$tmp/private_values_flagged.env"
+    PRIVATE_VALUES_FILE="$flagged_priv" SECRETS_ENV_FILE="$tmp/secrets.env" \
+        PROJECTS_CSV_FILE="$proj_csv" bash "$0" --apply --keys SIGNAL_ACCOUNT --include-project-names >/dev/null 2>&1
+    if grep -qF "PROJECT_privateproj=privateproj" "$flagged_priv" 2>/dev/null; then
+        _check 0 "--include-project-names on a full end-to-end run writes the private slug"
+    else
+        _check 1 "--include-project-names did not write the private slug end-to-end"
+    fi
+
     rm -rf "$tmp"
     echo ""
     echo "private_values_sync selftest: $pass/$total PASS"
@@ -181,3 +343,10 @@ fi
 
 echo "private_values_sync: ${MODE} (keys=${KEYS})"
 sync_one "$SECRETS_ENV_FILE" "$PRIVATE_VALUES_FILE" "$KEYS" "$MODE"
+
+if [ "$INCLUDE_PROJECT_NAMES" -eq 1 ]; then
+    echo "private_values_sync: ${MODE} (project names from ${PROJECTS_CSV_FILE})"
+    sync_project_names "$PROJECTS_CSV_FILE" "$PRIVATE_VALUES_FILE" "$MODE"
+else
+    echo "private_values_sync: project-name seeding skipped (pass --include-project-names to enable; OFF by default -- see header)"
+fi

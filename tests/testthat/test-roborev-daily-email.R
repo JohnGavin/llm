@@ -397,20 +397,20 @@ test_that("degenerate by-attempts outliers table is replaced with a note", {
 test_that("known public repo is hyperlinked; unresolvable slug stays plain text", {
   # Fix 2: every slug used to be hardcoded to
   # https://github.com/JohnGavin/<slug>, which 404s for non-repo slugs (e.g.
-  # "premortem", a local-only planning folder with no GitHub remote).
+  # a local-only planning folder with no GitHub remote).
   skip_if_not_installed("blastula")
   snap <- make_synthetic_snapshot()
   snap$severity_by_project_7d <- list(
     list(repo = "llm", High = 0L, Medium = 0L, Low = 0L, Unknown = 0L, Total = 0L),
-    list(repo = "premortem", High = 0L, Medium = 0L, Low = 0L, Unknown = 0L, Total = 0L)
+    list(repo = "localonlyproj", High = 0L, Medium = 0L, Low = 0L, Unknown = 0L, Total = 0L)
   )
   out <- run_email_dry_run(snap)
   combined <- paste(out, collapse = "\n")
 
   expect_true(grepl('href="https://github.com/JohnGavin/llm"', combined, fixed = TRUE),
     info = "Known public repo 'llm' must be hyperlinked")
-  expect_false(grepl('href="https://github.com/JohnGavin/premortem"', combined, fixed = TRUE),
-    info = "Unresolvable slug 'premortem' must NOT be hyperlinked (this was the 404 bug)")
+  expect_false(grepl('href="https://github.com/JohnGavin/localonlyproj"', combined, fixed = TRUE),
+    info = "Unresolvable slug 'localonlyproj' must NOT be hyperlinked (this was the 404 bug)")
 })
 
 # ── Tests: llm#961 regression guard — delta-vs-standing above-threshold banner ─

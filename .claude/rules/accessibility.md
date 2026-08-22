@@ -73,7 +73,8 @@ deep palettes → pastels, in plots, tables AND diagrams. Safari/Edge/Brave
 are unaffected, so the breakage is Chrome-only and easy to miss.
 
 Check this clause FIRST, before any other dark-mode debugging — see the
-companion doc for the premortem issue 0027 worked example (5 merged
+companion doc for the worked example from issue 0027 in a private project's
+tracker (5 merged
 iterations fixed the wrong layer before this meta tag was identified as the
 root cause).
 

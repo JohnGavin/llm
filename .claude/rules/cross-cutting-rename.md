@@ -14,7 +14,7 @@ Any user-ask that involves renaming a user-facing noun — a scenario label, a c
 
 ## Source
 
-JohnGavin/premortem session 30, 2026-06-02. User had to ask three times to
+A private personal-finance project, 2026-06-02. User had to ask three times to
 replace "Plan A / Plan B / Plan C" labels in a dashboard. The first two
 fix attempts only touched the layer the user pointed at, leaving the rename
 incomplete in YAML descriptions, sweep-report headings, knowledge-base docs,
@@ -37,9 +37,9 @@ a YAML config or an R helper sourced by the qmd.
 ```r
 # CORRECT — single source of truth
 LABELS <- c(
-  "Plan_A" = "£60k gifts",
-  "Plan_B" = "£120k gifts",
-  "Plan_C" = "£120k then £60k after 7y"
+  "Plan_A" = "Scenario A",
+  "Plan_B" = "Scenario B",
+  "Plan_C" = "Scenario C"
 )
 
 label_for <- function(key) {
@@ -113,8 +113,8 @@ If a third ask happens, the lessons-learnt was incomplete or unread.
 ## Disambiguation (when the same letter is reused)
 
 When the same letter ("A", "B") is used in TWO different domains (e.g. one
-project has "Plan A" = a gifting strategy AND "Scenario A" = a pension-IHT
-regime), the rename MUST be scoped to ONE domain. Document the
+project has "Plan A" = a UI layout variant AND "Scenario A" = an unrelated
+modelling assumption), the rename MUST be scoped to ONE domain. Document the
 disambiguation in the lessons-learnt doc and in the audit greps so the
 unrelated domain is not accidentally swept up.
 
@@ -145,4 +145,4 @@ unrelated domain is not accidentally swept up.
 - `narrative-colour-persistence`
 - `pivot-signal` — if the second rename attempt fails the same way as the
   first, stop and escalate
-- premortem issue 0021 — reference implementation of this rule
+- private-repo issue tracker (session origin above) — reference implementation of this rule
