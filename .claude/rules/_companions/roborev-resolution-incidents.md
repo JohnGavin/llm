@@ -73,6 +73,29 @@ per-repo scan loop. See "Cleaning ephemeral entries" in the details
 companion for the cleanup command (now largely unnecessary, since ephemeral
 entries are auto-skipped).
 
+## Requeue Dropped Quota Failures — 2026-08-14 rollout measurement
+
+Measured 2026-08-14 against the real DB: 153 candidates, 87 correctly
+skipped as excluded (mostly llmtelemetry bot-data commits, plus 2
+`historical` CHANGELOG-only commits), 10 skipped as unavailable (missing
+checkout / rewritten history), 51 held back by the default `--limit=5`, 5
+offered for enqueue — all real code, in `coMMpass`, which has no
+`exclude_patterns` configured.
+
+**Wired into `com.claude.roborev-poll-merges`** (fires thrice daily,
+Mon–Fri 09:00/13:00/17:00) — no new launchd plist was added, per the
+`housekeeping-framework` rule's "check for an existing slot first"
+discipline. `roborev_poll_merges.sh` calls `roborev_requeue_dropped.sh`
+after its own primary per-repo catchup work completes, mirroring the
+poller's own dry-run/`--apply` mode with a fixed `--limit=5`. The call is
+fail-open (missing/non-executable script, missing `timeout` binary, or a
+non-zero exit all degrade to a logged skip — the poller's own summary and
+exit code are never affected) and bounded by `timeout 120`. Opt out with
+`SKIP_ROBOREV_REQUEUE=1` (naming mirrors `SKIP_SESSION_END_REFINE`). Every
+invocation — including skips — is logged to
+`~/.claude/logs/roborev_poll_merges.log` under a `requeue-sweep:` prefix, so
+the sweep never runs silently.
+
 ## Merge Gate — Week-1 Data Plan
 
 For the first week after shipping the dry-run merge gate, the plan was to run

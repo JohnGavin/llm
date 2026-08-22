@@ -35,20 +35,9 @@ The second is far more dangerous: it does not error, it returns nothing.
 
 `saveRDS()` preserves an object's internals verbatim, **including absolute
 filesystem paths the object captured at construction time**. The clearest case is
-`htmltools::htmlDependency()`, which every htmlwidget carries:
-
-```r
-x <- readRDS("inst/extdata/vignettes/vig_github_activity_table.rds")
-x$dependencies[[2]]$src$file
-#> "/nix/store/y630zvw…-r-DT-0.34.0/library/DT/htmlwidgets/lib/datatables"
-```
-
-That path exists on the machine that ran the export and **nowhere else**. CI
-installs the same package at a different prefix and the render aborts:
-
-```
-Error: path for html_dependency not found: /nix/store/y630zvw…/lib/datatables
-```
+`htmltools::htmlDependency()`, which every htmlwidget carries — a recorded
+`/nix/store/...` path from the exporting machine, absent on any other. The
+symptom (`readRDS()` output, the resulting CI error) is in the companion.
 
 ### Required pattern — repair at READ time, never by regenerating
 
@@ -56,21 +45,10 @@ Regenerating the artifact does **not** fix this. It only re-acquires whichever
 path the *new* exporting machine has, so the defect returns on the next export
 from anywhere else.
 
-Repair when the artifact is loaded:
-
-```r
-# For each dependency whose recorded path is absent on THIS machine,
-# re-resolve it from the installed package.
-if (!file.exists(f) && !dir.exists(f)) {
-  m <- regmatches(f, regexec("/library/([^/]+)/(.*)$", f))[[1]]
-  if (length(m) == 3L) {
-    resolved <- system.file(m[3], package = m[2])
-    if (nzchar(resolved)) dep$src$file <- resolved
-  }
-}
-```
-
-Three properties this must have:
+Repair when the artifact is loaded: for each dependency whose recorded path
+is absent on the current machine, re-resolve it via `system.file()` using the
+package name and relative path extracted from the stale absolute path
+(worked R snippet in the companion). Three properties this must have:
 
 1. **No-op when the path already resolves** — so it changes nothing on the
    machine that wrote the artifact.
@@ -155,6 +133,8 @@ worktree-built artifact is visible in review rather than silent.
 
 ## Related
 
+- [`_companions/portable-build-artifacts-details.md`](_companions/portable-build-artifacts-details.md)
+  — worked code for the Part 1 symptom and read-time repair, split out of this rule
 - [`prerendered-docs-deploy-verification`](../memory/feedback_prerendered-docs-deploy-verification.md) — merged ≠ live; verify the deployed artifact
 - [`worktree-location`](worktree-location.md) — why every worktree path contains `/worktrees/`
 - [`data-validation-timeseries`](data-validation-timeseries.md) — content-level validation targets
