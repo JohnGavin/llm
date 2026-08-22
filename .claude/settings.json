@@ -440,6 +440,26 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/repo_visibility_guard.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/phi-scan-hook.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "~/.claude/hooks/destructive_api_guard.sh",
             "timeout": 5
           }
