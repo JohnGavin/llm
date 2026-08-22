@@ -28,6 +28,26 @@ PROCESSED_LOG="$HOME/.claude/logs/whisper_processed.txt"
 SIGNAL_HTTP="http://localhost:7583"
 ACCOUNT="+15550001111"
 
+# Group-restricted capture (llm#1001): only messages/attachments from the
+# configured group are processed — everything else (other groups, direct
+# self-sent notes) is ignored and logged, never silently captured. Reuses
+# the SAME group-id file braindump_respond.sh already reads to know where
+# to send status replies (populated by hand from `signal-cli listGroups`,
+# see signal_group_filter.py's module docstring for the full rationale).
+# Pinned on groupId (stable across renames), never groupName — if the ID
+# cannot be resolved (file missing/empty) every message is treated as not
+# belonging to the target group (fail closed), never falls back to
+# matching by name.
+GROUP_ID_FILE="${SIGNAL_GROUP_ID_FILE:-$HOME/.claude/config/signal_notes_group_id.txt}"
+PDF_EXTRACTOR="$SCRIPT_DIR/extract_pdf_text.py"
+# Attachment IDs (no extension) confirmed to belong to a target-group
+# message. The directory-glob audio catch-up loop below has no per-message
+# context of its own — it consults this file before transcribing anything,
+# so an attachment from an excluded group/direct message is never
+# transcribed just because it happens to sit in the shared attachments
+# directory.
+ALLOWLIST="${SIGNAL_GROUP_ATTACHMENT_ALLOWLIST:-$HOME/.claude/logs/signal_group_attachment_allowlist.txt}"
+
 # Find whisper: check PATH first, then known Nix store location
 WHISPER_BIN=$(command -v whisper 2>/dev/null)
 if [ -z "$WHISPER_BIN" ]; then
@@ -114,9 +134,19 @@ if ! _signal_daemon_listening 7583; then
 import sys, json, os, subprocess
 from datetime import datetime
 
+script_dir = '$SCRIPT_DIR'
+sys.path.insert(0, script_dir)
+import signal_group_filter as sgf
+
 dump_dir = '$DUMP_DIR'
 db_path = '$DB'
 account = '$ACCOUNT'
+attach_dir = '$ATTACH_DIR'
+group_id_file = '$GROUP_ID_FILE'
+pdf_extractor = '$PDF_EXTRACTOR'
+allowlist_file = '$ALLOWLIST'
+log_file = '$LOG'
+target_group_id = sgf.read_target_group_id(group_id_file)
 
 for line in sys.stdin:
     line = line.strip()
@@ -134,6 +164,14 @@ for line in sys.stdin:
         if dest and dest != account:
             continue
 
+        # Group restriction (llm#1001) — see signal_group_filter.py for
+        # the groupId-vs-groupName rationale. Logged distinctly from
+        # 'unhandled: no processor for content type'.
+        allowed, reason, group_name, group_id = sgf.classify_group(sent, target_group_id)
+        if not allowed:
+            sgf.log_ignored(log_file, sent, reason)
+            continue
+
         ts = env.get('timestamp', 0) / 1000
         dt = datetime.fromtimestamp(ts) if ts > 0 else datetime.now()
 
@@ -149,6 +187,15 @@ for line in sys.stdin:
                 f\"INSERT INTO braindumps (source, raw_text, captured_at) SELECT 'signal_notes', '{escaped}', '{dt:%Y-%m-%d %H:%M:%S}'::TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM braindumps WHERE source='signal_notes' AND raw_text='{escaped}');\"],
                 capture_output=True)
             print(f'Text: {filename}')
+
+        # Attachments: audio stays with the directory-glob whisper loop
+        # below (now gated on allowlist_file); PDF gets extracted here;
+        # anything else is logged as unhandled, never silently dropped.
+        sgf.process_non_audio_attachments(sent, dt, {
+            'attach_dir': attach_dir, 'dump_dir': dump_dir,
+            'db_path': db_path, 'log_file': log_file,
+            'pdf_extractor': pdf_extractor, 'allowlist_file': allowlist_file,
+        })
 
     except (json.JSONDecodeError, KeyError, ValueError):
         continue
@@ -168,6 +215,25 @@ fi
 transcribe_audio() {
   local audio_file="$1"
   local base=$(basename "$audio_file")
+  local att_id="${base%.*}"
+
+  # Group restriction (llm#1001): this loop scans the whole attachments
+  # directory by file extension, with no per-message context of its own —
+  # it cannot on its own tell which Signal conversation an attachment came
+  # from. Before this fix it transcribed EVERY audio file sitting in the
+  # directory regardless of group (a real leak: a voice note dropped in,
+  # say, 'pills' was captured the same as one in the target group).
+  # process_daemon_messages() and the direct-receive fallback above record
+  # every target-group audio attachment's ID to ALLOWLIST as they parse
+  # messages; this function refuses to transcribe anything not on that
+  # list. Deliberately does NOT mark an unlisted attachment as processed —
+  # if its message hasn't been parsed yet (e.g. this run's daemon-tail read
+  # landed before the file did), it should be retried next run, not
+  # silently blacklisted forever.
+  if ! grep -qxF "$att_id" "$ALLOWLIST" 2>/dev/null; then
+    log "ignored: audio attachment $base not associated with a target-group message (skipped, will retry)"
+    return 0
+  fi
 
   # Skip if already processed
   grep -qF "$base" "$PROCESSED_LOG" 2>/dev/null && return 0
@@ -291,9 +357,19 @@ process_daemon_messages() {
 import sys, json, os, subprocess
 from datetime import datetime
 
+script_dir = '$SCRIPT_DIR'
+sys.path.insert(0, script_dir)
+import signal_group_filter as sgf
+
 dump_dir = '$DUMP_DIR'
 db_path = '$DB'
 account = '$ACCOUNT'
+attach_dir = '$ATTACH_DIR'
+group_id_file = '$GROUP_ID_FILE'
+pdf_extractor = '$PDF_EXTRACTOR'
+allowlist_file = '$ALLOWLIST'
+log_file = '$LOG'
+target_group_id = sgf.read_target_group_id(group_id_file)
 exc_count_file = '$exc_count_file'
 exceptions = 0
 
@@ -345,6 +421,14 @@ for line in sys.stdin:
         if dest and dest != account:
             continue
 
+        # Group restriction (llm#1001) — see signal_group_filter.py for
+        # the groupId-vs-groupName rationale. Logged distinctly from
+        # 'unhandled: no processor for content type'.
+        allowed, reason, group_name, group_id = sgf.classify_group(sent, target_group_id)
+        if not allowed:
+            sgf.log_ignored(log_file, sent, reason)
+            continue
+
         ts = env.get('timestamp', 0) / 1000
         dt = datetime.fromtimestamp(ts) if ts > 0 else datetime.now()
 
@@ -361,6 +445,15 @@ for line in sys.stdin:
                 f\"INSERT INTO braindumps (source, raw_text, captured_at) SELECT 'signal_notes', '{escaped}', '{dt:%Y-%m-%d %H:%M:%S}'::TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM braindumps WHERE source='signal_notes' AND raw_text='{escaped}');\"],
                 capture_output=True)
             print(f'Text: {filename}')
+
+        # Attachments: audio stays with the directory-glob whisper loop
+        # below (now gated on allowlist_file); PDF gets extracted here;
+        # anything else is logged as unhandled, never silently dropped.
+        sgf.process_non_audio_attachments(sent, dt, {
+            'attach_dir': attach_dir, 'dump_dir': dump_dir,
+            'db_path': db_path, 'log_file': log_file,
+            'pdf_extractor': pdf_extractor, 'allowlist_file': allowlist_file,
+        })
 
     except (KeyError, ValueError):
         continue
