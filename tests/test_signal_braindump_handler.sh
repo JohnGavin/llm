@@ -94,9 +94,14 @@ FAKE_HOME="$TMP/home"
 
 run_handler() {
   # $1 = LSOF_BIN, $2 = PGREP_BIN, $3 = SIGNAL_CLI
+  # SIGNAL_ACCOUNT is forced to the fixture value so these scenarios (which
+  # predate llm#946's runtime-account-read requirement) exercise their
+  # intended behaviour rather than tripping the fail-closed guard. The
+  # fail-closed/secrets-sourcing behaviour itself is covered separately below.
   rm -rf "$FAKE_HOME"
   mkdir -p "$FAKE_HOME"
   HOME="$FAKE_HOME" LSOF_BIN="$1" PGREP_BIN="$2" SIGNAL_CLI="$3" \
+    SIGNAL_ACCOUNT="+15550001111" \
     bash "$SCRIPT" >/dev/null 2>&1
   echo "$?"
 }
@@ -216,6 +221,7 @@ FIXTURE_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
 } > "$FIXTURE_LOG"
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_ACCOUNT="+15550001111" \
   bash "$SCRIPT" >/dev/null 2>&1
 log6=$(read_log)
 
@@ -261,6 +267,7 @@ printf '%s\n' '{"envelope":{"timestamp":1750000100000,"syncMessage":{"sentMessag
 echo 999999 > "$pos_file"   # bogus large offset simulating a pre-truncation position
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_ACCOUNT="+15550001111" \
   bash "$SCRIPT" >/dev/null 2>&1
 log7=$(read_log)
 assert_contains "logs a truncation-detected line" "truncated" "$log7"
@@ -312,6 +319,7 @@ log_lines_before8=$(wc -l < "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/nul
 log_lines_before8="${log_lines_before8:-0}"
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_ACCOUNT="+15550001111" \
   SIGNAL_DAEMON_PLIST="$FIXTURE_PLIST" bash "$SCRIPT" >/dev/null 2>&1
 log8=$(tail -n "+$((log_lines_before8 + 1))" "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/null)
 assert_not_contains "no GAP when plist resolves to a real file" "GAP:" "$log8"
@@ -323,6 +331,62 @@ if [ -n "$saved8" ] && grep -ql "hello from custom plist path" $saved8 2>/dev/nu
   PASS=$((PASS + 1))
 else
   echo "  FAIL: message NOT ingested — plist resolution did not pick up the custom StandardOutPath"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 9: SIGNAL_ACCOUNT unset, no secrets.env present -> fails closed
+#    (llm#946: the real account literal was scrubbed from git history after
+#    a 4-month public exposure; the script must be structurally unable to
+#    run against an unset/placeholder account).
+
+echo ""
+echo "-- Test: SIGNAL_ACCOUNT unset and no secrets.env present -> fails closed before any receive attempt"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME"
+env -u SIGNAL_ACCOUNT HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_DOWN" PGREP_BIN="$FAKE_PGREP_NONE" \
+  SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+rc9=$?
+log9=$(read_log)
+assert_contains "logs a FATAL naming the unset account" "FATAL: SIGNAL_ACCOUNT is unset/empty" "$log9"
+assert_contains "FATAL log names secrets.env" "secrets.env" "$log9"
+assert_contains "FATAL log references llm#946" "llm#946" "$log9"
+if [ "$rc9" != "0" ]; then
+  echo "  PASS: script exits non-zero when SIGNAL_ACCOUNT is unset and no secrets.env exists (rc=$rc9)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should exit non-zero, got rc=$rc9"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 10: SIGNAL_ACCOUNT unset, but a fixture secrets.env supplies it
+#    -> the script self-sources it and succeeds (direct-invocation path).
+
+echo ""
+echo "-- Test: SIGNAL_ACCOUNT unset but a fixture secrets.env supplies it -> sourced and succeeds"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.config"
+printf 'SIGNAL_ACCOUNT="+15550001111"\n' > "$FAKE_HOME/.config/secrets.env"
+chmod 600 "$FAKE_HOME/.config/secrets.env"
+
+FAKE_SIGNAL_CLI_EMPTY_AFTER_SECRETS="$TMP/empty_after_secrets.sh"
+cat > "$FAKE_SIGNAL_CLI_EMPTY_AFTER_SECRETS" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$FAKE_SIGNAL_CLI_EMPTY_AFTER_SECRETS"
+
+env -u SIGNAL_ACCOUNT HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_DOWN" PGREP_BIN="$FAKE_PGREP_NONE" \
+  SIGNAL_CLI="$FAKE_SIGNAL_CLI_EMPTY_AFTER_SECRETS" \
+  bash "$SCRIPT" >/dev/null 2>&1
+rc10=$?
+log10=$(read_log)
+assert_not_contains "does not log a FATAL when secrets.env supplies the account" "FATAL: SIGNAL_ACCOUNT" "$log10"
+if [ "$rc10" = "0" ]; then
+  echo "  PASS: script exits 0 when SIGNAL_ACCOUNT is sourced from a fixture secrets.env (rc=$rc10)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should exit 0 when secrets.env supplies the account, got rc=$rc10"
   FAIL=$((FAIL + 1))
 fi
 

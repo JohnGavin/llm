@@ -26,7 +26,27 @@ DB="$HOME/.claude/logs/unified.duckdb"
 LOG="$HOME/.claude/logs/signal_sync.log"
 PROCESSED_LOG="$HOME/.claude/logs/whisper_processed.txt"
 SIGNAL_HTTP="http://localhost:7583"
-ACCOUNT="+15550001111"
+
+# Signal account number — read at runtime, NEVER hardcoded (llm#946). A git
+# history rewrite replaced the real value with a fictional placeholder
+# across all history after it was exposed in this public repo for four
+# months. Accept an already-exported SIGNAL_ACCOUNT (e.g. set by the
+# `with-secrets` wrapper) or source SECRETS_ENV_FILE directly when invoked
+# without it — this script runs via launchd, which does not source shell rc
+# files. Same override convention as render_signal_launchd_plists.sh.
+SECRETS_ENV_FILE="${SECRETS_ENV_FILE:-$HOME/.config/secrets.env}"
+mkdir -p "$(dirname "$LOG")"
+if [ -z "${SIGNAL_ACCOUNT:-}" ] && [ -r "$SECRETS_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SECRETS_ENV_FILE"
+  set +a
+fi
+if [ -z "${SIGNAL_ACCOUNT:-}" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') FATAL: SIGNAL_ACCOUNT is unset/empty -- refusing to run against an unknown Signal account. Set it in $SECRETS_ENV_FILE (llm#946)." >> "$LOG"
+  exit 1
+fi
+ACCOUNT="$SIGNAL_ACCOUNT"
 
 # Find whisper: check PATH first, then known Nix store location
 WHISPER_BIN=$(command -v whisper 2>/dev/null)

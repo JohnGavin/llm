@@ -97,9 +97,14 @@ FAKE_HOME="$TMP/home"
 
 run_sync() {
   # $1 = PGREP_BIN, $2 = SIGNAL_CLI, $3 = LSOF_BIN (default: daemon DOWN)
+  # SIGNAL_ACCOUNT is forced to the fixture value so these scenarios (which
+  # predate llm#946's runtime-account-read requirement) exercise their
+  # intended behaviour rather than tripping the fail-closed guard. The
+  # fail-closed/secrets-sourcing behaviour itself is covered separately below.
   rm -rf "$FAKE_HOME"
   mkdir -p "$FAKE_HOME"
   HOME="$FAKE_HOME" PGREP_BIN="$1" SIGNAL_CLI="$2" LSOF_BIN="${3:-$FAKE_LSOF_DOWN}" \
+    SIGNAL_ACCOUNT="+15550001111" \
     bash "$SCRIPT" >/dev/null 2>&1
   echo "$?"
 }
@@ -232,6 +237,72 @@ if [ "$rc5" = "0" ]; then
   PASS=$((PASS + 1))
 else
   echo "  FAIL: script should exit 0 on a deliberate skip, got rc=$rc5"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 6: SIGNAL_ACCOUNT unset, no secrets.env present -> fails closed
+#    (llm#946: the real account literal was scrubbed from git history after
+#    a 4-month public exposure; the script must be structurally unable to
+#    run against an unset/placeholder account).
+
+echo ""
+echo "-- Test: SIGNAL_ACCOUNT unset and no secrets.env present -> fails closed, never invokes signal-cli"
+FAKE_SIGNAL_CLI_SHOULD_NOT_RUN3="$TMP/should_not_run3.sh"
+cat > "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN3" <<EOF
+#!/usr/bin/env bash
+echo "I SHOULD NOT HAVE RUN (SIGNAL_ACCOUNT unset)" >> "$TMP/violation3.log"
+echo '{}'
+EOF
+chmod +x "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN3"
+rm -f "$TMP/violation3.log"
+
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME"
+env -u SIGNAL_ACCOUNT HOME="$FAKE_HOME" PGREP_BIN="$FAKE_PGREP_NONE" \
+  SIGNAL_CLI="$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN3" LSOF_BIN="$FAKE_LSOF_DOWN" \
+  bash "$SCRIPT" >/dev/null 2>&1
+rc6=$?
+log6=$(read_log)
+assert_contains "logs a FATAL naming the unset account" "FATAL: SIGNAL_ACCOUNT is unset/empty" "$log6"
+assert_contains "FATAL log names secrets.env" "secrets.env" "$log6"
+assert_contains "FATAL log references llm#946" "llm#946" "$log6"
+if [ "$rc6" != "0" ]; then
+  echo "  PASS: script exits non-zero when SIGNAL_ACCOUNT is unset and no secrets.env exists (rc=$rc6)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should exit non-zero, got rc=$rc6"
+  FAIL=$((FAIL + 1))
+fi
+if [ -f "$TMP/violation3.log" ]; then
+  echo "  FAIL: signal-cli fake WAS invoked despite SIGNAL_ACCOUNT being unset"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: signal-cli fake was NOT invoked (fail-closed guard worked)"
+  PASS=$((PASS + 1))
+fi
+
+# ── Scenario 7: SIGNAL_ACCOUNT unset, but a fixture secrets.env supplies it
+#    -> the script self-sources it and succeeds (direct-invocation path,
+#    i.e. not via the with-secrets wrapper).
+
+echo ""
+echo "-- Test: SIGNAL_ACCOUNT unset but a fixture secrets.env supplies it -> sourced and succeeds"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.config"
+printf 'SIGNAL_ACCOUNT="+15550001111"\n' > "$FAKE_HOME/.config/secrets.env"
+chmod 600 "$FAKE_HOME/.config/secrets.env"
+
+env -u SIGNAL_ACCOUNT HOME="$FAKE_HOME" PGREP_BIN="$FAKE_PGREP_NONE" \
+  SIGNAL_CLI="$FAKE_SIGNAL_CLI_EMPTY" LSOF_BIN="$FAKE_LSOF_DOWN" \
+  bash "$SCRIPT" >/dev/null 2>&1
+rc7=$?
+log7=$(read_log)
+assert_not_contains "does not log a FATAL when secrets.env supplies the account" "FATAL: SIGNAL_ACCOUNT" "$log7"
+if [ "$rc7" = "0" ]; then
+  echo "  PASS: script exits 0 when SIGNAL_ACCOUNT is sourced from a fixture secrets.env (rc=$rc7)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should exit 0 when secrets.env supplies the account, got rc=$rc7"
   FAIL=$((FAIL + 1))
 fi
 
