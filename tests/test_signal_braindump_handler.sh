@@ -92,10 +92,27 @@ chmod +x "$FAKE_PGREP_MATCH"
 
 FAKE_HOME="$TMP/home"
 
+# Group-restricted capture (llm#1001): the target group is pinned on
+# groupId. This is a synthetic test ID — real deployment reads the actual
+# ID from ~/.claude/config/signal_notes_group_id.txt via
+# `signal-cli listGroups` (see signal_group_filter.py's module docstring).
+TARGET_GROUP_ID="grp-target-abc123"
+
+write_group_config() {
+  # $1 = target dir ($FAKE_HOME), $2 = group id (default TARGET_GROUP_ID;
+  # pass "" to leave unconfigured)
+  local home_dir="$1" group_id="${2-$TARGET_GROUP_ID}"
+  if [ -n "$group_id" ]; then
+    mkdir -p "$home_dir/.claude/config"
+    printf '%s' "$group_id" > "$home_dir/.claude/config/signal_notes_group_id.txt"
+  fi
+}
+
 run_handler() {
-  # $1 = LSOF_BIN, $2 = PGREP_BIN, $3 = SIGNAL_CLI
+  # $1 = LSOF_BIN, $2 = PGREP_BIN, $3 = SIGNAL_CLI, $4 = group id override
   rm -rf "$FAKE_HOME"
   mkdir -p "$FAKE_HOME"
+  write_group_config "$FAKE_HOME" "${4-$TARGET_GROUP_ID}"
   HOME="$FAKE_HOME" LSOF_BIN="$1" PGREP_BIN="$2" SIGNAL_CLI="$3" \
     bash "$SCRIPT" >/dev/null 2>&1
   echo "$?"
@@ -168,10 +185,10 @@ assert_not_contains "does not log RECEIVE FAILED for a clean empty receive" "REC
 echo ""
 echo "-- Test: daemon down + receive returns a text message -> written to DUMP_DIR, not silently dropped"
 FAKE_SIGNAL_CLI_MSG="$TMP/msg_cli.sh"
-cat > "$FAKE_SIGNAL_CLI_MSG" <<'EOF'
+cat > "$FAKE_SIGNAL_CLI_MSG" <<EOF
 #!/usr/bin/env bash
-cat <<'JSON'
-{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from fallback path"}}}}
+cat <<JSON
+{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from fallback path","groupInfo":{"groupId":"$TARGET_GROUP_ID","groupName":"Notes to llm"}}}}}
 JSON
 exit 0
 EOF
@@ -209,10 +226,11 @@ echo ""
 echo "-- Test: daemon up + stdout log at the real fallback path, containing an exception envelope AND a message -> message ingested, exception logged distinctly, no GAP"
 rm -rf "$FAKE_HOME"
 mkdir -p "$FAKE_HOME/.claude/logs"
+write_group_config "$FAKE_HOME"
 FIXTURE_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
 {
   printf '%s\n' '{"exception":{"message":"getServerGuid(...) must not be null","type":"NullPointerException"},"envelope":{"source":null,"sourceNumber":null,"sourceUuid":null,"sourceName":null,"sourceDevice":null,"timestamp":1787335255053,"serverReceivedTimestamp":1787335253948,"serverDeliveredTimestamp":1787335253996},"account":"+15550001111"}'
-  printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from daemon tail"}}}}'
+  printf '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from daemon tail","groupInfo":{"groupId":"%s","groupName":"Notes to llm"}}}}}\n' "$TARGET_GROUP_ID"
 } > "$FIXTURE_LOG"
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
@@ -257,7 +275,7 @@ fi
 
 echo ""
 echo "-- Test: daemon stdout log truncated since last run -> offset resets to 0, new content still ingested"
-printf '%s\n' '{"envelope":{"timestamp":1750000100000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"post-truncation message"}}}}' > "$FIXTURE_LOG"
+printf '{"envelope":{"timestamp":1750000100000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"post-truncation message","groupInfo":{"groupId":"%s","groupName":"Notes to llm"}}}}}\n' "$TARGET_GROUP_ID" > "$FIXTURE_LOG"
 echo 999999 > "$pos_file"   # bogus large offset simulating a pre-truncation position
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
@@ -282,7 +300,7 @@ fi
 echo ""
 echo "-- Test: SIGNAL_DAEMON_PLIST points at a fixture plist with a custom StandardOutPath -> that path is used, not the default fallback"
 FIXTURE_CUSTOM_LOG="$FAKE_HOME/.claude/logs/custom_daemon_stdout.log"
-printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from custom plist path"}}}}' > "$FIXTURE_CUSTOM_LOG"
+printf '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from custom plist path","groupInfo":{"groupId":"%s","groupName":"Notes to llm"}}}}}\n' "$TARGET_GROUP_ID" > "$FIXTURE_CUSTOM_LOG"
 
 FIXTURE_PLIST="$TMP/fixture_daemon.plist"
 cat > "$FIXTURE_PLIST" <<PLIST
@@ -324,6 +342,175 @@ if [ -n "$saved8" ] && grep -ql "hello from custom plist path" $saved8 2>/dev/nu
 else
   echo "  FAIL: message NOT ingested — plist resolution did not pick up the custom StandardOutPath"
   FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 9: message from a DIFFERENT group -> ignored via the
+#    direct-receive fallback path (llm#1001)
+
+echo ""
+echo "-- Test: direct-receive fallback + message from a different group ('pills') -> ignored, not captured"
+FAKE_SIGNAL_CLI_WRONG_GROUP="$TMP/wrong_group_cli.sh"
+cat > "$FAKE_SIGNAL_CLI_WRONG_GROUP" <<'EOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"a pills photo caption","groupInfo":{"groupId":"grp-pills-999","groupName":"pills"}}}}}
+JSON
+exit 0
+EOF
+chmod +x "$FAKE_SIGNAL_CLI_WRONG_GROUP"
+
+run_handler "$FAKE_LSOF_DOWN" "$FAKE_PGREP_NONE" "$FAKE_SIGNAL_CLI_WRONG_GROUP" > /dev/null
+log9=$(read_log)
+assert_contains "logs an 'ignored:' line" "ignored:" "$log9"
+assert_contains "reason names it a wrong group" "wrong group" "$log9"
+dump_dir9="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+saved9=$(find "$dump_dir9" -name "*-signal.md" 2>/dev/null)
+if [ -z "$saved9" ]; then
+  echo "  PASS: no braindump file was written for the wrong-group message"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: a braindump file WAS written for a wrong-group message: $saved9"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 10: direct (non-group) message -> excluded via the
+#    direct-receive fallback path (llm#1001)
+
+echo ""
+echo "-- Test: direct-receive fallback + direct self-sent message (no groupInfo) -> excluded"
+FAKE_SIGNAL_CLI_DIRECT="$TMP/direct_cli.sh"
+cat > "$FAKE_SIGNAL_CLI_DIRECT" <<'EOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"note to self, no group"}}}}
+JSON
+exit 0
+EOF
+chmod +x "$FAKE_SIGNAL_CLI_DIRECT"
+
+run_handler "$FAKE_LSOF_DOWN" "$FAKE_PGREP_NONE" "$FAKE_SIGNAL_CLI_DIRECT" > /dev/null
+log10=$(read_log)
+assert_contains "logs an 'ignored:' line" "ignored:" "$log10"
+assert_contains "reason names it a direct message" "direct message" "$log10"
+
+# ── Scenario 11: target group unconfigured -> fails closed (llm#1001)
+
+echo ""
+echo "-- Test: group-id file unconfigured -> fails closed, not open"
+run_handler "$FAKE_LSOF_DOWN" "$FAKE_PGREP_NONE" "$FAKE_SIGNAL_CLI_MSG" "" > /dev/null
+log11=$(read_log)
+assert_contains "logs an 'ignored:' line even for what would be the target group" "ignored:" "$log11"
+assert_contains "reason names the missing configuration" "not configured" "$log11"
+dump_dir11="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+saved11=$(find "$dump_dir11" -name "*-signal.md" 2>/dev/null)
+if [ -z "$saved11" ]; then
+  echo "  PASS: nothing captured while unconfigured (fail-closed, not fail-open)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: a braindump file WAS written while the group id was unconfigured: $saved11"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 12: unhandled attachment content type via the daemon-tail path
+#    -> logged distinctly, never silently dropped (llm#1001)
+
+echo ""
+echo "-- Test: daemon-tail path + image/jpeg attachment in the target group -> logged as unhandled"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+write_group_config "$FAKE_HOME"
+FIXTURE_LOG12="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+printf '{"envelope":{"timestamp":1755848760000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","groupInfo":{"groupId":"%s","groupName":"Notes to llm"},"attachments":[{"id":"7T7uODp736f0OkX2aEG9","contentType":"image/jpeg","filename":"photo.jpg"}]}}}}\n' "$TARGET_GROUP_ID" > "$FIXTURE_LOG12"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log12=$(read_log)
+assert_contains "logs 'unhandled: no processor for content type' with the actual type" \
+  "unhandled: no processor for content type 'image/jpeg'" "$log12"
+assert_not_contains "does NOT use the group-exclusion 'ignored:' wording for this case" \
+  "ignored: " "$log12"
+
+# ── Scenario 13: PDF attachment via the daemon-tail path -> extracted
+#    end-to-end through the real script (llm#1001)
+
+echo ""
+echo "-- Test: daemon-tail path + application/pdf attachment in the target group -> extracted"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+write_group_config "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.local/share/signal-cli/attachments"
+cp "$REPO_ROOT/tests/fixtures/pdf/text_layer_ok.pdf" "$FAKE_HOME/.local/share/signal-cli/attachments/synth-pdf-fixture-001.pdf"
+FIXTURE_LOG13="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+printf '{"envelope":{"timestamp":1755855900000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","groupInfo":{"groupId":"%s","groupName":"Notes to llm"},"attachments":[{"id":"synth-pdf-fixture-001","contentType":"application/pdf","filename":"Scanned.pdf"}]}}}}\n' "$TARGET_GROUP_ID" > "$FIXTURE_LOG13"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log13=$(read_log)
+assert_contains "logs 'PDF extracted'" "PDF extracted" "$log13"
+dump_dir13="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+saved13=$(find "$dump_dir13" -name "*-pdf-*.md" 2>/dev/null)
+if [ -n "$saved13" ] && grep -ql "synthetic test PDF page" $saved13 2>/dev/null; then
+  echo "  PASS: PDF note file contains the extracted (synthetic) text"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: PDF note file missing or does not contain expected text: $saved13"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 14: audio attachment referenced by a target-group message ->
+#    recorded to the allowlist (llm#1001). No physical audio file is placed
+#    in ATTACH_DIR here so the directory-glob loop at the bottom of the
+#    script finds nothing to transcribe — this scenario is deliberately
+#    scoped to proving the allowlist gets POPULATED, without ever invoking
+#    a real (or even fake) whisper binary.
+
+echo ""
+echo "-- Test: daemon-tail path + audio/aac attachment in the target group -> recorded to allowlist"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+write_group_config "$FAKE_HOME"
+FIXTURE_LOG14="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+printf '{"envelope":{"timestamp":1755851000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","groupInfo":{"groupId":"%s","groupName":"Notes to llm"},"attachments":[{"id":"clag3fLXrK7q2NNe_3U6","contentType":"audio/aac","filename":"voice.aac"}]}}}}\n' "$TARGET_GROUP_ID" > "$FIXTURE_LOG14"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+allowlist14="$FAKE_HOME/.claude/logs/signal_group_attachment_allowlist.txt"
+if [ -f "$allowlist14" ] && grep -qxF "clag3fLXrK7q2NNe_3U6" "$allowlist14"; then
+  echo "  PASS: target-group audio attachment id recorded to the allowlist"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: audio attachment id NOT found in allowlist ($allowlist14)"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 15: audio file sitting in ATTACH_DIR but NOT referenced by any
+#    message parsed this run -> the directory-glob catch-up loop refuses to
+#    transcribe it (privacy gate), logs distinctly, and does NOT mark it
+#    processed (so a later run — once/if its message does arrive and is
+#    allowed — can still pick it up). This is the concrete fix for the
+#    pre-llm#1001 leak: any audio file dropped anywhere in the shared
+#    attachments directory used to be transcribed unconditionally.
+
+echo ""
+echo "-- Test: audio file with no associated target-group message -> directory-glob loop skips it, logs distinctly, does not mark processed"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+write_group_config "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.local/share/signal-cli/attachments"
+printf 'fake aac bytes, no associated message' > "$FAKE_HOME/.local/share/signal-cli/attachments/unassociated123.aac"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log15=$(read_log)
+assert_contains "logs the not-associated skip" \
+  "ignored: audio attachment unassociated123.aac not associated with a target-group message" "$log15"
+processed_log15="$FAKE_HOME/.claude/logs/whisper_processed.txt"
+if [ -f "$processed_log15" ] && grep -qF "unassociated123.aac" "$processed_log15"; then
+  echo "  FAIL: unassociated attachment was marked processed — will never be retried even if its message later arrives"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: unassociated attachment was NOT marked processed (retry-safe)"
+  PASS=$((PASS + 1))
 fi
 
 rm -rf "$TMP"

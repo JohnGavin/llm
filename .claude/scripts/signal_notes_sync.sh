@@ -39,6 +39,16 @@ DB="$HOME/.claude/logs/unified.duckdb"
 LOG="$HOME/.claude/logs/signal_sync.log"
 PROCESSED_LOG="$HOME/.claude/logs/whisper_processed.txt"
 
+# Group-restricted capture (llm#1001): only messages/attachments from the
+# configured group are processed — everything else (other groups, direct
+# self-sent notes) is ignored and logged, never silently captured. Reuses
+# the SAME group-id file braindump_respond.sh already reads to know where
+# to send status replies (populated by hand from `signal-cli listGroups`,
+# see signal_group_filter.py's module docstring for the full rationale).
+GROUP_ID_FILE="${SIGNAL_GROUP_ID_FILE:-$HOME/.claude/config/signal_notes_group_id.txt}"
+PDF_EXTRACTOR="$SCRIPT_DIR/extract_pdf_text.py"
+ALLOWLIST="${SIGNAL_GROUP_ATTACHMENT_ALLOWLIST:-$HOME/.claude/logs/signal_group_attachment_allowlist.txt}"
+
 # Whisper config
 WHISPER_BIN=$(command -v whisper 2>/dev/null || find /nix/store -maxdepth 2 -name "whisper" -type f 2>/dev/null | head -1)
 WHISPER_MODEL="small"
@@ -144,6 +154,10 @@ echo "$MESSAGES" | python3 -c "
 import sys, json, os, subprocess
 from datetime import datetime
 
+script_dir = '$SCRIPT_DIR'
+sys.path.insert(0, script_dir)
+import signal_group_filter as sgf
+
 dump_dir = '$DUMP_DIR'
 db_path = '$DB'
 account = '$ACCOUNT'
@@ -153,6 +167,10 @@ whisper_model = '$WHISPER_MODEL'
 whisper_prompt = '$WHISPER_PROMPT'
 processed_log = '$PROCESSED_LOG'
 log_file = '$LOG'
+group_id_file = '$GROUP_ID_FILE'
+pdf_extractor = '$PDF_EXTRACTOR'
+allowlist_file = '$ALLOWLIST'
+target_group_id = sgf.read_target_group_id(group_id_file)
 saved = 0
 
 def log(msg):
@@ -218,6 +236,15 @@ for line in sys.stdin:
         if dest and dest != account:
             continue
 
+        # Group restriction (llm#1001): only the configured target group is
+        # captured. Logged distinctly from 'unhandled: no processor for
+        # content type' — this is a deliberate privacy exclusion, not a
+        # missing feature.
+        allowed, reason, group_name, group_id = sgf.classify_group(sent, target_group_id)
+        if not allowed:
+            sgf.log_ignored(log_file, sent, reason)
+            continue
+
         ts = env.get('timestamp', 0) / 1000
         dt = datetime.fromtimestamp(ts) if ts > 0 else datetime.now()
 
@@ -238,8 +265,25 @@ for line in sys.stdin:
             att_id = att.get('id', '')
             att_filename = att.get('filename', '')
 
-            if not content_type.startswith('audio/'):
+            if content_type == 'application/pdf':
+                sgf.handle_pdf_attachment(att, dt, {
+                    'attach_dir': attach_dir, 'dump_dir': dump_dir,
+                    'db_path': db_path, 'log_file': log_file,
+                    'pdf_extractor': pdf_extractor,
+                })
                 continue
+
+            if not content_type.startswith('audio/'):
+                # llm#1001: previously silently dropped (image/jpeg, and
+                # anything else that isn't audio or a handled PDF). Now
+                # logged so a drop is visible, distinct from the
+                # group-exclusion 'ignored:' wording above.
+                base = att_filename or att_id or '(unknown)'
+                sgf.log_line(log_file, f\"unhandled: no processor for content type '{content_type}' (attachment {base})\")
+                continue
+
+            if allowlist_file:
+                sgf.allowlist_add(allowlist_file, att_id)
 
             # Find the attachment file
             audio_path = None
