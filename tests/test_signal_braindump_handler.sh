@@ -101,7 +101,7 @@ run_handler() {
   rm -rf "$FAKE_HOME"
   mkdir -p "$FAKE_HOME"
   HOME="$FAKE_HOME" LSOF_BIN="$1" PGREP_BIN="$2" SIGNAL_CLI="$3" \
-    SIGNAL_ACCOUNT="+15550001111" \
+    SIGNAL_ACCOUNT="+12025550111" \
     bash "$SCRIPT" >/dev/null 2>&1
   echo "$?"
 }
@@ -176,7 +176,7 @@ FAKE_SIGNAL_CLI_MSG="$TMP/msg_cli.sh"
 cat > "$FAKE_SIGNAL_CLI_MSG" <<'EOF'
 #!/usr/bin/env bash
 cat <<'JSON'
-{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from fallback path"}}}}
+{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+12025550111","message":"hello from fallback path"}}}}
 JSON
 exit 0
 EOF
@@ -216,12 +216,12 @@ rm -rf "$FAKE_HOME"
 mkdir -p "$FAKE_HOME/.claude/logs"
 FIXTURE_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
 {
-  printf '%s\n' '{"exception":{"message":"getServerGuid(...) must not be null","type":"NullPointerException"},"envelope":{"source":null,"sourceNumber":null,"sourceUuid":null,"sourceName":null,"sourceDevice":null,"timestamp":1787335255053,"serverReceivedTimestamp":1787335253948,"serverDeliveredTimestamp":1787335253996},"account":"+15550001111"}'
-  printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from daemon tail"}}}}'
+  printf '%s\n' '{"exception":{"message":"getServerGuid(...) must not be null","type":"NullPointerException"},"envelope":{"source":null,"sourceNumber":null,"sourceUuid":null,"sourceName":null,"sourceDevice":null,"timestamp":1787335255053,"serverReceivedTimestamp":1787335253948,"serverDeliveredTimestamp":1787335253996},"account":"+12025550111"}'
+  printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+12025550111","message":"hello from daemon tail"}}}}'
 } > "$FIXTURE_LOG"
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
-  SIGNAL_ACCOUNT="+15550001111" \
+  SIGNAL_ACCOUNT="+12025550111" \
   bash "$SCRIPT" >/dev/null 2>&1
 log6=$(read_log)
 
@@ -263,11 +263,11 @@ fi
 
 echo ""
 echo "-- Test: daemon stdout log truncated since last run -> offset resets to 0, new content still ingested"
-printf '%s\n' '{"envelope":{"timestamp":1750000100000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"post-truncation message"}}}}' > "$FIXTURE_LOG"
+printf '%s\n' '{"envelope":{"timestamp":1750000100000,"syncMessage":{"sentMessage":{"destinationNumber":"+12025550111","message":"post-truncation message"}}}}' > "$FIXTURE_LOG"
 echo 999999 > "$pos_file"   # bogus large offset simulating a pre-truncation position
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
-  SIGNAL_ACCOUNT="+15550001111" \
+  SIGNAL_ACCOUNT="+12025550111" \
   bash "$SCRIPT" >/dev/null 2>&1
 log7=$(read_log)
 assert_contains "logs a truncation-detected line" "truncated" "$log7"
@@ -289,7 +289,7 @@ fi
 echo ""
 echo "-- Test: SIGNAL_DAEMON_PLIST points at a fixture plist with a custom StandardOutPath -> that path is used, not the default fallback"
 FIXTURE_CUSTOM_LOG="$FAKE_HOME/.claude/logs/custom_daemon_stdout.log"
-printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+15550001111","message":"hello from custom plist path"}}}}' > "$FIXTURE_CUSTOM_LOG"
+printf '%s\n' '{"envelope":{"timestamp":1750000000000,"syncMessage":{"sentMessage":{"destinationNumber":"+12025550111","message":"hello from custom plist path"}}}}' > "$FIXTURE_CUSTOM_LOG"
 
 FIXTURE_PLIST="$TMP/fixture_daemon.plist"
 cat > "$FIXTURE_PLIST" <<PLIST
@@ -319,7 +319,7 @@ log_lines_before8=$(wc -l < "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/nul
 log_lines_before8="${log_lines_before8:-0}"
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
-  SIGNAL_ACCOUNT="+15550001111" \
+  SIGNAL_ACCOUNT="+12025550111" \
   SIGNAL_DAEMON_PLIST="$FIXTURE_PLIST" bash "$SCRIPT" >/dev/null 2>&1
 log8=$(tail -n "+$((log_lines_before8 + 1))" "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/null)
 assert_not_contains "no GAP when plist resolves to a real file" "GAP:" "$log8"
@@ -366,7 +366,7 @@ echo ""
 echo "-- Test: SIGNAL_ACCOUNT unset but a fixture secrets.env supplies it -> sourced and succeeds"
 rm -rf "$FAKE_HOME"
 mkdir -p "$FAKE_HOME/.config"
-printf 'SIGNAL_ACCOUNT="+15550001111"\n' > "$FAKE_HOME/.config/secrets.env"
+printf 'SIGNAL_ACCOUNT="+12025550111"\n' > "$FAKE_HOME/.config/secrets.env"
 chmod 600 "$FAKE_HOME/.config/secrets.env"
 
 FAKE_SIGNAL_CLI_EMPTY_AFTER_SECRETS="$TMP/empty_after_secrets.sh"
@@ -387,6 +387,114 @@ if [ "$rc10" = "0" ]; then
   PASS=$((PASS + 1))
 else
   echo "  FAIL: script should exit 0 when secrets.env supplies the account, got rc=$rc10"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 11: a message with attachments and NO text body -> accounted for
+#    in the log, with its content type and group (llm#1001).
+#
+#    This is the regression that made a ten-week outage invisible: such a
+#    message hit no branch, produced no log line, and left no trace that
+#    anything had arrived. The group name is only present in the envelope —
+#    the on-disk attachment scan cannot recover it — so the assertion below
+#    checks that it survives into the log.
+
+echo ""
+echo "-- Test: attachment-only message (no text body) -> logged with content type and group, not silently dropped"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+ATT_ONLY_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+{
+  printf '%s\n' '{"envelope":{"timestamp":1755855939000,"syncMessage":{"sentMessage":{"message":null,"attachments":[{"contentType":"application/pdf","id":"FIXTUREattachment01","filename":"Scanned_20260822-0945.pdf"}],"groupInfo":{"groupId":"Z3JwMQ==","groupName":"Notes to llm"}}}}}'
+  printf '%s\n' '{"envelope":{"timestamp":1755856050000,"syncMessage":{"sentMessage":{"message":null,"attachments":[],"groupInfo":{"groupName":"pills"}}}}}'
+} > "$ATT_ONLY_LOG"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_ACCOUNT="+12025550111" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log11=$(read_log)
+
+assert_contains "attachment-only message produces a log line at all (llm#1001)" \
+  "ATTACHMENT-ONLY message" "$log11"
+assert_contains "log line names the attachment's content type" "application/pdf" "$log11"
+assert_contains "log line names the attachment's filename" "Scanned_20260822-0945.pdf" "$log11"
+assert_contains "log line names the group the message arrived in" "Notes to llm" "$log11"
+assert_contains "a message with neither body nor attachments is also accounted for" \
+  "EMPTY message" "$log11"
+
+dump_dir11="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+if find "$dump_dir11" -name "*-signal.md" 2>/dev/null | grep -q .; then
+  echo "  FAIL: attachment-only message was written as if it were a text braindump"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: attachment-only message did not produce a bogus empty text braindump"
+  PASS=$((PASS + 1))
+fi
+
+# ── Scenario 12: the handler actually invokes signal_attachment_ingest.sh, and
+#    a PDF sitting in the attachments directory comes out the other side as a
+#    braindump note. Proves the wiring, not just the processor in isolation.
+
+echo ""
+echo "-- Test: a PDF in the attachments directory is ingested via signal_attachment_ingest.sh"
+GS_FOR_FIXTURE=$(command -v gs 2>/dev/null || echo /opt/homebrew/bin/gs)
+if [ ! -x "$GS_FOR_FIXTURE" ]; then
+  echo "  SKIP: ghostscript not available — cannot build a PDF fixture"
+else
+  rm -rf "$FAKE_HOME"
+  mkdir -p "$FAKE_HOME/.claude/logs" "$FAKE_HOME/.local/share/signal-cli/attachments"
+  printf '%%!PS\n/Helvetica findfont 24 scalefont setfont\n72 700 moveto (WIRING FIXTURE EMBEDDED TEXT LAYER) show\n72 660 moveto (SECOND LINE TO CLEAR THE MIN CHARS THRESHOLD) show\nshowpage\n' > "$TMP/wiring.ps"
+  "$GS_FOR_FIXTURE" -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite \
+    -o "$FAKE_HOME/.local/share/signal-cli/attachments/statement.pdf" "$TMP/wiring.ps" >/dev/null 2>&1
+
+  # Pin the cutoff rather than relying on the fixture being newer than the
+  # ingest script's default — otherwise this test would start failing on a
+  # machine whose clock disagrees, for reasons unrelated to the wiring.
+  HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+    SIGNAL_ACCOUNT="+12025550111" SIGNAL_INGEST_SINCE="2000-01-01" \
+    bash "$SCRIPT" >/dev/null 2>&1
+  log12=$(read_log)
+
+  assert_not_contains "no GAP warning — the ingest script was found and run" \
+    "signal_attachment_ingest.sh not found" "$log12"
+  assert_contains "PDF text-layer extraction was logged" "PDF text-layer: statement.pdf" "$log12"
+
+  dump_dir12="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+  pdf_note=$(find "$dump_dir12" -name "*-pdf-statement.md" 2>/dev/null)
+  if [ -n "$pdf_note" ] && grep -ql "WIRING FIXTURE EMBEDDED TEXT LAYER" $pdf_note 2>/dev/null; then
+    echo "  PASS: PDF content reached a braindump note end-to-end"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: PDF content did NOT reach a braindump note (wiring broken)"
+    FAIL=$((FAIL + 1))
+  fi
+fi
+
+# ── Scenario 13: if signal_attachment_ingest.sh is absent, the handler says so
+#    loudly. Without this the GAP branch is untested and could rot into the
+#    same silent no-op it exists to prevent.
+
+echo ""
+echo "-- Test: signal_attachment_ingest.sh missing -> loud GAP line, handler still exits 0"
+ISOLATED="$TMP/isolated_scripts"
+mkdir -p "$ISOLATED"
+cp "$SCRIPT" "$ISOLATED/"
+cp "$REPO_ROOT/.claude/scripts/lib_signal_process_guard.sh" "$ISOLATED/"
+# deliberately NOT copying signal_attachment_ingest.sh
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_ACCOUNT="+12025550111" \
+  bash "$ISOLATED/signal_braindump_handler.sh" >/dev/null 2>&1
+rc13=$?
+log13=$(read_log)
+assert_contains "missing ingest script produces a GAP line naming llm#1001" \
+  "PDF/image attachments are NOT being ingested" "$log13"
+if [ "$rc13" = "0" ]; then
+  echo "  PASS: handler still exits 0 — a missing processor does not break audio transcription (rc=$rc13)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: handler exited $rc13 when the ingest script was missing"
   FAIL=$((FAIL + 1))
 fi
 
