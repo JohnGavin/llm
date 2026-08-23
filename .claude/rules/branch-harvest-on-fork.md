@@ -16,7 +16,7 @@ before any new work begins on user-facing surfaces.
 
 ## Source
 
-JohnGavin/premortem session 30, 2026-06-02, Lessons learnt L-4. See the
+A private personal-finance project, session 30, 2026-06-02, Lessons learnt L-4. See the
 companion doc for the full stranded-branch incident narrative.
 
 ## CRITICAL: Silence Is What Caused L-4
@@ -144,5 +144,5 @@ Selftest + a 4-step manual verification checklist are in the companion doc.
   current worktree's repo
 - `auto-delegation` — agent dispatches in worktrees; the harvest output
   informs which branches a subagent should NOT re-create work on
-- premortem `knowledge_base/lessons_learnt.md` L-4 — origin case
-- premortem issue 0021 — reference implementation
+- private-repo `knowledge_base/lessons_learnt.md` L-4 — origin case (see companion Source)
+- private-repo issue tracker (same project) — reference implementation
