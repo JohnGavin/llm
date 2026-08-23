@@ -170,6 +170,22 @@ for line in sys.stdin:
                 capture_output=True)
             print(f'Text: {filename}')
 
+        # Same accounting as the daemon path (llm#1001): a message that
+        # produced no text must still leave a record of having arrived.
+        if not body:
+            atts = sent.get('attachments', []) or []
+            group = sent.get('groupInfo', {}) or {}
+            group_name = group.get('groupName') or group.get('groupId') or 'direct'
+            if atts:
+                desc = ', '.join(
+                    f\"{a.get('contentType', 'unknown')}:{a.get('id', '?')}\"
+                    + (f\" ({a.get('filename')})\" if a.get('filename') else '')
+                    for a in atts
+                )
+                print(f'ATTACHMENT-ONLY message at {dt:%Y-%m-%d %H:%M:%S} in group {group_name!r}: {len(atts)} attachment(s) [{desc}] — no text body; file ingestion handled by signal_attachment_ingest.sh', file=sys.stderr)
+            else:
+                print(f'EMPTY message at {dt:%Y-%m-%d %H:%M:%S} in group {group_name!r}: no text body and no attachments — nothing to ingest', file=sys.stderr)
+
     except (json.JSONDecodeError, KeyError, ValueError):
         continue
 " 2>>"$LOG" || true
@@ -382,6 +398,27 @@ for line in sys.stdin:
                 capture_output=True)
             print(f'Text: {filename}')
 
+        # Account for every message that produced no text (llm#1001). A message
+        # with an empty body used to fall off the end of this loop with no log
+        # line at all — which is how a scanned PDF and 93 images disappeared
+        # without trace for ten weeks. The group name is only available HERE,
+        # in the envelope; the on-disk attachment scan cannot recover it, so it
+        # is recorded now even though the file itself is ingested later by
+        # signal_attachment_ingest.sh.
+        if not body:
+            atts = sent.get('attachments', []) or []
+            group = sent.get('groupInfo', {}) or {}
+            group_name = group.get('groupName') or group.get('groupId') or 'direct'
+            if atts:
+                desc = ', '.join(
+                    f\"{a.get('contentType', 'unknown')}:{a.get('id', '?')}\"
+                    + (f\" ({a.get('filename')})\" if a.get('filename') else '')
+                    for a in atts
+                )
+                print(f'ATTACHMENT-ONLY message at {dt:%Y-%m-%d %H:%M:%S} in group {group_name!r}: {len(atts)} attachment(s) [{desc}] — no text body; file ingestion handled by signal_attachment_ingest.sh', file=sys.stderr)
+            else:
+                print(f'EMPTY message at {dt:%Y-%m-%d %H:%M:%S} in group {group_name!r}: no text body and no attachments — nothing to ingest', file=sys.stderr)
+
     except (KeyError, ValueError):
         continue
 
@@ -411,5 +448,22 @@ for aac in "$ATTACH_DIR"/*.aac "$ATTACH_DIR"/*.ogg "$ATTACH_DIR"/*.opus "$ATTACH
   [ -f "$aac" ] || continue
   transcribe_audio "$aac"
 done
+
+# 3. Process every OTHER attachment type — PDFs, images, and anything unknown
+# (llm#1001). Before this, steps 1 and 2 were the entire pipeline: a text body
+# or an audio file. Everything else hit no branch and produced no log line.
+#
+# The ingest script is deliberately conservative by default: it only looks at
+# attachments newer than its cutoff, and records each older file once as
+# skipped-pre-cutoff rather than retro-ingesting four months of photos into an
+# append-only store. Run it directly with --backfill to pick those up.
+#
+# It never exits non-zero on a per-file failure, but guard the call anyway so a
+# missing dependency can't take down audio transcription above.
+if [ -x "$SCRIPT_DIR/signal_attachment_ingest.sh" ]; then
+  "$SCRIPT_DIR/signal_attachment_ingest.sh" || log "WARN: signal_attachment_ingest.sh exited non-zero"
+else
+  log "GAP: signal_attachment_ingest.sh not found or not executable at $SCRIPT_DIR — PDF/image attachments are NOT being ingested (llm#1001)"
+fi
 
 exit 0
