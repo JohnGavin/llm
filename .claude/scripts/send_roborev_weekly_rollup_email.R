@@ -17,8 +17,12 @@
 #   ROBOREV_DB                  override reviews.db path
 #   UNIFIED_DUCKDB              override unified.duckdb path
 #   ROBOREV_WEEKLY_DIR          override weekly rollup output dir
-#   ROBOREV_DASHBOARD_URL       dashboard link (default provided)
 #   EMAIL_DRY_RUN               "1" → print body to stdout, do not send
+#   ROBOREV_DASHBOARD_URL        Explicit dashboard link override (wins outright)
+#   ROBOREV_DASHBOARD_REPO_URL   GitHub repo fallback (default: llmtelemetry)
+#   ROBOREV_DASHBOARD_LOCAL_PATH Locally-rendered dashboard path (default:
+#                                 ~/docs_gh/llmtelemetry/_site/index.html)
+#   See resolve_dashboard_links()/dashboard_cta_block() in email_styles.R.
 #
 # Usage:
 #   Rscript .claude/scripts/send_roborev_weekly_rollup_email.R
@@ -50,11 +54,11 @@ suppressPackageStartupMessages({
 source(file.path(.scripts_dir, "email_styles.R"))
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-
-ROBOREV_DASHBOARD_URL <- Sys.getenv(
-  "ROBOREV_DASHBOARD_URL",
-  "https://johngavin.github.io/llmtelemetry/#roborev"
-)
+#
+# ROBOREV_DASHBOARD_URL / _REPO_URL / _LOCAL_PATH: resolved by
+# resolve_dashboard_links() / dashboard_cta_block() in email_styles.R (sourced
+# above). See that file for the full env-var contract and the 2026-08-22
+# llmtelemetry-went-private rationale.
 
 ROBOREV_WEEKLY_DIR <- Sys.getenv(
   "ROBOREV_WEEKLY_DIR",
@@ -207,17 +211,7 @@ body_inner <- collapsible_block(
 )
 
 # Dashboard CTA
-dashboard_block <- sprintf(
-  '<div style="margin: 16px 0;">
-  <a href="%s"
-     style="display:inline-block; padding:10px 20px; background-color:%s;
-            color:#1a1a2e; text-decoration:none; border-radius:4px;
-            font-weight:bold; font-size:13px;">
-    View Full roborev Dashboard
-  </a>
-</div>',
-  ROBOREV_DASHBOARD_URL, accent_blue
-)
+dashboard_block <- dashboard_cta_block(accent_blue)
 
 email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
