@@ -59,3 +59,91 @@ collapsible_block <- function(title, summary_stats, html_body, open = FALSE) {
     html_body
   )
 }
+
+# ── resolve_dashboard_links() / dashboard_cta_block() ─────────────────────────
+#
+# The llmtelemetry roborev dashboard was public via GitHub Pages until the
+# repo was made private (2026-08-22) to stop it publishing another project's
+# personal-finance data — the GH Pages site went offline as an accepted
+# consequence. The dashboard itself still exists: Quarto renders it LOCALLY
+# to _site/index.html inside the llmtelemetry checkout.
+#
+# Nothing here is hardcoded to that one incident. Every piece is
+# env-overridable, so a FUTURE visibility change (site goes public again,
+# moves host, repo renamed) is a config edit, not a code hunt:
+#   ROBOREV_DASHBOARD_URL        — explicit override; if set, wins outright
+#                                   (e.g. point back at a restored public URL
+#                                   without touching any script)
+#   ROBOREV_DASHBOARD_REPO_URL   — the GitHub repo, for owner-authenticated
+#                                   browsing when the site itself isn't
+#                                   published (default: the llmtelemetry repo)
+#   ROBOREV_DASHBOARD_LOCAL_PATH — where the rendered site lives on this
+#                                   machine (default: the llmtelemetry
+#                                   checkout's Quarto _site/ output)
+#
+# @return list(explicit_url = chr|NULL, repo_url = chr, local_path = chr)
+resolve_dashboard_links <- function() {
+  explicit_url <- Sys.getenv("ROBOREV_DASHBOARD_URL", "")
+  list(
+    explicit_url = if (nzchar(explicit_url)) explicit_url else NULL,
+    repo_url = Sys.getenv(
+      "ROBOREV_DASHBOARD_REPO_URL",
+      "https://github.com/JohnGavin/llmtelemetry"
+    ),
+    local_path = Sys.getenv(
+      "ROBOREV_DASHBOARD_LOCAL_PATH",
+      file.path(Sys.getenv("HOME"), "docs_gh", "llmtelemetry", "_site", "index.html")
+    )
+  )
+}
+
+# dashboard_cta_block(): renders the "View Full roborev Dashboard" button
+# plus, when no explicit override URL is set, a one-line explanation of why
+# the button now points at the (private) repo instead of the old published
+# site, and the locally-rendered path as SELECTABLE TEXT rather than a
+# file:// <a href>. Major mail clients (Gmail included) strip file:// links
+# outright — a link that renders but can't be followed is barely better than
+# the 404 it replaces, so the path is shown as copyable <code> text instead.
+#
+# @param accent_colour CTA button colour (e.g. ACCENT_BLUE)
+# @return HTML string
+dashboard_cta_block <- function(accent_colour) {
+  links <- resolve_dashboard_links()
+  href  <- if (!is.null(links$explicit_url)) links$explicit_url else links$repo_url
+
+  changed_note <- if (is.null(links$explicit_url)) {
+    sprintf(
+      '<p style="color:%s; font-size:%s; margin:4px 0 12px 0;">
+        The public dashboard went offline when llmtelemetry was made private
+        (2026-08-22) to stop it publishing another project&#39;s data. The
+        button above opens the (now-private) repo instead &mdash; or open the
+        locally rendered site at:<br>
+        <code style="background-color:%s; color:%s; padding:2px 6px;
+          border-radius:3px; font-size:%s; user-select:all;">%s</code>
+      </p>',
+      DARK_MUTED, EMAIL_FONT_SUBTITLE, DARK_CARD, ACCENT_GREEN,
+      EMAIL_FONT_SUBTITLE, links$local_path
+    )
+  } else ""
+
+  sprintf(
+    '<div style="margin: 16px 0;">
+  <a href="%s"
+     style="display:inline-block; padding:10px 20px; background-color:%s;
+            color:#1a1a2e; text-decoration:none; border-radius:4px;
+            font-weight:bold; font-size:13px;">
+    View Full roborev Dashboard
+  </a>
+</div>
+%s',
+    href, accent_colour, changed_note
+  )
+}
+
+# effective_dashboard_url(): the single URL that dashboard_cta_block() will
+# actually render as the button href — for callers that need the same value
+# outside the HTML block itself (e.g. QA markers).
+effective_dashboard_url <- function() {
+  links <- resolve_dashboard_links()
+  if (!is.null(links$explicit_url)) links$explicit_url else links$repo_url
+}
