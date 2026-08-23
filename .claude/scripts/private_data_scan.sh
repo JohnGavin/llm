@@ -308,6 +308,57 @@ is_e164_fictional() {
 }
 
 # ---------------------------------------------------------------------------
+# Git short-SHA collision guard -- uk-postcode ONLY (see rationale below).
+# ---------------------------------------------------------------------------
+# RE_UK_POSTCODE is matched case-insensitively (PII_RULE_CI[uk-postcode]=1),
+# so it also matches a bare git abbreviated SHA whenever the SHA happens to
+# be composed entirely of hex letters, e.g. ca7f8fd (2 letters + digit +
+# alnum + digit + 2 letters -- the exact postcode shape). Naively rejecting
+# every all-hex candidate is WRONG: EC1A 1BB is a real London postcode and is
+# ALSO all-hex (E,C,1,A,1,B,B are all valid hex characters) -- rejecting
+# all-hex would create a false NEGATIVE on real postcodes, which is the wrong
+# direction for a privacy gate (a missed leak costs more than a blocked
+# commit -- see "prefer the false positive" in this script's task history).
+#
+# The three signals that together are unique to a git short SHA -- and that
+# a conventionally-written postcode never carries all at once -- are:
+#   1. every character is a valid hex digit (0-9a-f)
+#   2. no whitespace (a real postcode's outward/inward split, even when
+#      compacted, is written by a human either WITH the space or in
+#      UPPERCASE -- never both stripped AND lowercased in practice)
+#   3. every letter is lowercase (git SHAs are always lowercase hex; a real
+#      postcode written in prose is conventionally uppercase, e.g. SW1A 1AA,
+#      EC1A 1BB -- even a compact, spaceless real postcode like "EC1A1BB"
+#      keeps the uppercase convention)
+# A single regex captures all three at once: a string matching ^[0-9a-f]+$
+# has no uppercase letters (fails #3 otherwise), no non-hex letters (fails
+# #1 otherwise), and no whitespace (whitespace is not in the class, so any
+# match with the anchors fails #2 otherwise). Any ONE signal missing means
+# the candidate stays flagged:
+#   EC1A 1BB  -> has a space + uppercase letters -> STILL FLAGGED
+#   SW1A 1AA  -> S,W are not hex characters       -> STILL FLAGGED
+#   EC1A1BB   -> uppercase letters                -> STILL FLAGGED
+#   ca7f8fd   -> all-hex, no space, all-lowercase -> exempted (SHA-shaped)
+#
+# Known accepted gap: a real postcode written BOTH spaceless AND lowercase
+# (e.g. "ec1a1bb") is indistinguishable from a short SHA by this guard and
+# would be exempted. This is deliberately accepted as out of scope: PII
+# leaks in this repo's history/prose are addresses copy-pasted or typed by a
+# human, and postcodes are conventionally cased/spaced in that context (see
+# the module header's origin incident) -- the false-negative surface this
+# leaves is narrower than the false-positive surface (every 7-char lowercase
+# hex git SHA in CHANGELOG/commit-footer text) it closes.
+#
+# Scoped to uk-postcode only: e164-phone requires a leading '+' (never
+# hex-only) and iban's pattern is case-SENSITIVE on an uppercase country
+# code (PII_RULE_CI[iban]=0, RE_IBAN starts '[A-Z]{2}'), so a lowercase git
+# SHA can never match either -- this collision is unique to uk-postcode's
+# combination of an all-alnum shape with case-insensitive matching.
+is_git_sha_like() {
+    printf '%s' "$1" | "$GREP" -qE '^[0-9a-f]+$'
+}
+
+# ---------------------------------------------------------------------------
 # Self-reference exemption -- GENERIC-PATTERN DETECTION ONLY, never deny-list.
 # ---------------------------------------------------------------------------
 # This scanner's own source (and its sibling private_values_sync.sh, whose
@@ -424,6 +475,10 @@ scan_generic() {
             if [ "$name" = "e164-phone" ]; then
                 match="$(printf '%s' "$line" | "$GREP" -oE '\+[1-9][0-9]{7,14}' | head -1)"
                 [ -n "$match" ] && is_e164_fictional "$match" && continue
+            fi
+            if [ "$name" = "uk-postcode" ]; then
+                match="$(printf '%s' "$line" | "$GREP" -ioE -- "$pat" | head -1)"
+                [ -n "$match" ] && is_git_sha_like "$match" && continue
             fi
             append_finding "generic" "$sev" "$loc" "$lnum" "$name" \
                 "PII-shaped value detected (value redacted -- rule: $name)"
@@ -838,6 +893,33 @@ run_selftest() {
     FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f8.XXXXXX")"
     printf 'reach +19998887766 in a totally unrelated file\n' | scan_blob "R/some_other_file.R"
     _check "$([ "$(wc -l < "$FINDINGS_FILE" | tr -d ' ')" -ge 1 ] && echo 0 || echo 1)" "self-reference exemption is scoped: an unlisted file with the same content is still flagged"
+    rm -f "$FINDINGS_FILE"
+
+    # 17: git short-SHA collision guard (see is_git_sha_like()'s header
+    # comment) -- a bare abbreviated SHA that happens to be all-hex must NOT
+    # be flagged as a uk-postcode false positive.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f9.XXXXXX")"
+    printf 'fixed in commit ca7f8fd today\n' | scan_blob "R/some_other_file.R"
+    _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" "git short SHA 'ca7f8fd' is NOT flagged as a uk-postcode false positive"
+    rm -f "$FINDINGS_FILE"
+
+    # 18: the git-SHA guard must not weaken real postcode detection -- every
+    # one of these still matches RE_UK_POSTCODE (including all-hex shapes)
+    # but fails at least one of the three SHA-collision signals, so all must
+    # still be flagged.
+    for pc in "EC1A 1BB" "SW1A 1AA" "EC1Y 8NH"; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f10.XXXXXX")"
+        printf 'postcode %s lives here\n' "$pc" | scan_blob "R/some_other_file.R"
+        _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "real postcode '$pc' is still flagged (SHA guard does not weaken postcode detection)"
+        rm -f "$FINDINGS_FILE"
+    done
+
+    # 19: an uppercase, SPACELESS, all-hex postcode (EC1A1BB) still fails
+    # the "all-lowercase" signal -- proves the guard is not merely "has a
+    # space", it genuinely requires all three signals together.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f11.XXXXXX")"
+    printf 'postcode EC1A1BB lives here\n' | scan_blob "R/some_other_file.R"
+    _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "uppercase spaceless all-hex postcode 'EC1A1BB' is still flagged"
     rm -f "$FINDINGS_FILE"
 
     rm -rf "$tmp"
