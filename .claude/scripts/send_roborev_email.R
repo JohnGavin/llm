@@ -8,11 +8,15 @@
 #   GMAIL_USERNAME       Gmail address (sender + credential lookup)
 #   GMAIL_APP_PASSWORD   Gmail app password
 #   REPORT_RECIPIENT     Recipient address (falls back to GMAIL_USERNAME)
-#   ROBOREV_DASHBOARD_URL  Dashboard link (optional; default provided)
 #
 # Optional env vars:
 #   ROBOREV_DAILY_DIR   Override daily report directory
 #   EMAIL_DRY_RUN       Set to "1" to print body to stdout without sending
+#   ROBOREV_DASHBOARD_URL        Explicit dashboard link override (wins outright)
+#   ROBOREV_DASHBOARD_REPO_URL   GitHub repo fallback (default: llmtelemetry)
+#   ROBOREV_DASHBOARD_LOCAL_PATH Locally-rendered dashboard path (default:
+#                                 ~/docs_gh/llmtelemetry/_site/index.html)
+#   See resolve_dashboard_links()/dashboard_cta_block() in email_styles.R.
 #
 # Usage:
 #   Rscript .claude/scripts/send_roborev_email.R
@@ -48,10 +52,10 @@ ROBOREV_DAILY_DIR <- Sys.getenv(
   file.path(Sys.getenv("HOME"), ".claude", "logs", "roborev_daily_report")
 )
 
-ROBOREV_DASHBOARD_URL <- Sys.getenv(
-  "ROBOREV_DASHBOARD_URL",
-  "https://johngavin.github.io/llmtelemetry/#roborev"
-)
+# ROBOREV_DASHBOARD_URL / _REPO_URL / _LOCAL_PATH: resolved by
+# resolve_dashboard_links() / dashboard_cta_block() in email_styles.R (sourced
+# above). See that file for the full env-var contract and the 2026-08-22
+# llmtelemetry-went-private rationale.
 
 dry_run <- identical(Sys.getenv("EMAIL_DRY_RUN"), "1")
 
@@ -753,17 +757,7 @@ dashboard_block <- paste0(
   deploy_stale_block,
   above_threshold_block,
   unparseable_block,
-  sprintf(
-    '<div style="margin: 16px 0;">
-  <a href="%s"
-     style="display:inline-block; padding:10px 20px; background-color:%s;
-            color:#1a1a2e; text-decoration:none; border-radius:4px;
-            font-weight:bold; font-size:13px;">
-    View Full roborev Dashboard
-  </a>
-</div>',
-    ROBOREV_DASHBOARD_URL, accent_blue
-  )
+  dashboard_cta_block(accent_blue)
 )
 
 headline_1d_inner <- sprintf(
@@ -1115,7 +1109,7 @@ severity_html <- collapsible_block(
 # respectively, by construction of classify_open_findings().
 qa_markers <- sprintf(
   '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd -->',
-  report_date, issues_found_closed, fmt_rate(close_rate), ROBOREV_DASHBOARD_URL,
+  report_date, issues_found_closed, fmt_rate(close_rate), effective_dashboard_url(),
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
   if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
   if (is.na(total_above_threshold_open_n)) "NA" else as.character(total_above_threshold_open_n),
