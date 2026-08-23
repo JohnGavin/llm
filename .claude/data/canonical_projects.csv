@@ -1,28 +1,28 @@
-slug,display_name,repo,kind,is_active,notes
-JohnGavin.github.io,Personal Site,JohnGavin/JohnGavin.github.io,quarto-website,true,user site repo
-acd_area_climate_design,ACD Area Climate Design,JohnGavin/acd_area_climate_design,analysis,true,
-coMMpass,COMMpass,JohnGavin/coMMpass-analysis,analysis,true,GH repo is coMMpass-analysis; alias commpass for lowercase joins
-crypto,Crypto,JohnGavin/crypto,analysis,true,confirmed by user 2026-06-06
-crypto_solwatch,Crypto SolWatch,JohnGavin/crypto_solwatch,dashboard,true,
-crypto_swarms,Crypto Swarms,JohnGavin/crypto_swarms,analysis,true,
-football,Football,JohnGavin/football,analysis,true,confirmed by user 2026-06-06
-footbet,Footbet,JohnGavin/footbet,analysis,true,
-historical,Historical,JohnGavin/historical,analysis,true,
-irishbuoys,Irish Buoys,JohnGavin/irishbuoys,r-package,true,
-llm,LLM (meta-config),JohnGavin/llm,meta-config,true,this repo
-llmtelemetry,LLM Telemetry,JohnGavin/llmtelemetry,r-package,true,
-micromort,Micromort,JohnGavin/micromort,analysis,true,
-mycare,MyCare,JohnGavin/mycare,r-package,true,
-premortem,Premortem,JohnGavin/premortem,analysis,true,confirmed by user 2026-06-06
-randomwalk,Random Walk,JohnGavin/randomwalk,analysis,true,
-rix.setup,rix Setup,JohnGavin/rix.setup,meta-config,true,
-urban_planning,Urban Planning,JohnGavin/urban_planning,analysis,true,
-eis6,EIS 6,,analysis,true,SENSITIVE — local git only; NEVER push to GitHub
-t-demos,T-lang demos (archived),,analysis,false,defunct; archived to proj/data/tlang/t_demos.zip 2026-06-20
-knowledge,Knowledge Base,,other,true,llm#652 — kind=knowledge-base but CHECK allows only r-package/quarto-website/dashboard/analysis/meta-config/other; path docs_gh/llm/knowledge; LOCAL git only per wiki-storage-policy; 526 roborev jobs were being dropped
-travel,Travel,,analysis,true,llm#652 — path docs_gh/proj/pers/travel; 42 roborev jobs dropped; still active 2026-08-06
-tennis,Tennis,,analysis,true,llm#652 — path docs_gh/proj/pers/tennis; NB a second repo row also named tennis at docs_gh/tennis — verify which is live
-ideas,Ideas,,analysis,true,llm#652 — path docs_gh/proj/stats/ideas
-content,LLM Content Cache,,other,true,llm#652 — kind=cache but CHECK allows only the six listed kinds; path docs_gh/proj/data/llm/content; pkgctx external-context cache
-hello_t,T-lang hello (archived),,analysis,false,llm#652 — path docs_gh/proj/data/tlang/hello_t; same defunct family as t-demos
-my_t_project,T-lang my_t_project (archived),,analysis,false,llm#652 — path docs_gh/proj/data/tlang/my_t_project; same defunct family as t-demos
+slug,display_name,repo,kind,is_active,notes,visibility
+JohnGavin.github.io,Personal Site,JohnGavin/JohnGavin.github.io,quarto-website,true,user site repo,public
+acd_area_climate_design,ACD Area Climate Design,JohnGavin/acd_area_climate_design,analysis,true,,public
+coMMpass,COMMpass,JohnGavin/coMMpass-analysis,analysis,true,GH repo is coMMpass-analysis; alias commpass for lowercase joins,public
+crypto,Crypto,JohnGavin/solwatch,analysis,true,confirmed by user 2026-06-06; repo renamed on GitHub from crypto to solwatch and is now PRIVATE (verified via gh api 2026-08-22) — likely the same underlying project as crypto_solwatch below; unify in a follow-up,private
+crypto_solwatch,Crypto SolWatch,JohnGavin/crypto_solwatch,dashboard,true,repo field does not resolve on GitHub (404; verified 2026-08-22) — likely a duplicate/alias of the crypto row (which now points at the renamed JohnGavin/solwatch; private); needs human consolidation,private
+crypto_swarms,Crypto Swarms,JohnGavin/crypto_swarms,analysis,true,,public
+football,Football,JohnGavin/football,analysis,true,confirmed by user 2026-06-06; repo does not resolve on GitHub (404; verified 2026-08-22) — local-only or stale; unverified,private
+footbet,Footbet,JohnGavin/footbet,analysis,true,,public
+historical,Historical,JohnGavin/historical,analysis,true,,public
+irishbuoys,Irish Buoys,JohnGavin/irishbuoys,r-package,true,,public
+llm,LLM (meta-config),JohnGavin/llm,meta-config,true,this repo,public
+llmtelemetry,LLM Telemetry,JohnGavin/llmtelemetry,r-package,true,,private
+micromort,Micromort,JohnGavin/micromort,analysis,true,,public
+mycare,MyCare,,r-package,true,local-only; not on GitHub (verified 2026-08-22); PHI — see public-private-repo-boundary rule (health trigger),private
+premortem,Premortem,,analysis,true,confirmed by user 2026-06-06; local-only; not on GitHub (verified 2026-08-22) — repo field previously said JohnGavin/premortem but no such repo exists; money/estate-planning trigger,private
+randomwalk,Random Walk,JohnGavin/randomwalk,analysis,true,,public
+rix.setup,rix Setup,JohnGavin/rix.setup,meta-config,true,,public
+urban_planning,Urban Planning,JohnGavin/urban_planning,analysis,true,,public
+eis6,EIS 6,,analysis,true,SENSITIVE — local git only; NEVER push to GitHub,private
+t-demos,T-lang demos (archived),,analysis,false,defunct; archived to proj/data/tlang/t_demos.zip 2026-06-20,private
+knowledge,Knowledge Base,,other,true,llm#652 — kind=knowledge-base but CHECK allows only r-package/quarto-website/dashboard/analysis/meta-config/other; path docs_gh/llm/knowledge; LOCAL git only per wiki-storage-policy; 526 roborev jobs were being dropped,private
+travel,Travel,,analysis,true,llm#652 — path docs_gh/proj/pers/travel; 42 roborev jobs dropped; still active 2026-08-06; no positive evidence of public status — default-private,private
+tennis,Tennis,,analysis,true,llm#652 — path docs_gh/proj/pers/tennis; NB a second repo row also named tennis at docs_gh/tennis — verify which is live; no positive evidence of public status — default-private,private
+ideas,Ideas,,analysis,true,llm#652 — path docs_gh/proj/stats/ideas; no positive evidence of public status — default-private,private
+content,LLM Content Cache,,other,true,llm#652 — kind=cache but CHECK allows only the six listed kinds; path docs_gh/proj/data/llm/content; pkgctx external-context cache; likely benign (not personal) but no positive evidence of public status — default-private,private
+hello_t,T-lang hello (archived),,analysis,false,llm#652 — path docs_gh/proj/data/tlang/hello_t; same defunct family as t-demos,private
+my_t_project,T-lang my_t_project (archived),,analysis,false,llm#652 — path docs_gh/proj/data/tlang/my_t_project; same defunct family as t-demos,private

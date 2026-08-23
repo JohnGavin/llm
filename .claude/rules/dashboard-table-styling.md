@@ -18,7 +18,7 @@ any framework-emitted table.
 
 ## Source
 
-JohnGavin/premortem session 30, 2026-06-02. User report: "make all columns
+A private personal-finance project, session 30, 2026-06-02. User report: "make all columns
 the same width as the text in that column i.e the columns do not have to
 span the width of the window, move them to the left and right justify all
 columns in all tables."
@@ -133,4 +133,4 @@ After applying:
 - `accessibility` — table contrast, captions
 - `uniform-typography` — tables inherit the body font size
 - `quarto-vignettes` — table-format rules (DT-only for `vig_*` targets)
-- premortem issue 0021 — reference implementation
+- private-repo issue tracker (session origin above) — reference implementation

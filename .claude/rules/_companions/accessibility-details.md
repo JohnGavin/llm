@@ -19,7 +19,7 @@ format:
     axe: true  # MANDATORY
 ```
 
-## Clause 0 — premortem issue 0027 worked example
+## Clause 0 — issue 0027 worked example (private-repo tracker)
 
 **5 merged iterations** fixed the wrong layer (mermaid theme override, CSS
 catch-all, vendored mermaid 10, per-diagram `%%{init}%%`, http-server
