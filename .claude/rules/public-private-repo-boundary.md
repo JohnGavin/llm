@@ -71,7 +71,7 @@ that reader is fallible and is sometimes in a hurry.
 
 The controls that actually hold the boundary are mechanical and auto-triggered:
 pre-commit, pre-push, CI on PR, and a scheduled history audit. See
-[`private-data-gates`](private-data-gates.md) (llm#946) for the enforcement layers.
+[`private-data-scanning`](private-data-scanning.md) (llm#946) for the enforcement layers.
 
 If you find yourself relying on *this file* to prevent a leak, the enforcement is
 missing and that is the bug to fix.
@@ -117,7 +117,7 @@ exposure is permanent. That is the cost this rule exists to avoid paying again.
 
 ## Related
 
-- [`private-data-gates`](private-data-gates.md) — the mechanical enforcement (llm#946)
+- [`private-data-scanning`](private-data-scanning.md) — the mechanical enforcement (llm#946)
 - [`secrets-single-source`](secrets-single-source.md) — runtime secret sourcing; the
   Layer-0 control that keeps values out of repos entirely
 - [`credential-management`](credential-management.md) — credential handling posture
