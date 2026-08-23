@@ -359,6 +359,34 @@ is_git_sha_like() {
 }
 
 # ---------------------------------------------------------------------------
+# HTML numeric character reference collision guard -- uk-postcode ONLY.
+# ---------------------------------------------------------------------------
+# RE_UK_POSTCODE also matches inside an HTML hex character reference such as
+# &#x1F4CB; (an emoji), because the reference's own syntax -- a leading 'x'
+# (hex-radix marker) immediately followed by hex digits -- happens to fit
+# the same 1-2-letters + digit + alnum + digit + 2-letters shape as a
+# compact UK postcode: x1F4CB -> x(letter) 1(digit) F(alnum) 4(digit)
+# CB(2 letters). Found live in
+# .claude/scripts/send_roborev_weekly_rollup_email.R: "&#x1F4CB; Weekly
+# Rollup" (2026-08-23).
+#
+# Unlike the git-SHA collision above, this is not a shape ambiguity needing
+# a multi-signal heuristic: an HTML numeric character reference's own
+# delimiters (&# immediately before the payload, ; immediately after) are
+# unambiguous, always present in valid markup, and never appear wrapped
+# around a postcode written in prose. So the guard is a literal-context
+# check: is the candidate match wrapped in "&#<match>;" on the line it came
+# from? If yes, it is the entity's hex payload, not a postcode.
+#
+# Scoped to uk-postcode only, for the same reason as the SHA guard: e164
+# requires a leading '+' and iban requires an uppercase country-code prefix
+# -- neither can match a lowercase hex entity payload like "x1f4cb".
+is_html_entity_like() {
+    local match="$1" line="$2"
+    printf '%s' "$line" | "$GREP" -qFi -- "&#${match};"
+}
+
+# ---------------------------------------------------------------------------
 # Self-reference exemption -- GENERIC-PATTERN DETECTION ONLY, never deny-list.
 # ---------------------------------------------------------------------------
 # This scanner's own source (and its sibling private_values_sync.sh, whose
@@ -477,8 +505,21 @@ scan_generic() {
                 [ -n "$match" ] && is_e164_fictional "$match" && continue
             fi
             if [ "$name" = "uk-postcode" ]; then
-                match="$(printf '%s' "$line" | "$GREP" -ioE -- "$pat" | head -1)"
-                [ -n "$match" ] && is_git_sha_like "$match" && continue
+                # Check EVERY match on the line, not just the first -- a
+                # line can legitimately carry both an exempt (SHA/HTML
+                # entity) hit and a real postcode (e.g. an icon entity
+                # earlier in a line whose prose also names a genuine
+                # postcode). Skip the line only when ALL matches are exempt.
+                local pc_exempt_all=1 pc_match
+                while IFS= read -r pc_match; do
+                    [ -n "$pc_match" ] || continue
+                    if is_git_sha_like "$pc_match" || is_html_entity_like "$pc_match" "$line"; then
+                        continue
+                    fi
+                    pc_exempt_all=0
+                    break
+                done < <(printf '%s' "$line" | "$GREP" -ioE -- "$pat")
+                [ "$pc_exempt_all" -eq 1 ] && continue
             fi
             append_finding "generic" "$sev" "$loc" "$lnum" "$name" \
                 "PII-shaped value detected (value redacted -- rule: $name)"
@@ -920,6 +961,26 @@ run_selftest() {
     FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f11.XXXXXX")"
     printf 'postcode EC1A1BB lives here\n' | scan_blob "R/some_other_file.R"
     _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "uppercase spaceless all-hex postcode 'EC1A1BB' is still flagged"
+    rm -f "$FINDINGS_FILE"
+
+    # 20-21: HTML numeric character reference collision guard (see
+    # is_html_entity_like()'s header comment) -- a hex entity's own hex
+    # payload (leading 'x' + hex digits, wrapped in &#...;) must NOT be
+    # flagged as a uk-postcode false positive. Both entities actually
+    # present in .claude/scripts/send_roborev_weekly_rollup_email.R.
+    for ent in "&#x1F4CB; Weekly Rollup" "&#x1F4CA; Chart"; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f12.XXXXXX")"
+        printf '%s\n' "$ent" | scan_blob "R/some_other_file.R"
+        _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" "HTML entity '$ent' is NOT flagged as a uk-postcode false positive"
+        rm -f "$FINDINGS_FILE"
+    done
+
+    # 22: a real postcode on the SAME line as an HTML entity is still
+    # flagged -- proves the guard skips only the exempt match, not the
+    # whole line (the per-match loop, not a first-match-only check).
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f13.XXXXXX")"
+    printf '%s\n' "&#x1F4CB; postcode EC1A 1BB lives here" | scan_blob "R/some_other_file.R"
+    _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "real postcode on the same line as an HTML entity is still flagged"
     rm -f "$FINDINGS_FILE"
 
     rm -rf "$tmp"
