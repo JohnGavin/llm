@@ -4,7 +4,101 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
-## 2026-08-18/19 — the monitoring cluster: eight PRs, and a missing PATH entry behind the "broken" fallback
+## 2026-08-21/23 — a four-month PII exposure in a public repo, and the gates that now block it
+
+Started on roborev job timeouts, ended having found a personal phone number in
+this **public** repo, present since 2026-04-20 in 8 files across 9 commits. The
+thread through everything below: **every preventive control that existed was
+advisory, and every one of them failed.**
+
+### Completed
+
+**Signal pipeline restored end-to-end.** Capture had been dead since 8 June. Four
+separate causes, found in order by fixing each and looking again:
+
+1. Daemon/cron deadlock over one account lock — the cron `receive` timed out at
+   `rc=124` every 5.5 min while the daemon held the lock ([#990](https://github.com/JohnGavin/llm/pull/990)).
+2. `process_daemon_messages()` read `/tmp/signal_cli_daemon_stdout.log`; the
+   plist writes `~/.claude/logs/…`. A path mismatch, now resolved from the plist.
+3. signal-cli 0.14.3 threw `NullPointerException: getServerGuid(...) must not be
+   null` on a real envelope at 19:00:55 and killed its own receive loop. Upgraded
+   to 0.14.7 — the plist hardcoded `Cellar/0.14.3_1`, which `brew upgrade`
+   deletes, so that was fixed in the same operation.
+4. Content-type gap: the pipeline handled text and `.aac/.ogg/.opus` only.
+   PDFs and images were dropped **silently** ([#1001](https://github.com/JohnGavin/llm/issues/1001)).
+
+Verified live: a test voice note arrived in `Notes to llm` and transcribed. A
+scanned utility bill was OCR'd (no text layer — `/Font` absent, `DCTDecode`
+JPEGs, so `pdftotext` would return nothing) and filed as premortem issue 0071
+with every figure flagged **model-read, not parser-derived**.
+
+**PII: rewrite, then the gates that make it unnecessary.** 1,736 commits
+rewritten; branches and tags verified clean from a fresh clone. Then five
+mechanical layers ([#1004](https://github.com/JohnGavin/llm/pull/1004)):
+deny-list scanner, pre-commit, pre-push, CI, scheduled audit. Proven by staging
+a file containing the real value — commit **blocked**, both detectors fired,
+both redacted their own output.
+
+**Disclosure audit of the public repo** ([#1006](https://github.com/JohnGavin/llm/pull/1006)).
+Value-scanners cannot see prose. `AGENTS.md` named three banks and referenced
+estate balances; `.claude/settings.json`'s WebFetch allowlist held ~27
+personal-finance domains — *a map of someone's financial life*, disclosive in
+aggregate though no single entry is secret. `canonical_projects.csv` gained a
+`visibility` column defaulting to **private**.
+
+**Also:** roborev reaper + duplicate-daemon check ([#998](https://github.com/JohnGavin/llm/pull/998));
+quota-vs-crash reclassification ([#999](https://github.com/JohnGavin/llm/pull/999)) —
+claude-code says "spend limit", gemini says "quota", and the classifier matched
+only the second, so 13 transient failures were filed as crashes; push-guard flag
+parsing ([#991](https://github.com/JohnGavin/llm/pull/991)); safety-critical rule
+tier ([#994](https://github.com/JohnGavin/llm/pull/994)); dead ccusage job removed
+([#993](https://github.com/JohnGavin/llm/pull/993)); dashboard CTA no longer 404s
+([#1009](https://github.com/JohnGavin/llm/pull/1009)).
+
+### Failed approaches
+
+- **Tried `git push --mirror` to publish the rewrite. It hung for 10 minutes.**
+  452 of 547 refs were `refs/pull/*`, which GitHub owns and rejects. Push
+  `refs/heads/*` and `refs/tags/*` explicitly instead.
+- **Tried squashing the gates branch with `reset --soft origin/main`.** It
+  silently turned another merged PR's files into deletions — the llm#318
+  "appears to revert" shape. Rebase first, then squash.
+- **Tried verifying no PII with `git diff | grep '^+'`. It returned clean and
+  was incapable of returning anything else** — difftastic is configured as an
+  external diff driver, so there are no `+` lines to match ([#997](https://github.com/JohnGavin/llm/issues/997)).
+  Use `--no-ext-diff`, or read blobs via `git cat-file` as the scanner now does.
+- **Tried "reject all-hex tokens" to stop git SHAs matching the postcode rule.**
+  Some genuine London postcodes are composed entirely of hex characters, so that
+  fix would have traded a CI nuisance for a missed detection. The working
+  discriminator needs all three SHA signals together: all-hex, no whitespace,
+  all-lowercase. (Writing the counter-example literally into this file is itself
+  blocked by the new gate — correctly, so it is described rather than quoted.)
+
+### Accuracy / metrics
+
+- 12 PRs merged; ~15 issues closed; 8 filed.
+- Scanner selftests 14 → **28**; signal suites 58 assertions; gates 51/51.
+- roborev gemini durations are **bimodal** — 0.2–0.9 min typically, with stall
+  batches of 25–58 min. A 7-day mean of "2.7 min" averages the two regimes and
+  means nothing; use a quantile or per-batch max.
+- `~/.claude` measured **2.7 GB** (issue said 7.9), logs **2.2 GB** (said 6.5),
+  poller log **1.1 MB** (said 74 MB). Five of eleven issue targets were already
+  fixed or materially stale.
+
+### Known limitations
+
+- **8 commits remain fetchable via 438 `refs/pull/*` refs.** A rewrite cannot
+  reach them. Owner decided against contacting GitHub Support; the number is a
+  primary phone and **cannot be rotated**, so the exposure is permanent.
+- Project-name gating ships **warn-only** — enabling it would block every commit
+  touching the ~20 files that legitimately name private projects.
+- `--full-history` audit tested on fixtures only; CI workflow never run on a real
+  runner; `.claude/`-dependent tests skip silently under `R CMD check`.
+- Per-agent `pass_rate` still uncorrected for quota failures (llm#904).
+- The `myeloma` redaction in telemetry JSON is cosmetic — the ccusage pipeline
+  will regenerate it. Needs a source-level fix.
+
+
 
 A day spent on issues whose common shape is *the arithmetic is right and the
 claim attached to it is false*. Every finding below came from checking a number
