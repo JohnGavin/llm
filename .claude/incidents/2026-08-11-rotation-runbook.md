@@ -85,9 +85,16 @@ gh secret set CACHIX_AUTH_TOKEN --repo JohnGavin/<repo>
 
 > **This is the step that was missing in 2026-08 and it cost 11 days of broken
 > CI.** The local `secrets.env` was updated correctly and the old token revoked;
-> three repos (`tlang`, `irishbuoys`, `randomwalk`) kept serving the dead value
-> to GitHub Actions. Nothing surfaced it — the failures were nightly and weekly
-> jobs nobody was watching. See JohnGavin/llm#1013.
+> **four** repos (`tlang`, `irishbuoys`, `solwatch`, `randomwalk`) kept serving
+> the dead value to GitHub Actions. Nothing surfaced it — the failures were
+> nightly and weekly jobs nobody was watching. See JohnGavin/llm#1013.
+>
+> The count is itself the argument for Step 0. A hand-written list of "the repos
+> that use Cachix", compiled by someone who had just spent an hour reading these
+> failures, came to **three** — it guessed the repo name `crypto_solwatch` when
+> the repo is `solwatch`. Running the enumeration found the fourth, which had
+> been failing weekly since 2026-08-16 and was in nobody's list. Recall does not
+> work for this; the command does.
 
 ## Group 2 — Billable API keys (do second)
 
@@ -195,7 +202,7 @@ and check it. Do not mark the rotation complete until that run has been observed
 |---|---|---|---|
 | `GMAIL_APP_PASSWORD` | | | 06:30 digest email |
 | `GH_TOKEN` / `GITHUB_PAT` | | | `gh auth status` + one `gh` write |
-| `CACHIX_AUTH_TOKEN` | | `tlang`, `irishbuoys`, `randomwalk` | one nix build per repo |
+| `CACHIX_AUTH_TOKEN` | | `tlang`, `irishbuoys`, `solwatch`, `randomwalk` | one nix build per repo |
 | `GEMINI_API_KEY` | | | roborev review |
 
 ### Why this section was rewritten
