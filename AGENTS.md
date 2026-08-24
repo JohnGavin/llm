@@ -61,6 +61,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 - Data / analysis: `cross-cutting-rename`, `data-glossary-and-entity-resolution`, `unified-observability-schema`, `survival-reporting`
 - Build artifacts: `portable-build-artifacts` (committed artifacts must not depend on which checkout built them — absolute paths in serialised objects; path filters matching their own scan root)
 - Tooling: `roborev-exclude-patterns`
+- Checks / gates: `checks-must-distinguish-unknown` (any check, gate, probe or health report must be able to say "I could not determine this" distinguishably from a negative — an error path and a negative-result path must never share an exit; six instances in one week, llm#1012/#746/#913/#1013/#1017/#1019)
 
 **Dark-mode contrast (every Quarto project):** Single global script at `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh` (public mirror: `https://raw.githubusercontent.com/JohnGavin/llm/main/.claude/scripts/check_dark_contrast.sh`). NEVER copy into a project. EVERY `_quarto.yml` MUST add this line under `project: post-render:` — `- /Users/johngavin/docs_gh/llm/.claude/scripts/quarto_post_render_contrast.sh`. Render fails on any uncovered light inline background. See `dark-mode-completeness` rule.
 
@@ -130,7 +131,7 @@ Pruned 2026-07-08 (chore/prune-vestigial-slash-commands): `/pr-status`, `/wiki-h
 
 `deploy-new-project.md`, `onboard-dataset.md`, `debug-ci-failure.md`, `publish-vignette.md`
 
-## Rules (74)
+## Rules (88)
 
 Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
 
