@@ -4,6 +4,45 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-23 — Signal attachment ingestion, and two checks that were passing for the wrong reason
+
+Picked up item 4 from the previous session's list: [#1001](https://github.com/JohnGavin/llm/issues/1001), the content-type gap that dropped PDFs and images silently. Shipped as [#1011](https://github.com/JohnGavin/llm/pull/1011), merged `06e51de`, deployed and verified live.
+
+### Completed
+
+**`.claude/scripts/signal_attachment_ingest.sh`** — the pipeline handled a text body or an `.aac`/`.ogg`/`.opus` voice note; everything else hit no branch and produced no log line. Every file now yields exactly one recorded outcome, *including the ones we can't handle*: PDF text layer via `gs -sDEVICE=txtwrite`; image-only PDFs said out loud and sent to OCR (gs raster @300dpi → tesseract, page at a time); an `unreadable` stub when neither works ([#901](https://github.com/JohnGavin/llm/issues/901)'s requirement that a missing text layer fail loudly rather than return an empty success); images OCR'd with a stub when text-free; unknown types logged `UNHANDLED` with their detected MIME type; audio delegated to the existing whisper path and recorded as such. No new dependencies — `gs`, `tesseract`, `qpdf` were already installed.
+
+**Message-level accounting** in `signal_braindump_handler.sh`. A body-less message now logs its attachment content types **and its group name** — which exists only in the envelope and cannot be recovered from the file on disk. That is the input [#1001](https://github.com/JohnGavin/llm/issues/1001) item 4 will need.
+
+**Conservative by default.** Only attachments newer than a 2026-08-22 cutoff are processed; each older file is recorded once as `skipped-pre-cutoff` *with a log line*. `--backfill` on demand. Retro-ingesting 93 photos into an append-only store should be a decision, not a side effect of a bug fix. The user chose new-only with opt-in backfill, and stub notes for text-free images.
+
+**Live result:** `braindumps/` had 31 files, newest 2026-05-30. The 2026-08-22 scanned PDF now yields 5,429 chars from 4 pages (text layer: **0**), and both rows from the issue's evidence table are captured, indexed in `braindumps` as `signal_pdf_ocr` / `signal_image_stub`.
+
+### Failed Approaches
+
+**A 40-char text-layer threshold against a one-line fixture.** The first selftest fixture held `HELLO SELFTEST TEXT LAYER` — 33 non-whitespace chars, under `PDF_TEXT_MIN_CHARS=40` — so a text-layer PDF was classified image-only. Fixed by lengthening the fixture, *not* by lowering the threshold: 40 is right for real documents, and the fixture was the thing that was wrong.
+
+**Trusting 18 green assertions.** The suite passed while the cutoff silently skipped the exact file the change existed to recover. BSD `date -j -f '%Y-%m-%d'` fills unspecified fields from the **current time**, so the cutoff walked forward through the day; run at 13:00 it excluded a 09:50 file from that same morning, recorded it as `skipped-pre-cutoff`, and reported `scan complete: 1 processed`. GNU `date -d` does not do this. Now pinned to `00:00:00`, with the resolved instant asserted directly *and* a fixture stamped 00:30 on the cutoff date. Mutation-verified — reinstating the bug turns 20/0 into 18/2. Caught only by running against the real attachments directory. New memory: `feedback_fixtures-hide-boundary-drift`.
+
+**Trusting the merge gate's own output.** `bin/roborev_merge_gate.sh` printed `PASS` before the merge. It hardcodes `GH="${GH:-/usr/local/bin/gh}"`, which does not exist on this machine (`gh` is Homebrew), the failure is swallowed by `2>/dev/null || echo ""`, and the empty commit list takes the fail-open branch. Same PR, same second: `PASS (no commits found — fail-open)` vs `PASS (no unresolved High-severity findings)` with `GH` corrected. The gate has never gated anything here. Filed as [#1012](https://github.com/JohnGavin/llm/issues/1012); the important half of the fix is not the path but separating *"could not ask"* from *"nothing to report"*.
+
+### Accuracy / Metrics
+
+- `tests/test_signal_braindump_handler.sh` — **39 passed** (28 pre-existing, all still green)
+- `tests/test_signal_attachment_ingest.sh` — **9 passed**, wrapping a 20-assertion `--selftest`
+- `tests/test_signal_notes_sync.sh` — **20 passed**, untouched
+- roborev on both commits: `verdict_bool=1`, *"No issues found."*
+- Memory index compacted 165 → 58 lines, all 53 entries preserved verbatim
+
+### Known Limitations
+
+- **93-image backlog** untouched by design — `signal_attachment_ingest.sh --backfill` when wanted.
+- **[#1001](https://github.com/JohnGavin/llm/issues/1001) item 4** (scope capture to `Notes to llm`) still open; `pills` traffic remains in scope for ingestion, as before.
+- **[#1012](https://github.com/JohnGavin/llm/issues/1012)** — merge gate fail-opens. Third instance of the shape behind [#746](https://github.com/JohnGavin/llm/issues/746) and [#913](https://github.com/JohnGavin/llm/issues/913): a check returning the reassuring answer for reasons unrelated to the question. The cutoff bug above is a fourth, in the same day.
+- **`tests/test_signal_notes_sync.sh`** still uses `+1555-000-1111`, outside the `NPA-555-01XX` range `private_data_scan.sh` allowlists. It will block the next commit touching it. One line; left alone as unrelated to [#1001](https://github.com/JohnGavin/llm/issues/1001).
+- **`GH_TOKEN`** in this shell holds a revoked token shadowing the working keyring credential; every `gh` call needed `env -u GH_TOKEN`. It is also one of the ways [#1012](https://github.com/JohnGavin/llm/issues/1012)'s gate fail-opens.
+- **roborev backlog: 45 open findings**, 7 unaddressed verdict failures (17 failed / 10 addressed), oldest critical is #9384 (security, 7d). All pre-existing; `crash=0`, `quota=0`, consistency check clean.
+
 ## 2026-08-21/23 — a four-month PII exposure in a public repo, and the gates that now block it
 
 Started on roborev job timeouts, ended having found a personal phone number in
