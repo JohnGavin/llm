@@ -14,6 +14,44 @@ Ordering is by *blast radius × exploitability*, not by provider convenience.
 
 ---
 
+## Step 0 — Enumerate every STORE before revoking anything
+
+**Do this first, for each credential, and write the list down.**
+
+`~/.config/secrets.env` is one store among several. A credential also lives
+anywhere it was *copied to*, and revoking the old value breaks every copy at
+once. The copies do not announce themselves — they fail on their own schedule,
+which may be days later.
+
+Known store classes:
+
+| store | how to enumerate | notes |
+|---|---|---|
+| `~/.config/secrets.env` | `grep -c '^export' ~/.config/secrets.env` | the only one the original runbook covered |
+| **GitHub Actions repo secrets** | command below | **this is the one that was missed in 2026-08** |
+| launchd plists / job env | `grep -rl '<VARNAME>' ~/Library/LaunchAgents/` | holds values in memory until restarted |
+| CI provider secrets other than GitHub | manual | none currently |
+
+Enumerate the GitHub Actions copies — replace `VARNAME`:
+
+```bash
+for r in $(gh repo list JohnGavin --limit 200 --json name --jq '.[].name'); do
+  gh secret list --repo "JohnGavin/$r" 2>/dev/null \
+    | grep -q '^VARNAME' && echo "JohnGavin/$r"
+done
+```
+
+Run it **before** revoking. After revocation the same list is still correct, but
+you are now working against a clock with CI already broken.
+
+> A repo that is **dormant** looks identical to a repo that is **fixed**. In the
+> 2026-08 incident `randomwalk` held the dead token and had not run a workflow
+> since 2026-07-12 — it was not failing, and it was not repaired either. Set the
+> new value everywhere the enumeration lists it, not just where something is
+> visibly red.
+
+---
+
 ## Group 1 — Write access to code (do first)
 
 Compromise here means an attacker can modify source, publish releases, or
@@ -35,8 +73,21 @@ is why they rank above billable API keys.
 5. Verify: `gh auth status` reports a valid token.
 6. This unblocks all queued `gh` work, including deleting the leaked comment.
 
-**Steps (3):** create the new Cachix token first, update `secrets.env`, then
-revoke the old one — this ordering avoids breaking an in-flight nix push.
+**Steps (3):** create the new Cachix token first, update `secrets.env` **and
+every GitHub Actions repo secret from the Step 0 enumeration**, then revoke the
+old one — this ordering avoids breaking an in-flight nix push.
+
+```bash
+# per repo from the Step 0 list; reads the value from stdin, never argv,
+# so it does not land in shell history or `ps` output
+gh secret set CACHIX_AUTH_TOKEN --repo JohnGavin/<repo>
+```
+
+> **This is the step that was missing in 2026-08 and it cost 11 days of broken
+> CI.** The local `secrets.env` was updated correctly and the old token revoked;
+> three repos (`tlang`, `irishbuoys`, `randomwalk`) kept serving the dead value
+> to GitHub Actions. Nothing surfaced it — the failures were nightly and weekly
+> jobs nobody was watching. See JohnGavin/llm#1013.
 
 ## Group 2 — Billable API keys (do second)
 
@@ -114,16 +165,59 @@ sessions** for unfamiliar access since 2026-08-11.
 
 ## Completion check
 
-After all rotations:
+### Local store
 
 ```
 grep -c '^export' ~/.config/secrets.env      # expect 13
 gh auth status                                # expect valid
 ```
 
-Then confirm the dependent jobs still run: the 06:30 digest email
-(`GMAIL_APP_PASSWORD`), roborev review (`GEMINI_API_KEY`), and any nix push
-(`CACHIX_AUTH_TOKEN`).
+### Every OTHER store — verified where the credential is consumed
+
+**A check that runs on this laptop cannot observe a credential failing in CI.**
+Both surfaces must be verified, and the CI one must be verified *by running CI*,
+not by reasoning about it.
+
+For each repo from the Step 0 enumeration, trigger the workflow and confirm it
+goes green:
+
+```bash
+gh workflow run "<workflow>" --repo JohnGavin/<repo>
+gh run list --repo JohnGavin/<repo> --limit 1   # wait, then confirm success
+```
+
+For repos with **no manually-triggerable workflow**, note the next scheduled run
+and check it. Do not mark the rotation complete until that run has been observed.
+
+### Rotation is complete only when this table is filled in
+
+| credential | `secrets.env` | GH Actions repos | consuming job observed green |
+|---|---|---|---|
+| `GMAIL_APP_PASSWORD` | | | 06:30 digest email |
+| `GH_TOKEN` / `GITHUB_PAT` | | | `gh auth status` + one `gh` write |
+| `CACHIX_AUTH_TOKEN` | | `tlang`, `irishbuoys`, `randomwalk` | one nix build per repo |
+| `GEMINI_API_KEY` | | | roborev review |
+
+### Why this section was rewritten
+
+The original read: *"Then confirm the dependent jobs still run: … and any nix
+push (`CACHIX_AUTH_TOKEN`)."*
+
+That sentence was present, was correct, and did not work. Three reasons, all
+worth avoiding in future runbooks:
+
+1. **It was prose, not a command.** Nothing to run, so nothing was run.
+2. **It named the wrong surface.** "any nix push" framed the risk as the *push*.
+   The actual breakage was the *pull* — `cachix use` on a **public** cache,
+   which needs no credential at all, failed because a revoked token was in the
+   environment. The consequence was strictly larger than the sentence described.
+3. **It had no owner and no deadline.** A nightly job that starts failing at
+   04:00 is invisible until someone reads a notification email.
+
+This is the same shape as JohnGavin/llm#1012 and #746: **the check and the
+thing being checked shared a context**, so the check could not observe the
+failure. `gh auth status` passing on a laptop says nothing about a GitHub
+Actions runner.
 
 ## Priority summary
 
