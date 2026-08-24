@@ -22,9 +22,17 @@ done
 
 **Worked case (llm#1013, 2026-08).** `CACHIX_AUTH_TOKEN` was rotated after the
 2026-08-11 leak: new token minted, `secrets.env` updated, old token revoked —
-exactly as the runbook said. Three repos kept serving the dead value to CI.
-`tlang` failed nightly for 11 consecutive days; `irishbuoys` weekly; nobody
-noticed until the notification emails were read.
+exactly as the runbook said. Four repos kept serving the dead value to CI.
+`tlang` failed nightly for 11 consecutive days; `irishbuoys` and `solwatch`
+weekly; nobody noticed until the notification emails were read.
+
+**The enumeration is not optional, and this is the proof.** A hand-written list
+of affected repos — written immediately after reading the failure logs — came to
+*three*. It guessed a repo name (`crypto_solwatch`) that does not exist; the real
+one is `solwatch`, and it had been failing weekly since 2026-08-16. Running the
+command found it. Curated lists of "the places that use X" are wrong in exactly
+the cases that matter, because the ones you forget are the ones you never see
+fail.
 
 The runbook *did* contain "confirm the dependent jobs still run … and any nix
 push (`CACHIX_AUTH_TOKEN`)". It failed anyway, three ways worth copying down:
