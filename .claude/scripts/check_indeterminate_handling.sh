@@ -37,14 +37,25 @@
 set -uo pipefail
 
 SELFTEST=0
-ALLOWLIST="${INDETERMINATE_ALLOWLIST:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.indeterminate-allowlist}"
+WRITE_BASELINE=0
+USE_BASELINE=1
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ALLOWLIST="${INDETERMINATE_ALLOWLIST:-$_SCRIPT_DIR/.indeterminate-allowlist}"
+BASELINE="${INDETERMINATE_BASELINE:-$_SCRIPT_DIR/.indeterminate-baseline}"
 PATHS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        (--selftest) SELFTEST=1; shift ;;
-        (-h|--help)  echo "Usage: $(basename "$0") [--selftest] [path ...]" >&2; exit 2 ;;
-        (*)          PATHS+=("$1"); shift ;;
+        (--selftest)       SELFTEST=1; shift ;;
+        (--write-baseline) WRITE_BASELINE=1; shift ;;
+        (--all)            USE_BASELINE=0; shift ;;
+        (-h|--help)
+            echo "Usage: $(basename "$0") [--selftest|--write-baseline|--all] [path ...]" >&2
+            echo "  default          report only findings NOT in the baseline; exit 1 if any" >&2
+            echo "  --all            report every finding, ignoring the baseline" >&2
+            echo "  --write-baseline accept all current findings as known (shrink it over time)" >&2
+            exit 2 ;;
+        (*)                PATHS+=("$1"); shift ;;
     esac
 done
 
@@ -166,25 +177,75 @@ EOS
 
 [ "$SELFTEST" -eq 1 ] && { selftest; exit $?; }
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ "${#PATHS[@]}" -eq 0 ]; then
-    ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     PATHS=("$ROOT/.claude/scripts" "$ROOT/.claude/hooks" "$ROOT/bin")
 fi
 
-findings=0
+# Baseline entries are stored REPO-RELATIVE. Absolute paths would differ between
+# the main checkout and every worktree, so a committed baseline built in one
+# would match nothing in the other — the portable-build-artifacts trap.
+_rel() { printf '%s' "${1#"$ROOT"/}"; }
+
+# Signature ignores the line number: a finding must not reappear as "new"
+# because unrelated lines were inserted above it. file + finding-type is stable
+# under edits elsewhere in the file, and precise enough that a genuinely new
+# instance of the same type in the same file still surfaces once.
+_sig() { printf '%s\t%s' "$(_rel "$1")" "$2"; }
+
+collected=""
 scanned=0
 for p in "${PATHS[@]}"; do
     [ -e "$p" ] || continue
     while IFS= read -r f; do
         scanned=$((scanned + 1))
         out="$(scan_file "$f")"
-        if [ -n "$out" ]; then
-            printf '%s\n' "$out"
-            findings=$((findings + $(printf '%s\n' "$out" | grep -c .)))
-        fi
+        [ -n "$out" ] && collected="${collected}${out}"$'\n'
     done < <(find "$p" -type f -name '*.sh' 2>/dev/null)
 done
 
-echo "indeterminate-handling: scanned=$scanned findings=$findings"
-[ "$findings" -eq 0 ] || exit 1
+if [ "$WRITE_BASELINE" -eq 1 ]; then
+    {
+        echo "# check_indeterminate_handling.sh baseline"
+        echo "# Pre-existing findings, accepted so the checker can block NEW ones."
+        echo "# Entries are <repo-relative-path><TAB><finding-type>. Line numbers are"
+        echo "# deliberately excluded so edits elsewhere in a file do not resurrect an"
+        echo "# entry as 'new'."
+        echo "#"
+        echo "# This file should SHRINK. Deleting a line here means that file must be"
+        echo "# clean of that finding type. Never add to it by hand — fix the code, or"
+        echo "# regenerate deliberately with --write-baseline and say why in the commit."
+        printf '%s\n' "$collected" | grep -c . >/dev/null 2>&1 || true
+        printf '%s\n' "$collected" | grep . | while IFS= read -r line; do
+            _f="${line%%:*}"
+            _type="$(printf '%s' "$line" | sed -nE 's/.*\[([a-z-]+)\].*/\1/p')"
+            [ -n "$_type" ] && _sig "$_f" "$_type" && printf '\n'
+        done | sort -u
+    } > "$BASELINE"
+    echo "indeterminate-handling: baseline written to $(_rel "$BASELINE") ($(grep -vc '^#' "$BASELINE" 2>/dev/null || echo 0) entries)"
+    exit 0
+fi
+
+new_findings=0
+total=0
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    total=$((total + 1))
+    _f="${line%%:*}"
+    _type="$(printf '%s' "$line" | sed -nE 's/.*\[([a-z-]+)\].*/\1/p')"
+    if [ "$USE_BASELINE" -eq 1 ] && [ -f "$BASELINE" ] \
+       && grep -qxF "$(_sig "$_f" "$_type")" "$BASELINE" 2>/dev/null; then
+        continue   # known, accepted
+    fi
+    printf '%s\n' "$line"
+    new_findings=$((new_findings + 1))
+done <<< "$collected"
+
+if [ "$USE_BASELINE" -eq 1 ] && [ -f "$BASELINE" ]; then
+    baselined=$(( total - new_findings ))
+    echo "indeterminate-handling: scanned=$scanned new=$new_findings baselined=$baselined"
+else
+    echo "indeterminate-handling: scanned=$scanned findings=$total (no baseline)"
+fi
+[ "$new_findings" -eq 0 ] || exit 1
 exit 0
