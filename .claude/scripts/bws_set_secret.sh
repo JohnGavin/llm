@@ -58,10 +58,33 @@ LOG="${BWS_SET_LOG:-$HOME/.claude/logs/bws_set_secret.log}"
 NAME=""
 PROJECT_ID=""
 DO_REGEN=1
+VERIFY_CMD=""
+NO_VERIFY=0
+
+# Ground-truth verifiers, keyed by secret name (llm#1026).
+_SGT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/secret_ground_truth.sh"
+# shellcheck source=lib/secret_ground_truth.sh
+[ -r "$_SGT_LIB" ] && . "$_SGT_LIB"
 
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
 
-usage() { echo "Usage: $(basename "$0") <SECRET_NAME> [--project-id <ID>] [--no-regen] | --selftest" >&2; exit 2; }
+usage() {
+    cat >&2 <<'USAGE'
+Usage: bws_set_secret.sh <SECRET_NAME> [options]
+       bws_set_secret.sh --selftest
+
+  --project-id <ID>      project for a CREATE (derived from an existing secret otherwise)
+  --no-regen             skip regenerating ~/.config/secrets.env
+  --verify-against <CMD> compare the typed value against CMD's stdout (digests only)
+  --no-verify            skip a built-in ground-truth check for this secret
+
+Some secrets have a known authority on this machine (see
+lib/secret_ground_truth.sh) and are verified automatically. Double entry
+catches a slip; it cannot catch a misreading, because the same typo typed
+twice is self-consistent.
+USAGE
+    exit 2
+}
 
 # ── Value hygiene ────────────────────────────────────────────────────────────
 
@@ -210,6 +233,51 @@ for s in d if isinstance(d,list) else []:
         return 1
     fi
 
+    # ── Ground-truth verification (llm#1026) ────────────────────────────────
+    # Typing the same typo twice is self-consistent, so double entry proves
+    # nothing about correctness. Where the consuming system can be asked what
+    # the value should be, ask it.
+    local gt_cmd=""
+    if [ "$NO_VERIFY" -eq 0 ]; then
+        if [ -n "$VERIFY_CMD" ]; then
+            gt_cmd="$VERIFY_CMD"
+        elif command -v secret_ground_truth_cmd >/dev/null 2>&1; then
+            gt_cmd="$(secret_ground_truth_cmd "$NAME")"
+        fi
+    fi
+
+    if [ -n "$gt_cmd" ]; then
+        local expected gt_rc
+        expected="$(eval "$gt_cmd" 2>/dev/null)"; gt_rc=$?
+        if [ "$gt_rc" -ne 0 ] || [ -z "$expected" ]; then
+            # UNVERIFIABLE is not VERIFIED and is not MISMATCH. Say which.
+            echo "NOTE: could not determine a ground-truth value for $NAME" >&2
+            echo "      (verifier exited $gt_rc). Proceeding WITHOUT verification." >&2
+            log "$NAME verify=unavailable rc=$gt_rc"
+        elif [ "$(_digest "$expected")" != "$(_digest "$v1")" ]; then
+            echo "REFUSED: the value does not match this machine's authoritative source." >&2
+            echo "" >&2
+            echo "           expected sha256: $(_digest "$expected")  (length ${#expected})" >&2
+            echo "           you entered      $(_digest "$v1")  (length ${#v1})" >&2
+            echo "" >&2
+            echo "         Digests only — neither value is printed." >&2
+            echo "         Equal lengths with different digests means a typo, not a" >&2
+            echo "         format difference. A wrong-but-valid value would be accepted" >&2
+            echo "         by every system downstream and fail silently at match time." >&2
+            echo "" >&2
+            echo "         Source consulted:" >&2
+            printf '             %s\n' "$gt_cmd" >&2
+            echo "" >&2
+            echo "         If the authoritative source is the thing that is wrong," >&2
+            echo "         re-run with --no-verify. Nothing was written." >&2
+            log "$NAME refused=ground-truth-mismatch"
+            return 1
+        else
+            echo "VERIFIED: matches this machine's authoritative source for $NAME."
+            log "$NAME verify=matched"
+        fi
+    fi
+
     local new_sha; new_sha="$(_digest "$v1")"
     if [ -n "$old_sha" ] && [ "$new_sha" = "$old_sha" ]; then
         echo "REFUSED: new value is identical to the stored one — nothing to do." >&2
@@ -294,6 +362,8 @@ while [ $# -gt 0 ]; do
         (--selftest)   selftest; exit $? ;;
         (--project-id) PROJECT_ID="${2:-}"; shift 2 ;;
         (--no-regen)   DO_REGEN=0; shift ;;
+        (--verify-against) VERIFY_CMD="${2:-}"; shift 2 ;;
+        (--no-verify)  NO_VERIFY=1; shift ;;
         (-h|--help)    usage ;;
         (-*)           echo "unknown flag: $1" >&2; usage ;;
         (*)            NAME="$1"; shift ;;
