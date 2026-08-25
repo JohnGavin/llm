@@ -319,9 +319,9 @@ actual_exit=0
 GH="$BIN1/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
   bash "$GATE" 99 2>/dev/null || actual_exit=$?
 if [ "$actual_exit" = "0" ]; then
-  pass "test1: no commits → exit 0 (fail-open)"
+  pass "test1: gh answers 'no commits' → exit 0 (real negative, not fail-open)"
 else
-  fail "test1: no commits → exit 0 (fail-open)" "got exit=$actual_exit"
+  fail "test1: gh answers 'no commits' → exit 0 (real negative, not fail-open)" "got exit=$actual_exit"
 fi
 
 # Test 2 — PR with open HIGH finding, no citation → exit 1 (BLOCK)
@@ -417,6 +417,171 @@ assert d.get('unresolved_count', 0) > 0
   pass "test8: --json emits verdict=block with unresolved_count>0"
 else
   fail "test8: --json emits verdict=block with unresolved_count>0" "got: $json_out8"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# llm#1012 — "could not ask" must not exit like "nothing to report"
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Every test below drives the gate into a state where it CANNOT reach
+# reviews.db, and asserts two things each time:
+#   (a) the exit code is 3, not 0
+#   (b) the word PASS does not appear in the output
+#
+# (b) matters independently of (a).  The bug that shipped was readable on
+# screen — `merge-gate: PASS (no commits found — fail-open)` — long before
+# anyone looked at $?.  A future refactor that returns 3 while still printing
+# "PASS" would re-create the failure for every human reader.
+
+# Test 9 — gh binary does not exist (the llm#1012 headline case).
+BIN9="${TMPDIR_ROOT}/bin9"
+mkdir -p "$BIN9"
+out9=""
+exit9=0
+out9=$(
+  GH="/nonexistent/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo 99 2>&1
+) || exit9=$?
+
+if [ "$exit9" = "3" ]; then
+  pass "test9: missing gh binary → exit 3 (INDETERMINATE)"
+else
+  fail "test9: missing gh binary → exit 3 (INDETERMINATE)" "got exit=$exit9 | output: $out9"
+fi
+
+if echo "$out9" | grep -q "PASS"; then
+  fail "test9b: missing gh binary output must not contain 'PASS'" "output: $out9"
+else
+  pass "test9b: missing gh binary output must not contain 'PASS'"
+fi
+
+# Test 10 — gh exists but fails at runtime (auth rejected / network down).
+# This is the shape a stale GH_TOKEN produces, and it is NOT covered by
+# fixing the path alone.
+BIN10="${TMPDIR_ROOT}/bin10"
+mkdir -p "$BIN10"
+cat > "$BIN10/gh" <<'EOF'
+#!/usr/bin/env bash
+# Mock gh that always fails the way a revoked token does.
+echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2
+exit 1
+EOF
+chmod +x "$BIN10/gh"
+
+out10=""
+exit10=0
+out10=$(
+  GH="$BIN10/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo 99 2>&1
+) || exit10=$?
+
+if [ "$exit10" = "3" ]; then
+  pass "test10: gh exits non-zero (401) → exit 3 (INDETERMINATE)"
+else
+  fail "test10: gh exits non-zero (401) → exit 3 (INDETERMINATE)" "got exit=$exit10 | output: $out10"
+fi
+
+if echo "$out10" | grep -q "PASS"; then
+  fail "test10b: gh-failure output must not contain 'PASS'" "output: $out10"
+else
+  pass "test10b: gh-failure output must not contain 'PASS'"
+fi
+
+# The failure REASON must reach the operator.  Without it the message says
+# "could not evaluate" and leaves them to guess which of four causes it was;
+# with it, the 401 names the revoked token directly.  This regressed once
+# already during development (the reason was set inside a command-substitution
+# subshell and never escaped), so it is asserted rather than assumed.
+if echo "$out10" | grep -q "Bad credentials"; then
+  pass "test10c: gh's own error text is surfaced in the reason"
+else
+  fail "test10c: gh's own error text is surfaced in the reason" "output: $out10"
+fi
+
+# Test 11 — reviews.db absent is also "could not ask", not "no findings".
+BIN11="${TMPDIR_ROOT}/bin11"
+mkdir -p "$BIN11"
+make_mock_gh "$BIN11" "[\"${SHA_HIGH_OPEN}\"]"
+
+out11=""
+exit11=0
+out11=$(
+  GH="$BIN11/gh" ROBOREV_DB="${TMPDIR_ROOT}/no_such_reviews.db" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo 99 2>&1
+) || exit11=$?
+
+if [ "$exit11" = "3" ]; then
+  pass "test11: reviews.db absent → exit 3 (INDETERMINATE)"
+else
+  fail "test11: reviews.db absent → exit 3 (INDETERMINATE)" "got exit=$exit11 | output: $out11"
+fi
+
+if echo "$out11" | grep -q "PASS"; then
+  fail "test11b: db-absent output must not contain 'PASS'" "output: $out11"
+else
+  pass "test11b: db-absent output must not contain 'PASS'"
+fi
+
+# Test 12 — MERGE_GATE_FAIL_OPEN=1 downgrades the exit but NOT the wording.
+# Fail-open stays available for callers that want it; what it must never do is
+# become indistinguishable from a real pass again.
+out12=""
+exit12=0
+out12=$(
+  MERGE_GATE_FAIL_OPEN=1 GH="/nonexistent/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo 99 2>&1
+) || exit12=$?
+
+if [ "$exit12" = "0" ]; then
+  pass "test12: MERGE_GATE_FAIL_OPEN=1 downgrades exit 3 → 0"
+else
+  fail "test12: MERGE_GATE_FAIL_OPEN=1 downgrades exit 3 → 0" "got exit=$exit12 | output: $out12"
+fi
+
+if echo "$out12" | grep -q "INDETERMINATE"; then
+  pass "test12b: fail-open still says INDETERMINATE, never PASS"
+else
+  fail "test12b: fail-open still says INDETERMINATE, never PASS" "output: $out12"
+fi
+
+# Test 13 — --json carries the indeterminate verdict too, so scripted callers
+# see it as clearly as humans do.
+out13=""
+exit13=0
+out13=$(
+  GH="/nonexistent/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --json --repo JohnGavin/fakerepo 99 2>&1
+) || exit13=$?
+
+if echo "$out13" | /usr/bin/python3 -c "
+import sys, json
+d = json.loads(sys.stdin.read())
+assert d.get('verdict') == 'indeterminate', d.get('verdict')
+assert d.get('failed_open') is False
+" 2>/dev/null; then
+  pass "test13: --json emits verdict=indeterminate"
+else
+  fail "test13: --json emits verdict=indeterminate" "got: $out13"
+fi
+
+# Test 14 — the control.  With everything working the gate must still reach a
+# real verdict; otherwise tests 9-13 could be satisfied by a gate that has
+# simply stopped working altogether.
+BIN14="${TMPDIR_ROOT}/bin14"
+mkdir -p "$BIN14"
+make_mock_gh "$BIN14" "[\"${SHA_HIGH_OPEN}\"]"
+
+out14=""
+exit14=0
+out14=$(
+  GH="$BIN14/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || exit14=$?
+
+if [ "$exit14" = "1" ]; then
+  pass "test14 (control): working gh + real finding → exit 1 (BLOCK)"
+else
+  fail "test14 (control): working gh + real finding → exit 1 (BLOCK)" "got exit=$exit14 | output: $out14"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────

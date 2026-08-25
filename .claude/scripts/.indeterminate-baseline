@@ -34,6 +34,5 @@
 .claude/scripts/roborev_install_post_merge_hook.sh	swallowed-status
 .claude/scripts/skillify_backlog.sh	pipefail-abort
 .claude/scripts/vignette_check.sh	pipefail-abort
-.claude/scripts/worktree_gc.sh	swallowed-status
 bin/launchd_run_record.sh	pipefail-abort
 bin/refresh_and_preserve.sh	pipefail-abort

@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits from its BLOCK and BYPASS paths only, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # secret_leak_guard.sh — Block shell command-substitution / echo patterns
 # that splice credentials into a Bash command before it runs.
 # Hook: PreToolUse:Bash
@@ -184,6 +191,35 @@ def looks_like_credential_value(v):
     return _shannon_entropy(v) >= CRED_ENTROPY_THRESHOLD
 
 
+def _is_count_only_sink(seg):
+    """TRUE if this pipeline stage can emit nothing but a count.
+
+    `wc` in any flag combination, and `grep` with -c/--count. Anything else --
+    including a bare `grep`, which prints matching LINES -- is not count-only.
+    Used by Rule 3 to exempt `env | wc -l` from the transport check (llm#1018).
+    """
+    if not seg:
+        return False
+    try:
+        tokens = shlex.split(seg, posix=True)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    name = os.path.basename(tokens[0])
+    if name == 'wc':
+        return True
+    if name == 'grep':
+        for t in tokens[1:]:
+            if t == '--count':
+                return True
+            # short-flag cluster: -c, -ic, -Ec ... but not the pattern itself
+            if t.startswith('-') and not t.startswith('--') and 'c' in t[1:]:
+                return True
+        return False
+    return False
+
+
 def _append(path, line):
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -343,17 +379,55 @@ def main():
     # Only a violation when the expansion is an argument to echo/printf in the
     # SAME command segment — `[ -n "${VAR:-}" ] && echo set` must stay allowed.
     secret_var_re = re.compile(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)')
-    secret_name_re = re.compile(r'(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIAL)', re.IGNORECASE)
+    # PAT is delimited; the rest are plain substrings.
+    #
+    # A bare `PAT` substring also matches PATH, path, wt_path, pattern,
+    # PATTERNS and compat. So echoing the PATH variable -- one of the most
+    # ordinary shell diagnostics there is -- was blocked as a suspected
+    # credential leak, as was any printf naming a wt_path variable. Found
+    # while editing worktree_gc.sh for llm#1019: the guard blocked the edit
+    # because a log line in it mentions a wt_path variable, and then blocked
+    # the first attempt at THIS comment for naming the PATH variable with a
+    # sigil in front of it.
+    #
+    # Requiring a `_` or a string boundary keeps GITHUB_PAT, MY_PAT, PAT_TOKEN
+    # and a bare PAT, while dropping the whole PATH family.
+    #
+    # The other keywords stay plain substrings deliberately: KEY/TOKEN/SECRET
+    # are long enough that a false positive is rare and a miss is expensive.
+    secret_name_re = re.compile(
+        r'(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(?:^|_)PAT(?:_|[0-9]|$))',
+        re.IGNORECASE,
+    )
     for seg in re.split(r';|&&|\|\||\n', cmd):
         if re.search(r'\b(echo|printf)\b', seg):
             for vm in secret_var_re.finditer(seg):
                 if secret_name_re.search(vm.group(1)):
+                    # The remedy this message names must survive the OTHER
+                    # guards. The previous wording recommended
+                    # `[ -n "${VAR:-}" ] && echo set`, which
+                    # compound_command_guard rejects outright for the `&&`.
+                    # The operator was then left to improvise a third form
+                    # under time pressure, which is exactly when someone
+                    # reaches for a plain echo of the value (llm#1018).
+                    #
+                    # The rationale is also corrected here. The old text said
+                    # `:-` and `:+` both "expand to the VALUE when set". That
+                    # is true of `:-` and false of `:+`: `${VAR:+set}` yields
+                    # the literal word. Both are still blocked, but for the
+                    # honest reason -- they differ by one keystroke -- because
+                    # a reader who disproves a stated rationale in ten seconds
+                    # starts working around the guard.
                     block(
                         '2',
-                        'echo/printf expands ${%s} — if the variable holds a secret this '
-                        'prints it verbatim (":-"/":+ " expand to the VALUE when set). Use '
-                        '`[ -n "${VAR:-}" ] && echo set` to test presence without exposing it.'
-                        % vm.group(1),
+                        'echo/printf expands ${%(v)s} — if the variable holds a secret this '
+                        'prints it verbatim. To test presence without printing the value, use '
+                        'the bare test and read its exit code: `test -n "${%(v)s:-}"` '
+                        '(exit 0 = set, exit 1 = unset or empty). '
+                        'Note: `${VAR:+set}` does NOT print the value — only `${VAR:-...}` '
+                        'does — but both are blocked here because they differ by one '
+                        'keystroke and the wrong one leaks.'
+                        % {'v': vm.group(1)},
                         cmd, bypassable=True,
                     )
 
@@ -375,6 +449,26 @@ def main():
     bare_printenv = re.search(_cmdpos + r'printenv\b' + _dumpend, cmd)
     bare_env = re.search(_cmdpos + r'env\b' + _dumpend, cmd)
     transport = any(t in cmd for t in ('gh ', 'curl ', '|', '>', 'tee'))
+
+    # Count-only sinks are not transport (llm#1018).
+    #
+    # `env | wc -l` and `env | grep -c FOO` emit a NUMBER. No variable name and
+    # no value leaves the pipeline, so there is nothing for the rule to
+    # protect. Blocking them was a routine false positive on a legitimate
+    # is-it-there check, and a guard that blocks the safe form pushes the
+    # operator toward improvising an unsafe one.
+    #
+    # Deliberately narrow. `cut -d= -f1` also emits names-not-values and is
+    # still blocked, because deciding that requires reasoning about which
+    # fields a given cut invocation selects — too clever for a secrets guard.
+    # Only sinks whose entire output is a count are exempt, and any gh / curl /
+    # tee / redirect anywhere in the command disqualifies the whole thing
+    # regardless.
+    if transport and '>' not in cmd and not any(t in cmd for t in ('gh ', 'curl ', 'tee')):
+        stages = [seg.strip() for seg in cmd.split('|')[1:]]
+        if stages and all(_is_count_only_sink(seg) for seg in stages):
+            transport = False
+
     if (bare_printenv or bare_env) and transport:
         block(
             '3',
@@ -565,6 +659,63 @@ if [ "${1:-}" = "--selftest" ]; then
     "BLOCK"
   _case "a REAL bare printenv dump into a redirect still blocks" \
     'printenv > /tmp/all_env.txt' \
+    "BLOCK"
+
+  # ── llm#1018 — PAT must be a delimited token, not a substring ───────────
+  # A bare `PAT` substring also matches PATH, path, wt_path, pattern,
+  # PATTERNS, compat. Printing the search path is one of the most ordinary
+  # shell diagnostics there is, and it was being reported as a suspected
+  # credential leak. Found when this guard blocked an edit to worktree_gc.sh
+  # whose log line names a wt_path variable — and then blocked the first
+  # attempt at writing the comment explaining that.
+  _case "printing the search path is not a credential (PATH != PAT)" \
+    'echo "$PATH"' \
+    "ALLOW"
+  _case "a path-suffixed variable is not a credential (wt_path != PAT)" \
+    'echo "$wt_path"' \
+    "ALLOW"
+  _case "a pattern variable is not a credential (pattern != PAT)" \
+    'echo "$pattern"' \
+    "ALLOW"
+  # …but a real PAT must still block. Without these three, the narrowing above
+  # would be equally satisfied by deleting PAT from the keyword list entirely
+  # — a green suite hiding a hole rather than a fix.
+  _case "GITHUB_PAT still blocks (delimited by _)" \
+    'echo "$GITHUB_PAT"' \
+    "BLOCK"
+  _case "a bare PAT variable still blocks" \
+    'echo "$PAT"' \
+    "BLOCK"
+  _case "PAT_TOKEN still blocks" \
+    'echo "$PAT_TOKEN"' \
+    "BLOCK"
+  _case "printf of a PAT variable still blocks" \
+    'printf "%s" "$MY_PAT"' \
+    "BLOCK"
+
+  # ── llm#1018 — count-only sinks are not transport ───────────────────────
+  # `env | wc -l` emits a number: no variable name, no value. Blocking it was
+  # a routine false positive on a legitimate is-it-there check, and a guard
+  # that blocks the safe form pushes the operator toward an unsafe one.
+  _case "env piped to wc -l emits only a count" \
+    'env | wc -l' \
+    "ALLOW"
+  _case "printenv piped to grep -c emits only a count" \
+    'printenv | grep -c AWS' \
+    "ALLOW"
+  # The exemption must stay narrow. Each case below is one token away from an
+  # allowed form above and must still block.
+  _case "grep WITHOUT -c prints matching lines — still blocks" \
+    'env | grep AWS' \
+    "BLOCK"
+  _case "cut -d= -f1 emits names, not a count — still blocks" \
+    'env | cut -d= -f1' \
+    "BLOCK"
+  _case "a count-only sink does not launder a redirect" \
+    'env | wc -l > /tmp/n.txt' \
+    "BLOCK"
+  _case "a count-only sink does not launder a gh egress" \
+    'env | wc -l | gh issue comment 1 --body-file -' \
     "BLOCK"
 
   # ── Additional regression / coverage cases ───────────────────────────────
