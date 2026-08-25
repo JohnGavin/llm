@@ -18,7 +18,7 @@ hard — not when the prose is good.
 
 ## The single shape
 
-Nine of the eleven rows below are one defect wearing different clothes:
+Nine of the thirteen rows below are one defect wearing different clothes:
 
 > **A system reported success about something it had not established.**
 
@@ -35,8 +35,8 @@ llm#1025) is the part that fires without anyone remembering.
 
 | # | What happened | Lesson | Mechanical prevention | Enforced? |
 |---|---|---|---|---|
-| 1 | Merge gate printed `PASS` while resolving `gh` from `/usr/local/bin/gh`, which does not exist here | A tool resolved from a hardcoded absolute path degrades to "found nothing" | Resolve from `PATH`; exit 2 for "could not run", distinct from 0/1 | **no** — llm#1012 open |
-| 2 | GC read a `gh` 401 as "no merged PR exists", retaining ~5 GB of merged worktrees for weeks | `2>/dev/null \|\| true` + emptiness test erases the error/negative distinction | `check_indeterminate_handling.sh` flags the signature; baseline blocks new instances | **partial** — checker merged, pre-commit hook **not installed** |
+| 1 | Merge gate printed `PASS` while resolving `gh` from `/usr/local/bin/gh`, which does not exist here | A tool resolved from a hardcoded absolute path degrades to "found nothing" | Resolve from `PATH`; **exit 3** for "could not run", distinct from 0/1; tests assert the output does not contain `PASS` | **yes** — llm#1012 |
+| 2 | GC read a `gh` 401 as "no merged PR exists", retaining ~5 GB of merged worktrees for weeks | `2>/dev/null \|\| true` + emptiness test erases the error/negative distinction | `is_squash_merged()` returns 2 for "could not ask"; `squash-detect-failures=N` on the summary; `check_indeterminate_handling.sh` flags the signature | **partial** — llm#1019 fixes the instance and `worktree_gc.sh` is off the baseline, but the pre-commit hook is still **not installed**, so new instances are not blocked |
 | 3 | Rotation completion check was `grep -c '^export' secrets.env # expect 13`; the file has no `export` lines, so it returned 0 for a healthy file *and* an empty one | A check whose output does not vary with its subject is not a check | Runbook rewritten to a value-stripping count with the real number | **yes** — llm#1015 |
 | 4 | `CACHIX_AUTH_TOKEN` rotated in `secrets.env` only; 4 repos kept serving the revoked value, `tlang` failed nightly 11 days | A credential lives everywhere it was copied to; enumerate stores *before* revoking | Runbook Step 0 enumeration command + per-surface verification table | **yes** — llm#1015 |
 | 5 | Hand-written list of affected repos came to 3 and guessed a repo name that does not exist; the command found the 4th (`solwatch`), failing weekly, unnoticed | Curated lists of "the places that use X" are wrong exactly where it matters | Same Step 0 command | **yes** — llm#1015 |
@@ -45,7 +45,9 @@ llm#1025) is the part that fires without anyone remembering.
 | 8 | `bws` said `Doesn't contain a decryption key`; read as "the token is malformed" and written up as "re-issue it". The token was fine — it had never reached `bws` | Before attributing a negative result to the subject, confirm the tool could observe the subject | Rule corollary; no mechanical check exists | **no** — prose only |
 | 9 | Cache regen deleted `SIGNAL_ACCOUNT` (cache-only, never in BWS) and disabled Signal capture. Summary read `Keys before: 15 / Keys after: 15` | A destructive step must not be reported at the volume of a routine one; a stable count hides an add-plus-delete | Regen refuses removals without `--allow-removals`; `Churn: +N/-N`; drift check in session banner | **yes** — llm#1025 |
 | 10 | Re-typed `SIGNAL_ACCOUNT` was one digit wrong. Written, cache regenerated, `OK: written (length 13)`. Nothing errored — a wrong account is not an *invalid* account | Double entry catches a slip, never a misreading: the same typo typed twice is self-consistent | `--verify-against` + ground-truth registry; `SIGNAL_ACCOUNT` checked against signal-cli's `accounts.json` | **pending** — llm#1026 open |
-| 11 | Hook-liveness report claimed 21 hooks "never fired", including two that fired that day | Measuring instrumentation and calling it execution | Separate `instrumented` from `fires`; mark block-only guards as on-block | **no** — llm#1017 open |
+| 12 | `secret_leak_guard` recommended a remedy that `compound_command_guard` rejects, and justified itself with a claim about `${VAR:+…}` that is false | A guard whose stated reason can be disproved in ten seconds teaches the reader to work around it; a remedy that another guard blocks leaves the operator improvising under pressure | Message names `test -n "${VAR:-}"`, which passes both guards; rationale corrected; `PAT` matched as a delimited token so PATH/path/wt_path/pattern stop tripping it; 13 selftest cases | **yes** — llm#1018 |
+| 13 | A GC log line wrote a live GitHub token in plaintext, because one repo's `remote.origin.url` embeds one and the new diagnostic logged the slug | Anything derived from a remote URL or a tool's stderr is a credential-bearing surface the moment it reaches a log | `redact_credentials()` on every reason string; slug parse strips `user:pass@` before parsing | **partial** — llm#1019 covers `worktree_gc.sh`; the embedded token still needs rotating and the remote still needs fixing, and nothing yet scans *other* scripts for the same shape |
+| 11 | Hook-liveness report claimed 21 hooks "never fired", including two that fired that day | Measuring instrumentation and calling it execution | `instrumented`/`cadence` read from each hook's own `# hook-liveness:` marker; uninstrumented renders `—`, never `0`; a test fails if an instrumented hook lacks a marker | **yes** — llm#1017 |
 
 ---
 
@@ -99,6 +101,29 @@ pretending the memory is enough. Options, in order of cost:
 
 ---
 
+### 6. Outstanding after the 2026-08-25 fix pass (llm#1012/#1017/#1018/#1019)
+
+Three things the four fixes deliberately did **not** do:
+
+- **`indeterminate_precommit.sh` is still not wired into `.git/hooks/pre-commit`.**
+  Row 2 stays `partial` for this reason. The four instances fixed on
+  2026-08-25 were all found and fixed by hand; the checker would not have
+  blocked any of them, because it never runs. This is one line, and it is
+  the difference between "we fixed four" and "a fifth cannot land".
+
+- **`check_indeterminate_handling.sh` does not catch llm#1012's shape.** Run
+  it against `bin/roborev_merge_gate.sh` as it was and it reports
+  `findings=0`: the swallow (`2>/dev/null || echo ""`) lived inside a
+  function and the emptiness test lived in its caller, one call apart, so
+  the pattern-1 matcher never saw them together. The checker written for
+  this family misses the issue it names first in its own header.
+
+- **The embedded credential in a `remote.origin.url` is contained, not
+  resolved.** The token is out of `worktree_gc.log` and the script now
+  redacts, but the token itself is unrotated, the remote still embeds it,
+  and no scan looks for the same shape in other scripts that log a remote
+  URL.
+
 ## How to use this file
 
 When an item is closed **mechanically**, move it to a `Closed` section with the
@@ -111,4 +136,4 @@ mode this file exists to record.
 - [`checks-must-distinguish-unknown`](../rules/checks-must-distinguish-unknown.md) — the shared shape
 - [`2026-08-11-rotation-runbook.md`](2026-08-11-rotation-runbook.md) — rows 3–5
 - [`2026-08-11-credential-leak.md`](2026-08-11-credential-leak.md) — the precedent for "advisory controls fail"
-- Issues: llm#1012, #1013, #1017, #1018, #1019, #1024, #1026
+- Issues: llm#1012, #1013, #1017, #1018, #1019, #1024, #1026 (#1012, #1017, #1018 closed by fix; #1019 closed by fix, credential rotation outstanding)
