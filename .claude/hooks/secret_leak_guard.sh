@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits from its BLOCK and BYPASS paths only, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # secret_leak_guard.sh — Block shell command-substitution / echo patterns
 # that splice credentials into a Bash command before it runs.
 # Hook: PreToolUse:Bash

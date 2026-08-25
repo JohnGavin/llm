@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its BLOCK path, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # destructive_api_guard.sh - Block destructive API calls before execution
 # Hook: PreToolUse:Bash
 # Exit 2 = BLOCK. Exit 0 = allow.
