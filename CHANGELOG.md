@@ -4,6 +4,107 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-24/25 — a revoked token, a deleted secret, and the discovery that naming a defect does not prevent it
+
+Started from "why does a demo project have CI jobs?" and ended with a ledger of
+fourteen failures, two of which were produced by the code written to prevent them.
+
+### Completed
+
+**Root cause behind three repos' CI.** `CACHIX_AUTH_TOKEN` was revoked in the
+2026-08-11 rotation and a replacement created **nowhere** — not in BWS, not in the
+cache, not in any repo. `tlang` failed nightly for 11 days, `irishbuoys` and
+`solwatch` weekly. Verified by transition (last success 08-13, first failure 08-14),
+not by adjacency to the incident date.
+
+**Enumeration beats recall.** A hand-written list of affected repos came to three
+and guessed a repo name that does not exist. The command found the fourth,
+`solwatch`, failing weekly and in nobody's list. Now Step 0 of the runbook.
+
+**tlang CI green again** ([tlang#9](https://github.com/JohnGavin/tlang/pull/9)).
+Eight workflows were dying at `cachix use` on a PUBLIC cache, because a job-level
+`env: CACHIX_AUTH_TOKEN` reached every step and the `cachix` CLI reads it from the
+environment. A dead credential cost the whole build rather than just the push.
+Secret now scoped to 2 of 7 steps; push gated on a step output.
+
+**Rotation runbook corrected** ([#1015](https://github.com/JohnGavin/llm/pull/1015)).
+It told you to edit `~/.config/secrets.env`, which is GENERATED and says
+`DO NOT EDIT`, and its completion check `grep -c '^export' … # expect 13` returned
+0 for a healthy file and 0 for an empty one.
+
+**A rule and its enforcement** ([#1021](https://github.com/JohnGavin/llm/pull/1021),
+[#1022](https://github.com/JohnGavin/llm/pull/1022),
+[#1025](https://github.com/JohnGavin/llm/pull/1025)):
+`checks-must-distinguish-unknown` — an error path and a negative-result path must
+never share an exit — plus `check_indeterminate_handling.sh`, which independently
+rediscovered the confirmed [#1019](https://github.com/JohnGavin/llm/issues/1019) bug.
+
+**Secret-write safety** ([#1022](https://github.com/JohnGavin/llm/pull/1022),
+[#1023](https://github.com/JohnGavin/llm/pull/1023),
+[#1026](https://github.com/JohnGavin/llm/pull/1026)): hidden-stdin writer that refuses
+placeholders, refuses no-ops, refuses without a terminal, and verifies the typed
+value against the system that consumes it.
+
+**Cache-deletion guard** ([#1025](https://github.com/JohnGavin/llm/pull/1025)): the
+regen now refuses to delete keys absent from BWS.
+
+**Also:** Signal PDF/image ingestion ([#1011](https://github.com/JohnGavin/llm/pull/1011)),
+llmtelemetry's daily report unblocked ([llmtelemetry#353](https://github.com/JohnGavin/llmtelemetry/pull/353)),
+historical's dead links + stale API doc ([historical#761](https://github.com/JohnGavin/historical/pull/761)),
+~1.3 GB of squash-merged worktrees reclaimed, 80 → 48.
+
+### Failed Approaches
+
+**Diagnosing from a tool's complaint without checking it received input.** `bws`
+said `Doesn't contain a decryption key`; read as "the token is malformed" and
+written up as advice to re-issue a working credential. It had received nothing —
+the value did not propagate to the child process. One command settles it:
+`VAR="$V" bash -c 'test -n "${VAR:-}"'`.
+
+**A placeholder inside a runnable command.** `bws secret create CACHIX_AUTH_TOKEN
+'<cachix-token>' …` was pasted verbatim and BWS stored the literal string. Confirmed
+by digest, not assumed. A shell command is an invitation to paste.
+
+**Assuming a regen is safe.** Adding one key deleted `SIGNAL_ACCOUNT`, which lived
+only in the cache, and disabled Signal capture for 7.5 hours. The summary read
+`Keys before: 15 / Keys after: 15` — a no-op shape produced by an add plus a delete.
+
+**Trusting "no more errors" as evidence of repair.** The re-typed `SIGNAL_ACCOUNT`
+was one digit wrong. FATALs stopped at 19:29 when the WRONG value landed; the log
+then read healthy for half an hour while nothing could match. Caught by comparing
+digests against signal-cli's `accounts.json`.
+
+**Building a gate and not watching it refuse.** The pre-commit gate shipped with
+the very defect it exists to catch: `~/.claude/scripts` symlinks into the main
+checkout, so from a worktree it scanned main's baselined files and passed every
+commit while logging `pass`. Only found by deliberately committing the forbidden
+pattern.
+
+**A test that read ambient config and modified shared state.** Fixture repos
+inherited the global `core.hooksPath` and wrote a `pre-commit` into the real shared
+hooks directory — which would have run the gate in every repo on the machine.
+Removed; fixtures now pin it.
+
+### Accuracy / Metrics
+
+- 8 PRs merged, 1 open ([#1028](https://github.com/JohnGavin/llm/pull/1028))
+- 8 issues filed: #1012, #1013, #1014, #1017, #1018, #1019, #1024, llmtelemetry#352
+- Signal capture restored, verified 3 ways (cache digest, signal-cli ground truth, handler run)
+- Ledger: 14 rows, 5 enforced, 1 pending, 8 not
+- roborev: `crash=0 quota=0`, consistency check clean
+
+### Known Limitations
+
+- **The pre-commit gate is currently UNINSTALLED** — deliberately. Its fix is in
+  [#1028](https://github.com/JohnGavin/llm/pull/1028); leaving the broken version
+  wired in would have logged `pass` for everything. Re-install after merge with
+  `.claude/scripts/indeterminate_hook_install.sh --repo ~/docs_gh/llm`.
+- `GH_TOKEN` in the shell is revoked but present; every `gh` call needs
+  `env -u GH_TOKEN`. Also one of the ways #1012's gate fail-opens.
+- 45 baselined linter findings, untriaged by design.
+- roborev backlog 155 open, 10 unaddressed verdict failures, all pre-existing.
+- `dittodb` / `mutator` / mirai-async review not started.
+
 ## 2026-08-23 — Signal attachment ingestion, and two checks that were passing for the wrong reason
 
 Picked up item 4 from the previous session's list: [#1001](https://github.com/JohnGavin/llm/issues/1001), the content-type gap that dropped PDFs and images silently. Shipped as [#1011](https://github.com/JohnGavin/llm/pull/1011), merged `06e51de`, deployed and verified live.
