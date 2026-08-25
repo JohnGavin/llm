@@ -217,9 +217,24 @@ bin/roborev_merge_gate.sh --json 253               # scripting
 bin/roborev_merge_gate.sh --repo JohnGavin/llm 253  # explicit repo
 ```
 
-Exit codes: `0` = PASS, `1` = BLOCK. The `bin/` script enforces; the
-predecessor `~/.claude/scripts/roborev_merge_gate.sh` is dry-run only (always
-exits 0), kept for week-1 signal logging.
+Exit codes: `0` = PASS, `1` = BLOCK, `2` = usage error, `3` = **INDETERMINATE**.
+The `bin/` script enforces; the predecessor
+`~/.claude/scripts/roborev_merge_gate.sh` is dry-run only (always exits 0),
+kept for week-1 signal logging.
+
+**Exit 3 is not a pass.** It means the gate could not evaluate the PR at all —
+`gh` missing or unrunnable, `gh` rejecting auth (a stale `GH_TOKEN` does this),
+the repo unresolvable, or `reviews.db` absent. Before llm#1012 every one of
+those exited 0 and printed the word `PASS`, so the gate on this machine had
+never inspected a finding and was structurally incapable of blocking. Treat a
+3 the way you would a 1: stop and fix the cause. `MERGE_GATE_FAIL_OPEN=1`
+downgrades it to exit 0 for callers that deliberately accept the risk — the
+output still reads INDETERMINATE, never PASS.
+
+Regression cover: `tests/test_roborev_merge_gate.sh` tests 9–14. Each drives
+the gate into an unanswerable state and asserts both `exit == 3` **and** that
+the output does not contain the string `PASS`; test 14 is the control that a
+working gate still reaches a real verdict.
 
 Pilot escalation path:
 1. **Pilot (now):** `bin/roborev_merge_gate.sh` enforces HIGH only. Run before every merge.
