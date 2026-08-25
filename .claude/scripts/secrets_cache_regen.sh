@@ -123,6 +123,20 @@ _validate_fetch() {
   return 0
 }
 
+# Prints the key names present in the CURRENT cache but absent from the
+# CANDIDATE — i.e. exactly what installing would delete. Empty output means no
+# removals. Used both by the refusal guard below and by the drift check
+# (secrets_cache_drift.sh), so the two can never disagree about what counts as
+# a removal.
+ALLOW_REMOVALS="${ALLOW_REMOVALS:-0}"
+
+_removed_names() {
+  local current="$1" candidate="$2"
+  comm -23 \
+    <(_key_names "$current"   | sort -u) \
+    <(_key_names "$candidate" | sort -u) 2>/dev/null
+}
+
 _names_added_removed() {
   local current="$1" candidate="$2"
   local cur_names new_names
@@ -447,6 +461,12 @@ _main() {
       mode="dry-run"
       shift
       ;;
+    --allow-removals)
+      # Opt in to deleting keys that exist in the cache but not in BWS.
+      # Without this the script refuses and changes nothing (llm#1024).
+      ALLOW_REMOVALS=1
+      shift
+      ;;
     --cache-file)
       cache_file="$2"
       shift 2
@@ -492,7 +512,60 @@ _main() {
   new_count="$(_count_keys "$candidate")"
   echo "Keys before: $old_count"
   echo "Keys after:  $new_count"
+  # A stable count is NOT evidence of a stable key set: 15 -> 15 is what an
+  # add-plus-a-delete looks like, and that is exactly how SIGNAL_ACCOUNT went
+  # unnoticed (llm#1024). Report the churn, not just the total.
+  {
+    _n_added="$(comm -13 <(_key_names "$cache_file" | sort -u) <(_key_names "$candidate" | sort -u) 2>/dev/null | grep -c . || true)"
+    _n_removed="$(_removed_names "$cache_file" "$candidate" | grep -c . || true)"
+    echo "Churn:       +${_n_added:-0} / -${_n_removed:-0}"
+  }
   _names_added_removed "$cache_file" "$candidate"
+
+  # ── Removal guard (llm#1024) ────────────────────────────────────────────
+  # Deleting a key is the only irreversible thing this script does, and until
+  # now it happened at the same volume as everything else: a "Removed:" line
+  # between two lines of progress output, exit 0.
+  #
+  # On 2026-08-25 a regen run to add CACHIX_AUTH_TOKEN also dropped
+  # SIGNAL_ACCOUNT, which lived only in the cache and had never been migrated
+  # to BWS. Both Signal entry points fail closed without it (llm#946), so
+  # capture stopped — the same capability repaired that morning under llm#1001.
+  # The summary said "Keys before: 15 / Keys after: 15", which reads like a
+  # no-op precisely BECAUSE one key was added as another was removed. Two
+  # people read that output and neither noticed.
+  #
+  # A key in the cache but not in BWS is not noise: it is a value that exists
+  # in exactly one place, and this script is the thing that deletes it. Refuse
+  # by default; make the operator say so.
+  local removed_list
+  removed_list="$(_removed_names "$cache_file" "$candidate")"
+
+  if [ -n "$removed_list" ] && [ "$ALLOW_REMOVALS" != "1" ]; then
+    local removed_count
+    removed_count="$(printf '%s\n' "$removed_list" | grep -c .)"
+    echo ""
+    echo "REFUSED: ${removed_count} key(s) in the cache are absent from Bitwarden and would be DELETED:"
+    printf '           %s\n' $removed_list
+    echo ""
+    echo "         These exist in ~/.config/secrets.env and nowhere else. Installing"
+    echo "         this cache would destroy them. Nothing has been changed."
+    echo ""
+    echo "         To keep a key, put it in Bitwarden first:"
+    printf '             ~/.claude/scripts/bws_set_secret.sh %s\n' $removed_list
+    echo ""
+    echo "         To delete it deliberately, re-run with --allow-removals."
+    echo ""
+    echo "         (llm#1024 — this guard exists because an unrelated regen"
+    echo "          silently dropped SIGNAL_ACCOUNT and disabled Signal capture.)"
+    rm -f "$candidate"
+    exit 1
+  fi
+
+  if [ -n "$removed_list" ]; then
+    echo "PROCEEDING WITH REMOVALS (--allow-removals given) — these keys will be deleted:"
+    printf '    %s\n' $removed_list
+  fi
 
   if [ "$mode" != "apply" ]; then
     echo "[dry-run] Would install $new_count keys to $cache_file. Re-run with --apply."

@@ -1540,6 +1540,35 @@ _rb_pct_part=""
 echo "roborev-backlog: open=${_rb_open}${_rb_top_part}${_rb_pct_part}" > "$_rb_cache"
 RBBEOF
 
+# ── Phase 13e: secrets cache drift — BACKGROUND (BWS network call) ───────────
+# Surfaces keys that exist in ~/.config/secrets.env but NOT in Bitwarden. Those
+# are one unrelated `secrets_cache_regen.sh --apply` away from deletion, and the
+# value then survives only in a rotating backup. llm#1024: exactly that removed
+# SIGNAL_ACCOUNT and stopped Signal capture.
+#
+# Same cache-then-refresh pattern as 13d: print the previous answer instantly,
+# recompute in the background for next session, so a BWS round-trip never
+# delays session start. Silent when there is no drift.
+_scd_cache="${HOME}/.claude/logs/session_init_secrets_drift_cache.txt"
+if [ -f "$_scd_cache" ]; then
+  _scd_cached=$(cat "$_scd_cache" 2>/dev/null) || true
+  [ -n "$_scd_cached" ] && echo "$_scd_cached"
+fi
+_scd_script="${HOME}/.claude/scripts/secrets_cache_drift.sh"
+mkdir -p "$(dirname "$_scd_cache")"
+if [ -x "$_scd_script" ]; then
+  nohup bash -s "$_scd_script" "$_scd_cache" > /dev/null 2>&1 <<'SCDEOF' &
+#!/usr/bin/env bash
+_s="$1"; _c="$2"
+# --quiet prints a single banner line ONLY when drift exists, and always
+# exits 0. A failure to reach BWS therefore leaves the previous cached answer
+# in place rather than overwriting it with a falsely-clean one — "could not
+# ask" must not render as "no drift" (llm#1021).
+_out="$(timeout 25 bash "$_s" --quiet 2>/dev/null)" || exit 0
+printf '%s' "$_out" > "$_c"
+SCDEOF
+fi
+
 # ── Phase 14a: T-lang flake.nix closure-rebuild advisory — BACKGROUND (~up to 5s) ──
 # Output cached; advisory only (no action needed at prompt time).
 _tlang_cache="${HOME}/.claude/logs/session_init_tlang_cache.txt"
