@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its BLOCK paths, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # file_protection.sh - Block or warn on edits to critical files
 # Hook: PreToolUse (Edit, Write)
 # Exit 2 = BLOCK (auto-generated files, main-checkout .claude/). Exit 0 = WARN/ALLOW.

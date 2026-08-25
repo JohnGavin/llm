@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: every-call
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). a probe: emits one row per invocation, so a
+#   7-day count of zero in that report is a genuine alert: the hook should have emitted on every invocation.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # tool_input_probe.sh — records the SHAPE of tool_input (never its values)
 # for hook matchers under investigation (llm#960 Part 3).
 # Hook: PreToolUse:Artifact, PreToolUse:WebFetch (and any future matcher

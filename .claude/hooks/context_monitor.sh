@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: every-call
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits one row per invocation, so a
+#   7-day count of zero in that report is a genuine alert: the hook should have emitted on every invocation.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # context_monitor.sh - Progressive context usage warnings
 # Hook: PostToolUse (Bash, Task)
 # Checks context usage percentage and warns at thresholds.

@@ -197,38 +197,150 @@ is_main_checkout() {
   [ "$git_dir" = "$git_common_dir" ]
 }
 
-# ─── Helper: squash-merge detection (llm#820) — DETECTION ONLY, never removes
-# Prints a merged PR number to stdout if the given branch has a merged
-# GitHub PR (i.e. was very likely squash-merged, which `git cherry` cannot
-# detect because the squash commit's patch-id differs from every commit on
-# the branch). Prints NOTHING on any failure — gh missing, no remote, no
-# parseable owner/repo slug, API error, or timeout. Callers MUST treat empty
-# stdout as "not detected" and fall back to the existing skipped_unmerged
-# handling unchanged. Always returns 0 (never fails the caller's `set -e`).
+# ─── Helper: squash-merge detection (llm#820, llm#1019) — DETECTION ONLY ─────
+# Prints a merged PR number to stdout if the given branch has a merged GitHub
+# PR (i.e. was very likely squash-merged, which `git cherry` cannot detect
+# because the squash commit's patch-id differs from every commit on the
+# branch).
+#
+# RETURN CONTRACT (llm#1019 — the whole point of this function's shape):
+#   0  the question was asked and answered.
+#      stdout = PR number  → squash-merged
+#      stdout = empty      → genuinely no merged PR for this branch
+#   2  the question could NOT be asked. stdout carries the REASON in place of
+#      the answer. The caller MUST count this separately and MUST NOT read it
+#      as "not merged".
+#
+# Reason-on-stdout rather than a global: this is called as
+# `_squash_pr=$(is_squash_merged ...)`, i.e. inside a command-substitution
+# subshell, so any variable it assigns dies with that subshell. The first
+# end-to-end run of this fix logged `retaining: unknown` for every branch for
+# exactly that reason. The caller only reads stdout as a reason when rc=2,
+# when there is no PR number to confuse it with.
+#
+# Before llm#1019 both outcomes were `return 0` with empty stdout. A revoked
+# GH_TOKEN in the environment made every `gh pr list` exit 401, which the
+# caller read as "no merged PR exists", so every squash-merged worktree was
+# retained. Same command, same branch, two environments:
+#
+#   $ gh pr list ... --head worktree-agent-a09dab3b15c650366
+#   HTTP 401: Bad credentials
+#   $ env -u GH_TOKEN gh pr list ...
+#   [{"mergedAt":"2026-08-23T07:13:16Z","number":1006}]
+#
+# would-remove-squash across the whole sweep: 0 with the poisoned token, 42
+# without it. 42 provably merged worktrees, each retained at ~16 MB, growing
+# without bound. That is the ~5 GB footprint.
+#
+# Note which cases are genuine NEGATIVES and stay `return 0`: no remote, or a
+# remote that is not a parseable GitHub slug. A repo with no GitHub remote
+# cannot have a merged GitHub PR, so "no" really is the answer, not a failure
+# to ask. Only an inability to reach GitHub is indeterminate.
+#
+# Never fails the caller's `set -e`: callers use `|| _rc=$?`.
+SQUASH_DETECT_WHY=""
+
+# Last line of defence before anything derived from a remote URL or a tool's
+# stderr reaches the log. The slug parse above already strips the common
+# `user:pass@host` form; this catches whatever shape it does not anticipate,
+# because a guard that only handles the case you already found is not a guard.
+redact_credentials() {
+  printf '%s' "$1" | sed -E \
+    -e 's#(://)[^/@[:space:]]*@#\1<REDACTED>@#g' \
+    -e 's#(gh[pousr]_)[A-Za-z0-9]{16,}#\1<REDACTED>#g' \
+    -e 's#(github_pat_)[A-Za-z0-9_]{16,}#\1<REDACTED>#g'
+}
+
 is_squash_merged() {
   local _repo="$1" _branch="$2"
-  command -v gh >/dev/null 2>&1 || return 0
 
-  local _remote_url _slug
-  _remote_url=$(git -C "$_repo" config --get remote.origin.url 2>/dev/null || true)
-  [ -z "$_remote_url" ] && return 0
+  if ! command -v gh >/dev/null 2>&1; then
+    printf '%s' "gh not on PATH"
+    return 2
+  fi
 
-  _slug=$(printf '%s' "$_remote_url" | sed -E 's#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##')
-  [[ "$_slug" == */* ]] || return 0
+  # `git config --get` exits 1 when the key is simply absent (a genuine "no
+  # remote"), and >1 on a real failure (unreadable/corrupt config). Only the
+  # latter is indeterminate.
+  local _remote_url _git_rc=0
+  _remote_url=$(git -C "$_repo" config --get remote.origin.url 2>/dev/null) || _git_rc=$?
+  if [ "$_git_rc" -gt 1 ]; then
+    printf '%s' "git config --get remote.origin.url failed (rc=$_git_rc)"
+    return 2
+  fi
+  [ -z "$_remote_url" ] && return 0     # no remote → no GitHub PR. A real "no".
 
-  local _pr_json
-  _pr_json=$($_gc_timeout_bin gh pr list -R "$_slug" --state merged --head "$_branch" --json number,mergedAt --limit 1 2>/dev/null || true)
-  [ -z "$_pr_json" ] && return 0
+  # Strip any embedded credential BEFORE parsing. A remote of the form
+  #   https://x-access-token:<token>@github.com/OWNER/REPO
+  # is written by some CI/auth flows and is present on at least one repo here.
+  # Two consequences, both fixed by this line:
+  #   1. the old sed matched neither prefix, so the slug came out as the whole
+  #      URL and `gh pr list -R <url>` could never work — squash detection was
+  #      silently broken for that repo on top of the token problem;
+  #   2. the reason string built below is LOGGED, so the token went into
+  #      ~/.claude/logs/worktree_gc.log in plaintext. Observed for real on the
+  #      first full run of this fix.
+  local _slug
+  _slug=$(printf '%s' "$_remote_url" \
+            | sed -E 's#^[a-z+]+://[^/@]*@#https://#; s#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##')
+  [[ "$_slug" == */* ]] || return 0     # not a GitHub slug → a real "no".
 
-  printf '%s' "$_pr_json" | python3 -c "
+  local _pr_json _gh_rc=0
+  _pr_json=$($_gc_timeout_bin gh pr list -R "$_slug" --state merged --head "$_branch" \
+               --json number,mergedAt --limit 1 2>&1) || _gh_rc=$?
+  if [ "$_gh_rc" -ne 0 ]; then
+    # 124 is `timeout`'s kill code; anything else is gh itself (auth, network,
+    # rate limit). All are "could not ask", none are "not merged".
+    local _gh_err _safe_slug
+    _gh_err=$(redact_credentials "$(printf '%s' "$_pr_json" | tr '\n' ' ' | cut -c1-120)")
+    _safe_slug=$(redact_credentials "$_slug")
+    printf '%s' "gh pr list -R $_safe_slug --head $_branch failed (rc=$_gh_rc): $_gh_err"
+    return 2
+  fi
+  [ -z "$_pr_json" ] && return 0        # gh answered with nothing → a real "no".
+
+  # A payload that will not parse is also a failure to answer, not a "no".
+  local _num _py_rc=0
+  _num=$(printf '%s' "$_pr_json" | python3 -c "
 import json, sys
-try:
-    data = json.load(sys.stdin)
-    if data:
-        print(data[0].get('number', ''))
-except Exception:
-    pass
-" 2>/dev/null || true
+data = json.load(sys.stdin)
+print(data[0].get('number', '') if data else '')
+" 2>&1) || _py_rc=$?
+  if [ "$_py_rc" -ne 0 ]; then
+    local _py_err
+    _py_err=$(redact_credentials "$(printf '%s' "$_num" | tr '\n' ' ' | cut -c1-120)")
+    printf '%s' "could not parse gh output for $_branch: $_py_err"
+    return 2
+  fi
+
+  printf '%s' "$_num"
+  return 0
+}
+
+# ─── Preflight: can squash detection ask GitHub at all? (llm#1019) ───────────
+# Runs ONCE at sweep start rather than per-worktree, so a broken credential
+# produces one clear line instead of N identical ones — and, critically, so it
+# appears even when the sweep finds no candidates at all. Advisory: it never
+# disables detection or changes removal behaviour. Its only job is to make
+# "the GC is retaining everything because it cannot reach GitHub" visible
+# instead of looking like normal operation.
+squash_detect_preflight() {
+  if ! command -v gh >/dev/null 2>&1; then
+    SQUASH_DETECT_PREFLIGHT="unavailable"
+    log "[squash-detect-preflight] unavailable: gh not on PATH — squash-merged worktrees CANNOT be detected and will all be retained"
+    return 0
+  fi
+  local _out _rc=0
+  _out=$($_gc_timeout_bin gh auth status 2>&1) || _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    SQUASH_DETECT_PREFLIGHT="unavailable"
+    local _auth_err
+    _auth_err=$(redact_credentials "$(printf '%s' "$_out" | tr '\n' ' ' | cut -c1-120)")
+    log "[squash-detect-preflight] unavailable: gh auth status rc=$_rc ($_auth_err) — squash-merged worktrees CANNOT be detected and will all be retained"
+    return 0
+  fi
+  SQUASH_DETECT_PREFLIGHT="ok"
+  log "[squash-detect-preflight] ok"
   return 0
 }
 
@@ -295,6 +407,14 @@ REMOVED=0
 REMOVED_SQUASH=0
 KEPT=0
 EVENTS_WRITTEN=0
+
+# llm#1019 — `would-remove-squash=0` used to mean BOTH "nothing to remove" and
+# "I could not check". These two counters split them apart, so the summary line
+# can no longer report a confident zero it has not earned.
+SQUASH_DETECT_FAILURES=0
+SQUASH_DETECT_PREFLIGHT="unknown"
+
+squash_detect_preflight
 
 # Track convention-pattern parent dirs for later rmdir
 declare -a CONVENTION_PARENTS=()
@@ -409,7 +529,18 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
       # see the `[ "$APPLY" = "1" ]` guard below — so `--dry-run` still only
       # reports would_remove_squash, exactly as before this change.
       if [ "${SQUASH_DETECT_ENABLED}" = "1" ]; then
-        _squash_pr=$(is_squash_merged "$_repo_dir" "$wt_branch" || true)
+        # rc=2 means detection was UNAVAILABLE, not that the branch is
+        # unmerged. Still fail-safe (the worktree is retained either way) —
+        # but loudly, so a credential problem is visible as a credential
+        # problem instead of as a sweep that found nothing (llm#1019).
+        _squash_rc=0
+        _squash_pr=$(is_squash_merged "$_repo_dir" "$wt_branch") || _squash_rc=$?
+        if [ "$_squash_rc" -eq 2 ]; then
+          SQUASH_DETECT_WHY="$_squash_pr"   # on rc=2 stdout carries the reason
+          SQUASH_DETECT_FAILURES=$(( SQUASH_DETECT_FAILURES + 1 ))
+          log "[squash-detect-unavailable] $wt_path branch=$wt_branch repo=$_repo_dir — classification degraded, retaining: ${SQUASH_DETECT_WHY:-unknown}"
+          _squash_pr=""
+        fi
         if [ -n "$_squash_pr" ]; then
           _squash_size_mb=$(dir_size_mb "$wt_path")
           _squash_reason="squash-merged via PR #${_squash_pr} in $_repo_dir"
@@ -424,9 +555,16 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
             _squash_age=$(( _now - _squash_mtime ))
 
             if [ -z "$_squash_dirty" ] && [ "$_squash_age" -ge "$_age_seconds" ] && [ "$APPLY" = "1" ]; then
-              _tip_sha=$(git -C "$_repo_dir" rev-parse "$wt_branch" 2>/dev/null || true)
-              if [ -z "$_tip_sha" ]; then
-                log "[skip-squash-remove-failed] $wt_path (could not resolve branch tip sha)"
+              # Capture rc rather than swallowing it: this decides whether a
+              # worktree is about to be deleted, so "rev-parse failed" and
+              # "rev-parse printed nothing" both abort the removal AND say
+              # which happened. Behaviour was already fail-safe; llm#1019 adds
+              # the reason to the log line.
+              _tip_rc=0
+              _tip_sha=$(git -C "$_repo_dir" rev-parse "$wt_branch" 2>&1) || _tip_rc=$?
+              if [ "$_tip_rc" -ne 0 ] || [ -z "$_tip_sha" ]; then
+                _tip_err=$(printf '%s' "$_tip_sha" | tr '\n' ' ' | cut -c1-100)
+                log "[skip-squash-remove-failed] $wt_path (could not resolve branch tip sha: rc=$_tip_rc $_tip_err)"
                 write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: could not resolve tip sha" "$_squash_size_mb"
                 EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
                 KEPT=$(( KEPT + 1 ))
@@ -567,7 +705,14 @@ else
   log "[log-rotate-dryrun] dir=$CLAUDE_RUNTIME_ROOT/logs threshold_bytes=$LOG_ROTATE_THRESHOLD_BYTES keep_lines=$LOG_ROTATE_KEEP_LINES would_rotate=$LOGS_ROTATED"
 fi
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED"
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH squash-detect=$SQUASH_DETECT_PREFLIGHT squash-detect-failures=$SQUASH_DETECT_FAILURES removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED"
+
+# One loud line when squash detection could not run. Without it, a sweep that
+# checked nothing looks identical in the log to a sweep that found nothing —
+# which is how ~5 GB accumulated unnoticed (llm#1019).
+if [ "$SQUASH_DETECT_PREFLIGHT" != "ok" ] || [ "$SQUASH_DETECT_FAILURES" -gt 0 ]; then
+  log "[squash-detect-degraded] preflight=$SQUASH_DETECT_PREFLIGHT per-branch-failures=$SQUASH_DETECT_FAILURES — would-remove-squash=$WOULD_REMOVE_SQUASH is a FLOOR, not a count. Squash-merged worktrees are being retained because GitHub could not be asked, not because none exist. Check: gh auth status (a stale GH_TOKEN shadows the keyring credential — try env -u GH_TOKEN)."
+fi
 
 # Stamp for cron_catchup.sh catch-up detection
 mkdir -p "${HOME}/.claude/logs/stamps"
@@ -779,6 +924,128 @@ for i in range(3000):
   else
     echo "SKIP: rotate_logs not sourced (sentinel_log_sweep.sh missing?)"
   fi
+
+  # --- Tests: is_squash_merged distinguishes "no" from "could not ask" (llm#1019)
+  #
+  # The bug these cover: a revoked GH_TOKEN made every `gh pr list` exit 401,
+  # is_squash_merged returned empty, and the caller read empty as "this branch
+  # is not merged". 42 squash-merged worktrees were retained indefinitely.
+  # An error path and a negative-result path must not share an exit.
+  #
+  # Note what is asserted alongside every rc: that a REAL negative still comes
+  # back as rc=0. Tests that only check "failure gives rc=2" would also pass if
+  # the function returned 2 unconditionally, which would disable removal
+  # entirely — a different bug wearing the same green tick.
+  _sq_bin="$tmpdir/sqbin"
+  mkdir -p "$_sq_bin"
+
+  # A git repo with a GitHub remote, so the slug parses.
+  _sq_repo="$tmpdir/sqrepo"
+  git init -q "$_sq_repo"
+  git -C "$_sq_repo" remote add origin "git@github.com:JohnGavin/fake.git"
+
+  # (1) gh absent → INDETERMINATE (rc=2), with a reason on stdout.
+  _sq_out=$(PATH="$_sq_bin" is_squash_merged "$_sq_repo" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: gh absent returns rc=2 (not a negative)" "2" "$_sq_rc"
+  _check "squash-detect: gh absent gives a non-empty reason" "1" "$([ -n "$_sq_out" ] && echo 1 || echo 0)"
+
+  # (2) gh present but failing the way a revoked token does → rc=2, and the
+  #     reason must carry gh's own text so the cause is identifiable.
+  cat > "$_sq_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2
+exit 1
+GHEOF
+  chmod +x "$_sq_bin/gh"
+  _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_repo" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: gh 401 returns rc=2 (not 'unmerged')" "2" "$_sq_rc"
+  _check "squash-detect: gh 401 reason names the credential failure" "1" \
+    "$(case "$_sq_out" in (*"401"*) echo 1 ;; (*) echo 0 ;; esac)"
+
+  # (3) gh answering with an empty list → a REAL negative: rc=0, empty stdout.
+  cat > "$_sq_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "[]"
+GHEOF
+  chmod +x "$_sq_bin/gh"
+  _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_repo" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: empty PR list is rc=0 (a real 'no')" "0" "$_sq_rc"
+  _check "squash-detect: empty PR list prints nothing" "" "$_sq_out"
+
+  # (4) gh finding a merged PR → rc=0 and the PR number.
+  cat > "$_sq_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo '[{"mergedAt":"2026-08-23T07:13:16Z","number":1006}]'
+GHEOF
+  chmod +x "$_sq_bin/gh"
+  _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_repo" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: merged PR is rc=0" "0" "$_sq_rc"
+  _check "squash-detect: merged PR number is returned" "1006" "$_sq_out"
+
+  # (5) unparseable payload is a failure to answer, not a 'no'.
+  cat > "$_sq_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo 'not json at all'
+GHEOF
+  chmod +x "$_sq_bin/gh"
+  _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_repo" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: unparseable gh output is rc=2, not a 'no'" "2" "$_sq_rc"
+
+  # (5b) a remote with an embedded credential must produce a usable slug AND
+  #      must never put the credential in a log line. Found the hard way: the
+  #      first full run of this fix wrote a live GitHub token into
+  #      worktree_gc.log, because the old slug parse handled neither the
+  #      `https://user:pass@host/` form nor redaction. The embedded credential
+  #      also meant the slug was the entire URL, so squash detection had never
+  #      worked for that repo at all -- two bugs, one line.
+  #
+  #      The fixture token is built by concatenation so this file never
+  #      contains a literal token-shaped string; secret_leak_guard cannot tell
+  #      a fixture from the real thing, and it is right not to try.
+  _fake_tok="ghp""_AAAABBBBCCCCDDDDEEEEFFFF00001111"
+  _sq_credrepo="$tmpdir/sqcredrepo"
+  git init -q "$_sq_credrepo"
+  git -C "$_sq_credrepo" remote add origin \
+    "https://x-access-token:${_fake_tok}@github.com/JohnGavin/fake.git"
+
+  # gh echoes back the -R VALUE it was handed, so the test asserts which slug
+  # actually reached it rather than inferring it. The argv position matters:
+  # `gh pr list -R <slug> ...` puts the slug at $4, not $3 ($3 is the -R flag
+  # itself). The first version of this test read $3, compared "-R" against the
+  # expected slug, and failed while the parse it was checking was correct.
+  cat > "$_sq_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "SLUG_SEEN=$4" >&2
+exit 1
+GHEOF
+  chmod +x "$_sq_bin/gh"
+  _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_credrepo" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: credentialed remote parses to a bare OWNER/REPO slug" "1" \
+    "$(case "$_sq_out" in (*"SLUG_SEEN=JohnGavin/fake"*) echo 1 ;; (*) echo 0 ;; esac)"
+  _check "squash-detect: reason string carries NO token" "0" \
+    "$(case "$_sq_out" in (*"$_fake_tok"*) echo 1 ;; (*) echo 0 ;; esac)"
+
+  # redact_credentials directly. A helper tested only through one caller stops
+  # being tested the moment that caller changes.
+  _check "redact: strips user:pass@ from a URL" "0" \
+    "$(case "$(redact_credentials "https://x-access-token:${_fake_tok}@github.com/o/r")" in (*"$_fake_tok"*) echo 1 ;; (*) echo 0 ;; esac)"
+  _check "redact: strips a bare token" "0" \
+    "$(case "$(redact_credentials "token is ${_fake_tok} here")" in (*"$_fake_tok"*) echo 1 ;; (*) echo 0 ;; esac)"
+  _check "redact: leaves ordinary text alone" "no secrets in this line" \
+    "$(redact_credentials 'no secrets in this line')"
+
+  # (6) a repo with NO remote is a genuine negative — there cannot be a GitHub
+  #     PR — so it must stay rc=0. Over-reporting indeterminate would make the
+  #     new degraded-warning fire constantly and get ignored.
+  _sq_norem="$tmpdir/sqnoremote"
+  git init -q "$_sq_norem"
+  cat > "$_sq_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "[]"
+GHEOF
+  chmod +x "$_sq_bin/gh"
+  _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_norem" "some-branch") && _sq_rc=0 || _sq_rc=$?
+  _check "squash-detect: repo with no remote is rc=0 (real 'no', not degraded)" "0" "$_sq_rc"
 
   echo ""
   echo "$_pass PASS, $_fail FAIL"
