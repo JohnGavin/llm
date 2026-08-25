@@ -177,7 +177,14 @@ EOS
 
 [ "$SELFTEST" -eq 1 ] && { selftest; exit $?; }
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# INDETERMINATE_ROOT overrides the scan/baseline root. Required, not cosmetic:
+# ~/.claude/scripts is a SYMLINK into the main checkout, so deriving ROOT from
+# this script's own location always resolves to the main checkout — even when
+# invoked from a worktree's pre-commit hook. The gate then scanned main's files,
+# found them baselined, and passed every commit made from a worktree regardless
+# of its content. A check looking in the wrong place and reporting clean
+# (llm#1028).
+ROOT="${INDETERMINATE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 if [ "${#PATHS[@]}" -eq 0 ]; then
     PATHS=("$ROOT/.claude/scripts" "$ROOT/.claude/hooks" "$ROOT/bin")
 fi
