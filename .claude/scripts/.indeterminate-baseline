@@ -7,10 +7,23 @@
 # This file should SHRINK. Deleting a line here means that file must be
 # clean of that finding type. Never add to it by hand — fix the code, or
 # regenerate deliberately with --write-baseline and say why in the commit.
+#
+# 2026-08-25 (llm#1030): 29 -> 35. The rise is a NEW PATTERN, not new debt.
+# `swallowed-status-fn` flags a function whose last command discards stderr
+# and status while a caller captures its stdout — the llm#1012 shape, which
+# patterns 1 and 2 could not see because the swallow and its misreading were
+# one function call apart. The 11 instances it found (6 files) were all
+# already there; they became visible, not new. Five sit in
+# .claude/scripts/roborev_merge_gate.sh, the dry-run predecessor to
+# bin/roborev_merge_gate.sh — worth fixing or retiring, since a dry-run gate
+# that always exits 0 cannot gate anything either way.
+#
+# The SHRINK rule stands. This file is now 35 and should head back down.
 .claude/hooks/agent_push_guard.sh	swallowed-status
 .claude/hooks/compound_command_guard.sh	swallowed-status
 .claude/hooks/destructive_api_guard.sh	pipefail-abort
 .claude/hooks/destructive_fs_guard.sh	swallowed-status
+.claude/hooks/external_content_quarantine.sh	swallowed-status-fn
 .claude/hooks/gh_comment_provenance.sh	swallowed-status
 .claude/hooks/llmtelemetry_emit.sh	swallowed-status
 .claude/hooks/log_agent_run.sh	swallowed-status
@@ -29,10 +42,15 @@
 .claude/scripts/process_pending_skillify.sh	pipefail-abort
 .claude/scripts/roborev_agent_health.sh	pipefail-abort
 .claude/scripts/roborev_auto_verify.sh	swallowed-status
+.claude/scripts/roborev_citation_validate.sh	swallowed-status-fn
 .claude/scripts/roborev_commit_reference_rate_check.sh	swallowed-status
+.claude/scripts/roborev_handoff.sh	swallowed-status-fn
 .claude/scripts/roborev_install_auto_verify_hook.sh	swallowed-status
 .claude/scripts/roborev_install_post_merge_hook.sh	swallowed-status
+.claude/scripts/roborev_merge_gate.sh	swallowed-status-fn
+.claude/scripts/secret_exposure_scan.sh	swallowed-status-fn
 .claude/scripts/skillify_backlog.sh	pipefail-abort
 .claude/scripts/vignette_check.sh	pipefail-abort
+bin/launchd_health_audit.sh	swallowed-status-fn
 bin/launchd_run_record.sh	pipefail-abort
 bin/refresh_and_preserve.sh	pipefail-abort
