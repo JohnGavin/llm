@@ -161,12 +161,36 @@ for s in d if isinstance(d,list) else []:
         echo "    project: $PROJECT_ID"
     fi
 
+    # A controlling terminal is required — the whole point is that the value is
+    # typed, never pasted into a command line. Check FIRST and say so plainly.
+    # Without this the script died on `v1: unbound variable` after two
+    # "/dev/tty: Device not configured" lines: it failed closed, correctly, but
+    # said nothing about why or what to do instead. An error path that cannot
+    # explain itself is the same defect this repo's
+    # checks-must-distinguish-unknown rule exists to stop.
+    # The probe runs in a SUBSHELL: a failing redirection is reported by the
+    # shell itself before the command executes, so a bare `: >/dev/tty
+    # 2>/dev/null` still leaks "Device not configured" to stderr. Redirecting
+    # the subshell captures it.
+    if [ ! -r /dev/tty ] || ! ( : >/dev/tty ) 2>/dev/null; then
+        echo "REFUSED: no controlling terminal, so the value cannot be typed." >&2
+        echo "         This script deliberately has no --value flag: a value on the" >&2
+        echo "         command line is exactly the exposure it exists to remove." >&2
+        echo "" >&2
+        echo "         Run it from your own shell:" >&2
+        echo "             ~/.claude/scripts/bws_set_secret.sh $NAME" >&2
+        echo "" >&2
+        echo "         Nothing was written. $NAME is unchanged." >&2
+        log "$NAME refused=no-tty"
+        return 1
+    fi
+
     # Hidden entry, twice.
-    local v1 v2
+    local v1="" v2=""
     printf 'Enter value for %s (input hidden): ' "$NAME" >&2
-    IFS= read -rs v1 </dev/tty; printf '\n' >&2
+    IFS= read -rs v1 </dev/tty || true; printf '\n' >&2
     printf 'Re-enter to confirm: ' >&2
-    IFS= read -rs v2 </dev/tty; printf '\n' >&2
+    IFS= read -rs v2 </dev/tty || true; printf '\n' >&2
 
     if [ "$v1" != "$v2" ]; then
         echo "REFUSED: the two entries do not match. Nothing was written." >&2
