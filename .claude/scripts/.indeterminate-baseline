@@ -1,0 +1,39 @@
+# check_indeterminate_handling.sh baseline
+# Pre-existing findings, accepted so the checker can block NEW ones.
+# Entries are <repo-relative-path><TAB><finding-type>. Line numbers are
+# deliberately excluded so edits elsewhere in a file do not resurrect an
+# entry as 'new'.
+#
+# This file should SHRINK. Deleting a line here means that file must be
+# clean of that finding type. Never add to it by hand — fix the code, or
+# regenerate deliberately with --write-baseline and say why in the commit.
+.claude/hooks/agent_push_guard.sh	swallowed-status
+.claude/hooks/compound_command_guard.sh	swallowed-status
+.claude/hooks/destructive_api_guard.sh	pipefail-abort
+.claude/hooks/destructive_fs_guard.sh	swallowed-status
+.claude/hooks/gh_comment_provenance.sh	swallowed-status
+.claude/hooks/llmtelemetry_emit.sh	swallowed-status
+.claude/hooks/log_agent_run.sh	swallowed-status
+.claude/hooks/session_init.sh	pipefail-abort
+.claude/hooks/session_init.sh	swallowed-status
+.claude/hooks/session_stop.sh	swallowed-status
+.claude/scripts/agent-post-verify.sh	pipefail-abort
+.claude/scripts/audit_skills_if_changed.sh	swallowed-status
+.claude/scripts/braindump_respond.sh	swallowed-status
+.claude/scripts/check_indeterminate_handling.sh	pipefail-abort
+.claude/scripts/check_indeterminate_handling.sh	swallowed-status
+.claude/scripts/clean-stale-worktrees.sh	swallowed-status
+.claude/scripts/hook_event_emit.sh	swallowed-status
+.claude/scripts/phi_scan.sh	pipefail-abort
+.claude/scripts/pr_status_pulse.sh	swallowed-status
+.claude/scripts/process_pending_skillify.sh	pipefail-abort
+.claude/scripts/roborev_agent_health.sh	pipefail-abort
+.claude/scripts/roborev_auto_verify.sh	swallowed-status
+.claude/scripts/roborev_commit_reference_rate_check.sh	swallowed-status
+.claude/scripts/roborev_install_auto_verify_hook.sh	swallowed-status
+.claude/scripts/roborev_install_post_merge_hook.sh	swallowed-status
+.claude/scripts/skillify_backlog.sh	pipefail-abort
+.claude/scripts/vignette_check.sh	pipefail-abort
+.claude/scripts/worktree_gc.sh	swallowed-status
+bin/launchd_run_record.sh	pipefail-abort
+bin/refresh_and_preserve.sh	pipefail-abort
