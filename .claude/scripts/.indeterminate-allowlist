@@ -1,0 +1,11 @@
+# Files exempt from check_indeterminate_handling.sh.
+#
+# One repo-relative-or-absolute path per line. Blank lines and # comments ignored.
+#
+# Add an entry ONLY with a reason on the line above it. "Too noisy" is not a
+# reason — if a file genuinely does not care about the distinction between
+# "error" and "no result", say why that is safe there.
+#
+# Empty on purpose: the current 45 findings have not been triaged yet, so the
+# checker ships advisory (not wired into pre-commit). Silencing them wholesale
+# via this file would defeat the point.
