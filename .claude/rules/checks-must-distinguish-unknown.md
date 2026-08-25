@@ -76,6 +76,60 @@ already-merged worktrees indefinitely.
 file **and** `0` for an empty one. Its output does not vary with the thing it
 measures. That is not a weak check; it is not a check.
 
+## Corollary: the same rule applies to diagnosis, not just to code
+
+The rule above governs checks you *write*. The identical error is available when
+you *read* a tool's output, and prose rules do not catch it.
+
+> **Before attributing a negative result to the subject, confirm the tool could
+> observe the subject at all.**
+
+Worked failure, 2026-08-25, by the author of this rule about an hour after
+merging it. `bws` reported `Doesn't contain a decryption key`. That was read as
+*"the stored token is malformed"* and written up as "the token needs
+re-issuing". The token was fine. It had never reached `bws` — the value was
+passed via an environment variable that does not propagate to child processes in
+that session, so `bws` received nothing and complained about the nothing.
+
+One command settles it, and it was run only afterwards:
+
+```bash
+BWS_ACCESS_TOKEN="$VALUE" bash -c 'test -n "${BWS_ACCESS_TOKEN:-}"'   # exit 1 → never arrived
+```
+
+The tell: **a tool complaining about the *shape* of an input it may not have
+received.** "Malformed", "invalid", "not found", "empty", "no such" — each is a
+statement about what the tool *saw*, which is only a statement about your
+subject once you have established that it saw the subject.
+
+| Before writing this | Establish this |
+|---|---|
+| "the credential is invalid" | the credential reached the tool |
+| "the file is empty" | you opened the file you think you opened |
+| "the branch has no merged PR" | the API call authenticated |
+| "the hook never fires" | the hook is instrumented to report firing |
+| "no rows matched" | the query ran against the intended database |
+
+Cost when skipped: a confident wrong diagnosis, remediation advice for a
+non-problem (re-issue a working credential), and — because the advice carried a
+`<placeholder>` — a literal `<cachix-token>` string written into the secrets
+vault as if it were a token.
+
+## Corollary: a placeholder in a runnable command is a defect
+
+If a documented command contains `<something>`, someone will run it verbatim.
+That is not carelessness; a shell command is an invitation to paste.
+
+- Never emit a copy-pasteable line with an unfilled placeholder. Either resolve
+  every field, or make it visibly non-runnable (prose, or a `$VARIABLE` the
+  reader must set first).
+- Where a value is genuinely private, take it on **hidden stdin** rather than
+  in argv — a prompt cannot be pasted past. See `bws_set_secret.sh`, which also
+  refuses placeholder-shaped input outright.
+- The receiving system will not save you: `bws secret create` accepted
+  `<cachix-token>` and returned success, because the command was valid and only
+  the value was wrong. Nothing downstream could tell the difference.
+
 ## Required pattern
 
 Capture the status. Branch on it. Say so.
