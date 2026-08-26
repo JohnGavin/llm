@@ -43,7 +43,36 @@ if [ ! -x "$CHECKER" ]; then
   exit 0
 fi
 
-out="$("$CHECKER" 2>&1)"; rc=$?
+# Scan THIS repo's staged files, not the checker's own directory.
+#
+# ~/.claude/scripts is a symlink into the main checkout, so the checker's
+# self-derived root always pointed at main — including when this hook ran inside
+# a worktree. It scanned main's (baselined) files and passed every worktree
+# commit no matter what it contained. Verified: a commit deliberately adding the
+# swallowed-status pattern in a worktree was accepted (llm#1028).
+#
+# Pin the root to the repo being committed, and hand the checker the staged
+# paths explicitly.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+  echo "indeterminate-check: UNAVAILABLE (not in a git repo) — not blocking" >&2
+  log "unavailable no-repo-root"
+  exit 0
+fi
+
+_staged_paths=()
+while IFS= read -r _f; do
+  [ -n "$_f" ] || continue
+  [ -f "$REPO_ROOT/$_f" ] && _staged_paths+=("$REPO_ROOT/$_f")
+done <<< "$staged"
+
+if [ "${#_staged_paths[@]}" -eq 0 ]; then
+  exit 0   # staged shell files are all deletions
+fi
+
+out="$(INDETERMINATE_ROOT="$REPO_ROOT" \
+       INDETERMINATE_BASELINE="$REPO_ROOT/.claude/scripts/.indeterminate-baseline" \
+       "$CHECKER" "${_staged_paths[@]}" 2>&1)"; rc=$?
 
 if [ "$rc" -eq 0 ]; then
   log "pass staged_sh=$(printf '%s\n' "$staged" | grep -c .)"
