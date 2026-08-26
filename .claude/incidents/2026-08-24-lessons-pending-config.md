@@ -16,9 +16,32 @@ hard — not when the prose is good.
 
 ---
 
+## Naming the pattern does not stop you falling into it
+
+The most useful finding of 2026-08-25 is not in any single row. It is that
+**two new instances were produced by code written to prevent the pattern**,
+hours after it was codified as a rule and merged:
+
+- Row 8 — `bws` said `Doesn't contain a decryption key`; that was read as "the
+  token is malformed" and written up as advice to re-issue a working
+  credential. The tool had received nothing.
+- Row 12 — the pre-commit gate built to catch this defect shipped *with* this
+  defect, scanning the wrong repo and reporting clean.
+
+Both were written by someone who had just finished writing the rule. So the
+rule is not a vaccine, and this file should not be read as one either. The only
+rows that have ever stopped a recurrence are the ones in the `Enforced?` column
+marked **yes** — a refusal, a non-zero exit, a blocked commit.
+
+Corollary, learned the same day: **installing a gate is not evidence it works.**
+Row 12 passed a commit it should have blocked, silently, while logging `pass`.
+The gate was only proven by deliberately committing the forbidden pattern and
+watching it refuse. Every gate added from here should be accompanied by a
+recorded observation of it *failing closed*, not merely of it being present.
+
 ## The single shape
 
-Nine of the thirteen rows below are one defect wearing different clothes:
+Nine of the sixteen rows below are one defect wearing different clothes:
 
 > **A system reported success about something it had not established.**
 
@@ -48,6 +71,9 @@ llm#1025) is the part that fires without anyone remembering.
 | 11 | Hook-liveness report claimed 21 hooks "never fired", including two that fired that day | Measuring instrumentation and calling it execution | `instrumented`/`cadence` read from each hook's own `# hook-liveness:` marker; uninstrumented renders `—`, never `0`; a test fails if an instrumented hook lacks a marker | **yes** — llm#1017 |
 | 12 | `secret_leak_guard` recommended a remedy that `compound_command_guard` rejects, and justified itself with a claim about `${VAR:+…}` that is false | A guard whose stated reason can be disproved in ten seconds teaches the reader to work around it; a remedy that another guard blocks leaves the operator improvising under pressure | Message names `test -n "${VAR:-}"`, which passes both guards; rationale corrected; `PAT` matched as a delimited token so PATH/path/wt_path/pattern stop tripping it; 13 selftest cases | **yes** — llm#1018 |
 | 13 | A GC log line wrote a live GitHub token in plaintext, because one repo's `remote.origin.url` embeds one and the new diagnostic logged the slug | Anything derived from a remote URL or a tool's stderr is a credential-bearing surface the moment it reaches a log | `redact_credentials()` on every reason string; slug parse strips `user:pass@` before parsing | **partial** — llm#1019 covers `worktree_gc.sh`; the embedded token still needs rotating and the remote still needs fixing, and nothing yet scans *other* scripts for the same shape |
+| 14 | The pre-commit gate built to catch this defect **had this defect**. `~/.claude/scripts` is a symlink into the main checkout, so the checker's self-derived root always resolved there; run from a worktree it scanned main's baselined files, reported clean, and logged `pass` for every commit | Naming a pattern does not confer immunity to it. Installing a gate is not evidence it works — only watching it *refuse* is | `INDETERMINATE_ROOT` pinned by the caller; staged paths passed explicitly; block-direction verified against the live hook | **pending** — llm#1028 |
+| 15 | A selftest's fixture repos inherited the ambient **global** `core.hooksPath` and wrote a `pre-commit` into the real shared hooks directory — which would have run the gate in every repo on the machine | A test that reads ambient config can modify shared state. Fixtures must pin every environment input they depend on | Fixtures set `core.hooksPath` locally; assertion checks the fixture path, which is what caught it | **yes** — llm#1028 |
+| 16 | A throwaway probe file was committed while testing the gate, then removed with `reset --mixed` | Verification artefacts must be created outside the tree under test, or removed before the commit that proves the point | none — judgement | **no** |
 
 ---
 
