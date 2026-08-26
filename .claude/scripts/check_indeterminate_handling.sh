@@ -15,6 +15,14 @@
 #      This is the llm#1019 shape: a `gh` 401 became "no merged PR exists" and
 #      the GC retained ~5 GB of already-merged worktrees indefinitely.
 #
+#   3. A FUNCTION whose last command discards both stderr and status, so its
+#      empty stdout means both "no result" and "could not run":
+#          _get_pr_commits() { "$GH" pr view ... 2>/dev/null || echo ""; }
+#      This is the llm#1012 shape. Patterns 1 and 2 both require the swallow
+#      and its misreading in one variable's scan; here they were one function
+#      call apart, and this checker reported findings=0 on that exact file.
+#      (llm#1030.)
+#
 #   2. An unguarded command substitution containing a pipeline, in a file that
 #      sets `set -e`/`set -o pipefail`. A grep that matches nothing exits 1,
 #      fails the pipeline, and aborts the script mid-run — often before it
@@ -87,6 +95,92 @@ scan_file() {
         done <<< "$vars"
     fi
 
+    # Pattern 3 — a FUNCTION whose result conflates error with empty (llm#1030).
+    #
+    # Patterns 1 and 2 both require the swallow and its misreading to sit in
+    # one scan of one variable name. llm#1012 put them one function call apart:
+    #
+    #     _get_pr_commits() {
+    #       "$GH" pr view ... 2>/dev/null || echo ""     # the swallow
+    #     }
+    #     commit_shas=$(_get_pr_commits "$pr" "$repo")
+    #     if [ -z "$commit_shas" ]; then                 # the misreading
+    #       echo "merge-gate: PASS (no commits found — fail-open)"
+    #
+    # Neither half matches alone, so this checker reported findings=0 on the
+    # exact file it names first in its own header. Wrapping a swallow in a
+    # helper — ordinary, good factoring — made the code invisible to it.
+    #
+    # What is flagged: a function whose LAST effective command swallows both
+    # stderr and status. Such a function is structurally incapable of telling
+    # its caller "I could not answer" — its stdout is empty either way — so
+    # every caller that tests it for emptiness inherits the defect, wherever
+    # they live. Flagging the function is both earlier and cheaper than
+    # chasing its call sites.
+    #
+    # Deliberately NOT flagged: a swallow in the middle of a function that
+    # goes on to branch, and a function that captures the status (`|| rc=$?`).
+    # Those are the correct forms, and both appear in the fixes for llm#1012
+    # and llm#1019.
+    # Only functions whose STDOUT IS CONSUMED can carry this defect. A
+    # fire-and-forget side-effecting function -- worktree_gc.sh's
+    # write_gc_event(), whose last line is a DuckDB write ending
+    # `2>/dev/null || true` -- has the same shape and no defect: nobody reads
+    # its output, and a failed telemetry write must not crash the sweep. That
+    # was the first false positive this pattern produced, and the checker's
+    # own selftest already accepts "fire-and-forget with no emptiness test" as
+    # good. So: emit `line<TAB>name` from awk, then keep only names that
+    # appear inside a command substitution somewhere in the same file.
+    local fn_hits
+    fn_hits="$(awk '
+        # A heredoc body is DATA, not code in this file. Without this, the
+        # selftest fixtures below -- which deliberately contain the defect --
+        # are reported as defects in this script itself. Any scanner that
+        # cannot tell its own fixtures from its own code will accumulate
+        # exactly one self-referential finding per test it adds.
+        !inhd && /<<[-]?[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?[[:space:]]*$/ {
+            hd = $0
+            sub(/^.*<<[-]?[\x27"]?/, "", hd)
+            sub(/[\x27"]?[[:space:]]*$/, "", hd)
+            inhd = 1; next
+        }
+        inhd { if ($0 == hd) inhd = 0; next }
+
+        /^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/ {
+            infn = 1
+            fname = $0
+            sub(/^[[:space:]]*(function[[:space:]]+)?/, "", fname)
+            sub(/[[:space:]]*\(\).*$/, "", fname)
+            last = ""; lastline = 0; next
+        }
+        infn && /^\}/ {
+            if (last ~ /2>\/dev\/null/ && (last ~ /\|\|[[:space:]]*true[[:space:]]*$/ || last ~ /\|\|[[:space:]]*echo[[:space:]]+""[[:space:]]*$/)) {
+                print lastline "\t" fname
+            }
+            infn = 0; next
+        }
+        infn {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (line == "" || line ~ /^#/) next
+            # A status capture means the function CAN report failure.
+            if (line ~ /\|\|[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\?/) { last = ""; lastline = 0; next }
+            if (line ~ /^return[[:space:]]/) { last = ""; lastline = 0; next }
+            last = line; lastline = NR
+        }
+    ' "$f" 2>/dev/null || true)"
+
+    if [ -n "$fn_hits" ]; then
+        while IFS="$(printf '\t')" read -r hl hname; do
+            [ -n "$hl" ] || continue
+            [ -n "${hname:-}" ] || continue
+            # Consumed anywhere as $(name ...) or `name ...`?
+            grep -qE '(\$\(|`)[[:space:]]*'"$hname"'([[:space:]]|\)|`)' "$f" 2>/dev/null || continue
+            _is_allowlisted "$rel" && continue
+            echo "$rel:$hl: [swallowed-status-fn] ${hname}()'s last command discards stderr and exit status, and its output IS captured by a caller. Empty stdout therefore means BOTH \"no result\" and \"could not run\" (llm#1012)."
+        done <<< "$fn_hits"
+    fi
+
     # Pattern 2 — unguarded pipeline substitution under set -e/pipefail.
     if grep -qE '^[[:space:]]*set[[:space:]]+-[a-z]*e|set[[:space:]]+-o[[:space:]]+pipefail' "$f" 2>/dev/null; then
         local hits
@@ -107,6 +201,20 @@ selftest() {
     tmp="$(mktemp -d)"
     ok(){ pass=$((pass+1)); echo "  PASS: $1"; }
     bad(){ fail=$((fail+1)); echo "  FAIL: $1"; }
+    # A fixture that was never written produces no findings, and "no findings"
+    # is this suite's PASS condition for every accepts-* case. So an absent
+    # fixture reads as a pass -- the exact defect this script exists to catch,
+    # in this script's own selftest. It happened: the llm#1030 cases were
+    # added below the `rm -rf "$tmp"` line and two of them "passed" against
+    # files that did not exist. Assert existence and non-emptiness before
+    # drawing any conclusion from a scan.
+    _fixture(){
+        if [ ! -s "$1" ]; then
+            bad "fixture $(basename "$1") was not written -- cannot conclude anything from scanning it"
+            return 1
+        fi
+        return 0
+    }
     echo "check_indeterminate_handling.sh --selftest"
 
     # The llm#1019 shape — must be flagged.
@@ -169,6 +277,81 @@ EOS
     else
         bad "false positive on legitimate fire-and-forget"
     fi
+
+    # ── llm#1030 — the swallow and its misreading one function call apart ──
+    # This is verbatim the llm#1012 shape. Before pattern 3 the checker
+    # reported findings=0 on the real file.
+    cat > "$tmp/bad3.sh" <<'EOS'
+#!/usr/bin/env bash
+_get_pr_commits() {
+  local pr_num="$1" repo="$2"
+  "$GH" pr view "$pr_num" --repo "$repo" --json commits --jq '.commits[].oid' 2>/dev/null || echo ""
+}
+main() {
+  commit_shas=$(_get_pr_commits "$pr_num" "$repo")
+  if [ -z "$commit_shas" ]; then
+    echo "merge-gate: PASS (no commits found — fail-open)"
+    exit 0
+  fi
+}
+EOS
+    if _fixture "$tmp/bad3.sh" && scan_file "$tmp/bad3.sh" | grep -q 'swallowed-status-fn'; then
+        ok "flags a consumed function whose last command swallows status (llm#1012/llm#1030)"
+    else
+        bad "missed the cross-function swallow (llm#1030)"
+    fi
+
+    # The names matter: a finding that cannot say WHICH function is a finding
+    # the reader has to re-derive.
+    if _fixture "$tmp/bad3.sh" && scan_file "$tmp/bad3.sh" | grep -q '_get_pr_commits()'; then
+        ok "names the offending function"
+    else
+        bad "finding does not name the function"
+    fi
+
+    # Fire-and-forget — same shape, no defect, must NOT be flagged. This was
+    # the first false positive pattern 3 produced (worktree_gc.sh's
+    # write_gc_event, a DuckDB telemetry write nobody reads).
+    cat > "$tmp/good5.sh" <<'EOS'
+#!/usr/bin/env bash
+write_gc_event() {
+  duckdb "$DB" -c "INSERT INTO events VALUES ('$1');" 2>/dev/null || true
+}
+write_gc_event "something"
+EOS
+    if _fixture "$tmp/good5.sh" && [ -z "$(scan_file "$tmp/good5.sh")" ]; then
+        ok "accepts a fire-and-forget function whose output nobody captures"
+    else
+        bad "false positive on fire-and-forget (the write_gc_event shape)"
+    fi
+
+    # The corrected form from llm#1012 — status captured, caller can branch.
+    cat > "$tmp/good6.sh" <<'EOS'
+#!/usr/bin/env bash
+_get_pr_commits() {
+  local out rc=0
+  out=$("$GH" pr view "$1" --json commits --jq '.commits[].oid' 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s' "gh failed (rc=$rc)"
+    return 3
+  fi
+  printf '%s' "$out"
+  return 0
+}
+rc=0
+shas=$(_get_pr_commits 99) || rc=$?
+EOS
+    if _fixture "$tmp/good6.sh" && [ -z "$(scan_file "$tmp/good6.sh")" ]; then
+        ok "accepts the rc-capturing function form (the llm#1012 fix)"
+    else
+        bad "false positive on the corrected function form"
+    fi
+
+    # Cleanup moved here from above: the llm#1030 cases below it were
+    # writing fixtures into a directory that had already been removed. Each
+    # `cat >` failed, scan_file saw nothing, and "no output" read as PASS --
+    # this checker's own defect, in this checker's own selftest. The
+    # _fixture helper below is the guard against it recurring.
 
     rm -rf "$tmp"
     echo "  $pass passed, $fail failed"

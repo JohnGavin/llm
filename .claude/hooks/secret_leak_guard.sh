@@ -184,6 +184,22 @@ def looks_like_credential_value(v):
         return False                                     # code expression
     if re.fullmatch(r'[0-9a-fA-F-]+', v):
         return False                                     # git SHA / nix hash / UUID
+    # A hex identifier carrying an alphabetic prefix: worktree-agent-<hex>,
+    # agent-<hex>. The bare-hex rule above cannot help, because the letters in
+    # 'worktree' and 'agent' defeat its fullmatch, so entropy over the whole
+    # string decides — and clears the threshold. There are 40+ such branches
+    # on this machine at any time, and llm#1019's manual squash-merge checks
+    # name them on the gh command line (llm#1031).
+    #
+    # The entropy-carrying tail must be HEX, and every preceding segment
+    # alphabetic-only. That is the same reasoning as the bare-SHA exclusion
+    # applied to a PREFIXED sha, and it deliberately does NOT admit general
+    # kebab-case: a lowercase-with-hyphens secret whose tail is not hex still
+    # trips this rule, which matters because Rule 6 exists for secrets with no
+    # vendor prefix (llm#960 Part 2's example was an all-lowercase 16-char
+    # Gmail app password).
+    if re.fullmatch(r'[A-Za-z]+(?:-[A-Za-z]+)*-[0-9a-fA-F]{8,}', v):
+        return False                                     # <word>-…-<hex> identifier
     if not re.search(r'[A-Za-z]', v):
         return False                                     # pure-numeric/symbol
     if re.fullmatch(r'[0-9]+(?:[.:/_-][0-9]+)*', v):
@@ -660,6 +676,35 @@ if [ "${1:-}" = "--selftest" ]; then
   _case "a REAL bare printenv dump into a redirect still blocks" \
     'printenv > /tmp/all_env.txt' \
     "BLOCK"
+
+  # ── llm#1031 — harness branch names are not credentials ────────────────
+  # Rule 6 flagged worktree-agent-<hex> as a high-entropy secret. The bare-hex
+  # exclusion could not help: the letters in "worktree" and "agent" defeat its
+  # fullmatch, so entropy over the whole string decided. 40+ such branches
+  # exist here at any time, and llm#1019's manual squash-merge checks name
+  # them on the gh command line.
+  _case "harness worktree branch name is not a credential" \
+    'gh pr list -R JohnGavin/llm --state merged --head worktree-agent-a09dab3b15c650366' \
+    "ALLOW"
+  _case "short agent branch name is not a credential" \
+    'gh pr list -R JohnGavin/llm --head agent-aab7e5cc16712b02c' \
+    "ALLOW"
+  # The exclusion requires an ALPHABETIC prefix and a HEX tail. These three
+  # are each one property away and must still block — otherwise the narrowing
+  # would be satisfied by exempting kebab-case generally, which is exactly
+  # what Rule 6 exists to catch (llm#960 Part 2: an all-lowercase 16-char
+  # Gmail app password).
+  _case "kebab-case value with a NON-hex tail still blocks" \
+    'gh issue comment 1 --body-file - some-lowercase-secretvaluez' \
+    "BLOCK"
+  _case "hyphenated high-entropy value with a non-hex tail still blocks" \
+    'curl -X POST https://example.com/a --data svc-auth-Kp3nZq8XwLt5Vhr2Ym' \
+    "BLOCK"
+  # Entropy floor, stated so the next reader does not repeat the mistake this
+  # case was written with: my-token-zzzzzzzzzzzzzzzz has entropy 2.0, below
+  # CRED_ENTROPY_THRESHOLD=3.0, so it is allowed by the entropy check and
+  # proves nothing about the llm#1031 exclusion. A must-block case has to
+  # clear the floor (svc-auth-… is 4.53) or it is testing the wrong gate.
 
   # ── llm#1018 — PAT must be a delimited token, not a substring ───────────
   # A bare `PAT` substring also matches PATH, path, wt_path, pattern,
