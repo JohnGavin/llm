@@ -79,9 +79,14 @@ iterations fixed the wrong layer before this meta tag was identified as the
 root cause).
 
 Verification: `~/.claude/scripts/check_dashboard_color_scheme.sh <dir>`
-(greps every rendered HTML for both signals; exit 1 on any miss). Wire it
-into the project's Quarto `post-render` alongside `check_dark_contrast.sh`.
-See llm#584.
+(greps for both signals in every rendered HTML file that has a same-directory
+`.qmd`/`.md` source of the same basename; exit 1 on any miss among those. A
+file with no Quarto source — a shinylive export, a hand-built diagram page,
+an untracked build artifact — cannot carry a Quarto-injected `<meta>` tag, so
+it is skipped and reported separately rather than failed; see the script's
+own header comment for the historical-project case that motivated this
+scoping). Wire it into the project's Quarto `post-render` alongside
+`check_dark_contrast.sh`. See llm#584.
 
 ### CRITICAL: Black = `#000000`. White = `#ffffff`.
 
