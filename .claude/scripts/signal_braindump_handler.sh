@@ -1,4 +1,22 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# NOT `#!/usr/bin/env bash` — deliberately, and this file is run by launchd.
+#
+# `env bash` resolves to Homebrew bash, which is AD-HOC SIGNED. macOS stores a
+# TCC grant for an ad-hoc-signed binary with an EMPTY code-requirement blob,
+# so the grant cannot bind to a code identity and is re-requested every time.
+# Any file access this script (or an agent it spawns) makes under a
+# TCC-protected service therefore prompts, is allowed, and prompts again.
+#
+# Verified for THIS script's job: prompts attributed to
+# /opt/homebrew/Cellar/bash/5.3.9/bin/bash, accessed by /usr/bin/find,
+# brokered by /usr/libexec/sandboxd, responsible process a long-lived
+# launchd-parented bash running this file.
+#
+# /bin/bash is Apple-signed: its grant carries a real csreq and persists.
+# Verified bash-3.2 compatible (`/bin/bash -n` clean; no declare -A, mapfile,
+# ${x^^}, coproc). Re-check that before adding any bash-4+ construct.
+#
+# llm#1036.
 # signal_braindump_handler.sh — Event-driven braindump processing
 # Triggered by launchd WatchPaths on signal-cli attachments directory
 # OR run periodically to catch up on any missed messages.
