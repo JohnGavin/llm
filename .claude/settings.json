@@ -249,57 +249,31 @@
       "WebFetch(domain:blogs.rstudio.com)",
       "WebFetch(domain:cran.r-project.org)",
       "WebFetch(domain:docs.ropensci.org)",
-      "WebFetch(domain:expat-pensions.co.uk)",
       "WebFetch(domain:forum.posit.co)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:johngavin.github.io)",
       "WebFetch(domain:johngavin.r-universe.dev)",
       "WebFetch(domain:machinelearningmastery.com)",
-      "WebFetch(domain:monevator.com)",
-      "WebFetch(domain:myexpatsipp.com)",
       "WebFetch(domain:posit-dev.github.io)",
       "WebFetch(domain:puntofisso.net)",
       "WebFetch(domain:quarto.org)",
       "WebFetch(domain:r-lib.github.io)",
       "WebFetch(domain:r-universe.dev)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:register.fca.org.uk)",
       "WebFetch(domain:rstudio.github.io)",
       "WebFetch(domain:shikokuchuo.net)",
       "WebFetch(domain:shiny.posit.co)",
       "WebFetch(domain:shinylive.io)",
       "WebFetch(domain:shipyard.build)",
-      "WebFetch(domain:thecolumnist.co.uk)",
       "WebFetch(domain:tidyverse.github.io)",
       "WebFetch(domain:tidyverse.org)",
       "WebFetch(domain:wlandau.github.io)",
-      "WebFetch(domain:www.aberdeenpersonal.com)",
-      "WebFetch(domain:www.abrdn.com)",
-      "WebFetch(domain:www.ajbell.co.uk)",
       "WebFetch(domain:www.andrewheiss.com)",
       "WebFetch(domain:www.bbc.co.uk)",
-      "WebFetch(domain:www.beckett-financial.co.uk)",
-      "WebFetch(domain:www.expat.com)",
-      "WebFetch(domain:www.expatfinancial.com)",
-      "WebFetch(domain:www.expatmoney.com)",
-      "WebFetch(domain:www.expatsavings.co.uk)",
-      "WebFetch(domain:www.fca.org.uk)",
       "WebFetch(domain:www.gov.uk)",
-      "WebFetch(domain:www.hl.co.uk)",
-      "WebFetch(domain:www.ii.co.uk)",
-      "WebFetch(domain:www.interactiveinvestor.co.uk)",
-      "WebFetch(domain:www.moneyhelper.org.uk)",
-      "WebFetch(domain:www.myexpatsipp.com)",
-      "WebFetch(domain:www.pensionbee.com)",
-      "WebFetch(domain:www.pensionplaypen.com)",
-      "WebFetch(domain:www.pensionsadvisoryservice.org.uk)",
       "WebFetch(domain:www.r-bloggers.com)",
       "WebFetch(domain:www.shiny-webawesome.org)",
-      "WebFetch(domain:www.sippadviser.co.uk)",
-      "WebFetch(domain:www.thisismoney.co.uk)",
       "WebFetch(domain:www.tidy-finance.org)",
-      "WebFetch(domain:www.unbiased.co.uk)",
-      "WebFetch(domain:www.wesleyjohnson.co.uk)",
       "WebFetch(domain:www.which.co.uk)",
       "WebSearch",
       "Write",
@@ -432,6 +406,26 @@
             "type": "command",
             "command": "~/.claude/hooks/secret_leak_guard.sh",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/repo_visibility_guard.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/phi-scan-hook.sh",
+            "timeout": 10
           }
         ]
       },

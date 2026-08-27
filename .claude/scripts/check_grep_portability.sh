@@ -32,6 +32,10 @@ set -uo pipefail
 GREP="${GREP:-/usr/bin/grep}"
 [ -x "$GREP" ] || GREP="grep"
 
+# Absolute path to this script, resolved before any cd. Used by --selftest so
+# it invokes THIS file rather than guessing one relative to the caller's cwd.
+SELF_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
 _audit_file() {
   local f="$1" findings=0 line lnum
   # Only lines that pipe into a bare `grep` (not "$GREP", not /usr/bin/grep)
@@ -130,7 +134,21 @@ EOF
 
   pass=0; fail=0
   _one() { # name, file, expect_flagged(0/1)
-    local out; out="$(cd "$tmp" && bash "$OLDPWD/.claude/scripts/check_grep_portability.sh" ".claude/scripts" 2>/dev/null)"
+    # Resolve THIS script by its own path, not via $OLDPWD. With $OLDPWD the
+    # selftest only worked when invoked from a checkout root that already
+    # contained the script: run it from anywhere else and bash failed, $out was
+    # empty, and 4 of the 5 cases "passed" because empty output reads as
+    # "not flagged" — which is exactly what they assert. Four green ticks for a
+    # run that never happened. See checks-must-distinguish-unknown.
+    local out rc=0
+    out="$(cd "$tmp" && bash "$SELF_PATH" ".claude/scripts" 2>&1)" || rc=$?
+    # 0 = ran, clean.  1 = ran, found something. Both are real results.
+    # Anything else (127 not-found, 126 not-executable, a shell error) means
+    # the checker never ran, which must NOT be reported as "not flagged".
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+      fail=$((fail+1)); echo "  FAIL $1 (INDETERMINATE: checker exited $rc — did not run)"
+      return
+    fi
     if printf '%s' "$out" | $GREP -q "$2"; then local got=1; else local got=0; fi
     if [ "$got" = "$3" ]; then pass=$((pass+1)); echo "  PASS $1"
     else fail=$((fail+1)); echo "  FAIL $1 (flagged=$got want=$3)"; fi

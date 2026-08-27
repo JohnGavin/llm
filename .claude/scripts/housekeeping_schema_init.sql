@@ -12,6 +12,7 @@
 --   data_quality_incidents -- one row per known untrustworthy-data window (llm#913, llm#915)
 --   secret_scan_findings   -- one row per finding from secret_exposure_scan.sh (llm#951)
 --   roborev_retention_events -- one row per item-type pruned by roborev_retention.sh (llm#929)
+--   private_data_scan_findings -- one row per finding from private_data_scan.sh (2026-08-22 PII incident)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -41,7 +42,18 @@ CREATE TABLE IF NOT EXISTS housekeeping_runs (
   source_script   TEXT NOT NULL,             -- absolute path to script
   started_at      TIMESTAMPTZ NOT NULL,
   ended_at        TIMESTAMPTZ,
-  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial'
+  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial' | 'deferred'
+                                              -- 'deferred' (llm#947, llm#970): the job declined to
+                                              -- run because its precondition (network/DNS) was
+                                              -- absent within the bound -- NOT a failure. Written by
+                                              -- callers of .claude/scripts/wait_for_resolvable_host.sh
+                                              -- when it returns 2. Readers MUST NOT bucket 'deferred'
+                                              -- alongside 'failed' -- same rationale as the 'unknown'
+                                              -- state added to launchd_health_events.state above.
+                                              -- No CHECK constraint enforces this enum (verified via
+                                              -- duckdb_constraints() on the live table -- only
+                                              -- PRIMARY KEY + NOT NULL exist), so no migration was
+                                              -- required to add this value.
   rows_written    INTEGER DEFAULT 0,
   error_text      TEXT,
   detail_json     TEXT
@@ -259,6 +271,36 @@ CREATE TABLE IF NOT EXISTS roborev_retention_events (
 );
 CREATE INDEX IF NOT EXISTS idx_roborev_retention_events_run_id ON roborev_retention_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_roborev_retention_events_fired_at ON roborev_retention_events(fired_at);
+
+-- private_data_scan_findings: one row per finding from private_data_scan.sh
+-- (deny-list exact-value hits + generic E.164/UK-postcode/IBAN pattern
+-- hits), batched -- one INSERT...SELECT per invocation via
+-- write_findings_to_db(), same convention as secret_scan_findings above.
+-- Joins to housekeeping_runs(id) via run_id (task='private_data_scan').
+--
+-- NEVER stores a PII value. `note` is the same fixed, rule-specific,
+-- non-leaking description private_data_scan.sh already prints to
+-- stdout/--json/the log under its no-leaked-value contract; `rule` is a
+-- finding-class label ('e164-phone' | 'uk-postcode' | 'iban' |
+-- 'known-value'), never the matched literal.
+--
+-- Deterministic PK: md5(run_id:source:location:line_num:rule) -- replaying
+-- the same run's write step is idempotent via INSERT OR IGNORE.
+-- Origin: 2026-08-22 incident (personal phone number, 8 files, 9 commits,
+-- 4 months exposed on a public repo). See private-data-scanning.md.
+CREATE TABLE IF NOT EXISTS private_data_scan_findings (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
+  fired_at    TIMESTAMPTZ NOT NULL,
+  source      TEXT NOT NULL,             -- 'denylist' | 'generic'
+  severity    TEXT NOT NULL,             -- 'critical' | 'high'
+  location    TEXT NOT NULL,             -- 'staged:<path>' | '<sha12>:<path>' | '<path>'
+  line_num    TEXT,
+  rule        TEXT NOT NULL,             -- 'known-value' | 'e164-phone' | 'uk-postcode' | 'iban'
+  note        TEXT NOT NULL              -- fixed generic description -- NEVER a PII value
+);
+CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_run_id ON private_data_scan_findings(run_id);
+CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_fired_at ON private_data_scan_findings(fired_at);
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);

@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its BLOCK path, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # worktree_symlink_guard.sh — PreToolUse:Edit|Write realpath boundary check
 # Hook: PreToolUse (Edit, Write)
 # Exit 2 = BLOCK (realpath escapes worktree sandbox). Exit 0 = ALLOW.

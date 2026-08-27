@@ -1,0 +1,59 @@
+# private-data-scan — CI gate for PII entering this PUBLIC repo.
+#
+# This is Layer 4 of the private-data-scanning defence (see
+# .claude/rules/private-data-scanning.md): server-side, unbypassable by any
+# local flag (--no-verify, an uninstalled hook, a fresh clone that never ran
+# the installer). This is the layer that would actually have stopped the
+# 2026-08-22 merge that caused the incident this defence responds to — a
+# personal phone number in 8 files across 9 commits, exposed for 4 months.
+#
+# Scans the FULL RANGE of commits in the PR (not just the final diff), so a
+# value added then removed within the same PR is still caught — using
+# private_data_scan.sh --range, which reads file content via
+# `git cat-file -p <sha>:<path>` (never git diff/log -p/show <commit>), so
+# it is structurally immune to the vacuous-diff class of bug in
+# JohnGavin/llm#997 (this repo configures difftastic as its external diff
+# driver; `git diff | grep '^+'` matches nothing regardless of content).
+#
+# --no-denylist is intentional, not a shortcut: a public repo's Actions
+# runner must never be handed personal PII literals (even as a masked
+# secret) without the repo owner explicitly opting in — see
+# private-data-scanning.md's CI section for how to opt in later via a
+# PRIVATE_VALUES repository secret. Until then, this workflow provides
+# generic E.164/UK-postcode/IBAN pattern coverage only, and says so in its
+# own summary — it never claims the denylist's stronger guarantee.
+#
+# The selftest step runs BEFORE the real scan and must pass 14/14 — per
+# the project's non-negotiable requirement, a check must prove it can
+# fail, on THIS runner's exact tool versions, before its "clean" result is
+# trusted for anything.
+
+name: private-data-scan
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Self-check — prove the detector can fail before trusting it
+        run: |
+          bash .claude/scripts/private_data_scan.sh --selftest
+
+      - name: Scan every commit in this PR for PII (generic patterns; no deny-list on CI)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "::notice::private-data-scan runs with --no-denylist on CI (generic E.164/UK-postcode/IBAN pattern coverage only — see private-data-scanning.md for why, and how to opt a repo secret in)."
+          bash .claude/scripts/private_data_scan.sh --range "$BASE_SHA" "$HEAD_SHA" --no-denylist

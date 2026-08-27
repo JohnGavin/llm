@@ -12,6 +12,24 @@
 #   0   All related findings >= threshold are cited or acked  (PASS)
 #   1   One or more unresolved findings >= threshold          (BLOCK)
 #   2   Usage error
+#   3   INDETERMINATE — the gate could not evaluate the PR    (NOT a pass)
+#
+# Exit 3 exists because of llm#1012.  Before it, every way of failing to *ask*
+# the question — `gh` missing, `gh` auth rejected, repo not resolvable, network
+# down — landed on the same exit 0 and the same word on screen as a genuine
+# clean result:
+#
+#     merge-gate: PASS (no commits found for PR #1011 — fail-open)
+#
+# `GH` was hardcoded to /usr/local/bin/gh, which does not exist on the machine
+# this runs on, so the gate had never inspected a finding and could not fail.
+# An error path and a negative-result path must never share an exit
+# (.claude/rules/checks-must-distinguish-unknown.md).
+#
+# Fail-open is still available, but you have to ask for it:
+# MERGE_GATE_FAIL_OPEN=1 downgrades exit 3 to exit 0.  Even then the output
+# says INDETERMINATE, never PASS — the word PASS is reserved for a verdict
+# reached by actually querying reviews.db.
 #
 # "Related" definition: commit_sha IN PR commits (commit-scope, Alternative C
 # from llm#241).  This is the tightest scope and avoids the day-1 backlog freeze.
@@ -43,8 +61,13 @@ set -euo pipefail
 
 # ── Tool paths (survive launchd bare PATH) ───────────────────────────────────
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-PYTHON="${PYTHON:-/usr/bin/python3}"
-GH="${GH:-/usr/local/bin/gh}"
+# Resolve from PATH first, then fall back to a known location.  A hardcoded
+# absolute path does not fail loudly when it is wrong — it degrades to
+# "command not found", which every caller below used to read as "found
+# nothing" (llm#1012).  PATH is set immediately above, so `command -v` sees
+# the launchd-safe set as well as the caller's.
+PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || echo /usr/bin/python3)}"
+GH="${GH:-$(command -v gh 2>/dev/null || echo /usr/local/bin/gh)}"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
@@ -83,6 +106,8 @@ Exit codes:
   0  PASS — no unresolved findings >= threshold
   1  BLOCK — unresolved findings found
   2  Usage error
+  3  INDETERMINATE — could not evaluate (gh unusable, repo unresolvable).
+     NOT a pass.  Set MERGE_GATE_FAIL_OPEN=1 to downgrade this to exit 0.
 
 Pilot scope: High only.  Cite findings in commits with:
   closes roborev #N   |   acks roborev #N --reason "…"
@@ -90,21 +115,93 @@ See .claude/rules/roborev-resolution.md for full policy.
 USAGE
 }
 
+# ── The "could not ask" contract (llm#1012) ─────────────────────────────────
+# Both gh wrappers below return:
+#     0  the question was asked and answered (stdout may legitimately be empty)
+#     3  the question could NOT be asked — binary missing, auth rejected,
+#        network down, repo not a GitHub repo
+# and, on 3, print the REASON on stdout in place of the answer.
+#
+# Reason-on-stdout rather than a global: these are called as
+# `out=$(_get_pr_commits ...)`, i.e. inside a command-substitution subshell, so
+# any variable they assign is discarded when that subshell exits.  Writing the
+# reason where the answer would have gone is the one channel that survives, and
+# the caller only reads it when rc!=0, when there is no answer to confuse it
+# with.  (Caught by the very first end-to-end run of this fix: the detail line
+# came back blank.)
+#
+# The rc distinction is the entire point: `2>/dev/null || echo ""` collapses
+# both outcomes into an empty string, and emptiness then reads as a negative
+# answer.
+GATE_INDETERMINATE_DETAIL=""
+_E_INDETERMINATE=3
+
+# First non-empty line of $1, trimmed and length-capped, for one-line messages.
+_first_line() {
+  printf '%s' "$1" | tr -d '\r' | grep -m1 -v '^[[:space:]]*$' | cut -c1-160 || true
+}
+
 # Resolve OWNER/REPO from gh if not supplied.
 _resolve_repo() {
-  local repo="$1"
+  local repo="$1" out rc=0
   if [ -n "$repo" ]; then
-    echo "$repo"
+    printf '%s' "$repo"
     return 0
   fi
-  "$GH" repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo ""
+  out=$("$GH" repo view --json nameWithOwner --jq '.nameWithOwner' 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s' "\`gh repo view\` failed (rc=$rc): $(_first_line "$out")"
+    return "$_E_INDETERMINATE"
+  fi
+  if [ -z "$out" ]; then
+    # gh succeeded but named no repo. That is not a negative answer about
+    # findings — it means we never had a repo to ask about.
+    printf '%s' "\`gh repo view\` returned no repo name"
+    return "$_E_INDETERMINATE"
+  fi
+  printf '%s' "$out"
+  return 0
 }
 
 # Fetch commit SHAs for a PR.
+# Empty stdout with rc=0 is a real answer ("this PR has no commits"); an
+# unusable gh is rc=3, never an empty answer.
 _get_pr_commits() {
-  local pr_num="$1" repo="$2"
-  "$GH" pr view "$pr_num" --repo "$repo" \
-    --json commits --jq '.commits[].oid' 2>/dev/null || echo ""
+  local pr_num="$1" repo="$2" out rc=0
+  out=$("$GH" pr view "$pr_num" --repo "$repo" \
+          --json commits --jq '.commits[].oid' 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s' "\`gh pr view $pr_num --repo $repo\` failed (rc=$rc): $(_first_line "$out")"
+    return "$_E_INDETERMINATE"
+  fi
+  printf '%s' "$out"
+  return 0
+}
+
+# Emit an INDETERMINATE verdict and exit.
+#   $1 = machine-readable reason   $2 = pr number
+# Never prints the word PASS. The whole defect in llm#1012 was that this path
+# read like a pass, so the string is the fix as much as the exit code is.
+_exit_indeterminate() {
+  local reason="$1" pr_num="$2" detail="${GATE_INDETERMINATE_DETAIL:-}"
+  local downgrade="${MERGE_GATE_FAIL_OPEN:-0}"
+  local final_exit="$_E_INDETERMINATE"
+  [ "$downgrade" = "1" ] && final_exit=0
+
+  if [ "$EMIT_JSON" = "1" ]; then
+    "$PYTHON" -c 'import sys, json; print(json.dumps({"verdict":"indeterminate","reason":sys.argv[1],"pr":int(sys.argv[2]) if sys.argv[2].isdigit() else sys.argv[2],"detail":sys.argv[3],"failed_open":sys.argv[4]=="1","unresolved":[]}))' \
+      "$reason" "$pr_num" "$detail" "$downgrade"
+  else
+    printf '%s\n' "merge-gate: INDETERMINATE — could not evaluate PR #${pr_num} (${reason})." >&2
+    [ -n "$detail" ] && printf '%s\n' "  ${detail}" >&2
+    printf '%s\n' "  This is NOT a pass: the gate never queried reviews.db, so an unresolved" >&2
+    printf '%s\n' "  Critical finding would look exactly like this. Fix the cause, or set" >&2
+    printf '%s\n' "  MERGE_GATE_FAIL_OPEN=1 to accept the risk deliberately." >&2
+    if [ "$downgrade" = "1" ]; then
+      printf '%s\n' "  MERGE_GATE_FAIL_OPEN=1 is set — exiting 0 anyway." >&2
+    fi
+  fi
+  exit "$final_exit"
 }
 
 # Query reviews.db for open findings on the given commit SHAs.
@@ -306,34 +403,47 @@ _main() {
       exit 2 ;;
   esac
 
+  # Preflight: is the tool we depend on actually runnable?  Checked BEFORE any
+  # question is asked, so "gh is missing" is reported as itself rather than as
+  # whatever empty answer it would have produced downstream (llm#1012).
+  if ! [ -x "$GH" ] && ! command -v "$GH" >/dev/null 2>&1; then
+    GATE_INDETERMINATE_DETAIL="gh not executable at '$GH' (set GH=/path/to/gh, or put gh on PATH)"
+    _exit_indeterminate "gh_unavailable" "$pr_num"
+  fi
+
   # Resolve repo
-  local repo
-  repo=$(_resolve_repo "$REPO")
-  if [ -z "$repo" ]; then
-    # Fail-open: can't determine repo
-    echo "merge-gate: PASS (could not determine repo — fail-open)" >&2
-    exit 0
+  local repo rc=0
+  repo=$(_resolve_repo "$REPO") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    GATE_INDETERMINATE_DETAIL="$repo"   # on failure stdout carries the reason
+    _exit_indeterminate "repo_unresolvable" "$pr_num"
   fi
 
-  # Fail-open: DB absent
+  # No reviews.db means there is nothing to consult, which is a failure to ask
+  # the question — not an answer of "no findings".  Same shape as the gh
+  # failures above; it used to print PASS for the same reason (llm#1012).
   if [ ! -f "$ROBOREV_DB" ]; then
-    if [ "$EMIT_JSON" = "1" ]; then
-      printf '{"verdict":"pass","reason":"db_absent","pr":%s,"unresolved":[]}\n' "$pr_num"
-    else
-      echo "merge-gate: PASS (reviews.db not found — fail-open)"
-    fi
-    exit 0
+    GATE_INDETERMINATE_DETAIL="reviews.db not found at '$ROBOREV_DB' (set ROBOREV_DB=/path/to/reviews.db)"
+    _exit_indeterminate "db_absent" "$pr_num"
   fi
 
-  # Fetch PR commits
+  # Fetch PR commits.  rc!=0 means gh could not answer — NOT that the PR has
+  # no commits.  These were the same exit before llm#1012.
   local commit_shas
-  commit_shas=$(_get_pr_commits "$pr_num" "$repo")
+  rc=0
+  commit_shas=$(_get_pr_commits "$pr_num" "$repo") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    GATE_INDETERMINATE_DETAIL="$commit_shas"  # on failure stdout carries the reason
+    _exit_indeterminate "pr_commits_unavailable" "$pr_num"
+  fi
 
   if [ -z "$commit_shas" ]; then
+    # gh answered, and the answer is "no commits".  A PR with no commits has
+    # no findings attached to it, so this genuinely is a pass.
     if [ "$EMIT_JSON" = "1" ]; then
       printf '{"verdict":"pass","reason":"no_commits","pr":%s,"unresolved":[]}\n' "$pr_num"
     else
-      echo "merge-gate: PASS (no commits found for PR #${pr_num} — fail-open)"
+      echo "merge-gate: PASS (PR #${pr_num} has no commits — nothing to gate)"
     fi
     exit 0
   fi

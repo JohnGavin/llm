@@ -181,6 +181,36 @@ sec1_data <- safe_query("
 ")
 
 n_new_findings <- if (nrow(sec1_data) > 0L) sum(sec1_data$n) else 0L
+
+# ── llm#1037: how much INPUT did the detectors have? ────────────────────────
+# `0 new findings` renders identically whether twelve sessions were analysed
+# and found clean, or zero sessions existed to analyse. Those are different
+# facts and only one of them is reassuring. Stage-1's detectors
+# (marathon_session, parallel_session_sprawl, fixer_heavy_day,
+# subagent_heavy_session, stuck_loop, ...) all read `sessions`; with no rows in
+# the window they cannot emit, and the report said "0 new findings" without
+# ever saying it had nothing to look at.
+#
+# NOT a staleness claim. `sessions` carries a deliberate 72h cadence (p95 gap
+# ~1.5h in active use; 72h tolerates a weekend — see the derivation in
+# staleness_collect.sh), so a quiet day is correct and expected. This counts
+# the window's input so the reader can tell "clean" from "unexamined".
+n_sessions_in_window <- tryCatch({
+  r <- safe_query(sprintf("
+    SELECT count(*) AS n FROM sessions
+    WHERE started_at >= %s - INTERVAL '24' HOUR
+  ", sql_utc_now()), fallback = data.frame(n = NA_integer_))
+  if (nrow(r) > 0L) suppressWarnings(as.integer(r$n[[1]])) else NA_integer_
+}, error = function(e) NA_integer_)
+
+# Three states, three renderings — an unreadable count must not read as zero.
+findings_phrase <- if (is.na(n_sessions_in_window)) {
+  sprintf("%d new findings (session count unavailable \u2014 coverage unknown)", n_new_findings)
+} else if (n_sessions_in_window == 0L) {
+  sprintf("%d new findings \u2014 <b>but 0 sessions in the window; nothing was analysed</b>", n_new_findings)
+} else {
+  sprintf("%d new findings across %d session(s)", n_new_findings, n_sessions_in_window)
+}
 n_critical     <- if (nrow(sec1_data) > 0L)
   sum(sec1_data$n[sec1_data$severity == "critical"], na.rm = TRUE) else 0L
 n_major        <- if (nrow(sec1_data) > 0L)
@@ -1507,13 +1537,19 @@ border-radius:6px;">
   Overnight Self-Review &mdash; %s
 </h2>
 <p style="color:%s;font-size:%s;margin:0;">
-  %d new findings &nbsp;·&nbsp; %d source tables stale or dead
+  %s &nbsp;·&nbsp; %d of %d source tables stale or dead
+</p>
+<p style="color:%s;font-size:%s;margin:6px 0 0 0;">
+  Scope: session-telemetry patterns only (long sessions, agent sprawl, stuck loops,
+  tool-error rate). This report does <b>not</b> inspect config, rules or code &mdash;
+  a quiet morning here is not evidence that nothing needs changing.
 </p>
 </div>',
   DARK_CARD, ACCENT_BLUE, EMAIL_FONT_H2,
   today_str,
   DARK_MUTED, EMAIL_FONT_SUBTITLE,
-  n_new_findings, n_stale_tables
+  findings_phrase, n_stale_tables, length(source_tables),
+  DARK_MUTED, EMAIL_FONT_SUBTITLE
 )
 
 footer_html <- sprintf(
@@ -1590,11 +1626,13 @@ derive_registered_hooks <- function(settings_path) {
   # entries) -- calling is.na() on a multi-field list element throws
   # "the condition has length > 1" (found via `EMAIL_DRY_RUN=1` smoke test,
   # llm#950). Use explicit is.null() checks for anything structural instead.
-  if (!file.exists(settings_path)) return(character(0))
+  .empty <- data.frame(hook_name = character(0), script = character(0),
+                       stringsAsFactors = FALSE)
+  if (!file.exists(settings_path)) return(.empty)
   settings_cfg <- jsonlite::fromJSON(settings_path, simplifyVector = FALSE)
   hooks_cfg <- settings_cfg$hooks
   if (is.null(hooks_cfg)) hooks_cfg <- list()
-  registered <- character(0)
+  registered <- NULL
   for (event_groups in hooks_cfg) {
     for (grp in event_groups) {
       hlist <- grp$hooks
@@ -1604,18 +1642,123 @@ derive_registered_hooks <- function(settings_path) {
         if (is.null(cmd) || !is.character(cmd) || length(cmd) != 1L) cmd <- ""
         m <- regmatches(cmd, regexpr("\\.claude/hooks/[A-Za-z0-9_]+\\.sh", cmd))
         if (length(m) && nzchar(m)) {
-          registered <- c(registered, sub("^.*/([A-Za-z0-9_]+)\\.sh$", "\\1", m))
+          script <- sub("^.*/([A-Za-z0-9_]+)\\.sh$", "\\1", m)
+
+          # The name a hook emits under is not always its script basename.
+          # tool_input_probe.sh is registered twice, as
+          #   ~/.claude/hooks/tool_input_probe.sh artifact_probe
+          #   ~/.claude/hooks/tool_input_probe.sh webfetch_probe
+          # and passes that first argument through as hook_name. Matching on
+          # the basename therefore looked for rows under "tool_input_probe",
+          # found none, and reported a hook that fires constantly as SILENT --
+          # while its 21 real rows sat in the table under the other two names
+          # (llm#1017, second order).
+          rest <- sub("^.*\\.claude/hooks/[A-Za-z0-9_]+\\.sh\\s*", "", cmd)
+          arg  <- regmatches(rest, regexpr("^[A-Za-z0-9_]+", rest))
+          emitted <- if (length(arg) && nzchar(arg)) arg else script
+
+          registered <- rbind(
+            registered,
+            data.frame(hook_name = emitted, script = script,
+                       stringsAsFactors = FALSE)
+          )
         }
       }
     }
   }
-  sort(unique(registered))
+  if (is.null(registered) || nrow(registered) == 0L) {
+    return(data.frame(hook_name = character(0), script = character(0),
+                      stringsAsFactors = FALSE))
+  }
+  registered <- registered[!duplicated(registered$hook_name), , drop = FALSE]
+  registered[order(registered$hook_name), , drop = FALSE]
 }
+
+# ── Hook classification (llm#1017) ───────────────────────────────────────────
+# "Registered" and "observable" are different facts, and conflating them is
+# what made the previous version of this section wrong in the alarming
+# direction: it reported 21 hooks as having "never fired", including
+# session_init and session_stop, both of which had fired that same day. It was
+# never measuring execution. It was measuring whether a hook calls
+# hook_event_emit.sh, and printing the difference as death.
+#
+# 9 of 30 hook scripts carry an emitter call. The other 21 could fire a
+# thousand times a day and still read `never`. Worse, of the 9 that ARE
+# instrumented, most emit ONLY on their block path — zero is the healthy value
+# for a guard nobody tripped. Listing those beside genuinely uninstrumented
+# hooks implied a defect in both.
+#
+# So each registered hook is classified on two axes read from the script
+# itself:
+#
+#   instrumented  yes      the script calls hook_event_emit.sh
+#                 no       it does not — liveness is UNOBSERVABLE, not zero
+#                 unknown  the script could not be read; we cannot say either
+#
+#   cadence       every-call  expected to emit on every invocation; 0 is an alert
+#                 on-block    emits only when it blocks something; 0 is HEALTHY
+#                 unknown     no declaration; treated as every-call (alerting
+#                             default — a missing marker must not silence a
+#                             genuinely dead hook)
+#
+# Cadence is declared by the hook itself, in a `# hook-liveness: <cadence>`
+# comment beside its emitter call, rather than by a list kept here. llm#944
+# showed a hardcoded list drifting out of sync with reality while its checker
+# went on passing; the same argument that put `paths:` in rule frontmatter
+# applies here.
+classify_hook_liveness <- function(hook_name, hooks_dir) {
+  path <- file.path(hooks_dir, paste0(hook_name, ".sh"))
+  if (!file.exists(path) || file.access(path, 4) != 0L) {
+    # Cannot read the script → cannot say whether it is instrumented. This is
+    # the indeterminate case and must not collapse into "no".
+    return(list(instrumented = "unknown", cadence = "unknown"))
+  }
+  lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) NULL)
+  if (is.null(lines)) {
+    return(list(instrumented = "unknown", cadence = "unknown"))
+  }
+
+  # A mention inside a comment (every one of these scripts documents the
+  # emitter in its header) is not a call. Strip comment-only lines first.
+  code <- lines[!grepl("^\\s*#", lines)]
+  # TWO writers reach hook_events, not one: hook_event_emit.sh (llm#950) and
+  # log_session.sh's `hook` subcommand (the older path, still used by
+  # context_monitor, which has ~29k rows). Grepping only for the first
+  # classified the single most active hook in the table as uninstrumented.
+  #
+  # The `hook` subcommand is load-bearing in that second pattern. log_session.sh
+  # also takes start/stop/agent_start/agent_stop, which write to sessions and
+  # agent_runs, NOT hook_events. A looser match on the script name alone marked
+  # session_init, session_stop and log_agent_run as instrumented, and they
+  # promptly reappeared in the SILENT column -- the original bug, restored by
+  # its own fix. Caught by re-rendering the section rather than by reasoning.
+  instrumented <- if (any(grepl(
+        "hook_event_emit|_emit_hook_event|emit_hook_event|(log_session\\.sh|_log_script\")\\s+hook\\b",
+        code, fixed = FALSE))) "yes" else "no"
+
+  cadence <- "unknown"
+  decl <- grep("^\\s*#\\s*hook-liveness:\\s*", lines, value = TRUE)
+  if (length(decl) > 0L) {
+    val <- sub("^\\s*#\\s*hook-liveness:\\s*([A-Za-z-]+).*$", "\\1", decl[[1]])
+    if (val %in% c("every-call", "on-block")) cadence <- val
+  }
+  list(instrumented = instrumented, cadence = cadence)
+}
+
+# Overridable so the cadence markers can be exercised against a checkout other
+# than the installed one. ~/.claude/hooks is a symlink into the main checkout,
+# so a fix on a branch is invisible here until it merges -- which is correct
+# for production and unhelpful when verifying the fix.
+.hook_liveness_hooks_dir <- local({
+  o <- Sys.getenv("HOOK_LIVENESS_HOOKS_DIR", "")
+  if (nzchar(o)) path.expand(o) else path.expand("~/.claude/hooks")
+})
 
 .hook_liveness_settings_path <- path.expand("~/.claude/settings.json")
 .hook_liveness_registered <- tryCatch(
   derive_registered_hooks(.hook_liveness_settings_path),
-  error = function(e) character(0)
+  error = function(e) data.frame(hook_name = character(0), script = character(0),
+                                 stringsAsFactors = FALSE)
 )
 
 hook_liveness_block <- tryCatch({
@@ -1625,7 +1768,7 @@ hook_liveness_block <- tryCatch({
   } else {
     registered <- .hook_liveness_registered
 
-    if (length(registered) == 0L) {
+    if (nrow(registered) == 0L) {
       sprintf('<p style="color:%s;">No hook scripts found under settings.json\'s hooks block.</p>', DARK_MUTED)
     } else {
       # Independent evidence check (zero-metric-evidence-or-defect): confirm
@@ -1647,40 +1790,108 @@ hook_liveness_block <- tryCatch({
         GROUP BY hook_name
       ", sql_utc_now(), sql_utc_now()))
 
-      reg_df <- data.frame(hook_name = registered, stringsAsFactors = FALSE)
+      reg_df <- registered
+      cls <- lapply(reg_df$script, classify_hook_liveness, hooks_dir = .hook_liveness_hooks_dir)
+      reg_df$instrumented <- vapply(cls, function(x) x$instrumented, character(1))
+      reg_df$cadence      <- vapply(cls, function(x) x$cadence,      character(1))
+
       merged <- merge(reg_df, fire_counts, by = "hook_name", all.x = TRUE)
       merged$fires_24h <- ifelse(is.na(merged$fires_24h), 0L, merged$fires_24h)
       merged$fires_7d  <- ifelse(is.na(merged$fires_7d), 0L, merged$fires_7d)
-      merged <- merged[order(merged$fires_7d, merged$hook_name), , drop = FALSE]
-      n_silent <- sum(merged$fires_7d == 0L)
 
-      if (!is.na(evidence_n) && evidence_n > 0L && all(merged$fires_7d == 0L)) {
+      # Evidence outranks static analysis. If rows exist under this name the
+      # hook is observably instrumented, whatever the grep above concluded --
+      # there may be a third writer nobody has thought of. Reading the script
+      # is the FALLBACK, for hooks with no rows to speak for them.
+      merged$instrumented[merged$fires_7d > 0L] <- "yes"
+
+      # Three populations, previously reported as one (llm#1017):
+      #   silent       instrumented, expected on every call, zero fires. THIS
+      #                is the alert — and the only one that ever was.
+      #   on-block     instrumented, emits only when it blocks something. Zero
+      #                is the healthy value; nothing was blocked.
+      #   unobservable no emitter call, or the script could not be read. Says
+      #                nothing about whether the hook ran.
+      merged$liveness <- ifelse(
+        merged$instrumented != "yes", "unobservable",
+        ifelse(merged$fires_7d > 0L, "firing",
+               ifelse(merged$cadence == "on-block", "on-block-quiet", "silent"))
+      )
+
+      # Alerting rows first, then quiet guards, then the ones we cannot see.
+      .rank <- c(silent = 0L, firing = 1L, "on-block-quiet" = 2L, unobservable = 3L)
+      merged <- merged[order(.rank[merged$liveness], merged$hook_name), , drop = FALSE]
+
+      n_silent       <- sum(merged$liveness == "silent")
+      n_onblock      <- sum(merged$liveness == "on-block-quiet")
+      n_unobservable <- sum(merged$liveness == "unobservable")
+      n_instrumented <- sum(merged$instrumented == "yes")
+
+      # The inconsistency check now applies only to hooks that CAN be observed.
+      # Previously it compared against all registered hooks, so it could never
+      # fire while 21 uninstrumented hooks sat permanently at zero.
+      .observable_zero <- n_instrumented > 0L &&
+        all(merged$fires_7d[merged$instrumented == "yes"] == 0L)
+
+      if (!is.na(evidence_n) && evidence_n > 0L && .observable_zero) {
         # The raw table has rows but every registered hook shows zero — the
         # per-hook aggregation (not the hooks) is broken. Fail loud rather
         # than rendering a table that looks like "every hook is dead".
         sprintf(
           '<p style="color:#ff5252;">INCONSISTENT: hook_events has %d row(s) but the
-per-hook aggregation returned zero for all %d registered hooks — the query, not the
-hooks, is likely broken. See zero-metric-evidence-or-defect rule.</p>',
-          evidence_n, length(registered)
+per-hook aggregation returned zero for all %d <b>instrumented</b> hooks — the query,
+not the hooks, is likely broken. See zero-metric-evidence-or-defect rule.</p>',
+          evidence_n, n_instrumented
         )
       } else {
         rows_html <- paste(apply(merged, 1, function(r) {
-          is_silent <- as.integer(r[["fires_7d"]]) == 0L
-          row_bg <- if (is_silent) "#2a0a0a" else DARK_CARD
-          f7_col <- if (is_silent) "#ff5252" else DARK_TEXT
+          state <- r[["liveness"]]
+
+          # Only a genuinely silent instrumented hook gets the alarm styling.
+          # An unobservable hook shows em-dashes, never a 0: printing 0 for a
+          # hook with no emitter is the lie this section used to tell.
+          row_bg <- switch(state,
+                           silent          = "#2a0a0a",
+                           DARK_CARD)
+          f7_col <- switch(state,
+                           silent          = "#ff5252",
+                           unobservable    = DARK_MUTED,
+                           "on-block-quiet" = DARK_MUTED,
+                           DARK_TEXT)
+
+          observable <- !identical(state, "unobservable")
+          f24_txt  <- if (observable) r[["fires_24h"]] else "&mdash;"
+          f7_txt   <- if (observable) r[["fires_7d"]]  else "&mdash;"
+          last_txt <- if (!observable) {
+            if (identical(r[["instrumented"]], "unknown"))
+              "script unreadable &mdash; cannot tell"
+            else
+              "no emitter call &mdash; cannot tell"
+          } else {
+            r[["last_fired_at"]] %||% "never"
+          }
+
+          state_txt <- switch(state,
+                              silent           = "SILENT",
+                              firing           = "firing",
+                              "on-block-quiet" = "on-block (0 = healthy)",
+                              unobservable     = "uninstrumented",
+                              state)
+
           sprintf(
             '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;font-size:12px;">%s</td>
+<td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
 <td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;">%s</td>
 <td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;font-weight:bold;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
 </tr>',
             row_bg,
             htmlEscape(r[["hook_name"]]),
-            DARK_TEXT, r[["fires_24h"]],
-            f7_col, r[["fires_7d"]],
-            DARK_MUTED, r[["last_fired_at"]] %||% "never"
+            if (identical(state, "silent")) "#ff5252" else DARK_MUTED, state_txt,
+            DARK_TEXT, f24_txt,
+            f7_col, f7_txt,
+            DARK_MUTED, last_txt
           )
         }), collapse = "\n")
 
@@ -1689,22 +1900,31 @@ hooks, is likely broken. See zero-metric-evidence-or-defect rule.</p>',
             '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
 <thead><tr style="background-color:%s;">
 <th style="padding:5px 10px;text-align:left;">Hook</th>
+<th style="padding:5px 10px;text-align:left;">State</th>
 <th style="padding:5px 10px;text-align:right;">Fires 24h</th>
 <th style="padding:5px 10px;text-align:right;">Fires 7d</th>
-<th style="padding:5px 10px;text-align:left;">Last fired</th>
+<th style="padding:5px 10px;text-align:left;">Last fired / why not</th>
 </tr></thead><tbody>%s</tbody></table>',
             DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, rows_html
           ),
           sprintf(
             '<p style="color:%s;font-size:%s;margin-top:8px;">
-%d/%d registered hooks silent (0 fires) in the last 7 days. Some guards only emit
-on their own BLOCK path and only when not in an off/log mode (e.g.
-compound_command_guard under COMPOUND_GUARD_MODE=log) — a persistent zero there
-reflects configuration, not a dead hook. Cross-check the guard\'s own
-~/.claude/logs/*.log before filing an issue. Emitter: hook_event_emit.sh ·
-Loader: hook_events_load.sh · llm#950.</p>',
+<b>%d</b> of %d registered hooks are genuinely SILENT: instrumented, expected to emit
+on every call, and zero fires in 7 days. Those are the actionable rows.<br>
+%d are <i>on-block</i> guards — they emit only when they block something, so zero is
+the healthy value, not a defect.<br>
+%d are <i>uninstrumented</i>: no call to hook_event_emit.sh, so this table cannot see
+them at all. They show &mdash;, not 0. session_init and session_stop are in this group
+and demonstrably do run.<br>
+Before llm#1017 all three groups were reported together as "never fired", which made
+21 hooks look dead — two of them provably alive that same day — and buried any real
+signal among them. A guard in log/off mode (e.g. compound_command_guard under
+COMPOUND_GUARD_MODE=log) also shows a legitimate zero; cross-check its own
+~/.claude/logs/*.log before filing. Cadence is declared per hook via a
+<code>#&nbsp;hook-liveness:</code> comment. Emitter: hook_event_emit.sh ·
+Loader: hook_events_load.sh · llm#950 · llm#1017.</p>',
             if (n_silent > 0L) "#ff5252" else DARK_MUTED, EMAIL_FONT_SUBTITLE,
-            n_silent, length(registered)
+            n_silent, nrow(merged), n_onblock, n_unobservable
           )
         )
       }
@@ -1716,8 +1936,9 @@ Loader: hook_events_load.sh · llm#950.</p>',
 })
 
 hook_liveness_summary <- tryCatch({
-  registered <- .hook_liveness_registered
-  if (length(registered) == 0L) {
+  reg <- .hook_liveness_registered
+  registered <- reg$hook_name
+  if (nrow(reg) == 0L) {
     "settings.json not found or no hook scripts registered"
   } else {
     # hook_events.fired_at is UTC-valued (see sql_utc_now() doc comment, llm#959).
@@ -1726,13 +1947,30 @@ hook_liveness_summary <- tryCatch({
              SUM(CASE WHEN fired_at >= %s - INTERVAL '7' DAY THEN 1 ELSE 0 END) AS fires_7d
       FROM hook_events GROUP BY hook_name
     ", sql_utc_now()))
-    silent <- sum(!(registered %in% fc$hook_name[fc$fires_7d > 0L]))
-    sprintf("%d registered · %d silent 7d", length(registered), silent)
+    fired <- registered %in% fc$hook_name[fc$fires_7d > 0L]
+
+    # The old summary counted every non-firing hook as silent, which is how a
+    # headline of "21 silent" came to include session_init on a day it ran.
+    # Silent now means instrumented AND expected on every call AND zero
+    # (llm#1017).
+    cls <- lapply(reg$script, classify_hook_liveness, hooks_dir = .hook_liveness_hooks_dir)
+    instr   <- vapply(cls, function(x) x$instrumented, character(1))
+    cadence <- vapply(cls, function(x) x$cadence,      character(1))
+    instr[fired] <- "yes"   # evidence outranks static analysis (see block above)
+
+    n_instr  <- sum(instr == "yes")
+    n_silent <- sum(instr == "yes" & !fired & cadence != "on-block")
+    n_unobs  <- sum(instr != "yes")
+    sprintf("%d registered · %d instrumented · %d silent 7d · %d unobservable",
+            nrow(reg), n_instr, n_silent, n_unobs)
   }
 }, error = function(e) "unavailable")
 
 sec_hooks_block <- collapsible_block(
-  "Hook liveness (registered vs firing)",
+  # NOT "registered vs firing" — that is not what is measured, and claiming it
+  # was is the whole of llm#1017. What is measured is registration versus
+  # emitted-and-observed events.
+  "Hook liveness (registered vs instrumented-and-observed)",
   hook_liveness_summary,
   hook_liveness_block
 )

@@ -1,4 +1,31 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# NOT `#!/usr/bin/env bash` — deliberately (llm: daily TCC prompt).
+#
+# `env bash` resolves to /opt/homebrew/bin/bash, which is AD-HOC SIGNED. TCC
+# stores a grant for an ad-hoc-signed binary with an EMPTY code-requirement
+# blob (csreq), because there is no stable designated requirement to record.
+# With no csreq, TCC cannot verify tomorrow that the binary asking is the one
+# that was authorised yesterday — so it re-prompts. This job runs once a day,
+# which is why the prompt appeared once a day:
+#
+#   $ sqlite3 ~/Library/.../TCC.db \
+#       "SELECT client, length(csreq) FROM access
+#        WHERE service='kTCCServiceSystemPolicyAppData'"
+#   /opt/homebrew/Cellar/bash/5.3.9/bin/bash|      <- empty
+#
+#   tccd log, same morning:
+#   09:00:09 AUTHREQ_PROMPTING service=kTCCServiceSystemPolicyAppData
+#            subject=/opt/homebrew/Cellar/bash/5.3.9/bin/bash
+#
+# /bin/bash is Apple-signed, so its grant carries a real csreq and persists.
+# The control on this machine: /bin/bash holds kTCCServiceAppleEvents granted
+# 2026-04-28 and never re-prompted since.
+#
+# The Cellar path is also version-pinned (…/bash/5.3.9/…), so every Homebrew
+# bash upgrade would invalidate the grant regardless.
+#
+# Verified bash-3.2 compatible: no declare -A, mapfile, ${x^^} or other 4+
+# constructs, and `/bin/bash -n` is clean. Re-check that before adding any.
 # chrome_tab_backup.sh — Daily snapshot of all Chrome tabs (all profiles, all windows)
 # Runs via launchd: com.johngavin.chrome-tab-backup
 # Output: ~/.chrome-tab-backups/YYYY-MM-DD_HHMMSS.json

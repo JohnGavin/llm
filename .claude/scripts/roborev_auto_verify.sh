@@ -29,7 +29,9 @@
 #
 # Exit codes:
 #   0 = success (including fail-open cases)
-#   1 = internal error (unexpected failure; fail-open protects the commit)
+#   1 = internal error (unexpected failure; fail-open protects the commit) OR
+#       roborev_auto_close.sh (Component 5 guard script) is missing — findings
+#       are left open rather than closed unguarded (llm#974)
 #
 # Log: ~/.claude/logs/roborev_auto_verify.log
 # Issue: JohnGavin/llm#163
@@ -665,21 +667,26 @@ if [ "$VERDICT" = "1" ]; then
 
   # Delegate each finding to roborev_auto_close.sh so the four hard safety
   # guards (severity downgrade, security queue, wontfix-tag, stale) are applied.
+  #
+  # llm#974: a missing guard script must NOT be routed around by closing
+  # findings unguarded — that silently bypasses all four hard safety guards,
+  # which is exactly the failure mode this delegation exists to prevent. A
+  # missing security control is a reason to refuse the operation, not to fall
+  # back to an unguarded path. Leave every cited finding open for human
+  # triage instead. (This is a deliberate divergence from this script's
+  # general fail-open philosophy — see the header comment — because the
+  # commit is already made; refusing the *closure* here does not block
+  # anything, it just correctly declines to auto-approve without guards.)
   _AUTO_CLOSE_SCRIPT="$(dirname "$0")/roborev_auto_close.sh"
   if [ ! -f "$_AUTO_CLOSE_SCRIPT" ]; then
-    log "WARN: roborev_auto_close.sh not found at ${_AUTO_CLOSE_SCRIPT} — falling back to direct close"
-    # Fallback: call roborev close directly without safety guards
+    log "ERROR: roborev_auto_close.sh not found at ${_AUTO_CLOSE_SCRIPT} — refusing to close findings unguarded"
+    echo "  ERROR: safety-guard script missing (${_AUTO_CLOSE_SCRIPT}) — leaving finding(s) open, NOT closing" >&2
     while IFS= read -r fid; do
       [ -z "$fid" ] && continue
-      if "$ROBOREV_BIN" close "$fid" >/dev/null 2>&1; then
-        log "CLOSED finding_id=${fid} type=approved commit=${COMMIT_SHA} (fallback)"
-        echo "  closed finding #${fid} (fallback)"
-      else
-        log "CLOSE_FAIL finding_id=${fid} commit=${COMMIT_SHA} (fallback)"
-        echo "  WARN: could not close finding #${fid} via roborev" >&2
-      fi
+      log "REFUSED finding_id=${fid} commit=${COMMIT_SHA} reason=guard_script_missing"
+      echo "  REFUSED: finding #${fid} left open — guard script missing" >&2
     done <<< "$CITED_IDS"
-    exit 0
+    exit 1
   fi
 
   while IFS= read -r fid; do

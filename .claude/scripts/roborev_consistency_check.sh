@@ -26,6 +26,20 @@
 #
 # Wired into session_init.sh banner (Phase 8) and /bye (session-end.md).
 # See: llm#679
+#
+# crash/quota reclassification (llm#904):
+#   roborev's own `summary --json` under-counts `.failures.errors.quota` —
+#   verified 2026-08-21 against the real DB: it recognizes gemini's
+#   TerminalQuotaError text as quota but NOT claude-code's "You've hit your
+#   monthly spend limit" (every claude-code spend-limit failure in a
+#   19-day/repo-scoped test landed in `crash`, none in `quota`). Since
+#   roborev is a third-party binary we cannot fix its own classifier, this
+#   script re-derives crash/quota straight from `review_jobs.error` using
+#   the same vocabulary as `classify_failure()` in roborev_metrics_etl.R —
+#   see the "DB reclassification" block below. `counters.reclassified` in
+#   --json output tells a caller whether the live numbers or roborev's raw
+#   (possibly under-counted) ones were used; `native_counters` always
+#   carries roborev's own numbers for comparison.
 
 set -euo pipefail
 
@@ -108,6 +122,79 @@ VD_TOTAL="${VD_TOTAL:-0}";   VD_TOTAL="${VD_TOTAL/null/0}"
 VD_PASS_RATE="${VD_PASS_RATE:-0}"; VD_PASS_RATE="${VD_PASS_RATE/null/0}"
 CR_CRASH="${CR_CRASH:-0}";   CR_CRASH="${CR_CRASH/null/0}"
 CR_QUOTA="${CR_QUOTA:-0}";   CR_QUOTA="${CR_QUOTA/null/0}"
+
+# Keep roborev's own (native) numbers around for comparison in --verbose /
+# --json output, before any DB reclassification below overwrites CR_CRASH/CR_QUOTA.
+CR_CRASH_NATIVE="$CR_CRASH"
+CR_QUOTA_NATIVE="$CR_QUOTA"
+
+# ── DB reclassification of crash vs quota (llm#904) ──────────────────────────
+# roborev's own `summary --json` buckets a failure as "quota" only for certain
+# error-string shapes (verified 2026-08-21: it recognizes gemini's
+# TerminalQuotaError but NOT claude-code's "You've hit your monthly spend
+# limit" — measured on the real DB, every claude-code spend-limit failure in
+# a 19-day window landed in `crash`, 0 in `quota`). Since roborev is a
+# third-party binary we cannot patch its classifier, so this block
+# re-derives crash/quota straight from `review_jobs.error` text using the
+# same vocabulary as `classify_failure()` in roborev_metrics_etl.R (that
+# function's own header cites this exact defect as llm#904) — one canonical
+# pattern shared across the ETL and this live gate instead of a third
+# diverging copy.
+#
+# Only attempted when: not in --fixture mode (fixture JSON has no matching
+# live DB to query against), sqlite3 is available, the DB file exists, and
+# SUMMARY_JSON carries a `.repo_path` to scope the query to THIS repo (a
+# global count would double-count other projects' failures into a single
+# repo's gate). Any failure to satisfy these falls back to roborev's native
+# CR_CRASH/CR_QUOTA — fail-open, matching this script's existing tolerant
+# posture on every other counter.
+RECLASSIFIED=0
+if [ -z "$FIXTURE_FILE" ] && command -v sqlite3 >/dev/null 2>&1; then
+  _rb_db="${HOME}/.roborev/reviews.db"
+  _repo_path=$(echo "$SUMMARY_JSON" | jq -r '.repo_path // empty')
+  if [ -f "$_rb_db" ] && [ -n "$_repo_path" ]; then
+    # Convert CONSISTENCY_WINDOW ("24h"/"7d"/"90m") to a SQLite datetime()
+    # modifier. Falls back to -24 hours on an unrecognized suffix so a typo
+    # in ROBOREV_CONSISTENCY_WINDOW degrades to the documented default
+    # rather than silently querying an unbounded window.
+    case "$CONSISTENCY_WINDOW" in
+      *h) _win_mod="-${CONSISTENCY_WINDOW%h} hours" ;;
+      *d) _win_mod="-${CONSISTENCY_WINDOW%d} days" ;;
+      *m) _win_mod="-${CONSISTENCY_WINDOW%m} minutes" ;;
+      *)  _win_mod="-24 hours" ;;
+    esac
+    # Same vocabulary as classify_failure()'s `quota` regex in
+    # roborev_metrics_etl.R: "spend limit|quota|rate limit|too many
+    # requests|429" (case-insensitive — SQLite LIKE is ASCII
+    # case-insensitive by default, matching R's ignore.case=TRUE).
+    _quota_pattern_sql="(rj.error LIKE '%spend limit%' OR rj.error LIKE '%quota%' OR rj.error LIKE '%rate limit%' OR rj.error LIKE '%too many requests%' OR rj.error LIKE '%429%')"
+    _repo_path_escaped=$(printf '%s' "$_repo_path" | sed "s/'/''/g")
+    # COALESCE(...,0) — a zero-row match set makes SUM() return NULL, not 0
+    # (standard SQL aggregate behaviour). Without COALESCE, a genuinely
+    # zero-failure window would print "|" (both fields empty) and be
+    # indistinguishable from a query failure, wrongly falling back to
+    # roborev's native (possibly under-counted) numbers on the exact case
+    # this reclassification is supposed to make authoritative: zero.
+    _reclass_rc=0
+    _reclass=$(sqlite3 -separator '|' "$_rb_db" "
+      SELECT
+        COALESCE(SUM(CASE WHEN ${_quota_pattern_sql} THEN 1 ELSE 0 END), 0),
+        COALESCE(SUM(CASE WHEN NOT ${_quota_pattern_sql} THEN 1 ELSE 0 END), 0)
+      FROM review_jobs rj
+      JOIN repos r ON r.id = rj.repo_id
+      WHERE r.root_path = '${_repo_path_escaped}'
+        AND rj.status = 'failed'
+        AND datetime(replace(replace(rj.enqueued_at, 'T', ' '), 'Z', '')) > datetime('now', '${_win_mod}');
+    " 2>/dev/null) || _reclass_rc=$?
+    if [ "$_reclass_rc" -eq 0 ] && [ -n "$_reclass" ]; then
+      _reclass_quota="${_reclass%%|*}"
+      _reclass_crash="${_reclass##*|}"
+      CR_QUOTA="$_reclass_quota"
+      CR_CRASH="$_reclass_crash"
+      RECLASSIFIED=1
+    fi
+  fi
+fi
 
 # ── 0-reviews-in-window: nothing to assert → healthy ─────────────────────────
 # When the summary window contains no reviews (e.g. --since 24h on a quiet day),
@@ -223,6 +310,10 @@ if [ "$OV_FAILED" -gt 0 ] 2>/dev/null; then
 fi
 
 # ── JSON output mode ──────────────────────────────────────────────────────────
+# llm#904: counters.crash/counters.quota are DB-reclassified from
+# review_jobs.error when reclassified=true (roborev own summary --json
+# under-counts quota — see the header comment above); native_counters is
+# always what roborev itself reported, kept for comparison/debugging.
 if [ "$JSON_OUT" = "1" ]; then
   jq -n \
     --argjson ov_total    "$OV_TOTAL" \
@@ -231,6 +322,9 @@ if [ "$JSON_OUT" = "1" ]; then
     --arg     vd_rate     "$VD_PASS_RATE" \
     --argjson cr_crash    "$CR_CRASH" \
     --argjson cr_quota    "$CR_QUOTA" \
+    --argjson cr_crash_native "$CR_CRASH_NATIVE" \
+    --argjson cr_quota_native "$CR_QUOTA_NATIVE" \
+    --argjson reclassified "$RECLASSIFIED" \
     --argjson backlog     "$BACKLOG_OPEN" \
     --arg     fired       "${FIRED_WHICH% }" \
     --argjson bt          "$BACKLOG_THRESHOLD" \
@@ -246,6 +340,11 @@ if [ "$JSON_OUT" = "1" ]; then
         crash: $cr_crash,
         quota: $cr_quota,
         backlog_open: $backlog
+      },
+      reclassified: ($reclassified == 1),
+      native_counters: {
+        crash: $cr_crash_native,
+        quota: $cr_quota_native
       },
       thresholds: {
         backlog_open_gt: $bt,
@@ -264,7 +363,9 @@ if [ -n "$INCONSISTENCIES" ]; then
 fi
 
 if [ "$VERBOSE" = "1" ]; then
-  echo "roborev:consistent (backlog=${BACKLOG_OPEN}, overview_total=${OV_TOTAL}, verdicts=${VD_TOTAL}, crash+quota=$((CR_CRASH+CR_QUOTA)))"
+  _reclass_note="native(crash=${CR_CRASH_NATIVE},quota=${CR_QUOTA_NATIVE})"
+  [ "$RECLASSIFIED" = "1" ] && _reclass_note="reclassified from ${_reclass_note} (llm#904)"
+  echo "roborev:consistent (backlog=${BACKLOG_OPEN}, overview_total=${OV_TOTAL}, verdicts=${VD_TOTAL}, crash=${CR_CRASH}, quota=${CR_QUOTA} [${_reclass_note}])"
 fi
 
 exit 0

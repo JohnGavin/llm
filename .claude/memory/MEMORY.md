@@ -1,150 +1,60 @@
 # Project Memory Index
 
-One hook line per topic; full detail lives in the linked file. Keep under ~140 lines.
+One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 
-## Architecture (see architecture.md)
-- Two-tier Nix shell (dev + project shells); _targets.R orchestrates plans from R/tar_plans/ only
-
-## MCP r-btw: NEVER Call Directly (see btw-timeouts rule)
-- ALL R via `Bash("timeout N Rscript -e ...")`; never btw_tool_run_r/pkg_test/check/document/load_all; docs/files/session tools safe
-
-## Agent Patterns (see agent-patterns.md)
-- haiku=$ / sonnet=$$ / opus=$$$; delegate long btw_tool_pkg_* + run_r to subagents; run independent tasks in parallel
-
-## CI Strategy (see ci-strategy.md)
-- Public repos: any GH Actions OK; private: Nix-only Linux, conserve minutes; pkgdown built locally (bslib breaks in Nix)
-
-## Nix Operations (see nix-operations.md)
-- Segfaults = R-version mismatch or nested-shell R_LIBS_SITE contamination; never install.packages() in Nix; add pkgs via DESCRIPTION→default.R→re-enter; launchd/cron uses GC-rooted drv not default.nix (llm#596)
-
-## Shinylive (see shinylive-issues.md)
-- Munsell/ggplot2 error → use plotly; webr::install("munsell") before ggplot2; always test in real browser (F12)
-
-## btw MCP Tools (see btw-timeouts rule)
-- Subset docs/pkg/files/run/env/session; excluded git (gert), github (gh::gh()), agents, cran, web, ide
-
-## pkgctx (see llm-package-context skill)
-- `nix run github:b-rodrigues/pkgctx -- r . --compact`; central cache ~/docs_gh/proj/data/llm/content/inst/ctx/external/
-
-## Tool Preferences (see tool-preferences.md)
-- Preferred: mirai, crew, duckdb, arrow, dplyr, targets, pkgctx, cli; cachix push only this pkg never deps
-
-## Performance Patterns (see r-vectorization-patterns.md)
-- 10-100x speedup for entity loops: matrices not lists, padded grid, batch RNG, cbind indexing
-
-## Session Conventions
-- Commit with gert (not bash git); append CHANGELOG.md at /bye; CURRENT_WORK.md is ephemeral
-
-## ast-grep Lessons (see feedback_ast-grep-lessons.md)
-- R is a CUSTOM grammar: always `-c ~/.config/ast-grep/sgconfig.yml`, else a valid rule errors as "Cannot parse rule / SgLang"; binary is nix-shell-only; rules live laptop-local at `~/.config/ast-grep/rules/` so merging ≠ deploying; bare `$$$` can silently never match — prove a rule fires before trusting it
-
-## Safe Deletion (see feedback_safe-deletion.md)
-- NEVER delete untracked >1MB without size/age/diff/user-approval (origin: 522MB worktree loss 2026-03-27)
-
-## NEVER Edit default.nix Directly (see feedback_never-edit-default-nix.md)
-- default.nix is rix-generated from default.R; edit DESCRIPTION→default.R; manual edits get overwritten
-
-## Nix Shell Portability (see feedback_nix-shell-portability.md)
-- GNU not BSD utils: no `grep -oP`, `sed -i ''`, `stat -f`; prefer Edit tool over sed; cachix via ./push_to_cachix.sh
-
-## Worktree Location (see rules/worktree-location.md)
-- New worktrees under ~/docs_gh/worktrees/<project>/<branch>/ (llm#582); use cc-worktree.sh; legacy ~/worktrees/ read-only
-
-## Never `cd && git` (see feedback_no-compound-cd.md)
-- `cd dir && git` triggers unbypassed approval prompt; always `git -C <dir>` (see git-no-compound-cd rule)
-
-## Editing Symlinked Config (see feedback_symlink-edit-vs-mv.md)
-- ~/.claude/settings.json symlinks to repo; use Edit/`>` redirect, never `mv` (replaces symlink with regular file)
-
-## Knowledge Base Discipline (see feedback_knowledge-base-discipline.md)
-- Hub at ~/docs_gh/llm/knowledge/ LOCAL-only never push; raw/ append-only, wiki/ needs `## Sources` + `[[topic]]`; wiki-curator compiles, critic validates
-
-## GitHub Pages User Sites (see feedback_github-pages-user-sites.md)
-- username.github.io serves from default branch NOT gh-pages; output-dir: docs, commit docs/ to master; quarto publish gh-pages fails for user sites
-
-## Delegation Under Pressure (see feedback_delegation-under-pressure.md)
-- After FIRST fix in a CI-fail→fix loop, delegate subsequent fixes to fixer/quick-fix (6 opus edits ≈$30 vs sonnet ≈$3)
-
-## Agent Salvage: Unlanded Work (see feedback_agent-salvage-unlanded-work.md)
-- 3/5 agents (2026-08-02), then **7/7 (2026-08-03)** stopped before committing — work complete, just unlanded; a `failed`/truncated report is NOT evidence work is missing. At 7/7 salvage is a PLANNED dispatch stage, not an exception: agent does diagnosis+edits, you do verify+commit+PR; a dispatch is done when YOU land it. Check the worktree, verify the outcome yourself, commit with provenance + what reasoning was never delivered. Never re-dispatch (pays twice). Push guard misparses `push -u` — name the branch explicitly
-
-## Parallel Model Allocation (see feedback_parallel-model-allocation.md)
-- Cheapest sufficient model per task; dispatch independent tasks in parallel (one message, multiple Agent uses); even 1-line edits → quick-fix
-
-## Cross-Project Scope (see cross-project-scope rule)
-- Only llm sessions work across projects (llm#190); others own-tree-only, may file issues but not edit/dispatch/roborev elsewhere
-
-## Roborev Session-End Automation (2026-05-20)
-- session_stop.sh fires session_end_refine.sh in bg (timeout 120s, max-iter 3, min-severity high); opt-out SKIP_SESSION_END_REFINE=1
-
-## Config Migration (2026-03-09)
-- Rules/scripts/CLAUDE.md git-backed via symlinks; CLAUDE.md→AGENTS.md merged; /hi→/session-start symlink
-
-## Verify External Claims (see feedback_verify-external-claims.md)
-- Read an external tool's source/docs BEFORE asserting its internals; label unverified; use `gh api .../contents` when WebFetch blocked (origin: msgvault 2026-06-18)
-
-## Adopt Before Build (see feedback_adopt-before-build.md)
-- Before estimating a build, check stack primitives + maintained tools first; DuckDB ships fts+vss, RRF≈15 lines SQL (origin: over-scoped DuckDB+RRF 2026-06-18)
-
-## Hook ENOENT = Deleted CWD (see hook-cwd-deletion.md)
-- `ENOENT posix_spawn /bin/sh` on every hook = session cwd deleted; recover by relaunch via cc.sh from a real dir; never run from /tmp/ephemeral (llm#647)
-
-## Stale PTY-Spare 100% CPU (see stale-pty-spare-cpu.md)
-- Orphaned old-version bg-pty-host/bg-spare daemons busy-loop 100% CPU after harness upgrade; kill any whose version != running claude (2026-06-23)
-
-## macOS Downloads TCC Block (see macos-downloads-tcc-block.md)
-- Bash CANNOT read ~/Downloads (macOS TCC, persists w/ sandbox off); mv/cp fail, ls/stat mislead; hand user a `! mv` command (llm#670)
-
-## Startup Cost = MCP, Not Hook (see startup-cost-is-mcp-not-hook.md)
-- Slow start = r-btw MCP nix-shell eval (~10s), not session_init.sh; fix = GC-rooted drv boot (r_btw_mcp_launch.sh, #673) (2026-06-25)
-
-## roborev Silent Failure (see roborev-gemini-dead-silent-failure.md)
-- "0 failed" can lie: read overview.failed + failures.errors not verdicts.failed (0 when reviews crash); gemini dead → config codex/claude-code + daemon restart; #679 consistency check open (2026-06-25)
-
-## roborev .roborev.toml Empty-String Shadows Global (see roborev-toml-empty-string-shadows-global.md)
-- A per-repo `.roborev.toml` key set to `''` OVERRIDES global config.toml to empty; only an ABSENT key inherits. To un-shadow a global default per-repo, set the explicit value (not ''). Daemon reads MAIN checkout's toml (#723, 2026-07-31)
-
-## roborev Automated-Data Noise (see roborev-automated-data-noise.md)
-- llmtelemetry ~400 bot commits/wk flooded roborev (234 findings/7d); fix = per-repo .roborev.toml exclude_patterns for inst/extdata/**; crashed jobs (verdict=null) ≠ closeable findings; range reviews (SHA..SHA) often real code — don't mass-close (2026-07-22)
-
-## npm Global Install in Nix Shell (see npm-global-in-nix-shell.md)
-- `npm install -g` fails (read-only store prefix) + root-owned ~/.npm; use `--prefix ~/.npm-global --cache /tmp/<pkg>-cache <pkg>@<ver>`; model downloads → ~/.cache (GBs) (qmd #686, 2026-06-27)
-
-## Destructive-FS Guard Blocks rm (see destructive-guard-blocks-rm.md)
-- Guard denies `rm -rf ~/...` even WITH user confirmation (not bypassed in worktrees); don't retry — hand user `! rm`, verify w/ du/ls (2026-06-27)
-
-## Symlink Worktree-Escape (see config-pulse-symlink-worktree-escape.md)
-- A repo file that symlinks into ANOTHER repo (e.g. llm `.claude/scripts/config_pulse.sh` → llmtelemetry) lets a worktree agent's edit follow the link out of its sandbox and push to the other repo's main (#517 Pattern 2, real 2026-06-28). Memory is NOT a reliable guard — needs a PreToolUse realpath hook (#517) + de-symlinking known traps
-
-## Hook "No stderr output" = pipefail abort (see hook-pipefail-no-stderr.md)
-- SessionStart "Failed with non-blocking status code: No stderr output" = unguarded `var=$(...|grep...)` under `set -euo pipefail`; grep miss → exit 1 aborts hook silently; fix `|| true` (session_init.sh:847, llm#695, 2026-06-29)
-
-## ellmer Can't Use Max Subscription (see ellmer-cannot-use-max-subscription.md)
-- ellmer 0.4.0 has NO OAuth/`chat_claude_code()`; uses pay-per-token ANTHROPIC_API_KEY only; Anthropic blocked 3rd-party Max-sub use 2026-04-04; fund a key, then chat_claude() (#696, 2026-06-30)
-
-## cc Startup Hang = npx/burn-rate no timeout (see cc-startup-hang-npx-timeout.md)
-- `cc` hangs after "Switched to worktree" = unbounded `npx ccusage` in burn_rate_check (GNU timeout absent on macOS → `${TIMEOUT_CMD:+…}` empty); unblock `npx --yes ccusage --version`; fix = perl-alarm fallback + npx --yes + </dev/null (#716, 2026-07-03)
-
-## Embed Issue/PR Links on Merge (see feedback_embed-issue-link-on-merge.md)
-- When reporting a merge/PR/issue action, embed a clickable link (`[#750](url)`) never a bare `#750`; codified in pr-shipping-discipline rule (#751, 2026-07-08)
-
-## Max Plan Can't Share Artifacts (see feedback_max-plan-artifact-sharing.md)
-- Individual Max: artifact Share button INACTIVE, URL grants no access to anyone; needs Teams/Enterprise; share the self-contained HTML out-of-band (email the .html file / GH Pages) (2026-07-10)
-
-## Deploy Gap: Merged ≠ Live (see deploy-gap-stale-main-checkout.md)
-- A merged fix that "isn't live" = local main checkout behind origin/main; cron `--ff-only` auto-pull jams on dirty tree (uncommitted memory edits), swallows the error, runs stale. Check `git -C ~/docs_gh/llm rev-list --count HEAD..origin/main`; also `launchctl print` before trusting "N cron jobs failed" (#510 reopened 2026-07-11)
-
-## Portable Build Artifacts (see portable-build-artifacts.md)
-- A committed artifact must not depend on the checkout that built it: (1) absolute paths serialised inside objects (DT html_dependency) — repair on READ, regenerating only re-acquires the new machine's path; (2) path filters matched on absolute paths swallow their own scan root (every worktree path contains `/worktrees/`) — match relative, and this one returns EMPTY not an error. Diff regenerated artifacts by content, never mtime (llm#883/#889, 2026-08-03)
-
-## Deploy Trigger Excludes Vignette Data (see deploy-trigger-excludes-vignette-data.md)
-- A publish workflow's `paths:` filter can omit `inst/extdata/vignettes/**` — the data vignettes actually read — so a snapshot-only fix merges green and never deploys; check for a run AT your merge SHA, and check recent run history (3 consecutive failures = site pinned at last green, so the "live" defect may not be live at all) (llm#881, 2026-08-03)
-
-## Pre-rendered docs/ ≠ Live (see feedback_prerendered-docs-deploy-verification.md)
-- Repos that commit pre-rendered `docs/` (deploy CI only publishes, renders nothing) — a source/.qmd fix is INERT until docs/ is re-rendered + committed. "PR merged + deploy green" ≠ live. Verify the DEPLOYED artifact (curl live HTML / git grep origin/main docs/**), not the source or deploy status. Shinylive: app embedded in rendered HTML. (origin: micromort quiz \d fix appeared merged+green but live app still broken, 2026-07-27)
-
-## Verify Causal Claims, Not Just Facts (see feedback_verify-causal-claims.md)
-- Counts/mechanisms get verified; the STORY connecting them doesn't — that's where errors hide. Assert a cause, date, or blast radius only with a query behind it. 4 corrections in one session (llm#913): hand-summed count, guessed affected surfaces, merge-time≠onset (break preceded it 4h), and "0 affected today" = not-yet-reaped. Adjacent dates ≠ causation; verify the TRANSITION. A marker written by a delayed process understates the present (2026-08-05)
-
-## Probe Must Not Share the Writer's Path (see probe-must-not-share-writer-path.md)
-- A freshness/health probe called from INSIDE the producer's code path measures its own liveness, not the data's — fails silently both ways (writer dies + data fine → false "13d idle"; data dies + writer fine → false "fresh"). Stored `status` makes it worse: it cannot detect the ABSENCE of a write. Compute status at read time from facts; read the asset directly, from a different trigger class. If a registry says a source is idle, confirm against the source (llm#913/#915, 2026-08-05)
+- [Architecture](architecture.md) — Two-tier Nix shell (dev + project shells); _targets.R orchestrates plans from R/tar_plans/ only
+- [MCP r-btw: NEVER Call Directly](../rules/btw-timeouts.md) — ALL R via `Bash("timeout N Rscript -e ...")`; never btw_tool_run_r/pkg_test/check/document/load_all; docs/files/session tools safe
+- [Agent Patterns](agent-patterns.md) — haiku=$ / sonnet=$$ / opus=$$$; delegate long btw_tool_pkg_* + run_r to subagents; run independent tasks in parallel
+- [CI Strategy](ci-strategy.md) — Public repos: any GH Actions OK; private: Nix-only Linux, conserve minutes; pkgdown built locally (bslib breaks in Nix)
+- [Nix Operations](nix-operations.md) — Segfaults = R-version mismatch or nested-shell R_LIBS_SITE contamination; never install.packages() in Nix; add pkgs via DESCRIPTION→default.R→re-enter; launchd/cron uses GC-rooted drv not default.nix (llm#596)
+- [Shinylive](shinylive-issues.md) — Munsell/ggplot2 error → use plotly; webr::install("munsell") before ggplot2; always test in real browser (F12)
+- [btw MCP Tools](../rules/btw-timeouts.md) — Subset docs/pkg/files/run/env/session; excluded git (gert), github (gh::gh()), agents, cran, web, ide
+- [pkgctx](../skills/llm-package-context/SKILL.md) — `nix run github:b-rodrigues/pkgctx -- r . --compact`; central cache ~/docs_gh/proj/data/llm/content/inst/ctx/external/
+- [Tool Preferences](tool-preferences.md) — Preferred: mirai, crew, duckdb, arrow, dplyr, targets, pkgctx, cli; cachix push only this pkg never deps
+- [Performance Patterns](r-vectorization-patterns.md) — 10-100x speedup for entity loops: matrices not lists, padded grid, batch RNG, cbind indexing
+- **Session Conventions** — Commit with gert (not bash git); append CHANGELOG.md at /bye; CURRENT_WORK.md is ephemeral
+- [ast-grep Lessons](feedback_ast-grep-lessons.md) — R is a CUSTOM grammar: always `-c ~/.config/ast-grep/sgconfig.yml`, else a valid rule errors as "Cannot parse rule / SgLang"; binary is nix-shell-only; rules live laptop-local at `~/.config/ast-grep/rules/` so merging ≠ deploying; bare `$$$` can silently never match — prove a rule fires before trusting it
+- [Safe Deletion](feedback_safe-deletion.md) — NEVER delete untracked >1MB without size/age/diff/user-approval (origin: 522MB worktree loss 2026-03-27)
+- [NEVER Edit default.nix Directly](feedback_never-edit-default-nix.md) — default.nix is rix-generated from default.R; edit DESCRIPTION→default.R; manual edits get overwritten
+- [Nix Shell Portability](feedback_nix-shell-portability.md) — GNU not BSD utils: no `grep -oP`, `sed -i ''`, `stat -f`; prefer Edit tool over sed; cachix via ./push_to_cachix.sh
+- [Worktree Location](../rules/worktree-location.md) — New worktrees under ~/docs_gh/worktrees/<project>/<branch>/ (llm#582); use cc-worktree.sh; legacy ~/worktrees/ read-only
+- [Never `cd && git`](feedback_no-compound-cd.md) — `cd dir && git` triggers unbypassed approval prompt; always `git -C <dir>` (see git-no-compound-cd rule)
+- [Editing Symlinked Config](feedback_symlink-edit-vs-mv.md) — ~/.claude/settings.json symlinks to repo; use Edit/`>` redirect, never `mv` (replaces symlink with regular file)
+- [Knowledge Base Discipline](feedback_knowledge-base-discipline.md) — Hub at ~/docs_gh/llm/knowledge/ LOCAL-only never push; raw/ append-only, wiki/ needs `## Sources` + `[[topic]]`; wiki-curator compiles, critic validates
+- [GitHub Pages User Sites](feedback_github-pages-user-sites.md) — username.github.io serves from default branch NOT gh-pages; output-dir: docs, commit docs/ to master; quarto publish gh-pages fails for user sites
+- [Delegation Under Pressure](feedback_delegation-under-pressure.md) — After FIRST fix in a CI-fail→fix loop, delegate subsequent fixes to fixer/quick-fix (6 opus edits ≈$30 vs sonnet ≈$3)
+- [Agent Salvage: Unlanded Work](feedback_agent-salvage-unlanded-work.md) — 3/5 agents (2026-08-02), then **7/7 (2026-08-03)** stopped before committing — work complete, just unlanded; a `failed`/truncated report is NOT evidence work is missing. At 7/7 salvage is a PLANNED dispatch stage, not an exception: agent does diagnosis+edits, you do verify+commit+PR; a dispatch is done when YOU land it. Check the worktree, verify the outcome yourself, commit with provenance + what reasoning was never delivered. Never re-dispatch (pays twice). Push guard misparses `push -u` — name the branch explicitly
+- [Parallel Model Allocation](feedback_parallel-model-allocation.md) — Cheapest sufficient model per task; dispatch independent tasks in parallel (one message, multiple Agent uses); even 1-line edits → quick-fix
+- [Cross-Project Scope](../rules/cross-project-scope.md) — Only llm sessions work across projects (llm#190); others own-tree-only, may file issues but not edit/dispatch/roborev elsewhere
+- **Roborev Session-End Automation** (2026-05-20) — session_stop.sh fires session_end_refine.sh in bg (timeout 120s, max-iter 3, min-severity high); opt-out SKIP_SESSION_END_REFINE=1
+- **Config Migration** (2026-03-09) — Rules/scripts/CLAUDE.md git-backed via symlinks; CLAUDE.md→AGENTS.md merged; /hi→/session-start symlink
+- [Verify External Claims](feedback_verify-external-claims.md) — Read an external tool's source/docs BEFORE asserting its internals; label unverified; use `gh api .../contents` when WebFetch blocked (origin: msgvault 2026-06-18)
+- [Adopt Before Build](feedback_adopt-before-build.md) — Before estimating a build, check stack primitives + maintained tools first; DuckDB ships fts+vss, RRF≈15 lines SQL (origin: over-scoped DuckDB+RRF 2026-06-18)
+- [Hook ENOENT = Deleted CWD](hook-cwd-deletion.md) — `ENOENT posix_spawn /bin/sh` on every hook = session cwd deleted; recover by relaunch via cc.sh from a real dir; never run from /tmp/ephemeral (llm#647)
+- [Stale PTY-Spare 100% CPU](stale-pty-spare-cpu.md) — Orphaned old-version bg-pty-host/bg-spare daemons busy-loop 100% CPU after harness upgrade; kill any whose version != running claude (2026-06-23)
+- [macOS Downloads TCC Block](macos-downloads-tcc-block.md) — Bash CANNOT read ~/Downloads (macOS TCC, persists w/ sandbox off); mv/cp fail, ls/stat mislead; hand user a `! mv` command (llm#670)
+- [Startup Cost = MCP, Not Hook](startup-cost-is-mcp-not-hook.md) — Slow start = r-btw MCP nix-shell eval (~10s), not session_init.sh; fix = GC-rooted drv boot (r_btw_mcp_launch.sh, #673) (2026-06-25)
+- [roborev Silent Failure](roborev-gemini-dead-silent-failure.md) — "0 failed" can lie: read overview.failed + failures.errors not verdicts.failed (0 when reviews crash); gemini dead → config codex/claude-code + daemon restart; #679 consistency check open (2026-06-25)
+- [roborev .roborev.toml Empty-String Shadows Global](roborev-toml-empty-string-shadows-global.md) — A per-repo `.roborev.toml` key set to `''` OVERRIDES global config.toml to empty; only an ABSENT key inherits. To un-shadow a global default per-repo, set the explicit value (not ''). Daemon reads MAIN checkout's toml (#723, 2026-07-31)
+- [roborev Automated-Data Noise](roborev-automated-data-noise.md) — llmtelemetry ~400 bot commits/wk flooded roborev (234 findings/7d); fix = per-repo .roborev.toml exclude_patterns for inst/extdata/**; crashed jobs (verdict=null) ≠ closeable findings; range reviews (SHA..SHA) often real code — don't mass-close (2026-07-22)
+- [npm Global Install in Nix Shell](npm-global-in-nix-shell.md) — `npm install -g` fails (read-only store prefix) + root-owned ~/.npm; use `--prefix ~/.npm-global --cache /tmp/<pkg>-cache <pkg>@<ver>`; model downloads → ~/.cache (GBs) (qmd #686, 2026-06-27)
+- [Destructive-FS Guard Blocks rm](destructive-guard-blocks-rm.md) — Guard denies `rm -rf ~/...` even WITH user confirmation (not bypassed in worktrees); don't retry — hand user `! rm`, verify w/ du/ls (2026-06-27)
+- [Symlink Worktree-Escape](config-pulse-symlink-worktree-escape.md) — A repo file that symlinks into ANOTHER repo (e.g. llm `.claude/scripts/config_pulse.sh` → llmtelemetry) lets a worktree agent's edit follow the link out of its sandbox and push to the other repo's main (#517 Pattern 2, real 2026-06-28). Memory is NOT a reliable guard — needs a PreToolUse realpath hook (#517) + de-symlinking known traps
+- [Hook "No stderr output" = pipefail abort](hook-pipefail-no-stderr.md) — SessionStart "Failed with non-blocking status code: No stderr output" = unguarded `var=$(...|grep...)` under `set -euo pipefail`; grep miss → exit 1 aborts hook silently; fix `|| true` (session_init.sh:847, llm#695, 2026-06-29)
+- [ellmer Can't Use Max Subscription](ellmer-cannot-use-max-subscription.md) — ellmer 0.4.0 has NO OAuth/`chat_claude_code()`; uses pay-per-token ANTHROPIC_API_KEY only; Anthropic blocked 3rd-party Max-sub use 2026-04-04; fund a key, then chat_claude() (#696, 2026-06-30)
+- [cc Startup Hang = npx/burn-rate no timeout](cc-startup-hang-npx-timeout.md) — `cc` hangs after "Switched to worktree" = unbounded `npx ccusage` in burn_rate_check (GNU timeout absent on macOS → `${TIMEOUT_CMD:+…}` empty); unblock `npx --yes ccusage --version`; fix = perl-alarm fallback + npx --yes + </dev/null (#716, 2026-07-03)
+- [Embed Issue/PR Links on Merge](feedback_embed-issue-link-on-merge.md) — When reporting a merge/PR/issue action, embed a clickable link (`[#750](url)`) never a bare `#750`; codified in pr-shipping-discipline rule (#751, 2026-07-08)
+- [Max Plan Can't Share Artifacts](feedback_max-plan-artifact-sharing.md) — Individual Max: artifact Share button INACTIVE, URL grants no access to anyone; needs Teams/Enterprise; share the self-contained HTML out-of-band (email the .html file / GH Pages) (2026-07-10)
+- [Deploy Gap: Merged ≠ Live](deploy-gap-stale-main-checkout.md) — A merged fix that "isn't live" = local main checkout behind origin/main; cron `--ff-only` auto-pull jams on dirty tree (uncommitted memory edits), swallows the error, runs stale. Check `git -C ~/docs_gh/llm rev-list --count HEAD..origin/main`; also `launchctl print` before trusting "N cron jobs failed" (#510 reopened 2026-07-11)
+- [`exec zsh` Does NOT Clear Env](exec-zsh-does-not-clear-env.md) — Deleting `export FOO=` from a dotfile only affects FUTURE shells; `exec zsh` inherits the environment and keeps it. A revoked GH_TOKEN survived file-deletion + `exec zsh`, so `gh auth login` refused to store its own credential. Diagnostic order: files → `launchctl getenv` → process-tree inheritance. Fix: `unset FOO`, or `env -u FOO <cmd>` for one command (works even in a tainted session). Never print the value while diagnosing (2026-08-13)
+- [Portable Build Artifacts](portable-build-artifacts.md) — A committed artifact must not depend on the checkout that built it: (1) absolute paths serialised inside objects (DT html_dependency) — repair on READ, regenerating only re-acquires the new machine's path; (2) path filters matched on absolute paths swallow their own scan root (every worktree path contains `/worktrees/`) — match relative, and this one returns EMPTY not an error. Diff regenerated artifacts by content, never mtime (llm#883/#889, 2026-08-03)
+- [Deploy Trigger Excludes Vignette Data](deploy-trigger-excludes-vignette-data.md) — A publish workflow's `paths:` filter can omit `inst/extdata/vignettes/**` — the data vignettes actually read — so a snapshot-only fix merges green and never deploys; check for a run AT your merge SHA, and check recent run history (3 consecutive failures = site pinned at last green, so the "live" defect may not be live at all) (llm#881, 2026-08-03)
+- [Pre-rendered docs/ ≠ Live](feedback_prerendered-docs-deploy-verification.md) — Repos that commit pre-rendered `docs/` (deploy CI only publishes, renders nothing) — a source/.qmd fix is INERT until docs/ is re-rendered + committed. "PR merged + deploy green" ≠ live. Verify the DEPLOYED artifact (curl live HTML / git grep origin/main docs/**), not the source or deploy status. Shinylive: app embedded in rendered HTML. (origin: micromort quiz \d fix appeared merged+green but live app still broken, 2026-07-27)
+- [Verify Causal Claims, Not Just Facts](feedback_verify-causal-claims.md) — Counts/mechanisms get verified; the STORY connecting them doesn't — that's where errors hide. Assert a cause, date, or blast radius only with a query behind it. 4 corrections in one session (llm#913): hand-summed count, guessed affected surfaces, merge-time≠onset (break preceded it 4h), and "0 affected today" = not-yet-reaped. Adjacent dates ≠ causation; verify the TRANSITION. A marker written by a delayed process understates the present (2026-08-05)
+- [Fix Every Instance, or Justify the Exclusion](feedback_fix-every-instance-or-justify-the-exclusion.md) — A correct diagnosis narrowed to the wrong scope still ships a broken system. TCC prompts: mechanism diagnosed right (ad-hoc-signed bash stores an EMPTY csreq, so the grant can never bind), 6 launchd scripts found, **1 fixed** — the other 5 demoted to "context" on the written reasoning *"exactly one of six touches a TCC-protected resource"*. That was an inference from a 12-hour sample stated as knowledge. Next day a KeepAlive daemon running one of the five produced **11 prompts**. The blast-radius clause of [[feedback_verify-causal-claims]] in reverse: "these are unaffected" needs evidence as much as "these are affected". Default to fixing all N; "not observed failing" ≠ "will not fail"; when certainty is unavailable let the cost asymmetry decide (one shebang edit vs a permanent daily dialog). Same 24h: the follow-up was nearly blamed on a same-day timing correlation until running the suspect code produced zero requests (2026-08-27)
+- [Fixtures Hide Boundary Drift](feedback_fixtures-hide-boundary-drift.md) — A green suite of synthetic fixtures can miss a boundary bug that ONE run against real inputs exposes. Fixtures are chosen to make the intended branch fire, so they sit far from the edge; real data clusters at the edge. llm#1001: 18 assertions passed while the cutoff silently skipped the very file the fix existed to recover — BSD `date -j -f '%Y-%m-%d'` fills unspecified fields from NOW, so the cutoff walked forward through the day (GNU `date -d` doesn't). Pin it: `-f '%Y-%m-%d %H:%M:%S' "$D 00:00:00"`. Put a fixture ON the boundary, assert the resolved value directly, and mutation-check every assertion added for a bug (2026-08-23)
+- [Rotate Every Store, Not Just the Canonical One](feedback_rotate-every-store-not-just-the-canonical-one.md) — A credential lives everywhere it was copied to; revoking breaks all copies at once but they fail on their own schedules. Enumerate every store BEFORE revoking (`secrets.env`, **GitHub Actions repo secrets**, launchd plists) with a command, not recall. llm#1013: `CACHIX_AUTH_TOKEN` was revoked and a replacement created NOWHERE (not BWS, not the cache, not 4 repos) — `tlang` failed nightly 11 days. `~/.config/secrets.env` is GENERATED (`DO NOT EDIT`, bare `KEY=value`, no `export`) — use `rotate_secret.sh <NAME> --apply`. Its completion check `grep -c '^export' … # expect 13` returns 0 for a healthy file AND an empty one: a check whose output doesn't vary with what it checks is not a check. A hand-written repo list came to 3 and guessed a name that doesn't exist; the command found the 4th (`solwatch`). The runbook's "confirm the dependent jobs still run" line existed and failed: prose not a command, named the push when the *pull* broke (public cache needing no auth, killed by a revoked token in the env), and verified on a laptop not a runner. A DORMANT consumer looks identical to a fixed one (2026-08-24)
+- [Health Check Inherits a Different PATH](health-check-inherits-a-different-path.md) — A health check run by hand resolves binaries from YOUR shell's PATH, not the daemon's, so it passes on tools the daemon cannot see. `roborev check-agents` said `claude-code OK` for days while the launchd daemon returned "no configured agent available" — its plist PATH lacked `~/.local/bin`. Resolve with `env -i PATH="<daemon's exact PATH>" which <tool>`; get that PATH from `ps eww -p <pid>`. Also: `bootout`+`bootstrap` (not stop) to load an edited plist, and verify by `status=done`, not by "Enqueued" (llm#746, 2026-08-18)
+- [Probe Must Not Share the Writer's Path](probe-must-not-share-writer-path.md) — A freshness/health probe called from INSIDE the producer's code path measures its own liveness, not the data's — fails silently both ways (writer dies + data fine → false "13d idle"; data dies + writer fine → false "fresh"). Stored `status` makes it worse: it cannot detect the ABSENCE of a write. Compute status at read time from facts; read the asset directly, from a different trigger class. If a registry says a source is idle, confirm against the source (llm#913/#915, 2026-08-05)
+- [Default-Permit Is Fail-Open](feedback_default-permit-is-fail-open.md) — Any publish/exclude control written as an opt-out ENUMERATION is fail-open: everything not yet named ships, silently, and the gap grows per new project. llmtelemetry published 584 rows of premortem estate data since 26 May because `privacy_exclusion.R` worked fine and premortem was never added to it — the filter wasn't broken, the DEFAULT was. Same shape as the 4-month phone-number leak in public llm. Ask of any pipeline: "what happens to a thing nobody classified?" If it ships, that's the bug. Invert to an allow-list. Names/paths/timestamps/institutions are disclosive even when no value leaks — public AGENTS.md named Wise/Marcus/RBS (llm#946, llmtelemetry#347, 2026-08-22)
+- [Visibility Change Beats History Surgery](feedback_visibility-change-beats-history-surgery.md) — To contain data exposed in a repo, evaluate making it PRIVATE before reaching for git-filter-repo. Rewrite reaches branches+tags only; `refs/pull/*` is GitHub-owned, unpushable, and carries full reachable history — 8 rewritten commits stayed fetchable from **438** PR refs. Visibility change reached everything, was one command, and is fully reversible; the rewrite cost a mirror backup, 74 stale worktrees, 3 orphaned PRs and every clone. Check forks/stars first: zero of both = no audience to break. `push --mirror` is REJECTED (tries read-only pull refs) — push refs/heads/* and refs/tags/* explicitly. Never present a rewrite as closure (llm#946, 2026-08-22)

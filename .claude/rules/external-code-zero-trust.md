@@ -1,11 +1,17 @@
----
-description: Never copy code from external sources — read for ideas, re-implement in our own style
-paths:
-  - "**/CODEOWNERS"
-  - ".claude/state/**"
----
-
 # Rule: External Code Zero Trust
+
+## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
+
+This rule was scoped to `paths: ["**/CODEOWNERS", ".claude/state/**"]` —
+`CODEOWNERS` is edited approximately never, so a rule AGENTS.md calls
+"MANDATORY, ALL PROJECTS" was effectively never loaded. The decision this
+rule governs (is this code copy safe to bring in) happens at the moment of
+reading external content, in any file, not at the moment `CODEOWNERS` is
+edited. Per [llm#943](https://github.com/JohnGavin/llm/issues/943), this
+rule is now in the **safety-critical tier** declared in AGENTS.md's
+"Safety-critical rules" line and carries no `paths:` frontmatter — it loads
+into every session and every subagent, matching the mandatory tier's
+contract.
 
 ## When This Applies
 

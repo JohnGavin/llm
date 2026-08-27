@@ -1540,6 +1540,35 @@ _rb_pct_part=""
 echo "roborev-backlog: open=${_rb_open}${_rb_top_part}${_rb_pct_part}" > "$_rb_cache"
 RBBEOF
 
+# ── Phase 13e: secrets cache drift — BACKGROUND (BWS network call) ───────────
+# Surfaces keys that exist in ~/.config/secrets.env but NOT in Bitwarden. Those
+# are one unrelated `secrets_cache_regen.sh --apply` away from deletion, and the
+# value then survives only in a rotating backup. llm#1024: exactly that removed
+# SIGNAL_ACCOUNT and stopped Signal capture.
+#
+# Same cache-then-refresh pattern as 13d: print the previous answer instantly,
+# recompute in the background for next session, so a BWS round-trip never
+# delays session start. Silent when there is no drift.
+_scd_cache="${HOME}/.claude/logs/session_init_secrets_drift_cache.txt"
+if [ -f "$_scd_cache" ]; then
+  _scd_cached=$(cat "$_scd_cache" 2>/dev/null) || true
+  [ -n "$_scd_cached" ] && echo "$_scd_cached"
+fi
+_scd_script="${HOME}/.claude/scripts/secrets_cache_drift.sh"
+mkdir -p "$(dirname "$_scd_cache")"
+if [ -x "$_scd_script" ]; then
+  nohup bash -s "$_scd_script" "$_scd_cache" > /dev/null 2>&1 <<'SCDEOF' &
+#!/usr/bin/env bash
+_s="$1"; _c="$2"
+# --quiet prints a single banner line ONLY when drift exists, and always
+# exits 0. A failure to reach BWS therefore leaves the previous cached answer
+# in place rather than overwriting it with a falsely-clean one — "could not
+# ask" must not render as "no drift" (llm#1021).
+_out="$(timeout 25 bash "$_s" --quiet 2>/dev/null)" || exit 0
+printf '%s' "$_out" > "$_c"
+SCDEOF
+fi
+
 # ── Phase 14a: T-lang flake.nix closure-rebuild advisory — BACKGROUND (~up to 5s) ──
 # Output cached; advisory only (no action needed at prompt time).
 _tlang_cache="${HOME}/.claude/logs/session_init_tlang_cache.txt"
@@ -1669,6 +1698,37 @@ if [ "${CLAUDE_RULE_SCOPING_CHECK:-1}" != "0" ]; then
   if [ -x "$_rulescope_script" ]; then
     mkdir -p "$(dirname "$_rulescope_cache")"
     nohup bash -c "timeout 5 '$_rulescope_script' 2>/dev/null > '$_rulescope_cache' || true" > /dev/null 2>&1 &
+  fi
+fi
+
+# ── Phase 15f: Credential hygiene — BACKGROUND (llm#1032) ────────────────────
+# Two things that were silent for two weeks: a credential embedded in a git
+# remote URL, and an auth env var that is SET but REJECTED.
+#
+# The second is the one that cost real time. A revoked GH_TOKEN in the
+# environment SHADOWS the working keyring credential — gh prefers the env var,
+# so every call 401s while `gh auth status` reports a healthy login. Downstream
+# that produced `merge-gate: PASS` on a PR nobody had looked at (llm#1012) and
+# `would-remove-squash=0` while ~5 GB of merged worktrees accumulated
+# (llm#1019). Neither consumer said anything, because neither could tell "the
+# answer is no" from "I could not ask".
+#
+# Cached-and-refreshed like the other 15x phases: the cached result prints
+# immediately, a fresh run repopulates it in the background. Surfaces findings
+# only — a clean run is silent. Exit 2 (could not reach the API) is NOT clean
+# and IS surfaced, because an unvalidated token is exactly the state this
+# phase exists to catch.
+# Skippable: CLAUDE_CREDENTIAL_HYGIENE_CHECK=0
+_credhyg_cache="${HOME}/.claude/logs/session_init_credhyg_cache.txt"
+if [ "${CLAUDE_CREDENTIAL_HYGIENE_CHECK:-1}" != "0" ]; then
+  if [ -f "$_credhyg_cache" ]; then
+    _credhyg_cached=$(cat "$_credhyg_cache" 2>/dev/null) || true
+    echo "$_credhyg_cached" | grep -qE 'FINDING|INDETERMINATE' && echo "$_credhyg_cached"
+  fi
+  _credhyg_script="${CLAUDE_DIR}/scripts/credential_hygiene_check.sh"
+  if [ -x "$_credhyg_script" ]; then
+    mkdir -p "$(dirname "$_credhyg_cache")"
+    nohup bash -c "timeout 30 '$_credhyg_script' --quiet 2>/dev/null | grep -E 'FINDING|INDETERMINATE|    ' > '$_credhyg_cache' || true" > /dev/null 2>&1 &
   fi
 fi
 
