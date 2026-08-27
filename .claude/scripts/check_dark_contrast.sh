@@ -28,6 +28,12 @@
 
 set -euo pipefail
 
+# grep portability: `grep` on PATH is ugrep, which ignores \b in -E and would
+# make the pattern below silently never match. See check_grep_portability.sh.
+GREP="${GREP:-/usr/bin/grep}"
+[ -x "$GREP" ] || GREP="grep"
+
+
 URL="${1:?Usage: $0 <url>}"
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
@@ -98,7 +104,7 @@ while IFS= read -r line; do
   # Check coverage: id-level rule OR attribute-selector rule for this hex
   protected=no
   if [ -n "$id" ]; then
-    if echo "$styles" | grep -qE "body\.dark-mode #${id}\b"; then
+    if echo "$styles" | "$GREP" -qE "body\.dark-mode #${id}\b"; then
       protected=yes
     fi
   fi

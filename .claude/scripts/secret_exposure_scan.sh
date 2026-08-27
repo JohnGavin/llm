@@ -17,6 +17,14 @@
 # ${x^^}, coproc). Re-check that before adding any bash-4+ construct.
 #
 # llm#1036.
+
+# --- grep portability (llm: ugrep-on-PATH) ---------------------------------
+# `grep` on this machine resolves to ugrep, which does NOT honour \b / \< / \>
+# word boundaries in -E mode. A pattern using them silently never matches — no
+# error, no exit code, just a check that always says "clean". Pin to the system
+# grep, which does support them. Override with GREP= if needed.
+GREP="${GREP:-/usr/bin/grep}"
+[ -x "$GREP" ] || GREP="grep"   # fail soft on non-macOS
 # secret-exposure-scan: pattern-definitions -- this file legitimately embeds
 # the credential-shaped regex/name literals it exists to detect. The
 # detector-2/4 self-reference exemption (see the rule doc's "Self-Reference
@@ -557,7 +565,7 @@ scan_source_patterns() {
         if printf '%s' "$rest" | grep -qE 'grep[^|]*-[a-zA-Z]*v[a-zA-Z]*'; then
             append_finding "1" "high" "$file" "$lnum" "denylist-capture" \
                 "export/env dump filtered by a DENYLIST (grep -v...) -- fails open; use an explicit ALLOWLIST (grep -E \"^declare -x (ALLOWED_VAR1|ALLOWED_VAR2)=\") instead"
-        elif printf '%s' "$rest" | grep -qE '\bgrep\b'; then
+        elif printf '%s' "$rest" | "$GREP" -qE '\bgrep\b'; then
             : # positive grep present with no -v flag -- treated as an allowlist, not a finding
         else
             append_finding "1" "high" "$file" "$lnum" "unfiltered-capture" \

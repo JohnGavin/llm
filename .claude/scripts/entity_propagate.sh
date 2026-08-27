@@ -2,7 +2,7 @@
 # entity_propagate.sh — minimal entity propagation (#137 Phase 3)
 #
 # Portability fixes (#181 Theme 2 — roborev id 848):
-#   - BSD grep /usr/bin/grep on macOS does NOT support \b word-boundary
+#   - `grep` on PATH here is ugrep, which does NOT support \b word-boundary
 #     assertions in ERE mode (-E). All word-boundary matches now use
 #     POSIX character-class anchors: (^|[^[:alnum:]_])PATTERN([^[:alnum:]_]|$)
 #
@@ -25,11 +25,11 @@ set -o pipefail  # no -e — single project lookup must not kill the pass
                   # no -u either — interacts badly with some snapshot/init scripts
 
 # Grep configuration.
-# BSD grep (/usr/bin/grep on macOS) does NOT support \b word-boundary
+# `grep` on PATH here is ugrep, which does NOT support \b word-boundary
 # assertions in ERE mode (-E). We use POSIX character-class anchors instead:
 #   (^|[^[:alnum:]_])PATTERN([^[:alnum:]_]|$)
 # This is portable across BSD grep, GNU grep, and toybox grep.
-# Do NOT use \b — it silently matches nothing on BSD grep with -E.
+# Do NOT use \b — it silently matches nothing under ugrep with -E.
 GREP="${GREP:-/usr/bin/grep}"
 SESSION_ID="${1:-${CLAUDE_CODE_SESSION_ID:-}}"
 KNOWLEDGE_ROOT="${KNOWLEDGE_ROOT:-$HOME/docs_gh/llm/knowledge}"
@@ -73,7 +73,7 @@ for project in "${PROJECTS[@]}"; do
   # Count occurrences in the JSONL — each line is a JSON event.
   # `grep -c` exits 1 with output "0" when nothing matches; coerce to int safely.
   #
-  # PORTABILITY: \b is NOT supported by BSD grep (macOS /usr/bin/grep) in ERE
+  # PORTABILITY: \b is NOT supported by ugrep (the `grep` on PATH) in ERE
   # mode. Use POSIX character-class boundary instead:
   #   (^|[^[:alnum:]_])  = start of string OR non-word char before match
   #   ([^[:alnum:]_]|$)  = non-word char after match OR end of string
