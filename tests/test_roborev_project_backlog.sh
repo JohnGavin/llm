@@ -321,6 +321,68 @@ ROBOREV_DB="${DB7}" bash "${BACKLOG_SCRIPT}" testgi \
 count7=$(grep -c '\.roborev/' "${REPO7}/.gitignore" 2>/dev/null || echo 0)
 assert_eq "test7: .gitignore idempotent (single .roborev/ entry)" "1" "${count7}"
 
+# ── Test 8: llm#1035 — not_reviewed rows are flagged, not scored as unknown ──
+# Mirrors the fixtures in tests/testthat/test-roborev-daily-email.R so the
+# two consumers of the shared classifier (.claude/scripts/lib/roborev_classify.py
+# and send_roborev_email.R) are proven to agree on the same live-observed text.
+DB8="${TMPDIR_ROOT}/db8.sqlite"
+REPO8="${TMPDIR_ROOT}/repo8"
+mkdir -p "${REPO8}"
+make_roborev_db "${DB8}"
+make_git_repo "${REPO8}"
+
+insert_finding "${DB8}" "testclassify" \
+    "I am unable to read the diff file because it is ignored by configured ignore patterns." 1 0
+
+out8=$(ROBOREV_DB="${DB8}" bash "${BACKLOG_SCRIPT}" testclassify \
+    --repo-root "${REPO8}" --dry-run 2>&1)
+exit8=$?
+
+assert_eq "test8: exit 0" "0" "${exit8}"
+assert_contains "test8: not_reviewed sev label appears" "not_reviewed" "${out8}"
+assert_contains "test8: agent-health category appears" "agent-health" "${out8}"
+assert_contains "test8: still counted in open findings (1 open)" "1 open findings" "${out8}"
+
+# ── Test 9: llm#1035 — passed rows (ran, found nothing) excluded from count ──
+DB9="${TMPDIR_ROOT}/db9.sqlite"
+REPO9="${TMPDIR_ROOT}/repo9"
+mkdir -p "${REPO9}"
+make_roborev_db "${DB9}"
+make_git_repo "${REPO9}"
+
+insert_finding "${DB9}" "testpassed" "SEVERITY_THRESHOLD_MET" 1 0
+
+out9=$(ROBOREV_DB="${DB9}" bash "${BACKLOG_SCRIPT}" testpassed \
+    --repo-root "${REPO9}" --dry-run 2>&1)
+exit9=$?
+
+assert_eq "test9: exit 0" "0" "${exit9}"
+assert_contains "test9: 0 open findings (passed row excluded)" "0 open findings" "${out9}"
+assert_contains "test9: excluded count surfaced" "excluded" "${out9}"
+
+# ── Test 10: llm#1035 — mixed population: real finding + not_reviewed + passed ──
+DB10="${TMPDIR_ROOT}/db10.sqlite"
+REPO10="${TMPDIR_ROOT}/repo10"
+mkdir -p "${REPO10}"
+make_roborev_db "${DB10}"
+make_git_repo "${REPO10}"
+
+insert_finding "${DB10}" "testmixed" \
+    "**Severity**: Critical\nA real sql injection finding." 5 0
+insert_finding "${DB10}" "testmixed" \
+    "No review output generated" 1 0
+insert_finding "${DB10}" "testmixed" "SEVERITY_THRESHOLD_MET" 1 0
+
+out10=$(ROBOREV_DB="${DB10}" bash "${BACKLOG_SCRIPT}" testmixed \
+    --repo-root "${REPO10}" --dry-run 2>&1)
+exit10=$?
+
+assert_eq "test10: exit 0" "0" "${exit10}"
+# 2 open (critical + not_reviewed), 1 passed excluded
+assert_contains "test10: 2 open findings" "2 open findings" "${out10}"
+assert_contains "test10: critical finding present" "critical" "${out10}"
+assert_contains "test10: not_reviewed finding present" "not_reviewed" "${out10}"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: ${PASS} PASS, ${FAIL} FAIL"

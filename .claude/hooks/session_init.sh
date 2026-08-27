@@ -1481,10 +1481,15 @@ fi
 _rbb_db="${HOME}/.roborev/reviews.db"
 _rbb_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
 _rbb_name=$(basename "${_rbb_root:-unknown}")
+# llm#1035: shared classifier lives beside this hook at ../scripts/lib —
+# resolved here (where BASH_SOURCE still points at session_init.sh) and
+# passed positionally, since the heredoc below runs as a separate `bash -s`
+# process reading from stdin, where BASH_SOURCE would not resolve.
+_rbb_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib" 2>/dev/null && pwd) || _rbb_lib_dir=""
 mkdir -p "$(dirname "$_rbb_cache")"
-nohup bash -s "$_rbb_db" "$_rbb_name" "$_rbb_cache" > /dev/null 2>&1 <<'RBBEOF' &
+nohup bash -s "$_rbb_db" "$_rbb_name" "$_rbb_cache" "$_rbb_lib_dir" > /dev/null 2>&1 <<'RBBEOF' &
 #!/usr/bin/env bash
-_rb_db="$1"; _rb_name="$2"; _rb_cache="$3"
+_rb_db="$1"; _rb_name="$2"; _rb_cache="$3"; _rb_lib_dir="$4"
 [ -f "$_rb_db" ] || exit 0
 [ -x /usr/bin/python3 ] || exit 0
 _rb_backlog_file=$(dirname "$_rb_db")/../.roborev/backlog.md 2>/dev/null || true
@@ -1500,9 +1505,23 @@ if [ -n "$_rb_backlog" ] && [ -f "$_rb_backlog" ]; then
     _rb_top_cat=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
   fi
 fi
-_rb_out=$(/usr/bin/python3 - "$_rb_db" "$_rb_name" <<'PYEOF'
+_rb_out=$(/usr/bin/python3 - "$_rb_db" "$_rb_name" "$_rb_lib_dir" <<'PYEOF'
 import sys, sqlite3
+
 db_path = sys.argv[1]; repo_name = sys.argv[2]
+lib_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+
+# llm#1035: a review classified "passed" (ran, found nothing) is excluded
+# from the open count -- it is not a backlog item. Fail-open: if the shared
+# module can't be imported, every open row counts as before (pre-llm#1035).
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import classify_review
+except Exception:
+    def classify_review(text):
+        return "parsed"
+
 try:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
@@ -1512,17 +1531,21 @@ repo_row = con.execute("SELECT id FROM repos WHERE name = ? ORDER BY id DESC LIM
 if repo_row is None: sys.exit(0)
 repo_id = repo_row["id"]
 try:
-    stats = con.execute("""
-        SELECT SUM(CASE WHEN rv.closed = 0 THEN 1 ELSE 0 END) AS open_count,
-               COUNT(*) AS total_count, SUM(rv.closed) AS closed_count
+    rows = con.execute("""
+        SELECT rv.output AS output, rv.closed AS closed
         FROM reviews rv JOIN review_jobs rj ON rj.id = rv.job_id
         WHERE rj.repo_id = ? AND rj.status = 'done'
-    """, (repo_id,)).fetchone()
+    """, (repo_id,)).fetchall()
 except Exception:
     sys.exit(0)
 con.close()
-open_count = stats["open_count"] or 0; total_count = stats["total_count"] or 0
-closed_count = stats["closed_count"] or 0
+
+total_count = len(rows)
+closed_count = sum(1 for r in rows if r["closed"])
+open_count = sum(
+    1 for r in rows
+    if not r["closed"] and classify_review(r["output"]) != "passed"
+)
 addressed_pct = round(100.0 * closed_count / total_count) if total_count > 0 else 0
 print(f"OPEN:{open_count}")
 print(f"ADDRESSED:{addressed_pct}")

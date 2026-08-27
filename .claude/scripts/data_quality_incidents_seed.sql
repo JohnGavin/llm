@@ -124,3 +124,71 @@ VALUES (
   'llm#913 / llm#915',
   TIMESTAMP '2026-08-05 00:00:00'
 );
+
+-- ---------------------------------------------------------------------------
+-- Incident: llm#1035 / kenn-io/roborev#1104 -- reviews.verdict_bool conflates
+-- "review ran, found nothing" with "review never ran" (agent-health failure)
+-- ---------------------------------------------------------------------------
+-- ~/.roborev/reviews.db is written by a third-party closed-source binary
+-- (kenn-io/roborev) we cannot patch, so this incident records the DEFECT
+-- against our own asset inventory rather than against reviews.db's own
+-- (nonexistent) schema-change log. `verdict_bool = 0` is set both when a
+-- review agent completed and explicitly found nothing, AND when the agent
+-- crashed, refused, or could not read its own snapshot diff (roborev writes
+-- it to `<repo>/.roborev/`, which is gitignored in the repo under review --
+-- the global `gemini` review agent refuses to read a gitignored path;
+-- `claude-code` reads it fine). Every consumer that read verdict_bool/closed
+-- alone -- the daily digest before llm#972/llm#1035, and
+-- roborev_project_backlog.sh before this fix -- silently treated a
+-- never-ran review identically to a genuine clean pass.
+--
+-- window_start -- derived, not guessed: the earliest occurrence across
+-- ALL reviews (any repo, any closed/verdict state) of any of the seven
+-- not-reviewed text signatures classify_unparseable_finding() /
+-- .claude/scripts/lib/roborev_classify.py match on. Derived via:
+--
+--   sqlite3 -readonly ~/.roborev/reviews.db \
+--     "SELECT min(created_at) FROM reviews WHERE \
+--      lower(output) LIKE '%unable to read the diff%' OR \
+--      lower(output) LIKE '%unable to access%' OR \
+--      lower(output) LIKE '%cannot perform the requested code review%' OR \
+--      lower(output) LIKE '%unable to perform the code review%' OR \
+--      lower(output) LIKE '%diff file could not be read%' OR \
+--      lower(output) LIKE '%no review output generated%' OR \
+--      lower(output) LIKE '%ignored by configured ignore patterns%';"
+--   -- 2026-07-06 09:15:16
+--
+-- This is a SQL-substring proxy for the R/Python classifiers' pattern list
+-- (case-insensitive LIKE, no whitespace-normalisation), not a re-run of the
+-- classifier itself against every historical row -- adequate for a boundary
+-- estimate, not asserted as an exact row count.
+--
+-- window_end -- the date the root-cause fix (pinning `agent = 'claude-code'`
+-- per-repo instead of inheriting the global `gemini` default for review
+-- jobs) landed for the two majority-affected repos: llmtelemetry (PR #356,
+-- commit 42ce3d201, merged 2026-08-27) and historical (matching
+-- .roborev.toml change, same date). These two repos accounted for 22 of 27
+-- open not-reviewed rows at the time of this incident record.
+--
+-- NOT fully closed: `richard` and `coMMpass` still inherit the global
+-- `gemini` default for review jobs (no per-repo agent pin) and remain
+-- exposed to the same failure going forward -- see llm#1035 follow-up.
+-- `premortem` already pins `agent = 'claude-code'`; its one historical
+-- not-reviewed row predates that pin. Also NOT closed by this window: the
+-- underlying schema ambiguity itself (verdict_bool=0 meaning two different
+-- things) is a property of the third-party DB and persists for ANY future
+-- not-reviewed row from ANY cause, on ANY repo -- the shared classifier in
+-- .claude/scripts/lib/roborev_classify.py + send_roborev_email.R is the
+-- mitigation, not a schema fix.
+INSERT OR IGNORE INTO data_quality_incidents
+  (id, asset, column_name, window_start, window_end, reason, issue_ref, recorded_at)
+VALUES (
+  'llm1035-roborev_reviews-verdict_bool-20260706',
+  'roborev.reviews',
+  'verdict_bool',
+  TIMESTAMP '2026-07-06 09:15:16',
+  TIMESTAMP '2026-08-27 00:00:00',
+  'verdict_bool = 0 conflates "review ran, found nothing" with "review never ran" (agent crashed / refused / could not read its own gitignored snapshot diff). Any consumer reading verdict_bool/closed alone without classify_unparseable_finding()-equivalent logic silently treats a never-ran review as either a real finding or a clean pass. Root-cause agent-routing fix (pin agent=claude-code per-repo) landed 2026-08-27 for llmtelemetry and historical (majority of affected volume); richard and coMMpass remain exposed (no per-repo pin, inherit global gemini default for review jobs); the schema-level ambiguity itself is NOT fixed and applies to any future row on any repo -- mitigated, not eliminated, by the shared classifier in .claude/scripts/lib/roborev_classify.py (Python) and send_roborev_email.R (R).',
+  'llm#1035 / kenn-io/roborev#1104',
+  TIMESTAMP '2026-08-27 00:00:00'
+);
