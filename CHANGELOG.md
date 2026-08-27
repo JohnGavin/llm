@@ -4,6 +4,54 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-26/27 — six checks that reported success about something they had not established, and a fix scoped from a 12-hour sample
+
+Continuation of the 2026-08-24/25 session. Started by fixing four filed issues,
+ended having caused and then fixed a regression of the same family, plus a
+credential finding surfaced by running a fix rather than reading it.
+
+### Completed
+
+**[#1012](https://github.com/JohnGavin/llm/issues/1012) merge gate** — `GH` hardcoded to a path that does not exist here; the failure swallowed into an empty commit list that took the fail-open branch and printed `PASS`. The gate had never queried `reviews.db`. New exit 3 (INDETERMINATE) separates every "could not ask" outcome from a verdict; `reviews.db absent` also used to print PASS. Tests 9–14 assert exit 3 **and** that the output does not contain "PASS" — the bug was legible on screen long before `$?`.
+
+**[#1017](https://github.com/JohnGavin/llm/issues/1017) hook liveness** — reported 21 hooks "never fired" including `session_init` on a day it ran. It measured whether a hook calls the emitter. Now classified `instrumented` × `cadence`, both read from each hook's own `# hook-liveness:` marker. Headline went `27 registered · 21 silent` → `30 registered · 11 instrumented · 0 silent · 19 unobservable`.
+
+**[#1018](https://github.com/JohnGavin/llm/issues/1018) secret_leak_guard** — recommended a remedy `compound_command_guard` rejects; justified itself with a false claim about `${VAR:+…}`; matched `PAT` as a bare substring so `$PATH`, `$wt_path`, `$pattern` all tripped it. It blocked the edit fixing it, then the comment explaining that, then its own test cases.
+
+**[#1019](https://github.com/JohnGavin/llm/issues/1019) worktree GC** — read a `gh` 401 as "no merged PR", retaining every squash-merged worktree. Now returns 2 for "could not ask", with a preflight, per-branch reasons and `squash-detect-failures=N` on the summary.
+
+**[#1030](https://github.com/JohnGavin/llm/issues/1030)** — `check_indeterminate_handling.sh` reported `findings=0` on the very file #1012 was filed about: the swallow and the emptiness test were one function call apart. Pattern 3 added. **[#1031](https://github.com/JohnGavin/llm/issues/1031)** — rule 6 flagged `worktree-agent-<hex>` branch names. **[#1032](https://github.com/JohnGavin/llm/issues/1032)** — `credential_hygiene_check.sh`: credentials in git remotes, and auth env vars that are set-but-rejected.
+
+**[llmtelemetry#354](https://github.com/JohnGavin/llmtelemetry/pull/354)** — Daily LLM Report had failed three mornings. The `__DASHBOARD_URL__` substitution sat inside the stale-banner branch, so the link resolved only on days the data happened to be stale. Cause confirmed by ancestry, not adjacent dates.
+
+**Ledger reconciled** ([#1039](https://github.com/JohnGavin/llm/pull/1039)) — six items marked pending had shipped. A ledger reporting work pending after it shipped misleads as much as one reporting it done before.
+
+### Failed Approaches
+
+**A fix scoped from a 12-hour sample.** [#1034](https://github.com/JohnGavin/llm/pull/1034) diagnosed the daily TCC prompt correctly — Homebrew bash is ad-hoc signed, so its grant stores an empty `csreq` and can never bind — and found **six** launchd scripts routing through it. One was fixed; the other five were demoted to "context" with this written into the code: *"exactly one of six touches a TCC-protected resource"*. That was an inference from a single sample stated as knowledge. Next day a `KeepAlive` daemon running one of the five produced 11 prompts. Fixed properly in [#1036](https://github.com/JohnGavin/llm/pull/1036); new memory `feedback_fix-every-instance-or-justify-the-exclusion`.
+
+**Blaming a change on a same-day timing correlation.** The prompt surge was first attributed to a credential-hygiene sweep added that morning — it landed 10:04, the first new prompt was 23:24. Running its exact `find` produced **zero** TCC requests. Coincidence. Testing it is the only reason the second fix landed on the right thing.
+
+**Three subshell state losses.** The indeterminate reason came back blank in #1012 and again in #1019 — set inside `x=$(fn)`, discarded on subshell exit — and a third time in the TCC checker's own selftest. Caught each time by running, never by reading.
+
+**A selftest with the defect it tests for.** Two #1030 cases were added below `rm -rf "$tmp"`; their fixtures were never written, `scan_file` found nothing, and "no findings" is that suite's PASS condition. They passed against files that did not exist.
+
+**Two wrong claims corrected mid-session.** Called the embedded GitHub token "live" — it returns 401 and is the same value as the poisoned `GH_TOKEN`. And used `launchctl getenv` as a presence test; it exits 0 either way.
+
+### Accuracy / Metrics
+
+- merge gate 19 PASS · worktree_gc 49 PASS · secret_leak_guard 70/70 · compound guard 24 · hook-liveness 25 · credential hygiene 8 · TCC durability 9 · indeterminate checker 9
+- Every new assertion mutation-checked; the indeterminate gate verified **blocking** live, probe self-cleaned
+- TCC prompts: 11 in 24h → **0** since the daemon restart; 6 launchd scripts pinned to `/bin/bash`, 0 remaining on `env` shebangs
+- Credentialed git remotes: 1 → 0 across 208 repos
+
+### Known Limitations
+
+- **A live GitHub token was written to `worktree_gc.log`** while verifying #1019 — one repo's `remote.origin.url` embedded one. Removed, and the code now redacts. The token was already revoked by GitHub on 2026-08-11; not regenerated, deliberately, since `gh` works from the keyring.
+- `GH_TOKEN` survives in already-running processes only; no edit can reach them.
+- [#1035](https://github.com/JohnGavin/llm/issues/1035) — 24 of 42 "unparseable severity" rows are failed reviews filed under a "not a backlog" heading. [#1037](https://github.com/JohnGavin/llm/issues/1037) — the overnight self-review inspects session telemetry only, never config, and cannot distinguish clean from unexamined.
+- Ledger items 3 and 5 remain genuinely open. `dittodb` / `mutator` / mirai-async review still not started.
+
 ## 2026-08-24/25 — a revoked token, a deleted secret, and the discovery that naming a defect does not prevent it
 
 Started from "why does a demo project have CI jobs?" and ended with a ledger of
