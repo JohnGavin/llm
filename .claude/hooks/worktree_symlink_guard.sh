@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its BLOCK path, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # worktree_symlink_guard.sh — PreToolUse:Edit|Write realpath boundary check
 # Hook: PreToolUse (Edit, Write)
 # Exit 2 = BLOCK (realpath escapes worktree sandbox). Exit 0 = ALLOW.
@@ -18,6 +25,20 @@
 # Sources: llm#692 (implementation), llm#517 (Pattern 2), agent-identity-and-task-scopes rule
 
 set -euo pipefail
+
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path (worktree-vs-symlink rationale, see
+# secret_leak_guard.sh). Pure parameter expansion — no subshell — costs
+# nothing on the (common) allow path.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" worktree_symlink_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -63,6 +84,9 @@ _resolve_realpath() {
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   PASS=0; FAIL=0; TOTAL=5
   HOOK_PATH="$0"
+  # llm#950: case 1 spawns a subprocess that reaches the real block path
+  # (exit 2), which now emits. Redirect to a throwaway spool for this run.
+  _SELFTEST_SPOOL=$(mktemp /tmp/worktree_symlink_guard_selftest_spool_XXXXXX)
 
   # Run hook in a subprocess with synthetic JSON input.
   # Returns "block" (exit 2) or "allow" (exit 0).
@@ -73,7 +97,7 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
     tmpjson=$(mktemp /tmp/wsg_selftest_XXXXXX.json)
     printf '{"tool_name": "Edit", "tool_input": {"file_path": "%s"}}' "$file_path" > "$tmpjson"
     rc=0
-    env CLAUDE_HOOK_SELFTEST=0 $extra_env bash "$HOOK_PATH" < "$tmpjson" >/dev/null 2>&1 || rc=$?
+    env CLAUDE_HOOK_SELFTEST=0 HOOK_EVENTS_SPOOL="$_SELFTEST_SPOOL" $extra_env bash "$HOOK_PATH" < "$tmpjson" >/dev/null 2>&1 || rc=$?
     rm -f "$tmpjson"
     [ "$rc" = "2" ] && echo "block" || echo "allow"
   }
@@ -127,6 +151,7 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   else _fail "non-git path — expected allow (fail-open), got $r"; fi
 
   printf '\nworktree_symlink_guard selftest: %d/%d PASS\n' "$PASS" "$TOTAL"
+  rm -f "$_SELFTEST_SPOOL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
 fi
 
@@ -179,6 +204,7 @@ case "$REAL_PATH" in
       echo ""
       echo "  See: agent-identity-and-task-scopes rule, llm#692, llm#517."
     } >&2
+    _emit_hook_event "PreToolUse:blocked" "worktree escape: $FILE_PATH -> $REAL_PATH"
     exit 2
     ;;
 esac

@@ -201,6 +201,42 @@ roborev_status <- function() {
   }, error = function(e) "roborev not available")
 }
 
+# Repository-coverage counts, read from roborev's own SQLite DB (llm#923).
+#
+# `roborev repo list` has no --json flag and no created_at, so the counts below
+# come straight from the DB. sqlite3 ships with macOS; if it or the DB is
+# missing every field returns NA and the UI renders "n/a" rather than a
+# misleading 0 (see zero-metric-evidence-or-defect rule).
+#
+# `deleted` is deliberately absent: `repos` has no tombstone, so a removed repo
+# leaves no trace and a decrease is NOT observable. `active_7d` is the honest
+# substitute -- repos that actually saw a review in the window.
+roborev_repo_stats <- function() {
+  na_result <- list(total = NA_integer_, new_7d = NA_integer_,
+                    active_7d = NA_integer_, ephemeral = NA_integer_)
+  db <- Sys.getenv("ROBOREV_DB", unset = path.expand("~/.roborev/reviews.db"))
+  if (!file.exists(db) || !nzchar(Sys.which("sqlite3"))) return(na_result)
+
+  sql <- paste(
+    "SELECT (SELECT count(*) FROM repos),",
+    "(SELECT count(*) FROM repos WHERE created_at >= date('now','-7 days')),",
+    "(SELECT count(DISTINCT repo_id) FROM review_jobs",
+    " WHERE enqueued_at >= date('now','-7 days')),",
+    "(SELECT count(*) FROM repos WHERE root_path LIKE '/tmp/%'",
+    " OR root_path LIKE '/private/tmp/%' OR root_path LIKE '/var/folders/%'",
+    " OR root_path LIKE '/private/var/folders/%');"
+  )
+  tryCatch({
+    raw <- system2("sqlite3", c("-readonly", shQuote(db), shQuote(sql)),
+                   stdout = TRUE, stderr = FALSE)
+    if (length(raw) == 0L || !nzchar(raw[1])) return(na_result)
+    parts <- as.integer(strsplit(raw[1], "|", fixed = TRUE)[[1]])
+    if (length(parts) != 4L || anyNA(parts)) return(na_result)
+    list(total = parts[1], new_7d = parts[2],
+         active_7d = parts[3], ephemeral = parts[4])
+  }, error = function(e) na_result)
+}
+
 # ---- UI ---------------------------------------------------------------------
 
 ui <- bslib::page_sidebar(
@@ -337,6 +373,7 @@ ui <- bslib::page_sidebar(
         shiny::column(
           12,
           shiny::h6("Daily session time by project (last 10 days)", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("duration_quality_note"),
           plotly::plotlyOutput("daily_time_project", height = "280px")
         )
       ),
@@ -357,7 +394,15 @@ ui <- bslib::page_sidebar(
       shiny::fluidRow(
         shiny::column(
           12,
-          shiny::h6("roborev status", style = "color:#aaa; margin-top:8px;"),
+          shiny::h6("Repository coverage", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("roborev_repo_metrics_ui")
+        )
+      ),
+
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::h6("roborev status", style = "color:#aaa; margin-top:16px;"),
           shiny::uiOutput("roborev_status_ui")
         )
       ),
@@ -819,6 +864,18 @@ server <- function(input, output, session) {
   # ---- Time tab ------------------------------------------------------------
 
   # Daily session time by project (last 10 days)
+  #
+  # llm#913/#915: session_stop.sh's DB stop-write silently never fired from
+  # 2026-07-24 to 2026-08-04 (a /bye sentinel was consumed earlier in the
+  # Stop hook chain). session_reaper.sql backfilled the affected `sessions`
+  # rows with a synthetic duration_min = 120.0 and tagged `summary` with the
+  # marker below so the estimate is never mistaken for an observed duration.
+  # Excluded here (not just labeled) because a 120.0-minute constant summed
+  # into "total minutes" would silently inflate the real total. See the
+  # `data_quality_incidents` table (unified-observability-schema rule) for
+  # the durable incident record; the marker check is used directly here
+  # (rather than joining that table) so this chart still works even before
+  # the incidents-table migration has been applied to a given DB.
   daily_time_proj_data <- shiny::reactive({
     shiny::invalidateLater(30000, session)
     input$refresh
@@ -830,6 +887,7 @@ server <- function(input, output, session) {
         "ROUND(SUM(COALESCE(duration_min, 0)), 1) AS total_min ",
         "FROM sessions ",
         "WHERE CAST(started_at AS DATE) >= '", cutoff, "'",
+        " AND (summary IS NULL OR summary NOT LIKE '%llm#803 reaper%')",
         project_clause(),
         " GROUP BY date, project ORDER BY date DESC"
       ),
@@ -837,6 +895,37 @@ server <- function(input, output, session) {
         date      = as.Date(character(0)),
         project   = character(0),
         total_min = numeric(0)
+      )
+    )
+  })
+
+  # Count of sessions excluded from daily_time_proj_data above because their
+  # duration is llm#803-reaper-imputed rather than observed (llm#913/#915).
+  duration_excluded_data <- shiny::reactive({
+    shiny::invalidateLater(30000, session)
+    input$refresh
+    cutoff <- as.character(Sys.Date() - 10)
+    query_db(
+      paste0(
+        "SELECT count(*) AS n_excluded FROM sessions ",
+        "WHERE CAST(started_at AS DATE) >= '", cutoff, "'",
+        " AND summary LIKE '%llm#803 reaper%'",
+        project_clause()
+      ),
+      data.frame(n_excluded = 0L)
+    )
+  })
+
+  output$duration_quality_note <- shiny::renderUI({
+    n <- duration_excluded_data()$n_excluded[1]
+    if (is.na(n) || n == 0) {
+      return(NULL)
+    }
+    shiny::div(
+      style = "color:#f39c12; font-size:0.78rem; margin:2px 0 6px 0;",
+      paste0(
+        "⚠ ", n, " session(s) in this window excluded from the total ",
+        "-- duration is an estimate, session-end event not observed (llm#913)."
       )
     )
   })
@@ -876,10 +965,28 @@ server <- function(input, output, session) {
 
   output$recent_sessions_tbl <- DT::renderDataTable({
     df <- recent_sessions_data()
-    if (nrow(df) == 0) df <- data.frame(message = "No sessions found")
+    tbl_caption <- "Recent sessions"
+    if (nrow(df) == 0) {
+      df <- data.frame(message = "No sessions found")
+    } else {
+      # llm#913/#915: mark llm#803-reaper-imputed durations so an estimate
+      # (session-end event not observed) is never read as an observed one.
+      is_estimated <- grepl("llm#803 reaper", df$summary, fixed = TRUE)
+      df$duration_min <- ifelse(
+        is_estimated,
+        paste0(df$duration_min, "*"),
+        as.character(df$duration_min)
+      )
+      if (any(is_estimated)) {
+        tbl_caption <- paste0(
+          tbl_caption,
+          " (* = estimated duration, session-end event not observed -- see llm#913)"
+        )
+      }
+    }
     DT::datatable(
       df,
-      caption   = "Recent sessions",
+      caption   = tbl_caption,
       rownames  = FALSE,
       options   = list(
         pageLength = 10, dom = "t", scrollX = TRUE,
@@ -926,6 +1033,43 @@ server <- function(input, output, session) {
         "max-height:140px; overflow-y:auto;"
       ),
       txt
+    )
+  })
+
+  output$roborev_repo_metrics_ui <- shiny::renderUI({
+    roborev_refresh()
+    s <- roborev_repo_stats()
+    fmt <- function(x) if (is.na(x)) "n/a" else as.character(x)
+
+    metrics <- data.frame(
+      metric = c("Repositories tracked", "New (7d)", "Active (7d)"),
+      value  = c(fmt(s$total), fmt(s$new_7d), fmt(s$active_7d)),
+      stringsAsFactors = FALSE
+    )
+    # Ephemeral repos are the llm#923 phantom class: throwaway temp-dir repos
+    # that inherited the global core.hooksPath. Steady state is 0; anything
+    # above that means the guard has regressed, so surface it only when non-zero.
+    if (!is.na(s$ephemeral) && s$ephemeral > 0L) {
+      metrics <- rbind(metrics, data.frame(
+        metric = "Ephemeral (should be 0)",
+        value  = as.character(s$ephemeral),
+        stringsAsFactors = FALSE
+      ))
+    }
+    value_colors <- c(
+      "#ffffff", "#ffffff", "#ffffff",
+      if (!is.na(s$ephemeral) && s$ephemeral > 0L) "#f08080"
+    )
+    shiny::tagList(
+      metric_table_ui(metrics, value_colors),
+      shiny::p(
+        style = "color:#aaa; margin-top:6px;",
+        paste(
+          "Repository deletions are not observable -- `repos` keeps no",
+          "tombstone -- so only increases are reported. \"Active\" counts",
+          "repos with a review enqueued in the window."
+        )
+      )
     )
   })
 

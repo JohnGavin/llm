@@ -97,6 +97,11 @@ _esc() { printf '%s' "$1" | sed "s/'/''/g"; }
 ROWS_WRITTEN=0
 WARN_COUNT=0
 FAIL_COUNT=0
+# etl_freshness sources deliberately excluded (event-driven) vs. accidentally
+# excluded (nobody has derived a cadence). Counted separately so the two can
+# never be read as the same thing — see _etl_event_driven() below.
+ETL_EVENT_DRIVEN=0
+ETL_UNKNOWN_CADENCE=0
 
 # ─── Cadence overrides for etl_freshness sources with NULL cadence ──────────
 # (llm#893 defect 2: NULL degraded to status='unknown', which read as benign
@@ -118,14 +123,69 @@ FAIL_COUNT=0
 #                  repo's read scope — no in-repo history to derive a cadence
 #                  from. Documented default: 24h, matching its sibling
 #                  cron-fed sources (roborev, burn_rate) in the same table.
+#   config_staleness  (added llm#928 defect 2) refreshed only as a side
+#                  effect of /bye (session_stop.sh -> export_and_deploy_data.sh
+#                  -> skill_usage_etl.R --apply), not on a launchd schedule —
+#                  so its real cadence is the observed gap BETWEEN /bye
+#                  events, not a fixed clock. Derived 2026-08-17 from
+#                  command_usage (WITH b AS (SELECT ts FROM command_usage
+#                  WHERE command_name='bye' ORDER BY ts), g AS (SELECT
+#                  date_diff('hour', LAG(ts) OVER (ORDER BY ts), ts) AS
+#                  gap_hours FROM b) SELECT ...): n=60 bye events
+#                  2026-06-07..2026-08-10, median gap 5h, p90 94.2h, p95
+#                  118.9h, max 234h. The 234h/165h/127h outlier gaps were
+#                  checked against their timestamps and all fall in
+#                  late-June/mid-July — genuine multi-day gaps between work
+#                  sessions on this repo, predating the current dead-feed
+#                  incident, not artifacts of it. 120h (5d) rounds the p95 up
+#                  — comfortably inside the range of gaps this repo's owner
+#                  has produced before without anything being wrong, while
+#                  sitting well below the two rarer >150h gaps.
+#                  KNOWN CONSEQUENCE: as of 2026-08-17 this source reads
+#                  'stale' under this cadence — last_row_ts is 2026-08-08
+#                  (~9d ago, ~216h > 120h). That is correct: llm#829
+#                  documents that config_staleness's refresh has no reliable
+#                  hook-firing feed (a /bye fired 2026-08-10 without a
+#                  matching etl_freshness update), so it IS a dead producer
+#                  right now. 120h was chosen from the gap data, not
+#                  inflated to suppress this — a larger number would have
+#                  hidden a real defect.
+# ─── _etl_event_driven: sources that have no cadence BY DESIGN ─────────────
+# An event-driven source emits rows when something happens, not on a schedule.
+# A long silence is the DESIRED state, so a staleness cadence would manufacture
+# a "dead producer" alert every calm week and train the reader to ignore it.
+#
+# This is deliberately a SEPARATE function from _etl_cadence_override(), not
+# another arm of its case statement. Both conditions previously fell through to
+# the same empty-string return, so "no cadence by design" and "nobody has
+# derived a cadence for this source yet" were indistinguishable — the exact
+# collapse `checks-must-distinguish-unknown` forbids. A new source added
+# tomorrow with a genuine coverage gap looked identical to `errors`.
+#
+#   errors  Measured 2026-08-27 over the full table: 87 rows spanning
+#           2026-04-20..2026-08-25, median inter-row gap 0.02h (rows arrive in
+#           bursts when something breaks), p95 171.6h, max 1147h (~48 days).
+#           There is no schedule to be late against. Query:
+#             WITH d AS (SELECT logged_at, lag(logged_at) OVER (ORDER BY
+#             logged_at) AS prev FROM errors), g AS (SELECT date_diff('minute',
+#             prev, logged_at)/60.0 AS gap_h FROM d WHERE prev IS NOT NULL)
+#             SELECT median(gap_h), quantile_cont(gap_h,0.95), max(gap_h) FROM g;
+_etl_event_driven() {
+  case "$1" in
+    errors) echo "yes" ;;
+    *)      echo "" ;;
+  esac
+}
+
 _etl_cadence_override() {
   case "$1" in
-    sessions)      echo "72" ;;
-    skill_usage)   echo "336" ;;
-    command_usage) echo "168" ;;
-    agent_runs)    echo "48" ;;
-    llmtelemetry)  echo "24" ;;
-    *)             echo "" ;;
+    sessions)          echo "72" ;;
+    skill_usage)       echo "336" ;;
+    command_usage)     echo "168" ;;
+    agent_runs)        echo "48" ;;
+    llmtelemetry)      echo "24" ;;
+    config_staleness)  echo "120" ;;
+    *)                 echo "" ;;
   esac
 }
 
@@ -158,8 +218,16 @@ collect_etl_sources() {
       _cadence="$(_etl_cadence_override "$_name")"
     fi
     if [ -z "$_cadence" ]; then
-      echo "staleness_collect: WARN no cadence for etl_source '${_name}' (not in override table) — skipping" >&2
-      WARN_COUNT=$((WARN_COUNT + 1))
+      if [ -n "$(_etl_event_driven "$_name")" ]; then
+        # Deliberate exclusion, not a gap. Informational, NOT a warning —
+        # counted so the digest can state the denominator it actually covered.
+        echo "staleness_collect: INFO etl_source '${_name}' is event-driven — no cadence by design, excluded from staleness" >&2
+        ETL_EVENT_DRIVEN=$((ETL_EVENT_DRIVEN + 1))
+      else
+        echo "staleness_collect: WARN no cadence for etl_source '${_name}' (not in override table, not event-driven) — skipping" >&2
+        WARN_COUNT=$((WARN_COUNT + 1))
+        ETL_UNKNOWN_CADENCE=$((ETL_UNKNOWN_CADENCE + 1))
+      fi
       continue
     fi
 
@@ -342,6 +410,182 @@ collect_launchd_jobs() {
   shopt -u nullglob
 }
 
+# ─── Content-fact detectors (llm#893 step 4 / section D) ────────────────────
+# Three concrete detectors, each mapped to a real incident that already
+# happened, so each is testable against something real rather than a
+# hypothetical. See staleness_schema.sql for the column semantics
+# (metric_value / metric_value_prior / metric_aux / metric_aux_prior /
+# metric_threshold_high) and the 2-deep retention rule (current + one prior
+# observation per asset — bounded, no history table).
+#
+# Section D is scoped to *scheduling and surfacing* content checks with the
+# existing cadence machinery, not to building a general content-regression
+# framework (that is llm#892's). These two functions are intentionally
+# narrow: one named log, one named DB, both already implicated in a real
+# incident (llm#886/#887 and llm#884 respectively).
+
+# Monitored asset for detectors 1+2. One row (asset_kind='log_growth') answers
+# both questions:
+#   1. "did it stop growing?" — the EXISTING time machinery from steps 1-2:
+#      last_seen_ts is set to the file's own mtime (proxy for "last time it
+#      produced new content"); staleness_status.status (fresh/stale) answers
+#      this with zero new columns. This is the llm#886 tell.
+#   2. "did it grow abnormally?" — the NEW magnitude machinery: metric_value
+#      (current size in bytes) vs metric_value_prior (previous observation)
+#      vs metric_threshold_high; staleness_status.content_status answers
+#      this. This is the llm#887 incident (74 MB).
+LOG_GROWTH_PATH="${HOME}/.claude/logs/roborev_poll_merges.log"
+LOG_GROWTH_ASSET_ID="roborev_poll_merges.log"
+# 72h, not 24h: the underlying job (com.claude.roborev-poll-merges) runs
+# weekdays only at 09:00/13:00/17:00 — a naive 24h cadence would misfire
+# 'stale' every Saturday/Sunday when nothing is scheduled to write. 72h
+# tolerates a full Fri-17:00-to-Mon-09:00 gap (64h) with margin, matching the
+# same weekend-tolerant reasoning already used for the 'sessions' etl
+# override above.
+LOG_GROWTH_CADENCE_HOURS=72
+# Ceiling for a 72h window's worth of growth, in bytes. Derived from the live
+# log's own per-run byte-size distribution, measured 2026-08-16 by splitting
+# the file on its "summary [applied]" lines (n=25 runs since the file was
+# last reset 2026-08-04): min=3,227 B, mean=44,694 B, max=171,919 B per run.
+# A 72h window spans at most 3 weekdays x 3 runs/day = 9 runs; even 9
+# consecutive worst-case (171,919 B) runs = 1,547,271 B. 2,000,000 B (2 MB)
+# rounds that up with ~30% margin — comfortably above any plausible run of
+# healthy runs, and ~37x below the actual llm#887 incident size (74 MB), so
+# it fires long before a recurrence reaches that scale.
+LOG_GROWTH_THRESHOLD_HIGH_BYTES=2000000
+
+collect_log_growth() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "staleness_collect: SKIP log_growth collection (not macOS — uses BSD stat/date)" >&2
+    return
+  fi
+  if [ ! -f "$LOG_GROWTH_PATH" ]; then
+    echo "staleness_collect: WARN log_growth target not found: ${LOG_GROWTH_PATH} — skipping" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+    return
+  fi
+
+  local size_bytes mtime_epoch mtime_iso
+  size_bytes="$(/usr/bin/stat -f '%z' "$LOG_GROWTH_PATH" 2>/dev/null || echo "")"
+  mtime_epoch="$(/usr/bin/stat -f '%m' "$LOG_GROWTH_PATH" 2>/dev/null || echo "")"
+  if [ -z "$size_bytes" ] || [ -z "$mtime_epoch" ]; then
+    echo "staleness_collect: WARN could not stat ${LOG_GROWTH_PATH} — skipping" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+    return
+  fi
+  mtime_iso="$(/bin/date -r "$mtime_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "")"
+  if [ -z "$mtime_iso" ]; then
+    echo "staleness_collect: WARN could not format mtime for ${LOG_GROWTH_PATH} — skipping" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+    return
+  fi
+
+  # 2-deep retention: read the current metric_value before it is overwritten
+  # — it becomes metric_value_prior in the upsert below (see
+  # staleness_schema.sql for the retention rule this implements).
+  local prior_value prior_sql="NULL"
+  prior_value="$(duck_run "$DB" -noheader -list -c "
+    SELECT metric_value FROM staleness
+    WHERE asset_kind = 'log_growth' AND asset_id = '$(_esc "$LOG_GROWTH_ASSET_ID")';
+  " 2>/dev/null)"
+  [ -n "$prior_value" ] && prior_sql="$prior_value"
+
+  if duck_run "$DB" -c "
+    INSERT OR REPLACE INTO staleness
+      (asset_kind, asset_id, project, last_seen_ts, expected_cadence_hours,
+       last_exit_code, observed_at, metric_value, metric_value_prior, metric_threshold_high)
+    VALUES (
+      'log_growth', '$(_esc "$LOG_GROWTH_ASSET_ID")', NULL,
+      TIMESTAMPTZ '$(_esc "$mtime_iso")', ${LOG_GROWTH_CADENCE_HOURS},
+      NULL, current_timestamp, ${size_bytes}, ${prior_sql}, ${LOG_GROWTH_THRESHOLD_HIGH_BYTES}
+    );
+  " >/dev/null 2>&1; then
+    ROWS_WRITTEN=$((ROWS_WRITTEN + 1))
+  else
+    echo "staleness_collect: WARN upsert failed for log_growth '${LOG_GROWTH_ASSET_ID}'" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+  fi
+}
+
+# Detector 3: "a DB grew without its row count growing" (llm#884: 7.1 GiB for
+# 61,635 rows). asset_kind='db_bloat' tracks this DB's own size (bytes,
+# metric_value) alongside its total row count (metric_aux); content_status
+# flags when bytes-per-row density exceeds metric_threshold_high.
+#
+# Ceiling derived from a live measurement taken 2026-08-16: this DB is
+# currently 1.4 GiB (block_size * used_blocks) holding 79,712 rows across 38
+# tables = ~18,858 B/row (post-compaction, healthy). The documented llm#884
+# incident measured 7.1 GiB / 61,635 rows = ~123,676 B/row. 3x today's
+# healthy density (~56,574 B/row, rounded to 60,000) sits well below the
+# incident value — it would fire long before the DB reached crisis scale —
+# with margin above today's baseline to tolerate normal day-to-day variation
+# without false-alarming.
+#
+# last_seen_ts is set to current_timestamp (this DB always "exists" the
+# moment the collector runs) and expected_cadence_hours=24 (matches the
+# collector's own daily schedule) — the interesting signal here is
+# content_status (density), not time-staleness of the DB file itself.
+DB_BLOAT_ASSET_ID="unified.duckdb"
+DB_BLOAT_CADENCE_HOURS=24
+DB_BLOAT_THRESHOLD_HIGH_BYTES_PER_ROW=60000
+
+collect_db_bloat() {
+  # Single query, explicit '|' concatenation (not relying on the CLI -list
+  # separator — same defensive pattern as collect_etl_sources above).
+  # duckdb_tables().estimated_size is an ESTIMATE, not an exact COUNT(*) —
+  # adequate for a density trend signal, not for exact accounting.
+  local facts
+  facts="$(duck_run "$DB" -noheader -list -c "
+    SELECT block_size::VARCHAR || '|' || used_blocks::VARCHAR || '|' ||
+           (SELECT COALESCE(SUM(estimated_size), 0) FROM duckdb_tables())::VARCHAR
+    FROM pragma_database_size();
+  " 2>/dev/null)"
+  if [ -z "$facts" ]; then
+    echo "staleness_collect: WARN could not measure db_bloat facts — skipping" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+    return
+  fi
+
+  local _block_size _used_blocks _rows
+  IFS='|' read -r _block_size _used_blocks _rows <<< "$facts"
+  if [ -z "$_block_size" ] || [ -z "$_used_blocks" ]; then
+    echo "staleness_collect: WARN incomplete db_bloat facts — skipping" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+    return
+  fi
+  [ -z "$_rows" ] && _rows=0
+  local _size_bytes=$((_block_size * _used_blocks))
+
+  # 2-deep retention: read both current facts before they are overwritten —
+  # they become metric_value_prior / metric_aux_prior in the upsert below.
+  local prior prior_size prior_rows prior_size_sql="NULL" prior_rows_sql="NULL"
+  prior="$(duck_run "$DB" -noheader -list -c "
+    SELECT COALESCE(metric_value::VARCHAR, '') || '|' || COALESCE(metric_aux::VARCHAR, '')
+    FROM staleness WHERE asset_kind = 'db_bloat' AND asset_id = '$(_esc "$DB_BLOAT_ASSET_ID")';
+  " 2>/dev/null)"
+  IFS='|' read -r prior_size prior_rows <<< "$prior"
+  [ -n "$prior_size" ] && prior_size_sql="$prior_size"
+  [ -n "$prior_rows" ] && prior_rows_sql="$prior_rows"
+
+  if duck_run "$DB" -c "
+    INSERT OR REPLACE INTO staleness
+      (asset_kind, asset_id, project, last_seen_ts, expected_cadence_hours,
+       last_exit_code, observed_at, metric_value, metric_value_prior,
+       metric_aux, metric_aux_prior, metric_threshold_high)
+    VALUES (
+      'db_bloat', '$(_esc "$DB_BLOAT_ASSET_ID")', NULL,
+      current_timestamp, ${DB_BLOAT_CADENCE_HOURS},
+      NULL, current_timestamp, ${_size_bytes}, ${prior_size_sql},
+      ${_rows}, ${prior_rows_sql}, ${DB_BLOAT_THRESHOLD_HIGH_BYTES_PER_ROW}
+    );
+  " >/dev/null 2>&1; then
+    ROWS_WRITTEN=$((ROWS_WRITTEN + 1))
+  else
+    echo "staleness_collect: WARN upsert failed for db_bloat '${DB_BLOAT_ASSET_ID}'" >&2
+    WARN_COUNT=$((WARN_COUNT + 1))
+  fi
+}
+
 # ─── collect_self_heartbeat: this script's own row ──────────────────────────
 # Cadence (24h) matches com.claude.staleness-collect's daily 08:15 schedule
 # (.claude/launchd/com.claude.staleness-collect.plist) — keep the two in sync
@@ -382,7 +626,16 @@ selftest() {
   _assert "override-command_usage" "$(_etl_cadence_override command_usage)" "168"
   _assert "override-agent_runs" "$(_etl_cadence_override agent_runs)" "48"
   _assert "override-llmtelemetry" "$(_etl_cadence_override llmtelemetry)" "24"
+  _assert "override-config_staleness" "$(_etl_cadence_override config_staleness)" "120"
   _assert "override-unknown-source-empty" "$(_etl_cadence_override some_new_source)" ""
+  # An event-driven source and an un-derived source BOTH return "" from
+  # _etl_cadence_override. That is precisely why the distinction cannot live
+  # there: these two assertions are identical, and the next two are what
+  # actually separate the cases.
+  _assert "override-event-driven-also-empty" "$(_etl_cadence_override errors)" ""
+  _assert "event-driven-errors"        "$(_etl_event_driven errors)" "yes"
+  _assert "event-driven-unknown-empty" "$(_etl_event_driven some_new_source)" ""
+  _assert "event-driven-scheduled-empty" "$(_etl_event_driven sessions)" ""
 
   if ! command -v duckdb >/dev/null 2>&1; then
     if ! (command -v nix-shell >/dev/null 2>&1 && [ -f "${NIX_DEFAULT}" ]); then
@@ -439,6 +692,133 @@ selftest() {
 
   rm -f "$fixture_db"
 
+  # ── llm#893 step 4 (section D) — content-fact detectors ──────────────────
+  # Separate fixture db from the etl fixture above, so a failure here is
+  # unambiguously attributed to the content-fact feature. Each detector is
+  # proven in BOTH directions: it fires on a synthetic case shaped like the
+  # real incident it names, and stays quiet on a healthy case — proving only
+  # the fire direction is worth little (a check that always fires "works" by
+  # that standard too).
+  local content_db="/tmp/staleness_collect_selftest_content_${pid}.duckdb"
+  rm -f "$content_db"
+  duck_run "$content_db" < "$SCHEMA_SQL" >/dev/null 2>&1
+
+  # Detector 1: "a log stopped growing" (llm#886 tell) — pure time check,
+  # reuses the EXISTING status machinery from steps 1-2 with
+  # asset_kind='log_growth' — zero new columns needed for this direction.
+  duck_run "$content_db" -c "
+    INSERT INTO staleness (asset_kind, asset_id, last_seen_ts, expected_cadence_hours, observed_at, metric_threshold_high)
+    VALUES
+      ('log_growth', 'stalled_case', current_timestamp - INTERVAL 100 HOUR, ${LOG_GROWTH_CADENCE_HOURS}, current_timestamp, ${LOG_GROWTH_THRESHOLD_HIGH_BYTES}),
+      ('log_growth', 'healthy_case', current_timestamp - INTERVAL 1 HOUR,   ${LOG_GROWTH_CADENCE_HOURS}, current_timestamp, ${LOG_GROWTH_THRESHOLD_HIGH_BYTES});
+  " >/dev/null 2>&1
+
+  local d1_stalled d1_healthy
+  d1_stalled="$(duck_run "$content_db" -noheader -list -c "SELECT status FROM staleness_status WHERE asset_id='stalled_case'" 2>/dev/null)"
+  _assert "detector1-stopped-growing-fires-past-72h-gap" "$d1_stalled" "stale"
+  d1_healthy="$(duck_run "$content_db" -noheader -list -c "SELECT status FROM staleness_status WHERE asset_id='healthy_case'" 2>/dev/null)"
+  _assert "detector1-quiet-within-72h-cadence" "$d1_healthy" "fresh"
+
+  # Detector 2: "a log grew abnormally" (llm#887: 74 MB poller log) —
+  # magnitude delta vs metric_threshold_high, on the SAME threshold value
+  # used in production (LOG_GROWTH_THRESHOLD_HIGH_BYTES = 2 MB).
+  duck_run "$content_db" -c "
+    INSERT INTO staleness (asset_kind, asset_id, last_seen_ts, expected_cadence_hours, observed_at, metric_value, metric_value_prior, metric_threshold_high)
+    VALUES
+      ('log_growth', 'spike_case',  current_timestamp, ${LOG_GROWTH_CADENCE_HOURS}, current_timestamp, 5000000, 1000000, ${LOG_GROWTH_THRESHOLD_HIGH_BYTES}),
+      ('log_growth', 'normal_case', current_timestamp, ${LOG_GROWTH_CADENCE_HOURS}, current_timestamp, 1050000, 1000000, ${LOG_GROWTH_THRESHOLD_HIGH_BYTES});
+  " >/dev/null 2>&1
+
+  local d2_spike d2_normal
+  d2_spike="$(duck_run "$content_db" -noheader -list -c "SELECT content_status FROM staleness_status WHERE asset_id='spike_case'" 2>/dev/null)"
+  _assert "detector2-abnormal-growth-fires-4MB-delta" "$d2_spike" "abnormal_growth"
+  d2_normal="$(duck_run "$content_db" -noheader -list -c "SELECT content_status FROM staleness_status WHERE asset_id='normal_case'" 2>/dev/null)"
+  _assert "detector2-quiet-50KB-delta" "$d2_normal" "normal"
+
+  # Detector 3: "a DB grew without its row count growing" (llm#884: 7.1 GiB
+  # for 61,635 rows = ~123,676 B/row) — density vs metric_threshold_high, on
+  # the SAME threshold value used in production
+  # (DB_BLOAT_THRESHOLD_HIGH_BYTES_PER_ROW = 60,000 B/row).
+  duck_run "$content_db" -c "
+    INSERT INTO staleness (asset_kind, asset_id, last_seen_ts, expected_cadence_hours, observed_at, metric_value, metric_aux, metric_threshold_high)
+    VALUES
+      ('db_bloat', 'db_bloated_case', current_timestamp, ${DB_BLOAT_CADENCE_HOURS}, current_timestamp, 700000000, 1000, ${DB_BLOAT_THRESHOLD_HIGH_BYTES_PER_ROW}),
+      ('db_bloat', 'db_healthy_case', current_timestamp, ${DB_BLOAT_CADENCE_HOURS}, current_timestamp, 20000000,  1000, ${DB_BLOAT_THRESHOLD_HIGH_BYTES_PER_ROW});
+  " >/dev/null 2>&1
+
+  # NB: asset_id is only unique per (asset_kind, asset_id) — the db_bloat
+  # rows above use a 'db_'-prefixed asset_id distinct from the log_growth
+  # 'healthy_case'/'spike_case' rows above so this SELECT (by asset_id
+  # alone) can't accidentally match a row from a different asset_kind.
+  local d3_bloated d3_healthy
+  d3_bloated="$(duck_run "$content_db" -noheader -list -c "SELECT content_status FROM staleness_status WHERE asset_id='db_bloated_case'" 2>/dev/null)"
+  _assert "detector3-bloat-fires-700KB-per-row" "$d3_bloated" "bloat"
+  d3_healthy="$(duck_run "$content_db" -noheader -list -c "SELECT content_status FROM staleness_status WHERE asset_id='db_healthy_case'" 2>/dev/null)"
+  _assert "detector3-quiet-20KB-per-row" "$d3_healthy" "normal"
+
+  rm -f "$content_db"
+
+  # ── Collector wiring: prove collect_log_growth()'s 2-deep retention runs
+  # end-to-end (reads the prior metric_value before overwriting it) against a
+  # temp fixture FILE — LOG_GROWTH_PATH/ASSET_ID are swapped for the
+  # duration, never touching the real
+  # ~/.claude/logs/roborev_poll_merges.log or the live unified.duckdb.
+  local retention_db="/tmp/staleness_collect_selftest_retention_${pid}.duckdb"
+  local fixture_log="/tmp/staleness_collect_selftest_log_${pid}.log"
+  rm -f "$retention_db" "$fixture_log"
+  duck_run "$retention_db" < "$SCHEMA_SQL" >/dev/null 2>&1
+  printf 'line one\n' > "$fixture_log"   # 9 bytes
+
+  local saved_log_path="$LOG_GROWTH_PATH" saved_log_id="$LOG_GROWTH_ASSET_ID"
+  LOG_GROWTH_PATH="$fixture_log"
+  LOG_GROWTH_ASSET_ID="selftest_fixture_log"
+  DB="$retention_db"
+
+  collect_log_growth
+  local r1_value r1_prior
+  r1_value="$(duck_run "$retention_db" -noheader -list -c "SELECT metric_value FROM staleness WHERE asset_id='selftest_fixture_log'" 2>/dev/null)"
+  _assert "retention-first-run-metric-value-9-bytes" "$r1_value" "9.0"
+  r1_prior="$(duck_run "$retention_db" -noheader -list -c "SELECT metric_value_prior FROM staleness WHERE asset_id='selftest_fixture_log'" 2>/dev/null)"
+  _assert "retention-first-run-no-prior-yet" "$r1_prior" "NULL"
+
+  printf 'line one\nline two has a lot more bytes than the first line did\n' > "$fixture_log"
+  collect_log_growth
+  local r2_prior
+  r2_prior="$(duck_run "$retention_db" -noheader -list -c "SELECT metric_value_prior FROM staleness WHERE asset_id='selftest_fixture_log'" 2>/dev/null)"
+  _assert "retention-second-run-prior-equals-first-runs-value" "$r2_prior" "9.0"
+
+  LOG_GROWTH_PATH="$saved_log_path"
+  LOG_GROWTH_ASSET_ID="$saved_log_id"
+  rm -f "$retention_db" "$fixture_log"
+
+  # collect_db_bloat() wiring: same retention proof, against the (also temp)
+  # retention_db itself as the measured target — never the live unified.duckdb.
+  local bloat_db="/tmp/staleness_collect_selftest_bloat_${pid}.duckdb"
+  rm -f "$bloat_db"
+  duck_run "$bloat_db" < "$SCHEMA_SQL" >/dev/null 2>&1
+  DB="$bloat_db"
+  collect_db_bloat
+  local b1_prior
+  b1_prior="$(duck_run "$bloat_db" -noheader -list -c "SELECT metric_value_prior FROM staleness WHERE asset_id='${DB_BLOAT_ASSET_ID}'" 2>/dev/null)"
+  _assert "db_bloat-first-run-no-prior-yet" "$b1_prior" "NULL"
+  collect_db_bloat
+  local b2_prior b1_value
+  b1_value="$(duck_run "$bloat_db" -noheader -list -c "SELECT metric_value FROM staleness WHERE asset_id='${DB_BLOAT_ASSET_ID}'" 2>/dev/null)"
+  # After a second run, metric_value_prior must equal whatever metric_value
+  # was after the first run (bloat_db is tiny and near-static between the two
+  # calls, so this also incidentally proves the measurement itself is a real,
+  # non-zero number rather than a stubbed/NULL fact).
+  b2_prior="$(duck_run "$bloat_db" -noheader -list -c "SELECT metric_value_prior FROM staleness WHERE asset_id='${DB_BLOAT_ASSET_ID}'" 2>/dev/null)"
+  if [ -n "$b1_value" ] && [ "$b1_value" != "NULL" ] && [ "$b1_value" != "0.0" ]; then
+    echo "PASS: db_bloat-measures-nonzero-size (metric_value=${b1_value})"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: db_bloat-measures-nonzero-size (got metric_value='${b1_value}')"
+    fail=$((fail + 1))
+  fi
+  _assert "db_bloat-second-run-prior-populated" "$([ "$b2_prior" != "NULL" ] && [ -n "$b2_prior" ] && echo yes || echo no)" "yes"
+  rm -f "$bloat_db"
+
   echo "─────────────────────────────"
   echo "Selftest: ${pass} PASS, ${fail} FAIL"
   [ "$fail" -eq 0 ]
@@ -480,6 +860,8 @@ duck_run "$DB" -c "
 
 collect_etl_sources
 collect_launchd_jobs
+collect_log_growth
+collect_db_bloat
 collect_self_heartbeat
 
 STATUS="ok"
@@ -494,6 +876,6 @@ duck_run "$DB" -c "
   WHERE id = '${RUN_ID}';
 " >/dev/null 2>&1 || true
 
-echo "staleness_collect: rows_written=${ROWS_WRITTEN} warnings=${WARN_COUNT} failures=${FAIL_COUNT} status=${STATUS}"
+echo "staleness_collect: rows_written=${ROWS_WRITTEN} warnings=${WARN_COUNT} failures=${FAIL_COUNT} etl-event-driven=${ETL_EVENT_DRIVEN} etl-unknown-cadence=${ETL_UNKNOWN_CADENCE} status=${STATUS}"
 
 [ "$FAIL_COUNT" -eq 0 ]

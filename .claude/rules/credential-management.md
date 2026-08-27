@@ -1,14 +1,26 @@
----
-name: credential-management
-description: Never embed credentials in code; retrieve from environment, enforce small-number suppression, and manage data use agreements
-type: rule
-paths:
-  - "**/.Renviron*"
-  - ".github/**"
-  - "R/**"
----
-
 # Rule: Credential and Data Governance
+
+## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
+
+This rule was scoped (`["**/.Renviron*", ".github/**", "R/**"]`) until
+2026-08-12, which excluded every shell script, dotfile, secrets file and
+launchd plist — i.e. everywhere secrets are actually handled. The forbidden
+`${VAR:-...}` is-it-set construct documented below was consequently used
+verbatim, printing a live key, one step in the chain that ended with 14
+credentials published to a public repo. See
+`.claude/incidents/2026-08-11-credential-leak.md` §4.
+
+Widening the `paths:` list to cover shell/dotfile/plist surfaces was the
+first fix, but it was still a scoped rule: a safety rule that only loads
+where the risk has already materialised is not a safety rule. Per
+[llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is now in
+the **safety-critical tier** declared in AGENTS.md's "Safety-critical rules"
+line, alongside `external-code-zero-trust`, `permission-discipline`, and
+`destructive-ops-guard` — it carries no `paths:` frontmatter at all and
+loads into every session and every subagent, the same contract as the
+mandatory tier. `check_rule_scoping.sh` enforces this: a safety-critical rule
+that regains `paths:` frontmatter, or is deleted, fails the audit (exit 3)
+and blocks the commit.
 
 ## Source
 

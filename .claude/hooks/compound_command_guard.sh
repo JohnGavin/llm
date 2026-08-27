@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its BLOCK path; also silent under COMPOUND_GUARD_MODE=log/off, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # compound_command_guard.sh — PreToolUse:Bash hook
 #
 # Detects compound bash commands (&&, ||, |, unescaped ;) and either logs
@@ -18,10 +25,28 @@ set -euo pipefail
 LOG="$HOME/.claude/logs/compound_guard.log"
 MODE="${COMPOUND_GUARD_MODE:-off}"
 
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path (worktree-vs-symlink rationale, see
+# secret_leak_guard.sh). Pure parameter expansion — no subshell — costs
+# nothing on the (common) off/allow path.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" compound_command_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # ── Self-test mode ──────────────────────────────────────────────────────
 if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
   _pass=0; _fail=0
   SCRIPT_PATH="$(realpath "$0")"
+  # llm#950: the DETECT-mode subprocess spawns below run with
+  # COMPOUND_GUARD_MODE=block, i.e. they DO reach the real emit call. Redirect
+  # to a throwaway spool for the duration of this selftest.
+  _SELFTEST_SPOOL=$(mktemp /tmp/compound_guard_selftest_spool_XXXXXX)
 
   _selftest_case() {
     local desc="$1" cmd="$2" expect="$3" tool_name="${4:-Bash}"
@@ -33,6 +58,7 @@ if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
     local exit_code=0
     printf '%s' "$payload" | \
       env COMPOUND_GUARD_MODE=block COMPOUND_GUARD_SELFTEST=0 \
+      HOOK_EVENTS_SPOOL="$_SELFTEST_SPOOL" \
       /usr/bin/env bash "$SCRIPT_PATH" >/dev/null 2>/dev/null || exit_code=$?
     # exit_code=1 means detected (blocked), exit_code=0 means not detected
     case "$expect" in
@@ -89,6 +115,7 @@ if [ "${COMPOUND_GUARD_SELFTEST:-0}" = "1" ]; then
   _selftest_case "non-Bash tool: Read with pipe-like input"   "cat file | head"                              ALLOW  Read
 
   echo "=== Results: $_pass passed, $_fail failed ==="
+  rm -f "$_SELFTEST_SPOOL"
   [ "$_fail" -eq 0 ] && exit 0 || exit 1
 fi
 
@@ -251,4 +278,5 @@ if [ -x "$_log_script" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
   fi
 fi
 
+_emit_hook_event "PreToolUse:blocked" "compound operator(s) ${DETECTED}: ${CMD_TRUNCATED}"
 exit 1

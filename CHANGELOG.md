@@ -4,6 +4,548 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-26/27 — six checks that reported success about something they had not established, and a fix scoped from a 12-hour sample
+
+Continuation of the 2026-08-24/25 session. Started by fixing four filed issues,
+ended having caused and then fixed a regression of the same family, plus a
+credential finding surfaced by running a fix rather than reading it.
+
+### Completed
+
+**[#1012](https://github.com/JohnGavin/llm/issues/1012) merge gate** — `GH` hardcoded to a path that does not exist here; the failure swallowed into an empty commit list that took the fail-open branch and printed `PASS`. The gate had never queried `reviews.db`. New exit 3 (INDETERMINATE) separates every "could not ask" outcome from a verdict; `reviews.db absent` also used to print PASS. Tests 9–14 assert exit 3 **and** that the output does not contain "PASS" — the bug was legible on screen long before `$?`.
+
+**[#1017](https://github.com/JohnGavin/llm/issues/1017) hook liveness** — reported 21 hooks "never fired" including `session_init` on a day it ran. It measured whether a hook calls the emitter. Now classified `instrumented` × `cadence`, both read from each hook's own `# hook-liveness:` marker. Headline went `27 registered · 21 silent` → `30 registered · 11 instrumented · 0 silent · 19 unobservable`.
+
+**[#1018](https://github.com/JohnGavin/llm/issues/1018) secret_leak_guard** — recommended a remedy `compound_command_guard` rejects; justified itself with a false claim about `${VAR:+…}`; matched `PAT` as a bare substring so `$PATH`, `$wt_path`, `$pattern` all tripped it. It blocked the edit fixing it, then the comment explaining that, then its own test cases.
+
+**[#1019](https://github.com/JohnGavin/llm/issues/1019) worktree GC** — read a `gh` 401 as "no merged PR", retaining every squash-merged worktree. Now returns 2 for "could not ask", with a preflight, per-branch reasons and `squash-detect-failures=N` on the summary.
+
+**[#1030](https://github.com/JohnGavin/llm/issues/1030)** — `check_indeterminate_handling.sh` reported `findings=0` on the very file #1012 was filed about: the swallow and the emptiness test were one function call apart. Pattern 3 added. **[#1031](https://github.com/JohnGavin/llm/issues/1031)** — rule 6 flagged `worktree-agent-<hex>` branch names. **[#1032](https://github.com/JohnGavin/llm/issues/1032)** — `credential_hygiene_check.sh`: credentials in git remotes, and auth env vars that are set-but-rejected.
+
+**[llmtelemetry#354](https://github.com/JohnGavin/llmtelemetry/pull/354)** — Daily LLM Report had failed three mornings. The `__DASHBOARD_URL__` substitution sat inside the stale-banner branch, so the link resolved only on days the data happened to be stale. Cause confirmed by ancestry, not adjacent dates.
+
+**Ledger reconciled** ([#1039](https://github.com/JohnGavin/llm/pull/1039)) — six items marked pending had shipped. A ledger reporting work pending after it shipped misleads as much as one reporting it done before.
+
+### Failed Approaches
+
+**A fix scoped from a 12-hour sample.** [#1034](https://github.com/JohnGavin/llm/pull/1034) diagnosed the daily TCC prompt correctly — Homebrew bash is ad-hoc signed, so its grant stores an empty `csreq` and can never bind — and found **six** launchd scripts routing through it. One was fixed; the other five were demoted to "context" with this written into the code: *"exactly one of six touches a TCC-protected resource"*. That was an inference from a single sample stated as knowledge. Next day a `KeepAlive` daemon running one of the five produced 11 prompts. Fixed properly in [#1036](https://github.com/JohnGavin/llm/pull/1036); new memory `feedback_fix-every-instance-or-justify-the-exclusion`.
+
+**Blaming a change on a same-day timing correlation.** The prompt surge was first attributed to a credential-hygiene sweep added that morning — it landed 10:04, the first new prompt was 23:24. Running its exact `find` produced **zero** TCC requests. Coincidence. Testing it is the only reason the second fix landed on the right thing.
+
+**Three subshell state losses.** The indeterminate reason came back blank in #1012 and again in #1019 — set inside `x=$(fn)`, discarded on subshell exit — and a third time in the TCC checker's own selftest. Caught each time by running, never by reading.
+
+**A selftest with the defect it tests for.** Two #1030 cases were added below `rm -rf "$tmp"`; their fixtures were never written, `scan_file` found nothing, and "no findings" is that suite's PASS condition. They passed against files that did not exist.
+
+**Two wrong claims corrected mid-session.** Called the embedded GitHub token "live" — it returns 401 and is the same value as the poisoned `GH_TOKEN`. And used `launchctl getenv` as a presence test; it exits 0 either way.
+
+### Accuracy / Metrics
+
+- merge gate 19 PASS · worktree_gc 49 PASS · secret_leak_guard 70/70 · compound guard 24 · hook-liveness 25 · credential hygiene 8 · TCC durability 9 · indeterminate checker 9
+- Every new assertion mutation-checked; the indeterminate gate verified **blocking** live, probe self-cleaned
+- TCC prompts: 11 in 24h → **0** since the daemon restart; 6 launchd scripts pinned to `/bin/bash`, 0 remaining on `env` shebangs
+- Credentialed git remotes: 1 → 0 across 208 repos
+
+### Known Limitations
+
+- **A live GitHub token was written to `worktree_gc.log`** while verifying #1019 — one repo's `remote.origin.url` embedded one. Removed, and the code now redacts. The token was already revoked by GitHub on 2026-08-11; not regenerated, deliberately, since `gh` works from the keyring.
+- `GH_TOKEN` survives in already-running processes only; no edit can reach them.
+- [#1035](https://github.com/JohnGavin/llm/issues/1035) — 24 of 42 "unparseable severity" rows are failed reviews filed under a "not a backlog" heading. [#1037](https://github.com/JohnGavin/llm/issues/1037) — the overnight self-review inspects session telemetry only, never config, and cannot distinguish clean from unexamined.
+- Ledger items 3 and 5 remain genuinely open. `dittodb` / `mutator` / mirai-async review still not started.
+
+## 2026-08-24/25 — a revoked token, a deleted secret, and the discovery that naming a defect does not prevent it
+
+Started from "why does a demo project have CI jobs?" and ended with a ledger of
+fourteen failures, two of which were produced by the code written to prevent them.
+
+### Completed
+
+**Root cause behind three repos' CI.** `CACHIX_AUTH_TOKEN` was revoked in the
+2026-08-11 rotation and a replacement created **nowhere** — not in BWS, not in the
+cache, not in any repo. `tlang` failed nightly for 11 days, `irishbuoys` and
+`solwatch` weekly. Verified by transition (last success 08-13, first failure 08-14),
+not by adjacency to the incident date.
+
+**Enumeration beats recall.** A hand-written list of affected repos came to three
+and guessed a repo name that does not exist. The command found the fourth,
+`solwatch`, failing weekly and in nobody's list. Now Step 0 of the runbook.
+
+**tlang CI green again** ([tlang#9](https://github.com/JohnGavin/tlang/pull/9)).
+Eight workflows were dying at `cachix use` on a PUBLIC cache, because a job-level
+`env: CACHIX_AUTH_TOKEN` reached every step and the `cachix` CLI reads it from the
+environment. A dead credential cost the whole build rather than just the push.
+Secret now scoped to 2 of 7 steps; push gated on a step output.
+
+**Rotation runbook corrected** ([#1015](https://github.com/JohnGavin/llm/pull/1015)).
+It told you to edit `~/.config/secrets.env`, which is GENERATED and says
+`DO NOT EDIT`, and its completion check `grep -c '^export' … # expect 13` returned
+0 for a healthy file and 0 for an empty one.
+
+**A rule and its enforcement** ([#1021](https://github.com/JohnGavin/llm/pull/1021),
+[#1022](https://github.com/JohnGavin/llm/pull/1022),
+[#1025](https://github.com/JohnGavin/llm/pull/1025)):
+`checks-must-distinguish-unknown` — an error path and a negative-result path must
+never share an exit — plus `check_indeterminate_handling.sh`, which independently
+rediscovered the confirmed [#1019](https://github.com/JohnGavin/llm/issues/1019) bug.
+
+**Secret-write safety** ([#1022](https://github.com/JohnGavin/llm/pull/1022),
+[#1023](https://github.com/JohnGavin/llm/pull/1023),
+[#1026](https://github.com/JohnGavin/llm/pull/1026)): hidden-stdin writer that refuses
+placeholders, refuses no-ops, refuses without a terminal, and verifies the typed
+value against the system that consumes it.
+
+**Cache-deletion guard** ([#1025](https://github.com/JohnGavin/llm/pull/1025)): the
+regen now refuses to delete keys absent from BWS.
+
+**Also:** Signal PDF/image ingestion ([#1011](https://github.com/JohnGavin/llm/pull/1011)),
+llmtelemetry's daily report unblocked ([llmtelemetry#353](https://github.com/JohnGavin/llmtelemetry/pull/353)),
+historical's dead links + stale API doc ([historical#761](https://github.com/JohnGavin/historical/pull/761)),
+~1.3 GB of squash-merged worktrees reclaimed, 80 → 48.
+
+### Failed Approaches
+
+**Diagnosing from a tool's complaint without checking it received input.** `bws`
+said `Doesn't contain a decryption key`; read as "the token is malformed" and
+written up as advice to re-issue a working credential. It had received nothing —
+the value did not propagate to the child process. One command settles it:
+`VAR="$V" bash -c 'test -n "${VAR:-}"'`.
+
+**A placeholder inside a runnable command.** `bws secret create CACHIX_AUTH_TOKEN
+'<cachix-token>' …` was pasted verbatim and BWS stored the literal string. Confirmed
+by digest, not assumed. A shell command is an invitation to paste.
+
+**Assuming a regen is safe.** Adding one key deleted `SIGNAL_ACCOUNT`, which lived
+only in the cache, and disabled Signal capture for 7.5 hours. The summary read
+`Keys before: 15 / Keys after: 15` — a no-op shape produced by an add plus a delete.
+
+**Trusting "no more errors" as evidence of repair.** The re-typed `SIGNAL_ACCOUNT`
+was one digit wrong. FATALs stopped at 19:29 when the WRONG value landed; the log
+then read healthy for half an hour while nothing could match. Caught by comparing
+digests against signal-cli's `accounts.json`.
+
+**Building a gate and not watching it refuse.** The pre-commit gate shipped with
+the very defect it exists to catch: `~/.claude/scripts` symlinks into the main
+checkout, so from a worktree it scanned main's baselined files and passed every
+commit while logging `pass`. Only found by deliberately committing the forbidden
+pattern.
+
+**A test that read ambient config and modified shared state.** Fixture repos
+inherited the global `core.hooksPath` and wrote a `pre-commit` into the real shared
+hooks directory — which would have run the gate in every repo on the machine.
+Removed; fixtures now pin it.
+
+### Accuracy / Metrics
+
+- 8 PRs merged, 1 open ([#1028](https://github.com/JohnGavin/llm/pull/1028))
+- 8 issues filed: #1012, #1013, #1014, #1017, #1018, #1019, #1024, llmtelemetry#352
+- Signal capture restored, verified 3 ways (cache digest, signal-cli ground truth, handler run)
+- Ledger: 14 rows, 5 enforced, 1 pending, 8 not
+- roborev: `crash=0 quota=0`, consistency check clean
+
+### Known Limitations
+
+- **The pre-commit gate is currently UNINSTALLED** — deliberately. Its fix is in
+  [#1028](https://github.com/JohnGavin/llm/pull/1028); leaving the broken version
+  wired in would have logged `pass` for everything. Re-install after merge with
+  `.claude/scripts/indeterminate_hook_install.sh --repo ~/docs_gh/llm`.
+- `GH_TOKEN` in the shell is revoked but present; every `gh` call needs
+  `env -u GH_TOKEN`. Also one of the ways #1012's gate fail-opens.
+- 45 baselined linter findings, untriaged by design.
+- roborev backlog 155 open, 10 unaddressed verdict failures, all pre-existing.
+- `dittodb` / `mutator` / mirai-async review not started.
+
+## 2026-08-23 — Signal attachment ingestion, and two checks that were passing for the wrong reason
+
+Picked up item 4 from the previous session's list: [#1001](https://github.com/JohnGavin/llm/issues/1001), the content-type gap that dropped PDFs and images silently. Shipped as [#1011](https://github.com/JohnGavin/llm/pull/1011), merged `06e51de`, deployed and verified live.
+
+### Completed
+
+**`.claude/scripts/signal_attachment_ingest.sh`** — the pipeline handled a text body or an `.aac`/`.ogg`/`.opus` voice note; everything else hit no branch and produced no log line. Every file now yields exactly one recorded outcome, *including the ones we can't handle*: PDF text layer via `gs -sDEVICE=txtwrite`; image-only PDFs said out loud and sent to OCR (gs raster @300dpi → tesseract, page at a time); an `unreadable` stub when neither works ([#901](https://github.com/JohnGavin/llm/issues/901)'s requirement that a missing text layer fail loudly rather than return an empty success); images OCR'd with a stub when text-free; unknown types logged `UNHANDLED` with their detected MIME type; audio delegated to the existing whisper path and recorded as such. No new dependencies — `gs`, `tesseract`, `qpdf` were already installed.
+
+**Message-level accounting** in `signal_braindump_handler.sh`. A body-less message now logs its attachment content types **and its group name** — which exists only in the envelope and cannot be recovered from the file on disk. That is the input [#1001](https://github.com/JohnGavin/llm/issues/1001) item 4 will need.
+
+**Conservative by default.** Only attachments newer than a 2026-08-22 cutoff are processed; each older file is recorded once as `skipped-pre-cutoff` *with a log line*. `--backfill` on demand. Retro-ingesting 93 photos into an append-only store should be a decision, not a side effect of a bug fix. The user chose new-only with opt-in backfill, and stub notes for text-free images.
+
+**Live result:** `braindumps/` had 31 files, newest 2026-05-30. The 2026-08-22 scanned PDF now yields 5,429 chars from 4 pages (text layer: **0**), and both rows from the issue's evidence table are captured, indexed in `braindumps` as `signal_pdf_ocr` / `signal_image_stub`.
+
+### Failed Approaches
+
+**A 40-char text-layer threshold against a one-line fixture.** The first selftest fixture held `HELLO SELFTEST TEXT LAYER` — 33 non-whitespace chars, under `PDF_TEXT_MIN_CHARS=40` — so a text-layer PDF was classified image-only. Fixed by lengthening the fixture, *not* by lowering the threshold: 40 is right for real documents, and the fixture was the thing that was wrong.
+
+**Trusting 18 green assertions.** The suite passed while the cutoff silently skipped the exact file the change existed to recover. BSD `date -j -f '%Y-%m-%d'` fills unspecified fields from the **current time**, so the cutoff walked forward through the day; run at 13:00 it excluded a 09:50 file from that same morning, recorded it as `skipped-pre-cutoff`, and reported `scan complete: 1 processed`. GNU `date -d` does not do this. Now pinned to `00:00:00`, with the resolved instant asserted directly *and* a fixture stamped 00:30 on the cutoff date. Mutation-verified — reinstating the bug turns 20/0 into 18/2. Caught only by running against the real attachments directory. New memory: `feedback_fixtures-hide-boundary-drift`.
+
+**Trusting the merge gate's own output.** `bin/roborev_merge_gate.sh` printed `PASS` before the merge. It hardcodes `GH="${GH:-/usr/local/bin/gh}"`, which does not exist on this machine (`gh` is Homebrew), the failure is swallowed by `2>/dev/null || echo ""`, and the empty commit list takes the fail-open branch. Same PR, same second: `PASS (no commits found — fail-open)` vs `PASS (no unresolved High-severity findings)` with `GH` corrected. The gate has never gated anything here. Filed as [#1012](https://github.com/JohnGavin/llm/issues/1012); the important half of the fix is not the path but separating *"could not ask"* from *"nothing to report"*.
+
+### Accuracy / Metrics
+
+- `tests/test_signal_braindump_handler.sh` — **39 passed** (28 pre-existing, all still green)
+- `tests/test_signal_attachment_ingest.sh` — **9 passed**, wrapping a 20-assertion `--selftest`
+- `tests/test_signal_notes_sync.sh` — **20 passed**, untouched
+- roborev on both commits: `verdict_bool=1`, *"No issues found."*
+- Memory index compacted 165 → 58 lines, all 53 entries preserved verbatim
+
+### Known Limitations
+
+- **93-image backlog** untouched by design — `signal_attachment_ingest.sh --backfill` when wanted.
+- **[#1001](https://github.com/JohnGavin/llm/issues/1001) item 4** (scope capture to `Notes to llm`) still open; `pills` traffic remains in scope for ingestion, as before.
+- **[#1012](https://github.com/JohnGavin/llm/issues/1012)** — merge gate fail-opens. Third instance of the shape behind [#746](https://github.com/JohnGavin/llm/issues/746) and [#913](https://github.com/JohnGavin/llm/issues/913): a check returning the reassuring answer for reasons unrelated to the question. The cutoff bug above is a fourth, in the same day.
+- **`tests/test_signal_notes_sync.sh`** still uses `+1555-000-1111`, outside the `NPA-555-01XX` range `private_data_scan.sh` allowlists. It will block the next commit touching it. One line; left alone as unrelated to [#1001](https://github.com/JohnGavin/llm/issues/1001).
+- **`GH_TOKEN`** in this shell holds a revoked token shadowing the working keyring credential; every `gh` call needed `env -u GH_TOKEN`. It is also one of the ways [#1012](https://github.com/JohnGavin/llm/issues/1012)'s gate fail-opens.
+- **roborev backlog: 45 open findings**, 7 unaddressed verdict failures (17 failed / 10 addressed), oldest critical is #9384 (security, 7d). All pre-existing; `crash=0`, `quota=0`, consistency check clean.
+
+## 2026-08-21/23 — a four-month PII exposure in a public repo, and the gates that now block it
+
+Started on roborev job timeouts, ended having found a personal phone number in
+this **public** repo, present since 2026-04-20 in 8 files across 9 commits. The
+thread through everything below: **every preventive control that existed was
+advisory, and every one of them failed.**
+
+### Completed
+
+**Signal pipeline restored end-to-end.** Capture had been dead since 8 June. Four
+separate causes, found in order by fixing each and looking again:
+
+1. Daemon/cron deadlock over one account lock — the cron `receive` timed out at
+   `rc=124` every 5.5 min while the daemon held the lock ([#990](https://github.com/JohnGavin/llm/pull/990)).
+2. `process_daemon_messages()` read `/tmp/signal_cli_daemon_stdout.log`; the
+   plist writes `~/.claude/logs/…`. A path mismatch, now resolved from the plist.
+3. signal-cli 0.14.3 threw `NullPointerException: getServerGuid(...) must not be
+   null` on a real envelope at 19:00:55 and killed its own receive loop. Upgraded
+   to 0.14.7 — the plist hardcoded `Cellar/0.14.3_1`, which `brew upgrade`
+   deletes, so that was fixed in the same operation.
+4. Content-type gap: the pipeline handled text and `.aac/.ogg/.opus` only.
+   PDFs and images were dropped **silently** ([#1001](https://github.com/JohnGavin/llm/issues/1001)).
+
+Verified live: a test voice note arrived in `Notes to llm` and transcribed. A
+scanned utility bill was OCR'd (no text layer — `/Font` absent, `DCTDecode`
+JPEGs, so `pdftotext` would return nothing) and filed as premortem issue 0071
+with every figure flagged **model-read, not parser-derived**.
+
+**PII: rewrite, then the gates that make it unnecessary.** 1,736 commits
+rewritten; branches and tags verified clean from a fresh clone. Then five
+mechanical layers ([#1004](https://github.com/JohnGavin/llm/pull/1004)):
+deny-list scanner, pre-commit, pre-push, CI, scheduled audit. Proven by staging
+a file containing the real value — commit **blocked**, both detectors fired,
+both redacted their own output.
+
+**Disclosure audit of the public repo** ([#1006](https://github.com/JohnGavin/llm/pull/1006)).
+Value-scanners cannot see prose. `AGENTS.md` named three banks and referenced
+estate balances; `.claude/settings.json`'s WebFetch allowlist held ~27
+personal-finance domains — *a map of someone's financial life*, disclosive in
+aggregate though no single entry is secret. `canonical_projects.csv` gained a
+`visibility` column defaulting to **private**.
+
+**Also:** roborev reaper + duplicate-daemon check ([#998](https://github.com/JohnGavin/llm/pull/998));
+quota-vs-crash reclassification ([#999](https://github.com/JohnGavin/llm/pull/999)) —
+claude-code says "spend limit", gemini says "quota", and the classifier matched
+only the second, so 13 transient failures were filed as crashes; push-guard flag
+parsing ([#991](https://github.com/JohnGavin/llm/pull/991)); safety-critical rule
+tier ([#994](https://github.com/JohnGavin/llm/pull/994)); dead ccusage job removed
+([#993](https://github.com/JohnGavin/llm/pull/993)); dashboard CTA no longer 404s
+([#1009](https://github.com/JohnGavin/llm/pull/1009)).
+
+### Failed approaches
+
+- **Tried `git push --mirror` to publish the rewrite. It hung for 10 minutes.**
+  452 of 547 refs were `refs/pull/*`, which GitHub owns and rejects. Push
+  `refs/heads/*` and `refs/tags/*` explicitly instead.
+- **Tried squashing the gates branch with `reset --soft origin/main`.** It
+  silently turned another merged PR's files into deletions — the llm#318
+  "appears to revert" shape. Rebase first, then squash.
+- **Tried verifying no PII with `git diff | grep '^+'`. It returned clean and
+  was incapable of returning anything else** — difftastic is configured as an
+  external diff driver, so there are no `+` lines to match ([#997](https://github.com/JohnGavin/llm/issues/997)).
+  Use `--no-ext-diff`, or read blobs via `git cat-file` as the scanner now does.
+- **Tried "reject all-hex tokens" to stop git SHAs matching the postcode rule.**
+  Some genuine London postcodes are composed entirely of hex characters, so that
+  fix would have traded a CI nuisance for a missed detection. The working
+  discriminator needs all three SHA signals together: all-hex, no whitespace,
+  all-lowercase. (Writing the counter-example literally into this file is itself
+  blocked by the new gate — correctly, so it is described rather than quoted.)
+
+### Accuracy / metrics
+
+- 12 PRs merged; ~15 issues closed; 8 filed.
+- Scanner selftests 14 → **28**; signal suites 58 assertions; gates 51/51.
+- roborev gemini durations are **bimodal** — 0.2–0.9 min typically, with stall
+  batches of 25–58 min. A 7-day mean of "2.7 min" averages the two regimes and
+  means nothing; use a quantile or per-batch max.
+- `~/.claude` measured **2.7 GB** (issue said 7.9), logs **2.2 GB** (said 6.5),
+  poller log **1.1 MB** (said 74 MB). Five of eleven issue targets were already
+  fixed or materially stale.
+
+### Known limitations
+
+- **8 commits remain fetchable via 438 `refs/pull/*` refs.** A rewrite cannot
+  reach them. Owner decided against contacting GitHub Support; the number is a
+  primary phone and **cannot be rotated**, so the exposure is permanent.
+- Project-name gating ships **warn-only** — enabling it would block every commit
+  touching the ~20 files that legitimately name private projects.
+- `--full-history` audit tested on fixtures only; CI workflow never run on a real
+  runner; `.claude/`-dependent tests skip silently under `R CMD check`.
+- Per-agent `pass_rate` still uncorrected for quota failures (llm#904).
+- The `myeloma` redaction in telemetry JSON is cosmetic — the ccusage pipeline
+  will regenerate it. Needs a source-level fix.
+
+
+
+A day spent on issues whose common shape is *the arithmetic is right and the
+claim attached to it is false*. Every finding below came from checking a number
+that had already been reported, not from new symptoms.
+
+### Completed
+
+**Requeue sweep had a fixed point (#964 → PR #965).** It re-enqueued the same
+five March commits every run, forever. Three defects reinforcing each other:
+`coMMpass` was the only repo pinned to a broken agent so the only one that could
+fail; failures were classified `outage` so only failures returned to the pool;
+and the pool sorted `ORDER BY r.name` with `--limit=5`, and it sorts first. Two
+consecutive runs were byte-identical — `candidates=153 enqueued=5
+skipped_rate_limit=51` — while 51 candidates from live repos were never reached.
+Fixed by requeueing only when a pair's **latest** job is a quota failure
+(generalises past enumerating auth patterns) plus round-robin ordering.
+
+**Backlog counter overstated by 3× (#966 → PR #968).** `candidates=148` read as
+"148 waiting"; only 51 could ever be enqueued — 87 permanently excluded, 10 with
+missing checkouts. Added `actionable=`. Rejected a verdict cache (invalidation
+complexity for ~87 git calls/run on a static set) and rejected dropping excluded
+pairs (excluded ≠ reviewed).
+
+**Stop hook aborted silently on every stop (PR #967).** `set -euo pipefail` plus
+`ls -t <glob> 2>/dev/null | head -1` — the glob misses, `ls` exits 1, stderr is
+suppressed, `set -e` kills the hook. Hence "No stderr output". The fail-safe
+existed two lines below and was unreachable. Four such sites fixed.
+
+**Cron-health reported healthy jobs as failed (#962 → PR #969).** Unknown state
+rendered as failure, and `secret-exposure-scan`'s exit-1-means-findings contract
+read as a crash. Now buckets `unknown` separately and prefers
+`housekeeping_runs.status` over raw exit codes. The count stayed 2 and the
+identity inverted: two false failures cleared, two real ones surfaced —
+including `launchd-health-weekly`, exit code 0 with a `partial` heartbeat for
+four days (#970).
+
+**UTC windows short by the tz offset (#959 → PR #969).** Every `INTERVAL '24'
+HOUR` compared a UTC column against a local baseline. Seasonally invisible —
+correct under GMT, wrong Mar–Oct. One `sql_utc_now()` helper, 6 call sites, and
+a test that pins `TimeZone` to a non-UTC zone.
+
+**Daily report alleged an ETL fault from a guaranteed-zero number (#961 → PR
+#971).** Report runs 07:00, autocloser 08:30 — the 24h close-rate was
+structurally 0. Replaced with a lagged 2–8d window (66.7%). Then the *fix*
+reintroduced the defect: the new alert fired on 105 of 125 open reviews, daily.
+Corrected to fire on the delta (2 new) with the total as context, unparseable
+split into its own bucket.
+
+**Severity regex missed the unbolded form (#972 → PR #975).** Sampling split
+"51% unparseable" into two causes: 21 emit `Severity:` without `**` (fixed), 39
+have no findings block at all and read as passes despite `verdict_bool=0` (left
+alone, boundary pinned by test). Measured effect next morning: plain-form open
+reviews 21 → 6, and **15 of the day's 50 autocloses were plain-form** — findings
+previously stuck permanently.
+
+**`~/.roborev` retention (#929 → PR #973).** 6.1 GB and growing; 7 unpruned
+backups, 11k job logs. Landed **report-only**: Phase 0 pinned to `--dry-run`
+because it inherited `--apply` from the weekly chain and merging would have
+deleted 3.7 GB unattended.
+
+**The fallback was never broken (#746 reopened → PR #978).** roborev's
+`gemini → claude-code` waterfall never engaged. Config was correct, daemon not
+stale, `check-agents` said `claude-code OK`. Root cause: the daemon's launchd
+`PATH` lacked `~/.local/bin`, where `claude` lives. Under `env -i` with the
+daemon's exact PATH, `which claude` exits 1. The waterfall had nowhere to fall.
+The plist comment had recorded it years-of-context ago — *"the daemon resolves
+`gemini`/`codex` … Copied deliberately, not re-derived"* — a third agent was
+added later and the PATH was never revisited.
+
+Also: removed dead `agent = "codex"` pins from `coMMpass` and `micromort` (both
+401'ing since the credential rotation); coMMpass reviewed successfully for the
+first time since March.
+
+### Failed approaches
+
+- **Loosening the severity regex as the whole fix.** Would have recovered 21 of
+  60 and left 39 looking like a smaller version of the same bug. Sampling first
+  showed two unrelated causes.
+- **Alerting on the above-threshold backlog.** True, and useless — 84% of open
+  reviews, every morning. Replacing a false daily banner with a true daily
+  banner leaves the reader's experience unchanged.
+- **`launchctl bootout` to stop a calendar job** (earlier, #930). Does not
+  persist; the XPC activity respawns it. `disable` is the durable verb.
+- **`roborev daemon stop` to reload a plist.** `KeepAlive` restarts it within
+  seconds still holding the old in-memory config. `bootout` + `bootstrap`.
+
+### Accuracy / Metrics
+
+- Package suite 760 → **794 PASS**, `FAIL 1` throughout (pre-existing
+  `test-kb-digest.R:824`, reproduced on `main` at the same base commit)
+- `roborev_requeue_dropped.sh` selftest 11/11 → 12/12 → 15/15
+- New tests mutation-proven, not merely green: reverting each fix fails its test
+- Requeue sweep now spans 5 distinct repos/run instead of 5 commits from one
+
+### Known limitations
+
+- **#746 not closed.** The PATH fix is verified by a forced override
+  (`--agent claude-code` → job 12545 → `done`), which proves the binary
+  resolves, not that roborev *chooses* it unprompted. Needs a natural quota
+  failure observed recovering.
+- **Retention is report-only.** `~/.roborev` keeps gaining ~750 MB per
+  backup-producing run. The dry-run week is a decision deadline, not a soak.
+- **#974** — the severity marker is parsed in 5 places across 3 languages; 3
+  fixed. The two left include the **severity downgrade-attack guard**, which now
+  disagrees with the autocloser on the same text.
+- **#972 cause 2** — 39 reviews recorded as having findings, reading as passes,
+  with nothing machine-classifiable. Cause undetermined.
+- Gemini free-tier quota still throttles (~72% success on 18 Aug).
+
+### Corrections made during the session
+
+Recorded because several looked decisive and were not: "the fallback has never
+fired" (unsupportable — an empty column is not an absent mechanism); "18 commits
+prove fallback works" (they were the requeue sweep, months apart); "reviews are
+failing outright" (72% success); "#819 cause 1 still open" (the plist fires
+daily, not weekly); and misreading a cron-health table by keying on the raw
+state column rather than the computed bucket.
+
+## 2026-08-13 — removed the plaintext environment dump from default.sh
+
+`default.sh` regenerated a file under `~/.config/positron/` on every dev-shell
+entry by piping `export -p` (the **entire** exported environment) through a
+**denylist** of Nix/bash internals (`BASH*`, `SHLVL`, `PWD`, `OLDPWD`, ...,
+`NIX_BUILD`). Credentials were never on the denylist, so every credential in
+scope was written to disk in plaintext. Measured on the live artifact before
+deletion: **169 variables, 114 KB, mode 644 (world-readable), 11 live
+credentials**.
+
+Verified the file had **zero consumers**: the only code referencing it was
+the block that wrote it; the Positron terminal wrapper script
+(`nix-terminal-wrapper.sh`, generated further down in the same `default.sh`)
+sources `/etc/profile.d/nix-shell.sh` directly and never reads the dump.
+Removed the write rather than adding an allowlist, since nothing depends on
+the output.
+
+**Lesson:** any future environment capture must use a positive **allowlist**
+of variable names, never a denylist — a denylist fails open by default, and
+a credential is exactly the kind of variable an author forgets to list.
+
+Handoff: the stale `~/.config/positron/nix_env.sh` artifact this code
+produced on past runs still exists on disk outside any git worktree and
+needs manual deletion by whoever has access to that path.
+
+## 2026-08-08 — roborev's failure signal was 98.6% noise; the guard that cleaned it was eating live repos
+
+Session opened 2026-08-06. Theme: every defect below was found **by hand**, none
+by a metric — which became the reason P0 is now "monitoring that reports success
+while broken" ([#932](https://github.com/JohnGavin/llm/issues/932)).
+
+### Completed
+
+- **Article gap-review** — 7 URLs read (VentureBeat 429'd five times; read via a
+  syndicated mirror, flagged second-hand). Grouped into 2 issues + 2 comments
+  rather than 7: [#920](https://github.com/JohnGavin/llm/issues/920)
+  (metric-definition drift — llm#917's reaper exclusion landed in `app.R` only,
+  so llmtelemetry still weights **cost attribution** on synthetic `duration_min`,
+  giving the synthetic `ClaudeProbe` project 63.7% of attributed spend for 12
+  days), [#921](https://github.com/JohnGavin/llm/issues/921) (the dashboard has
+  `sum()` and `round()` and *no* median/percentile anywhere), plus smevals →
+  [#816](https://github.com/JohnGavin/llm/issues/816) and GraphRAG/pgGraph →
+  [#419](https://github.com/JohnGavin/llm/issues/419).
+- **[#922](https://github.com/JohnGavin/llm/pull/922) merged** — retracted the
+  llm#913 seed's onset explanation. See Failed Approaches.
+- **[#924](https://github.com/JohnGavin/llm/pull/924) merged** —
+  [#923](https://github.com/JohnGavin/llm/issues/923): `core.hooksPath` is set
+  **globally**, so a testthat fixture that `git init`s under a tempdir and
+  commits ~24 times enqueued ~24 roborev reviews against a path testthat then
+  deleted. Fixture opt-out + path guard in `git-hooks/post-commit` + two-sided
+  self-test. Cleanup applied to the live DB: **1,723 repos, 3,032 review_jobs,
+  3,032 commits, 617 reviews, 588 responses** removed, 27 real repos kept, 0
+  orphans, backup retained.
+- **[#925](https://github.com/JohnGavin/llm/pull/925) merged** — repo-coverage
+  block on the Reviews tab. No "deleted" metric: `repos` has no tombstone, so a
+  decrease is genuinely unobservable; reports increases + "Active (7d)" instead,
+  and says so. A red "Ephemeral (should be 0)" row appears only when non-zero.
+- **[#926](https://github.com/JohnGavin/llm/pull/926) opened** — the self-test
+  shipped in #924 hardcoded an absolute worktree path, so it tested a stale copy
+  of the hook. Now resolves from its own directory, verified two-sided.
+- **[#930](https://github.com/JohnGavin/llm/issues/930) + job unloaded** —
+  verifying #886's fix revealed the restored `roborev-autoclose` would create
+  **221+ GitHub issues, 184 with an empty commit SHA, 189 on the public
+  JohnGavin.github.io**, on the next Monday run. Partial count — the dry run
+  timed out at 180s. Job unloaded (`launchctl bootout`); plist untouched.
+- **[#933](https://github.com/JohnGavin/llm/pull/933) opened** — first P0 item:
+  the ETL selected `status` but not `error`, so `roborev_daily_metrics` had **no
+  job-failure column at all**. New `classify_failure()` →
+  ephemeral/quota/agent/other, five additive columns.
+- **[#934](https://github.com/JohnGavin/llm/pull/934) opened** — see below.
+- **Backlog triage** — 168 open issues grouped into P0–P9
+  ([#932](https://github.com/JohnGavin/llm/issues/932)); `P0-blind-spots` label
+  applied to 17. Closed #923, #439 (duplicate of #406), #184 (superseded by
+  #307). [#931](https://github.com/JohnGavin/llm/issues/931) inventories the
+  ~38-issue "evaluate X" graveyard (24% of open, zero completions since
+  2026-05-16) with a cap + named-trigger policy.
+  [#929](https://github.com/JohnGavin/llm/issues/929): `~/.roborev` at 5.3 GB,
+  ~3.5 GB of it unpruned weekly backups.
+
+### Failed Approaches
+
+- **"The llm#913 onset predates #809's merge because the gating change was live
+  from a local branch."** Refuted. `~/.claude/hooks` symlinks only to the main
+  checkout, whose HEAD did not move between 2026-07-22 09:35 and the ff-pull at
+  2026-07-24 10:34, and 103 affected sessions ran before that pull. Nothing under
+  version control changed across the onset; the trigger is **unidentified** and is
+  now recorded that way rather than replaced with a second guess. The timing was
+  query-backed and stands; the *explanation* attached to it never was — an
+  explanation inherits the credibility of the fact it rides on without earning it.
+- **Planned "delete non-canonical rows from the metrics mirror" — abandoned, and
+  the abandonment was the finding.** The safety check first: nine repos in the
+  mirror were *live* (`knowledge` 526 jobs, `travel` 42 and active that day) but
+  missing from `canonical_projects`, so the #536 guard had been silently dropping
+  them — 591 jobs invisible to every metric. The planned delete would have
+  destroyed their real history. Fixed instead in #934.
+- **Four wrong hypotheses on a "0 projects" selftest result** (CSV parse, ON
+  CONFLICT, worktree nix-shell path, `$REPO_ROOT` resolution) before instrumenting.
+  Actual cause: `canonical_projects` has `CHECK(kind IN (...six values...))` and I
+  had invented `knowledge-base` and `cache`. The insert failed wholesale, the
+  aliases FK then failed, and `duck_query` sends stderr to `/dev/null` — so a
+  **rejected value** presented as an **empty file**. Should have instrumented at
+  failure two, per `pivot-signal`.
+- **`sqlite3 -readonly` on the backup** returned "unable to open database file";
+  worked without the flag. Not diagnosed — noted so the next session doesn't burn
+  time on it.
+
+### Accuracy / Metrics
+
+- roborev failed jobs, trailing 16 days: **1,137 → 17** (the 17 are genuine).
+- Phantom repos in `~/.roborev`: **1,723 → 0**; real repos 27; orphans 0.
+- Open reviews: 622 → 599 (25 phantom removed from the backlog).
+- `classify_failure()` over all 12,319 jobs in the pre-cleanup backup: ephemeral
+  2,410 · agent 391 · quota 89 · other 5. NA count **exactly** matched the
+  non-failed row count.
+- Cross-validation, mirror vs source of truth: `SUM(jobs_failed) = 25` vs
+  `COUNT(*) status='failed' = 25`.
+- `canonical_projects_migrate.sh --selftest`: **1/5 → 5/5** (the 4 failures were
+  pre-existing rot — hardcoded `18` against a CSV that had grown to 20).
+- New test file `test-roborev-failure-category.R`: 15 passing, snapshot stable.
+
+### Known Limitations
+
+- **gemini is failing ~34% and is `default_agent`** — 19 done / 10 failed since
+  2026-08-06, `exit status 41 (parse error: no valid stream-json events)`. Not
+  filed yet.
+- **`com.claude.roborev-autoclose` is unloaded.** Deliberate (#930), but this also
+  stops the weekly `reviews.db` backup (#929). Re-enable only after the
+  empty-commit guard and per-run cap land.
+- **35 commits were never reviewed by anything, ever**
+  ([#927](https://github.com/JohnGavin/llm/issues/927)) — quota failures are
+  terminal, and nothing re-enqueues them. Blocked on
+  [#904](https://github.com/JohnGavin/llm/issues/904): roborev cannot *classify* a
+  quota error, so it cannot *defer* one.
+- **The metrics mirror still holds 720 dead repo names** (60% of rows). Deferred
+  deliberately until #934 lands, so the delete can exclude the newly-canonical
+  repos.
+- **`duck_query`'s `2>/dev/null`** turns any SQL error into an empty result — the
+  zero-metric-evidence pattern inside our own tooling. Not filed.
+- PRs #926, #933, #934 open and unmerged; #934 needs
+  `canonical_projects_migrate.sh` run against the live DB after merge (llm#510).
+
 ## 2026-08-05 (session 2) — #910 + #909 fixed and deployed; the #909 fix shipped the very defect it was fixing
 
 ### Completed
@@ -2212,7 +2754,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 ### Completed
 
 - **#156 closed** — estate planning Q-list compiled (`knowledge/wiki/estate-planning-questions.md`, 17.7 KB, 10 sections, 65 questions, 4 AI-inferred markers). YouTube transcript captured via `yt-dlp` from Wade Pfau / Alex Magia "Retire with Style" podcast Ch11. Local-only.
-- **#157 closed** — MyExpatSIPP wiki page (`knowledge/wiki/sipp-offshore.md`, 3 raw docs / 9.6 KB total, 5 independent sources cited, 10 AI-inferred claims tagged, bidirectional cross-link with #156). FCA register lookup hit CSS error — flagged for manual verification.
+- **#157 closed** — offshore/expat SIPP provider wiki page (`knowledge/wiki/sipp-offshore.md`, 3 raw docs / 9.6 KB total, 5 independent sources cited, 10 AI-inferred claims tagged, bidirectional cross-link with #156). FCA register lookup hit CSS error — flagged for manual verification.
 - **#158 closed** — Roborev evaluation. Step 1 quantitative: 1,694 reviews, 24.4% approval, **15.5% addressed rate** (`knowledge/wiki/roborev-evaluation.md`). Step 2 stratified 30-finding sample (`knowledge/wiki/roborev-eval-sample.md`). User classification: 30/30 = TP-actioned. **Decision: KEEP roborev.** Signal is excellent; bottleneck is the addressed-rate.
 - **#159 filed** — Close config gaps vs MachineLearningMastery agentic-patterns + LLM-observability articles
 - **#160 filed** — Roborev never uses Critical or Info severity (prompt investigation + add Critical tier)
@@ -2260,7 +2802,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 - **#154 closed** — `b85bb59` (worktree-isolated fixer agent). New target `vig_kb_stats` in `R/tar_plans/plan_kb_stats.R`; pre-computed RDS (267 B, aggregates only) at `inst/extdata/vignettes/vig_kb_stats.rds`. knowledge-evolution.qmd now renders in CI with real numbers despite gitignored `knowledge/`.
 - **#153 attempted-closed-then-reopened** — `b9283ab` (Option B: Homebrew bash shebang) merged ff-only; verification showed state-T persisted. Three further fixes attempted same session: plist `ProcessType=Background` + `AbandonProcessGroup=true`, `trap '' SIGTSTP SIGTTIN SIGTTOU`, external wrapper watchdog. All failed. Issue reopened with full findings.
 - **#156 filed** — estate / legacy / incapacity planning Q-list (10 sections from YouTube takeaways, work tracked for fresh session)
-- **#157 filed** — MyExpatSIPP knowledge-base addition
+- **#157 filed** — offshore/expat SIPP provider knowledge-base addition
 
 ### Failed Approaches
 
@@ -2751,7 +3293,7 @@ None this session.
   - `JohnGavin/irishbuoys` — `527c7e9` pushed; file moved INTO the package subfolder at `proj/data/weather/irish_buoy_network/irishbuoys/RECOVERY.md` (the parent path is not a git repo; the package is); paths within the file are relative to the package root.
   - `JohnGavin/llmtelemetry` — `3f3a901` rebased over 4 origin auto-refresh commits and pushed; bundled `.claude/CLAUDE.md` (declares `Environment: prod`) + `RECOVERY.md` (predictions/duckdb/dashboard JSON) + the pre-existing `model_daily.json` refresh per user direction.
   - `JohnGavin/JohnGavin.github.io` — `e05f9fc` (`.claude/CLAUDE.md` with `Environment: prod`, deploy notes, dark-mode + `.nojekyll` reminders); pushed by user from a non-nix terminal (nix shell has no `ssh`).
-  - `mycare` — `RECOVERY.md` written at `/Users/johngavin/docs_/pers/NHS_health/data/antigravity/mycare/RECOVERY.md`. NOT a git repo (intentional — PHI). File documents PHI-specific encryption-at-rest requirements and a no-cloud-without-DUA constraint.
+  - `mycare` — `RECOVERY.md` written at its local project root (path withheld — PHI project, see `public-private-repo-boundary` rule). NOT a git repo (intentional — PHI). File documents PHI-specific encryption-at-rest requirements and a no-cloud-without-DUA constraint.
 
 ### Failed approaches / sharp edges
 
@@ -2876,7 +3418,7 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   - Fixed early-exit bug in `r_code_check.sh`: ast-grep empty output no longer `exit 0`, so jarl always runs
   - Added jarl integration block to `r_code_check.sh` with graceful skip if jarl not in PATH
   - Updated `/check` command (step 4, bash block, output format) to reference `r_code_check.sh` and show ast-grep + jarl results
-  - Braindump #32 (statin note): processed as informational for mycare project
+  - Braindump #32 (health note): processed as informational for mycare project
 
 ### Failed approaches
 - **Adding `jarl` to `default.nix` directly**: bypassed the rix workflow (`default.R` → `rix::rix()` → `default.nix`). Build failed because nixpkgs only ships jarl 0.3.0 and its `insta-1.43.1` snapshot tests fail (5 of 109): `test_assignment_wrong_value_from_toml`, `test_default_exclude_wrong_values`, `test_exclude_wrong_values`, `test_malformed_toml_syntax`, `test_unknown_toml_field`. Even if it built, 0.3.0 predates the rule set `r_code_check.sh` relies on. Manual edit also violated `feedback_never-edit-default-nix`, `nix-agent-shell-protocol`, `auto-delegation` (should have used `nix-env` agent), and `verification-before-completion` rules. **Resolution:** keep manual install at `/usr/local/bin/jarl` until nixpkgs catches up; tracked in #99.

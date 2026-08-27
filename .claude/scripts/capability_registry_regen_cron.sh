@@ -124,6 +124,36 @@ if ! command -v nix-shell > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── Wait for DNS before touching the network (llm#947, llm#970) ──────────────
+# Scheduled jobs fire before this machine's network is reliably up. A job
+# that cannot resolve DNS within the bound has NOT failed -- its precondition
+# (network) was absent -- so this defers rather than attempting nix
+# evaluation that would otherwise die with "Could not resolve host".
+# See .claude/scripts/wait_for_resolvable_host.sh.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/wait_for_resolvable_host.sh"
+if ! wait_for_resolvable_host "" log; then
+  log "DEFER: DNS not up within bound — skipping this run (not a failure)"
+  if command -v duckdb >/dev/null 2>&1 && [ -f "${UNIFIED_DB}" ]; then
+    _defer_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    _defer_ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    duckdb "${UNIFIED_DB}" "
+      INSERT OR IGNORE INTO housekeeping_runs
+        (id, task, source_script, started_at, ended_at, status, rows_written)
+      VALUES (
+        '${_defer_id}',
+        'capability_registry_regen',
+        '${SCRIPT_DIR}/capability_registry_regen_cron.sh',
+        TIMESTAMPTZ '${_defer_ts}',
+        TIMESTAMPTZ '${_defer_ts}',
+        'deferred',
+        0
+      );
+    " 2>/dev/null || log "duckdb WARN: housekeeping_runs deferred-row INSERT failed (non-fatal)"
+  fi
+  exit 0
+fi
+
 # ── Resolve nix target: GC-rooted drv preferred (llm#596) ─────────────────────
 # Evaluating ${LLM_NIX} re-fetches the unhashed nixpkgs tarball once the
 # tarball TTL lapses; the launchd environment cannot resolve github.com, so

@@ -34,3 +34,10 @@ Issue:       "Fix: age filter was inverted, now correctly excludes minors"
 | Jargon without definition | Alienates non-specialists | Define on first use |
 | Hedging in code comments ("maybe", "probably") | Suggests untested code | Document assumptions clearly |
 | Paragraphs > 150 words in vignettes | Hard to scan | Break into headed sections |
+
+## Related
+
+- [`outbound-writing-style`](outbound-writing-style.md) — this rule governs *clarity*
+  for a given audience; that one governs *whose voice* a draft is in when John will
+  send it under his own name, plus the plain-text-not-blockquote formatting discipline
+  for anything meant to be copy-pasted.

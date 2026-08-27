@@ -9,6 +9,10 @@
 --   kb_events              -- one row per knowledge-base change detected by kb_digest_daily_cron.sh
 --   launchd_health_events  -- one row per launchd plist's last-observed state (llm#554)
 --   roborev_daily_summary  -- per-project daily summary mirrored from roborev SQLite (llm#555)
+--   data_quality_incidents -- one row per known untrustworthy-data window (llm#913, llm#915)
+--   secret_scan_findings   -- one row per finding from secret_exposure_scan.sh (llm#951)
+--   roborev_retention_events -- one row per item-type pruned by roborev_retention.sh (llm#929)
+--   private_data_scan_findings -- one row per finding from private_data_scan.sh (2026-08-22 PII incident)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -34,11 +38,22 @@ CREATE TABLE IF NOT EXISTS worktree_gc_events (
 
 CREATE TABLE IF NOT EXISTS housekeeping_runs (
   id              TEXT PRIMARY KEY,
-  task            TEXT NOT NULL,             -- 'worktree_gc' | 'branch_gc' | 'config_digest' | 'kb_digest' | 'launchd_health' | 'roborev_bridge' | 'stage1_findings' | 'self_review_verify'
+  task            TEXT NOT NULL,             -- 'worktree_gc' | 'branch_gc' | 'config_digest' | 'kb_digest' | 'launchd_health' | 'roborev_bridge' | 'stage1_findings' | 'self_review_verify' | 'secret_exposure_scan'
   source_script   TEXT NOT NULL,             -- absolute path to script
   started_at      TIMESTAMPTZ NOT NULL,
   ended_at        TIMESTAMPTZ,
-  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial'
+  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial' | 'deferred'
+                                              -- 'deferred' (llm#947, llm#970): the job declined to
+                                              -- run because its precondition (network/DNS) was
+                                              -- absent within the bound -- NOT a failure. Written by
+                                              -- callers of .claude/scripts/wait_for_resolvable_host.sh
+                                              -- when it returns 2. Readers MUST NOT bucket 'deferred'
+                                              -- alongside 'failed' -- same rationale as the 'unknown'
+                                              -- state added to launchd_health_events.state above.
+                                              -- No CHECK constraint enforces this enum (verified via
+                                              -- duckdb_constraints() on the live table -- only
+                                              -- PRIMARY KEY + NOT NULL exist), so no migration was
+                                              -- required to add this value.
   rows_written    INTEGER DEFAULT 0,
   error_text      TEXT,
   detail_json     TEXT
@@ -112,7 +127,11 @@ CREATE TABLE IF NOT EXISTS launchd_health_events (
   fired_at        TIMESTAMPTZ NOT NULL,
   source          TEXT NOT NULL,           -- 'launchd_health_weekly_cron.sh'
   plist_label     TEXT NOT NULL,           -- e.g. 'com.claude.worktree-gc'
-  state           TEXT NOT NULL,           -- 'loaded_ok' | 'loaded_recent_fail' | 'unloaded' | 'missing' | 'orphan'
+  state           TEXT NOT NULL,           -- 'loaded_ok' | 'loaded_recent_fail' | 'unloaded' | 'unknown' | 'orphan'
+                                            -- 'unknown' (llm#962 Part 1): launchctl output could not be parsed --
+                                            -- MUST NOT be counted as a failure by readers. 'missing' is the
+                                            -- pre-rename spelling of the same state; readers still accept it
+                                            -- for rows written before the rename.
   last_exit_code  INTEGER,
   last_fired_at   TIMESTAMPTZ,             -- from launchctl print (NULL when not parseable)
   next_fire_at    TIMESTAMPTZ,             -- from launchctl print (NULL when not scheduled/parseable)
@@ -159,12 +178,16 @@ CREATE INDEX IF NOT EXISTS idx_roborev_daily_summary_project_window ON roborev_d
 
 -- etl_freshness: one row per ETL data source, upserted by the source's own
 -- writer after every run via .claude/scripts/etl_freshness_upsert.sh. Makes
--- silent ETL staleness impossible — session_init.sh Phase 15c surfaces any
--- row with status='stale' at session start.
--- status vocabulary: fresh | stale | unknown (unknown = no expected_cadence_hours,
--- i.e. an event-driven source with no SLA, e.g. sessions/agent_runs).
+-- silent ETL staleness impossible — records FACT columns (last_row_ts,
+-- last_etl_run_ts, expected_cadence_hours) that .claude/scripts/
+-- staleness_collect.sh reads as one input to the `staleness` table.
+-- The authoritative staleness verdict is the `staleness_status` view
+-- (recomputed at every read), surfaced by session_init.sh Phase 15d.
+-- status: VESTIGIAL (llm#893/#913) — no longer written by
+-- etl_freshness_upsert.sh; retained only so pre-existing rows still load.
+-- Do not add readers of this column; use `staleness_status` instead.
 -- PK: source_name.
--- See llm#309 Phase 1a.
+-- See llm#309 Phase 1a; superseded by llm#893.
 CREATE TABLE IF NOT EXISTS etl_freshness (
   source_name             VARCHAR PRIMARY KEY,
   last_row_ts             TIMESTAMP,
@@ -172,7 +195,112 @@ CREATE TABLE IF NOT EXISTS etl_freshness (
   expected_cadence_hours  DOUBLE,
   status                  VARCHAR
 );
-CREATE INDEX IF NOT EXISTS idx_etl_freshness_status ON etl_freshness(status);
+
+-- data_quality_incidents: one row per known window where a table/column's
+-- values are not trustworthy (e.g. imputed/estimated data that would
+-- otherwise be silently read as observed data). Written once per incident
+-- by whoever diagnoses it (human or agent) -- NOT a continuously-firing
+-- event writer like the tables above. Consumers of the named asset/column
+-- MUST check this table (or the incident marker it documents, e.g. a
+-- `summary` tag) before presenting an aggregate as real.
+-- PK is a fixed, human-chosen string (not gen_random_uuid) so re-seeding an
+-- incident record is idempotent -- one row per incident, not one per apply.
+-- See unified-observability-schema rule "Data Quality Incidents" section,
+-- llm#913, llm#915.
+CREATE TABLE IF NOT EXISTS data_quality_incidents (
+  id            TEXT PRIMARY KEY,
+  asset         TEXT NOT NULL,             -- e.g. 'sessions'
+  column_name   TEXT,                      -- e.g. 'duration_min'; NULL = whole asset
+  window_start  TIMESTAMP NOT NULL,
+  window_end    TIMESTAMP,                 -- NULL = still open
+  reason        TEXT NOT NULL,
+  issue_ref     TEXT,                      -- e.g. 'llm#913 / llm#915'
+  recorded_at   TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_data_quality_incidents_asset ON data_quality_incidents(asset, window_start);
+
+-- secret_scan_findings: one row per finding from secret_exposure_scan.sh
+-- (see the four detectors in secret-exposure-scanning.md), batched -- one
+-- INSERT...SELECT per invocation via write_findings_to_db(), NOT one INSERT
+-- per finding. Joins to housekeeping_runs(id) via run_id (task=
+-- 'secret_exposure_scan') for the run-level heartbeat/status.
+--
+-- NEVER stores a credential value. `note` is the SAME fixed, detector-
+-- specific description append_finding() already prints to stdout/--json/the
+-- log file under the scanner's no-leaked-value contract; `name` is a
+-- finding-class label (e.g. 'cred-shape', 'bad-permissions'), never the
+-- matched literal. This table persists exactly the same 6-tuple the
+-- existing reporters already emit -- nothing wider.
+--
+-- Deterministic PK: md5(run_id:detector:file_path:line_num:name) --
+-- replaying the same run's write step (write_findings_to_db called twice
+-- for the same run_id) is idempotent via INSERT OR IGNORE. A later run
+-- (new run_id) for the same finding gets a new id, by design -- each run is
+-- a distinct observation for the digest email's delta-vs-previous-run
+-- section, not a dedup target.
+-- See llm#951 (scanner half); llm#950 (guard half, same detector set).
+CREATE TABLE IF NOT EXISTS secret_scan_findings (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
+  fired_at    TIMESTAMPTZ NOT NULL,
+  detector    TEXT NOT NULL,             -- '1' | '2' | '3' | '4'
+  severity    TEXT NOT NULL,             -- 'high' | 'critical'
+  file_path   TEXT NOT NULL,
+  line_num    TEXT,                      -- '-' for detector 3 (file-level, no line)
+  name        TEXT NOT NULL,             -- finding-class label, e.g. 'cred-shape'
+  note        TEXT NOT NULL              -- fixed generic description -- NEVER a credential value
+);
+CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_run_id ON secret_scan_findings(run_id);
+CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_fired_at ON secret_scan_findings(fired_at);
+CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_detector ON secret_scan_findings(detector, fired_at);
+
+-- roborev_retention_events: one row per item-type removed by
+-- roborev_retention.sh (llm#929) — 'backup' (DB snapshot) or 'joblog'
+-- (logs/jobs/<id>.log). Written on --apply only (never on --dry-run), so
+-- this table's absence of rows for a given day means the dry-run ran, not
+-- that nothing needed pruning. Joins to housekeeping_runs.id via run_id.
+CREATE TABLE IF NOT EXISTS roborev_retention_events (
+  id          TEXT PRIMARY KEY,
+  fired_at    TIMESTAMPTZ NOT NULL,
+  source      TEXT NOT NULL,             -- 'roborev_retention.sh'
+  run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
+  item_type   TEXT NOT NULL,             -- 'backup' | 'joblog'
+  action      TEXT NOT NULL,             -- 'removed'
+  count       INTEGER NOT NULL,          -- number of files removed
+  bytes       BIGINT NOT NULL            -- cumulative bytes reclaimed
+);
+CREATE INDEX IF NOT EXISTS idx_roborev_retention_events_run_id ON roborev_retention_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_roborev_retention_events_fired_at ON roborev_retention_events(fired_at);
+
+-- private_data_scan_findings: one row per finding from private_data_scan.sh
+-- (deny-list exact-value hits + generic E.164/UK-postcode/IBAN pattern
+-- hits), batched -- one INSERT...SELECT per invocation via
+-- write_findings_to_db(), same convention as secret_scan_findings above.
+-- Joins to housekeeping_runs(id) via run_id (task='private_data_scan').
+--
+-- NEVER stores a PII value. `note` is the same fixed, rule-specific,
+-- non-leaking description private_data_scan.sh already prints to
+-- stdout/--json/the log under its no-leaked-value contract; `rule` is a
+-- finding-class label ('e164-phone' | 'uk-postcode' | 'iban' |
+-- 'known-value'), never the matched literal.
+--
+-- Deterministic PK: md5(run_id:source:location:line_num:rule) -- replaying
+-- the same run's write step is idempotent via INSERT OR IGNORE.
+-- Origin: 2026-08-22 incident (personal phone number, 8 files, 9 commits,
+-- 4 months exposed on a public repo). See private-data-scanning.md.
+CREATE TABLE IF NOT EXISTS private_data_scan_findings (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
+  fired_at    TIMESTAMPTZ NOT NULL,
+  source      TEXT NOT NULL,             -- 'denylist' | 'generic'
+  severity    TEXT NOT NULL,             -- 'critical' | 'high'
+  location    TEXT NOT NULL,             -- 'staged:<path>' | '<sha12>:<path>' | '<path>'
+  line_num    TEXT,
+  rule        TEXT NOT NULL,             -- 'known-value' | 'e164-phone' | 'uk-postcode' | 'iban'
+  note        TEXT NOT NULL              -- fixed generic description -- NEVER a PII value
+);
+CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_run_id ON private_data_scan_findings(run_id);
+CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_fired_at ON private_data_scan_findings(fired_at);
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);

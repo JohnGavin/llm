@@ -32,6 +32,28 @@ CREATE TABLE IF NOT EXISTS roborev_daily_metrics (
   PRIMARY KEY (date, repo)
 );
 
+-- ADDITIVE columns (llm#928, 2026-08-06) — safe under the FROZEN note above:
+-- nothing is renamed or retyped, and downstream selects by name.
+--
+-- WHY: `reviews_passed`/`reviews_failed` are derived from `reviews.verdict_bool`,
+-- which only exists once a job produced a review. A job that FAILS never
+-- produces one, so it counts in `reviews_created` and in neither of the other
+-- two — job-level failure had no column at all. On 2026-08-03 this table read
+-- `reviews_failed = 5` for llm while 582 jobs actually failed that day.
+--
+-- `reviews_failed` keeps its meaning (verdict failed) and its name;
+-- llmtelemetry#144 reads it. The new columns sit alongside it.
+--
+-- ALTER ... ADD COLUMN IF NOT EXISTS is idempotent in DuckDB and backfills
+-- existing rows with the DEFAULT. Note DuckDB rejects NOT NULL in ADD COLUMN
+-- ("Adding columns with constraints not yet supported"), so these carry
+-- DEFAULT 0 only — matching the intent without the constraint.
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed           INTEGER DEFAULT 0;
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_ephemeral INTEGER DEFAULT 0;
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_quota     INTEGER DEFAULT 0;
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_agent     INTEGER DEFAULT 0;
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_other     INTEGER DEFAULT 0;
+
 -- ── roborev_review_lifecycle ──────────────────────────────────────────────
 -- Per-review timeline. One row per review (keyed on review_id from reviews.id).
 -- PK: review_id

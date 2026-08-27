@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.roborev.daemon.plist
+     launchd supervision for the roborev review daemon (llm#936, llm#956).
+
+     WHY THIS EXISTS
+     `roborev daemon start` self-daemonizes: forks, detaches, and returns a
+     shell prompt. Nothing then owns its lifecycle, nothing restarts it,
+     nothing bounds its age, and it appears in no health check. That
+     self-daemonized process ran for 7 days holding a stale GEMINI_API_KEY
+     after a rotation; every review failed the whole time and nobody knew
+     (llm#936). This plist replaces the self-daemonizing entrypoint with
+     launchd supervision via roborev_daemon_launcher.sh, which re-reads
+     secrets fresh on every start (RunAtLoad, and every KeepAlive restart)
+     and execs `roborev daemon run` in the foreground so its PID is the one
+     launchd actually supervises.
+
+     Once installed, never run `roborev daemon start` again on this
+     machine — the two would race for the same job queue. Restarts go
+     through launchd: `launchctl kickstart -k gui/$(id -u)/com.roborev.daemon`.
+
+     See .claude/rules/long-running-process-supervision.md for the general
+     invariant.
+
+     HOW THE DAEMON ACTUALLY GETS STARTED (measured 2026-08-14, corrects two
+     wrong premises this header previously carried)
+       Any roborev CLIENT auto-spawns a daemon when none is reachable. The
+       instance running before this migration was NOT an orphan from a hand-
+       typed `daemon start`: its parent was `roborev stream` (a client),
+       whose parent was roborev_auto_refine.sh, whose parent was launchd via
+       com.roborev.auto-refine. Whole tree started in the same second.
+
+         4574 roborev daemon run          <- PPID 4572
+         4572 roborev stream              <- PPID 4561, spawned the daemon
+         4561 roborev_auto_refine.sh run  <- PPID 1 (com.roborev.auto-refine)
+
+       Two consequences for the sequence below:
+         a) Stop com.roborev.auto-refine FIRST. Killing only the daemon
+            leaves its `stream` client running, which immediately spawns a
+            replacement and races the launchd one.
+         b) The race is bounded but not free: the daemon binds
+            127.0.0.1:7373, so a second instance cannot bind and exits.
+            Whoever holds the port wins; the loser dies. With KeepAlive +
+            ThrottleInterval that means a client-spawned rival can hold the
+            port for up to a minute while launchd's copy crash-loops.
+
+       `roborev daemon stop` DOES exist in this version and works (verified:
+       prints "Daemon stopped", exit 0). An earlier draft of this header
+       claimed otherwise and told the operator to `kill` by PID.
+
+     MIGRATION SEQUENCE (orchestrator step, after PR review)
+       1. Stop the job whose client spawns the daemon, so nothing respawns
+          one mid-migration:
+            launchctl bootout gui/$(id -u)/com.roborev.auto-refine
+          Then stop the daemon itself and confirm the port is free:
+            roborev daemon stop
+            pgrep -fl roborev                       # expect no output
+            lsof -nP -iTCP:7373 -sTCP:LISTEN        # expect no output
+
+       2. Install this plist:
+            cp .claude/launchd/com.roborev.daemon.plist \
+               ~/Library/LaunchAgents/com.roborev.daemon.plist
+
+       3. Bootstrap it:
+            launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.roborev.daemon.plist
+
+       4. Verify a NEW pid appears, that launchd's supervised pid IS the
+          daemon's pid (proves the launcher exec'd rather than forked), and
+          that its parent is launchd:
+            launchctl print gui/$(id -u)/com.roborev.daemon | grep pid
+            pgrep -fl "roborev daemon run"
+            ps -o pid,ppid,command -p <pid>          # PPID must be 1
+            lsof -nP -iTCP:7373 -sTCP:LISTEN         # must be the new pid
+
+       5. Restore auto-refine and confirm its client CONNECTS rather than
+          spawning a rival — exactly one "daemon run" must remain:
+            launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.roborev.auto-refine.plist
+            pgrep -fl roborev
+
+       6. Verify the daemon actually processes work, not just that a PID
+          exists — make one small commit in a repo with roborev's
+          post-commit hook installed, then confirm a new row lands in
+          ~/.roborev/reviews.db for that commit within a couple of minutes:
+            sqlite3 ~/.roborev/reviews.db \
+              "SELECT id, status, agent, enqueued_at FROM review_jobs \
+               ORDER BY enqueued_at DESC LIMIT 3;"
+
+       ROLLBACK (only if step 4, 5 or 6 fails)
+            launchctl bootout gui/$(id -u)/com.roborev.daemon
+          This returns to NO supervised daemon running — the safe failure
+          mode. Note that bootstrapping com.roborev.auto-refine again is by
+          itself enough to get an UNsupervised daemon back (its client
+          spawns one), which is the pre-migration state; treat that as a
+          temporary stopgap only, and reopen llm#956 rather than calling it
+          resolved.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.roborev.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/.claude/scripts/roborev_daemon_launcher.sh</string>
+    </array>
+
+    <!-- The daemon resolves review-agent binaries from PATH. Originally
+         copied from com.roborev.auto-refine.plist, which only ever needed
+         `gemini`/`codex` — so `claude-code` was never in scope and
+         ~/.local/bin was omitted.
+
+         Measured 2026-08-18: with the old PATH,
+           env -i PATH=<old> /usr/bin/which claude codex gemini
+         resolved codex and gemini but NOT claude (~/.local/bin/claude).
+         The configured backup agent was therefore unreachable, and every
+         gemini quota failure died with
+
+           no review agent available: no configured agent available
+           (preferred: "claude-code", backups: claude-code)
+
+         instead of falling back to claude-code. The waterfall was
+         configured correctly and had nowhere to fall. Verified after
+         adding ~/.local/bin: the same forced-override review that
+         previously errored returned
+           Enqueued job 12545 for c228cb3 (agent: claude-code)
+         and ran under claude-code. See llm#746.
+
+         If a new review agent is added, verify it resolves from THIS PATH,
+         not from an interactive shell's — `roborev check-agents` run by
+         hand passes on binaries the daemon cannot see, which is exactly
+         how this stayed hidden. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Perpetual process, not a scheduled task: restart on crash or
+         reboot, never exit on its own. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Bound a crash-loop: if the daemon exits within 10s of starting
+         (e.g. GEMINI_API_KEY genuinely absent, exit 78 from the launcher),
+         wait at least this many seconds before the next KeepAlive restart
+         rather than spinning. Matches roborev_bridge's precedent value. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev-daemon.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev-daemon.log</string>
+</dict>
+</plist>

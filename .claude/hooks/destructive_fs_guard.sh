@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its BLOCK path, so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # destructive_fs_guard.sh — PreToolUse:Bash hook
 #
 # Enforces confirmation for destructive filesystem commands on protected paths.
@@ -13,6 +20,22 @@
 # Protected paths: .claude/, R/, packages/, data/, *.nix, _targets*, etc.
 
 set -euo pipefail
+
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path — see destructive_api_guard.sh/secret_leak_guard.sh
+# for the identical worktree-vs-symlink rationale. Pure parameter expansion —
+# no subshell — costs nothing on the (common) allow path. The selftest block
+# above tests is_destructive()/targets_protected() directly and never reaches
+# the block path below, so no HOOK_EVENTS_SPOOL override is needed there.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" destructive_fs_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
 
 # In selftest mode, skip stdin reading — functions are defined below, selftest runs after them
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" != "1" ]; then
@@ -227,6 +250,7 @@ EOF
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED (code: $EXPECTED_CODE): $COMMAND" >> "$LOG_FILE"
 
+  _emit_hook_event "PreToolUse:blocked" "$DISPLAY_CMD"
   exit 1
 fi
 

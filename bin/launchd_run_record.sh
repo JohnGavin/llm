@@ -21,6 +21,26 @@
 
 set -euo pipefail
 
+# ── Secrets (llm#791 / llm#936) ───────────────────────────────────────────────
+# Every job that runs through this wrapper inherits the environment loaded here.
+# ~/.config/secrets.env is the single source of truth; ~/.zshenv sources it for
+# zsh, but launchd does not run a shell, so without this line a launchd job sees
+# only its plist's EnvironmentVariables (typically just PATH).
+#
+# This is the one edit point that covers every job using the recorder. Daemons
+# started outside it — e.g. com.roborev.auto-refine — must load it themselves.
+#
+# Deliberately NOT fail-loud here: this wrapper is generic and most jobs need no
+# secrets at all. Jobs with a hard requirement assert their own (see
+# roborev_auto_refine.sh). Missing-file is silent by design; the file is
+# optional on a machine that has no secrets.
+if [ -r "$HOME/.config/secrets.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.config/secrets.env"
+  set +a
+fi
+
 # ── Arg parsing ────────────────────────────────────────────────────────────────
 
 if [[ $# -lt 3 ]]; then
@@ -85,8 +105,14 @@ fi
 STARTED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
 EXIT_CODE=0
 
-# /usr/bin/time -l on macOS emits "N maximum resident set size" in bytes
-if /usr/bin/time -l "${CMD[@]}" 2>"$TIMELOG"; then
+# /usr/bin/time -l on macOS emits "N maximum resident set size" in bytes.
+# CRITICAL (llm#928): use `-o "$TIMELOG"` — NOT `2>"$TIMELOG"` — so the wrapped
+# job's own stderr passes straight through to this script's stderr (and from
+# there to the plist's StandardErrorPath). `-o` diverts ONLY /usr/bin/time's
+# own resource-usage report into $TIMELOG; the job's diagnostics are never
+# captured or deleted. Verified: `man time` (macOS) — "-o file: Write the
+# output to file instead of stderr."
+if /usr/bin/time -l -o "$TIMELOG" "${CMD[@]}"; then
   EXIT_CODE=0
 else
   EXIT_CODE=$?

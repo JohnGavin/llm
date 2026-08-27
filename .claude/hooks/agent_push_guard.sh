@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# hook-liveness: on-block
+#   Read by the hook-liveness section of send_overnight_self_review_email.R
+#   (llm#1017). emits only from its two BLOCK paths (protected branch, cross-worktree), so a
+#   7-day count of zero in that report is the HEALTHY value -- it means nothing was blocked, not that the hook is dead.
+#   Declared here rather than in a list kept by the report, so it stays true
+#   when this file changes -- the same reason rules carry their own `paths:`.
 # agent_push_guard.sh — PreToolUse:Bash hook
 #
 # Blocks `git push` to main/master/release/prod when the push originates
@@ -62,6 +69,22 @@ LOG_FILE="$HOME/.claude/logs/agent_push_blocked.log"
 WOULD_BLOCK_LOG="$HOME/.claude/logs/agent_push_would_block.log"
 CROSSBRANCH_LOG="$HOME/.claude/logs/agent_push_blocked_crossbranch.log"
 
+# llm#950 — fire-and-forget hook_events telemetry (spool write; see
+# hook_event_emit.sh header for the single-writer-DuckDB rationale).
+# Resolved relative to this script's own location, not a hardcoded
+# ~/.claude/scripts/... path (worktree-vs-symlink rationale, see
+# secret_leak_guard.sh). Pure parameter expansion — no subshell — costs
+# nothing on the allow path. Only called from the "NORMAL HOOK OPERATION"
+# section below, which the selftest never reaches (selftest calls decide()
+# directly), so no HOOK_EVENTS_SPOOL override is needed for the selftest.
+_HOOK_EVENT_EMIT_SCRIPT="${BASH_SOURCE[0]%/*}/../scripts/hook_event_emit.sh"
+_emit_hook_event() {
+  if [ -x "$_HOOK_EVENT_EMIT_SCRIPT" ]; then
+    "$_HOOK_EVENT_EMIT_SCRIPT" agent_push_guard "$1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 log_blocked() {
   mkdir -p "$(dirname "$LOG_FILE")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] BLOCKED push to protected branch: $1" >> "$LOG_FILE"
@@ -94,22 +117,49 @@ log_allowed_crossbranch_bypass() {
 # Protected branch pattern (POSIX ERE)
 PROTECTED_BRANCH_PATTERN='^(main|master|production|release/.*|prod/.*)$'
 
+# Returns only the FIRST physical line of a (possibly multi-line) command
+# string. Every detection function below is applied to this, not the raw
+# multi-line command — found live (2026-08-21, while committing the fix
+# below): `git -C <path> commit -m "$(cat <<EOF ... EOF)"` was misclassified
+# as a push command, because the heredoc BODY quoted an indented example
+# `git push --force-with-lease origin <branch>` line. `grep`/`sed` `^`/`$`
+# anchor PER LINE by default (no `-z`), and is_push_command's own
+# env-assignment-stripping sed strips EACH line's leading whitespace before
+# the push-pattern grep runs — so an indented example line inside a commit
+# message, once de-indented by that sed, reads as if it were the actual
+# command. A real single `git push`/`gh repo sync` invocation is always the
+# FIRST line of the command string; everything after it in a multi-line
+# string is payload (a heredoc body, a multi-line SQL string, a commit
+# message), never a second command to detect against. Accepted trade-off:
+# a manually backslash-continued `git push \`\n`  origin main` (rare; Claude
+# Code's own generated command strings do not produce this shape) will have
+# its refspec extraction miss the second line and fall back to Case C
+# (current branch) in extract_target_branch — safe, not a security
+# regression, just less precise for a shape nothing in this system emits.
+first_line() {
+  printf '%s\n' "$1" | head -n1
+}
+
 has_bypass() {
   # Returns 0 if AGENT_PUSH_OK=1 appears as a leading env-var in the command
   echo "$1" | grep -qE '(^|[[:space:]])AGENT_PUSH_OK=1([[:space:]]|$)'
 }
 
 is_push_command() {
-  # Strip leading env-var assignments (KEY=value pairs before the command)
+  # Strip leading env-var assignments (KEY=value pairs before the command).
+  # Restricted to the first line (see first_line() above) so a push-shaped
+  # line embedded later in a multi-line command (e.g. a commit message
+  # quoting a push example) is never mistaken for the command itself.
   local stripped_cmd
-  stripped_cmd=$(echo "$1" | sed 's/^[[:space:]]*\([A-Z_][A-Z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
+  stripped_cmd=$(first_line "$1" | sed 's/^[[:space:]]*\([A-Z_][A-Z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
   echo "$stripped_cmd" | grep -qE \
     '(^git[[:space:]]+(push|-C[[:space:]]+[^[:space:]]+[[:space:]]+push)|^gh[[:space:]]+repo[[:space:]]+sync)'
 }
 
 extract_dash_c_path() {
   # Extract argument to -C flag: git -C /some/path push ...
-  echo "$1" | grep -oE '\-C[[:space:]]+[^[:space:]]+' | head -1 | sed 's/-C[[:space:]]*//'
+  # First-line-restricted for the same reason as is_push_command.
+  first_line "$1" | grep -oE '\-C[[:space:]]+[^[:space:]]+' | head -1 | sed 's/-C[[:space:]]*//'
 }
 
 is_worktree_path() {
@@ -121,28 +171,68 @@ is_worktree_path() {
   return 1
 }
 
+# Tokenises the argument list AFTER 'push' and identifies the remote and
+# refspec positionally, SKIPPING any leading `-`-prefixed flag tokens
+# (llm#988: `--force-with-lease`, `-u`, `--force`, `--set-upstream`,
+# `--follow-tags`, `--no-verify`, `-f`, ... were previously consumed
+# positionally as if they were the remote, which silently mis-parsed the
+# real remote as the refspec and left the actual refspec unexamined).
+#
+# `--opt=value` single-token forms (e.g. `--force-with-lease=<ref>`) are
+# skipped whole, since they still start with `-`. Flags that take a
+# SEPARATE-token value (e.g. `-o <value>`) are not used by any workflow
+# this guard governs and are not specifically handled — documented
+# limitation, not silently assumed safe.
+#
+# Sets globals _PARSED_REMOTE and _PARSED_REFSPEC (bash has no multi-value
+# return without a subshell, and we want to avoid the subshell-per-call cost
+# on every hook invocation).
+parse_push_args() {
+  local cmd="$1"
+  local after_push
+  # First-line-restricted (see first_line()'s header comment) — otherwise
+  # sed's '.*push' match is greedy PER LINE across a multi-line command and
+  # can pick up a 'push' substring from an unrelated later line (e.g. a
+  # commit message body).
+  after_push=$(first_line "$cmd" | sed 's/.*push[[:space:]]*//')
+  local -a tokens
+  read -r -a tokens <<< "$after_push"
+  local remote="" refspec="" tok
+  for tok in "${tokens[@]}"; do
+    case "$tok" in
+      -*) continue ;;  # skip flag tokens, regardless of position
+    esac
+    if [ -z "$remote" ]; then
+      remote="$tok"
+    else
+      refspec="$tok"
+      break
+    fi
+  done
+  _PARSED_REMOTE="$remote"
+  _PARSED_REFSPEC="$refspec"
+}
+
 extract_target_branch() {
   local cmd="$1"
   local effective_path="$2"
   # Case A: explicit HEAD:branch refspec — git push origin HEAD:main
+  # First-line-restricted — an unrelated later line (e.g. a commit message
+  # discussing "HEAD:something") must never be read as the refspec.
   local head_ref
-  head_ref=$(echo "$cmd" | grep -oE 'HEAD:[^[:space:]]+' | cut -d: -f2 || echo "")
+  head_ref=$(first_line "$cmd" | grep -oE 'HEAD:[^[:space:]]+' | cut -d: -f2 || echo "")
   if [ -n "$head_ref" ]; then
     echo "$head_ref"
     return
   fi
-  # Case B: explicit branch refspec — git push origin main OR git push origin feat/foo
-  # Strip everything up to and including 'push', then get words that don't start with -
-  local after_push
-  after_push=$(echo "$cmd" | sed 's/.*push[[:space:]]*//')
-  local refspec
-  refspec=$(echo "$after_push" | awk '{print $2}')
-  if [ -n "$refspec" ]; then
+  # Case B: explicit branch refspec — git push [flags] origin main
+  parse_push_args "$cmd"
+  if [ -n "$_PARSED_REFSPEC" ]; then
     # Could be branch:branch — take destination side
-    if echo "$refspec" | grep -q ':'; then
-      echo "$refspec" | cut -d: -f2
+    if echo "$_PARSED_REFSPEC" | grep -q ':'; then
+      echo "$_PARSED_REFSPEC" | cut -d: -f2
     else
-      echo "$refspec"
+      echo "$_PARSED_REFSPEC"
     fi
     return
   fi
@@ -158,14 +248,12 @@ extract_target_branch() {
 # refspec means "push to my own tracking branch" which is always safe.
 target_was_explicit() {
   local cmd="$1"
-  # Case A: HEAD:branch
-  echo "$cmd" | grep -qE 'HEAD:[^[:space:]]+' && return 0
-  # Case B: explicit refspec after the remote name (second word after 'push')
-  local after_push
-  after_push=$(echo "$cmd" | sed 's/.*push[[:space:]]*//')
-  local refspec
-  refspec=$(echo "$after_push" | awk '{print $2}')
-  [ -n "$refspec" ] && return 0
+  # Case A: HEAD:branch (first-line-restricted, see extract_target_branch)
+  first_line "$cmd" | grep -qE 'HEAD:[^[:space:]]+' && return 0
+  # Case B: explicit refspec after the remote name, flags skipped (llm#988).
+  # parse_push_args() itself is first-line-restricted.
+  parse_push_args "$cmd"
+  [ -n "$_PARSED_REFSPEC" ] && return 0
   return 1
 }
 
@@ -255,7 +343,7 @@ decide() {
 if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
   PASS=0
   FAIL=0
-  TOTAL=12
+  TOTAL=22
 
   # Temp log paths to avoid polluting production logs during self-test
   SELFTEST_LOG="/tmp/agent_push_selftest_blocked_$$"
@@ -398,6 +486,98 @@ if [ "${CLAUDE_HOOK_SELFTEST:-}" = "1" ]; then
 
   unset _SELFTEST_CURRENT_BRANCH
 
+  # ── Flag-parsing guard (llm#988) ────────────────────────────────────────────
+  # Guard B (and Guard A) must keep working correctly when a flag sits between
+  # 'push' and the remote — the flag must never be misread as the remote/ref.
+
+  # 13: -u to own branch → ALLOW
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 13 "allow" \
+    "git push -u origin worktree-agent-abc123" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 14: --force-with-lease to own branch → ALLOW
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 14 "allow" \
+    "git push --force-with-lease origin worktree-agent-abc123" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 15: --force to own branch → ALLOW
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 15 "allow" \
+    "git push --force origin worktree-agent-abc123" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 16: --no-verify to own branch → ALLOW
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 16 "allow" \
+    "git push --no-verify origin worktree-agent-abc123" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 17: literal repro from llm#988 (--force-with-lease, matching own branch) → ALLOW
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-a260e445ff4b647d5" \
+  check_scenario 17 "allow" \
+    "git push --force-with-lease origin worktree-agent-a260e445ff4b647d5" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-a260e445ff4b647d5"
+
+  # 18: --force-with-lease to main (Guard A, flag present) → BLOCK
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 18 "block" \
+    "git push --force-with-lease origin main" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 19: --force-with-lease to a SIBLING branch (Guard B, flag present — the
+  #     regression that matters most: correct parsing must not weaken Guard B) → BLOCK
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 19 "block" \
+    "git push --force-with-lease origin feat/cc-20260524-221709" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 20: -u to a SIBLING branch (Guard B, different flag) → BLOCK
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 20 "block" \
+    "git push -u origin feat/cc-20260524-221709" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # ── Multi-line command false-positive guard (found live 2026-08-21 while ──
+  # committing the fix above): a `git commit` whose heredoc-quoted message
+  # BODY contains an indented example `git push ...` line was misclassified
+  # as a push command — is_push_command's env-strip sed de-indents every
+  # line, then its grep's `^` anchors PER LINE, so the de-indented example
+  # line read as if it WERE the command. Must ALLOW regardless of what a
+  # multi-line commit message quotes.
+  MULTILINE_COMMIT_CMD='git -C /Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123 commit -m "$(cat <<EOF
+fix(hooks): example commit message quoting a push command
+
+  git push --force-with-lease origin worktree-agent-abc123
+
+was previously blocked incorrectly.
+EOF
+)"'
+  # 21: git commit whose message BODY quotes an indented "git push ..." example → ALLOW.
+  # _SELFTEST_CURRENT_BRANCH is set here deliberately (unlike a real worktree,
+  # this fake path has no actual git repo, so without the override
+  # get_worktree_current_branch() would return "" and the cross-worktree
+  # check would short-circuit to allow REGARDLESS of whether is_push_command
+  # was fooled — masking the exact regression this test exists to catch).
+  # With a real current-branch value injected, a mutation that reintroduces
+  # the multi-line false-positive produces "block-cross" (FAIL), not a
+  # coincidental "allow" for the wrong reason.
+  _SELFTEST_CURRENT_BRANCH="worktree-agent-abc123" \
+  check_scenario 21 "allow" \
+    "$MULTILINE_COMMIT_CMD" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  # 22: a genuine push to main, sent as a MULTI-LINE string (push on line 1,
+  # unrelated prose on line 2) must still BLOCK — the first-line restriction
+  # must not create a bypass by appending harmless-looking extra lines.
+  MULTILINE_PUSH_TO_MAIN=$'git push origin main\n# trailing comment-like text, still one logical command'
+  check_scenario 22 "block" \
+    "$MULTILINE_PUSH_TO_MAIN" \
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/agent-abc123"
+
+  unset _SELFTEST_CURRENT_BRANCH
+
   # Cleanup temp test logs
   rm -f "$SELFTEST_LOG" "$SELFTEST_WOULD_LOG"
 
@@ -486,6 +666,7 @@ EOF
 EOF
 
   log_blocked_crossbranch "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH, current=$CURRENT_BRANCH)"
+  _emit_hook_event "PreToolUse:blocked" "cross-worktree push target=${TARGET_BRANCH} current=${CURRENT_BRANCH}"
 
   # ── Log to unified DuckDB errors table (llm#491-a) ──
   _log_script="$HOME/.claude/scripts/log_session.sh"
@@ -546,6 +727,7 @@ cat >&2 <<EOF
 EOF
 
 log_blocked "$COMMAND (path=$EFFECTIVE_PATH, target=$TARGET_BRANCH)"
+_emit_hook_event "PreToolUse:blocked" "push to protected branch ${TARGET_BRANCH}"
 
 # ── Log to unified DuckDB errors table (llm#491-a) ──
 _log_script="$HOME/.claude/scripts/log_session.sh"

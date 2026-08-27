@@ -1,4 +1,22 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# NOT `#!/usr/bin/env bash` — deliberately, and this file is run by launchd.
+#
+# `env bash` resolves to Homebrew bash, which is AD-HOC SIGNED. macOS stores a
+# TCC grant for an ad-hoc-signed binary with an EMPTY code-requirement blob,
+# so the grant cannot bind to a code identity and is re-requested every time.
+# Any file access this script (or an agent it spawns) makes under a
+# TCC-protected service therefore prompts, is allowed, and prompts again.
+#
+# Verified for THIS script's job: prompts attributed to
+# /opt/homebrew/Cellar/bash/5.3.9/bin/bash, accessed by /usr/bin/find,
+# brokered by /usr/libexec/sandboxd, responsible process a long-lived
+# launchd-parented bash running this file.
+#
+# /bin/bash is Apple-signed: its grant carries a real csreq and persists.
+# Verified bash-3.2 compatible (`/bin/bash -n` clean; no declare -A, mapfile,
+# ${x^^}, coproc). Re-check that before adding any bash-4+ construct.
+#
+# llm#1036.
 # roborev_auto_refine.sh — Event-driven auto-refine daemon
 # Listens to roborev stream, triggers refine when reviews complete with findings
 #
@@ -10,6 +28,38 @@
 # Logs: ~/.claude/logs/roborev-auto-refine.log
 
 set -euo pipefail
+
+# ── Secrets (llm#791 / llm#936) ───────────────────────────────────────────────
+# ~/.config/secrets.env is the single source of truth and ~/.zshenv already
+# sources it — but ONLY for zsh. launchd does not run a shell at all, so a
+# launchd-started daemon gets exactly what its plist's EnvironmentVariables
+# block provides, which here is PATH and nothing else.
+#
+# This daemon ran fine for days purely because it had been started once from an
+# interactive shell and KeepAlive kept that process alive. When it finally died
+# on 2026-08-06 22:34 launchd respawned it with the plist environment, gemini
+# lost GEMINI_API_KEY, and every review failed for two days — 13 jobs, zero
+# successes, no alert. The key never moved; the daemon's parent did.
+#
+# Do NOT put secrets in the plist instead: .claude/launchd/*.plist is
+# version-controlled, so that would commit them to git.
+if [ -r "$HOME/.config/secrets.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.config/secrets.env"
+  set +a
+fi
+
+# Fail loud rather than failing 13 times in silence. A daemon that cannot
+# authenticate should not start.
+_missing=""
+for _v in GEMINI_API_KEY; do
+  [ -n "${!_v:-}" ] || _missing="$_missing $_v"
+done
+if [ -n "$_missing" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') FATAL: missing secret(s):$_missing — expected in ~/.config/secrets.env (llm#791)" >&2
+  exit 78   # EX_CONFIG
+fi
 
 # Mark session as scheduled/automated for llmtelemetry_emit.sh (#322 Phase 2).
 # Propagates to any claude process spawned by roborev refine so the Stop hook

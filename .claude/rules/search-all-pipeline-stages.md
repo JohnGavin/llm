@@ -70,9 +70,9 @@ can silently fail due to shell glob expansion limits (ARG_MAX). When this happen
 - You conclude the data doesn't exist
 - The data was there all along
 
-This exact failure occurred in the mycare project: `grep -rli "remission" *.txt` on
+This exact failure occurred in the mycare project: `grep -rli "search-term" *.txt` on
 117 files returned nothing. The Grep tool on the same directory found matches in
-multiple files. The word "remission" was present in line 144 of a letter.
+multiple files. The search term was present in line 144 of a letter.
 
 | Wrong | Why it fails | Right |
 |-------|-------------|-------|
@@ -84,16 +84,16 @@ multiple files. The word "remission" was present in line 144 of a letter.
 
 | Wrong | Right |
 |-------|-------|
-| "No IgG results after March" (searched only database) | "No IgG in database. Checking CSVs... none. Checking PDFs... found in pdf/2026-04-20/" |
+| "No results after March" (searched only database) | "No results in database. Checking CSVs... none. Checking PDFs... found in pdf/2026-04-20/" |
 | "Data doesn't exist" (searched one folder) | "Data not found in csv/ or database. pdf/ has unprocessed files — checking those." |
 | Grep only intermediate files | Grep source, intermediate, AND final |
 | Bash grep on large directories | Grep tool (handles any directory size) |
 
 ## Origin
 
-Incident: 2026-04-21 in mycare project. Agent searched csv/ and DuckDB for IgG data,
-concluded none existed after March 2026. Missed `pdf/2026-04-20/Result Trends -
-IMMUNOGLOBULINS G, A AND M - 20 Apr 2026.PDF` — 17 PDFs downloaded but not yet
+Incident: 2026-04-21 in mycare project. Agent searched csv/ and DuckDB for a lab
+result field, concluded none existed after March 2026. Missed a source PDF
+already sitting in the `pdf/` staging folder — 17 PDFs downloaded but not yet
 converted to CSV. The user had to point out the file by name.
 
 ## Related
