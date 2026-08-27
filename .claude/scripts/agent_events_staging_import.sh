@@ -94,6 +94,13 @@ duckdb -init /dev/null "${DB_PATH}" -c "
   );
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tool_use_id VARCHAR;
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS backfilled BOOLEAN DEFAULT false;
+  -- llm#1045: dispatch_id/parent_dispatch_id/outcome -- see
+  -- migrate_agent_runs_1045.sql for the full rationale. Mirrored here so a
+  -- fresh DB or a staging replay acquires these columns without depending
+  -- on the one-time migration having run first.
+  ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS dispatch_id VARCHAR;
+  ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS parent_dispatch_id VARCHAR;
+  ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS outcome VARCHAR;
 " 2>/dev/null || log "WARN schema ensure failed (non-fatal)"
 
 if [ ! -f "${STAGING}" ] || [ ! -s "${STAGING}" ]; then
