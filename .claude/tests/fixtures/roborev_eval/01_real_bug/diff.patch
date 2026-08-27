@@ -1,0 +1,17 @@
+diff --git a/R/rate_helpers.R b/R/rate_helpers.R
+new file mode 100644
+index 0000000..a1b2c3d
+--- /dev/null
++++ b/R/rate_helpers.R
+@@ -0,0 +1,11 @@
++#' Compute a rate as a fraction of total
++#'
++#' @param numerator Numeric count.
++#' @param denominator Numeric total.
++#' @return Numeric rate.
++#' @export
++compute_rate <- function(numerator, denominator) {
++  # No guard against denominator == 0: silently returns Inf/NaN and
++  # propagates undetected into downstream aggregation.
++  numerator / denominator
++}

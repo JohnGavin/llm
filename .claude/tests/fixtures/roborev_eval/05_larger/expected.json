@@ -1,0 +1,8 @@
+{
+  "fixture": "05_larger",
+  "description": "Three new files: R/filter_helpers.R (filter-inversion bug -- '!=' where '==' was intended, so keep_completed() drops completed jobs instead of keeping them), R/label_helpers.R (clean, no issues), tests/testthat/test-filter_helpers.R (the test itself asserts the wrong/inverted behavior, so it passes against the bug). Exercises multi-file surface area for a single review.",
+  "expect_completion": true,
+  "expect_findings": true,
+  "must_mention_any": ["!=", "==", "filter", "invert", "wrong", "condition", "logic", "completed"],
+  "forbid_severity_at_or_above": null
+}

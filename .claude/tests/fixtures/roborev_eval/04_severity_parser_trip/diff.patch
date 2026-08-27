@@ -1,0 +1,12 @@
+diff --git a/R/magic_number_helper.R b/R/magic_number_helper.R
+new file mode 100644
+index 0000000..b5c6d7e
+--- /dev/null
++++ b/R/magic_number_helper.R
+@@ -0,0 +1,6 @@
++#' Compute a discount price
++#' @param price Numeric.
++#' @return Numeric.
++apply_discount <- function(price) {
++  price * 0.85
++}

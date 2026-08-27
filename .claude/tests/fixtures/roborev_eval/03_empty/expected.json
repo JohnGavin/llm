@@ -1,0 +1,8 @@
+{
+  "fixture": "03_empty",
+  "description": "Appends a single trailing blank line to an existing tracked file -- whitespace-only, semantically a no-op diff.",
+  "expect_completion": true,
+  "expect_findings": null,
+  "must_mention_any": null,
+  "forbid_severity_at_or_above": "high"
+}
