@@ -141,26 +141,36 @@ check_shebangs() {
             shebang=$(head -1 "$path" 2>/dev/null || true)
             case "$shebang" in
                 (*"/usr/bin/env "*)
-                    # NOT a finding on its own. Six launchd scripts here use an
-                    # env-shebang and exactly one of them touches a
-                    # TCC-protected resource; flagging all six would have people
-                    # editing five shebangs for no reason, and a check that
-                    # cries wolf gets ignored and then deleted. This is the
-                    # EXPLANATION for a check-A finding, printed as context.
-                    n=$((n + 1))
-                    printf '    %-46s %s\n' "$(basename "$pl")" "$path" >> "$_SHEBANG_TMP"
+                    # A FINDING, not context. The first version demoted this to
+                    # an explanation printed only beside a check-A finding,
+                    # reasoning that "exactly one of six touches a TCC-protected
+                    # resource, so flagging all six would have people editing
+                    # five shebangs for no reason".
+                    #
+                    # That reasoning was wrong, and wrong in the direction that
+                    # costs. It asserted which scripts touch protected
+                    # resources from a single 12-hour sample. The next day
+                    # com.roborev.auto-refine — a KeepAlive daemon running one
+                    # of the five "no reason" scripts — produced 11 prompts,
+                    # because the agents it spawns run `find` and sandboxd
+                    # brokers that. Nothing had changed except which jobs
+                    # happened to be busy.
+                    #
+                    # An env-shebang on a launchd script is a latent defect
+                    # whether or not it has fired yet: the day the job touches
+                    # a protected path, the grant cannot be remembered. Cost of
+                    # a false positive is one shebang edit; cost of a false
+                    # negative is a permanent daily dialog. Flag it.
+                    n=$((n + 1)); FINDINGS=$((FINDINGS + 1))
+                    _emit "FINDING [launchd-shebang-reexec] $(basename "$pl")"
+                    _emit "    $path"
+                    _emit "    shebang '$shebang' resolves to an ad-hoc-signed Homebrew bash, whose"
+                    _emit "    TCC grant cannot persist. Any protected access this job makes will"
+                    _emit "    prompt every run, forever. Pin it: #!/bin/bash"
                     ;;
             esac
         done <<< "$scripts"
     done < <(find "$LAUNCH_DIR" -maxdepth 1 -name '*.plist' 2>/dev/null)
-    # Only surface the list when check A found something it explains.
-    if [ "$n" -gt 0 ] && [ "$FINDINGS" -gt 0 ]; then
-        _emit "  Context — launchd scripts whose shebang re-execs out of the plist's"
-        _emit "  interpreter into whatever is on PATH (an ad-hoc-signed Homebrew bash):"
-        cat "$_SHEBANG_TMP" 2>/dev/null
-        _emit "  Only the one whose job touches a protected resource needs pinning to"
-        _emit "  #!/bin/bash; the rest are listed so the mechanism is visible."
-    fi
     rm -f "$_SHEBANG_TMP"
     _say "check-shebangs: scripts scanned=$scanned env-shebangs=$n"
     return 0
@@ -235,25 +245,19 @@ for name, script in (("bad", "bad.sh"), ("good", "good.sh")):
                    "ProgramArguments": ["/bin/bash", os.path.join(tmp, script)]},
                   open(os.path.join(ld, "test.%s.plist" % name), "wb"))
 PY
-    # The shebang scan is CONTEXT: it must not raise findings by itself, and
-    # must stay silent when check A found nothing to explain.
+    # An env-shebang on a launchd script is a finding in its own right, with no
+    # check-A finding required to justify it. It was context until
+    # com.roborev.auto-refine proved the demotion wrong.
     LAUNCH_DIR="$ld"; FINDINGS=0; QUIET=1
     check_shebangs > "$tmp/out2.txt" 2>&1 || true
-    if [ "$FINDINGS" -eq 0 ]; then ok "shebang scan raises no findings on its own"
-    else bad "shebang scan raised $FINDINGS finding(s) unprompted"; fi
-    if [ ! -s "$tmp/out2.txt" ]; then ok "shebang context stays silent with no check-A finding"
-    else bad "shebang context printed with nothing to explain"; fi
-
-    # …but WITH a check-A finding, it must print, and must name only the
-    # env-shebang script.
-    LAUNCH_DIR="$ld"; FINDINGS=1; QUIET=1
-    check_shebangs > "$tmp/out2b.txt" 2>&1 || true
-    if grep -q 'bad\.sh' "$tmp/out2b.txt"; then ok "shebang context names the env-shebang script"
-    else bad "shebang context omitted the env-shebang script"; fi
-    if grep -q 'good\.sh' "$tmp/out2b.txt"; then
-        bad "shebang context named the #!/bin/bash script"
+    if [ "$FINDINGS" -eq 1 ]; then ok "env-shebang on a launchd script is a finding on its own"
+    else bad "env-shebang raised $FINDINGS finding(s), expected 1"; fi
+    if grep -q 'bad\.sh' "$tmp/out2.txt"; then ok "names the env-shebang script"
+    else bad "did not name the env-shebang script"; fi
+    if grep -q 'good\.sh' "$tmp/out2.txt"; then
+        bad "flagged the #!/bin/bash script"
     else
-        ok "shebang context does not name the #!/bin/bash script"
+        ok "does not flag a #!/bin/bash script"
     fi
     # The scan must have actually LOOKED at both scripts. Without this, the two
     # assertions above are equally satisfied by a scan that found no files at
