@@ -59,7 +59,7 @@ llm#1025) is the part that fires without anyone remembering.
 | # | What happened | Lesson | Mechanical prevention | Enforced? |
 |---|---|---|---|---|
 | 1 | Merge gate printed `PASS` while resolving `gh` from `/usr/local/bin/gh`, which does not exist here | A tool resolved from a hardcoded absolute path degrades to "found nothing" | Resolve from `PATH`; **exit 3** for "could not run", distinct from 0/1; tests assert the output does not contain `PASS` | **yes** — llm#1012 |
-| 2 | GC read a `gh` 401 as "no merged PR exists", retaining ~5 GB of merged worktrees for weeks | `2>/dev/null \|\| true` + emptiness test erases the error/negative distinction | `is_squash_merged()` returns 2 for "could not ask"; `squash-detect-failures=N` on the summary; `check_indeterminate_handling.sh` flags the signature | **partial** — llm#1019 fixes the instance and `worktree_gc.sh` is off the baseline, but the pre-commit hook is still **not installed**, so new instances are not blocked |
+| 2 | GC read a `gh` 401 as "no merged PR exists", retaining ~5 GB of merged worktrees for weeks | `2>/dev/null \|\| true` + emptiness test erases the error/negative distinction | `is_squash_merged()` returns 2 for "could not ask"; `squash-detect-failures=N` on the summary; `check_indeterminate_handling.sh` flags the signature | **yes** — llm#1019 fixed the instance; llm#1028 installed the gate. Verified blocking 2026-08-27: a probe commit carrying the signature exits 1 with `Commit BLOCKED: new swallowed-error finding(s)` |
 | 3 | Rotation completion check was `grep -c '^export' secrets.env # expect 13`; the file has no `export` lines, so it returned 0 for a healthy file *and* an empty one | A check whose output does not vary with its subject is not a check | Runbook rewritten to a value-stripping count with the real number | **yes** — llm#1015 |
 | 4 | `CACHIX_AUTH_TOKEN` rotated in `secrets.env` only; 4 repos kept serving the revoked value, `tlang` failed nightly 11 days | A credential lives everywhere it was copied to; enumerate stores *before* revoking | Runbook Step 0 enumeration command + per-surface verification table | **yes** — llm#1015 |
 | 5 | Hand-written list of affected repos came to 3 and guessed a repo name that does not exist; the command found the 4th (`solwatch`), failing weekly, unnoticed | Curated lists of "the places that use X" are wrong exactly where it matters | Same Step 0 command | **yes** — llm#1015 |
@@ -149,6 +149,27 @@ Three things the four fixes deliberately did **not** do:
   redacts, but the token itself is unrotated, the remote still embeds it,
   and no scan looks for the same shape in other scripts that log a remote
   URL.
+
+### Reconciled 2026-08-27 — what is now actually enforced
+
+Items 1, 2, 4 and all three of section 6 above are **done**. Left standing,
+they were the failure this file exists to name: a ledger that reports work as
+pending after it has shipped is as misleading as one that reports it done
+before. Verified, each by running the thing rather than reading it:
+
+| Item | Status | Evidence |
+|---|---|---|
+| 1 · install the pre-commit gate | **done** | llm#1028 merged; `indeterminate_hook_install.sh --repo ~/docs_gh/llm` run. A probe commit carrying the signature now exits 1 with `Commit BLOCKED: new swallowed-error finding(s)`. The probe cleaned itself up — no repeat of the row-16 artefact |
+| 2 · `AGENTS.md` "Checks" clause | **done** | present in `AGENTS.md` |
+| 4 · retire the `GH_TOKEN` workaround | **done for new shells** | a clean-env login shell has it unset and `gh api user` succeeds with no workaround. It survives only in already-running processes, which no edit can reach |
+| 6a · gate not wired in | **done** | same as item 1 |
+| 6b · checker misses llm#1012's shape | **done** | llm#1030 added pattern 3; the pre-fix gate now reports 2 findings naming `_resolve_repo()` and `_get_pr_commits()`, where it previously reported `findings=0` |
+| 6c · credential in a remote URL | **contained** | 208 repos scanned, 0 credentialed remotes; `credential_hygiene_check.sh` detects recurrence. The token itself was revoked by GitHub on 2026-08-11 and is not regenerated — deliberately, since `gh` works from the keyring |
+
+Still genuinely open: item 3 (ground-truth registry wording), item 5 (fixture
+discipline, memory-only), and the two follow-ups filed 2026-08-26 —
+llm#1035 (the roborev report files failed reviews under a "not a backlog"
+heading) and llm#1037.
 
 ## How to use this file
 
