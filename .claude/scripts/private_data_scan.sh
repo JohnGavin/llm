@@ -212,11 +212,36 @@ PII_RULE_PATTERNS=("$RE_E164" "$RE_UK_POSTCODE" "$RE_IBAN")
 PII_RULE_SEVERITY=(critical high high)
 PII_RULE_CI=(0 1 0)   # 1 = case-insensitive (-i)
 
-# NANP fictional-use block (FCC-reserved: NPA-555-01XX is reserved for
-# fictional use in any North American area code) -- the exact convention
-# JohnGavin/llm#997's own test fixtures already use ("+1555…"). Narrow and
-# numeric, so it exempts real fixtures without needing a marker comment.
-RE_E164_FICTIONAL='^\+1[0-9]{3}55501[0-9]{2}$'
+# Reserved / never-assignable phone ranges -- numbers that CANNOT belong to a
+# real person, so flagging them is always a false positive.
+#
+# WHY THIS LIST GREW (llm#1004 follow-up, 2026-08-27)
+# --------------------------------------------------
+# The original single pattern covered only NPA-555-01XX, i.e. 555 as the
+# EXCHANGE. It missed 555 as the AREA CODE (+1555XXXXXXX) -- the older and more
+# common fictional convention, and the one this repo's own Signal test fixtures
+# actually use. Consequence: private_data_scan.sh blocked commits with 12
+# "critical e164-phone" findings across 4 already-committed test files, all of
+# them the same fictional number. The scanner's guidance in that state is
+# "sanctioned override: git commit --no-verify", so a false positive on a
+# SAFETY-CRITICAL gate trains the operator to bypass it. That is a worse
+# outcome than the narrow pattern was protecting against -- a gate people
+# routinely skip is not a gate.
+#
+# TRADE-OFF, stated rather than assumed: every range added here is a range the
+# scanner will never flag again. That is acceptable ONLY because each is
+# reserved by its national regulator and can never be issued to a subscriber,
+# so no real person's number can fall inside one. Do NOT add a range merely
+# because a fixture happens to use it -- add it only if the regulator reserves
+# it. Anything else belongs in the marker-based looks_like_fixture_context()
+# path, which requires an explicit EXAMPLE/FAKE/DUMMY/TEST/FIXTURE word.
+#
+#   NANP  555-01XX in any area code   FCC-reserved for fiction
+#   NANP  area code 555               never assignable
+#   UK    07700 900000-900999         Ofcom drama range (mobile)
+#   UK    020 7946 0000-0999          Ofcom drama range (London)
+#   UK    01632 960000-960999         Ofcom drama range (national)
+RE_E164_FICTIONAL='^\+1[0-9]{3}55501[0-9]{2}$|^\+1555[0-9]{7}$|^\+447700900[0-9]{3}$|^\+442079460[0-9]{3}$|^\+441632960[0-9]{3}$'
 
 # ---------------------------------------------------------------------------
 # Options
@@ -809,6 +834,24 @@ run_selftest() {
         _check 1 "assert_can_detect unexpectedly failed on a normal invocation (rc=$rc): $(cat "$norm_out")"
     fi
     rm -f "$norm_out"
+
+    # ── llm#1004 follow-up: reserved-range exemptions ──────────────────────
+    # Each reserved range must be EXEMPT, and — the assertion that actually
+    # matters — a real-shaped number must still be CAUGHT. Without the
+    # negative cases, widening the exemption to ".*" would pass every
+    # positive case here.
+    _check "$(is_e164_fictional '+15555550142' && echo 0 || echo 1)" "exempt: NANP NPA-555-01XX (pre-existing)"
+    _check "$(is_e164_fictional '+15551234567' && echo 0 || echo 1)" "exempt: NANP 555 area code (llm#1004 gap)"
+    _check "$(is_e164_fictional '+447700900123' && echo 0 || echo 1)" "exempt: UK Ofcom 07700 900xxx"
+    _check "$(is_e164_fictional '+442079460123' && echo 0 || echo 1)" "exempt: UK Ofcom 020 7946 0xxx"
+    _check "$(is_e164_fictional '+441632960123' && echo 0 || echo 1)" "exempt: UK Ofcom 01632 960xxx"
+    # Negative controls — these MUST still be flagged.
+    _check "$(is_e164_fictional '+14155552671' && echo 1 || echo 0)" "NOT exempt: real-shaped US number"
+    _check "$(is_e164_fictional '+442071838750' && echo 1 || echo 0)" "NOT exempt: real-shaped UK landline"
+    _check "$(is_e164_fictional '+447700123456' && echo 1 || echo 0)" "NOT exempt: UK mobile outside the drama range"
+    _check "$(is_e164_fictional '+19998887766' && echo 1 || echo 0)" "NOT exempt: the script's own known-bad probe"
+    # Boundary: one digit outside the reserved block must NOT be exempt.
+    _check "$(is_e164_fictional '+447700901123' && echo 1 || echo 0)" "NOT exempt: 07700 901xxx (just past the range)"
 
     # ── fixtures ──
     local tmp; tmp="$(mktemp -d "${TMPDIR:-/tmp}/private_data_scan_selftest.XXXXXX")"
