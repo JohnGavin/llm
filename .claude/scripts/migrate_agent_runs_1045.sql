@@ -1,0 +1,45 @@
+-- Migration for llm#1045: additive columns on agent_runs. Idempotent.
+--
+-- WHY: agent-identity-and-task-scopes.md mandates every dispatch carry a
+-- UUID "in four places" (prompt, git note, post-verify state file, commit
+-- footer). agent_runs was meant to be a fifth, queryable place and had no
+-- column for it. It also lacked a parent/child edge -- contrast with
+-- roborev's own review_jobs table, which already has parent_job_id -- so an
+-- orchestrator-spawned chain of dispatches cannot be distinguished from
+-- unrelated concurrent work. Finally, `status` conflated termination with
+-- outcome: a row can stop updating (crash, kill, session end before the
+-- PostToolUse hook fires) while still reading 'running' forever; there was
+-- no column recording what the dispatch actually AMOUNTED to once someone
+-- (or agent_runs_reaper.sql) determined it was no longer live.
+--
+-- dispatch_id / parent_dispatch_id: nullable VARCHAR, NOT YET POPULATED.
+-- No caller (log_agent_run.sh / log_session.sh) currently threads a
+-- CLAUDE_DISPATCH_ID through to the INSERT -- that env var does not exist
+-- yet. Populating these columns is Phase 2 future work (see
+-- agent-identity-and-task-scopes.md's own Phase Roadmap); this migration
+-- only adds the columns so Phase 2 has somewhere to write.
+--
+-- outcome: nullable VARCHAR, vocabulary 'landed' | 'salvaged' | 'abandoned'
+-- | 'n-a' (dispatch never produced anything to land, e.g. read-only critic
+-- review). Distinct from `status`, which records how the run TERMINATED
+-- (done/failed/unknown/inherited); `outcome` records what became of the
+-- work afterward -- a run can be status='done' and outcome='abandoned' (the
+-- orchestrator decided not to use the result) or status='unknown' and
+-- outcome='salvaged' (see feedback_agent-salvage-unlanded-work.md: an agent
+-- that stopped before committing, whose work the orchestrator later
+-- recovered and landed itself). No CHECK constraint enforces this enum --
+-- matching the existing convention in housekeeping_schema_init.sql
+-- (housekeeping_runs.status), verified there via duckdb_constraints() on
+-- the live table showing only PRIMARY KEY + NOT NULL -- so no migration is
+-- required to add a vocabulary value later.
+--
+-- status 'unknown': NOT a new enum value enforced by DDL (VARCHAR is
+-- unconstrained here, per the same duckdb_constraints() check applied to
+-- agent_runs -- see agent_runs_reaper.sql for the query). This is a
+-- documentation/convention addition: agent_runs_reaper.sql (llm#1045) sets
+-- status='unknown' for rows whose termination was never observed, per the
+-- checks-must-distinguish-unknown rule -- an indeterminate result must not
+-- share an exit with a real negative ('failed').
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS dispatch_id VARCHAR;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS parent_dispatch_id VARCHAR;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS outcome VARCHAR;
