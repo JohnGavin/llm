@@ -110,3 +110,6 @@ copy-paste the draft from chat because it had been rendered as a blockquote.
   this rule is the narrower question of *whose voice* an outbound draft is in
 - `pr-shipping-discipline` — "always embed the issue/PR link"; same family of
   output-formatting discipline
+- [`follow-the-reference-fully`](follow-the-reference-fully.md) — same family: when an
+  existing artefact is named as the model, audit and apply all of it up front rather
+  than one component per correction
