@@ -71,6 +71,8 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **Cite the artefact, never describe it (ALL PROJECTS):** When reporting on anything that has an address — a dashboard, a rendered page, a deployed site, an issue, a PR, a CI run, an artefact — **print the full URL**, embedded as a markdown link. Never write "the dashboard", "the published site", "the leaderboard page" and leave the reader to find it. A generic reference costs the reader a search every single time, and the cost is paid on every message; a URL costs one click, once. This includes the *specific* page, not just the site root — `https://owner.github.io/repo/leaderboard.html`, not "the dashboard". Resolve it rather than guessing: `gh api repos/OWNER/REPO/pages --jq .html_url`, and `curl -s -o /dev/null -w '%{http_code}'` to confirm it is actually live before citing it. **A URL you have not fetched is a claim, not a citation** — the deployed page is a different surface from your local render, and per `verification-before-completion` it must be curl'd (WebFetch caches ~15 min). Extends the existing "always embed the issue/PR link" clause in `pr-shipping-discipline` from issues/PRs to every addressable artefact. Origin: user request 2026-08-24, after a session in which a dashboard was repeatedly called "the feedback surface" without once naming where it is.
 
+**Outbound writing — John's voice, not yours (ALL PROJECTS):** Anything John will *send* under his own name — email, message, issue comment, letter — is drafted in **his** style, not house style. Greeting `Hi,`; **one clause per line**, broken at natural pauses (including mid-sentence after a subordinate clause), never paragraphs left to wrap; sign-off is a bare `John.` — no "Many thanks", no surname. Cut questions that pre-empt a reply (don't ask how to pay before they've confirmed a slot). Separately, **anything meant to be copied — email bodies, commands, messages — is output as plain text and saved as a `.txt`, NEVER in a markdown blockquote**: `>` renders as vertical bars in the terminal and gets copied with the text. See `outbound-writing-style` rule. Origin: user, 2026-08-27, after re-writing a drafted booking email and then failing to copy-paste it.
+
 **Shiny UI:** NEVER use `value_box()` or similar large KPI boxes - they waste space. Use compact two-column tables instead (Metric | Value). Time series plots MUST have a range slider and default to last 3 months view. **NEVER pie charts** — use dotcharts (Cleveland dot plots) as first choice, horizontal bars as fallback. For compact filters inside card headers/footers and next to inputs, use `bslib::toolbar()` (bslib 0.11.0+). See `dashboard-filter-placement` rule. See `visualization-standards` rule.
 
 **Shinylive/WebR:** Long computations MUST use JS round-trip batching (NOT `invalidateLater()`). See `shinylive-webr-nonblocking` rule. `proc.time()` does not advance in WASM. Service workers cache aggressively — change port when testing.
@@ -133,7 +135,7 @@ Pruned 2026-07-08 (chore/prune-vestigial-slash-commands): `/pr-status`, `/wiki-h
 
 `deploy-new-project.md`, `onboard-dataset.md`, `debug-ci-failure.md`, `publish-vignette.md`
 
-## Rules (88)
+## Rules (89)
 
 Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
 
