@@ -65,6 +65,33 @@ When codex hits rate limit: re-run with `--agent gemini`. roborev does not auto-
 
 One-time backlog burn-down for projects with >20 open reviews: see companion.
 
+## Eval Harness — Regression Check on Agent Swap (llm#1044)
+
+roborev is a third-party closed-source binary we cannot patch. We have no
+automated evaluation of its review *quality* — only that a job ran. Concretely:
+gemini-2.5-flash-lite silently failed to read the diff on 15.5% of its 129 open
+reviews in this repo (20 of them) — nobody noticed until a human hand-queried
+`~/.roborev/reviews.db` during an unrelated bug (llm#1035). Nothing caught it
+on the day the agent/model config changed.
+
+**After changing `.roborev.toml` `agent=`/`model=` (globally or per-repo),
+run the eval harness before trusting the new config in production:**
+
+```bash
+.claude/scripts/roborev_eval_run.sh --agent <new-agent> --model <new-model>
+.claude/scripts/roborev_eval_run.sh --selftest   # classification-logic-only, no live call
+```
+
+The harness replays 5 golden diffs (`.claude/tests/fixtures/roborev_eval/`)
+through the live `roborev review --dirty --local --wait` and classifies each
+result as `PASS` / `FAIL` / `ERROR` / `TIMEOUT` — an `ERROR` (nonzero exit, or
+the exit-0-but-empty-result silent-failure signature from llm#1035) is never
+folded into a pass, per `checks-must-distinguish-unknown`. This is
+documentation-as-gate, not an automated hook — no PreToolUse hook intercepts
+`roborev config set`; a human runs this manually before trusting a config
+change. Judge-disagreement tracking, safety sampling of auto-closures, and an
+error taxonomy are explicitly out of scope for this slice (see llm#1044).
+
 ## Per-Project Config
 
 Every project with roborev must have `.roborev.toml`:
@@ -160,4 +187,6 @@ More edge cases (PATH/wrapper quirks, `hooksPath` sharing, silent agent fallback
 - llm#927 — quota failures are terminal; `roborev_requeue_dropped.sh` origin issue
 - llm#224 — severity autoclose (sibling policy)
 - llm#217 — poller schedule + ephemeral-repos cleanup
+- llm#1044 — eval harness origin issue; llm#1035 — the silent-diff-read-failure incident the harness exists to catch
+- `.claude/scripts/roborev_eval_run.sh` / `.claude/scripts/roborev_eval_classify.py` / `.claude/tests/fixtures/roborev_eval/` — the eval harness itself (Eval Harness section above)
 - llm#300 — weekly launchd health email (long-term solution); see companion for the launchd health audit procedure
