@@ -163,20 +163,49 @@ _query_backlog() {
     return 0
   fi
 
-  "$PYTHON" - "$db" "$repo_name" "$root_path_override" "$top_n" <<'PYEOF'
+  local lib_dir
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+
+  "$PYTHON" - "$db" "$repo_name" "$root_path_override" "$top_n" "$lib_dir" <<'PYEOF'
 import sys, sqlite3, math, re, subprocess, os
 
 db_path = sys.argv[1]
 repo_name = sys.argv[2]
 root_path_override = sys.argv[3] if len(sys.argv) > 3 else ""
 top_n = int(sys.argv[4]) if len(sys.argv) > 4 else 10
+lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
+
+# llm#1035: shared not_reviewed/passed/unclassified classifier -- see
+# .claude/scripts/lib/roborev_classify.py for why this exists and why it is
+# a parallel (not shared-import) port of send_roborev_email.R's classifier.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import classify_review
+except Exception:
+    # Fail-open: if the shared module can't be imported (e.g. lib_dir wrong
+    # on some future layout), fall back to treating every row as "parsed"
+    # so behaviour degrades to the pre-llm#1035 status quo rather than
+    # crashing the backlog writer.
+    def classify_review(text):
+        return "parsed"
 
 # ── Severity / category weight tables ────────────────────────────────────────
-SEV_WEIGHT = {"critical": 10, "high": 5, "medium": 2, "low": 1, "unknown": 1}
+# "not_reviewed" sits ABOVE high (5) but below critical (10) -- an agent that
+# never actually reviewed the commit is a blind spot, which is worse than an
+# ordinary unclassified/low finding but is not asserted to be a genuine
+# Critical code defect (llm#1035).
+SEV_WEIGHT = {
+    "critical": 10, "high": 5, "medium": 2, "low": 1,
+    "not_reviewed": 6, "unclassified": 1, "unknown": 1,
+}
 CAT_RISK   = {
     "security": 3.0, "error-handling": 2.5, "async": 2.0,
     "dependency": 1.5, "test": 1.5, "performance": 1.2,
     "other": 1.0, "docs": 0.5,
+    # A review that never ran is an agent-health signal, not a code-quality
+    # one -- weighted like error-handling, not like a security finding.
+    "agent-health": 2.5,
 }
 
 def max_sev_ord(output):
@@ -325,11 +354,31 @@ if not rows:
     print("_0 open findings._")
     sys.exit(0)
 
-# Compute priority for each row, then sort DESC
+# Compute priority for each row, then sort DESC.
+# llm#1035: classify_review() splits rows whose severity could not be parsed
+# into not_reviewed (agent-health alert) / passed (clean, not a backlog
+# item) / unclassified (genuine residual) -- mirrors send_roborev_email.R so
+# a "review never ran" row is never silently indistinguishable from a real
+# low-severity finding OR silently dropped as if it were clean.
 scored = []
+passed_excluded_n = 0
 for row in rows:
-    sev_label, sev_weight = max_sev_ord(row["output"])
-    category = infer_category(row["output"])
+    outcome = classify_review(row["output"])
+    if outcome == "passed":
+        # The review ran and explicitly found nothing -- not a backlog item.
+        # Excluded from OPEN_COUNT and the priority table entirely, rather
+        # than being scored as an "unknown"-severity finding.
+        passed_excluded_n += 1
+        continue
+    if outcome == "not_reviewed":
+        sev_label, sev_weight = "not_reviewed", SEV_WEIGHT["not_reviewed"]
+        category = "agent-health"
+    elif outcome == "unclassified":
+        sev_label, sev_weight = "unclassified", SEV_WEIGHT["unclassified"]
+        category = infer_category(row["output"])
+    else:  # "parsed" -- a genuine Severity: marker was found
+        sev_label, sev_weight = max_sev_ord(row["output"])
+        category = infer_category(row["output"])
     cat_risk  = CAT_RISK.get(category, 1.0)
     age       = row["age_days"] if row["age_days"] is not None else 1
     file_path = get_file_mention(row["output"])
@@ -350,6 +399,7 @@ scored.sort(key=lambda x: x["priority"], reverse=True)
 top_list = scored[:top_n]
 
 print(f"OPEN_COUNT:{len(scored)}")
+print(f"PASSED_EXCLUDED_N:{passed_excluded_n}")
 print("| id | sev | category | age_days | touches | priority | summary |")
 print("|----|-----|----------|----------|---------|----------|---------|")
 for r in top_list:
@@ -534,6 +584,10 @@ raw_output=$(_query_backlog "$REPO_NAME" "$ROBOREV_DB" "$REPO_ROOT" "$TOP_N")
 # Extract metadata lines
 db_root_path=$(printf '%s\n' "$raw_output" | grep "^ROOT_PATH:" | head -1 | sed 's/^ROOT_PATH://')
 open_count=$(printf '%s\n' "$raw_output" | grep "^OPEN_COUNT:" | head -1 | sed 's/^OPEN_COUNT://')
+# llm#1035: reviews classified "passed" (ran, found nothing) are excluded
+# from open_count entirely rather than scored as findings -- this count is
+# reported so the exclusion is visible, not silent.
+passed_excluded_n=$(printf '%s\n' "$raw_output" | grep "^PASSED_EXCLUDED_N:" | head -1 | sed 's/^PASSED_EXCLUDED_N://')
 top_id=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_ID:" | head -1 | sed 's/^TOP_FINDING_ID://')
 top_sev=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_SEV:" | head -1 | sed 's/^TOP_FINDING_SEV://')
 top_cat=$(printf '%s\n' "$raw_output" | grep "^TOP_FINDING_CAT:" | head -1 | sed 's/^TOP_FINDING_CAT://')
@@ -546,19 +600,22 @@ table=$(printf '%s\n' "$raw_output" \
   | grep -v "^ROOT_PATH:" \
   | grep -v "^REPO:" \
   | grep -v "^OPEN_COUNT:" \
+  | grep -v "^PASSED_EXCLUDED_N:" \
   | grep -v "^TOP_FINDING_")
 
 if [ "$APPLY" -eq 0 ]; then
   echo "=== roborev backlog: $REPO_NAME (dry-run) ==="
   echo "${open_count:-0} open findings"
+  [ -n "${passed_excluded_n:-}" ] && [ "${passed_excluded_n:-0}" -gt 0 ] 2>/dev/null \
+    && echo "(${passed_excluded_n} additional review(s) excluded: ran, found nothing)"
   echo ""
   printf '%s\n' "$table"
   [ -n "$top_id" ] && echo "Top finding: #${top_id} (${top_sev}:${top_cat})"
-  log "dry-run: repo=$REPO_NAME open=${open_count:-0}"
+  log "dry-run: repo=$REPO_NAME open=${open_count:-0} passed_excluded=${passed_excluded_n:-0}"
 else
   out_file=$(_write_backlog "$effective_root" "$table" "$REPO_NAME" "${OUT_FILE:-}")
   _ensure_gitignore "$effective_root"
-  log "apply: wrote $out_file repo=$REPO_NAME open=${open_count:-?} top=#${top_id}(${top_sev}:${top_cat})"
+  log "apply: wrote $out_file repo=$REPO_NAME open=${open_count:-?} passed_excluded=${passed_excluded_n:-0} top=#${top_id}(${top_sev}:${top_cat})"
   echo "roborev_project_backlog: wrote $out_file (${open_count:-?} open findings)"
 fi
 
