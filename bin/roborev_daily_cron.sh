@@ -161,6 +161,32 @@ else
   log "nix WARN: no gcroot — falling back to nix-shell evaluation (needs network, llm#596)"
 fi
 
+# ── Step 0b: private-repo agent routing (llm#1035, llm#1046) ─────────────────
+# Assert that no PRIVATE repo routes its diffs to a third-party review agent.
+# This runs here, daily, because the previous arrangement was a COMMENT in
+# llm/.roborev.toml claiming the global default protected private repos. That
+# comment went stale on 2026-07-05 and nothing noticed for seven weeks, during
+# which six local-only repos (health, estate, investment, the knowledge hub)
+# sent every commit diff to a free-tier model.
+#
+# Advisory: logs and continues. A routing problem should not stop the daily
+# report from being produced — but it must be VISIBLE every single day, which a
+# comment in a config file was not. Exit 1 = findings, 2 = could not determine;
+# both are logged distinctly, and 2 is never treated as clean.
+PRIVACY_CHECK="${REPO_ROOT}/.claude/scripts/check_roborev_agent_privacy.sh"
+if [ -x "${PRIVACY_CHECK}" ]; then
+  PRIVACY_OUT="$("${PRIVACY_CHECK}" 2>&1)"; PRIVACY_RC=$?
+  case "${PRIVACY_RC}" in
+    0) log "agent-privacy: OK — $(printf '%s' "${PRIVACY_OUT}" | head -1)" ;;
+    1) log "agent-privacy: FINDINGS — a PRIVATE repo routes to a disallowed agent"
+       printf '%s\n' "${PRIVACY_OUT}" >> "${LOG_FILE}" ;;
+    *) log "agent-privacy: INDETERMINATE (rc=${PRIVACY_RC}) — could NOT verify routing; not a pass"
+       printf '%s\n' "${PRIVACY_OUT}" >> "${LOG_FILE}" ;;
+  esac
+else
+  log "agent-privacy: INDETERMINATE — check script not found or not executable at ${PRIVACY_CHECK}"
+fi
+
 # ── Step 1: Generate/refresh daily snapshot ───────────────────────────────────
 log "Step 1: generating roborev daily snapshot..."
 REPORT_SCRIPT="${REPO_ROOT}/.claude/scripts/roborev_daily_report.R"

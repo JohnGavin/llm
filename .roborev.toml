@@ -3,8 +3,20 @@
 # usual gemini-first order (gemini -> codex backup). Enabled via the AI Studio
 # API key (GEMINI_API_KEY) after the CLI auth-type fix (#733); gemini-cli's OAuth
 # tier is still dead (#676). llm is PUBLIC so free-tier "trains on prompts" is moot.
-# GLOBAL default_agent stays 'claude-code' so private repos (no per-repo config)
-# never route to gemini — public-only opt-in.
+# NOTE (2026-08-27, llm#1035): this comment used to claim "GLOBAL default_agent
+# stays 'claude-code' so private repos (no per-repo config) never route to
+# gemini — public-only opt-in". That stopped being true on 2026-07-05, when
+# the global default was deliberately changed to gemini (see
+# ~/.roborev/config.toml.bak-pre-gemini-global-20260705) to route bulk review
+# to a free tier. The comment was not updated, so the stale reassurance sat
+# here while four LOCAL-ONLY private repos — mycare (health), premortem and
+# eis6 (money), travel — silently inherited gemini for every commit diff.
+#
+# The invariant is now enforced where it belongs: each private repo pins
+# `agent = 'claude-code'` in its own .roborev.toml, so it survives any future
+# change to the global default instead of depending on one. Public repos keep
+# the gemini default and its cost benefit. Do not restore a claim about the
+# global value here — state only what THIS repo does.
 agent = 'gemini'
 # Default model for this repo when no workflow-specific model is set.
 model = ''
