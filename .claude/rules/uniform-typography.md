@@ -24,6 +24,32 @@ document ... no exceptions ... this was asked before so reopen all closed
 issues related to this request and start tracking your failures
 explicitly".
 
+## Recurrence — 2026-08-27, historical project
+
+Reported again, by the same user, on a leaderboard dashboard: *"the font size is
+too small. match the main text. repeat this throughout the document."* The target
+was a DT table caption and its `<details>` disclosure summary.
+
+**This rule already forbade it** — `caption { font-size: smaller }` was in the
+Forbidden Patterns table below at the time. It was violated anyway, because the
+Required Pattern's selector list did not name the two surfaces that actually
+carried the drift: `details summary` (a shared-CSS rule set it to `0.9em`) and
+DT's injected `.dt-caption`. Every listed selector was compliant; the size drift
+lived in the gap between them.
+
+**The generalisable lesson: a typography rule is only as good as its selector
+list.** "Set the body size once and let everything inherit" fails silently the
+moment a framework or a shared stylesheet introduces a new text surface with its
+own default — DataTables, Quarto callouts, `<details>`, tooltip/popover bodies,
+plot legends rendered as HTML. When adding any new text-bearing UI element, add
+its selector to the list in the same commit. When a size-drift report arrives,
+**find the surface that is not in the list** rather than assuming the rule was
+never applied.
+
+Verification for this class is a computed-style sweep, not a source grep: a
+source that contains no `font-size` override can still render at the wrong size
+because a vendored stylesheet set one.
+
 ## CRITICAL: One Body Size, No Per-Element Overrides
 
 Prose font size drift across a single page makes the page look like it was
@@ -47,6 +73,8 @@ caption, figcaption,
 .figure-caption, .quarto-figure-caption, p.caption,
 .dataTables_wrapper, .dataTables_filter input, .dataTables_info,
 table.dataTable, table.dataTable th, table.dataTable td,
+table.dataTable caption, .dt-caption,
+details, details summary,
 .panel-tabset .nav-link,
 .cell-output, .cell-output-stdout,
 .callout, .callout p,
@@ -88,6 +116,8 @@ Anything not in this table that has a custom `font-size` in inline
 | `.glossary-term { font-size: 0.9em }` | Drift from body | Remove the rule |
 | `.methodology p { font-size: 1.1em }` | Drift from body | Remove the rule |
 | `caption { font-size: smaller }` | Browser-default smaller — too small | Set to body size via the required CSS pattern |
+| `details summary { font-size: 0.9em }` | A disclosure summary IS body prose — it is the only text a reader sees until they click | Remove the override; it is in the required selector list above |
+| A `<details>` disclosure whose summary is smaller than the text it hides | Inverts the hierarchy: the always-visible line is smaller than the optional one | Summary at body size |
 | `<dl style="font-size: 0.95rem">` | Inline drift | Remove the inline style |
 | Inline `style="font-size: 23px"` on a panel | Drift, even if "matches" body | Remove and rely on inheritance |
 
