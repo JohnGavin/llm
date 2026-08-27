@@ -1,0 +1,53 @@
+-- agent_runs_reaper.sql — llm#1045
+--
+-- Closes `agent_runs` rows whose PostToolUse(Agent) hook (log_agent_run.sh)
+-- never fired the 'agent_stop' write that would set status to a real
+-- terminal value (done/failed) -- a killed agent, a session ended before
+-- the dispatch's PostToolUse fired, or a crashed harness. Mirrors
+-- session_reaper.sql's shape exactly (same problem, different table): the
+-- normal path writes a terminal status exactly once, at the dispatch's
+-- real end; rows that never hit that path stay status='running' forever
+-- without this sweep. 49 such rows were found stale at time of writing, the
+-- oldest started 2026-06-14 -- clearly not "still running" 18+ days later.
+--
+-- Terminal value used here is 'unknown', NOT 'failed'. The dispatch's
+-- actual outcome was never observed -- it may have succeeded and simply
+-- never reported back (see feedback_agent-salvage-unlanded-work.md: 7/7
+-- agents in one 2026-08-03 session stopped before committing, yet the work
+-- was complete). Writing 'failed' here would assert a negative result this
+-- sweep has no evidence for, which is exactly the failure mode
+-- checks-must-distinguish-unknown exists to prevent: an indeterminate
+-- result must not share an exit with a real negative.
+--
+-- Staleness threshold: 4 hours since started_at. Chosen above the observed
+-- p99 real agent_runs duration (3600s = 1 hour, across 473 historical rows
+-- with a genuine duration_sec; p50 = 1.5s, p90 = 412s, max = 70073s/~19.5h
+-- -- an outlier that itself likely belongs in this reaper's catchment) --
+-- a ~4x buffer, comparable to session_reaper.sql's 6h-vs-96min-p99 (~3.75x)
+-- buffer for the whole-session table. Agent dispatches are individual tool
+-- calls within a session, not the session itself, so they are expected to
+-- be far shorter-lived than sessions -- hence a much tighter threshold (4h
+-- vs 6h) despite the smaller absolute buffer multiplier. Verified against
+-- the live DB immediately before writing this threshold that the most
+-- recent genuinely-stale row started 2026-08-09 (18 days before today),
+-- i.e. there is no ambiguous population sitting just above 1h and just
+-- below 4h that this choice could misclassify as either "still running" or
+-- "long abandoned".
+--
+-- No CHECK constraint enforces the `status` enum on agent_runs (same
+-- convention as housekeeping_runs.status -- see migrate_agent_runs_1045.sql
+-- header; confirmed via:
+--   SELECT * FROM duckdb_constraints() WHERE table_name = 'agent_runs';
+-- which returns only the PRIMARY KEY on `id`), so adding 'unknown' as a
+-- status value required no DDL migration, only this SQL and the
+-- documentation above.
+--
+-- A note is appended to `prompt_preview` (the only free-text column on this
+-- table -- there is no `summary`-equivalent) so downstream analytics can
+-- filter or exclude these rows the same way session_reaper.sql tags
+-- `sessions.summary`.
+UPDATE agent_runs
+SET status = 'unknown',
+    prompt_preview = trim(COALESCE(prompt_preview, '') || ' [llm#1045 reaper: status is UNKNOWN, no agent_stop event observed within 4h]')
+WHERE status = 'running'
+  AND started_at < current_timestamp - INTERVAL 4 HOUR;

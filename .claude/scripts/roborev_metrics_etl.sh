@@ -388,6 +388,17 @@ else
   log "agent_events_staging_import: SKIP (script not found or not executable: ${_AGENT_EVENTS_IMPORT})"
 fi
 
+# llm#1045: reap agent_runs rows whose PostToolUse(Agent) hook never fired a
+# terminal status (killed agent, session ended mid-dispatch). Runs right
+# after the import above, same ETL cadence, same pattern as session_reaper.sh
+# being invoked at session boundaries for the sibling `sessions` table.
+_AGENT_RUNS_REAPER="${SCRIPT_DIR}/agent_runs_reaper.sh"
+if [ -x "${_AGENT_RUNS_REAPER}" ]; then
+  "${_AGENT_RUNS_REAPER}" "${UNIFIED_DB}" >> "$LOGFILE" 2>&1 || log "agent_runs_reaper: failed (see ${LOGFILE} for detail)"
+else
+  log "agent_runs_reaper: SKIP (script not found or not executable: ${_AGENT_RUNS_REAPER})"
+fi
+
 _ERROR_EVENTS_IMPORT="${SCRIPT_DIR}/error_events_staging_import.sh"
 if [ -x "${_ERROR_EVENTS_IMPORT}" ]; then
   "${_ERROR_EVENTS_IMPORT}" "${UNIFIED_DB}" >> "$LOGFILE" 2>&1 || log "error_events_staging_import: failed (see ${LOGFILE} for detail)"
