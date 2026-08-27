@@ -181,6 +181,36 @@ sec1_data <- safe_query("
 ")
 
 n_new_findings <- if (nrow(sec1_data) > 0L) sum(sec1_data$n) else 0L
+
+# ── llm#1037: how much INPUT did the detectors have? ────────────────────────
+# `0 new findings` renders identically whether twelve sessions were analysed
+# and found clean, or zero sessions existed to analyse. Those are different
+# facts and only one of them is reassuring. Stage-1's detectors
+# (marathon_session, parallel_session_sprawl, fixer_heavy_day,
+# subagent_heavy_session, stuck_loop, ...) all read `sessions`; with no rows in
+# the window they cannot emit, and the report said "0 new findings" without
+# ever saying it had nothing to look at.
+#
+# NOT a staleness claim. `sessions` carries a deliberate 72h cadence (p95 gap
+# ~1.5h in active use; 72h tolerates a weekend — see the derivation in
+# staleness_collect.sh), so a quiet day is correct and expected. This counts
+# the window's input so the reader can tell "clean" from "unexamined".
+n_sessions_in_window <- tryCatch({
+  r <- safe_query(sprintf("
+    SELECT count(*) AS n FROM sessions
+    WHERE started_at >= %s - INTERVAL '24' HOUR
+  ", sql_utc_now()), fallback = data.frame(n = NA_integer_))
+  if (nrow(r) > 0L) suppressWarnings(as.integer(r$n[[1]])) else NA_integer_
+}, error = function(e) NA_integer_)
+
+# Three states, three renderings — an unreadable count must not read as zero.
+findings_phrase <- if (is.na(n_sessions_in_window)) {
+  sprintf("%d new findings (session count unavailable \u2014 coverage unknown)", n_new_findings)
+} else if (n_sessions_in_window == 0L) {
+  sprintf("%d new findings \u2014 <b>but 0 sessions in the window; nothing was analysed</b>", n_new_findings)
+} else {
+  sprintf("%d new findings across %d session(s)", n_new_findings, n_sessions_in_window)
+}
 n_critical     <- if (nrow(sec1_data) > 0L)
   sum(sec1_data$n[sec1_data$severity == "critical"], na.rm = TRUE) else 0L
 n_major        <- if (nrow(sec1_data) > 0L)
@@ -1507,13 +1537,19 @@ border-radius:6px;">
   Overnight Self-Review &mdash; %s
 </h2>
 <p style="color:%s;font-size:%s;margin:0;">
-  %d new findings &nbsp;·&nbsp; %d source tables stale or dead
+  %s &nbsp;·&nbsp; %d of %d source tables stale or dead
+</p>
+<p style="color:%s;font-size:%s;margin:6px 0 0 0;">
+  Scope: session-telemetry patterns only (long sessions, agent sprawl, stuck loops,
+  tool-error rate). This report does <b>not</b> inspect config, rules or code &mdash;
+  a quiet morning here is not evidence that nothing needs changing.
 </p>
 </div>',
   DARK_CARD, ACCENT_BLUE, EMAIL_FONT_H2,
   today_str,
   DARK_MUTED, EMAIL_FONT_SUBTITLE,
-  n_new_findings, n_stale_tables
+  findings_phrase, n_stale_tables, length(source_tables),
+  DARK_MUTED, EMAIL_FONT_SUBTITLE
 )
 
 footer_html <- sprintf(

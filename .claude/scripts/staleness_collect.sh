@@ -97,6 +97,11 @@ _esc() { printf '%s' "$1" | sed "s/'/''/g"; }
 ROWS_WRITTEN=0
 WARN_COUNT=0
 FAIL_COUNT=0
+# etl_freshness sources deliberately excluded (event-driven) vs. accidentally
+# excluded (nobody has derived a cadence). Counted separately so the two can
+# never be read as the same thing — see _etl_event_driven() below.
+ETL_EVENT_DRIVEN=0
+ETL_UNKNOWN_CADENCE=0
 
 # ─── Cadence overrides for etl_freshness sources with NULL cadence ──────────
 # (llm#893 defect 2: NULL degraded to status='unknown', which read as benign
@@ -145,6 +150,33 @@ FAIL_COUNT=0
 #                  right now. 120h was chosen from the gap data, not
 #                  inflated to suppress this — a larger number would have
 #                  hidden a real defect.
+# ─── _etl_event_driven: sources that have no cadence BY DESIGN ─────────────
+# An event-driven source emits rows when something happens, not on a schedule.
+# A long silence is the DESIRED state, so a staleness cadence would manufacture
+# a "dead producer" alert every calm week and train the reader to ignore it.
+#
+# This is deliberately a SEPARATE function from _etl_cadence_override(), not
+# another arm of its case statement. Both conditions previously fell through to
+# the same empty-string return, so "no cadence by design" and "nobody has
+# derived a cadence for this source yet" were indistinguishable — the exact
+# collapse `checks-must-distinguish-unknown` forbids. A new source added
+# tomorrow with a genuine coverage gap looked identical to `errors`.
+#
+#   errors  Measured 2026-08-27 over the full table: 87 rows spanning
+#           2026-04-20..2026-08-25, median inter-row gap 0.02h (rows arrive in
+#           bursts when something breaks), p95 171.6h, max 1147h (~48 days).
+#           There is no schedule to be late against. Query:
+#             WITH d AS (SELECT logged_at, lag(logged_at) OVER (ORDER BY
+#             logged_at) AS prev FROM errors), g AS (SELECT date_diff('minute',
+#             prev, logged_at)/60.0 AS gap_h FROM d WHERE prev IS NOT NULL)
+#             SELECT median(gap_h), quantile_cont(gap_h,0.95), max(gap_h) FROM g;
+_etl_event_driven() {
+  case "$1" in
+    errors) echo "yes" ;;
+    *)      echo "" ;;
+  esac
+}
+
 _etl_cadence_override() {
   case "$1" in
     sessions)          echo "72" ;;
@@ -186,8 +218,16 @@ collect_etl_sources() {
       _cadence="$(_etl_cadence_override "$_name")"
     fi
     if [ -z "$_cadence" ]; then
-      echo "staleness_collect: WARN no cadence for etl_source '${_name}' (not in override table) — skipping" >&2
-      WARN_COUNT=$((WARN_COUNT + 1))
+      if [ -n "$(_etl_event_driven "$_name")" ]; then
+        # Deliberate exclusion, not a gap. Informational, NOT a warning —
+        # counted so the digest can state the denominator it actually covered.
+        echo "staleness_collect: INFO etl_source '${_name}' is event-driven — no cadence by design, excluded from staleness" >&2
+        ETL_EVENT_DRIVEN=$((ETL_EVENT_DRIVEN + 1))
+      else
+        echo "staleness_collect: WARN no cadence for etl_source '${_name}' (not in override table, not event-driven) — skipping" >&2
+        WARN_COUNT=$((WARN_COUNT + 1))
+        ETL_UNKNOWN_CADENCE=$((ETL_UNKNOWN_CADENCE + 1))
+      fi
       continue
     fi
 
@@ -588,6 +628,14 @@ selftest() {
   _assert "override-llmtelemetry" "$(_etl_cadence_override llmtelemetry)" "24"
   _assert "override-config_staleness" "$(_etl_cadence_override config_staleness)" "120"
   _assert "override-unknown-source-empty" "$(_etl_cadence_override some_new_source)" ""
+  # An event-driven source and an un-derived source BOTH return "" from
+  # _etl_cadence_override. That is precisely why the distinction cannot live
+  # there: these two assertions are identical, and the next two are what
+  # actually separate the cases.
+  _assert "override-event-driven-also-empty" "$(_etl_cadence_override errors)" ""
+  _assert "event-driven-errors"        "$(_etl_event_driven errors)" "yes"
+  _assert "event-driven-unknown-empty" "$(_etl_event_driven some_new_source)" ""
+  _assert "event-driven-scheduled-empty" "$(_etl_event_driven sessions)" ""
 
   if ! command -v duckdb >/dev/null 2>&1; then
     if ! (command -v nix-shell >/dev/null 2>&1 && [ -f "${NIX_DEFAULT}" ]); then
@@ -828,6 +876,6 @@ duck_run "$DB" -c "
   WHERE id = '${RUN_ID}';
 " >/dev/null 2>&1 || true
 
-echo "staleness_collect: rows_written=${ROWS_WRITTEN} warnings=${WARN_COUNT} failures=${FAIL_COUNT} status=${STATUS}"
+echo "staleness_collect: rows_written=${ROWS_WRITTEN} warnings=${WARN_COUNT} failures=${FAIL_COUNT} etl-event-driven=${ETL_EVENT_DRIVEN} etl-unknown-cadence=${ETL_UNKNOWN_CADENCE} status=${STATUS}"
 
 [ "$FAIL_COUNT" -eq 0 ]
