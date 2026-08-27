@@ -1,0 +1,8 @@
+{
+  "fixture": "04_severity_parser_trip",
+  "description": "New file with a minor style nit (magic number 0.85, thin roxygen) -- intended to elicit a low-key review response that may not follow a clean '**Severity**:' marker. Live assertion is deliberately loose (completion only): the runner's PARSER ROBUSTNESS against unusual/absent severity markers is exercised by roborev_eval_run.sh --selftest against mocked review text, not by asserting on non-deterministic live LLM phrasing here.",
+  "expect_completion": true,
+  "expect_findings": null,
+  "must_mention_any": null,
+  "forbid_severity_at_or_above": null
+}

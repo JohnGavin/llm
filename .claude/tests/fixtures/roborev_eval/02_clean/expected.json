@@ -1,0 +1,8 @@
+{
+  "fixture": "02_clean",
+  "description": "Modifies only the wording of a roxygen @param comment in an existing tracked file -- no functional change. A reviewer should not raise anything at High/Critical severity.",
+  "expect_completion": true,
+  "expect_findings": false,
+  "must_mention_any": null,
+  "forbid_severity_at_or_above": "high"
+}

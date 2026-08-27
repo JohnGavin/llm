@@ -1,0 +1,7 @@
+diff --git a/analysis/constant_value.R b/analysis/constant_value.R
+index 3333333..4444444 100644
+--- a/analysis/constant_value.R
++++ b/analysis/constant_value.R
+@@ -1 +1,2 @@
+ constant_value <- 42
++

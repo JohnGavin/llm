@@ -1,0 +1,13 @@
+diff --git a/analysis/label_utils.R b/analysis/label_utils.R
+index 1111111..2222222 100644
+--- a/analysis/label_utils.R
++++ b/analysis/label_utils.R
+@@ -1,7 +1,7 @@
+ #' Format a percentage label
+ #'
+-#' @param x Numeric fraction (0-1).
++#' @param x Numeric fraction in [0, 1].
+ #' @return Character string.
+ format_pct_label <- function(x) {
+   paste0(round(x * 100, 1), "%")
+ }

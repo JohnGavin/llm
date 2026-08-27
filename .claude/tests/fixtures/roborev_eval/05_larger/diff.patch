@@ -1,0 +1,43 @@
+diff --git a/R/filter_helpers.R b/R/filter_helpers.R
+new file mode 100644
+index 0000000..c1d2e3f
+--- /dev/null
++++ b/R/filter_helpers.R
+@@ -0,0 +1,10 @@
++#' Keep only completed jobs
++#'
++#' @param jobs data.frame with a status column
++#' @return data.frame filtered to completed jobs
++#' @export
++keep_completed <- function(jobs) {
++  # BUG: should be status == "completed" to KEEP completed jobs;
++  # != inverts the filter and keeps everything EXCEPT completed jobs.
++  jobs[jobs$status != "completed", ]
++}
+diff --git a/R/label_helpers.R b/R/label_helpers.R
+new file mode 100644
+index 0000000..d4e5f6a
+--- /dev/null
++++ b/R/label_helpers.R
+@@ -0,0 +1,8 @@
++#' Title-case a short label
++#'
++#' @param x Character vector.
++#' @return Character vector, title-cased.
++#' @export
++title_case_label <- function(x) {
++  paste0(toupper(substring(x, 1, 1)), substring(x, 2))
++}
+diff --git a/tests/testthat/test-filter_helpers.R b/tests/testthat/test-filter_helpers.R
+new file mode 100644
+index 0000000..e7f8a9b
+--- /dev/null
++++ b/tests/testthat/test-filter_helpers.R
+@@ -0,0 +1,7 @@
++test_that("keep_completed keeps only completed jobs", {
++  jobs <- data.frame(status = c("completed", "pending", "completed"))
++  result <- keep_completed(jobs)
++  # BUG: asserts 1 row remains ("pending") -- this matches the inverted
++  # filter's (wrong) behavior instead of the function's stated intent.
++  expect_equal(nrow(result), 1)
++})

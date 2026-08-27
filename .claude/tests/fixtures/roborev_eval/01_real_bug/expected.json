@@ -1,0 +1,8 @@
+{
+  "fixture": "01_real_bug",
+  "description": "New file R/rate_helpers.R adds compute_rate() dividing numerator/denominator with no zero-guard -- an unguarded division producing silent Inf/NaN, explicitly named in this repo's .roborev.toml review_guidelines. Any competent review of this diff should flag it.",
+  "expect_completion": true,
+  "expect_findings": true,
+  "must_mention_any": ["denominator", "zero", "nan", "inf", "division"],
+  "forbid_severity_at_or_above": null
+}
