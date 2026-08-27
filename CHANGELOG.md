@@ -4,6 +4,110 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-27 (session 2) — the same defect in eleven places, twice in my own new code
+
+### Completed
+
+- **[#1041](https://github.com/JohnGavin/llm/pull/1041) (closes #1037)** — the overnight
+  email led with "0 new findings" whether twelve sessions were analysed and found clean or
+  zero existed to analyse. Headline now states the input count in three states (NA /
+  0 / N), the staleness denominator ("0 **of 3**"), and a scope line saying the report
+  inspects session telemetry, not config or rules. Also split `staleness_collect.sh`'s
+  "no cadence by design" from "nobody derived one yet" — both returned `""` from the same
+  function, so `errors` (event-driven: 87 rows in 4 months, median gap 0.02h, max 1147h)
+  was indistinguishable from a genuine coverage gap.
+- **[#1043](https://github.com/JohnGavin/llm/pull/1043) (closes #1035, reporting half)** —
+  the roborev daily report framed its whole no-severity bucket as "data-quality, not
+  triage … not a backlog to close" while 16 of those rows were reviews that never ran.
+  Three headings now, each accurate. Also fixed the classifier, which missed its own
+  dominant signature: 10 never-ran reviews sat in `unclassified` because the agent says
+  "unable to READ the diff" and the pattern list only had "unable to ACCESS". And rebased
+  the ">50% unclassified" guard's denominator to exclude `passed` — at 43 of 80 rows it
+  held the ratio at 26.2% and kept the guard silent; on the corrected denominator the same
+  data reads 56.8%.
+- **[#1046](https://github.com/JohnGavin/llm/pull/1046)** — `.roborev.toml` asserted the
+  global default protected private repos. That stopped being true on 2026-07-05. Corrected
+  the comment AND added `check_roborev_agent_privacy.sh`, because a comment is what failed.
+  On its first run it found two private repos the manual sweep had missed.
+- **[#1047](https://github.com/JohnGavin/llm/pull/1047)** — `private_data_scan.sh` exempted
+  `NPA-555-01XX` (555 as exchange) but not 555 as area code, so it blocked commits with 12
+  criticals on already-committed fixtures and its own advice is `--no-verify`. Three such
+  overrides in this session's history. Now exempts five regulator-reserved ranges, with the
+  trade-off written into the source.
+- **Merged also:** #1039 (ledger), #1040 (TCC memory), #914 (memory routing), #979 (grep
+  portability). **Cross-repo:** llmtelemetry#356, historical#773.
+- **Closed:** #976 (fully superseded by #1004 — main's copies of both hooks are strictly
+  newer), llmtelemetry#355 (branched from stale local main; see below).
+- **Filed:** [#1044](https://github.com/JohnGavin/llm/issues/1044) (no evaluation harness
+  for review agents — gemini fails 15.5% of reviews, claude-code 0%, found by hand-querying
+  during unrelated work), [#1045](https://github.com/JohnGavin/llm/issues/1045)
+  (`agent_runs` has no dispatch_id despite the rule mandating one in four places; 49 rows
+  have claimed "running" since 2026-08-09).
+- **Eight repos pinned** to claude-code: llmtelemetry, historical, mycare, premortem, eis6,
+  travel, knowledge, tennis — four of them local-only (no remote at all) yet sending every
+  commit diff to a free-tier model.
+
+### Failed Approaches
+
+- **Tried treating any non-zero exit as "did not run"** when fixing
+  `check_grep_portability.sh --selftest`. Broke it the mirror-image way (0/5): that checker
+  exits 1 when it FINDS something, which is a real result. Accept 0 and 1; only other codes
+  mean it never ran.
+- **Tried merging llmtelemetry#355 as-is.** Its first `git fetch` failed silently (HTTPS
+  auth rejecting the poisoned `GH_TOKEN`), so the conflict was against a stale `origin/main`.
+  Refetched with `env -u GH_TOKEN`: the branch was cut from LOCAL main, 5 commits ahead with
+  work already landed upstream under different SHAs. Net diff was 36 files, not 1 — it would
+  have reverted newer telemetry data and #350. Rebuilt from `origin/main` as #356.
+- **Tried `cc-worktree.sh` for an existing remote branch.** It silently creates a FRESH
+  branch from main when the branch exists on origin but not locally. Nearly pushed that over
+  #914, which would have overwritten the PR with main's content. Use
+  `git worktree add --track -b <branch> <path> origin/<branch>`.
+- **Tried merging main into two pre-existing worktrees.** Both held stale pre-rebase
+  duplicates (#979 at 91b46b9 vs aae4fdc; #976 at 3190aac vs c871a01) — 87 add/add conflicts
+  from a bad merge base, versus 1 from the correct remote head.
+
+### Accuracy / Metrics
+
+- `staleness_collect.sh --selftest` 25 → **29 PASS**
+- `private_data_scan.sh --selftest` 28 → **38 PASS** (5 exempt + 5 negative controls)
+- `check_roborev_agent_privacy.sh --selftest` **10 PASS** (new)
+- `test-selfreview-coverage-phrase.R` **11 PASS** (new)
+- `test_roborev_severity_consistency.sh` **16/16, 0 skipped** (in the nix shell)
+- roborev never-ran reviews correctly classified: **10 → 0** left in `unclassified`
+- private repos routing to a third-party agent: **6 → 0** (`checked=20 clear=20`)
+
+### Known Limitations
+
+- **#1035 upstream half unfixed** — roborev writes its snapshot diff inside the repo under
+  review and records a never-ran review as `status=done`, `verdict=0`. No snapshot-directory
+  key exists in `roborev config list`, so both need upstream changes.
+- **roborev backlog** — 23 verdict failures, 12 addressed; 11 unaddressed. `crash=0`,
+  `quota=0`, so this is backlog, not agent health.
+- **`.claude/worktrees/` in llmtelemetry** is 10 MB of an old agent dispatch, untracked.
+  Needs a human call (>1 MB, `safe-deletion`).
+- **The Medium article on AI burnout was never read** — it 403s and search returned only
+  other articles. No gaps were filed from it; inventing them from adjacent sources would
+  have been fabrication.
+- **`.agents[].pass_rate` still uncorrected for quota** (llm#904) — unchanged this session.
+
+### Lessons
+
+The whole session was one defect wearing different clothes: **a check whose failure is
+indistinguishable from a pass.** A merge gate that had never gated. "0 findings" meaning
+zero sessions analysed. `passed` padding a denominator until the guard could not fire. A
+selftest reporting 4/5 green when it never ran. 49 rows claiming "running" for 18 days. A
+config comment asserting a protection that ended seven weeks earlier.
+
+Twice it was in code written *this session* to fix that exact class — most sharply when
+`check_roborev_agent_privacy.sh` filed "no local pin" as *unknown* rather than as the
+finding it is, hiding the precise condition it was built to catch.
+
+Three claims of mine were wrong and were retracted publicly rather than quietly dropped:
+the gemini routing was a deliberate 2026-07-05 decision, not "drift" (which is why the fix
+became per-repo pins rather than reverting the global); the model pins are belt-and-braces,
+not mandatory (`crypto_solwatch` pins the agent alone, 15/15 clean); and #1037's issue text
+criticised a 72h cadence I had not read the derivation for.
+
 ## 2026-08-26/27 — six checks that reported success about something they had not established, and a fix scoped from a 12-hour sample
 
 Continuation of the 2026-08-24/25 session. Started by fixing four filed issues,
