@@ -219,6 +219,58 @@ load_codexbar_project_cost <- function(path = NULL) {
     )
 }
 
+#' Known aliases for `codexbar_cost_per_project.json`'s `canonical_project`
+#'
+#' The exporter (llmtelemetry's `export_dashboard_data.R` Section 9b) does
+#' not currently resolve every short-form project token through
+#' `unified.duckdb.canonical_project_aliases` before writing this file --
+#' confirmed 2026-08-28 by querying that table directly for `rw`/`llmtel`,
+#' which are absent. Resolving here, at the sole in-repo consumer of this
+#' export, is the "cosmetic-but-public and cheap" half of JohnGavin/llm#894;
+#' the "stop mis-attributing at export time" half is llmtelemetry's fix.
+#'
+#' `knowledge` is deliberately NOT aliased -- it is a bare directory-name
+#' fragment (the `knowledge/` submodule), the same class of meta-only token
+#' [canonicalize_ccusage_project()]'s `.ccusage_meta_only` already treats as
+#' ephemeral rather than a real project. It is caught by
+#' [.codexbar_ephemeral_project()] below instead of being resolved to
+#' anything.
+#'
+#' @keywords internal
+.codexbar_project_aliases <- c(
+  "rw"     = "randomwalk",
+  "llmtel" = "llmtelemetry"
+)
+
+#' Detect ephemeral/non-project `canonical_project` values from the
+#' CodexBar per-project cost export
+#'
+#' Mirrors the same class of defect [canonicalize_ccusage_project()] filters
+#' for the ccusage daily cache (JohnGavin/llm#887's ephemeral-registration
+#' pattern), applied to the distinct value shapes actually observed in
+#' `codexbar_cost_per_project.json` (JohnGavin/llm#894): R `tempdir()` paths
+#' from the knowledge-base test suite, ephemeral publish worktrees, and bare
+#' word fragments with no project meaning.
+#'
+#' @param x Character vector of raw `canonical_project` values.
+#' @return Logical vector, same length as `x`: `TRUE` where the value should
+#'   be dropped before aggregation.
+#' @keywords internal
+.codexbar_is_ephemeral <- function(x) {
+  # kb_fixture_<hash>: R tempdir() paths from the knowledge-base test suite.
+  is_kb_fixture <- grepl("^kb_fixture_", x)
+  # publish_roborev_data_worktree_<pid>: ephemeral publish worktrees.
+  is_publish_worktree <- grepl("worktree_[0-9]+$", x)
+  # tmp.<random>: any bare tempdir()-style basename.
+  is_tmp_path <- grepl("^tmp\\.", x)
+  # Bare fragments with no project meaning, observed on the live public
+  # chart (JohnGavin/llm#894): pieces of longer hook/script names split on a
+  # delimiter upstream, plus "knowledge" (see .codexbar_project_aliases).
+  is_bare_fragment <- x %in% c("session", "split", "pulse", "email", "knowledge")
+
+  is_kb_fixture | is_publish_worktree | is_tmp_path | is_bare_fragment
+}
+
 #' Summarise CodexBar per-project cost at project grain
 #'
 #' Collapses the day x project rows from [load_codexbar_project_cost()] to
@@ -227,6 +279,13 @@ load_codexbar_project_cost <- function(path = NULL) {
 #' content for JohnGavin/llm#877 -- session-level CodexBar cost does not
 #' exist as a data source, so the finest honest grain available is
 #' project-per-day, aggregated here to project totals for a single plot.
+#'
+#' Before aggregating, resolves known aliases
+#' ([.codexbar_project_aliases]) and drops ephemeral/non-project entries
+#' ([.codexbar_is_ephemeral]) -- JohnGavin/llm#894: test fixtures and
+#' publish worktrees were being registered as first-class projects on the
+#' live public chart, and `rw`/`llmtel` were plotted as separate series
+#' from `randomwalk`/`llmtelemetry` rather than merged with them.
 #'
 #' @param df A tibble as returned by [load_codexbar_project_cost()], or any
 #'   data frame with `canonical_project`, `est_cost`, and `duration_min`
@@ -253,6 +312,12 @@ summarise_codexbar_project_cost <- function(df) {
 
   df |>
     dplyr::filter(!is.na(canonical_project), nzchar(canonical_project)) |>
+    dplyr::filter(!.codexbar_is_ephemeral(canonical_project)) |>
+    dplyr::mutate(
+      canonical_project = dplyr::coalesce(
+        unname(.codexbar_project_aliases[canonical_project]), canonical_project
+      )
+    ) |>
     dplyr::group_by(canonical_project) |>
     dplyr::summarise(
       total_est_cost     = sum(est_cost, na.rm = TRUE),

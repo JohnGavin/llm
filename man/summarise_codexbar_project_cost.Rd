@@ -26,3 +26,11 @@ content for JohnGavin/llm#877 -- session-level CodexBar cost does not
 exist as a data source, so the finest honest grain available is
 project-per-day, aggregated here to project totals for a single plot.
 }
+\details{
+Before aggregating, resolves known aliases
+([.codexbar_project_aliases]) and drops ephemeral/non-project entries
+([.codexbar_is_ephemeral]) -- JohnGavin/llm#894: test fixtures and
+publish worktrees were being registered as first-class projects on the
+live public chart, and `rw`/`llmtel` were plotted as separate series
+from `randomwalk`/`llmtelemetry` rather than merged with them.
+}
