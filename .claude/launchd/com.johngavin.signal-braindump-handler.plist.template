@@ -17,9 +17,9 @@
     <key>StartInterval</key>
     <integer>600</integer>
     <key>StandardOutPath</key>
-    <string>/tmp/signal_braindump_handler_stdout.log</string>
+    <string>/Users/johngavin/.claude/logs/signal_braindump_handler_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/signal_braindump_handler_stderr.log</string>
+    <string>/Users/johngavin/.claude/logs/signal_braindump_handler_stderr.log</string>
     <key>RunAtLoad</key>
     <true/>
     <key>ThrottleInterval</key>
