@@ -109,6 +109,9 @@ jobs:
           echo "=== HTML error scan (R/tar_plans/plan_qa_gates.R) ==="
           Rscript -e 'source("R/tar_plans/plan_qa_gates.R"); scan_html_for_errors("docs")'
 
+          echo "=== Blank-plot scan (#787) ==="
+          Rscript -e 'source("R/tar_plans/plan_qa_gates.R"); check_no_blank_plots("docs")'
+
           echo "=== Checking internal links ==="
           broken=0
           for html in docs/articles/*.html; do
