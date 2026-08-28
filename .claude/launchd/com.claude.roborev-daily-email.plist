@@ -20,7 +20,14 @@
        GMAIL_USERNAME=you@gmail.com
        GMAIL_APP_PASSWORD=<16-char app password>
        REPORT_RECIPIENT=you@gmail.com
-       ROBOREV_DASHBOARD_URL=https://johngavin.github.io/llmtelemetry/#roborev
+
+     ROBOREV_DASHBOARD_URL is an OPTIONAL override, not a required field --
+     leave it unset. resolve_dashboard_links()/dashboard_cta_block() in
+     email_styles.R (llm#946, #1009) already default to the llmtelemetry
+     GitHub repo URL, since the repo's GH Pages dashboard went offline when
+     it was made private on 2026-08-22. Setting this var to the old
+     https://johngavin.github.io/llmtelemetry/#roborev value re-breaks the
+     button by overriding that fixed default with the same dead link.
 
      Tracked in llm#287.
 -->

@@ -825,6 +825,48 @@ test_that("compute_new_no_wiki() returns list(count, rows) with correct structur
               info = paste("compute_new_no_wiki() failed:", combined))
 })
 
+test_that("section_summary_stats() does not count table header/separator rows as items (llm#298 follow-up)", {
+  # Regression for a bug where "N items" (shown next to the digest title in
+  # the email) counted every markdown line starting with "| " -- including
+  # a table's header row and its "|---|---|" separator row -- as an item.
+  # kb_digest.R's output has exactly one top-level "##" heading (the whole
+  # digest is treated as one section), so a digest with 1 commit and 0
+  # actual wiki/raw/outputs changes still reported "13 items": 4 header +
+  # 4 separator + 4 genuine data-ish rows + 1 commit-subject bullet,
+  # completely decoupled from the all-zero table directly below it.
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+
+  rcode <- paste0(
+    "source('", email_script, "', local=TRUE)\n",
+    "body <- c(\n",
+    "  '### Changes by Category', '',\n",
+    "  '| Category | Files changed | Lines + | Lines - |',\n",
+    "  '|----------|:-------------:|--------:|--------:|',\n",
+    "  '| wiki     | 0 | +0 | -0 |',\n",
+    "  '| raw      | 0 | +0 | -0 |',\n",
+    "  '| outputs  | 0 | +0 | -0 |', '',\n",
+    "  '### Commit Subjects', '',\n",
+    "  '- some commit subject', ''\n",
+    ")\n",
+    "result <- section_summary_stats(body)\n",
+    "stopifnot(identical(result, '4 items'))\n",
+    "cat('OK\\n')\n"
+  )
+  tmp_r <- tempfile(fileext = ".R")
+  writeLines(rcode, tmp_r)
+  on.exit(unlink(tmp_r))
+
+  env_vars <- c(paste0("KB_SCRIPTS_DIR=", file.path(REPO_ROOT, ".claude", "scripts")),
+                "KB_DIGEST_DEFINE_ONLY=1")
+  out <- system2("Rscript", args = tmp_r, stdout = TRUE, stderr = TRUE,
+                  env = env_vars)
+
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("OK", combined),
+              info = paste("section_summary_stats() failed:", combined))
+})
+
 test_that("dry-run email HTML includes all four KB-digest signal QA markers (#479-#482)", {
   skip_if_not_installed("blastula")
 
