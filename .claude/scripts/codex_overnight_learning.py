@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""codex_overnight_learning.py - Summarise recent Codex sessions into a daily digest.
+"""codex_overnight_learning.py - Summarise recent CLI-agent sessions into a daily digest.
 
-Reads Codex session JSONL plus prompt history, extracts repeated workflows,
-repeated user corrections, and repeated command failures, then writes both a
-machine-readable JSON summary and a markdown report.
+Reads TWO session sources -- Codex session JSONL (plus its prompt history)
+and Claude Code session JSONL under ~/.claude/projects/**/*.jsonl -- and
+extracts repeated workflows, repeated user corrections, and repeated command
+failures from both, then writes a combined machine-readable JSON summary and
+a markdown report.
+
+Why two sources (llm#690): this job originally read ONLY Codex sessions.
+When Codex CLI is rate-limited/unavailable, ~/.codex/sessions/ is empty and
+the job silently emitted an all-zero digest every morning while real work
+was happening in Claude Code sessions the job never looked at -- the same
+"metric reads a dead/empty source" shape as #318/#323/#676/#679. The two
+sources are merged (Claude Code session ids prefixed "claude:" so they can
+never collide with Codex's own ids) so the digest reflects whichever tool
+was actually in use, and a loud WARN fires if BOTH sources are empty rather
+than silently reporting session_count=0 as if nothing happened overnight.
 """
 
 from __future__ import annotations
@@ -16,6 +28,7 @@ import os
 import pathlib
 import re
 import shlex
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
 from typing import Any
@@ -44,10 +57,23 @@ def parse_args() -> argparse.Namespace:
     default_session_root = home / ".codex" / "sessions"
     default_history = home / ".codex" / "history.jsonl"
     default_output_dir = home / ".codex" / "learning"
+    default_claude_projects_root = home / ".claude" / "projects"
     parser = argparse.ArgumentParser()
     parser.add_argument("--session-root", default=str(default_session_root))
     parser.add_argument("--history-file", default=str(default_history))
     parser.add_argument("--output-dir", default=str(default_output_dir))
+    parser.add_argument(
+        "--claude-projects-root",
+        default=str(default_claude_projects_root),
+        help="Claude Code session JSONL root (llm#690) -- set to a nonexistent "
+        "path to disable this source and read Codex sessions only.",
+    )
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="Run against synthetic fixtures in a temp dir and exit; no real "
+        "session data is read.",
+    )
     parser.add_argument("--lookback-hours", type=int, default=24)
     parser.add_argument(
         "--now",
@@ -264,6 +290,136 @@ def parse_sessions(paths: list[pathlib.Path]) -> dict[str, dict[str, Any]]:
     return sessions
 
 
+def parse_claude_timestamp(ts: str) -> int:
+    """Parse a Claude Code session's ISO-8601 'Z' timestamp to epoch seconds.
+
+    Returns 0 (not "now") on any parse failure so a malformed/missing
+    timestamp sorts before the lookback window rather than always inside it.
+    """
+    if not ts:
+        return 0
+    try:
+        parsed = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return int(parsed.timestamp())
+    except ValueError:
+        return 0
+
+
+def extract_claude_failure_preview(content: Any) -> str:
+    """Normalise a Claude Code tool_result's `content` (str or content-block
+    list) into a short preview, mirroring extract_failure_preview()'s output
+    shape so both sources feed detect_failures() identically."""
+    if isinstance(content, list):
+        texts = [
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        text = " ".join(texts)
+    else:
+        text = str(content)
+
+    for line in text.splitlines():
+        preview = normalize_text(line)
+        if preview:
+            return preview[:160]
+    return ""
+
+
+def parse_claude_sessions(
+    paths: list[pathlib.Path],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Parse Claude Code session JSONL files (~/.claude/projects/**/*.jsonl).
+
+    Returns (sessions, history_rows) in the same shapes parse_sessions() and
+    parse_history() produce, so detect_workflows()/detect_corrections()/
+    detect_failures() run over them unchanged regardless of source. Session
+    ids are prefixed "claude:" so they can never collide with Codex's own
+    ids when the two sources' session dicts are merged in main().
+
+    Schema (differs entirely from Codex's response_item/function_call
+    format): each JSONL line is one event with a top-level "type". A Bash
+    tool call is an "assistant" event whose message.content list has a
+    {"type": "tool_use", "name": "Bash", "input": {"command": ...}} block.
+    Its result is a later "user" event whose message.content is a LIST of
+    {"type": "tool_result", "tool_use_id": ..., "is_error": bool} blocks --
+    contrast a genuine user prompt, whose message.content is a bare STRING.
+    That str-vs-list distinction is what separates real prompts (read for
+    detect_corrections()) from tool-result wrappers (read for failures).
+    """
+    sessions: dict[str, dict[str, Any]] = {}
+    history_rows: list[dict[str, Any]] = []
+
+    for path in paths:
+        session_id = f"claude:{path.stem}"
+        info: dict[str, Any] = {
+            "session_id": session_id,
+            "path": str(path),
+            "command_labels": [],
+            "raw_commands": [],
+            "call_map": {},
+            "failures": [],
+            "title": path.parent.name,
+        }
+        saw_any_event = False
+
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                saw_any_event = True
+
+                event_type = event.get("type")
+                content = event.get("message", {}).get("content")
+
+                if event_type == "assistant" and isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict) or block.get("type") != "tool_use":
+                            continue
+                        if block.get("name") != "Bash":
+                            continue
+                        cmd = str(block.get("input", {}).get("command", ""))
+                        label = command_family(cmd)
+                        entry = {"label": label, "raw": cmd or "Bash"}
+                        info["call_map"].setdefault(block.get("id", ""), []).append(entry)
+                        info["command_labels"].append(label)
+                        info["raw_commands"].append(cmd or "Bash")
+
+                elif event_type == "user" and isinstance(content, str):
+                    history_rows.append(
+                        {
+                            "ts": parse_claude_timestamp(event.get("timestamp", "")),
+                            "text": content,
+                            "session_id": session_id,
+                        }
+                    )
+
+                elif event_type == "user" and isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict) or block.get("type") != "tool_result":
+                            continue
+                        if not block.get("is_error"):
+                            continue
+                        preview = extract_claude_failure_preview(block.get("content", ""))
+                        if not preview:
+                            continue
+                        labels = info["call_map"].get(
+                            block.get("tool_use_id", ""),
+                            [{"label": "tool_call", "raw": "tool_call"}],
+                        )
+                        for label in labels:
+                            info["failures"].append(
+                                {"label": label["label"], "exit_code": None, "preview": preview}
+                            )
+
+        if saw_any_event:
+            sessions[session_id] = info
+
+    return sessions, history_rows
+
+
 def parse_history(history_file: pathlib.Path, cutoff: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not history_file.exists():
@@ -431,6 +587,7 @@ def build_markdown(
     sessions: dict[str, dict[str, Any]],
     signals: list[Signal],
     output_json: pathlib.Path,
+    source_summary: dict[str, Any],
 ) -> str:
     workflow_signals = [s for s in signals if s.category == "workflow"]
     correction_signals = [s for s in signals if s.category == "correction"]
@@ -441,6 +598,13 @@ def build_markdown(
         f"- Window: `{window_start}` to `{window_end}`",
         f"- Sessions analyzed: `{len(sessions)}`",
         f"- JSON summary: `{output_json}`",
+        "",
+        "## Sources (llm#690)",
+        "",
+        f"- Codex: `{source_summary['codex_session_root']}` — "
+        f"`{source_summary['codex_sessions']}` session(s)",
+        f"- Claude Code: `{source_summary['claude_projects_root']}` — "
+        f"`{source_summary['claude_sessions']}` session(s)",
         "",
         "## Counts",
         "",
@@ -486,6 +650,7 @@ def write_outputs(
     window_start: dt.datetime,
     sessions: dict[str, dict[str, Any]],
     signals: list[Signal],
+    source_summary: dict[str, Any],
 ) -> tuple[pathlib.Path, pathlib.Path]:
     ensure_dir(output_dir)
     summary_date = now.date().isoformat()
@@ -498,6 +663,7 @@ def write_outputs(
         "window_start_utc": window_start.isoformat(),
         "window_end_utc": now.isoformat(),
         "session_count": len(sessions),
+        "sources": source_summary,
         "counts": {
             "workflow_candidates": sum(1 for s in signals if s.category == "workflow"),
             "correction_candidates": sum(1 for s in signals if s.category == "correction"),
@@ -515,6 +681,7 @@ def write_outputs(
         sessions=sessions,
         signals=signals,
         output_json=json_path,
+        source_summary=source_summary,
     )
 
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -522,8 +689,130 @@ def write_outputs(
     return json_path, md_path
 
 
+def selftest() -> int:
+    """Synthetic-fixture check for parse_claude_sessions() (llm#690).
+
+    Builds one fixture session with: a successful Bash tool_use, a FAILING
+    Bash tool_use whose tool_result carries is_error=true, and a real user
+    prompt containing a correction marker -- then asserts each surfaces
+    through the same shapes/paths a real session would.
+    """
+    import tempfile
+
+    checks: list[tuple[str, bool]] = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        proj_dir = pathlib.Path(tmp) / "-fake-project"
+        proj_dir.mkdir()
+        session_path = proj_dir / "11111111-2222-3333-4444-555555555555.jsonl"
+
+        events = [
+            {
+                "type": "user",
+                "timestamp": "2026-08-28T09:00:00.000Z",
+                "message": {"content": "don't ever run rm -rf without asking first"},
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_ok",
+                            "name": "Bash",
+                            "input": {"command": "git status"},
+                        }
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "toolu_ok", "content": "clean", "is_error": False}
+                    ]
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_fail",
+                            "name": "Bash",
+                            "input": {"command": "gh pr view 999"},
+                        }
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_fail",
+                            "content": "Error: pull request not found",
+                            "is_error": True,
+                        }
+                    ]
+                },
+            },
+        ]
+        with session_path.open("w", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event) + "\n")
+
+        sessions, history_rows = parse_claude_sessions([session_path])
+
+        session_id = f"claude:{session_path.stem}"
+        checks.append(("session captured", session_id in sessions))
+        info = sessions.get(session_id, {})
+        checks.append(("git status labelled", "git status" in info.get("command_labels", [])))
+        checks.append(
+            ("gh command labelled", any(lbl.startswith("gh ") for lbl in info.get("command_labels", [])))
+        )
+        checks.append(("one failure recorded", len(info.get("failures", [])) == 1))
+        checks.append(
+            (
+                "failure preview non-empty",
+                bool(info.get("failures", [{}])[0].get("preview")) if info.get("failures") else False,
+            )
+        )
+        checks.append(("history row captured", len(history_rows) == 1))
+        checks.append(
+            (
+                "history row text matches",
+                history_rows[0]["text"] == "don't ever run rm -rf without asking first" if history_rows else False,
+            )
+        )
+        checks.append(
+            ("history row epoch parsed", history_rows[0]["ts"] > 0 if history_rows else False)
+        )
+
+        # detect_corrections() requires >= 2 occurrences before surfacing a
+        # signal -- one fixture session correctly yields zero signals here.
+        # The str-content-vs-list-content split (real prompt vs tool-result
+        # wrapper) is what's actually under test in the "history row" checks
+        # above; this just confirms the existing threshold still applies.
+        detected_corrections = detect_corrections(history_rows)
+        checks.append(("correction threshold (2+) still applies to 1 occurrence", len(detected_corrections) == 0))
+
+    print("=== codex_overnight_learning.py --selftest ===")
+    all_pass = True
+    for label, ok in checks:
+        print(f"  {'PASS' if ok else 'FAIL'}: {label}")
+        all_pass = all_pass and ok
+
+    print(f"=== {'ALL PASS' if all_pass else 'FAILURES DETECTED'} ({sum(1 for _, ok in checks if ok)}/{len(checks)}) ===")
+    return 0 if all_pass else 1
+
+
 def main() -> int:
     args = parse_args()
+    if args.selftest:
+        return selftest()
     now = parse_now(args.now)
     cutoff_dt = now - dt.timedelta(hours=args.lookback_hours)
     cutoff_ts = cutoff_dt.timestamp()
@@ -531,21 +820,52 @@ def main() -> int:
     session_root = pathlib.Path(args.session_root).expanduser()
     history_file = pathlib.Path(args.history_file).expanduser()
     output_dir = pathlib.Path(args.output_dir).expanduser()
+    claude_projects_root = pathlib.Path(args.claude_projects_root).expanduser()
 
-    sessions = parse_sessions(session_files(session_root, cutoff_ts))
-    history_rows = parse_history(history_file, int(cutoff_ts))
+    codex_sessions = parse_sessions(session_files(session_root, cutoff_ts))
+    claude_sessions, claude_history_rows = parse_claude_sessions(
+        session_files(claude_projects_root, cutoff_ts)
+    )
+    sessions = {**codex_sessions, **claude_sessions}
+    history_rows = parse_history(history_file, int(cutoff_ts)) + claude_history_rows
+
+    source_summary = {
+        "codex_session_root": str(session_root),
+        "codex_sessions": len(codex_sessions),
+        "claude_projects_root": str(claude_projects_root),
+        "claude_sessions": len(claude_sessions),
+    }
 
     workflow_signals = detect_workflows(sessions)
     correction_signals = detect_corrections(history_rows)
     failure_signals = detect_failures(sessions)
     signals = workflow_signals + correction_signals + failure_signals
 
-    json_path, md_path = write_outputs(output_dir, now, cutoff_dt, sessions, signals)
+    json_path, md_path = write_outputs(
+        output_dir, now, cutoff_dt, sessions, signals, source_summary
+    )
 
     digest = hashlib.sha1(json_path.read_bytes()).hexdigest()
     print(f"codex-overnight-learning: sessions={len(sessions)} signals={len(signals)} sha1={digest}")
+    print(f"  codex={source_summary['codex_sessions']} claude={source_summary['claude_sessions']}")
     print(f"  json: {json_path}")
     print(f"  md:   {md_path}")
+
+    # llm#690: a 0 across BOTH sources usually means one or both roots are
+    # dead/misconfigured (e.g. Codex CLI rate-limited so ~/.codex/sessions/
+    # is empty), not that no work happened overnight -- flag it loudly
+    # rather than let a silent all-zero digest look like a real "quiet
+    # night". Exit code stays 0 (this is a launchd job; a non-zero exit
+    # would page on a state that isn't actually a script failure) but the
+    # WARN line is unambiguous in the launchd log.
+    if len(sessions) == 0:
+        print(
+            "codex-overnight-learning: WARN 0 sessions across BOTH configured "
+            f"sources (codex={session_root}, claude={claude_projects_root}) -- "
+            "source(s) likely dead/misconfigured, not a genuinely quiet night "
+            "(llm#690)",
+            file=sys.stderr,
+        )
 
     # Stamp for cron_catchup.sh catch-up detection
     import datetime
