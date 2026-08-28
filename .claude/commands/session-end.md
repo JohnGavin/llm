@@ -90,7 +90,7 @@ Before committing, verify no unresolved roborev findings remain.
 **IMPORTANT:** `roborev summary --json` has two independent sections that must both be checked. Crashed reviews never produce a verdict, so `verdicts.failed` alone is insufficient:
 - `.verdicts` — only counts reviews that produced a pass/fail result. If a review job **crashes** (e.g. agent `IneligibleTierError`), it never reaches a verdict, so `verdicts.failed` stays 0 even when all jobs crashed (#676).
 - `.overview` — job-level outcomes (`total`, `done`, `failed`). Real job failures live here.
-- `.agents[]` — per-agent stats: `{agent, total, errors, pass_rate}`. **Do not read this as an agent-quality signal without checking crash vs quota below** — a quota-exhausted agent's jobs count as `errors` here too, and roborev's own `pass_rate` denominator does not exclude them (llm#904; not yet fixed at this layer — see "Known gap" below).
+- `.agents[]` — per-agent stats: `{agent, total, errors, pass_rate}`. **Do not read `.pass_rate` from here** — a quota-exhausted agent's jobs count as `errors` too, and roborev's own denominator does not exclude them. Use `roborev_consistency_check.sh --json`'s `.per_agent[].pass_rate_corrected` instead (llm#904 — see below).
 
 **Do NOT read `.failures.errors.{crash,quota}` directly off `roborev summary --json`.** roborev's own classifier under-counts `quota` — verified 2026-08-21 against the real DB: it recognizes some agents' quota-exhaustion strings (e.g. gemini's `TerminalQuotaError`) but not others (claude-code's "You've hit your monthly spend limit" was 0-for-9 in a same-repo test — every one landed in `crash`). Get the corrected split from `roborev_consistency_check.sh --json` instead (its `counters.crash`/`counters.quota` are re-derived from `review_jobs.error` text; `counters.reclassified` is `true` when the correction actually ran, `native_counters` shows what roborev itself reported for comparison):
 
@@ -101,7 +101,7 @@ Before committing, verify no unresolved roborev findings remain.
   overview_failed: .overview.failed,
   agent_errors: [.agents[] | select(.errors > 0) | {agent, errors}]
 }'
-~/.claude/scripts/roborev_consistency_check.sh --json | jq '{crash: .counters.crash, quota: .counters.quota, reclassified, native: .native_counters}'
+~/.claude/scripts/roborev_consistency_check.sh --json | jq '{crash: .counters.crash, quota: .counters.quota, reclassified, native: .native_counters, per_agent}'
 ```
 
 Report NOT-CLEAN and ask the user if ANY of:
@@ -119,7 +119,7 @@ If `quota > 0` and `crash == 0` (every failure this window is quota, not a genui
 - Do **not** direct the user to `roborev_agent_health.sh --status` — quota exhaustion is a billing state, not an agent-health defect (llm#904). The correct remedy is waiting for the quota to reset; `roborev_requeue_dropped.sh` (wired into `roborev_poll_merges.sh`, thrice-daily Mon–Fri) already re-enqueues these automatically once it does (llm#927) — no manual action needed.
 - Commit/push may proceed without asking Y/N.
 
-**Known gap (llm#904, not fixed):** per-agent `pass_rate` in `roborev summary --json .agents[]` is NOT corrected for quota-failed jobs — a quota-exhausted agent's `pass_rate` still reads artificially low (e.g. claude-code 0.14 vs gemini 0.71 during a claude-code billing outage, neither number reflecting actual code-review quality). Do not use `.agents[].pass_rate` to compare agents without first checking whether `crash` (reclassified) is the dominant contributor to that agent's `errors`; if it's mostly `quota`, the comparison is not meaningful. Fixing the denominator itself needs a decision on where the corrected metric should live (`roborev_metrics_etl.R`'s `classify_failure()` already computes the correct daily-level split for the dashboard, but nothing yet recomputes a live per-agent pass rate).
+**Corrected per-agent pass rate (llm#904, fixed):** `roborev_consistency_check.sh --json`'s `.per_agent[]` gives `{agent, total, quota, crash, passed, failed_verdict, pass_rate_corrected}` per agent, DB-derived over the same window as `counters.crash`/`counters.quota` — `pass_rate_corrected = passed / (total - quota)`, `null` when every job for that agent this window was quota-failed (never a misleading `0`). Use this instead of `.agents[].pass_rate` from `roborev summary --json` to compare agents; that field's denominator still includes quota-failed jobs that never ran a review.
 
 ### Cross-counter consistency check (#679)
 
