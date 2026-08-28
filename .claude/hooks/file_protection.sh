@@ -35,7 +35,7 @@ _emit_hook_event() {
 
 # ─── Self-test harness (CLAUDE_HOOK_SELFTEST=1) ──────────────────────────────
 if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
-  PASS=0; FAIL=0; TOTAL=12
+  PASS=0; FAIL=0; TOTAL=13
   HOOK_PATH="$0"
   # llm#950: several cases below spawn a real subprocess that reaches a real
   # block path (exit 2), which now emits. Redirect to a throwaway spool for
@@ -146,6 +146,15 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   if [ "$r" = "allow" ]; then _ok "runtime projects/<proj>/memory/*.md → allow"
   else _fail "runtime projects memory expected allow, got $r"; fi
 
+  # Case 13 — Claude Code Plan Mode writes its plan file to
+  # ~/.claude/plans/<slug>.md — a harness-designated, session-scoped,
+  # prose-only scratch file (same risk class as CURRENT_WORK.md, which is
+  # already exempted). Reproduced blocking this file during 2026-08-28
+  # session; fixed by adding plans/*.md to the exemption list.
+  r=$(_check_hook "/Users/johngavin/.claude/plans/some-plan.md")
+  if [ "$r" = "allow" ]; then _ok "runtime plans/*.md (Plan Mode) → allow"
+  else _fail "plans/*.md expected allow, got $r"; fi
+
   printf '\nfile_protection selftest: %d/%d PASS\n' "$PASS" "$TOTAL"
   rm -f "$_SELFTEST_SPOOL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
@@ -224,7 +233,7 @@ case "$TARGET_PATH" in
     #     those must ship via a worktree branch + PR.
     _claude_rel="${TARGET_PATH#*/.claude/}"
     case "$_claude_rel" in
-      CURRENT_WORK.md|CLAUDE.md|rules/*.md|memory/*.md|projects/*/memory/*.md)
+      CURRENT_WORK.md|CLAUDE.md|rules/*.md|memory/*.md|projects/*/memory/*.md|plans/*.md)
         exit 0
         ;;
     esac
@@ -248,7 +257,7 @@ case "$TARGET_PATH" in
     {
       echo "BLOCKED: $FILE_PATH targets the canonical .claude/ (resolved: $TARGET_PATH)"
       echo "Scripts/hooks changes must go via a worktree branch + PR."
-      echo "Orchestrator prose exceptions: CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md, projects/*/memory/*.md."
+      echo "Orchestrator prose exceptions: CURRENT_WORK.md, CLAUDE.md, rules/*.md, memory/*.md, projects/*/memory/*.md, plans/*.md."
       echo "See: agent-identity-and-task-scopes rule, llm#572, llm#601."
     } >&2
     _emit_hook_event "PreToolUse:blocked" "canonical .claude/ in main checkout: $TARGET_PATH"
