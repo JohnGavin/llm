@@ -76,3 +76,56 @@ test_that("check_methodology_blocks flags vignette missing AI disclosure", {
     regexp = "All rendered vignettes"
   )
 })
+
+# ── check_no_blank_plots() (#787) ────────────────────────────────────────────
+
+test_that("check_no_blank_plots flags a deliberately-blanked plot fixture", {
+  skip_if_not_installed("png")
+  tmp  <- withr::local_tempdir()
+  docs <- file.path(tmp, "docs")
+  dir.create(docs, recursive = TRUE)
+
+  # Deliberately blank: all-white PNG. Small dimensions keep the compressed
+  # file well under the size threshold, matching a real blank-canvas render.
+  blank_img <- array(1, dim = c(100L, 100L, 3L))
+  png::writePNG(blank_img, file.path(docs, "blank-plot-1.png"))
+
+  source(.qa_gates_path, local = TRUE)
+  expect_error(
+    check_no_blank_plots(html_dir = docs),
+    regexp = "look blank or near-blank"
+  )
+})
+
+test_that("check_no_blank_plots does not flag a real, varied-content PNG", {
+  skip_if_not_installed("png")
+  tmp  <- withr::local_tempdir()
+  docs <- file.path(tmp, "docs")
+  dir.create(docs, recursive = TRUE)
+
+  # A stand-in "real chart": enough colour variation that both the
+  # near-white-pixel fraction is low AND the compressed file size clears the
+  # threshold -- the same two properties the #786 calibration set showed for
+  # four genuinely non-blank figures.
+  withr::local_seed(1L)
+  real_img <- array(stats::runif(300L * 300L * 3L), dim = c(300L, 300L, 3L))
+  png::writePNG(real_img, file.path(docs, "real-chart-1.png"))
+
+  source(.qa_gates_path, local = TRUE)
+  expect_no_error(check_no_blank_plots(html_dir = docs))
+})
+
+test_that("check_no_blank_plots respects skip_basenames for by-design near-blank figures", {
+  skip_if_not_installed("png")
+  tmp  <- withr::local_tempdir()
+  docs <- file.path(tmp, "docs")
+  dir.create(docs, recursive = TRUE)
+
+  blank_img <- array(1, dim = c(100L, 100L, 3L))
+  png::writePNG(blank_img, file.path(docs, "intentionally-blank.png"))
+
+  source(.qa_gates_path, local = TRUE)
+  expect_no_error(
+    check_no_blank_plots(html_dir = docs, skip_basenames = "intentionally-blank.png")
+  )
+})

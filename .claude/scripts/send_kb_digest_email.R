@@ -206,9 +206,30 @@ lines_to_html <- function(lines) {
 }
 
 # Derive a one-line summary for a section from its body lines.
+#
+# Counts genuine content rows only. A naive `grepl("^\\| ", ...)` count
+# treats a markdown table's header row AND its `|---|---|` separator row as
+# "items" -- on a table with 3 real data rows that reads as 5. kb_digest.R's
+# output has exactly one top-level `##` heading (the whole digest is one
+# section), so every table decoration line in the entire document used to
+# get folded into this count -- e.g. a digest with 1 commit and 0 actual
+# category changes still reported "13 items" (12 header/separator/data
+# table lines + 1 commit-subject bullet), while the digest's own tables
+# right below it showed all zeros. See llm#298 follow-up.
 section_summary_stats <- function(body_lines) {
-  n_list  <- sum(grepl("^- ", body_lines))
-  n_table <- sum(grepl("^\\| ", body_lines))
+  n_list <- sum(grepl("^- ", body_lines))
+
+  is_pipe_row <- grepl("^\\| ", body_lines)
+  # A markdown separator row is only `|`, `-`, `:`, and whitespace between
+  # the pipes, e.g. "|----------|:-------------:|--------:|--------:|".
+  is_sep_row  <- grepl("^\\|[-:[:space:]|]+\\|?[[:space:]]*$", body_lines)
+  # A header row is a pipe row immediately followed by a separator row.
+  is_header_row <- rep(FALSE, length(body_lines))
+  sep_idx <- which(is_sep_row)
+  header_idx <- sep_idx[sep_idx > 1L] - 1L
+  is_header_row[header_idx] <- TRUE
+
+  n_table <- sum(is_pipe_row & !is_sep_row & !is_header_row)
   n_items <- n_list + n_table
   if (n_items > 0L) {
     return(sprintf("%d item%s", n_items, if (n_items == 1L) "" else "s"))

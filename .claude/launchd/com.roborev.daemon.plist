@@ -130,11 +130,24 @@
          If a new review agent is added, verify it resolves from THIS PATH,
          not from an interactive shell's — `roborev check-agents` run by
          hand passes on binaries the daemon cannot see, which is exactly
-         how this stayed hidden. -->
+         how this stayed hidden.
+
+         /usr/bin:/bin were moved ahead of /opt/homebrew/bin on 2026-08-28
+         (llm#1036 follow-up): /opt/homebrew/bin/bash is a symlink to
+         Homebrew's Cellar bash, which is ad-hoc signed (empty csreq) and
+         can never hold a durable TCC grant. With homebrew first in PATH,
+         any child process this daemon spawns that execs a bare `bash` (not
+         an absolute path) — e.g. a review agent's shell tool calls —
+         resolved to that ad-hoc binary and re-prompted on every TCC-gated
+         access, even after the daemon's OWN script had its shebang pinned
+         to Apple-signed /bin/bash. Neither codex/gemini/claude nor roborev
+         itself live under /usr/bin or /bin, so moving these two ahead does
+         not change which review-agent binaries resolve — only which `bash`
+         a bare invocation finds. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin</string>
     </dict>
 
     <key>RunAtLoad</key>

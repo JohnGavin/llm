@@ -39,6 +39,7 @@ Suggests:
     igraph,
     knitr,
     lubridate,
+    png,
     quarto,
     rmarkdown,
     targets,
