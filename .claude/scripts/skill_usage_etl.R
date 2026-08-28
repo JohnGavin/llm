@@ -272,10 +272,29 @@ config_agg AS (
          SUM(CASE WHEN session_date >= CURRENT_DATE - 90 THEN accesses ELSE 0 END) AS inv_last_90d
   FROM config_access GROUP BY regexp_replace(file_path, '.*/\\.claude/(rules|memory|hooks|scripts)/', '')
 ),
+-- llm#829: hooks entered config_inventory via a filesystem scan but had no
+-- firing feed to join against, so every hook was structurally guaranteed
+-- 'never_used' even though hook_events already records real firings for
+-- most of them. hook_events.hook_name is already stored without a '.sh'
+-- extension (e.g. 'file_protection'), matching config_inventory.name's
+-- format for hooks/scripts directly -- no path-stripping regex needed here,
+-- unlike config_agg above.
+hook_agg AS (
+  SELECT hook_name AS name, 'hook' AS usage_table,
+         MAX(CAST(fired_at AS DATE)) AS last_used,
+         COUNT(DISTINCT session_id)  AS session_count,
+         COUNT(*)                    AS total_invocations,
+         SUM(CASE WHEN fired_at >= CURRENT_DATE - 30 THEN 1 ELSE 0 END) AS inv_last_30d,
+         SUM(CASE WHEN fired_at >= CURRENT_DATE - 90 THEN 1 ELSE 0 END) AS inv_last_90d
+  FROM hook_events
+  WHERE hook_name IS NOT NULL
+  GROUP BY hook_name
+),
 usage AS (
   SELECT * FROM skill_agg
   UNION ALL SELECT * FROM agent_agg
   UNION ALL SELECT * FROM config_agg
+  UNION ALL SELECT * FROM hook_agg
 )
 SELECT
   i.item_type,
