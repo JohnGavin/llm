@@ -69,6 +69,51 @@ test_that("summarise_codexbar_project_cost returns an empty tibble when required
   expect_equal(nrow(out), 0L)
 })
 
+test_that("summarise_codexbar_project_cost drops ephemeral canonical_project values (llm#894)", {
+  df <- tibble::tibble(
+    date              = c("2026-07-01", "2026-07-01", "2026-07-01", "2026-07-01",
+                           "2026-07-01", "2026-07-01"),
+    canonical_project = c("llm", "kb_fixture_a1b2c3", "publish_roborev_data_worktree_4242",
+                           "tmp.IZoOBNm33e", "session", "knowledge"),
+    est_cost          = c(1, 1, 1, 1, 1, 1),
+    duration_min      = c(10, 10, 10, 10, 10, 10),
+    share             = c(1, 1, 1, 1, 1, 1)
+  )
+
+  out <- summarise_codexbar_project_cost(df)
+
+  expect_equal(nrow(out), 1L)
+  expect_equal(out$canonical_project, "llm")
+  expect_equal(out$total_est_cost, 1)
+})
+
+test_that("summarise_codexbar_project_cost resolves rw/llmtel aliases (llm#894)", {
+  df <- tibble::tibble(
+    date              = c("2026-07-01", "2026-07-02", "2026-07-01", "2026-07-02"),
+    canonical_project = c("rw", "randomwalk", "llmtel", "llmtelemetry"),
+    est_cost          = c(1, 2, 3, 4),
+    duration_min      = c(10, 20, 30, 40),
+    share             = c(1, 1, 1, 1)
+  )
+
+  out <- summarise_codexbar_project_cost(df)
+
+  expect_equal(nrow(out), 2L)
+  expect_setequal(out$canonical_project, c("randomwalk", "llmtelemetry"))
+  rw_row <- out[out$canonical_project == "randomwalk", ]
+  expect_equal(rw_row$total_est_cost, 3)  # 1 (rw) + 2 (randomwalk)
+  expect_equal(rw_row$n_days, 2L)
+})
+
+test_that(".codexbar_is_ephemeral flags every documented junk shape (llm#894)", {
+  junk <- c("kb_fixture_deadbeef", "publish_roborev_data_worktree_123",
+            "tmp.IZoOBNm33e", "session", "split", "pulse", "email", "knowledge")
+  expect_true(all(.codexbar_is_ephemeral(junk)))
+
+  real <- c("llm", "llmtelemetry", "randomwalk", "irishbuoys")
+  expect_false(any(.codexbar_is_ephemeral(real)))
+})
+
 # ============================================================================
 # load_codexbar_project_cost()
 # ============================================================================
