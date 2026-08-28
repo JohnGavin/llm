@@ -39,7 +39,13 @@
 #   see the "DB reclassification" block below. `counters.reclassified` in
 #   --json output tells a caller whether the live numbers or roborev's raw
 #   (possibly under-counted) ones were used; `native_counters` always
-#   carries roborev's own numbers for comparison.
+#   carries roborev's own numbers for comparison. `--json`'s `per_agent[]`
+#   gives the same quota/crash split PER AGENT plus a pass_rate_corrected
+#   (= passed / (total - quota), null rather than a misleading 0 when every
+#   job for that agent this window was quota-failed) -- use this instead of
+#   `roborev summary --json .agents[].pass_rate`, whose denominator still
+#   includes quota-failed jobs that never ran a review. Empty array in
+#   --fixture mode (no live DB to query) and on a 0-reviews-in-window.
 
 set -euo pipefail
 
@@ -193,8 +199,47 @@ if [ -z "$FIXTURE_FILE" ] && command -v sqlite3 >/dev/null 2>&1; then
       CR_CRASH="$_reclass_crash"
       RECLASSIFIED=1
     fi
+
+    # ── Per-agent corrected pass_rate (llm#904 "Known gap") ────────────────
+    # roborev summary --json's .agents[].pass_rate denominator includes
+    # quota-failed jobs that never actually ran a review, so a
+    # quota-exhausted agent's pass_rate reads artificially low (e.g.
+    # claude-code 0.14 vs gemini 0.71 during a claude-code billing outage,
+    # neither number reflecting review quality). This mirrors the same
+    # quota-pattern reclassification above, scoped per rj.agent, and
+    # excludes quota-failed jobs from the denominator: pass_rate_corrected
+    # = passed / (total - quota_failed), NULL (renders as JSON null, not a
+    # misleading 0) when every job for that agent this window was
+    # quota-failed. `reviews.verdict_bool` is only set for jobs that
+    # actually reached a verdict (status='done'); a job that crashed or hit
+    # quota has no matching reviews row, so the LEFT JOIN naturally excludes
+    # it from passed/failed_verdict without an extra status filter.
+    _per_agent_rc=0
+    PER_AGENT_JSON=$(sqlite3 -json "$_rb_db" "
+      SELECT
+        rj.agent AS agent,
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN rj.status = 'failed' AND ${_quota_pattern_sql} THEN 1 ELSE 0 END), 0) AS quota,
+        COALESCE(SUM(CASE WHEN rj.status = 'failed' AND NOT ${_quota_pattern_sql} THEN 1 ELSE 0 END), 0) AS crash,
+        COALESCE(SUM(CASE WHEN rv.verdict_bool = 1 THEN 1 ELSE 0 END), 0) AS passed,
+        COALESCE(SUM(CASE WHEN rv.verdict_bool = 0 THEN 1 ELSE 0 END), 0) AS failed_verdict,
+        ROUND(
+          CAST(COALESCE(SUM(CASE WHEN rv.verdict_bool = 1 THEN 1 ELSE 0 END), 0) AS REAL) /
+          NULLIF(COUNT(*) - COALESCE(SUM(CASE WHEN rj.status = 'failed' AND ${_quota_pattern_sql} THEN 1 ELSE 0 END), 0), 0),
+        4) AS pass_rate_corrected
+      FROM review_jobs rj
+      JOIN repos r ON r.id = rj.repo_id
+      LEFT JOIN reviews rv ON rv.job_id = rj.id
+      WHERE r.root_path = '${_repo_path_escaped}'
+        AND datetime(replace(replace(rj.enqueued_at, 'T', ' '), 'Z', '')) > datetime('now', '${_win_mod}')
+      GROUP BY rj.agent;
+    " 2>/dev/null) || _per_agent_rc=$?
+    if [ "$_per_agent_rc" -ne 0 ] || [ -z "$PER_AGENT_JSON" ]; then
+      PER_AGENT_JSON="[]"
+    fi
   fi
 fi
+PER_AGENT_JSON="${PER_AGENT_JSON:-[]}"
 
 # ── 0-reviews-in-window: nothing to assert → healthy ─────────────────────────
 # When the summary window contains no reviews (e.g. --since 24h on a quiet day),
@@ -209,6 +254,7 @@ if [ "$OV_TOTAL" -eq 0 ] 2>/dev/null; then
       --arg     at "$AGENT_ERROR_RATE_THRESHOLD" \
       --arg     win "$CONSISTENCY_WINDOW" \
       '{counters:{overview_total:0,overview_failed:0,verdicts_total:0,verdicts_pass_rate:0,crash:0,quota:0,backlog_open:0},
+        per_agent:[],
         thresholds:{backlog_open_gt:$bt,verdicts_total_lte:$vt,crash_rate_gt:($ct|tonumber),agent_error_rate_gt:($at|tonumber)},
         inconsistencies_fired:[],
         note:("0 reviews in window="+$win+" — healthy by definition")}' 2>/dev/null || true
@@ -331,6 +377,7 @@ if [ "$JSON_OUT" = "1" ]; then
     --argjson vt          "$VERDICTS_LOW_THRESHOLD" \
     --arg     ct          "$CRASH_RATE_THRESHOLD" \
     --arg     at          "$AGENT_ERROR_RATE_THRESHOLD" \
+    --argjson per_agent   "${PER_AGENT_JSON:-[]}" \
     '{
       counters: {
         overview_total: $ov_total,
@@ -346,6 +393,7 @@ if [ "$JSON_OUT" = "1" ]; then
         crash: $cr_crash_native,
         quota: $cr_quota_native
       },
+      per_agent: $per_agent,
       thresholds: {
         backlog_open_gt: $bt,
         verdicts_total_lte: $vt,
