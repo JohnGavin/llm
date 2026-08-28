@@ -85,12 +85,35 @@ if (!file.exists(UNIFIED_DUCKDB)) {
   graceful_exit(paste("unified.duckdb not found at", UNIFIED_DUCKDB))
 }
 
-con <- tryCatch(
-  dbConnect(duckdb::duckdb(), UNIFIED_DUCKDB, read_only = TRUE),
-  error = function(e) {
-    graceful_exit(paste("cannot open unified.duckdb:", conditionMessage(e)))
+# A concurrent read-write duckdb process (another script, an interactive
+# `duckdb` shell) holds a transient lock that clears within seconds -- but
+# without a retry, one momentary collision skips the whole snapshot and the
+# daily email then reports the PREVIOUS day's file as stale (2026-08-28: PID
+# 84562 held the lock for ~15s at 08:00, this script gave up immediately).
+# Bounded retry (5 attempts, 2s apart, ~10s max) absorbs that without masking
+# a genuinely broken/missing database -- a non-lock error still fails fast.
+con <- local({
+  max_attempts <- 5L
+  delay_s <- 2
+  last_err <- NULL
+  for (attempt in seq_len(max_attempts)) {
+    result <- tryCatch(
+      dbConnect(duckdb::duckdb(), UNIFIED_DUCKDB, read_only = TRUE),
+      error = function(e) e
+    )
+    if (!inherits(result, "error")) return(result)
+    last_err <- result
+    is_lock_conflict <- grepl("Could not set lock|Conflicting lock",
+                               conditionMessage(result))
+    if (!is_lock_conflict || attempt == max_attempts) break
+    message(sprintf(
+      "roborev_daily_report.R: unified.duckdb locked (attempt %d/%d) — retrying in %ds",
+      attempt, max_attempts, delay_s
+    ))
+    Sys.sleep(delay_s)
   }
-)
+  graceful_exit(paste("cannot open unified.duckdb:", conditionMessage(last_err)))
+})
 on.exit(tryCatch(dbDisconnect(con, shutdown = TRUE), error = function(e) NULL),
         add = TRUE)
 

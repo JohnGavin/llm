@@ -114,9 +114,17 @@ _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
   ) WHERE rn = 1;
 
   -- Phase 2: stop rows (latest per session_id) -> UPDATE with COALESCE guard
+  --
+  -- ended_at is floored at started_at (llm#811): a premature Stop-hook
+  -- stamp or a clock/session-id race across concurrent worktrees can
+  -- produce a stop timestamp earlier than the session's own start, which
+  -- previously wrote straight through as a negative duration_min (72 rows
+  -- found in production). GREATEST() clips those to a 0-minute session
+  -- instead of a negative one; it never advances a legitimately later
+  -- ended_at, since GREATEST(x, started_at) == x whenever x >= started_at.
   UPDATE sessions SET
-    ended_at = s.ended_at,
-    duration_min = EXTRACT(EPOCH FROM (s.ended_at - sessions.started_at)) / 60.0,
+    ended_at = GREATEST(s.ended_at, sessions.started_at),
+    duration_min = EXTRACT(EPOCH FROM (GREATEST(s.ended_at, sessions.started_at) - sessions.started_at)) / 60.0,
     summary = COALESCE(NULLIF(s.summary,''), sessions.summary),
     model = COALESCE(NULLIF(s.model,''), sessions.model)
   FROM (

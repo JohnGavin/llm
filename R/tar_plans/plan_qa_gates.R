@@ -552,6 +552,107 @@ check_no_nulls <- function(store = targets::tar_config_get("store"),
   invisible(vig_names)
 }
 
+#' Check rendered figure PNGs for blank/near-blank plots (#787)
+#'
+#' `scan_html_for_errors()` catches TEXT failure patterns leaked into HTML
+#' (`#&gt; NULL`, `Error in ...`) but a figure chunk can emit a perfectly
+#' well-formed `<img>` pointing at an essentially empty PNG, and no existing
+#' gate sees it. Worked example: #783 made `safe_tar_read()` draw grobs via
+#' `grid::grid.draw()`, which removed the `#> NULL` text dump the old gate
+#' caught — but `grid.draw()` silently no-ops on a ggplot2 gTree when
+#' ggplot2 isn't `library()`-attached, so the plots rendered blank and the
+#' gate went green. Fixed manually in #786; this gate exists so the next
+#' such regression (missing package attach, empty data, theme/DPI bug,
+#' serialization drift) fails the build instead of deploying silently.
+#'
+#' Flags a PNG as suspiciously blank only when BOTH conditions hold, per the
+#' #786 calibration set (four real, non-blank figures: 53.8%-96.9% near-white
+#' pixels, 71-119 KB) — requiring both keeps a legitimately sparse chart
+#' (mostly white, but a real file size) from false-positiving:
+#'   - file size below `size_kb_threshold` (a real chart is tens-hundreds of
+#'     KB; a blank canvas is a few KB)
+#'   - near-white-pixel fraction at/above `white_fraction_threshold`
+#'
+#' @param html_dir Path to the pkgdown output (default "docs"). Searched
+#'   recursively for `*.png`.
+#' @param size_kb_threshold File-size ceiling, in KB, for the "blank" test.
+#' @param white_fraction_threshold Near-white pixel-fraction floor for the
+#'   "blank" test. A pixel counts as near-white when its luma (0.299R +
+#'   0.587G + 0.114B, ignoring alpha) is >= 0.98.
+#' @param skip_basenames PNG basenames excluded from the check — for figures
+#'   that are legitimately near-blank by design.
+#' @return Invisibly returns a tibble of flagged files (or NULL when clean).
+#'   Calls `cli::cli_abort()` on detection, matching
+#'   `scan_html_for_errors()`'s contract so CI exits non-zero.
+QA_BLANK_PLOT_SIZE_KB_THRESHOLD <- 20
+QA_BLANK_PLOT_WHITE_FRACTION_THRESHOLD <- 0.99
+
+check_no_blank_plots <- function(html_dir = "docs",
+                                 size_kb_threshold        = QA_BLANK_PLOT_SIZE_KB_THRESHOLD,
+                                 white_fraction_threshold = QA_BLANK_PLOT_WHITE_FRACTION_THRESHOLD,
+                                 skip_basenames = character(0L)) {
+  png_files <- list.files(
+    html_dir,
+    pattern    = "\\.png$",
+    recursive  = TRUE,
+    full.names = TRUE
+  )
+  png_files <- png_files[!basename(png_files) %in% skip_basenames]
+
+  if (length(png_files) == 0L) {
+    cli::cli_alert_warning(
+      "No PNG files found in {.path {html_dir}} — run pkgdown/quarto first"
+    )
+    return(invisible(NULL))
+  }
+
+  results <- purrr::map_dfr(png_files, function(f) {
+    size_kb <- file.info(f)$size / 1024
+    img <- tryCatch(png::readPNG(f), error = function(e) NULL)
+    # An unreadable PNG is a different failure (corrupt file) than this
+    # gate's concern (a valid-but-blank render) — skip it here rather than
+    # aborting on a problem this check isn't designed to diagnose.
+    if (is.null(img)) return(NULL)
+
+    d <- dim(img)
+    if (length(d) == 2L) {
+      luma <- img
+    } else if (d[3] >= 3L) {
+      luma <- 0.299 * img[, , 1] + 0.587 * img[, , 2] + 0.114 * img[, , 3]
+    } else {
+      luma <- img[, , 1]
+    }
+    white_fraction <- mean(luma >= 0.98)
+
+    if (size_kb < size_kb_threshold && white_fraction >= white_fraction_threshold) {
+      tibble::tibble(
+        file           = basename(f),
+        size_kb        = round(size_kb, 1L),
+        white_fraction = round(white_fraction, 3L)
+      )
+    }
+  })
+
+  if (!is.null(results) && nrow(results) > 0L) {
+    cli::cli_alert_danger("Blank/near-blank plot(s) detected:")
+    print(results)
+    cli::cli_abort(c(
+      "x" = "{nrow(results)} rendered figure(s) look blank or near-blank.",
+      "i" = paste(
+        "A figure this small AND this white usually means the chunk drew",
+        "nothing (missing library() attach, empty data, theme/DPI bug,",
+        "serialization drift) -- see #786 for the worked example."
+      ),
+      "i" = "Legitimately near-blank by design? Add its basename to skip_basenames."
+    ))
+  }
+
+  cli::cli_alert_success(
+    "No blank/near-blank plots in {length(png_files)} PNG{?s}"
+  )
+  invisible(results)
+}
+
 plan_qa_gates <- function() {
   list(
     targets::tar_target(
@@ -570,6 +671,11 @@ plan_qa_gates <- function() {
       qa_html_no_errors,
       scan_html_for_errors(),
       packages = c("purrr", "tibble", "cli")
+    ),
+    targets::tar_target(
+      qa_no_blank_plots,
+      check_no_blank_plots(),
+      packages = c("purrr", "tibble", "cli", "png")
     ),
     targets::tar_target(
       qa_methodology_blocks,
