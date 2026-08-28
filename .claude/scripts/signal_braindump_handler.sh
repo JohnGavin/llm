@@ -484,4 +484,21 @@ else
   log "GAP: signal_attachment_ingest.sh not found or not executable at $SCRIPT_DIR — PDF/image attachments are NOT being ingested (llm#1001)"
 fi
 
+# Register braindumps freshness (llm#937 fix 5). Idempotent — re-registering
+# the same MAX(captured_at) on a quiet run is harmless. Fresh even when this
+# run inserted 0 rows: it reads captured_at directly from the table, not from
+# whether this invocation itself wrote anything, so a genuinely dead upstream
+# (signal-cli, the daemon, or this handler itself) shows up as growing
+# staleness in `staleness_status` rather than a self-reported "still alive".
+#
+# Cadence 168h (7d): derived from the live table's own inter-row gaps
+# (n=34, excluding the 2026-05-10..08-09 incident itself as the outlier it
+# is measuring): median 0.65h, p95 ~117h, largest *normal* gap 122.67h. 168h
+# rounds the largest normal gap up with margin, and is ~15x below the 2492h
+# (~104d) incident gap it exists to catch.
+if [ -x "$SCRIPT_DIR/etl_freshness_upsert.sh" ]; then
+  "$SCRIPT_DIR/etl_freshness_upsert.sh" braindumps "$DB" 168 \
+    --table braindumps --ts-col captured_at || true
+fi
+
 exit 0
