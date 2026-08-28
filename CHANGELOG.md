@@ -4,6 +4,73 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-27 (session 3) — a subagent's correction was itself wrong, and a config regen nearly erased why
+
+### Completed
+
+- **[#1049](https://github.com/JohnGavin/llm/pull/1049) (llm#1044)** — golden-fixture eval
+  harness for roborev review-agent regressions. 5 fixtures (real bug / clean / empty /
+  severity-parser trip / larger) replayed through the live `roborev` binary; 5/5 pass. The
+  harness caught and fixed a real bug in its own error path (`set -e` swallowing an ERROR
+  case) during its own dogfooding run.
+- **[#1050](https://github.com/JohnGavin/llm/pull/1050) (llm#1045)** — `agent_runs` gains
+  `dispatch_id`/`parent_dispatch_id`/`outcome` (nullable, additive — population is a
+  separate Phase 2). New reaper mirrors `session_reaper.sql`; the 49 rows stuck at
+  `status='running'` since 2026-08-09 (18+ days) were backfilled to `'unknown'` against the
+  live DB (backed up first), recorded in `data_quality_incidents`, not silently rewritten.
+- **[#1051](https://github.com/JohnGavin/llm/pull/1051) (llm#1035, DB-side half)** — the
+  not-reviewed classifier that #1043 already applied to the daily email is now shared:
+  ported into `roborev_project_backlog.sh` and the `session_init.sh` banner, so a review
+  that never ran stops reading as clean everywhere except the one email that already knew
+  better.
+- **[procedural-scenes#1](https://github.com/JohnGavin/procedural-scenes/pull/1),
+  [coMMpass-analysis#103](https://github.com/JohnGavin/coMMpass-analysis/pull/103)** — the
+  actual root-cause fix (pin `agent = 'claude-code'`; gemini refuses to read roborev's
+  gitignored snapshot diff) applied to the two remaining exposed repos, matching
+  llmtelemetry (#356) and historical, which already had it.
+- Filed [kenn-io/roborev#1104](https://github.com/kenn-io/roborev/issues/1104) upstream
+  requesting a first-class "could not review" status distinct from `verdict=0`.
+- Deleted two dead branches: `fix/1035-roborev-report-split` (turned out to be a normal
+  merged-branch remnant — PR #1043 was opened *from* it, not a stranded duplicate as first
+  assumed) and `fix/roborev-agent-pin-1035` in procedural-scenes (abandoned after
+  discovering that repo's local `main` shares no history with `origin/main`).
+- All five PRs merged on explicit instruction.
+
+### Failed Approaches
+
+- Dispatched three `isolation: "worktree"` fixer agents from a session whose own cwd is
+  already a non-main worktree. Isolation silently failed to create a fresh worktree for two
+  of three — both correctly self-halted before writing, per their own mandatory self-check,
+  but landed their finished work as uncommitted files in the *parent session's* shared
+  worktree instead. Recovered by hand: inventoried the disjoint file sets, copied each into
+  a properly isolated worktree, verified, committed, PR'd. The third dispatch needed
+  `$WORKTREE_PATH` hard-pinned in the prompt (no "capture your own pwd") before it would
+  land cleanly the first time. Filed as product feedback.
+- Nearly deleted a documented, reasoned decision: trusted a subagent's claim that
+  richard/coMMpass were "still exposed" without re-verifying against that repo's own
+  history first. `roborev config set` on coMMpass silently stripped a 7-line comment
+  explaining a prior incident (llm#964 — a codex pin that failed terminally) before I
+  checked what I was overwriting. Reverted, verified the premise properly against
+  `~/.roborev/reviews.db` (both repos did have live not-reviewed failures, confirmed by
+  output text), then hand-edited the file to keep the original reasoning alongside the new
+  decision instead of letting the tool's regeneration erase it.
+- A subagent asserted "the briefing was wrong" (claiming #1035's report-side fix was
+  unmerged) based on finding a similarly-titled commit on what it assumed was a stranded
+  branch — it hadn't checked whether that commit was reachable from `origin/main`, nor that
+  the branch itself was the actual source of the already-merged PR. Verified with `git
+  merge-base --is-ancestor` and a content diff before acting on the claim either way; it was
+  wrong on both counts.
+
+### Known Limitations
+
+- richard's and coMMpass's pre-existing not-reviewed backlog rows are not retroactively
+  reclassified — only reviews run after today's agent pin benefit.
+- `agent_runs.dispatch_id`/`parent_dispatch_id` population (Phase 2 of
+  `agent-identity-and-task-scopes`) is still not implemented — columns exist and are
+  nullable, nothing writes them yet.
+- richard's local `main` checkout has no common git history with `origin/main` — a
+  pre-existing repo-hygiene issue, left untouched, flagged for follow-up.
+
 ## 2026-08-27 (session 2) — the same defect in eleven places, twice in my own new code
 
 ### Completed
