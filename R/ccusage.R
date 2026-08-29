@@ -1122,9 +1122,13 @@ calculate_block_usage <- function(blocks_data, current_window) {
   checkmate::assert_names(names(current_window), must.include = c("block_start", "block_end", "time_remaining"))
 
   if (is.null(blocks_data) || nrow(blocks_data) == 0) {
+    # llm#793 item 4: use the same overridable limit as the non-empty path
+    # below, rather than a second hardcoded 88000 — otherwise this function
+    # reports a different tokens_limit depending on whether blocks_data is
+    # empty, even with LLM_BLOCK_LIMIT_TOKENS set.
     return(list(
       tokens_used = 0,
-      tokens_limit = 88000,
+      tokens_limit = as.numeric(Sys.getenv("LLM_BLOCK_LIMIT_TOKENS", "88000")),
       usage_pct = 0,
       time_remaining = current_window$time_remaining,
       block_start = current_window$block_start,
@@ -1338,6 +1342,13 @@ get_block_history <- function(days = 5, cache_dir = NULL, grouped = TRUE) {
     return(NULL)
   }
 
+  # Max5 limit per 5-hour block (llm#793 item 4: this MUST match the
+  # LLM_BLOCK_LIMIT_TOKENS override used by calculate_block_usage() below —
+  # two hardcoded 88000 literals used to live at usage_pct/day_pct and
+  # silently ignored the env var, so setting it changed show_max5_block_status()
+  # but not get_block_history()).
+  tokens_limit <- as.numeric(Sys.getenv("LLM_BLOCK_LIMIT_TOKENS", "88000"))
+
   # Get cutoff time
   cutoff <- Sys.time() - days * 24 * 3600
 
@@ -1357,7 +1368,7 @@ get_block_history <- function(days = 5, cache_dir = NULL, grouped = TRUE) {
     ) |>
     dplyr::filter(total_tokens > 0) |>
     dplyr::mutate(
-      usage_pct = round((total_tokens / 88000) * 100),
+      usage_pct = round((total_tokens / tokens_limit) * 100),
       status = dplyr::case_when(
         usage_pct >= 90 ~ "\U0001F534",  # red circle
         usage_pct >= 75 ~ "\U0001F7E1",  # yellow circle
@@ -1390,7 +1401,12 @@ get_block_history <- function(days = 5, cache_dir = NULL, grouped = TRUE) {
         day_total = sum(total_tokens, na.rm = TRUE),
         .groups = "drop"
       ) |>
-      dplyr::mutate(day_pct = round((day_total / (88000 * 5)) * 100))
+      # The "* 5" assumes 5 blocks/day (a second, previously-unstated
+      # assumption alongside the per-block token limit above — llm#793
+      # item 4). It is a round-number approximation, not a derived value:
+      # a 5-hour Max5 block reset cycle only fits into a 24h day ~4.8 times,
+      # so 5 is a conservative round-up, not an exact daily block count.
+      dplyr::mutate(day_pct = round((day_total / (tokens_limit * 5)) * 100))
 
     for (d in seq_len(nrow(day_totals))) {
       day_row <- day_totals[d, ]

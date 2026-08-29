@@ -506,14 +506,29 @@ test_that("calculate_block_usage handles no data in current block", {
 
 test_that("calculate_block_usage uses environment variable for limit", {
   withr::local_envvar(LLM_BLOCK_LIMIT_TOKENS = "100000")
-  
+
   window <- get_current_block_window()
   blocks_data <- create_sample_blocks_data(tokens = 50000)
-  
+
   result <- calculate_block_usage(blocks_data, window)
-  
+
   expect_equal(result$tokens_limit, 100000)
   expect_equal(result$usage_pct, 50)  # 50000/100000
+})
+
+test_that("calculate_block_usage empty-data fallback honors LLM_BLOCK_LIMIT_TOKENS (llm#793 item 4)", {
+  # Before the fix, the NULL/empty-data early-return branch hardcoded
+  # tokens_limit = 88000 regardless of the env var — inconsistent with the
+  # non-empty path a few lines below it in the same function.
+  withr::local_envvar(LLM_BLOCK_LIMIT_TOKENS = "123456")
+
+  window <- get_current_block_window()
+
+  result_null  <- calculate_block_usage(NULL, window)
+  result_empty <- calculate_block_usage(tibble::tibble(), window)
+
+  expect_equal(result_null$tokens_limit, 123456)
+  expect_equal(result_empty$tokens_limit, 123456)
 })
 
 test_that("calculate_block_usage validates inputs (TDD - will fail)", {
@@ -698,14 +713,56 @@ test_that("get_block_history filters by days parameter", {
 
 test_that("get_block_history handles NULL data", {
   skip_if_not_installed("cli")
-  
+
   local_mocked_bindings(
     load_cached_ccusage = function(...) NULL
   )
-  
+
   result <- get_block_history()
-  
+
   expect_null(result)
+})
+
+test_that("get_block_history honors LLM_BLOCK_LIMIT_TOKENS for usage_pct and day_pct (llm#793 item 4)", {
+  skip_if_not_installed("cli")
+
+  # Before the fix, get_block_history() hardcoded 88000 (usage_pct, line
+  # ~1360) and 88000*5 (day_pct, line ~1393) independently of
+  # calculate_block_usage()'s already-overridable limit — setting the env
+  # var changed show_max5_block_status() output but NOT get_block_history()
+  # output. This test fails on the pre-fix code (both percentages below
+  # would be computed against 88000 regardless of the override) and passes
+  # after.
+  withr::local_envvar(LLM_BLOCK_LIMIT_TOKENS = "100000")
+  withr::local_options(list(cli.num_colors = 1, cli.dynamic = FALSE))
+
+  local_mocked_bindings(
+    load_cached_ccusage = function(...) {
+      tibble::tibble(
+        timestamp = Sys.time() - 300,
+        totalTokens = 50000,
+        project = "test"
+      )
+    }
+  )
+
+  # cli writes via message() (the stderr-type connection), not stdout, so
+  # capture_messages() is required here — capture_output() (stdout only)
+  # observes nothing from cli::cli_text() calls.
+  out <- testthat::capture_messages(
+    result <- get_block_history(days = 1, grouped = TRUE)
+  )
+  out <- paste(out, collapse = "")
+
+  # Per-block usage_pct (returned tibble column) — 50000/100000 = 50%, not
+  # the pre-fix 88000-hardcoded 57% (round(50000/88000*100)).
+  expect_equal(result$usage_pct, 50)
+
+  # Day-level day_pct (printed only, not part of the returned tibble) —
+  # 50000/(100000*5) = 10%, not the pre-fix 88000-hardcoded 11%
+  # (round(50000/(88000*5)*100)).
+  expect_true(grepl("10%\\)", out))
+  expect_false(grepl("11%\\)", out))
 })
 
 test_that("get_block_history calculates status indicators correctly", {
