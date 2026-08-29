@@ -38,12 +38,18 @@ cd /path/to/project && nix-shell default.nix --run "cmd"
 Nix builds can fail due to test suite regressions in transitive dependencies (e.g., Twisted, ibis-framework). When this happens:
 
 1. **Diagnose**: Check the error — is it a test failure in a dependency, not the target package?
-2. **Fall back to pip venv** for Python packages:
+2. **Fall back to pip venv** for Python packages, **ALWAYS pinned to an exact version** —
+   never a bare `pip install <pkg>`. An unpinned install is the exact delivery channel
+   named in the 2026-06 Socket.dev mini-Shai-Hulud/Miasma/Hades campaign, which
+   specifically targeted bioinformatics and MCP-developer packages via `.pth` startup
+   hooks and compiled `.abi3.so` trojans (llm#644):
    ```bash
    /usr/bin/python3 -m venv /tmp/project_venv
-   /tmp/project_venv/bin/pip install pdfplumber
+   /tmp/project_venv/bin/pip install pdfplumber==0.11.4   # exact version, never bare
    /tmp/project_venv/bin/python3 /path/to/script.py
    ```
+   Look up the exact version from the project's existing `default.R`/`default.nix` pin
+   (or PyPI's release history if genuinely new) rather than letting `pip` resolve latest.
 3. **File an issue** in the llm project with the regression details
 4. **Do NOT** give up and claim the package "doesn't work"
 
