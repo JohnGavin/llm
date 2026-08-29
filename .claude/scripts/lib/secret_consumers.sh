@@ -49,6 +49,43 @@
 CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine launchd:com.roborev.daemon"
 CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email"
 
+# CONSUMERS_HF_TOKEN and CONSUMERS_OPENAI_API_KEY are deliberately empty
+# (llm#945, audited 2026-08-29). Empty is NOT the same fact as "absent": an
+# absent CONSUMERS_<NAME> means nobody has checked; these two are present
+# and empty because the check was done and found no `launchd:`/`daemon:`
+# consumer to list. A grep of this repo for HF_TOKEN, HUGGING_FACE_HUB_TOKEN,
+# HUGGINGFACE_API_TOKEN, OPENAI_API_KEY, and openai_secret_key turns up only:
+#   - ad hoc, one-shot scripts that re-read the env var fresh on every
+#     invocation and hold no long-lived process to restart — e.g.
+#     .claude/scripts/cross_modal_eval.sh (OPENAI_API_KEY, direct API call),
+#     explorations/2026-06-30_ellmer-pilot/ellmer_triage_pilot.R
+#     (OPENAI_API_KEY, exploration script);
+#   - classification/scanner code that references the NAME as a string, not
+#     the value as a credential — .claude/scripts/credential_tier_lookup.sh,
+#     .claude/hooks/permission_request.sh (self-test fixture),
+#     .claude/hooks/secret_leak_guard.sh, .claude/scripts/verify_no_launchd_secret_leak.sh,
+#     .claude/scripts/secret_exposure_scan.sh, .claude/scripts/incident_response.sh
+#     (prints rotation instructions; does not itself authenticate);
+#   - documentation/rules/skills describing manual or CI usage patterns
+#     (.claude/rules/huggingface-upload.md and its companion,
+#     .claude/skills/huggingface-r/SKILL.md) with no corresponding
+#     .github/workflows/*.yml in this repo that actually wires either
+#     secret into a job;
+#   - a guard-script test fixture using the three HF names as fabricated
+#     data (tests/test_secrets_cache_regen_removal_guard.sh) — unrelated to
+#     real consumption.
+# No launchd plist or self-daemonized process in this repo holds either
+# secret in memory, so `rotate_secret.sh` will still print the "no
+# consumers configured" WARNING for both names — that WARNING is now
+# correct and audited, not a gap. If a future launchd job or daemon starts
+# reading HF_TOKEN or OPENAI_API_KEY, add its `launchd:`/`daemon:` spec
+# here. See JohnGavin/llm#945 for the duplicate-name audit that prompted
+# this entry (one HuggingFace token under 3 names, one OpenAI key under 2 —
+# consolidating the aliases and deleting the redundant BWS entries is a
+# separate, human-reviewed step, not done by this commit).
+CONSUMERS_HF_TOKEN=""
+CONSUMERS_OPENAI_API_KEY=""
+
 # ── consumer restart mechanisms — table-driven: a new kind is one `case` arm
 #    in each of the two functions below, not a new code path. ──────────────
 kind_get_pid() {
