@@ -69,6 +69,10 @@ WITH stuck_loop_candidates AS (
         AND ended_at IS NULL
         -- Must have been running for > 1 hour to avoid flagging in-flight agents.
         AND started_at < current_timestamp - INTERVAL '1' HOUR
+        -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) — it
+        -- dominates session volume (~50% of all sessions) and its dispatch
+        -- semantics are not comparable to real work sessions.
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
     GROUP BY session_id, agent_type, status
     HAVING COUNT(*) >= 3
 ),
@@ -201,6 +205,10 @@ WITH daily_errors AS (
             'wiki_health_onwrite',   -- blocks writes failing wiki health checks
             'skill_quality_onwrite'  -- blocks writes failing skill quality checks
         )
+        -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) from
+        -- both the numerator and denominator below so the rate stays internally
+        -- consistent — see daily_agent_calls for the matching exclusion.
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
     GROUP BY CAST(logged_at AS DATE), source
 ),
 daily_agent_calls AS (
@@ -212,6 +220,8 @@ daily_agent_calls AS (
         session_id IS NOT NULL
         -- Rate-window: only consider the last 7 days (#269 fix)
         AND started_at >= current_timestamp - INTERVAL '7' DAY
+        -- Exclude ClaudeProbe (llm#812) — matches daily_errors above.
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
     GROUP BY CAST(started_at AS DATE)
 ),
 error_rates AS (
@@ -309,6 +319,9 @@ WITH session_error_bursts AS (
     WHERE
         session_id IS NOT NULL
         AND logged_at IS NOT NULL
+        -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) —
+        -- its error bursts are probe-fleet noise, not real pivot-signal events.
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
     GROUP BY session_id, source
     HAVING COUNT(*) >= 3
 ),
@@ -391,6 +404,12 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- Ref: #804 — global unbounded running sum + COALESCE(ended_at, now()) made
 -- peak_concurrent grow without bound; fixed via per-day partitioning + a
 -- bounded (1 min) cap on never-closed sessions.
+--
+-- Ref: #812 — the synthetic ClaudeProbe health-probe project accounts for
+-- ~50% of all session rows (3166/6273) and is overwhelmingly short-duration,
+-- so it dominates the concurrency count without representing real concurrent
+-- work. Excluded below; matches the email-layer exclusion already shipped in
+-- send_overnight_self_review_email.R (#821).
 WITH session_bounds AS (
     SELECT
         session_id,
@@ -404,7 +423,10 @@ WITH session_bounds AS (
         -- capped at +1 minute instead of "now" (#804 fix for bug 2).
         COALESCE(ended_at, started_at + INTERVAL '1' MINUTE)   AS effective_end
     FROM sessions
-    WHERE started_at IS NOT NULL
+    WHERE
+        started_at IS NOT NULL
+        -- Exclude synthetic ClaudeProbe sessions (#812).
+        AND project NOT IN ('ClaudeProbe')
 ),
 parallel_events AS (
     -- +1 event when a session starts
@@ -481,6 +503,8 @@ WITH subagent_heavy_sessions AS (
         COUNT(DISTINCT agent_type)  AS distinct_agent_types
     FROM agent_runs
     WHERE session_id IS NOT NULL
+        -- Exclude the synthetic ClaudeProbe health-probe project (llm#812).
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
     GROUP BY session_id
     HAVING COUNT(*) >= 10
 )
@@ -532,6 +556,10 @@ WITH marathon_sessions AS (
         started_at IS NOT NULL
         AND ended_at IS NOT NULL
         AND ended_at - started_at >= INTERVAL '8' HOUR
+        -- Exclude synthetic ClaudeProbe sessions (llm#812) — a probe-fleet
+        -- session running long is a probe/infra artifact, not a real
+        -- background-work marathon session worth flagging to a human.
+        AND project NOT IN ('ClaudeProbe')
 )
 INSERT INTO self_review_findings_stage1
     BY NAME
@@ -582,6 +610,12 @@ WITH daily_fixer_share AS (
         )                                   AS fixer_share
     FROM agent_runs
     WHERE session_id IS NOT NULL
+        -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) —
+        -- verified against real data: without this filter, 4 calendar days
+        -- (2026-05-29, 2026-06-08, 2026-07-03, 2026-07-10) false-positive as
+        -- fixer_heavy_day purely from ClaudeProbe's own agent_runs, and
+        -- disappear once excluded.
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
     GROUP BY CAST(started_at AS DATE)
     HAVING
         COUNT(*) >= 5
