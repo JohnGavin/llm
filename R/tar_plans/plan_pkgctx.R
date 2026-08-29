@@ -21,6 +21,8 @@ CTX_CACHE <- file.path(
   Sys.getenv("HOME"),
   "docs_gh/proj/data/llm/content/inst/ctx/external"
 )
+# MANUAL: no source (see llm#1090) — retention-policy judgement call for
+# both constants below, no machine-readable source possible (llm#793 item 5).
 CTX_MAX_AGE_DAYS <- 30
 CTX_CLEANUP_DAYS <- 90  # Delete untouched ctx files older than this
 

@@ -197,4 +197,46 @@ test_that("compute_cost_usd spot-check matches prior embedded-literal behaviour"
   expect_equal(cost, 15.00 + 75.00)
 })
 
+# ── Fallback-hit counter (llm#793 item 3) ──────────────────────────────────
+
+test_that("PRICING_FALLBACK_HITS exists and starts/reset at zero", {
+  expect_true(exists("PRICING_FALLBACK_HITS"))
+  expect_true(exists("reset_pricing_fallback_counter"))
+  reset_pricing_fallback_counter()
+  expect_equal(PRICING_FALLBACK_HITS$n, 0L)
+})
+
+test_that("PRICING_FALLBACK_HITS does NOT increment for a recognised model id", {
+  reset_pricing_fallback_counter()
+  # "claude-opus-4" is a real seeded prefix (roborev_metrics_schema.sql) —
+  # this must match a real pricing row, not the __default__ fallback.
+  p <- model_pricing("claude-opus-4", at_date = as.Date("2026-07-30"))
+  expect_equal(p$input, 15.00)
+  expect_equal(p$output, 75.00)
+  expect_equal(PRICING_FALLBACK_HITS$n, 0L)
+})
+
+test_that("PRICING_FALLBACK_HITS increments once for an unrecognised model id", {
+  reset_pricing_fallback_counter()
+  model_pricing("totally-unknown-model-zzz", at_date = as.Date("2026-06-15"))
+  expect_equal(PRICING_FALLBACK_HITS$n, 1L)
+})
+
+test_that("PRICING_FALLBACK_HITS increments for NA/empty/'unknown' model ids", {
+  reset_pricing_fallback_counter()
+  model_pricing(NA_character_, at_date = as.Date("2026-06-15"))
+  model_pricing("", at_date = as.Date("2026-06-15"))
+  model_pricing("unknown", at_date = as.Date("2026-06-15"))
+  expect_equal(PRICING_FALLBACK_HITS$n, 3L)
+})
+
+test_that("PRICING_FALLBACK_HITS accumulates across mixed recognised/unrecognised calls", {
+  reset_pricing_fallback_counter()
+  model_pricing("claude-sonnet-4", at_date = as.Date("2026-07-30"))   # recognised: no increment
+  model_pricing("some-brand-new-model", at_date = as.Date("2026-07-30")) # unrecognised: +1
+  model_pricing("claude-haiku-4", at_date = as.Date("2026-07-30"))    # recognised: no increment
+  model_pricing("another-unseen-model", at_date = as.Date("2026-07-30")) # unrecognised: +1
+  expect_equal(PRICING_FALLBACK_HITS$n, 2L)
+})
+
 cat("\n--- All tests completed ---\n")
