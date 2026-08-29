@@ -1,0 +1,9 @@
+#!/bin/bash
+# Deployed dry-run only (no --apply): roborev_job_reaper.sh mutates a
+# third-party database (~/.roborev/reviews.db) it does not own, and its own
+# SOAK_END guard (2026-08-29) forces dry-run before that date regardless of
+# this wrapper's args. Whether to add --apply and start marking stuck jobs
+# 'failed' for real is a live-system policy decision left to a human after
+# reviewing a run or two of this dry-run [would-reap]/[keep] log output —
+# see JohnGavin/llm#984 items 3-4, explicitly not decided here.
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-job-reaper" -- "/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_job_reaper.sh"

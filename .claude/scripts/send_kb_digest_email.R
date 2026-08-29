@@ -761,7 +761,12 @@ compute_new_no_wiki <- function(knowledge_repo) {
         kind    = kind,
         name    = name,
         created = format(add_time, "%Y-%m-%d"),
-        wiki_ref = wiki_ref_str
+        # Field name matches the documented column header above
+        # ("Table: kind | name | created | wiki_referenced (y/n)") and
+        # test-kb-digest.R's expectation (llm#897) -- it was previously
+        # written as `wiki_ref`, a plain naming mismatch unrelated to the
+        # #886 launchd outage this issue originally suspected.
+        wiki_referenced = wiki_ref_str
       )
     }
 
@@ -769,7 +774,7 @@ compute_new_no_wiki <- function(knowledge_repo) {
     for (f in rule_files)  process_file(f, "rule")
 
     # Count those WITHOUT wiki reference
-    no_wiki <- Filter(function(r) r$wiki_ref == "n", rows)
+    no_wiki <- Filter(function(r) r$wiki_referenced == "n", rows)
     list(count = length(no_wiki), rows = rows)
   }, error = function(e) {
     message("compute_new_no_wiki: error — ", conditionMessage(e))
@@ -790,7 +795,7 @@ signal_482_html <- if (length(signal_482$rows) == 0L) {
   )
 } else {
   rows_html <- paste(vapply(signal_482$rows, function(r) {
-    ref_color <- if (r$wiki_ref == "y") ACCENT_GREEN else ACCENT_ORANGE
+    ref_color <- if (r$wiki_referenced == "y") ACCENT_GREEN else ACCENT_ORANGE
     sprintf(
       '<tr>
         <td style="padding:4px 8px; color:%s;">%s</td>
@@ -801,7 +806,7 @@ signal_482_html <- if (length(signal_482$rows) == 0L) {
       DARK_MUTED,  htmlEscape(r$kind),
       DARK_TEXT,   htmlEscape(r$name),
       DARK_MUTED,  htmlEscape(r$created),
-      ref_color,   htmlEscape(r$wiki_ref)
+      ref_color,   htmlEscape(r$wiki_referenced)
     )
   }, character(1L)), collapse = "\n")
 
