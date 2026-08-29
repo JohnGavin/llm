@@ -283,6 +283,52 @@ if [ "${CC_SH_SELFTEST:-0}" = "1" ]; then
     check "select_mode: script dir detection (skipped)" "skip" "skip"
   fi
 
+  # ── is_ephemeral_cwd() tests (llm#647) ────────────────────────────────────
+  # Inline mirror of the production is_ephemeral_cwd() defined later in this
+  # file — kept self-contained here so selftest doesn't depend on load order,
+  # matching the existing _is_worktree/_select_mode selftest convention above.
+  _is_ephemeral_cwd() {
+    local dir="${1:-$PWD}"
+    case "$dir" in
+      /tmp|/tmp/*|/private/tmp|/private/tmp/*) return 0 ;;
+      "$HOME/docs_gh"/*-*) return 0 ;;
+      "$HOME/docs_gh"/*/.claude/worktrees/agent-*) return 0 ;;
+      "$HOME/docs_gh/worktrees"/*/*/*) return 0 ;;
+      "$HOME/worktrees"/*/*/*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  # Test 15: /tmp path → ephemeral
+  if _is_ephemeral_cwd "/tmp/some-scratch"; then
+    check "is_ephemeral_cwd: /tmp/* → ephemeral" "ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: /tmp/* → ephemeral" "ephemeral" "not-ephemeral"
+  fi
+
+  # Test 16: agent worktree path → ephemeral (this is llm#647's actual trigger:
+  # worktree_gc.sh sweeps "${DOCS_GH}/*/.claude/worktrees/agent-*")
+  if _is_ephemeral_cwd "$HOME/docs_gh/llm/.claude/worktrees/agent-abc123"; then
+    check "is_ephemeral_cwd: agent worktree → ephemeral" "ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: agent worktree → ephemeral" "ephemeral" "not-ephemeral"
+  fi
+
+  # Test 17: canonical worktree path (~/docs_gh/worktrees/<proj>/<branch>) → ephemeral
+  if _is_ephemeral_cwd "$HOME/docs_gh/worktrees/llm/feat/fix-foo"; then
+    check "is_ephemeral_cwd: canonical worktree → ephemeral" "ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: canonical worktree → ephemeral" "ephemeral" "not-ephemeral"
+  fi
+
+  # Test 18: normal main checkout (~/docs_gh/<project>) → NOT ephemeral
+  # (no false positive on the common case)
+  if _is_ephemeral_cwd "$HOME/docs_gh/llm"; then
+    check "is_ephemeral_cwd: main checkout → not ephemeral" "not-ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: main checkout → not ephemeral" "not-ephemeral" "not-ephemeral"
+  fi
+
   echo ""
   echo "Results: $PASS passed, $FAIL failed"
   [ "$FAIL" -eq 0 ]
@@ -315,6 +361,25 @@ select_mode() {
   else
     echo "default"
   fi
+}
+
+# is_ephemeral_cwd <dir>: true if <dir> falls under a path that automated
+# cleanup (worktree_gc.sh, /tmp housekeeping, etc.) can remove out from under
+# a running session. Mirrors worktree_gc.sh's own SWEEP_PATTERNS so the
+# warning tracks whatever GC actually sweeps, plus /tmp/private-tmp which is
+# cleaned by broader OS/session housekeeping, not worktree_gc.sh itself.
+# Advisory only (llm#647) — a deleted cwd makes every subsequent hook spawn
+# fail with "ENOENT posix_spawn /bin/sh" (see .claude/memory/hook-cwd-deletion.md).
+is_ephemeral_cwd() {
+  local dir="${1:-$PWD}"
+  case "$dir" in
+    /tmp|/tmp/*|/private/tmp|/private/tmp/*) return 0 ;;
+    "$HOME/docs_gh"/*-*) return 0 ;;
+    "$HOME/docs_gh"/*/.claude/worktrees/agent-*) return 0 ;;
+    "$HOME/docs_gh/worktrees"/*/*/*) return 0 ;;
+    "$HOME/worktrees"/*/*/*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # _cc_bounded <secs> <cmd> [args...]
@@ -699,5 +764,21 @@ fi
 # false-positive WARN that fires when settings.json defaultMode="default" but
 # the runtime permission-mode is bypassPermissions, as set above via --permission-mode).
 export CC_LAUNCHED_VIA_WRAPPER=1
+
+# ---------------------------------------------------------------------------
+# Ephemeral-cwd warning (llm#647)
+# ---------------------------------------------------------------------------
+# Checked last, against the final $PWD (after the worktree-parent redirect,
+# the worktree offer, and any BURN-CRITICAL auto-spawn cd above), so it warns
+# about the directory the session will actually run from. Advisory only — a
+# long session whose cwd is later removed by worktree_gc.sh or a /tmp sweep
+# gets "ENOENT posix_spawn /bin/sh" on every subsequent hook. See
+# .claude/memory/hook-cwd-deletion.md.
+if [ "${CC_NO_EPHEMERAL_WARN:-0}" != "1" ] && is_ephemeral_cwd "$PWD"; then
+  echo "cc: WARNING — cwd ($PWD) sits under a path automated cleanup can remove"
+  echo "cc: (worktree GC / /tmp sweep) while this session is still running."
+  echo "cc: If it gets removed mid-session, every hook fails with 'ENOENT posix_spawn"
+  echo "cc: /bin/sh' (see .claude/memory/hook-cwd-deletion.md, llm#647). Not blocking."
+fi
 
 exec ~/.local/bin/claude "${ARGS[@]}" "${PASSTHROUGH_ARGS[@]}"
