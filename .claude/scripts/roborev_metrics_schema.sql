@@ -54,6 +54,24 @@ ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_quota    
 ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_agent     INTEGER DEFAULT 0;
 ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_failed_other     INTEGER DEFAULT 0;
 
+-- ADDITIVE columns (llm#928 items 3-4, 2026-08-29) — same FROZEN-safe pattern
+-- as the jobs_failed_* block above.
+--
+-- is_ephemeral: TRUE when this (date, repo) row's jobs came from a repo whose
+-- root_path lives under a temp root (agent worktree / test fixture, llm#923).
+-- #928 found `roborev_daily_metrics` (the mirror) holding 720 dead repo names
+-- vs 20 real ones, because #923's cleanup deleted the ephemeral rows from the
+-- SOURCE (reviews.db) but never touched this mirror. Lets downstream
+-- consumers exclude the noise without a destructive rebuild of history.
+--
+-- jobs_dropped: jobs enqueued in this window that, once stale, have NEITHER a
+-- review (verdict) NOR a jobs_failed_* classification — generalises #927
+-- ("commits with a failed review and no successful review", reported by
+-- nothing) to jobs stuck at status='queued'/'running' forever, which are
+-- exactly as invisible to `reviews_created`/`reviews_passed`/`reviews_failed`.
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS jobs_dropped INTEGER DEFAULT 0;
+ALTER TABLE roborev_daily_metrics ADD COLUMN IF NOT EXISTS is_ephemeral BOOLEAN DEFAULT FALSE;
+
 -- ── roborev_review_lifecycle ──────────────────────────────────────────────
 -- Per-review timeline. One row per review (keyed on review_id from reviews.id).
 -- PK: review_id

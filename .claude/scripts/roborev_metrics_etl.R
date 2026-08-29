@@ -241,6 +241,18 @@ if (!has_source_col) {
   log_msg("WARN: review_jobs.source column absent — using NULL AS source in sql_jobs (llm#706 Cause-1 guard)")
 }
 
+# ── Guard: repos.root_path (llm#928 item 3) ───────────────────────────────────
+# root_path is used downstream by is_ephemeral_repo_path() to flag mirror rows
+# whose repo lives under a temp root (agent worktree / test fixture, llm#923) —
+# same guard pattern as source/error above: absent column degrades to NULL
+# rather than throwing, and is_ephemeral simply comes out FALSE everywhere.
+has_root_path_col <- tryCatch({
+  "root_path" %in% names(dbGetQuery(read_con, "SELECT * FROM src.repos LIMIT 0"))
+}, error = function(e) FALSE)
+if (!has_root_path_col) {
+  log_msg("WARN: repos.root_path column absent — is_ephemeral will be FALSE for all rows (llm#928)")
+}
+
 sql_jobs <- sprintf("
   SELECT
     rj.id          AS job_id,
@@ -253,7 +265,8 @@ sql_jobs <- sprintf("
     rj.started_at,
     rj.finished_at,
     %s             AS source,
-    %s             AS error
+    %s             AS error,
+    %s             AS repo_root_path
   FROM src.review_jobs rj
   JOIN src.repos rp ON rp.id = rj.repo_id
   WHERE date(rj.enqueued_at) >= DATE '%s'
@@ -261,6 +274,7 @@ sql_jobs <- sprintf("
   ORDER BY rj.id
 ", if (has_source_col) "rj.source" else "NULL",
    if (has_error_col) "rj.error" else "NULL",
+   if (has_root_path_col) "rp.root_path" else "NULL",
    since_str, repo_clause)
 
 jobs_raw <- tryCatch(
@@ -520,6 +534,94 @@ classify_failure <- function(status, error) {
   out
 }
 
+# ── Classify a repo row as ephemeral (llm#928 item 3) ────────────────────────
+#
+# `roborev_daily_metrics` (the mirror) holds rows for repos that no longer
+# exist in the live `repos` table — 720 dead repo names vs 20 real ones,
+# measured 2026-08-06 — because #923's cleanup deleted the ephemeral rows
+# from the SOURCE (reviews.db) but never touched the MIRROR (unified.duckdb).
+# Any per-repo aggregate/ratio/coverage count computed from the mirror today
+# silently includes that noise.
+#
+# Reuses the EXACT root_path identification pattern from
+# cleanup_ephemeral_repos.sql (the canonical llm#923 fix) and
+# roborev_poll_merges.sh's is_ephemeral_path() — do not invent a third
+# pattern. Anchored at the start of the path (unlike classify_failure()'s
+# `ephemeral` branch above, which searches free-text error strings where the
+# path can appear mid-sentence): root_path IS the path, so an unanchored
+# match risks a false positive on a real repo whose path merely contains the
+# substring "/tmp/" somewhere below its root.
+EPHEMERAL_ROOT_PATTERN <- "^(/private)?/(tmp|var/folders)/"
+
+is_ephemeral_repo_path <- function(root_path) {
+  rp <- ifelse(is.na(root_path), "", as.character(root_path))
+  grepl(EPHEMERAL_ROOT_PATTERN, rp)
+}
+
+# ── Classify a "dropped" job (llm#928 item 4, generalises #927) ─────────────
+#
+# #927: a job that fails on an agent quota/spend error is TERMINAL — nothing
+# re-enqueues it, so the commit is never reviewed again. #928 item 5 names the
+# gap this closes: "commits with a failed review and no successful review" is
+# reported by nothing. Generalised one level further here: a job stuck at
+# status='queued'/'running' well past when a normal review completes is
+# exactly as invisible to today's metrics as an outright `failed` job with no
+# retry — `reviews_created` counts it, and nothing else ever resolves it. A
+# job counts as dropped only once it is stale, so one still legitimately in
+# flight (enqueued minutes ago) is never miscounted.
+#
+# STALE_DAYS_DROPPED is deliberately whole-calendar-day, not hour-granular:
+# this ETL already groups by date_str for build_daily_metrics, so day-level
+# staleness needs no per-row timestamp parsing. See roborev_job_reaper.sh for
+# the hour-granularity, job-level version of the same underlying problem
+# (a stale 'running' row with a dead worker behind it).
+STALE_DAYS_DROPPED <- 1L
+
+is_job_dropped <- function(status, has_review, is_stale) {
+  n <- length(status)
+  if (n == 0L) return(logical(0L))
+  not_failed <- is.na(status) | status != "failed"
+  not_failed & !has_review & is_stale
+}
+
+# ── Evidence check: jobs_dropped vs raw jobs_raw (zero-metric-evidence-or-defect) ──
+#
+# Per the `zero-metric-evidence-or-defect` rule: a new metric must be checked
+# against an independent, more primitive count before being trusted — a
+# mismatch means the METRIC is broken, not that the window is genuinely clean.
+# This recomputes "dropped" directly against jobs_raw/reviews_raw (bypassing
+# the per-day grouping in build_daily_metrics entirely) and compares the total
+# to what daily_df actually carries. The two are expected to agree by
+# construction; a mismatch signals a defect in the day-grouping logic (e.g. a
+# future refactor that filters day_jobs some other way) rather than a real
+# behaviour change, and must never be reported as a silent zero.
+verify_dropped_evidence <- function(jobs_raw, reviews_raw, daily_df, etl_run_at,
+                                     stale_days = STALE_DAYS_DROPPED) {
+  if (nrow(jobs_raw) == 0L) {
+    return(invisible(TRUE))  # nothing to cross-check — an empty window is not a defect
+  }
+
+  has_review <- jobs_raw$job_id %in% reviews_raw$job_id
+  age_days   <- as.numeric(as.Date(etl_run_at) - as.Date(substr(jobs_raw$enqueued_at, 1L, 10L)))
+  is_stale   <- is.finite(age_days) & age_days >= stale_days
+  evidence_dropped <- sum(is_job_dropped(jobs_raw$status, has_review, is_stale))
+
+  computed_dropped <- if ("jobs_dropped" %in% names(daily_df)) {
+    sum(daily_df$jobs_dropped, na.rm = TRUE)
+  } else {
+    NA_integer_
+  }
+
+  if (is.na(computed_dropped) || evidence_dropped != computed_dropped) {
+    log_msg("WARN: DEFECT — jobs_dropped metric (", computed_dropped,
+            ") does not match independent evidence count against raw jobs_raw (",
+            evidence_dropped, "). See zero-metric-evidence-or-defect rule — ",
+            "treat this as a broken metric, not a genuine result.")
+    return(invisible(FALSE))
+  }
+  invisible(TRUE)
+}
+
 # ── Build roborev_daily_metrics ────────────────────────────────────────────
 
 build_daily_metrics <- function(jobs, reviews) {
@@ -541,6 +643,10 @@ build_daily_metrics <- function(jobs, reviews) {
     jobs_failed_quota           = integer(),
     jobs_failed_agent           = integer(),
     jobs_failed_other           = integer(),
+    # llm#928 items 3-4 — additive, same FROZEN-safe pattern as the jobs_failed_*
+    # block above: nothing renamed/retyped, downstream selects by name.
+    jobs_dropped                = integer(),
+    is_ephemeral                = logical(),
     stringsAsFactors            = FALSE
   )
 
@@ -579,6 +685,25 @@ build_daily_metrics <- function(jobs, reviews) {
     )
     day_fail_cat[is.na(day_fail_cat)] <- "none"
 
+    # llm#928 item 4 — dropped jobs: enqueued this day, still not resolved
+    # (no review AND not classified failed) once the day is stale. See
+    # is_job_dropped()'s docstring for why staleness is day-granular here.
+    has_review <- day_jobs$job_id %in% day_rv$job_id
+    age_days   <- as.numeric(as.Date(etl_run_at) - as.Date(d))
+    is_stale   <- is.finite(age_days) && age_days >= STALE_DAYS_DROPPED
+    day_dropped <- is_job_dropped(day_jobs$status, has_review,
+                                   rep(is_stale, nrow(day_jobs)))
+
+    # llm#928 item 3 — flag the (date, repo) row as ephemeral if ANY job in
+    # this group came from a temp-rooted repo. Favours flagging over missing
+    # noise when a repo `name` maps to more than one root_path (the issue
+    # itself notes `repos` has duplicate names, e.g. "historical"/"tennis").
+    day_is_ephemeral <- if ("repo_root_path" %in% names(day_jobs)) {
+      any(is_ephemeral_repo_path(day_jobs$repo_root_path))
+    } else {
+      FALSE
+    }
+
     data.frame(
       date                        = as.Date(d),
       repo                        = rep,
@@ -600,6 +725,8 @@ build_daily_metrics <- function(jobs, reviews) {
       jobs_failed_quota           = sum(day_fail_cat == "quota"),
       jobs_failed_agent           = sum(day_fail_cat == "agent"),
       jobs_failed_other           = sum(day_fail_cat == "other"),
+      jobs_dropped                = sum(day_dropped),
+      is_ephemeral                = day_is_ephemeral,
       stringsAsFactors            = FALSE
     )
   })
@@ -2140,6 +2267,7 @@ build_fix_method_trend <- function(duck_con, run_date) {
 # ── Build tables ───────────────────────────────────────────────────────────
 
 daily_df     <- build_daily_metrics(jobs_raw, reviews_raw)
+verify_dropped_evidence(jobs_raw, reviews_raw, daily_df, etl_run_at)
 lifecycle_df <- build_review_lifecycle(jobs_raw, reviews_raw, markers_raw)
 
 # Enrich lifecycle with fix-commit links (#379).
