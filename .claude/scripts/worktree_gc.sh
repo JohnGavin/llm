@@ -108,12 +108,71 @@ SENTINEL_AGE_DAYS="${SENTINEL_AGE_DAYS:-7}"
 LOG_ROTATE_THRESHOLD_BYTES="${LOG_ROTATE_THRESHOLD_BYTES:-10485760}"  # 10 MB
 LOG_ROTATE_KEEP_LINES="${LOG_ROTATE_KEEP_LINES:-2000}"
 
-# Sweep patterns: "glob|age_days_var_name"
+# ─── Helper: enumerate convention-pattern worktrees via git worktree list ────
+# llm#1000: the "convention" sweep patterns used to be fixed-depth globs
+# (`${WORKTREES_BASE}/*/*/*`), which assumed every worktree branch name
+# contains exactly one slash (e.g. `feat/foo`, matching the worktree-location
+# convention's usual example). A worktree whose branch has NO slash (`main`,
+# `hotfix`, any bare single-word branch) lives at
+# `${WORKTREES_BASE}/<project>/<branch>/` — only 2 levels — and the 3-level
+# glob silently never matched it, so it was never swept and never garbage
+# collected regardless of age.
+#
+# Enumerating via `git worktree list --porcelain` instead is robust to any
+# branch-name shape (0, 1, or N slashes) because git reports the ACTUAL
+# worktree path rather than a depth guess.
+enumerate_convention_worktrees() {
+  local _base_dir="$1"
+  [ -d "$_base_dir" ] || return 0
+
+  # Canonicalize to the physical path (resolve symlinks). `git worktree list
+  # --porcelain` always reports physical paths, so comparing a symlinked
+  # base_dir (e.g. macOS mktemp's /var/... -> /private/var/... — real bug hit
+  # while writing the SELFTEST for this function) against git's output would
+  # silently match nothing. `~/docs_gh` itself is not normally symlinked, but
+  # nothing guarantees that for every caller, so always resolve.
+  _base_dir="$(cd "$_base_dir" 2>/dev/null && pwd -P)" || return 0
+
+  local _proj_dir _git_marker _some_wt_dir _wt_line _wt_path
+  for _proj_dir in "$_base_dir"/*/; do
+    [ -d "$_proj_dir" ] || continue
+    _proj_dir="$(cd "$_proj_dir" 2>/dev/null && pwd -P)" || continue
+    _proj_dir="${_proj_dir}/"
+
+    # Find any git checkout under this project's worktree tree. `.git` is a
+    # FILE (a gitdir pointer) in a worktree, not a directory — so don't
+    # restrict -type. Worktree metadata is shared repo-wide, so any single
+    # checkout found (at whatever depth the branch name happens to produce)
+    # can answer `git worktree list` for every worktree of that repo.
+    _git_marker="$(find "$_proj_dir" -maxdepth 6 -name '.git' 2>/dev/null | head -1)"
+    [ -n "$_git_marker" ] || continue
+    _some_wt_dir="$(dirname "$_git_marker")"
+
+    while IFS= read -r _wt_line; do
+      case "$_wt_line" in
+        worktree\ *)
+          _wt_path="${_wt_line#worktree }"
+          # Only report worktrees that actually live under this project's
+          # tree — `git worktree list` also reports the main checkout
+          # (elsewhere entirely) and, if shared, worktrees under the OTHER
+          # base (current vs legacy convention).
+          case "$_wt_path" in
+            "${_proj_dir%/}"/*) echo "$_wt_path" ;;
+          esac
+          ;;
+      esac
+    done < <(git -C "$_some_wt_dir" worktree list --porcelain 2>/dev/null || true)
+  done
+}
+
+# Sweep patterns: "glob|age_days_var_name" for shell-glob patterns, or
+# "GITWT:<base_dir>|age_days_var_name" for patterns enumerated via
+# enumerate_convention_worktrees() above (see llm#1000).
 SWEEP_PATTERNS=(
   "${DOCS_GH}/*-*|siblings"
   "${DOCS_GH}/*/.claude/worktrees/agent-*|agent"
-  "${WORKTREES_BASE}/*/*/*|convention"
-  "${WORKTREES_BASE_LEGACY}/*/*/*|convention"
+  "GITWT:${WORKTREES_BASE}|convention"
+  "GITWT:${WORKTREES_BASE_LEGACY}|convention"
 )
 
 for arg in "$@"; do
@@ -435,17 +494,28 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
 
   log "[sweep] pattern=$_label glob=$_glob age_days=$_age_days"
 
-  # Expand glob — use nullglob-compatible test
+  # Expand pattern into candidate worktree directories.
+  #
+  # "GITWT:<base>" patterns (convention worktrees, llm#1000) are enumerated
+  # via git worktree metadata — see enumerate_convention_worktrees() above —
+  # because a fixed-depth glob cannot be trusted to match every possible
+  # branch-name shape. All other patterns are plain shell-glob expansion,
+  # which is fine for them: siblings and agent worktrees sit at a single
+  # fixed depth that is NOT driven by branch-name shape.
   _dirs=()
-  while IFS= read -r -d '' _d; do
-    _dirs+=("$_d")
-  done < <(find $HOME -maxdepth 5 -type d -name "$(basename "$_glob")" 2>/dev/null -print0 | sort -z || true)
-
-  # Simpler approach: use shell glob expansion carefully
-  _dirs=()
-  for _d in $_glob; do
-    [ -d "$_d" ] && _dirs+=("$_d")
-  done
+  case "$_glob" in
+    GITWT:*)
+      _gitwt_base="${_glob#GITWT:}"
+      while IFS= read -r _d; do
+        [ -n "$_d" ] && [ -d "$_d" ] && _dirs+=("$_d")
+      done < <(enumerate_convention_worktrees "$_gitwt_base")
+      ;;
+    *)
+      for _d in $_glob; do
+        [ -d "$_d" ] && _dirs+=("$_d")
+      done
+      ;;
+  esac
 
   for wt_path in "${_dirs[@]:-}"; do
     [ -z "$wt_path" ] && continue
@@ -816,6 +886,57 @@ if [ "${SELFTEST:-0}" = "1" ]; then
   label_convention=0
   [[ "$convention_path" == *worktrees/*/*/* ]] && label_convention=1
   _check "convention worktree path matches convention pattern" "1" "$label_convention"
+
+  # --- Test: enumerate_convention_worktrees finds branches of ANY slash
+  # count (llm#1000). Real git worktrees, real git worktree list output —
+  # not a string-match heuristic.
+  _conv_base="$tmpdir/conv_base"
+  _conv_main="$tmpdir/conv_main_repo"
+  git init -q "$_conv_main"
+  git -C "$_conv_main" config user.email "test@test"
+  git -C "$_conv_main" config user.name "test"
+  echo "init" > "$_conv_main/f.txt"
+  git -C "$_conv_main" add f.txt
+  git -C "$_conv_main" commit -q -m "init"
+
+  # A worktree whose branch has a slash (the shape the old glob assumed).
+  git -C "$_conv_main" worktree add -q -b "feat/has-slash" \
+    "$_conv_base/proj/feat/has-slash"
+  # A worktree whose branch has NO slash — the llm#1000 bug case.
+  git -C "$_conv_main" worktree add -q -b "hotfix" \
+    "$_conv_base/proj/hotfix"
+
+  # enumerate_convention_worktrees canonicalizes (resolves symlinks) before
+  # comparing against git's own physical-path output — so the expected paths
+  # here must be canonicalized too. On macOS, mktemp -d hands back a path
+  # under /var/... which is itself a symlink to /private/var/..., so without
+  # this the assertions below would fail for a reason unrelated to the fix
+  # being tested (caught while writing this very test).
+  _conv_base_canon="$(cd "$_conv_base" 2>/dev/null && pwd -P)"
+  _enum_found="$(enumerate_convention_worktrees "$_conv_base")"
+  _check "enumerate finds slash-branch worktree" "1" \
+    "$(printf '%s\n' "$_enum_found" | grep -Fxc "$_conv_base_canon/proj/feat/has-slash" || true)"
+  _check "enumerate finds slash-less-branch worktree (llm#1000 fix)" "1" \
+    "$(printf '%s\n' "$_enum_found" | grep -Fxc "$_conv_base_canon/proj/hotfix" || true)"
+
+  # Demonstrate the OLD fixed-depth glob (`${base}/*/*/*`) would have missed
+  # the slash-less-branch worktree — this is the regression itself, proven
+  # against the same fixture, not asserted from description.
+  _old_glob_found_slashless=0
+  for _d in "$_conv_base"/*/*/*; do
+    [ -d "$_d" ] || continue
+    [ "$_d" = "$_conv_base/proj/hotfix" ] && _old_glob_found_slashless=1
+  done
+  _check "OLD glob '*/*/*' misses slash-less branch (pre-fix regression demo)" "0" "$_old_glob_found_slashless"
+
+  # ...and that it DID find the slash-branch worktree, so this isn't a case
+  # where the old glob simply matched nothing at all.
+  _old_glob_found_slash=0
+  for _d in "$_conv_base"/*/*/*; do
+    [ -d "$_d" ] || continue
+    [ "$_d" = "$_conv_base/proj/feat/has-slash" ] && _old_glob_found_slash=1
+  done
+  _check "OLD glob '*/*/*' did find the slash-branch worktree" "1" "$_old_glob_found_slash"
 
   # --- Test: sibling worktree path label
   sibling_path="$tmpdir/myproject-fix-foo"

@@ -177,8 +177,16 @@ find_log_file() {
   fi
 
   # Derive suffix: strip prefix, hyphens→underscores
+  #
+  # NOTE: `sed 's/^com\.claude\.\|^com\.roborev\.//'` (BRE alternation via a
+  # literal `\|`) is a GNU-sed extension. On BSD sed (macOS default
+  # /usr/bin/sed, no GNU sed installed) it is a silent no-op — the pattern
+  # never matches, so the com.claude./com.roborev. prefix is never stripped
+  # and Priority 2/3 log-file lookup below always misses. Use POSIX extended
+  # regex (`-E`) with a real `(a|b)` group instead, which both BSD and GNU
+  # sed support identically. See llm#995.
   local suffix
-  suffix="$(printf '%s' "$label" | sed 's/^com\.claude\.\|^com\.roborev\.//; s/-/_/g')"
+  suffix="$(printf '%s' "$label" | sed -E 's/^com\.(claude|roborev)\.//; s/-/_/g')"
 
   # Priority 2: <suffix>.out
   if [[ -f "$LOG_DIR/${suffix}.out" ]]; then

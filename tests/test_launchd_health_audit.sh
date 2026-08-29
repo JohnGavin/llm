@@ -70,13 +70,25 @@ touch -m -t "$(date -v-72H '+%Y%m%d%H%M.%S')" "$LOG_DIR/stale_job.out" 2>/dev/nu
 # fixture only passes under the fixed expected_cadence_seconds().
 #
 # Written at the fixture plist's literal StandardOutPath (Priority 1 in
-# find_log_file()), not under $LOG_DIR (Priority 2/3) -- the Priority 2/3
-# suffix derivation uses a GNU-sed-only `\|` alternation that is a silent
-# no-op under macOS's BSD sed, so it never strips the `com.claude.` prefix
-# on this platform (separate, pre-existing bug, not fixed here).
+# find_log_file()), not under $LOG_DIR (Priority 2/3) -- unrelated to the
+# cadence bug this fixture targets. The Priority 2/3 fallback derivation
+# (formerly a GNU-only `\|` sed alternation, fixed under llm#995) is
+# exercised separately by the com.claude.fallback-log fixture below.
 mkdir -p /tmp/launchd_audit_test
 echo "2026-05-29 13:00:01 done exit 0" > /tmp/launchd_audit_test/weekday_repeated.out
 touch -m -t "$(date -v-3H '+%Y%m%d%H%M.%S')" /tmp/launchd_audit_test/weekday_repeated.out 2>/dev/null || true
+
+# fallback-log (llm#995 regression): this fixture plist has NO StandardOutPath
+# key, so find_log_file() MUST fall through to the Priority-2/3 suffix
+# derivation (`sed -E 's/^com\.(claude|roborev)\.//; s/-/_/g'`) to locate its
+# log file. Every OTHER fixture in this suite sets StandardOutPath explicitly
+# (Priority 1), so before this fixture existed the buggy GNU-only `\|`
+# alternation sed (a silent no-op on BSD sed) was never actually exercised by
+# any test — the fallback path was untested and its bug went undetected.
+# Written under $LOG_DIR (Priority 2/3), matching the label
+# "com.claude.fallback-log" stripped to "fallback-log" then "fallback_log".
+echo "2026-05-29 09:00:01 done exit 0" > "$LOG_DIR/fallback_log.out"
+touch -m -t "$(date -v-1H '+%Y%m%d%H%M.%S')" "$LOG_DIR/fallback_log.out" 2>/dev/null || true
 
 # ── Set up mock launchctl list file ───────────────────────────────────────────
 # The mock returns JSON-like output for labels that ARE loaded.
@@ -89,6 +101,7 @@ cat > "$MOCK_LIST" <<'EOF'
 {"PID": 0, "LastExitStatus": 256, "Label": "com.claude.loaded-failing"}
 {"PID": 5678, "LastExitStatus": 0, "Label": "com.claude.stale-job"}
 {"PID": 9012, "LastExitStatus": 0, "Label": "com.claude.weekday-repeated"}
+{"PID": 3456, "LastExitStatus": 0, "Label": "com.claude.fallback-log"}
 EOF
 # not-loaded intentionally absent → returns empty
 
@@ -159,6 +172,22 @@ if [[ -n "$weekday_row" && "$weekday_row" != *"STALE"* ]]; then
 else
   echo "  FAIL: com.claude.weekday-repeated should not be STALE (llm#898)"
   echo "        row: $weekday_row"
+  FAIL=$(( FAIL + 1 ))
+fi
+
+# llm#995 regression: com.claude.fallback-log has no StandardOutPath, so its
+# log file can only be found via the Priority 2/3 suffix-derivation sed. Its
+# log is fresh (1h old, daily cadence), so under the fixed sed it must show as
+# a normal loaded/fresh row -- NOT "never / unknown" (which is what the
+# pre-fix GNU-only `\|` sed produced on BSD sed, because it never stripped
+# the com.claude. prefix and therefore looked for the wrong filename).
+fallback_row="$(printf '%s\n' "$output" | grep 'fallback-log' || true)"
+if [[ -n "$fallback_row" && "$fallback_row" != *"never / unknown"* ]]; then
+  echo "  PASS: com.claude.fallback-log log resolved via fallback sed derivation (llm#995)"
+  PASS=$(( PASS + 1 ))
+else
+  echo "  FAIL: com.claude.fallback-log should resolve its log via the suffix fallback (llm#995)"
+  echo "        row: $fallback_row"
   FAIL=$(( FAIL + 1 ))
 fi
 
