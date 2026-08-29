@@ -59,7 +59,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 - Orchestration / provenance: `orchestrator-protocol`, `provenance-mandatory`, `look-ahead-bias-prevention`, `pr-shipping-discipline`, `branch-harvest-on-fork`, `housekeeping-framework`
 - Knowledge base: `raw-folder-readonly`, `confidence-markers`, `wiki-storage-policy`
 - Quarto / vignettes: `dark-mode-completeness`, `narrative-evidence-block`, `narrative-colour-persistence`, `vignette-build-info-block`, `uniform-typography`
-- Dashboards / viz: `dashboard-table-styling`, `dashboard-filter-placement`, `mermaid-click-anchors`, `mermaid-dashboard-pattern`
+- Dashboards / viz: `dashboard-table-styling`, `dashboard-filter-placement`, `cards-are-tabsets` (a set of cards is ALWAYS a tabset, never a grid — enforce it in the generator, not in review), `mermaid-click-anchors`, `mermaid-dashboard-pattern`
 - Data / analysis: `cross-cutting-rename`, `data-glossary-and-entity-resolution`, `unified-observability-schema`, `survival-reporting`
 - Build artifacts: `portable-build-artifacts` (committed artifacts must not depend on which checkout built them — absolute paths in serialised objects; path filters matching their own scan root)
 - Tooling: `roborev-exclude-patterns`
