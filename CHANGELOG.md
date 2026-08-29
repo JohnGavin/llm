@@ -4,6 +4,67 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-08-29 — recovering a session lost to a sub-agent routing bug
+
+### Completed
+
+- **Recovered a disaster session.** A prior session's read-only research sub-agent got a
+  mid-turn message meant for the main session (a roborev triage ask) instead of its own
+  scoped task — it correctly refused to act outside its role and returned control, but the
+  roborev report and the sub-agent's llmtelemetry research were both lost. Re-verified
+  everything from scratch rather than trusting either the routing bug's description or the
+  sub-agent's own numbers: pulled the real roborev finding text from `~/.roborev/reviews.db`
+  directly.
+- **roborev triage, verified not guessed:** closed #9737 (`llm`, false positive — the
+  reviewer's own text said "no code change needed"; the PATH reorder is already documented
+  in the plist). Fixed and merged #9744
+  ([#1066](https://github.com/JohnGavin/llm/pull/1066)) — added a hermetic fixture test for
+  `skill_usage_etl.R`'s `hook_agg` CTE, with a negative control and a confirmed mutation
+  check (the assertions actually fail when the join breaks). Fixed and merged #9756
+  ([historical#791](https://github.com/JohnGavin/historical/pull/791)) — an `isTRUE()`
+  applied to a data-frame column inside `case_when()` was silently collapsing to `FALSE`
+  and getting recycled, mislabeling undetectable strategies "Detectable"; also fixed a
+  silent-blank fallback in `git_sha_full` and an ignored `pkg_name` param.
+- **Verified a GitGuardian "Bearer Token exposed" alert as a false positive.** Email
+  authenticity confirmed independently (DKIM/SPF/DMARC pass, and the cited commit verified
+  via `gh api`, not via the email's own link). The flagged string was a test fixture inside
+  `.claude/hooks/secret_leak_guard.sh`'s own self-test suite (`ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123`
+  — sequential, not random, i.e. obviously synthetic) — not a real credential. No rotation
+  needed.
+- **llmtelemetry dashboard reskin/Quarto-dashboard scoping** (read-only research, redone
+  properly after the routing bug lost the original): the current Shinylive dashboard
+  (`vignettes/dashboard_shinylive.qmd`, 6,844 lines) is 100% tabular — 11 `renderDT` calls,
+  zero charts — despite the originating issue
+  ([llmtelemetry#27](https://github.com/JohnGavin/llmtelemetry/issues/27)) asking for a
+  commit heatmap, cost trend, and change-coupling graph. Recommendation: narrow rewrite
+  (not reskin) migrating the 11 tables to bslib cards per the `quarto-dashboards` skill and
+  finally adding the requested charts — no ETL changes needed, presentation-layer only.
+
+### Failed Approaches
+
+- (none — this session's dead end was procedural, not technical: see Known Limitations)
+
+### Metrics
+
+- 4 roborev findings resolved this session (1 closed as false positive, 2 fixed+merged,
+  1 already closed). Standing backlog (unrelated to this session): 167 total open findings
+  across all watched repos, 27 verdict-failures vs 21 addressed — pre-existing, confirmed
+  consistent (`roborev_consistency_check.sh`), not a regression.
+
+### Known Limitations
+
+- **Root cause of the original disaster is a harness behavior, not a repo bug**: a mid-turn
+  user message attaches to whichever tool call is in flight, not to an idle parent agent.
+  Not fixable from this repo; flagged as product feedback territory, not an issue here.
+- **Stale `GH_TOKEN` env var recurred 3 times in one session** (blocked `gh` for the
+  orchestrator and two independently-dispatched sub-agents). Root cause identified by the
+  user: restarting Claude Code inside the same terminal window (rather than closing the
+  window and opening a new one) keeps the tainted shell's exported env alive — see
+  `exec-zsh-does-not-clear-env` memory, now updated with this confirmed recipe. Not fixed at
+  the source this session (workaround only: `env -u GH_TOKEN`).
+- llmtelemetry dashboard scoping produced a recommendation only — no implementation, no
+  tracked issue filed yet.
+
 ## 2026-08-27 (session 2) — the same defect in eleven places, twice in my own new code
 
 ### Completed
