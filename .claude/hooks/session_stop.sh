@@ -317,9 +317,24 @@ fi
 # and appends: <ISO-timestamp>  <branch>  <slug>
 # to ~/.claude/logs/session_index.log for grep-based session lookup.
 # 30-second timeout — never blocks /bye.
+#
+# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
+# This block used to write UNGATED, appending a row on every response —
+# measured at ~93% duplicate rows (llm#912): 4326 lines for only 12 distinct
+# (branch, slug) pairs across 3 days. Gated on the same one-shot
+# `_bye_detected` sentinel used elsewhere in this file (see llm#803, #910),
+# so the write now fires exactly once, at the session's real end. Sessions
+# that never call /bye (crash, kill, /clear) leave no row here — the same
+# accepted gap as the llm#803 DB write; option 1 of llm#912's three options,
+# chosen for consistency with that precedent (this is an append-only text
+# log, not a DB row, so option 2's per-session upsert would require
+# rewriting the whole file on every turn — a worse trade for a flat log).
+# The pre-existing 93%-duplicate file is de-duplicated once via
+# session_index_dedup.sh (see that script; not wired into any hook —
+# run manually per its own header comment).
 _SLUG_SCRIPT="$CLAUDE_DIR/scripts/session_slug.sh"
 _SESSION_INDEX_LOG="$CLAUDE_RUNTIME_ROOT/logs/session_index.log"
-if [ -x "$_SLUG_SCRIPT" ]; then
+if [ "$_bye_detected" -eq 1 ] && [ -x "$_SLUG_SCRIPT" ]; then
   _INDEX_BRANCH=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null \
     || git rev-parse --abbrev-ref HEAD 2>/dev/null \
     || echo "unknown")
