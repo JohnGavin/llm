@@ -518,6 +518,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/external_content_quarantine.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
