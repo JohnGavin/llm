@@ -11,6 +11,12 @@
 #   A repo opts into B by creating <root>/.claude/.roborev-handoff-mode
 #   containing the word "inbox".  All other content (or absent) → A.
 #   If GH issues are disabled for the repo, A falls back to B automatically.
+#   Mechanism B writes ONE summary line to CURRENT_WORK.md per repo per run
+#   (e.g. "roborev-inbox: 3 new finding(s) (jobs 601,602,603) -- see ...") —
+#   NOT one block per finding (llm#977: the old per-finding append grew
+#   CURRENT_WORK.md to 3856 lines / 539 entries with nothing ever trimming
+#   it). Full finding text always lives in $FINDINGS_DIR/<job>.md and the
+#   roborev DB regardless of mode.
 #
 # "pass clean" = verdict_bool=1 AND output starts with "No issues found."
 # "pass with comments" = verdict_bool=1 AND output has substantive content beyond that
@@ -592,6 +598,12 @@ while IFS= read -r repo_json; do
   identity=$("$PYTHON" -c "import sys,json; d=json.loads(sys.argv[1]); print(d['identity'])" "$repo_json")
   repos_total=$((repos_total + 1))
 
+  # llm#977: per-repo accumulators for Mechanism B (inbox mode) — reset once
+  # per repo so the post-job-loop summary write below covers exactly this
+  # repo's findings from this run, never a previous repo's leftovers.
+  inbox_jobs_this_repo=0
+  inbox_ids_this_repo=""
+
   # Skip repos with no .git on disk
   if [ ! -d "$root_path/.git" ] && [ ! -f "$root_path/.git" ]; then
     log "skip: $repo_name — no .git at $root_path"
@@ -696,34 +708,39 @@ while IFS= read -r repo_json; do
         ;;
 
       # ── Mechanism B (inbox mode) ────────────────────────────────────────
+      # llm#977: this used to append one `## Inbox: roborev finding` block
+      # per finding directly to CURRENT_WORK.md here, unbounded — that grew
+      # the file to 3856 lines / 539 entries because nothing ever trims it,
+      # and a later rewrite silently discarded all of them. The findings
+      # themselves already live in $FINDINGS_DIR and the roborev DB, both
+      # queryable — CURRENT_WORK.md only needs a signal that new findings
+      # exist. So this branch now just records the full finding to
+      # $FINDINGS_DIR (unchanged) and accumulates a per-repo count; the
+      # actual CURRENT_WORK.md write happens ONCE per repo after the job
+      # loop below, as a single summary line matching the style
+      # session_init.sh already uses for `roborev-backlog: open=N ...`.
       fail|pass-comments)
         if [ "$mode" = "inbox" ]; then
-          output=$(job_output "$job_id")
-          output_trimmed=$(printf '%s' "$output" | sed 's/^[[:space:]]*//')
-          current_work="$root_path/.claude/CURRENT_WORK.md"
-          one_line=$(echo "$output_trimmed" | head -1)
-          inbox_block=$(printf '\n## Inbox: roborev finding %s\n\n- commit: %s\n- job: %s\n- finding: %s\n- full: see `~/.roborev/findings/%s.md`\n' \
-            "$(date -u +%Y-%m-%d)" "$commit_sha" "$job_id" "$one_line" "$job_id")
-
           if [ "$APPLY" -eq 0 ]; then
-            echo "[dry] $repo_name: would append to inbox CURRENT_WORK.md (job $job_id, mode=inbox)"
+            echo "[dry] $repo_name: would record inbox finding (job $job_id, mode=inbox)"
           else
-            # Idempotency: skip if already present
-            if [ -f "$current_work" ] && grep -q "job: $job_id" "$current_work" 2>/dev/null; then
-              log "skip: $repo_name job=$job_id already in CURRENT_WORK.md"
+            # Idempotency: skip if this job's finding was already saved by a
+            # prior run (e.g. a run where the subsequent `roborev close`
+            # failed, leaving the job eligible to reappear in meta_file).
+            if [ -f "$FINDINGS_DIR/${job_id}.md" ]; then
+              log "skip: $repo_name job=$job_id already recorded in $FINDINGS_DIR"
             else
-              # Save full review to findings dir
+              output=$(job_output "$job_id")
               printf '%s\n' "$output" > "$FINDINGS_DIR/${job_id}.md"
-              # Append to CURRENT_WORK.md (create if needed)
-              mkdir -p "$(dirname "$current_work")"
-              printf '%s\n' "$inbox_block" >> "$current_work"
-              log "B: appended inbox job=$job_id repo=$repo_name findings=$FINDINGS_DIR/${job_id}.md"
+              inbox_jobs_this_repo=$((inbox_jobs_this_repo + 1))
+              inbox_ids_this_repo="${inbox_ids_this_repo:+$inbox_ids_this_repo,}${job_id}"
+              log "B: recorded inbox job=$job_id repo=$repo_name findings=$FINDINGS_DIR/${job_id}.md"
+            fi
 
-              if "$ROBOREV" close "$job_id" >/dev/null 2>&1; then
-                log "B: closed job=$job_id"
-              else
-                log "fail: roborev close $job_id (B) — inbox written but job not closed"
-              fi
+            if "$ROBOREV" close "$job_id" >/dev/null 2>&1; then
+              log "B: closed job=$job_id"
+            else
+              log "fail: roborev close $job_id (B) — finding recorded but job not closed"
             fi
           fi
           act_b=$((act_b + 1))
@@ -864,6 +881,17 @@ while IFS= read -r repo_json; do
         ;;
     esac
   done < "$meta_file"
+
+  # llm#977: single per-repo, per-run summary line for Mechanism B — replaces
+  # the old one-block-per-finding append. Only written in --apply mode, and
+  # only when this run actually recorded ≥1 new inbox finding for this repo.
+  if [ "$APPLY" -eq 1 ] && [ "$inbox_jobs_this_repo" -gt 0 ]; then
+    current_work="$root_path/.claude/CURRENT_WORK.md"
+    mkdir -p "$(dirname "$current_work")"
+    printf '\nroborev-inbox: %d new finding(s) (jobs %s) -- see `~/.roborev/findings/<job>.md` or `roborev show <job>`\n' \
+      "$inbox_jobs_this_repo" "$inbox_ids_this_repo" >> "$current_work"
+    log "B: wrote inbox summary line to $current_work (count=$inbox_jobs_this_repo repo=$repo_name)"
+  fi
 
 done < "$WORKDIR/repos.jsonl"
 
