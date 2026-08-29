@@ -6,6 +6,72 @@
 
 If you haven't run the verification command **in this message**, you cannot claim it passes.
 
+### A Check You Have Never Seen Fail Is Not a Check
+
+A green result carries information only if red was reachable. If no input could have
+produced red, the check is a ritual — it consumes effort, produces reassurance, and
+transmits nothing.
+
+> **Before recording a check as passed, make it fail once on purpose.**
+
+1. **Name the input that would make this red.** Cannot name one? There is no check yet.
+2. **Produce it** — empty the list, break the parser, invent an impossible value.
+3. **Confirm red**, for the expected reason and not an unrelated one.
+4. **Restore, confirm green, record both.**
+
+Record the falsification beside the result:
+
+```
+RESULT: clean — 0 matches across 122 terms
+        (falsified: emptying derived_nouns.txt → 4 canaries missing, exit 1)
+```
+
+`0 matches` and `the list was empty` are indistinguishable outputs. The parenthesis is
+what separates them.
+
+#### Five traps
+
+| Type | Shape | Counter |
+|---|---|---|
+| **A — cannot go red** | Structurally always true: `exit 0` regardless; sentinel supplied by the subject | Run against a value you invented; it must fail |
+| **B — wrong object** | Inspects a different artifact than production uses (file vs embedded copy, source vs built) | Point the check at the **shipped** artifact; diff the two |
+| **C — wrong property** | Asserts shape/range/count instead of meaning ("all links valid", "parses OK") | Ask what a *correct* result means, not what a *well-formed* one looks like |
+| **D — contaminated measurement** | Inherits the state it measures (env vars, caches, stubs) | Isolate: `env -u`, `env -i`, fresh process, cold cache |
+| **E — verified by authorship** | "I wrote the fix" substituted for "the fix works" | Observe the effect in the environment that was broken |
+
+Type E is the default failure mode in cross-browser, cross-platform and permissions
+work, where a diff is routinely correct **and** inert.
+
+#### Stricter bar for safety and privacy gates
+
+Their failure mode is **silence**. A broken test suite eventually goes red because
+features break; a broken privacy gate keeps saying "clean" forever while data leaks.
+
+- Ship a positive control that runs every time — **and falsify the control**, or you
+  have only moved the problem.
+- Target **every artifact that ships**, including files generated from the ones you edit.
+- Have the gate **scan itself**. Adding a denylist script to its own target list
+  immediately found real identifiers hardcoded inside it.
+- **Refuse to certify a run whose inputs came back thin.** A gate that passes on an
+  empty denylist is worse than none, because it is trusted.
+
+#### Too loud is also broken
+
+The first version of that denylist produced **112 false positives** by matching every
+capitalised word in a config file. It could fail — constantly — and a check that cries
+wolf gets bypassed. Aim for **quiet in normal operation, demonstrably loud on a fault
+you have personally triggered.**
+
+Six checks in one session (2026-08-21/22) satisfied the Iron Law completely — each was
+run fresh, its output read, its result quoted — while the thing each checked was
+broken: a render harness that loaded a standalone YAML never read by the shipped page;
+a denylist canary present in a list that regenerates verbatim every run; a link audit
+that asserted range instead of correctness; `launchctl getenv` exiting 0 whether or not
+a variable exists; a child shell that inherited the variable under test; a CSS fix
+verified by having written it. See `knowledge/wiki/lessons-learned-checks-that-cannot-fail.md`
+for the full write-up. Sibling: `systematic-debugging`'s "Measure the Baseline Before
+Claiming a Regression" is the same habit applied to causation, not verification.
+
 ## Verification Gate
 
 1. **IDENTIFY**: What command proves this claim?

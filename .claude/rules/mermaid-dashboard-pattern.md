@@ -55,7 +55,28 @@ The `mermaid_dashboard_guard.sh` hook (`PreToolUse:Edit|Write`, wired in
 Escape hatch: `CLAUDE_MERMAID_DASHBOARD_GUARD=0` bypasses for one
 command (audited to `~/.claude/logs/mermaid_dashboard_guard_skip.log`).
 
+## Tombstone: `verify_mermaid_dashboard.sh` (removed 2026-07-13)
+
+[#773](https://github.com/JohnGavin/llm/pull/773) deleted
+`.claude/scripts/verify_mermaid_dashboard.sh` (plus `audit_mermaid_dashboards.sh`,
+`scaffold-mermaid-dashboard.sh`, and the `.claude/templates/mermaid-dashboard/`
+scaffold) as unused. It was not unused: a downstream project's Quarto
+`post-render.sh` called it by absolute path on every render, and the call site's
+`cmd || echo "advisory" >&2` swallow made "script missing" and "script ran clean"
+produce the identical exit code — the breakage ran silently for six weeks
+([#1067](https://github.com/JohnGavin/llm/issues/1067)).
+
+If your project mounts Mermaid diagrams at runtime via an external JS loader
+(the exact pattern this rule documents) and relies on a verifier to catch a
+failed mount, that verifier no longer ships from this repo. Options: restore
+your own copy of the check locally, or replace it with an
+indeterminate-vs-clean-vs-failed three-state check per
+[`checks-must-distinguish-unknown`](checks-must-distinguish-unknown.md) so a
+missing/renamed tool is never silently read as "passed."
+
 ## Related
 
 - `mermaid-click-anchors` — every URL must include `#L<n>`
 - `dark-mode-completeness` — diagram background colours
+- `checks-must-distinguish-unknown` — the swallow-pattern defect that hid this
+  removal's breakage for six weeks ([#1067](https://github.com/JohnGavin/llm/issues/1067))
