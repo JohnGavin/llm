@@ -357,6 +357,66 @@ All checks passed."
   # summary line below is only ever reached if BOTH protective idioms hold. ─
   _assert "19. selftest reached this line — set -e did not abort at test 18" "ok"
 
+  # ── llm#930+ fail-safe dead-branch regression, part 2 ─────────────────────
+  # Audit for the same bug class (unprotected command/assignment under
+  # set -e making its own failure-handling dead code) found three further
+  # instances, all in the --apply-only code path: the two `issue_url=$( "$GH"
+  # issue create ... )` sites (Phase 1a per-commit issue, Phase 1b new-digest
+  # create) and the bare `"$GH" issue edit ...` command (Phase 1b digest
+  # append). Each was followed by a `[ -n "$var" ] && {...} || {...}` /
+  # `[ "$_gh_rc" -eq 0 ] && ... || ...` handler that could never run if the
+  # gh call failed, for the identical reason as the gh_repo_info bug above.
+  # Fixed by attaching the same `|| var=""` / `&&/||` idioms used above.
+  # These tests use mock functions shaped exactly like a failing `gh` call
+  # (no stdout, non-zero exit) so the regression is provable without a
+  # network dependency. If any of these idioms regresses back to unprotected,
+  # set -e kills the script at that assignment/command — no PASS/FAIL line
+  # for that test prints, and the next proof-of-life test never prints
+  # either. ──────────────────────────────────────────────────────────────────
+
+  # ── 20. Mirrors the Phase 1a `issue_url=$( "$GH" issue create ... ) ||
+  # issue_url=""` idiom: a failing gh issue create must not abort under
+  # set -e, and issue_url must fall through empty to the failure-logging
+  # branch. ───────────────────────────────────────────────────────────────
+  _mock_gh_issue_create_fail() { return 1; }
+  issue_url_20=$(_mock_gh_issue_create_fail) || issue_url_20=""
+  [ -z "$issue_url_20" ] \
+    && _assert "20. fail-safe: Phase 1a issue_url=\$(...) || issue_url=\"\" survives gh issue create failure" "ok" \
+    || _assert "20. fail-safe: Phase 1a issue_url=\$(...) || issue_url=\"\" survives gh issue create failure" "got '$issue_url_20'"
+
+  # ── 21. Proof-of-life: selftest is still executing after test 20. ────────
+  _assert "21. selftest reached this line — set -e did not abort at test 20" "ok"
+
+  # ── 22. Mirrors the Phase 1b digest-append idiom: `"$GH" issue edit ... &&
+  # _gh_rc=0 || _gh_rc=$?`. This is a BARE command, not an assignment — set -e
+  # fires on a failing bare command before the NEXT line ever runs, so the
+  # &&/|| pair must be attached directly to the command itself (capturing
+  # `$?` on a separate following line, as the code did before the fix, is too
+  # late). ────────────────────────────────────────────────────────────────
+  _mock_gh_issue_edit_fail() { return 7; }
+  _mock_gh_issue_edit_fail && _gh_rc_22=0 || _gh_rc_22=$?
+  [ "$_gh_rc_22" -eq 7 ] \
+    && _assert "22. fail-safe: Phase 1b gh issue edit cmd && _gh_rc=0 || _gh_rc=\$? survives failure" "ok" \
+    || _assert "22. fail-safe: Phase 1b gh issue edit cmd && _gh_rc=0 || _gh_rc=\$? survives failure" "got rc='$_gh_rc_22'"
+
+  # ── 23. Proof-of-life: selftest is still executing after test 22. ────────
+  _assert "23. selftest reached this line — set -e did not abort at test 22" "ok"
+
+  # ── 24. Mirrors the Phase 1b new-digest-create idiom: identical shape to
+  # test 20, applied to the second `issue_url=$( "$GH" issue create ... )`
+  # call site (new weekly digest creation, as opposed to the Phase 1a
+  # per-commit issue). ───────────────────────────────────────────────────
+  _mock_gh_issue_create_digest_fail() { return 1; }
+  issue_url_24=$(_mock_gh_issue_create_digest_fail) || issue_url_24=""
+  [ -z "$issue_url_24" ] \
+    && _assert "24. fail-safe: Phase 1b new-digest issue_url=\$(...) || issue_url=\"\" survives gh issue create failure" "ok" \
+    || _assert "24. fail-safe: Phase 1b new-digest issue_url=\$(...) || issue_url=\"\" survives gh issue create failure" "got '$issue_url_24'"
+
+  # ── 25. Proof-of-life: selftest is still executing after test 24 — the
+  # summary line below is only ever reached if all three newly-fixed
+  # fail-safes hold. ─────────────────────────────────────────────────────
+  _assert "25. selftest reached this line — set -e did not abort at test 24" "ok"
+
   echo ""
   echo "selftest: ${PASS} PASS, ${FAIL} FAIL"
   [ "$FAIL" -eq 0 ] && exit 0 || exit 1
@@ -768,13 +828,19 @@ while IFS= read -r repo_json; do
               _body_file_1a=$(mktemp /tmp/roborev_handoff_1a_XXXXXX.md)
               printf '## roborev review — commit `%s`\n\n%s\n\n---\n_roborev job: %s_\n' \
                 "$commit_short" "$output" "$job_id" > "$_body_file_1a"
+              # set -e note (llm#930+ fail-safe): `gh issue create` returning
+              # non-zero (auth/network/rate-limit) must not abort the script
+              # here — that would make the `[ -n "$issue_url" ] && {...} ||
+              # {...}` failure-logging branch below unreachable, identical to
+              # the gh_repo_info bug fixed above. `|| issue_url=""` neutralises
+              # the failing exit status so the assignment always succeeds.
               issue_url=$(
                 "$GH" issue create \
                   --repo "$owner_repo" \
                   --title "roborev review for $commit_short" \
                   --label "roborev-handoff" \
                   --body-file "$_body_file_1a" 2>/dev/null
-              )
+              ) || issue_url=""
               rm -f "$_body_file_1a"
               [ -n "$issue_url" ] && {
                 log "1a: created issue $issue_url job=$job_id repo=$repo_name"
@@ -824,8 +890,14 @@ while IFS= read -r repo_json; do
                 # Use --body-file to avoid command-substitution approval prompts (#200)
                 _body_file_1b=$(mktemp /tmp/roborev_handoff_1b_XXXXXX.md)
                 printf '%s' "$new_body" > "$_body_file_1b"
-                "$GH" issue edit "$digest_num" --repo "$owner_repo" --body-file "$_body_file_1b" >/dev/null 2>&1
-                _gh_rc=$?
+                # set -e note (llm#930+ fail-safe): `gh issue edit` returning
+                # non-zero must not abort the script here — a bare command (not
+                # an assignment) triggers set -e BEFORE the next line ever runs,
+                # so capturing $? afterward on its own line is too late. Attach
+                # the &&/|| pair directly to the command so set -e never sees it
+                # fail; the real exit status is still captured in $_gh_rc.
+                "$GH" issue edit "$digest_num" --repo "$owner_repo" --body-file "$_body_file_1b" >/dev/null 2>&1 \
+                  && _gh_rc=0 || _gh_rc=$?
                 rm -f "$_body_file_1b"
                 [ "$_gh_rc" -eq 0 ] && {
                   log "1b: appended to digest #$digest_num job=$job_id repo=$repo_name"
@@ -841,13 +913,17 @@ while IFS= read -r repo_json; do
               # Use --body-file to avoid command-substitution approval prompts (#200)
               _body_file_1b_new=$(mktemp /tmp/roborev_handoff_1bnew_XXXXXX.md)
               printf '%s' "$append_block" > "$_body_file_1b_new"
+              # set -e note (llm#930+ fail-safe): same idiom as the Phase 1a
+              # issue_url assignment above — `|| issue_url=""` neutralises a
+              # failing `gh issue create` so the `[ -n "$issue_url" ] && {...}
+              # || {...}` failure-logging branch below stays reachable.
               issue_url=$(
                 "$GH" issue create \
                   --repo "$owner_repo" \
                   --title "$digest_title" \
                   --label "roborev-digest" \
                   --body-file "$_body_file_1b_new" 2>/dev/null
-              )
+              ) || issue_url=""
               rm -f "$_body_file_1b_new"
               [ -n "$issue_url" ] && {
                 log "1b: created digest $issue_url job=$job_id repo=$repo_name"
