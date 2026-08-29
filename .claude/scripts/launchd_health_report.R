@@ -58,6 +58,9 @@ LEDGER_PATH <- Sys.getenv(
 CLOUD_REPOS_RAW <- Sys.getenv("CLOUD_REPOS", "JohnGavin/llm,JohnGavin/llmtelemetry")
 CLOUD_REPOS     <- trimws(strsplit(CLOUD_REPOS_RAW, ",")[[1]])
 
+# MANUAL: no source (see llm#1090) — rolling report window is a judgement
+# call about how much history a weekly-cadence health report should
+# surface; no machine-readable source possible (llm#793 item 6).
 REPORT_WINDOW_DAYS <- 7L
 
 # ── Section 1: plist inventory ─────────────────────────────────────────────────
