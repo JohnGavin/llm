@@ -552,6 +552,137 @@ check_no_nulls <- function(store = targets::tar_config_get("store"),
   invisible(vig_names)
 }
 
+#' Check built vig_* targets for suspiciously non-varying numeric columns
+#'
+#' Implements Layer 2 of #881 (input-freshness / degenerate-column guard) and
+#' closes the concrete detection gap named by #921 ("Report distributions, not
+#' totals"): the productivity dashboard's `duration_min` column was 99.6% one
+#' constant value for 12 days and nothing caught it, because every number the
+#' dashboard showed was a `sum()` -- and a degenerate (near-constant) column
+#' sums to a total that looks exactly as plausible as a healthy one. Layer 1
+#' (`qa_no_nulls`, above) catches a target that silently returns NULL; this
+#' gate catches the harder case where the target returns non-NULL data whose
+#' values have quietly stopped varying.
+#'
+#' For every built `vig_*` target that is a data frame, checks every numeric
+#' column's "mode share" -- the fraction of non-NA values equal to that
+#' column's single most frequent value. A column is flagged `DEGENERATE` when
+#' mode share is at/above `mode_share_threshold`.
+#'
+#' Per the `checks-must-distinguish-unknown` rule, a column that cannot be
+#' judged is reported as `INDETERMINATE`, never silently folded into "not
+#' degenerate": a check whose output does not vary with the thing it checks is
+#' not a check. A column is `INDETERMINATE` when it has fewer than `min_n`
+#' non-NA observations (including all-NA) -- there isn't enough data to tell a
+#' genuinely constant input from a healthy one that just hasn't varied yet. A
+#' `vig_*` target that built to `NULL` or to a non-data-frame value (a
+#' `ggplot`, a `DT::datatable`, a plain string) has no columns to evaluate and
+#' is skipped outright -- that is `qa_no_nulls`'s concern, or simply out of
+#' scope for a column-level check, not an unresolved verdict of this gate's.
+#'
+#' No allowlist by design, matching `check_no_nulls()`'s posture (#881 Layer
+#' 1): every numeric column of every `vig_*` target is checked, not a
+#' hand-picked subset, so a future column with the same failure mode is
+#' caught without anyone having to remember to add it here. A column with a
+#' legitimate reason to be near-constant (e.g. a feature-flag indicator) can
+#' be named in `skip_columns`.
+#'
+#' @param store targets store to read metadata and target values from.
+#' @param mode_share_threshold Fraction of non-NA values sharing the most
+#'   common value at/above which a column is flagged `DEGENERATE`.
+#' @param min_n Minimum non-NA observations required to render a verdict;
+#'   fewer than this is `INDETERMINATE` rather than "not degenerate".
+#' @param skip_columns Character vector of column names excluded from the
+#'   check across all targets (for columns that are legitimately
+#'   near-constant by design).
+#' @return Invisibly, a tibble of (target, column, status, reason, mode_share,
+#'   n) for every checked column, or `NULL` when there is no store, no built
+#'   `vig_*` targets, or no numeric columns to check. Calls `cli::cli_abort()`
+#'   naming every `DEGENERATE` column; `INDETERMINATE` columns are reported
+#'   loudly but do not fail the gate.
+#' @keywords internal
+check_no_degenerate_columns <- function(store = targets::tar_config_get("store"),
+                                        mode_share_threshold = 0.95,
+                                        min_n = 5L,
+                                        skip_columns = character(0L)) {
+  if (!dir.exists(store)) {
+    cli::cli_alert_info("No targets store at {.path {store}} — skipping degenerate-column gate.")
+    return(invisible(NULL))
+  }
+
+  meta <- targets::tar_meta(store = store)
+  meta <- meta[grepl("^vig_", meta$name) & !is.na(meta$time), ]
+  vig_names <- meta$name
+  if (length(vig_names) == 0L) {
+    cli::cli_alert_info("No built vig_* targets in {.path {store}} — skipping degenerate-column gate.")
+    return(invisible(NULL))
+  }
+
+  results <- purrr::map_dfr(vig_names, function(nm) {
+    val <- targets::tar_read_raw(nm, store = store)
+    if (is.null(val) || !is.data.frame(val)) {
+      # A NULL target is qa_no_nulls's concern; a non-data-frame target
+      # (ggplot, DT::datatable, plain string/list) has no columns to
+      # evaluate. Neither is an unresolved verdict of THIS gate -- there is
+      # nothing here for it to check, so it is skipped, not INDETERMINATE.
+      return(NULL)
+    }
+    numeric_cols <- names(val)[vapply(val, is.numeric, logical(1L))]
+    numeric_cols <- setdiff(numeric_cols, skip_columns)
+    if (length(numeric_cols) == 0L) return(NULL)
+
+    purrr::map_dfr(numeric_cols, function(col) {
+      x <- val[[col]]
+      x_nonna <- x[!is.na(x)]
+      if (length(x_nonna) < min_n) {
+        return(tibble::tibble(
+          target = nm, column = col, status = "INDETERMINATE",
+          reason = sprintf("only %d non-NA value(s), need >= %d", length(x_nonna), min_n),
+          mode_share = NA_real_, n = length(x_nonna)
+        ))
+      }
+      freq <- table(x_nonna)
+      mode_share <- max(freq) / length(x_nonna)
+      status <- if (mode_share >= mode_share_threshold) "DEGENERATE" else "OK"
+      tibble::tibble(
+        target = nm, column = col, status = status, reason = NA_character_,
+        mode_share = as.numeric(mode_share), n = length(x_nonna)
+      )
+    })
+  })
+
+  if (is.null(results) || nrow(results) == 0L) {
+    cli::cli_alert_success("Degenerate-column gate: no numeric vig_* columns to check.")
+    return(invisible(results))
+  }
+
+  indeterminate <- results[results$status == "INDETERMINATE", , drop = FALSE]
+  degenerate    <- results[results$status == "DEGENERATE", , drop = FALSE]
+
+  if (nrow(indeterminate) > 0L) {
+    cli::cli_alert_warning(
+      "Degenerate-column gate: {nrow(indeterminate)} column{?s} could not be evaluated (INDETERMINATE):"
+    )
+    print(indeterminate[, c("target", "column", "reason")])
+  }
+
+  if (nrow(degenerate) > 0L) {
+    cli::cli_alert_danger("Degenerate column(s) detected:")
+    print(degenerate[, c("target", "column", "mode_share", "n")])
+    cli::cli_abort(c(
+      "x" = "{nrow(degenerate)} numeric vig_* column{?s} {?is/are} suspiciously non-varying.",
+      "i" = "{paste(paste0(degenerate$target, '$', degenerate$column, ' (', round(degenerate$mode_share * 100, 1), '% one value, n=', degenerate$n, ')'), collapse = '; ')}",
+      "i" = "A near-constant column can still sum to a plausible-looking total (see llm#921).",
+      "i" = "Check the upstream input for staleness or a broken parser before trusting downstream totals."
+    ))
+  }
+
+  cli::cli_alert_success(
+    "Degenerate-column gate: {sum(results$status == 'OK')} OK, {nrow(indeterminate)} indeterminate, {nrow(degenerate)} degenerate."
+  )
+  invisible(results)
+}
+
 #' Check rendered figure PNGs for blank/near-blank plots (#787)
 #'
 #' `scan_html_for_errors()` catches TEXT failure patterns leaked into HTML
@@ -659,6 +790,12 @@ plan_qa_gates <- function() {
       qa_no_nulls,
       check_no_nulls(),
       packages = c("cli"),
+      cue = targets::tar_cue(mode = "always")
+    ),
+    targets::tar_target(
+      qa_no_degenerate_columns,
+      check_no_degenerate_columns(),
+      packages = c("cli", "purrr", "tibble"),
       cue = targets::tar_cue(mode = "always")
     ),
     targets::tar_target(
