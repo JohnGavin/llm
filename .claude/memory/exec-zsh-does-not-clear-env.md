@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: f2ceb4a5-18a9-47e4-95c0-1bb159694960
-  modified: 2026-08-13T18:23:49.118Z
+  modified: 2026-08-29T10:46:58.657Z
 ---
 
 Deleting `export FOO=…` from `~/.config/secrets.env` (or any rc file) removes it
@@ -37,6 +37,14 @@ tainted one.
   This is the reliable form and works even inside an already-tainted session.
 - A brand-new terminal window/tab started from the launcher (not a child of
   the tainted shell) is clean.
+- **Restarting Claude Code itself is not enough.** Confirmed 2026-08-29: user
+  restarted the Claude Code session for a project inside the same zsh window
+  (rather than closing the window and opening a new one), and the stale
+  `GH_TOKEN` from that shell's ancestry was still inherited — it broke `gh`
+  three separate times in one session (the orchestrator's own `gh api` call
+  and two dispatched subagents, each independently hitting `Bad credentials`
+  and working around it with `env -u GH_TOKEN`). The fix is to kill the
+  terminal window/tab, not just the Claude process running inside it.
 - **Diagnostic order** when a variable "won't go away": check the files, then
   `launchctl getenv NAME` (gui domain), then conclude process-tree
   inheritance. Do not assert "it's gone" from file evidence alone — verify
