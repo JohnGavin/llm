@@ -171,6 +171,32 @@ test_that("dry-run output references llm#491", {
               info = "Issue #491 reference not found in dry-run output")
 })
 
+test_that("dry-run output contains action-required verdict (llm#749 Part B)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+
+  out      <- run_dry_run()
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("QA:n_action_items=", combined),
+              info = "Missing QA:n_action_items marker")
+  # No `^` anchor: `combined` is every stdout/stderr line joined with "\n"
+  # into ONE string, and a preceding line (e.g. an auto-printed icu
+  # LOAD/INSTALL result) can precede SUBJECT -- `^` anchors to the start of
+  # the whole string, not each line, so it would false-negative here.
+  expect_true(grepl("SUBJECT: \\[llm\\] Overnight", combined, fixed = FALSE),
+              info = "Subject line not printed in dry-run output")
+  # Exactly one of the two verdict renderings must appear -- the subject
+  # leads with the verdict (ACTION(n) or all-clear), never raw counts.
+  has_action    <- grepl("ACTION\\(\\d+\\)", combined)
+  has_all_clear <- grepl("all clear", combined, fixed = TRUE)
+  expect_true(has_action || has_all_clear,
+              info = "Subject line does not encode ACTION(n) or all-clear verdict")
+  expect_false(has_action && has_all_clear,
+               info = "Subject line rendered both ACTION and all-clear -- verdict logic is inconsistent")
+})
+
 test_that("script exits non-zero when DB path does not exist", {
   skip_if_not_installed("blastula")
   skip_if_not_installed("duckdb")

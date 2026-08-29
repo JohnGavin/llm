@@ -1530,6 +1530,82 @@ sec4_block <- collapsible_block(
 # ── Assemble email body ────────────────────────────────────────────────────────
 today_str <- format(Sys.Date(), "%Y-%m-%d")
 
+# ── Action-required verdict (llm#749 Part B, bounded slice) ──────────────────
+# llm#749 Part B asks for a full action-first redesign (subject verdict, a
+# lead digest, a false-positive cron classifier, and collapsing 5 sections
+# into one housekeeping strip). Only the first two are added here:
+#   1. Subject line encodes the verdict (ACTION(n) vs all-clear), not raw
+#      counts.
+#   2. A lead "Action Required" block, rendered above Section 1, computed
+#      from the three signals Part B names explicitly: real cron failures,
+#      STALE/DEAD source tables, and findings at/above a severity threshold
+#      (critical + major here).
+# The cron false-positive classifier (Part B item 3) already exists via
+# interpret_cron_row()'s ok/failed/unknown buckets in Section 3e above, so
+# `n_fail` below already excludes exit-code false positives (e.g.
+# metrics-etl, weekly-rollup) — it is not a new query. Collapsing the 5
+# housekeeping sections (item 4) and the full section reorder (item 5) are a
+# materially larger change than this bounded dispatch and are left as a
+# follow-up; see the PR description.
+action_items <- character(0)
+action_slugs <- character(0)
+
+if (n_critical > 0L) {
+  action_items <- c(action_items, sprintf("%d critical finding(s) in the last 24h", n_critical))
+  action_slugs <- c(action_slugs, "critical-findings")
+}
+if (n_major > 0L) {
+  action_items <- c(action_items, sprintf("%d major finding(s) in the last 24h", n_major))
+  action_slugs <- c(action_slugs, "major-findings")
+}
+
+# n_fail is assigned above only inside Section 3e's `nrow(cron_health) > 0L`
+# branch — guard with exists() rather than assuming it is always set (e.g. no
+# launchd_health_events rows yet).
+.cron_n_fail <- if (exists("n_fail", inherits = FALSE)) n_fail else 0L
+if (.cron_n_fail > 0L) {
+  action_items <- c(action_items, sprintf("%d cron job(s) failed", .cron_n_fail))
+  action_slugs <- c(action_slugs, "cron-failed")
+}
+
+if (n_stale_tables > 0L) {
+  action_items <- c(action_items, sprintf("%d source table(s) stale/dead", n_stale_tables))
+  action_slugs <- c(action_slugs, "source-stale")
+}
+
+n_action_items <- length(action_items)
+
+action_digest_html <- if (n_action_items == 0L) {
+  sprintf(
+    '<div style="background-color:%s;padding:14px 20px;margin-bottom:12px;
+border-radius:6px;border-left:4px solid %s;">
+<p style="color:%s;font-size:%s;margin:0;font-weight:bold;">
+  &#10003; All clear &mdash; nothing needs action.
+</p>
+</div>',
+    DARK_CARD, ACCENT_GREEN, ACCENT_GREEN, EMAIL_FONT_SUBTITLE
+  )
+} else {
+  items_html <- paste(sprintf('<li style="margin:2px 0;">%s</li>', action_items), collapse = "\n")
+  sprintf(
+    '<div style="background-color:%s;padding:14px 20px;margin-bottom:12px;
+border-radius:6px;border-left:4px solid #ff5252;">
+<p style="color:#ff5252;font-size:%s;margin:0 0 6px 0;font-weight:bold;">
+  &#9888; Action required (%d)
+</p>
+<ul style="color:%s;font-size:%s;margin:0;padding-left:20px;">%s</ul>
+</div>',
+    DARK_CARD, EMAIL_FONT_SUBTITLE, n_action_items, DARK_TEXT, EMAIL_FONT_BODY, items_html
+  )
+}
+
+email_subject <- if (n_action_items == 0L) {
+  sprintf("[llm] Overnight ✓ all clear — %s", today_str)
+} else {
+  sprintf("[llm] Overnight ⚠ ACTION(%d) · %s — %s",
+          n_action_items, paste(action_slugs, collapse = ", "), today_str)
+}
+
 header_html <- sprintf(
   '<div style="background-color:%s;padding:16px 20px;margin-bottom:12px;
 border-radius:6px;">
@@ -1571,8 +1647,9 @@ qa_block <- sprintf(
   '<!-- QA:overnight_self_review_email=true -->
 <!-- QA:n_new_findings_24h=%d -->
 <!-- QA:n_stale_tables=%d -->
-<!-- QA:overnight_email_date=%s -->',
-  n_new_findings, n_stale_tables, today_str
+<!-- QA:overnight_email_date=%s -->
+<!-- QA:n_action_items=%d -->',
+  n_new_findings, n_stale_tables, today_str, n_action_items
 )
 
 # ── Section: oversized-config surface (audit-teeth #754, llm#749) ──────────────
@@ -2404,6 +2481,7 @@ email_body <- paste0(
   sprintf('<div style="background-color:%s;color:%s;font-family:Arial,sans-serif;
 padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   header_html,
+  action_digest_html, "\n",
   sec1_block, "\n",
   sec2_block, "\n",
   sec_staleness_block, "\n",
@@ -2425,6 +2503,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
 
 # ── Dry run: print and exit ────────────────────────────────────────────────────
 if (dry_run) {
+  cat(sprintf("SUBJECT: %s\n\n", email_subject))
   cat(email_body, "\n")
   quit(status = 0L)
 }
@@ -2448,8 +2527,7 @@ blastula::smtp_send(
   email      = email_obj,
   to         = report_recip,
   from       = gmail_user,
-  subject    = sprintf("[llm] Overnight self-review: %s · %d new findings · %d stale tables",
-                       today_str, n_new_findings, n_stale_tables),
+  subject    = email_subject,
   credentials = smtp_creds
 )
 
