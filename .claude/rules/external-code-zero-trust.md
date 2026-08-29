@@ -125,7 +125,7 @@ further:
 | Layer | Description | Status |
 |---|---|---|
 | 1 | Rule file (this document) | Shipped in this PR |
-| 2 | PreToolUse:WebFetch quarantine hook | Follow-up PR |
+| 2 | PreToolUse:WebFetch quarantine hook | Shipped — `external_content_quarantine.sh` wired into `.claude/settings.json` alongside `tool_input_probe.sh` on the `WebFetch` matcher (2026-08-29) |
 | 3 | PreToolUse:Edit\|Write content-similarity guard | Follow-up PR |
 | 4 | PostToolUse:Bash gh-comment provenance logger | Shipped in this PR |
 | 5 | PreToolUse:Bash gh-pr-merge author guard | Follow-up PR |
