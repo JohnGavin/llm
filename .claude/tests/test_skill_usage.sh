@@ -182,6 +182,89 @@ FRESHNESS_RUN_TS=$(dq "$TESTDB" "SELECT COUNT(*) FROM etl_freshness WHERE source
 assert "etl_freshness: skill_usage last_etl_run_ts is non-NULL" "$FRESHNESS_RUN_TS" "1"
 
 echo ""
+echo "=== Test group 6b: hook_agg CTE (skill_usage_etl.R) joins hook_events into config_staleness (llm#829, roborev #9744) ==="
+
+# llm#829: hooks entered config_inventory via a filesystem scan but had no
+# firing feed to join against, so every hook was structurally guaranteed
+# 'never_used'. The hook_agg CTE (skill_usage_etl.R lines ~282-292) fixes
+# this by aggregating hook_events into the same 'usage' UNION that
+# skill_agg/agent_agg/config_agg already feed. That fix shipped with no
+# automated test (manual verification only, against a live DB) — roborev
+# finding #9744. This test extracts the REAL STALENESS_VIEW_DDL string from
+# the ETL source (the same dynamic-extraction pattern test group 8b below
+# uses for hash_args()) and runs it against a fully hermetic fixture DB, so
+# it exercises the actual join, not a re-typed copy of it.
+ETL="$WT/.claude/scripts/skill_usage_etl.R"
+DDL_FILE=$(mktemp)
+sed -n '/^STALENESS_VIEW_DDL <- "$/,/^"$/p' "$ETL" | sed '1d;$d' > "$DDL_FILE"
+
+if [ -s "$DDL_FILE" ]; then
+  HOOKDIR=$(mktemp -d)
+  HOOKDB="$HOOKDIR/hook_agg_test.duckdb"
+
+  # Seed the four tables config_staleness UNIONs together, plus a hook in
+  # config_inventory (mimicking build_config_inventory's filesystem scan)
+  # and two hook_events rows for it in two distinct sessions.
+  dq "$HOOKDB" "
+    CREATE TABLE skill_usage (session_id VARCHAR, session_date DATE, project VARCHAR, skill_name VARCHAR, invocations INTEGER, etl_run_at TIMESTAMP);
+    CREATE TABLE agent_usage (session_id VARCHAR, session_date DATE, project VARCHAR, agent_type VARCHAR, model VARCHAR, has_isolation BOOLEAN, dispatches INTEGER, etl_run_at TIMESTAMP);
+    CREATE TABLE config_access (session_id VARCHAR, session_date DATE, project VARCHAR, file_path VARCHAR, access_type VARCHAR, accesses INTEGER, etl_run_at TIMESTAMP);
+    CREATE TABLE config_inventory (item_type VARCHAR, name VARCHAR, file_path VARCHAR, file_size_bytes INTEGER, last_modified DATE, has_paths_scope BOOLEAN, is_mandatory BOOLEAN, etl_run_at TIMESTAMP);
+    CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
+
+    INSERT INTO config_inventory VALUES
+      ('hook', 'file_protection', '.claude/hooks/file_protection.sh', 100, CURRENT_DATE, NULL, FALSE, current_timestamp);
+
+    INSERT INTO hook_events (id, session_id, hook_name, event_type, fired_at, duration_ms, output_preview) VALUES
+      (1, 'test-session-hook',  'file_protection', 'PreToolUse', CURRENT_DATE - 1, NULL, NULL),
+      (2, 'test-session-hook2', 'file_protection', 'PreToolUse', CURRENT_DATE - 5, NULL, NULL);
+  " > /dev/null
+
+  duckdb -init /dev/null "$HOOKDB" -c ".read $DDL_FILE" > /dev/null 2>&1
+
+  HOOK_STATUS=$(dq "$HOOKDB" "SELECT staleness_status FROM config_staleness WHERE item_type='hook' AND name='file_protection';")
+  HOOK_SESSIONS=$(dq "$HOOKDB" "SELECT session_count FROM config_staleness WHERE item_type='hook' AND name='file_protection';")
+  HOOK_TOTAL=$(dq "$HOOKDB" "SELECT total_invocations FROM config_staleness WHERE item_type='hook' AND name='file_protection';")
+
+  assert "hook_agg: seeded hook is NOT never_used (was structurally guaranteed never_used pre-#829)" \
+    "$([ "$HOOK_STATUS" != "never_used" ] && echo yes || echo no)" "yes"
+  assert "hook_agg: session_count reflects 2 distinct firing sessions" "$HOOK_SESSIONS" "2"
+  assert "hook_agg: total_invocations counts both hook_events rows" "$HOOK_TOTAL" "2"
+
+  # Negative control: a hook_events row whose hook_name does NOT match any
+  # config_inventory.name must NOT join -- proves the assertions above are
+  # actually exercising the join predicate (lower(i.name) = lower(u.name)),
+  # not just "a row exists somewhere". Per feedback_fixtures-hide-boundary-
+  # drift: a fixture that can only pass proves nothing.
+  MUTDB="$HOOKDIR/hook_agg_namemismatch.duckdb"
+  dq "$MUTDB" "
+    CREATE TABLE skill_usage (session_id VARCHAR, session_date DATE, project VARCHAR, skill_name VARCHAR, invocations INTEGER, etl_run_at TIMESTAMP);
+    CREATE TABLE agent_usage (session_id VARCHAR, session_date DATE, project VARCHAR, agent_type VARCHAR, model VARCHAR, has_isolation BOOLEAN, dispatches INTEGER, etl_run_at TIMESTAMP);
+    CREATE TABLE config_access (session_id VARCHAR, session_date DATE, project VARCHAR, file_path VARCHAR, access_type VARCHAR, accesses INTEGER, etl_run_at TIMESTAMP);
+    CREATE TABLE config_inventory (item_type VARCHAR, name VARCHAR, file_path VARCHAR, file_size_bytes INTEGER, last_modified DATE, has_paths_scope BOOLEAN, is_mandatory BOOLEAN, etl_run_at TIMESTAMP);
+    CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
+
+    INSERT INTO config_inventory VALUES
+      ('hook', 'file_protection', '.claude/hooks/file_protection.sh', 100, CURRENT_DATE, NULL, FALSE, current_timestamp);
+
+    INSERT INTO hook_events (id, session_id, hook_name, event_type, fired_at, duration_ms, output_preview) VALUES
+      (1, 'test-session-hook', 'file_protection_WRONG_NAME', 'PreToolUse', CURRENT_DATE - 1, NULL, NULL);
+  " > /dev/null
+
+  duckdb -init /dev/null "$MUTDB" -c ".read $DDL_FILE" > /dev/null 2>&1
+
+  MISMATCH_STATUS=$(dq "$MUTDB" "SELECT staleness_status FROM config_staleness WHERE item_type='hook' AND name='file_protection';")
+  assert "hook_agg: hook_events row with mismatched hook_name does NOT join (stays never_used)" \
+    "$MISMATCH_STATUS" "never_used"
+
+  rm -rf "$HOOKDIR"
+else
+  echo "  FAIL: could not extract STALENESS_VIEW_DDL from $ETL (source shape changed?)"
+  FAIL=$((FAIL + 1))
+fi
+rm -f "$DDL_FILE"
+
+echo ""
 echo "=== Test group 7: backfill script (R) — skip gracefully if R env unavailable ==="
 
 if command -v Rscript >/dev/null 2>&1 && Rscript -e 'quit(status = if (requireNamespace("duckdb", quietly=TRUE) && requireNamespace("jsonlite", quietly=TRUE)) 0L else 1L)' >/dev/null 2>&1; then
