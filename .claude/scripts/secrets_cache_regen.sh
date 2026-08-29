@@ -16,10 +16,13 @@
 #               invokes the real `bws` binary.
 #
 # Refuses to install if: the fetch failed or is empty; the fetch has fewer
-# keys than the current cache (a truncated fetch must never silently
-# shrink the cache); any line is malformed; or any line appears to contain
-# two NAME= assignments glued together (the exact corruption previously
-# caused by a missing trailing newline on an append).
+# keys than the current cache and --allow-removals was not given (a
+# truncated fetch must never silently shrink the cache; --allow-removals
+# is for a deliberate deletion, and shows exactly which keys before
+# proceeding -- see the removal guard in _main, llm#1024/llm#945); any line
+# is malformed; or any line appears to contain two NAME= assignments glued
+# together (the exact corruption previously caused by a missing trailing
+# newline on an append).
 #
 # The installed cache is intentionally plaintext (mode 600): it is not the
 # system of record, it is fully regenerable from BWS at any time. Report
@@ -114,8 +117,16 @@ _validate_fetch() {
   new_count="$(_count_keys "$candidate")"
   old_count="$(_count_keys "$current")"
 
-  if [ "$new_count" -lt "$old_count" ]; then
-    echo "REFUSE: fetched ${new_count} keys, fewer than current cache's ${old_count} — refusing to shrink the cache"
+  # A lower count always means at least one name was removed (each NAME=
+  # line is a unique key), so this is strictly implied by -- and weaker
+  # than -- the named removal-guard in _main (llm#1024): that one shows
+  # exactly which keys would be deleted and gates on --allow-removals; this
+  # one only sees a bare number and had no override, so it refused a
+  # deliberate, --allow-removals'd deletion before _main's guard ever ran
+  # (llm#945). Deferring to that guard here, rather than duplicating its
+  # check with a cruder, override-less one.
+  if [ "$new_count" -lt "$old_count" ] && [ "$ALLOW_REMOVALS" != "1" ]; then
+    echo "REFUSE: fetched ${new_count} keys, fewer than current cache's ${old_count} -- refusing to shrink the cache (re-run with --allow-removals to see exactly which keys and confirm)"
     return 1
   fi
 
@@ -279,6 +290,25 @@ EOF
     ;;
   esac
   _t "fewer keys exit code" "1" "$rc1"
+
+  # Case: mock-BWS returns FEWER keys, but ALLOW_REMOVALS=1 -> proceeds
+  # (llm#945: this was the missing wiring -- the blunt count check above
+  # had no override and refused before _main's named removal-guard, which
+  # DOES gate on --allow-removals, ever got a chance to run).
+  local out1b rc1b
+  out1b="$(ALLOW_REMOVALS=1 _validate_fetch "$fewer" "$current" 2>&1)"
+  rc1b=$?
+  case "$out1b" in
+  *"OK"*)
+    pass=$((pass + 1))
+    echo "  PASS [fewer keys + ALLOW_REMOVALS=1 -> proceeds]"
+    ;;
+  *)
+    fail=$((fail + 1))
+    echo "  FAIL [fewer keys + ALLOW_REMOVALS=1 -> proceeds]: $out1b"
+    ;;
+  esac
+  _t "fewer keys + ALLOW_REMOVALS=1 exit code" "0" "$rc1b"
 
   # Case: mock-BWS returns a line with two assignments glued -> refused
   local glued="$tmpdir/glued.env"
