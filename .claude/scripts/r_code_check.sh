@@ -88,6 +88,33 @@ else
   echo "No hardcoded paths found."
 fi
 
+# ─── Domain logic outside R/ check (domain-logic-in-package rule) ──────────
+# group_by()+summarise() outside R/ is the signature of aggregation logic
+# written inline in a script/dashboard instead of extracted to R/, where a
+# second consumer could find and reuse it. See llm#1063.
+echo ""
+echo "=== Domain Logic Outside R/ Check ==="
+DLP_ROOT="$TARGET_DIR"
+while [ "$DLP_ROOT" != "/" ] && [ ! -f "$DLP_ROOT/DESCRIPTION" ] && [ ! -d "$DLP_ROOT/.git" ]; do
+  DLP_ROOT=$(dirname "$DLP_ROOT")
+done
+dlp_hits=""
+if [ -d "$DLP_ROOT" ]; then
+  dlp_hits=$(grep -rl "group_by(" "$DLP_ROOT" \
+    --include='*.qmd' --include='*.R' --include='*.r' 2>/dev/null \
+    | grep -v "^$DLP_ROOT/R/" \
+    | while read -r f; do grep -q "summari[sz]e(" "$f" && echo "$f"; done || true)
+fi
+if [ -n "$dlp_hits" ]; then
+  n_dlp=$(echo "$dlp_hits" | wc -l | tr -d ' ')
+  echo "WARNING: $n_dlp file(s) with group_by()+summarise() outside R/ — likely domain logic that should be an exported, tested function instead:"
+  echo "$dlp_hits"
+  echo "See ~/docs_gh/llm/.claude/rules/domain-logic-in-package.md"
+  n_warning=$((n_warning + n_dlp))
+else
+  echo "No aggregation logic found outside R/."
+fi
+
 # jarl R idiom linter (separate tool, different rule set from ast-grep)
 # LAPTOP-LOCAL ONLY: see llm#99. Manual install at /usr/local/bin/jarl.
 # Skipped silently inside CI runners (no /usr/local/bin/jarl) — that is by design
