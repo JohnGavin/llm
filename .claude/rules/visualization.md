@@ -101,8 +101,32 @@ never proven via a captured console error).
 
 **NEVER hardcode numbers in prose or captions.** Use inline R or `paste0()`.
 
+## Variable Labels Drive Titles (MANDATORY where a label exists)
+
+Set a variable's description ONCE, as its `label` attribute
+(`labelled::var_label(x) <- "..."`), and let it flow to every downstream
+surface instead of re-typing the same text into `labs()`, a `table1`
+formula, or a `gtsummary::tbl_summary()` header:
+
+- **ggplot2 (4.0.0+)** auto-derives an axis/legend title from a variable's
+  `label` attribute when `labs()` doesn't set one explicitly.
+- **table1** and **gtsummary** both consume the same attribute for row/column
+  headers.
+
+If a `label` attribute is already set on a column, do NOT also hardcode the
+same text in an explicit `labs(x = "...")` call — that reintroduces exactly
+the duplication this convention removes. Full worked example (ggplot2 axis
+title + table1/gtsummary header from one `var_label()` call, plus the
+attribute-preservation caveat) is in the `visualization-detailed` skill.
+
+Cross-reference: the [`data-glossary-and-entity-resolution`](data-glossary-and-entity-resolution.md)
+rule documents how the SAME `label`/`labels` attributes double as the
+project's variable glossary, so labelling a column once serves both the
+glossary and every plot/table it appears in (JohnGavin/llm#730).
+
 ## Related
 
 - `accessibility` rule — contrast, alt text
-- `visualization-detailed` skill — full caption spec, plotly, Mermaid
+- `visualization-detailed` skill — full caption spec, plotly, Mermaid, variable-label worked example
 - `mermaid-click-anchors` — every clickable node URL into project source must include `#L<n>`
+- `data-glossary-and-entity-resolution` rule — `label`/`labels` attributes as the single source for both the data glossary and plot/table titles (JohnGavin/llm#729, JohnGavin/llm#730)

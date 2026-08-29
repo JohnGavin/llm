@@ -272,6 +272,94 @@ tar_read(data_trends) |> DT::datatable(caption = "Raw data")
 paste0("Average cost was ", dollar(mean(data$cost)))
 ```
 
+## Part 5: Variable Labels Drive Titles (ggplot2 / table1 / gtsummary)
+
+R has a long-standing (informal, `haven`/`labelled`-ecosystem) convention of
+storing a natural-language description of a variable in its **`label`
+attribute**. Set it once and let ggplot2, `table1`, and `gtsummary` all
+consume it — instead of typing the same description into `labs()`, a
+`table1` formula, and a `gtsummary` header separately, which is how the
+three surfaces drift out of sync with each other.
+
+### ggplot2 4.0.0+ auto-titles from the `label` attribute (VERIFIED)
+
+**ggplot2 4.0.0** ("An attempt is made to use a variable's label attribute
+as default label", per its `NEWS.md`) auto-derives an axis/legend title from
+a variable's `label` attribute when `labs()` doesn't set one explicitly.
+This project's `default.nix` currently pins **ggplot2 4.0.1**, so the
+behaviour below is available as-is — no version bump needed.
+
+```r
+library(ggplot2)
+
+df <- data.frame(x = 1:5, y = c(2, 4, 3, 5, 6))
+attr(df$x, "label") <- "Days since treatment start"
+attr(df$y, "label") <- "Tumour volume (mm^3)"
+
+p <- ggplot(df, aes(x, y)) + geom_point()
+get_labs(p)$x
+#> [1] "Days since treatment start"
+get_labs(p)$y
+#> [1] "Tumour volume (mm^3)"
+```
+
+Verified in this project's nix shell: `get_labs(p)$x`/`$y` return exactly the
+two label strings set via `attr()`, with no explicit `labs()` call. The same
+mechanism works whether the `label` attribute was set by hand (as above) or
+by `labelled::var_label(x) <- "..."` — both write to the identical `label`
+attribute; ggplot2 does not care which one set it.
+
+**Don't duplicate the text.** Once a column carries a `label` attribute, an
+explicit `labs(x = "Days since treatment start")` on the same plot is
+redundant — remove it and let the attribute drive the title, so a future
+change to the label only has to happen in one place.
+
+### table1 and gtsummary consume the same attribute
+
+> The two examples below use the documented public API of `table1` and
+> `gtsummary` (both long-stable, widely-used packages). Neither package is
+> installed in this project's current nix shell (`default.R` would need
+> `table1`/`gtsummary` added), so — unlike the ggplot2 example above — these
+> are **not independently verified in this environment**. They are shown
+> for the documented, standard usage pattern; verify them once the packages
+> are added to `default.R`.
+
+`table1` uses its own `label<-()` generic:
+
+```r
+library(table1)
+
+label(df$x) <- "Days since treatment start"
+table1(~ x, data = df)   # row header reads "Days since treatment start"
+```
+
+`gtsummary::tbl_summary()` reads the same `label` attribute automatically
+for its row headers, falling back to the raw column name only when no label
+is set:
+
+```r
+library(gtsummary)
+
+df |> gtsummary::tbl_summary()   # uses attr(df$x, "label") for the row header
+```
+
+### Value labels flow through to factor levels, then to legends/facets
+
+For a **categorical** variable, the payoff compounds: `labelled::val_labels()`
+(or `haven::labelled()`) attaches the code→meaning map once, and converting
+to a factor (`labelled::to_factor()` / `haven::as_factor()`) turns that map
+into the factor's `levels` — which then becomes every legend entry and
+facet label ggplot2 draws, with no separate re-typing of "1 = low, 2 =
+medium, 3 = high" anywhere in the plotting code. The full round-trip
+example, plus the **attribute-preservation gotcha** (arithmetic inside
+`dplyr::mutate()` silently drops both the `label` and the labelled class —
+verified in the companion doc) live in the
+[`data-glossary-and-entity-resolution`](../../rules/data-glossary-and-entity-resolution.md)
+rule (JohnGavin/llm#730). Check any labelled column survived a
+transformation BEFORE it reaches a plot or table — a silently-dropped label
+doesn't error, it just falls back to the bare column name, which is easy to
+miss in review.
+
 ## Checklist
 
 - [ ] Caption has all 7 items, 3+ sentences
@@ -279,9 +367,13 @@ paste0("Average cost was ", dollar(mean(data$cost)))
 - [ ] Mermaid uses CDN (not `{mermaid}` chunks)
 - [ ] Diagrams have captions with node meanings
 - [ ] All numbers dynamic (no hardcoding)
+- [ ] Variable `label` attribute set once, not re-typed in `labs()`/table headers
 
 ## Related
 
 - `accessibility` rule — contrast, alt text
 - `quarto-vignettes` rule — vignette structure
 - `visualization` rule — Core visualization standards; Plotly Dark Theming section cross-references this skill
+- `data-glossary-and-entity-resolution` rule — `label`/`labels` attributes as
+  the single source for the data glossary AND plot/table titles
+  (JohnGavin/llm#729, JohnGavin/llm#730)
