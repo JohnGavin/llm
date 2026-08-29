@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-job-reaper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-job-reaper</string>
+    </array>
+    <!-- JohnGavin/llm#984: sweeps ~/.roborev/reviews.db review_jobs rows stuck
+         status='running' with no worker left to finish them (observed: 10h12m
+         and 6h04m old with zero matching agent process). Deployed dry-run
+         only (no --apply in the wrapper) -- see the wrapper's own comment for
+         why enabling real reaping is a separate, human decision. StartInterval
+         matches roborev-failure-alert's 30-minute cadence (both are lightweight
+         read-mostly roborev health checks). -->
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <!-- ~/.local/bin/ MUST precede /usr/local/bin/ so the Phase-1.6 roborev
+         primary shim (#386) intercepts roborev invocations, matching every
+         other roborev launchd job in this directory. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_job_reaper.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_job_reaper.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
