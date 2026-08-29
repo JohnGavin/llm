@@ -10,7 +10,7 @@ Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-r
 | **Bash** | `bash-safety` |
 | **Data** | `data-in-packages`, `data-validation-timeseries`, `credential-management`, `data-glossary-and-entity-resolution` |
 | **Stats** | `statistical-reporting`, `suppress-warnings-antipattern`, `survival-reporting`, `na-propagation-rolling-stats` |
-| **Viz** | `visualization`, `dynamic-prose-values`, `uniform-typography`, `dashboard-table-styling`, `dashboard-filter-placement`, `hover-popup-standard`, `mermaid-click-anchors`, `mermaid-dashboard-pattern` |
+| **Viz** | `visualization`, `dynamic-prose-values`, `uniform-typography`, `dashboard-table-styling`, `dashboard-filter-placement`, `cards-are-tabsets`, `hover-popup-standard`, `mermaid-click-anchors`, `mermaid-dashboard-pattern` |
 | **Quarto** | `quarto-vignettes`, `acronym-expansion`, `vignette-build-info-block`, `narrative-evidence-block`, `narrative-colour-persistence` |
 | **Shiny** | `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking` |
 | **Pipeline** | `qa-targets-pipeline`, `ctx-yaml-cache`, `cron-auto-pull-discipline`, `housekeeping-framework`, `portable-build-artifacts`, `unified-observability-schema` |
