@@ -369,6 +369,20 @@ ui <- bslib::page_sidebar(
     bslib::nav_panel(
       "Time",
 
+      # llm#921: "Daily session time by project" below is a SUM per day --
+      # a column stuck near one constant value sums to a total that looks
+      # just as plausible as a healthy one (the duration_min incident: 99.6%
+      # one value for 12 days, invisible in every totals-only view). This
+      # table reports the underlying per-session distribution so a
+      # near-constant run is visible on the page, not just in the QA gate.
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::h6("Session duration distribution (last 10 days)", style = "color:#aaa; margin-top:8px;"),
+          shiny::uiOutput("duration_distribution_metrics")
+        )
+      ),
+
       shiny::fluidRow(
         shiny::column(
           12,
@@ -519,13 +533,40 @@ server <- function(input, output, session) {
     )$total
   })
 
+  # llm#921: a total ("Cost this week") looks equally plausible whether the
+  # underlying daily costs vary normally or are stuck near one value -- a
+  # sum can't distinguish those. Pull the per-day figures behind that total
+  # and report median/p95 alongside it, not instead of it, so a degenerate
+  # (near-constant) run of days is visible without opening the Costs tab.
+  daily_cost_this_week <- shiny::reactive({
+    shiny::invalidateLater(30000, session)
+    input$refresh
+    query_db(
+      "SELECT total_cost FROM costs WHERE date >= CAST(current_date - INTERVAL '6 days' AS DATE)",
+      data.frame(total_cost = numeric(0))
+    )$total_cost
+  })
+
   output$overview_metrics <- shiny::renderUI({
+    daily_costs <- daily_cost_this_week()
+    med_cost <- if (length(daily_costs) > 0) stats::median(daily_costs, na.rm = TRUE) else NA_real_
+    p95_cost <- if (length(daily_costs) > 0) {
+      stats::quantile(daily_costs, 0.95, na.rm = TRUE, names = FALSE)
+    } else {
+      NA_real_
+    }
     metrics <- data.frame(
-      metric = c("Sessions today", "Cost this week"),
+      metric = c(
+        "Sessions today", "Cost this week (total)",
+        "Median daily cost (7d)", "P95 daily cost (7d)"
+      ),
       value  = c(
         as.character(sessions_today()),
-        sprintf("$%.2f", cost_this_week())
-      )
+        sprintf("$%.2f", cost_this_week()),
+        if (is.na(med_cost)) "n/a" else sprintf("$%.2f", med_cost),
+        if (is.na(p95_cost)) "n/a" else sprintf("$%.2f", p95_cost)
+      ),
+      stringsAsFactors = FALSE
     )
     metric_table_ui(metrics)
   })
@@ -914,6 +955,73 @@ server <- function(input, output, session) {
       ),
       data.frame(n_excluded = 0L)
     )
+  })
+
+  # Raw (unaggregated) per-session durations feeding the chart above, used
+  # to compute distribution metrics -- llm#921. Same exclusions as
+  # daily_time_proj_data (llm#803-reaper-imputed rows are estimates, not
+  # observed durations, and would themselves look like a degenerate run of
+  # identical values if included).
+  duration_min_raw_data <- shiny::reactive({
+    shiny::invalidateLater(30000, session)
+    input$refresh
+    cutoff <- as.character(Sys.Date() - 10)
+    query_db(
+      paste0(
+        "SELECT duration_min FROM sessions ",
+        "WHERE CAST(started_at AS DATE) >= '", cutoff, "'",
+        " AND duration_min IS NOT NULL",
+        " AND (summary IS NULL OR summary NOT LIKE '%llm#803 reaper%')",
+        project_clause()
+      ),
+      data.frame(duration_min = numeric(0))
+    )$duration_min
+  })
+
+  output$duration_distribution_metrics <- shiny::renderUI({
+    vals <- duration_min_raw_data()
+    if (length(vals) == 0) {
+      return(shiny::p(
+        style = "color:#aaa; font-size:0.85rem;",
+        "No session duration data for last 10 days."
+      ))
+    }
+
+    med <- stats::median(vals, na.rm = TRUE)
+    p95 <- stats::quantile(vals, 0.95, na.rm = TRUE, names = FALSE)
+    avg <- mean(vals, na.rm = TRUE)
+    sdv <- stats::sd(vals, na.rm = TRUE)
+
+    # Mode-share: fraction of sessions sharing the single most common
+    # duration -- the direct signal the duration_min incident needed. A
+    # healthy distribution has a low mode share; the incident's column sat
+    # at 99.6%.
+    freq <- table(vals)
+    mode_share <- if (length(freq) > 0) max(freq) / length(vals) else NA_real_
+
+    metrics <- data.frame(
+      metric = c(
+        "Median session duration", "P95 session duration",
+        "Mean session duration", "SD session duration",
+        "Share at most-common value"
+      ),
+      value = c(
+        sprintf("%.1f min", med),
+        sprintf("%.1f min", p95),
+        sprintf("%.1f min", avg),
+        if (is.na(sdv)) "n/a" else sprintf("%.1f min", sdv),
+        if (is.na(mode_share)) "n/a" else paste0(round(mode_share * 100, 1), "%")
+      ),
+      stringsAsFactors = FALSE
+    )
+    # Flag the mode-share row when it crosses the same 95% threshold the
+    # qa_no_degenerate_columns pipeline gate uses (plan_qa_gates.R).
+    flagged <- !is.na(mode_share) && mode_share >= 0.95
+    value_colors <- ifelse(
+      metrics$metric == "Share at most-common value" & flagged,
+      "#e74c3c", "#fff"
+    )
+    metric_table_ui(metrics, value_colors)
   })
 
   output$duration_quality_note <- shiny::renderUI({
