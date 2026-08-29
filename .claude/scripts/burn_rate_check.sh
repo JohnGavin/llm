@@ -66,7 +66,15 @@ _register_burn_freshness() {
 # Consecutive-failure canary (llm#597). A dead guard must get LOUDER, not
 # quieter: after 2 consecutive fetch failures the output stops being a quiet
 # burn:err and names the log to read.
+#
+# llm#420: a bare "burn:err" collapsed every failure cause (ccusage missing,
+# network timeout, malformed JSON, offline-mode empty response) into one
+# indistinguishable string, so the reported alarm couldn't be triaged without
+# manually re-running the fetch by hand. fail_and_exit() now takes a reason
+# code and threads it into every output mode; classification happens at each
+# call site via _classify_fetch_failure() below.
 fail_and_exit() {
+  local reason="${1:-fetch}"
   local n=0
   [ -f "$FAIL_COUNT_FILE" ] && n=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
   n=$((n + 1))
@@ -75,13 +83,42 @@ fail_and_exit() {
   if [ "$MODE" = "--percent-only" ]; then
     echo "0"  # Always numeric for scripts
   elif [ "$n" -ge 2 ]; then
-    echo "BURN GUARD DEAD: usage fetch failed ${n} consecutive runs — burn-rate escalation is NOT protecting you. See $ERR_LOG (llm#597)"
+    echo "BURN GUARD DEAD (reason=${reason}): usage fetch failed ${n} consecutive runs — burn-rate escalation is NOT protecting you. See $ERR_LOG (llm#597)"
   elif [ "$MODE" = "compact" ]; then
-    echo "burn:err"
+    echo "burn:err:${reason}"
   else
-    echo "Burn rate: could not fetch usage (see $ERR_LOG)"
+    echo "Burn rate: could not fetch usage — reason=${reason} (see $ERR_LOG)"
   fi
   exit 0
+}
+
+# _classify_fetch_failure <exit_code> <stderr_file>
+# Distinguishes WHY the ccusage fetch failed (llm#420) so the alarm names a
+# cause instead of a single opaque "err":
+#   miss  — ccusage/npx not resolvable at all (no npx AND no node on PATH,
+#           or stderr says so)
+#   tmo   — the bounded call hit its timeout (GNU `timeout` exits 124; the
+#           perl-alarm fallback's SIGALRM kill shows up as 142 = 128+SIGALRM)
+#   fetch — ran, exited non-zero, for some other reason (network error,
+#           non-zero from ccusage itself, etc.) — the generic bucket
+_classify_fetch_failure() {
+  local exit_code="${1:-1}" err_file="${2:-/dev/null}"
+  if ! command -v npx >/dev/null 2>&1 && ! command -v node >/dev/null 2>&1; then
+    echo "miss"
+    return
+  fi
+  case "$exit_code" in
+    124|142) echo "tmo"; return ;;
+  esac
+  if grep -qiE 'command not found|no such file or directory|enoent' "$err_file" 2>/dev/null; then
+    echo "miss"
+    return
+  fi
+  if grep -qiE 'timed out|timeout' "$err_file" 2>/dev/null; then
+    echo "tmo"
+    return
+  fi
+  echo "fetch"
 }
 
 # Week-start day name → ISO weekday number (date +%u: 1=Mon .. 7=Sun)
@@ -150,12 +187,38 @@ _ensure_ccusage_installed() {
 CACHE_FILE="/tmp/ccusage_burnweek_${week_start_ymd}_cache.json"
 CACHE_MAX_AGE=300
 
+# _cache_is_valid <file>: llm#420 — a cache file only ever gets written after
+# a successful fetch (see the `echo "$daily_json" > "$CACHE_FILE"` below), so
+# routine corruption is unlikely, but a partial write (disk full, killed
+# mid-write) can still leave a truncated/non-JSON file that would otherwise
+# be trusted blindly for the rest of CACHE_MAX_AGE. Validate structure before
+# reuse instead of discovering the corruption only at parse time downstream.
+_cache_is_valid() {
+  local file="$1"
+  [ -s "$file" ] || return 1
+  python3 -c "
+import json, sys
+try:
+    data = json.load(open('$file'))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if isinstance(data, dict) and 'daily' in data else 1)
+" 2>/dev/null
+}
+
 use_cache=false
 if [ -f "$CACHE_FILE" ]; then
   # GNU stat (Nix) uses -c %Y, macOS stat uses -f %m
   file_mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0)
   cache_age=$(( $(date +%s) - file_mtime ))
-  [ "$cache_age" -lt "$CACHE_MAX_AGE" ] && use_cache=true
+  if [ "$cache_age" -lt "$CACHE_MAX_AGE" ]; then
+    if _cache_is_valid "$CACHE_FILE"; then
+      use_cache=true
+    else
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cache invalid/corrupt at $CACHE_FILE (age=${cache_age}s) — forcing live refetch instead of trusting it for the rest of the ${CACHE_MAX_AGE}s window" >> "$ERR_LOG" 2>/dev/null || true
+      rm -f "$CACHE_FILE" 2>/dev/null || true
+    fi
+  fi
 fi
 
 if [ "$use_cache" = true ]; then
@@ -176,18 +239,30 @@ else
     # _bounded: always bounded (perl alarm fallback when GNU timeout absent);
     # --yes: never prompt to install a missing npx package;
     # </dev/null: stdin is /dev/null so any install prompt gets immediate EOF.
+    # llm#420: classify WHY this failed (miss/tmo/fetch) instead of collapsing
+    # every cause into a bare "burn:err" — see _classify_fetch_failure().
+    _npx_rc=0
     daily_json=$(_bounded 30 npx --yes ccusage daily \
       --since "$week_start_ymd" \
       --timezone "$TZ_NAME" \
-      --json --offline </dev/null 2>>"$err_tmp") || {
+      --json --offline </dev/null 2>>"$err_tmp") || _npx_rc=$?
+    if [ "$_npx_rc" -ne 0 ] || [ -z "$daily_json" ]; then
+      if [ "$_npx_rc" -eq 0 ]; then
+        # Exited cleanly but produced nothing — e.g. --offline with no local
+        # DB populated yet on a fresh machine (issue's cause #4). Distinct
+        # from a hard fetch failure: the tool ran, it just has no data source.
+        _reason="empty"
+      else
+        _reason=$(_classify_fetch_failure "$_npx_rc" "$err_tmp")
+      fi
       {
-        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ccusage daily --since $week_start_ymd failed — stderr:"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ccusage daily --since $week_start_ymd failed (reason=$_reason, exit=$_npx_rc) — stderr:"
         cat "$err_tmp"
       } >> "$ERR_LOG" 2>/dev/null || true
       rm -f "$err_tmp"
       _register_burn_freshness
-      fail_and_exit
-    }
+      fail_and_exit "$_reason"
+    fi
   fi
   rm -f "$err_tmp"
   echo "$daily_json" > "$CACHE_FILE"
@@ -239,7 +314,7 @@ print(f'{severity}|{spent:.0f}|{projected:.0f}|{cap:.0f}|{days_elapsed}|{days_re
   if [ "$MODE" = "--percent-only" ]; then
     echo "0"  # Always numeric for scripts
   else
-    echo "burn:parse_err (see $ERR_LOG)"
+    echo "burn:err:parse (see $ERR_LOG)"
   fi
   exit 0
 }
