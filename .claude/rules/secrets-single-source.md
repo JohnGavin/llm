@@ -178,3 +178,48 @@ selftest rather than drifting invisibly.
   — rotation scripts; both source the shared consumer map below.
 - `.claude/scripts/lib/secret_consumers.sh` — shared `CONSUMERS_*` map +
   restart/verify functions (llm#958).
+- `.claude/scripts/credential_single_source_check.sh` — the deterministic
+  single-source-of-truth check (llm#949 Acceptance section, see below).
+
+## Single-Source Check (llm#949)
+
+`.claude/scripts/credential_single_source_check.sh` is the deterministic
+control named by llm#949's "Acceptance" section: a check, not a human,
+watching for the credential sprawl (GMAIL_APP_PASSWORD in 6 files, 2
+values, 2026-08-11) to recur. It asserts, over the fixed file set
+`~/.config/secrets.env`, `~/.zshenv`, `~/.zshrc`, `~/.config/positron/*.sh`,
+`~/.claude/env/*.env`:
+
+- every credential-shaped NAME is assigned in exactly one file;
+- `secrets.env` has one assignment per line and a trailing newline;
+- no file other than `secrets.env` assigns a credential-shaped name;
+- no credential-shaped assignment sits on a comment line.
+
+It reuses `secret_exposure_scan.sh`'s NAME-shape heuristic (extracted at
+runtime, not copy-pasted) and its `--json` output (detector 4, shelled
+out to) rather than re-deriving either — see the script's own header
+comment for the full reuse rationale, including why neither
+`secret_exposure_scan.sh` nor `secrets_cache_regen.sh` could simply be
+`source`d (both run their main flow unconditionally, including a live
+`bws` call in the latter's case).
+
+```bash
+.claude/scripts/credential_single_source_check.sh             # scan, text report
+.claude/scripts/credential_single_source_check.sh --json       # scan, JSON report
+.claude/scripts/credential_single_source_check.sh --selftest   # fixture-based tests
+```
+
+Exit codes: `0` clean, `1` violation(s) found, `2` indeterminate (nothing
+scannable existed, or a target file/dependency could not be read/verified
+— never presented as "clean", per `checks-must-distinguish-unknown`).
+
+As of this script's introduction, a real run correctly reports
+`GMAIL_APP_PASSWORD` as duplicated across `secrets.env` and the three
+`~/.claude/env/*.env` files — this is a **known, expected** finding, not a
+bug: collapsing those files is blocked pending rotation of that value (see
+the incident section above). The check reports the fact; it does not fix
+it.
+
+**Not yet done:** deciding BWS-vs-secrets.env authority (human policy
+call) and wiring this script into `session_init.sh` or CI are both
+tracked as follow-ups on llm#949, not implemented by this script.
