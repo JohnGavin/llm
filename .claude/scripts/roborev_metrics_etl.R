@@ -996,6 +996,20 @@ PRICING_SEED <- list(
 PRICING_DEFAULT_INPUT  <- 3.00
 PRICING_DEFAULT_OUTPUT <- 15.00
 
+# Fallback-hit counter (llm#793 item 3): every unrecognised/unknown model_id
+# that falls through to the __default__ (Sonnet-tier) pricing row increments
+# this. Sonnet-tier pricing is a 5x understatement for Opus-tier traffic, so
+# a high count here means a meaningful share of the published cost figures
+# are silently wrong-direction (too low). Reported once per --apply/--dry-run
+# invocation near where codex_provider_invocations are read (see below).
+PRICING_FALLBACK_HITS <- new.env(parent = emptyenv())
+PRICING_FALLBACK_HITS$n <- 0L
+
+reset_pricing_fallback_counter <- function() {
+  PRICING_FALLBACK_HITS$n <- 0L
+  invisible(NULL)
+}
+
 pricing_seed_df <- function() {
   data.frame(
     model_prefix        = vapply(PRICING_SEED, `[[`, character(1L), "prefix"),
@@ -1049,6 +1063,7 @@ model_pricing <- function(model_id, at_date = NULL, pricing_df = PRICING_DF) {
   }
 
   if (is.null(model_id) || is.na(model_id) || !nzchar(model_id) || model_id == "unknown") {
+    PRICING_FALLBACK_HITS$n <- PRICING_FALLBACK_HITS$n + 1L
     return(default_pricing)
   }
 
@@ -1061,7 +1076,10 @@ model_pricing <- function(model_id, at_date = NULL, pricing_df = PRICING_DF) {
     ,
     drop = FALSE
   ]
-  if (nrow(candidates) == 0L) return(default_pricing)
+  if (nrow(candidates) == 0L) {
+    PRICING_FALLBACK_HITS$n <- PRICING_FALLBACK_HITS$n + 1L
+    return(default_pricing)
+  }
 
   # Longest-matching prefix wins; among ties, the most recent effective_from.
   ord <- order(-nchar(candidates$model_prefix), -as.numeric(candidates$effective_from))
@@ -1113,8 +1131,27 @@ seed_model_pricing <- function(con) {
 # ==== PRICING_BLOCK_END (llm#795) ═════════════════════════════════════════
 
 # Bytes-to-tokens approximation: 4 bytes ≈ 1 token (English/code prose).
-# Used when the CLI does not expose token counts.  Conservative — actual token
-# count may differ.  Documented in plans/380-investigation.md.
+# Used when the CLI does not expose token counts (codex/gemini CLIs do not
+# emit structured usage metadata — see plans/380-investigation.md sections 2
+# and 6). This is NOT an empirically-fitted value: plans/380-investigation.md
+# adopts the commonly-cited industry rule of thumb "~4 chars per token for
+# English/code text" (the same heuristic OpenAI's own docs use) without
+# measuring it against this repo's actual codex/gemini traffic — no
+# byte-count-vs-real-token-count comparison has been run here (llm#793
+# item 2). Treat this as a documented approximation, not a calibrated one.
+#
+# Error-margin note (llm#793 item 2): cost_usd = tokens * price is linear in
+# the token estimate, so a fractional error in BYTES_PER_TOKEN propagates
+# 1:1 into total_cost_usd — a 10% under/over-estimate of true tokens-per-byte
+# produces a 10% swing in every cost figure this heuristic feeds (compute_cost_usd
+# -> total_cost_usd -> estimated_wasted_usd -> the published dashboard's
+# dollar column and the roborev daily email). No bound is currently placed on
+# how large that fractional error actually is for this repo's traffic; doing
+# so would require capturing real token counts (e.g. from an API usage
+# endpoint) to compare against, which plans/380-investigation.md section 6
+# explicitly rejected for cost/latency reasons. Until that comparison exists,
+# read cost figures derived from this heuristic as approximate to within an
+# unquantified but potentially double-digit percentage.
 BYTES_PER_TOKEN <- 4L
 
 bytes_to_tokens <- function(bytes) {
@@ -2284,6 +2321,16 @@ cat(sprintf("roborev_metrics_etl.R: built %d daily_metrics rows, %d lifecycle ro
 invocations_raw <- read_codex_fallback_jsonl(CODEX_FALLBACK_LOG_DIR)
 cat(sprintf("roborev_metrics_etl.R: read %d codex_provider_invocations records\n",
             nrow(invocations_raw)))
+# llm#793 item 3: report how often an unrecognised/unknown model_id fell
+# through to Sonnet-tier default pricing — that fallback silently
+# understates cost by ~5x for Opus-tier traffic, so a nonzero count here is
+# a signal the PRICING_SEED table is missing a prefix, not just background
+# noise.
+if (PRICING_FALLBACK_HITS$n > 0L) {
+  cat(sprintf(
+    "roborev_metrics_etl.R: model_pricing fallback (unrecognised/unknown model) hit %d/%d invocation row(s) — priced at Sonnet-tier defaults (llm#793)\n",
+    PRICING_FALLBACK_HITS$n, nrow(invocations_raw)))
+}
 # #390: warn when no invocation data found so operators know why total_cost_usd
 # will be NULL.  The upstream source is ~/.claude/logs/codex_fallback/*.jsonl,
 # written by codex_with_fallback.sh only when the codex_shim/ PATH-prepend is
