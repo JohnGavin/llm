@@ -192,6 +192,21 @@ for (f in files) data <- rbind(data, read_csv(f))
 tbl(con, sql("SELECT * FROM 'data/*.csv'"))
 ```
 
+## Labelled Columns Through This Stack
+
+A column carrying `label`/`labels` attributes (see
+`data-glossary-and-entity-resolution` rule) does not survive a round trip
+through DuckDB. Verified: writing a data frame with a `label`-attributed
+column into DuckDB (`dbWriteTable()`) and reading it back
+(`dbGetQuery()`/`collect()`) returns a plain, unlabelled vector — SQL
+execution and DuckDB's columnar storage have no concept of R's
+`label`/`labels` attributes, so they are simply not carried across the
+connection. The same applies to `duckplyr`/`dbplyr`-mediated queries, since
+they execute through the same DuckDB engine. If the labelled version matters
+downstream (a plot, a `table1`/`gtsummary` table), re-apply the label AFTER
+`collect()`, not before the round trip — or keep a side table of
+`column -> label` and re-attach it in one step at the end of the pipeline.
+
 ## Resources
 
 - [DuckDB R API](https://duckdb.org/docs/api/r)

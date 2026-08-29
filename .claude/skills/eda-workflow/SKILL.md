@@ -56,6 +56,10 @@ data |> select(where(is.Date)) |> summary()
 - [ ] Are types correct (numeric vs character vs factor)?
 - [ ] What's the grain of the data (one row = what)?
 - [ ] Are there duplicates that shouldn't exist?
+- [ ] Does the data already carry `label`/`labels` attributes (imported from
+      SPSS/Stata/SAS via `haven`, or set via `labelled`)? Check with
+      `purrr::map(data, attr, "label")` before writing variable descriptions
+      by hand — see the `data-glossary-and-entity-resolution` rule.
 
 ### Phase 2: Univariate Distributions
 
@@ -372,6 +376,8 @@ df |> ggauto(cat1, cat2, value)              # continuous heatmap
 - `systematic-debugging` - Scientific method when EDA reveals problems
 - `targets-vignettes` - Reproducible EDA pipelines
 - `visualization-standards` - ggauto for standard charts, ggplot2 for custom
+- `data-glossary-and-entity-resolution` rule - `label`/`labels` attributes as
+  the data's own glossary (JohnGavin/llm#730)
 
 ## Resources
 
