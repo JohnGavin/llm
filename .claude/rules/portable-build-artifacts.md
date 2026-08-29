@@ -5,6 +5,8 @@ paths:
   - "**/R/tar_plans/**"
   - "**/_includes/**"
   - "**/_targets.R"
+  - "**/scripts/**/*.R"
+  - "**/*.html"
 ---
 
 # Rule: Portable Build Artifacts
@@ -138,6 +140,51 @@ Until an exporter is proven location-independent, regenerate committed artifacts
 guaranteed, have the exporter print the checkout path it ran from, so a
 worktree-built artifact is visible in review rather than silent.
 
+---
+
+## Part 5: Large embedded assets make a file line-unsafe
+
+Once a text file has large generated assets spliced into it as very long single
+lines — a base64-encoded image, a minified data blob, any line running into the
+tens of kilobytes — **line-oriented file APIs stop being safe on that file**.
+
+Observed directly: an R `readLines()` → `writeLines()` round-trip, used for an
+unrelated structural edit (reordering a section) on an HTML file that already had
+nine base64-encoded chart SVGs embedded as ~25KB single lines, silently split one
+of those long lines into several. The split left the *new*, correct data on the
+first fragment and seven *orphaned, stale* JSON records trailing after it as inert
+text — a corruption that produced no error, because the file was still
+syntactically plausible HTML. It was caught only by chance, because a JS syntax
+check happened to be run before publishing — not because anything required it.
+
+### Required pattern
+
+1. **Once a file crosses this threshold, use whole-file string operations only**
+   — `readChar()`/`writeChar()` in R (or the equivalent byte-safe read/write in
+   any language), never `readLines()`/`writeLines()`, never `sed` with line
+   addressing. Do not mix the two styles of edit on the same file.
+2. **Splice large generated assets last.** Do all structural and text edits on
+   the small, clean version of the file first; embed the large assets as the
+   final build step, once, not interleaved with further edits.
+3. **Verify structural integrity after every edit to such a file, before
+   publishing or committing** — a syntax check for embedded code (`node --check`
+   for JS, `parse()` for R), a tag/section-balance count, and a record-count
+   sanity check (does the embedded data still have exactly the expected number
+   of elements). Do not treat "the edit tool reported success" as sufficient —
+   a corrupted file can still be written successfully.
+
+```r
+# WRONG — line-oriented API on a file with embedded long lines
+lines <- readLines("artifact.html")
+lines[42] <- "<section>...</section>"
+writeLines(lines, "artifact.html")   # risks silently splitting a nearby long line
+
+# RIGHT — whole-file string substitution
+content <- readChar("artifact.html", file.info("artifact.html")$size, useBytes = TRUE)
+content <- sub(old_string, new_string, content, fixed = TRUE)
+writeChar(content, "artifact.html", eos = NULL, useBytes = TRUE)
+```
+
 ## Forbidden Patterns
 
 | Pattern | Why wrong | Fix |
@@ -147,14 +194,23 @@ worktree-built artifact is visible in review rather than silent.
 | `grepl("/token/", absolute_path)` to skip subtrees | Matches the scan root too | Match relative to the root (Part 2) |
 | Accepting a regenerated artifact because it is non-NULL | Empty ≠ NULL | Compare content to the prior version (Part 3) |
 | Treating "CI green" as "artifact correct" | The data path may not even trigger CI | Verify the deployed artifact |
+| `readLines()`/`writeLines()` on a file with embedded long lines | Can silently split a long line, orphaning data | Whole-file string ops only (Part 5) |
+| Considering an edit done because the tool call succeeded | A corrupted file can still write successfully | Structural integrity check before publish (Part 5) |
 
 ## Origin
 
 - [llm#883](https://github.com/JohnGavin/llm/issues/883) / [#885](https://github.com/JohnGavin/llm/pull/885) — DT `html_dependency` absolute nix paths; 13 snapshots affected; blocked all publishing for 2 days
 - [llm#889](https://github.com/JohnGavin/llm/issues/889) / [#890](https://github.com/JohnGavin/llm/pull/890) — worktree-exclusion regex matched its own scan root; `vig_scrolly_config` regenerated 222 rows → 0 by [#868](https://github.com/JohnGavin/llm/pull/868) and shipped silently
+- `tennis` project, 2026-08-29 — `readLines()`/`writeLines()` round-trip on a
+  published artifact HTML silently split an embedded ~25KB JSON data line,
+  orphaning seven stale records; caught only by an incidental syntax check
+  before publish (Part 5)
 
 ## Related
 
 - [`prerendered-docs-deploy-verification`](../memory/feedback_prerendered-docs-deploy-verification.md) — merged ≠ live; verify the deployed artifact
 - [`worktree-location`](worktree-location.md) — why every worktree path contains `/worktrees/`
 - [`data-validation-timeseries`](data-validation-timeseries.md) — content-level validation targets
+- [`bash-safety`](bash-safety.md) — tool-choice discipline generally (Part 5 is the same discipline applied to file-editing APIs)
+- [`verification-before-completion`](verification-before-completion.md) — "no completion claims without evidence," extended here to structural file integrity
+- [`domain-logic-in-package`](domain-logic-in-package.md) — a different failure mode from the same incident (business logic duplicated outside `R/`)
