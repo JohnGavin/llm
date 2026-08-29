@@ -755,6 +755,159 @@ render_stale_processes_table <- function(stale) {
   paste(lines, collapse = "\n")
 }
 
+# ── Section 6: braindumps freshness alarm (llm#937 fix 5) ─────────────────────
+#
+# llm#937 documented five fixes for the Signal-note-capture outage (a
+# version-pinned binary path stopped existing after a Homebrew upgrade,
+# degrading "command not found" into an empty message list, indistinguishable
+# from "no new messages" for three months). Fixes 1-4 (un-pin the binary path,
+# SIGKILL-escalating timeouts, stale-process guards — see detect_stale_processes
+# above, daemon/direct-receive race fixes) have all landed. Fix 5, "freshness
+# alarm", had not: signal_braindump_handler.sh calls etl_freshness_upsert.sh to
+# RECORD facts into the (legacy, pre-#893) `etl_freshness` table, but nothing
+# ever reads that table to raise an alarm — and even if something did, a check
+# invoked from *inside* the writer's own script only ever runs when the writer
+# itself successfully runs, which is exactly the failure mode this exists to
+# catch (see `.claude/memory/probe-must-not-share-writer-path.md` /
+# `checks-must-distinguish-unknown` rule). This report is a genuinely separate
+# trigger class — its own weekly launchd cron — so it still runs and still
+# sees the true row age even if the Signal capture pipeline has been silently
+# dead for months.
+
+#' Detect braindumps table staleness directly from the unified DuckDB ledger.
+#'
+#' Deliberately does NOT reuse any liveness signal recorded by the writer
+#' (signal_notes_sync.sh / signal_braindump_handler.sh / etl_freshness) — it
+#' queries `braindumps` itself, from a separate script on a separate cron
+#' trigger, so a dead writer cannot also silence its own alarm.
+#'
+#' @param con An open DBI connection to the unified DuckDB ledger (read-only
+#'   is fine). Production callers pass the same connection used elsewhere in
+#'   this script; tests pass an in-memory duckdb connection with a synthetic
+#'   `braindumps` table.
+#' @param threshold_hours Numeric — newest-row age beyond this many hours is
+#'   reported as 'stale'. Default 72h (3 days): this is a personal
+#'   note-capture pipeline expected to receive input at least every few
+#'   days, so 72h tolerates a quiet weekend without a false alarm while
+#'   still catching a dead pipeline at ~4% of the ~104-day (2492h) silence
+#'   in the motivating llm#937 incident.
+#' @return A one-row data.frame with columns: status
+#'   ('fresh'|'stale'|'indeterminate'), hours_since_newest (NA for
+#'   indeterminate), newest_captured_at (NA for indeterminate),
+#'   threshold_hours, detail (NA except for indeterminate, where it carries
+#'   a human-readable reason). Never NULL, never errors — mirrors the
+#'   zero-metric-evidence-or-defect discipline: a query that cannot run
+#'   returns 'indeterminate', never a value that would render the same as
+#'   'fresh' or 'stale' (checks-must-distinguish-unknown).
+detect_braindumps_staleness <- function(con, threshold_hours = 72) {
+  indeterminate <- function(detail) {
+    data.frame(
+      status = "indeterminate",
+      hours_since_newest = NA_real_,
+      newest_captured_at = NA_character_,
+      threshold_hours = threshold_hours,
+      detail = detail,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  if (is.null(con)) return(indeterminate("no DB connection available"))
+
+  tryCatch({
+    tables <- DBI::dbListTables(con)
+    if (!"braindumps" %in% tables) {
+      return(indeterminate("'braindumps' table not found in ledger"))
+    }
+
+    row <- DBI::dbGetQuery(con, "SELECT MAX(captured_at) AS newest FROM braindumps")
+    newest <- row$newest[[1L]]
+    if (is.null(newest) || length(newest) == 0L || is.na(newest)) {
+      return(indeterminate("'braindumps' table exists but has zero rows"))
+    }
+
+    newest_posix <- as.POSIXct(newest, tz = "UTC")
+    hours_since  <- as.numeric(difftime(Sys.time(), newest_posix, units = "hours"))
+    status <- if (hours_since > threshold_hours) "stale" else "fresh"
+
+    data.frame(
+      status = status,
+      hours_since_newest = round(hours_since, 1),
+      newest_captured_at = format(newest_posix, "%Y-%m-%d %H:%M UTC"),
+      threshold_hours = threshold_hours,
+      detail = NA_character_,
+      stringsAsFactors = FALSE
+    )
+  }, error = function(e) indeterminate(conditionMessage(e)))
+}
+
+#' Render the braindumps staleness row as a markdown block. Each of the
+#' three states is textually and visually distinct — 'indeterminate' is
+#' never allowed to look like a smaller/quieter version of 'fresh' or
+#' 'stale' (checks-must-distinguish-unknown).
+render_braindumps_staleness <- function(staleness) {
+  if (is.null(staleness) || nrow(staleness) == 0L) {
+    return(paste0(
+      "\n> \U26A0\UFE0F **INDETERMINATE** — the braindumps staleness check ",
+      "produced no result at all (unexpected — this is itself a defect).\n"
+    ))
+  }
+
+  r <- staleness[1L, ]
+
+  if (identical(r$status, "fresh")) {
+    return(sprintf(
+      "\nbraindumps: fresh (newest row %.1fh ago, captured_at %s; threshold %gh).\n",
+      r$hours_since_newest, r$newest_captured_at, r$threshold_hours
+    ))
+  }
+
+  if (identical(r$status, "stale")) {
+    return(sprintf(paste0(
+      "\n> \U26A0\UFE0F **STALE** — braindumps: newest row is %.1fh old ",
+      "(captured_at %s), past the %gh threshold. The Signal capture ",
+      "pipeline may be dead — see llm#937.\n"
+    ), r$hours_since_newest, r$newest_captured_at, r$threshold_hours))
+  }
+
+  # status == "indeterminate" (or any unrecognised value) — loud AND
+  # distinct from both fresh and stale, never silently treated as fine.
+  sprintf(paste0(
+    "\n> \U26A0\UFE0F **INDETERMINATE** — the braindumps staleness check ",
+    "could not run: %s. This is NOT the same as 'fresh' — it means the ",
+    "check itself is broken and braindumps freshness is currently unknown.\n"
+  ), r$detail)
+}
+
+#' Production entry point: open a fresh short-lived connection to the
+#' unified ledger, run detect_braindumps_staleness() against it, and always
+#' close the connection again — mirrors the connect/query/disconnect
+#' lifecycle already used by read_run_metrics()/read_run_counts_by_script()
+#' above, kept separate from detect_braindumps_staleness() itself so that
+#' function stays a pure, easily-testable query against a caller-supplied
+#' connection. Never errors — any failure to even open the connection is
+#' itself an 'indeterminate' result, not a crash of the whole report.
+collect_braindumps_staleness <- function(ledger = LEDGER_PATH, threshold_hours = 72) {
+  indeterminate <- function(detail) {
+    data.frame(
+      status = "indeterminate", hours_since_newest = NA_real_,
+      newest_captured_at = NA_character_, threshold_hours = threshold_hours,
+      detail = detail, stringsAsFactors = FALSE
+    )
+  }
+
+  if (!has_duckdb) return(indeterminate("duckdb R package not available"))
+  if (!file.exists(ledger)) return(indeterminate(sprintf("ledger not found at %s", ledger)))
+
+  con <- tryCatch(
+    duckdb::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = TRUE),
+    error = function(e) NULL
+  )
+  if (is.null(con)) return(indeterminate("could not open a connection to the unified ledger"))
+  on.exit(duckdb::dbDisconnect(con, shutdown = FALSE), add = TRUE)
+
+  detect_braindumps_staleness(con, threshold_hours = threshold_hours)
+}
+
 # ── Markdown rendering ─────────────────────────────────────────────────────────
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
@@ -888,6 +1041,9 @@ cloud_crons <- collect_cloud_crons(CLOUD_REPOS)
 message("launchd_health_report.R: scanning for stale/wedged timeout-wrapped processes")
 stale_processes <- detect_stale_processes(collect_process_table())
 
+message("launchd_health_report.R: checking braindumps freshness (llm#937 fix 5)")
+braindumps_staleness <- collect_braindumps_staleness(LEDGER_PATH)
+
 # ── Assemble report ────────────────────────────────────────────────────────────
 
 now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M UTC", tz = "UTC")
@@ -910,6 +1066,9 @@ report_md <- paste0(
   "\n\n---\n\n",
   "## 5. Stale/Wedged Processes\n",
   render_stale_processes_table(stale_processes),
+  "\n\n---\n\n",
+  "## 6. Braindumps Freshness (llm#937 fix 5)\n",
+  render_braindumps_staleness(braindumps_staleness),
   "\n"
 )
 
