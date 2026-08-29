@@ -209,6 +209,26 @@ plan_vignette_closeread <- function() {
       packages = c("tibble")
     ),
 
+    # 6b. Pipeline walkthrough plan-file drift check (llm#793 item 1): the
+    # `plan` column above is a hand-typed mirror of irishbuoys'
+    # R/tar_plans/*.R file names — mechanically derivable, unlike the
+    # curated layer/software/description columns. See
+    # R/pipeline_walkthrough_drift.R for the check/abort logic and its
+    # tests (tests/testthat/test-pipeline-walkthrough-drift.R).
+    tar_target(
+      vig_cr_pipeline_walkthrough_drift_check,
+      abort_on_pipeline_walkthrough_drift(
+        check_pipeline_walkthrough_drift(
+          vig_cr_pipeline_walkthrough$plan,
+          Sys.getenv(
+            "LLM_IRISHBUOYS_TAR_PLANS_DIR",
+            path.expand("~/docs_gh/irishbuoys/R/tar_plans")
+          )
+        )
+      ),
+      packages = c("cli", "checkmate", "tools")
+    ),
+
     # 7. Pipeline DAG mermaid with layer colours
     tar_target(
       vig_cr_pipeline_dag_mermaid,
