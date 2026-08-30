@@ -9,7 +9,16 @@
 # R/tar_plans/ is a subdirectory of R/, so it is NOT collated into the
 # package namespace -- only tar_source() loads it at pipeline build time.
 # Source it directly, as test-qa-rds-freshness.R and test-plan-qa-gates.R do.
-source(file.path(pkgload::pkg_path(), "R", "tar_plans", "plan_vignette_outputs.R"))
+#
+# locate_tar_plan() (helper-0-locate-tar-plan.R, auto-loaded) resolves via
+# system.file() under a real install (inst/tar_plans/ symlink), with a
+# dev-tree fallback -- plain pkgload::pkg_path() breaks under
+# covr::package_coverage()/R CMD check, where R/tar_plans/*.R is never
+# installed as browsable source.
+.plan_vignette_outputs_path <- locate_tar_plan("plan_vignette_outputs.R")
+if (!is.na(.plan_vignette_outputs_path)) {
+  source(.plan_vignette_outputs_path)
+}
 
 test_that("vig_session_data is retired and not reintroduced", {
   targets_list <- plan_vignette_outputs()

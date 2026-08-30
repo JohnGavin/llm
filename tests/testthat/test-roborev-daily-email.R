@@ -446,7 +446,19 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list()) {
 
   con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
-  DBI::dbExecute(con, "LOAD sqlite")
+  # sqlite is bundled in recent DuckDB builds and LOAD succeeds without
+  # INSTALL; INSTALL fetches from the network and can fail/be unavailable
+  # in offline or restricted environments (e.g. covr::package_coverage()
+  # CI runners). Mirrors the established try-LOAD-then-INSTALL+LOAD
+  # fallback already used in .claude/scripts/roborev_metrics_etl.R and
+  # friends for this exact extension.
+  tryCatch(
+    DBI::dbExecute(con, "LOAD sqlite"),
+    error = function(e_load) {
+      DBI::dbExecute(con, "INSTALL sqlite")
+      DBI::dbExecute(con, "LOAD sqlite")
+    }
+  )
   DBI::dbExecute(con, sprintf("ATTACH '%s' AS fix (TYPE sqlite)", db_path))
 
   DBI::dbExecute(con, "CREATE TABLE fix.repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
