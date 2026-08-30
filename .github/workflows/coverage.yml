@@ -38,9 +38,26 @@
 # exit, error or not. A later, separate GitHub Actions step (e.g. an
 # `if: failure()` step doing `find /tmp -name '*.Rout.fail'`) runs in a NEW
 # shell after the failing Rscript process has already exited and cleaned up,
-# so it would find nothing. The diagnostic below therefore reads and prints
-# the file's raw content INSIDE the same Rscript invocation, in a tryCatch
-# around covr::package_coverage(), before the process ends.
+# so it would find nothing. The diagnostic therefore reads and prints the
+# file's raw content INSIDE the same Rscript invocation, before the process
+# ends.
+#
+# A first version of that in-process diagnostic used tryCatch() around
+# covr::package_coverage() -- and still printed "No .Rout.fail files found",
+# because tryCatch()'s handler only runs AFTER the call stack has unwound
+# past every intervening on.exit() (including the on.exit() cleanup inside
+# covr's own install/test machinery that deletes the .Rout.fail file), so
+# the file was already gone by the time the handler ran. Empirically
+# confirmed (nix-shell Rscript: a function that writes a marker file, then
+# registers on.exit(unlink(marker_file)), then stop()s): wrapped in
+# tryCatch(), the handler saw file.exists(marker_file) == FALSE; wrapped in
+# withCallingHandlers() instead, the handler runs IN PLACE at the moment the
+# condition is signalled, before any on.exit() fires, and saw
+# file.exists(marker_file) == TRUE. An uncaught error inside
+# withCallingHandlers() still halts the script and exits non-zero exactly
+# like an unhandled error normally would (confirmed: "Execution halted",
+# exit code 1) -- so switching to withCallingHandlers() below loses nothing
+# and gains a diagnostic that actually sees the file.
 
 name: Code Coverage
 
@@ -111,12 +128,14 @@ jobs:
               cat("===== END .Rout.fail CONTENT =====\n\n")
             }
 
-            cov <- tryCatch(
+            # withCallingHandlers(), NOT tryCatch(): the handler must run
+            # before covr internal on.exit() cleanup deletes the
+            # .Rout.fail file. See the workflow header comment for the
+            # empirical proof. An uncaught error here still halts the
+            # script and exits non-zero, same as before.
+            cov <- withCallingHandlers(
               covr::package_coverage(),
-              error = function(e) {
-                show_rout_fail_files(tmp_root)
-                stop(e)
-              }
+              error = function(e) show_rout_fail_files(tmp_root)
             )
             print(cov)
             saveRDS(cov, "inst/extdata/coverage.rds")
