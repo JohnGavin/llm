@@ -45,6 +45,11 @@ export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 #   Any repo whose root_path starts with /private/tmp/ or /tmp/ is skipped
 #   during the per-repo loop (these are agent worktree artefacts, never real
 #   projects). The --clean-repos-table flag deletes matching rows from the DB.
+#   Since #923/#924 the shared post-commit hook already refuses to register
+#   NEW ephemeral root_paths, so this loop mainly guards against rows left
+#   over from before that fix. Skips are counted, not logged per-repo
+#   (llm#887 Option B) -- the aggregate count appears as `ephemeral=N` on the
+#   one `summary [...]` line at the end of the run.
 #
 # Requeue dropped quota failures (llm#927, bolt-on sweep — see the dedicated
 # comment block near the end of this file):
@@ -79,7 +84,7 @@ DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 SQLITE="${SQLITE:-/usr/bin/sqlite3}"
 ROBOREV="${ROBOREV:-/usr/local/bin/roborev}"
 GIT="${GIT:-/usr/bin/git}"
-LOG="$HOME/.claude/logs/roborev_poll_merges.log"
+LOG="${LOG:-$HOME/.claude/logs/roborev_poll_merges.log}"
 mkdir -p "$(dirname "$LOG")"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
@@ -153,17 +158,24 @@ done < <(
   "$SQLITE" "$DB" "SELECT id || '|' || name || '|' || root_path FROM repos;"
 )
 
-total=0; behind=0; enqueued=0; skipped=0
+total=0; behind=0; enqueued=0; skipped=0; ephemeral_skipped=0
 for line in "${REPOS[@]}"; do
   IFS='|' read -r repo_id name root_path <<<"$line"
   total=$((total + 1))
 
   # Skip ephemeral paths (/private/tmp/ or /tmp/) — nix-shell agent artefacts
   # that were registered in the DB during agent runs but are never real project
-  # roots. Emitting a debug-level log only (not error — expected noise).
+  # roots. No per-repo log line here (llm#887 Option B): with the ephemeral
+  # guard in the shared post-commit hook (llm#923/#924) this set can still be
+  # large on an unpurged DB, and a per-repo line for a non-actionable, expected
+  # skip is pure noise -- ~1,390 lines/run before this fix. The count is
+  # rolled into the single aggregate summary line below instead. Per-repo log
+  # lines are KEPT for every other skip reason (deleted repo, already
+  # reviewed, diverged branch, ...) -- those are about real repos and stay
+  # actionable.
   if is_ephemeral_path "$root_path"; then
-    log "SKIP $root_path (ephemeral)"
     skipped=$((skipped + 1))
+    ephemeral_skipped=$((ephemeral_skipped + 1))
     continue
   fi
 
@@ -242,8 +254,8 @@ for line in "${REPOS[@]}"; do
 done
 
 mode="dry-run"; [ "$DRY_RUN" -eq 0 ] && mode="applied"
-log "summary [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped"
-echo "roborev_poll_merges [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped"
+log "summary [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped (ephemeral=$ephemeral_skipped)"
+echo "roborev_poll_merges [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped (ephemeral=$ephemeral_skipped)"
 
 # ── Requeue dropped quota failures (llm#927 bolt-on sweep) ───────────────────
 # roborev_requeue_dropped.sh finds review_jobs stuck in the TERMINAL
