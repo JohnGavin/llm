@@ -2,16 +2,18 @@
 # Exercises: passing case, bare <abbr title>, short tooltip, missing link.
 # Issue #246 — hover-popup QA gate.
 
-.qa_gates_path <- file.path(
-  pkgload::pkg_path(),
-  "R", "tar_plans", "plan_qa_gates.R"
-)
+# locate_tar_plan() is defined in helper-0-locate-tar-plan.R (auto-loaded).
+# Resolves via system.file() under a real install (inst/tar_plans/ symlink)
+# with a dev-tree fallback -- see that helper's header comment for why
+# pkgload::pkg_path() alone breaks under covr::package_coverage()/R CMD check.
+.qa_gates_path <- locate_tar_plan("plan_qa_gates.R")
 
 # ---------------------------------------------------------------------------
 # 1. Empty docs dir — warning (cli_alert), returns invisible(character(0))
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() returns empty vector for empty docs dir", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   # No HTML files exist — should NOT abort, just return invisible(character(0))
@@ -24,6 +26,7 @@ test_that("check_hover_popups() returns empty vector for empty docs dir", {
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() passes for a page with no tooltips at all", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   writeLines(
@@ -44,6 +47,7 @@ test_that("check_hover_popups() passes for a page with no tooltips at all", {
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() fails for bare <abbr title> without Tippy upgrade", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   writeLines(
@@ -65,6 +69,7 @@ test_that("check_hover_popups() fails for bare <abbr title> without Tippy upgrad
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() fails for tooltip with fewer than 2 sentences", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   writeLines(
@@ -92,6 +97,7 @@ test_that("check_hover_popups() fails for tooltip with fewer than 2 sentences", 
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() fails for tooltip with no anchor link", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   writeLines(
@@ -118,6 +124,7 @@ test_that("check_hover_popups() fails for tooltip with no anchor link", {
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() passes for a compliant Tippy popup", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   writeLines(
@@ -143,6 +150,7 @@ test_that("check_hover_popups() passes for a compliant Tippy popup", {
 # ---------------------------------------------------------------------------
 
 test_that("check_hover_popups() does NOT fail when bare <abbr> coexists with Tippy spans", {
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   tmp <- withr::local_tempdir()
   writeLines(

@@ -182,7 +182,19 @@ kb_index <- function(dir, db_path) {
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
-  DBI::dbExecute(con, "LOAD fts")
+  # fts is bundled in recent DuckDB builds and LOAD succeeds without
+  # INSTALL; INSTALL fetches from the network and can fail/be unavailable
+  # in offline or restricted environments. Strategy (matches the existing
+  # pattern in .claude/scripts/roborev_metrics_etl.R for the sqlite
+  # extension): try LOAD first, fall back to INSTALL+LOAD only if LOAD
+  # fails.
+  tryCatch(
+    DBI::dbExecute(con, "LOAD fts"),
+    error = function(e_load) {
+      DBI::dbExecute(con, "INSTALL fts")
+      DBI::dbExecute(con, "LOAD fts")
+    }
+  )
 
   # Drop existing table if present (overwrite semantics)
   DBI::dbExecute(con, "DROP TABLE IF EXISTS chunks")
@@ -268,7 +280,16 @@ kb_search <- function(query, db_path, k = 10L) {
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
-  DBI::dbExecute(con, "LOAD fts")
+  # See kb_index() above for why this is wrapped: try LOAD first, fall
+  # back to INSTALL+LOAD only if LOAD fails (bundled vs. network-fetched
+  # extension).
+  tryCatch(
+    DBI::dbExecute(con, "LOAD fts"),
+    error = function(e_load) {
+      DBI::dbExecute(con, "INSTALL fts")
+      DBI::dbExecute(con, "LOAD fts")
+    }
+  )
 
   # Parameterised query: positional ? avoids any injection risk from the query
   # string.  DuckDB fts_main_chunks.match_bm25() accepts the query as its

@@ -8,7 +8,16 @@
 # R/tar_plans/ is a subdirectory of R/, so it is NOT collated into the package
 # namespace -- only tar_source() loads it. Source it directly, as
 # test-plan-qa-gates.R and test-qa-rds-freshness.R do.
-source(file.path(pkgload::pkg_path(), "R", "tar_plans", "plan_qa_gates.R"))
+#
+# locate_tar_plan() (helper-0-locate-tar-plan.R, auto-loaded) resolves via
+# system.file() under a real install (inst/tar_plans/ symlink), with a
+# dev-tree fallback -- plain pkgload::pkg_path() breaks under
+# covr::package_coverage()/R CMD check, where R/tar_plans/*.R is never
+# installed as browsable source.
+.plan_qa_gates_path <- locate_tar_plan("plan_qa_gates.R")
+if (!is.na(.plan_qa_gates_path)) {
+  source(.plan_qa_gates_path)
+}
 
 # Build a fake targets store whose tar_meta()/tar_read_raw() report `values`
 # for `targets`, alongside an optional snapshot dir holding committed .rds

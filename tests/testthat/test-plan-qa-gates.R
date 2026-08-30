@@ -2,12 +2,11 @@
 # Covers roborev #3342: both top-level vignettes/ and vignettes/articles/ .qmd
 # files must resolve to docs/articles/*.html (pkgdown layout).
 
-# Source the functions under test from the package source tree.
-# pkgload::pkg_path() gives the package root regardless of test working dir.
-.qa_gates_path <- file.path(
-  pkgload::pkg_path(),
-  "R", "tar_plans", "plan_qa_gates.R"
-)
+# locate_tar_plan() is defined in helper-0-locate-tar-plan.R (auto-loaded).
+# Resolves via system.file() under a real install (inst/tar_plans/ symlink)
+# with a dev-tree fallback -- see that helper's header comment for why
+# pkgload::pkg_path() alone breaks under covr::package_coverage()/R CMD check.
+.qa_gates_path <- locate_tar_plan("plan_qa_gates.R")
 
 test_that("check_methodology_blocks inspects top-level and nested vignette HTML", {
   # Build a minimal fixture tree that mirrors pkgdown output layout:
@@ -37,6 +36,7 @@ test_that("check_methodology_blocks inspects top-level and nested vignette HTML"
   writeLines(good_html, file.path(docs_articles, "a.html"))
   writeLines(good_html, file.path(docs_articles, "b.html"))
 
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   result <- check_methodology_blocks(
     vignettes_dir = docs_articles,
@@ -67,6 +67,7 @@ test_that("check_methodology_blocks flags vignette missing AI disclosure", {
   )
   writeLines(incomplete_html, file.path(docs_articles, "c.html"))
 
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   expect_error(
     check_methodology_blocks(
@@ -90,6 +91,7 @@ test_that("check_no_blank_plots flags a deliberately-blanked plot fixture", {
   blank_img <- array(1, dim = c(100L, 100L, 3L))
   png::writePNG(blank_img, file.path(docs, "blank-plot-1.png"))
 
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   expect_error(
     check_no_blank_plots(html_dir = docs),
@@ -111,6 +113,7 @@ test_that("check_no_blank_plots does not flag a real, varied-content PNG", {
   real_img <- array(stats::runif(300L * 300L * 3L), dim = c(300L, 300L, 3L))
   png::writePNG(real_img, file.path(docs, "real-chart-1.png"))
 
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   expect_no_error(check_no_blank_plots(html_dir = docs))
 })
@@ -124,6 +127,7 @@ test_that("check_no_blank_plots respects skip_basenames for by-design near-blank
   blank_img <- array(1, dim = c(100L, 100L, 3L))
   png::writePNG(blank_img, file.path(docs, "intentionally-blank.png"))
 
+  skip_if_not(!is.na(.qa_gates_path), "plan_qa_gates.R not found")
   source(.qa_gates_path, local = TRUE)
   expect_no_error(
     check_no_blank_plots(html_dir = docs, skip_basenames = "intentionally-blank.png")
