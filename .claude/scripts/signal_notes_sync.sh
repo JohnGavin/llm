@@ -87,6 +87,36 @@ mkdir -p "$DUMP_DIR"
 mkdir -p "$(dirname "$LOG")"
 touch "$PROCESSED_LOG"
 
+# Concurrency guard (llm#937 whisper backlog note): this script runs via
+# launchd every 5 minutes, but the voice-attachment backlog loop below (plus
+# the per-attachment whisper transcription inside the python block further
+# down) budgets up to 120s PER FILE. With 112 files sitting unprocessed in
+# ATTACH_DIR at the time this was written, a single invocation can run long
+# enough for the *next* 5-minute launchd fire to start a second, overlapping
+# invocation before the first has finished. `_signal_cli_already_running`
+# above only guards the `receive` call itself -- it does nothing for two
+# invocations both walking the attachment backlog, which would race on the
+# same unprocessed files (each only gets appended to PROCESSED_LOG once ITS
+# transcription finishes) and duplicate whisper runs / braindump inserts.
+# Whole-script PID-file lock, mirroring the identical pattern already in
+# export_and_deploy_data.sh (added 2026-07-27 for the same
+# "invocations arrive faster than one cycle can finish" failure mode): a
+# live holder is detected via `kill -0` and this run skips cleanly rather
+# than piling up. LOCK_FILE lives under $HOME so tests can sandbox it via a
+# fake $HOME exactly like the rest of this script's paths.
+LOCK_FILE="$HOME/.claude/logs/signal_notes_sync.lock"
+mkdir -p "$(dirname "$LOCK_FILE")"
+if [ -f "$LOCK_FILE" ]; then
+  LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') SKIP: another signal_notes_sync.sh already running (pid $LOCK_PID) -- refusing to overlap the whisper backlog scan (llm#937)" >> "$LOG"
+    exit 0
+  fi
+  # Stale lock (holder PID is dead) -- fall through and overwrite it below.
+fi
+echo $$ > "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
 # Skip the direct-receive call entirely when the daemon already holds the
 # signal-cli config lock (llm#989). The pre-flight stale-process guard below
 # only catches an in-flight `receive`; it does NOT catch a healthy,

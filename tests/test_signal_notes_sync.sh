@@ -110,7 +110,19 @@ run_sync() {
 }
 
 read_log() {
-  cat "$FAKE_HOME/.claude/logs/signal_sync.log" 2>/dev/null || echo ""
+  # "Log file does not exist yet" (expected before the first log write in a
+  # scenario) is a genuine negative result and returns empty. Any OTHER cat
+  # failure (e.g. a permissions error) is left to surface as an error rather
+  # than being silently folded into the same empty string -- an error path
+  # and a negative-result path must not share an exit (llm#1012,
+  # checks-must-distinguish-unknown). Pre-existing helper (llm#946, #1002);
+  # narrowed while touching this file for llm#937.
+  local f="$FAKE_HOME/.claude/logs/signal_sync.log"
+  if [ ! -e "$f" ]; then
+    echo ""
+    return 0
+  fi
+  cat "$f"
 }
 
 # ── Scenario 1: stale signal-cli already running -> refuses, never invokes SIGNAL_CLI
@@ -303,6 +315,89 @@ if [ "$rc7" = "0" ]; then
   PASS=$((PASS + 1))
 else
   echo "  FAIL: script should exit 0 when secrets.env supplies the account, got rc=$rc7"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 8: another invocation already holds the lock (live PID) ->
+#    this run skips cleanly, never invokes signal-cli, logs a distinguishable
+#    SKIP line (llm#937 whisper-backlog concurrency guard).
+
+echo ""
+echo "-- Test: lock held by a live PID -> skips this run, signal-cli never invoked"
+FAKE_SIGNAL_CLI_SHOULD_NOT_RUN4="$TMP/should_not_run4.sh"
+cat > "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN4" <<EOF
+#!/usr/bin/env bash
+echo "I SHOULD NOT HAVE RUN (lock held)" >> "$TMP/violation4.log"
+echo '{}'
+EOF
+chmod +x "$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN4"
+rm -f "$TMP/violation4.log"
+
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+# A genuinely live PID: this test process itself ($$) is guaranteed alive
+# for the duration of the run, so `kill -0` on it succeeds deterministically
+# without racing a background sleep's startup.
+echo "$$" > "$FAKE_HOME/.claude/logs/signal_notes_sync.lock"
+
+HOME="$FAKE_HOME" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$FAKE_SIGNAL_CLI_SHOULD_NOT_RUN4" \
+  LSOF_BIN="$FAKE_LSOF_DOWN" SIGNAL_ACCOUNT="+15550001111" \
+  bash "$SCRIPT" >/dev/null 2>&1
+rc8=$?
+log8=$(read_log)
+assert_contains "logs a SKIP line naming the held lock" "SKIP: another signal_notes_sync.sh already running" "$log8"
+assert_contains "SKIP log references llm#937" "llm#937" "$log8"
+if [ -f "$TMP/violation4.log" ]; then
+  echo "  FAIL: signal-cli fake WAS invoked despite the lock being held"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: signal-cli fake was NOT invoked (lock guard worked)"
+  PASS=$((PASS + 1))
+fi
+if [ "$rc8" = "0" ]; then
+  echo "  PASS: script exits 0 on a deliberate lock-held skip (rc=$rc8)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should exit 0 on a lock-held skip, got rc=$rc8"
+  FAIL=$((FAIL + 1))
+fi
+# The held lock must be left untouched -- this run must not have clobbered
+# the live holder's lock file (it never reached the `echo $$ > LOCK_FILE`
+# line, since it exited straight after detecting the live PID).
+lock_after8=$(cat "$FAKE_HOME/.claude/logs/signal_notes_sync.lock" 2>/dev/null || echo "")
+if [ "$lock_after8" = "$$" ]; then
+  echo "  PASS: the live holder's lock file was left untouched"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: lock file was overwritten despite the holder still being alive (now: $lock_after8)"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 9: lock file present but the recorded PID is dead (stale lock)
+#    -> the script proceeds normally, exactly as if no lock had been held.
+
+echo ""
+echo "-- Test: stale lock (dead PID recorded) -> proceeds normally, does not skip"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+# A PID essentially guaranteed to be dead: PIDs this large are far past any
+# real process on a normal system, and even if it were briefly valid,
+# `kill -0` on an arbitrary unrelated PID we do not own would still (almost
+# always) fail -- this is the same style of stale-lock fixture already used
+# for the stale-process guard scenarios above, applied to a plain PID file
+# rather than a pgrep-matched process.
+echo "99999999" > "$FAKE_HOME/.claude/logs/signal_notes_sync.lock"
+
+rc9=$(HOME="$FAKE_HOME" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$FAKE_SIGNAL_CLI_EMPTY" \
+  LSOF_BIN="$FAKE_LSOF_DOWN" SIGNAL_ACCOUNT="+15550001111" \
+  bash "$SCRIPT" >/dev/null 2>&1; echo $?)
+log9=$(read_log)
+assert_not_contains "does not log a lock-held SKIP for a stale (dead-PID) lock" "another signal_notes_sync.sh already running" "$log9"
+if [ "$rc9" = "0" ]; then
+  echo "  PASS: script proceeds and exits 0 despite a stale lock file (rc=$rc9)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: script should proceed past a stale lock, got rc=$rc9"
   FAIL=$((FAIL + 1))
 fi
 
