@@ -26,29 +26,13 @@ explicitly".
 
 ## Recurrence — 2026-08-27, historical project
 
-Reported again, by the same user, on a leaderboard dashboard: *"the font size is
-too small. match the main text. repeat this throughout the document."* The target
-was a DT table caption and its `<details>` disclosure summary.
+Reported again, by the same user, on a leaderboard dashboard: *"the font size is too small. match the main text. repeat this throughout the document."* The target was a DT table caption and its `<details>` disclosure summary.
 
-**This rule already forbade it** — `caption { font-size: smaller }` was in the
-Forbidden Patterns table below at the time. It was violated anyway, because the
-Required Pattern's selector list did not name the two surfaces that actually
-carried the drift: `details summary` (a shared-CSS rule set it to `0.9em`) and
-DT's injected `.dt-caption`. Every listed selector was compliant; the size drift
-lived in the gap between them.
+**This rule already forbade it** — `caption { font-size: smaller }` was in the Forbidden Patterns table below at the time. It was violated anyway, because the Required Pattern's selector list did not name the two surfaces that actually carried the drift: `details summary` (a shared-CSS rule set it to `0.9em`) and DT's injected `.dt-caption`. Every listed selector was compliant; the size drift lived in the gap between them.
 
-**The generalisable lesson: a typography rule is only as good as its selector
-list.** "Set the body size once and let everything inherit" fails silently the
-moment a framework or a shared stylesheet introduces a new text surface with its
-own default — DataTables, Quarto callouts, `<details>`, tooltip/popover bodies,
-plot legends rendered as HTML. When adding any new text-bearing UI element, add
-its selector to the list in the same commit. When a size-drift report arrives,
-**find the surface that is not in the list** rather than assuming the rule was
-never applied.
+**The generalisable lesson: a typography rule is only as good as its selector list.** "Set the body size once and let everything inherit" fails silently the moment a framework or a shared stylesheet introduces a new text surface with its own default — DataTables, Quarto callouts, `<details>`, tooltip/popover bodies, plot legends rendered as HTML. When adding any new text-bearing UI element, add its selector to the list in the same commit. When a size-drift report arrives, **find the surface that is not in the list** rather than assuming the rule was never applied.
 
-Verification for this class is a computed-style sweep, not a source grep: a
-source that contains no `font-size` override can still render at the wrong size
-because a vendored stylesheet set one.
+Verification for this class is a computed-style sweep, not a source grep: a source that contains no `font-size` override can still render at the wrong size because a vendored stylesheet set one.
 
 ## CRITICAL: One Body Size, No Per-Element Overrides
 

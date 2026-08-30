@@ -11,37 +11,22 @@ paths:
 
 ## When This Applies
 
-Every project that joins data from two or more sources where the join key has
-more than one human form. Examples:
+Every project that joins data from two or more sources where the join key has more than one human form. Examples:
 
 - `user_id` vs `email` vs `username` — three forms for one identity concept
 - `repo` vs `repo_full_name` vs `slug` vs `project` — same repository, four names
 - `severity` vs `sev` vs `severity_level` — roborev DB vs GitHub labels vs internal config
 - `"Acme Corp"` vs `"Acme Corporation"` vs `"ACME-NA"` — three strings for one account
 
-If your code has a raw string join condition, a CASE WHEN map, or a manually
-maintained `left_join(by = c("col_a" = "col_b"))` with no backing source of
-truth, this rule applies.
+If your code has a raw string join condition, a CASE WHEN map, or a manually maintained `left_join(by = c("col_a" = "col_b"))` with no backing source of truth, this rule applies.
 
 ## Source
 
-JohnGavin/llm#474 — Salesforce 8 Design Principles gap analysis (Principle 2:
-Harmonise data with metadata-driven understanding). Concrete trigger: the
-roborev daily report joined `findings` (roborev DB) with `commits` (GitHub)
-by repo slug. Slug normalisation differed by source; findings were attributed
-to the wrong repo and the cross-repo severity comparison (#471) was
-meaningless.
+JohnGavin/llm#474 — Salesforce 8 Design Principles gap analysis (Principle 2: Harmonise data with metadata-driven understanding). Concrete trigger: the roborev daily report joined `findings` (roborev DB) with `commits` (GitHub) by repo slug. Slug normalisation differed by source; findings were attributed to the wrong repo and the cross-repo severity comparison (#471) was meaningless.
 
 ## CRITICAL: Every Join Key Has One Canonical Form
 
-Two systems disagreeing on a name is not a data-quality bug — it is a missing
-mapping. The canonical name is the project's authoritative identifier. Every
-alias is a deviation that MUST be resolved to the canonical form before any
-join, aggregation, or display. The mapping lives in one place; all code reads
-from that place.
-
-A join that hard-codes `col_a = "GitHub"` when the DB stores `"github"` is an
-untracked alias — invisible until it produces a silent wrong answer.
+Two systems disagreeing on a name is not a data-quality bug — it is a missing mapping. The canonical name is the project's authoritative identifier. Every alias is a deviation that MUST be resolved to the canonical form before any join, aggregation, or display. The mapping lives in one place; all code reads from that place. A join that hard-codes `col_a = "GitHub"` when the DB stores `"github"` is an untracked alias — invisible until it produces a silent wrong answer.
 
 ## The Pattern
 
@@ -74,20 +59,9 @@ fast on any unmapped values — see Worked Example 2 below for the full pattern.
 
 ### 5. Variable-level descriptions: attach them to the data, don't duplicate them in a doc
 
-Steps 1-4 above cover **join-key** aliasing. A separate but related drift
-happens at the **column** level: a human-readable description of what a
-variable means ("Incident severity code", "1=low, 2=medium, 3=high") is
-usually written once into a glossary document and never touched again, while
-the data itself carries no memory of that description. The two fall out of
-sync the moment either one changes.
+Steps 1-4 above cover **join-key** aliasing. A separate but related drift happens at the **column** level: a human-readable description of what a variable means ("Incident severity code", "1=low, 2=medium, 3=high") is usually written once into a glossary document and never touched again, while the data itself carries no memory of that description. The two fall out of sync the moment either one changes.
 
-The fix is the same discipline applied one level down: attach the
-description to the column itself, as a `label` attribute (what the variable
-is) and a `labels` attribute (what its coded values mean), using
-`labelled::var_label()` / `labelled::val_labels()` (or the `haven` package,
-which the labelled ecosystem builds on). The glossary becomes something
-**derived from** the labelled data — e.g. `purrr::map(df, attr, "label")` —
-rather than a parallel document that can drift.
+The fix is the same discipline applied one level down: attach the description to the column itself, as a `label` attribute (what the variable is) and a `labels` attribute (what its coded values mean), using `labelled::var_label()` / `labelled::val_labels()` (or the `haven` package, which the labelled ecosystem builds on). The glossary becomes something **derived from** the labelled data — e.g. `purrr::map(df, attr, "label")` — rather than a parallel document that can drift.
 
 ```r
 library(labelled)
@@ -96,28 +70,11 @@ var_label(df$severity)  <- "Incident severity code"
 val_labels(df$severity) <- c(low = 1, medium = 2, high = 3)
 ```
 
-Value labels round-trip to a factor's levels via `labelled::to_factor()`
-(equivalent: `haven::as_factor()`, verified below), so the same description
-drives both the raw coded column and any factor derived from it.
-See the companion doc for a full worked round-trip, the value-labels ↔
-factor-levels mapping, and the attribute-preservation gotcha: base `[` on a
-plain (non-`haven_labelled`) vector, and arithmetic transforms inside
-`dplyr::mutate()`, can both silently **strip** `label`/`labels` — the
-companion doc gives a verified demonstration of exactly what survives
-(`dplyr::filter()`, a non-transforming `dplyr::left_join()`) and what
-doesn't, plus a validation-check pattern to catch the drop.
+Value labels round-trip to a factor's levels via `labelled::to_factor()` (equivalent: `haven::as_factor()`, verified below), so the same description drives both the raw coded column and any factor derived from it. See the companion doc for a full worked round-trip, the value-labels ↔ factor-levels mapping, and the attribute-preservation gotcha: base `[` on a plain (non-`haven_labelled`) vector, and arithmetic transforms inside `dplyr::mutate()`, can both silently **strip** `label`/`labels` — the companion doc gives a verified demonstration of exactly what survives (`dplyr::filter()`, a non-transforming `dplyr::left_join()`) and what doesn't, plus a validation-check pattern to catch the drop.
 
-> **Project note:** `labelled` is not yet a dependency in this project's
-> `default.R`/`default.nix` — add it there before running the
-> `labelled::`-prefixed calls above. The companion doc's verified examples
-> use `haven` (already a project dependency) to demonstrate the identical
-> underlying `label`/`labels` attribute mechanics.
+> **Project note:** `labelled` is not yet a dependency in this project's `default.R`/`default.nix` — add it there before running the `labelled::`-prefixed calls above. The companion doc's verified examples use `haven` (already a project dependency) to demonstrate the identical underlying `label`/`labels` attribute mechanics.
 
-Cross-reference: the [`visualization`](visualization.md) rule and
-`visualization-detailed` skill document the payoff — ggplot2 (4.0.0+),
-`table1`, and `gtsummary` all consume the same `label` attribute for
-axis titles and table headers, so a variable labelled once here needs no
-further labelling at the plotting or reporting layer.
+Cross-reference: the [`visualization`](visualization.md) rule and `visualization-detailed` skill document the payoff — ggplot2 (4.0.0+), `table1`, and `gtsummary` all consume the same `label` attribute for axis titles and table headers, so a variable labelled once here needs no further labelling at the plotting or reporting layer.
 
 ## Forbidden Patterns
 

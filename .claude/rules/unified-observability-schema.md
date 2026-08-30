@@ -26,15 +26,7 @@ that emits events, and every agent run. Applies to:
 
 ## CRITICAL: One DuckDB, One Schema Family, All Projects
 
-Every observable event in the stack writes to a single unified DuckDB at
-`~/.claude/logs/unified.duckdb`. This is a user-level store, not a
-project-level one — all projects share it. The reasons a unified store
-matters: (1) cross-session and cross-project queries become trivial JOIN
-operations; (2) the overnight self-review job (`self_review_stage1.sql`) can
-reason about the full system without stitching together custom log formats;
-(3) drift over time is visible because cause-and-effect chains are traceable
-in a single query. A custom per-project log file or a second DuckDB silently
-breaks all of those properties.
+Every observable event in the stack writes to a single unified DuckDB at `~/.claude/logs/unified.duckdb`. This is a user-level store, not a project-level one — all projects share it. The reasons a unified store matters: (1) cross-session and cross-project queries become trivial JOIN operations; (2) the overnight self-review job (`self_review_stage1.sql`) can reason about the full system without stitching together custom log formats; (3) drift over time is visible because cause-and-effect chains are traceable in a single query. A custom per-project log file or a second DuckDB silently breaks all of those properties.
 
 ## The 5-Dim Model
 
@@ -69,19 +61,7 @@ these before proposing a new table:
 
 ## Data Quality Incidents
 
-`data_quality_incidents` records windows where an asset/column's values are
-known to be untrustworthy (imputed, estimated, or otherwise not observed) —
-e.g. `sessions.duration_min` between 2026-07-24 and 2026-08-05, backfilled by
-`session_reaper.sql` (llm#803) when `session_stop.sh`'s DB write silently
-stopped firing (llm#913, llm#915). Add a row when you diagnose such a window;
-it is a one-time incident record, not a continuously-firing event table. Any
-consumer of an affected asset/column (dashboard query, vignette, exported
-JSON) MUST check this table — or the incident's own marker if one exists
-(e.g. a `summary` tag) — and exclude or visibly flag affected rows rather
-than presenting an estimate as observed data. Schema:
-`.claude/scripts/housekeeping_schema_init.sql`; seed pattern:
-`.claude/scripts/data_quality_incidents_seed.sql` +
-`data_quality_incidents_seed_apply.sh`.
+`data_quality_incidents` records windows where an asset/column's values are known to be untrustworthy (imputed, estimated, or otherwise not observed) — e.g. `sessions.duration_min` between 2026-07-24 and 2026-08-05, backfilled by `session_reaper.sql` (llm#803) when `session_stop.sh`'s DB write silently stopped firing (llm#913, llm#915). Add a row when you diagnose such a window; it is a one-time incident record, not a continuously-firing event table. Any consumer of an affected asset/column (dashboard query, vignette, exported JSON) MUST check this table — or the incident's own marker if one exists (e.g. a `summary` tag) — and exclude or visibly flag affected rows rather than presenting an estimate as observed data. Schema: `.claude/scripts/housekeeping_schema_init.sql`; seed pattern: `.claude/scripts/data_quality_incidents_seed.sql` + `data_quality_incidents_seed_apply.sh`.
 
 ## How to Add a New Event Type
 

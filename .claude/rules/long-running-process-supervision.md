@@ -10,15 +10,7 @@ paths:
 
 ## Source
 
-[llm#936](https://github.com/JohnGavin/llm/issues/936) — the roborev review
-daemon self-daemonized via `roborev daemon start` (fork, detach, return a
-shell prompt). Nothing then owned its lifecycle. It ran 7 days holding a
-stale `GEMINI_API_KEY` after a rotation, every review failed the whole time,
-and nothing detected it: no restart, no age bound, no health check coverage.
-[llm#956](https://github.com/JohnGavin/llm/issues/956) is the migration that
-put it under launchd supervision (`com.roborev.daemon.plist` +
-`roborev_daemon_launcher.sh`) and is the reference implementation for this
-rule.
+[llm#936](https://github.com/JohnGavin/llm/issues/936) — the roborev review daemon self-daemonized via `roborev daemon start` (fork, detach, return a shell prompt). Nothing then owned its lifecycle. It ran 7 days holding a stale `GEMINI_API_KEY` after a rotation, every review failed the whole time, and nothing detected it: no restart, no age bound, no health check coverage. [llm#956](https://github.com/JohnGavin/llm/issues/956) is the migration that put it under launchd supervision (`com.roborev.daemon.plist` + `roborev_daemon_launcher.sh`) and is the reference implementation for this rule.
 
 ## When This Applies
 
@@ -32,14 +24,7 @@ forks and detaches.
 > Anything long-running is a launchd job. Nothing is started by hand or
 > self-daemonized.
 
-A process that forks itself into the background escapes every supervision
-mechanism this project has: launchd's `KeepAlive` never sees it (there is no
-launchd job to restart), the weekly `launchd_health_audit.sh` never sees it
-(it audits installed plists, not ad hoc PIDs), and it never appears in a
-`launchctl list`-based inventory. The only thing keeping it alive is the fact
-that it happens to still be running — which is also true right up until the
-moment it silently stops being useful (stale credentials, stale config, a
-crash nobody saw) while its PID keeps existing.
+A process that forks itself into the background escapes every supervision mechanism this project has: launchd's `KeepAlive` never sees it (there is no launchd job to restart), the weekly `launchd_health_audit.sh` never sees it (it audits installed plists, not ad hoc PIDs), and it never appears in a `launchctl list`-based inventory. The only thing keeping it alive is the fact that it happens to still be running — which is also true right up until the moment it silently stops being useful (stale credentials, stale config, a crash nobody saw) while its PID keeps existing.
 
 ## The Three-Part Invariant
 
@@ -121,30 +106,14 @@ the process started) warrants `launchctl kickstart`.
 
 ## A Client Can Spawn the Daemon You Are Trying to Supervise
 
-Installing the plist is not sufficient on its own. Many daemon-backed CLIs
-**auto-start a daemon from any client command** when none is reachable —
-roborev does this from `stream`, and the pre-migration process was not an
-orphan from a hand-typed `daemon start` at all: it was a child of
-`roborev stream`, itself a child of the `com.roborev.auto-refine` launchd
-job. So the process was transitively supervised by the *wrong* job, which is
-why a restart of that job appeared to fix llm#936 and why nothing looked like
-an orphan when someone went looking for one.
-
-Before migrating, establish two facts about the tool:
+Installing the plist is not sufficient on its own. Many daemon-backed CLIs **auto-start a daemon from any client command** when none is reachable — a "self-daemonized orphan" may in fact be a grandchild of another launchd job that transitively supervises the wrong thing (full llm#936 narrative: companion doc). Before migrating, establish two facts about the tool:
 
 | Question | How to answer it | Why it matters |
 |---|---|---|
 | What actually spawns the running process? | `ps -o pid,ppid,lstart,command` up the PPID chain until PPID 1 | A "self-daemonized orphan" may in fact be a grandchild of another job; killing the process alone lets its parent respawn it |
 | Is there a single-binder lock? | `lsof -nP -p <pid> -a -i` / `-a -U` | A fixed port or socket bounds the damage: a rival cannot bind and exits. Without one, two daemons can serve the same queue indefinitely |
 
-Then stop the **spawning job first**, not the daemon first. Killing the
-daemon while its client keeps running just hands the port to a fresh rival.
-
-A single-binder lock bounds the race but does not remove it: while a
-client-spawned rival holds the port, the launchd copy fails to bind, exits,
-and is held off by `ThrottleInterval` before retrying — so a rival can own
-the queue for up to that interval. Supervision is not a substitute for
-knowing what else starts the process.
+Then stop the **spawning job first**, not the daemon first — killing the daemon while its client keeps running just hands the port to a fresh rival. A single-binder lock bounds this race but does not remove it (full explanation: companion doc) — supervision is not a substitute for knowing what else starts the process.
 
 ## Known Follow-Up (Not This Change)
 
