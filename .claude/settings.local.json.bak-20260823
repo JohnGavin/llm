@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/opt/homebrew/bin/codexbar usage *)",
+      "Bash(/opt/homebrew/bin/codexbar *)",
+      "Bash(/Users/johngavin/.npm/_npx/5032fdcfd7bcf20e/node_modules/@ccusage/ccusage-darwin-arm64/bin/ccusage --help)",
+      "Bash(/Users/johngavin/.npm/_npx/5032fdcfd7bcf20e/node_modules/@ccusage/ccusage-darwin-arm64/bin/ccusage daily *)",
+      "Bash(CLAUDE_HOOK_SELFTEST=1 bash *)",
+      "Bash(/bin/ls *)",
+      "Bash(exit 0)",
+      "Bash(SKIP_SESSION_END_REFINE=1 /Users/johngavin/docs_gh/llm/.claude/scripts/session_end_refine.sh *)",
+      "Bash(ls *)",
+      "Bash(SESSION_END_REFINE_DRYRUN=1 HOME=/tmp/test_refine_home /bin/bash -c 'cd /Users/johngavin/docs_gh/llm && /bin/bash /Users/johngavin/docs_gh/llm/.claude/scripts/session_end_refine.sh')",
+      "Bash(SESSION_END_REFINE_DRYRUN=1 HOME=/tmp/test_refine_home /bin/bash -c 'cd /tmp && /bin/bash /Users/johngavin/docs_gh/llm/.claude/scripts/session_end_refine.sh')",
+      "Bash(SESSION_END_REFINE_DRYRUN=1 /Users/johngavin/.claude/scripts/session_end_refine.sh *)",
+      "Bash(SKIP_SESSION_END_REFINE=1 SESSION_END_REFINE_DRYRUN=1 /Users/johngavin/.claude/scripts/session_end_refine.sh *)",
+      "Bash(SESSION_END_REFINE_DRYRUN=1 /Users/johngavin/docs_gh/llm/.claude/worktrees/agent-a6d568647923d6133/.claude/scripts/session_end_refine.sh *)",
+      "Bash(SESSION_END_REFINE_DRYRUN=1 SKIP_SESSION_END_REFINE=1 /Users/johngavin/.claude/scripts/session_end_refine.sh *)",
+      "Bash(SESSION_END_REFINE_DRYRUN=1 SKIP_SESSION_END_REFINE=1 /Users/johngavin/docs_gh/llm/.claude/worktrees/agent-a6d568647923d6133/.claude/scripts/session_end_refine.sh *)",
+      "Bash(/usr/bin/jq '.verdicts | {total: .total, failed: .failed, addressed: .addressed}')",
+      "Bash(env)",
+      "Bash(/usr/bin/security find-generic-password *)",
+      "Bash(bash *)",
+      "Bash(CC_SH_SELFTEST=1 bash ~/.claude/scripts/cc.sh)",
+      "Bash(env *)",
+      "Bash(~/.claude/scripts/cc-worktree.sh llm *)",
+      "Bash(~/.claude/scripts/agent-post-verify.sh capture *)",
+      "Bash(cp ~/docs_gh/llm/.claude/scripts/cc.sh ~/worktrees/llm/fix/launcher-login-21173/.claude/scripts/cc.sh)",
+      "Bash(cp ~/docs_gh/llm/default.sh ~/worktrees/llm/fix/launcher-login-21173/default.sh)",
+      "Bash(cp ~/docs_gh/llm/.claude/settings.json ~/worktrees/llm/fix/launcher-login-21173/.claude/settings.json)",
+      "Bash(command -v npx node)",
+      "Bash(brew uninstall *)",
+      "Bash(~/.claude/scripts/agent-post-verify.sh check *)",
+      "Bash(SKIP_CRON_PULL=1 DRYRUN=1 bash /Users/johngavin/docs_gh/worktrees/llm/fix/596-cron-gcroot/bin/kb_digest_daily_cron.sh)"
+    ]
+  }
+}
