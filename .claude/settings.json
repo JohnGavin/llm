@@ -407,6 +407,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/private_repo_detail_guard.sh",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit",
         "hooks": [
           {

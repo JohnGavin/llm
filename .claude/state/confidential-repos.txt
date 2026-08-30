@@ -1,0 +1,39 @@
+# Confidential-by-policy repos — llm's OWN list, consumed by
+# repo_visibility.sh (JohnGavin/llm#794 item 1).
+#
+# Format: one entry per line — either a bare directory basename
+# (e.g. "my-private-project") or an "owner/repo" GitHub identifier
+# (e.g. "JohnGavin/my-private-project"). Lines starting with '#' are
+# comments; a trailing '#...' on a data line is also treated as a comment.
+# Blank lines are ignored.
+#
+# Purpose: some repos are technically PUBLIC on GitHub (or have no GitHub
+# remote at all and would otherwise fall through to a weaker bucket) but
+# must still never have their name/paths/domain detail appear in a public
+# cross-project artifact this repo (llm) publishes — issues, PR bodies,
+# comments. Any entry here is classified `confidential_by_policy` by
+# repo_visibility.sh regardless of what `gh repo view` would otherwise say.
+#
+# This list is deliberately SEPARATE from
+# `llmtelemetry::excluded_dashboard_projects()` (a different repo's R-level
+# dashboard-scoping list) and from `.claude/state/trusted-contributors.txt`
+# (a different concern — code-provenance trust, not publish-detail
+# sensitivity). llm's own confidential-by-policy list exists because the
+# pre-publish guard in THIS repo (private_repo_detail_guard.sh) must decide
+# what to scan for using bash + `gh`, with no dependency on another
+# project's R package being installed or loadable.
+#
+# To add an entry:
+#   1. Confirm the repo is genuinely confidential-by-policy (not simply
+#      "currently private" — that case is already covered by
+#      `gh repo view --json visibility` and needs no entry here).
+#   2. Add the basename or owner/repo string below.
+#   3. Commit with a message referencing the decision/issue that added it.
+#
+# Rule reference: .claude/rules/private-repo-detail-locality.md
+# Issue: JohnGavin/llm#794
+
+# (no entries yet — llm has not identified a technically-public-but-
+# confidential-by-policy repo of its own as of 2026-08-30; llmtelemetry's
+# excluded_dashboard_projects() is the precedent this list follows if/when
+# one is identified)
