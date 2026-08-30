@@ -531,6 +531,65 @@ fi
 log "INFO: triggering re-review for commit=${COMMIT_SHA} repo=${REPO_NAME}"
 echo "  triggering re-review for ${COMMIT_SHA} (repo: ${REPO_NAME})"
 
+# ── Record predictions (JohnGavin/llm#163 Slice 3 + JohnGavin/llm#839) ───────
+#
+# Prediction moment: right here, BEFORE the adversarial re-review's verdict
+# is known. A commit citing "closes roborev #N" is an implicit full-confidence
+# claim that the fix resolved finding #N — that claim is what gets predicted;
+# the re-review's verdict_bool (below) is the later-known outcome. There is
+# no elicited numeric confidence anywhere upstream of this script, so
+# p_success is logged as a constant 1.0 (a "closes" citation IS a claim of
+# certainty, not a fabricated probability). This means the reliability
+# diagram will show a single high-confidence bucket until a richer signal
+# (e.g. an agent self-reporting a probability at commit time) exists —
+# documented as a known limitation, not hidden. See JohnGavin/llm#839.
+#
+# Only the approved-fix path (this branch) predicts: the wontfix path above
+# returns before reaching here (no adversarial verify happens for a wontfix,
+# so there is no prediction/outcome pair to record), and the VALIDATION_ERRORS
+# path above also returns before here (an invalid citation is not a
+# prediction).
+declare -A FINDING_TO_PREDICTION_ID=()
+_RECORD_PREDICTION_SCRIPT="$(dirname "$0")/record_prediction.sh"
+if [ -x "$_RECORD_PREDICTION_SCRIPT" ]; then
+  PROJECT_ROOT_PATH=$(/usr/bin/python3 - "$ROBOREV_DB" "$COMMIT_SHA" <<'PY'
+import sys, sqlite3
+db_path, sha = sys.argv[1], sys.argv[2]
+try:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    row = conn.execute(
+        """SELECT rp.root_path FROM commits c
+           JOIN repos rp ON rp.id = c.repo_id
+           WHERE c.sha = ? LIMIT 1""",
+        (sha,)
+    ).fetchone()
+    conn.close()
+    if row and row[0]:
+        print(row[0])
+except Exception:
+    pass
+PY
+  )
+  PROJECT_SLUG=$(printf '%s' "${PROJECT_ROOT_PATH:-$REPO_NAME}" | tr '/' '-')
+
+  while IFS= read -r fid; do
+    [ -z "$fid" ] && continue
+    PREDICT_OUT=$(bash "$_RECORD_PREDICTION_SCRIPT" predict \
+      "$PROJECT_SLUG" "$REPO_NAME" "roborev_adversarial_verify" "1.0" \
+      "adversarial-verify commit ${COMMIT_SHA} claims to resolve roborev finding #${fid}" \
+      "fix commit cites 'closes roborev #${fid}'" 2>/dev/null) || true
+    PRED_ID=$(printf '%s\n' "$PREDICT_OUT" | sed -n 's/^Recorded prediction: \([^ ]*\).*/\1/p')
+    if [ -n "$PRED_ID" ]; then
+      FINDING_TO_PREDICTION_ID["$fid"]="$PRED_ID"
+      log "PREDICTED finding_id=${fid} prediction_id=${PRED_ID} commit=${COMMIT_SHA}"
+    else
+      log "WARN: record_prediction.sh predict produced no prediction_id for finding_id=${fid}"
+    fi
+  done <<< "$CITED_IDS"
+else
+  log "WARN: record_prediction.sh not found or not executable at ${_RECORD_PREDICTION_SCRIPT} — skipping prediction logging"
+fi
+
 # Trigger roborev re-review
 REVIEW_JOB_ID=""
 if ! REVIEW_OUTPUT=$("$ROBOREV_BIN" review --commit "$COMMIT_SHA" 2>&1); then
@@ -651,6 +710,27 @@ if [ -z "$VERDICT" ]; then
 fi
 
 log "INFO: job_id=${REVIEW_JOB_ID} verdict_bool=${VERDICT}"
+
+# ── Record prediction outcomes (JohnGavin/llm#839) ────────────────────────────
+# The outcome is known now: the adversarial re-review's verdict_bool. Record
+# it against whichever prediction_id(s) were logged above, regardless of what
+# happens next (close / queue for triage / reject) — those are downstream
+# actions on the finding, not part of "was the fix-claim correct".
+if [ -x "$_RECORD_PREDICTION_SCRIPT" ]; then
+  OUTCOME_BOOL="false"
+  [ "$VERDICT" = "1" ] && OUTCOME_BOOL="true"
+  while IFS= read -r fid; do
+    [ -z "$fid" ] && continue
+    PRED_ID="${FINDING_TO_PREDICTION_ID[$fid]:-}"
+    [ -z "$PRED_ID" ] && continue
+    if bash "$_RECORD_PREDICTION_SCRIPT" outcome "$PRED_ID" "$OUTCOME_BOOL" \
+      "adversarial-verify job_id=${REVIEW_JOB_ID} verdict_bool=${VERDICT}" >/dev/null 2>&1; then
+      log "OUTCOME_RECORDED finding_id=${fid} prediction_id=${PRED_ID} outcome=${OUTCOME_BOOL}"
+    else
+      log "WARN: record_prediction.sh outcome failed for prediction_id=${PRED_ID} finding_id=${fid}"
+    fi
+  done <<< "$CITED_IDS"
+fi
 
 # ── Verdict: approved (1) → delegate to auto-close (Component 5) ─────────────
 
