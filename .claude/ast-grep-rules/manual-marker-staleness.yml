@@ -1,0 +1,47 @@
+# manual-marker-staleness.yml
+#
+# NOT YET REGISTERED: like r-no-system2-getenv-splice.yml (see that file's
+# header for the full explanation), this rule cannot be auto-discovered by
+# r_code_check.sh / `/check` until it is copied to the laptop-local,
+# non-git-backed ast-grep rules directory:
+#
+#   cp .claude/ast-grep-rules/manual-marker-staleness.yml \
+#     ~/.config/ast-grep/rules/manual-marker-staleness.yml
+#
+# This file is kept in-repo so the rule is reviewable and version-controlled;
+# the orchestrator (or a human) must perform the one-time copy above outside
+# this worktree's sandbox.
+#
+# Rationale: JohnGavin/llm#792. A `# MANUAL: no source` marker documents a
+# hand-entered value for which no machine-readable source exists. Per the
+# issue: "A marker with no expiry becomes a lie" -- one private repo carried
+# such a marker for a value whose parser had since been written, and the two
+# had silently diverged. F3 (see provisional-constants rule) therefore
+# REQUIRES the marker to cite a tracking issue number (e.g. "see #123"), and
+# requires that issue to still be OPEN.
+#
+# Scope of this detector: finding the location of a `# MANUAL:` comment that
+# has NO issue-number reference is a pure text/regex match on the comment
+# node's content -- ast-grep does it here, unconditionally, as an `error`
+# (this fires regardless of Option-C's graduated block/warn tiering, per the
+# task: a missing issue reference is always a defect). Checking whether a
+# CITED issue is closed (the staleness half) requires a `gh issue view` API
+# call and does NOT belong in a structural ast-grep rule -- that half is
+# implemented in r_code_check.sh's "MANUAL Marker Staleness Check" section,
+# which greps flagged files for `# MANUAL:.*#([0-9]+)` and queries each
+# referenced issue's state.
+id: manual-marker-no-issue-ref
+language: r
+rule:
+  kind: comment
+  regex: "MANUAL:"
+  not:
+    regex: "MANUAL:.*#[0-9]+"
+message: |
+  "# MANUAL: no source" marker with no linked tracking issue.
+  F3 requires an issue reference (e.g. "# MANUAL: no source (see #123)") so
+  the marker's staleness can be checked -- an un-cited marker can never be
+  verified against a source that has since become available. See
+  .claude/rules/provisional-constants.md and JohnGavin/llm#792.
+severity: error
+note: "Fix: append '(see #<issue>)' citing a tracking issue to obtain a parseable source."
