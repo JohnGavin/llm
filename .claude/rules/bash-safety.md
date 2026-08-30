@@ -27,18 +27,11 @@ Every Agent dispatch involving Bash MUST include the verbatim Bash discipline pr
 
 ### CRITICAL: Never Use `&&` in Bash Commands
 
-Compound commands with `&&` trigger confirmation prompts that interrupt workflow.
-Some prompts (e.g., `cd && git`) are hardcoded and cannot be bypassed even with
-`bypassPermissions`. To eliminate ALL such prompts, this rule bans `&&` entirely.
-
-**One command per Bash call. No exceptions.**
+Compound commands with `&&` trigger confirmation prompts that interrupt workflow. Some prompts (e.g., `cd && git`) are hardcoded and cannot be bypassed even with `bypassPermissions`. To eliminate ALL such prompts, this rule bans `&&` entirely. **One command per Bash call. No exceptions.**
 
 ### Why
 
-1. **Eliminates all confirmation prompts** — no `&&` means no compound-command guards fire
-2. **Explicit audit trail** — each tool call shows exactly one operation
-3. **No cwd leakage** — `cd` in one call affects subsequent calls
-4. **Failure isolation** — if command A fails, command B doesn't run silently in wrong state
+Eliminates all confirmation prompts (no `&&` means no compound-command guards fire), gives an explicit audit trail (each tool call shows exactly one operation), prevents cwd leakage (`cd` in one call would otherwise affect subsequent calls), and isolates failures (command A failing can't let command B run silently in the wrong state).
 
 ### Substitution Patterns
 
@@ -54,30 +47,9 @@ Some prompts (e.g., `cd && git`) are hardcoded and cannot be bypassed even with
 | `cmd1 && cmd2` | Two separate Bash calls |
 | `cmd1; cmd2` | Two separate Bash calls |
 
-### Dependent Operations
+### Dependent Operations, Subshells, and Heredocs
 
-When command B depends on command A, use **separate sequential Bash calls**:
-
-```
-# First call:
-Bash("git -C ~/repo add file.R")
-# Second call (after first succeeds):
-Bash("git -C ~/repo commit -m 'msg'")
-```
-
-### Exception: Subshells for Atomicity
-
-When atomicity is required (rare):
-
-```bash
-(cd ~/repo && tar czf ../backup.tgz .)
-```
-
-The subshell `()` isolates the `cd` so it doesn't leak.
-
-### Exception: Heredocs
-
-Heredocs for multi-line strings are allowed:
+When command B depends on command A, use **separate sequential Bash calls** (`Bash("git -C ~/repo add file.R")`, then `Bash("git -C ~/repo commit -m 'msg'")`). When atomicity is required (rare), a subshell isolates the `cd` so it doesn't leak: `(cd ~/repo && tar czf ../backup.tgz .)`. Heredocs for multi-line strings (e.g. commit messages) are allowed:
 
 ```bash
 git -C ~/repo commit -m "$(cat <<'EOF'
@@ -148,33 +120,11 @@ find .claude/worktrees/ -maxdepth 2 -type f | head -20
 
 ### CRITICAL: `git diff | grep '^+'` Silently Sees Nothing When an External Diff Tool Is Configured
 
-If `diff.external` (or the `GIT_EXTERNAL_DIFF` env var) is set — e.g.
-`git config diff.external difft` for [difftastic](https://github.com/Wilfred/difftastic)
-— every command that goes through git's diff machinery (`git diff`,
-`git log -p`, `git show <commit>`, `git diff-tree -p`) renders its output
-through that external tool instead of the standard unified format. A
-structural differ's output does not use `+`/`-` line prefixes, so any script
-piping diff output into a `grep '^+'`-style content scan (PII scrubbing, a
-secret scan, a code-review grep) returns **zero matches regardless of actual
-content** — no error, no warning, a clean bill of health that means nothing.
-
-**Verified on this machine, live** (`git config --get diff.external` returns
-`difft --display inline`, set both globally and per-repo):
-
-```bash
-$ git diff HEAD~1 -- some-changed-file.sh | grep -c '^+'
-0
-$ git diff --no-ext-diff HEAD~1 -- some-changed-file.sh | grep -c '^+'
-10
-```
-
-Ten real added lines, zero matches on the default path.
+If `diff.external` (or the `GIT_EXTERNAL_DIFF` env var) is set — e.g. `git config diff.external difft` for [difftastic](https://github.com/Wilfred/difftastic) — every command that goes through git's diff machinery (`git diff`, `git log -p`, `git show <commit>`, `git diff-tree -p`) renders its output through that external tool instead of the standard unified format. A structural differ's output does not use `+`/`-` line prefixes, so any script piping diff output into a `grep '^+'`-style content scan (PII scrubbing, a secret scan, a code-review grep) returns **zero matches regardless of actual content** — no error, no warning, a clean bill of health that means nothing. Verified live reproduction on this machine: companion doc.
 
 ### The Fix: `--no-ext-diff`, Not an Env-Var Override
 
-Add `--no-ext-diff` to any `git diff` / `git log -p` / `git show` invocation
-whose output a script will parse programmatically (never to a diff shown
-to a human — that's the whole point of configuring an external differ).
+Add `--no-ext-diff` to any `git diff` / `git log -p` / `git show` invocation whose output a script will parse programmatically (never to a diff shown to a human — that's the whole point of configuring an external differ). `GIT_EXTERNAL_DIFF=` (set empty) does NOT work as a bypass — verified, see companion doc.
 
 ```bash
 # CORRECT — forces the standard unified format regardless of diff.external
@@ -185,29 +135,7 @@ git log --all -p --no-ext-diff | grep -aoE "$PATTERN"
 git diff HEAD~1 -- file.sh | grep '^+'
 ```
 
-**`GIT_EXTERNAL_DIFF=` (set to empty) does NOT work as a bypass** — verified:
-it makes git try to execute an empty string as the diff program, which
-fails outright (`error: cannot run : No such file or directory`) rather than
-falling back to the built-in differ. Same result for `git -c diff.external=`.
-`--no-ext-diff` is the only invocation-scoped override that actually works.
-
-### Audit of This Repo's Own Scripts (2026-08-29, llm#997)
-
-Grepped `.claude/hooks/**` and `.claude/scripts/**` for `git diff`, `git log
--p`, and `git show` calls whose output feeds a pattern-matching scan. Result:
-every content-parsing call site already guards against this —
-
-| Script | Guard already in place |
-|---|---|
-| `.claude/hooks/repo_visibility_guard.sh` | `git log --all -p --no-ext-diff` (added 2026-08-22, citing this same issue as belt-and-braces) |
-| `.claude/scripts/branch_gc.sh` (`sample_unique_strings()`) | `git diff --no-ext-diff "${def}...${branch}"` |
-| `.claude/scripts/private_data_scan.sh` | Documents this exact hazard in its own header and avoids content diff entirely — uses `git diff --cached --name-only` / `git diff-tree --name-only -r` (file lists, never content) |
-| `.claude/scripts/check_skill_security.sh`, `.claude/scripts/phi_scan.sh`, `.claude/scripts/indeterminate_precommit.sh` | Use `git diff --name-only` (file paths only) — structurally unaffected by `diff.external` regardless |
-
-No follow-up fix is needed in this repo today. Flagging this section so a
-**future** script that adds a new `git diff \| grep`-style content scan
-carries `--no-ext-diff` from the start, rather than being discovered only
-when a review silently passes something it should have caught.
+A 2026-08-29 audit (llm#997) of every content-parsing `git diff`/`git log -p`/`git show` call site in `.claude/hooks/**` and `.claude/scripts/**` found all of them already guarded (`repo_visibility_guard.sh`, `branch_gc.sh`, `private_data_scan.sh`, and three name-only scanners) — no follow-up fix needed today. Full audit table: companion doc. Flagging this section so a **future** script that adds a new content scan carries `--no-ext-diff` from the start.
 
 ---
 
