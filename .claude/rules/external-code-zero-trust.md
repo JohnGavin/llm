@@ -126,9 +126,9 @@ further:
 |---|---|---|
 | 1 | Rule file (this document) | Shipped in this PR |
 | 2 | PreToolUse:WebFetch quarantine hook | Shipped — `external_content_quarantine.sh` wired into `.claude/settings.json` alongside `tool_input_probe.sh` on the `WebFetch` matcher (2026-08-29) |
-| 3 | PreToolUse:Edit\|Write content-similarity guard | Follow-up PR |
+| 3 | PreToolUse:Edit\|Write content-similarity guard | Shipped 2026-08-30 — `edit_write_similarity_guard.sh` compares new Edit/Write content against recent WebFetch fingerprints (`external_content_fingerprint.sh`, a companion PostToolUse:WebFetch hook) using a word-shingle Jaccard-overlap heuristic (`lib/content_shingles.py`). WARNS (never blocks) above threshold — see the hooks' own headers for why block was rejected. The fingerprint capture hook's content-field extraction is best-effort/unverified (WebFetch's `tool_response` shape has never been probed in this repo) and documents that gap honestly rather than guessing; see its "UNVERIFIED SHAPE" header comment |
 | 4 | PostToolUse:Bash gh-comment provenance logger | Shipped in this PR |
-| 5 | PreToolUse:Bash gh-pr-merge author guard | Follow-up PR |
+| 5 | PreToolUse:Bash gh-pr-merge author guard | Shipped 2026-08-30 — `pr_merge_author_guard.sh` blocks `gh pr merge` unless the PR author's `author_association` is OWNER/COLLABORATOR/MEMBER or the login is in `trusted-contributors.txt`. Fail-**closed**, deliberately unlike most guards in this repo: an indeterminate author (lookup failure, malformed response) blocks rather than allows — see the hook's header for the `checks-must-distinguish-unknown` rationale. Bypass: `EXTERNAL_PR_MERGE_OK=1` command-string prefix (human override after manual review) |
 | 6 | Trust manifest (`trusted-contributors.txt`) | Shipped in this PR |
 
 ---
