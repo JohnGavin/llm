@@ -273,6 +273,19 @@ other.
 
 ---
 
+## Long verification commands — full incident detail (llm#749 trim)
+
+Each stall costs a `SendMessage` resume, and the agent typically has already
+finished the real work, so the delay buys nothing. Observed **five times
+across two sessions** (2026-08-05 issues #640/#641/#645; 2026-08-24 issues
+#738/#748 and #740/#697). In the 2026-08-24 pair the orchestrator's dispatch
+*did* say "foreground" in prose and both agents backgrounded anyway — the
+affirmative instruction alone has now failed every time it has been relied
+on; the verbatim call plus the negative instruction is the only form that
+has held.
+
+---
+
 ## Right vs Wrong
 
 ```
