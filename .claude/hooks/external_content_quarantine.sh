@@ -21,58 +21,16 @@
 set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════════════════════
-# CONFIGURATION — edit this list to add/remove trusted domains
+# SHARED DOMAIN ALLOWLIST (llm#194 Layer 3 follow-up, 2026-08-30)
 # ═══════════════════════════════════════════════════════════════════════════
-
-# Hosts in this list are logged as ALLOW (no quarantine marker set).
-# Hosts not in this list are logged as QUARANTINE (marker set).
-# Subdomains are NOT automatically trusted — add them explicitly.
-ALLOWED_DOMAINS=(
-  # Anthropic — Claude documentation and API references
-  "anthropic.com"
-  "docs.anthropic.com"
-
-  # GitHub — trusted for JohnGavin/* repos; raw content
-  "github.com"
-  "raw.githubusercontent.com"
-
-  # Owner's own published domains
-  "johngavin.github.io"
-  "johngavin.r-universe.dev"
-
-  # R ecosystem documentation
-  "cran.r-project.org"
-  "r-lib.github.io"
-  "tidyverse.org"
-  "tidyverse.github.io"
-  "posit-dev.github.io"
-  "quarto.org"
-  "shiny.posit.co"
-  "shinylive.io"
-  "rstudio.github.io"
-  "blogs.rstudio.com"
-  "r-universe.dev"
-  "docs.ropensci.org"
-  "wlandau.github.io"
-  "shikokuchuo.net"
-
-  # Reference and learning
-  "machinelearningmastery.com"
-  "blog.r-hub.io"
-  "www.r-bloggers.com"
-  "forum.posit.co"
-  "www.andrewheiss.com"
-  "blog.vincentqiao.com"
-  "www.tidy-finance.org"
-
-  # Project-specific reference domains (finance, gov)
-  "www.gov.uk"
-  "www.fca.org.uk"
-
-  # Self
-  "puntofisso.net"
-  "blog.stephenturner.us"
-)
+# ALLOWED_DOMAINS, is_allowed_domain(), and extract_host_from_url() now live
+# in lib/domain_allowlist.sh, shared with the Layer 3 fingerprint capture
+# hook (external_content_fingerprint.sh) so the two can never disagree about
+# what counts as trusted. Resolved relative to THIS script's own location
+# (not a hardcoded ~/.claude/... path) — see the lib file's own header for
+# why. Behavior is unchanged: same list, same matching logic.
+# shellcheck source=lib/domain_allowlist.sh
+source "${BASH_SOURCE[0]%/*}/lib/domain_allowlist.sh"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PATHS
@@ -101,30 +59,6 @@ try:
 except Exception:
     print('')
 " 2>/dev/null || echo ""
-}
-
-# ═══════════════════════════════════════════════════════════════════════════
-# HELPER: check if host is in the allowlist
-# ═══════════════════════════════════════════════════════════════════════════
-
-is_allowed() {
-  local host="$1"
-  for domain in "${ALLOWED_DOMAINS[@]}"; do
-    if [ "$host" = "$domain" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-# ═══════════════════════════════════════════════════════════════════════════
-# HELPER: extract host from URL
-# ═══════════════════════════════════════════════════════════════════════════
-
-extract_host() {
-  local url="$1"
-  # Strip protocol, then take first path component, then strip port/query
-  printf '%s' "$url" | sed 's|^[a-zA-Z][a-zA-Z0-9+.-]*://||' | cut -d'/' -f1 | cut -d':' -f1 | cut -d'?' -f1
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -226,7 +160,7 @@ if [ -z "$URL" ]; then
 fi
 
 # Extract host from URL
-HOST=$(extract_host "$URL")
+HOST=$(extract_host_from_url "$URL")
 
 if [ -z "$HOST" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ALLOW (no host parsed) url=$URL" >> "$LOG_FILE"
@@ -237,7 +171,7 @@ fi
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 AGENT_ID="${CLAUDE_AGENT_ID:-${CLAUDE_SESSION_ID:-unknown}}"
 
-if is_allowed "$HOST"; then
+if is_allowed_domain "$HOST"; then
   # Trusted domain — log ALLOW
   echo "[$TIMESTAMP] ALLOW host=$HOST url=$URL agent=$AGENT_ID" >> "$LOG_FILE"
   echo "ALLOW: $HOST"
