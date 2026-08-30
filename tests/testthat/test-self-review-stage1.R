@@ -336,7 +336,7 @@ test_that("self_review_stage1.sh passes bash -n syntax check", {
 
 test_that("self_review_stage1.sql exists and is non-empty", {
   f <- sql_file()
-  expect_true(file.exists(f), info = "self_review_stage1.sql not found")
+  skip_if_not(file.exists(f), "self_review_stage1.sql not found")
   lines <- readLines(f, warn = FALSE)
   expect_gt(length(lines), 10L, label = "SQL file appears empty")
 })

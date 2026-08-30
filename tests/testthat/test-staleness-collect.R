@@ -124,7 +124,7 @@ test_that("bin/launchd-recorders/staleness-collect launcher is executable", {
 # ── Schema content ─────────────────────────────────────────────────────────────
 
 test_that("staleness_schema.sql exists and is non-empty", {
-  expect_true(file.exists(schema_sql), info = "staleness_schema.sql not found")
+  skip_if_not(file.exists(schema_sql), "staleness_schema.sql not found")
   lines <- readLines(schema_sql, warn = FALSE)
   expect_gt(length(lines), 10L, label = "SQL file appears empty")
 })

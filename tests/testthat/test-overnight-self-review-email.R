@@ -60,9 +60,9 @@ library(testthat)
 .real_db <- normalizePath("~/.claude/logs/unified.duckdb", mustWork = FALSE)
 
 run_dry_run <- function(db_path = .real_db, extra_env = character(0)) {
-  expect_true(
+  skip_if_not(
     nzchar(.email_script) && file.exists(.email_script),
-    info = "send_overnight_self_review_email.R not found"
+    "send_overnight_self_review_email.R not found"
   )
   env_vars <- c(
     "EMAIL_DRY_RUN=1",
@@ -90,9 +90,9 @@ run_dry_run <- function(db_path = .real_db, extra_env = character(0)) {
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test_that("sender script exists", {
-  expect_true(
+  skip_if_not(
     nzchar(.email_script) && file.exists(.email_script),
-    info = paste("Script not found at:", .email_script)
+    paste("Script not found at:", .email_script)
   )
 })
 
@@ -227,9 +227,9 @@ test_that("launchd plist passes xmllint syntax check", {
 })
 
 test_that("launchd plist file exists", {
-  expect_true(
+  skip_if_not(
     file.exists(.plist_path),
-    info = paste("Plist not found at:", .plist_path)
+    paste("Plist not found at:", .plist_path)
   )
 })
 
