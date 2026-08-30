@@ -17,6 +17,30 @@
 # and committed back to the repo, matching the existing pattern used for other
 # generated telemetry data in this project (readable via readRDS() from a
 # vignette/dashboard later, same as the documented template's intent).
+#
+# Diagnostic note (2026-08-30): on failure, covr::package_coverage() raises
+# an error via covr:::show_failures(), whose message is the *tail* of the
+# underlying <pkg>-tests/testthat.Rout.fail file, truncated to
+# getOption("warning.length") - 9 bytes (default 1000, i.e. ~991 bytes of
+# header+body). That default was empirically too small to show ANY of the
+# actual failure -- a real CI run (33323482903) printed only
+# "Error: Failure in `.../testthat.Rout.fail`" with nothing else, even
+# though an earlier run on a shorter-output failure (33263456520) DID show
+# a full testthat backtrace under the same code path. Confirmed empirically
+# that raising warning.length to its max (8170, verified valid; 20 and
+# 90000 are both rejected by base R) makes show_failures() surface far more
+# of the tail.
+#
+# Also confirmed empirically (nix-shell Rscript, deliberate stop() after
+# writing a tempdir marker file, checked from a separate subsequent shell
+# call) that R deletes its own tempdir -- and everything nested under it,
+# including covr's install_path and any *.Rout.fail file -- on ANY process
+# exit, error or not. A later, separate GitHub Actions step (e.g. an
+# `if: failure()` step doing `find /tmp -name '*.Rout.fail'`) runs in a NEW
+# shell after the failing Rscript process has already exited and cleaned up,
+# so it would find nothing. The diagnostic below therefore reads and prints
+# the file's raw content INSIDE the same Rscript invocation, in a tryCatch
+# around covr::package_coverage(), before the process ends.
 
 name: Code Coverage
 
@@ -50,7 +74,50 @@ jobs:
       - name: Generate coverage
         run: |
           Rscript -e '
-            cov <- covr::package_coverage()
+            # Max valid value for warning.length (8170); default 1000 was
+            # empirically shown to truncate the tail of testthat.Rout.fail
+            # down to near-nothing on a real failing run. See the workflow
+            # header comment for the falsification test behind this.
+            options(warning.length = 8170L)
+
+            tmp_root <- tempdir()
+
+            show_rout_fail_files <- function(root) {
+              fail_files <- list.files(
+                root, pattern = "\\.Rout\\.fail$",
+                recursive = TRUE, full.names = TRUE
+              )
+              if (length(fail_files) == 0L && root != "/tmp") {
+                fail_files <- list.files(
+                  "/tmp", pattern = "\\.Rout\\.fail$",
+                  recursive = TRUE, full.names = TRUE
+                )
+              }
+              cat("\n===== FULL CONTENT OF .Rout.fail FILES (untruncated) =====\n")
+              if (length(fail_files) == 0L) {
+                cat(
+                  "No .Rout.fail files found under ", root,
+                  " (or /tmp) -- consistent with the subprocess being",
+                  " killed (signal/OOM) before flushing any output.\n",
+                  sep = ""
+                )
+              } else {
+                for (f in fail_files) {
+                  cat("\n----- ", f, " -----\n", sep = "")
+                  cat(readLines(f, warn = FALSE), sep = "\n")
+                  cat("\n")
+                }
+              }
+              cat("===== END .Rout.fail CONTENT =====\n\n")
+            }
+
+            cov <- tryCatch(
+              covr::package_coverage(),
+              error = function(e) {
+                show_rout_fail_files(tmp_root)
+                stop(e)
+              }
+            )
             print(cov)
             saveRDS(cov, "inst/extdata/coverage.rds")
           '
