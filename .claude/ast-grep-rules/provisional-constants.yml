@@ -1,0 +1,84 @@
+# provisional-constants.yml
+#
+# NOT YET REGISTERED: like r-no-system2-getenv-splice.yml (see that file's
+# header for the full explanation), this rule cannot be auto-discovered by
+# r_code_check.sh / `/check` until it is copied to the laptop-local,
+# non-git-backed ast-grep rules directory:
+#
+#   cp .claude/ast-grep-rules/provisional-constants.yml \
+#     ~/.config/ast-grep/rules/provisional-constants.yml
+#
+# This file is kept in-repo so the rule is reviewable and version-controlled;
+# the orchestrator (or a human) must perform the one-time copy above outside
+# this worktree's sandbox.
+#
+# Rationale: JohnGavin/llm#792. A hand-entered literal (scalar / c(...) vector
+# / list(...)) whose comment carries a provisional marker word
+# (refine/rough/first-pass/placeholder/for now/assumed/approx/guess/hardcod/
+# TODO/FIXME/user-confirmed/from statement) has no parser, no test, and no
+# audit trail -- it silently drifts as its real source updates. See the
+# `provisional-constants` rule (.claude/rules/provisional-constants.md) for
+# the full P0-P3 severity taxonomy and F1-F4 fix vocabulary.
+#
+# Scope of this detector (documented approximation, not a full CFG/comment-
+# attachment analysis):
+#   - Matches a `binary_operator` (`<-` or `=` assignment) whose RHS is a
+#     bare literal (float/integer/string/na/TRUE/FALSE) or a call to
+#     `c(...)`/`list(...)`.
+#   - Requires the IMMEDIATELY PRECEDING sibling node to be a `comment`
+#     matching the marker regex (`follows`, `stopBy: neighbor`).
+#   - Known false-positive mode: if a PRIOR, unrelated statement ends with a
+#     trailing comment that happens to contain a marker word, and the very
+#     next statement is an unrelated literal assignment, this rule's
+#     `follows` relation cannot distinguish "comment attached to the
+#     statement above" from "comment attached to the statement below" --
+#     tree-sitter siblings carry no column/attachment semantics. This is
+#     mitigated downstream in r_code_check.sh, which re-checks the literal
+#     source text: a match is only escalated to a graduated BLOCK if the
+#     line immediately above the flagged assignment is a COMMENT-ONLY line
+#     (stripped of whitespace, starts with `#`) containing the marker --
+#     this excludes the "trailing comment on a prior unrelated statement"
+#     shape. See r_code_check.sh's "Provisional Constants Check" section.
+#   - Same-line trailing comments on the flagged assignment itself (e.g.
+#     `x <- c(12, 12, 12)  # rough guess`) are NOT matched by this ast-grep
+#     rule (structural `follows` only looks at preceding siblings); they are
+#     caught by a separate best-effort text regex in r_code_check.sh instead
+#     of adding more relational complexity here.
+#
+# Severity is deliberately always `warning` here -- Option C's graduated
+# block/warn split (JohnGavin/llm#792 "friction question") is a function of
+# WHICH FILE the match is in, which ast-grep rules cannot express natively.
+# r_code_check.sh decides block-vs-warn per match based on the file's path.
+id: provisional-constants
+language: r
+rule:
+  kind: binary_operator
+  has:
+    field: rhs
+    any:
+      - kind: float
+      - kind: integer
+      - kind: string
+      - kind: na
+      - kind: 'true'
+      - kind: 'false'
+      - all:
+          - kind: call
+          - has:
+              field: function
+              regex: "^(c|list)$"
+  follows:
+    kind: comment
+    stopBy: neighbor
+    regex: "(?i)refine|rough|first-pass|placeholder|for now|assumed|approx|guess|hardcod|TODO|FIXME|user-confirmed|from statement"
+message: |
+  Literal assignment preceded by a provisional-marker comment
+  (refine/rough/first-pass/placeholder/for now/assumed/approx/guess/
+  hardcod/TODO/FIXME/user-confirmed/from statement).
+  A hand-entered value with no parser, no test, and no audit trail silently
+  drifts as its real source updates. See the provisional-constants rule
+  (.claude/rules/provisional-constants.md) for the P0-P3 taxonomy and the
+  F1-F4 fix vocabulary (F1 write a parser, F2 promote to a cited constant,
+  F3 add "# MANUAL: no source" + issue, F4 delete if dead).
+severity: warning
+note: "See JohnGavin/llm#792. r_code_check.sh escalates this to a hard block for files under R/plan_*/**, pipeline/**, scrapers/**, or read by a .qmd under docs/**/vignettes/**."
