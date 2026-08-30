@@ -13,16 +13,11 @@ paths:
 
 ## When This Applies
 
-Any time a build **writes a file that gets committed** — a serialised object
-(`.rds`, `.parquet`, `.qs`), a rendered HTML page, a generated config — and that
-file is later read by a *different* machine (CI, a colleague, a deploy runner) or
-from a *different checkout* (a worktree, a fresh clone).
+Any time a build **writes a file that gets committed** — a serialised object (`.rds`, `.parquet`, `.qs`), a rendered HTML page, a generated config — and that file is later read by a *different* machine (CI, a colleague, a deploy runner) or from a *different checkout* (a worktree, a fresh clone).
 
 ## CRITICAL: The Checkout That Built It Must Not Leak Into It
 
-A committed artifact is only reproducible if it is **independent of where it was
-built**. Two failure modes, both observed in `llm` within 48 hours, both of which
-merged green and were only caught days later by a CI render log:
+A committed artifact is only reproducible if it is **independent of where it was built**. Two failure modes, both observed in `llm` within 48 hours, both of which merged green and were only caught days later by a CI render log:
 
 | Leak | What gets baked in | Symptom |
 |---|---|---|
@@ -31,13 +26,9 @@ merged green and were only caught days later by a CI render log:
 
 The second is far more dangerous: it does not error, it returns nothing.
 
----
-
 ## Part 1: Serialised objects capture absolute paths
 
-`saveRDS()` preserves an object's internals verbatim, **including absolute
-filesystem paths the object captured at construction time**. The clearest case is
-`htmltools::htmlDependency()`, which every htmlwidget carries:
+`saveRDS()` preserves an object's internals verbatim, **including absolute filesystem paths the object captured at construction time**. The clearest case is `htmltools::htmlDependency()`, which every htmlwidget carries:
 
 ```r
 x <- readRDS("inst/extdata/vignettes/vig_github_activity_table.rds")
@@ -45,8 +36,7 @@ x$dependencies[[2]]$src$file
 #> "/nix/store/y630zvw…-r-DT-0.34.0/library/DT/htmlwidgets/lib/datatables"
 ```
 
-That path exists on the machine that ran the export and **nowhere else**. CI
-installs the same package at a different prefix and the render aborts:
+That path exists on the machine that ran the export and **nowhere else**. CI installs the same package at a different prefix and the render aborts:
 
 ```
 Error: path for html_dependency not found: /nix/store/y630zvw…/lib/datatables
@@ -54,11 +44,7 @@ Error: path for html_dependency not found: /nix/store/y630zvw…/lib/datatables
 
 ### Required pattern — repair at READ time, never by regenerating
 
-Regenerating the artifact does **not** fix this. It only re-acquires whichever
-path the *new* exporting machine has, so the defect returns on the next export
-from anywhere else.
-
-Repair when the artifact is loaded:
+Regenerating the artifact does **not** fix this — it only re-acquires whichever path the *new* exporting machine has, so the defect returns on the next export from anywhere else. Repair when the artifact is loaded:
 
 ```r
 # For each dependency whose recorded path is absent on THIS machine,
@@ -72,24 +58,13 @@ if (!file.exists(f) && !dir.exists(f)) {
 }
 ```
 
-Three properties this must have:
+Three properties this must have: **no-op when the path already resolves** (changes nothing on the machine that wrote the artifact); **leave `package`-relative dependencies alone** (already portable); **leave unresolvable paths at their original value** — do not blank them, a visible failure beats a silently-missing asset.
 
-1. **No-op when the path already resolves** — so it changes nothing on the
-   machine that wrote the artifact.
-2. **Leave `package`-relative dependencies alone** — those are already portable.
-3. **Leave unresolvable paths at their original value** — do not blank them.
-   A visible failure beats a silently-missing asset.
-
-Same hazard class, worth checking for: fonts resolved to absolute paths, cached
-`system.file()` results, `here::here()` values captured into a stored object,
-open connections, and `environment()` captured by closures inside the object.
-
----
+Same hazard class, worth checking for: fonts resolved to absolute paths, cached `system.file()` results, `here::here()` values captured into a stored object, open connections, and `environment()` captured by closures inside the object.
 
 ## Part 2: Path filters must match RELATIVE to the scan root
 
-An exclusion intended to skip *nested* subtrees must never be matched against the
-absolute path, because the **scan root itself** may contain the excluded token.
+An exclusion intended to skip *nested* subtrees must never be matched against the absolute path, because the **scan root itself** may contain the excluded token.
 
 ```r
 # WRONG — the scan root can contain the token
@@ -100,16 +75,7 @@ rel   <- fs::path_rel(files, scan_root)
 files <- files[!grepl("(^|/)(archive|worktrees)/", rel)]
 ```
 
-Why it matters here: **every** worktree path contains `/worktrees/` — both
-`.claude/worktrees/` (every dispatched agent) and `~/docs_gh/worktrees/` (every
-manual worktree, per `worktree-location`). So a target built anywhere except the
-main checkout scanned 377 files and kept **zero**.
-
-The result is not an error. It is a well-formed, empty result that flows
-downstream and only surfaces somewhere far away — in the observed case, a
-`facet_wrap()` call in a vignette that killed the entire site build.
-
----
+Why it matters here: **every** worktree path contains `/worktrees/` — both `.claude/worktrees/` (every dispatched agent) and `~/docs_gh/worktrees/` (every manual worktree, per `worktree-location`). So a target built anywhere except the main checkout scanned 377 files and kept **zero**. The result is not an error — it is a well-formed, empty result that flows downstream and only surfaces somewhere far away (in the observed case, a `facet_wrap()` call in a vignette that killed the entire site build).
 
 ## Part 3: Verify artifacts by content, not by existence
 
@@ -121,57 +87,24 @@ Both incidents passed every gate in place at the time:
 | `qa_rds_freshness` | snapshot mtime vs target mtime | never inspects content |
 | CI / deploy status | workflow exit code | the data path was not in `on.push.paths` |
 
-**Before committing a regenerated artifact, diff it against the previous
-version's content** — row count, category coverage, non-NA share — not just its
-existence or timestamp. A regeneration that shrinks an artifact by orders of
-magnitude is a defect until proven otherwise:
+**Before committing a regenerated artifact, diff it against the previous version's content** — row count, category coverage, non-NA share — not just its existence or timestamp. A regeneration that shrinks an artifact by orders of magnitude is a defect until proven otherwise:
 
 ```r
 old <- readRDS(...); new <- <rebuild>
 stopifnot(nrow(new) >= 0.5 * nrow(old))   # tune per artifact
 ```
 
----
-
 ## Part 4: Prefer the canonical checkout for regeneration
 
-Until an exporter is proven location-independent, regenerate committed artifacts
-**from the project's main checkout**, not from a worktree. Where that cannot be
-guaranteed, have the exporter print the checkout path it ran from, so a
-worktree-built artifact is visible in review rather than silent.
-
----
+Until an exporter is proven location-independent, regenerate committed artifacts **from the project's main checkout**, not from a worktree. Where that cannot be guaranteed, have the exporter print the checkout path it ran from, so a worktree-built artifact is visible in review rather than silent.
 
 ## Part 5: Large embedded assets make a file line-unsafe
 
-Once a text file has large generated assets spliced into it as very long single
-lines — a base64-encoded image, a minified data blob, any line running into the
-tens of kilobytes — **line-oriented file APIs stop being safe on that file**.
-
-Observed directly: an R `readLines()` → `writeLines()` round-trip, used for an
-unrelated structural edit (reordering a section) on an HTML file that already had
-nine base64-encoded chart SVGs embedded as ~25KB single lines, silently split one
-of those long lines into several. The split left the *new*, correct data on the
-first fragment and seven *orphaned, stale* JSON records trailing after it as inert
-text — a corruption that produced no error, because the file was still
-syntactically plausible HTML. It was caught only by chance, because a JS syntax
-check happened to be run before publishing — not because anything required it.
+Once a text file has large generated assets spliced into it as very long single lines — a base64-encoded image, a minified data blob, any line running into the tens of kilobytes — **line-oriented file APIs stop being safe on that file**. Observed directly on the `tennis` project (2026-08-29): an R `readLines()`/`writeLines()` round-trip silently split an embedded ~25KB base64 SVG line, orphaning seven stale JSON records with no error — caught only by an incidental syntax check before publish. Full incident narrative: companion doc.
 
 ### Required pattern
 
-1. **Once a file crosses this threshold, use whole-file string operations only**
-   — `readChar()`/`writeChar()` in R (or the equivalent byte-safe read/write in
-   any language), never `readLines()`/`writeLines()`, never `sed` with line
-   addressing. Do not mix the two styles of edit on the same file.
-2. **Splice large generated assets last.** Do all structural and text edits on
-   the small, clean version of the file first; embed the large assets as the
-   final build step, once, not interleaved with further edits.
-3. **Verify structural integrity after every edit to such a file, before
-   publishing or committing** — a syntax check for embedded code (`node --check`
-   for JS, `parse()` for R), a tag/section-balance count, and a record-count
-   sanity check (does the embedded data still have exactly the expected number
-   of elements). Do not treat "the edit tool reported success" as sufficient —
-   a corrupted file can still be written successfully.
+**Once a file crosses this threshold, use whole-file string operations only** — `readChar()`/`writeChar()` in R, never `readLines()`/`writeLines()`, never `sed` with line addressing; don't mix the two styles on the same file. **Splice large generated assets last** — do structural/text edits on the small, clean version first, embed large assets as the final build step. **Verify structural integrity after every edit** — a syntax check for embedded code, a tag/section-balance count, a record-count sanity check; do not treat "the edit tool reported success" as sufficient, since a corrupted file can still write successfully.
 
 ```r
 # WRONG — line-oriented API on a file with embedded long lines
@@ -201,10 +134,7 @@ writeChar(content, "artifact.html", eos = NULL, useBytes = TRUE)
 
 - [llm#883](https://github.com/JohnGavin/llm/issues/883) / [#885](https://github.com/JohnGavin/llm/pull/885) — DT `html_dependency` absolute nix paths; 13 snapshots affected; blocked all publishing for 2 days
 - [llm#889](https://github.com/JohnGavin/llm/issues/889) / [#890](https://github.com/JohnGavin/llm/pull/890) — worktree-exclusion regex matched its own scan root; `vig_scrolly_config` regenerated 222 rows → 0 by [#868](https://github.com/JohnGavin/llm/pull/868) and shipped silently
-- `tennis` project, 2026-08-29 — `readLines()`/`writeLines()` round-trip on a
-  published artifact HTML silently split an embedded ~25KB JSON data line,
-  orphaning seven stale records; caught only by an incidental syntax check
-  before publish (Part 5)
+- `tennis` project, 2026-08-29 — `readLines()`/`writeLines()` round-trip silently split an embedded ~25KB data line, orphaning stale records (Part 5; full narrative in companion doc)
 
 ## Related
 

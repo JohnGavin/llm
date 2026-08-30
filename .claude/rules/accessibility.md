@@ -66,27 +66,11 @@ Every dark-mode dashboard/vignette MUST include BOTH:
 :root, html, body { color-scheme: dark; }
 ```
 
-Without this, **Chrome's "Auto Dark Mode for Web Contents" (default-on
-since v96, late 2021)** mis-classifies intentionally-dark pages as light
-and silently inverts the page's lightness — black backgrounds → white,
-deep palettes → pastels, in plots, tables AND diagrams. Safari/Edge/Brave
-are unaffected, so the breakage is Chrome-only and easy to miss.
+Without this, **Chrome's "Auto Dark Mode for Web Contents" (default-on since v96, late 2021)** mis-classifies intentionally-dark pages as light and silently inverts the page's lightness — black backgrounds → white, deep palettes → pastels, in plots, tables AND diagrams. Safari/Edge/Brave are unaffected, so the breakage is Chrome-only and easy to miss.
 
-Check this clause FIRST, before any other dark-mode debugging — see the
-companion doc for the worked example from issue 0027 in a private project's
-tracker (5 merged
-iterations fixed the wrong layer before this meta tag was identified as the
-root cause).
+Check this clause FIRST, before any other dark-mode debugging — see the companion doc for the worked example from issue 0027 in a private project's tracker (5 merged iterations fixed the wrong layer before this meta tag was identified as the root cause).
 
-Verification: `~/.claude/scripts/check_dashboard_color_scheme.sh <dir>`
-(greps for both signals in every rendered HTML file that has a same-directory
-`.qmd`/`.md` source of the same basename; exit 1 on any miss among those. A
-file with no Quarto source — a shinylive export, a hand-built diagram page,
-an untracked build artifact — cannot carry a Quarto-injected `<meta>` tag, so
-it is skipped and reported separately rather than failed; see the script's
-own header comment for the historical-project case that motivated this
-scoping). Wire it into the project's Quarto `post-render` alongside
-`check_dark_contrast.sh`. See llm#584.
+Verification: `~/.claude/scripts/check_dashboard_color_scheme.sh <dir>` (greps for both signals in every rendered HTML file that has a same-directory `.qmd`/`.md` source of the same basename; exit 1 on any miss among those. A file with no Quarto source — a shinylive export, a hand-built diagram page, an untracked build artifact — cannot carry a Quarto-injected `<meta>` tag, so it is skipped and reported separately rather than failed; see the script's own header comment for the historical-project case that motivated this scoping). Wire it into the project's Quarto `post-render` alongside `check_dark_contrast.sh`. See llm#584.
 
 ### CRITICAL: Black = `#000000`. White = `#ffffff`.
 

@@ -108,31 +108,13 @@ See [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegatio
 
 ### CRITICAL — Long verification commands go in the prompt VERBATIM, never as prose
 
-Any dispatch that requires the agent to run a multi-minute verification command
-(`scripts/verify.sh`, `devtools::check()`, a full test suite) MUST embed the literal
-`Bash(...)` invocation in the prompt's Verification section, **plus** an explicit
-"do NOT use `run_in_background` for this" sentence:
+Any dispatch that requires the agent to run a multi-minute verification command (`scripts/verify.sh`, `devtools::check()`, a full test suite) MUST embed the literal `Bash(...)` invocation in the prompt's Verification section, **plus** an explicit "do NOT use `run_in_background` for this" sentence:
 
 ```
 Bash(command="<worktree>/scripts/verify.sh > /tmp/verify.txt 2>&1", timeout=600000)
 ```
 
-**Describing the intent does not work.** Writing "run verify.sh in the foreground, up
-to 10 minutes" reads as satisfied by a backgrounded run, and agents then end their turn
-with "waiting for the build to complete" — which is not a result. Each stall costs a
-`SendMessage` resume, and the agent typically has already finished the real work, so
-the delay buys nothing.
-
-Observed **five times across two sessions** (2026-08-05 issues #640/#641/#645;
-2026-08-24 issues #738/#748 and #740/#697). In the 2026-08-24 pair the orchestrator's
-dispatch *did* say "foreground" in prose and both agents backgrounded anyway. The
-affirmative instruction alone has now failed every time it has been relied on; the
-verbatim call plus the negative instruction is the only form that has held.
-
-A warm nix shell is ~13s and a full suite runs in a few minutes, so foreground fits
-inside a 600000 ms timeout comfortably. If a run genuinely exceeds that, require
-polling the output file with repeated `Read` calls until a terminal completion marker
-appears — never a bare "wait for the notification".
+**Describing the intent does not work.** Writing "run verify.sh in the foreground, up to 10 minutes" reads as satisfied by a backgrounded run, and agents then end their turn with "waiting for the build to complete" — which is not a result. Observed five times across two sessions; even explicit "foreground" prose has failed — the verbatim call plus the negative instruction is the only form that has held. Full incident detail: companion doc. A warm nix shell is ~13s and a full suite runs in a few minutes, so foreground fits inside a 600000 ms timeout comfortably; if a run genuinely exceeds that, poll the output file with repeated `Read` calls until a terminal completion marker appears — never a bare "wait for the notification".
 
 ### CRITICAL — SendMessage Continuations for Write Operations (#304)
 
