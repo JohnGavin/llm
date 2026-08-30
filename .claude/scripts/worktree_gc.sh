@@ -107,6 +107,8 @@ CLAUDE_RUNTIME_ROOT="${CLAUDE_RUNTIME_ROOT:-$HOME/.claude}"
 SENTINEL_AGE_DAYS="${SENTINEL_AGE_DAYS:-7}"
 LOG_ROTATE_THRESHOLD_BYTES="${LOG_ROTATE_THRESHOLD_BYTES:-10485760}"  # 10 MB
 LOG_ROTATE_KEEP_LINES="${LOG_ROTATE_KEEP_LINES:-2000}"
+# .claude.json.tmp.<pid>.<hash> orphans live in $HOME itself, not $HOME/.claude
+CLAUDE_JSON_TMP_HOME="${CLAUDE_JSON_TMP_HOME:-$HOME}"
 
 # ─── Helper: enumerate convention-pattern worktrees via git worktree list ────
 # llm#1000: the "convention" sweep patterns used to be fixed-depth globs
@@ -756,26 +758,32 @@ if [ "$APPLY" = "1" ] && [ "${#CONVENTION_PARENTS[@]}" -gt 0 ]; then
   done
 fi
 
-# ─── Sentinel sweep + log rotation (JohnGavin/llm#884 steps 2-3) ─────────────
+# ─── Sentinel sweep + log rotation + claude.json.tmp sweep (JohnGavin/llm#884 steps 2-4) ─
 # Gated on the same --apply flag as worktree removal: dry-run by default (so
 # manual/test invocations of this script never mutate ~/.claude/), the real
 # sweep/rotation only runs when --apply is passed (the launchd job always
 # passes --apply — see bin/launchd-recorders/worktree-gc).
 SENTINELS_SWEPT=0
 LOGS_ROTATED=0
+CLAUDE_JSON_TMP_SWEPT=0
+CLAUDE_JSON_TMP_SKIPPED_LIVE=0
 if [ "$APPLY" = "1" ]; then
   sweep_stale_sentinels "$CLAUDE_RUNTIME_ROOT" "$SENTINEL_AGE_DAYS" 0 || true
   log "[sentinel-sweep] dir=$CLAUDE_RUNTIME_ROOT age_days=$SENTINEL_AGE_DAYS swept=$SENTINELS_SWEPT"
   rotate_logs "$CLAUDE_RUNTIME_ROOT/logs" "$LOG_ROTATE_THRESHOLD_BYTES" "$LOG_ROTATE_KEEP_LINES" 0 log || true
   log "[log-rotate] dir=$CLAUDE_RUNTIME_ROOT/logs threshold_bytes=$LOG_ROTATE_THRESHOLD_BYTES keep_lines=$LOG_ROTATE_KEEP_LINES rotated=$LOGS_ROTATED"
+  sweep_claude_json_tmp "$CLAUDE_JSON_TMP_HOME" 0 || true
+  log "[claude-json-tmp-sweep] dir=$CLAUDE_JSON_TMP_HOME swept=$CLAUDE_JSON_TMP_SWEPT skipped_live=$CLAUDE_JSON_TMP_SKIPPED_LIVE"
 else
   sweep_stale_sentinels "$CLAUDE_RUNTIME_ROOT" "$SENTINEL_AGE_DAYS" 1 || true
   log "[sentinel-sweep-dryrun] dir=$CLAUDE_RUNTIME_ROOT age_days=$SENTINEL_AGE_DAYS would_sweep=$SENTINELS_SWEPT"
   rotate_logs "$CLAUDE_RUNTIME_ROOT/logs" "$LOG_ROTATE_THRESHOLD_BYTES" "$LOG_ROTATE_KEEP_LINES" 1 log || true
   log "[log-rotate-dryrun] dir=$CLAUDE_RUNTIME_ROOT/logs threshold_bytes=$LOG_ROTATE_THRESHOLD_BYTES keep_lines=$LOG_ROTATE_KEEP_LINES would_rotate=$LOGS_ROTATED"
+  sweep_claude_json_tmp "$CLAUDE_JSON_TMP_HOME" 1 || true
+  log "[claude-json-tmp-sweep-dryrun] dir=$CLAUDE_JSON_TMP_HOME would_sweep=$CLAUDE_JSON_TMP_SWEPT skipped_live=$CLAUDE_JSON_TMP_SKIPPED_LIVE"
 fi
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH squash-detect=$SQUASH_DETECT_PREFLIGHT squash-detect-failures=$SQUASH_DETECT_FAILURES removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED"
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH squash-detect=$SQUASH_DETECT_PREFLIGHT squash-detect-failures=$SQUASH_DETECT_FAILURES removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED claude-json-tmp-swept=$CLAUDE_JSON_TMP_SWEPT"
 
 # One loud line when squash detection could not run. Without it, a sweep that
 # checked nothing looks identical in the log to a sweep that found nothing —
@@ -1044,6 +1052,38 @@ for i in range(3000):
     _check "log-rotate on missing dir is a silent no-op" "0" "$LOGS_ROTATED"
   else
     echo "SKIP: rotate_logs not sourced (sentinel_log_sweep.sh missing?)"
+  fi
+
+  # --- Tests: sweep_claude_json_tmp (JohnGavin/llm#884 Finding 4) ────────────
+  if command -v sweep_claude_json_tmp >/dev/null 2>&1; then
+    _cjt_dir="$tmpdir/claude_json_tmp_home"
+    mkdir -p "$_cjt_dir"
+    # Dead PID: 999999 is far outside any plausible live PID range.
+    touch "$_cjt_dir/.claude.json.tmp.999999.deadbeef"
+    # Live PID: this very selftest process, guaranteed running right now.
+    touch "$_cjt_dir/.claude.json.tmp.$$.livehash"
+    # Malformed PID segment: must be left alone, not guessed about.
+    touch "$_cjt_dir/.claude.json.tmp.notanumber.somehash"
+
+    sweep_claude_json_tmp "$_cjt_dir" 1
+    _check "claude-json-tmp dry-run counts only the dead-PID orphan" "1" "$CLAUDE_JSON_TMP_SWEPT"
+    _check "claude-json-tmp dry-run flags the live-PID file as skipped" "1" "$CLAUDE_JSON_TMP_SKIPPED_LIVE"
+    _check "claude-json-tmp dry-run leaves all 3 files in place" "3" "$(ls -A "$_cjt_dir" | wc -l | tr -d '[:space:]')"
+
+    sweep_claude_json_tmp "$_cjt_dir" 0
+    _check "claude-json-tmp real sweep removes only the dead-PID orphan" "1" "$CLAUDE_JSON_TMP_SWEPT"
+    _check "claude-json-tmp real sweep never touches the live-PID file" "1" "$([ -f "$_cjt_dir/.claude.json.tmp.$$.livehash" ] && echo 1 || echo 0)"
+    _check "claude-json-tmp real sweep never touches the malformed-PID file" "1" "$([ -f "$_cjt_dir/.claude.json.tmp.notanumber.somehash" ] && echo 1 || echo 0)"
+    _check "claude-json-tmp real sweep leaves the 2 non-orphans" "2" "$(ls -A "$_cjt_dir" | wc -l | tr -d '[:space:]')"
+
+    sweep_claude_json_tmp "$tmpdir/does_not_exist_cjt" 0
+    _check "claude-json-tmp sweep on missing dir is a silent no-op" "0" "$CLAUDE_JSON_TMP_SWEPT"
+
+    mkdir -p "$tmpdir/empty_cjt"
+    sweep_claude_json_tmp "$tmpdir/empty_cjt" 0
+    _check "claude-json-tmp sweep on empty dir is a no-op" "0" "$CLAUDE_JSON_TMP_SWEPT"
+  else
+    echo "SKIP: sweep_claude_json_tmp not sourced (sentinel_log_sweep.sh missing?)"
   fi
 
   # --- Tests: is_squash_merged distinguishes "no" from "could not ask" (llm#1019)

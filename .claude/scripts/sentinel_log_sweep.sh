@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# sentinel_log_sweep.sh — pure helper functions for JohnGavin/llm#884 steps 2-3:
+# sentinel_log_sweep.sh — pure helper functions for JohnGavin/llm#884 steps 2-4:
 #   sweep_stale_sentinels() — delete orphaned session sentinels older than N days
 #   rotate_log_file()/rotate_logs() — copy-truncate oversized log files
+#   sweep_claude_json_tmp() — delete orphaned ~/.claude.json.tmp.<pid>.<hash>
+#                             atomic-write temporaries whose PID is not alive
 #
 # Sourced by worktree_gc.sh (the existing daily housekeeping job, per the
 # housekeeping-framework rule) so these run for real once a day, gated by the
@@ -133,6 +135,68 @@ rotate_logs() {
   return 0
 }
 
+# ── claude.json.tmp sweep (Finding 4) ─────────────────────────────────────────
+# Claude Code writes ~/.claude.json by temp-file-then-rename
+# (.claude.json.tmp.<pid>.<hash>); a crash or kill between the write and the
+# rename leaves the temp behind permanently — nothing else ever cleans it up.
+# Deleting purely by pattern match would be unsafe: a write genuinely in
+# progress right now is also named .claude.json.tmp.<pid>.<hash>, and would
+# look identical to an orphan by name alone. So this checks PID liveness
+# (`kill -0`) before deleting anything — a temp file is swept only when the
+# PID embedded in its own name is NOT currently running.
+#
+# Known limitation (documented, not silently assumed away): PID liveness is a
+# heuristic, not a proof the CURRENT holder of that PID is unrelated — PIDs
+# are reused by the OS over time, so in the rare case a new, unrelated process
+# is assigned the exact same PID before this sweep runs, an orphan would be
+# skipped as "still live" (a false negative — the safe direction to be wrong
+# in; it never deletes a file a live process might still be writing to it
+# just leaves debris one more cycle for the next run to catch once that PID
+# frees up again).
+#
+# A filename whose PID segment doesn't parse as a plain positive integer is
+# NOT swept either — an unparseable name is an indeterminate result, not a
+# green light to delete (checks-must-distinguish-unknown): it is logged and
+# left alone rather than guessed about.
+#
+# args: home_dir [dry_run=0]
+# Sets global CLAUDE_JSON_TMP_SWEPT to the count removed (or, in dry-run, the
+# count that would be removed) and CLAUDE_JSON_TMP_SKIPPED_LIVE to the count
+# left alone because their PID is still running. Never fails the caller.
+sweep_claude_json_tmp() {
+  local _home="$1" _dry="${2:-0}"
+  CLAUDE_JSON_TMP_SWEPT=0
+  CLAUDE_JSON_TMP_SKIPPED_LIVE=0
+  [ -d "$_home" ] || return 0
+
+  local _f _base _rest _pid _count=0 _skipped=0
+  while IFS= read -r -d '' _f; do
+    _base="${_f##*/}"
+    # Expect: .claude.json.tmp.<pid>.<hash>
+    _rest="${_base#.claude.json.tmp.}"
+    _pid="${_rest%%.*}"
+    case "$_pid" in
+      ''|*[!0-9]*)
+        # PID segment doesn't parse — indeterminate, leave it alone.
+        continue
+        ;;
+    esac
+    if kill -0 "$_pid" 2>/dev/null; then
+      _skipped=$(( _skipped + 1 ))
+      continue
+    fi
+    if [ "$_dry" = "1" ]; then
+      _count=$(( _count + 1 ))
+    elif rm -f -- "$_f" 2>/dev/null; then
+      _count=$(( _count + 1 ))
+    fi
+  done < <(find "$_home" -maxdepth 1 -type f -name '.claude.json.tmp.*' -print0 2>/dev/null || true)
+
+  CLAUDE_JSON_TMP_SWEPT=$_count
+  CLAUDE_JSON_TMP_SKIPPED_LIVE=$_skipped
+  return 0
+}
+
 # ── Standalone CLI (only runs when executed directly, never when sourced) ────
 # Dry-run by default, matching worktree_gc.sh's own UX; --apply performs the
 # real operation. Lets the helper be exercised/debugged without going through
@@ -159,8 +223,12 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
       rotate_logs "${_cli_args[1]:?dir required}" "${_cli_args[2]:-10485760}" "${_cli_args[3]:-2000}" "$_cli_dry"
       echo "rotated=$LOGS_ROTATED dry_run=$_cli_dry"
       ;;
+    sweep-claude-json-tmp)
+      sweep_claude_json_tmp "${_cli_args[1]:?home dir required}" "$_cli_dry"
+      echo "swept=$CLAUDE_JSON_TMP_SWEPT skipped_live=$CLAUDE_JSON_TMP_SKIPPED_LIVE dry_run=$_cli_dry"
+      ;;
     *)
-      echo "Usage: $0 {sweep <dir> [age_days]|rotate <dir> [threshold_bytes] [keep_lines]} [--apply]" >&2
+      echo "Usage: $0 {sweep <dir> [age_days]|rotate <dir> [threshold_bytes] [keep_lines]|sweep-claude-json-tmp <home_dir>} [--apply]" >&2
       exit 64
       ;;
   esac
