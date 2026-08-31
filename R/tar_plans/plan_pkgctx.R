@@ -252,18 +252,42 @@ ctx_sync <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE,
   if (fix_stale) {
     stale <- needs_work[needs_work$status == "STALE", , drop = FALSE]
     for (i in seq_len(nrow(stale))) {
-      res <- generate_ctx(stale$package[i], stale$version[i], cache_dir)
+      pkg <- stale$package[i]
+      # A single package's generate_ctx() failure (network error, malformed
+      # DESCRIPTION entry, etc.) must never abort the whole batch -- catch it,
+      # warn loudly, record it, and keep going. See JohnGavin/llm issue re:
+      # "ctx_sync silently failed for 11 packages".
+      res <- tryCatch(
+        generate_ctx(pkg, stale$version[i], cache_dir),
+        error = function(e) {
+          cli::cli_warn(c(
+            "!" = "Failed to refresh ctx for {.pkg {pkg}}: {conditionMessage(e)}"
+          ))
+          list(pkg = pkg, version = stale$version[i], status = "ERROR",
+               file = NA_character_)
+        }
+      )
       results <- c(results, list(tibble::tibble(
-        package = stale$package[i], action = "refresh", result = res$status      )))
+        package = pkg, action = "refresh", result = res$status      )))
     }
   }
 
   if (fix_missing) {
     missing <- needs_work[needs_work$status == "MISSING", , drop = FALSE]
     for (i in seq_len(nrow(missing))) {
-      res <- generate_ctx(missing$package[i], missing$version[i], cache_dir)
+      pkg <- missing$package[i]
+      res <- tryCatch(
+        generate_ctx(pkg, missing$version[i], cache_dir),
+        error = function(e) {
+          cli::cli_warn(c(
+            "!" = "Failed to create ctx for {.pkg {pkg}}: {conditionMessage(e)}"
+          ))
+          list(pkg = pkg, version = missing$version[i], status = "ERROR",
+               file = NA_character_)
+        }
+      )
       results <- c(results, list(tibble::tibble(
-        package = missing$package[i], action = "create", result = res$status      )))
+        package = pkg, action = "create", result = res$status      )))
     }
   }
 
