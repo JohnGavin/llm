@@ -34,7 +34,7 @@ Automation is not wrong. The failure mode is automation that runs **past the bou
 |---|---|---|---|
 | **A** | Catastrophic / irreversible | `DROP TABLE prod`; delete repo; force-push to main; revert a merged PR; rotate production credentials; destroy a volume | Out-of-band ack AND target name supplied from memory (agent must NOT print the target name in the same turn as the prompt) |
 | **B** | Destructive / recoverable | `rm -rf` >100 MB; `git reset --hard`; force-push feature branch; bulk delete issues; revert uncommitted changes across multiple files | Target name included in the user's confirmation phrase |
-| **C** | **Publish gate** (cross-boundary visible) | PR merge; issue close; email send; `gh comment` posted externally; Slack/webhook notification; public release tag | Explicit action verb in user reply: "merge", "send", "close", "release" — NOT just "yes" or "go ahead" |
+| **C** | **Publish gate** (cross-boundary visible) | PR merge; issue close; email send; `gh comment` posted externally; Slack/webhook notification; public release tag | Explicit action verb in user reply: "merge", "send", "close", "release" — NOT just "yes" or "go ahead". PR merge specifically may move to Class D under the **Auto-Merge Policy** toggle — see below |
 | **D** | Scoped commit / local write | `gh pr create`; branch push (own branch); file Edit/Write in worktree; commit to feature branch; open PR (not merge) | No confirmation — proceed automatically |
 | **E** | Read-only / advisory | `gh issue list`; grep; SQL query; `git log`; `tar_read()`; file Read; test run (no side effects) | No confirmation — proceed silently |
 
@@ -59,6 +59,79 @@ Class D is the key innovation over `destructive-ops-guard` Part 3: it explicitly
 Any ambiguous phrasing — "ship it", "land this", "let's push" — resolves to Class D (open PR) unless the user supplies an explicit Class C verb ("merge", "merge to main", "land directly").
 
 See `pr-shipping-discipline` for the full verb decision table.
+
+## Conditional Auto-Merge (Auto-Merge Policy)
+
+PR merge is Class C by default (explicit verb required, every time). A
+**global toggle** in `~/.claude/CLAUDE.md` — `**Auto-Merge Policy:** ON` /
+`OFF` — lets the user opt merges into Class D (proceed automatically)
+*without restating it per session or per PR*. The toggle applies to every
+project, not just this one — that is the point: a per-session verbal grant
+("merge anything clean this session") does not scale for a prolific solo
+maintainer and has to be re-typed every time.
+
+**When the toggle is ON**, a PR merges without asking IFF **all** of:
+
+1. Every CI check reports success — not pending, not skipped, not
+   inconclusive.
+2. The merge-gate / roborev consistency check reports a genuine PASS —
+   **never** an indeterminate result (exit code 3, per
+   `checks-must-distinguish-unknown`) treated as a pass. An indeterminate
+   gate always falls back to Class C (ask), regardless of the toggle — a
+   gate that cannot tell you whether it checked anything is not evidence of
+   safety.
+3. The PR's diff touches **none** of the Auto-Merge Exclusion List paths
+   below.
+
+**When the toggle is OFF** (the historical default), every merge stays Class
+C exactly as documented above — nothing else in this rule changes.
+
+This is advisory, not hook-enforced: no technical mechanism currently blocks
+a merge call the way `agent_push_guard.sh` blocks a worktree-agent push to
+`main`. The policy trades a firm technical backstop for zero session-to-session
+friction — a deliberate choice, made explicitly rather than by default (see
+Origin below). It depends entirely on this rule being read and followed, the
+same as every other advisory rule in this corpus; a GitHub branch-protection
+review requirement was considered and explicitly declined as an enforcement
+mechanism because it reintroduces the same manual click-through friction the
+toggle exists to remove.
+
+### Auto-Merge Exclusion List (always Class C, regardless of the toggle)
+
+| Path / change class | Why excluded |
+|---|---|
+| `.claude/hooks/**` | Controls what every future action is allowed to do — the trust boundary itself |
+| `.claude/rules/**` (especially mandatory / safety-critical rules) | Same reasoning as hooks — this is the policy layer, including the auto-merge policy defined in this very section |
+| `.claude/scripts/**` that handle credentials, secrets, or destructive operations | Direct incident history: the 2026-08-11 credential leak and the phone-number leak both originated in script-level handling |
+| `default.nix`, `default.R`, `.claude/settings.json` | Environment/permission configuration — a bad merge here can silently change what every subsequent session is allowed to do |
+| Any diff touching a credential/secret file, `.Renviron`, `secrets.env`, or a rotation script | `credential-management` / `secrets-single-source` safety-critical surface |
+| DB schema / migration files (`*_schema.sql`, `*_schema_apply.sh`) | Effectively irreversible once other writers depend on the new shape |
+| Content published to a live, public-facing surface (rendered GH Pages HTML source, public dashboard export scripts) | Public blast radius — see `public-private-repo-boundary` |
+
+A PR touching **any** excluded path reverts to standard Class C — the toggle
+does not override this list under any circumstance, and repo visibility
+(public vs. private) is deliberately NOT a criterion here: a private repo is
+not automatically low-stakes (it typically holds more sensitive content, not
+less), so exclusion is based on change class, never on repo visibility alone.
+
+### Origin
+
+User request 2026-08-28: repeated manual "merge" confirmations were the
+higher-friction cost for a prolific solo maintainer running many small,
+independently-verified PRs per session; a session-scoped verbal grant was
+rejected as still requiring the user to remember and restate it every
+session, so the toggle is global instead. Full auto-merge on green gates
+alone (no exclusion list) was explicitly rejected: this repo's own incident
+history shows automated checks passing when they should not have — the
+2026-08-11 credential leak passed the model's own pre-commit self-check, the
+phone-number leak passed automated PII scanning for four months across nine
+commits, and roborev itself has shipped phantom-failure counts, quota
+misclassification, and silently-dropped reviews (`#923`/`#927`/`#904`/`#928`).
+The exclusion list targets exactly the paths where those incidents actually
+occurred. Improving the underlying gates' own false-negative rate (so "gate
+says clean" is trustworthy more often) is tracked separately as its own
+priority initiative — this section governs the merge policy, not gate
+quality.
 
 ## Class D Bounded-Confirm Pattern (New)
 
@@ -88,7 +161,9 @@ The bounded-confirm is NOT a confirmation prompt for individual Class D ops. It 
 | Agent retries after refusal | A/B | Persistence pressure | Accept refusal, report, stop |
 | Agent skips Class C checkpoint because "user said go ahead earlier in the session" | C | Prior session context is not per-action authorisation | Each Class C action requires its own explicit verb |
 | Agent silently does 7 Class D ops when user said "tidy these up" | D | Scope expanded without bounded-confirm | Emit bounded-confirm for ≥ 3 Class D ops |
-| Agent classifies PR merge as Class D | C | Merge is cross-boundary visible | Reclassify as C; require explicit verb |
+| Agent classifies PR merge as Class D | C | Merge is cross-boundary visible | Reclassify as C; require explicit verb, unless the Auto-Merge Policy conditions are genuinely met |
+| Auto-Merge Policy is ON but the merge-gate returned indeterminate (exit 3), and the agent treats that as a pass | C | An unverifiable gate is not evidence of safety — `checks-must-distinguish-unknown` | Fall back to Class C (ask) whenever the gate result is anything other than a genuine pass |
+| Auto-Merge Policy is ON and the agent merges a PR touching an excluded path (hooks/rules/scripts/schema/credentials/public surface) | C | The exclusion list is absolute — the toggle never overrides it | Reclassify as C; require explicit verb |
 
 ## Worked Example
 
@@ -106,3 +181,5 @@ expansion). The normative rule above is complete without it.
 - Hook: `~/.claude/hooks/destructive_api_guard.sh` — enforces Class A/B at the Bash level.
 - [#477](https://github.com/JohnGavin/llm/issues/477) — origin issue.
 - [#450](https://github.com/JohnGavin/llm/issues/450) — parent design tracker (Salesforce Principle 5).
+- `checks-must-distinguish-unknown` — the "indeterminate ≠ pass" requirement the Auto-Merge Policy's second condition depends on.
+- `~/.claude/CLAUDE.md` — Core Rules carries the actual `**Auto-Merge Policy:**` toggle line; this file is the mechanism it activates.

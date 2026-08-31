@@ -38,6 +38,7 @@ The discipline is one-way: PR is always safe; direct merge requires explicit use
 | Subagent emits "ready to ship" in its report | — | Treat as "PR opened" — never as merge authorisation |
 | Workflow / script literal `ship_it()` function | — | The function must open a PR; if named `merge_it()` it may merge |
 | User says "land this" + explicit `--merge` flag context | — | OK to merge (explicit intent) |
+| Auto-Merge Policy is ON (`~/.claude/CLAUDE.md` global toggle) AND the PR is CI-green, merge-gate-clean (genuine pass, not indeterminate), and touches no Auto-Merge Exclusion List path | — | Merge automatically — no explicit verb needed. See `human-in-the-loop-decision-points` § Conditional Auto-Merge for the full condition set and exclusion list. |
 
 ## Forbidden patterns
 
@@ -83,4 +84,5 @@ When reporting a merge, PR, or issue action to the user — or in session-end / 
 - [`destructive-ops-guard`](destructive-ops-guard.md)
 - [`bash-safety`](bash-safety.md)
 - [`skills-vs-mcp`](skills-vs-mcp.md) — companion authoring rule (skills steer behavior, MCP distributes business logic; this rule steers PR-vs-merge behavior at the language layer)
+- [`human-in-the-loop-decision-points`](human-in-the-loop-decision-points.md) § Conditional Auto-Merge — the global toggle that moves PR merge from Class C to Class D under narrow, verifiable conditions; this rule's "merge ONLY after ... user has acknowledged" row is the default, that section is the opt-in exception
 - [#469](https://github.com/JohnGavin/llm/issues/469) — origin
