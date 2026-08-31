@@ -3,6 +3,8 @@
 One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 
 - [Architecture](architecture.md) — Two-tier Nix shell (dev + project shells); _targets.R orchestrates plans from R/tar_plans/ only
+- [Signal Braindump Channel](reference_signal-braindump-channel.md) — only "Notes to llm" chat is a braindump source; other chats = noise (llm#1113)
+- [AgentsView Quality Baseline](project_agentsview-quality-baseline.md) — substantive-session filter + rule/script status; what's deferred and why (llm#1115, #932 P0-blind-spots)
 - [MCP r-btw: NEVER Call Directly](../rules/btw-timeouts.md) — ALL R via `Bash("timeout N Rscript -e ...")`; never btw_tool_run_r/pkg_test/check/document/load_all; docs/files/session tools safe
 - [Agent Patterns](agent-patterns.md) — haiku=$ / sonnet=$$ / opus=$$$; delegate long btw_tool_pkg_* + run_r to subagents; run independent tasks in parallel
 - [CI Strategy](ci-strategy.md) — Public repos: any GH Actions OK; private: Nix-only Linux, conserve minutes; pkgdown built locally (bslib breaks in Nix)
