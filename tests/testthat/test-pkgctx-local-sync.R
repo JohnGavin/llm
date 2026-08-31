@@ -186,3 +186,76 @@ test_that("find_project_ctx_files finds ctx.yaml at project root", {
   result <- find_project_ctx_files(proj_dir)
   expect_true(ctx_file %in% result)
 })
+
+# ── ctx_sync(): one package's generate_ctx() error must not abort the batch ──
+#
+# Regression test for a bug where ctx_sync()'s `for` loops called
+# generate_ctx() with no error handling: an uncaught error from ANY package
+# aborted the whole ctx_sync() call, silently skipping every package still
+# queued after it. Reported as "ctx_sync silently failed for 11 packages".
+#
+# generate_ctx() is stubbed (reassigned in .GlobalEnv, restored on exit) so
+# these tests never shell out to `nix run github:b-rodrigues/pkgctx` — that
+# would be slow, network-dependent, and irrelevant to the loop-control bug
+# under test.
+
+test_that("ctx_sync continues processing remaining packages after one generate_ctx() error", {
+  proj_dir  <- withr::local_tempdir()
+  cache_dir <- withr::local_tempdir()
+
+  desc_path <- file.path(proj_dir, "DESCRIPTION")
+  writeLines(
+    c(
+      "Package: dummy",
+      "Imports:",
+      "    zzzfakepkgone,",
+      "    zzzfakepkgtwo,",
+      "    zzzfakepkgthree"
+    ),
+    desc_path
+  )
+
+  orig_generate_ctx <- generate_ctx
+  on.exit(assign("generate_ctx", orig_generate_ctx, envir = .GlobalEnv), add = TRUE)
+
+  calls <- character(0)
+  assign("generate_ctx", function(pkg, version = NULL, cache_dir = CTX_CACHE) {
+    calls <<- c(calls, pkg)
+    if (pkg == "zzzfakepkgtwo") {
+      stop("simulated generate_ctx failure for ", pkg)
+    }
+    list(pkg = pkg, version = "0.0.0", status = "GENERATED", file = NA_character_)
+  }, envir = .GlobalEnv)
+
+  result <- suppressWarnings(
+    ctx_sync(desc_path, cache_dir, fix_missing = TRUE, fix_stale = TRUE)
+  )
+
+  # All three packages must have been ATTEMPTED -- proves the loop continued
+  # past zzzfakepkgtwo's error instead of aborting the whole batch.
+  expect_setequal(calls, c("zzzfakepkgone", "zzzfakepkgtwo", "zzzfakepkgthree"))
+
+  expect_equal(nrow(result), 3L)
+  expect_equal(result$result[result$package == "zzzfakepkgone"], "GENERATED")
+  expect_equal(result$result[result$package == "zzzfakepkgtwo"], "ERROR")
+  expect_equal(result$result[result$package == "zzzfakepkgthree"], "GENERATED")
+})
+
+test_that("ctx_sync warns loudly (never silently) when generate_ctx() errors", {
+  proj_dir  <- withr::local_tempdir()
+  cache_dir <- withr::local_tempdir()
+
+  desc_path <- file.path(proj_dir, "DESCRIPTION")
+  writeLines(c("Package: dummy", "Imports:", "    zzzfakepkgfour"), desc_path)
+
+  orig_generate_ctx <- generate_ctx
+  on.exit(assign("generate_ctx", orig_generate_ctx, envir = .GlobalEnv), add = TRUE)
+  assign("generate_ctx", function(pkg, version = NULL, cache_dir = CTX_CACHE) {
+    stop("boom")
+  }, envir = .GlobalEnv)
+
+  expect_warning(
+    ctx_sync(desc_path, cache_dir, fix_missing = TRUE, fix_stale = TRUE),
+    "zzzfakepkgfour"
+  )
+})
