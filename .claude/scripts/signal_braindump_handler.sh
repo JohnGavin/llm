@@ -45,6 +45,17 @@ LOG="$HOME/.claude/logs/signal_sync.log"
 PROCESSED_LOG="$HOME/.claude/logs/whisper_processed.txt"
 SIGNAL_HTTP="http://localhost:7583"
 
+# Only messages whose Signal groupInfo.groupName (or groupId, when the name
+# is unset) case-insensitively matches this are captured into braindumps
+# (llm#1113). Every OTHER group is logged as skipped, never silently
+# dropped, per checks-must-distinguish-unknown. Messages with NO groupInfo
+# at all — Signal "Note to Self" / direct messages, the 'direct' fallback
+# label used throughout this script — are deliberately NOT filtered by
+# this: that is this script's original capture path (see the "direct
+# receive fallback" comments below), and #1113's evidence points at a
+# different GROUP chat, not at direct messages.
+TARGET_GROUP_NAME="${TARGET_GROUP_NAME:-Notes to llm}"
+
 # Signal account number — read at runtime, NEVER hardcoded (llm#946). A git
 # history rewrite replaced the real value with a fictional placeholder
 # across all history after it was exposed in this public repo for four
@@ -155,6 +166,8 @@ from datetime import datetime
 dump_dir = '$DUMP_DIR'
 db_path = '$DB'
 account = '$ACCOUNT'
+target_group_name_display = '$TARGET_GROUP_NAME'
+target_group_name = target_group_name_display.strip().lower()
 
 for line in sys.stdin:
     line = line.strip()
@@ -170,6 +183,16 @@ for line in sys.stdin:
 
         dest = sent.get('destinationNumber', sent.get('destination', ''))
         if dest and dest != account:
+            continue
+
+        # Filter to the target Signal group (llm#1113). A message with NO
+        # groupInfo at all (direct/'Note to Self') is NOT filtered here —
+        # see TARGET_GROUP_NAME's definition above for why.
+        group = sent.get('groupInfo', {}) or {}
+        group_name = group.get('groupName') or group.get('groupId') or 'direct'
+        is_group_message = bool(group.get('groupName') or group.get('groupId'))
+        if is_group_message and group_name.strip().lower() != target_group_name:
+            print(f'SKIPPED (off-channel group): message in group {group_name!r} does not match target group {target_group_name_display!r} — not captured', file=sys.stderr)
             continue
 
         ts = env.get('timestamp', 0) / 1000
@@ -192,8 +215,6 @@ for line in sys.stdin:
         # produced no text must still leave a record of having arrived.
         if not body:
             atts = sent.get('attachments', []) or []
-            group = sent.get('groupInfo', {}) or {}
-            group_name = group.get('groupName') or group.get('groupId') or 'direct'
             if atts:
                 desc = ', '.join(
                     f\"{a.get('contentType', 'unknown')}:{a.get('id', '?')}\"
@@ -348,6 +369,8 @@ from datetime import datetime
 dump_dir = '$DUMP_DIR'
 db_path = '$DB'
 account = '$ACCOUNT'
+target_group_name_display = '$TARGET_GROUP_NAME'
+target_group_name = target_group_name_display.strip().lower()
 exc_count_file = '$exc_count_file'
 exceptions = 0
 
@@ -399,6 +422,20 @@ for line in sys.stdin:
         if dest and dest != account:
             continue
 
+        # Filter to the target Signal group (llm#1113). A message with NO
+        # groupInfo at all (direct/'Note to Self') is NOT filtered here —
+        # see TARGET_GROUP_NAME's definition in the shell script for why.
+        # The group name is only available HERE, in the envelope; the
+        # on-disk attachment scan cannot recover it, so the filter has to
+        # happen at this stage regardless of whether the message has a
+        # text body or only attachments.
+        group = sent.get('groupInfo', {}) or {}
+        group_name = group.get('groupName') or group.get('groupId') or 'direct'
+        is_group_message = bool(group.get('groupName') or group.get('groupId'))
+        if is_group_message and group_name.strip().lower() != target_group_name:
+            print(f'SKIPPED (off-channel group): message in group {group_name!r} does not match target group {target_group_name_display!r} — not captured', file=sys.stderr)
+            continue
+
         ts = env.get('timestamp', 0) / 1000
         dt = datetime.fromtimestamp(ts) if ts > 0 else datetime.now()
 
@@ -419,14 +456,9 @@ for line in sys.stdin:
         # Account for every message that produced no text (llm#1001). A message
         # with an empty body used to fall off the end of this loop with no log
         # line at all — which is how a scanned PDF and 93 images disappeared
-        # without trace for ten weeks. The group name is only available HERE,
-        # in the envelope; the on-disk attachment scan cannot recover it, so it
-        # is recorded now even though the file itself is ingested later by
-        # signal_attachment_ingest.sh.
+        # without trace for ten weeks.
         if not body:
             atts = sent.get('attachments', []) or []
-            group = sent.get('groupInfo', {}) or {}
-            group_name = group.get('groupName') or group.get('groupId') or 'direct'
             if atts:
                 desc = ', '.join(
                     f\"{a.get('contentType', 'unknown')}:{a.get('id', '?')}\"

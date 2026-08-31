@@ -404,9 +404,13 @@ echo "-- Test: attachment-only message (no text body) -> logged with content typ
 rm -rf "$FAKE_HOME"
 mkdir -p "$FAKE_HOME/.claude/logs"
 ATT_ONLY_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+# Both fixture messages are in the target group ("Notes to llm") deliberately
+# — this scenario tests the llm#1001 accounting (attachment-only / fully-empty
+# messages are logged, not silently dropped), not the llm#1113 group filter.
+# The filter itself is covered separately below (Scenario 14).
 {
   printf '%s\n' '{"envelope":{"timestamp":1755855939000,"syncMessage":{"sentMessage":{"message":null,"attachments":[{"contentType":"application/pdf","id":"FIXTUREattachment01","filename":"Scanned_20260822-0945.pdf"}],"groupInfo":{"groupId":"Z3JwMQ==","groupName":"Notes to llm"}}}}}'
-  printf '%s\n' '{"envelope":{"timestamp":1755856050000,"syncMessage":{"sentMessage":{"message":null,"attachments":[],"groupInfo":{"groupName":"pills"}}}}}'
+  printf '%s\n' '{"envelope":{"timestamp":1755856050000,"syncMessage":{"sentMessage":{"message":null,"attachments":[],"groupInfo":{"groupName":"Notes to llm"}}}}}'
 } > "$ATT_ONLY_LOG"
 
 HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
@@ -495,6 +499,70 @@ if [ "$rc13" = "0" ]; then
   PASS=$((PASS + 1))
 else
   echo "  FAIL: handler exited $rc13 when the ingest script was missing"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── Scenario 14: group filtering (llm#1113) — only "Notes to llm" messages
+#    are captured; other groups are skipped and logged (never silently
+#    dropped); the match is case-insensitive; direct/'Note to Self' messages
+#    (no groupInfo at all) are unaffected by the filter.
+
+echo ""
+echo "-- Test: group filter (llm#1113) -- target group captured, off-channel group skipped+logged, case-insensitive match, direct messages unaffected"
+rm -rf "$FAKE_HOME"
+mkdir -p "$FAKE_HOME/.claude/logs"
+GROUP_FILTER_LOG="$FAKE_HOME/.claude/logs/signal_cli_daemon_stdout.log"
+{
+  printf '%s\n' '{"envelope":{"timestamp":1755900000000,"syncMessage":{"sentMessage":{"message":"message from target group","groupInfo":{"groupId":"Z3JwMQ==","groupName":"Notes to llm"}}}}}'
+  printf '%s\n' '{"envelope":{"timestamp":1755900100000,"syncMessage":{"sentMessage":{"message":"message from off-channel group","groupInfo":{"groupId":"ZmFtaWx5","groupName":"family chat"}}}}}'
+  printf '%s\n' '{"envelope":{"timestamp":1755900200000,"syncMessage":{"sentMessage":{"message":"message from lowercase target group","groupInfo":{"groupId":"Z3JwMQ==","groupName":"notes to llm"}}}}}'
+  printf '%s\n' '{"envelope":{"timestamp":1755900300000,"syncMessage":{"sentMessage":{"message":"message from direct chat unaffected by filter"}}}}'
+} > "$GROUP_FILTER_LOG"
+
+HOME="$FAKE_HOME" LSOF_BIN="$FAKE_LSOF_UP" PGREP_BIN="$FAKE_PGREP_NONE" SIGNAL_CLI="$TMP/unused_cli.sh" \
+  SIGNAL_ACCOUNT="+12025550111" \
+  bash "$SCRIPT" >/dev/null 2>&1
+log14=$(read_log)
+dump_dir14="$FAKE_HOME/docs_gh/llm/knowledge/raw/braindumps"
+saved14=$(find "$dump_dir14" -name "*-signal.md" 2>/dev/null)
+saved14_content=$(cat $saved14 2>/dev/null)
+
+if [ -n "$saved14" ] && [[ "$saved14_content" == *"message from target group"* ]]; then
+  echo "  PASS: message from the target group ('Notes to llm') was captured"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: message from the target group was NOT captured"
+  FAIL=$((FAIL + 1))
+fi
+
+if [[ "$saved14_content" != *"message from off-channel group"* ]]; then
+  echo "  PASS: message from an off-channel group ('family chat') was NOT captured"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: message from an off-channel group was captured — filter did not apply"
+  FAIL=$((FAIL + 1))
+fi
+
+assert_contains "off-channel message is logged as skipped, not silently dropped" \
+  "SKIPPED (off-channel group)" "$log14"
+assert_contains "skip log line names the actual (rejected) group" \
+  "family chat" "$log14"
+assert_contains "skip log line names the target group it was compared against" \
+  "Notes to llm" "$log14"
+
+if [[ "$saved14_content" == *"message from lowercase target group"* ]]; then
+  echo "  PASS: group-name match is case-insensitive ('notes to llm' matched 'Notes to llm')"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: lowercase group name 'notes to llm' was NOT matched case-insensitively"
+  FAIL=$((FAIL + 1))
+fi
+
+if [[ "$saved14_content" == *"message from direct chat unaffected by filter"* ]]; then
+  echo "  PASS: a direct message (no groupInfo) is unaffected by the group filter"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: a direct message (no groupInfo) was incorrectly filtered out"
   FAIL=$((FAIL + 1))
 fi
 
