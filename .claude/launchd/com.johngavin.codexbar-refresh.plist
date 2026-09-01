@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Install:  launchctl load -w ~/Library/LaunchAgents/com.johngavin.codexbar-refresh.plist
+     Tracks:  llm#184, llm#1121
+     Mirrors: com.johngavin.ccusage-refresh.plist
+
+     Relocated from bin/com.johngavin.codexbar-refresh.plist (llm#1121, git mv,
+     history preserved) to .claude/launchd/ for consistency with every other
+     tracked plist and with the *.plist audit glob that missed this file while
+     it lived in bin/ — that's what made it "untracked" as far as llm#1121's
+     original audit was concerned, even though it has been in-repo since PR
+     #305.
+
+     ProgramArguments now points at bin/launchd-recorders/codexbar-refresh so
+     macOS Background Task Management shows a distinct job name instead of a
+     generic "bash" (llm#1121 item C) — same wrapper pattern already used by
+     ~29 other jobs (see e.g. com.claude.branch-gc.plist).
+
+     StartInterval / EnvironmentVariables / log paths below are UNCHANGED from
+     the original bin/ file (committed 2026, PR #305) — this is the REAL
+     historically-deployed schedule, not a placeholder guessed by this
+     dispatch. (llm#1121's task description assumed no tracked plist existed
+     for this job and asked for an inferred placeholder; that assumption was
+     wrong — a tracked copy already existed, just in bin/ instead of
+     .claude/launchd/. Flagging this correction explicitly per this repo's
+     "verify before asserting" discipline.) -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.johngavin.codexbar-refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/codexbar-refresh</string>
+    </array>
+
+    <!-- Run every 12 hours -->
+    <key>StartInterval</key>
+    <integer>43200</integer>
+
+    <!-- Do NOT run at load — first real run after manual install/test -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Environment variables needed for the script -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Log stdout/stderr to ~/.claude/logs/ (mirrors ccusage convention) -->
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/codexbar_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/codexbar_launchd_error.log</string>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
