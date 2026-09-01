@@ -11,13 +11,9 @@
     <!-- 06:30 overnight-email, 07:00 kb-digest, 09:15 roborev-autoclose) so  -->
     <!-- this does not contend with them for disk/CPU on the same wake.       -->
     <!--                                                                       -->
-    <!-- NOT a named-launcher wrapper (bin/launchd-recorders/*) -- that       -->
-    <!-- directory was outside this dispatch's write scope (.claude/scripts,  -->
-    <!-- .claude/hooks, .github/workflows, tests, .claude/rules only). Login  -->
-    <!-- Items will show "bash" rather than a descriptive name until a        -->
-    <!-- follow-up adds bin/launchd-recorders/private-data-history-audit      -->
-    <!-- mirroring worktree-gc's wrapper -- functionally identical either     -->
-    <!-- way, this is a display-name nicety only.                            -->
+    <!-- Uses the bin/launchd-recorders/private-data-history-audit named-    -->
+    <!-- launcher wrapper (llm#1121) so macOS Background Task Management     -->
+    <!-- shows "private-data-history-audit" instead of generic "bash".       -->
     <!--                                                                       -->
     <!-- THIS PLIST IS DELIVERED, NOT INSTALLED. Install / reload:            -->
     <!--   launchctl bootout gui/$(id -u)/com.claude.private-data-history-audit 2>/dev/null -->
@@ -33,8 +29,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/private_data_history_audit.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/private-data-history-audit</string>
     </array>
 
     <!-- launchd's default PATH omits Homebrew/duckdb -- same fix as         -->
