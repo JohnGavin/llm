@@ -6,8 +6,7 @@
 	<string>com.johngavin.chrome-tab-backup</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
-		<string>/Users/johngavin/.claude/scripts/chrome_tab_backup.sh</string>
+		<string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/chrome-tab-backup</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
