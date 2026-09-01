@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.johngavin.signal-braindump-handler" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/signal_braindump_handler.sh"
