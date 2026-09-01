@@ -3,7 +3,21 @@
 <!-- com.claude.overnight-self-review-email.plist
      Overnight self-review digest email — surfaces ETL starvation and new
      self-review findings from unified.duckdb. Sends a collapsible HTML email
-     at 06:30 daily (after self-review-stage1 at 02:30).
+     at 08:45 daily (after self-review-stage1 at 02:30, and — critically —
+     after com.claude.staleness-collect's own 08:15 daily run).
+
+     Timing fix (llm#1122): this job previously fired at 06:30, which is
+     1h45m BEFORE com.claude.staleness-collect's 08:15 daily run. Every
+     morning's email therefore read YESTERDAY's staleness snapshot and
+     presented it as current — reporting jobs "~22h ago / STALE" that were
+     in fact healthy and about to run (or had already run) on schedule.
+     Moving this job to 08:45 (after 08:15, before the 09:00 job peak —
+     worktree-gc/roborev-poll-merges/roborev-project-backlog/config-pulse —
+     and after 08:00's launchd-health-weekly) closes that gap: the email now
+     always reads the SAME morning's freshly-collected snapshot. The email's
+     own "Observed Nm ago" column (staleness_status observation_age, added
+     2026-08-16) remains as defense-in-depth for the rare case the collector
+     itself is late or fails that morning.
 
      Install:
        cp .claude/launchd/com.claude.overnight-self-review-email.plist \
@@ -42,13 +56,14 @@
         <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/overnight-self-review-email</string>
     </array>
 
-    <!-- Daily at 06:30 local time (after self-review-stage1 at 02:30) -->
+    <!-- Daily at 08:45 local time (after self-review-stage1 at 02:30, and
+         after com.claude.staleness-collect's daily 08:15 run — llm#1122) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>6</integer>
+        <integer>8</integer>
         <key>Minute</key>
-        <integer>30</integer>
+        <integer>45</integer>
     </dict>
 
     <!-- Do NOT run immediately on launchctl load -->
