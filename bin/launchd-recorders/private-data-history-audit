@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.private-data-history-audit" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/private_data_history_audit.sh"
