@@ -295,26 +295,56 @@ if isinstance(sci, dict):
   awk -v s="$seconds" 'BEGIN { printf "%.4f", s / 3600.0 }'
 }
 
-# ─── _launchd_log_file: find the log used as a "last fired" proxy ───────────
-# Priority: StandardOutPath from the plist, else derived <suffix>.out/.log
-# under ~/.claude/logs (same derivation as launchd_health_audit.sh).
-_launchd_log_file() {
-  local label="$1" out_path="$2"
-  if [ -n "$out_path" ] && [ -f "$out_path" ]; then
-    echo "$out_path"
-    return
-  fi
+# ─── _launchd_last_seen_epoch: freshest mtime among all "did this job do
+# anything" proxies for a launchd label ───────────────────────────────────
+#
+# Bug fix (llm#1122, Bug 2): a single StandardOutPath is NOT a reliable
+# "last fired" proxy on its own. Many com.claude.* scripts follow the
+# housekeeping-framework `log()` convention and append to their OWN
+# semantic <suffix>.log file directly — a file distinct from whatever
+# launchd's StandardOutPath/StandardErrorPath captured, and one that keeps
+# updating on every real run even when the script prints nothing to
+# stdout/stderr. The old priority-order logic (`_launchd_log_file`, this
+# function's predecessor) picked StandardOutPath whenever it existed and
+# never looked at the derived .log at all — so a job could run correctly,
+# be recorded faithfully in its own .log, and still be reported "last seen"
+# using a stale, rarely-written .out file's old mtime.
+#
+# Confirmed for com.claude.roborev-autoclose (2026-08-31/09-01, llm#1122):
+#   roborev_autoclose.out  mtime 2026-08-17 09:15:12  (stale — the value the
+#                           email wrongly reported as "last seen")
+#   roborev_autoclose.log  mtime 2026-08-30 12:16:32  (correct — the
+#                           script's own log, ignored under the old logic)
+# The .out file is only touched when the job happens to print something to
+# stdout on a given run; this job's weekly Monday firings mostly don't, so
+# .out went 2 weeks stale while .log (updated by the script's own `log()`
+# calls on every invocation) stayed current.
+#
+# Fix: take the MAX mtime across every candidate file — declared
+# StandardOutPath/StandardErrorPath, plus the derived <suffix>.log/.out/.err
+# under ~/.claude/logs — instead of the first one found by priority. Any
+# one file being current is enough to prove the job did something recently.
+_launchd_last_seen_epoch() {
+  local label="$1" out_path="$2" err_path="$3"
   local suffix
   suffix="$(printf '%s' "$label" | sed 's/^com\.claude\.//' | tr '-' '_')"
-  if [ -f "${LOG_DIR_DEFAULT}/${suffix}.out" ]; then
-    echo "${LOG_DIR_DEFAULT}/${suffix}.out"
-    return
-  fi
-  if [ -f "${LOG_DIR_DEFAULT}/${suffix}.log" ]; then
-    echo "${LOG_DIR_DEFAULT}/${suffix}.log"
-    return
-  fi
-  echo ""
+
+  local candidates="" f
+  [ -n "$out_path" ] && candidates="${candidates}${out_path}"$'\n'
+  [ -n "$err_path" ] && candidates="${candidates}${err_path}"$'\n'
+  candidates="${candidates}${LOG_DIR_DEFAULT}/${suffix}.log"$'\n'
+  candidates="${candidates}${LOG_DIR_DEFAULT}/${suffix}.out"$'\n'
+  candidates="${candidates}${LOG_DIR_DEFAULT}/${suffix}.err"
+
+  local best=0 m
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ -f "$f" ] || continue
+    m="$(/usr/bin/stat -f '%m' "$f" 2>/dev/null || echo 0)"
+    case "$m" in ''|*[!0-9]*) m=0 ;; esac
+    [ "$m" -gt "$best" ] && best="$m"
+  done <<< "$candidates"
+  echo "$best"
 }
 
 # ─── collect_launchd_jobs: one row per deployed com.claude.* plist ──────────
@@ -367,16 +397,14 @@ collect_launchd_jobs() {
     local out_path
     out_path="$(printf '%s' "$json" | "$PYTHON3" -c "import sys, json; print(json.load(sys.stdin).get('StandardOutPath', ''))" 2>/dev/null)"
 
+    local err_path
+    err_path="$(printf '%s' "$json" | "$PYTHON3" -c "import sys, json; print(json.load(sys.stdin).get('StandardErrorPath', ''))" 2>/dev/null)"
+
     local cadence_hours
     cadence_hours="$(_launchd_cadence_hours "$json")"
 
-    local log_file
-    log_file="$(_launchd_log_file "$label" "$out_path")"
-
-    local last_seen_epoch=0
-    if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-      last_seen_epoch="$(/usr/bin/stat -f '%m' "$log_file" 2>/dev/null || echo 0)"
-    fi
+    local last_seen_epoch
+    last_seen_epoch="$(_launchd_last_seen_epoch "$label" "$out_path" "$err_path")"
 
     local last_seen_sql="NULL"
     if [ "${last_seen_epoch:-0}" -gt 0 ] 2>/dev/null; then
@@ -636,6 +664,40 @@ selftest() {
   _assert "event-driven-errors"        "$(_etl_event_driven errors)" "yes"
   _assert "event-driven-unknown-empty" "$(_etl_event_driven some_new_source)" ""
   _assert "event-driven-scheduled-empty" "$(_etl_event_driven sessions)" ""
+
+  # ── Bug fix (llm#1122, Bug 2): _launchd_last_seen_epoch() must use the
+  # FRESHEST candidate file, not just StandardOutPath — proven against a
+  # temp fixture dir (LOG_DIR_DEFAULT swapped for the duration) so this
+  # never touches the real ~/.claude/logs. Reproduces the exact shape of the
+  # roborev-autoclose incident: an old-but-present StandardOutPath (.out)
+  # alongside a NEWER derived <suffix>.log (the job's own housekeeping-
+  # framework log() output) that the old priority-order logic ignored.
+  local saved_log_dir_default="$LOG_DIR_DEFAULT"
+  local fixture_dir="/tmp/staleness_collect_selftest_logdir_${pid}"
+  rm -rf "$fixture_dir"
+  mkdir -p "$fixture_dir"
+  LOG_DIR_DEFAULT="$fixture_dir"
+
+  local fixture_out="${fixture_dir}/some_job.out"
+  : > "$fixture_out"
+  /usr/bin/touch -t 202608170915 "$fixture_out"   # old — the stale .out
+
+  local fixture_derived_log="${fixture_dir}/some_job.log"
+  : > "$fixture_derived_log"
+  /usr/bin/touch -t 202608301216 "$fixture_derived_log"   # new — the job's own log
+
+  local epoch_out epoch_log epoch_result
+  epoch_out="$(/usr/bin/stat -f '%m' "$fixture_out")"
+  epoch_log="$(/usr/bin/stat -f '%m' "$fixture_derived_log")"
+  # Sanity check on the fixture itself: the derived .log must actually be
+  # newer than .out, or this test would pass for the wrong reason.
+  _assert "last-seen-fixture-log-is-newer-than-out" "$([ "$epoch_log" -gt "$epoch_out" ] && echo yes || echo no)" "yes"
+
+  epoch_result="$(_launchd_last_seen_epoch "com.claude.some-job" "$fixture_out" "")"
+  _assert "last-seen-uses-freshest-not-just-out_path" "$epoch_result" "$epoch_log"
+
+  LOG_DIR_DEFAULT="$saved_log_dir_default"
+  rm -rf "$fixture_dir"
 
   if ! command -v duckdb >/dev/null 2>&1; then
     if ! (command -v nix-shell >/dev/null 2>&1 && [ -f "${NIX_DEFAULT}" ]); then
