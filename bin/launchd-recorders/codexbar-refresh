@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.johngavin.codexbar-refresh" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/bin/refresh_codexbar_and_commit.sh"

@@ -6,9 +6,7 @@
     <string>com.johngavin.signal-braindump-handler</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>~/.claude/scripts/signal_braindump_handler.sh</string>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/signal-braindump-handler</string>
     </array>
     <key>WatchPaths</key>
     <array>
