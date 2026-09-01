@@ -34,6 +34,7 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - "Item from unidentified developer" BTM subtext — real fix requires a code-signing experiment (ad-hoc vs. real Apple Developer ID) not yet attempted.
 - tlang Arrow Validation CI fix — root cause identified, no fix applied; awaiting user's re-run-vs-pin decision.
 - The 3 original #1121 jobs (chrome-tab-backup, secret-exposure-scan, private-data-history-audit) are still unfixed — untouched by this session's #1128 dispatch, which was deliberately scoped to the newly-found jobs only.
+- `ctx_sync("DESCRIPTION")` run at session end (post-#1112) correctly reported per-package `FAILED` instead of aborting silently (the fix working as intended) — but all 12 STALE packages failed to regenerate and the run hit its own 280s timeout before reaching the 9 OTHER_VERSION packages. Root cause not investigated this session (uniform failure across unrelated packages suggests one shared cause, e.g. the underlying `pkgctx` tool itself, not per-package issues) — needs its own investigation next session.
 
 ## 2026-08-31 (session-end: feat/cc-20260829-145111)
 
