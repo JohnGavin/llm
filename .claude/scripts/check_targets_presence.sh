@@ -6,20 +6,24 @@
 # _targets.R IF the file existed. A project with no _targets.R at all
 # satisfied that check trivially — parse() was never called, so nothing could
 # fail. This script closes that gap by distinguishing FOUR states instead of
-# the old two, per the checks-must-distinguish-unknown rule:
+# the old two, per the checks-must-distinguish-unknown rule and the
+# repo-wide exit-code convention (exit-code-conventions rule, JohnGavin/llm#1140):
 #
 #   STATE                          RESULT              EXIT
 #   _targets.R present, parses     PASS                0
-#   _targets.R present, parse fail FAIL parse-error     1
 #   _targets.R absent, exempt      PASS exempt          0
-#   _targets.R absent, undeclared  FAIL undeclared       2   <- the bug this
+#   _targets.R present, parse fail FAIL parse-error     1
+#   _targets.R absent, undeclared  FAIL undeclared       1   <- the bug this
 #                                                              script exists
 #                                                              to catch
-#   usage error (bad path, no R)   INDETERMINATE         3
+#   usage error (bad path, --help) usage error           2
+#   Rscript not on PATH            INDETERMINATE         3
 #
-# Exit 2 is deliberately distinct from exit 1 so a caller can tell "the
-# pipeline is broken" apart from "there is no pipeline and nobody said why".
-# Exit 3 (tool/path problems) is never folded into either FAIL state.
+# 0 = determinate positive, 1 = determinate negative (FAIL — this check DID
+# reach a verdict, whether "parse error" or "undeclared absence"; both are
+# things we successfully determined, not unknowns), 2 = the caller invoked
+# this script wrongly, 3 = the check could not evaluate its subject at all
+# (Rscript missing — genuinely indeterminate, never folded into a FAIL).
 #
 # EXEMPTION SYNTAX — a table row in the project's .claude/CLAUDE.md:
 #
@@ -49,7 +53,7 @@ usage() {
 while [ $# -gt 0 ]; do
     case "$1" in
         (--selftest) SELFTEST=1; shift ;;
-        (-h|--help)  usage; exit 3 ;;
+        (-h|--help)  usage; exit 2 ;;
         (*)          TARGET_DIR="$1"; shift ;;
     esac
 done
@@ -61,19 +65,20 @@ done
 EXEMPT_RE='^\|[[:space:]]*targets[[:space:]]+pipeline[[:space:]]*\|[[:space:]]*none[[:space:]]*[-—][[:space:]]*[a-zA-Z0-9].*\|[[:space:]]*$'
 
 # check_one — inspect one project directory. Prints one summary line.
-# Returns 0 pass / 1 parse-fail / 2 undeclared-absence / 3 usage-error.
+# Returns 0 pass / 1 fail (parse-error or undeclared-absence) / 2 usage
+# error / 3 indeterminate (per exit-code-conventions, JohnGavin/llm#1140).
 check_one() {
     local dir="$1"
     if [ ! -d "$dir" ]; then
-        echo "INDETERMINATE usage: not a directory: $dir"
-        return 3
+        echo "USAGE-ERROR: not a directory: $dir"
+        return 2
     fi
     local targets_file="$dir/_targets.R"
     local claude_md="$dir/.claude/CLAUDE.md"
 
     if [ -f "$targets_file" ]; then
         if ! command -v Rscript >/dev/null 2>&1; then
-            echo "INDETERMINATE usage: Rscript not on PATH — cannot check parse validity of $targets_file"
+            echo "INDETERMINATE: Rscript not on PATH — cannot check parse validity of $targets_file"
             return 3
         fi
         local out rc=0
@@ -101,7 +106,7 @@ check_one() {
     fi
 
     echo "FAIL undeclared-absence: $dir has no _targets.R and no '| Targets pipeline | none — <reason> |' row in .claude/CLAUDE.md"
-    return 2
+    return 1
 }
 
 selftest() {
@@ -166,13 +171,17 @@ EOS
     # exemption declared at all -> must be FAIL, never a silent pass. This is
     # the falsification the verification-before-completion rule requires: a
     # checker that returns PASS on an empty/undeclared directory reproduces
-    # the exact vacuous-pass bug from JohnGavin/llm#539.
+    # the exact vacuous-pass bug from JohnGavin/llm#539. Per the repo-wide
+    # exit-code convention (JohnGavin/llm#1140), "undeclared absence" is a
+    # DETERMINATE negative -- we successfully determined the project is
+    # non-compliant -- so it belongs at exit 1 (FAIL), not exit 2. Exit 2 is
+    # reserved for usage errors and exit 3 for INDETERMINATE.
     mkdir -p "$tmp/state4"
     out="$(check_one "$tmp/state4")"; rc=$?
-    if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q '^FAIL undeclared-absence'; then
-        ok "state 4: no _targets.R, no exemption -> FAIL undeclared-absence (exit 2), NOT a silent pass"
+    if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^FAIL undeclared-absence'; then
+        ok "state 4: no _targets.R, no exemption -> FAIL undeclared-absence (exit 1), NOT a silent pass"
     else
-        bad "state 4 (THE llm#539 BUG): expected FAIL undeclared-absence/exit2, got rc=$rc out=$out -- a PASS here reproduces the original defect"
+        bad "state 4 (THE llm#539 BUG): expected FAIL undeclared-absence/exit1, got rc=$rc out=$out -- a PASS here reproduces the original defect"
     fi
 
     # State 4b -- CLAUDE.md exists but has no Targets pipeline row at all ->
@@ -186,10 +195,10 @@ EOS
 | Environment | dev |
 EOS
     out="$(check_one "$tmp/state4b")"; rc=$?
-    if [ "$rc" -eq 2 ]; then
-        ok "state 4b: CLAUDE.md present but no Targets pipeline row -> FAIL undeclared-absence"
+    if [ "$rc" -eq 1 ]; then
+        ok "state 4b: CLAUDE.md present but no Targets pipeline row -> FAIL undeclared-absence (exit 1)"
     else
-        bad "state 4b: expected exit2, got rc=$rc out=$out"
+        bad "state 4b: expected exit1, got rc=$rc out=$out"
     fi
 
     # State 4c -- a placeholder exemption (empty reason) must NOT count as
@@ -200,20 +209,40 @@ EOS
 | Targets pipeline | none — |
 EOS
     out="$(check_one "$tmp/state4c")"; rc=$?
-    if [ "$rc" -eq 2 ]; then
-        ok "state 4c: empty-reason placeholder -> FAIL undeclared-absence, not a pass"
+    if [ "$rc" -eq 1 ]; then
+        ok "state 4c: empty-reason placeholder -> FAIL undeclared-absence (exit 1), not a pass"
     else
-        bad "state 4c: expected exit2 on empty-reason placeholder, got rc=$rc out=$out"
+        bad "state 4c: expected exit1 on empty-reason placeholder, got rc=$rc out=$out"
     fi
 
-    # Usage error: nonexistent directory -> exit 3, distinct from both FAIL
-    # states above (checks-must-distinguish-unknown: never fold a tool/path
-    # problem into a content finding).
-    out="$(check_one "$tmp/does-not-exist")"; rc=$?
-    if [ "$rc" -eq 3 ]; then
-        ok "usage error: nonexistent directory -> exit 3, distinct from content FAILs"
+    # State 5 -- _targets.R present but Rscript is not resolvable -> the
+    # check literally cannot evaluate its subject. That is INDETERMINATE
+    # (exit 3), distinct from every FAIL state above. PATH is narrowed only
+    # for this one call (bash scopes a leading assignment to the command it
+    # prefixes, function calls included) so this test is meaningful even
+    # when Rscript IS on the ambient PATH.
+    mkdir -p "$tmp/state5"
+    cat > "$tmp/state5/_targets.R" <<'EOS'
+list()
+EOS
+    out="$(PATH="/usr/bin:/bin" check_one "$tmp/state5")"; rc=$?
+    if [ "$rc" -eq 3 ] && printf '%s' "$out" | grep -qi '^INDETERMINATE'; then
+        ok "state 5: _targets.R present, Rscript unavailable -> INDETERMINATE (exit 3)"
     else
-        bad "usage error: expected exit3, got rc=$rc out=$out"
+        bad "state 5: expected INDETERMINATE/exit3, got rc=$rc out=$out"
+    fi
+
+    # Usage error: nonexistent directory -> exit 2 (caller invoked the check
+    # against a path that isn't a directory at all). Distinct from both FAIL
+    # states above AND from state 5's INDETERMINATE (checks-must-distinguish-
+    # unknown: never fold a usage problem into a content finding, and never
+    # fold a usage problem into "could not evaluate" either -- they answer
+    # different questions: "you called this wrong" vs "I could not tell").
+    out="$(check_one "$tmp/does-not-exist")"; rc=$?
+    if [ "$rc" -eq 2 ]; then
+        ok "usage error: nonexistent directory -> exit 2, distinct from content FAILs and from INDETERMINATE"
+    else
+        bad "usage error: expected exit2, got rc=$rc out=$out"
     fi
 
     rm -rf "$tmp"
