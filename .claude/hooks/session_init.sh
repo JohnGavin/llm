@@ -1592,6 +1592,43 @@ printf '%s' "$_out" > "$_c"
 SCDEOF
 fi
 
+# ── Phase 13f: credential single-source-of-truth check — BACKGROUND ──────────
+# Surfaces credential-shaped NAME sprawl across the fixed dotfile set named
+# by llm#949 (a NAME assigned in more than one file, or assigned somewhere
+# other than secrets.env, or a malformed/glued secrets.env line, or a
+# commented-out credential) — the file-PLACEMENT half of the credential-
+# sprawl problem; Phase 13e above is the BWS-vs-cache half. Same
+# cache-then-refresh pattern as 13d/13e: print the previous answer
+# instantly, recompute in the background for next session so this never
+# delays session start. Silent when clean.
+_cssc_cache="${HOME}/.claude/logs/session_init_cred_single_source_cache.txt"
+if [ -f "$_cssc_cache" ]; then
+  _cssc_cached=$(cat "$_cssc_cache" 2>/dev/null) || true
+  [ -n "$_cssc_cached" ] && echo "$_cssc_cached"
+fi
+_cssc_script="${HOME}/.claude/scripts/credential_single_source_check.sh"
+mkdir -p "$(dirname "$_cssc_cache")"
+if [ -x "$_cssc_script" ]; then
+  nohup bash -s "$_cssc_script" "$_cssc_cache" > /dev/null 2>&1 <<'CSSCEOF' &
+#!/usr/bin/env bash
+_s="$1"; _c="$2"
+# --quiet prints one banner line only when there is a violation or an
+# indeterminate condition to report, exit code UNCHANGED (0/1/2/3 — see
+# the script's own header). Only a genuinely DETERMINATE outcome (0 clean,
+# 1 violation) is ever written to the cache; INDETERMINATE (3), a usage
+# error (2, should not occur here since args are fixed), or a `timeout`
+# kill (124) all leave the previous cached answer in place rather than
+# overwriting it with a falsely-clean/empty one — "could not tell" must
+# never render as "no drift" at this caching layer either
+# (checks-must-distinguish-unknown), the same discipline Phase 13e applies
+# to its own BWS reachability failure.
+_out="$(timeout 25 bash "$_s" --quiet 2>/dev/null)"; _rc=$?
+if [ "$_rc" -eq 0 ] || [ "$_rc" -eq 1 ]; then
+  printf '%s' "$_out" > "$_c"
+fi
+CSSCEOF
+fi
+
 # ── Phase 14a: T-lang flake.nix closure-rebuild advisory — BACKGROUND (~up to 5s) ──
 # Output cached; advisory only (no action needed at prompt time).
 _tlang_cache="${HOME}/.claude/logs/session_init_tlang_cache.txt"
