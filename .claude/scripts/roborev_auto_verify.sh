@@ -31,7 +31,11 @@
 #   0 = success (including fail-open cases)
 #   1 = internal error (unexpected failure; fail-open protects the commit) OR
 #       roborev_auto_close.sh (Component 5 guard script) is missing — findings
-#       are left open rather than closed unguarded (llm#974)
+#       are left open rather than closed unguarded (llm#974) OR
+#       the fix_rejected_queue INSERT failed on a REJECTED verdict — the
+#       commit is already made by this point, so exiting 1 here does NOT
+#       block anything; it is the loud signal that a rejected fix vanished
+#       instead of landing in the human-triage queue (JohnGavin/llm#1094)
 #
 # Log: ~/.claude/logs/roborev_auto_verify.log
 # Issue: JohnGavin/llm#163
@@ -67,6 +71,61 @@ log() {
   local ts
   ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')
   echo "${ts} $*" >> "$LOGFILE"
+}
+
+# ── Shared: write a REJECTED-verdict entry to fix_rejected_queue ───────────────
+#
+# Column names below MUST match roborev_schema_migration_v2.sql's
+# fix_rejected_queue table exactly: finding_ids_json, fix_commit_sha,
+# rejection_job_id, rejection_summary. (JohnGavin/llm#1094 — a prior version
+# used stale column names finding_ids/fix_commit/rejection_review_id, and the
+# failure was swallowed by a bare `except` with no sys.exit(1), so the INSERT
+# silently no-op'd and the human-triage queue this table exists to populate
+# was never populated.)
+#
+# Factored into a function — rather than inlined separately in the main
+# REJECTED-verdict path and in SELFTEST — so the self-test below exercises
+# this EXACT INSERT statement, not a hand-copied stand-in that could drift
+# out of sync with production the same way the original bug arose.
+#
+# Args: db_path ids_json commit_sha job_id rejection_summary
+# Stdout: "ok:<ids_json>" on success, "ERR:<message>" on failure.
+# Returns: 0 on success, 1 on failure (including if the table/columns are
+# missing or wrong — an unexpected DB shape, exactly what this exists to
+# catch).
+_write_fix_rejected_queue() {
+  local db_path="$1" ids_json="$2" commit_sha="$3" job_id="$4" rejection_s="$5"
+  /usr/bin/python3 - "$db_path" "$ids_json" "$commit_sha" "$job_id" "$rejection_s" <<'PY'
+import sys, sqlite3
+
+db_path     = sys.argv[1]
+ids_json    = sys.argv[2]
+commit_sha  = sys.argv[3]
+job_id      = int(sys.argv[4]) if sys.argv[4] else None
+rejection_s = sys.argv[5][:500]
+
+try:
+    conn = sqlite3.connect(db_path, timeout=5.0)
+except Exception as e:
+    print(f"ERR:{e}")
+    sys.exit(1)
+
+try:
+    conn.execute(
+        """INSERT INTO fix_rejected_queue
+           (finding_ids_json, fix_commit_sha, rejection_job_id, rejection_summary)
+           VALUES (?, ?, ?, ?)""",
+        (ids_json, commit_sha, job_id, rejection_s)
+    )
+    conn.commit()
+    print(f"ok:{ids_json}")
+except Exception as e:
+    conn.rollback()
+    print(f"ERR:{e}")
+    sys.exit(1)
+finally:
+    conn.close()
+PY
 }
 
 # ── Self-test ──────────────────────────────────────────────────────────────────
@@ -208,6 +267,87 @@ PY
   else
     _check "refs-ignored" "fail: got '$IDS'"
   fi
+
+  # ── fix_rejected_queue regression cases (JohnGavin/llm#1094) ─────────────────
+  #
+  # Fixture DB: real schema, built from the same migration file the operator
+  # runs — never the live ~/.roborev/reviews.db.
+  _SCRIPT_DIR_ST="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+  FIXTURE_DB="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/roborev_auto_verify_selftest.XXXXXX")"
+  sqlite3 "$FIXTURE_DB" < "${_SCRIPT_DIR_ST}/roborev_schema_migration_v2.sql" >/dev/null 2>&1
+
+  # Case 11 (RED): the historical buggy column names (finding_ids/fix_commit/
+  # rejection_review_id — what this script used before the llm#1094 fix)
+  # against the REAL schema. This must fail, proving the root cause: those
+  # columns never existed in the live table, so the old INSERT could only
+  # ever no-op.
+  OLD_BUGGY_RESULT=$(/usr/bin/python3 - "$FIXTURE_DB" <<'PY'
+import sys, sqlite3
+conn = sqlite3.connect(sys.argv[1], timeout=5.0)
+try:
+    conn.execute(
+        """INSERT INTO fix_rejected_queue
+           (finding_ids, fix_commit, rejection_review_id, rejection_summary)
+           VALUES (?, ?, ?, ?)""",
+        ('[1,2]', 'deadbeef', 42, 'selftest: reproducing the old bug')
+    )
+    conn.commit()
+    print("ok (UNEXPECTED)")
+except Exception as e:
+    conn.rollback()
+    print(f"ERR:{e}")
+finally:
+    conn.close()
+PY
+)
+  if echo "$OLD_BUGGY_RESULT" | grep -q '^ERR:.*no column named finding_ids'; then
+    _check "frq-old-columns-fail-red" "pass"
+  else
+    _check "frq-old-columns-fail-red" "fail: expected 'no such column' error, got '$OLD_BUGGY_RESULT'"
+  fi
+
+  # Case 12 (GREEN): the fixed _write_fix_rejected_queue() succeeds against
+  # the real schema, and a row actually lands (row COUNT increases — not
+  # merely that the command exited 0).
+  COUNT_BEFORE=$(sqlite3 "$FIXTURE_DB" "SELECT COUNT(*) FROM fix_rejected_queue;")
+  if WRITE_OUT=$(_write_fix_rejected_queue "$FIXTURE_DB" '[1,2]' 'cafef00d' '99' 'selftest: fixed columns'); then
+    WRITE_RC=0
+  else
+    WRITE_RC=1
+  fi
+  COUNT_AFTER=$(sqlite3 "$FIXTURE_DB" "SELECT COUNT(*) FROM fix_rejected_queue;")
+  if [ "$WRITE_RC" -eq 0 ] && [ "$COUNT_AFTER" -eq $((COUNT_BEFORE + 1)) ] && echo "$WRITE_OUT" | grep -q '^ok:'; then
+    _check "frq-write-succeeds-green" "pass"
+  else
+    _check "frq-write-succeeds-green" "fail: rc=$WRITE_RC before=$COUNT_BEFORE after=$COUNT_AFTER out='$WRITE_OUT'"
+  fi
+
+  # Verify the row's actual column values (not just the count) landed correctly.
+  ROW_CHECK=$(sqlite3 "$FIXTURE_DB" "SELECT finding_ids_json || '|' || fix_commit_sha || '|' || rejection_job_id FROM fix_rejected_queue WHERE fix_commit_sha='cafef00d';")
+  if [ "$ROW_CHECK" = "[1,2]|cafef00d|99" ]; then
+    _check "frq-write-row-values" "pass"
+  else
+    _check "frq-write-row-values" "fail: got '$ROW_CHECK'"
+  fi
+
+  # Case 13: failure must be SURFACED, not silently swallowed — drive
+  # _write_fix_rejected_queue() at a DB that lacks the table entirely (an
+  # unmigrated/corrupt DB) and assert it returns non-zero AND reports ERR:.
+  BROKEN_DB="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/roborev_auto_verify_selftest_broken.XXXXXX")"
+  sqlite3 "$BROKEN_DB" "CREATE TABLE placeholder (id INTEGER);" >/dev/null 2>&1
+  if BROKEN_OUT=$(_write_fix_rejected_queue "$BROKEN_DB" '[1]' 'deadbeef' '1' 'selftest: no table'); then
+    BROKEN_RC=0
+  else
+    BROKEN_RC=1
+  fi
+  if [ "$BROKEN_RC" -eq 1 ] && echo "$BROKEN_OUT" | grep -q '^ERR:'; then
+    _check "frq-failure-surfaced-loudly" "pass"
+  else
+    _check "frq-failure-surfaced-loudly" "fail: rc=$BROKEN_RC out='$BROKEN_OUT'"
+  fi
+
+  rm -f "$FIXTURE_DB" "$BROKEN_DB"
+  unset _SCRIPT_DIR_ST FIXTURE_DB BROKEN_DB OLD_BUGGY_RESULT COUNT_BEFORE COUNT_AFTER WRITE_OUT WRITE_RC ROW_CHECK BROKEN_OUT BROKEN_RC
 
   TOTAL=$((PASS+FAIL))
   echo ""
@@ -809,32 +949,19 @@ print(json.dumps(ids))
 PY
 )
 
-/usr/bin/python3 - "$ROBOREV_DB" "$IDS_JSON" "$COMMIT_SHA" "$REVIEW_JOB_ID" "$JOB_OUTPUT" <<'PY'
-import sys, sqlite3
-
-db_path     = sys.argv[1]
-ids_json    = sys.argv[2]
-commit_sha  = sys.argv[3]
-job_id      = int(sys.argv[4])
-rejection_s = sys.argv[5][:500]
-
-conn = sqlite3.connect(db_path, timeout=5.0)
-try:
-    conn.execute(
-        """INSERT INTO fix_rejected_queue
-           (finding_ids, fix_commit, rejection_review_id, rejection_summary)
-           VALUES (?, ?, ?, ?)""",
-        (ids_json, commit_sha, job_id, rejection_s)
-    )
-    conn.commit()
-    print(f"queued: {ids_json}")
-except Exception as e:
-    conn.rollback()
-    print(f"ERR: {e}", file=sys.stderr)
-finally:
-    conn.close()
-PY
-
-echo "roborev_auto_verify: fix rejected — check fix_rejected_queue for human triage"
-echo "  query: SELECT * FROM fix_rejected_queue WHERE resolved=0 ORDER BY created_at DESC LIMIT 10;"
-exit 0
+if FRQ_WRITE_RESULT=$(_write_fix_rejected_queue "$ROBOREV_DB" "$IDS_JSON" "$COMMIT_SHA" "$REVIEW_JOB_ID" "$JOB_OUTPUT"); then
+  log "QUEUED: fix_rejected_queue write ok commit=${COMMIT_SHA} job=${REVIEW_JOB_ID} ${FRQ_WRITE_RESULT}"
+  echo "roborev_auto_verify: fix rejected — check fix_rejected_queue for human triage"
+  echo "  query: SELECT * FROM fix_rejected_queue WHERE resolved=0 ORDER BY attempted_at DESC LIMIT 10;"
+  exit 0
+else
+  # A write that can silently no-op is not a write (checks-must-distinguish-
+  # unknown). This must NOT share the fate of the other fail-open paths above:
+  # the commit is already made by this point, so a loud non-zero exit here
+  # does not block anything — it is the only signal that a rejected fix
+  # vanished instead of landing in the human-triage queue (JohnGavin/llm#1094).
+  log "ERROR: fix_rejected_queue INSERT FAILED commit=${COMMIT_SHA} job=${REVIEW_JOB_ID} ids=${IDS_JSON} detail=${FRQ_WRITE_RESULT}"
+  echo "roborev_auto_verify: ERROR — fix_rejected_queue INSERT FAILED; finding(s) $(printf '%s' "$CITED_IDS" | tr '\n' ',') NOT queued for human triage" >&2
+  echo "  detail: ${FRQ_WRITE_RESULT}" >&2
+  exit 1
+fi
