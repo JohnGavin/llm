@@ -26,6 +26,9 @@
 #   bash worktree_gc.sh            # dry-run (safe; never removes anything)
 #   bash worktree_gc.sh --apply    # remove only after SOAK_END date
 #   SELFTEST=1 bash worktree_gc.sh # run built-in unit tests against temp repos
+#                                   # (any DB writes go to a private scratch
+#                                   # DuckDB, never the live unified.duckdb —
+#                                   # llm#1105)
 #
 # Opt-out: place a .no-worktree-gc file in a repo root to skip that repo.
 # Empty ~/worktrees/<proj>/{feat,fix,chore}/ parents are rmdir'd when all
@@ -86,6 +89,37 @@ SOAK_END="2026-06-02"
 SQUASH_DETECT_ENABLED="${SQUASH_DETECT_ENABLED:-1}"
 SQUASH_REMOVE_DISABLE="${SQUASH_REMOVE_DISABLE:-0}"
 SQUASH_SOAK_END="2026-08-25"
+
+# ─── SELFTEST DB sandboxing (llm#1105) ───────────────────────────────────────
+# Confirmed reproducible twice: `SELFTEST=1 bash worktree_gc.sh` runs a REAL
+# sweep of the real filesystem below (APPLY stays 0, so nothing is ever
+# removed) — but that real sweep still writes its informational audit rows
+# (housekeeping_runs + worktree_gc_events) via $UNIFIED_DB, which — before
+# this fix — defaulted straight to the LIVE ~/.claude/logs/unified.duckdb
+# whenever the caller forgot to also set UNIFIED_DB_PATH. A selftest that
+# touches production data is not a selftest.
+#
+# Fix: resolve the DB path to a private scratch DB HERE, before ANY other
+# code in this script reads UNIFIED_DB_PATH — the sole accessor for the
+# rest of the script is the single `UNIFIED_DB="${UNIFIED_DB_PATH:-...}"`
+# assignment in the Config section immediately below, so overriding the env
+# var here is sufficient to redirect every downstream write. This is done
+# UNCONDITIONALLY (not via `:-` fallback), so a caller's own UNIFIED_DB_PATH
+# — however it got set — is structurally ignored during SELFTEST, not
+# merely defaulted around. The scratch DB gets the real schema applied so
+# the real sweep's writes actually land in real tables and can be
+# inspected; an empty/schema-less file would leave $_duckdb_ok false below
+# and every write would silently no-op, which would prove nothing about
+# write behaviour either way.
+_selftest_db_dir=""
+if [ "${SELFTEST:-0}" = "1" ]; then
+  _selftest_db_dir="$(mktemp -d "${TMPDIR:-/tmp}/worktree_gc_selftest_db.XXXXXX")"
+  UNIFIED_DB_PATH="${_selftest_db_dir}/unified.duckdb"
+  _selftest_schema_sql="${_gc_script_dir}/housekeeping_schema_init.sql"
+  if command -v duckdb >/dev/null 2>&1 && [ -f "$_selftest_schema_sql" ]; then
+    duckdb -init /dev/null "$UNIFIED_DB_PATH" < "$_selftest_schema_sql" >/dev/null 2>&1 || true
+  fi
+fi
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 # Per-pattern age thresholds (days)
@@ -824,7 +858,10 @@ if [ "${SELFTEST:-0}" = "1" ]; then
   }
 
   tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' EXIT
+  # Cleans up both the unit-test fixture tree AND the scratch DuckDB directory
+  # created by the SELFTEST DB-sandboxing block above (llm#1105) — the latter
+  # is non-empty here precisely because we are inside `if SELFTEST=1`.
+  trap 'rm -rf "$tmpdir" "$_selftest_db_dir"' EXIT
 
   # Create a bare main repo
   main="$tmpdir/main"
