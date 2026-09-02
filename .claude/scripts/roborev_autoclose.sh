@@ -43,6 +43,9 @@ export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 # Exit codes:
 #   0  ok (including "nothing to do" and "roborev binary missing")
 #   1  unexpected error (daemon stop failed, backup failed, SQL failed)
+#   3  INDETERMINATE — stale-job discovery could not be evaluated (`roborev
+#      list` failed, or its output could not be parsed as the expected
+#      shape). NEVER conflated with "0 stale jobs" — see llm#1100.
 #
 # Why "open" findings accumulate: a roborev review job runs after each
 # commit and stays in the `open` set until something dismisses it.
@@ -123,18 +126,47 @@ CUTOFF=$(date -u -v "-${THRESHOLD_DAYS}d" +%s 2>/dev/null \
        || date -u -d "${THRESHOLD_DAYS} days ago" +%s)
 
 # Fetch open jobs, filter by enqueued_at < cutoff, emit ids.
-# Portable while-read loop instead of mapfile (Bash 3.2 compat — macOS ships Bash 3.2).
-STALE_IDS=()
-while IFS= read -r _line; do
-  STALE_IDS+=("$_line")
-done < <(
-  "$ROBOREV" list --json --open --limit 1000 2>/dev/null \
-    | python3 -c "
+#
+# CRITICAL (llm#1100): capture BOTH pipeline stages' exit codes explicitly.
+# This previously ran inside a process substitution ( < <(...) ) so a
+# `while read` loop could build STALE_IDS without mapfile (Bash 3.2 compat —
+# macOS ships Bash 3.2). `set -euo pipefail` does NOT propagate a failure
+# through a process substitution — a well-known bash gotcha — so a crash
+# inside the python3 parse step (e.g. empty/invalid/wrong-shape JSON from
+# `roborev list`, whose stderr was also discarded to /dev/null) was silently
+# swallowed: STALE_IDS ended up empty, N=0, and the script reported
+# "0 stale jobs" — indistinguishable from a genuine, verified-empty result
+# (a checks-must-distinguish-unknown violation).
+#
+# Fix: run the pipeline directly (no process substitution) so
+# ${PIPESTATUS[@]} captures both stages' exit codes, write matches to a real
+# temp file, and check both exit codes BEFORE trusting an empty result.
+# Also stop discarding roborev's stderr — capture it so a real failure is
+# diagnosable from the log line instead of vanishing.
+DISCOVERY_OUT="$(mktemp "${TMPDIR:-/tmp}/roborev_autoclose_discovery.XXXXXX")"
+DISCOVERY_ERR="$(mktemp "${TMPDIR:-/tmp}/roborev_autoclose_discovery_err.XXXXXX")"
+trap 'rm -f "$DISCOVERY_OUT" "$DISCOVERY_ERR"' EXIT
+
+set +e
+"$ROBOREV" list --json --open --limit 1000 2>"$DISCOVERY_ERR" \
+  | python3 -c "
 import json, sys
 from datetime import datetime, timezone
 cutoff = int(sys.argv[1])
-data = json.load(sys.stdin)
-jobs = data if isinstance(data, list) else data.get('jobs', [])
+try:
+    data = json.load(sys.stdin)
+except Exception as e:
+    sys.stderr.write('PARSE_ERROR: ' + str(e) + chr(10))
+    sys.exit(1)
+if isinstance(data, list):
+    jobs = data
+elif isinstance(data, dict):
+    jobs = data.get('jobs', [])
+    if jobs is None:
+        jobs = []
+else:
+    sys.stderr.write('PARSE_ERROR: unexpected JSON shape: ' + type(data).__name__ + chr(10))
+    sys.exit(1)
 for j in jobs:
     ts = j.get('enqueued_at')
     if not ts: continue
@@ -144,8 +176,25 @@ for j in jobs:
         continue
     if ds < cutoff:
         print(j['id'])
-" "$CUTOFF"
-)
+" "$CUTOFF" >"$DISCOVERY_OUT" 2>>"$DISCOVERY_ERR"
+DISCOVERY_PIPE_STATUS=("${PIPESTATUS[@]}")
+set -e
+
+ROBOREV_LIST_RC="${DISCOVERY_PIPE_STATUS[0]}"
+PARSE_RC="${DISCOVERY_PIPE_STATUS[1]}"
+
+if [ "$ROBOREV_LIST_RC" -ne 0 ] || [ "$PARSE_RC" -ne 0 ]; then
+  DISCOVERY_ERR_TEXT="$(tail -c 2000 "$DISCOVERY_ERR" 2>/dev/null | tr '\n' ' ')"
+  log "INDETERMINATE: stale-job discovery failed (roborev_list_rc=$ROBOREV_LIST_RC parse_rc=$PARSE_RC): ${DISCOVERY_ERR_TEXT}"
+  echo "roborev: INDETERMINATE — stale-job discovery failed (roborev_list_rc=$ROBOREV_LIST_RC parse_rc=$PARSE_RC); see $LOGFILE" >&2
+  exit 3
+fi
+
+# Portable while-read loop instead of mapfile (Bash 3.2 compat — macOS ships Bash 3.2).
+STALE_IDS=()
+while IFS= read -r _line; do
+  [ -n "$_line" ] && STALE_IDS+=("$_line")
+done < "$DISCOVERY_OUT"
 
 N=${#STALE_IDS[@]}
 if [ "$N" -eq 0 ]; then
