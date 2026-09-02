@@ -69,19 +69,26 @@ reported defect.
 ## The Check
 
 `.claude/scripts/check_targets_presence.sh` distinguishes four states, per
-`checks-must-distinguish-unknown`:
+`checks-must-distinguish-unknown` and the repo-wide `exit-code-conventions`
+rule:
 
 | State | `_targets.R` | Exemption declared | Result |
 |---|---|---|---|
 | Parses | present | n/a | **PASS** (exit 0) |
-| Parse error | present | n/a | **FAIL** (exit 1) — genuine defect |
 | Declared exempt | absent | yes | **PASS — exempt** (exit 0, labeled) |
-| Undeclared absence | absent | no | **FAIL — undeclared** (exit 2) — the bug this rule exists to close |
+| Parse error | present | n/a | **FAIL** (exit 1) — genuine defect |
+| Undeclared absence | absent | no | **FAIL — undeclared** (exit 1) — the bug this rule exists to close |
+| Bad path / `--help` | n/a | n/a | **usage error** (exit 2) |
+| `Rscript` unavailable | present | n/a | **INDETERMINATE** (exit 3) — cannot evaluate |
 
-Exit code 2 is deliberately distinct from exit 1: a caller that wants to
-distinguish "the pipeline is broken" from "there is no pipeline and nobody
-said why" can branch on it. Usage errors (bad path, missing tools) exit 3 —
-never folded into either FAIL state.
+Both FAIL states share exit 1 (both are *determinate negatives* — the check
+successfully reached a verdict) and are distinguished by the printed message
+(`FAIL parse-error: ...` vs `FAIL undeclared-absence: ...`), not by exit
+code. Exit 2 is reserved for usage errors and exit 3 for INDETERMINATE —
+never folded into a FAIL. See `exit-code-conventions` for the full
+convention and why this table changed from an earlier three-way split
+(undeclared-absence at 2, usage errors at 3) to this one
+([JohnGavin/llm#1140](https://github.com/JohnGavin/llm/issues/1140)).
 
 ```bash
 .claude/scripts/check_targets_presence.sh [project-dir]   # default: cwd
@@ -100,11 +107,12 @@ follow-up; see the PR that shipped this rule.
 | No `_targets.R`, no exemption row, nobody notices | Exactly the vacuous-pass bug this rule replaces | Declare the exemption or add a pipeline |
 | Exemption row present but `<reason>` is empty or a placeholder | Same defect wearing a different shape — see `checks-must-distinguish-unknown`'s placeholder corollary | Write the actual reason |
 | Treating "no `_targets.R`" as automatically fine because the project is "just docs" | That is a real exemption reason — but it still has to be **declared**, not inferred | Add the row |
-| Checker exit 2 (undeclared) silently mapped to exit 0 by a caller | Reintroduces the vacuous pass one layer up | Branch on the distinct exit code |
+| Checker exit 1 (FAIL, either kind) silently mapped to exit 0 by a caller | Reintroduces the vacuous pass one layer up | Branch on the distinct exit code |
 
 ## Related
 
 - `checks-must-distinguish-unknown` — the three/four-state discipline this rule's checker follows
+- `exit-code-conventions` — the repo-wide 0/1/2/3 exit-code standard this checker's codes follow (JohnGavin/llm#1140)
 - `permission-discipline` Part 3 — the `| Environment | ... |` table-row convention this rule's exemption syntax mirrors
 - [JohnGavin/llm#539](https://github.com/JohnGavin/llm/issues/539) — origin issue, full reading comparison (A/B/C/D)
 - `targets-pipeline-spec` skill — how to structure `_targets.R` once a project adopts one

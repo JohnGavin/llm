@@ -141,7 +141,7 @@ Pruned 2026-07-08 (chore/prune-vestigial-slash-commands): `/pr-status`, `/wiki-h
 
 `deploy-new-project.md`, `onboard-dataset.md`, `debug-ci-failure.md`, `publish-vignette.md`
 
-## Rules (90)
+## Rules (91)
 
 Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
 

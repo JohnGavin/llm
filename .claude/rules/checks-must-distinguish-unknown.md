@@ -90,7 +90,9 @@ if [ -z "$result" ]; then
 fi
 ```
 
-Exit-code convention for new checks:
+Exit-code convention for new checks (simple, 3-state form — see
+`exit-code-conventions` for the full 4-state form used by any script that
+ALSO needs to distinguish a usage error from "could not run"):
 
 | code | meaning |
 |---|---|
@@ -140,6 +142,7 @@ If the answer is "the same thing it prints when everything is fine", it is not f
 
 ## Related
 
+- [`exit-code-conventions`](exit-code-conventions.md) — the repo-wide 0/1/2/3 code mapping (PASS/FAIL/usage-error/INDETERMINATE); use it instead of this file's simpler 3-code table whenever a script also needs to distinguish a usage error from "could not run" (JohnGavin/llm#1140)
 - [`verification-before-completion`](verification-before-completion.md) — do not claim without fresh evidence; this rule is the converse
 - [`systematic-debugging`](systematic-debugging.md) — "Measure the baseline"; a check that cannot fail has no baseline
 - [`probe-must-not-share-writer-path`](../memory/probe-must-not-share-writer-path.md) — special case: the probe shares the producer's code path
