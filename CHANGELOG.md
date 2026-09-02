@@ -4,6 +4,32 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-02 (session-end continued: feat/cc-20260831-110702)
+
+### Completed
+- **Merged** [#1130](https://github.com/JohnGavin/llm/pull/1130) (prior session's changelog PR) and [#1131](https://github.com/JohnGavin/llm/pull/1131) (the original 3 `llm#1121` jobs — chrome-tab-backup, secret-exposure-scan, private-data-history-audit).
+- **6 new Signal braindumps triaged** (ids 44-49): micromort quiz-timestamp + timing-distribution requests combined into [micromort#141](https://github.com/JohnGavin/micromort/issues/141); a Farewill bereavement/probate contact reference filed as premortem issue 0073 (phone/email — local-only, per `public-private-repo-boundary`); two tennis notes (SwingVision trademark-safe naming + non-affiliation disclaimer + a private-dashboard details/schema hide-toggle) appended as concrete requirements onto the existing tennis issue 5 (same initiative, not a new issue number); one AI-hygiene/session-tagging business note recorded informational — no forced project match, no invented false-precision issue.
+- **tlang CI root-caused correctly on re-check**: the prior session's "macos-latest regression" framing was revised after finding the sibling `macos-latest` job in the *same run* succeeded at the identical `Install Nix` step — that's a transient `cachix/install-nix-action` nix-daemon-kickstart flake (`Could not kickstart service "org.nixos.nix-daemon": Operation not permitted`), not a deterministic image regression. Re-ran the failed job rather than pinning `macos-14` (which the evidence didn't support) — passed.
+- **AgentsView vendor feedback drafted** (no code fix possible — closed-source binary) as a plain-text report in the session scratchpad, in John's voice per `outbound-writing-style`, citing the full diagnostic evidence chain from the prior entry.
+- **llm#1121 — remaining live-machine work completed and verified**:
+  - Solved the stale-BTM-cache mystery: a normal `launchctl bootout`+`bootstrap` never clears a Background Task Management "Name" cached before a job's wrapper existed. A full remove-plist-file → bootout → restore → re-register cycle does. Verified live on 2 of the 3 stale roborev jobs (`roborev-agent-health`, `roborev-autoclose`) — both now correctly show their real name instead of "bash". `roborev-bridge` deliberately left untouched: the fix worked cleanly once and needed a `launchctl load -w` fallback (after `bootstrap` failed twice) on the second — didn't want to risk a third job ending up unloaded for a cosmetic fix.
+  - Deployed PR #1131's fix live: copied the 3 updated plists to `~/Library/LaunchAgents/`, reloaded via `bootout`+`bootstrap` (private-data-history-audit's `bootout` returned exit 5/IO-error — harmless, `bootstrap` alone succeeded), verified via `sfltool dumpbtm` that all 3 now show their correct names.
+  - Net result: 5 of the 6 jobs originally flagged in `llm#1121` are fixed and verified live (`secret-exposure-scan`, `private-data-history-audit`, `chrome-tab-backup`, `roborev-agent-health`, `roborev-autoclose`). Only `roborev-bridge` and the separate "item from unidentified developer" code-signing sub-problem remain open.
+
+### Failed Approaches
+- `launchctl bootout`+`bootstrap` alone to clear a stale BTM Name cache — silently does nothing; the cache only clears on a full remove-and-recreate of the LaunchAgent registration.
+- Retrying `launchctl bootstrap` a second time immediately after a failed first attempt (post remove+recreate) — failed identically twice for `roborev-autoclose`; `launchctl load -w` (the legacy, non-preferred syntax) succeeded immediately where `bootstrap` kept failing. Root cause of the `bootstrap`-specific flakiness not identified.
+
+### Accuracy / Metrics
+- roborev: 0 crash, 0 quota this window — clean.
+- `llm#1121`: 5/6 originally-flagged jobs fixed and live-verified; 0 jobs left in a broken/unregistered state (both roborev-job experiments that hit trouble were fully restored before moving on).
+
+### Known Limitations
+- `roborev-bridge` still shows "bash" in Background Task Management — the fix recipe is proven, just not applied here due to the `bootstrap` flakiness observed on the sibling job.
+- "Item from unidentified developer" code-signing sub-problem — still not attempted.
+- AgentsView vendor report is drafted but not sent — needs John to submit it via agentsview.io's contact form (no public issue tracker exists).
+- The stray uncommitted `.claude/rules/visualization.md` change sitting in the main checkout (not this session's work) was left untouched throughout — flagging its continued presence for whoever owns it.
+
 ## 2026-09-01 (session-end: feat/cc-20260831-110702)
 
 ### Completed
