@@ -383,6 +383,28 @@ normalize_ws <- function(text) {
 #   taken from `passed`** -- verified before landing, because stealing a
 #   clean review into an agent-health bucket would be a worse error than
 #   the one being fixed.
+#
+#   llm#1035 follow-up (2026-09-02): re-measured the LIVE backlog a week
+#   after the four patterns above landed. Of 63 open unparseable rows, the
+#   production classifier (normalize_ws + classify_unparseable_finding, run
+#   against the raw DB text, not a SQL approximation) left 5 unclassified.
+#   3 of those 5 were provably not genuine residual:
+#     id 9966 "...diff file at `...` is inaccessible due to configured
+#              ignore patterns." -- same class-A failure as the existing
+#              "ignored by configured ignore patterns" pattern, different
+#              wording ("inaccessible due to" vs "ignored by").
+#     id 9987 "I am unable to proceed with the review as the diff file
+#              `...` is ignored by the configured patterns..." -- another
+#              phrasing of the same class-A failure; neither
+#              "unable to perform the code review" (missing "the review"
+#              framing here) nor "ignored by configured ignore patterns"
+#              (this text says "ignored by THE configured patterns", no
+#              "ignore") matched it.
+#   The other 2 (id 9861, 10014) are genuine findings with real Medium
+#   content but no `Severity:` marker -- correctly left unclassified; the
+#   two new patterns below do not touch them (verified: 0 rows moved other
+#   than the 3 named here, 0 stolen from the existing `passed`/
+#   `not_reviewed` buckets).
 NOT_REVIEWED_PATTERNS <- c(
   "no review output generated",
   "unable to access",
@@ -390,7 +412,9 @@ NOT_REVIEWED_PATTERNS <- c(
   "unable to read the diff",
   "unable to perform the code review",
   "diff file could not be read",
-  "ignored by configured ignore patterns"
+  "ignored by configured ignore patterns",
+  "inaccessible due to configured ignore patterns",
+  "unable to proceed with the review"
 )
 
 # PASSED_PATTERNS: the review ran and explicitly found nothing — not a
@@ -401,10 +425,15 @@ NOT_REVIEWED_PATTERNS <- c(
 #   documented roborev semantics — the name could plausibly mean the
 #   opposite. Do not build anything load-bearing on this inference beyond
 #   "not a thing a human needs to triage".
+#   "no review found for empty diff" — llm#1035 follow-up: id 9932 in the
+#   live backlog (2026-09-02), a distinct empty-diff phrasing from
+#   "no code changes were provided" above; same shape (nothing to review),
+#   correctly not a finding.
 PASSED_PATTERNS <- c(
   "severity_threshold_met",
   "no issues found",
-  "no code changes were provided"
+  "no code changes were provided",
+  "no review found for empty diff"
 )
 
 .pattern_matches <- function(text_norm, patterns) {
