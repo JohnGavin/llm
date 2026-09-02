@@ -76,6 +76,46 @@ If a documented command contains `<something>`, someone will run it verbatim. Th
 - Where a value is genuinely private, take it on **hidden stdin** rather than in argv — a prompt cannot be pasted past. See `bws_set_secret.sh`, which also refuses placeholder-shaped input outright.
 - The receiving system will not save you: `bws secret create` accepted `<cachix-token>` and returned success, because the command was valid and only the value was wrong. Nothing downstream could tell the difference.
 
+## Corollary: INDETERMINATE is not a catch-all — say *why* you could not answer
+
+Splitting "unknown" out of "no" is only the first cut. A missing **tool** and an
+absent **subject** are different failures, and collapsing them back together
+re-creates the bug one level up: the reader learns the check didn't answer, but
+not whether that is their problem to fix or the environment's.
+
+Ask, every time: **could this question have been answered without the thing that
+is missing?**
+
+- **No** → genuinely INDETERMINATE. The check could not observe its subject.
+- **Yes** → still a determinate result. Report it as PASS or FAIL, not unknown.
+
+Worked example (`check_targets_presence.sh`, llm#539/#1140). Two states both
+involve `Rscript` being unavailable, and they must NOT return the same code:
+
+| Situation | Verdict | Why |
+|---|---|---|
+| `_targets.R` exists, `Rscript` missing | **INDETERMINATE (3)** | Parse validity is unknowable without the parser |
+| `_targets.R` absent, `Rscript` missing | **FAIL (1)** | Absence is observable with `test -f`; the missing tool is irrelevant to *this* question |
+
+Verified directly: run outside the nix shell against an empty directory and it
+returns **1**, not 3 — the missing interpreter does not launder a determinate
+negative into an unknown.
+
+Getting this wrong is expensive in the honest direction as well as the
+dishonest one. Over-reporting INDETERMINATE trains the reader to ignore it —
+and an indeterminate count nobody reads is worth exactly as much as the silent
+pass this rule exists to abolish (see "Too loud is also broken" in
+`verification-before-completion`).
+
+So a check with an unavailable dependency must ask what that dependency was
+actually needed **for**, and degrade only the specific sub-questions that
+depended on it. Blanket "tool missing → everything unknown" is a lazy
+generalisation, not caution.
+
+Applies to any check in any project: a linter without its binary, a DB probe
+without a driver, a network check without connectivity. Some of what each was
+asked still has a determinate answer.
+
 ## Required pattern — capture the status, branch on it, say so
 
 ```bash
