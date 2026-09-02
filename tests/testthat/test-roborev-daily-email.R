@@ -1104,3 +1104,99 @@ test_that("llm#1035 follow-up: a real finding with no Severity marker still stay
   expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
   expect_true(grepl("QA:total_passed_open_n=0", combined, fixed = TRUE))
 })
+
+# ── Tests: llm#1127 — a fabricated "Severity: High" marker must not
+# override a tooling-failure signature ──
+#
+# Live evidence (~/.roborev/reviews.db, `gemini` agent, `micromort` repo,
+# 2026-08-31, ids 9962/9963/9968): the review agent's OWN `read_file` tool
+# was blocked by its ignore-pattern config from reading the diff snapshot
+# at `.roborev/roborev-snapshot-*/roborev-snapshot-content.diff`, and it
+# wrote up that tooling failure as a "Severity: High" finding ABOUT the
+# code, rather than reporting an error. Before this fix,
+# classify_open_findings() only ran classify_unparseable_finding() when NO
+# `Severity:` marker was found at all — a fabricated marker skipped that
+# check entirely and routed straight into the above-threshold triage
+# backlog. Fixtures below are the exact live text of ids 9962/9963, paths
+# redacted to the existing fixture convention.
+FABRICATED_HIGH_BLOCKED_IGNORE_OUTPUT <- paste(
+  "Summary: Unable to retrieve diff content for review.",
+  "Review Findings:",
+  "- **Severity**: High",
+  "- **Location**: N/A",
+  "- **Problem**: The diff file, expected at",
+  "`/Users/x/repo/.roborev/roborev-snapshot-1456588781/roborev-snapshot-content.diff`,",
+  "could not be accessed. Initial attempts to read it were blocked by",
+  "ignore patterns, and a subsequent `glob` command, even when attempting",
+  "to bypass Gemini ignore patterns, indicated a file was ignored without",
+  "finding the target file. This prevents the code review from proceeding.",
+  "- **Fix**: Ensure the diff content is accessible, either by adjusting",
+  "ignore patterns or providing the diff content through an alternative,",
+  "accessible method."
+)
+FABRICATED_HIGH_BLOCKED_CONFIGURED_IGNORE_OUTPUT <- paste(
+  "Summary: Unable to retrieve diff content for review.",
+  "Review Findings:",
+  "- **Severity**: High",
+  "- **Location**: N/A",
+  "- **Problem**: The diff file, located at",
+  "`/Users/x/repo/.roborev/roborev-snapshot-3126204784/roborev-snapshot-content.diff`,",
+  "could not be accessed using the `read_file` tool because it is blocked",
+  "by configured ignore patterns. The `read_file` tool does not provide an",
+  "option to bypass these ignore patterns, preventing the code review from",
+  "proceeding.",
+  "- **Fix**: A mechanism to bypass ignore patterns for the `read_file`",
+  "tool is required, or the diff content must be made accessible in a",
+  "different manner that is not subject to ignore patterns for review by",
+  "the agent."
+)
+
+test_that("llm#1127: a fabricated Severity:High wrapping a 'blocked by ignore patterns' tooling failure is not_reviewed, not above-threshold", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = FABRICATED_HIGH_BLOCKED_IGNORE_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE),
+    info = "a Severity:High wrapper around a 'blocked by ignore patterns' failure must classify as not_reviewed")
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "the fabricated High marker must NOT reach the human-triage backlog")
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
+
+test_that("llm#1127: a fabricated Severity:High wrapping a 'blocked by configured ignore patterns' tooling failure is not_reviewed, not above-threshold", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = FABRICATED_HIGH_BLOCKED_CONFIGURED_IGNORE_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE),
+    info = "a Severity:High wrapper around a 'blocked by configured ignore patterns' failure must classify as not_reviewed")
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = "the fabricated High marker must NOT reach the human-triage backlog")
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
+
+test_that("llm#1127: a genuine Severity:High finding (no tooling-failure signature) still lands above-threshold (regression guard)", {
+  # Companion to the two tests above. Without this, a classifier that runs
+  # classify_unparseable_finding() on every row could plausibly also start
+  # swallowing real High-severity findings into not_reviewed/passed. This
+  # fixture (HIGH_SEV_OUTPUT, already used elsewhere in this file) is a
+  # normal finding with no tooling-failure phrasing and MUST still reach
+  # the human-triage backlog.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = HIGH_SEV_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_above_threshold_open_n=1", combined, fixed = TRUE),
+    info = "a real High-severity finding with no tooling-failure signature must still count as above-threshold")
+  expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
