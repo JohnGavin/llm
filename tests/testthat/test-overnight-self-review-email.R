@@ -243,3 +243,143 @@ test_that("launchd plist schedules at hour 6, minute 30", {
   expect_true(grepl("<key>Minute</key>\\s*<integer>30</integer>", plist_text),
               info = "Plist does not schedule at minute 30")
 })
+
+# ── Cron-health "indeterminate" bucket (llm#1145) ──────────────────────────
+#
+# llm#1145: the cron-health section (Section 3e) folded a heartbeat status
+# of 'partial' into the same bucket as a confirmed 'failed', and silently
+# resolved a raw-state/exit-code vs derived-heartbeat contradiction in
+# favour of whichever side happened to be checked -- both hid a genuine
+# INDETERMINATE signal behind a summary line that only distinguished ok
+# from failed. `com.claude.launchd_health` sat 'partial' for 27 consecutive
+# runs (~4 weeks) while the report's own summary read "0 unknown".
+#
+# These tests build a scratch COPY of the real unified.duckdb (never the
+# live file itself), clear launchd_health_events/housekeeping_runs in the
+# copy, and insert exactly the rows under test -- isolating the assertion
+# from whatever the real, live cron-health state happens to be on the day
+# the suite runs (which, as of llm#1145, already contains a genuine partial
+# row and a genuine contradiction row).
+
+#' Build a scratch unified.duckdb fixture: a copy of `.real_db` with
+#' launchd_health_events/housekeeping_runs replaced by exactly the rows in
+#' `hk_row` / `ev_row` (one row each, as named lists).
+#' @return path to the scratch DB, or NULL if prerequisites are unavailable.
+.build_cron_fixture_db <- function(hk_row, ev_row) {
+  if (!file.exists(.real_db)) return(NULL)
+  if (!requireNamespace("DBI", quietly = TRUE)) return(NULL)
+  if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
+
+  dst <- tempfile(fileext = ".duckdb")
+  if (!file.copy(.real_db, dst, overwrite = TRUE)) return(NULL)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dst, read_only = FALSE)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  DBI::dbExecute(con, "DELETE FROM launchd_health_events")
+  DBI::dbExecute(con, "DELETE FROM housekeeping_runs")
+
+  now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M:%S", tz = "UTC")
+
+  if (!is.null(hk_row)) {
+    DBI::dbExecute(con, sprintf(
+      "INSERT INTO housekeeping_runs
+         (id, task, source_script, started_at, ended_at, status, rows_written)
+       VALUES ('fixture-hk', %s, 'test-fixture', TIMESTAMPTZ '%s', TIMESTAMPTZ '%s', %s, %d)",
+      DBI::dbQuoteString(con, hk_row$task), now_utc, now_utc,
+      DBI::dbQuoteString(con, hk_row$status), hk_row$rows_written
+    ))
+  }
+
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO launchd_health_events
+       (id, fired_at, source, plist_label, state, last_exit_code, last_fired_at, next_fire_at, detail)
+     VALUES ('fixture-ev', TIMESTAMPTZ '%s', 'test-fixture', %s, %s, %s, %s, NULL, NULL)",
+    now_utc,
+    DBI::dbQuoteString(con, ev_row$plist_label),
+    DBI::dbQuoteString(con, ev_row$state),
+    if (is.na(ev_row$last_exit_code)) "NULL" else ev_row$last_exit_code,
+    if (isTRUE(ev_row$last_fired_at_now)) sprintf("TIMESTAMPTZ '%s'", now_utc) else "NULL"
+  ))
+
+  dst
+}
+
+# `com.claude.worktree-gc` is used as the plist_label for every fixture
+# below because it must have a real .plist file under ~/Library/LaunchAgents
+# -- the sender script's plist-existence filter is not env-overridable, so
+# a synthetic label with no matching file would be silently dropped from
+# the table (0 rows), not tested.
+.WORKTREE_GC_PLIST <- file.path(
+  path.expand("~"), "Library", "LaunchAgents", "com.claude.worktree-gc.plist"
+)
+
+test_that("cron-health: partial heartbeat renders as indeterminate, not ok or failed (llm#1145)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST),
+              "com.claude.worktree-gc.plist not installed -- fixture row would be filtered out")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "partial", rows_written = 42L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_ok",
+                   last_exit_code = 0L, last_fired_at_now = TRUE)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+
+  out      <- run_dry_run(db_path = db)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("indeterminate", combined, fixed = TRUE),
+              info = "partial heartbeat did not render as indeterminate")
+  expect_true(grepl("1 indeterminate", combined, fixed = TRUE),
+              info = "summary line did not count the partial row as indeterminate")
+  expect_false(grepl("plists · 1 ok ·", combined, fixed = TRUE),
+               info = "partial heartbeat was folded into the ok count")
+})
+
+test_that("cron-health: raw-exit-code vs heartbeat contradiction renders as indeterminate with both values (llm#1145 Finding 2)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST),
+              "com.claude.worktree-gc.plist not installed -- fixture row would be filtered out")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "ok", rows_written = 168L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+
+  out      <- run_dry_run(db_path = db)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("indeterminate", combined, fixed = TRUE),
+              info = "raw-state/exit-code contradiction did not render as indeterminate")
+  expect_true(grepl("raw exit 1", combined, fixed = TRUE),
+              info = "raw exit code value not shown in the contradiction label")
+  expect_true(grepl("heartbeat 'ok", combined, fixed = TRUE),
+              info = "heartbeat-derived value not shown in the contradiction label")
+  expect_false(grepl("plists · 1 ok · 0 failed · 0 indeterminate", combined, fixed = TRUE),
+               info = "contradiction was silently resolved as a clean ok")
+})
+
+test_that("cron-health: zero indeterminate is rendered explicitly, not omitted (llm#1145)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST),
+              "com.claude.worktree-gc.plist not installed -- fixture row would be filtered out")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "ok", rows_written = 5L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_ok",
+                   last_exit_code = 0L, last_fired_at_now = TRUE)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+
+  out      <- run_dry_run(db_path = db)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("0 indeterminate", combined, fixed = TRUE),
+              info = "zero-indeterminate case did not explicitly print '0 indeterminate'")
+})
