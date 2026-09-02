@@ -405,6 +405,21 @@ normalize_ws <- function(text) {
 #   two new patterns below do not touch them (verified: 0 rows moved other
 #   than the 3 named here, 0 stolen from the existing `passed`/
 #   `not_reviewed` buckets).
+#   llm#1127 (2026-09-02): 3 live reviews (ids 9962/9963/9968, all `gemini`,
+#   `micromort` repo) carried an EXPLICIT "Severity: High" / "**Severity**:
+#   High" marker whose only content was a narration of the agent's own
+#   `read_file` tool being blocked by its ignore-pattern config on the
+#   `.roborev/roborev-snapshot-*/roborev-snapshot-content.diff` path — a
+#   tooling failure fabricated into a "finding". Two of the three phrasings
+#   ("blocked by ignore patterns" / "blocked by configured ignore
+#   patterns") were not covered by any existing pattern; the third
+#   ("inaccessible due to configured ignore patterns", id 9968) was already
+#   added by #1141 for the SIBLING unparseable-severity case (#1035) but
+#   never reached id 9968 because that row DOES parse a severity — see the
+#   `classify_open_findings()` restructure below, which is the actual fix
+#   for this: a parseable "Severity:" marker previously skipped
+#   `classify_unparseable_finding()` entirely, so no pattern list addition
+#   here could ever have caught 9968 or 9962/9963 on its own.
 NOT_REVIEWED_PATTERNS <- c(
   "no review output generated",
   "unable to access",
@@ -414,7 +429,9 @@ NOT_REVIEWED_PATTERNS <- c(
   "diff file could not be read",
   "ignored by configured ignore patterns",
   "inaccessible due to configured ignore patterns",
-  "unable to proceed with the review"
+  "unable to proceed with the review",
+  "blocked by ignore patterns",
+  "blocked by configured ignore patterns"
 )
 
 # PASSED_PATTERNS: the review ran and explicitly found nothing — not a
@@ -456,11 +473,49 @@ classify_unparseable_finding <- function(text) {
 # classify_open_findings(): splits a set of open-findings rows (each with
 # `output`/`review_id`/`repo`) into two DISJOINT top-level buckets —
 # above-threshold (parseable severity > AUTOCLOSE_THRESHOLD_ORD) and
-# unparseable (no `Severity:` marker, bold or plain, found at all). A row
-# lands in at most one top-level bucket, so the two counts never
-# double-count the same finding. Unparseable rows are further split into
-# not_reviewed / passed / unclassified via classify_unparseable_finding()
-# (llm#972 cause 2) — those three sub-counts always sum to unparse_n.
+# unparseable (no `Severity:` marker, bold or plain, found at all, OR a
+# marker present but the text is a known tooling-failure/empty-diff
+# signature — see llm#1127 below). A row lands in at most one top-level
+# bucket, so the two counts never double-count the same finding.
+# Unparseable rows are further split into not_reviewed / passed /
+# unclassified via classify_unparseable_finding() (llm#972 cause 2) — those
+# three sub-counts always sum to unparse_n.
+#
+#   llm#1127 (2026-09-02): originally this function ran
+#   classify_unparseable_finding() ONLY when parse_max_severity_ordinal()
+#   returned NA — i.e. only when no "Severity:" marker was found at all.
+#   That let a REVIEW-TOOLING FAILURE bypass the not_reviewed/passed
+#   classification entirely whenever the agent's own error narration
+#   happened to embed a "Severity: High" marker (observed live: a Gemini
+#   review agent, blocked from reading its own diff snapshot by its
+#   ignore-pattern config, wrote up that tooling failure as if it were a
+#   finding ABOUT the code, at High severity — ids 9962/9963/9968). The
+#   fabricated marker then routed the row straight into `above_rows`,
+#   which feeds the human-triage backlog and (via roborev-backlog banners /
+#   roborev_merge_gate.sh, both outside this file's scope) the merge-gate
+#   severity threshold.
+#
+#   Fix: classify_unparseable_finding() now runs on EVERY row, BEFORE the
+#   severity check, and its verdict takes priority over ANY parsed
+#   severity — a matched not_reviewed/passed signature can no longer be
+#   overridden by an embedded (possibly fabricated) "Severity:" marker.
+#   Only when the text matches NEITHER known shape does the function fall
+#   back to the severity-based above/below-threshold path, exactly as
+#   before. This is a pure widening of when the classifier runs, not a
+#   change to what NOT_REVIEWED_PATTERNS/PASSED_PATTERNS match — a row with
+#   real code-finding content and a real severity marker (the overwhelming
+#   majority of rows) is completely unaffected, because
+#   classify_unparseable_finding() returns "unclassified" for it exactly as
+#   it always did.
+#
+#   NOTE (boundary, not fixed here): roborev_severity_autoclose.sh and
+#   roborev_merge_gate.sh each carry their OWN bash-mirrored
+#   `_parse_max_severity()`/severity-threshold check, entirely separate
+#   code from this R file, and share the identical false-positive risk — a
+#   fabricated "Severity: High" marker still counts as a real High there.
+#   Fixing this file changes what the daily email/backlog REPORTS; it does
+#   NOT change what those two scripts count or act on. Flagged as an open
+#   follow-up, not silently left unmentioned.
 classify_open_findings <- function(rows) {
   above_n    <- 0L
   above_rows <- list()
@@ -469,17 +524,23 @@ classify_open_findings <- function(rows) {
   passed_n       <- 0L
   unclassified_n <- 0L
   for (r in rows) {
-    ord <- parse_max_severity_ordinal(r[["output"]])
-    if (is.na(ord)) {
+    text <- r[["output"]]
+    sub_cls <- classify_unparseable_finding(text)
+    if (identical(sub_cls, "not_reviewed") || identical(sub_cls, "passed")) {
+      # A known tooling-failure/empty-diff signature was matched — this
+      # takes priority over any parsed severity, fabricated or not.
       unparse_n <- unparse_n + 1L
-      sub_cls <- classify_unparseable_finding(r[["output"]])
       if (identical(sub_cls, "not_reviewed")) {
         not_reviewed_n <- not_reviewed_n + 1L
-      } else if (identical(sub_cls, "passed")) {
-        passed_n <- passed_n + 1L
       } else {
-        unclassified_n <- unclassified_n + 1L
+        passed_n <- passed_n + 1L
       }
+      next
+    }
+    ord <- parse_max_severity_ordinal(text)
+    if (is.na(ord)) {
+      unparse_n <- unparse_n + 1L
+      unclassified_n <- unclassified_n + 1L
     } else if (ord > AUTOCLOSE_THRESHOLD_ORD) {
       above_n <- above_n + 1L
       sev_label <- names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
