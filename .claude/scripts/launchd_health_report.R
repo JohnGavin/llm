@@ -483,15 +483,28 @@ build_suggestions <- function(inventory, metrics) {
   }
 
   # High failure rate
+  #
+  # llm#1145: this referenced r$last_exit_code, a column read_run_metrics()
+  # never selects (its query returns last_status, not last_exit_code). `$`
+  # on a missing column returns NULL, `is.na(NULL)` is `logical(0)`, and
+  # `if (logical(0))` throws "argument is of length zero" -- deterministically,
+  # every time ANY task's rolling-window failure_pct exceeded 10%. Confirmed
+  # via ~/.claude/logs/launchd_health_weekly.log: this exact error, at this
+  # exact call site, on every daily run since 2026-08-07 (27 consecutive
+  # runs) -- the day some task's 7-day failure rate first crossed 10%. Both
+  # Step 1 (this script) and Step 2 (send_launchd_health_email.R, which
+  # invokes the same aggregation code as a subprocess) crashed identically,
+  # which is why housekeeping_runs.status has read 'partial' for a job whose
+  # actual bug was a stale column reference, not a genuine health problem.
   if (!is.null(metrics) && nrow(metrics) > 0L && !"empty" %in% names(metrics)) {
     fail_jobs <- metrics[!is.na(metrics$failure_pct) & metrics$failure_pct > 10, ]
     if (nrow(fail_jobs) > 0L) {
       for (i in seq_len(nrow(fail_jobs))) {
         r <- fail_jobs[i, ]
         suggestions <- c(suggestions, sprintf(
-          "**High failure rate** for `%s`: %.0f%% failures (%d/%d runs), last exit %s.",
+          "**High failure rate** for `%s`: %.0f%% failures (%d/%d runs), last status %s.",
           r$label, r$failure_pct, r$failures, r$run_count,
-          if (!is.na(r$last_exit_code)) as.character(r$last_exit_code) else "?"
+          if (!is.null(r$last_status) && !is.na(r$last_status)) as.character(r$last_status) else "?"
         ))
       }
     }
