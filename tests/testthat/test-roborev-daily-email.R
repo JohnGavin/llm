@@ -1004,3 +1004,103 @@ test_that("llm#1035: the guard stays silent when unclassified is genuinely low",
   expect_false(grepl("may need updating", combined, fixed = TRUE),
     info = "1 of 10 non-passed unclassified (10%) must NOT trigger the guard")
 })
+
+# ── Tests: llm#1035 follow-up (2026-09-02) — re-measured the live backlog ──
+#
+# A week after the four NOT_REVIEWED_PATTERNS above landed, 3 of the 5
+# still-unclassified open rows were re-checked against the PRODUCTION
+# classifier (not a SQL approximation -- `classify_unparseable_finding()`
+# run directly against the raw `reviews.db` text) and turned out to be two
+# more phrasings of "the review never ran" and one more phrasing of "empty
+# diff, nothing to review". The other 2 of the 5 (a real Medium finding with
+# no `Severity:` marker) are genuinely unclassified and must stay that way --
+# see the control test at the end of this section.
+#
+# Fixtures below are lifted from the live backlog (ids 9932/9966/9987 in
+# ~/.roborev/reviews.db), paths redacted to match the existing fixture
+# convention (`/Users/x/repo/...`) rather than the real local path.
+NOT_REVIEWED_LIVE_INACCESSIBLE_IGNORE_OUTPUT <- paste(
+  "Summary: Unable to perform code review.",
+  "Review Findings: Review could not be performed as the diff file at",
+  "`/private/tmp/pr120-mergecheck2/.roborev/roborev-snapshot-1/roborev-snapshot-content.diff`",
+  "is inaccessible due to configured ignore patterns."
+)
+NOT_REVIEWED_LIVE_UNABLE_TO_PROCEED_OUTPUT <- paste(
+  "I am unable to proceed with the review as the diff file",
+  "`/Users/x/repo/.roborev/roborev-snapshot-2/roborev-snapshot-content.diff`",
+  "is ignored by the configured patterns, and the `read_file` tool does not",
+  "provide an option to bypass these patterns. Without access to the diff",
+  "content, I cannot perform the code review."
+)
+PASSED_LIVE_EMPTY_DIFF_OUTPUT <- "No review found for empty diff."
+# Control: a real Medium finding with no `Severity:` marker (live ids
+# 9861/10014). Must stay unclassified -- proves the two new
+# NOT_REVIEWED_PATTERNS below do not swallow genuine findings.
+UNCLASSIFIED_REAL_FINDING_NO_MARKER_OUTPUT <- paste(
+  "Summary: Adds new quality gates for provisional constants and manual",
+  "marker staleness checks.",
+  "Review Findings:",
+  "- Medium, `.claude/rules/provisional-constants.md`, Line Count: The file",
+  "exceeds the 150-line limit for rule files (190 lines). Consider",
+  "splitting or condensing documentation."
+)
+
+test_that("llm#1035 follow-up: live 'inaccessible due to ... ignore patterns' phrasing classifies as not_reviewed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = NOT_REVIEWED_LIVE_INACCESSIBLE_IGNORE_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE),
+    info = "'inaccessible due to configured ignore patterns' must classify as not_reviewed")
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE),
+    info = "must NOT land in the residual bucket")
+})
+
+test_that("llm#1035 follow-up: live 'unable to proceed with the review' phrasing classifies as not_reviewed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = NOT_REVIEWED_LIVE_UNABLE_TO_PROCEED_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE),
+    info = "'unable to proceed with the review' must classify as not_reviewed")
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE),
+    info = "must NOT land in the residual bucket")
+})
+
+test_that("llm#1035 follow-up: live 'no review found for empty diff' phrasing classifies as passed", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = PASSED_LIVE_EMPTY_DIFF_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_passed_open_n=1", combined, fixed = TRUE),
+    info = "'no review found for empty diff' must classify as passed, not unclassified")
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE),
+    info = "must NOT land in the residual bucket")
+})
+
+test_that("llm#1035 follow-up: a real finding with no Severity marker still stays unclassified (regression guard)", {
+  # Companion to the three tests above. Without this, a classifier broadened
+  # to catch the new not-reviewed/passed phrasings could plausibly also
+  # start swallowing genuine findings -- this fixture is real content (a
+  # live Medium-severity finding) that must NOT be reclassified away.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = UNCLASSIFIED_REAL_FINDING_NO_MARKER_OUTPUT, age_hours = 1)))
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE),
+    info = "a real finding with no Severity marker must remain unclassified")
+  expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_passed_open_n=0", combined, fixed = TRUE))
+})
