@@ -65,6 +65,19 @@ if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
     # This is a SELFTEST-local copy of the real `_parse_max_severity()`
     # defined later in this file (outside the selftest block) — keep both
     # patterns in sync when editing either.
+    #
+    # llm#1146: this copy used `\s*` here while the real copy below (and
+    # send_roborev_email.R's R regex) use the POSIX bracket class
+    # `[[:space:]]*`. `\s` is a GNU/PCRE extension, not POSIX ERE — inside
+    # this project's own nix shell `grep` resolves to toybox's grep, which
+    # does NOT support `\s` in `-E` mode, so this copy silently matched
+    # NOTHING there (verified: `echo "Severity: High" | grep -iE
+    # "Severity:\s*High"` exits 1 under nix-shell's toybox grep, exits 0 for
+    # `[[:space:]]*High`) while its own sibling copy below worked fine —
+    # exactly the "third copy quietly drifts" failure #1146 was raised to
+    # stop. Caught by tests/test_severity_regex_parity.sh, which runs the
+    # same fixture set through all of Python (canonical), R, and both bash
+    # copies and asserts they agree.
     local text="$1"
     local max=-1
     local word ord
@@ -74,7 +87,7 @@ if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
         ord=$(_sev_ordinal "$word")
         [ "$ord" -gt "$max" ] && max=$ord
       fi
-    done < <(echo "$text" | grep -iE '\*{0,2}Severity\*{0,2}:\s*(Critical|High|Medium|Low)')
+    done < <(echo "$text" | grep -iE '\*{0,2}Severity\*{0,2}:[[:space:]]*(Critical|High|Medium|Low)')
     [ "$max" -ge 0 ] && echo "$max" || echo ""
   }
 
