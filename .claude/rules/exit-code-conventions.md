@@ -133,5 +133,5 @@ of a script correctly outside this rule's scope.
 - [`verification-before-completion`](verification-before-completion.md) — falsify every selftest assertion before trusting it
 - `.claude/scripts/check_targets_presence.sh` — reference implementation (JohnGavin/llm#1140)
 - `bin/roborev_merge_gate.sh` — pre-existing conformant example (1=BLOCK, 2=usage, 3=INDETERMINATE)
-- [`_companions/exit-code-conventions-audit-1140.md`](_companions/exit-code-conventions-audit-1140.md) — full per-script audit of every checker under `.claude/scripts/**` and `bin/**`: 7 confirmed DRIFT, 6 confirmed CONFORMS, 163 not individually reviewed (auto-classified by code-set only)
+- [`_companions/exit-code-conventions-audit-1140.md`](_companions/exit-code-conventions-audit-1140.md) — full per-script audit of every checker under `.claude/scripts/**` and `bin/**`: 7 confirmed DRIFT, 7 confirmed CONFORMS, 162 not individually reviewed (auto-classified by code-set only)
 - [JohnGavin/llm#1140](https://github.com/JohnGavin/llm/issues/1140) — origin issue

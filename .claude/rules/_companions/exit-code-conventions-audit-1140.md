@@ -33,11 +33,14 @@ of health.
   contradicts the standard (usually: exit 2 used for INDETERMINATE, or exit
   3 used for a more-severe FAIL, inverting the pair the same way
   `check_targets_presence.sh` had before this PR)
-- **6 confirmed CONFORMS / MOSTLY CONFORMS** — including the two reference
+- **7 confirmed CONFORMS / MOSTLY CONFORMS** — including the two reference
   examples named in the issue (`bin/roborev_merge_gate.sh`,
-  `.claude/scripts/roborev_autoclose.sh`) plus a third found during this
-  audit (`venv_supply_chain_audit.sh`)
-- **163 not individually reviewed** — auto-classified by code-set only
+  `.claude/scripts/roborev_autoclose.sh`), a third found during this
+  audit (`venv_supply_chain_audit.sh`), and `credential_single_source_check.sh`
+  (fixed as part of the llm#949 dispatch, 2026-09-02 — moved from
+  "not reviewed" after this table flagged it as exactly the code-2
+  double-duty pattern this rule exists to catch)
+- **162 not individually reviewed** — auto-classified by code-set only
 
 ## Fixed in this PR
 
@@ -122,7 +125,7 @@ predecessor — out of scope, not a live gate.
 | `codex-start.sh` | (none) | not reviewed | no non-zero exit observed by this grep (may rely on implicit/dynamic status) |
 | `command_usage_staging_import.sh` | 0 | not reviewed | no non-zero exit observed by this grep (may rely on implicit/dynamic status) |
 | `credential_hygiene_check.sh` | 0,1,2 | not reviewed | uses code 2, no 3 — verify 2 means usage error, not indeterminate |
-| `credential_single_source_check.sh` | 0,1,2 | not reviewed | uses code 2, no 3 — verify 2 means usage error, not indeterminate |
+| `credential_single_source_check.sh` | 0,1,2,3 | CONFORMS | fixed llm#949 dispatch (2026-09-02): was 0,1,2 with code 2 doing double duty as both usage error AND indeterminate — the exact collision this rule exists to end; indeterminate moved to 3, usage error stays 2 |
 | `credential_tier_lookup.sh` | 0,1,2 | not reviewed | uses code 2, no 3 — verify 2 means usage error, not indeterminate |
 | `cron_catchup.sh` | 0 | not reviewed | no non-zero exit observed by this grep (may rely on implicit/dynamic status) |
 | `cron_deploy_pull.sh` | (none) | not reviewed | no non-zero exit observed by this grep (may rely on implicit/dynamic status) |
