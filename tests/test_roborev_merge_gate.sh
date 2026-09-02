@@ -125,6 +125,11 @@ commits = [
     (2, 'bbb002bbb002bbb002bbb002bbb002bbb002bbb002', 'Fix bug B'),         # HIGH open → will be cited
     (3, 'ccc003ccc003ccc003ccc003ccc003ccc003ccc003', 'Refactor C'),        # MEDIUM open only
     (4, 'ddd004ddd004ddd004ddd004ddd004ddd004ddd004', 'Update docs D'),     # HIGH open → will be acked
+    # llm#1146 regression fixtures below
+    (5, 'eee005eee005eee005eee005eee005eee005eee005', 'Fix bug E'),         # HIGH open, NON-BOLD marker
+    (6, 'fff006fff006fff006fff006fff006fff006fff006', 'Touch F'),          # unparseable ("not_reviewed"), uncited
+    (7, 'ggg007ggg007ggg007ggg007ggg007ggg007ggg007', 'Touch G'),          # unparseable ("not_reviewed"), will be cited
+    (8, 'hhh008hhh008hhh008hhh008hhh008hhh008hhh008', 'Touch H'),          # unparseable but "passed"-shaped text
 ]
 for cid, sha, subj in commits:
     cur.execute(
@@ -133,7 +138,7 @@ for cid, sha, subj in commits:
     )
 
 # review_jobs
-for jid, cid in [(1,1),(2,2),(3,3),(4,4)]:
+for jid, cid in [(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8)]:
     cur.execute(
         "INSERT INTO review_jobs (id,repo_id,commit_id,git_ref) VALUES (?,1,?,?)",
         (jid, cid, f'refs/heads/feat/test')
@@ -154,12 +159,40 @@ MEDIUM_OUTPUT = """\
 **Location**: R/bar.R:10
 **Problem**: Variable naming could be clearer.
 """
+# llm#1146: the exact non-bold shape the pre-fix regex could not see. Proof
+# text from the issue itself: '- Severity: High' (no ** markers).
+NONBOLD_HIGH_OUTPUT = """\
+## Review findings
+
+- Severity: High
+- Location: R/baz.R:7
+- Problem: Off-by-one error in loop bound.
+"""
+# llm#1146: genuinely unparseable text — no Severity marker at all, and it
+# matches roborev_classify's NOT_REVIEWED_PATTERNS, not PASSED_PATTERNS —
+# so it must surface as unparseable (INDETERMINATE), never be silently
+# dropped.
+UNPARSEABLE_NOT_REVIEWED_OUTPUT = (
+    "I am unable to read the diff file because it is ignored by "
+    "configured ignore patterns."
+)
+# llm#1146: no Severity marker, but text matches PASSED_PATTERNS ("no
+# issues found") — this is the llm#972-cause-2 DB inconsistency case
+# (verdict_bool=0 recorded even though the text says nothing was found).
+# It must be silently dropped, exactly like before — NOT counted as a
+# finding and NOT surfaced as unparseable/indeterminate, or the gate would
+# cry wolf on ordinary "no issues found" reviews.
+PASSED_SHAPED_OUTPUT = "No issues found."
 
 reviews = [
     (1, 1, HIGH_OUTPUT,   0, 0),   # id=1, job=1 (aaa001), HIGH, open
     (2, 2, HIGH_OUTPUT,   0, 0),   # id=2, job=2 (bbb002), HIGH, open → cited
     (3, 3, MEDIUM_OUTPUT, 0, 0),   # id=3, job=3 (ccc003), MEDIUM, open
     (4, 4, HIGH_OUTPUT,   0, 0),   # id=4, job=4 (ddd004), HIGH, open → acked
+    (5, 5, NONBOLD_HIGH_OUTPUT,             0, 0),  # id=5, job=5 (eee005), HIGH non-bold, open
+    (6, 6, UNPARSEABLE_NOT_REVIEWED_OUTPUT, 0, 0),  # id=6, job=6 (fff006), unparseable, open, uncited
+    (7, 7, UNPARSEABLE_NOT_REVIEWED_OUTPUT, 0, 0),  # id=7, job=7 (ggg007), unparseable, open → cited
+    (8, 8, PASSED_SHAPED_OUTPUT,            0, 0),  # id=8, job=8 (hhh008), "passed"-shaped noise
 ]
 for rid, jid, out, closed, verdict in reviews:
     cur.execute(
@@ -231,6 +264,11 @@ SHA_HIGH_OPEN="aaa001aaa001aaa001aaa001aaa001aaa001aaa001"
 SHA_HIGH_CITED="bbb002bbb002bbb002bbb002bbb002bbb002bbb002"
 SHA_MEDIUM_ONLY="ccc003ccc003ccc003ccc003ccc003ccc003ccc003"
 SHA_HIGH_ACKED="ddd004ddd004ddd004ddd004ddd004ddd004ddd004"
+# llm#1146 regression fixtures
+SHA_HIGH_NONBOLD="eee005eee005eee005eee005eee005eee005eee005"
+SHA_UNPARSEABLE_OPEN="fff006fff006fff006fff006fff006fff006fff006"
+SHA_UNPARSEABLE_CITED="ggg007ggg007ggg007ggg007ggg007ggg007ggg007"
+SHA_PASSED_SHAPED="hhh008hhh008hhh008hhh008hhh008hhh008hhh008"
 
 # Acks file
 ACKS_FILE="${FIXTURE_DIR}/acks.jsonl"
@@ -583,6 +621,87 @@ if [ "$exit14" = "1" ]; then
 else
   fail "test14 (control): working gh + real finding → exit 1 (BLOCK)" "got exit=$exit14 | output: $out14"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# JohnGavin/llm#1146 — non-bold "Severity: High" must not be invisible to
+# the gate, and an unresolved unparseable severity must be INDETERMINATE
+# (exit 3), never a silent PASS.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Test 15 — the exact regression: a NON-BOLD "- Severity: High" marker,
+# uncited. Before llm#1146 the gate's inline regex required "**Severity**:"
+# and silently skipped this row ("conservative: don't block on
+# unparseable") -- so this test is RED against the pre-fix script (see the
+# falsification block below) and must be GREEN (exit 1, BLOCK) against the
+# fix.
+BIN15="${TMPDIR_ROOT}/bin15"
+mkdir -p "$BIN15"
+run_gate "$BIN15" \
+  "[\"${SHA_HIGH_NONBOLD}\"]" \
+  "" \
+  "--min-severity High" \
+  "1" \
+  "test15: non-bold 'Severity: High' uncited → exit 1 (BLOCK, was invisible pre-#1146)"
+
+# Test 16 — a genuinely unparseable severity (no marker at all, and the
+# text matches roborev_classify's NOT_REVIEWED shape, not the PASSED
+# shape), uncited. Must be INDETERMINATE (exit 3), never absorbed into
+# "no findings at this severity" (which would print exit 0/PASS).
+BIN16="${TMPDIR_ROOT}/bin16"
+mkdir -p "$BIN16"
+run_gate "$BIN16" \
+  "[\"${SHA_UNPARSEABLE_OPEN}\"]" \
+  "" \
+  "--min-severity High" \
+  "3" \
+  "test16: unparseable severity, uncited → exit 3 (INDETERMINATE)"
+
+# Confirm the message distinguishes "could not parse" from "no findings",
+# and that the word PASS never appears next to it (same discipline as
+# tests 9b/10b/11b for the llm#1012 cases).
+out16=""
+out16=$(
+  GH="$BIN16/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || true
+if echo "$out16" | grep -q "PASS"; then
+  fail "test16b: unparseable-severity output must not contain 'PASS'" "output: $out16"
+else
+  pass "test16b: unparseable-severity output must not contain 'PASS'"
+fi
+if echo "$out16" | grep -q "could not parse"; then
+  pass "test16c: message says severity could not be parsed (not 'no findings')"
+else
+  fail "test16c: message says severity could not be parsed (not 'no findings')" "output: $out16"
+fi
+
+# Test 17 — the same unparseable shape, but explicitly resolved via
+# "closes roborev #7". Citation/ack resolution must apply to unparseable
+# findings exactly as it does to parseable ones -- an operator who has
+# already addressed the finding is not blocked by the gate's inability to
+# parse a severity word out of text they've already handled.
+BIN17="${TMPDIR_ROOT}/bin17"
+mkdir -p "$BIN17"
+run_gate "$BIN17" \
+  "[\"${SHA_UNPARSEABLE_CITED}\"]" \
+  "closes roborev #7" \
+  "--min-severity High" \
+  "0" \
+  "test17: unparseable severity, cited via closes roborev #7 → exit 0 (PASS)"
+
+# Test 18 — "no issues found" text (the llm#972-cause-2 DB-inconsistency
+# shape: verdict_bool=0 recorded despite text saying nothing was found).
+# Must be silently dropped exactly as before -- NOT a finding, NOT
+# indeterminate. A gate that cries wolf on ordinary clean reviews gets
+# bypassed (verification-before-completion's "too loud is also broken").
+BIN18="${TMPDIR_ROOT}/bin18"
+mkdir -p "$BIN18"
+run_gate "$BIN18" \
+  "[\"${SHA_PASSED_SHAPED}\"]" \
+  "" \
+  "--min-severity High" \
+  "0" \
+  "test18: 'no issues found' text (verdict_bool=0 noise) → exit 0 (PASS, not INDETERMINATE)"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
