@@ -89,6 +89,41 @@ If the task matches a named agent's trigger, MUST delegate:
 
 When `burn_rate_check.sh` reports **WARN**, prefer worker/lightweight agents, use the lightweight tier for all single-file edits, and defer speculative exploration. At **CRITICAL**, the orchestrator tier handles user dialogue only — ALL code work goes to worker/lightweight agents (or a `claude --model sonnet` worktree). Full severity→action table: [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
 
+## CRITICAL: Verify the work is not already done BEFORE dispatching
+
+A dispatch is the most expensive thing the orchestrator can do (~300k tokens and
+5–20 minutes each). Spending one to discover "already fixed" is pure waste, and
+it happens often: on 2026-09-02, **2 of 5** issues worked in one session were
+already resolved — #1075 by a commit landed the day after it was filed, and the
+body of #1035 by a PR merged a week earlier. Neither had been closed. A third
+item's four sub-tasks were already tracked verbatim in another repo's tracker.
+
+Before dispatching work on any issue or task, run these three probes and state
+the result:
+
+1. **Grep `main` for the concrete thing it names** — the file, symbol, config
+   key, or behaviour. `git log --oneline --all -S '<symbol>' -- <path>` finds
+   the commit that introduced or removed a string, which is usually decisive.
+2. **Look for a merged PR** — `gh pr list --state merged --search "<number>"`.
+3. **Check unmerged branches and worktrees** — the work may be complete but
+   unlanded: `git log --all --oneline --grep '#<number>'` covers every branch
+   without visiting each of the (often dozens of) worktrees.
+
+Report one of three verdicts, never two — per `checks-must-distinguish-unknown`:
+
+| Verdict | Action |
+|---|---|
+| **RESOLVED** | Do not dispatch. Recommend closing, citing the SHA/PR. |
+| **OPEN** | Dispatch. Say what you grepped and did not find. |
+| **INDETERMINATE** | You could not tell — the issue names nothing testable, or spans a repo/runtime you cannot observe. Say so; do NOT report it as OPEN. |
+
+An issue too vague to have a checkable "fixed" state is itself a finding: it
+cannot be verified done later either, so it wants rewriting before working.
+
+Corollary for the agent: a dispatch prompt should tell the agent to confirm the
+premise before implementing, and to report "already fixed" as a **successful**
+outcome rather than manufacturing a diff to justify the dispatch.
+
 ## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
 
 Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Full rationale (main-checkout credential risk, `~/.claude/` symlink sandbox-escape, `worktree_symlink_guard` hook llm#692) is in the companion doc.
