@@ -12,7 +12,9 @@
 #   0   All related findings >= threshold are cited or acked  (PASS)
 #   1   One or more unresolved findings >= threshold          (BLOCK)
 #   2   Usage error
-#   3   INDETERMINATE — the gate could not evaluate the PR    (NOT a pass)
+#   3   INDETERMINATE — the gate could not evaluate the PR,
+#       OR an unresolved finding's severity text could not
+#       be parsed (llm#1146)                                  (NOT a pass)
 #
 # Exit 3 exists because of llm#1012.  Before it, every way of failing to *ask*
 # the question — `gh` missing, `gh` auth rejected, repo not resolvable, network
@@ -34,8 +36,22 @@
 # "Related" definition: commit_sha IN PR commits (commit-scope, Alternative C
 # from llm#241).  This is the tightest scope and avoids the day-1 backlog freeze.
 #
-# Severity is parsed from the review output text: "**Severity**: High" regex.
-# This mirrors roborev_severity_autoclose.sh (llm#224).
+# Severity is parsed from the review output text ("**Severity**: High" or the
+# bare "Severity: High" form) via the SHARED parser in
+# .claude/scripts/lib/roborev_classify.py — the same module
+# roborev_project_backlog.sh and session_init.sh's Phase 13d backlog banner
+# already use.  Before llm#1146 this script carried its own inline copy of
+# the regex, and that copy had NOT received the llm#972 fix (optional bold
+# markers) applied to roborev_severity_autoclose.sh and send_roborev_email.R
+# — 18% of open findings used the non-bold form and were silently invisible
+# to the gate, which then answered PASS on PRs it should have blocked.  A
+# finding whose severity still cannot be parsed (module unavailable, or text
+# matching neither a real severity marker nor a recognised "review didn't
+# run"/"no issues found" shape) is NEVER silently dropped: if it is
+# unresolved (not cited, not acked) the gate answers INDETERMINATE (exit 3),
+# never PASS.  See tests/test_roborev_classify.sh for the R/Python parity
+# proof and .claude/scripts/lib/roborev_classify.py's own docstring for why
+# R and Python keep parallel (not shared) implementations.
 #
 # Citation patterns recognised in PR commit messages (case-insensitive):
 #   closes roborev #N
@@ -50,12 +66,15 @@
 # Pilot scope: --min-severity High (default).  Escalate to Medium after 1 week
 # of signal data (see llm#241 escalation path).
 #
-# Part of: JohnGavin/llm#241
+# Part of: JohnGavin/llm#241, JohnGavin/llm#1146
 # Related:
-#   ~/.claude/scripts/roborev_merge_gate.sh  — dry-run predecessor (keep as-is)
-#   .claude/rules/roborev-resolution.md      — policy documentation
-#   .github/PULL_REQUEST_TEMPLATE.md         — checklist row
-#   tests/test_roborev_merge_gate.sh         — test suite
+#   ~/.claude/scripts/roborev_merge_gate.sh    — dry-run predecessor (keep as-is)
+#   .claude/rules/roborev-resolution.md        — policy documentation
+#   .claude/rules/exit-code-conventions.md     — 0/1/2/3 PASS/FAIL/usage/INDETERMINATE
+#   .claude/scripts/lib/roborev_classify.py    — shared severity parser (llm#1146)
+#   .github/PULL_REQUEST_TEMPLATE.md           — checklist row
+#   tests/test_roborev_merge_gate.sh           — test suite
+#   tests/test_roborev_classify.sh             — shared-parser parity tests
 
 set -euo pipefail
 
@@ -69,25 +88,20 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || echo /usr/bin/python3)}"
 GH="${GH:-$(command -v gh 2>/dev/null || echo /usr/local/bin/gh)}"
 
+# llm#1146: resolve the shared severity-parsing module's directory here,
+# where BASH_SOURCE still points at this script, and pass it positionally
+# into the python heredoc in _query_open_findings (mirroring
+# session_init.sh's Phase 13d pattern — see that hook's _rbb_lib_dir
+# resolution for the same trick applied to the same module).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLASSIFY_LIB_DIR="$(cd "${SCRIPT_DIR}/../.claude/scripts/lib" 2>/dev/null && pwd)" || CLASSIFY_LIB_DIR=""
+
 # ── Defaults ─────────────────────────────────────────────────────────────────
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 ACKS_JSONL="${ACKS_JSONL:-$HOME/.roborev/acks.jsonl}"
 DEFAULT_MIN_SEVERITY="High"
 EMIT_JSON=0
 REPO=""    # auto-detected from gh repo view if not provided
-
-# ── Severity ordering ─────────────────────────────────────────────────────────
-# Python helper used in multiple places; defined once as a heredoc constant.
-_SEV_PY='
-SEV_ORDER = ["low", "medium", "high", "critical"]
-
-def sev_idx(s):
-    s = (s or "").strip().lower()
-    try:
-        return SEV_ORDER.index(s)
-    except ValueError:
-        return -1
-'
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -205,30 +219,80 @@ _exit_indeterminate() {
 }
 
 # Query reviews.db for open findings on the given commit SHAs.
-# Severity is parsed from review output text ("**Severity**: High").
-# Returns JSON list: [{"id":N,"severity":"high","commit_sha":"abc","location":"...","problem":"..."}]
+#
+# llm#1146: severity is parsed via the SHARED .claude/scripts/lib/
+# roborev_classify.py module (imported below), not an inline regex — this
+# script's own copy of the regex had NOT received the llm#972 fix (optional
+# bold markers) that roborev_severity_autoclose.sh and send_roborev_email.R
+# already carry, so a genuine "Severity: High" (no bold) marker was
+# invisible to it.
+#
+# Returns a JSON OBJECT (not a bare array — this is a deliberate shape
+# change from the pre-llm#1146 version):
+#   {
+#     "findings":     [{"id":N,"severity":"High","commit_sha":"abc","location":"...","problem":"..."}, ...],
+#     "unparseable":  [{"id":N,"commit_sha":"abc","outcome":"not_reviewed"|"unclassified"}, ...],
+#     "import_error": "<message>"   # present only if the shared module could not be imported
+#   }
+#
+# "findings" = open, closed=0/verdict_bool=0 rows whose severity parsed AND
+# is >= threshold — same meaning as the old bare array.
+#
+# "unparseable" = open rows whose severity could NOT be parsed AND whose
+# text does not match the module's "passed" shape (i.e. genuinely "no
+# issues found" text that landed with verdict_bool=0 due to the known
+# verdict_bool/output-text inconsistency — llm#972 cause 2, documented in
+# send_roborev_email.R). These are NEVER silently dropped: the caller must
+# treat an unresolved (uncited/unacked) entry here as INDETERMINATE, never
+# as "no findings at this severity" — that conflation is exactly the bug
+# llm#1146 fixes. A "passed"-shaped unparseable row IS dropped, same as
+# before, because it genuinely carries no finding to report.
 _query_open_findings() {
   local shas_newline="$1"   # newline-separated SHAs
   local min_sev="$2"        # threshold string e.g. "high"
   local db="$3"
+  local lib_dir="${4:-}"    # dir containing roborev_classify.py
 
-  [ -f "$db" ] || { echo "[]"; return 0; }
-  [ -z "$shas_newline" ] && { echo "[]"; return 0; }
+  [ -f "$db" ] || { echo '{"findings":[],"unparseable":[]}'; return 0; }
+  [ -z "$shas_newline" ] && { echo '{"findings":[],"unparseable":[]}'; return 0; }
 
-  "$PYTHON" - "$db" "$min_sev" <<PYEOF
+  "$PYTHON" - "$db" "$min_sev" "$lib_dir" <<PYEOF
 import sys, sqlite3, json, re
 
 db_path = sys.argv[1]
 min_sev  = sys.argv[2].strip().lower()
+lib_dir  = sys.argv[3] if len(sys.argv) > 3 else ""
 
-${_SEV_PY}
+# llm#1146: fail CLOSED (never a silent PASS) if the shared severity parser
+# cannot be imported at all — that is a stronger version of "cannot ask the
+# question" than a single unparseable row, so it is reported back to bash
+# as import_error and turned into an INDETERMINATE verdict by _main(),
+# never silently degraded to a laxer inline regex.
+IMPORT_ERROR = None
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import (
+        parse_max_severity_ordinal,
+        classify_unparseable_finding,
+        SEVERITY_ORDINAL,
+    )
+except Exception as e:
+    IMPORT_ERROR = f"{type(e).__name__}: {e}"
+
+if IMPORT_ERROR is not None:
+    print(json.dumps({"findings": [], "unparseable": [], "import_error": IMPORT_ERROR}))
+    sys.exit(0)
+
+def sev_idx(s):
+    return SEVERITY_ORDINAL.get((s or "").strip().lower(), -1)
 
 # Read SHAs from stdin (passed via heredoc below)
 shas_raw = """${shas_newline}"""
 shas = [s.strip() for s in shas_raw.splitlines() if s.strip()]
 
 if not shas:
-    print("[]")
+    print(json.dumps({"findings": [], "unparseable": []}))
     sys.exit(0)
 
 min_idx = sev_idx(min_sev)
@@ -247,36 +311,52 @@ try:
     """.format(ph=placeholders), shas).fetchall()
     con.close()
 except Exception as e:
-    # Fail-open: DB error → pass gate
-    print("[]")
+    # Fail-open: DB error → pass gate (pre-existing behaviour, unchanged by
+    # llm#1146 — this is a query/connection failure, not an unparseable
+    # severity, and reviews.db's mere absence is already caught earlier in
+    # _main() as its own INDETERMINATE case).
+    print(json.dumps({"findings": [], "unparseable": []}))
     sys.exit(0)
 
-sev_re = re.compile(r"\*\*Severity\*\*:\s*(Critical|High|Medium|Low)", re.IGNORECASE)
 loc_re = re.compile(r"\*\*(?:Location|File)\*\*:\s*([^\n]+)", re.IGNORECASE)
 prb_re = re.compile(r"\*\*Problem\*\*:\s*([^\n]+)", re.IGNORECASE)
 
-results = []
+findings = []
+unparseable = []
 for (rid, output, sha) in rows:
     output = output or ""
-    sevs = sev_re.findall(output)
-    if not sevs:
-        continue  # no parseable severity → skip (conservative: don't block on unparseable)
-    max_sev = max(sevs, key=lambda s: sev_idx(s))
-    if sev_idx(max_sev) < min_idx:
+    max_ord = parse_max_severity_ordinal(output)
+    if max_ord is None:
+        # llm#1146: previously "continue # skip (conservative: don't block
+        # on unparseable)" — that silent skip WAS the bug. Distinguish text
+        # that genuinely means "no issues" (dropped, same as before) from
+        # text where the review never ran or matches no known shape at all
+        # (surfaced as unparseable, never silently dropped).
+        outcome = classify_unparseable_finding(output)
+        if outcome == "passed":
+            continue
+        unparseable.append({
+            "id":         rid,
+            "commit_sha": sha[:12],
+            "outcome":    outcome,
+        })
+        continue
+    if max_ord < min_idx:
         continue  # below threshold
     loc_m   = loc_re.search(output)
     prb_m   = prb_re.search(output)
     location = loc_m.group(1).strip() if loc_m else "(location unknown)"
     problem  = prb_m.group(1).strip()[:120] if prb_m else "(see review output)"
-    results.append({
+    label = next(k for k, v in SEVERITY_ORDINAL.items() if v == max_ord)
+    findings.append({
         "id":         rid,
-        "severity":   max_sev.capitalize(),
+        "severity":   label.capitalize(),
         "commit_sha": sha[:12],
         "location":   location,
         "problem":    problem,
     })
 
-print(json.dumps(results))
+print(json.dumps({"findings": findings, "unparseable": unparseable}))
 PYEOF
 }
 
@@ -448,21 +528,39 @@ _main() {
     exit 0
   fi
 
-  # Query open findings
+  # Query open findings (llm#1146: now {"findings":[...],"unparseable":[...]},
+  # optionally with "import_error" — see _query_open_findings's own comment).
   local findings_json
-  findings_json=$(_query_open_findings "$commit_shas" "${min_sev,,}" "$ROBOREV_DB")
+  findings_json=$(_query_open_findings "$commit_shas" "${min_sev,,}" "$ROBOREV_DB" "$CLASSIFY_LIB_DIR")
+
+  # llm#1146: if the shared severity parser could not even be imported, the
+  # gate cannot tell High from Low for ANY finding on this PR. That is a
+  # stronger version of the same "cannot ask the question" state as a
+  # missing gh binary or an absent reviews.db (llm#1012) — same treatment:
+  # INDETERMINATE, never a fall-through to PASS.
+  local import_error
+  import_error=$("$PYTHON" -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('import_error') or '')" "$findings_json")
+  if [ -n "$import_error" ]; then
+    GATE_INDETERMINATE_DETAIL="severity-parser module unavailable: ${import_error}"
+    _exit_indeterminate "severity_parser_unavailable" "$pr_num"
+  fi
 
   # Parse citations and acks
   local cited_json acked_json
   cited_json=$(_parse_citations "$commit_shas")
   acked_json=$(_parse_acked_ids "$ACKS_JSONL")
 
-  # Compute unresolved = open - (cited ∪ acked)
-  local unresolved_json
+  # Compute unresolved = open - (cited ∪ acked), for the threshold-qualifying
+  # findings AND, separately, for the severity-unparseable ones. The same
+  # citation/ack resolution mechanism applies to both — an operator who
+  # already wrote "closes roborev #N" or acked #N has addressed that finding
+  # regardless of whether its severity text happened to parse.
+  local unresolved_json unresolved_unparseable_json
   unresolved_json=$("$PYTHON" - "$findings_json" "$cited_json" "$acked_json" <<'PYEOF'
 import sys, json
 
-findings = json.loads(sys.argv[1])
+data     = json.loads(sys.argv[1])
+findings = data.get("findings", [])
 cited    = set(json.loads(sys.argv[2]))
 acked    = set(json.loads(sys.argv[3]))
 resolved = cited | acked
@@ -471,6 +569,43 @@ unresolved = [f for f in findings if f["id"] not in resolved]
 print(json.dumps(unresolved))
 PYEOF
 )
+
+  unresolved_unparseable_json=$("$PYTHON" - "$findings_json" "$cited_json" "$acked_json" <<'PYEOF'
+import sys, json
+
+data        = json.loads(sys.argv[1])
+unparseable = data.get("unparseable", [])
+cited       = set(json.loads(sys.argv[2]))
+acked       = set(json.loads(sys.argv[3]))
+resolved    = cited | acked
+
+unresolved = [f for f in unparseable if f["id"] not in resolved]
+print(json.dumps(unresolved))
+PYEOF
+)
+
+  local unresolved_unparseable_count
+  unresolved_unparseable_count=$("$PYTHON" -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$unresolved_unparseable_json")
+
+  # llm#1146: an unresolved finding whose severity text could not be parsed
+  # must never be silently absent from the verdict — that IS the bug this
+  # fixes (18% of open findings used a non-bold "Severity: High" marker the
+  # old inline regex could not see, and the gate answered PASS regardless).
+  # "no findings at this severity" and "the gate could not parse N
+  # findings' severity" are different results and must not share an exit or
+  # a message (checks-must-distinguish-unknown) — so this check runs BEFORE
+  # the PASS/BLOCK decision below, and always routes through
+  # _exit_indeterminate rather than reusing the PASS/BLOCK exit paths.
+  if [ "$unresolved_unparseable_count" -gt 0 ]; then
+    local unparseable_detail
+    unparseable_detail=$("$PYTHON" -c "
+import json, sys
+items = json.loads(sys.argv[1])
+print(', '.join(f\"#{i['id']} ({i['commit_sha']}, {i['outcome']})\" for i in items))
+" "$unresolved_unparseable_json")
+    GATE_INDETERMINATE_DETAIL="${unresolved_unparseable_count} open finding(s) on this PR have a Severity marker the gate could not parse, and are not cited/acked: ${unparseable_detail}"
+    _exit_indeterminate "unparseable_severity" "$pr_num"
+  fi
 
   local unresolved_count
   unresolved_count=$("$PYTHON" -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$unresolved_json")
