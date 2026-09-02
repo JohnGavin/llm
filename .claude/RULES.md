@@ -13,7 +13,7 @@ Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-r
 | **Viz** | `visualization`, `dynamic-prose-values`, `uniform-typography`, `dashboard-table-styling`, `dashboard-filter-placement`, `cards-are-tabsets`, `hover-popup-standard`, `mermaid-click-anchors`, `mermaid-dashboard-pattern` |
 | **Quarto** | `quarto-vignettes`, `acronym-expansion`, `vignette-build-info-block`, `narrative-evidence-block`, `narrative-colour-persistence` |
 | **Shiny** | `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking` |
-| **Pipeline** | `qa-targets-pipeline`, `ctx-yaml-cache`, `cron-auto-pull-discipline`, `housekeeping-framework`, `portable-build-artifacts`, `unified-observability-schema` |
+| **Pipeline** | `qa-targets-pipeline`, `ctx-yaml-cache`, `cron-auto-pull-discipline`, `housekeeping-framework`, `portable-build-artifacts`, `unified-observability-schema`, `pipeline-validation` |
 | **Knowledge** | `wiki-conventions` |
 | **Quality** | `accessibility`, `analytical-review-checklist`, `analysis-rationale-mandatory`, `braindump-closed-loop`, `zero-metric-evidence-or-defect`, `checks-must-distinguish-unknown` |
 | **Security** | `destructive-fs-guard`, `destructive-ops-guard`, `permission-discipline`, `backup-architecture`, `agent-identity-and-task-scopes`, `agent-no-push-to-main`, `external-code-zero-trust`, `secret-leak-prevention`, `secret-exposure-scanning`, `secrets-single-source`, `private-data-scanning`, `public-private-repo-boundary`, `repo-visibility-gate` |
