@@ -40,8 +40,17 @@ DARK_BORDER   <- "#2a2a4a"
 # @param html_body     Full HTML content to collapse/expand
 # @param open          If TRUE the <details> is expanded by default (open attribute).
 #                      Default FALSE = collapsed on load. (#527)
+# @param summary_color Colour for the summary-stats span. Default ACCENT_GREEN
+#                      (unchanged behaviour for every existing caller). Pass a
+#                      warning/danger colour when the summary itself reports a
+#                      non-clean state -- llm#1145: a hardcoded green summary
+#                      colour meant "1 failed · 0 unknown" read as reassuring
+#                      regardless of content, so a real degradation (27 runs of
+#                      an indeterminate cron job) sat unnoticed behind a green
+#                      line for four weeks.
 # @return A length-1 character string containing the <details> block
-collapsible_block <- function(title, summary_stats, html_body, open = FALSE) {
+collapsible_block <- function(title, summary_stats, html_body, open = FALSE,
+                               summary_color = ACCENT_GREEN) {
   details_attr <- if (open) " open" else ""
   sprintf(
     '<details%s style="margin: 12px 0;">
@@ -55,7 +64,7 @@ collapsible_block <- function(title, summary_stats, html_body, open = FALSE) {
 </details>',
     details_attr,
     DARK_CARD, DARK_TEXT, EMAIL_FONT_BODY,
-    title, ACCENT_GREEN, summary_stats,
+    title, summary_color, summary_stats,
     html_body
   )
 }

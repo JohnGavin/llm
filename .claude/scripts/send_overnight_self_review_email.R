@@ -1279,8 +1279,12 @@ if (nrow(cron_health) > 0L) {
   # plist that writes one; fall back to the exit code otherwise. Matching is
   # by name-normalisation (plist label -> task), not a hardcoded per-job
   # list, so any future job that wires up a heartbeat is covered for free.
+  # ended_at (fallback started_at) is carried alongside status so a
+  # heartbeat/raw-exit-code disagreement (llm#1145 Finding 2) can be
+  # attributed to whichever side is actually stale, instead of just being
+  # asserted.
   hk_latest <- safe_query("
-    SELECT task, status, rows_written
+    SELECT task, status, rows_written, COALESCE(ended_at, started_at) AS hb_at
     FROM (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY task ORDER BY started_at DESC) AS rn
       FROM housekeeping_runs
@@ -1298,27 +1302,85 @@ if (nrow(cron_health) > 0L) {
       hit <- hk_latest[startsWith(norm, paste0(hk_latest$task, "_")), , drop = FALSE]
     }
     if (nrow(hit) == 0L) return(NULL)
-    list(status = hit$status[[1]], rows_written = hit$rows_written[[1]])
+    list(status = hit$status[[1]], rows_written = hit$rows_written[[1]],
+         at = hit$hb_at[[1]])
   }
 
+  # llm#1145: say which side of a raw-exit-code / heartbeat disagreement is
+  # stale, when the timestamps let us tell -- never assert staleness we
+  # cannot support (checks-must-distinguish-unknown).
+  describe_exit_code_staleness <- function(hb_at, exit_at) {
+    hb_dt   <- suppressWarnings(as.POSIXct(hb_at,   tz = "UTC"))
+    exit_dt <- suppressWarnings(as.POSIXct(exit_at, tz = "UTC"))
+    if (length(hb_dt) == 0L || length(exit_dt) == 0L ||
+        is.na(hb_dt) || is.na(exit_dt)) {
+      return("sourced at times we cannot compare — verify with launchctl print")
+    }
+    if (exit_dt < hb_dt) {
+      sprintf("exit code (%s) is older than the heartbeat (%s) — likely stale",
+              exit_at, hb_at)
+    } else if (hb_dt < exit_dt) {
+      sprintf("heartbeat (%s) is older than the exit code (%s) — heartbeat may be stale",
+              hb_at, exit_at)
+    } else {
+      "both recorded at the same time — genuine disagreement, verify with launchctl print"
+    }
+  }
+
+  # llm#1145: three real buckets — "ok" (determinate positive), "failed"
+  # (determinate negative), "indeterminate" (could not confirm either way).
+  # Before this fix, a heartbeat status of 'partial' — the check ran but
+  # could NOT confirm a clean result — was folded into "failed" alongside
+  # genuine crashes, and a raw-state/derived-result contradiction (exit
+  # code vs heartbeat) was resolved silently in favour of the heartbeat with
+  # no visible flag. Both hid a real signal: launchd_health sat 'partial' for
+  # 27 consecutive runs (~4 weeks) with nothing in the summary counters
+  # distinguishing it from a hard failure or a clean pass.
   interpret_cron_row <- function(i) {
     r <- cron_health[i, ]
     if (isTRUE(r$is_stale_row)) {
-      return(list(bucket = "unknown",
-                  label  = sprintf("unknown — stale (%.0fh behind latest run)", r$row_age_hours)))
+      return(list(bucket = "indeterminate",
+                  label  = sprintf("indeterminate — stale row (%.0fh behind latest run)", r$row_age_hours)))
     }
     if (r$state %in% c("unknown", "missing")) {
-      return(list(bucket = "unknown", label = "unknown — state unreadable"))
+      return(list(bucket = "indeterminate", label = "indeterminate — state unreadable"))
     }
     hb <- find_heartbeat(r$plist_label)
     if (!is.null(hb)) {
-      bucket <- switch(hb$status, ok = "ok", failed = "failed", partial = "failed", "ok")
-      label  <- if (!is.na(hb$rows_written) && hb$rows_written > 0L) {
+      hb_bucket <- switch(hb$status,
+        ok = "ok", failed = "failed", partial = "indeterminate", "indeterminate")
+      hb_label  <- if (!is.na(hb$rows_written) && hb$rows_written > 0L) {
         sprintf("%s — %d row(s)", hb$status, hb$rows_written)
       } else {
         hb$status
       }
-      return(list(bucket = bucket, label = label))
+      if (hb_bucket == "indeterminate") {
+        hb_label <- sprintf(
+          "indeterminate — %s (heartbeat could not confirm a clean result)",
+          hb_label
+        )
+      }
+
+      # Finding 2: raw state/exit-code and the derived heartbeat result can
+      # disagree (e.g. exit code 1 alongside heartbeat status='ok'). A
+      # contradiction the report can see must not be resolved silently.
+      ec <- suppressWarnings(as.integer(r$last_exit_code))
+      ec_says_ok   <- length(ec) == 1L && !is.na(ec) && ec == 0L
+      ec_says_fail <- length(ec) == 1L && !is.na(ec) && ec != 0L
+      contradicts <- (hb_bucket == "ok" && ec_says_fail) ||
+                      (hb_bucket == "failed" && ec_says_ok)
+      if (contradicts) {
+        return(list(
+          bucket = "indeterminate",
+          label  = sprintf(
+            "indeterminate — raw exit %s vs heartbeat '%s' disagree (%s)",
+            r$last_exit_code %||% "—", hb_label,
+            describe_exit_code_staleness(hb$at, r$last_fired_at)
+          )
+        ))
+      }
+
+      return(list(bucket = hb_bucket, label = hb_label))
     }
     if (r$state == "loaded_ok") return(list(bucket = "ok", label = "ok"))
     return(list(bucket = "failed", label = r$state))
@@ -1328,15 +1390,15 @@ if (nrow(cron_health) > 0L) {
   cron_health$bucket             <- vapply(.cron_interp, function(x) x$bucket, character(1))
   cron_health$interpreted_label  <- vapply(.cron_interp, function(x) x$label, character(1))
 
-  n_fail    <- sum(cron_health$bucket == "failed",  na.rm = TRUE)
-  n_ok      <- sum(cron_health$bucket == "ok",      na.rm = TRUE)
-  n_unknown <- sum(cron_health$bucket == "unknown", na.rm = TRUE)
-  n_plists  <- nrow(cron_health)
+  n_fail          <- sum(cron_health$bucket == "failed",        na.rm = TRUE)
+  n_ok            <- sum(cron_health$bucket == "ok",            na.rm = TRUE)
+  n_indeterminate <- sum(cron_health$bucket == "indeterminate", na.rm = TRUE)
+  n_plists        <- nrow(cron_health)
 
   cron_rows_html <- paste(apply(cron_health, 1, function(r) {
     bucket  <- r[["bucket"]]
-    row_bg  <- switch(bucket, failed = "#2a0a0a", unknown = "#2a2205", DARK_CARD)
-    st_col  <- switch(bucket, failed = "#ff5252", unknown = ACCENT_ORANGE, ACCENT_GREEN)
+    row_bg  <- switch(bucket, failed = "#2a0a0a", indeterminate = "#2a2205", DARK_CARD)
+    st_col  <- switch(bucket, failed = "#ff5252", indeterminate = ACCENT_ORANGE, ACCENT_GREEN)
     sprintf(
       '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;font-size:11px;max-width:280px;
@@ -1386,22 +1448,41 @@ if (nrow(cron_health) > 0L) {
       )
     )
   }
-  if (n_unknown > 0L) {
+  # llm#1145: "indeterminate" replaces the old "unknown" bucket AND now also
+  # absorbs heartbeat status='partial' and raw-state/exit-code contradictions
+  # (see interpret_cron_row()) -- all three mean "could not confirm a clean
+  # result", not "confirmed clean". The per-row reason is in the Result
+  # column (interpreted_label); this paragraph is the loud, summary-level
+  # flag so a run of indeterminate results cannot again sit unnoticed behind
+  # a header that only distinguishes ok/failed.
+  if (n_indeterminate > 0L) {
     cron_table_html <- paste0(
       cron_table_html,
       sprintf(
-        '<p style="color:%s;font-size:%s;margin-top:8px;">
-  %d plist(s) unknown — state unreadable or the row is stale relative to
-  its peers (see Result column). Not counted as failed; verify with
-  <code>launchctl print</code> before treating as a problem.</p>',
-        ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, n_unknown
+        '<p style="color:%s;font-size:%s;margin-top:8px;font-weight:bold;">
+  &#9888; %d plist(s) indeterminate — could not confirm a clean result
+  (state unreadable, stale row, partial heartbeat, or a raw-state/exit-code
+  contradiction; see Result column for which). Not the same as a confirmed
+  failure, but not confirmed healthy either — verify with
+  <code>launchctl print</code>.</p>',
+        ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, n_indeterminate
       )
     )
   }
   sec3e_summary <- sprintf(
-    "%d plists · %d ok · %d failed · %d unknown",
-    n_plists, n_ok, n_fail, n_unknown
+    "%d plists · %d ok · %d failed · %d indeterminate",
+    n_plists, n_ok, n_fail, n_indeterminate
   )
+  # llm#1145: the summary line itself must not default to green when there
+  # is anything to flag -- a hardcoded-green header is exactly what let a
+  # 27-run degradation read as reassuring for four weeks.
+  sec3e_summary_color <- if (n_fail > 0L) {
+    "#ff5252"
+  } else if (n_indeterminate > 0L) {
+    ACCENT_ORANGE
+  } else {
+    ACCENT_GREEN
+  }
 } else {
   cron_table_html <- paste0(
     cron_stale_note,
@@ -1410,13 +1491,15 @@ if (nrow(cron_health) > 0L) {
       DARK_MUTED, EMAIL_FONT_BODY
     )
   )
-  sec3e_summary <- "no data yet"
+  sec3e_summary       <- "no data yet"
+  sec3e_summary_color <- ACCENT_GREEN
 }
 
 sec3e_block <- collapsible_block(
   "Cron health (last fire)",
   sec3e_summary,
-  cron_table_html
+  cron_table_html,
+  summary_color = sec3e_summary_color
 )
 
 # ── Section 3f: Branch GC (last 24h) — llm#589 Phase B ───────────────────────
