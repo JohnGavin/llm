@@ -16,12 +16,13 @@
         <string>/Users/johngavin/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
+    <!-- Staggered 4 min past :00 to avoid clock-minute contention (llm#1154). -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>9</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>4</integer>
     </dict>
     <key>StandardOutPath</key>
     <string>/Users/johngavin/.claude/logs/roborev_project_backlog.out</string>

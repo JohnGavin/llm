@@ -3,7 +3,8 @@
 <plist version="1.0">
 <dict>
     <!-- Verify that the overnight Stage-1 self-review --write run succeeded.  -->
-    <!-- Runs at 08:00 daily — after 02:30 stage1 run + ~03:00 backup.        -->
+    <!-- Runs at 08:06 daily — after 02:30 stage1 run + ~03:00 backup.        -->
+    <!-- Staggered 6 min past :00 to avoid clock-minute contention (llm#1154). -->
     <!-- Tracks: JohnGavin/llm#235.                                            -->
     <!-- Remove once the overnight job is confirmed stable.                    -->
     <!--                                                                        -->
@@ -21,13 +22,13 @@
         <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/self-review-verify</string>
     </array>
 
-    <!-- 08:00 daily: after 02:30 stage1 run and ~03:00 backup -->
+    <!-- 08:06 daily: after 02:30 stage1 run and ~03:00 backup -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>8</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>6</integer>
     </dict>
 
     <key>StandardOutPath</key>
