@@ -14,12 +14,13 @@
 	<string>/tmp/chrome_tab_backup_stderr.log</string>
 	<key>StandardOutPath</key>
 	<string>/tmp/chrome_tab_backup_stdout.log</string>
+	<!-- Staggered 8 min past :00 to avoid clock-minute contention (llm#1154). -->
 	<key>StartCalendarInterval</key>
 	<dict>
 		<key>Hour</key>
 		<integer>9</integer>
 		<key>Minute</key>
-		<integer>0</integer>
+		<integer>8</integer>
 	</dict>
 </dict>
 </plist>
