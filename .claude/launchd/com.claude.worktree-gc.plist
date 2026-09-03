@@ -38,13 +38,14 @@
         <string>/Users/johngavin</string>
     </dict>
 
-    <!-- Daily 09:00 (Mac reliably awake) -->
+    <!-- Daily 09:06 (Mac reliably awake). Staggered 6 min past :00 to avoid
+         clock-minute contention with other 09:00 jobs (llm#1154). -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>9</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>6</integer>
     </dict>
 
     <key>StandardOutPath</key>

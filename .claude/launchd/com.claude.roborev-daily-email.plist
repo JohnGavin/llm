@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- com.claude.roborev-daily-email.plist
      Daily roborev snapshot → llmtelemetry data branch → digest email.
-     Runs at 08:00 local time, after the 02:00 roborev-metrics-etl job (#226).
+     Runs at 08:03 local time, after the 02:00 roborev-metrics-etl job (#226).
+     (Staggered 3 min past :00 to avoid clock-minute contention — llm#1154.)
 
      Install:
        cp .claude/launchd/com.claude.roborev-daily-email.plist \
@@ -41,13 +42,15 @@
         <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-daily-email</string>
     </array>
 
-    <!-- Daily at 08:00 local time (after 02:00 metrics-etl job) -->
+    <!-- Daily at 08:03 local time (after 02:00 metrics-etl job).
+         Staggered from :00 to avoid clock-minute contention with
+         launchd-health-weekly and self-review-verify (llm#1154). -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>8</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>3</integer>
     </dict>
 
     <!-- Do NOT run immediately on launchctl load -->
