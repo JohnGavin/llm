@@ -59,6 +59,26 @@ proj_idx     <- which(args == "--projects-dir") + 1L
 projects_dir <- if (length(proj_idx) && proj_idx <= length(args))
                   args[[proj_idx]] else path.expand("~/.claude/projects")
 
+# Hardened DuckDB connection helper (JohnGavin/llm#1156). Safe here because
+# this script's DB writes are all core DuckDB SQL (CREATE TABLE, ALTER TABLE,
+# dbWriteTable, date_trunc/CAST/current_timestamp, INSERT ... SELECT, DROP
+# TABLE) — no LOAD of an extension and no ATTACH of an external database file.
+# See duckdb_secure.R's header for call sites (the roborev ":memory:" +
+# ATTACH sqlite readers, and skill_usage_etl.R's DATEDIFF-based staleness
+# view, which needs the icu extension) that must NOT use this helper.
+.scripts_dir_backfill_skill <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args_full <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args_full)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args_full[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "backfill_skill_usage.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_backfill_skill, "lib", "duckdb_secure.R"))
+
 cat(sprintf("backfill_skill_usage: dry_run=%s db=%s projects_dir=%s\n",
             dry_run, db_path, projects_dir))
 
@@ -168,7 +188,7 @@ if (dry_run) {
 }
 
 # ── DB write ──────────────────────────────────────────────────────────────────
-con <- dbConnect(duckdb(), db_path)
+con <- connect_duckdb_secure(dbdir = db_path, read_only = FALSE)
 on.exit(dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
 # Ensure schema — additive; identical DDL to skill_usage_staging_import.sh so
