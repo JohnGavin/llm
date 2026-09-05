@@ -87,6 +87,40 @@ never proven via a captured console error).
 
 1-sentence caption = VIOLATION. Use `visualization-detailed` skill for full 7-item spec.
 
+## Question-Framed Captions (MANDATORY, all projects — graphs AND tables)
+
+**Every graph and table caption/subtitle/section-note MUST state the
+question it answers**, wherever a real question exists — not just what the
+axes/columns are. A reader should be able to tell WHY this figure exists
+without first reading the surrounding prose. More than one question is
+fine when a figure genuinely answers more than one (e.g. "does X track
+with Y? does the effect differ by Z?").
+
+```r
+# WRONG — describes the axes, states no question
+subtitle = "Strokes hit vs stroke-in accuracy, one point per drill instance"
+
+# RIGHT — the question the chart exists to answer
+subtitle = "Does hitting more strokes in a drill instance track with accuracy — a within-drill fatigue or warm-up signal?"
+```
+
+Applies equally to a table's intro sentence (`section-note`, caption,
+`<p>` above the table) — e.g. "Which rallies were flagged, and why?" or
+"Does each proposed split actually resolve the rally under threshold?"
+rather than only "columns are X, Y, Z."
+
+**When there's no real question** (a pure reference/lookup table — a
+glossary, a raw variable listing, a schema diagram) this doesn't apply;
+don't force a question onto content that is genuinely just data-shape
+description. The test is "wherever possible," not "always" — see
+`checks-must-distinguish-unknown`'s spirit: don't manufacture a false
+question to satisfy a checklist.
+
+### Related
+
+- `dashboard-table-styling` — table-specific caption/styling conventions this extends
+- Origin: user request, `tennis` project, 2026-09-01 — after adding two new bivariate charts whose subtitles already asked a question ("does X track with Y?"), asked for this to become the standing convention for every chart AND table, in every project, not just the two just-added ones.
+
 ## Number Formatting
 
 | Type | Format |
