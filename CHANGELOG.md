@@ -4290,16 +4290,29 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   this session.
 - `ctx_audit("DESCRIPTION")`: 1 OK, 9 OTHER_VERSION, 24 STALE.
   `ctx_sync("DESCRIPTION")` was run to close the OTHER_VERSION gaps and
-  **failed on all 24 attempted refreshes** — every call errored with
-  `sh: .../file*.ctx.yaml: No such file or directory`, suggesting the
-  underlying `pkgctx` CLI itself is broken in this nix shell, not a data
-  issue. Not investigated further this session (unrelated to the work
-  above); flagged as a known limitation for whoever next needs a fresh
-  ctx file.
+  **failed on all 24 attempted refreshes**. Root-caused (not just
+  flagged): `pkgctx` (`nix run github:b-rodrigues/pkgctx`) is a Rust
+  binary; its Nix build needs to fetch a transitive crate dependency,
+  `zmij@1.0.12`, from crates.io, and that fetch fails inside the Nix
+  sandbox — `curl: (22) unable to get local issuer certificate` on the
+  first attempt, then `curl: (22) ... 403` on retries, reproduced
+  consistently across two attempts minutes apart. Verified this is
+  external, not local: `zmij@1.0.12` is a real, non-yanked crate; the
+  static CDN URL for the identical tarball
+  (`static.crates.io/crates/zmij/zmij-1.0.12.crate`) returns 200; only
+  crates.io's `/api/v1/.../download` redirect endpoint 403s, both inside
+  and outside the Nix sandbox; the Nix daemon's TLS trust store
+  (`/etc/nix/macos-keychain.crt`) is current (modified 2 days prior) and
+  valid. Conclusion: crates.io's own download-redirect endpoint is
+  blocking/rate-limiting this specific artifact request — an upstream
+  `pkgctx`/crates.io issue, not fixable from this repo. Not pursued
+  further (disproportionate effort for a non-critical docs-cache tool).
 
 ### Known Limitations
-- `pkgctx`-based ctx.yaml regeneration (`ctx_sync()`) appears broken in
-  the current nix shell — every refresh in this session's run failed
-  identically. Needs its own investigation before it's trusted again;
-  until then, `ctx_audit()`'s STALE/OTHER_VERSION counts may just keep
-  growing.
+- `pkgctx`-based ctx.yaml regeneration (`ctx_sync()`) is currently broken
+  end-to-end — every refresh fails because `pkgctx`'s own Nix build can't
+  fetch its `zmij@1.0.12` crate dependency from crates.io's download
+  endpoint (external, root-caused above — not a local or repo-side bug).
+  Remedy is either waiting for crates.io to stop 403ing that artifact, or
+  an upstream `pkgctx` Cargo.lock update; `ctx_audit()`'s STALE/
+  OTHER_VERSION counts will keep growing until then.
