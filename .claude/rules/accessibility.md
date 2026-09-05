@@ -53,6 +53,42 @@ snippet is in the companion doc.
 - Visible focus rings
 - Labels on all inputs
 
+### Tooltips: prefer a CSS hover/focus popover over native `title=`
+
+**CRITICAL:** Do not rely on the native HTML `title` attribute as the sole
+way to convey explanatory text a user is expected to actually read (e.g.
+an icon-only button's purpose). It is unreliable in practice, not just
+inelegant:
+
+- Browsers commonly render a `cursor: help` "?" badge cursor on
+  `[title]`-bearing elements — easily mistaken for "the tooltip," masking
+  the fact that no readable text ever appeared.
+- Dwell-timing is outside CSS/JS control and browser-dependent; a mouse
+  that moves at all can reset the delay indefinitely, so the tooltip may
+  never fire in practice even though the markup is correct.
+- No usable fallback for keyboard users beyond whatever `:focus` behavior
+  the browser itself happens to implement for `title`.
+
+Required: a CSS-driven hover/focus popover instead — wrapper with
+`position: relative`, a child holding the explanatory text with
+`position: absolute; opacity: 0; visibility: hidden`, revealed via
+`:hover` and `:focus-within` on the wrapper. This is fully within project
+control: always renders, predictable position, normal text
+wrapping/selection, identical behavior for mouse and keyboard. Reuse an
+existing project popover component if one already exists rather than
+inventing a second one.
+
+Verification: a plain screenshot of a page's resting state does NOT prove
+hover-triggered content renders — force the popover's visible state in a
+**scratch copy** of the rendered file (never the file being shipped) and
+screenshot that. See `verification-before-completion`'s companion doc for
+the worked incident this note comes from.
+
+Origin: 2026-09-05, an icon-only toggle button's native `title=` tooltip
+showed nothing at all on hover — even after fixing an earlier `cursor:
+help` masking bug on the same element. The cursor bug was real but was not
+the actual cause; native title-tooltip unreliability was.
+
 ## Part 2: Dark Mode Completeness
 
 ### Clause 0: `color-scheme: dark` is mandatory (supersedes all other clauses)
@@ -151,6 +187,36 @@ Every vignette MUST have toolbar with:
 
 ONE shared partial per project.
 
+### Font A−/A+ implementation note (CRITICAL)
+
+A text-size control that only updates a CSS custom property (e.g.
+`--fs-base`) via JS is not sufficient on its own. `rem` units are anchored
+to the **root element's computed `font-size` property**, not to any custom
+property. A typical stylesheet uses `rem` for most rules and references
+the custom property directly in only a handful — so the control silently
+does nothing for the majority of the page's text, even though the property
+itself is genuinely changing value on every click.
+
+Required:
+
+```css
+html { font-size: var(--fs-base); }
+```
+
+This makes the root's actual `font-size` track the property, so every
+`rem`-sized rule scales along with it — not just the rules that reference
+`var(--fs-base)` explicitly.
+
+Verification: after using the control, inspect a `rem`-sized element that
+does NOT reference the custom property directly (a nav link, a table cell)
+and confirm its rendered size changed — not just an element that was
+already wired to the property.
+
+Origin: 2026-09-05, a trip-dashboard's A+/A− control moved `--fs-base` but
+almost nothing on the page visibly changed size, because nearly every rule
+used `rem`, and `html`'s own `font-size` — never wired to the property —
+is what actually governs what `rem` resolves to.
+
 ## Forbidden Patterns
 
 | Pattern | Fix |
@@ -161,6 +227,8 @@ ONE shared partial per project.
 | Per-element contrast fix | Sweep PR with full audit |
 | Vignette missing dark toggle | Include shared toolbar |
 | Dark-mode default text using a tinted grey/khaki hue | Default text white/near-white; see Clause 6 |
+| Native `title=` as the only way to explain an icon-only control | CSS hover/focus popover instead |
+| Text-size control updates a custom property but never `html`'s `font-size` | `html { font-size: var(--fs-base) }` |
 
 ## Related
 

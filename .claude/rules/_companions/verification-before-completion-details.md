@@ -7,8 +7,36 @@ rule to keep it under the repo's line-count budget. The normative content
 stricter-bar-for-safety-gates bullets, Verification Gate, Required Commands,
 Post-Deploy Validation, One Change Per Verification Run's governing rule,
 Before Any Commit, Verify Tool Output Counts, Red Flags, Forbidden vs
-Correct) stays in the rule; this file is the two dated worked incidents,
-loaded on demand.
+Correct) stays in the rule; this file is the dated worked incidents, loaded
+on demand.
+
+## Worked case, 2026-09-05 — a screenshot proved the wrong state (Trap B)
+
+A headless-Chrome screenshot was used to "verify" a fix to an icon button's
+hover tooltip: the screenshot showed the button rendered, bigger, with a
+normal cursor — genuinely improved over the prior broken state — and was
+reported as fixed. It was not: the actual complaint was about what the
+tooltip *showed on hover*, and a static screenshot of the page's resting
+state cannot render a `:hover`-triggered popover at all. The check was
+real, ran fresh, and its output was read correctly — it simply verified a
+different object (resting-state appearance) than the one the claim was
+about (hover-triggered content). Textbook Trap B.
+
+The user reported the popup still showed nothing. The fix that actually
+worked (switching from a native `title=` attribute to a CSS
+hover/focus-triggered popover) was verified correctly on the next attempt
+by forcing the popover's visible state in a **scratch copy** of the
+rendered file — never the file being shipped — via a throwaway CSS
+override (`.pop > .pop-body { opacity: 1 !important; ... }`), then
+screenshotting that copy. That screenshot showed the actual text content,
+positioned and readable, which a resting-state screenshot structurally
+cannot show. The scratch file was deleted immediately after.
+
+General lesson: any check of `:hover`/`:focus`/`:active`-triggered CSS
+needs either a tool that can drive a real pointer/focus event, or — cheaper
+and sufficient for a one-off check — a scratch copy with the triggering
+selector temporarily forced on, screenshotted, then discarded. A screenshot
+of the untouched file only ever proves the resting state.
 
 ## Six checks in one session, 2026-08-21/22 — full incident list
 
