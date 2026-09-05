@@ -7,6 +7,7 @@ paths:
   - "docs/**"
   - "**/*.css"
   - "**/*.scss"
+  - "**/*.css.html"
 ---
 
 # Rule: Accessibility Standards
@@ -101,6 +102,34 @@ No CSS/qmd commit without `check_dark_contrast.sh` exit 0.
 
 Script at `~/docs_gh/llm/.claude/scripts/check_dark_contrast.sh`. Projects reference by absolute path — NEVER copy per-project.
 
+### Clause 6: Default text color must be white in dark mode, not a tinted grey
+
+**CRITICAL:** In dark mode, the default/body text color token (`--ink`, `--fg`,
+or equivalent) MUST render as white (`#ffffff` or a near-white ≥ ~95%
+lightness) — never a mid-tone grey, khaki, or a thematically-tinted off-white
+(e.g. a light-mode brand palette's dark ink carried into dark mode unchanged
+in hue, only lightened — `#9BA69C`, `#78827A`). Secondary/muted text tones
+(labels, captions, footnotes) MUST stay light enough to still read as "white,
+dimmed" rather than "grey" — target ≥ 85% lightness on a near-black
+background, not a distinct grey hue.
+
+This is a stricter bar than Part 1's Color and Contrast table (4.5:1
+minimum) — Clause 6 does not relax that floor, it raises it for the
+*default* body-text token specifically. Grey-on-black is measurably harder
+to read than white-on-black even when it nominally clears 4.5:1: thin
+sans-serif text at typical body sizes loses definition against a near-black
+background well before the WCAG AA floor.
+
+A dark-mode ink family may keep its light-mode counterpart's hue for accents
+(`--accent`, badges, links, semantic status colors) — Clause 6 governs
+reading-text tokens only, not the whole palette.
+
+Origin: user instruction 2026-09-05, after reporting that a generated
+trip-dashboard's default text (grey-green `--ink-soft`/`--ink-faint` tones
+against a near-black `--paper`) was too hard to read; escalated from a
+one-off fix to a global rule so it applies to every project's dark mode, not
+just the one that prompted it.
+
 ### Dark-Mode Replacement Palette
 
 | Light hex | Dark pair (≥4.5:1 on `#000`) |
@@ -131,6 +160,7 @@ ONE shared partial per project.
 | `var(--card-bg)` when user said "black" | Use `#000000` |
 | Per-element contrast fix | Sweep PR with full audit |
 | Vignette missing dark toggle | Include shared toolbar |
+| Dark-mode default text using a tinted grey/khaki hue | Default text white/near-white; see Clause 6 |
 
 ## Related
 
