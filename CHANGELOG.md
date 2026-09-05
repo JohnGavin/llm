@@ -4195,3 +4195,63 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   has not yet run live in production (thrice-daily via `com.claude.roborev-poll-merges`)
   — first real-world observation is still pending as of session end.
 
+## 2026-09-05 (session-end: feat/cc-20260903-092531, cont'd)
+
+### Completed
+- Merged #1162 (the dashboard-data-separation rule + session summary from the
+  prior entry) — `6b45514`.
+- Followed up on the GH Pages question raised by the DuckDB/dashboard work:
+  explored `richard`'s `procedural-scenes` project
+  (`/Users/johngavin/docs_gh/proj/richard`, GitHub repo
+  `JohnGavin/procedural-scenes`, already public) and found it already had a
+  complete, unpublished web layer on a local-only `publish` branch —
+  `gallery.html`/`viewer.html`/`pipeline.html`/`buildings.html`/
+  `blender_city.html`, driven by a shared `demos.js` registry, plus real
+  rendered outputs (13MB of PNG/glTF, gitignored as regenerable-from-Blender
+  on `main`). Un-ignored and committed exactly the 12 files the pages
+  reference (not the whole `renders/` folder — scratch `.blend` files stay
+  ignored), pushed `publish` to `origin`, added `.nojekyll`, and enabled GH
+  Pages via `gh api .../pages` with source = `publish` branch, root. Verified
+  live: https://johngavin.github.io/procedural-scenes/ — all 5 demo pages
+  return 200 with real content (spot-checked title tags, `demos.js`, and one
+  1.16MB render actually loading, not just status codes).
+- User reported `viewer.html`/`buildings.html` showing nothing live
+  ("reset does nothing"). Root-caused: both construct a
+  `THREE.WebGLRenderer` with zero error handling — a browser reporting no
+  WebGL context (matches this project's own prior documented finding,
+  "WebGL is dead in Chrome and Brave on this machine — use Edge") throws at
+  that line, silently halting the rest of the module script before the
+  reset-button click handler (or anything else) ever gets attached. Wrapped
+  both files' module bodies in try/catch with a visible on-page error
+  message instead of silence. Confirmed fixed by the user after redeploy.
+- Added `index.html` (previously the bare root 404'd) linking all 5 pages,
+  reusing `gallery.html`'s exact design tokens rather than inventing new
+  ones.
+- User confirmed done with the `richard` project for now.
+
+### Failed Approaches
+- (none this entry — the WebGL fix worked on the first attempt, verified by
+  the user reloading the live page)
+
+### Accuracy / Metrics
+- roborev backlog snapshot at session end: `consistent` (232 open, 0
+  crash-class, 0 quota this window). Narrower-scope `roborev summary --json`
+  showed 24 verdict-failures/9 addressed — informational, pre-existing
+  backlog, unrelated to this session.
+- `richard`/`procedural-scenes` `publish` branch: 3 new commits
+  (`5f73947` renders, `9f4af95` `.nojekyll`, `985f836` index + WebGL guards),
+  fully pushed, GH Pages build succeeded (commit `985f836`, ~24s build time).
+
+### Known Limitations
+- `richard/procedural-scenes` `main` is locally 2 ahead / 2 behind
+  `origin/main` — noticed but not investigated or touched; unrelated to this
+  session's work on the `publish` branch.
+- `proj/pers/tennis` has uncommitted local changes (`README.md`,
+  `artifact/tennis_trends.html`) observed at session end — not made by this
+  session (the earlier dashboard-data-separation investigation explicitly
+  left tennis untouched), left alone as presumed concurrent/other-session
+  work, not this session's to commit or stash.
+- travel/tennis remain fully private, no-remote repos by design — the user
+  confirmed this is intentional (Claude Artifact links are the preferred
+  distribution mechanism for those, for controllable/revocable sharing with
+  specific people rather than public GH Pages).
