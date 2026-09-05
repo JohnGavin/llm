@@ -42,6 +42,26 @@ suppressPackageStartupMessages({
 # Optional DuckDB for ledger reads (graceful fallback if absent)
 has_duckdb <- requireNamespace("duckdb", quietly = TRUE)
 
+# Hardened DuckDB connection helper (JohnGavin/llm#1156). Safe here: every
+# query in this file against the unified ledger uses only core DuckDB SQL
+# (SELECT, COUNT, EPOCH, arg_max, MEDIAN, date/time casts) — no LOAD of an
+# extension and no ATTACH of an external database file. See
+# duckdb_secure.R's header for call sites that must NOT use this helper.
+if (has_duckdb) {
+  .scripts_dir_launchd_health <- tryCatch(
+    dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+    error = function(e) {
+      args_full <- commandArgs(trailingOnly = FALSE)
+      idx  <- grep("^--file=", args_full)
+      if (length(idx)) dirname(normalizePath(sub("^--file=", "", args_full[idx]), mustWork = FALSE))
+      else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                           ".claude", "scripts", "launchd_health_report.R"),
+                                 mustWork = FALSE))
+    }
+  )
+  source(file.path(.scripts_dir_launchd_health, "lib", "duckdb_secure.R"))
+}
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 LAUNCH_AGENTS_DIR <- file.path(Sys.getenv("HOME"), "Library", "LaunchAgents")
@@ -309,7 +329,7 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
     return(data.frame(empty = TRUE, stringsAsFactors = FALSE))
   }
 
-  con <- duckdb::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = TRUE)
+  con <- connect_duckdb_secure(dbdir = ledger, read_only = TRUE)
   on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
 
   tables <- DBI::dbListTables(con)
@@ -362,7 +382,7 @@ read_run_counts_by_script <- function(ledger = LEDGER_PATH, window_days = REPORT
   if (!has_duckdb) return(NULL)
   if (!file.exists(ledger)) return(NULL)
 
-  con <- duckdb::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = TRUE)
+  con <- connect_duckdb_secure(dbdir = ledger, read_only = TRUE)
   on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
 
   tables <- DBI::dbListTables(con)
@@ -915,7 +935,7 @@ collect_braindumps_staleness <- function(ledger = LEDGER_PATH, threshold_hours =
   if (!file.exists(ledger)) return(indeterminate(sprintf("ledger not found at %s", ledger)))
 
   con <- tryCatch(
-    duckdb::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = TRUE),
+    connect_duckdb_secure(dbdir = ledger, read_only = TRUE),
     error = function(e) NULL
   )
   if (is.null(con)) return(indeterminate("could not open a connection to the unified ledger"))
