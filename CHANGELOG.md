@@ -4,6 +4,22 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-05 (session: travel-repo dashboard fixes, feat/cc-20260903-185554)
+
+### Completed
+- **`accessibility.md`**: added Clause 6 (dark-mode default text must be white/near-white, never a tinted grey), a new "Tooltips" subsection under Part 1 (prefer a CSS hover/focus popover over the native `title=` attribute, which is unreliable for content a user needs to actually read), and a "Font A−/A+ implementation note" under Part 3 (`html { font-size: var(--fs-base) }` is required or `rem`-based rules never scale) — plus matching Forbidden Patterns rows and a `**/*.css.html` paths-glob addition. Commit `b7dc154`.
+- **`verification-before-completion.md`** + companion doc: documented a worked incident where a resting-state headless-Chrome screenshot "verified" a `:hover`-triggered tooltip fix that was still broken — a named instance of Trap B (wrong object), not previously called out by name. Cross-referenced from the Five Traps table. Commit `e3a62ca`.
+- All four lessons trace to one real bug-fixing session on a private travel-planning dashboard in a sibling repo (`~/docs_gh/proj/pers/travel`, not tracked here): font-size scaling not actually reaching `rem`-based CSS, grey-on-black dark-mode text, a broken hover tooltip, and — the meta-lesson — a screenshot that verified the wrong DOM state.
+
+### Failed Approaches
+- N/A — documentation-only session, no code changes.
+
+### Accuracy / Metrics
+- roborev: 0 crash, 0 quota this window (`roborev_consistency_check.sh --json`); global backlog=228 open findings (pre-existing across all tracked repos, unrelated to this session's two-file prose commit).
+
+### Known Limitations
+- Unrelated uncommitted work found in the working tree at session end (`.claude/rules/visualization.md` modified, `.claude/rules/shinylive-vs-js-duplication.md` untracked, both about a different topic — dual JS/Shinylive implementations) — not made by this session; left untouched and flagged to the user rather than committed, stashed, or discarded.
+
 ## 2026-09-01 (session-end: feat/cc-20260831-110702)
 
 ### Completed
