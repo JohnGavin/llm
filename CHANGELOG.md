@@ -4094,3 +4094,88 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - Part C of #424 (auto-GC) deferred; manual sweep needed periodically until then.
 - llmtelemetry dashboard panel for #389's trend table pending — needs ≥14 days of data.
 
+## 2026-09-03 – 2026-09-04 (session-end: feat/cc-20260903-092531)
+
+### Completed
+- Launchd contention fix: staggered the 08:00 (3-job) and 09:00 (5-job) clock-minute
+  pile-ups the weekly health report flagged. #1154 filed, #1155 merged. Live
+  `~/Library/LaunchAgents` plists reloaded/verified via `launchctl print` before the
+  repo-tracked templates were brought back in sync.
+- roborev triage: closed #10012 (`roborev_autoclose.sh` discovery-failure swallowing)
+  and #10052 (`credential_single_source_check.sh` not executable) — both already
+  fixed on `main` by prior commits (`e0fa2d4`/PR #1134, `ef439f6`/PR #1152); reran
+  their test coverage fresh before closing rather than re-doing the work. Tennis-repo
+  findings (#10025, #10047) left for that project per user instruction.
+- Gap analysis vs "Why AWS bought DuckLabs" (DuckDB-for-agents article): filed #1156,
+  added to the evaluate/gap-analysis register #953. Investigated all 3 candidate
+  gaps with live evidence rather than leaving them speculative:
+  - Ephemeral `:memory:` DuckDB pattern — turned out to be a misdiagnosis: the
+    pattern itself is already in real production use (~6 call sites). What was
+    actually unused was `connect_duckdb_secure()`, the skill's "MANDATORY"
+    security-hardening wrapper, which existed only as a markdown example with zero
+    real call sites. Fixed in #1159 (merged): real implementation at
+    `.claude/scripts/lib/duckdb_secure.R`, wired into `backfill_skill_usage.R`,
+    with a falsification-tested regression suite. The dispatched agent also
+    discovered and documented a genuine DuckDB gotcha along the way:
+    `enable_external_access = false` blocks extension *autoload* too (e.g. `icu`
+    for `DATEDIFF()`), not just explicit `LOAD` — this ruled out the originally
+    suggested retrofit target and is now a CRITICAL section in `duckdb-patterns`
+    SKILL.md.
+  - Telemetry not driving agent decisions — confirmed `roborev_agent_performance`
+    had zero readers anywhere (not even the digest email, contrary to my first
+    guess). Fixed in #1158 (merged): `roborev_requeue_dropped.sh` now picks
+    `--agent` by lowest 30-day error rate from that table (min-sample floor 20,
+    opt-out env var, safe fallback to today's behavior when data is unavailable).
+  - Concurrent burst-query pattern — reproduced live (scratch DB only): 5
+    concurrent `duckdb` CLI writers to one file, 4/5 failed with "Conflicting
+    lock is held". Turned out **not** to be a gap — this exact failure already
+    happened in production at larger scale and was already fixed (#710/#956) via
+    an append-only JSONL staging + serialized-drain pattern; it just wasn't
+    documented anywhere reusable. Fixed in #1157 (merged): added a "Part 4:
+    Concurrent Writers" section to `duckdb-patterns` SKILL.md.
+- Explained a launchd_health "75% failures (6/8 runs)" report to the user by
+  querying `housekeeping_runs` directly: confirmed it's the still-decaying 7-day
+  trailing window from the #1145/#1151 fix (merged 2026-09-02), not a new problem —
+  every run since the fix landed has been clean.
+
+### Failed Approaches
+- First attempt at the launchd stagger fix used `PlistBuddy -c "Set ..."` directly
+  against the plist files. This reformats the *entire* file (alphabetizes keys,
+  strips all comments) — a huge, unreviewable diff for a 1-line time change. Also
+  ran it against the **main checkout**'s tracked templates instead of this
+  worktree's copies (wrong target entirely). Reverted both the main-checkout
+  pollution and the reformatting; redid it as minimal text edits (`Edit` tool) in
+  the correct worktree, preserving all existing comments/structure.
+- Suggested `roborev_metrics_etl.R`'s `:memory:` connection as the retrofit target
+  for `connect_duckdb_secure()` without checking what it does. The dispatched
+  agent found it (and every other `:memory:` site in the repo) does `LOAD sqlite`
+  + `ATTACH` to read `~/.roborev/reviews.db` — `enable_external_access = false`
+  blocks `LOAD` outright, so retrofitting any of them would have broken them. It
+  also tried `skill_usage_etl.R` next (looked safe by grep), then found its
+  staleness view's `DATEDIFF()` silently triggers `icu` extension autoload, which
+  is *also* blocked — reverted that attempt cleanly before landing on the
+  genuinely safe `backfill_skill_usage.R` target. Lesson generalizes: a grep for
+  `LOAD`/`ATTACH` is not sufficient to prove a DuckDB connection is safe to harden
+  — extension **autoload** on first use of a function like `DATEDIFF()` produces
+  no grep-visible warning sign in the source; the only way to know is to run the
+  script end-to-end under the hardened connection.
+
+### Accuracy / Metrics
+- 5 PRs merged this session: #1155, #1157, #1158, #1159 (squash), plus the
+  earlier launchd stagger fix.
+- roborev backlog snapshot at session end: `consistent` (242 open across tracked
+  repos, 0 crash-class failures, 0 quota failures this window per
+  `roborev_consistency_check.sh`). `roborev summary --json` on the current
+  narrower scope showed 28 verdict-failures / 15 addressed (13 unaddressed) —
+  informational, not blocking: pre-existing backlog, unrelated to this session's
+  changes, no crash-class failures behind it.
+
+### Known Limitations
+- The DuckDB security-hardening retrofit (#1159) covers exactly one call site
+  (`backfill_skill_usage.R`) by design — a broader repo-wide retrofit of the
+  remaining ~9 unhardened `dbConnect()` calls is explicitly out of scope and not
+  tracked as a follow-up issue yet.
+- `roborev_requeue_dropped.sh`'s new performance-based `--agent` selection (#1158)
+  has not yet run live in production (thrice-daily via `com.claude.roborev-poll-merges`)
+  — first real-world observation is still pending as of session end.
+

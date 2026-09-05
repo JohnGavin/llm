@@ -118,6 +118,35 @@ content <- sub(old_string, new_string, content, fixed = TRUE)
 writeChar(content, "artifact.html", eos = NULL, useBytes = TRUE)
 ```
 
+## Part 6: Before re-architecting a dashboard's data-delivery mechanism, verify the capability and the incumbent pipeline
+
+A build-time-loader / data-externalization redesign (embedded data → a
+separately fetched asset, à la Observable Framework) is itself a change to
+how a committed artifact is built — the same class of change Parts 1-5
+govern. Two checks are required **before** starting the redesign, not after:
+
+1. **Does the target platform actually support it?** A Claude Artifact's
+   `assets` runtime capability was assumed available and was not — confirmed
+   only by loading the `artifact-capabilities` skill directly and reading its
+   authoritative capability list. Verify the mechanism exists on the actual
+   target platform before designing around it; "it's a reasonable pattern"
+   is not evidence it is buildable here.
+2. **Does the incumbent pipeline already solve the problem this redesign is
+   for?** A YAML→R-render pipeline in the `travel` project already produced
+   fully-formed static HTML with a build-time privacy gate — architecturally
+   ahead of the proposed fetch-a-JSON-asset model, not behind it. Redesigning
+   it would have added a client-side dependency and moved private-data content
+   out from behind a scanned build step, for no evidenced benefit. Read what
+   actually built the artifact (check for a "Build" page, a `Makefile`, a
+   render script) before assuming an artifact's surface shape *is* how it was
+   authored.
+
+Both checks failed to hold in a live investigation (2026-09) that started
+from a plausible-sounding external pattern and two named artifacts. Full
+narrative, evidence, and the disposition of every related issue:
+[`lessons-learned-dashboard-data-separation`](https://github.com/JohnGavin/llm/blob/main/knowledge/wiki/lessons-learned-dashboard-data-separation.md)
+(local-only knowledge base; not fetchable from a public clone).
+
 ## Forbidden Patterns
 
 | Pattern | Why wrong | Fix |
@@ -129,12 +158,15 @@ writeChar(content, "artifact.html", eos = NULL, useBytes = TRUE)
 | Treating "CI green" as "artifact correct" | The data path may not even trigger CI | Verify the deployed artifact |
 | `readLines()`/`writeLines()` on a file with embedded long lines | Can silently split a long line, orphaning data | Whole-file string ops only (Part 5) |
 | Considering an edit done because the tool call succeeded | A corrupted file can still write successfully | Structural integrity check before publish (Part 5) |
+| Redesigning a dashboard's data delivery around a platform capability that was never confirmed to exist | Assumed feasibility, not verified feasibility | Load the capability's own authoritative docs first (Part 6) |
+| Replacing an existing build pipeline without reading what it already does | May already be a better instance of the pattern you're about to add | Read the artifact's own build trail before redesigning it (Part 6) |
 
 ## Origin
 
 - [llm#883](https://github.com/JohnGavin/llm/issues/883) / [#885](https://github.com/JohnGavin/llm/pull/885) — DT `html_dependency` absolute nix paths; 13 snapshots affected; blocked all publishing for 2 days
 - [llm#889](https://github.com/JohnGavin/llm/issues/889) / [#890](https://github.com/JohnGavin/llm/pull/890) — worktree-exclusion regex matched its own scan root; `vig_scrolly_config` regenerated 222 rows → 0 by [#868](https://github.com/JohnGavin/llm/pull/868) and shipped silently
 - `tennis` project, 2026-08-29 — `readLines()`/`writeLines()` round-trip silently split an embedded ~25KB data line, orphaning stale records (Part 5; full narrative in companion doc)
+- [llm#1163](https://github.com/JohnGavin/llm/issues/1163) — Observable Framework gap analysis; both proposed test cases (Vienna, Tennis) were NO-GO on evidence (Part 6)
 
 ## Related
 
@@ -142,5 +174,6 @@ writeChar(content, "artifact.html", eos = NULL, useBytes = TRUE)
 - [`worktree-location`](worktree-location.md) — why every worktree path contains `/worktrees/`
 - [`data-validation-timeseries`](data-validation-timeseries.md) — content-level validation targets
 - [`bash-safety`](bash-safety.md) — tool-choice discipline generally (Part 5 is the same discipline applied to file-editing APIs)
-- [`verification-before-completion`](verification-before-completion.md) — "no completion claims without evidence," extended here to structural file integrity
+- [`verification-before-completion`](verification-before-completion.md) — "no completion claims without evidence," extended here to structural file integrity, and to platform-capability claims (Part 6)
 - [`domain-logic-in-package`](domain-logic-in-package.md) — a different failure mode from the same incident (business logic duplicated outside `R/`)
+- [`external-code-zero-trust`](external-code-zero-trust.md) — a plausible external pattern is an idea to evaluate, never an implementation to assume works here (Part 6)
