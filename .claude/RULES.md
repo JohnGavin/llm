@@ -12,7 +12,7 @@ Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-r
 | **Stats** | `statistical-reporting`, `suppress-warnings-antipattern`, `survival-reporting`, `na-propagation-rolling-stats` |
 | **Viz** | `visualization`, `dynamic-prose-values`, `uniform-typography`, `dashboard-table-styling`, `dashboard-filter-placement`, `cards-are-tabsets`, `hover-popup-standard`, `mermaid-click-anchors`, `mermaid-dashboard-pattern` |
 | **Quarto** | `quarto-vignettes`, `acronym-expansion`, `vignette-build-info-block`, `narrative-evidence-block`, `narrative-colour-persistence` |
-| **Shiny** | `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking` |
+| **Shiny** | `module-isolation`, `shiny-module-data-sharing`, `shinylive-webr-nonblocking`, `shinylive-vs-js-duplication` |
 | **Pipeline** | `qa-targets-pipeline`, `ctx-yaml-cache`, `cron-auto-pull-discipline`, `housekeeping-framework`, `portable-build-artifacts`, `unified-observability-schema`, `pipeline-validation` |
 | **Knowledge** | `wiki-conventions` |
 | **Quality** | `accessibility`, `analytical-review-checklist`, `analysis-rationale-mandatory`, `braindump-closed-loop`, `zero-metric-evidence-or-defect`, `checks-must-distinguish-unknown`, `exit-code-conventions` |
