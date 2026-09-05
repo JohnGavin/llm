@@ -28,7 +28,7 @@ RESULT: clean — 0 matches across 122 terms
 | Type | Shape | Counter |
 |---|---|---|
 | **A — cannot go red** | Structurally always true: `exit 0` regardless; sentinel supplied by the subject | Run against a value you invented; it must fail |
-| **B — wrong object** | Inspects a different artifact than production uses (file vs embedded copy, source vs built) | Point the check at the **shipped** artifact; diff the two |
+| **B — wrong object** | Inspects a different artifact than production uses (file vs embedded copy, source vs built) — includes a resting-state screenshot "verifying" `:hover`/`:focus`-triggered CSS | Point the check at the **shipped** artifact; diff the two. For interaction-triggered CSS, force the state in a scratch copy (never the shipped file) and screenshot that — see companion doc, 2026-09-05 |
 | **C — wrong property** | Asserts shape/range/count instead of meaning ("all links valid", "parses OK") | Ask what a *correct* result means, not what a *well-formed* one looks like |
 | **D — contaminated measurement** | Inherits the state it measures (env vars, caches, stubs) | Isolate: `env -u`, `env -i`, fresh process, cold cache |
 | **E — verified by authorship** | "I wrote the fix" substituted for "the fix works" | Observe the effect in the environment that was broken |

@@ -69,25 +69,43 @@ Source: [Simon Willison's DuckDB security research](https://github.com/simonw/re
 
 ### Secure Connection Template
 
+Real implementation: `.claude/scripts/lib/duckdb_secure.R` (`connect_duckdb_secure()`).
+Source it and call it in place of a raw `DBI::dbConnect(duckdb::duckdb(), ...)`:
+
 ```r
-connect_duckdb_secure <- function(dbdir = ":memory:", read_only = FALSE,
-                                  allowed_dirs = NULL, memory_limit = "1GB") {
-  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = dbdir, read_only = read_only)
-
-  if (!is.null(allowed_dirs)) {
-    dirs_sql <- paste0("'", allowed_dirs, "'", collapse = ", ")
-    DBI::dbExecute(con, paste0("SET allowed_directories = [", dirs_sql, "]"))
-  }
-
-  DBI::dbExecute(con, "SET enable_external_access = false")
-  DBI::dbExecute(con, paste0("SET memory_limit = '", memory_limit, "'"))
-  DBI::dbExecute(con, "SET lock_configuration = true")  # MUST be LAST
-
-  con
-}
+source(file.path(<script_dir>, "lib", "duckdb_secure.R"))
+con <- connect_duckdb_secure(dbdir = db_path, read_only = FALSE)
 ```
 
-### Threats Mitigated
+Working example: `.claude/scripts/backfill_skill_usage.R` (DB-write connection,
+`con <- connect_duckdb_secure(dbdir = db_path, read_only = FALSE)`), covered by
+`tests/test_backfill_skill_usage_secure_connection.R`.
+
+### CRITICAL — `enable_external_access = false` breaks any connection that LOADs an extension or ATTACHes a file
+
+Verified empirically (JohnGavin/llm#1156): once `enable_external_access` is
+set to `false`, DuckDB's extension-loading path is disabled for the life of
+the connection — including its own **autoloading** of a bundled extension
+for a function you didn't explicitly `LOAD`. `allowed_directories` does
+**not** carve out an exception; it only scopes filesystem paths for
+operations that `enable_external_access` still permits at all.
+
+Two real failure modes found while wiring this in:
+
+| Pattern | Why it breaks | Example in this repo |
+|---|---|---|
+| `LOAD sqlite` then `ATTACH '<file>' (TYPE sqlite, READ_ONLY)` | `LOAD` itself is blocked | `roborev_metrics_etl.R`'s `read_con`, `roborev_daily_report.R`'s three `tmp_con` sites, `roborev_weekly_rollup.R`, `send_overnight_self_review_email.R` — all read `~/.roborev/reviews.db` this way; NOT retrofitted |
+| A query uses a function backed by an auto-loadable extension (e.g. `DATEDIFF()` → `icu`) | DuckDB's autoload-on-first-use is itself extension loading | `skill_usage_etl.R`'s `STALENESS_VIEW_DDL` uses `DATEDIFF()`; NOT retrofitted |
+
+`date_trunc()`, `regexp_replace()`, `CAST`, and `current_timestamp` are
+core functions and do not trigger this — confirmed empirically, and that is
+why `backfill_skill_usage.R` (which uses exactly those) was a safe target.
+Before retrofitting any other `dbConnect()` call site, run the script
+end-to-end against a real temp DB and projects/ input, not just a grep for
+`ATTACH`/`LOAD` — the icu-autoload failure above produces no grep-visible
+warning sign in the source.
+
+### Threats Mitigated (on connections where it's safe to apply)
 
 | Threat | After Hardening |
 |---|---|
@@ -207,9 +225,9 @@ write path through the staging pattern instead of suppressing the error.
 ## Checklist
 
 - [ ] No `DBI::dbGetQuery()` with raw SQL strings
-- [ ] Every `dbConnect()` uses secure hardening
-- [ ] `enable_external_access = false` on all connections
-- [ ] `lock_configuration = true` set LAST
+- [ ] Every `dbConnect()` that only touches its own DuckDB-native tables uses `connect_duckdb_secure()`
+- [ ] Any connection that must `LOAD` an extension or `ATTACH` an external file is deliberately left unhardened, with a comment saying why (see the CRITICAL note above)
+- [ ] `lock_configuration = true` set LAST, on connections where hardening is applied
 - [ ] Every `row_number()` has `window_order()` with tiebreaker
 - [ ] No `distinct(.keep_all = TRUE)`
 - [ ] Inequality joins checked for fan-out

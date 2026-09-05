@@ -114,6 +114,38 @@
 # for a follow-up commit. See the roborev-resolution.md "Requeue Dropped
 # Quota Failures" section for the actual command line to add.
 #
+# Agent selection (llm#1156): roborev_metrics_etl.R has written
+# roborev_agent_performance (unified.duckdb; per-day x per-agent n_runs/
+# error_count, see roborev_metrics_schema.sql) daily since Slice 2, but a
+# repo-wide grep found ZERO readers of that table anywhere in the codebase
+# — this script's enqueue call always omitted --agent entirely and let
+# roborev fall back to whatever default_agent happens to be configured,
+# ignoring which agent has actually been erroring out least recently. A
+# real query on 2026-09-03 showed error rates from ~2.5% (claude-code w/
+# sonnet) to ~98% (a known dead-gemini incident window) across configured
+# agents — a gap worth closing given this sweep exists specifically to
+# retry work an agent previously failed to do.
+#
+# pick_best_agent() (below) now picks the agent with the lowest
+# error_count/n_runs over the trailing 30 days, computed ONCE before the
+# candidate loop (not per-candidate — the ranking is stable for the
+# duration of one invocation) and passed as --agent on every `roborev
+# review` call this run makes. It requires a minimum trailing-30-day
+# SUM(n_runs) >= ROBOREV_REQUEUE_AGENT_MIN_RUNS (default 20) before an
+# agent's error rate is trusted enough to steer selection — below that, a
+# single bad day can swing the observed rate by tens of percentage points
+# on pure noise (3 runs, 1 error = a "33% error rate" that means nothing).
+# When duckdb/the DB are unavailable, the query errors, or no agent clears
+# the floor, it echoes nothing and today's exact behaviour (no --agent
+# flag) is preserved unchanged.
+#
+# Opt out entirely with ROBOREV_REQUEUE_AGENT_FROM_PERFORMANCE=0 (default
+# unset/1 = enabled) — naming/on-off convention mirrors SKIP_ROBOREV_REQUEUE
+# and SKIP_SESSION_END_REFINE, though this one takes an explicit 0/1 value
+# rather than being a bare presence-triggered skip, since the underlying
+# behaviour it's toggling (agent selection) is itself a default-on feature
+# rather than a whole-sweep kill switch.
+#
 # Exit codes:
 #   0 ok (including "nothing to do" and "roborev/sqlite/git missing")
 #   1 unexpected error (selftest failure only — the sweep itself never
@@ -329,6 +361,46 @@ commit_excluded() {
   done <<< "$files"
 
   echo "excluded"
+}
+
+# pick_best_agent — choose the roborev agent with the lowest recent error
+# rate, per roborev_agent_performance in $UNIFIED_DB (see the "Agent
+# selection" header comment above for the full llm#1156 rationale). Echoes
+# EXACTLY the winning agent name on stdout and nothing else; echoes nothing
+# (caller falls back to today's behaviour — no --agent flag, roborev's own
+# default_agent applies) when:
+#   - opted out via ROBOREV_REQUEUE_AGENT_FROM_PERFORMANCE=0
+#   - duckdb is not on PATH or $UNIFIED_DB does not exist (mirrors the
+#     existing $_duckdb_ok guard used by hk_run_start/hk_run_end)
+#   - the query itself errors (e.g. roborev_agent_performance does not
+#     exist yet on a DB that predates Slice 2 — checks-must-distinguish-
+#     unknown posture: indeterminate data means "don't guess", never
+#     "assume clean")
+#   - no agent's trailing-30-day SUM(n_runs) clears the minimum-sample-size
+#     floor (ROBOREV_REQUEUE_AGENT_MIN_RUNS, default 20)
+# Called ONCE per invocation by the caller, before the candidate loop
+# starts — not once per candidate.
+pick_best_agent() {
+  [ "${ROBOREV_REQUEUE_AGENT_FROM_PERFORMANCE:-1}" = "1" ] || return 0
+  [ "$_duckdb_ok" = "1" ] || return 0
+  local floor="${ROBOREV_REQUEUE_AGENT_MIN_RUNS:-20}"
+  local result rc
+  result="$(duckdb -init /dev/null -noheader -list "$UNIFIED_DB" -c "
+    SELECT agent FROM (
+      SELECT agent,
+             SUM(n_runs) AS total_runs,
+             CAST(SUM(error_count) AS DOUBLE) / NULLIF(SUM(n_runs), 0) AS error_rate
+      FROM roborev_agent_performance
+      WHERE date >= current_date - INTERVAL 30 DAY
+      GROUP BY agent
+    ) t
+    WHERE total_runs >= ${floor}
+    ORDER BY error_rate ASC, agent ASC
+    LIMIT 1;
+  " 2>/dev/null)"
+  rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  echo "$result"
 }
 
 # ---------------------------------------------------------------------------
@@ -742,6 +814,117 @@ SQL
     echo "$rr_out"
   fi
 
+  # ---- Checks 9-12 (llm#1156): --agent selection driven by
+  # roborev_agent_performance. Isolated one-repo/one-candidate fixture so
+  # each --apply pass enqueues exactly one job and the fake_roborev
+  # invocation log's args can be asserted directly. fake_roborev never
+  # touches reviews.db, so the same candidate stays eligible across all
+  # four sub-cases without needing to reset status between them. ----
+  local as_root="${tmp_root}/agent_select"
+  mkdir -p "${as_root}/repo/R"
+  local as_repo="${as_root}/repo"
+  "$git_bin" -C "$as_repo" init -q -b main
+  "$git_bin" -C "$as_repo" config user.email "test@example.com"
+  "$git_bin" -C "$as_repo" config user.name "Test"
+  echo 'x <- function() 1' > "$as_repo/R/x.R"
+  "$git_bin" -C "$as_repo" add -A
+  "$git_bin" -C "$as_repo" commit -q -m "feat: agent-selection candidate"
+  local sha_as
+  sha_as="$("$git_bin" -C "$as_repo" rev-parse HEAD)"
+
+  local as_db="${as_root}/reviews.db"
+  "$sqlite_bin" "$as_db" <<SQL
+CREATE TABLE repos (id INTEGER PRIMARY KEY, root_path TEXT UNIQUE NOT NULL, name TEXT NOT NULL);
+CREATE TABLE commits (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, sha TEXT NOT NULL, subject TEXT NOT NULL);
+CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, commit_id INTEGER, git_ref TEXT NOT NULL, status TEXT NOT NULL, error TEXT, enqueued_at TEXT NOT NULL DEFAULT '2026-05-01 00:00:00');
+INSERT INTO repos VALUES (1, '${as_repo}', 'agent-select-repo');
+INSERT INTO commits VALUES (1, 1, '${sha_as}', 'feat: agent-selection candidate');
+INSERT INTO review_jobs VALUES (1, 1, 1, '${sha_as}', 'failed', 'quota: agent: codex failed: Quota exceeded.', '2026-05-01 00:00:00');
+SQL
+
+  # A performance DB with a clear winner: claude-code/sonnet has both a
+  # much lower error rate AND clears the default floor (100 >= 20); codex
+  # also clears the floor but with a far worse error rate, so a correct
+  # implementation must pick claude-code, not just "any agent present".
+  local perf_winner_db="${as_root}/perf_winner.duckdb"
+  duckdb -init /dev/null "$perf_winner_db" < "${_SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
+  duckdb -init /dev/null "$perf_winner_db" < "${_SCRIPT_DIR}/roborev_metrics_schema.sql" >/dev/null 2>&1 || true
+  duckdb -init /dev/null "$perf_winner_db" -c "
+    INSERT INTO roborev_agent_performance VALUES (current_date, 'claude-code', 'sonnet', 100, 90, 5, 5, NULL, NULL, NULL, NULL, NULL);
+    INSERT INTO roborev_agent_performance VALUES (current_date, 'codex', '', 100, 50, 20, 50, NULL, NULL, NULL, NULL, NULL);
+  " >/dev/null 2>&1 || true
+
+  # A performance DB where every agent is well below the sample-size floor
+  # (5 runs each, default floor is 20) -- even though claude-code still has
+  # the better error rate on paper, neither row is trustworthy yet.
+  local perf_below_floor_db="${as_root}/perf_below_floor.duckdb"
+  duckdb -init /dev/null "$perf_below_floor_db" < "${_SCRIPT_DIR}/housekeeping_schema_init.sql" >/dev/null 2>&1 || true
+  duckdb -init /dev/null "$perf_below_floor_db" < "${_SCRIPT_DIR}/roborev_metrics_schema.sql" >/dev/null 2>&1 || true
+  duckdb -init /dev/null "$perf_below_floor_db" -c "
+    INSERT INTO roborev_agent_performance VALUES (current_date, 'claude-code', 'sonnet', 5, 5, 0, 0, NULL, NULL, NULL, NULL, NULL);
+    INSERT INTO roborev_agent_performance VALUES (current_date, 'codex', '', 5, 2, 3, 3, NULL, NULL, NULL, NULL, NULL);
+  " >/dev/null 2>&1 || true
+
+  # ---- Check 9: duckdb DB unavailable (UNIFIED_DB_PATH points nowhere) ->
+  # no --agent flag, today's exact pre-#1156 behaviour preserved. ----
+  total=$((total + 1))
+  : > "$fake_roborev_log"
+  ROBOREV_DB="$as_db" SQLITE="$sqlite_bin" ROBOREV="$fake_roborev" GIT_BIN="$git_bin" \
+    UNIFIED_DB_PATH="${as_root}/does-not-exist.duckdb" LOG_FILE_PATH="${tmp_root}/log_as9.log" FAKE_ROBOREV_LOG="$fake_roborev_log" \
+    bash "$0" --apply --limit=1 >/dev/null 2>&1
+  local as9_call
+  as9_call="$(cat "$fake_roborev_log" 2>/dev/null)"
+  if [ -n "$as9_call" ] && ! echo "$as9_call" | grep -q -- "--agent"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL (check 9): expected no --agent flag when UNIFIED_DB is unavailable. Invocation: '$as9_call'"
+  fi
+
+  # ---- Check 10: clear winner present -> --agent <winner> passed. ----
+  total=$((total + 1))
+  : > "$fake_roborev_log"
+  ROBOREV_DB="$as_db" SQLITE="$sqlite_bin" ROBOREV="$fake_roborev" GIT_BIN="$git_bin" \
+    UNIFIED_DB_PATH="$perf_winner_db" LOG_FILE_PATH="${tmp_root}/log_as10.log" FAKE_ROBOREV_LOG="$fake_roborev_log" \
+    bash "$0" --apply --limit=1 >/dev/null 2>&1
+  local as10_call
+  as10_call="$(cat "$fake_roborev_log" 2>/dev/null)"
+  if echo "$as10_call" | grep -q -- "--agent claude-code"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL (check 10): expected '--agent claude-code' (lowest error rate, clears floor). Invocation: '$as10_call'"
+  fi
+
+  # ---- Check 11: all agents below the sample-size floor -> no --agent
+  # flag, even though one has a nominally-better error rate on paper. ----
+  total=$((total + 1))
+  : > "$fake_roborev_log"
+  ROBOREV_DB="$as_db" SQLITE="$sqlite_bin" ROBOREV="$fake_roborev" GIT_BIN="$git_bin" \
+    UNIFIED_DB_PATH="$perf_below_floor_db" LOG_FILE_PATH="${tmp_root}/log_as11.log" FAKE_ROBOREV_LOG="$fake_roborev_log" \
+    bash "$0" --apply --limit=1 >/dev/null 2>&1
+  local as11_call
+  as11_call="$(cat "$fake_roborev_log" 2>/dev/null)"
+  if [ -n "$as11_call" ] && ! echo "$as11_call" | grep -q -- "--agent"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL (check 11): expected no --agent flag when every agent is below the sample-size floor. Invocation: '$as11_call'"
+  fi
+
+  # ---- Check 12: ROBOREV_REQUEUE_AGENT_FROM_PERFORMANCE=0 opts out, even
+  # with a clear winner available in the performance DB. ----
+  total=$((total + 1))
+  : > "$fake_roborev_log"
+  ROBOREV_DB="$as_db" SQLITE="$sqlite_bin" ROBOREV="$fake_roborev" GIT_BIN="$git_bin" \
+    UNIFIED_DB_PATH="$perf_winner_db" LOG_FILE_PATH="${tmp_root}/log_as12.log" FAKE_ROBOREV_LOG="$fake_roborev_log" \
+    ROBOREV_REQUEUE_AGENT_FROM_PERFORMANCE=0 \
+    bash "$0" --apply --limit=1 >/dev/null 2>&1
+  local as12_call
+  as12_call="$(cat "$fake_roborev_log" 2>/dev/null)"
+  if [ -n "$as12_call" ] && ! echo "$as12_call" | grep -q -- "--agent"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL (check 12): expected no --agent flag when ROBOREV_REQUEUE_AGENT_FROM_PERFORMANCE=0. Invocation: '$as12_call'"
+  fi
+
   rm -rf "$tmp_root" 2>/dev/null || true
 
   echo "selftest: ${pass}/${total} PASS"
@@ -780,6 +963,17 @@ if ! "$SQLITE" ":memory:" "SELECT ROW_NUMBER() OVER (ORDER BY 1);" >/dev/null 2>
 fi
 
 hk_run_start
+
+# llm#1156: computed ONCE for the whole invocation — see pick_best_agent()
+# and the "Agent selection" header comment above.
+best_agent="$(pick_best_agent)"
+if [ -n "$best_agent" ]; then
+  log "agent-selection: using --agent $best_agent (roborev_agent_performance, trailing 30d, floor=${ROBOREV_REQUEUE_AGENT_MIN_RUNS:-20})"
+  echo "roborev_requeue_dropped: agent selection — $best_agent (lowest recent error rate)"
+else
+  log "agent-selection: none — roborev default_agent applies (duckdb/data unavailable, query error, opted out, or no agent cleared the sample-size floor)"
+  echo "roborev_requeue_dropped: agent selection — none (using roborev default)"
+fi
 
 CANDIDATES_SQL="
 WITH ranked AS (
@@ -877,7 +1071,11 @@ while IFS=$'\x1f' read -r repo_id repo_name root_path commit_id sha subject; do
     log "[dry] would enqueue: $repo_name $sha"
     echo "[dry] would enqueue: $repo_name $sha — ${subject}"
   else
-    if "$ROBOREV" review --sha "$sha" --repo "$root_path" >/dev/null 2>&1; then
+    roborev_args=(review --sha "$sha" --repo "$root_path")
+    if [ -n "$best_agent" ]; then
+      roborev_args+=(--agent "$best_agent")
+    fi
+    if "$ROBOREV" "${roborev_args[@]}" >/dev/null 2>&1; then
       enqueued=$((enqueued + 1))
       log "enqueued: $repo_name $sha"
       echo "enqueued: $repo_name $sha — ${subject}"
