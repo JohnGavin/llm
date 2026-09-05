@@ -53,6 +53,18 @@ suppressPackageStartupMessages({
 )
 source(file.path(.scripts_dir_s1, "email_styles.R"))
 
+# NOTE: connect_duckdb_secure() (JohnGavin/llm#1156) was tried here and
+# REVERTED after verification. The query below uses
+# `(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::TIMESTAMP`, and DuckDB's `AT TIME
+# ZONE` conversion autoloads the `icu` extension on first use — reproduced
+# live: with the hardened connection, the query failed with "Extension
+# Autoloading Error ... Loading external extensions is disabled through
+# configuration". This is the same icu-autoload hazard documented in
+# duckdb-patterns/SKILL.md for skill_usage_etl.R's DATEDIFF() use — not
+# limited to DATEDIFF() itself, but to any function backed by an
+# auto-loadable extension. This connection MUST stay a raw
+# DBI::dbConnect() call.
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 UNIFIED_DUCKDB <- Sys.getenv(
