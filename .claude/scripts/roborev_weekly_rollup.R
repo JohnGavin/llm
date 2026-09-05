@@ -55,6 +55,31 @@ suppressPackageStartupMessages({
 )
 source(file.path(.scripts_dir_rollup, "lib", "canonical_check.R"))
 
+# Hardened DuckDB connection helper (JohnGavin/llm#1156). Used ONLY by
+# query_close_reasons()'s UNIFIED_DUCKDB connection below.
+#
+# NOT used for:
+#   - the ":memory:" connection elsewhere below that LOADs the sqlite
+#     extension and ATTACHes reviews.db (must stay a raw DBI::dbConnect()
+#     call — see duckdb_secure.R's header); and
+#   - the `duck_con_filter` UNIFIED_DUCKDB connection above (canonical-
+#     project filter), which was tried and REVERTED after verification:
+#     its `on.exit(dbDisconnect(..., shutdown = FALSE))` is registered
+#     inside an `if` block at the script's TOP LEVEL, which never actually
+#     fires (on.exit() requires an enclosing function frame — see the
+#     matching "on.exit() does not fire at script top level" comment in
+#     roborev_metrics_etl.R). The connection is therefore genuinely never
+#     closed, and connect_duckdb_secure()'s `SET lock_configuration = true`
+#     on that leaked connection then poisons the SAME cached DuckDB
+#     instance (llm#595 per-dbdir instance caching) for every later
+#     connection to UNIFIED_DUCKDB in the same process — reproduced live:
+#     query_close_reasons() failed with "Cannot change configuration
+#     option \"enable_external_access\" - the configuration has been
+#     locked" whenever duck_con_filter was also hardened. Fixing the
+#     underlying on.exit-at-top-level leak is out of scope for this
+#     retrofit; duck_con_filter is left as a raw, unhardened connection.
+source(file.path(.scripts_dir_rollup, "lib", "duckdb_secure.R"))
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 ROBOREV_DAILY_BACKLOG_DIR <- Sys.getenv(
@@ -486,7 +511,7 @@ query_close_reasons <- function(duckdb_path, week_start_str, week_end_str) {
   }
 
   con <- tryCatch(
-    DBI::dbConnect(duckdb::duckdb(), duckdb_path, read_only = TRUE),
+    connect_duckdb_secure(dbdir = duckdb_path, read_only = TRUE),
     error = function(e) {
       message("roborev_weekly_rollup: cannot open unified.duckdb — ", conditionMessage(e))
       NULL
