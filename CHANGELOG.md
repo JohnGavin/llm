@@ -4255,3 +4255,51 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   confirmed this is intentional (Claude Artifact links are the preferred
   distribution mechanism for those, for controllable/revocable sharing with
   specific people rather than public GH Pages).
+
+## 2026-09-05 (session-end: feat/cc-20260903-092531, cont'd 2)
+
+### Completed
+- Merged concurrent-session work into this branch (`origin/main` had moved
+  on with accessibility/verification-before-completion rule updates) —
+  resolved a real `CHANGELOG.md` merge conflict by keeping both sessions'
+  entries; `duckdb-patterns/SKILL.md` merged automatically (non-overlapping
+  edits). Merged PR #1164 → `90be812`.
+- Fixed `richard`/`procedural-scenes` `main` being 2 ahead / 2 behind
+  `origin/main` (flagged, not investigated, at prior session-end). Local
+  `main` held only a stale 2026-08-10 handoff note predating the repo's
+  GitHub push; `origin/main` held the real ~14.5k-line Blender/three.js
+  pipeline. Merged with `--allow-unrelated-histories` (origin/main was
+  seeded independently on GitHub), resolved two near-duplicate CHANGELOG
+  passages and one `.gitignore` add/add conflict, pushed: `f8878fe..8fd1bcd`.
+- Found and rescued unrelated uncommitted work sitting directly on the llm
+  main checkout's `main` branch: a 34-line "Question-Framed Captions"
+  addition to `.claude/rules/visualization.md` (nothing to do with the
+  `shinylive-vs-js-duplication.md` rule it was initially flagged alongside
+  — that one was already safely committed on its own branch, `748d9d6`).
+  Committed to a new branch, opened and merged PR #1166 → `4703b9d`. Main
+  checkout is now clean.
+
+### Failed Approaches
+- (none this entry)
+
+### Accuracy / Metrics
+- roborev backlog snapshot at session end: `consistent` (backlog=242,
+  overview_total=8, crash=0, quota=0). Narrower-scope `roborev summary
+  --json` shows 23 verdict-failures/9 addressed — same pre-existing
+  backlog noted at the prior session-end entry (was 24/9), unrelated to
+  this session.
+- `ctx_audit("DESCRIPTION")`: 1 OK, 9 OTHER_VERSION, 24 STALE.
+  `ctx_sync("DESCRIPTION")` was run to close the OTHER_VERSION gaps and
+  **failed on all 24 attempted refreshes** — every call errored with
+  `sh: .../file*.ctx.yaml: No such file or directory`, suggesting the
+  underlying `pkgctx` CLI itself is broken in this nix shell, not a data
+  issue. Not investigated further this session (unrelated to the work
+  above); flagged as a known limitation for whoever next needs a fresh
+  ctx file.
+
+### Known Limitations
+- `pkgctx`-based ctx.yaml regeneration (`ctx_sync()`) appears broken in
+  the current nix shell — every refresh in this session's run failed
+  identically. Needs its own investigation before it's trusted again;
+  until then, `ctx_audit()`'s STALE/OTHER_VERSION counts may just keep
+  growing.
