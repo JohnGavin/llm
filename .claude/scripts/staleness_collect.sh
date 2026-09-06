@@ -268,13 +268,45 @@ sci = d.get('StartCalendarInterval')
 if sci is None:
     print(86400)  # no declared schedule -> documented default: assume daily
     sys.exit()
+if isinstance(sci, list) and any(e.get('Weekday') is not None for e in sci):
+    # roborev#9079: entries that carry a Weekday (e.g. com.claude.roborev
+    # -poll-merges — Mon-Fri x {09:02,13:00,17:00}, 15 dict entries) repeat
+    # weekly, not daily. Sorting by minute-of-day alone (the branch below)
+    # and taking the MINIMUM gap gives the shortest INTRA-day gap (here 4h,
+    # between 09:02 and 13:00) and completely ignores the much larger
+    # inter-day/weekend gap (Friday 17:00 -> Monday 09:02 = ~64h). Since
+    # expected_cadence_hours is compared directly against elapsed time with
+    # no multiplier (`now() - last_seen_ts > expected_cadence_hours * 1
+    # hour`, staleness_schema.sql), a 4h cadence on a job that legitimately
+    # goes quiet all weekend makes it read 'stale' every single Saturday and
+    # Sunday. The fix: place every entry on a single weekly timeline
+    # (weekday*1440 + hour*60 + minute minutes into the week; Weekday 0 and
+    # 7 both mean Sunday, so `% 7` normalises them to the same slot), sort,
+    # and take the MAXIMUM gap around the full 7-day cycle (including the
+    # wraparound gap from the last entry back to the first) -- that maximum
+    # IS the true worst-case wait between two legitimate firings, which is
+    # exactly the threshold staleness detection needs.
+    week_minutes = 7 * 24 * 60
+    offsets = sorted(
+        (e.get('Weekday', 0) % 7) * 1440 + e.get('Hour', 0) * 60 + e.get('Minute', 0)
+        for e in sci
+    )
+    if len(offsets) < 2:
+        print(week_minutes * 60)
+        sys.exit()
+    gaps = [offsets[i] - offsets[i - 1] for i in range(1, len(offsets))]
+    gaps.append(offsets[0] + week_minutes - offsets[-1])  # wraparound
+    print(max(gaps) * 60)
+    sys.exit()
 if isinstance(sci, list):
-    # Multiple entries commonly repeat the same Hour:Minute across different
-    # Weekdays (e.g. Mon/Tue/Wed all at 09:00) — sorting by minute-of-day
-    # alone then yields adjacent duplicates and a diff of 0, which would make
-    # the cadence 0h (=> permanently 'stale'). Only strictly-positive diffs
-    # between distinct minute-of-day slots count; an all-duplicate list falls
-    # back to the documented daily default, same as a single-entry list.
+    # No entry carries a Weekday -> the schedule repeats every day (e.g.
+    # 09:00 and 13:00, daily). Multiple entries commonly repeat the same
+    # Hour:Minute (rare for this shape, but guarded the same way) —
+    # sorting by minute-of-day alone then yields adjacent duplicates and a
+    # diff of 0, which would make the cadence 0h (=> permanently 'stale').
+    # Only strictly-positive diffs between distinct minute-of-day slots
+    # count; an all-duplicate list falls back to the documented daily
+    # default, same as a single-entry list.
     entries = sorted(sci, key=lambda x: x.get('Hour', 0) * 60 + x.get('Minute', 0))
     diffs = []
     for i in range(1, len(entries)):

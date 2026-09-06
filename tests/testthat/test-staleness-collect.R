@@ -274,3 +274,119 @@ test_that("staleness_banner.sh fails open (prints nothing, exits 0) when the DB 
   expect_equal(exit_code, 0L, info = "banner must fail open on a missing DB")
   expect_length(out, 0L)
 })
+
+# ── _launchd_cadence_hours(): Weekday cadence (roborev#9079) ─────────────────
+#
+# No prior test coverage existed for this function at all. It is extracted
+# directly from the shipped script (not a hand-copied duplicate) and run via
+# a throwaway bash wrapper, so these tests exercise the exact code that ships.
+#
+# roborev#9079's primary High-severity finding (cadence ignoring Weekday) was
+# previously addressed only for a single-dict StartCalendarInterval. The real
+# multi-fire-per-week case — com.claude.roborev-poll-merges.plist, Mon-Fri x
+# {09:02,13:00,17:00}, a LIST of 15 per-weekday dict entries — went through a
+# different branch that sorted by minute-of-day alone and took the MINIMUM
+# gap (4h, the intra-day gap), completely ignoring the much larger Friday
+# 17:00 -> Monday 09:02 weekend gap (~64h). Since expected_cadence_hours is
+# compared directly against elapsed time with no multiplier
+# (staleness_schema.sql: `now() - last_seen_ts > expected_cadence_hours * 1
+# hour`), a 4h cadence on this job would read 'stale' every Saturday and
+# Sunday. This was still live when these tests were written and is fixed as
+# part of this same change (list branch now special-cases any entry carrying
+# a Weekday and computes the true maximum gap around the full weekly cycle).
+
+extract_cadence_fn <- function() {
+  skip_if_not(file.exists(collect_sh), "staleness_collect.sh not found")
+  lines <- readLines(collect_sh, warn = FALSE)
+  start <- grep("^_launchd_cadence_hours\\(\\) \\{", lines)[1]
+  skip_if_not(!is.na(start), "_launchd_cadence_hours() not found in staleness_collect.sh")
+  rel_end <- which(lines[(start + 1L):length(lines)] == "}")[1]
+  skip_if_not(!is.na(rel_end), "could not find end of _launchd_cadence_hours()")
+  end <- start + rel_end
+  paste(lines[start:end], collapse = "\n")
+}
+
+run_cadence <- function(json) {
+  skip_if_not(nzchar(Sys.which("python3")), "python3 not available")
+  fn_src <- extract_cadence_fn()
+  script <- paste(
+    "#!/usr/bin/env bash",
+    "PYTHON3=$(command -v python3)",
+    fn_src,
+    sprintf("_launchd_cadence_hours %s", shQuote(json)),
+    sep = "\n"
+  )
+  tmp <- tempfile(fileext = ".sh")
+  writeLines(script, tmp)
+  on.exit(unlink(tmp), add = TRUE)
+  # stderr = FALSE keeps stdout clean of any diagnostic noise from the
+  # wrapper itself, so a coercion failure below reflects a real problem in
+  # _launchd_cadence_hours()'s own output, not stderr bleeding into stdout.
+  out <- system2("bash", args = tmp, stdout = TRUE, stderr = FALSE)
+  raw <- out[length(out)]
+  val <- as.numeric(raw)
+  if (is.na(val)) {
+    fail(sprintf(
+      "_launchd_cadence_hours did not print a numeric cadence (got: %s)",
+      raw
+    ))
+  }
+  val
+}
+
+weekday_json <- function(weekday, hour, minute) {
+  sprintf('{"Weekday":%d,"Hour":%d,"Minute":%d}', weekday, hour, minute)
+}
+
+poll_merges_json <- function() {
+  entries <- unlist(lapply(1:5, function(wd) {
+    c(weekday_json(wd, 9, 2), weekday_json(wd, 13, 0), weekday_json(wd, 17, 0))
+  }))
+  sprintf('{"StartCalendarInterval":[%s]}', paste(entries, collapse = ","))
+}
+
+test_that("_launchd_cadence_hours: Mon-Fri x 3-times-daily list returns the true weekend gap, not the 4h intra-day gap (roborev#9079)", {
+  skip_if_not(file.exists(collect_sh), "staleness_collect.sh not found")
+  skip_if_not(nzchar(Sys.which("python3")), "python3 not available")
+
+  cadence <- run_cadence(poll_merges_json())
+
+  # Fri 17:00 -> Mon 09:02 = 64h 2m = 64.0333h -- the TRUE maximum gap around
+  # the weekly cycle. The pre-fix implementation returned 3.9667h (the
+  # 09:02 -> 13:00 intra-day gap), which is smaller than the real weekend
+  # gap and would make the collector flag this job stale every weekend.
+  expect_equal(cadence, 64.0333, tolerance = 0.001)
+  expect_gt(cadence, 24, label = "cadence must reflect the multi-day weekend gap, not an intra-day gap")
+})
+
+test_that("_launchd_cadence_hours: single-dict Weekday schedule is unaffected (168h weekly)", {
+  skip_if_not(file.exists(collect_sh), "staleness_collect.sh not found")
+  skip_if_not(nzchar(Sys.which("python3")), "python3 not available")
+
+  cadence <- run_cadence('{"StartCalendarInterval":{"Weekday":1,"Hour":9,"Minute":0}}')
+  expect_equal(cadence, 168, tolerance = 0.001)
+})
+
+test_that("_launchd_cadence_hours: a single Weekday-carrying list entry falls back to weekly (168h)", {
+  skip_if_not(file.exists(collect_sh), "staleness_collect.sh not found")
+  skip_if_not(nzchar(Sys.which("python3")), "python3 not available")
+
+  cadence <- run_cadence('{"StartCalendarInterval":[{"Weekday":1,"Hour":9,"Minute":0}]}')
+  expect_equal(cadence, 168, tolerance = 0.001)
+})
+
+test_that("_launchd_cadence_hours: daily multi-time list with NO Weekday key is unchanged (4h)", {
+  skip_if_not(file.exists(collect_sh), "staleness_collect.sh not found")
+  skip_if_not(nzchar(Sys.which("python3")), "python3 not available")
+
+  cadence <- run_cadence('{"StartCalendarInterval":[{"Hour":9,"Minute":0},{"Hour":13,"Minute":0}]}')
+  expect_equal(cadence, 4, tolerance = 0.001)
+})
+
+test_that("_launchd_cadence_hours: no declared schedule falls back to the documented daily default (24h)", {
+  skip_if_not(file.exists(collect_sh), "staleness_collect.sh not found")
+  skip_if_not(nzchar(Sys.which("python3")), "python3 not available")
+
+  cadence <- run_cadence("{}")
+  expect_equal(cadence, 24, tolerance = 0.001)
+})
