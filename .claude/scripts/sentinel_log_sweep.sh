@@ -91,8 +91,16 @@ rotate_log_file() {
     return 0
   fi
 
-  # Keep exactly one prior generation (overwrites any earlier .1).
-  cp -f "$_path" "${_path}.1" 2>/dev/null || true
+  # Keep exactly one prior generation (overwrites any earlier .1). If this
+  # backup copy fails (disk full, permission error, read-only target dir),
+  # ABORT the rotation entirely rather than proceeding to truncate — the
+  # discarded exit status here used to be swallowed with `|| true`, which
+  # meant a failed backup was followed by truncation anyway: everything
+  # beyond keep_lines would be permanently lost with NO backup at all.
+  if ! cp -f "$_path" "${_path}.1" 2>/dev/null; then
+    rm -f "$_tmp"
+    return 0
+  fi
 
   # Copy-truncate IN PLACE — see header comment. Never mv/rename here.
   if cat "$_tmp" > "$_path" 2>/dev/null; then

@@ -20,13 +20,25 @@
 #     match (session_id, agent_type, started_at truncated to the second) —
 #     mirrors the hook_events dedup pattern for callers with no natural key.
 #   Phase 2a (agent_stop, tool_use_id present): UPDATE the row with that
-#     tool_use_id WHERE status='running'. The status='running' guard is what
-#     makes this idempotent: re-running the same stop event against an
-#     already-stopped row matches zero rows and is a clean no-op — it does
-#     NOT reach the phase 3 fallback (see below), so it never inserts twice.
-#   Phase 2b (agent_stop, tool_use_id absent): UPDATE the LATEST running row
-#     for (session_id, agent_type) — mirrors the original code's second-tier
-#     fallback match.
+#     tool_use_id WHERE status IN ('running', 'unknown'). The status guard is
+#     what makes this idempotent: re-running the same stop event against an
+#     already-stopped row (a real terminal status, not 'running'/'unknown')
+#     matches zero rows and is a clean no-op — it does NOT reach the phase 3
+#     fallback (see below), so it never inserts twice. 'unknown' is included
+#     alongside 'running' because agent_runs_reaper.sql (llm#1045/roborev#9722)
+#     marks a stale-but-still-dispatched row 'unknown' after 4h with no
+#     agent_stop observed — if the real agent_stop event arrives LATE (after
+#     the reaper already ran), a match against 'running' alone would silently
+#     drop it: the row already isn't 'running' any more, Phase 3's orphan
+#     insert also wouldn't fire (the row already exists), so the real
+#     completion event would vanish with no record anywhere. No re-entrancy
+#     risk from widening this: once a row leaves 'running'/'unknown' for a
+#     real terminal status here, the reaper's own `WHERE status = 'running'`
+#     no longer matches it, so it can never be re-reaped to 'unknown'.
+#   Phase 2b (agent_stop, tool_use_id absent): UPDATE the LATEST
+#     running-or-unknown row for (session_id, agent_type) — mirrors the
+#     original code's second-tier fallback match; same 'unknown' inclusion
+#     and rationale as Phase 2a.
 #   Phase 3 (agent_stop, tool_use_id present, but NO row exists anywhere with
 #     that tool_use_id): insert a minimal 'inherited' row, mirroring the
 #     original code's last-resort INSERT for a stop event with no matching
@@ -155,9 +167,9 @@ _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
     ) WHERE rn = 1
   ) s
   WHERE agent_runs.tool_use_id = s.tool_use_id
-    AND agent_runs.status = 'running';
+    AND agent_runs.status IN ('running', 'unknown');
 
-  -- Phase 2b: agent_stop WITHOUT tool_use_id -> update latest running row for (session_id, agent_type)
+  -- Phase 2b: agent_stop WITHOUT tool_use_id -> update latest running-or-unknown row for (session_id, agent_type)
   UPDATE agent_runs SET
     ended_at = s.stop_ts,
     duration_sec = EXTRACT(EPOCH FROM (s.stop_ts - agent_runs.started_at)),
@@ -172,10 +184,11 @@ _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
   ) s
   WHERE agent_runs.id = (
     SELECT ar2.id FROM agent_runs ar2
-    WHERE ar2.session_id = s.session_id AND ar2.agent_type = s.agent_type AND ar2.status = 'running'
+    WHERE ar2.session_id = s.session_id AND ar2.agent_type = s.agent_type
+      AND ar2.status IN ('running', 'unknown')
     ORDER BY ar2.started_at DESC LIMIT 1
   )
-  AND agent_runs.status = 'running';
+  AND agent_runs.status IN ('running', 'unknown');
 
   -- Phase 3: agent_stop WITH tool_use_id but NO row exists at all with that id -> orphan insert
   INSERT INTO agent_runs (session_id, agent_type, model, started_at, ended_at, duration_sec, prompt_preview, status, tool_use_id)

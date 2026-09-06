@@ -254,6 +254,38 @@ test_that("rotate_logs dry-run mode never truncates", {
   expect_false(file.exists(paste0(big, ".1")))
 })
 
+test_that("rotate_log_file aborts without truncating when the backup copy fails", {
+  skip_if_not(file.exists(sweep_sh), "sentinel_log_sweep.sh not found")
+
+  dir <- tempfile("logs_backup_fail_")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+
+  big <- file.path(dir, "big.log")
+  make_big_log(big, 3000L)
+
+  # Stub `cp` to simulate a failed backup copy (disk full, permission error,
+  # read-only target dir) -- this targets the exact code path the fix
+  # guards, without depending on filesystem permission behaviour (which
+  # differs under root / some CI runners and would make a chmod-based test
+  # flaky).
+  out <- run_helper_snippet(sprintf(
+    paste0(
+      "cp() { return 1; }\n",
+      "rotate_log_file %s 10000 10 0\n",
+      "echo \"ROTATED=$_ROTATED_ONE\""
+    ),
+    shQuote(big)
+  ))
+
+  expect_true(any(grepl("^ROTATED=0$", out)),
+              info = paste("expected ROTATED=0 (aborted), got:", paste(out, collapse = "\n")))
+  expect_equal(length(readLines(big)), 3000L,
+               info = "original file must be left FULLY untouched when the backup copy fails")
+  expect_false(file.exists(paste0(big, ".1")),
+               info = "no backup file should exist when cp fails (stub returns 1, writes nothing)")
+})
+
 test_that("rotate_logs is idempotent — a second run over an already-rotated file is a no-op", {
   skip_if_not(file.exists(sweep_sh), "sentinel_log_sweep.sh not found")
 
