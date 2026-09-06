@@ -211,30 +211,65 @@ roborev_status <- function() {
 # `deleted` is deliberately absent: `repos` has no tombstone, so a removed repo
 # leaves no trace and a decrease is NOT observable. `active_7d` is the honest
 # substitute -- repos that actually saw a review in the window.
+# roborev#9342 (Medium): this used to shell out to `system2("sqlite3", ...)`
+# directly against roborev's SQLite DB, bypassing the project's preferred
+# duckplyr/dplyr pattern (duckdb-patterns skill) even though DuckDB can
+# ATTACH a SQLite file directly. Refactored to open an in-memory DuckDB
+# connection, ATTACH reviews.db read-only (mirroring the pattern already
+# established in .claude/scripts/roborev_daily_report.R /
+# roborev_metrics_etl.R), and query via dplyr verbs. `cutoff` is computed
+# client-side and unquote-spliced (`!!cutoff`) into each dplyr::filter() --
+# passing `Sys.Date() - 7` directly into filter() lets dbplyr try to
+# translate the R-side date arithmetic into SQL itself, which produces a
+# malformed DuckDB `DATE()` call (verified) rather than a literal string.
 roborev_repo_stats <- function() {
   na_result <- list(total = NA_integer_, new_7d = NA_integer_,
                     active_7d = NA_integer_, ephemeral = NA_integer_)
   db <- Sys.getenv("ROBOREV_DB", unset = path.expand("~/.roborev/reviews.db"))
-  if (!file.exists(db) || !nzchar(Sys.which("sqlite3"))) return(na_result)
+  if (!file.exists(db)) return(na_result)
 
-  sql <- paste(
-    "SELECT (SELECT count(*) FROM repos),",
-    "(SELECT count(*) FROM repos WHERE created_at >= date('now','-7 days')),",
-    "(SELECT count(DISTINCT repo_id) FROM review_jobs",
-    " WHERE enqueued_at >= date('now','-7 days')),",
-    "(SELECT count(*) FROM repos WHERE root_path LIKE '/tmp/%'",
-    " OR root_path LIKE '/private/tmp/%' OR root_path LIKE '/var/folders/%'",
-    " OR root_path LIKE '/private/var/folders/%');"
-  )
-  tryCatch({
-    raw <- system2("sqlite3", c("-readonly", shQuote(db), shQuote(sql)),
-                   stdout = TRUE, stderr = FALSE)
-    if (length(raw) == 0L || !nzchar(raw[1])) return(na_result)
-    parts <- as.integer(strsplit(raw[1], "|", fixed = TRUE)[[1]])
+  con <- NULL
+  result <- tryCatch({
+    con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+    invisible(tryCatch(
+      DBI::dbExecute(con, "LOAD sqlite"),
+      error = function(e) {
+        invisible(tryCatch(DBI::dbExecute(con, "INSTALL sqlite"), error = function(e2) NULL))
+        invisible(DBI::dbExecute(con, "LOAD sqlite"))
+      }
+    ))
+    DBI::dbExecute(con, sprintf("ATTACH '%s' AS rdb (TYPE sqlite, READ_ONLY)", db))
+
+    repos_tbl <- dplyr::tbl(con, "rdb.repos")
+    jobs_tbl  <- dplyr::tbl(con, "rdb.review_jobs")
+    cutoff <- as.character(Sys.Date() - 7)
+
+    total <- repos_tbl |> dplyr::summarise(n = dplyr::n()) |> dplyr::pull(n)
+    new_7d <- repos_tbl |>
+      dplyr::filter(created_at >= !!cutoff) |>
+      dplyr::summarise(n = dplyr::n()) |> dplyr::pull(n)
+    active_7d <- jobs_tbl |>
+      dplyr::filter(enqueued_at >= !!cutoff) |>
+      dplyr::summarise(n = dplyr::n_distinct(repo_id)) |> dplyr::pull(n)
+    # LIKE-heavy OR condition is clearer as one regex than four dplyr::filter
+    # ORs; str_detect() is dbplyr's documented DuckDB-backend translation.
+    ephemeral <- repos_tbl |>
+      dplyr::filter(stringr::str_detect(
+        root_path,
+        "^(/tmp/|/private/tmp/|/var/folders/|/private/var/folders/)"
+      )) |>
+      dplyr::summarise(n = dplyr::n()) |> dplyr::pull(n)
+
+    parts <- as.integer(c(total, new_7d, active_7d, ephemeral))
     if (length(parts) != 4L || anyNA(parts)) return(na_result)
     list(total = parts[1], new_7d = parts[2],
          active_7d = parts[3], ephemeral = parts[4])
   }, error = function(e) na_result)
+
+  if (!is.null(con)) {
+    tryCatch(DBI::dbDisconnect(con, shutdown = TRUE), error = function(e2) NULL)
+  }
+  result
 }
 
 # ---- UI ---------------------------------------------------------------------
