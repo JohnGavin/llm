@@ -125,6 +125,32 @@ VALUES (
   TIMESTAMP '2026-08-05 00:00:00'
 );
 
+-- roborev#9324: `id` is the sole PK for this table and INSERT OR IGNORE is
+-- the only write pattern used against it (confirmed -- no UPDATE path exists
+-- anywhere against data_quality_incidents). Commit 8d65656 corrected the two
+-- window_end values above from a stale 2026-08-04 21:04:02.341085 to the
+-- verified deploy instant 2026-08-05 17:29:22, but because the row `id`s are
+-- unchanged and the write is still INSERT OR IGNORE, that correction would
+-- silently NEVER apply on any DB where the earlier (wrong) seed had already
+-- run: INSERT OR IGNORE no-ops when the id already exists, so the stale
+-- window_end would remain and the 33 "not yet reaped" sessions this fix is
+-- meant to include stay excluded from the untrustworthy window. A row-count
+-- check ("re-apply leaves count at 2") cannot detect this -- the count is
+-- identical whether the UPDATE below actually ran or the no-op silently won.
+-- These two rows are id-stable by design (see the header comment above), so
+-- an explicit UPDATE -- not a change of id, and not a blanket ON CONFLICT
+-- DO UPDATE for every future row in this file -- is the targeted fix: it
+-- re-asserts the corrected window_end on every re-apply, for exactly the two
+-- rows a boundary correction is currently known to affect, without changing
+-- the write pattern (or its stability guarantee) for any other incident row.
+UPDATE data_quality_incidents
+SET window_end = TIMESTAMP '2026-08-05 17:29:22'
+WHERE id = 'llm913-sessions-duration_min-20260724';
+
+UPDATE data_quality_incidents
+SET window_end = TIMESTAMP '2026-08-05 17:29:22'
+WHERE id = 'llm913-sessions-ended_at-20260724';
+
 -- ---------------------------------------------------------------------------
 -- Incident: llm#1035 / kenn-io/roborev#1104 -- reviews.verdict_bool conflates
 -- "review ran, found nothing" with "review never ran" (agent-health failure)
