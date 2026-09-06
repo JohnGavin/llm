@@ -77,9 +77,30 @@ source(file.path(<script_dir>, "lib", "duckdb_secure.R"))
 con <- connect_duckdb_secure(dbdir = db_path, read_only = FALSE)
 ```
 
-Working example: `.claude/scripts/backfill_skill_usage.R` (DB-write connection,
-`con <- connect_duckdb_secure(dbdir = db_path, read_only = FALSE)`), covered by
-`tests/test_backfill_skill_usage_secure_connection.R`.
+Working examples (JohnGavin/llm#1156 retrofit round 2 — verified end-to-end
+against real data, not just parsed):
+
+- `.claude/scripts/backfill_skill_usage.R` (DB-write), covered by
+  `tests/test_backfill_skill_usage_secure_connection.R`.
+- `.claude/scripts/backfill_command_usage.R` (DB-write) — run live with
+  `--apply` against `~/.claude/logs/unified.duckdb`.
+- `.claude/scripts/launchd_health_report.R` — 3 read-only connections
+  (`read_run_metrics()`, `read_run_counts_by_script()`,
+  `collect_braindumps_staleness()`), all exercised by a full `--dry-run`.
+- `.claude/scripts/roborev_weekly_rollup.R` — `query_close_reasons()`
+  only (the `duck_con_filter` canonical-project-filter connection in the
+  same file was tried and reverted — see the table below).
+- `.claude/scripts/roborev_metrics_etl.R` — the canonical-guard read
+  connection and `load_pricing_df()`'s read connection (both exercised by
+  a default `--dry-run`), plus `connect_unified_rw()`'s read-write
+  connection (only reachable via `--apply`; verified by code inspection
+  against the already-live-tested write pattern in
+  `backfill_command_usage.R`, not exercised directly in this round).
+- `.claude/scripts/roborev_daily_report.R` — the single `UNIFIED_DUCKDB`
+  read connection, exercised by a full `--dry-run`.
+
+Two additional sites were tried in this round and **reverted** after live
+verification surfaced a real failure — see the next two subsections.
 
 ### CRITICAL — `enable_external_access = false` breaks any connection that LOADs an extension or ATTACHes a file
 
@@ -90,12 +111,15 @@ for a function you didn't explicitly `LOAD`. `allowed_directories` does
 **not** carve out an exception; it only scopes filesystem paths for
 operations that `enable_external_access` still permits at all.
 
-Two real failure modes found while wiring this in:
+Four real failure modes found while wiring this in (two from round 1, two
+more from round 2's retrofit — see JohnGavin/llm#1156):
 
 | Pattern | Why it breaks | Example in this repo |
 |---|---|---|
 | `LOAD sqlite` then `ATTACH '<file>' (TYPE sqlite, READ_ONLY)` | `LOAD` itself is blocked | `roborev_metrics_etl.R`'s `read_con`, `roborev_daily_report.R`'s three `tmp_con` sites, `roborev_weekly_rollup.R`, `send_overnight_self_review_email.R` — all read `~/.roborev/reviews.db` this way; NOT retrofitted |
 | A query uses a function backed by an auto-loadable extension (e.g. `DATEDIFF()` → `icu`) | DuckDB's autoload-on-first-use is itself extension loading | `skill_usage_etl.R`'s `STALENESS_VIEW_DDL` uses `DATEDIFF()`; NOT retrofitted |
+| `(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::TIMESTAMP` — timezone conversion | `AT TIME ZONE` also autoloads `icu`, same as `DATEDIFF()` — it is not a core function despite reading like one | `send_stage1_findings_email.R` — tried, reproduced live (`Extension Autoloading Error ... Loading external extensions is disabled through configuration`), **reverted to a raw `DBI::dbConnect()` call** |
+| A hardened connection to path *P* is leaked (never actually disconnected) because its `on.exit(dbDisconnect(...))` is registered inside an `if` block at the script's **top level**, where `on.exit()` has no enclosing function frame to fire on | The leaked connection already ran `SET lock_configuration = true`; a later connection to the *same* `dbdir` shares the cached DuckDB instance (per-dbdir instance caching, llm#595) and its own `SET enable_external_access = false` then fails with `Cannot change configuration option "enable_external_access" - the configuration has been locked` | `roborev_weekly_rollup.R`'s `duck_con_filter` (canonical-project filter) vs. `query_close_reasons()`, both against `UNIFIED_DUCKDB` in the same process — reproduced live; `duck_con_filter` **reverted to a raw `DBI::dbConnect()` call**, `query_close_reasons()` kept hardened |
 
 `date_trunc()`, `regexp_replace()`, `CAST`, and `current_timestamp` are
 core functions and do not trigger this — confirmed empirically, and that is
@@ -103,7 +127,10 @@ why `backfill_skill_usage.R` (which uses exactly those) was a safe target.
 Before retrofitting any other `dbConnect()` call site, run the script
 end-to-end against a real temp DB and projects/ input, not just a grep for
 `ATTACH`/`LOAD` — the icu-autoload failure above produces no grep-visible
-warning sign in the source.
+warning sign in the source. Likewise, grepping for `ATTACH`/`LOAD` cannot
+catch the fourth pattern — it only shows up by actually running the script
+end-to-end and checking whether **any other connection to the same dbdir**
+already ran with `lock_configuration = true` and was never truly closed.
 
 ### Threats Mitigated (on connections where it's safe to apply)
 

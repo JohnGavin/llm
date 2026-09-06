@@ -88,6 +88,24 @@ proj_idx     <- which(args == "--projects-dir") + 1L
 projects_dir <- if (length(proj_idx) && proj_idx <= length(args))
                   args[[proj_idx]] else path.expand("~/.claude/projects")
 
+# Hardened DuckDB connection helper (JohnGavin/llm#1156). Safe here because
+# this script's only DB write is core DuckDB SQL (CREATE TABLE, dbExecute
+# INSERT ... SELECT) — no LOAD of an extension and no ATTACH of an external
+# database file. See duckdb_secure.R's header for call sites that must NOT
+# use this helper.
+.scripts_dir_backfill_cmd <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args_full <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args_full)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args_full[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "backfill_command_usage.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_backfill_cmd, "lib", "duckdb_secure.R"))
+
 cat(sprintf("backfill_command_usage: dry_run=%s db=%s projects_dir=%s\n",
             dry_run, db_path, projects_dir))
 
@@ -200,7 +218,7 @@ if (dry_run) {
 }
 
 # ── DB write ──────────────────────────────────────────────────────────────────
-con <- dbConnect(duckdb(), db_path)
+con <- connect_duckdb_secure(dbdir = db_path, read_only = FALSE)
 on.exit(dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
 invisible(dbExecute(con, "

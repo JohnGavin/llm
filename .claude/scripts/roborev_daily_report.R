@@ -85,6 +85,24 @@ if (!file.exists(UNIFIED_DUCKDB)) {
   graceful_exit(paste("unified.duckdb not found at", UNIFIED_DUCKDB))
 }
 
+# Hardened DuckDB connection helper (JohnGavin/llm#1156). Safe ONLY for this
+# UNIFIED_DUCKDB-only connection (pure DuckDB-native reads) — NOT for the
+# three ":memory:" tmp_con connections below that LOAD the sqlite extension
+# and ATTACH REVIEWS_DB; those MUST stay raw dbConnect() calls. See
+# duckdb_secure.R's header.
+.scripts_dir_daily_report <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args_full <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args_full)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args_full[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "roborev_daily_report.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_daily_report, "lib", "duckdb_secure.R"))
+
 # A concurrent read-write duckdb process (another script, an interactive
 # `duckdb` shell) holds a transient lock that clears within seconds -- but
 # without a retry, one momentary collision skips the whole snapshot and the
@@ -98,7 +116,7 @@ con <- local({
   last_err <- NULL
   for (attempt in seq_len(max_attempts)) {
     result <- tryCatch(
-      dbConnect(duckdb::duckdb(), UNIFIED_DUCKDB, read_only = TRUE),
+      connect_duckdb_secure(dbdir = UNIFIED_DUCKDB, read_only = TRUE),
       error = function(e) e
     )
     if (!inherits(result, "error")) return(result)

@@ -97,6 +97,24 @@ COUNTER_FILE  <- file.path(Sys.getenv("HOME"), ".claude",
                              ".roborev_autoclose_counters.json")
 AUTOCLOSE_LOG <- file.path(Sys.getenv("HOME"), ".claude", "logs",
                              "roborev_severity_autoclose.log")
+
+# Hardened DuckDB connection helper (JohnGavin/llm#1156). Safe ONLY for the
+# UNIFIED_DB-only connections in this file (pure DuckDB-native reads/writes)
+# — NOT for the ":memory:" connection below (read_con) that LOADs the
+# sqlite extension and ATTACHes REVIEWS_DB; that one MUST stay a raw
+# DBI::dbConnect() call. See duckdb_secure.R's header.
+.scripts_dir_metrics_etl <- tryCatch(
+  dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  error = function(e) {
+    args_full <- commandArgs(trailingOnly = FALSE)
+    idx  <- grep("^--file=", args_full)
+    if (length(idx)) dirname(normalizePath(sub("^--file=", "", args_full[idx]), mustWork = FALSE))
+    else dirname(normalizePath(file.path(Sys.getenv("HOME"), "docs_gh", "llm",
+                                         ".claude", "scripts", "roborev_metrics_etl.R"),
+                               mustWork = FALSE))
+  }
+)
+source(file.path(.scripts_dir_metrics_etl, "lib", "duckdb_secure.R"))
 POLL_LOG      <- file.path(Sys.getenv("HOME"), ".claude", "logs",
                              "roborev_poll_merges.log")
 CODEX_FALLBACK_LOG_DIR <- file.path(Sys.getenv("HOME"), ".claude", "logs",
@@ -300,7 +318,7 @@ if (!include_fixtures && nrow(jobs_raw) > 0L && "repo" %in% names(jobs_raw)) {
       # CREATE ... attached in read-only mode"). on.exit() does not fire at
       # script top level — use finally for a deterministic disconnect;
       # shutdown = TRUE evicts the cached instance.
-      duck_read <- DBI::dbConnect(duckdb::duckdb(), UNIFIED_DB, read_only = TRUE)
+      duck_read <- connect_duckdb_secure(dbdir = UNIFIED_DB, read_only = TRUE)
       tryCatch(
         DBI::dbGetQuery(duck_read, "
           SELECT slug FROM canonical_projects WHERE is_active = TRUE
@@ -1031,7 +1049,7 @@ load_pricing_df <- function(db_path) {
   seed_df <- pricing_seed_df()
   if (!file.exists(db_path)) return(seed_df)
   df <- tryCatch({
-    con <- DBI::dbConnect(duckdb::duckdb(), db_path, read_only = TRUE)
+    con <- connect_duckdb_secure(dbdir = db_path, read_only = TRUE)
     tryCatch(
       DBI::dbGetQuery(con, "
         SELECT model_prefix, input_usd_per_mtok, output_usd_per_mtok,
@@ -2485,7 +2503,7 @@ hk_fail_cli <- function(err) {
 connect_unified_rw <- function(path, attempts = 5L, wait_s = 15L) {
   last_err <- "unknown"
   for (i in seq_len(attempts)) {
-    con <- tryCatch(dbConnect(duckdb::duckdb(), path), error = function(e) e)
+    con <- tryCatch(connect_duckdb_secure(dbdir = path, read_only = FALSE), error = function(e) e)
     if (!inherits(con, "error")) {
       ro <- tryCatch(
         dbGetQuery(con,
