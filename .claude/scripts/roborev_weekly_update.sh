@@ -100,9 +100,29 @@ update_is_available() {
   return 1   # nothing newer named -> treat as current
 }
 
-# True when `roborev status` reports the daemon as running.
+# Pure parser (no I/O) so the selftest can exercise it against fixed strings.
+# True when $1 (raw `roborev status` output) shows the daemon running AND —
+# when $2 (expected version, no leading v) is given — the status line also
+# names that exact version.
+#
+# The version check exists because "running" alone is not proof the daemon
+# picked up the new binary: if `daemon restart` silently no-ops (the process
+# was already up, or the restart command failed and was swallowed), the OLD
+# pre-update process keeps reporting "running" forever and this function
+# would wrongly call the update verified.
+status_shows_ready() {
+  local out="$1" expected="${2:-}"
+  printf '%s\n' "$out" | grep -qE '^Daemon:[[:space:]]+running' || return 1
+  if [ -n "$expected" ]; then
+    printf '%s\n' "$out" | grep -qF "[v${expected}]" || return 1
+  fi
+  return 0
+}
+
+# True when `roborev status` reports the daemon as running (and, when $1 is
+# given, running at that exact version).
 daemon_is_running() {
-  "$ROBOREV_BIN" status 2>/dev/null | grep -qE '^Daemon:[[:space:]]+running'
+  status_shows_ready "$("$ROBOREV_BIN" status 2>/dev/null)" "${1:-}"
 }
 
 # ── Selftest ─────────────────────────────────────────────────────────────────
@@ -138,6 +158,23 @@ if [ "$MODE" = "selftest" ]; then
   if printf 'Daemon: restarting\n' \
        | grep -qE '^Daemon:[[:space:]]+running'; then r=yes; else r=no; fi
   check "restarting daemon NOT counted as running" "no" "$r"
+
+  # Version-aware readiness: the case this fix exists for. A `daemon restart`
+  # that silently no-ops leaves the OLD pre-update process running -- the
+  # status line still says "running", but at the STALE version. The OLD
+  # daemon_is_running() (no version argument) could not tell the difference
+  # and would have called the update verified; the NEW version-aware check
+  # must correctly fail when the reported version doesn't match what was
+  # just installed.
+  STALE_STATUS='Daemon: running (uptime: 50h 37m) [v0.63.0]'
+  if status_shows_ready "$STALE_STATUS"; then r=yes; else r=no; fi
+  check "OLD-style check (no expected version) WOULD HAVE PASSED on a stale daemon" "yes" "$r"
+
+  if status_shows_ready "$STALE_STATUS" "0.64.0"; then r=yes; else r=no; fi
+  check "NEW version-aware check correctly FAILS when running version != expected" "no" "$r"
+
+  if status_shows_ready 'Daemon: running (uptime: 2m) [v0.64.0]' "0.64.0"; then r=yes; else r=no; fi
+  check "NEW version-aware check PASSES when running version == expected" "yes" "$r"
 
   # update_is_available() must say "no" for every up-to-date phrasing and "yes"
   # only when a genuinely different version is named.
@@ -220,13 +257,23 @@ AFTER="$(current_version || true)"
 say "Binary now reports: ${AFTER:-unknown} (was ${BEFORE:-unknown})"
 
 # ── 3. Restart the daemon ourselves, then prove it came back ─────────────────
+# The restart's own exit status is recorded distinctly (not swallowed with a
+# bare `|| true`) so a genuinely-failing restart command is visible in the
+# log even though the poll below still runs — some daemons come back on
+# their own even after `daemon restart` itself errors, so we still verify
+# rather than exiting immediately on a non-zero restart.
 
-"$ROBOREV_BIN" daemon restart || true   # verified below, not trusted here
+RESTART_RC=0
+"$ROBOREV_BIN" daemon restart || RESTART_RC=$?
+if [ "$RESTART_RC" -ne 0 ]; then
+  say "WARNING: 'roborev daemon restart' exited $RESTART_RC — polling for readiness anyway"
+  log "restart_command=failed rc=$RESTART_RC before=$BEFORE after=$AFTER"
+fi
 
 waited=0
 while [ "$waited" -lt "$READY_TIMEOUT" ]; do
-  if daemon_is_running; then
-    say "Daemon is running after ${waited}s. Updated ${BEFORE:-unknown} -> ${AFTER:-unknown}."
+  if daemon_is_running "$AFTER"; then
+    say "Daemon is running at ${AFTER:-unknown} after ${waited}s. Updated ${BEFORE:-unknown} -> ${AFTER:-unknown}."
     log "result=ok before=$BEFORE after=$AFTER daemon_ready_after=${waited}s"
     exit 0
   fi
@@ -235,10 +282,12 @@ while [ "$waited" -lt "$READY_TIMEOUT" ]; do
 done
 
 # The failure the 2026-08-03 run swallowed. Exit 2 so launchd records non-zero
-# and the weekly launchd-health audit surfaces it.
+# and the weekly launchd-health audit surfaces it. This also fires when the
+# daemon reports "running" but at the STALE (pre-update) version -- i.e. the
+# restart silently no-op'd and the old process never went away.
 say "ERROR: roborev updated to ${AFTER:-unknown} but the daemon did not report"
-say "       running within ${READY_TIMEOUT}s. Restart it manually:"
+say "       running at that version within ${READY_TIMEOUT}s. Restart it manually:"
 say "         roborev daemon restart"
 say "         roborev status"
-log "result=daemon-not-ready before=$BEFORE after=$AFTER timeout=${READY_TIMEOUT}s"
+log "result=daemon-not-ready before=$BEFORE after=$AFTER timeout=${READY_TIMEOUT}s restart_rc=$RESTART_RC"
 exit 2
