@@ -4316,3 +4316,81 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   Remedy is either waiting for crates.io to stop 403ing that artifact, or
   an upstream `pkgctx` Cargo.lock update; `ctx_audit()`'s STALE/
   OTHER_VERSION counts will keep growing until then.
+
+## 2026-09-06 (session-end: feat/cc-20260903-092531, cont'd 3)
+
+### Completed
+- Full roborev backlog audit and cleanup across `llm` and `llmtelemetry`:
+  91 open findings triaged, 86 closed (stale/noise/already-resolved), 9
+  confirmed genuinely still-live real bugs — all 9 fixed, PR'd, and
+  merged. Merged: [JohnGavin/llm#1171](https://github.com/JohnGavin/llm/pull/1171)
+  (#9083 daemon-restart version check, #9209 log-rotation backup-failure
+  abort, #9722 late `agent_stop` for reaped `'unknown'` rows; #9353
+  investigated and found already fixed by an earlier commit — closed, no
+  change), [JohnGavin/llm#1172](https://github.com/JohnGavin/llm/pull/1172)
+  (#9324 seed-file `UPDATE` for already-seeded DBs, #9342
+  `roborev_repo_stats()` duckdb/dplyr refactor + tests, #9079 weekday
+  cadence math fixed for the real 15-entry Mon-Fri×3/day plist — the
+  dispatch's "already fixed" premise was incomplete and I fixed the
+  remainder, #8908 orphaned vignette snapshot removed after confirming no
+  remaining references), [JohnGavin/llmtelemetry#362](https://github.com/JohnGavin/llmtelemetry/pull/362),
+  [#363](https://github.com/JohnGavin/llmtelemetry/pull/363),
+  [#364](https://github.com/JohnGavin/llmtelemetry/pull/364) (#8360 daily
+  email project-name resolution — prefer `sessionId` over unreliable
+  `projectPath`; found and fixed a bug in my own fix mid-verification —
+  `canonicalize_project()` was passing an unparseable `sanitized@...`
+  string through unchanged instead of returning `NA`). Every fix was
+  independently re-run against real data/DBs before landing, not just
+  accepted from the implementing agent's report (e.g. re-executed
+  `roborev_repo_stats()` against the live `~/.roborev/reviews.db` myself
+  and independently recomputed the weekly-cadence gap math in a
+  standalone script).
+- Corrected two of my own earlier-session mistakes: #10012/#10052 were
+  claimed closed in an earlier (pre-compaction) session but were still
+  `closed=0` — root cause was the same `review.id` vs `job_id` confusion
+  documented below; fixed properly this time using the correct `job_id`.
+  Separately, a mid-session `roborev close 6972` (using the displayed
+  `id` rather than the `job_id`) actually closed an unrelated review
+  (id=5505, about `expense_categories.yaml`); caught via a `sqlite3`
+  cross-check, reopened with `roborev close <job_id> --reopen`, and the
+  wrongly-touched review got a corrective comment.
+- Resynced this session's own branch with `origin/main`: it had drifted
+  10 commits behind on 6 files after PR #1170 landed (a retrofit of
+  `connect_duckdb_secure()` into more call sites) while this branch's
+  last merge-from-main predated that PR by ~2h15m — not a conflict-
+  resolution error, just a stale sync. Merged cleanly (0 conflicts); the
+  branch's actual content diff vs. `origin/main` is now empty (its own 10
+  "ahead" commits carried no net-new content once resynced — the docs/
+  changelog entries were already reflected on `main` via the separate
+  merged PRs).
+
+### Failed Approaches
+- Saved a `git diff` of an llmtelemetry fix to a patch file for
+  reapplication after realizing I'd edited the wrong branch —
+  `git apply` failed with "No valid patches in input" because the saved
+  file was difftastic's structural diff output, not a standard unified
+  diff (exactly the hazard this repo's own `bash-safety` rule Part 3
+  documents — I have it loaded and still fell into it). Abandoned the
+  patch approach; manually redid the edits directly.
+
+### Accuracy / Metrics
+- `roborev summary --json`: verdicts 50 total (36 passed, 14 failed, 10
+  addressed) since 2026-08-30. Manually inspected the `llm`/`llmtelemetry`
+  reviews landing on this session's own fix commits: 4 read "No issues
+  found" (roborev's own auto-summary format describes the *pre-fix* bug
+  under "Problem:", which reads like a fresh finding but isn't one), 2
+  raised genuine but Low-severity forward-looking suggestions — a
+  length-mismatch guard for `best_project_name()`'s vectorised inputs,
+  and a doc/verification note on the new `data`-branch `.roborev.toml` —
+  neither blocking, neither indicating a regression in a merged fix.
+  `roborev_consistency_check.sh --verbose`: `consistent` (backlog=128,
+  overview_total=6, verdicts=6, crash=0, quota=0).
+- `ctx_audit("DESCRIPTION")`: 1 OK, 9 OTHER_VERSION, 24 STALE — unchanged
+  from the prior entry's root-caused `pkgctx`/crates.io external failure;
+  not re-attempted this session (would just fail again for the same
+  documented reason).
+
+### Known Limitations
+- (carried forward, unchanged) `pkgctx`-based `ctx_sync()` remains broken
+  end-to-end on the external `zmij@1.0.12` crates.io fetch failure — see
+  the 2026-09-05 entry above for the full root-cause.
