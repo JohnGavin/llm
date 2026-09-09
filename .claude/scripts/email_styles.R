@@ -74,8 +74,20 @@ collapsible_block <- function(title, summary_stats, html_body, open = FALSE,
 # The llmtelemetry roborev dashboard was public via GitHub Pages until the
 # repo was made private (2026-08-22) to stop it publishing another project's
 # personal-finance data — the GH Pages site went offline as an accepted
-# consequence. The dashboard itself still exists: Quarto renders it LOCALLY
-# to _site/index.html inside the llmtelemetry checkout.
+# consequence.
+#
+# 2026-09-09 correction (llm#1123 follow-up): the previous default
+# (_site/index.html) was never actually produced by anything running on this
+# machine — that path is only ever written by CI (deploy-dashboard.yaml),
+# which copies the rendered *general* project dashboard
+# (dashboard_shinylive.qmd) there, not a roborev-specific page. Verified: the
+# path did not exist locally when checked. The correct LOCAL target for a
+# button labelled "View Full roborev Dashboard" is the roborev-specific
+# vignette, vignettes/roborev_summary.qmd, which renders to a single
+# self-contained HTML file (embed-resources: true — no companion _files/
+# directory to break a file:// link). Regenerate it locally with:
+#   inst/scripts/refresh_roborev_vignette_rds.R   # refresh data from unified.duckdb
+#   quarto render vignettes/roborev_summary.qmd    # render (needs quarto + plotly + DT)
 #
 # Nothing here is hardcoded to that one incident. Every piece is
 # env-overridable, so a FUTURE visibility change (site goes public again,
@@ -86,9 +98,9 @@ collapsible_block <- function(title, summary_stats, html_body, open = FALSE,
 #   ROBOREV_DASHBOARD_REPO_URL   — the GitHub repo, for owner-authenticated
 #                                   browsing when the site itself isn't
 #                                   published (default: the llmtelemetry repo)
-#   ROBOREV_DASHBOARD_LOCAL_PATH — where the rendered site lives on this
-#                                   machine (default: the llmtelemetry
-#                                   checkout's Quarto _site/ output)
+#   ROBOREV_DASHBOARD_LOCAL_PATH — where the rendered roborev vignette lives
+#                                   on this machine (default: the llmtelemetry
+#                                   checkout's rendered vignette HTML)
 #
 # @return list(explicit_url = chr|NULL, repo_url = chr, local_path = chr)
 resolve_dashboard_links <- function() {
@@ -101,36 +113,63 @@ resolve_dashboard_links <- function() {
     ),
     local_path = Sys.getenv(
       "ROBOREV_DASHBOARD_LOCAL_PATH",
-      file.path(Sys.getenv("HOME"), "docs_gh", "llmtelemetry", "_site", "index.html")
+      file.path(Sys.getenv("HOME"), "docs_gh", "llmtelemetry", "vignettes", "roborev_summary.html")
     )
   )
 }
 
-# dashboard_cta_block(): renders the "View Full roborev Dashboard" button
-# plus, when no explicit override URL is set, a one-line explanation of why
-# the button now points at the (private) repo instead of the old published
-# site, and the locally-rendered path as SELECTABLE TEXT rather than a
-# file:// <a href>. Major mail clients (Gmail included) strip file:// links
-# outright — a link that renders but can't be followed is barely better than
-# the 404 it replaces, so the path is shown as copyable <code> text instead.
+# dashboard_cta_block(): renders the "View Full roborev Dashboard" button.
+#
+# 2026-09-09 (llm#1123 follow-up, user request "fix the button to point to
+# the html file on my macbook"): when no explicit override URL is set AND
+# the local rendered vignette actually exists on THIS machine (checked at
+# send-time via file.exists() — the email is generated on the same Mac it
+# will be read on, so this is a real, not stale, check), the button href
+# becomes file://<local_path> directly. When the file is absent (nobody has
+# rendered it yet, or the email is somehow generated elsewhere), the button
+# falls back to the private repo URL, same as before.
+#
+# Caveat, unresolved as of this change: major mail clients (Gmail included)
+# are documented to strip file:// <a href> links outright. Whether that
+# still applies to THIS button in THIS mail client (Gmail account, read via
+# whatever app) has not been re-verified — the file:// path is used because
+# it directly matches what was asked, but if it renders unclickable, the
+# copyable <code> text below the button (present in both cases) is the
+# reliable fallback: select and paste into a browser's address bar.
 #
 # @param accent_colour CTA button colour (e.g. ACCENT_BLUE)
 # @return HTML string
 dashboard_cta_block <- function(accent_colour) {
   links <- resolve_dashboard_links()
-  href  <- if (!is.null(links$explicit_url)) links$explicit_url else links$repo_url
+  local_exists <- is.null(links$explicit_url) && file.exists(links$local_path)
+  href <- if (!is.null(links$explicit_url)) {
+    links$explicit_url
+  } else if (local_exists) {
+    paste0("file://", links$local_path)
+  } else {
+    links$repo_url
+  }
 
   changed_note <- if (is.null(links$explicit_url)) {
+    fallback_line <- if (local_exists) {
+      "The button above opens the locally rendered dashboard directly. If it
+        doesn&#39;t open (some mail clients block file:// links), copy this
+        path into a browser instead:"
+    } else {
+      "The public dashboard went offline when llmtelemetry was made private
+        (2026-08-22) to stop it publishing another project&#39;s data. The
+        button above opens the (now-private) repo instead &mdash; render the
+        dashboard locally (inst/scripts/refresh_roborev_vignette_rds.R then
+        quarto render vignettes/roborev_summary.qmd) to make the button open
+        it directly next time, or open the expected path once rendered:"
+    }
     sprintf(
       '<p style="color:%s; font-size:%s; margin:4px 0 12px 0;">
-        The public dashboard went offline when llmtelemetry was made private
-        (2026-08-22) to stop it publishing another project&#39;s data. The
-        button above opens the (now-private) repo instead &mdash; or open the
-        locally rendered site at:<br>
+        %s<br>
         <code style="background-color:%s; color:%s; padding:2px 6px;
           border-radius:3px; font-size:%s; user-select:all;">%s</code>
       </p>',
-      DARK_MUTED, EMAIL_FONT_SUBTITLE, DARK_CARD, ACCENT_GREEN,
+      DARK_MUTED, EMAIL_FONT_SUBTITLE, fallback_line, DARK_CARD, ACCENT_GREEN,
       EMAIL_FONT_SUBTITLE, links$local_path
     )
   } else ""
@@ -154,5 +193,11 @@ dashboard_cta_block <- function(accent_colour) {
 # outside the HTML block itself (e.g. QA markers).
 effective_dashboard_url <- function() {
   links <- resolve_dashboard_links()
-  if (!is.null(links$explicit_url)) links$explicit_url else links$repo_url
+  if (!is.null(links$explicit_url)) {
+    links$explicit_url
+  } else if (file.exists(links$local_path)) {
+    paste0("file://", links$local_path)
+  } else {
+    links$repo_url
+  }
 }
