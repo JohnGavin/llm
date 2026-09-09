@@ -12,6 +12,8 @@
   <integer>1800</integer>
   <key>RunAtLoad</key>
   <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/johngavin/.claude/logs/roborev_failure_alert_launchd.log</string>
   <key>StandardErrorPath</key>
   <string>/Users/johngavin/.claude/logs/roborev_failure_alert.err</string>
 </dict>
