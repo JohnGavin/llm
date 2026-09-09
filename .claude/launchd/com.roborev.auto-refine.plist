@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.roborev.auto-refine</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/.claude/scripts/roborev_auto_refine.sh</string>
+        <string>run</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/Users/johngavin/docs_gh/llm</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev-auto-refine.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev-auto-refine.log</string>
+</dict>
+</plist>

@@ -109,8 +109,15 @@ else
   log "warn: roborev status reports running but no PID matched 'roborev daemon run' -- pre-migration self-daemonized process, or ps -f pattern mismatch"
 fi
 
-fail="$(printf '%s' "$status" | grep -oE '[0-9]+ failed'    | grep -oE '^[0-9]+')"; fail="${fail:-0}"
-comp="$(printf '%s' "$status" | grep -oE '[0-9]+ completed' | grep -oE '^[0-9]+')"; comp="${comp:-0}"
+# Scope extraction to the "Jobs:" summary line only (e.g. "Jobs:    0 queued,
+# 0 running, 9638 completed, 563 failed, 0 skipped"). Matching against the
+# whole $status blob used to also pick up per-job lines in the "Recent
+# Errors" section ("job 13390 - job 13390 failed after 3 retries" matches
+# `[0-9]+ failed` too), producing multiple grep hits and a multi-line $fail
+# that broke the `dfail=$(( fail - pfail ))` arithmetic below on every run.
+jobs_line="$(printf '%s' "$status" | grep '^Jobs:' | head -1)"
+fail="$(printf '%s' "$jobs_line" | grep -oE '[0-9]+ failed'    | grep -oE '^[0-9]+')"; fail="${fail:-0}"
+comp="$(printf '%s' "$jobs_line" | grep -oE '[0-9]+ completed' | grep -oE '^[0-9]+')"; comp="${comp:-0}"
 dfail=$(( fail - pfail )); [ "$dfail" -lt 0 ] && dfail=0
 
 # First run: establish baseline, no alert.
