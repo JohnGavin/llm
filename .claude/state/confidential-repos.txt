@@ -30,10 +30,26 @@
 #   2. Add the basename or owner/repo string below.
 #   3. Commit with a message referencing the decision/issue that added it.
 #
+# NOTE ON SHORT AND COMMON NAMES (llm#1180): entries here are matched at ANY
+# length, unlike filesystem-discovered names which must clear
+# PRIVATE_DETAIL_MIN_NAME_LEN (default 6). That is deliberate — a name is here
+# because a human decided it must never be published, so the false-positive
+# cost is theirs to weigh. But do weigh it: declaring a short or dictionary
+# word (`crew`, `aver`, `data`) will block legitimate issues that merely use
+# the word. Prefer the owner/repo form, or accept the noise knowingly.
+#
+# A declared entry does NOT need to exist on this machine, be checked out, or
+# live under $REPO_VISIBILITY_SCAN_ROOT. Declaration alone is sufficient — that
+# is the whole point of this list (llm#1180).
+#
 # Rule reference: .claude/rules/private-repo-detail-locality.md
 # Issue: JohnGavin/llm#794
 
-# (no entries yet — llm has not identified a technically-public-but-
-# confidential-by-policy repo of its own as of 2026-08-30; llmtelemetry's
-# excluded_dashboard_projects() is the precedent this list follows if/when
-# one is identified)
+mycare   # PHI (medical records), local-only, no git remote — llm#1180
+
+# Positive control. Not a real repo and never will be. A scheduled check
+# pipes a synthetic publish payload containing this string through
+# private_repo_detail_guard.sh and asserts it BLOCKS. If that ever returns
+# "allow", the guard has gone inert and the next real leak would pass too.
+# Do not remove; do not rename to anything a human might legitimately type.
+zzz-canary-never-a-real-repo

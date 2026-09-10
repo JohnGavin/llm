@@ -265,8 +265,40 @@ classify_one() {
 # inline unless --refresh is passed or no cache file exists at all (first
 # run) — a PreToolUse hook consuming this must stay fast.
 _build_candidates() {
-  local d name vis count=0
+  local d name vis count=0 line entry
   : > "${CANDIDATES_FILE}.tmp"
+
+  # ── Declared entries first (llm#1180) ─────────────────────────────────────
+  # Every name in $CONFIDENTIAL_LIST becomes a candidate in its own right,
+  # with an EMPTY path field, regardless of whether that repo exists under
+  # $SCAN_ROOT, exists on this machine at all, or is currently checked out.
+  #
+  # Why this exists: the discovery loop below can only classify directories it
+  # has already found, so a repo outside $SCAN_ROOT was unprotectable — adding
+  # it to the confidential list changed nothing, because the list only
+  # influences how an ALREADY-ENUMERATED directory is classified. That gap hid
+  # a PHI-bearing, local-only repo from the pre-publish guard entirely
+  # (llm#1180). Declaration is now sufficient on its own; filesystem discovery
+  # below is the safety net for repos nobody remembered to declare, not the
+  # primary mechanism.
+  #
+  # The empty path field is load-bearing: private_repo_detail_guard.sh reads it
+  # as "declared, not discovered" and matches such names at ANY length, where a
+  # discovered name must clear MIN_NAME_LEN. See that hook's name-length note.
+  #
+  # A name that is BOTH declared and discovered legitimately produces two rows
+  # (one name-only, one with a path). That is harmless -- the guard breaks on
+  # first match -- and the path row adds a genuinely distinct match target.
+  if [ -f "$CONFIDENTIAL_LIST" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      entry="${line%%#*}"
+      entry="$(_trim "$entry")"
+      [ -z "$entry" ] && continue
+      printf '%s\t%s\t%s\n' "$entry" "" "confidential_by_policy" >> "${CANDIDATES_FILE}.tmp"
+    done < "$CONFIDENTIAL_LIST"
+  fi
+
+  # ── Filesystem discovery (safety net) ─────────────────────────────────────
   while IFS= read -r d; do
     [ -e "$d/.git" ] || continue
     case "$(basename "$d")" in
@@ -429,6 +461,39 @@ if [ "${1:-}" = "--selftest" ]; then
   _case "the never-seeded path really was never created by the call above" \
     "$([ -f "$TMP_DIR/never-seeded.tsv" ] && echo EXISTS || echo ABSENT)" \
     "ABSENT"
+  export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/candidates.tsv"
+  _load_config
+
+  # ── declared entries become candidates without existing on disk (llm#1180) ─
+  # The defect this covers: _build_candidates could only ever emit repos it
+  # found under $SCAN_ROOT, so a repo living outside that tree was invisible to
+  # the pre-publish guard no matter what confidential-repos.txt said. A
+  # PHI-bearing local-only repo sat unprotected because of it.
+  #
+  # $SCAN_ROOT is pointed at an EMPTY directory here, so nothing can be
+  # discovered and the only possible source of output is the declared list.
+  export REPO_VISIBILITY_SCAN_ROOT="$TMP_DIR/empty_scan_root"
+  export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/declared_candidates.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/declared_list.txt"
+  mkdir -p "$TMP_DIR/empty_scan_root"
+  printf '# a comment\n\nnowhere-on-this-disk   # trailing comment\n' \
+    > "$TMP_DIR/declared_list.txt"
+  _load_config
+  candidates --refresh >/dev/null 2>&1
+  _case "a declared repo that exists nowhere on disk is still a candidate" \
+    "$(candidates 2>/dev/null)" \
+    "$(printf 'nowhere-on-this-disk\t\tconfidential_by_policy')"
+
+  # Falsification: with the declared list empty, the SAME call must produce
+  # nothing. Without this, the case above would still pass if _build_candidates
+  # had simply started emitting a constant.
+  : > "$TMP_DIR/declared_list.txt"
+  candidates --refresh >/dev/null 2>&1
+  _case "with nothing declared, an empty scan root yields no candidates" \
+    "$(candidates 2>/dev/null)" ""
+
+  unset REPO_VISIBILITY_SCAN_ROOT
+  export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/confidential-repos.txt"
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/candidates.tsv"
   _load_config
 
