@@ -65,10 +65,17 @@ PASSED_PATTERNS = [
 ]
 
 # Mirrors send_roborev_email.R parse_max_severity_ordinal()'s regex --
-# \*{0,2} on both sides of "Severity" makes bold markdown markers optional so
-# both "- Severity: High" and "- **Severity**: High" parse.
+# \*{0,2} around "Severity" and around the colon makes bold markdown markers
+# optional on EITHER side of the colon, so all of "Severity: High",
+# "**Severity**: High" (bold closes before the colon), AND "**Severity:**
+# High" (bold closes after the colon -- 2026-09-10, llm daily-report
+# self-diagnostic, ids 9480/9652/9659/9661/9662 in the live backlog) parse.
+# Matched against whitespace-normalised text (see parse_max_severity_ordinal
+# below) so an embedded newline splitting "Severity" from its trailing "**:"
+# (id 9617) doesn't break the match either.
 _SEVERITY_RE = re.compile(
-    r"\*{0,2}Severity\*{0,2}:\s*(Critical|High|Medium|Low)", re.IGNORECASE
+    r"\*{0,2}Severity\s*\*{0,2}\s*:\s*\*{0,2}\s*(Critical|High|Medium|Low)",
+    re.IGNORECASE,
 )
 
 
@@ -87,7 +94,7 @@ def parse_max_severity_ordinal(text):
     no `Severity:` marker was found at all."""
     if not text:
         return None
-    words = _SEVERITY_RE.findall(text)
+    words = _SEVERITY_RE.findall(normalize_ws(text))
     if not words:
         return None
     return max(SEVERITY_ORDINAL[w.lower()] for w in words)

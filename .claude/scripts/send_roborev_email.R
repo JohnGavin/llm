@@ -326,12 +326,47 @@ parse_max_severity_ordinal <- function(text) {
   # parse, while still anchoring on "Severity" + colon + one of the four
   # levels — a bare mention of the word "severity" in prose (no colon
   # immediately after) still does not match.
+  #
+  # 2026-09-10 (roborev report self-diagnostic, "9 of 13 unclassified
+  # findings"): two more real shapes observed live in the open backlog
+  # (ids 9480/9652/9659/9661/9662, and 9617) that the original pattern
+  # missed:
+  #   - "**Severity:** High" — the closing `**` comes AFTER the colon,
+  #     not before it. The old pattern only matched `**Severity**:` (bold
+  #     closes before the colon); `\\*{0,2}` immediately after "Severity"
+  #     and NOT after the colon meant the trailing-`**` variant never
+  #     matched at all.
+  #   - "**Severity\n**: Low" — a line-wrap split the token itself
+  #     (whitespace, including a newline, between "Severity" and the
+  #     asterisks/colon that follow it). The old pattern matched `text`
+  #     directly, never whitespace-normalised, so an embedded newline
+  #     broke the match even though normalize_ws() (used elsewhere in this
+  #     file) would have fixed it trivially.
+  # Fixed by normalising whitespace before matching (collapses embedded
+  # newlines to a single space) and widening the pattern to accept
+  # optional whitespace AND optional asterisks in either order around the
+  # colon: `Severity\\s*\\*{0,2}\\s*:\\s*\\*{0,2}\\s*`. This is a pure
+  # widening — every string the old pattern matched, the new one still
+  # matches (verified: re-ran against the full open backlog, zero rows
+  # that previously parsed now parse differently) — it only adds coverage
+  # for the two new shapes above.
   # Mirrored in roborev_severity_autoclose.sh's `_parse_max_severity()` —
   # keep both patterns in sync; see the comment there.
-  m <- gregexpr("(?i)\\*{0,2}Severity\\*{0,2}:\\s*(Critical|High|Medium|Low)", text, perl = TRUE)
-  words <- regmatches(text, m)[[1]]
+  #
+  # Whitespace is normalised INLINE here (not via the normalize_ws() helper
+  # defined elsewhere in this file) because tests/test_severity_regex_parity.sh
+  # extracts this function in isolation (awk, `^parse_max_severity_ordinal
+  # <- function` to the closing `}`) to compare it against the Python
+  # canonical implementation and the two bash copies — a call out to a
+  # helper defined outside that extracted span would fail to resolve.
+  norm <- gsub("\\s+", " ", trimws(text))
+  m <- gregexpr(
+    "(?i)\\*{0,2}Severity\\s*\\*{0,2}\\s*:\\s*\\*{0,2}\\s*(Critical|High|Medium|Low)",
+    norm, perl = TRUE
+  )
+  words <- regmatches(norm, m)[[1]]
   if (length(words) == 0L) return(NA_integer_)
-  words <- tolower(sub(".*:\\s*", "", words))
+  words <- tolower(sub(".*:\\s*\\*{0,2}\\s*", "", words))
   max(unname(SEVERITY_ORDINAL[words]), na.rm = TRUE)
 }
 
@@ -446,9 +481,16 @@ NOT_REVIEWED_PATTERNS <- c(
 #   live backlog (2026-09-02), a distinct empty-diff phrasing from
 #   "no code changes were provided" above; same shape (nothing to review),
 #   correctly not a finding.
+#   "no issues were found" — 2026-09-10, id 10051 in the live backlog: "No
+#   issues were found in the changes..." landed in `unclassified` because
+#   "no issues found" (fixed-substring match) does not match text with an
+#   extra "were" in between. Added as its own literal entry rather than
+#   switching .pattern_matches() to regex, matching this list's existing
+#   convention of near-duplicate phrasings as separate fixed strings.
 PASSED_PATTERNS <- c(
   "severity_threshold_met",
   "no issues found",
+  "no issues were found",
   "no code changes were provided",
   "no review found for empty diff"
 )
