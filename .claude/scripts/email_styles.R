@@ -118,6 +118,30 @@ resolve_dashboard_links <- function() {
   )
 }
 
+# resolve_dashboard_href(): the single three-way branch (explicit override >
+# local file:// link > repo URL fallback) that both dashboard_cta_block() and
+# effective_dashboard_url() need. Extracted 2026-09-10 (roborev #10271,
+# Medium) — the branch previously existed twice, in two different code
+# shapes, with nothing enforcing that they stayed in sync; a future edit to
+# one (e.g. a new override precedence) could silently desync the rendered
+# button href from what effective_dashboard_url() reports as "effective".
+#
+# @param links list from resolve_dashboard_links()
+# @return list(href = chr, local_exists = lgl) — local_exists is exposed
+#   because dashboard_cta_block() needs it separately to pick which
+#   explanatory note to render.
+resolve_dashboard_href <- function(links) {
+  local_exists <- is.null(links$explicit_url) && file.exists(links$local_path)
+  href <- if (!is.null(links$explicit_url)) {
+    links$explicit_url
+  } else if (local_exists) {
+    paste0("file://", links$local_path)
+  } else {
+    links$repo_url
+  }
+  list(href = href, local_exists = local_exists)
+}
+
 # dashboard_cta_block(): renders the "View Full roborev Dashboard" button.
 #
 # 2026-09-09 (llm#1123 follow-up, user request "fix the button to point to
@@ -141,14 +165,9 @@ resolve_dashboard_links <- function() {
 # @return HTML string
 dashboard_cta_block <- function(accent_colour) {
   links <- resolve_dashboard_links()
-  local_exists <- is.null(links$explicit_url) && file.exists(links$local_path)
-  href <- if (!is.null(links$explicit_url)) {
-    links$explicit_url
-  } else if (local_exists) {
-    paste0("file://", links$local_path)
-  } else {
-    links$repo_url
-  }
+  resolved <- resolve_dashboard_href(links)
+  href <- resolved$href
+  local_exists <- resolved$local_exists
 
   changed_note <- if (is.null(links$explicit_url)) {
     fallback_line <- if (local_exists) {
@@ -190,14 +209,8 @@ dashboard_cta_block <- function(accent_colour) {
 
 # effective_dashboard_url(): the single URL that dashboard_cta_block() will
 # actually render as the button href — for callers that need the same value
-# outside the HTML block itself (e.g. QA markers).
+# outside the HTML block itself (e.g. QA markers). Shares resolve_dashboard_href()
+# with dashboard_cta_block() so the two can never silently desync (roborev #10271).
 effective_dashboard_url <- function() {
-  links <- resolve_dashboard_links()
-  if (!is.null(links$explicit_url)) {
-    links$explicit_url
-  } else if (file.exists(links$local_path)) {
-    paste0("file://", links$local_path)
-  } else {
-    links$repo_url
-  }
+  resolve_dashboard_href(resolve_dashboard_links())$href
 }
