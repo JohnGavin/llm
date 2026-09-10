@@ -58,10 +58,18 @@ NOT_REVIEWED_PATTERNS = [
 ]
 
 # Mirrors send_roborev_email.R PASSED_PATTERNS (llm#1035). Keep in sync.
+# "no issues were found" and "no review found for empty diff" were added to
+# the R list independently (llm#972/#1035 follow-ups) without a matching
+# update here -- caught 2026-09-10 via a live daily-report self-diagnostic
+# (roborev review #10051 misclassified "unclassified" here, "passed" in R).
+# tests/test_roborev_classify.sh's parity fixtures never covered either
+# phrase, which is why the drift went undetected; both are now fixtures.
 PASSED_PATTERNS = [
     "severity_threshold_met",
     "no issues found",
+    "no issues were found",
     "no code changes were provided",
+    "no review found for empty diff",
 ]
 
 # Mirrors send_roborev_email.R parse_max_severity_ordinal()'s regex --
@@ -158,6 +166,11 @@ def _selftest():
     )
     passed_threshold_met = "SEVERITY_THRESHOLD_MET"
     passed_no_issues_linebreak = "No\nissues found"
+    passed_no_issues_were_found = (
+        "Summary: The code review of the provided diff is complete. No issues "
+        "were found in the changes."
+    )
+    passed_empty_diff = "No review found for empty diff."
     unclassified_prose = (
         "This review comment matches none of the known agent-failure or "
         "pass-through shapes and should remain visible as a genuine residual."
@@ -186,6 +199,10 @@ def _selftest():
           "passed", classify_unparseable_finding(passed_threshold_met))
     check("'No\\nissues found' (line break) -> passed",
           "passed", classify_unparseable_finding(passed_no_issues_linebreak))
+    check("'No issues were found' -> passed (2026-09-10 parity fix, id 10051)",
+          "passed", classify_unparseable_finding(passed_no_issues_were_found))
+    check("'No review found for empty diff' -> passed (2026-09-10 parity fix)",
+          "passed", classify_unparseable_finding(passed_empty_diff))
     check("unrecognised prose -> unclassified",
           "unclassified", classify_unparseable_finding(unclassified_prose))
     check("live 'unable to read the diff' -> not_reviewed",
