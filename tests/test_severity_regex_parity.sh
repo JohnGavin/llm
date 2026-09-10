@@ -127,6 +127,8 @@ FIXTURES_DESC=(
   "prose mentioning 'severity' with no colon-anchored marker"
   "multiple markers -> takes the max (Low then High)"
   "empty string"
+  "bold closes AFTER colon: '**Severity:** High' (2026-09-10, ids 9480/9652/9659/9661/9662)"
+  "embedded newline splits the marker: '**Severity\\n**: Low' (2026-09-10, id 9617)"
 )
 FIXTURES_TEXT=(
   "- **Severity**: High"
@@ -136,6 +138,8 @@ FIXTURES_TEXT=(
   "This review discusses the severity of the issue at length, but does not include a structured marker."
   $'- **Severity**: Low\n- **Severity**: High'
   ""
+  "- **Severity:** High"
+  $'*   **Severity\n**: Low'
 )
 FIXTURES_EXPECTED=(
   "3"
@@ -145,6 +149,8 @@ FIXTURES_EXPECTED=(
   ""
   "3"
   ""
+  "3"
+  "1"
 )
 
 run_python() {

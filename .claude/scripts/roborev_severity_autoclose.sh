@@ -78,16 +78,28 @@ if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
     # stop. Caught by tests/test_severity_regex_parity.sh, which runs the
     # same fixture set through all of Python (canonical), R, and both bash
     # copies and asserts they agree.
+    #
+    # 2026-09-10 (llm daily-report self-diagnostic): widened to match
+    # optional whitespace/asterisks on BOTH sides of the colon (was: only
+    # before it), so "**Severity:** High" (bold closes AFTER the colon)
+    # parses like "**Severity**: High" (bold closes before it) always did.
+    # Restructured from "grep matching LINES, extract word per line" to
+    # "grep -o each MATCH directly" (via `tr '\n' ' '` first) so a marker
+    # split across an embedded newline ("**Severity\n**: Low") still
+    # matches as one occurrence, while multiple markers on the original
+    # multi-line text are still each extracted separately (grep -o returns
+    # one line per match regardless of the input's line structure, so
+    # collapsing newlines first does not merge distinct markers together).
     local text="$1"
     local max=-1
-    local word ord
-    while IFS= read -r line; do
-      word=$(echo "$line" | grep -oiE '(Critical|High|Medium|Low)' | head -1)
+    local word ord match
+    while IFS= read -r match; do
+      word=$(printf '%s' "$match" | grep -oiE '(Critical|High|Medium|Low)' | head -1)
       if [ -n "$word" ]; then
         ord=$(_sev_ordinal "$word")
         [ "$ord" -gt "$max" ] && max=$ord
       fi
-    done < <(echo "$text" | grep -iE '\*{0,2}Severity\*{0,2}:[[:space:]]*(Critical|High|Medium|Low)')
+    done < <(printf '%s' "$text" | tr '\n' ' ' | grep -oiE '\*{0,2}Severity[[:space:]]*\*{0,2}[[:space:]]*:[[:space:]]*\*{0,2}[[:space:]]*(Critical|High|Medium|Low)')
     [ "$max" -ge 0 ] && echo "$max" || echo ""
   }
 
@@ -269,7 +281,7 @@ _sev_name() {
   esac
 }
 
-# Parse Severity: <word> lines from text; echo the max ordinal or "" if none.
+# Parse Severity: <word> markers from text; echo the max ordinal or "" if none.
 # llm#972 cause 1: some agents emit "- Severity: High" (no bold markers)
 # instead of "- **Severity**: High" — `\*{0,2}` makes the markdown bold
 # markers optional on both sides of "Severity" so both shapes match, while
@@ -278,17 +290,26 @@ _sev_name() {
 # Mirrored in the SELFTEST-local `_parse_max_severity()` above and in
 # send_roborev_email.R's `parse_max_severity_ordinal()` — keep all three in
 # sync when editing any one of them.
+#
+# 2026-09-10 (llm daily-report self-diagnostic): widened to match optional
+# whitespace/asterisks on BOTH sides of the colon (was: only before it), so
+# "**Severity:** High" (bold closes AFTER the colon) parses like
+# "**Severity**: High" always did. Restructured to `grep -o` each MATCH
+# directly (via `tr '\n' ' '` first) so a marker split across an embedded
+# newline still matches as one occurrence, while multiple markers on the
+# original multi-line text are still each extracted separately. See the
+# SELFTEST-local copy above for the full rationale.
 _parse_max_severity() {
   local text="$1"
   local max=-1
-  local word ord
-  while IFS= read -r line; do
-    word=$(echo "$line" | grep -oiE '(Critical|High|Medium|Low)' | head -1)
+  local word ord match
+  while IFS= read -r match; do
+    word=$(printf '%s' "$match" | grep -oiE '(Critical|High|Medium|Low)' | head -1)
     if [ -n "$word" ]; then
       ord=$(_sev_ordinal "$word")
       [ "$ord" -gt "$max" ] && max=$ord
     fi
-  done < <(echo "$text" | grep -iE '\*{0,2}Severity\*{0,2}:[[:space:]]*(Critical|High|Medium|Low)')
+  done < <(printf '%s' "$text" | tr '\n' ' ' | grep -oiE '\*{0,2}Severity[[:space:]]*\*{0,2}[[:space:]]*:[[:space:]]*\*{0,2}[[:space:]]*(Critical|High|Medium|Low)')
   [ "$max" -ge 0 ] && echo "$max" || echo ""
 }
 
