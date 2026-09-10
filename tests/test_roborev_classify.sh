@@ -85,6 +85,19 @@ assert_eq "test3: 'SEVERITY_THRESHOLD_MET' -> passed" \
     "passed" \
     "$(classify_one "SEVERITY_THRESHOLD_MET")"
 
+# 2026-09-10: these two phrases were added to send_roborev_email.R's
+# PASSED_PATTERNS (llm#972/#1035 follow-ups) without a matching update to
+# roborev_classify.py -- undetected because neither had a parity fixture
+# here. Caught live via roborev review #10051 (R classified "passed",
+# Python classified "unclassified" for the identical text).
+assert_eq "test3: 'No issues were found' -> passed (2026-09-10 parity fix, id 10051)" \
+    "passed" \
+    "$(classify_one "Summary: The code review of the provided diff is complete. No issues were found in the changes.")"
+
+assert_eq "test3: 'No review found for empty diff' -> passed (2026-09-10 parity fix)" \
+    "passed" \
+    "$(classify_one "No review found for empty diff.")"
+
 assert_eq "test3: unrecognised prose -> unclassified" \
     "unclassified" \
     "$(classify_one "This matches none of the known shapes at all whatsoever.")"
