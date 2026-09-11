@@ -61,7 +61,7 @@
 # Issue: JohnGavin/llm#794
 
 # Positive control. Not a real repo and never will be. This is the fixture a
-# scheduled canary check (llm#1180 phase 5, not yet built) is intended to
+# scheduled canary check (llm#1183 phase 5, not yet built) is intended to
 # pipe through private_repo_detail_guard.sh as a synthetic publish payload,
 # asserting the guard BLOCKS it. Until that automation exists, verify by hand:
 #   REPO_VISIBILITY_CANDIDATES_FILE=... repo_visibility.sh candidates --refresh

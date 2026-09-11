@@ -333,7 +333,7 @@ _build_candidates() {
   # has already found, so a repo outside $SCAN_ROOT was unprotectable — adding
   # it to the confidential list changed nothing, because the list only
   # influences how an ALREADY-ENUMERATED directory is classified. That gap hid
-  # a PHI-bearing, local-only repo from the pre-publish guard entirely
+  # a confidential, local-only repo from the pre-publish guard entirely
   # (llm#1183). Declaration is now sufficient on its own; filesystem discovery
   # below is the safety net for repos nobody remembered to declare, not the
   # primary mechanism.
@@ -537,7 +537,7 @@ if [ "${1:-}" = "--selftest" ]; then
   # The defect this covers: _build_candidates could only ever emit repos it
   # found under $SCAN_ROOT, so a repo living outside that tree was invisible to
   # the pre-publish guard no matter what confidential-repos.txt said. A
-  # PHI-bearing local-only repo sat unprotected because of it.
+  # confidential local-only repo sat unprotected because of it.
   #
   # $SCAN_ROOT is pointed at an EMPTY directory here, so nothing can be
   # discovered and the only possible source of output is the declared list.
