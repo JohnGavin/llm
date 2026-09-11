@@ -181,10 +181,40 @@ $body_content"
     fi
   fi
 
-  local name path vis home_form matched_term=""
-  while IFS=$'\t' read -r name path vis; do
+  local name path vis home_form matched_term="" is_declared line rest
+  # Split each TSV row by hand rather than with `IFS=$'\t' read -r name path vis`.
+  # TAB is an IFS *whitespace* character, so bash collapses a run of tabs into a
+  # single delimiter: on a declared row (`name<TAB><TAB>vis`, empty path) that
+  # read silently yields path=<vis> and vis="", losing the empty field the
+  # declared/discovered distinction is encoded in. Caught by the two-tier
+  # selftest pair below, which failed against exactly that (llm#1183).
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    name="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    path="${rest%%$'\t'*}"
+    vis="${rest#*$'\t'}"
     [ -n "$name" ] || continue
-    if [ "${#name}" -ge "$MIN_NAME_LEN" ]; then
+    # Two-tier name matching (llm#1183).
+    #
+    # DECLARED entries -- an empty path field plus confidential_by_policy, the
+    # shape repo_visibility.sh emits for every entry in EITHER the tracked
+    # confidential-repos.txt OR the local, never-committed overlay
+    # ($REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST -- see repo_visibility.sh's
+    # _confidential_entries()) -- are matched at ANY length. A human wrote
+    # that name down specifically so it would never be published; the
+    # false-positive cost is theirs, and is documented at the point of
+    # declaration.
+    #
+    # DISCOVERED names must still clear MIN_NAME_LEN. Without that floor, real
+    # basenames already in the candidate list (`crew`, `aver`) would match
+    # ordinary English and block legitimate issues -- which gets the guard
+    # disabled, which is worse than the leak it prevents.
+    is_declared=0
+    if [ -z "$path" ] && [ "$vis" = "confidential_by_policy" ]; then
+      is_declared=1
+    fi
+    if [ "$is_declared" -eq 1 ] || [ "${#name}" -ge "$MIN_NAME_LEN" ]; then
       if printf '%s' "$scan_text" | grep -qF -- "$name"; then
         matched_term="$name"
         break
@@ -343,6 +373,32 @@ if [ "${1:-}" = "--selftest" ]; then
   REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_with_short.tsv" \
     _case "a 1-char candidate name is never used as a bare scan term -> ALLOW" \
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "this is an R package"' \
+    "ALLOW"
+
+  # ── two-tier name matching (llm#1183) ────────────────────────────────────
+  # DECLARED rows -- empty path + confidential_by_policy, the shape
+  # repo_visibility.sh emits for entries from EITHER confidential-repos.txt
+  # or the local overlay -- match at any length. The pair below is what
+  # makes that a real distinction rather than
+  # "the floor was removed": same 4-character name, same body text, opposite
+  # verdicts, differing ONLY in whether the row is declared or discovered.
+  printf 'kare\t\tconfidential_by_policy\n' > "$TMP_DIR/rv_candidates_declared_short.tsv"
+  REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_declared_short.tsv" \
+    _case "a DECLARED name below the length floor still blocks -> BLOCK" \
+    'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "mentions kare here"' \
+    "BLOCK"
+
+  printf 'kare\t%s/fake/kare\tprivate\n' "$TMP_DIR" > "$TMP_DIR/rv_candidates_discovered_short.tsv"
+  REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_discovered_short.tsv" \
+    _case "the same short name, DISCOVERED not declared, stays below the floor -> ALLOW" \
+    'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "mentions kare here"' \
+    "ALLOW"
+
+  # A declared row must not become a blanket match-everything: an unrelated
+  # body with the declared name absent still has to pass.
+  REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_declared_short.tsv" \
+    _case "a declared row does not block a body that never mentions it -> ALLOW" \
+    'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "nothing sensitive here"' \
     "ALLOW"
 
   # ── path fragment match (not just bare name) ────────────────────────────
