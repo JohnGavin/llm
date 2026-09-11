@@ -42,14 +42,31 @@
 # live under $REPO_VISIBILITY_SCAN_ROOT. Declaration alone is sufficient — that
 # is the whole point of this list (llm#1183).
 #
+# WHERE REAL CONFIDENTIAL NAMES GO (roborev #10301): this file is TRACKED and
+# PUBLIC — anyone with read access to this repo can read every line below.
+# Committing a real confidential repo name here, even inside a guard whose
+# whole purpose is protecting such names, publishes exactly what the guard
+# exists to protect: a leak inside the leak-prevention mechanism itself.
+#
+# Real, currently-confidential names belong ONLY in the local, never-
+# committed overlay at $REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST (default
+# ~/.config/confidential-repos.local.txt, mode 600, outside every repo).
+# repo_visibility.sh reads BOTH this file and that overlay when building
+# declared candidates and when classifying a repo — see
+# `_confidential_entries()` in repo_visibility.sh. THIS file is for names
+# that are already public knowledge, or synthetic (the canary below) — never
+# for a name that is itself the confidential fact.
+#
 # Rule reference: .claude/rules/private-repo-detail-locality.md
 # Issue: JohnGavin/llm#794
 
-mycare   # PHI (medical records), local-only, no git remote — llm#1183
-
-# Positive control. Not a real repo and never will be. A scheduled check
-# pipes a synthetic publish payload containing this string through
-# private_repo_detail_guard.sh and asserts it BLOCKS. If that ever returns
-# "allow", the guard has gone inert and the next real leak would pass too.
-# Do not remove; do not rename to anything a human might legitimately type.
+# Positive control. Not a real repo and never will be. This is the fixture a
+# scheduled canary check (llm#1180 phase 5, not yet built) is intended to
+# pipe through private_repo_detail_guard.sh as a synthetic publish payload,
+# asserting the guard BLOCKS it. Until that automation exists, verify by hand:
+#   REPO_VISIBILITY_CANDIDATES_FILE=... repo_visibility.sh candidates --refresh
+#   echo 'body mentioning zzz-canary-never-a-real-repo' | private_repo_detail_guard.sh ...
+# If that ever returns "allow", the guard has gone inert and the next real
+# leak would pass too. Do not remove; do not rename to anything a human might
+# legitimately type.
 zzz-canary-never-a-real-repo

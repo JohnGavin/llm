@@ -28,13 +28,27 @@
 #      author-declared-sensitivity convention the knowledge hub already uses
 #      (~/docs_gh/llm/knowledge/PRIVATE, see the `wiki-conventions` rule).
 #      -> confidential_by_policy
-#   2. This repo's OWN confidential-by-policy list
-#      (.claude/state/confidential-repos.txt by default) — matched by
-#      directory basename or `owner/repo` string. This is llm's own list,
-#      analogous in spirit to llmtelemetry::excluded_dashboard_projects()
-#      but not a dependency on it: this hook protects llm's own publish
-#      actions and must not require llmtelemetry (a separate R package) to
-#      be installed/loadable from a bash hook.
+#   2. This repo's OWN confidential-by-policy list, drawn from TWO sources —
+#      matched by directory basename or `owner/repo` string:
+#        a) the TRACKED, public file (.claude/state/confidential-repos.txt by
+#           default) — for names that are already public knowledge or
+#           synthetic (e.g. the canary), safe to commit to a public repo.
+#        b) a LOCAL, never-committed overlay
+#           ($REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST, default
+#           ~/.config/confidential-repos.local.txt) — for the REAL names a
+#           human has decided must never be published. Committing a real
+#           confidential name to the tracked file — even inside a guard
+#           whose whole purpose is protecting such names — defeats the
+#           guard by publishing exactly what it exists to protect
+#           (roborev #10301). The overlay is machine-local, mode 600,
+#           gitignored by construction (it never lives inside any repo).
+#      Both sources share one parser (`_confidential_entries`) so they can
+#      never drift in how comments/blank-lines/trimming are handled. This is
+#      llm's own list, analogous in spirit to
+#      llmtelemetry::excluded_dashboard_projects() but not a dependency on
+#      it: this hook protects llm's own publish actions and must not require
+#      llmtelemetry (a separate R package) to be installed/loadable from a
+#      bash hook.
 #      -> confidential_by_policy
 #   3. No git remote at all -> local_only (strictly private, never
 #      publishable).
@@ -80,6 +94,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # written to avoid falling into silently.
 _load_config() {
   CONFIDENTIAL_LIST="${REPO_VISIBILITY_CONFIDENTIAL_LIST:-$SCRIPT_DIR/../state/confidential-repos.txt}"
+  # Local, never-committed overlay for REAL declared confidential names —
+  # see the "Classification sources" comment above (roborev #10301). Missing
+  # is the normal case (fresh machine); present-but-unreadable is a genuine
+  # unknown and warns rather than silently contributing nothing — see
+  # _confidential_entries().
+  CONFIDENTIAL_LOCAL_LIST="${REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST:-$HOME/.config/confidential-repos.local.txt}"
   CACHE_FILE="${REPO_VISIBILITY_CACHE_FILE:-$HOME/.claude/logs/repo_visibility_cache.tsv}"
   CACHE_TTL="${REPO_VISIBILITY_CACHE_TTL:-300}"
   CANDIDATES_FILE="${REPO_VISIBILITY_CANDIDATES_FILE:-$HOME/.claude/logs/repo_visibility_candidates_cache.tsv}"
@@ -132,13 +152,47 @@ _trim() {
   printf '%s' "$v"
 }
 
+_confidential_entries() {
+  # Single parser for BOTH confidential-name sources — the TRACKED, public
+  # list ($CONFIDENTIAL_LIST) and the LOCAL, never-committed overlay
+  # ($CONFIDENTIAL_LOCAL_LIST). Emits one trimmed, comment-stripped,
+  # non-blank entry per line. Both readers of confidential names
+  # (_in_confidential_list below and the declared-entries block in
+  # _build_candidates) call this so the comment/trim/skip-blank rules can
+  # never drift between them (roborev #10301).
+  #
+  # A source file that does not exist is the normal case (nothing declared
+  # there yet, or a fresh machine with no local overlay) and contributes no
+  # entries — silently, on purpose.
+  #
+  # A source file that EXISTS but could not be read (permissions, I/O
+  # error) is a genuine UNKNOWN, not the same as "nothing declared" — per
+  # checks-must-distinguish-unknown, that must never collapse silently into
+  # an empty list. This function still returns 0 and contributes nothing
+  # from that file (existing callers' exit codes/behaviour are unchanged),
+  # but prints a one-line warning to stderr so the gap is auditable rather
+  # than silent.
+  local f line entry
+  for f in "$CONFIDENTIAL_LIST" "$CONFIDENTIAL_LOCAL_LIST"; do
+    [ -n "$f" ] || continue
+    [ -e "$f" ] || continue
+    if [ ! -r "$f" ]; then
+      echo "repo_visibility.sh: WARNING — confidential list exists but is not readable, contributing NO entries from it: $f" >&2
+      continue
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+      entry="${line%%#*}"
+      entry="$(_trim "$entry")"
+      [ -z "$entry" ] && continue
+      printf '%s\n' "$entry"
+    done < "$f"
+  done
+}
+
 _in_confidential_list() {
   # $1 = basename (may be empty), $2 = owner/repo (may be empty)
-  local basename_val="$1" ownerrepo_val="$2" line entry
-  [ -f "$CONFIDENTIAL_LIST" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    entry="${line%%#*}"
-    entry="$(_trim "$entry")"
+  local basename_val="$1" ownerrepo_val="$2" entry
+  while IFS= read -r entry; do
     [ -z "$entry" ] && continue
     if [ -n "$basename_val" ] && [ "$entry" = "$basename_val" ]; then
       return 0
@@ -146,7 +200,7 @@ _in_confidential_list() {
     if [ -n "$ownerrepo_val" ] && [ "$entry" = "$ownerrepo_val" ]; then
       return 0
     fi
-  done < "$CONFIDENTIAL_LIST"
+  done < <(_confidential_entries)
   return 1
 }
 
@@ -265,12 +319,14 @@ classify_one() {
 # inline unless --refresh is passed or no cache file exists at all (first
 # run) — a PreToolUse hook consuming this must stay fast.
 _build_candidates() {
-  local d name vis count=0 line entry
+  local d name vis count=0 entry
   : > "${CANDIDATES_FILE}.tmp"
 
-  # ── Declared entries first (llm#1183) ─────────────────────────────────────
-  # Every name in $CONFIDENTIAL_LIST becomes a candidate in its own right,
-  # with an EMPTY path field, regardless of whether that repo exists under
+  # ── Declared entries first (llm#1183), from BOTH confidential sources ──────
+  # Every entry from _confidential_entries — the TRACKED, public list
+  # ($CONFIDENTIAL_LIST) AND the LOCAL, never-committed overlay
+  # ($CONFIDENTIAL_LOCAL_LIST) — becomes a candidate in its own right, with an
+  # EMPTY path field, regardless of whether that repo exists under
   # $SCAN_ROOT, exists on this machine at all, or is currently checked out.
   #
   # Why this exists: the discovery loop below can only classify directories it
@@ -282,6 +338,15 @@ _build_candidates() {
   # below is the safety net for repos nobody remembered to declare, not the
   # primary mechanism.
   #
+  # Why a REAL declared name must go in the overlay, not the tracked file:
+  # a name declared here specifically because it must never be published —
+  # committed to a PUBLIC, tracked file — publishes exactly that name to
+  # every reader of this public repo, defeating the guard it exists to feed
+  # (roborev #10301). The tracked file is for names that are already public
+  # or synthetic (the canary); real confidential names live only in
+  # $CONFIDENTIAL_LOCAL_LIST (mode 600, never committed, never inside any
+  # repo).
+  #
   # The empty path field is load-bearing: private_repo_detail_guard.sh reads it
   # as "declared, not discovered" and matches such names at ANY length, where a
   # discovered name must clear MIN_NAME_LEN. See that hook's name-length note.
@@ -289,14 +354,10 @@ _build_candidates() {
   # A name that is BOTH declared and discovered legitimately produces two rows
   # (one name-only, one with a path). That is harmless -- the guard breaks on
   # first match -- and the path row adds a genuinely distinct match target.
-  if [ -f "$CONFIDENTIAL_LIST" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      entry="${line%%#*}"
-      entry="$(_trim "$entry")"
-      [ -z "$entry" ] && continue
-      printf '%s\t%s\t%s\n' "$entry" "" "confidential_by_policy" >> "${CANDIDATES_FILE}.tmp"
-    done < "$CONFIDENTIAL_LIST"
-  fi
+  while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    printf '%s\t%s\t%s\n' "$entry" "" "confidential_by_policy" >> "${CANDIDATES_FILE}.tmp"
+  done < <(_confidential_entries)
 
   # ── Filesystem discovery (safety net) ─────────────────────────────────────
   while IFS= read -r d; do
@@ -378,8 +439,14 @@ if [ "${1:-}" = "--selftest" ]; then
   export REPO_VISIBILITY_CACHE_FILE="$TMP_DIR/cache.tsv"
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/candidates.tsv"
   export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/confidential-repos.txt"
+  # Nonexistent path under $TMP_DIR throughout — this selftest MUST NEVER
+  # read the real ~/.config overlay (which may hold a genuine confidential
+  # name on this machine). Re-exported to a fresh nonexistent path at every
+  # section below that also swaps CONFIDENTIAL_LIST/SCAN_ROOT, so no section
+  # depends on this one line staying unmodified elsewhere in the file.
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_0.txt"
   export REPO_VISIBILITY_NO_CACHE=1
-  _load_config   # re-derive CACHE_FILE/CANDIDATES_FILE/CONFIDENTIAL_LIST from the exports above
+  _load_config   # re-derive CACHE_FILE/CANDIDATES_FILE/CONFIDENTIAL_LIST/CONFIDENTIAL_LOCAL_LIST from the exports above
 
   TOTAL=0
   PASS=0
@@ -454,6 +521,7 @@ if [ "${1:-}" = "--selftest" ]; then
   # caught: an earlier revision auto-built on ANY missing file, only
   # skipping the rebuild once one had already been written once before.
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/never-seeded.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_1.txt"
   _load_config
   never_seeded_out="$(candidates 2>/dev/null)"
   _case "candidates on a cache that was never seeded returns empty, no rebuild" \
@@ -462,6 +530,7 @@ if [ "${1:-}" = "--selftest" ]; then
     "$([ -f "$TMP_DIR/never-seeded.tsv" ] && echo EXISTS || echo ABSENT)" \
     "ABSENT"
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/candidates.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_2.txt"
   _load_config
 
   # ── declared entries become candidates without existing on disk (llm#1183) ─
@@ -475,6 +544,7 @@ if [ "${1:-}" = "--selftest" ]; then
   export REPO_VISIBILITY_SCAN_ROOT="$TMP_DIR/empty_scan_root"
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/declared_candidates.tsv"
   export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/declared_list.txt"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_3.txt"
   mkdir -p "$TMP_DIR/empty_scan_root"
   printf '# a comment\n\nnowhere-on-this-disk   # trailing comment\n' \
     > "$TMP_DIR/declared_list.txt"
@@ -492,14 +562,54 @@ if [ "${1:-}" = "--selftest" ]; then
   _case "with nothing declared, an empty scan root yields no candidates" \
     "$(candidates 2>/dev/null)" ""
 
+  # ── overlay-only declared entries (roborev #10301 fix) ──────────────────
+  # A REAL confidential name must never sit in the TRACKED, public list — it
+  # belongs only in the local, never-committed overlay
+  # ($CONFIDENTIAL_LOCAL_LIST). Prove the overlay alone (tracked list empty,
+  # scan root empty) is a sufficient source for BOTH the candidates builder
+  # and the classify_one() policy match — the two readers _confidential_entries
+  # feeds. Synthetic fixture name only; a real declared name is never typed
+  # into this codebase.
+  export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/overlay_candidates.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_list.txt"
+  # $REPO_VISIBILITY_CONFIDENTIAL_LIST (the tracked list) is still empty from
+  # the falsification step above.
+  printf 'zzz-local-overlay-fixture   # synthetic selftest fixture, never a real repo\n' \
+    > "$TMP_DIR/overlay_list.txt"
+  _load_config
+  candidates --refresh >/dev/null 2>&1
+  _case "(a) an overlay-only entry becomes a declared candidate row" \
+    "$(candidates 2>/dev/null)" \
+    "$(printf 'zzz-local-overlay-fixture\t\tconfidential_by_policy')"
+
+  mkdir -p "$TMP_DIR/zzz-local-overlay-fixture"
+  (cd "$TMP_DIR/zzz-local-overlay-fixture" && git init -q 2>/dev/null)
+  _case "(b) an overlay-only entry is classified confidential_by_policy via classify_one" \
+    "$(classify_one "$TMP_DIR/zzz-local-overlay-fixture")" "confidential_by_policy"
+
+  # (c) Falsification: remove the overlay entirely. The SAME candidates
+  # rebuild and the SAME classify_one call on the SAME path must now report
+  # nothing / not-confidential — proving (a) and (b) actually depended on the
+  # overlay file, not on a stale cache row or a hardcoded true. NO_CACHE is
+  # still 1 here (unset happens further below), so classify_one re-checks
+  # rather than replaying its earlier cached answer.
+  rm -f "$TMP_DIR/overlay_list.txt"
+  candidates --refresh >/dev/null 2>&1
+  _case "(c) falsification: overlay removed -> candidates yields nothing from it" \
+    "$(candidates 2>/dev/null)" ""
+  _case "(c) falsification: overlay removed -> classify_one no longer confidential_by_policy" \
+    "$(classify_one "$TMP_DIR/zzz-local-overlay-fixture")" "local_only"
+
   unset REPO_VISIBILITY_SCAN_ROOT
   export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/confidential-repos.txt"
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/candidates.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_4.txt"
   _load_config
 
   # ── cache TTL behaviour ──────────────────────────────────────────────────
   unset REPO_VISIBILITY_NO_CACHE
   export REPO_VISIBILITY_CACHE_TTL=3600
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_5.txt"
   _load_config
   : > "$REPO_VISIBILITY_CACHE_FILE"
   mkdir -p "$TMP_DIR/cache_repo"

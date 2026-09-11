@@ -198,10 +198,13 @@ $body_content"
     # Two-tier name matching (llm#1183).
     #
     # DECLARED entries -- an empty path field plus confidential_by_policy, the
-    # shape repo_visibility.sh emits for every line of confidential-repos.txt --
-    # are matched at ANY length. A human wrote that name down specifically so it
-    # would never be published; the false-positive cost is theirs, and is
-    # documented at the point of declaration.
+    # shape repo_visibility.sh emits for every entry in EITHER the tracked
+    # confidential-repos.txt OR the local, never-committed overlay
+    # ($REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST -- see repo_visibility.sh's
+    # _confidential_entries()) -- are matched at ANY length. A human wrote
+    # that name down specifically so it would never be published; the
+    # false-positive cost is theirs, and is documented at the point of
+    # declaration.
     #
     # DISCOVERED names must still clear MIN_NAME_LEN. Without that floor, real
     # basenames already in the candidate list (`crew`, `aver`) would match
@@ -374,8 +377,9 @@ if [ "${1:-}" = "--selftest" ]; then
 
   # ── two-tier name matching (llm#1183) ────────────────────────────────────
   # DECLARED rows -- empty path + confidential_by_policy, the shape
-  # repo_visibility.sh emits for confidential-repos.txt entries -- match at any
-  # length. The pair below is what makes that a real distinction rather than
+  # repo_visibility.sh emits for entries from EITHER confidential-repos.txt
+  # or the local overlay -- match at any length. The pair below is what
+  # makes that a real distinction rather than
   # "the floor was removed": same 4-character name, same body text, opposite
   # verdicts, differing ONLY in whether the row is declared or discovered.
   printf 'kare\t\tconfidential_by_policy\n' > "$TMP_DIR/rv_candidates_declared_short.tsv"
