@@ -187,7 +187,7 @@ $body_content"
   # single delimiter: on a declared row (`name<TAB><TAB>vis`, empty path) that
   # read silently yields path=<vis> and vis="", losing the empty field the
   # declared/discovered distinction is encoded in. Caught by the two-tier
-  # selftest pair below, which failed against exactly that (llm#1180).
+  # selftest pair below, which failed against exactly that (llm#1183).
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     name="${line%%$'\t'*}"
@@ -195,7 +195,7 @@ $body_content"
     path="${rest%%$'\t'*}"
     vis="${rest#*$'\t'}"
     [ -n "$name" ] || continue
-    # Two-tier name matching (llm#1180).
+    # Two-tier name matching (llm#1183).
     #
     # DECLARED entries -- an empty path field plus confidential_by_policy, the
     # shape repo_visibility.sh emits for every line of confidential-repos.txt --
@@ -372,7 +372,7 @@ if [ "${1:-}" = "--selftest" ]; then
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "this is an R package"' \
     "ALLOW"
 
-  # ── two-tier name matching (llm#1180) ────────────────────────────────────
+  # ── two-tier name matching (llm#1183) ────────────────────────────────────
   # DECLARED rows -- empty path + confidential_by_policy, the shape
   # repo_visibility.sh emits for confidential-repos.txt entries -- match at any
   # length. The pair below is what makes that a real distinction rather than

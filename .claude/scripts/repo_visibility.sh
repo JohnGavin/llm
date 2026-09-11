@@ -268,7 +268,7 @@ _build_candidates() {
   local d name vis count=0 line entry
   : > "${CANDIDATES_FILE}.tmp"
 
-  # ── Declared entries first (llm#1180) ─────────────────────────────────────
+  # ── Declared entries first (llm#1183) ─────────────────────────────────────
   # Every name in $CONFIDENTIAL_LIST becomes a candidate in its own right,
   # with an EMPTY path field, regardless of whether that repo exists under
   # $SCAN_ROOT, exists on this machine at all, or is currently checked out.
@@ -278,7 +278,7 @@ _build_candidates() {
   # it to the confidential list changed nothing, because the list only
   # influences how an ALREADY-ENUMERATED directory is classified. That gap hid
   # a PHI-bearing, local-only repo from the pre-publish guard entirely
-  # (llm#1180). Declaration is now sufficient on its own; filesystem discovery
+  # (llm#1183). Declaration is now sufficient on its own; filesystem discovery
   # below is the safety net for repos nobody remembered to declare, not the
   # primary mechanism.
   #
@@ -464,7 +464,7 @@ if [ "${1:-}" = "--selftest" ]; then
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/candidates.tsv"
   _load_config
 
-  # ── declared entries become candidates without existing on disk (llm#1180) ─
+  # ── declared entries become candidates without existing on disk (llm#1183) ─
   # The defect this covers: _build_candidates could only ever emit repos it
   # found under $SCAN_ROOT, so a repo living outside that tree was invisible to
   # the pre-publish guard no matter what confidential-repos.txt said. A
