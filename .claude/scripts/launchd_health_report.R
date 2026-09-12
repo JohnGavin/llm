@@ -59,20 +59,52 @@ if (has_duckdb) {
                                  mustWork = FALSE))
     }
   )
-  source(file.path(.scripts_dir_launchd_health, "lib", "duckdb_secure.R"))
+  # local = TRUE sources into the CALLING frame rather than always
+  # .GlobalEnv. At normal top-level Rscript execution this is a no-op
+  # (parent.frame() at top level IS .GlobalEnv), but it matters when this
+  # whole script is source()'d into an isolated environment for testing
+  # (e.g. `source(aggregator_path, local = .agg_env)` in
+  # test-launchd-health-report.R): without `local = TRUE` here,
+  # connect_duckdb_secure() was defined into .GlobalEnv and was therefore
+  # invisible to functions like read_run_counts_by_label() whose lexical
+  # scope is .agg_env — any test that actually opened a real duckdb
+  # connection (rather than hitting the file-missing short-circuit) would
+  # fail with "could not find function connect_duckdb_secure" (llm#1187).
+  source(file.path(.scripts_dir_launchd_health, "lib", "duckdb_secure.R"), local = TRUE)
 }
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 LAUNCH_AGENTS_DIR <- file.path(Sys.getenv("HOME"), "Library", "LaunchAgents")
 
-# Route (b): launchd_runs.duckdb is never populated (no plist wraps
-# launchd_run_record.sh), so per-run metrics are read from the already-populated
-# unified.duckdb ledger instead — table `housekeeping_runs` has one row per
-# script invocation (task, source_script, started_at, ended_at, status).
+# Two distinct ledgers, two distinct keys (llm#1187 defect 1):
+#
+#  - unified.duckdb / `housekeeping_runs` — one row per SCRIPT invocation,
+#    written by the housekeeping-framework start/end pattern, keyed by
+#    `task`/`source_script`. Section 2 (read_run_metrics(), keyed by `task`)
+#    is a genuinely good use of this table. It is NOT usable for the Section
+#    1 inventory table below: High-tier jobs run through a wrapper
+#    (bin/launchd-recorders/<name> -> bin/launchd_run_record.sh <label> --
+#    <real cmd>), and the wrapped script records its OWN source_script path,
+#    never the wrapper's — so joining on the plist's Program path can never
+#    match. This was previously (wrongly) documented here as "launchd_runs
+#    .duckdb is never populated" — that claim was true once and went stale:
+#    at least 20 wrappers exist under bin/launchd-recorders/, and the ledger
+#    below is actively written (verified: non-trivial size, written today).
+#
+#  - launchd_runs.duckdb / `runs` — one row per LAUNCHD JOB invocation,
+#    written by bin/launchd_run_record.sh, keyed by `label` (the launchd
+#    Label, which matches the plist inventory exactly — no path-join
+#    ambiguity). This is the correct source for the Section 1 inventory
+#    table's Runs (7d) / Fails (7d) columns.
 LEDGER_PATH <- Sys.getenv(
   "LAUNCHD_LEDGER",
   file.path(Sys.getenv("HOME"), ".claude", "logs", "unified.duckdb")
+)
+
+LAUNCHD_RUNS_LEDGER <- Sys.getenv(
+  "LAUNCHD_RUNS_LEDGER",
+  file.path(Sys.getenv("HOME"), ".claude", "logs", "launchd_runs.duckdb")
 )
 
 CLOUD_REPOS_RAW <- Sys.getenv("CLOUD_REPOS", "JohnGavin/llm,JohnGavin/llmtelemetry")
@@ -371,86 +403,123 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
   )
 }
 
-#' Read per-script run/failure counts from the ledger, keyed by
-#' `source_script` (the full path recorded by the housekeeping-framework
-#' start/end pattern). This is the join key used to attach counts to the
-#' plist inventory's `script_path` column — `housekeeping_runs$task` is a
-#' short slug (e.g. "worktree_gc") that does not match a launchd Label, so
-#' `read_run_metrics()`'s task-keyed rows cannot be used for that join.
-#' Returns NULL if duckdb/the ledger/the table are unavailable.
-read_run_counts_by_script <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_DAYS) {
+#' Read per-launchd-job run/failure counts from `launchd_runs.duckdb`'s
+#' `runs` table, keyed by `label` — the launchd Label, which matches the
+#' plist inventory's `label` column exactly (no path-join ambiguity, unlike
+#' `housekeeping_runs$source_script`; see the LAUNCHD_RUNS_LEDGER comment
+#' above). Failure = `exit_code <> 0` (the schema written by
+#' bin/launchd_run_record.sh always records a non-NULL exit_code).
+#'
+#' Returns NULL if duckdb / the ledger file / the `runs` table are
+#' unavailable, or the query itself errors — this is the "ledger
+#' unavailable" state and is a DIFFERENT thing from "label has zero runs",
+#' per checks-must-distinguish-unknown. Callers MUST NOT treat a NULL
+#' return the same as an empty windowed result.
+#'
+#' Otherwise returns a list with two elements:
+#'   - `windowed`         data.frame(label, n_runs, n_fail) for the report
+#'                        window only (labels with 0 runs in-window are
+#'                        simply absent from this data.frame).
+#'   - `all_time_labels`  character vector of every label that has EVER
+#'                        appeared in `runs` (any age) — used to distinguish
+#'                        "recorded historically, 0 in this window" (a
+#'                        genuine zero) from "never recorded at all".
+read_run_counts_by_label <- function(ledger = LAUNCHD_RUNS_LEDGER, window_days = REPORT_WINDOW_DAYS) {
   if (!has_duckdb) return(NULL)
   if (!file.exists(ledger)) return(NULL)
 
-  con <- connect_duckdb_secure(dbdir = ledger, read_only = TRUE)
+  con <- tryCatch(connect_duckdb_secure(dbdir = ledger, read_only = TRUE), error = function(e) NULL)
+  if (is.null(con)) return(NULL)
   on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
 
-  tables <- DBI::dbListTables(con)
-  if (!"housekeeping_runs" %in% tables) return(NULL)
+  tables <- tryCatch(DBI::dbListTables(con), error = function(e) character(0L))
+  if (!"runs" %in% tables) return(NULL)
 
   cutoff <- format(Sys.time() - window_days * 86400, "%Y-%m-%d %H:%M:%S")
 
-  # status NOT IN ('ok', 'deferred'): see the matching comment in
-  # read_run_metrics() above -- 'deferred' (llm#947, llm#970) is not a failure.
-  query <- sprintf(
-    "SELECT
-       source_script,
-       COUNT(*) AS n_runs,
-       SUM(CASE WHEN status IS NULL OR status NOT IN ('ok', 'deferred') THEN 1 ELSE 0 END) AS n_fail
-     FROM housekeeping_runs
-     WHERE started_at >= TIMESTAMPTZ '%s'
-       AND source_script IS NOT NULL
-     GROUP BY source_script",
-    cutoff
-  )
-
-  result <- tryCatch(
-    DBI::dbGetQuery(con, query),
+  windowed <- tryCatch(
+    DBI::dbGetQuery(con, sprintf(
+      "SELECT
+         label,
+         COUNT(*) AS n_runs,
+         SUM(CASE WHEN exit_code <> 0 THEN 1 ELSE 0 END) AS n_fail
+       FROM runs
+       WHERE started_at >= TIMESTAMPTZ '%s'
+       GROUP BY label",
+      cutoff
+    )),
     error = function(e) {
-      message("launchd_health_report.R: script-count ledger query error — ", conditionMessage(e))
+      message("launchd_health_report.R: label-count ledger query error — ", conditionMessage(e))
       NULL
     }
   )
-  if (!is.null(result) && nrow(result) > 0L) {
-    # Some ledger rows carry a path separator recorded as an embedded
-    # newline/tab instead of "/" (a known upstream data-quality issue, e.g.
-    # worktree_gc's writer produces ".../scripts\nworktree_gc.sh") — repair
-    # it to "/" (the same defensive-normalisation spirit as `program`'s
-    # `trimws(gsub("[\r\n\t]+", " ", program))` above, but path-shaped) so
-    # the basename join in attach_run_counts() isn't silently defeated.
-    result$source_script <- gsub("/+", "/", gsub("[\r\n\t]+", "/", trimws(result$source_script)))
-  }
-  result
+  if (is.null(windowed)) return(NULL)
+
+  all_time_labels <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT DISTINCT label FROM runs")$label,
+    error = function(e) character(0L)
+  )
+
+  list(windowed = windowed, all_time_labels = all_time_labels)
 }
 
-#' Attach n_runs/n_fail columns to the plist inventory by matching
-#' `script_path` against the ledger's `source_script` — full-path match
-#' first, falling back to a basename match (worktree-prefixed source_script
-#' values, e.g. a run captured from an agent worktree, won't full-path-match
-#' the canonical plist Program path but do share the script's basename).
-#' Jobs with no matching ledger rows keep NA (rendered as "—", not 0, so
-#' "no telemetry" stays distinct from "0 failures").
-attach_run_counts <- function(inventory, script_counts) {
-  inventory$n_runs <- NA_integer_
-  inventory$n_fail <- NA_integer_
-  if (is.null(script_counts) || nrow(script_counts) == 0L) return(inventory)
+#' Attach n_runs/n_fail/run_status columns to the plist inventory using
+#' label-keyed counts from `read_run_counts_by_label()`.
+#'
+#' `run_status` is one of three values, each rendered as a visually and
+#' textually DISTINCT string by `fmt_run_status()` (checks-must-distinguish-
+#' unknown — llm#1187 defect 1, "0 runs" must never be indistinguishable
+#' from "we don't know"):
+#'   - "ok"                  n_runs/n_fail are a real count (possibly 0 —
+#'                           the label has run history, just none in this
+#'                           window).
+#'   - "never_recorded"      the label has NEVER appeared in the runs
+#'                           ledger, in any window — n_runs/n_fail are NA.
+#'   - "ledger_unavailable"  the runs ledger itself could not be read at
+#'                           all (missing duckdb package, missing file,
+#'                           missing table, or a query error) — n_runs/
+#'                           n_fail are NA for every row.
+attach_label_run_counts <- function(inventory, label_counts) {
+  inventory$n_runs     <- NA_integer_
+  inventory$n_fail     <- NA_integer_
+  inventory$run_status <- "ledger_unavailable"
 
-  sc_basename <- basename(script_counts$source_script)
+  if (is.null(label_counts)) return(inventory)  # ledger unavailable, all rows
+
+  windowed        <- label_counts$windowed
+  all_time_labels <- label_counts$all_time_labels
 
   for (i in seq_len(nrow(inventory))) {
-    sp <- inventory$script_path[i]
-    if (is.na(sp)) next
-
-    idx <- which(script_counts$source_script == sp)
-    if (length(idx) == 0L) {
-      idx <- which(sc_basename == basename(sp))
+    lbl <- inventory$label[i]
+    if (!(lbl %in% all_time_labels)) {
+      inventory$run_status[i] <- "never_recorded"
+      next
     }
+    idx <- which(windowed$label == lbl)
     if (length(idx) > 0L) {
-      inventory$n_runs[i] <- sum(script_counts$n_runs[idx])
-      inventory$n_fail[i] <- sum(script_counts$n_fail[idx])
+      inventory$n_runs[i] <- sum(windowed$n_runs[idx])
+      inventory$n_fail[i] <- sum(windowed$n_fail[idx])
+    } else {
+      # Recorded historically, but no runs fell inside this window — a
+      # genuine zero, not an unknown.
+      inventory$n_runs[i] <- 0L
+      inventory$n_fail[i] <- 0L
     }
+    inventory$run_status[i] <- "ok"
   }
   inventory
+}
+
+#' Render one Runs (7d) / Fails (7d) table cell for a given (count, status)
+#' pair. The three `run_status` values from `attach_label_run_counts()` MUST
+#' produce three different strings — see that function's docs.
+fmt_run_status <- function(n, status) {
+  switch(status,
+    ok                  = as.character(n),
+    never_recorded      = "no data",
+    ledger_unavailable  = "unavailable",
+    "unavailable"  # defensive default for any unrecognised status value
+  )
 }
 
 # ── Section 3: auto-generated suggestions ─────────────────────────────────────
@@ -917,7 +986,7 @@ render_braindumps_staleness <- function(staleness) {
 #' Production entry point: open a fresh short-lived connection to the
 #' unified ledger, run detect_braindumps_staleness() against it, and always
 #' close the connection again — mirrors the connect/query/disconnect
-#' lifecycle already used by read_run_metrics()/read_run_counts_by_script()
+#' lifecycle already used by read_run_metrics()/read_run_counts_by_label()
 #' above, kept separate from detect_braindumps_staleness() itself so that
 #' function stays a pure, easily-testable query against a caller-supplied
 #' connection. Never errors — any failure to even open the connection is
@@ -950,6 +1019,14 @@ collect_braindumps_staleness <- function(ledger = LEDGER_PATH, threshold_hours =
 
 fmt_val <- function(x) if (is.null(x) || (length(x) == 1L && is.na(x))) "—" else as.character(x)
 
+#' Escape a literal `|` as `\|` so it cannot be mistaken for a markdown
+#' table cell separator. Backticks (code spans) do NOT protect a pipe from
+#' the table row-splitter — this must be applied to every interpolated
+#' cell, not just ones wrapped in backticks (llm#1187 defect 2: a job whose
+#' Program is `/bin/sh -c ... || true; sleep ...` broke the row into extra
+#' columns because nothing escaped the `||`).
+esc_pipe <- function(x) gsub("|", "\\|", x, fixed = TRUE)
+
 render_inventory_table <- function(inventory) {
   tiers <- c("High", "Medium", "Low")
   tier_emoji <- c(High = "\U1F534", Medium = "\U1F7E0", Low = "\U1F7E2")
@@ -959,6 +1036,16 @@ render_inventory_table <- function(inventory) {
     sub <- inventory[inventory$tier == tier, ]
     if (nrow(sub) == 0L) next
 
+    # Backward-compatible default for any caller that supplies numeric
+    # n_runs/n_fail without a run_status column.
+    if (!("run_status" %in% names(sub))) {
+      sub$run_status <- ifelse(is.na(sub$n_runs), "ledger_unavailable", "ok")
+    }
+
+    # Tier header totals: sum only over rows with a genuine ("ok") count —
+    # "never_recorded"/"ledger_unavailable" rows have NA n_runs/n_fail and
+    # contribute nothing, same as before, but now that NA is never confused
+    # with a queried zero.
     tier_runs <- if ("n_runs" %in% names(sub)) sum(sub$n_runs, na.rm = TRUE) else 0L
     tier_fail <- if ("n_fail" %in% names(sub)) sum(sub$n_fail, na.rm = TRUE) else 0L
     lines <- c(lines, sprintf(
@@ -974,9 +1061,22 @@ render_inventory_table <- function(inventory) {
       prog_short <- if (nchar(r$program) > 80) paste0(substr(r$program, 1L, 77L), "...") else r$program
       timeout_s <- if (!is.na(r$timeout_s)) sprintf("%ds", r$timeout_s) else "—"
       lines <- c(lines, sprintf("| `%s` | %s | %s | %s | `%s` | %s |",
-        r$label, r$schedule, fmt_val(r$n_runs), fmt_val(r$n_fail), prog_short, timeout_s
+        esc_pipe(r$label), esc_pipe(r$schedule),
+        fmt_run_status(r$n_runs, r$run_status), fmt_run_status(r$n_fail, r$run_status),
+        esc_pipe(prog_short), esc_pipe(timeout_s)
       ))
     }
+  }
+  if (length(lines) > 0L) {
+    lines <- c(lines, "",
+      paste0(
+        "_Runs/Fails legend: a number is the actual count in the last ",
+        REPORT_WINDOW_DAYS, " days (a job can genuinely show 0). ",
+        "“no data” means this job's label has never appeared in the run ",
+        "ledger at all. “unavailable” means the run ledger itself could ",
+        "not be read for this report run — neither is the same as a real zero._"
+      )
+    )
   }
   paste(lines, collapse = "\n")
 }
@@ -1061,9 +1161,9 @@ message("launchd_health_report.R: collecting inventory from ", LAUNCH_AGENTS_DIR
 inventory <- collect_inventory(LAUNCH_AGENTS_DIR)
 message(sprintf("  found %d owned plists", nrow(inventory)))
 
-message("launchd_health_report.R: reading per-script run/fail counts from ", LEDGER_PATH)
-script_counts <- read_run_counts_by_script(LEDGER_PATH, REPORT_WINDOW_DAYS)
-inventory <- attach_run_counts(inventory, script_counts)
+message("launchd_health_report.R: reading per-label run/fail counts from ", LAUNCHD_RUNS_LEDGER)
+label_counts <- read_run_counts_by_label(LAUNCHD_RUNS_LEDGER, REPORT_WINDOW_DAYS)
+inventory <- attach_label_run_counts(inventory, label_counts)
 
 message("launchd_health_report.R: reading run metrics from ", LEDGER_PATH)
 metrics <- read_run_metrics(LEDGER_PATH, REPORT_WINDOW_DAYS)

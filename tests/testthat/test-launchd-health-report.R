@@ -6,8 +6,13 @@
 #   3. Cloud-cron workflow YAML parsing (dispatch-only fixture)
 #   4. "Ledger empty" path produces placeholder text
 #   5. Email dry-run produces all 4 section QA markers
+#   6. A Program containing "||" renders as exactly 6 table cells (llm#1187 defect 2)
+#   7. Label-keyed run counts are picked up for a wrapped job whose Program
+#      path appears nowhere in housekeeping_runs (llm#1187 defect 1 regression)
+#   8. The three Runs/Fails states (ok/never_recorded/ledger_unavailable)
+#      render as three visually distinct strings (llm#1187 defect 1)
 #
-# Tracked in llm#300.
+# Tracked in llm#300, llm#1187.
 
 library(testthat)
 
@@ -177,6 +182,169 @@ test_that("render_metrics_table emits placeholder when ledger is empty", {
   # Metrics now come from the unified ledger's housekeeping_runs table
   # (llm#300 route (b) — launchd_runs.duckdb is never populated).
   expect_true(grepl("housekeeping_runs", output))
+})
+
+# ── Test 6: Defect 2 — a pipe-containing Program must not break the table ────
+#
+# llm#1187 defect 2: a job whose Program is a `/bin/sh -c ... || true; ...`
+# command breaks the markdown table because nothing escapes the literal `|`
+# characters — the row gains extra cells. Backticks around a cell do NOT
+# protect a `|` from the table's row-splitter.
+
+test_that("a Program containing '||' renders as exactly 6 table cells (llm#1187 defect 2)", {
+  render_fn <- get("render_inventory_table", envir = .agg_env)
+
+  inv <- data.frame(
+    label       = "com.claude.pipe-test",
+    tier        = "Low",
+    schedule    = "daemon/run-at-load",
+    program     = "/bin/sh -c /usr/local/bin/orbctl start 2>/dev/null || true; sleep 5",
+    script_path = NA_character_,
+    timeout_s   = NA_integer_,
+    n_runs      = NA_integer_,
+    n_fail      = NA_integer_,
+    run_status  = "never_recorded",
+    stringsAsFactors = FALSE
+  )
+
+  out   <- render_fn(inv)
+  lines <- strsplit(out, "\n", fixed = TRUE)[[1L]]
+  row_line <- lines[grepl("pipe-test", lines, fixed = TRUE)]
+  expect_length(row_line, 1L)
+
+  # Split on an UNESCAPED "|" only (a "|" immediately preceded by "\" is an
+  # escaped cell-internal pipe, not a column separator). A correctly-escaped
+  # 6-column row produces exactly 6 cells after dropping the leading empty
+  # element (the row starts with "| "); an unescaped "||" inside a cell would
+  # instead be picked up as 2 extra column separators.
+  cells <- strsplit(row_line, "(?<!\\\\)\\|", perl = TRUE)[[1L]]
+  cells <- cells[-1L]
+  expect_length(cells, 6L)
+})
+
+# ── Test 7: Defect 1 regression — label-keyed counts for a wrapped job ───────
+#
+# llm#1187 defect 1: High-tier jobs run through bin/launchd-recorders/<name>,
+# which execs bin/launchd_run_record.sh <label> -- <real cmd>. The wrapped
+# script records its OWN path in housekeeping_runs.source_script, never the
+# wrapper's — so a join on the plist's Program path can never match. The fix
+# reads run counts from launchd_runs.duckdb's `runs` table, keyed by `label`
+# (the launchd Label, which always matches), which has no such join problem.
+# This test plants a fixture `runs` table with rows for a wrapped job whose
+# Program path (the wrapper) appears nowhere in any housekeeping_runs-style
+# source_script value, and asserts the counts are still picked up by label.
+
+test_that("read_run_counts_by_label + attach_label_run_counts pick up a wrapped job by label (llm#1187 defect 1)", {
+  skip_if_not_installed("duckdb")
+  read_run_counts_by_label <- get("read_run_counts_by_label", envir = .agg_env)
+  attach_label_run_counts  <- get("attach_label_run_counts",  envir = .agg_env)
+
+  ledger <- tempfile(fileext = ".duckdb")
+  on.exit(unlink(ledger), add = TRUE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = FALSE)
+  DBI::dbExecute(con, "
+    CREATE TABLE runs (
+      label        VARCHAR NOT NULL,
+      started_at   TIMESTAMPTZ NOT NULL,
+      finished_at  TIMESTAMPTZ NOT NULL,
+      exit_code    INTEGER NOT NULL,
+      peak_rss_mb  DOUBLE,
+      host         VARCHAR
+    )
+  ")
+  now <- Sys.time()
+  fixture_rows <- data.frame(
+    label       = rep("com.claude.overnight-self-review-email", 3L),
+    started_at  = now - c(1, 2, 3) * 3600,
+    finished_at = now - c(1, 2, 3) * 3600 + 60,
+    exit_code   = c(0L, 0L, 1L),
+    peak_rss_mb = c(10.5, 10.5, 10.5),
+    host        = "test-host",
+    stringsAsFactors = FALSE
+  )
+  DBI::dbAppendTable(con, "runs", fixture_rows)
+  DBI::dbDisconnect(con, shutdown = TRUE)
+
+  label_counts <- read_run_counts_by_label(ledger = ledger, window_days = 7)
+  expect_false(is.null(label_counts))
+
+  # The plist inventory row for a High-tier wrapped job: its `program` is
+  # the WRAPPER path, which never appears as a source_script anywhere in
+  # housekeeping_runs — this is exactly the mismatch that broke defect 1.
+  inventory <- data.frame(
+    label       = "com.claude.overnight-self-review-email",
+    tier        = "High",
+    schedule    = "02:00",
+    program     = "/Users/johngavin/docs_gh/llm/bin/launchd-recorders/overnight-self-review-email",
+    script_path = NA_character_,
+    timeout_s   = NA_integer_,
+    stringsAsFactors = FALSE
+  )
+
+  result <- attach_label_run_counts(inventory, label_counts)
+  expect_equal(result$run_status, "ok")
+  expect_equal(result$n_runs, 3L)
+  expect_equal(result$n_fail, 1L)
+})
+
+# ── Test 8: Defect 1 — three distinguishable Runs/Fails states ───────────────
+#
+# Per checks-must-distinguish-unknown: "this job's label has never been
+# recorded", "this job's label was recorded but ran zero times in this
+# window", and "the run ledger itself is unavailable" are three DIFFERENT
+# facts and must never render as the same string (the report previously
+# printed "0 runs · 0 fails" for jobs that had, in fact, run 7 times).
+
+test_that("the three run-count states render as three different strings (llm#1187 defect 1)", {
+  fmt_run_status <- get("fmt_run_status", envir = .agg_env)
+
+  ok_str      <- fmt_run_status(0L, "ok")
+  never_str   <- fmt_run_status(NA_integer_, "never_recorded")
+  unavail_str <- fmt_run_status(NA_integer_, "ledger_unavailable")
+
+  expect_false(identical(ok_str, never_str))
+  expect_false(identical(ok_str, unavail_str))
+  expect_false(identical(never_str, unavail_str))
+  # A genuine zero must render as a literal zero, not a placeholder dash —
+  # that was the original bug (0 runs indistinguishable from unknown).
+  expect_equal(ok_str, "0")
+})
+
+test_that("render_inventory_table shows three distinct cell strings across ok/never_recorded/ledger_unavailable rows (llm#1187 defect 1)", {
+  render_fn <- get("render_inventory_table", envir = .agg_env)
+
+  inv <- data.frame(
+    label       = c("com.claude.ran-zero-in-window", "com.claude.never-recorded", "com.claude.unavailable-ledger"),
+    tier        = rep("Low", 3L),
+    schedule    = rep("daemon/run-at-load", 3L),
+    program     = rep("/bin/true", 3L),
+    script_path = rep(NA_character_, 3L),
+    timeout_s   = rep(NA_integer_, 3L),
+    n_runs      = c(0L, NA_integer_, NA_integer_),
+    n_fail      = c(0L, NA_integer_, NA_integer_),
+    run_status  = c("ok", "never_recorded", "ledger_unavailable"),
+    stringsAsFactors = FALSE
+  )
+
+  out   <- render_fn(inv)
+  lines <- strsplit(out, "\n", fixed = TRUE)[[1L]]
+
+  extract_runs_cell <- function(needle) {
+    row <- lines[grepl(needle, lines, fixed = TRUE)]
+    expect_length(row, 1L)
+    # Cell layout: "" | Label | Schedule | Runs | Fails | Program | Timeout
+    trimws(strsplit(row, "|", fixed = TRUE)[[1L]][4L])
+  }
+
+  cell_ok      <- extract_runs_cell("ran-zero-in-window")
+  cell_never   <- extract_runs_cell("never-recorded")
+  cell_unavail <- extract_runs_cell("unavailable-ledger")
+
+  expect_equal(cell_ok, "0")
+  expect_false(identical(cell_ok, cell_never))
+  expect_false(identical(cell_ok, cell_unavail))
+  expect_false(identical(cell_never, cell_unavail))
 })
 
 # ── Test 5: Email dry-run has all 4 section QA markers ────────────────────────
