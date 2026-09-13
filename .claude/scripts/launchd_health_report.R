@@ -1243,6 +1243,114 @@ render_missing_timeout_findings <- function(findings) {
   paste0("\n", paste(lines, collapse = "\n"), "\n")
 }
 
+# ── Section 8: failing-job findings (llm#1188) ────────────────────────────────
+#
+# Prior to this section, a job's non-zero exits were visible only as a
+# number buried in a per-tier summary line ("10 jobs · 1 runs · 1 non-zero
+# exits (7d)") -- nothing named WHICH job failed or why. llm#1188 found this
+# the hard way: com.claude.private-data-history-audit had been failing
+# (exit 1, 587 findings) for days and the only reason it surfaced was a
+# manual ledger query during an unrelated investigation. This section
+# closes that gap: every job with n_fail > 0 in the report window gets its
+# own line, plus a tail of its own .err log (same StandardErrorPath the
+# plist inventory already reads in collect_inventory()) so a reader does
+# not have to go dig for the cause themselves.
+
+#' Read the last `n` lines of a log file for the failing-jobs section.
+#' Distinguishes three states, each rendered distinctly by
+#' `render_failing_jobs_section()` (checks-must-distinguish-unknown): no
+#' `StandardErrorPath` declared at all, a declared path that cannot be read
+#' (missing file, permissions), and a genuinely empty-but-readable file --
+#' none of these three may collapse into the same rendered string.
+#'
+#' @return A list with `status` ("no_path" | "unavailable" | "ok") and
+#'   `lines` (character vector -- possibly length 0 even when status is
+#'   "ok", meaning the file exists, is readable, and is empty).
+tail_log_lines <- function(path, n = 10L) {
+  if (is.null(path) || length(path) == 0L || is.na(path) || !nzchar(path)) {
+    return(list(status = "no_path", lines = character(0L)))
+  }
+  if (!file.exists(path) || file.access(path, mode = 4L) != 0L) {
+    return(list(status = "unavailable", lines = character(0L)))
+  }
+  lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) NULL)
+  if (is.null(lines)) return(list(status = "unavailable", lines = character(0L)))
+  if (length(lines) == 0L) return(list(status = "ok", lines = character(0L)))
+  list(status = "ok", lines = utils::tail(lines, min(n, length(lines))))
+}
+
+#' Find every job with at least one non-zero exit in the report window.
+#'
+#' Only rows with `run_status == "ok"` are considered: "never_recorded" and
+#' "ledger_unavailable" rows have NA `n_fail` and are structurally excluded
+#' rather than silently coerced to "0 failures" (checks-must-distinguish-
+#' unknown) -- a job whose run status is unknown must not appear here as
+#' either failing or clean.
+#'
+#' @param inventory The plist inventory data.frame after
+#'   `attach_label_run_counts()` has run -- must have `label`, `tier`,
+#'   `n_runs`, `n_fail`, `run_status`. `std_err` is optional (defaults to
+#'   `NA_character_` per row when absent, e.g. in older test fixtures).
+#' @return A data.frame with columns `label`, `tier`, `n_runs`, `n_fail`,
+#'   `std_err` (0 rows, never NULL, when nothing failed in-window).
+find_failing_jobs <- function(inventory) {
+  empty <- data.frame(
+    label = character(), tier = character(), n_runs = integer(),
+    n_fail = integer(), std_err = character(), stringsAsFactors = FALSE
+  )
+  if (is.null(inventory) || nrow(inventory) == 0L) return(empty)
+  needed <- c("label", "tier", "n_runs", "n_fail", "run_status")
+  if (!all(needed %in% names(inventory))) return(empty)
+
+  failing <- inventory$run_status == "ok" & !is.na(inventory$n_fail) & inventory$n_fail > 0L
+  sub <- inventory[failing, , drop = FALSE]
+  if (nrow(sub) == 0L) return(empty)
+
+  data.frame(
+    label   = sub$label,
+    tier    = sub$tier,
+    n_runs  = sub$n_runs,
+    n_fail  = sub$n_fail,
+    std_err = if ("std_err" %in% names(sub)) sub$std_err else NA_character_,
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Render the failing-jobs section. A non-zero exit does not by itself mean
+#' a job crashed -- some checker/scanner jobs use exit 1 to mean "ran fine,
+#' found something" (see the inventory-table legend and the
+#' `exit-code-conventions` rule). This section reports the fact and a log
+#' tail for triage; it does not itself judge severity.
+render_failing_jobs_section <- function(failing, tail_n = 10L, tail_fn = tail_log_lines) {
+  if (is.null(failing) || nrow(failing) == 0L) {
+    return("\n_No jobs recorded a non-zero exit in the past 7 days._\n")
+  }
+
+  lines <- character(0L)
+  for (i in seq_len(nrow(failing))) {
+    r <- failing[i, ]
+    lines <- c(lines, sprintf(
+      "- \U26A0\UFE0F **`%s`** (%s tier) \U2014 %d/%d run(s) exited non-zero in the past 7 days.",
+      r$label, r$tier, r$n_fail, r$n_runs
+    ))
+
+    log_result <- tail_fn(r$std_err, tail_n)
+    if (identical(log_result$status, "no_path")) {
+      lines <- c(lines, "  - _No `StandardErrorPath` declared for this job._")
+    } else if (identical(log_result$status, "unavailable")) {
+      lines <- c(lines, sprintf("  - _Log file declared but not readable: `%s`_", r$std_err))
+    } else if (length(log_result$lines) == 0L) {
+      lines <- c(lines, sprintf("  - _Log file is empty: `%s`_", r$std_err))
+    } else {
+      lines <- c(lines, sprintf("  - Last %d line(s) of `%s`:", length(log_result$lines), r$std_err))
+      lines <- c(lines, "    ```")
+      lines <- c(lines, paste0("    ", log_result$lines))
+      lines <- c(lines, "    ```")
+    }
+  }
+  paste0("\n", paste(lines, collapse = "\n"), "\n")
+}
+
 # ── Markdown rendering ─────────────────────────────────────────────────────────
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
@@ -1434,6 +1542,9 @@ message("launchd_health_report.R: checking High-tier jobs for missing timeouts (
 timeout_exemptions       <- read_timeout_exemptions()
 missing_timeout_findings <- find_missing_timeout_findings(inventory, timeout_exemptions, wrapper_timeouts)
 
+message("launchd_health_report.R: finding jobs with a non-zero exit in-window (llm#1188)")
+failing_jobs <- find_failing_jobs(inventory)
+
 # ── Assemble report ────────────────────────────────────────────────────────────
 
 now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M UTC", tz = "UTC")
@@ -1462,6 +1573,9 @@ report_md <- paste0(
   "\n\n---\n\n",
   "## 7. High-Tier Jobs Missing a Declared Timeout (llm#1187 defect 3)\n",
   render_missing_timeout_findings(missing_timeout_findings),
+  "\n\n---\n\n",
+  "## 8. Jobs With a Non-Zero Exit in the Past ", REPORT_WINDOW_DAYS, " Days (llm#1188)\n",
+  render_failing_jobs_section(failing_jobs),
   "\n"
 )
 
