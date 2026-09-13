@@ -82,6 +82,13 @@ cat > "$TIMEOUTS_FILE" <<'EOF'
 # test fixture — not the real timeouts file
 test.timeout.fires      5     # short bound, deliberately shorter than the sleep below
 test.timeout.notfired   30    # generous bound a fast command will never hit
+# Test 4 needs its OWN label. Sharing test.timeout.notfired with Test 2 made
+# this suite non-deterministic: both wrote a row for that label within the same
+# clock second, and query_ledger's `ORDER BY started_at DESC LIMIT 1` then broke
+# the tie arbitrarily -- so Test 4 sometimes read Test 2's 'ok' row and failed,
+# and could equally have read it and PASSED while the unenforced path was
+# broken. Observed failing on one machine and passing on another (llm#1190).
+test.timeout.unenforced 30    # same generous bound, distinct label
 EOF
 
 # ── Test 1: a configured bound actually fires and is recorded as 'killed' ───
@@ -146,13 +153,13 @@ echo
 echo "-- Test 4: bound configured, no timeout binary -- runs unbounded, recorded as 'unenforced' --"
 
 PATH=/usr/bin:/bin LAUNCHD_LEDGER="$LEDGER" LAUNCHD_TIMEOUTS_FILE="$TIMEOUTS_FILE" \
-  bash "$SCRIPT" "test.timeout.notfired" -- /bin/echo "hi, no timeout binary" \
+  bash "$SCRIPT" "test.timeout.unenforced" -- /bin/echo "hi, no timeout binary" \
   > "$TMP/unenforced.out" 2> "$TMP/unenforced.err"
 WRAPPER_EXIT=$?
 
 assert "wrapper still runs the job (exit 0) when no timeout binary exists" "0" "$WRAPPER_EXIT"
-assert "ledger records timeout_status='unenforced' (never silently pretends the bound applied)" "unenforced" "$(query_ledger test.timeout.notfired timeout_status)"
-assert "ledger still records the configured bound (30) even though it could not be enforced" "30" "$(query_ledger test.timeout.notfired timeout_bound_s)"
+assert "ledger records timeout_status='unenforced' (never silently pretends the bound applied)" "unenforced" "$(query_ledger test.timeout.unenforced timeout_status)"
+assert "ledger still records the configured bound (30) even though it could not be enforced" "30" "$(query_ledger test.timeout.unenforced timeout_bound_s)"
 if grep -q "no timeout binary" "$TMP/unenforced.err"; then
   assert_true "a clear warning line was logged to stderr" "1"
 else
