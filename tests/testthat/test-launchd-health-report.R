@@ -548,6 +548,159 @@ test_that("render_inventory_table shows the wrapper-declared bound when timeout_
   expect_true(grepl("60s (wrapper)", out, fixed = TRUE))
 })
 
+# ── Tests 16-20: failing-job findings section (llm#1188) ────────────────────
+#
+# Prior to this section, a job's non-zero exits were visible only as a
+# number buried in a per-tier summary line — nothing named WHICH job
+# failed. llm#1188: com.claude.private-data-history-audit had been failing
+# for days and the only reason it surfaced was a manual ledger query.
+# These tests plant a job with n_fail > 0 in fixture data and assert the
+# new section renders it, distinguishing the three tail_log_lines() states.
+
+test_that("find_failing_jobs returns zero rows when nothing failed in-window", {
+  find_fn <- get("find_failing_jobs", envir = .agg_env)
+
+  inv <- data.frame(
+    label      = c("com.claude.clean-job", "com.claude.never-recorded", "com.claude.unavailable"),
+    tier       = c("High", "Medium", "Low"),
+    n_runs     = c(5L, NA_integer_, NA_integer_),
+    n_fail     = c(0L, NA_integer_, NA_integer_),
+    run_status = c("ok", "never_recorded", "ledger_unavailable"),
+    stringsAsFactors = FALSE
+  )
+
+  out <- find_fn(inv)
+  expect_equal(nrow(out), 0L)
+})
+
+test_that("find_failing_jobs picks up an 'ok'-status job with n_fail > 0 and excludes unknown-status rows even if n_fail happens to be set", {
+  find_fn <- get("find_failing_jobs", envir = .agg_env)
+
+  inv <- data.frame(
+    label      = c("com.claude.failing-job", "com.claude.clean-job", "com.claude.unknown-status-with-count"),
+    tier       = c("High", "Medium", "Low"),
+    n_runs     = c(1L, 3L, 2L),
+    n_fail     = c(1L, 0L, 2L),
+    run_status = c("ok", "ok", "ledger_unavailable"),
+    std_err    = c("/tmp/failing.err", NA_character_, "/tmp/unknown.err"),
+    stringsAsFactors = FALSE
+  )
+
+  out <- find_fn(inv)
+  expect_equal(nrow(out), 1L)
+  expect_equal(out$label[1L], "com.claude.failing-job")
+  expect_equal(out$n_fail[1L], 1L)
+  expect_equal(out$n_runs[1L], 1L)
+  expect_equal(out$std_err[1L], "/tmp/failing.err")
+})
+
+test_that("find_failing_jobs defaults std_err to NA when the inventory lacks that column", {
+  find_fn <- get("find_failing_jobs", envir = .agg_env)
+
+  inv <- data.frame(
+    label      = "com.claude.no-std-err-column",
+    tier       = "High",
+    n_runs     = 1L,
+    n_fail     = 1L,
+    run_status = "ok",
+    stringsAsFactors = FALSE
+  )
+
+  out <- find_fn(inv)
+  expect_equal(nrow(out), 1L)
+  expect_true(is.na(out$std_err[1L]))
+})
+
+test_that("tail_log_lines distinguishes no-path, unavailable, and ok-but-empty/ok-with-content", {
+  tail_fn <- get("tail_log_lines", envir = .agg_env)
+
+  no_path <- tail_fn(NA_character_)
+  expect_equal(no_path$status, "no_path")
+  expect_length(no_path$lines, 0L)
+
+  unavail <- tail_fn("/tmp/this_launchd_err_log_does_not_exist_1188.txt")
+  expect_equal(unavail$status, "unavailable")
+  expect_length(unavail$lines, 0L)
+
+  empty_file <- tempfile()
+  on.exit(unlink(empty_file), add = TRUE)
+  file.create(empty_file)
+  ok_empty <- tail_fn(empty_file)
+  expect_equal(ok_empty$status, "ok")
+  expect_length(ok_empty$lines, 0L)
+
+  content_file <- tempfile()
+  on.exit(unlink(content_file), add = TRUE)
+  writeLines(as.character(1:20), content_file)
+  ok_content <- tail_fn(content_file, n = 5L)
+  expect_equal(ok_content$status, "ok")
+  expect_equal(ok_content$lines, as.character(16:20))
+
+  # The three states must never render identically downstream — that is
+  # the entire point of returning a status field rather than just lines.
+  expect_false(identical(no_path$status, unavail$status))
+  expect_false(identical(unavail$status, ok_empty$status))
+})
+
+test_that("render_failing_jobs_section shows the placeholder when nothing failed", {
+  render_fn <- get("render_failing_jobs_section", envir = .agg_env)
+  find_fn   <- get("find_failing_jobs", envir = .agg_env)
+
+  out <- render_fn(find_fn(data.frame(
+    label = character(), tier = character(), n_runs = integer(),
+    n_fail = integer(), run_status = character(), stringsAsFactors = FALSE
+  )))
+  expect_true(grepl("No jobs recorded a non-zero exit", out, fixed = TRUE))
+})
+
+test_that("render_failing_jobs_section names the failing job and shows its log tail (llm#1188)", {
+  render_fn <- get("render_failing_jobs_section", envir = .agg_env)
+
+  failing <- data.frame(
+    label   = "com.claude.private-data-history-audit",
+    tier    = "High",
+    n_runs  = 1L,
+    n_fail  = 1L,
+    std_err = "/Users/johngavin/.claude/logs/private_data_history_audit.err",
+    stringsAsFactors = FALSE
+  )
+
+  fake_tail <- function(path, n = 10L) {
+    list(status = "ok", lines = c("mode=dry-run findings=587 status=findings_or_error rc=1"))
+  }
+
+  out <- render_fn(failing, tail_fn = fake_tail)
+  expect_true(grepl("private-data-history-audit", out, fixed = TRUE))
+  expect_true(grepl("1/1", out, fixed = TRUE))
+  expect_true(grepl("findings=587", out, fixed = TRUE))
+})
+
+test_that("render_failing_jobs_section distinguishes no-path/unavailable/empty/content log states", {
+  render_fn <- get("render_failing_jobs_section", envir = .agg_env)
+
+  failing <- data.frame(
+    label   = c("com.claude.no-path-job", "com.claude.unavail-job", "com.claude.empty-job", "com.claude.content-job"),
+    tier    = rep("High", 4L),
+    n_runs  = rep(1L, 4L),
+    n_fail  = rep(1L, 4L),
+    std_err = c(NA_character_, "/tmp/does-not-exist-1188.err", "/tmp/empty-1188.err", "/tmp/content-1188.err"),
+    stringsAsFactors = FALSE
+  )
+
+  fake_tail <- function(path, n = 10L) {
+    if (is.na(path)) return(list(status = "no_path", lines = character(0L)))
+    if (identical(path, "/tmp/does-not-exist-1188.err")) return(list(status = "unavailable", lines = character(0L)))
+    if (identical(path, "/tmp/empty-1188.err")) return(list(status = "ok", lines = character(0L)))
+    list(status = "ok", lines = "boom: something went wrong")
+  }
+
+  out <- render_fn(failing, tail_fn = fake_tail)
+  expect_true(grepl("No .StandardErrorPath. declared", out))
+  expect_true(grepl("not readable", out, fixed = TRUE))
+  expect_true(grepl("Log file is empty", out, fixed = TRUE))
+  expect_true(grepl("boom: something went wrong", out, fixed = TRUE))
+})
+
 # ── Test 5: Email dry-run has all 4 section QA markers ────────────────────────
 
 test_that("email dry-run output contains all 4 section QA markers", {
