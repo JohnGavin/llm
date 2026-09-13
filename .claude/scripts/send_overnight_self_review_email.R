@@ -1282,7 +1282,11 @@ if (nrow(cron_health) > 0L) {
   # ended_at (fallback started_at) is carried alongside status so a
   # heartbeat/raw-exit-code disagreement (llm#1145 Finding 2) can be
   # attributed to whichever side is actually stale, instead of just being
-  # asserted.
+  # asserted. llm#1188 narrowed that disagreement check further: exit 1
+  # alongside heartbeat 'ok' IS the findings convention described above, so
+  # interpret_cron_row() below treats that specific combination as a
+  # determinate ok rather than an unresolved contradiction -- it was
+  # previously reported "indeterminate" for every scanner every day.
   hk_latest <- safe_query("
     SELECT task, status, rows_written, COALESCE(ended_at, started_at) AS hb_at
     FROM (
@@ -1361,12 +1365,37 @@ if (nrow(cron_health) > 0L) {
         )
       }
 
-      # Finding 2: raw state/exit-code and the derived heartbeat result can
-      # disagree (e.g. exit code 1 alongside heartbeat status='ok'). A
-      # contradiction the report can see must not be resolved silently.
+      # Finding 2 (llm#1145), narrowed by llm#1188: raw state/exit-code and
+      # the derived heartbeat result can disagree, and a contradiction the
+      # report can see must not be resolved silently -- UNLESS the
+      # disagreement is exactly the documented exit-code-conventions
+      # findings shape (0 PASS / 1 FAIL findings / 2 usage error /
+      # 3 INDETERMINATE, see the `exit-code-conventions` rule and the
+      # comment ~90 lines above this one). Exit 1 alongside heartbeat 'ok'
+      # is what a scanner (secret_exposure_scan.sh,
+      # private_data_history_audit.sh, ...) reports when it ran cleanly and
+      # found N rows worth flagging -- that is a DETERMINATE ok, not an
+      # unresolved contradiction. Before this narrowing, two genuinely
+      # healthy scanners were reported "indeterminate" every single day
+      # even though every housekeeping_runs row for them showed
+      # status='ok' (llm#1188). Any OTHER nonzero exit code (2 = usage
+      # error, 3 = INDETERMINATE, or anything else) alongside heartbeat
+      # 'ok' is still a genuine contradiction: those exit codes are not
+      # part of the "ran fine, found N things" convention, so a heartbeat
+      # of 'ok' paired with one of them cannot both be trusted.
       ec <- suppressWarnings(as.integer(r$last_exit_code))
-      ec_says_ok   <- length(ec) == 1L && !is.na(ec) && ec == 0L
-      ec_says_fail <- length(ec) == 1L && !is.na(ec) && ec != 0L
+      ec_says_ok       <- length(ec) == 1L && !is.na(ec) && ec == 0L
+      ec_says_findings <- length(ec) == 1L && !is.na(ec) && ec == 1L
+      ec_says_fail     <- length(ec) == 1L && !is.na(ec) && ec != 0L && ec != 1L
+
+      if (hb_bucket == "ok" && ec_says_findings) {
+        ok_label <- sub("row\\(s\\)$", "finding row(s)", hb_label, perl = TRUE)
+        return(list(
+          bucket = "ok",
+          label  = sprintf("%s (exit 1 = findings, per exit-code-conventions)", ok_label)
+        ))
+      }
+
       contradicts <- (hb_bucket == "ok" && ec_says_fail) ||
                       (hb_bucket == "failed" && ec_says_ok)
       if (contradicts) {
