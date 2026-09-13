@@ -1030,6 +1030,91 @@ TIMEOUT_EXEMPT_FILE <- Sys.getenv(
             "launchd-timeout-exempt.txt")
 )
 
+# llm#1190: enforcement lives in bin/launchd_run_record.sh's per-label bound
+# file, NOT in each plist's own `TimeOut` key (39 plists were deliberately
+# NOT edited — one wrapper mechanism covers all of them). That means a job
+# can be genuinely bounded while the plist inventory's own `timeout_s`
+# column (read from `TimeOut`) still shows NA — without accounting for
+# this, Section 7 below would keep reporting a now-bounded job as a FALSE
+# "missing timeout" finding forever. Same env-var name as the wrapper
+# script uses, so one override controls both halves.
+WRAPPER_TIMEOUTS_FILE <- Sys.getenv(
+  "LAUNCHD_TIMEOUTS_FILE",
+  file.path(Sys.getenv("HOME"), "docs_gh", "llm", ".claude", "state",
+            "launchd-timeouts.txt")
+)
+
+#' Read bin/launchd_run_record.sh's per-label timeout-bounds file: one
+#' `label  seconds  # reasoning` line per entry (only the first two
+#' whitespace-separated tokens matter; the free-text reasoning after `#` is
+#' discarded here — it exists for a human reading the file, not for this
+#' report). Parsing mirrors `read_timeout_exemptions()`: strip from the
+#' first unescaped `#` to end of line, trim, skip blank/comment-only lines.
+#'
+#' A missing file is the normal case (mirrors `read_timeout_exemptions()`'s
+#' "absent -> no entries" convention) and returns a zero-length named
+#' numeric vector, silently. A file that EXISTS but cannot be read is a
+#' genuine UNKNOWN, not the same as "nothing declared" — a warning is
+#' emitted to stderr and no entries are contributed, but callers MUST NOT
+#' read that the same as "confirmed zero wrapper bounds"
+#' (checks-must-distinguish-unknown).
+#'
+#' @return A named numeric vector: names are plist Labels, values are the
+#'   declared bound in seconds.
+read_wrapper_timeouts <- function(path = WRAPPER_TIMEOUTS_FILE) {
+  empty <- stats::setNames(numeric(0L), character(0L))
+  if (!file.exists(path)) return(empty)
+  if (file.access(path, mode = 4L) != 0L) {
+    message(sprintf(
+      "launchd_health_report.R: WARNING — wrapper timeouts file exists but is not readable, treating as NO declared bounds: %s",
+      path
+    ))
+    return(empty)
+  }
+
+  lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character(0L))
+  if (length(lines) == 0L) return(empty)
+
+  out_labels  <- character(0L)
+  out_seconds <- numeric(0L)
+  for (line in lines) {
+    if (grepl("^[[:space:]]*#", line)) next  # pure comment line
+    if (!grepl("[^[:space:]]", line)) next   # blank line
+    hash_pos <- regexpr("#", line, fixed = TRUE)
+    body <- if (hash_pos > 0L) substr(line, 1L, hash_pos - 1L) else line
+    toks <- strsplit(trimws(body), "[[:space:]]+")[[1L]]
+    if (length(toks) < 2L) next
+    lbl  <- toks[1L]
+    secs <- suppressWarnings(as.numeric(toks[2L]))
+    if (!nzchar(lbl) || is.na(secs)) next
+    out_labels  <- c(out_labels, lbl)
+    out_seconds <- c(out_seconds, secs)
+  }
+  stats::setNames(out_seconds, out_labels)
+}
+
+#' Merge wrapper-declared bounds into the inventory as a display-ready
+#' `timeout_display` column, distinguishing which mechanism (if any) bounds
+#' a job: a plist `TimeOut` key ("Ns"), the wrapper script's per-label
+#' bound only ("Ns (wrapper)"), or neither ("—"). A job declaring both
+#' shows the plist value — no job currently declares both, since llm#1190
+#' deliberately did not edit any plist's `TimeOut` key.
+attach_wrapper_timeout_display <- function(inventory, wrapper_timeouts = read_wrapper_timeouts()) {
+  if (is.null(inventory) || nrow(inventory) == 0L) {
+    inventory$timeout_display <- character(0L)
+    return(inventory)
+  }
+  inventory$timeout_display <- vapply(seq_len(nrow(inventory)), function(i) {
+    if (!is.na(inventory$timeout_s[i])) return(sprintf("%ds", inventory$timeout_s[i]))
+    lbl <- inventory$label[i]
+    if (lbl %in% names(wrapper_timeouts)) {
+      return(sprintf("%ds (wrapper)", as.integer(wrapper_timeouts[[lbl]])))
+    }
+    "—"
+  }, character(1L))
+  inventory
+}
+
 #' Read the timeout-exemption declarations file: one `label  # reason` line
 #' per entry. Comment-stripped/trimmed the same way `confidential-repos.txt`
 #' is parsed by `_confidential_entries()` in
@@ -1091,11 +1176,18 @@ read_timeout_exemptions <- function(path = TIMEOUT_EXEMPT_FILE) {
 #'   `collect_inventory()`) — must have `tier`, `label`, `timeout_s`.
 #' @param exemptions A named character vector as returned by
 #'   `read_timeout_exemptions()` (names = label, values = reason).
+#' @param wrapper_timeouts A named numeric vector as returned by
+#'   `read_wrapper_timeouts()` (names = label, values = seconds). A label
+#'   present here is bounded via bin/launchd_run_record.sh even though the
+#'   plist's own `TimeOut` key (`timeout_s`) is NA (llm#1190) — it must NOT
+#'   be reported as a missing-timeout finding.
 #' @return A data.frame with columns `label`, `status` (`"finding"` or
 #'   `"exempt"`), `reason` (`NA_character_` for a finding; the declared
 #'   reason — possibly `""` — for an exemption). Zero rows (never NULL)
-#'   when every High-tier job has a declared timeout.
-find_missing_timeout_findings <- function(inventory, exemptions = read_timeout_exemptions()) {
+#'   when every High-tier job has a declared timeout (plist- or
+#'   wrapper-declared) or a recorded exemption.
+find_missing_timeout_findings <- function(inventory, exemptions = read_timeout_exemptions(),
+                                           wrapper_timeouts = read_wrapper_timeouts()) {
   empty <- data.frame(
     label = character(), status = character(), reason = character(),
     stringsAsFactors = FALSE
@@ -1103,7 +1195,8 @@ find_missing_timeout_findings <- function(inventory, exemptions = read_timeout_e
   if (is.null(inventory) || nrow(inventory) == 0L) return(empty)
   if (!("timeout_s" %in% names(inventory))) return(empty)
 
-  high <- inventory[inventory$tier == "High" & is.na(inventory$timeout_s), , drop = FALSE]
+  has_wrapper_bound <- inventory$label %in% names(wrapper_timeouts)
+  high <- inventory[inventory$tier == "High" & is.na(inventory$timeout_s) & !has_wrapper_bound, , drop = FALSE]
   if (nrow(high) == 0L) return(empty)
 
   rows <- lapply(high$label, function(lbl) {
@@ -1196,7 +1289,18 @@ render_inventory_table <- function(inventory) {
     for (i in seq_len(nrow(sub))) {
       r <- sub[i, ]
       prog_short <- if (nchar(r$program) > 80) paste0(substr(r$program, 1L, 77L), "...") else r$program
-      timeout_s <- if (!is.na(r$timeout_s)) sprintf("%ds", r$timeout_s) else "—"
+      # Backward-compatible default for any caller that supplies timeout_s
+      # without a timeout_display column (mirrors the run_status default
+      # above) — llm#1190 added timeout_display to distinguish a
+      # wrapper-declared bound ("Ns (wrapper)") from a plist-declared one
+      # ("Ns") and from neither ("—").
+      timeout_s <- if ("timeout_display" %in% names(sub)) {
+        r$timeout_display
+      } else if (!is.na(r$timeout_s)) {
+        sprintf("%ds", r$timeout_s)
+      } else {
+        "—"
+      }
       lines <- c(lines, sprintf("| `%s` | %s | %s | %s | `%s` | %s |",
         esc_pipe(r$label), esc_pipe(r$schedule),
         fmt_run_status(r$n_runs, r$run_status), fmt_run_status(r$n_fail, r$run_status),
@@ -1307,6 +1411,10 @@ message("launchd_health_report.R: reading per-label run/fail counts from ", LAUN
 label_counts <- read_run_counts_by_label(LAUNCHD_RUNS_LEDGER, REPORT_WINDOW_DAYS)
 inventory <- attach_label_run_counts(inventory, label_counts)
 
+message("launchd_health_report.R: reading wrapper-declared timeout bounds from ", WRAPPER_TIMEOUTS_FILE, " (llm#1190)")
+wrapper_timeouts <- read_wrapper_timeouts()
+inventory <- attach_wrapper_timeout_display(inventory, wrapper_timeouts)
+
 message("launchd_health_report.R: reading run metrics from ", LEDGER_PATH)
 metrics <- read_run_metrics(LEDGER_PATH, REPORT_WINDOW_DAYS)
 
@@ -1322,9 +1430,9 @@ stale_processes <- detect_stale_processes(collect_process_table())
 message("launchd_health_report.R: checking braindumps freshness (llm#937 fix 5)")
 braindumps_staleness <- collect_braindumps_staleness(LEDGER_PATH)
 
-message("launchd_health_report.R: checking High-tier jobs for missing timeouts (llm#1187 defect 3)")
+message("launchd_health_report.R: checking High-tier jobs for missing timeouts (llm#1187 defect 3 / llm#1190)")
 timeout_exemptions       <- read_timeout_exemptions()
-missing_timeout_findings <- find_missing_timeout_findings(inventory, timeout_exemptions)
+missing_timeout_findings <- find_missing_timeout_findings(inventory, timeout_exemptions, wrapper_timeouts)
 
 # ── Assemble report ────────────────────────────────────────────────────────────
 
