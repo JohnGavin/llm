@@ -1,0 +1,35 @@
+# High-tier launchd job timeout exemptions — read by
+# launchd_health_report.R's read_timeout_exemptions() (llm#1187 defect 3).
+#
+# User decision (llm#1187, 2026-09-13): every launchd job must declare a
+# `TimeOut` in its plist unless the plist owner has recorded an explicit
+# reason not to, here. A High-tier job with no declared timeout and no
+# entry in this file is reported as a FINDING in the weekly health report's
+# "High-Tier Jobs Missing a Declared Timeout" section — not merely a blank
+# "—" cell in the inventory table.
+#
+# Format: one entry per line —
+#
+#   <launchd Label>  # <reason this job is exempt from the timeout rule>
+#
+# The reason after '#' is REQUIRED — it is read and shown verbatim in the
+# report next to the job's label ("exempt: <reason>"), never discarded.
+# Lines starting with '#' in the first non-blank position are pure
+# comments and are skipped entirely. Blank lines are ignored.
+#
+# This file is parsed the same comment-stripping/trim way as
+# .claude/state/confidential-repos.txt's _confidential_entries() (strip
+# from the first unescaped '#' to end of line, trim, skip blank) — except
+# here the text after '#' is the exemption's REASON, not documentation to
+# discard.
+#
+# A missing file is the normal case (nothing exempted yet) — every
+# High-tier job with no timeout is reported as a finding. Adding a timeout
+# to the plist itself is almost always the right fix; use this file only
+# when there is a genuine, stated reason the job cannot declare one (e.g.
+# it is itself the timeout-supervision mechanism for other jobs).
+#
+# No entries declared yet — adding real timeouts to the High-tier plists
+# is separate follow-up work (see llm#1187 defect 3 and the PR that added
+# this mechanism, #1189). This file exists so the opt-out has somewhere to
+# go once a genuine case is identified; it is not a silent default.

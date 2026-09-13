@@ -85,7 +85,7 @@ against real data, not just parsed):
 - `.claude/scripts/backfill_command_usage.R` (DB-write) — run live with
   `--apply` against `~/.claude/logs/unified.duckdb`.
 - `.claude/scripts/launchd_health_report.R` — 3 read-only connections
-  (`read_run_metrics()`, `read_run_counts_by_script()`,
+  (`read_run_metrics()`, `read_run_counts_by_label()`,
   `collect_braindumps_staleness()`), all exercised by a full `--dry-run`.
 - `.claude/scripts/roborev_weekly_rollup.R` — `query_close_reasons()`
   only (the `duck_con_filter` canonical-project-filter connection in the
