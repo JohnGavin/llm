@@ -73,7 +73,17 @@ build_precommit_block() {
 # Installed: $(date '+%Y-%m-%d')
 PRIVATE_DATA_SCAN_BIN="\${PRIVATE_DATA_SCAN_BIN:-\$HOME/.claude/scripts/private_data_scan.sh}"
 if [ -x "\$PRIVATE_DATA_SCAN_BIN" ]; then
-  "\$PRIVATE_DATA_SCAN_BIN" --staged
+  # Resolve REPO_ROOT from the CALLER's cwd, at hook-run time, and export
+  # it explicitly for this one invocation -- never rely on
+  # private_data_scan.sh's own SCRIPT_DIR-based auto-detection here. When
+  # PRIVATE_DATA_SCAN_BIN is a machine-wide/symlinked path (the documented
+  # default, \$HOME/.claude/scripts/...), its own auto-detection resolves
+  # REPO_ROOT to wherever THAT SCRIPT physically lives, not to the repo
+  # this hook is actually running in -- silently scanning the wrong repo
+  # and reporting "clean" regardless of what's staged here
+  # (JohnGavin/llm#1161). private_data_scan.sh already honours
+  # \${REPO_ROOT:-...} as an override, so setting it here is sufficient.
+  REPO_ROOT="\$(git rev-parse --show-toplevel)" "\$PRIVATE_DATA_SCAN_BIN" --staged
   _pds_rc=\$?
   if [ "\$_pds_rc" -ne 0 ]; then
     echo "" >&2
@@ -115,7 +125,10 @@ if [ -x "\$PRIVATE_DATA_SCAN_BIN" ]; then
         ;;
     esac
     [ -n "\$_pds_base" ] || continue
-    "\$PRIVATE_DATA_SCAN_BIN" --range "\$_pds_base" "\$_pds_lsha" || _pds_blocked=1
+    # Same REPO_ROOT fix as the pre-commit block above (JohnGavin/llm#1161)
+    # -- resolve it from the caller's cwd at hook-run time, never leave it
+    # to private_data_scan.sh's own SCRIPT_DIR-based auto-detection.
+    REPO_ROOT="\$(git rev-parse --show-toplevel)" "\$PRIVATE_DATA_SCAN_BIN" --range "\$_pds_base" "\$_pds_lsha" || _pds_blocked=1
   done < "\$_pds_stdin"
 fi
 if [ "\$_pds_blocked" -ne 0 ]; then
@@ -345,6 +358,78 @@ run_selftest() {
     fi
 
     rm -rf "$fx"
+
+    # 8: symlink/REPO_ROOT regression (JohnGavin/llm#1161) -- the installed
+    # hook must scan the repo it is actually running in, never the repo the
+    # global PRIVATE_DATA_SCAN_BIN script happens to physically live inside.
+    # On the maintainer's machine ~/.claude/scripts symlinks into
+    # ~/docs_gh/llm, so private_data_scan.sh's own SCRIPT_DIR-based
+    # REPO_ROOT auto-detection silently resolves to `llm` for every OTHER
+    # repo installing these hooks with the documented default -- llm's own
+    # use of the installer is an UNREPRESENTATIVE test case, because the
+    # symlink happens to resolve back into llm's own tree. This case
+    # exercises the REAL private_data_scan.sh (not a stub, unlike cases
+    # 4-6 above) against TWO separate fixture repos to actually reproduce
+    # the symlink-vs-cwd mismatch, not merely call a stand-in scanner.
+    local self_dir; self_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    local sym_root; sym_root="$(mktemp -d "${TMPDIR:-/tmp}/pds_hooks_symtest.XXXXXX")"
+
+    # "scanner_host_repo" stands in for `llm`: a DIFFERENT git repo that
+    # happens to physically host a copy of the real scanner script, exactly
+    # like ~/docs_gh/llm hosts .claude/scripts/private_data_scan.sh --
+    # private_data_scan.sh's own SCRIPT_DIR auto-detection resolves here.
+    local scanner_host="$sym_root/scanner_host_repo"
+    mkdir -p "$scanner_host/.claude/scripts"
+    git -C "$scanner_host" init -q
+    git -C "$scanner_host" config user.email t@example.com
+    git -C "$scanner_host" config user.name t
+    printf 'seed\n' > "$scanner_host/seed.txt"
+    git -C "$scanner_host" add seed.txt
+    git -C "$scanner_host" commit -q -m seed
+    cp "$self_dir/private_data_scan.sh" "$scanner_host/.claude/scripts/private_data_scan.sh"
+    chmod +x "$scanner_host/.claude/scripts/private_data_scan.sh"
+
+    # "target_repo" stands in for `rallyr`: an UNRELATED repo, entirely
+    # outside scanner_host's tree, that installs the hooks using the
+    # documented default (PRIVATE_DATA_SCAN_BIN pointed at scanner_host's
+    # copy -- simulating the symlink pointing away from this repo).
+    local target_repo="$sym_root/target_repo"
+    mkdir -p "$target_repo"
+    git -C "$target_repo" init -q
+    git -C "$target_repo" config user.email t@example.com
+    git -C "$target_repo" config user.name t
+    printf 'seed\n' > "$target_repo/seed.txt"
+    git -C "$target_repo" add seed.txt
+    git -C "$target_repo" commit -q -m seed
+
+    ACTION="install" run_for_repo "$target_repo" >/dev/null
+
+    # A throwaway deny-list so the REAL scanner's default fail-closed
+    # require-denylist mode has something to match against -- never the
+    # machine's real ~/.config/private_values.env.
+    local sym_denylist="$sym_root/private_values.env"
+    local sym_sentinel="SELFTEST_1161_SENTINEL_h7Qm3xNp"
+    printf 'MY_SENTINEL=%s\n' "$sym_sentinel" > "$sym_denylist"
+    chmod 600 "$sym_denylist"
+
+    printf 'leak: %s\n' "$sym_sentinel" > "$target_repo/leak.txt"
+    git -C "$target_repo" add leak.txt
+
+    set +e
+    ( cd "$target_repo" && \
+      PRIVATE_DATA_SCAN_BIN="$scanner_host/.claude/scripts/private_data_scan.sh" \
+      PRIVATE_VALUES_FILE="$sym_denylist" \
+      UNIFIED_DB_PATH="$sym_root/does_not_exist.duckdb" \
+      bash .git/hooks/pre-commit ) >/tmp/pds_sym_out.$$ 2>&1
+    local sym_rc=$?
+    set -e
+    if [ "$sym_rc" -ne 0 ] && grep -q "BLOCKED" /tmp/pds_sym_out.$$; then
+        _check 0 "JohnGavin/llm#1161: installed hook blocks a real leak staged in an UNRELATED target repo (REPO_ROOT resolves to the target, not the scanner's own host repo)"
+    else
+        _check 1 "JohnGavin/llm#1161: installed hook did NOT block a real leak staged in the target repo (rc=$sym_rc, out=$(cat /tmp/pds_sym_out.$$ 2>/dev/null))"
+    fi
+    rm -f /tmp/pds_sym_out.$$
+    rm -rf "$sym_root"
     echo ""
     echo "private_data_git_hooks_install selftest: $pass/$total PASS"
     [ "$pass" -eq "$total" ]
