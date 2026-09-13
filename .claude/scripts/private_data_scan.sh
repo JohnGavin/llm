@@ -496,7 +496,20 @@ load_denylist() {
 # scan_denylist LOCATION < content-on-stdin
 scan_denylist() {
     local loc="$1" content
-    content="$(cat)"
+    # tr -d strips NUL bytes BEFORE bash's $(...) command substitution ever
+    # sees them. $(...) silently truncates its captured value at the first
+    # embedded NUL -- a binary file whose format places a NUL byte early
+    # (a DuckDB header, most compiled binaries, many image formats)
+    # previously got truncated to its leading bytes before this function
+    # ever ran, so the remainder of the file was never scanned and the
+    # overall result still reported "clean" (JohnGavin/llm#1160). Deleting
+    # NUL bytes -- not replacing them with a placeholder -- is deliberate:
+    # it keeps the scan NUL-safe end-to-end (nothing downstream can
+    # truncate either) and every byte of the file is scanned. Concatenating
+    # what were NUL-adjacent bytes can only ever CREATE additional matches,
+    # never hide a real one -- consistent with this script's documented
+    # "prefer the false positive" posture (see RE_E164_FICTIONAL above).
+    content="$(tr -d '\000')"
     [ -n "$content" ] || return 0
     [ "${#DENYLIST_VALUES[@]}" -gt 0 ] || return 0
     local v lnum
@@ -515,7 +528,10 @@ scan_denylist() {
 # scan_generic LOCATION < content-on-stdin
 scan_generic() {
     local loc="$1" content
-    content="$(cat)"
+    # See scan_denylist's comment above -- same NUL-truncation fix
+    # (JohnGavin/llm#1160), applied here for the same reason: this function
+    # also captures its stdin into a bash variable via $(...).
+    content="$(tr -d '\000')"
     [ -n "$content" ] || return 0
     local i name pat sev ci lnum line match
     for i in "${!PII_RULE_NAMES[@]}"; do
@@ -555,7 +571,14 @@ scan_generic() {
 # scan_blob LOCATION < content-on-stdin
 scan_blob() {
     local loc="$1" content
-    content="$(cat)"
+    # See scan_denylist's comment above -- same NUL-truncation fix
+    # (JohnGavin/llm#1160). This is the entry point every blob (staged
+    # content, a historical commit's content, an on-disk file, --content-
+    # stdin) first passes through, so fixing the capture here is what
+    # actually stops the truncation at its source; scan_denylist's and
+    # scan_generic's own fixes are defense-in-depth for any caller that
+    # invokes them directly with raw content (e.g. the selftest below).
+    content="$(tr -d '\000')"
     # Deny-list is UNCONDITIONAL -- always runs, even for a self-reference
     # exempt file. See "Self-reference exemption" above.
     printf '%s' "$content" | scan_denylist "$loc"
@@ -1025,6 +1048,82 @@ run_selftest() {
     printf '%s\n' "&#x1F4CB; postcode EC1A 1BB lives here" | scan_blob "R/some_other_file.R"
     _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "real postcode on the same line as an HTML entity is still flagged"
     rm -f "$FINDINGS_FILE"
+
+    # ── 23-27: NUL-byte truncation (JohnGavin/llm#1160) ────────────────────
+    # bash's printf can WRITE a literal NUL byte to a file's output stream
+    # (the format string itself is plain ASCII "\000" -- only the resulting
+    # OUTPUT bytes contain the NUL, so this is the portable, no-external-
+    # tool way to build the fixture).
+    #
+    # IMPORTANT, empirically verified while writing this test (both
+    # /opt/homebrew/bin/bash 5.3.9 and macOS system /bin/bash 3.2.57): on
+    # THIS machine, $(...) command substitution does NOT hard-truncate at
+    # the first NUL byte -- it silently STRIPS every NUL byte from the
+    # captured value while continuing to capture everything after them,
+    # and prints "warning: command substitution: ignored null byte in
+    # input" to stderr while doing so. That still means content after a
+    # deny-listed/generic-pattern value never gets LOST on this bash build
+    # -- so a fixture with only a couple of leading NUL bytes does not, by
+    # itself, reproduce a missed detection here (verified: it does not --
+    # see the falsification note below). Older/other bash builds have
+    # historically differed on this exact point (hard truncation at the
+    # first NUL, losing everything after it, is the literal mechanism
+    # JohnGavin/llm#1160 describes and is exactly the risk this fix
+    # removes) -- the fix (routing content through `tr -d '\000'` BEFORE
+    # bash's own $(...) ever sees it) is correct and needed regardless of
+    # which of the two behaviors a given bash build has, because it makes
+    # NUL-handling deterministic and explicit instead of depending on an
+    # unspecified, version-dependent bash internal.
+    #
+    # The genuinely falsifiable signal ON THIS MACHINE is therefore the
+    # stderr warning itself: pre-fix, bash's own $(...) emits it on every
+    # NUL-laden blob; post-fix, `tr -d '\000'` has already removed every
+    # NUL byte before $(...) ever runs, so the warning never fires. This
+    # was verified to flip red (2 occurrences of the warning, content
+    # still fully captured) -> green (0 occurrences) when the fix was
+    # temporarily reverted and restored during development of this test.
+    local nul_sentinel="SELFTEST_NUL_SENTINEL_p8Vt2xQmZ4"
+    local nul_fixture; nul_fixture="$(mktemp "${TMPDIR:-/tmp}/pds_nul_fixture.XXXXXX")"
+    printf 'DUCK\000\000\000leading binary header %s trailing text\n' "$nul_sentinel" > "$nul_fixture"
+
+    # 23: sanity -- the fixture genuinely contains an embedded NUL byte
+    # (proves this test would actually exercise the NUL-handling path, not
+    # a vacuous fixture that never had a NUL in it). A NUL byte cannot be
+    # passed as a shell argument (argv strings are NUL-terminated too), so
+    # detect it via a hex dump instead of grepping for it directly.
+    _check "$(LC_ALL=C od -An -tx1 -- "$nul_fixture" 2>/dev/null | "$GREP" -q ' 00' && echo 0 || echo 1)" \
+        "NUL-byte fixture sanity check: the fixture genuinely contains an embedded NUL byte"
+
+    # 24-25: a deny-list value placed AFTER the NUL byte is still detected,
+    # AND scanning it no longer triggers bash's own null-byte warning (the
+    # falsifiable half of this test -- see note above).
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f14.XXXXXX")"
+    local saved_denylist_nul=("${DENYLIST_VALUES[@]}")
+    DENYLIST_VALUES=("$nul_sentinel")
+    local nul_stderr1; nul_stderr1="$(mktemp "${TMPDIR:-/tmp}/pds_f14_stderr.XXXXXX")"
+    scan_blob "R/nul_fixture.bin" < "$nul_fixture" 2>"$nul_stderr1"
+    _check "$([ "$(awk -F'\t' '$1=="denylist"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" \
+        "JohnGavin/llm#1160: deny-list value AFTER an embedded NUL byte is still detected (not silently truncated)"
+    _check "$("$GREP" -qi 'null byte' "$nul_stderr1" && echo 1 || echo 0)" \
+        "JohnGavin/llm#1160: scanning NUL-laden content no longer triggers bash's own 'ignored null byte' warning (NULs are stripped deterministically before \$(...) ever runs)"
+    rm -f "$FINDINGS_FILE" "$nul_stderr1"
+    DENYLIST_VALUES=("${saved_denylist_nul[@]}")
+
+    # 26-27: a generic-pattern value (UK postcode) placed AFTER a NUL byte
+    # is still detected, and the same warning-suppression holds -- proves
+    # the fix covers scan_generic's own capture too, not only
+    # scan_denylist's.
+    local nul_fixture2; nul_fixture2="$(mktemp "${TMPDIR:-/tmp}/pds_nul_fixture2.XXXXXX")"
+    printf 'PK\003\004\000\000binary header postcode SW1A 1AA trailing\n' > "$nul_fixture2"
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f15.XXXXXX")"
+    local nul_stderr2; nul_stderr2="$(mktemp "${TMPDIR:-/tmp}/pds_f15_stderr.XXXXXX")"
+    scan_blob "R/nul_fixture2.bin" < "$nul_fixture2" 2>"$nul_stderr2"
+    _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" \
+        "JohnGavin/llm#1160: generic-pattern (uk-postcode) value AFTER an embedded NUL byte is still detected"
+    _check "$("$GREP" -qi 'null byte' "$nul_stderr2" && echo 1 || echo 0)" \
+        "JohnGavin/llm#1160: generic-pattern scan of NUL-laden content also no longer triggers bash's null-byte warning"
+    rm -f "$FINDINGS_FILE" "$nul_stderr2"
+    rm -f "$nul_fixture" "$nul_fixture2"
 
     rm -rf "$tmp"
 
