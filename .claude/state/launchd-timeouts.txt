@@ -1,0 +1,109 @@
+# Per-label timeout bounds for launchd jobs wrapped by bin/launchd_run_record.sh
+# (llm#1190 — enforcement half; the reporting half, "High-tier jobs missing a
+# declared timeout", lives in .claude/scripts/launchd_health_report.R Section 7
+# and reads .claude/state/launchd-timeout-exempt.txt for recorded exemptions).
+#
+# Policy (decided 2026-09-13, llm#1190): every scheduled job declares a
+# timeout unless there is an explicit recorded reason not to (see the
+# exemption file). A label with NO entry here runs UNBOUNDED, exactly as
+# before this file existed — this is the normal, safe default for a job not
+# yet analysed, never a silent claim that it has been bounded.
+#
+# Format: one entry per line —
+#
+#   <launchd Label><whitespace><seconds><whitespace># <reasoning>
+#
+# Comment-stripped/trimmed the same way launchd_health_report.R's
+# read_timeout_exemptions() parses launchd-timeout-exempt.txt: everything
+# from the first unescaped '#' to end of line is discarded (it is free-text
+# reasoning here, not a required field), blank lines and pure-comment lines
+# are skipped. Only the first two whitespace-separated tokens on a line are
+# read (label, seconds) — bin/launchd_run_record.sh's lookup_timeout_seconds()
+# ignores everything after the second token.
+#
+# ── How these bounds were derived ────────────────────────────────────────────
+#
+# Source: ~/.claude/logs/launchd_runs.duckdb, table `runs` (label,
+# started_at, finished_at), queried read-only. Per llm#1190's own explicit
+# instruction, MAX duration is never used as the bound — the maxima are
+# contaminated by exactly the hangs this file exists to stop (e.g.
+# com.claude.overnight-self-review-email: 28,676s max vs 20s median;
+# com.claude.cron-catchup: 36,862s max vs 0s median). Two derivation methods
+# were used, chosen per label's actual distribution shape (verified by
+# inspecting each label's top-N durations individually, not assumed):
+#
+#  (A) p95 x 5, rounded UP to the next whole minute, floor 60s. Used for
+#      every label below whose top few durations show a SINGLE sharp outlier
+#      (one hang, days/weeks apart from the rest) sitting well clear of an
+#      otherwise tight, well-behaved p95. With n=42 typical daily-cron sample
+#      sizes, p99 sits only ~0.4 points from the maximum and would just
+#      re-import the max-contamination problem this file exists to avoid —
+#      p95 is the highest percentile that stays clear of a single-run outlier
+#      at these sample sizes. 5x is deliberately generous headroom on top of
+#      that, not a tight fit.
+#  (B) Observed legit/hang gap. Used only for com.claude.cron-catchup, whose
+#      distribution is NOT single-outlier-shaped: 8 of 3,402 runs fall
+#      between 300-3600s (network/DNS-wait retries — this job already
+#      declines to run via a `deferred` status handled elsewhere, see
+#      wait_for_resolvable_host.sh) and exactly 2 runs exceed 3600s (36,862s
+#      and 13,935s — true hangs). The bound is set at the clean gap between
+#      those two clusters (3600s = 1h), which the p95 formula would have
+#      gotten wrong (its own p95 is ~1s, since >99% of runs are near-
+#      instant and the 5-30min network-wait tail is a small minority).
+#
+# Every label below was individually verified this way before being added —
+# none is a guess. See the PR that introduced this file for the full
+# per-label table (n, median, p95, max, chosen bound, method).
+
+# ── Required: llm#1189's 9 named High-tier findings ─────────────────────────
+com.claude.codex-overnight-learning       60    # p95=2.0s, n=42, method A — floor
+com.claude.overnight-self-review-email    240   # p95=36.9s, n=42, method A — single 28676s hang on 2026-08-21
+com.claude.private-data-history-audit     1200  # p95=237.9s, n=2 only — method A, extra caution for low sample count
+com.claude.roborev-bridge                 60    # p95=8.0s, n=42, method A — single 633s hang same night as the above
+com.claude.roborev-daily-backlog          60    # p95=4.0s, n=42, method A — floor
+com.claude.roborev-metrics-etl            300   # p95=59.95s, n=42, method A — single 8260s hang, same night
+com.claude.secret-exposure-scan           120   # p95=12.45s, n=12, method A
+com.claude.self-review-verify             1620  # p95=315.55s, n=42, method A — two ~710s legit-looking slow runs, not single-outlier
+com.claude.unified-duckdb-backup          60    # p95=5.95s, n=42, method A — floor
+
+# ── Additional: bounds populated where the data clearly supports it ─────────
+# NOTE: com.claude.launchd-health-weekly (plist TimeOut=300s),
+# com.claude.self-review-stage1 (plist TimeOut=120s), and
+# com.claude.staleness-collect (plist TimeOut=60s) already declare a
+# `TimeOut` key directly in their own plist — verified via `plutil -extract
+# TimeOut raw <plist>` against the live LaunchAgents inventory. They are
+# deliberately NOT duplicated here: this file's display convention shows
+# the plist value whenever both exist (see attach_wrapper_timeout_display()
+# in launchd_health_report.R), so adding a DIFFERENT wrapper-level number
+# for a job that already has a plist number would make the report's
+# "Timeout" column show a value that is not the one actually enforced —
+# exactly the kind of silent mismatch this whole change exists to prevent.
+com.claude.config-pulse                   120   # p95=22.9s, n=43, method A
+com.johngavin.chrome-tab-backup           60    # p95=5.25s, n=16, method A — floor
+com.claude.roborev-project-backlog        60    # p95=2.95s, n=42, method A — floor
+com.claude.wiki-health-pulse              60    # p95=0s, n=41, method A — floor
+com.claude.roborev-daily-email            1920  # p95=375.0s, n=41, method A
+com.claude.roborev-weekly-rollup-email    420   # p95=79.1s, n=7, method A
+com.claude.roborev-poll-merges            4860  # p95=965.55s, n=88, method A
+com.claude.roborev-autoclose              4740  # p95=941.95s, n=4 only, method A — extra caution for low sample count
+com.claude.roborev-weekly-update          7500  # p95=1490.5s, n=7, method A
+com.claude.config-digest-email            420   # p95=74.65s, n=42, method A — single 582s hang, 2nd-highest only 89s
+com.claude.kb-digest-email                360   # p95=61.75s, n=42, method A — single 490s hang, 2nd-highest only 120s
+com.claude.knowledge-pulse                120   # p95=20.9s, n=42, method A — single 646s hang, 2nd-highest only 27s
+com.claude.pr-status-pulse                60    # p95=3.0s, n=124, method A — single 703s hang, 2nd-highest only 4s
+com.claude.roborev-severity-autoclose     300   # p95=51.7s, n=42, method A — single 419s hang, 2nd-highest only 97s
+com.claude.roborev-agent-health           60    # p95=1.0s, n=1733, method A — floor
+com.claude.roborev-job-reaper             60    # p95=0s, n=2, method A — floor
+com.claude.cron-catchup                   3600  # method B — see rationale above (llm#1190's own motivating example)
+
+# ── Deliberately left unbounded (not exempt — pending more careful analysis) ─
+# com.claude.worktree-gc and com.claude.branch-gc both show a genuinely wide,
+# gradually-decaying tail of LEGITIMATE long runs (more worktrees/branches to
+# clean = more time), not a single-outlier hang signature the way every
+# label above does — worktree-gc's top 6 durations are 7875/6094/5292/5006/
+# 4573/4251s, a smooth decline, not "one huge value, then a cliff". Neither
+# method above fits cleanly; picking a number without a clearer signal would
+# be a guess, which llm#1190 explicitly asks not to do. Left unbounded on
+# purpose; a follow-up with more data (or a different derivation, e.g.
+# regressing duration against worktree count) should set these properly
+# rather than have this file guess.

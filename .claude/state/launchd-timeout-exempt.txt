@@ -29,7 +29,16 @@
 # when there is a genuine, stated reason the job cannot declare one (e.g.
 # it is itself the timeout-supervision mechanism for other jobs).
 #
-# No entries declared yet — adding real timeouts to the High-tier plists
-# is separate follow-up work (see llm#1187 defect 3 and the PR that added
-# this mechanism, #1189). This file exists so the opt-out has somewhere to
-# go once a genuine case is identified; it is not a silent default.
+# No High-tier findings are exempt here yet — every High-tier job that could
+# take a bound now has one, in .claude/state/launchd-timeouts.txt (llm#1190).
+# The two entries below are resident daemons: classify_tier() currently
+# scores them "Low" (RunAtLoad, no calendar/interval schedule, no keyword
+# match), so neither would render as a High-tier finding anyway — they are
+# recorded here regardless, per llm#1190's own instruction ("whatever cannot
+# take a bound ... goes in the exemption file with a real reason"), so the
+# exemption is documented rather than left to be re-derived from the plists
+# by a future reader.
+
+com.roborev.daemon  # Resident KeepAlive+RunAtLoad daemon (no calendar/interval schedule) — it IS the process other roborev CLI operations talk to, so a wall-clock timeout on the daemon itself would make no sense (there is no single "run" to bound). It does not go through bin/launchd_run_record.sh at all (its plist calls roborev_daemon_launcher.sh directly). If it hangs: the `roborev` CLI's own client commands (review/fix/close) would stall or fail against it, Section 5 of the weekly health report ("Stale/Wedged Processes") would flag any wedged `timeout`-wrapped child process it spawns, and ~/.claude/logs/roborev-daemon.log going stale is directly observable. See the 2026-08-13 restart-verification incident (llm#936) for why `launchctl kickstart`'s own exit code is NOT sufficient evidence this daemon actually restarted.
+
+com.roborev.auto-refine  # Resident KeepAlive+RunAtLoad daemon (no calendar/interval schedule) — same reasoning as com.roborev.daemon above; does not go through bin/launchd_run_record.sh (plist calls roborev_auto_refine.sh directly). If it hangs: new roborev findings stop being auto-fixed and the backlog grows silently. Detection: roborev_project_backlog.sh's weekly aggregation would show a rising open-finding count, roborev_agent_health.sh already monitors agent availability, and ~/.claude/logs/roborev-auto-refine.log going stale is directly observable.
