@@ -457,6 +457,97 @@ test_that("read_timeout_exemptions returns zero-length vector when the file is a
   expect_length(result, 0L)
 })
 
+# ── Tests 12-15: wrapper-declared timeout bounds (llm#1190) ─────────────────
+#
+# Enforcement lives in bin/launchd_run_record.sh's per-label bound file, not
+# in each plist's own `TimeOut` key (39 plists were deliberately NOT
+# edited). These tests cover the report-side awareness of that file: a job
+# bounded only via the wrapper must (a) be readable from the file, (b)
+# render distinguishably from a plist-declared bound and from no bound at
+# all, and (c) NOT be reported as a missing-timeout finding.
+
+test_that("read_wrapper_timeouts parses label/seconds pairs and skips comments/blanks", {
+  read_fn <- get("read_wrapper_timeouts", envir = .agg_env)
+
+  tf <- tempfile(fileext = ".txt")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c(
+    "# a pure comment line",
+    "",
+    "com.claude.wrapped-job       60    # p95=2s, floor",
+    "com.claude.another-job       1800  # method A"
+  ), tf)
+
+  result <- read_fn(path = tf)
+  expect_equal(unname(result[["com.claude.wrapped-job"]]), 60)
+  expect_equal(unname(result[["com.claude.another-job"]]), 1800)
+  expect_length(result, 2L)
+})
+
+test_that("read_wrapper_timeouts returns zero-length vector when the file is absent", {
+  read_fn <- get("read_wrapper_timeouts", envir = .agg_env)
+  result  <- read_fn(path = "/tmp/this_wrapper_timeouts_file_does_not_exist_1190.txt")
+  expect_length(result, 0L)
+})
+
+test_that("attach_wrapper_timeout_display renders plist/wrapper/none distinctly", {
+  attach_fn <- get("attach_wrapper_timeout_display", envir = .agg_env)
+
+  inv <- data.frame(
+    label     = c("com.claude.plist-bound", "com.claude.wrapper-bound", "com.claude.unbound"),
+    timeout_s = c(30L, NA_integer_, NA_integer_),
+    stringsAsFactors = FALSE
+  )
+  wrapper_timeouts <- stats::setNames(60, "com.claude.wrapper-bound")
+
+  out <- attach_fn(inv, wrapper_timeouts)
+
+  expect_equal(out$timeout_display[out$label == "com.claude.plist-bound"], "30s")
+  expect_equal(out$timeout_display[out$label == "com.claude.wrapper-bound"], "60s (wrapper)")
+  expect_equal(out$timeout_display[out$label == "com.claude.unbound"], "—")
+  # All three must be textually distinct -- the whole point of this column.
+  expect_equal(length(unique(out$timeout_display)), 3L)
+})
+
+test_that("a High-tier job bounded only via the wrapper is NOT a missing-timeout finding", {
+  find_fn <- get("find_missing_timeout_findings", envir = .agg_env)
+
+  inv <- data.frame(
+    label       = "com.claude.wrapper-only-job",
+    tier        = "High",
+    schedule    = "02:00",
+    program     = "/bin/true",
+    script_path = NA_character_,
+    timeout_s   = NA_integer_,   # no plist TimeOut key
+    stringsAsFactors = FALSE
+  )
+  wrapper_timeouts <- stats::setNames(120, "com.claude.wrapper-only-job")
+
+  findings <- find_fn(inv, exemptions = character(0L), wrapper_timeouts = wrapper_timeouts)
+  expect_equal(nrow(findings), 0L)
+})
+
+test_that("render_inventory_table shows the wrapper-declared bound when timeout_display is present", {
+  render_fn <- get("render_inventory_table", envir = .agg_env)
+
+  inv <- data.frame(
+    label           = "com.claude.wrapper-job",
+    tier            = "High",
+    schedule        = "02:00",
+    program         = "/bin/true",
+    script_path     = NA_character_,
+    timeout_s       = NA_integer_,
+    timeout_display = "60s (wrapper)",
+    n_runs          = 1L,
+    n_fail          = 0L,
+    run_status      = "ok",
+    stringsAsFactors = FALSE
+  )
+
+  out <- render_fn(inv)
+  expect_true(grepl("60s (wrapper)", out, fixed = TRUE))
+})
+
 # ── Test 5: Email dry-run has all 4 section QA markers ────────────────────────
 
 test_that("email dry-run output contains all 4 section QA markers", {
