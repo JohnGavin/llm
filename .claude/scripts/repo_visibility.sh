@@ -63,16 +63,35 @@
 # instruction; overridable for testing). REPO_VISIBILITY_NO_CACHE=1 forces a
 # fresh lookup on every call.
 #
-# The `candidates` list (enumeration of repos under
-# $REPO_VISIBILITY_SCAN_ROOT, default ~/docs_gh) is a SEPARATE, much more
-# expensive operation — one `gh repo view` per repo found — cached
-# separately at $REPO_VISIBILITY_CANDIDATES_FILE with its own, much longer
-# TTL ($REPO_VISIBILITY_CANDIDATES_TTL, default 86400 = 1 day). A
-# PreToolUse hook MUST NOT trigger a cold rebuild of this list inline (it
-# would blow any reasonable hook timeout scanning ~100+ repos over the
-# network) — `candidates` without --refresh returns whatever is cached, even
-# if stale, and returns EMPTY (never a hang) if nothing has been cached yet.
-# Seed the cache once with `repo_visibility.sh candidates --refresh`.
+# The `candidates` list (declared entries, above, PLUS filesystem discovery
+# under $REPO_VISIBILITY_SCAN_ROOTS — a colon-separated list of roots,
+# default $REPO_VISIBILITY_SCAN_ROOT or ~/docs_gh if neither is set) is a
+# SEPARATE, much more expensive operation — one `gh repo view` per
+# discovered repo — cached separately at $REPO_VISIBILITY_CANDIDATES_FILE
+# with its own, much longer TTL ($REPO_VISIBILITY_CANDIDATES_TTL, default
+# 86400 = 1 day). A PreToolUse hook MUST NOT trigger a cold rebuild of this
+# list inline (it would blow any reasonable hook timeout scanning ~100+
+# repos over the network) — `candidates` without --refresh returns whatever
+# is cached, and NEVER rebuilds inline.
+#
+# Filesystem discovery finds repo ROOTS ONLY, by locating `.git` (directory
+# or, for a `git worktree`, file) up to $REPO_VISIBILITY_SCAN_DEPTH
+# directories below each root (default 6) — never a flat depth-1 children
+# list. A scan root is NOT flat: `~/docs_gh/worktrees/<project>/<branch>/`
+# is itself a repo three-plus levels down, and a depth-1 sweep missed it
+# entirely (llm#1183). Discovery only enumerates directory NAMES via
+# `find -name .git -prune` — it never opens or reads file content, so
+# widening it does not create a new information-leak surface.
+#
+# `candidates` exit codes (checks-must-distinguish-unknown /
+# exit-code-conventions): 0 = usable result, stdout carries the list (which
+# may legitimately be empty — a fresh, current cache that found nothing is
+# a real negative). 3 = INDETERMINATE — the cache was never seeded, is past
+# its TTL, or could not be read; stdout may still carry stale content for a
+# human to read, but a caller MUST treat exit 3 as "could not check", never
+# as "nothing found", and act accordingly (private_repo_detail_guard.sh
+# blocks the publish verb it guards on exit 3 — llm#1183 fix 2). Seed the
+# cache once with `repo_visibility.sh candidates --refresh`.
 #
 # Self-test: bash repo_visibility.sh --selftest
 
@@ -104,7 +123,18 @@ _load_config() {
   CACHE_TTL="${REPO_VISIBILITY_CACHE_TTL:-300}"
   CANDIDATES_FILE="${REPO_VISIBILITY_CANDIDATES_FILE:-$HOME/.claude/logs/repo_visibility_candidates_cache.tsv}"
   CANDIDATES_TTL="${REPO_VISIBILITY_CANDIDATES_TTL:-86400}"
-  SCAN_ROOT="${REPO_VISIBILITY_SCAN_ROOT:-$HOME/docs_gh}"
+  # SCAN_ROOTS: colon-separated list of directories to search for repo
+  # roots (PATH-style separator). REPO_VISIBILITY_SCAN_ROOTS (new, multi-root)
+  # takes priority; REPO_VISIBILITY_SCAN_ROOT (singular, pre-#1183) is kept
+  # as a back-compat single-root override for existing callers/tests that
+  # only ever set one; default is $HOME/docs_gh if neither is set.
+  SCAN_ROOTS="${REPO_VISIBILITY_SCAN_ROOTS:-${REPO_VISIBILITY_SCAN_ROOT:-$HOME/docs_gh}}"
+  # Depth (in directories) below each scan root at which a repo's `.git`
+  # may be found. Not flat: worktrees nest as
+  # <root>/worktrees/<project>/<branch>/.git — depth 3-4 depending on
+  # whether the branch name itself contains a "/". Bounded so this never
+  # turns into an unbounded walk of a deep vendor tree (llm#1183).
+  SCAN_DEPTH="${REPO_VISIBILITY_SCAN_DEPTH:-6}"
   GH_TIMEOUT="${GH_REPO_VISIBILITY_TIMEOUT:-8}"
   MAX_CANDIDATES_SCAN="${REPO_VISIBILITY_MAX_CANDIDATES_SCAN:-500}"
 }
@@ -319,7 +349,7 @@ classify_one() {
 # inline unless --refresh is passed or no cache file exists at all (first
 # run) — a PreToolUse hook consuming this must stay fast.
 _build_candidates() {
-  local d name vis count=0 entry
+  local d name vis count=0 entry root gitdir
   : > "${CANDIDATES_FILE}.tmp"
 
   # ── Declared entries first (llm#1183), from BOTH confidential sources ──────
@@ -360,23 +390,46 @@ _build_candidates() {
   done < <(_confidential_entries)
 
   # ── Filesystem discovery (safety net) ─────────────────────────────────────
-  while IFS= read -r d; do
-    [ -e "$d/.git" ] || continue
-    case "$(basename "$d")" in
-      .*|worktrees) continue ;;
-    esac
-    count=$((count + 1))
-    if [ "$count" -gt "$MAX_CANDIDATES_SCAN" ]; then
-      break
-    fi
-    name="$(basename "$d")"
-    vis="$(classify_one "$d")"
-    case "$vis" in
-      private|local_only|confidential_by_policy)
-        printf '%s\t%s\t%s\n' "$name" "$d" "$vis" >> "${CANDIDATES_FILE}.tmp"
-        ;;
-    esac
-  done < <(find "$SCAN_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+  # Repo roots are found by locating `.git` (directory for an ordinary
+  # checkout, FILE for a `git worktree`) up to $SCAN_DEPTH directories below
+  # EACH of $SCAN_ROOTS (colon-separated) — NOT by assuming repos are flat
+  # immediate children of a single root. A flat -maxdepth 1 sweep of a
+  # single root missed real repos nested inside the scanned tree (worktrees)
+  # AND missed repos outside the tree entirely (llm#1183).
+  #
+  # `-name .git -print -type d -prune`: for every match, print first (so a
+  # `.git` FILE — a worktree — is captured even though `-type d` is false
+  # for it), then prune only when it IS a directory, so find never descends
+  # into a real .git object store. This enumerates directory/file NAMES
+  # only; it never opens or reads content, so widening this scan does not
+  # create a new information-leak surface.
+  local IFS_saved="$IFS"
+  IFS=':'
+  local -a _scan_roots_arr
+  read -r -a _scan_roots_arr <<< "$SCAN_ROOTS"
+  IFS="$IFS_saved"
+  for root in "${_scan_roots_arr[@]}"; do
+    [ -n "$root" ] || continue
+    [ -d "$root" ] || continue
+    while IFS= read -r gitdir; do
+      [ -n "$gitdir" ] || continue
+      d="${gitdir%/.git}"
+      case "$(basename "$d")" in
+        .*) continue ;;
+      esac
+      count=$((count + 1))
+      if [ "$count" -gt "$MAX_CANDIDATES_SCAN" ]; then
+        break 2
+      fi
+      name="$(basename "$d")"
+      vis="$(classify_one "$d")"
+      case "$vis" in
+        private|local_only|confidential_by_policy)
+          printf '%s\t%s\t%s\n' "$name" "$d" "$vis" >> "${CANDIDATES_FILE}.tmp"
+          ;;
+      esac
+    done < <(find "$root" -mindepth 1 -maxdepth "$SCAN_DEPTH" -name .git -print -type d -prune 2>/dev/null)
+  done
   mv "${CANDIDATES_FILE}.tmp" "$CANDIDATES_FILE"
   printf '%s\n' "$(_now)" > "${CANDIDATES_FILE}.epoch"
 }
@@ -390,28 +443,48 @@ candidates() {
   # function auto-built on a missing cache file — found and fixed while
   # writing private_repo_detail_guard.sh's own self-test, which hit exactly
   # this cost when it tried to simulate an unseeded cache (JohnGavin/llm#794).
-  local refresh="${1:-}" epoch ts_now out rc
+  # Exit codes (checks-must-distinguish-unknown / exit-code-conventions):
+  #   0 = usable result. stdout carries the candidate list, which may be
+  #       legitimately empty (a fresh, current cache that genuinely found
+  #       nothing is a real negative, not an unknown).
+  #   3 = INDETERMINATE. The list could not be established — never seeded,
+  #       past its TTL, or unreadable. stdout may still carry stale content
+  #       (for a human debugging), but a caller MUST NOT read that as "safe
+  #       to allow" — private_repo_detail_guard.sh blocks the publish verb
+  #       it guards on exit 3 rather than silently allowing (llm#1183 fix 2:
+  #       an empty-because-broken cache was previously indistinguishable
+  #       from an empty-because-nothing-found one, and both silently
+  #       allowed).
+  local refresh="${1:-}" epoch ts_now out rc stale=0
   mkdir -p "$(dirname "$CANDIDATES_FILE")" 2>/dev/null || true
   if [ "$refresh" = "--refresh" ]; then
     _build_candidates
   fi
 
   if [ ! -f "$CANDIDATES_FILE" ]; then
-    # Distinguishable NEGATIVE result: legitimately nothing cached yet (a
-    # fresh install, or --refresh itself failed to write the file). Empty
-    # stdout here is a real, correct answer ("no candidates known"), not a
-    # failure to determine one — the stderr line is what makes that call
-    # auditable rather than silent (checks-must-distinguish-unknown).
-    echo "repo_visibility.sh: candidates cache has never been seeded — run 'repo_visibility.sh candidates --refresh' once (this call returns an empty list, NOT a rebuild)" >&2
-    return 0
+    # INDETERMINATE, not a negative: the cache has never been seeded, so
+    # "found nothing" and "never looked" are indistinguishable from stdout
+    # alone. Prior behaviour treated this the same as a genuine empty
+    # result (exit 0); that is exactly the collapse
+    # checks-must-distinguish-unknown forbids, and it is what left the
+    # pre-publish guard inert whenever nobody had run `candidates
+    # --refresh` yet (llm#1183). NEVER trigger a rebuild here — only an
+    # explicit --refresh may do that.
+    echo "repo_visibility.sh: INDETERMINATE — candidates cache has never been seeded — run 'repo_visibility.sh candidates --refresh' once (this call returns no usable result, NOT a rebuild)" >&2
+    return 3
   fi
 
-  # Stale-but-present cache is still returned (never block on a rebuild);
-  # only warn on stderr so a human can decide to refresh.
+  # Stale-but-present cache: still returned on stdout (never block on an
+  # inline rebuild, and a human debugging wants to see the stale content),
+  # but the exit code reports INDETERMINATE — a cache this old may be
+  # missing repos created or reclassified since the last refresh, so a
+  # caller must not treat it as a confirmed-current negative (llm#1183
+  # fix 2).
   ts_now="$(_now)"
   epoch="$(cat "${CANDIDATES_FILE}.epoch" 2>/dev/null || echo 0)"
   if [ $(( ts_now - epoch )) -gt "$CANDIDATES_TTL" ]; then
-    echo "repo_visibility.sh: candidates cache is stale (>${CANDIDATES_TTL}s) — run 'repo_visibility.sh candidates --refresh' when convenient" >&2
+    stale=1
+    echo "repo_visibility.sh: INDETERMINATE — candidates cache is stale (>${CANDIDATES_TTL}s) — run 'repo_visibility.sh candidates --refresh'" >&2
   fi
 
   # INDETERMINATE result: the cache file exists but could not be read (I/O
@@ -425,9 +498,10 @@ candidates() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "repo_visibility.sh: INDETERMINATE — candidates cache exists but could not be read ($CANDIDATES_FILE): $out" >&2
-    return 2
+    return 3
   fi
   printf '%s\n' "$out"
+  [ "$stale" -eq 1 ] && return 3
   return 0
 }
 
@@ -509,10 +583,26 @@ if [ "${1:-}" = "--selftest" ]; then
 
   # ── candidates: never rebuilds inline without --refresh once cache exists ──
   printf 'fake_repo\t/tmp/fake_repo\tprivate\n' > "$REPO_VISIBILITY_CANDIDATES_FILE"
-  echo 1 > "${REPO_VISIBILITY_CANDIDATES_FILE}.epoch"
+  date -u +%s > "${REPO_VISIBILITY_CANDIDATES_FILE}.epoch"   # FRESH
+  candidates_out="$(candidates)"; candidates_rc=$?
   _case "candidates without --refresh returns the existing cache verbatim" \
-    "$(candidates)" \
+    "$candidates_out" \
     "$(printf 'fake_repo\t/tmp/fake_repo\tprivate')"
+  _case "a FRESH cache with content exits 0 (usable), not 3 (llm#1183 fix 2)" \
+    "$candidates_rc" "0"
+
+  # ── a STALE cache (llm#1183 fix 2): content is still returned on stdout
+  # (a human debugging wants to see it), but the exit code must distinguish
+  # this from a fresh, current answer — a caller reading only stdout (as
+  # private_repo_detail_guard.sh did before this fix) cannot tell a day-old
+  # cache from a fresh one; the exit code is what makes that distinguishable.
+  echo 1 > "${REPO_VISIBILITY_CANDIDATES_FILE}.epoch"   # STALE (epoch~1970)
+  candidates_out="$(candidates 2>/dev/null)"; candidates_rc=$?
+  _case "a STALE cache still returns its content on stdout" \
+    "$candidates_out" \
+    "$(printf 'fake_repo\t/tmp/fake_repo\tprivate')"
+  _case "a STALE cache exits 3 (INDETERMINATE), not 0 (llm#1183 fix 2)" \
+    "$candidates_rc" "3"
 
   # ── candidates on a NEVER-SEEDED cache must return empty, NOT rebuild ────
   # A rebuild here would scan $SCAN_ROOT for real and shell out to
@@ -523,9 +613,11 @@ if [ "${1:-}" = "--selftest" ]; then
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/never-seeded.tsv"
   export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_1.txt"
   _load_config
-  never_seeded_out="$(candidates 2>/dev/null)"
+  never_seeded_out="$(candidates 2>/dev/null)"; never_seeded_rc=$?
   _case "candidates on a cache that was never seeded returns empty, no rebuild" \
     "$never_seeded_out" ""
+  _case "candidates on a cache that was never seeded exits 3, not 0 (llm#1183 fix 2)" \
+    "$never_seeded_rc" "3"
   _case "the never-seeded path really was never created by the call above" \
     "$([ -f "$TMP_DIR/never-seeded.tsv" ] && echo EXISTS || echo ABSENT)" \
     "ABSENT"
@@ -559,8 +651,11 @@ if [ "${1:-}" = "--selftest" ]; then
   # had simply started emitting a constant.
   : > "$TMP_DIR/declared_list.txt"
   candidates --refresh >/dev/null 2>&1
+  empty_fresh_out="$(candidates 2>/dev/null)"; empty_fresh_rc=$?
   _case "with nothing declared, an empty scan root yields no candidates" \
-    "$(candidates 2>/dev/null)" ""
+    "$empty_fresh_out" ""
+  _case "a FRESH cache that is genuinely empty exits 0, not 3 (real negative, not unknown; llm#1183 fix 2)" \
+    "$empty_fresh_rc" "0"
 
   # ── overlay-only declared entries (roborev #10301 fix) ──────────────────
   # A REAL confidential name must never sit in the TRACKED, public list — it
@@ -599,6 +694,69 @@ if [ "${1:-}" = "--selftest" ]; then
     "$(candidates 2>/dev/null)" ""
   _case "(c) falsification: overlay removed -> classify_one no longer confidential_by_policy" \
     "$(classify_one "$TMP_DIR/zzz-local-overlay-fixture")" "local_only"
+
+  # ── filesystem discovery: multiple roots + nested depth (llm#1183 fix 1) ──
+  # The defect was TWO separate assumptions baked into one flat sweep:
+  #   (a) only ONE root was ever scanned — a repo outside it was invisible
+  #       no matter what;
+  #   (b) only depth-1 CHILDREN of that root were scanned — a repo nested a
+  #       few levels down, the shape every `git worktree` actually takes
+  #       ($root/worktrees/<project>/<branch>/), was invisible even though
+  #       it sits inside the tree supposedly being scanned.
+  # Four fixtures isolate (a) from (b) rather than conflating them:
+  #   flat-repo-fixture     under root_a, depth 1  -- control: proves the
+  #                          scan of root_a itself still runs.
+  #   nested-repo-fixture   under root_a, depth 3  -- isolates defect (b)
+  #                          alone (same root a flat sweep already covers).
+  #   second-root-repo-fixture under root_b, depth 1 -- isolates defect (a)
+  #                          alone (a second root, but not nested).
+  #   branchA (git WORKTREE) under root_b, depth 4, `.git` is a FILE -- both
+  #                          defects at once, the actual real-world shape.
+  root_a="$TMP_DIR/scan_root_a"
+  root_b="$TMP_DIR/scan_root_b"
+  mkdir -p "$root_a/flat-repo-fixture"
+  (cd "$root_a/flat-repo-fixture" && git init -q 2>/dev/null)
+  mkdir -p "$root_a/nested/sublevel/nested-repo-fixture"
+  (cd "$root_a/nested/sublevel/nested-repo-fixture" && git init -q 2>/dev/null)
+  mkdir -p "$root_b/second-root-repo-fixture"
+  (cd "$root_b/second-root-repo-fixture" && git init -q 2>/dev/null)
+  mkdir -p "$root_b/worktree-main-fixture"
+  (cd "$root_b/worktree-main-fixture" && git init -q 2>/dev/null)
+  (cd "$root_b/worktree-main-fixture" && git worktree add "$root_b/worktrees/proj/branchA" -b selftest-branch-a >/dev/null 2>&1)
+  unset REPO_VISIBILITY_SCAN_ROOT
+  export REPO_VISIBILITY_SCAN_ROOTS="$root_a:$root_b"
+  export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/multi_root_candidates.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/multi_root_confidential.txt"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_multi.txt"
+  : > "$TMP_DIR/multi_root_confidential.txt"
+  _load_config
+  candidates --refresh >/dev/null 2>&1
+  multi_out="$(candidates 2>/dev/null)"
+  _case "(control) a flat depth-1 repo under the first root is still discovered" \
+    "$(printf '%s' "$multi_out" | grep -c 'flat-repo-fixture')" "1"
+  _case "a repo NESTED below the top level of a scanned root is discovered (defect b alone)" \
+    "$(printf '%s' "$multi_out" | grep -c 'nested-repo-fixture')" "1"
+  _case "a repo that exists only under a SECOND scan root is discovered (defect a alone)" \
+    "$(printf '%s' "$multi_out" | grep -c 'second-root-repo-fixture')" "1"
+  _case "a nested git WORKTREE (.git is a FILE) under a second root is discovered (both defects)" \
+    "$(printf '%s' "$multi_out" | grep -c 'branchA')" "1"
+
+  # Falsification: shrink SCAN_DEPTH so it can still reach the shallow repos
+  # (.git at depth <=2) but not the nested ones (.git at depth >=3), and
+  # confirm they drop out of the SAME rebuild — proves the cases above
+  # actually exercise depth-bounded discovery, not a `find` default.
+  export REPO_VISIBILITY_SCAN_DEPTH=2
+  _load_config
+  candidates --refresh >/dev/null 2>&1
+  shallow_out="$(candidates 2>/dev/null)"
+  _case "(falsification) a shallower depth still finds the flat repos (control: the scan itself still ran)" \
+    "$(printf '%s' "$shallow_out" | grep -c -e 'flat-repo-fixture' -e 'second-root-repo-fixture')" "2"
+  _case "(falsification) a shallower depth misses the nested repo on the SAME root again" \
+    "$(printf '%s' "$shallow_out" | grep -c 'nested-repo-fixture')" "0"
+  _case "(falsification) a shallower depth misses the nested worktree again" \
+    "$(printf '%s' "$shallow_out" | grep -c 'branchA')" "0"
+  unset REPO_VISIBILITY_SCAN_DEPTH
+  unset REPO_VISIBILITY_SCAN_ROOTS
 
   unset REPO_VISIBILITY_SCAN_ROOT
   export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/confidential-repos.txt"
