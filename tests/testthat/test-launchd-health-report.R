@@ -347,6 +347,116 @@ test_that("render_inventory_table shows three distinct cell strings across ok/ne
   expect_false(identical(cell_never, cell_unavail))
 })
 
+# ── Test 9: Column rename — "Fails (7d)" -> "Non-zero exits (7d)" ───────────
+#
+# Per the `exit-code-conventions` rule, a non-zero exit is not necessarily a
+# failure — checker/scanner jobs use exit 1 to mean "ran fine, found
+# something" (e.g. com.claude.secret-exposure-scan: 7/7 non-zero exits this
+# week while every housekeeping_runs row for it recorded status='ok'). The
+# old "Fails (7d)" header claimed a stronger meaning than the underlying
+# `exit_code <> 0` count actually carries.
+
+test_that("inventory table header says 'Non-zero exits (7d)', not 'Fails (7d)'", {
+  render_fn <- get("render_inventory_table", envir = .agg_env)
+
+  inv <- data.frame(
+    label       = "com.claude.header-rename-test",
+    tier        = "Low",
+    schedule    = "daemon/run-at-load",
+    program     = "/bin/true",
+    script_path = NA_character_,
+    timeout_s   = NA_integer_,
+    n_runs      = 5L,
+    n_fail      = 1L,
+    run_status  = "ok",
+    stringsAsFactors = FALSE
+  )
+
+  out <- render_fn(inv)
+  expect_true(grepl("Non-zero exits (7d)", out, fixed = TRUE))
+  expect_false(grepl("Fails (7d)", out, fixed = TRUE))
+  # The tier-header summary line must use the same renamed vocabulary.
+  expect_true(grepl("non-zero exit", out, fixed = TRUE))
+})
+
+# ── Tests 10-11: High-tier missing-timeout findings (llm#1187 defect 3) ─────
+#
+# User decision (llm#1187 defect 3): every job must declare a timeout
+# unless the plist owner has recorded an explicit reason not to. A
+# High-tier job with no timeout and no recorded exemption is a FINDING.
+# Three states must be distinguishable per checks-must-distinguish-unknown:
+# timeout declared (not tested here — already covered by the inventory
+# table's Timeout column), no timeout + not exempt (finding), no timeout +
+# exempt (reason shown, never a bare dash, never silently "fine").
+
+test_that("a High-tier job with no timeout and no exemption is reported as a finding", {
+  find_fn   <- get("find_missing_timeout_findings", envir = .agg_env)
+  render_fn <- get("render_missing_timeout_findings", envir = .agg_env)
+
+  inv <- data.frame(
+    label       = "com.claude.no-timeout-job",
+    tier        = "High",
+    schedule    = "02:00",
+    program     = "/bin/true",
+    script_path = NA_character_,
+    timeout_s   = NA_integer_,
+    stringsAsFactors = FALSE
+  )
+
+  findings <- find_fn(inv, exemptions = character(0L))
+  expect_equal(nrow(findings), 1L)
+  expect_equal(findings$label[1L], "com.claude.no-timeout-job")
+  expect_equal(findings$status[1L], "finding")
+
+  out <- render_fn(findings)
+  expect_true(grepl("no-timeout-job", out, fixed = TRUE))
+  expect_true(grepl("FINDING", out, fixed = TRUE))
+})
+
+test_that("a High-tier job with no timeout but a file exemption is not a finding, and shows its reason", {
+  read_fn   <- get("read_timeout_exemptions", envir = .agg_env)
+  find_fn   <- get("find_missing_timeout_findings", envir = .agg_env)
+  render_fn <- get("render_missing_timeout_findings", envir = .agg_env)
+
+  exempt_file <- tempfile(fileext = ".txt")
+  on.exit(unlink(exempt_file), add = TRUE)
+  writeLines(c(
+    "# launchd timeout exemptions -- one 'label  # reason' per line",
+    "com.claude.exempt-job  # relies on internal watchdog, see llm#1187"
+  ), exempt_file)
+
+  exemptions <- read_fn(path = exempt_file)
+  expect_true("com.claude.exempt-job" %in% names(exemptions))
+
+  inv <- data.frame(
+    label       = "com.claude.exempt-job",
+    tier        = "High",
+    schedule    = "03:00",
+    program     = "/bin/true",
+    script_path = NA_character_,
+    timeout_s   = NA_integer_,
+    stringsAsFactors = FALSE
+  )
+
+  findings <- find_fn(inv, exemptions = exemptions)
+  expect_equal(nrow(findings), 1L)
+  expect_equal(findings$status[1L], "exempt")
+  expect_false(is.na(findings$reason[1L]))
+  expect_true(grepl("watchdog", findings$reason[1L], fixed = TRUE))
+
+  out <- render_fn(findings)
+  expect_true(grepl("exempt-job", out, fixed = TRUE))
+  expect_true(grepl("exempt", out, fixed = TRUE))
+  expect_false(grepl("FINDING", out, fixed = TRUE))
+  expect_true(grepl("watchdog", out, fixed = TRUE))
+})
+
+test_that("read_timeout_exemptions returns zero-length vector when the file is absent", {
+  read_fn <- get("read_timeout_exemptions", envir = .agg_env)
+  result  <- read_fn(path = "/tmp/this_exempt_file_does_not_exist_1187.txt")
+  expect_length(result, 0L)
+})
+
 # ── Test 5: Email dry-run has all 4 section QA markers ────────────────────────
 
 test_that("email dry-run output contains all 4 section QA markers", {
