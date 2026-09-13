@@ -96,7 +96,7 @@ LAUNCH_AGENTS_DIR <- file.path(Sys.getenv("HOME"), "Library", "LaunchAgents")
 #    written by bin/launchd_run_record.sh, keyed by `label` (the launchd
 #    Label, which matches the plist inventory exactly — no path-join
 #    ambiguity). This is the correct source for the Section 1 inventory
-#    table's Runs (7d) / Fails (7d) columns.
+#    table's Runs (7d) / Non-zero exits (7d) columns.
 LEDGER_PATH <- Sys.getenv(
   "LAUNCHD_LEDGER",
   file.path(Sys.getenv("HOME"), ".claude", "logs", "unified.duckdb")
@@ -510,7 +510,7 @@ attach_label_run_counts <- function(inventory, label_counts) {
   inventory
 }
 
-#' Render one Runs (7d) / Fails (7d) table cell for a given (count, status)
+#' Render one Runs (7d) / Non-zero exits (7d) table cell for a given (count, status)
 #' pair. The three `run_status` values from `attach_label_run_counts()` MUST
 #' produce three different strings — see that function's docs.
 fmt_run_status <- function(n, status) {
@@ -1013,6 +1013,143 @@ collect_braindumps_staleness <- function(ledger = LEDGER_PATH, threshold_hours =
   detect_braindumps_staleness(con, threshold_hours = threshold_hours)
 }
 
+# ── Section 7: missing-timeout findings (llm#1187 defect 3) ──────────────────
+#
+# User decision (llm#1187 defect 3, verbatim): every job must declare a
+# timeout unless there is an explicit reason not to, and a missing timeout
+# on a High-tier job is a FINDING — not merely a blank "—" cell in the
+# inventory table that a reader can easily skim past. A job may opt out by
+# declaring an explicit reason in a small, hand-maintained file; the
+# opt-out is READ, never a silent default (checks-must-distinguish-unknown:
+# "no timeout, not exempt" and "no timeout, exempt" must never render the
+# same way, and neither may collapse into a bare dash).
+
+TIMEOUT_EXEMPT_FILE <- Sys.getenv(
+  "LAUNCHD_TIMEOUT_EXEMPT_FILE",
+  file.path(Sys.getenv("HOME"), "docs_gh", "llm", ".claude", "state",
+            "launchd-timeout-exempt.txt")
+)
+
+#' Read the timeout-exemption declarations file: one `label  # reason` line
+#' per entry. Comment-stripped/trimmed the same way `confidential-repos.txt`
+#' is parsed by `_confidential_entries()` in
+#' `.claude/scripts/repo_visibility.sh` (strip from the first unescaped `#`
+#' to end of line, trim, skip blank) — except here the text after `#` is
+#' not discarded documentation to ignore, it IS the required reason, so it
+#' is captured rather than dropped. A line that is entirely a comment (a
+#' `#` in the first non-blank position) is skipped outright.
+#'
+#' A missing file is the normal case (nothing exempted yet) and returns a
+#' zero-length named vector — silently, on purpose (mirrors
+#' `_confidential_entries()`'s "file absent -> no entries" convention). A
+#' file that EXISTS but cannot be read is a genuine UNKNOWN, not the same
+#' as "nothing declared" — a warning is emitted to stderr and no entries
+#' are contributed, but this must never be read by a caller as "confirmed
+#' zero exemptions" (checks-must-distinguish-unknown).
+#'
+#' @return A named character vector: names are plist Labels, values are the
+#'   trimmed reason text (possibly `""` when a line had a bare `#` with no
+#'   text after it, or no `#` at all — `render_missing_timeout_findings()`
+#'   renders that case as "(no reason recorded)", never as a bare dash).
+read_timeout_exemptions <- function(path = TIMEOUT_EXEMPT_FILE) {
+  empty <- character(0L)
+  if (!file.exists(path)) return(empty)
+  if (file.access(path, mode = 4L) != 0L) {
+    message(sprintf(
+      "launchd_health_report.R: WARNING — timeout-exempt file exists but is not readable, contributing NO exemptions: %s",
+      path
+    ))
+    return(empty)
+  }
+
+  lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character(0L))
+  if (length(lines) == 0L) return(empty)
+
+  out_labels  <- character(0L)
+  out_reasons <- character(0L)
+  for (line in lines) {
+    if (grepl("^[[:space:]]*#", line)) next  # pure comment line
+    if (!grepl("[^[:space:]]", line)) next   # blank line
+    hash_pos <- regexpr("#", line, fixed = TRUE)
+    if (hash_pos > 0L) {
+      lbl    <- trimws(substr(line, 1L, hash_pos - 1L))
+      reason <- trimws(substr(line, hash_pos + 1L, nchar(line)))
+    } else {
+      lbl    <- trimws(line)
+      reason <- ""
+    }
+    if (!nzchar(lbl)) next
+    out_labels  <- c(out_labels, lbl)
+    out_reasons <- c(out_reasons, reason)
+  }
+  stats::setNames(out_reasons, out_labels)
+}
+
+#' Build the missing-timeout findings for High-tier jobs.
+#'
+#' @param inventory The plist inventory data.frame (as from
+#'   `collect_inventory()`) — must have `tier`, `label`, `timeout_s`.
+#' @param exemptions A named character vector as returned by
+#'   `read_timeout_exemptions()` (names = label, values = reason).
+#' @return A data.frame with columns `label`, `status` (`"finding"` or
+#'   `"exempt"`), `reason` (`NA_character_` for a finding; the declared
+#'   reason — possibly `""` — for an exemption). Zero rows (never NULL)
+#'   when every High-tier job has a declared timeout.
+find_missing_timeout_findings <- function(inventory, exemptions = read_timeout_exemptions()) {
+  empty <- data.frame(
+    label = character(), status = character(), reason = character(),
+    stringsAsFactors = FALSE
+  )
+  if (is.null(inventory) || nrow(inventory) == 0L) return(empty)
+  if (!("timeout_s" %in% names(inventory))) return(empty)
+
+  high <- inventory[inventory$tier == "High" & is.na(inventory$timeout_s), , drop = FALSE]
+  if (nrow(high) == 0L) return(empty)
+
+  rows <- lapply(high$label, function(lbl) {
+    if (lbl %in% names(exemptions)) {
+      list(label = lbl, status = "exempt", reason = unname(exemptions[[lbl]]))
+    } else {
+      list(label = lbl, status = "finding", reason = NA_character_)
+    }
+  })
+  do.call(rbind, lapply(rows, as.data.frame, stringsAsFactors = FALSE))
+}
+
+#' Render the missing-timeout findings section. The two possible row states
+#' ("finding" and "exempt") are rendered as visually and textually distinct
+#' lines — an exemption's reason is ALWAYS shown (never a bare dash, never
+#' silently identical to a finding's rendering) per
+#' checks-must-distinguish-unknown.
+render_missing_timeout_findings <- function(findings) {
+  if (is.null(findings) || nrow(findings) == 0L) {
+    return("\n_No High-tier jobs are missing a declared timeout._\n")
+  }
+
+  lines <- character(0L)
+  for (i in seq_len(nrow(findings))) {
+    r <- findings[i, ]
+    if (identical(r$status, "exempt")) {
+      reason_txt <- if (is.na(r$reason) || !nzchar(r$reason)) {
+        "(no reason recorded)"
+      } else {
+        r$reason
+      }
+      lines <- c(lines, sprintf("- `%s` — exempt: %s", r$label, reason_txt))
+    } else {
+      lines <- c(lines, sprintf(
+        paste0(
+          "- \U26A0\UFE0F **FINDING**: `%s` is a High-tier job with no ",
+          "declared `TimeOut` and no recorded exemption. Add a timeout to ",
+          "the plist, or add an exemption line to `%s`."
+        ),
+        r$label, basename(TIMEOUT_EXEMPT_FILE)
+      ))
+    }
+  }
+  paste0("\n", paste(lines, collapse = "\n"), "\n")
+}
+
 # ── Markdown rendering ─────────────────────────────────────────────────────────
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
@@ -1049,12 +1186,12 @@ render_inventory_table <- function(inventory) {
     tier_runs <- if ("n_runs" %in% names(sub)) sum(sub$n_runs, na.rm = TRUE) else 0L
     tier_fail <- if ("n_fail" %in% names(sub)) sum(sub$n_fail, na.rm = TRUE) else 0L
     lines <- c(lines, sprintf(
-      "\n### %s %s Tier — %d jobs · %d runs · %d fails (7d)",
+      "\n### %s %s Tier — %d jobs · %d runs · %d non-zero exits (7d)",
       tier_emoji[tier], tier, nrow(sub), tier_runs, tier_fail
     ), "")
     lines <- c(lines,
-      "| Label | Schedule | Runs (7d) | Fails (7d) | Program | Timeout |",
-      "|-------|----------|-----------|------------|---------|---------|"
+      "| Label | Schedule | Runs (7d) | Non-zero exits (7d) | Program | Timeout |",
+      "|-------|----------|-----------|----------------------|---------|---------|"
     )
     for (i in seq_len(nrow(sub))) {
       r <- sub[i, ]
@@ -1070,11 +1207,16 @@ render_inventory_table <- function(inventory) {
   if (length(lines) > 0L) {
     lines <- c(lines, "",
       paste0(
-        "_Runs/Fails legend: a number is the actual count in the last ",
-        REPORT_WINDOW_DAYS, " days (a job can genuinely show 0). ",
+        "_Runs/Non-zero-exits legend: a number is the actual count in the ",
+        "last ", REPORT_WINDOW_DAYS, " days (a job can genuinely show 0). ",
         "“no data” means this job's label has never appeared in the run ",
         "ledger at all. “unavailable” means the run ledger itself could ",
-        "not be read for this report run — neither is the same as a real zero._"
+        "not be read for this report run — neither is the same as a real ",
+        "zero. A non-zero exit means the job **failed OR completed and ",
+        "reported findings**, depending on that job's own exit-code ",
+        "convention (checker/scanner jobs commonly use exit 1 to mean ",
+        "\"ran fine, found something\") — see the `exit-code-conventions` ",
+        "rule. This column does not by itself mean the job crashed._"
       )
     )
   }
@@ -1180,6 +1322,10 @@ stale_processes <- detect_stale_processes(collect_process_table())
 message("launchd_health_report.R: checking braindumps freshness (llm#937 fix 5)")
 braindumps_staleness <- collect_braindumps_staleness(LEDGER_PATH)
 
+message("launchd_health_report.R: checking High-tier jobs for missing timeouts (llm#1187 defect 3)")
+timeout_exemptions       <- read_timeout_exemptions()
+missing_timeout_findings <- find_missing_timeout_findings(inventory, timeout_exemptions)
+
 # ── Assemble report ────────────────────────────────────────────────────────────
 
 now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M UTC", tz = "UTC")
@@ -1205,6 +1351,9 @@ report_md <- paste0(
   "\n\n---\n\n",
   "## 6. Braindumps Freshness (llm#937 fix 5)\n",
   render_braindumps_staleness(braindumps_staleness),
+  "\n\n---\n\n",
+  "## 7. High-Tier Jobs Missing a Declared Timeout (llm#1187 defect 3)\n",
+  render_missing_timeout_findings(missing_timeout_findings),
   "\n"
 )
 
