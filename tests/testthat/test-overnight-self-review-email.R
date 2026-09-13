@@ -338,16 +338,22 @@ test_that("cron-health: partial heartbeat renders as indeterminate, not ok or fa
                info = "partial heartbeat was folded into the ok count")
 })
 
-test_that("cron-health: raw-exit-code vs heartbeat contradiction renders as indeterminate with both values (llm#1145 Finding 2)", {
+test_that("cron-health: raw-exit-code vs heartbeat contradiction renders as indeterminate with both values (llm#1145 Finding 2, narrowed by llm#1188)", {
   skip_if_not_installed("blastula")
   skip_if_not_installed("duckdb")
   skip_if_not(file.exists(.WORKTREE_GC_PLIST),
               "com.claude.worktree-gc.plist not installed -- fixture row would be filtered out")
 
+  # llm#1188 narrowed the contradiction check so that exit 1 alongside
+  # heartbeat 'ok' is no longer flagged (that combination is the documented
+  # exit-code-conventions findings shape -- see the dedicated test below).
+  # This fixture uses exit 2 (usage error per exit-code-conventions), which
+  # is NOT part of that convention and must still read as a genuine,
+  # unresolved contradiction.
   db <- .build_cron_fixture_db(
     hk_row = list(task = "worktree_gc", status = "ok", rows_written = 168L),
     ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_recent_fail",
-                   last_exit_code = 1L, last_fired_at_now = TRUE)
+                   last_exit_code = 2L, last_fired_at_now = TRUE)
   )
   skip_if(is.null(db), "could not build cron-health fixture DB")
 
@@ -356,12 +362,73 @@ test_that("cron-health: raw-exit-code vs heartbeat contradiction renders as inde
 
   expect_true(grepl("indeterminate", combined, fixed = TRUE),
               info = "raw-state/exit-code contradiction did not render as indeterminate")
-  expect_true(grepl("raw exit 1", combined, fixed = TRUE),
+  expect_true(grepl("raw exit 2", combined, fixed = TRUE),
               info = "raw exit code value not shown in the contradiction label")
   expect_true(grepl("heartbeat 'ok", combined, fixed = TRUE),
               info = "heartbeat-derived value not shown in the contradiction label")
   expect_false(grepl("plists · 1 ok · 0 failed · 0 indeterminate", combined, fixed = TRUE),
                info = "contradiction was silently resolved as a clean ok")
+})
+
+test_that("cron-health: exit 1 alongside heartbeat 'ok' renders as a determinate ok, not indeterminate (llm#1188, narrows llm#1145 Finding 2)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST),
+              "com.claude.worktree-gc.plist not installed -- fixture row would be filtered out")
+
+  # exit-code-conventions: 0 PASS / 1 FAIL findings / 2 usage error /
+  # 3 INDETERMINATE. A scanner exiting 1 with a heartbeat of 'ok' ran
+  # cleanly and found N rows worth flagging -- this is exactly the
+  # secret_exposure_scan.sh / private_data_history_audit.sh shape that was
+  # wrongly reported "indeterminate" every day before llm#1188.
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "ok", rows_written = 138L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+
+  out      <- run_dry_run(db_path = db)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("0 indeterminate", combined, fixed = TRUE),
+              info = "exit 1 + heartbeat ok was still counted as indeterminate")
+  expect_true(grepl("plists · 1 ok · 0 failed · 0 indeterminate", combined, fixed = TRUE),
+              info = "exit 1 + heartbeat ok was not counted as a clean ok in the summary line")
+  expect_true(grepl("138 finding row(s)", combined, fixed = TRUE),
+              info = "row-level label did not state the finding count")
+  expect_true(grepl("exit 1 = findings, per exit-code-conventions", combined, fixed = TRUE),
+              info = "row-level label did not explain why exit 1 is not a failure")
+  expect_false(grepl("raw exit 1 vs heartbeat", combined, fixed = TRUE),
+               info = "exit 1 + heartbeat ok was still rendered as a raw-exit-vs-heartbeat contradiction")
+})
+
+test_that("cron-health: exit 0 alongside heartbeat 'failed' still renders as indeterminate (unchanged by llm#1188)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST),
+              "com.claude.worktree-gc.plist not installed -- fixture row would be filtered out")
+
+  # The llm#1188 narrowing only exempts exit 1 + heartbeat 'ok'. The
+  # opposite disagreement -- a clean exit code alongside a heartbeat that
+  # recorded a hard failure -- is not part of the findings convention at
+  # all and must remain a flagged, unresolved contradiction.
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "failed", rows_written = 0L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_ok",
+                   last_exit_code = 0L, last_fired_at_now = TRUE)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+
+  out      <- run_dry_run(db_path = db)
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("indeterminate", combined, fixed = TRUE),
+              info = "exit 0 + heartbeat failed did not render as indeterminate")
+  expect_true(grepl("raw exit 0", combined, fixed = TRUE),
+              info = "raw exit code value not shown in the contradiction label")
+  expect_true(grepl("heartbeat 'failed", combined, fixed = TRUE),
+              info = "heartbeat-derived value not shown in the contradiction label")
 })
 
 test_that("cron-health: zero indeterminate is rendered explicitly, not omitted (llm#1145)", {
