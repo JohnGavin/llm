@@ -90,9 +90,14 @@ run_dry_run <- function(db_path = .real_db, extra_env = character(0)) {
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test_that("sender script exists", {
-  skip_if_not(
+  # Was skip_if_not() with no expectation after it -- a test that can only
+  # ever SKIP or pass-with-zero-assertions can never go red (Trap A,
+  # verification-before-completion). Assert directly instead: this is a real
+  # falsifiable check (fails if the script is ever moved/renamed) rather than
+  # a guard for tests further down the file. See llm#1192.
+  expect_true(
     nzchar(.email_script) && file.exists(.email_script),
-    paste("Script not found at:", .email_script)
+    info = paste("Script not found at:", .email_script)
   )
 })
 
@@ -227,21 +232,127 @@ test_that("launchd plist passes xmllint syntax check", {
 })
 
 test_that("launchd plist file exists", {
-  skip_if_not(
+  # Same defect as "sender script exists" above: skip_if_not() with no
+  # expectation after it is an empty test that can never fail. Assert
+  # directly. See llm#1192.
+  expect_true(
     file.exists(.plist_path),
-    paste("Plist not found at:", .plist_path)
+    info = paste("Plist not found at:", .plist_path)
   )
 })
 
-test_that("launchd plist schedules at hour 6, minute 30", {
-  skip_if_not(file.exists(.plist_path), "Plist not found")
+# llm#1192: this test used to assert a literal 06:30 schedule. Commit
+# 26c7514 (llm#1122/#1125) deliberately moved the job to 08:45 because 06:30
+# was 1h45m BEFORE com.claude.staleness-collect's own 08:15 daily run --
+# every morning's email read YESTERDAY's staleness snapshot and reported
+# healthy jobs as stale. The test was never updated, so `main` has been red
+# since that commit landed.
+#
+# Re-pinning the literal (06:30 -> 08:45) would reproduce the exact failure
+# mode: the NEXT deliberate schedule change breaks the test again, for the
+# same reason. What the original assertion was actually defending is an
+# ordering INVARIANT -- "runs after the staleness snapshot it reads, before
+# the 09:00 job-peak contention window" -- so assert that instead, derived
+# from the plists themselves rather than restated as a new magic number.
 
-  plist_text <- paste(readLines(.plist_path), collapse = "\n")
-  # The Hour integer block should be 6
-  expect_true(grepl("<key>Hour</key>\\s*<integer>6</integer>", plist_text),
-              info = "Plist does not schedule at hour 6")
-  expect_true(grepl("<key>Minute</key>\\s*<integer>30</integer>", plist_text),
-              info = "Plist does not schedule at minute 30")
+#' Extract StartCalendarInterval Hour/Minute from a launchd plist as
+#' minutes-since-midnight. Handles only the single-<dict> StartCalendarInterval
+#' form (sufficient for every plist referenced below); returns NA_integer_ if
+#' the file is unreadable or the keys can't be found, so callers can
+#' distinguish "could not parse" from a real time value.
+.schedule_minutes <- function(plist_path) {
+  if (!file.exists(plist_path)) {
+    return(NA_integer_)
+  }
+  plist_text <- paste(readLines(plist_path), collapse = "\n")
+  hour_m   <- regexpr("<key>Hour</key>\\s*<integer>(\\d+)</integer>", plist_text)
+  minute_m <- regexpr("<key>Minute</key>\\s*<integer>(\\d+)</integer>", plist_text)
+  if (hour_m == -1L || minute_m == -1L) {
+    return(NA_integer_)
+  }
+  hour   <- as.integer(sub(".*<integer>(\\d+)</integer>.*", "\\1", regmatches(plist_text, hour_m)))
+  minute <- as.integer(sub(".*<integer>(\\d+)</integer>.*", "\\1", regmatches(plist_text, minute_m)))
+  hour * 60L + minute
+}
+
+.hhmm <- function(minutes) sprintf("%02d:%02d", minutes %/% 60L, minutes %% 60L)
+
+.staleness_plist_path <- normalizePath(
+  file.path(
+    pkgload::pkg_path(),
+    ".claude", "launchd", "com.claude.staleness-collect.plist"
+  ),
+  mustWork = FALSE
+)
+
+# config-pulse fires at exactly 09:00 -- the earliest of the named 09:00
+# job-peak cluster (worktree-gc 09:06, roborev-project-backlog 09:04,
+# roborev-poll-merges 09:02) -- so it is the tightest available boundary for
+# "before the 09:00 peak" and, being a single-<dict> StartCalendarInterval
+# (unlike roborev-poll-merges' per-weekday <array> form), is directly
+# parseable by .schedule_minutes().
+.peak_plist_path <- normalizePath(
+  file.path(
+    pkgload::pkg_path(),
+    ".claude", "launchd", "com.claude.config-pulse.plist"
+  ),
+  mustWork = FALSE
+)
+
+test_that("overnight email is scheduled after staleness-collect (llm#1122, llm#1192)", {
+  skip_if_not(file.exists(.plist_path), "overnight-self-review-email plist not found")
+  # A missing reference plist is INDETERMINATE, not a pass: the ordering
+  # invariant literally cannot be checked without it. skip (not pass)
+  # distinguishes "did not check" from "checked and fine".
+  skip_if_not(
+    file.exists(.staleness_plist_path),
+    "staleness-collect plist not found -- cannot verify ordering invariant"
+  )
+
+  email_minutes      <- .schedule_minutes(.plist_path)
+  staleness_minutes  <- .schedule_minutes(.staleness_plist_path)
+  skip_if(
+    is.na(email_minutes) || is.na(staleness_minutes),
+    "Could not parse StartCalendarInterval Hour/Minute from one or both plists"
+  )
+
+  expect_true(
+    email_minutes > staleness_minutes,
+    info = sprintf(
+      paste(
+        "overnight-self-review-email must run AFTER staleness-collect so it",
+        "reads the same morning's snapshot (llm#1122): email=%s,",
+        "staleness-collect=%s"
+      ),
+      .hhmm(email_minutes), .hhmm(staleness_minutes)
+    )
+  )
+})
+
+test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm#1192)", {
+  skip_if_not(file.exists(.plist_path), "overnight-self-review-email plist not found")
+  skip_if_not(
+    file.exists(.peak_plist_path),
+    "config-pulse plist not found -- cannot verify ordering invariant"
+  )
+
+  email_minutes <- .schedule_minutes(.plist_path)
+  peak_minutes  <- .schedule_minutes(.peak_plist_path)
+  skip_if(
+    is.na(email_minutes) || is.na(peak_minutes),
+    "Could not parse StartCalendarInterval Hour/Minute from one or both plists"
+  )
+
+  expect_true(
+    email_minutes < peak_minutes,
+    info = sprintf(
+      paste(
+        "overnight-self-review-email must run BEFORE the 09:00 job peak",
+        "(llm#1122): email=%s, config-pulse=%s"
+      ),
+      .hhmm(email_minutes), .hhmm(peak_minutes)
+    )
+  )
 })
 
 # ── Cron-health "indeterminate" bucket (llm#1145) ──────────────────────────
