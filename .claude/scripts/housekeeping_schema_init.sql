@@ -11,6 +11,7 @@
 --   roborev_daily_summary  -- per-project daily summary mirrored from roborev SQLite (llm#555)
 --   data_quality_incidents -- one row per known untrustworthy-data window (llm#913, llm#915)
 --   secret_scan_findings   -- one row per finding from secret_exposure_scan.sh (llm#951)
+--   secret_scan_store_state -- latest key-NAME-set baseline per known credential store (llm#1196)
 --   roborev_retention_events -- one row per item-type pruned by roborev_retention.sh (llm#929)
 --   private_data_scan_findings -- one row per finding from private_data_scan.sh (2026-08-22 PII incident)
 --
@@ -253,6 +254,23 @@ CREATE TABLE IF NOT EXISTS secret_scan_findings (
 CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_run_id ON secret_scan_findings(run_id);
 CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_fired_at ON secret_scan_findings(fired_at);
 CREATE INDEX IF NOT EXISTS idx_secret_scan_findings_detector ON secret_scan_findings(detector, fired_at);
+
+-- secret_scan_store_state: one row per KNOWN_CREDENTIAL_STORES entry (see
+-- secret_exposure_scan.sh detector 5, llm#1196) -- the LATEST observed key
+-- NAME set for that store, replaced (delete-then-insert) on every run that
+-- can reach a store. NOT an append-only ledger like secret_scan_findings
+-- above -- this is "current state", used only to compute a delta on the
+-- NEXT run. key_names is a comma-joined, sorted, de-duplicated list of
+-- variable NAMES -- NEVER a credential value; a known store's whole job is
+-- to hold credentials, so tracking values here would defeat the point of
+-- detector 5 (assert invariants that can change, not "contains secrets").
+-- PK is store_path itself (one row per store, not one per run).
+CREATE TABLE IF NOT EXISTS secret_scan_store_state (
+  store_path  TEXT PRIMARY KEY,
+  key_count   INTEGER NOT NULL,
+  key_names   TEXT NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL
+);
 
 -- roborev_retention_events: one row per item-type removed by
 -- roborev_retention.sh (llm#929) — 'backup' (DB snapshot) or 'joblog'
