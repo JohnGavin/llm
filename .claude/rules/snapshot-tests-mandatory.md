@@ -24,15 +24,23 @@ When writing tests for R functions, **at least 30% of test_that blocks must use 
 
 ## Required Setup for Non-Package Projects
 
-Projects without DESCRIPTION need `tests/setup.R`:
+**`tests/setup.R` with `local_edition(3, .env = testthat::teardown_env())` does NOT work** — verified empirically (llm#799, [historical#579](https://github.com/JohnGavin/historical/pull/579)): `withr`-style scoping binds the edition to the environment named in `.env`, and `teardown_env()` is not the frame test files execute in. The `setup.R` runs, sets nothing that survives into test frames, and exits silently — edition stays 2, `expect_snapshot()` behaves differently than intended, and nothing errors. A `tests/DESCRIPTION` carrying `Config/testthat/edition: 3` was also tried and also does NOT work (re-verified 2026-09-18, `testthat::edition_get()` still reports 2 with this in place).
+
+**What actually works, verified**: an explicit `testthat::local_edition(3)` call at the **top of every individual test file** — not in `setup.R`, not in a `DESCRIPTION`. Confirmed live 2026-09-18: only this variant makes `testthat::edition_get()` report 3 inside a test.
+
 ```r
-testthat::local_edition(3, .env = testthat::teardown_env())
+# tests/test-foo.R — first line, every test file
+testthat::local_edition(3)
+
+test_that("...", { ... })
 ```
 
 And run with `NOT_CRAN=true`:
 ```bash
 NOT_CRAN=true Rscript tests/run_tests.R
 ```
+
+If a project's `tests/setup.R` or `tests/DESCRIPTION` currently relies on either broken mechanism above believing it sets edition 3 repo-wide, its suite is silently running under edition 2 — sweep for this per llm#799's "Blast radius" section.
 
 ## Transform for Non-Deterministic Output
 
