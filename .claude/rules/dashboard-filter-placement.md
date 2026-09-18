@@ -25,6 +25,20 @@ bslib 0.11.0+ provides `toolbar()` — a compact container family that puts
 controls in `card_header()`, `card_footer()`, and inline with input labels.
 Use it to co-locate filters with the data they govern.
 
+**Shinylive/WASM caveat (llm#1147):** `toolbar()` requires bslib 0.11.0+.
+webR's CRAN mirror (`repo.r-wasm.org`) currently serves bslib **0.10.0**
+(checked 2026-09-18) — `toolbar()` is genuinely absent, not just
+present-but-broken, in any Shinylive/WASM dashboard built against it. This
+mandate applies to **server-side Shiny only**. For a Shinylive/WASM target,
+fall back to a plain `card_header()`/`card_footer()` with a
+`div(class = "d-flex justify-content-between align-items-center", ...)`
+wrapper around the input(s) — no sanctioned toolbar-equivalent fallback
+pattern exists yet (llm#1147 item 2, undecided); improvise per-project until
+one is established, and note the improvisation in the project's own
+CHANGELOG so it can be reconciled later. Re-check `repo.r-wasm.org`'s bslib
+version before assuming this caveat still applies — it may resolve itself
+once webR's bundled bslib catches up.
+
 ## Decision Table
 
 | Situation | Use |
