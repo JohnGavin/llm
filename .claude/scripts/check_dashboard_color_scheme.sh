@@ -45,8 +45,16 @@ set -euo pipefail
 # Both greps are intentionally permissive about quoting and whitespace:
 #   meta:  name="color-scheme" ... content="dark"  (either attribute order)
 #   css:   color-scheme: dark  (with or without space, inline or stylesheet)
-META_RE='name=["'\'']color-scheme["'\''][^>]*content=["'\'']dark["'\'']|content=["'\'']dark["'\''][^>]*name=["'\'']color-scheme["'\'']'
-CSS_RE='color-scheme[[:space:]]*:[[:space:]]*dark'
+#
+# llm#1003: a DUAL-MODE page correctly declares `light dark` (or, per the
+# CSS spec, `dark light` — either keyword order is valid), never a bare
+# `dark`. Both value shapes count as satisfying Clause 0 — see
+# `accessibility.md` Part 2 Clause 0's dual-mode amendment. A page that
+# narrows this to `light` only (no `dark` anywhere in the value) is exactly
+# the llm#1003 defect and must still fail here.
+COLOR_VALUE_RE='dark|light[[:space:]]+dark|dark[[:space:]]+light'
+META_RE='name=["'\'']color-scheme["'\''][^>]*content=["'\''](dark|light[[:space:]]+dark|dark[[:space:]]+light)["'\'']|content=["'\''](dark|light[[:space:]]+dark|dark[[:space:]]+light)["'\''][^>]*name=["'\'']color-scheme["'\'']'
+CSS_RE='color-scheme[[:space:]]*:[[:space:]]*(dark|light[[:space:]]+dark|dark[[:space:]]+light)'
 
 check_file() {
   # Returns 0 when BOTH signals present, prints what is missing otherwise.

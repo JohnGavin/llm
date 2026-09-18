@@ -107,6 +107,22 @@ Without this, **Chrome's "Auto Dark Mode for Web Contents" (default-on since v96
 
 Check this clause FIRST, before any other dark-mode debugging — see the companion doc for the worked example from issue 0027 in a private project's tracker (5 merged iterations fixed the wrong layer before this meta tag was identified as the root cause).
 
+**Dual-mode pages (llm#1003).** The form above pins `dark` and is correct only for pages that are always dark. Chrome's force-dark does not back off because a page *declared a colour scheme* — it backs off only when the page declares that it *supports dark*. A dual-mode page that narrows the declaration to whichever theme is currently active —
+
+```css
+/* WRONG on a dual-mode page — light mode is force-darkened */
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+```
+
+— re-invites force-dark every time it renders in light mode, while looking, to the person applying the fix, exactly like the fix simply not working. A page supporting both themes MUST declare `color-scheme: light dark` **once, unconditionally**, and MUST NOT narrow it anywhere per theme:
+
+```css
+:root, html, body { color-scheme: light dark; }
+```
+
+The declaration is not the page's theme; the CSS custom properties are. `check_dashboard_color_scheme.sh` accepts `dark` or `light dark`/`dark light` as satisfying this clause; it still fails a page whose declared value never includes `dark` at all (e.g. a page that only ever says `light`).
+
 Verification: `~/.claude/scripts/check_dashboard_color_scheme.sh <dir>` (greps for both signals in every rendered HTML file that has a same-directory `.qmd`/`.md` source of the same basename; exit 1 on any miss among those. A file with no Quarto source — a shinylive export, a hand-built diagram page, an untracked build artifact — cannot carry a Quarto-injected `<meta>` tag, so it is skipped and reported separately rather than failed; see the script's own header comment for the historical-project case that motivated this scoping). Wire it into the project's Quarto `post-render` alongside `check_dark_contrast.sh`. See llm#584.
 
 ### CRITICAL: Black = `#000000`. White = `#ffffff`.
