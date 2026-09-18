@@ -15,7 +15,12 @@
 #
 # Usage:
 #   canonical_projects_audit.sh           # --quiet mode (default)
-#   canonical_projects_audit.sh --quiet   # one compact line; silent if fully clean
+#   canonical_projects_audit.sh --quiet   # one compact line; silent if fully clean.
+#                                          # NOT silent if unified.duckdb is
+#                                          # missing — that prints a distinct
+#                                          # INDETERMINATE line instead (llm#1067:
+#                                          # "DB missing" and "0 findings" must
+#                                          # not both be silence).
 #   canonical_projects_audit.sh --verbose # per-bucket detail to stdout
 #   canonical_projects_audit.sh --selftest # assertions then exit
 #
@@ -252,6 +257,43 @@ if [ "$MODE" = "selftest" ]; then
     _is_fixture "irishbuoys" && _r="FIXTURE" || _r="NOT_FIXTURE"
     _assert_eq "irishbuoys does not classify as FIXTURE" "NOT_FIXTURE" "$_r"
 
+    # ── llm#1067: missing-DB vs clean must not be the same (silent) output ---
+    # Test 18: --quiet against a directory with NO unified.duckdb prints a
+    # distinct INDETERMINATE line — it must NOT be silent (silence is what
+    # "0 findings" also looks like, per Test 19 below).
+    _empty_logs_dir="$(mktemp -d)"
+    _missing_db_out="$(CLAUDE_LOGS_DIR="$_empty_logs_dir" bash "$SCRIPT_DIR/$(basename "$0")" --quiet 2>&1)"
+    case "$_missing_db_out" in
+        (*INDETERMINATE*unified.duckdb*not\ found*)
+            echo "  PASS: --quiet with missing DB prints INDETERMINATE (not silent)"
+            PASS=$((PASS+1)) ;;
+        (*)
+            echo "  FAIL: --quiet with missing DB — expected an INDETERMINATE line, got: '$_missing_db_out'"
+            FAIL=$((FAIL+1)) ;;
+    esac
+    rmdir "$_empty_logs_dir" 2>/dev/null || true
+
+    # Test 19: --quiet against a DB that IS present and fully clean (no
+    # UNKNOWN rows in any audited table) is silent — confirms Test 18's
+    # message is genuinely distinguishing, not just "always print something".
+    _clean_logs_dir="$(mktemp -d)"
+    _duck_run "$_clean_logs_dir/unified.duckdb" "
+        CREATE TABLE canonical_projects (slug VARCHAR PRIMARY KEY);
+        CREATE TABLE canonical_project_aliases (slug VARCHAR, alias VARCHAR, PRIMARY KEY (slug, alias));
+        CREATE TABLE roborev_review_lifecycle (repo VARCHAR);
+        INSERT INTO canonical_projects VALUES ('llm');
+        INSERT INTO roborev_review_lifecycle VALUES ('llm');
+    " > /dev/null 2>&1
+    _clean_out="$(CLAUDE_LOGS_DIR="$_clean_logs_dir" bash "$SCRIPT_DIR/$(basename "$0")" --quiet 2>&1)"
+    if [ -z "$_clean_out" ]; then
+        echo "  PASS: --quiet with a present, clean DB is silent (unlike Test 18)"
+        PASS=$((PASS+1))
+    else
+        echo "  FAIL: --quiet with a clean DB should be silent, got: '$_clean_out'"
+        FAIL=$((FAIL+1))
+    fi
+    rm -rf "$_clean_logs_dir"
+
     rm -f "$FIXTURE_DB"
     echo ""
     echo "selftest: $((PASS+FAIL)) tests — PASS=$PASS FAIL=$FAIL"
@@ -259,8 +301,18 @@ if [ "$MODE" = "selftest" ]; then
 fi
 
 # ── guard: DB must exist ---------------------------------------------------
+# llm#1067: in --quiet mode (the default, used by session_init.sh Phase 15b)
+# a missing DB previously produced NO output at all — indistinguishable from
+# "DB present, 0 UNKNOWN findings" (also no output). Both cases were silent
+# and exit 0. Emit a one-line INDETERMINATE marker even in quiet mode so
+# "could not audit" never reads the same as "audited and clean"
+# (checks-must-distinguish-unknown).
 if [ ! -f "$LIVE_DB" ]; then
-    [ "$MODE" = "verbose" ] && echo "canonical-projects-audit: unified.duckdb not found — skipped"
+    if [ "$MODE" = "verbose" ]; then
+        echo "canonical-projects-audit: unified.duckdb not found — skipped"
+    else
+        echo "canonical-projects-audit: INDETERMINATE — unified.duckdb not found at $LIVE_DB, audit did not run"
+    fi
     exit 0
 fi
 
