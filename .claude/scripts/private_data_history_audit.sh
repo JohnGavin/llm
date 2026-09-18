@@ -43,6 +43,16 @@
 # Delivered launchd plist (NOT installed by this dispatch):
 #   .claude/launchd/com.claude.private-data-history-audit.plist
 #
+# Note (JohnGavin/llm#1204): this wrapper has never enforced a commit-count
+# cap -- it only calls `private_data_scan.sh --full-history` and propagates
+# whatever exit code the scanner returns (see the RC handling below). The
+# non-deterministic-finding-count bug that #1204 reported (587 vs 174 on an
+# identical repo state) was in private_data_scan.sh's own default
+# MAX_COMMITS=2000 cap combined with git rev-list --all's unstable
+# enumeration order -- fixed there (now unlimited by default; exit 3/
+# INDETERMINATE if an explicit --max-commits truncates a clean run), not
+# here. #1204's title named this file; that attribution was incorrect.
+#
 # Origin: 2026-08-22 PII incident.
 
 set -uo pipefail

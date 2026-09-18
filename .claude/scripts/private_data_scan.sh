@@ -143,13 +143,32 @@
 #
 # Usage:
 #   private_data_scan.sh --staged [--require-denylist|--no-denylist] [--json] [--quiet]
-#   private_data_scan.sh --range <rev1> <rev2> [--require-denylist|--no-denylist] [--json] [--quiet]
+#   private_data_scan.sh --range <rev1> <rev2> [--max-commits N] [--require-denylist|--no-denylist] [--json] [--quiet]
 #   private_data_scan.sh --paths <file...> [--require-denylist|--no-denylist] [--json] [--quiet]
 #   private_data_scan.sh --full-history [--max-commits N] [--json] [--quiet]
 #   private_data_scan.sh --content-stdin <location-label> [--no-denylist]
 #   private_data_scan.sh --selftest
 #
-# Exit codes: 0 = clean, 1 = findings (or fail-closed error), 2 = usage error.
+# --max-commits: OPTIONAL, both --full-history and --range. When OMITTED
+# (the default), every reachable commit is scanned -- no cap. Pass it only
+# to deliberately bound cost (e.g. an interactive spot-check); doing so makes
+# the run's "clean" result INDETERMINATE whenever it actually truncates
+# before covering every reachable commit (see exit codes below). Prior to
+# JohnGavin/llm#1204, --full-history silently defaulted to a fixed 2000-commit
+# cap: `git rev-list --all`'s enumeration order is not a stable sort
+# guarantee, so which ~2000 of a larger reachable set got scanned varied
+# run to run, producing non-deterministic finding counts on an identical
+# repo state. The fix is this file's default-unlimited behaviour, not
+# private_data_history_audit.sh (which only ever calls this scanner and
+# propagates its exit code -- see that file's header).
+#
+# Exit codes: 0 = clean (every reachable/in-range commit was scanned and
+# none had findings), 1 = findings present (or a fail-closed error), 2 =
+# usage error, 3 = INDETERMINATE -- an explicit --max-commits truncated a
+# --full-history or --range scan before it covered every reachable commit,
+# and nothing was found in the subset that WAS scanned. Absence of findings
+# in a truncated scan is NOT proof of a clean history/range; re-run without
+# --max-commits (or with a higher value) for a determinate result.
 #
 # Log: ~/.claude/logs/private_data_scan.log (one line per invocation summary).
 # Housekeeping heartbeat: writes housekeeping_runs (task='private_data_scan')
@@ -251,21 +270,36 @@ JSON=0
 QUIET=0
 REQUIRE_DENYLIST=1
 MAX_COMMITS=2000
+MAX_COMMITS_EXPLICIT=0   # 1 only when the user passes --max-commits; default is unlimited (llm#1204)
 RANGE_A=""
 RANGE_B=""
 PATHS_ARGS=()
 CONTENT_LABEL=""
 
+# Coverage/determinism tracking for --full-history and --range (llm#1204).
+# Set by scan_full_history()/scan_range(); left at these defaults (and
+# therefore invisible to print_coverage_line/the exit-3 check below) for
+# every other mode, which has no "reachable commit set" concept.
+_SCAN_TRUNCATED=0
+_SCAN_SCANNED=0
+_SCAN_TOTAL_REACHABLE=""
+
 usage() {
     cat <<'EOF'
 Usage: private_data_scan.sh MODE [options]
   --staged                    Scan git INDEX content of staged files
-  --range <rev1> <rev2>       Scan full blob content of every file changed
-                               in every commit in rev1..rev2
+  --range <rev1> <rev2> [--max-commits N]
+                               Scan full blob content of every file changed
+                               in every commit in rev1..rev2 (default:
+                               unlimited; same --max-commits/exit-3 semantics
+                               as --full-history)
   --paths <file...>           Scan given on-disk files directly
   --full-history [--max-commits N]
                                Scan every blob changed across all reachable
-                               history (bounded; default N=2000)
+                               history (default: unlimited -- every reachable
+                               commit; pass --max-commits N to cap for cost
+                               control, which makes a clean truncated run
+                               exit 3/INDETERMINATE rather than 0)
   --content-stdin <label>     Scan stdin content (used by editor-time hooks)
   --selftest                  Run the fixture-based self-test suite
 Options: --require-denylist (default) | --no-denylist, --json, --quiet
@@ -283,7 +317,7 @@ while [ $# -gt 0 ]; do
         --full-history) MODE="full-history"; shift ;;
         --content-stdin) MODE="content-stdin"; shift; CONTENT_LABEL="${1:-stdin}"; shift || true ;;
         --selftest) MODE="selftest"; shift ;;
-        --max-commits) shift; MAX_COMMITS="${1:-2000}"; shift || true ;;
+        --max-commits) shift; MAX_COMMITS="${1:-2000}"; MAX_COMMITS_EXPLICIT=1; shift || true ;;
         --require-denylist) REQUIRE_DENYLIST=1; shift ;;
         --no-denylist) REQUIRE_DENYLIST=0; shift ;;
         --json) JSON=1; shift ;;
@@ -671,19 +705,32 @@ scan_range() {
     local a="$1" b="$2"
     [ -n "$a" ] && [ -n "$b" ] || { echo "private_data_scan: --range requires two revisions" >&2; return 2; }
     [ -d "$REPO_ROOT" ] || return 0
+    _SCAN_TRUNCATED=0
+    _SCAN_SCANNED=0
+    _SCAN_TOTAL_REACHABLE=""
+    # Only pay for a second (cheap -- rev-list alone, no diff-tree/cat-file)
+    # enumeration when the caller explicitly bounded the scan; the default
+    # (unlimited) path derives the total from the same single pass below
+    # (llm#1204) -- see the header's "--max-commits" note.
+    if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ]; then
+        _SCAN_TOTAL_REACHABLE="$(git -C "$REPO_ROOT" rev-list "${a}..${b}" 2>/dev/null | wc -l | tr -d ' ')"
+    fi
     local sha path count=0
     while IFS= read -r sha; do
         [ -n "$sha" ] || continue
         count=$((count + 1))
-        if [ "$count" -gt "$MAX_COMMITS" ]; then
+        if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ] && [ "$count" -gt "$MAX_COMMITS" ]; then
+            _SCAN_TRUNCATED=1
             echo "WARNING: --range truncated at $MAX_COMMITS commits -- absence of findings past this point is NOT proof of a clean range." >&2
             break
         fi
+        _SCAN_SCANNED=$((_SCAN_SCANNED + 1))
         while IFS= read -r path; do
             [ -n "$path" ] || continue
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
         done < <(git -C "$REPO_ROOT" diff-tree --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
     done < <(git -C "$REPO_ROOT" rev-list "${a}..${b}" 2>/dev/null)
+    [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
 
 scan_paths() {
@@ -699,19 +746,31 @@ scan_paths() {
 
 scan_full_history() {
     [ -d "$REPO_ROOT" ] || return 0
+    _SCAN_TRUNCATED=0
+    _SCAN_SCANNED=0
+    _SCAN_TOTAL_REACHABLE=""
+    # See scan_range()'s identical comment: the second enumeration (a cheap
+    # `rev-list | wc -l`, never the expensive diff-tree/cat-file work) only
+    # runs when the caller explicitly bounded the scan (llm#1204).
+    if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ]; then
+        _SCAN_TOTAL_REACHABLE="$(git -C "$REPO_ROOT" rev-list --all 2>/dev/null | wc -l | tr -d ' ')"
+    fi
     local sha path count=0
     while IFS= read -r sha; do
         [ -n "$sha" ] || continue
         count=$((count + 1))
-        if [ "$count" -gt "$MAX_COMMITS" ]; then
+        if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ] && [ "$count" -gt "$MAX_COMMITS" ]; then
+            _SCAN_TRUNCATED=1
             echo "WARNING: --full-history truncated at $MAX_COMMITS commits -- absence of findings past this point is NOT proof of a clean history. Increase --max-commits or rely on the scheduled resumable audit." >&2
             break
         fi
+        _SCAN_SCANNED=$((_SCAN_SCANNED + 1))
         while IFS= read -r path; do
             [ -n "$path" ] || continue
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
         done < <(git -C "$REPO_ROOT" diff-tree --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
     done < <(git -C "$REPO_ROOT" rev-list --all 2>/dev/null)
+    [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
 
 scan_content_stdin() {
@@ -797,9 +856,35 @@ write_findings_to_db() {
 # ---------------------------------------------------------------------------
 json_escape() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '%s' "$s"; }
 
+# print_coverage_line -- llm#1204 determinism fix. Reports actual commit
+# coverage for --full-history/--range explicitly on stdout, unconditionally
+# (NOT gated by --quiet -- see print_report's "clean" message for contrast,
+# which IS quiet-gated; coverage is the determinacy signal this whole fix
+# exists to surface, so it is never silenced). A no-op for every other mode
+# (--staged/--paths/--content-stdin), where _SCAN_TOTAL_REACHABLE is left
+# unset because there is no "reachable commit set" concept to report.
+print_coverage_line() {
+    [ -n "${_SCAN_TOTAL_REACHABLE:-}" ] || return 0
+    local pct=100
+    if [ "$_SCAN_TOTAL_REACHABLE" -gt 0 ]; then
+        pct=$(( _SCAN_SCANNED * 100 / _SCAN_TOTAL_REACHABLE ))
+    fi
+    if [ "${_SCAN_TRUNCATED:-0}" -eq 1 ]; then
+        echo "private-data-scan: scanned=${_SCAN_SCANNED}/${_SCAN_TOTAL_REACHABLE} commits (${pct}%) -- TRUNCATED"
+    else
+        echo "private-data-scan: scanned=${_SCAN_SCANNED}/${_SCAN_TOTAL_REACHABLE} commits (${pct}%)"
+    fi
+}
+
 print_report_json() {
     local first=1
-    printf '{"findings":['
+    printf '{'
+    if [ -n "${_SCAN_TOTAL_REACHABLE:-}" ]; then
+        printf '"scanned_commits":%s,"total_reachable_commits":%s,"truncated":%s,' \
+            "$_SCAN_SCANNED" "$_SCAN_TOTAL_REACHABLE" \
+            "$([ "${_SCAN_TRUNCATED:-0}" -eq 1 ] && echo true || echo false)"
+    fi
+    printf '"findings":['
     while IFS=$'\t' read -r src sev loc lnum rule note; do
         [ "$first" -eq 1 ] || printf ','
         first=0
@@ -813,6 +898,7 @@ print_report_json() {
 print_report() {
     local total; total=$(wc -l < "$FINDINGS_FILE" | tr -d ' ')
     if [ "$JSON" -eq 1 ]; then print_report_json; return 0; fi
+    print_coverage_line
     if [ "$total" -eq 0 ]; then
         [ "$QUIET" -eq 1 ] || echo "private-data-scan: clean -- 0 findings"
         return 0
@@ -1125,6 +1211,111 @@ run_selftest() {
     rm -f "$FINDINGS_FILE" "$nul_stderr2"
     rm -f "$nul_fixture" "$nul_fixture2"
 
+    # ── 28-38: JohnGavin/llm#1204 -- unlimited-by-default coverage + the
+    # exit-3/INDETERMINATE distinction for a truncated-but-clean scan. ─────
+    # $tmp/repo at this point has exactly 3 reachable commits: "initial",
+    # "add leak" (contains the real PII this selftest's earlier tests
+    # already proved detectable via --range), and "scrub" (HEAD, clean).
+    # `git rev-list` lists newest-first, so with --max-commits 1 the ONLY
+    # commit scanned is "scrub" (clean) -- the commit holding the real leak
+    # is silently excluded, which is exactly the scenario that must report
+    # INDETERMINATE (exit 3), never a clean 0.
+
+    # 28-29: default (no --max-commits) --full-history does NOT truncate a
+    # small repo, and scans exactly every reachable commit.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f16.XXXXXX")"
+    MAX_COMMITS_EXPLICIT=0
+    MAX_COMMITS=2000
+    scan_full_history
+    _check "$([ "$_SCAN_TRUNCATED" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1204: default --full-history (no --max-commits) does not truncate"
+    _check "$([ "$_SCAN_SCANNED" -eq "$_SCAN_TOTAL_REACHABLE" ] && [ "$_SCAN_SCANNED" -ge 3 ] && echo 0 || echo 1)" \
+        "llm#1204: default --full-history scans exactly all reachable commits (scanned == total, >= 3)"
+    rm -f "$FINDINGS_FILE"
+
+    # 30-32: explicit --max-commits below the true reachable count truncates,
+    # scans exactly the cap, and still reports the TRUE total reachable
+    # count (not just the cap) for an honest percentage.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f17.XXXXXX")"
+    MAX_COMMITS_EXPLICIT=1
+    MAX_COMMITS=1
+    scan_full_history 2>/dev/null
+    _check "$([ "$_SCAN_TRUNCATED" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1204: explicit --max-commits below the true reachable count truncates --full-history"
+    _check "$([ "$_SCAN_SCANNED" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1204: truncated --full-history scans exactly --max-commits commits"
+    _check "$([ "$_SCAN_TOTAL_REACHABLE" -ge 3 ] && echo 0 || echo 1)" \
+        "llm#1204: truncated --full-history still reports the TRUE total reachable commit count, not the cap"
+    rm -f "$FINDINGS_FILE"
+
+    # 33: explicit --max-commits AT/ABOVE the true reachable count does not
+    # truncate -- proves this isn't "explicit flag always truncates".
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f18.XXXXXX")"
+    MAX_COMMITS_EXPLICIT=1
+    MAX_COMMITS=100
+    scan_full_history
+    _check "$([ "$_SCAN_TRUNCATED" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1204: explicit --max-commits above the true reachable count does not truncate"
+    rm -f "$FINDINGS_FILE"
+    MAX_COMMITS_EXPLICIT=0
+    MAX_COMMITS=2000
+
+    # 34: end-to-end -- a truncated (--max-commits 1) --full-history run
+    # that finds 0 findings in what it scanned (the leak-bearing commit is
+    # excluded) must exit 3 (INDETERMINATE), never 0.
+    local e2e1; e2e1="$(mktemp "${TMPDIR:-/tmp}/pds_e2e1.XXXXXX")"
+    ( REPO_ROOT="$tmp/repo" bash "$0" --full-history --max-commits 1 --no-denylist --quiet >"$e2e1" 2>&1 )
+    rc=$?
+    _check "$([ "$rc" -eq 3 ] && echo 0 || echo 1)" \
+        "llm#1204 end-to-end: truncated + clean --full-history exits 3 (INDETERMINATE), not 0"
+    _check "$("$GREP" -q "TRUNCATED" "$e2e1" && echo 0 || echo 1)" \
+        "llm#1204 end-to-end: truncated run's own output reports TRUNCATED coverage (not just inferable from logs)"
+    rm -f "$e2e1"
+
+    # 35: end-to-end control -- the SAME repo, scanned WITHOUT truncation
+    # (default, unlimited), finds the real leak and exits 1, never 3 or 0.
+    # Proves test 34's exit 3 comes from truncation, not from this repo
+    # being clean outright.
+    local e2e2; e2e2="$(mktemp "${TMPDIR:-/tmp}/pds_e2e2.XXXXXX")"
+    ( REPO_ROOT="$tmp/repo" bash "$0" --full-history --no-denylist --quiet >"$e2e2" 2>&1 )
+    rc=$?
+    _check "$([ "$rc" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1204 end-to-end: default (untruncated) --full-history on the same repo finds the real leak and exits 1"
+    rm -f "$e2e2"
+
+    # 36: findings-present convention is unaffected by truncation -- a
+    # truncated scan that DOES cover the leak-bearing commit (max-commits 2:
+    # "scrub" + "add leak") still exits 1, not 3 (INDETERMINATE is reserved
+    # for the 0-findings case per this script's own exit-code contract).
+    local e2e3; e2e3="$(mktemp "${TMPDIR:-/tmp}/pds_e2e3.XXXXXX")"
+    ( REPO_ROOT="$tmp/repo" bash "$0" --full-history --max-commits 2 --no-denylist --quiet >"$e2e3" 2>&1 )
+    rc=$?
+    _check "$([ "$rc" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1204: truncated --full-history WITH findings still exits 1 (findings-present convention unaffected by truncation)"
+    rm -f "$e2e3"
+
+    # 37-38: --range has the same shape/fix -- truncating the range to
+    # exclude the leak-bearing commit (max-commits 1 out of the 2-commit
+    # range "add leak".."scrub") must ALSO report INDETERMINATE, not clean.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f19.XXXXXX")"
+    MAX_COMMITS_EXPLICIT=1
+    MAX_COMMITS=1
+    scan_range "$BASE_SHA" "$HEAD_SHA" 2>/dev/null
+    _check "$([ "$_SCAN_TRUNCATED" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1204: explicit --max-commits below the range's true commit count truncates --range"
+    _check "$([ "$(wc -l < "$FINDINGS_FILE" | tr -d ' ')" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1204: truncated --range (excluding the leak-bearing commit) reports 0 findings in the scanned subset"
+    rm -f "$FINDINGS_FILE"
+    MAX_COMMITS_EXPLICIT=0
+    MAX_COMMITS=2000
+
+    local e2e4; e2e4="$(mktemp "${TMPDIR:-/tmp}/pds_e2e4.XXXXXX")"
+    ( REPO_ROOT="$tmp/repo" bash "$0" --range "$BASE_SHA" "$HEAD_SHA" --max-commits 1 --no-denylist --quiet >"$e2e4" 2>&1 )
+    rc=$?
+    _check "$([ "$rc" -eq 3 ] && echo 0 || echo 1)" \
+        "llm#1204 end-to-end: truncated + clean --range exits 3 (INDETERMINATE), not 0"
+    rm -f "$e2e4"
+
     rm -rf "$tmp"
 
     echo ""
@@ -1188,6 +1379,18 @@ if [ "$TOTAL" -gt 0 ]; then
     echo "private-data-scan: repo is private -- generic-pattern findings reported but not blocking. Deny-list findings always block." >&2
     hk_run_end "ok" "$TOTAL"
     exit 0
+fi
+
+# TOTAL == 0: nothing found in what WAS scanned. If an explicit
+# --max-commits truncated a --full-history/--range scan before it covered
+# every reachable commit, that is INDETERMINATE, not clean -- see
+# checks-must-distinguish-unknown and this file's header. Findings-present
+# runs above are unaffected: this branch only ever executes when TOTAL is 0.
+if [ "${_SCAN_TRUNCATED:-0}" -eq 1 ]; then
+    echo "private-data-scan: INDETERMINATE -- scan was truncated (--max-commits) before covering every reachable commit; absence of findings in the scanned subset is NOT proof of a clean history/range. See the WARNING above; re-run without --max-commits (or with a higher value) for a determinate result." >&2
+    log_line "mode=${MODE} visibility=${VIS} findings=${TOTAL} truncated=1 result=indeterminate"
+    hk_run_end "ok" "$TOTAL"
+    exit 3
 fi
 
 hk_run_end "ok" "$TOTAL"
