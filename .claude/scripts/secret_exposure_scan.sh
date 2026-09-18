@@ -89,6 +89,26 @@ GREP="${GREP:-/usr/bin/grep}"
 #      change.
 #   4. a Detector-2-shaped assignment sitting on a COMMENT line —
 #      "commented out" is not "removed". Same skip rules as detector 2.
+#   5. known-credential-store invariants (llm#1196). KNOWN_CREDENTIAL_STORES
+#      below is a short, explicit, exact-path inventory of files whose
+#      ENTIRE job is to hold live credentials -- detectors 2/4 report
+#      "this file contains a credential" for them on every single run,
+#      forever, which is not a check (its output cannot vary with the thing
+#      it measures — same shape as #1013's `grep -c '^export' # expect 13`).
+#      Detectors 2/4 skip literal-value matching for these exact files
+#      (never a directory/prefix exemption — adding a fifth store is a
+#      deliberate one-line commit, the same shape as
+#      confidential-repos.local.txt). Detector 5 asserts properties that
+#      CAN vary instead: mode is exactly 600; the store is not inside any
+#      git work tree; no sibling `.bak*`/`.old`/`.save` copy sits beside it;
+#      its key NAME set is unchanged since the previous run (a key
+#      appearing or disappearing is a real signal — and this is what still
+#      catches a newly-planted credential in an "exempt" store: adding one
+#      changes the name set); and no key holds an empty or placeholder
+#      value (the `<cachix-token>` literal from #1013 is exactly this
+#      shape). Steady state is zero findings; `--fix` only auto-remediates
+#      the mode sub-case (chmod 600, same as detector 3) — everything else
+#      needs a human to look. Report only prints key NAMES, never values.
 #
 # Self-reference exemption: a file that must legitimately contain the
 # credential-shaped patterns THIS scanner looks for (i.e. security tooling
@@ -191,6 +211,19 @@ DEFAULT_DOTFILES=(
     "$HOME_DIR/.bashrc"
     "$HOME_DIR/.bash_profile"
     "$HOME_DIR/.profile"
+)
+
+# Known, enumerated credential stores (llm#1196) -- exact absolute paths
+# ONLY, never a glob/prefix/directory. Detectors 2/4 skip literal-value
+# matching for these files (see the header's "5." section); detector 5
+# asserts the invariants that replace it. Adding a fifth store is a
+# deliberate, reviewable one-line commit -- the same shape as
+# confidential-repos.local.txt -- never an accidental broadening.
+KNOWN_CREDENTIAL_STORES=(
+    "$HOME_DIR/.config/secrets.env"
+    "$HOME_DIR/.claude/env/kb_digest.env"
+    "$HOME_DIR/.claude/env/overnight_self_review.env"
+    "$HOME_DIR/.claude/env/roborev_email.env"
 )
 
 PRUNE_ARGS=(
@@ -331,6 +364,19 @@ is_pattern_definitions_file() {
     head -n 40 "$1" 2>/dev/null | grep -qF '# secret-exposure-scan: pattern-definitions'
 }
 
+# is_known_credential_store FILE
+# TRUE iff FILE is an EXACT match (never prefix/glob) against
+# KNOWN_CREDENTIAL_STORES (llm#1196). Detectors 2/4 use this to skip
+# literal-value matching for these files ONLY -- detector 5
+# (scan_known_stores) asserts the invariants that replace it.
+is_known_credential_store() {
+    local f="$1" k
+    for k in "${KNOWN_CREDENTIAL_STORES[@]}"; do
+        [ "$f" = "$k" ] && return 0
+    done
+    return 1
+}
+
 # looks_like_fixture_value LINE
 # Classifies a matched line (never printed -- see the no-leaked-value
 # contract at the top of this file) as an obviously-fake test/doc fixture:
@@ -432,6 +478,40 @@ write_findings_to_db() {
             columns={'column0':'VARCHAR','column1':'VARCHAR','column2':'VARCHAR',
                      'column3':'VARCHAR','column4':'VARCHAR','column5':'VARCHAR'})
         );
+    " >/dev/null 2>&1 || true
+}
+
+# get_prior_store_state STORE_PATH — prints "COUNT<TAB>NAMES" for a known
+# credential store's LAST recorded key-name set (llm#1196), or nothing if
+# unavailable (duckdb missing, table not yet created by
+# housekeeping_schema_apply.sh, or no prior row for this store — e.g. the
+# very first run). NAMES is a comma-joined, sorted, de-duplicated list of
+# variable NAMES only — never a value. Callers MUST treat "nothing printed"
+# as "no baseline to compare against", not as "zero keys".
+get_prior_store_state() {
+    [ "$_duckdb_ok" = "1" ] || return 0
+    local store="$1"
+    duckdb -init /dev/null -noheader -list "$UNIFIED_DB" -c "
+        SELECT key_count || chr(9) || key_names
+        FROM secret_scan_store_state
+        WHERE store_path = '${store}';
+    " 2>/dev/null
+}
+
+# record_store_state STORE_PATH COUNT NAMES — replaces the persisted
+# key-name-set baseline for STORE_PATH (delete-then-insert, not
+# INSERT-OR-IGNORE — this is a "latest observation" row, not an
+# append-only findings ledger). No-op if duckdb/the DB is unavailable.
+# NAMES must be variable NAMES only — this function never receives or
+# writes a credential value.
+record_store_state() {
+    [ "$_duckdb_ok" = "1" ] || return 0
+    local store="$1" count="$2" names="$3" now
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+    duckdb -init /dev/null "$UNIFIED_DB" -c "
+        DELETE FROM secret_scan_store_state WHERE store_path = '${store}';
+        INSERT INTO secret_scan_store_state (store_path, key_count, key_names, updated_at)
+        VALUES ('${store}', ${count}, '${names}', TIMESTAMPTZ '${now}');
     " >/dev/null 2>&1 || true
 }
 
@@ -612,6 +692,7 @@ scan_at_rest() {
     while IFS=: read -r file lnum rest; do
         [ -n "${file:-}" ] || continue
         is_pattern_definitions_file "$file" && continue
+        is_known_credential_store "$file" && continue
         looks_like_fixture_value "$rest" && continue
         append_finding "2" "critical" "$file" "$lnum" "cred-shape" \
             "literal credential-shaped value detected (value redacted -- see rule doc for the pattern class)"
@@ -627,6 +708,7 @@ scan_at_rest() {
     while IFS=: read -r file lnum rest; do
         [ -n "${file:-}" ] || continue
         is_pattern_definitions_file "$file" && continue
+        is_known_credential_store "$file" && continue
         looks_like_fixture_value "$rest" && continue
 
         stripped_line="$(printf '%s' "$rest" | sed -E 's/^[[:space:]]*#?[[:space:]]*//; s/^export[[:space:]]+//')"
@@ -670,6 +752,129 @@ check_permissions() {
 }
 
 # ---------------------------------------------------------------------------
+# Detector 5 — known-credential-store invariants (llm#1196)
+#
+# KNOWN_CREDENTIAL_STORES holds files whose entire job is to contain live
+# credentials -- detectors 2/4 skip literal-value matching for them (see
+# is_known_credential_store above). This detector asserts the properties
+# that CAN change instead of reporting the one that can't.
+# ---------------------------------------------------------------------------
+
+# _known_store_key_names FILE — prints the sorted, de-duplicated set of
+# assignment variable NAMES in FILE, one per line. Same shape as
+# secrets_cache_regen.sh's _key_names() (kept independent rather than
+# sourced -- that script's own flow runs unconditionally on load and this
+# scanner must never invoke it). NEVER prints a value.
+_known_store_key_names() {
+    grep -E '^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=' "$1" 2>/dev/null |
+        sed -E 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/' |
+        sort -u
+}
+
+# _known_store_bad_values FILE — for every active (non-comment, non-blank)
+# KEY=VALUE assignment in FILE, prints "empty<TAB>KEY<TAB>LINE" or
+# "placeholder<TAB>KEY<TAB>LINE" when the value is empty or looks like an
+# unfilled placeholder (a bare `<...>` token, or a common
+# changeme/todo/fixme marker). The matched VALUE itself is used only
+# inside this awk process to classify it -- it is never printed to stdout,
+# stderr, or any caller variable.
+_known_store_bad_values() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*$/ { next }
+        {
+            line = $0
+            sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+            if (line !~ /^[A-Za-z_][A-Za-z0-9_]*=/) next
+            key = line; sub(/=.*/, "", key)
+            val = line; sub(/^[A-Za-z_][A-Za-z0-9_]*=/, "", val)
+            if (val ~ /^"/) { sub(/^"/, "", val); sub(/".*$/, "", val) }
+            else if (val ~ /^\x27/) { sub(/^\x27/, "", val); sub(/\x27.*$/, "", val) }
+            if (val == "") { print "empty\t" key "\t" NR; next }
+            if (val ~ /^<.*>$/) { print "placeholder\t" key "\t" NR; next }
+            u = toupper(val)
+            if (u == "CHANGEME" || u == "CHANGE_ME" || u == "REPLACEME" ||
+                u == "REPLACE_ME" || u == "PLACEHOLDER" || u == "TODO" ||
+                u == "FIXME" || u == "YOUR_TOKEN_HERE" || u == "XXXXXXXX") {
+                print "placeholder\t" key "\t" NR; next
+            }
+        }
+    ' "$1" 2>/dev/null
+}
+
+scan_known_stores() {
+    local store
+    for store in "${KNOWN_CREDENTIAL_STORES[@]}"; do
+        [ -e "$store" ] || continue
+
+        # Invariant: mode is exactly 600 (the 2026-08 incident's actual
+        # shape was mode 644 -- 400 is NOT accepted here, unlike detector 3,
+        # because --fix for this sub-case always chmods to 600).
+        local mode
+        mode="$(file_mode "$store")"
+        if [ -n "$mode" ] && [ "$mode" != "600" ]; then
+            append_finding "5" "high" "$store" "-" "known-store-bad-mode" \
+                "mode $mode -- a known credential store must be mode 600"
+        fi
+
+        # Invariant: not inside any git work tree.
+        local store_dir
+        store_dir="$(dirname "$store")"
+        if [ "$(git -C "$store_dir" rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]; then
+            append_finding "5" "high" "$store" "-" "known-store-in-worktree" \
+                "a known credential store now sits inside a git work tree -- it can become publicly committed"
+        fi
+
+        # Invariant: no sibling backup/copy files beside it.
+        local base sib
+        base="$(basename "$store")"
+        while IFS= read -r sib; do
+            [ -n "$sib" ] || continue
+            append_finding "5" "high" "$store" "-" "known-store-sibling-copy" \
+                "stray copy '$(basename "$sib")' found beside a known credential store"
+        done < <(find "$store_dir" -maxdepth 1 -type f \( \
+                    -name "${base}.bak*" -o -name "${base}.old" -o -name "${base}.save" \
+                 \) 2>/dev/null)
+
+        # Invariant: key NAME set unchanged since the previous run. A newly
+        # planted credential (the falsification case -- see the rule doc)
+        # changes the name set, so it is still caught even though detectors
+        # 2/4 no longer report the file's baseline content.
+        local cur_names cur_count cur_joined prior_row prior_count prior_joined added removed
+        cur_names="$(_known_store_key_names "$store")"
+        cur_count=0
+        [ -n "$cur_names" ] && cur_count=$(printf '%s\n' "$cur_names" | grep -c .)
+        cur_joined="$(printf '%s\n' "$cur_names" | tr '\n' ',' | sed 's/,$//')"
+
+        prior_row="$(get_prior_store_state "$store")"
+        if [ -n "$prior_row" ]; then
+            prior_count="${prior_row%%$'\t'*}"
+            prior_joined="${prior_row#*$'\t'}"
+            if [ "$cur_joined" != "$prior_joined" ]; then
+                added=$(comm -13 \
+                    <(printf '%s\n' "$prior_joined" | tr ',' '\n' | grep -v '^$' | sort -u) \
+                    <(printf '%s\n' "$cur_names") 2>/dev/null | grep -c . || true)
+                removed=$(comm -23 \
+                    <(printf '%s\n' "$prior_joined" | tr ',' '\n' | grep -v '^$' | sort -u) \
+                    <(printf '%s\n' "$cur_names") 2>/dev/null | grep -c . || true)
+                append_finding "5" "high" "$store" "-" "known-store-key-delta" \
+                    "key count changed ${prior_count} -> ${cur_count} (added ${added:-0}, removed ${removed:-0}) -- verify this was intentional"
+            fi
+        fi
+        record_store_state "$store" "$cur_count" "$cur_joined"
+
+        # Invariant: no empty or placeholder values. Only the key NAME and
+        # line number are ever reported -- never the value.
+        local kind key lnum
+        while IFS=$'\t' read -r kind key lnum; do
+            [ -n "${kind:-}" ] || continue
+            append_finding "5" "critical" "$store" "$lnum" "known-store-${kind}-value" \
+                "key '${key}' has an ${kind} value -- a rotation may have half-failed"
+        done < <(_known_store_bad_values "$store")
+    done
+}
+
+# ---------------------------------------------------------------------------
 # --fix — conservative remediation
 # ---------------------------------------------------------------------------
 
@@ -692,13 +897,27 @@ apply_fixes() {
             1)
                 log_action "1" "${file}:${lnum}" "NOT auto-fixed -- source pattern requires human judgement (allowlist vs denylist); see rule doc"
                 ;;
+            5)
+                case "$name" in
+                    known-store-bad-mode)
+                        if chmod 600 "$file" 2>/dev/null; then
+                            log_action "5" "$file" "chmod 600 (known-store-bad-mode; was $note)"
+                        else
+                            log_action "5" "$file" "chmod 600 FAILED (known-store-bad-mode)"
+                        fi
+                        ;;
+                    *)
+                        log_action "5" "${file}:${lnum}" "NOT auto-fixed -- known-credential-store invariant ($name) requires human judgement; see rule doc"
+                        ;;
+                esac
+                ;;
         esac
     done < "$FINDINGS_FILE"
 }
 
 remaining_after_fix() {
     local remaining
-    remaining=$(awk -F'\t' '$1=="1"||$1=="2"||$1=="4"' "$FINDINGS_FILE" | wc -l | tr -d ' ')
+    remaining=$(awk -F'\t' '$1=="1"||$1=="2"||$1=="4"||($1=="5" && $5!="known-store-bad-mode")' "$FINDINGS_FILE" | wc -l | tr -d ' ')
     local file mode
     while IFS=$'\t' read -r det sev file lnum name note; do
         [ "$det" = "3" ] || continue
@@ -707,6 +926,11 @@ remaining_after_fix() {
             600|400) : ;;
             *) remaining=$((remaining + 1)) ;;
         esac
+    done < "$FINDINGS_FILE"
+    while IFS=$'\t' read -r det sev file lnum name note; do
+        [ "$det" = "5" ] && [ "$name" = "known-store-bad-mode" ] || continue
+        mode="$(file_mode "$file")"
+        [ "$mode" = "600" ] || remaining=$((remaining + 1))
     done < "$FINDINGS_FILE"
     printf '%s' "$remaining"
 }
@@ -881,18 +1105,78 @@ API_SECRET="$OTHER_SECRET_VAR"
 key_strength = max((channels[idx] for idx in non_spill), default=0.0)
 EOF
 
+    # 25-29: known-credential-store invariants (llm#1196) — fixtures live
+    # under KNOWN_CREDENTIAL_STORES (overridden below), never the real
+    # ~/.config/secrets.env etc. _duckdb_ok is forced to 0 for the whole of
+    # f1/f2 below (restored only inside the separately-guarded "hk" block
+    # further down) so the key-name-delta persistence functions never touch
+    # the REAL unified.duckdb even if one happens to exist on this machine.
+    #
+    #   known_clean.env     -- mode 600, a REAL ghp_-shaped credential value,
+    #                          no siblings, not in a git work tree -> the
+    #                          value is NOT reported (detector 2/4 exemption)
+    #                          AND zero detector-5 findings (clean baseline).
+    #   known_badmode.env   -- mode 644 -> "known-store-bad-mode".
+    #   known_sib.env(+.bak-*) -- a stray backup copy beside it ->
+    #                          "known-store-sibling-copy".
+    #   known_badvalue.env  -- one empty value, one placeholder value, one
+    #                          real-looking value -> the first two are
+    #                          flagged, the real-looking one is not.
+    #   known_ingit.env     -- sits inside a real git work tree ->
+    #                          "known-store-in-worktree".
+    _duckdb_ok=0
+
+    cat > "$tmp/dotfiles/known_clean.env" <<'EOF'
+GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789AB
+EOF
+    chmod 600 "$tmp/dotfiles/known_clean.env"
+
+    cat > "$tmp/dotfiles/known_badmode.env" <<'EOF'
+API_KEY=aB3xK9mQ2pL7vN4tXyZ0
+EOF
+    chmod 644 "$tmp/dotfiles/known_badmode.env"
+
+    cat > "$tmp/dotfiles/known_sib.env" <<'EOF'
+API_KEY=aB3xK9mQ2pL7vN4tXyZ0
+EOF
+    chmod 600 "$tmp/dotfiles/known_sib.env"
+    cp "$tmp/dotfiles/known_sib.env" "$tmp/dotfiles/known_sib.env.bak-20260101"
+    chmod 600 "$tmp/dotfiles/known_sib.env.bak-20260101"
+
+    cat > "$tmp/dotfiles/known_badvalue.env" <<'EOF'
+EMPTY_TOKEN=
+PLACEHOLDER_KEY=<cachix-token>
+REAL_LOOKING_SECRET=abcdefghijklmnop123
+EOF
+    chmod 600 "$tmp/dotfiles/known_badvalue.env"
+
+    mkdir -p "$tmp/gitrepo"
+    git init -q "$tmp/gitrepo" 2>/dev/null || true
+    cat > "$tmp/gitrepo/known_ingit.env" <<'EOF'
+API_KEY=aB3xK9mQ2pL7vN4tXyZ0
+EOF
+    chmod 600 "$tmp/gitrepo/known_ingit.env"
+
     REPO_ROOT="$tmp/repo"
     DEFAULT_DOTFILES=("$tmp/dotfiles")
+    KNOWN_CREDENTIAL_STORES=(
+        "$tmp/dotfiles/known_clean.env"
+        "$tmp/dotfiles/known_badmode.env"
+        "$tmp/dotfiles/known_sib.env"
+        "$tmp/dotfiles/known_badvalue.env"
+        "$tmp/gitrepo/known_ingit.env"
+    )
     FAST=0
     JSON=0
     QUIET=0
 
-    local f1 f2 pass=0 total=27
+    local f1 f2 pass=0 total=37
     f1="$(mktemp "${TMPDIR:-/tmp}/secret_scan_selftest_f1.XXXXXX")"
     FINDINGS_FILE="$f1"
     scan_source_patterns
     scan_at_rest
     check_permissions
+    scan_known_stores
 
     if awk -F'\t' '$1=="1" && $3 ~ /bad_denylist\.sh$/' "$f1" | grep -q .; then
         pass=$((pass + 1))
@@ -1008,6 +1292,56 @@ EOF
         pass=$((pass + 1))
     fi
 
+    # --- Detector 5: known-credential-store invariants (llm#1196) ---------
+
+    if awk -F'\t' '($1=="2"||$1=="4") && $3 ~ /known_clean\.env$/' "$f1" | grep -q .; then
+        echo "FAIL: known_clean.env's real ghp_-shaped value was reported by detector 2/4 -- known-store exemption not honoured"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_clean\.env$/' "$f1" | grep -q .; then
+        echo "FAIL: known_clean.env (mode 600, no siblings, not in git, no bad values) produced a detector-5 finding -- steady state must be zero"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_badmode\.env$/ && $5=="known-store-bad-mode"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: known_badmode.env (mode 644) not flagged known-store-bad-mode"
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_sib\.env$/ && $5=="known-store-sibling-copy"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: known_sib.env's sibling .bak-* copy not flagged known-store-sibling-copy"
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_badvalue\.env$/ && $5=="known-store-empty-value"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: known_badvalue.env's EMPTY_TOKEN not flagged known-store-empty-value"
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_badvalue\.env$/ && $5=="known-store-placeholder-value"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: known_badvalue.env's PLACEHOLDER_KEY=<cachix-token> not flagged known-store-placeholder-value"
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_badvalue\.env$/ && $6 ~ /REAL_LOOKING_SECRET/' "$f1" | grep -q .; then
+        echo "FAIL: known_badvalue.env's REAL_LOOKING_SECRET (a valid-looking value) was wrongly flagged as empty/placeholder"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_ingit\.env$/ && $5=="known-store-in-worktree"' "$f1" | grep -q .; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: known_ingit.env (inside a real git work tree) not flagged known-store-in-worktree"
+    fi
+
     local out
     out="$(FINDINGS_FILE="$f1" JSON=0 QUIET=0 print_report 2>&1)"
     apply_fixes >/dev/null 2>&1 || true
@@ -1020,13 +1354,28 @@ EOF
         echo "FAIL: chmod 600 not applied by --fix (mode=$mode_after)"
     fi
 
+    local known_mode_after
+    known_mode_after="$(file_mode "$tmp/dotfiles/known_badmode.env")"
+    if [ "$known_mode_after" = "600" ]; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL: --fix did not chmod 600 known_badmode.env (known-store-bad-mode is auto-fixable; mode=$known_mode_after)"
+    fi
+
     f2="$(mktemp "${TMPDIR:-/tmp}/secret_scan_selftest_f2.XXXXXX")"
     FINDINGS_FILE="$f2"
     scan_source_patterns
     scan_at_rest
     check_permissions
+    scan_known_stores
     if awk -F'\t' '$1=="3" && $3 ~ /insecure_perms\.env$/' "$f2" | grep -q .; then
         echo "FAIL: still flagged as bad-permissions after --fix + re-scan"
+    else
+        pass=$((pass + 1))
+    fi
+
+    if awk -F'\t' '$1=="5" && $3 ~ /known_badmode\.env$/ && $5=="known-store-bad-mode"' "$f2" | grep -q .; then
+        echo "FAIL: known_badmode.env still flagged known-store-bad-mode after --fix + re-scan"
     else
         pass=$((pass + 1))
     fi
@@ -1076,6 +1425,17 @@ EOF
     fi
 
     rm -rf "$tmp" "$f1" "$f2" 2>/dev/null || true
+
+    # Restore the real inventory now that the known-store fixtures are gone
+    # -- nothing below this point calls scan_known_stores again, but a
+    # stale fixture-path array is a footgun for future edits to this
+    # function.
+    KNOWN_CREDENTIAL_STORES=(
+        "$HOME_DIR/.config/secrets.env"
+        "$HOME_DIR/.claude/env/kb_digest.env"
+        "$HOME_DIR/.claude/env/overnight_self_review.env"
+        "$HOME_DIR/.claude/env/roborev_email.env"
+    )
 
     # -----------------------------------------------------------------------
     # Housekeeping heartbeat + persistence (llm#951) — NEVER touches the real
@@ -1312,6 +1672,7 @@ trap 'rm -f "$FINDINGS_FILE"' EXIT
 scan_source_patterns
 scan_at_rest
 check_permissions
+scan_known_stores
 
 total=$(wc -l < "$FINDINGS_FILE" | tr -d ' ')
 write_findings_to_db

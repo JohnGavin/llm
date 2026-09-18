@@ -20,9 +20,9 @@ Three incidents in one week — whole-environment/whole-file captures routed som
 
 ## CRITICAL: This Is Enforced by `secret_exposure_scan.sh`, Not by Reading This File
 
-The scanner (`.claude/scripts/secret_exposure_scan.sh`) is the enforcement mechanism. This rule documents its contract so an agent editing the scanner, a hook, or an environment-capturing script understands the four detectors and does not accidentally defeat them.
+The scanner (`.claude/scripts/secret_exposure_scan.sh`) is the enforcement mechanism. This rule documents its contract so an agent editing the scanner, a hook, or an environment-capturing script understands the five detectors and does not accidentally defeat them.
 
-## The Four Detectors
+## The Five Detectors
 
 | # | What it catches | Scope | Auto-fixed by `--fix`? |
 |---|---|---|---|
@@ -30,8 +30,36 @@ The scanner (`.claude/scripts/secret_exposure_scan.sh`) is the enforcement mecha
 | 2 | Plaintext credential at rest: a literal credential-shaped value (`ghp_`, `sk-ant-`, `AKIA`, PEM key, etc.) OR a **credential-assignment** — see below for the name-AND-value heuristic | dotfiles/config + repo | No — report only, with the exact removal command |
 | 3 | Bad permissions (not `600`/`400`) on a file Detector 2 flagged | any Detector-2-flagged file | **Yes** — `chmod 600` |
 | 4 | A Detector-2-shaped assignment sitting on a **comment** line | dotfiles/config + repo | No — report only |
+| 5 | Invariant violations on a **known credential store** (see below) | `KNOWN_CREDENTIAL_STORES` (4 exact files) | Partially — `chmod 600` for the mode sub-case only |
 
-Detectors 2 and 4 both skip a file/value that matches the self-reference exemption or the fixture-value heuristic below.
+Detectors 2 and 4 both skip a file/value that matches the self-reference exemption, the known-credential-store exemption, or the fixture-value heuristic below.
+
+## Known-Credential-Store Invariants (Detector 5, llm#1196)
+
+`~/.config/secrets.env`'s entire job is to hold live credentials — detectors 2/4 reported "this file contains a credential" for it on every single run, forever, which is not a check: its output cannot vary with the thing it measures (the same shape as [#1013](https://github.com/JohnGavin/llm/issues/1013)'s `grep -c '^export' # expect 13`). The fix is NOT to exempt the vault by path (that would blind the scanner to the highest-value file on the machine, per `default-permit-is-fail-open`) — it is to stop asserting the one property that can never change and assert the properties that CAN.
+
+`KNOWN_CREDENTIAL_STORES` in the scanner is a short, explicit, exact-path inventory (never a glob/prefix/directory):
+
+```
+~/.config/secrets.env
+~/.claude/env/kb_digest.env
+~/.claude/env/overnight_self_review.env
+~/.claude/env/roborev_email.env
+```
+
+Adding a fifth store is a deliberate, reviewable one-line commit — the same shape as `confidential-repos.local.txt` — never an accidental broadening. Detectors 2/4 skip literal-value matching for these EXACT files only (`is_known_credential_store()`); Detector 1 and 3 are unaffected (3 never sees these files anyway, since it derives its file list from Detector-2 findings).
+
+| Invariant | Fires when | `--fix`? |
+|---|---|---|
+| Mode is exactly `600` | Someone widens it (the 2026-08 incident's actual shape was mode 644) | **Yes** — `chmod 600` |
+| Not inside any git work tree | The store lands in a repo | No |
+| No sibling `.bak*`/`.old`/`.save` copy | A stray copy appears beside it | No |
+| Key NAME set unchanged since the previous run | A key appears or disappears (count + names, persisted in `secret_scan_store_state`) | No |
+| No empty or placeholder value | A rotation half-failed (the literal `<cachix-token>` incident from `checks-must-distinguish-unknown`) | No |
+
+Steady state is zero findings. Only key/variable **NAMES** and mode numbers are ever reported — never a value, exactly like every other detector in this scanner. The key-name-set invariant is also what still catches a newly-planted credential in an "exempt" store: adding a new key changes the name set, so it is reported via `known-store-key-delta` even though detectors 2/4 stay silent for the file's baseline content — this is the falsification case that separates a real narrowing from a blind spot (same precedent as `private-data-scanning`'s self-reference exemption, which keeps its deny-list check running unconditionally even on exempted files).
+
+The key-name-set baseline persists in `secret_scan_store_state` (see Heartbeat and Persistence below) — it requires `housekeeping_schema_apply.sh` to have been run at least once after this table was added; until then the delta sub-check degrades to "no baseline available" (no crash, no false finding, just silently not-yet-active).
 
 ## The Allowlist-vs-Denylist Rule (Detector 1's core distinction)
 
@@ -58,7 +86,7 @@ Worked examples (compat_mode, date_key, API_KEY_HEADER as non-findings; API_KEY 
 
 ## What `--fix` Will and Will Not Do
 
-**Will** (safe, reversible): `chmod 600` a Detector-3-flagged file. **Will not**: delete or rewrite any file automatically — a human must confirm a value is genuinely dead before removal; `--fix` prints the manual removal command instead. Detector-1 findings are never auto-rewritten — allowlist-vs-denylist is a judgement call, not something to guess.
+**Will** (safe, reversible): `chmod 600` a Detector-3-flagged file, or a Detector-5 `known-store-bad-mode` finding. **Will not**: delete or rewrite any file automatically — a human must confirm a value is genuinely dead before removal; `--fix` prints the manual removal command instead. Detector-1 findings are never auto-rewritten — allowlist-vs-denylist is a judgement call, not something to guess. Detector-5's other sub-cases (in-worktree, sibling-copy, key-delta, empty/placeholder-value) are never auto-fixed — each needs a human to look at what changed and why.
 
 ## Pruned Paths (Performance + Noise)
 
@@ -72,9 +100,9 @@ The scanner must never print a credential value — not in `--scan` output, `--f
 
 Every `--fix` action appends one line to `~/.claude/logs/secret_exposure_scan.log` (timestamp, detector id, path, action). Scheduled nightly 03:40 via `.claude/launchd/com.claude.secret-exposure-scan.plist`, currently `--scan --quiet` (report-only) for a soak week before `--fix --quiet` (promotion criterion in the plist comment). `--fast` scans the dotfile/config set only (session-start); full scan (default) is for the scheduled job.
 
-## Heartbeat and Persistence (llm#951)
+## Heartbeat and Persistence (llm#951, llm#1196)
 
-Every `--scan`/`--fix` invocation writes to `~/.claude/logs/unified.duckdb` (override `UNIFIED_DB_PATH`) — a `housekeeping_runs` heartbeat row plus a `secret_scan_findings` row per finding — so a clean 0-finding scan is distinguishable from the scanner not having run (the `zero-metric-evidence-or-defect` failure mode). Both writes are fail-open. Full schema, digest-email integration, `--selftest` coverage: companion doc.
+Every `--scan`/`--fix` invocation writes to `~/.claude/logs/unified.duckdb` (override `UNIFIED_DB_PATH`) — a `housekeeping_runs` heartbeat row plus a `secret_scan_findings` row per finding — so a clean 0-finding scan is distinguishable from the scanner not having run (the `zero-metric-evidence-or-defect` failure mode). Both writes are fail-open. Detector 5's key-name-set baseline lives in a separate table, `secret_scan_store_state` — one row per known store, replaced (not appended) on every run that can reach it, since it is "current state to diff against next time", not a findings ledger. Never stores a value, only variable NAMES. Full schema, digest-email integration, `--selftest` coverage: companion doc.
 
 ## Verification
 
@@ -91,3 +119,7 @@ Every `--scan`/`--fix` invocation writes to `~/.claude/logs/unified.duckdb` (ove
 - `credential-management` rule — never embed credentials in R code; retrieve from environment
 - `destructive-fs-guard` rule — hook-enforced guard for destructive filesystem ops (a different enforcement mechanism, same "advisory rules get ignored" motivation)
 - `housekeeping-framework` rule — the launchd plist + log-table conventions this scan follows
+- `secrets-single-source` rule — `secrets_cache_regen.sh`'s install step now deletes its transient timestamped backup once a regen is verified (llm#1196), so Detector 5's "no sibling copies" invariant does not fire on the tool's own normal behaviour
+- `checks-must-distinguish-unknown` rule — the motivating shape for Detector 5: a check whose output cannot vary with the thing it measures is not a check
+- `default-permit-is-fail-open` rule — why the fix is narrowing to five asserted invariants on four named files, never a path/directory exemption
+- `private-data-scanning` rule — precedent for a self-reference-style exemption that still catches a planted value via a mechanism that runs unconditionally (there: the deny-list check; here: the key-name-set delta)
