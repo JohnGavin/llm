@@ -37,11 +37,17 @@
 #     the risk.
 #   * The candidate list of non-public repo names/paths comes from
 #     `repo_visibility.sh candidates` — fast, cached, NEVER rebuilt inline by
-#     this hook (a cold rebuild scans every repo under ~/docs_gh and shells
-#     out to `gh repo view` for each; that cannot happen inside a 5-15s hook
-#     budget). If the candidates cache has never been seeded, the list is
-#     empty and this hook is a no-op until someone runs
-#     `repo_visibility.sh candidates --refresh` once.
+#     this hook (a cold rebuild scans every configured root and shells out to
+#     `gh repo view` for each; that cannot happen inside a 5-15s hook
+#     budget). `repo_visibility.sh candidates` exits 3 (INDETERMINATE) when
+#     the cache has never been seeded, is stale past its TTL, or could not
+#     be read — this hook treats exit 3 as "could not check" and BLOCKS the
+#     publish verb rather than letting it through unscanned (llm#1183 fix 2:
+#     an earlier revision only checked whether stdout was non-empty, so an
+#     unseeded/stale/unreadable cache was indistinguishable from a
+#     genuinely-empty one and silently ALLOWED everything — a no-op in
+#     exactly the state this hook exists to catch). Seed the cache once with
+#     `repo_visibility.sh candidates --refresh`.
 #   * Only candidate NAMES >= PRIVATE_DETAIL_MIN_NAME_LEN characters (default
 #     6) are used as scan terms — a repo literally named e.g. "R" or "1c"
 #     would false-positive on ordinary prose constantly. Candidate PATHS are
@@ -166,9 +172,34 @@ print((d.get("tool_input") or {}).get("command") or d.get("command") or "")' 2>/
   esac
   # public or unknown -> proceed to scan.
 
-  local candidates
-  candidates="$(bash "$REPO_VISIBILITY_SCRIPT" candidates 2>/dev/null || true)"
-  [ -n "$candidates" ] || exit 0   # nothing to scan for yet (cache never seeded)
+  local candidates candidates_rc=0
+  candidates="$(bash "$REPO_VISIBILITY_SCRIPT" candidates 2>/dev/null)" || candidates_rc=$?
+
+  if [ "$candidates_rc" -eq 3 ]; then
+    # INDETERMINATE (repo_visibility.sh's own exit 3 — never seeded, stale
+    # past TTL, or unreadable). Previously this hook only checked whether
+    # stdout was non-empty, so an unusable candidate list was
+    # indistinguishable from "genuinely found nothing" and silently
+    # ALLOWED every publish — the guard was a no-op in exactly the state it
+    # existed to catch (llm#1183 fix 2). An unknown result must never read
+    # as safe to publish, so this blocks the publish verb rather than
+    # letting it through unscanned.
+    _log "BLOCK target=$target target_vis=$target_vis reason=indeterminate-candidates cmd=${cmd:0:200}"
+    {
+      echo "BLOCKED (private_repo_detail_guard): the private-repo candidate"
+      echo "list could not be established (never seeded, stale, or"
+      echo "unreadable — repo_visibility.sh exited INDETERMINATE). This"
+      echo "guard cannot confirm the command is safe to publish, and an"
+      echo "unresolved check is treated as unsafe, not safe."
+      echo
+      echo "Run: bash $REPO_VISIBILITY_SCRIPT candidates --refresh"
+      echo "See: .claude/rules/private-repo-detail-locality.md"
+      echo "Log: $LOG"
+    } >&2
+    exit 2
+  fi
+
+  [ -n "$candidates" ] || exit 0   # genuinely nothing to scan for (fresh, current, empty list)
 
   local scan_text="$cmd"
   local body_file
@@ -300,28 +331,76 @@ if [ "${1:-}" = "--selftest" ]; then
 
   echo "private_repo_detail_guard.sh selftest:"
 
-  # ── Falsification: PRE-fix behaviour (no candidates seeded) must NOT block ──
+  # ── POSITIVE CONTROL (llm#1183 fix 2): an unseeded candidates cache ─────
+  # must now BLOCK, not silently ALLOW.
+  #
+  # This is the exact defect the issue reported: repo_visibility.sh's own
+  # header used to say "if the candidates cache has never been seeded, the
+  # list is empty and this hook is a no-op" — an unusable candidate list
+  # (never looked) was indistinguishable from a genuinely-clean one (looked,
+  # found nothing) from this hook's point of view, so it ALLOWED every
+  # publish in that state, including one that named the exact private repo
+  # this guard exists to protect. Before this fix, this same case asserted
+  # ALLOW and was labelled "falsification control" -- proof the gap was
+  # real, not a guess.
+  #
   # This must set the HOOK's own environment for the subprocess, not merely
   # appear as text inside the simulated command string (the hook never
   # executes that string — it only parses it) — so it is written directly
   # rather than through _case(). The override path genuinely does not exist,
-  # simulating a candidates cache that has never been seeded. This must
-  # return an EMPTY list, never trigger a cold rebuild — a rebuild would scan
-  # the real ~/docs_gh tree and shell out to `gh repo view` for every repo
-  # found, which is exactly the unbounded cost a PreToolUse hook must not be
-  # able to trigger inline (found and fixed in repo_visibility.sh's own
-  # candidates() while writing this test — JohnGavin/llm#794).
+  # simulating a candidates cache that has never been seeded.
+  #
+  # The "never rebuild inline" invariant still matters and is checked
+  # directly: a rebuild would scan the real configured roots and shell out
+  # to `gh repo view` for every repo found, which is exactly the unbounded
+  # cost a PreToolUse hook must not be able to trigger inline (found and
+  # fixed in repo_visibility.sh's own candidates() while writing this test —
+  # JohnGavin/llm#794).
+  never_seeded_path="$TMP_DIR/never-seeded-candidates.tsv"
   TOTAL=$((TOTAL + 1))
   payload="$(python3 -c 'import json, sys; print(json.dumps({"tool_input": {"command": sys.argv[1]}}))' \
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "mentions test-private-repo-xyz"')"
   rc=0
   printf '%s' "$payload" \
-    | REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/never-seeded-candidates.tsv" \
+    | REPO_VISIBILITY_CANDIDATES_FILE="$never_seeded_path" \
       bash "${BASH_SOURCE[0]}" >/dev/null 2>/dev/null || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    PASS=$((PASS + 1)); echo "PASS  [ALLOW] no candidate list seeded at all -> ALLOW (falsification control)"
+  if [ "$rc" -eq 2 ]; then
+    PASS=$((PASS + 1)); echo "PASS  [BLOCK] no candidate list seeded at all -> BLOCK (llm#1183 fix 2, was ALLOW)"
   else
-    echo "FAIL  [want=ALLOW got=BLOCK] no candidate list seeded at all -> ALLOW (falsification control)"
+    echo "FAIL  [want=BLOCK got=$([ "$rc" -eq 0 ] && echo ALLOW || echo "rc=$rc")] no candidate list seeded at all -> BLOCK (llm#1183 fix 2)"
+  fi
+  TOTAL=$((TOTAL + 1))
+  if [ ! -f "$never_seeded_path" ]; then
+    PASS=$((PASS + 1)); echo "PASS  [ABSENT] blocking on an unseeded cache still never triggers an inline rebuild"
+  else
+    echo "FAIL  [want=ABSENT got=EXISTS] blocking on an unseeded cache still never triggers an inline rebuild"
+  fi
+
+  # ── POSITIVE CONTROL (llm#1183 fix 2): a STALE candidates cache blocks ───
+  # too — a day-old cache may be missing repos created or reclassified since
+  # the last refresh, so a caller must not treat "stale" the same as
+  # "confirmed current and empty".
+  #
+  # The body deliberately does NOT mention the fixture's own candidate name
+  # (contrast the unseeded-cache control above, which reuses the
+  # test-private-repo-xyz body). If it did, the pre-fix guard would ALSO
+  # block here — correctly, by content match — which would make this case
+  # pass for the wrong reason and mask a reverted fix. An unrelated body
+  # isolates staleness as the ONLY thing that can trigger a block.
+  stale_path="$TMP_DIR/stale-candidates.tsv"
+  printf 'test-private-repo-xyz\t%s/fake/test-private-repo-xyz\tprivate\n' "$TMP_DIR" > "$stale_path"
+  echo 1 > "${stale_path}.epoch"   # epoch ~1970 -> always stale
+  stale_payload="$(python3 -c 'import json, sys; print(json.dumps({"tool_input": {"command": sys.argv[1]}}))' \
+    'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "nothing sensitive here, no candidate name at all"')"
+  TOTAL=$((TOTAL + 1))
+  rc=0
+  printf '%s' "$stale_payload" \
+    | REPO_VISIBILITY_CANDIDATES_FILE="$stale_path" \
+      bash "${BASH_SOURCE[0]}" >/dev/null 2>/dev/null || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    PASS=$((PASS + 1)); echo "PASS  [BLOCK] a stale candidates cache blocks even an UNRELATED body (llm#1183 fix 2)"
+  else
+    echo "FAIL  [want=BLOCK got=$([ "$rc" -eq 0 ] && echo ALLOW || echo "rc=$rc")] a stale candidates cache blocks even an UNRELATED body (llm#1183 fix 2)"
   fi
 
   # ── MUST BLOCK: public target, body mentions the synthetic private repo ────
@@ -370,6 +449,7 @@ if [ "${1:-}" = "--selftest" ]; then
   # be used as a bare scan term (would false-positive on ordinary prose).
   printf 'r\t%s/fake/r\tprivate\n%s' "$TMP_DIR" "$(cat "$REPO_VISIBILITY_CANDIDATES_FILE")" \
     > "$TMP_DIR/rv_candidates_with_short.tsv"
+  date -u +%s > "$TMP_DIR/rv_candidates_with_short.tsv.epoch"
   REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_with_short.tsv" \
     _case "a 1-char candidate name is never used as a bare scan term -> ALLOW" \
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "this is an R package"' \
@@ -383,12 +463,14 @@ if [ "${1:-}" = "--selftest" ]; then
   # "the floor was removed": same 4-character name, same body text, opposite
   # verdicts, differing ONLY in whether the row is declared or discovered.
   printf 'kare\t\tconfidential_by_policy\n' > "$TMP_DIR/rv_candidates_declared_short.tsv"
+  date -u +%s > "$TMP_DIR/rv_candidates_declared_short.tsv.epoch"
   REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_declared_short.tsv" \
     _case "a DECLARED name below the length floor still blocks -> BLOCK" \
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "mentions kare here"' \
     "BLOCK"
 
   printf 'kare\t%s/fake/kare\tprivate\n' "$TMP_DIR" > "$TMP_DIR/rv_candidates_discovered_short.tsv"
+  date -u +%s > "$TMP_DIR/rv_candidates_discovered_short.tsv.epoch"
   REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_discovered_short.tsv" \
     _case "the same short name, DISCOVERED not declared, stays below the floor -> ALLOW" \
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "mentions kare here"' \
@@ -404,6 +486,7 @@ if [ "${1:-}" = "--selftest" ]; then
   # ── path fragment match (not just bare name) ────────────────────────────
   printf 'longname-fixture\t%s/fake/longname-fixture-path\tlocal_only\n' "$TMP_DIR" \
     > "$TMP_DIR/rv_candidates_path.tsv"
+  date -u +%s > "$TMP_DIR/rv_candidates_path.tsv.epoch"
   REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_path.tsv" \
     _case "an absolute path fragment match blocks even with a different name in body" \
     "gh issue create --repo fake-public-owner/fake-public-repo --title x --body \"see ${TMP_DIR}/fake/longname-fixture-path for detail\"" \

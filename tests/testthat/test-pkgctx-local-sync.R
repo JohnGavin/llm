@@ -259,3 +259,81 @@ test_that("ctx_sync warns loudly (never silently) when generate_ctx() errors", {
     "zzzfakepkgfour"
   )
 })
+
+# ── ctx_sync(): total-failure contract (JohnGavin/llm#1181) ──────────────
+#
+# Regression test for a bug where ctx_sync() exited 0 (returning a normal
+# result tibble) after failing to generate ctx for EVERY attempted package
+# (observed: 28/28 FAILED in one real run). A caller that only checks the
+# exit code -- the session-init background `ctx_sync()` launch, or a future
+# `tar_make()` run -- would wrongly believe the sync succeeded. ctx_sync()
+# must now signal this loudly (cli::cli_abort()) rather than returning
+# silently, once 2+ packages are attempted and all of them fail.
+
+test_that("ctx_sync aborts loudly when every attempted package fails (2+ packages)", {
+  proj_dir  <- withr::local_tempdir()
+  cache_dir <- withr::local_tempdir()
+
+  desc_path <- file.path(proj_dir, "DESCRIPTION")
+  writeLines(
+    c(
+      "Package: dummy",
+      "Imports:",
+      "    zzzfakepkgfive,",
+      "    zzzfakepkgsix,",
+      "    zzzfakepkgseven"
+    ),
+    desc_path
+  )
+
+  orig_generate_ctx <- generate_ctx
+  on.exit(assign("generate_ctx", orig_generate_ctx, envir = .GlobalEnv), add = TRUE)
+
+  calls <- character(0)
+  assign("generate_ctx", function(pkg, version = NULL, cache_dir = CTX_CACHE) {
+    calls <<- c(calls, pkg)
+    list(pkg = pkg, version = version %||% "unknown", status = "FAILED",
+         file = NA_character_, error = "simulated total failure")
+  }, envir = .GlobalEnv)
+
+  expect_error(
+    ctx_sync(desc_path, cache_dir, fix_missing = TRUE, fix_stale = TRUE),
+    "all 3 attempted package"
+  )
+
+  # All three must still have been ATTEMPTED before the abort -- the
+  # per-package loop-continuation guarantee (the earlier regression test)
+  # must hold even though the aggregate result now aborts.
+  expect_setequal(calls, c("zzzfakepkgfive", "zzzfakepkgsix", "zzzfakepkgseven"))
+})
+
+test_that("ctx_sync does NOT abort when only some attempted packages fail", {
+  proj_dir  <- withr::local_tempdir()
+  cache_dir <- withr::local_tempdir()
+
+  desc_path <- file.path(proj_dir, "DESCRIPTION")
+  writeLines(
+    c(
+      "Package: dummy",
+      "Imports:",
+      "    zzzfakepkgeight,",
+      "    zzzfakepkgnine"
+    ),
+    desc_path
+  )
+
+  orig_generate_ctx <- generate_ctx
+  on.exit(assign("generate_ctx", orig_generate_ctx, envir = .GlobalEnv), add = TRUE)
+  assign("generate_ctx", function(pkg, version = NULL, cache_dir = CTX_CACHE) {
+    status <- if (pkg == "zzzfakepkgeight") "FAILED" else "GENERATED"
+    list(pkg = pkg, version = version %||% "unknown", status = status,
+         file = NA_character_)
+  }, envir = .GlobalEnv)
+
+  result <- ctx_sync(desc_path, cache_dir, fix_missing = TRUE, fix_stale = TRUE)
+
+  expect_s3_class(result, "tbl_df")
+  expect_equal(nrow(result), 2L)
+  expect_equal(result$result[result$package == "zzzfakepkgeight"], "FAILED")
+  expect_equal(result$result[result$package == "zzzfakepkgnine"], "GENERATED")
+})

@@ -477,6 +477,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/gh_permission_probe.sh pretooluse",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -688,6 +698,11 @@
             "type": "command",
             "command": "~/.claude/hooks/permission_request.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/gh_permission_probe.sh permissionrequest",
+            "timeout": 10
           }
         ]
       }

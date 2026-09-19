@@ -174,6 +174,6 @@ narrative, evidence, and the disposition of every related issue:
 - [`worktree-location`](worktree-location.md) — why every worktree path contains `/worktrees/`
 - [`data-validation-timeseries`](data-validation-timeseries.md) — content-level validation targets
 - [`bash-safety`](bash-safety.md) — tool-choice discipline generally (Part 5 is the same discipline applied to file-editing APIs)
-- [`verification-before-completion`](verification-before-completion.md) — "no completion claims without evidence," extended here to structural file integrity, and to platform-capability claims (Part 6)
+- [`verification-before-completion`](verification-before-completion.md) — "no completion claims without evidence," extended here to structural file integrity, and to platform-capability claims (Part 6); its Five Traps Type B also covers the same generated-interactive-HTML file class from the opposite direction — a static/`jsdom` check on this file proves it shipped, never what a user sees after real interaction
 - [`domain-logic-in-package`](domain-logic-in-package.md) — a different failure mode from the same incident (business logic duplicated outside `R/`)
 - [`external-code-zero-trust`](external-code-zero-trust.md) — a plausible external pattern is an idea to evaluate, never an implementation to assume works here (Part 6)
