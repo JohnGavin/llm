@@ -145,7 +145,8 @@ check_ctx_status <- function(pkg, cache_dir = CTX_CACHE) {
 #' This way the version stamp always matches the actual ctx content.
 #' @param pkg Package name
 #' @param version Hint version (used for skip check only; actual version comes from pkgctx output)
-#' @return list with pkg, version, status, file
+#' @return list with pkg, version, status, file, and (on FAILED) error --
+#'   the captured stderr tail from the underlying `nix run` (JohnGavin/llm#1167)
 generate_ctx <- function(pkg, version = NULL, cache_dir = CTX_CACHE) {
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -169,22 +170,52 @@ generate_ctx <- function(pkg, version = NULL, cache_dir = CTX_CACHE) {
     pkg
   }
 
-  # Generate to temp file first
+  # Generate to temp file first. stderr is captured to a sibling file
+  # (NOT discarded to /dev/null, JohnGavin/llm#1167) so a failure is
+  # diagnosable from generate_ctx()'s own output -- a failed crate fetch,
+  # a Nix build error, or a network/auth problem all show up here instead
+  # of a bare "Failed to generate ctx for X" with zero detail.
   tmp_file <- tempfile(fileext = ".ctx.yaml")
+  err_file <- paste0(tmp_file, ".err")
   cmd <- sprintf(
-    'nix run github:b-rodrigues/pkgctx -- r %s --compact > "%s" 2>/dev/null',
-    source, tmp_file
+    'nix run github:b-rodrigues/pkgctx -- r %s --compact > "%s" 2>"%s"',
+    source, tmp_file, err_file
   )
 
   cli::cli_alert_info("Generating ctx for {.pkg {pkg}}...")
   exit_code <- system(cmd, timeout = 300)
 
   if (exit_code != 0 || !file.exists(tmp_file) || file.size(tmp_file) < 10) {
+    stderr_lines <- character(0)
+    if (file.exists(err_file) && file.size(err_file) > 0) {
+      stderr_lines <- tryCatch(
+        readLines(err_file, warn = FALSE),
+        error = function(e) character(0)
+      )
+    }
+    stderr_tail <- utils::tail(stderr_lines, 10)
     unlink(tmp_file)
-    cli::cli_alert_warning("Failed to generate ctx for {.pkg {pkg}}")
+    unlink(err_file)
+
+    cli::cli_alert_warning("Failed to generate ctx for {.pkg {pkg}} (exit {exit_code})")
+    if (length(stderr_tail) > 0) {
+      # cli_verbatim() prints as-is, with no glue interpolation -- stderr
+      # from an external process may contain literal `{`/`}` (Nix flake
+      # refs, Rust panic messages) that would otherwise break cli's markup.
+      cli::cli_verbatim(paste(stderr_tail, collapse = "\n"))
+    } else {
+      cli::cli_alert_info("(no stderr captured for {.pkg {pkg}})")
+    }
+
+    error_detail <- if (length(stderr_tail) > 0) {
+      paste(stderr_tail, collapse = "\n")
+    } else {
+      NA_character_
+    }
     return(list(pkg = pkg, version = version %||% "unknown", status = "FAILED",
-                file = NA_character_))
+                file = NA_character_, error = error_detail))
   }
+  unlink(err_file)
 
   # Read actual version from pkgctx output
   lines <- readLines(tmp_file, n = 10, warn = FALSE)
@@ -234,6 +265,12 @@ ctx_audit <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE) {
 }
 
 #' Sync ctx cache — audit + regenerate stale + create missing
+#'
+#' Aborts via [cli::cli_abort()] if 2+ packages are attempted and every one
+#' of them fails (JohnGavin/llm#1181) — see the total-failure check near the
+#' end of the function body for the rationale. A lone package failing among
+#' others still just returns a normal result tibble with an "ERROR"/"FAILED"
+#' row for that package.
 ctx_sync <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE,
                      fix_missing = TRUE, fix_stale = TRUE) {
   audit <- ctx_audit(desc_path, cache_dir)
@@ -291,9 +328,36 @@ ctx_sync <- function(desc_path = "DESCRIPTION", cache_dir = CTX_CACHE,
     }
   }
 
-  if (length(results) > 0) do.call(rbind, results)
-  else tibble::tibble(package = character(0), action = character(0),
-                  result = character(0))
+  out <- if (length(results) > 0) {
+    do.call(rbind, results)
+  } else {
+    tibble::tibble(package = character(0), action = character(0),
+                    result = character(0))
+  }
+
+  # Contract-level fix for JohnGavin/llm#1181: a single package failing
+  # (network blip, one bad CRAN entry) stays a per-package warning above --
+  # but when EVERY attempted package fails (>= 2 attempted, 100% failure
+  # rate), that's a systemic problem (network/auth/sandbox), not a
+  # per-package one, and returning a normal tibble here would let a caller
+  # that only checks the exit code (the session-init background ctx_sync
+  # launch, or a future `tar_make()` run) believe the sync succeeded while
+  # it accomplished nothing -- the exact "checks-must-distinguish-unknown"
+  # failure mode. Abort loudly instead of returning silently.
+  failed_statuses <- c("FAILED", "ERROR")
+  n_attempted <- nrow(out)
+  n_failed <- sum(out$result %in% failed_statuses)
+
+  if (n_attempted >= 2L && n_failed == n_attempted) {
+    cli::cli_abort(c(
+      "x" = "ctx_sync failed to generate ctx for all {n_attempted} attempted package{?s}.",
+      "i" = "Every attempted package ({paste(out$package, collapse = ', ')}) reported {.val FAILED}/{.val ERROR}.",
+      "i" = "This usually indicates a systemic problem (network, auth, or sandbox), not a per-package one.",
+      "i" = "See the {.code Failed to generate ctx for <pkg>} warnings above for per-package stderr detail."
+    ))
+  }
+
+  out
 }
 
 #' Clean up old ctx files not touched in CTX_CLEANUP_DAYS
