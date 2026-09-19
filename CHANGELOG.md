@@ -4,6 +4,25 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-19 (session: weekly health-report icu bug + Downloads housekeeping, feat/cc-20260913-122624)
+
+### Completed
+
+- **Weekly health report "0 jobs" bug fixed** ([#1220](https://github.com/JohnGavin/llm/pull/1220), open — awaiting merge). Root cause: `connect_duckdb_secure()`'s `enable_external_access = false` lockdown disables DuckDB's lazy `icu` extension autoload, so any TIMESTAMPTZ-aware query on a hardened connection failed with `Loading external extensions is disabled through configuration` — caught by the caller's own `tryCatch` and silently rendered as "0 jobs / no run data" instead of "the query never ran" (`housekeeping_runs` actually held 277 real rows in the reporting window). Fix: `connect_duckdb_secure()` gains a `load_icu` parameter that LOADs `icu` before the lockdown SET statements run; both TIMESTAMPTZ-casting call sites in `launchd_health_report.R` now pass `load_icu = TRUE`. Independently corroborated by an existing comment in `send_stage1_findings_email.R` documenting the same hazard for a different call site.
+- **A second, pre-existing bug surfaced while verifying the fix**: `launchd_health_report.R`'s self-location fallback used `sys.frame(0L)$ofile`, which is always `NULL` (frame 0 is always `.GlobalEnv` — never carries `$ofile`). Under any invocation lacking a `--file=` commandArgs entry — exactly how the file's own test suite invokes it via `Rscript -e 'testthat::test_file(...)'` — the fallback silently resolved to the hardcoded MAIN CHECKOUT path, sourcing a stale `duckdb_secure.R` with no `load_icu` parameter. Invisible until the `load_icu` fix added a parameter the stale sourced function didn't accept — that mismatch, not a real regression, was the full 4-test failure surfaced by the first fix. Diagnosed by instrumenting the connect error handler with a debug `message()`, which surfaced `unused argument (load_icu = TRUE)`. Fixed by searching all stack frames (`sys.frames()`) for one carrying `$ofile`, verified against a minimal nested-`source()` reproduction before applying to the real file.
+- **Merged all open PRs on `JohnGavin/llm`** (explicit "merge all still open PRs" instruction): [#1219](https://github.com/JohnGavin/llm/pull/1219), [#1197](https://github.com/JohnGavin/llm/pull/1197). PR #1133 remains open — `mergeable: CONFLICTING`, needs manual conflict resolution, left untouched pending user decision.
+- **`~/Downloads/claude/*.json` made human-readable**: pretty-printed with `jq` (2-space indent) then post-processed to un-escape literal `\n`/`\t` sequences inside string values into real line breaks — the 2-space indent alone left long embedded markdown/transcript text as a single unreadable escaped line. Output is deliberately non-strict JSON (a raw newline inside a JSON string is invalid) as the explicit tradeoff for readability. Verified zero remaining literal `\n` in all four `-pretty.json` files.
+
+### Failed Approaches
+
+- **Attempted to download the 4 claude.ai data-export URLs from the manifest via `curl`.** The first attempt (`light_metadata-000.zip`) returned HTTP 200 but the body was Cloudflare's "Just a moment..." JS challenge page, not the real file — `curl` cannot pass a Cloudflare bot challenge, and each export URL is single-use. Deleted the bogus file; did not attempt the remaining 3 URLs (would certainly fail the same way and burn their single-use tokens); recommended the user open them directly in an authenticated browser instead.
+- **Assumed the 4-test regression after the `load_icu` fix was a real logic bug in the fix itself.** Spent significant effort testing DuckDB instance-caching/lock-configuration-collision hypotheses (ruled out empirically: 5 sequential `connect_duckdb_secure()` calls to 5 different tempfiles in one process succeeded cleanly). The actual cause (stale main-checkout sourcing) was only found by adding a debug `message()` to the error handler and reading the literal R error text — "unused argument" immediately named the real problem. Lesson: read the actual caught error before hypothesizing about DuckDB internals.
+
+### Known Limitations
+
+- **PR #1133 still open with a merge conflict** — needs manual resolution; not part of this session's "merge all open PRs" instruction since it requires human judgement on the conflict.
+- **[#1220](https://github.com/JohnGavin/llm/pull/1220) not yet merged** — opened per `pr-shipping-discipline`, awaiting explicit merge instruction.
+
 ## 2026-09-11 → 2026-09-13 (session: publish-channel containment + scheduled-job observability, feat/cc-20260911-110552)
 
 ### Completed
