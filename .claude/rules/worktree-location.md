@@ -94,6 +94,47 @@ git -C ~/docs_gh/llm worktree remove ~/docs_gh/worktrees/llm/feat/fix-foo
 git -C ~/docs_gh/llm worktree prune
 ```
 
+## CRITICAL: Multiple worktrees may exist outside `~/docs_gh/` — verify the canonical checkout before working
+
+A project's real, actively-used checkout is not guaranteed to live under
+`~/docs_gh/<project>/` at all. A privacy-sensitive project (health, financial,
+or other PHI/PII-bearing data — see `public-private-repo-boundary`) may be
+deliberately kept entirely outside the `docs_gh` tree, e.g. under a personal
+iCloud/local-only path, while `~/docs_gh/worktrees/<project>/<branch>/`
+contains only stale, forked-and-diverged mirror worktrees of the same repo
+that nobody has cleaned up.
+
+**Do not infer the canonical checkout from directory naming or a partial
+`find`/`mdfind` scoped to `~/docs_gh/`.** `git worktree list`, run from ANY
+known checkout of the repo — even a stale one — enumerates every worktree of
+that repo regardless of where it physically lives, because worktrees share
+one `.git` object store. Run it FIRST, before starting real work, whenever a
+project might have more than one checkout:
+
+```bash
+git -C <any-known-checkout-of-the-project> worktree list
+```
+
+Then identify which entry is actually current: check `git log -1
+--format='%ci'` per worktree, and prefer the one with the freshest commits
+AND/OR uncommitted in-progress changes (`git status --short`) over the one
+that merely has the most recent timestamp among a partial set you already
+happened to find. A worktree whose last commit is identical to another
+worktree's *older* tip is a strong signal it forked off and was abandoned —
+see `branch-harvest-on-fork`.
+
+**Origin:** 2026-09-18/19, mycare project. An agent worked an entire session
+in `~/docs_gh/worktrees/mycare/feat/cc-20260907-100559` — found via a
+`docs_gh`-scoped search and picked because it had the most recent commit
+timestamp among the worktrees that search surfaced — while the actual live
+checkout was `~/docs_/pers/NHS_health/data/antigravity/mycare/` on `main`,
+kept outside `docs_gh` specifically because it holds real patient data. The
+two had genuinely diverged: `main` already had independent, more current
+work (new issues at numbers the stray branch's new issues collided with,
+a same-day document already captured under a different, correct
+convention). The stray branch's commits had to be re-derived and re-applied
+on the real `main` by hand, and the stray worktree/branch deleted.
+
 ## Never start a session in the worktree-parent dir
 
 `~/docs_gh/worktrees/<project>/` (and `~/docs_gh/worktrees/<project>/feat/`, `.../fix/`, etc.)
