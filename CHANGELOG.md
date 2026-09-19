@@ -4,6 +4,42 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-11 → 2026-09-13 (session: publish-channel containment + scheduled-job observability, feat/cc-20260911-110552)
+
+### Completed
+
+- **Confidential repo names moved out of the public repo** ([#1182](https://github.com/JohnGavin/llm/pull/1182), merged). `private_repo_detail_guard.sh` could not protect a repo that never appeared under `$REPO_VISIBILITY_SCAN_ROOT`. Declared entries now become candidates on declaration alone, sourced from the tracked list AND a local, never-committed overlay (`~/.config/confidential-repos.local.txt`, mode 600); the tracked file keeps only a synthetic canary. The merge gate blocked the first attempt on a Critical finding — the PR was publishing the very name it existed to protect — which is the gate doing its job. **Verified live for the first time:** a publish payload naming the real entry BLOCKS (exit 2), a clean one ALLOWS.
+- **Weekly health report, three defects** ([#1189](https://github.com/JohnGavin/llm/pull/1189), merged, from braindumps 53/54). Runs/Fails were `—` for every job because the report joined `housekeeping_runs` on the plist `Program` path, which a wrapped job can never match; it now reads `launchd_runs.duckdb` keyed by label (`High Tier` went from `0 runs · 0 fails` to `64 runs · 8 non-zero exits`). A `||` in a Program field broke a markdown row — every cell is escaped now. The "Fails" column became `Non-zero exits` with a legend, because exit 1 means *findings* for checker jobs. Plus High-tier jobs with no timeout are reported as findings, with a documented exemption file.
+- **Cron health: 2 indeterminate → 0** ([#1191](https://github.com/JohnGavin/llm/pull/1191), merged, braindump 55). `send_overnight_self_review_email.R` documented at line 1276 that scanner exit 1 means "found N findings", then a later llm#1145 contradiction check flagged *any* non-zero exit against a healthy heartbeat — contradicting the rule written 90 lines above it. Narrowed so exit 1 + heartbeat `ok` is a determinate pass carrying the finding count; exit 0 + failed heartbeat, exit 2/3, and `partial` stay indeterminate.
+- **`main` was red and is now green** ([#1194](https://github.com/JohnGavin/llm/pull/1194), merged, [#1192](https://github.com/JohnGavin/llm/issues/1192)). Two assertions pinned the overnight email to 06:30 while the plist says 08:45 — `26c7514` had moved it deliberately so it runs after `staleness-collect`. Replaced the constant with the invariant it defended (after staleness-collect, before the 09:00 peak), parsed from the real plists. Also fixed two tests that had no assertion at all.
+- **Timeouts enforced for 26 scheduled jobs** ([#1195](https://github.com/JohnGavin/llm/pull/1195), merged, [#1190](https://github.com/JohnGavin/llm/issues/1190)). The bound lives in `bin/launchd_run_record.sh`, which already wraps every recorded job, so no plist was edited. Bounds are p95 × 5 with a 60s floor, annotated per line with sample size and evidence. A missing GNU `timeout` records `unenforced`, never a silent pass.
+- **Scanner findings 168 → 67.** Six stale `secrets.env.bak-*` files deleted after a pre-flight check showed three keys existed only in the backups — fingerprint comparison proved they were the same secrets under older names (`HF_TOKEN`, `OPENAI_API_KEY`). Triage and measured effect on [#1188](https://github.com/JohnGavin/llm/issues/1188).
+- **Braindumps processed** (ids 50–56): [llmtelemetry#368](https://github.com/JohnGavin/llmtelemetry/issues/368) (idea-to-live lead time), tennis `ISSUES.md` #64/#65, travel `issues/0004`, and an addendum on [#1123](https://github.com/JohnGavin/llm/issues/1123).
+- **Containment decisions recorded**: `llm` stays public ([#1185](https://github.com/JohnGavin/llm/issues/1185) closed, with the costs of going private measured — Pages offline on the free plan, metered CI minutes, stars lost); gating every publish channel instead ([#1186](https://github.com/JohnGavin/llm/issues/1186)). #190, #1183, #1179 and PR #1182's description redacted.
+
+### Failed Approaches
+
+- **Pointed a dispatched agent at another agent's harness worktree** to update an open PR branch. The sandbox pins each agent to its own: `git -C` refused, `EnterWorktree` then blocked every Bash call including `pwd`, and a cross-branch push hit `agent_push_guard.sh` Guard B. The agent recovered by fast-forwarding its own branch to the PR tip and pushing to the authorised target. A worktree under `~/docs_gh/worktrees/<project>/<branch>/` works fine — that is the pattern to use (memory: `feedback_agent-worktree-pinning`).
+- **Delegated a 3-line comment fix to `quick-fix`/haiku** — the dispatch overflowed haiku's context before doing anything, because the rule corpus loads into every subagent. Made the edit directly instead.
+- **Read `exit_code` alone as job health.** Reported the private-data audit as "failing"; its heartbeat said `status='ok'` on every run and exit 1 means *findings exist* per `exit-code-conventions`. Corrected on #1188. The same misreading was then designed out of both reports.
+- **Asserted a blast radius without measuring it.** [#1185](https://github.com/JohnGavin/llm/issues/1185) described the exposure as confined to one pull ref; a search afterwards found the name in 50 public issues/PRs and 38 tracked files. Corrected in its closing comment.
+
+### Accuracy / Metrics
+
+- `main` test suites: `[ FAIL 0 | WARN 0 | SKIP 0 | PASS 106 ]` (was FAIL 2, SKIP 2, PASS 29 for the overnight file alone) plus `tests/test_launchd_run_record_timeout.sh` 16/16, both run from the deployed checkout.
+- Cron health: `29 plists · 29 ok · 0 failed · 0 indeterminate` (was 2 indeterminate daily).
+- Secret-exposure scan: 168 → 67 findings; detector 2 (credential-assignment) 136 → 35.
+- Scheduled jobs with an enforced timeout: 0 → 26 of 39.
+
+### Known Limitations
+
+- **[#1196](https://github.com/JohnGavin/llm/issues/1196) not built**: `secrets.env` still reports 11 findings that can never be false. Design agreed (assert invariants about enumerated stores instead of reporting their contents). Must ship together with a fix to `secrets_cache_regen.sh:189`, which writes a new `.bak-<timestamp>` per regeneration — the six deleted backups will otherwise rebuild.
+- **[#1186](https://github.com/JohnGavin/llm/issues/1186) Phase 1 not started**: `git push` still has no content gate for private repo names. Re-verified this session — the pre-push scanner over the leaking commit returns `{"findings":[]}`.
+- **~21 self-reference findings** remain in the scanner's own sources and docs (#1188); the marker mechanism exists and these files never got it.
+- **`worktree-gc` and `branch-gc` remain unbounded** (#1190): their duration tails are load-dependent rather than single hangs, so no defensible bound exists yet. Deliberately not guessed.
+- **Per-session `/bye` sentinels degraded to the legacy globals this session** — neither `~/.claude/logs/.current_session` nor a `.llmtelemetry_ppid_session.$PPID` for this shell exists, so no session id resolved. That is the shared-token condition llm#913 fixed; worth checking whether the id file is still written.
+- **Edit-history revisions** on #190, #1183, #1179 and PR #1182 still need deleting by hand in the web UI — GitHub exposes no API for it.
+
 ## 2026-09-09 (session: roborev report follow-ups + launchd simplification, feat/cc-20260907-100630)
 
 ### Completed
