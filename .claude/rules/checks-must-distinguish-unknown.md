@@ -68,6 +68,33 @@ The tell: **a tool complaining about the *shape* of an input it may not have rec
 | "the hook never fires" | the hook is instrumented to report firing |
 | "no rows matched" | the query ran against the intended database |
 
+## Corollary: a "missing" claim needs an exhaustive-search receipt
+
+The same collapse — indeterminate read as negative — happens at human/session
+scale, not just inside a script. "We don't have X" is a claim that a search
+was run and came back empty, not a fact about the world. When the claim is
+wrong, it doesn't just cost one session: every later session inherits it as
+established context and re-asserts it without re-checking, so the false
+negative compounds for as long as nobody happens to search the one place
+that was missed.
+
+Worked case, mycare project (2026-09-18/19): issue #008 said a CT findings
+report was "missing" and escalated it as blocking a clinical decision after
+five months open. The report had been sitting on disk the whole time, in a
+dated subfolder nobody had checked — the project's own CLAUDE.md already
+carried this exact lesson from an earlier incident ("A search of only csv/
+and DuckDB missed 17 PDFs... Always check pdf/ for unprocessed downloads"),
+and it still recurred, in the *same* pipeline-stage-omission shape, because
+"missing" had already calcified into an accepted fact nobody re-tested.
+
+Before treating "we don't have X" as true enough to act on (re-request it,
+re-derive it, escalate it, or build a workaround for its absence): name every
+location it could plausibly already exist, and actually search each one —
+not just the location the original claim checked. A "missing" claim that has
+survived multiple sessions unchallenged is *more* suspect, not less — its
+apparent stability is nobody re-verifying it, not evidence it was ever
+confirmed.
+
 ## Corollary: a placeholder in a runnable command is a defect
 
 If a documented command contains `<something>`, someone will run it verbatim. That is not carelessness; a shell command is an invitation to paste.
