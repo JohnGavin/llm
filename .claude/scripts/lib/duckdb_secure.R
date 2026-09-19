@@ -24,12 +24,39 @@
 # its own DuckDB-native tables (CREATE TABLE, dbAppendTable, CREATE VIEW,
 # parameterized DBI queries) with no DuckDB-side external I/O.
 #
-# Function body is copied verbatim from the skill's Part 2 template — do
-# not redesign it here; if a call site needs different behaviour (e.g. a
+# Function body is copied verbatim from the skill's Part 2 template except
+# for the `load_icu` parameter (JohnGavin/llm#1223) — do not otherwise
+# redesign it here; if a call site needs different behaviour (e.g. a
 # controlled ATTACH), that is a separate helper, not a change to this one.
+#
+# load_icu: any TIMESTAMPTZ literal cast, or TZ-aware date function
+# (CURRENT_DATE, CURRENT_TIMESTAMP, AGE(), etc.) requires DuckDB's `icu`
+# extension. DuckDB normally autoloads it lazily on first use — but
+# `enable_external_access = false` (below) disables autoloading too, per
+# this file's own header warning, so a connection that runs ANY TZ-aware
+# SQL after that lockdown fails with "Loading external extensions is
+# disabled through configuration", caught by the caller's own tryCatch and
+# silently read as "no rows" rather than "the query never ran" — exactly
+# the checks-must-distinguish-unknown failure this project's other rules
+# exist to prevent. Load icu FIRST, before the lockdown, when the caller's
+# SQL needs it; the default stays FALSE so callers with no TZ-aware SQL are
+# unaffected (icu is generally cheap to load, but this keeps the function's
+# behaviour unchanged for existing callers per the "don't redesign" note
+# above). Reference precedent: the mycare project's own db_connect() already
+# does `LOAD icu` before any lockdown, for the same reason.
 connect_duckdb_secure <- function(dbdir = ":memory:", read_only = FALSE,
-                                  allowed_dirs = NULL, memory_limit = "1GB") {
+                                  allowed_dirs = NULL, memory_limit = "1GB",
+                                  load_icu = FALSE) {
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = dbdir, read_only = read_only)
+  if (isTRUE(load_icu)) {
+    tryCatch(
+      DBI::dbExecute(con, "LOAD icu"),
+      error = function(e) {
+        message("connect_duckdb_secure: LOAD icu failed: ", conditionMessage(e),
+                " — TZ-aware queries on this connection will error, not silently misparse.")
+      }
+    )
+  }
   if (!is.null(allowed_dirs)) {
     dirs_sql <- paste0("'", allowed_dirs, "'", collapse = ", ")
     DBI::dbExecute(con, paste0("SET allowed_directories = [", dirs_sql, "]"))
