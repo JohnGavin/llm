@@ -4,6 +4,13 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-19 (session-end continued: feat/cc-20260913-122624)
+
+### Completed
+
+- **Merged** [#1220](https://github.com/JohnGavin/llm/pull/1220) (the icu/self-location fix below) after explicit "merge 1220" instruction — MERGEABLE/CLEAN, all CI checks passing, squash-merged. Confirmed live on `origin/main` (`eb27638`).
+- **Closed** [#1133](https://github.com/JohnGavin/llm/pull/1133) without merging, with an explanatory comment. Investigation found: all 3 non-CHANGELOG files it added were already byte-identical on `main` (shipped via #1116); the issue it resolves (#1121) was already closed; the PRs it references merging (#1130, #1131) were already merged; and its one reusable "Failed Approaches" lesson (`launchctl bootout`+`bootstrap` alone doesn't clear a stale BTM Name cache) was already documented in the current CHANGELOG from an earlier entry on the same issue. The remaining conflict was purely CHANGELOG.md's prepend-point on a 17-day-stale branch — no content was actually lost by closing.
+
 ## 2026-09-19 (session: weekly health-report icu bug + Downloads housekeeping, feat/cc-20260913-122624)
 
 ### Completed
