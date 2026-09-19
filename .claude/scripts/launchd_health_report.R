@@ -48,8 +48,24 @@ has_duckdb <- requireNamespace("duckdb", quietly = TRUE)
 # extension and no ATTACH of an external database file. See
 # duckdb_secure.R's header for call sites that must NOT use this helper.
 if (has_duckdb) {
-  .scripts_dir_launchd_health <- tryCatch(
-    dirname(normalizePath(sys.frame(0L)$ofile, mustWork = FALSE)),
+  # NOTE (llm#1223 regression fix): sys.frame(0L) is ALWAYS .GlobalEnv per R's
+  # own semantics (frame 0), which never carries $ofile -- the original form
+  # here silently resolved to NULL every time, tripping the error handler's
+  # hardcoded-main-checkout fallback below on every invocation that lacked a
+  # --file= commandArgs entry (e.g. `Rscript -e 'testthat::test_file(...)'`,
+  # exactly how this file's own test suite invokes it). That fallback path
+  # points at the MAIN checkout's copy of duckdb_secure.R, not this worktree's
+  # -- silently sourcing stale code with no error, until a call site here
+  # passes an argument the stale sourced function doesn't accept. Fixed by
+  # searching every frame (sys.frames(), not sys.frame(0L)) for one carrying
+  # $ofile -- source() sets that field on the frame it evaluates the sourced
+  # file's code in; the LAST such match is this file's own path, since this
+  # code runs before launchd_health_report.R sources anything else.
+  .scripts_dir_launchd_health <- tryCatch({
+    ofiles <- Filter(Negate(is.null), lapply(sys.frames(), function(fr) fr$ofile))
+    if (length(ofiles) == 0L) stop("no ofile found in call stack")
+    dirname(normalizePath(ofiles[[length(ofiles)]], mustWork = FALSE))
+  },
     error = function(e) {
       args_full <- commandArgs(trailingOnly = FALSE)
       idx  <- grep("^--file=", args_full)
@@ -361,7 +377,9 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
     return(data.frame(empty = TRUE, stringsAsFactors = FALSE))
   }
 
-  con <- connect_duckdb_secure(dbdir = ledger, read_only = TRUE)
+  # load_icu = TRUE: this function's query casts TIMESTAMPTZ, which needs
+  # the icu extension — see connect_duckdb_secure()'s own header (llm#1223).
+  con <- connect_duckdb_secure(dbdir = ledger, read_only = TRUE, load_icu = TRUE)
   on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
 
   tables <- DBI::dbListTables(con)
@@ -428,7 +446,8 @@ read_run_counts_by_label <- function(ledger = LAUNCHD_RUNS_LEDGER, window_days =
   if (!has_duckdb) return(NULL)
   if (!file.exists(ledger)) return(NULL)
 
-  con <- tryCatch(connect_duckdb_secure(dbdir = ledger, read_only = TRUE), error = function(e) NULL)
+  # load_icu = TRUE: this function's query casts TIMESTAMPTZ too (llm#1223).
+  con <- tryCatch(connect_duckdb_secure(dbdir = ledger, read_only = TRUE, load_icu = TRUE), error = function(e) NULL)
   if (is.null(con)) return(NULL)
   on.exit(duckdb::dbDisconnect(con, shutdown = FALSE))
 
