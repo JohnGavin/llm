@@ -348,7 +348,7 @@ action" never returns.
 | F5 | **Corrected, see "Corrections".** ClaudeProbe has an external producer (CodexBar); why it stopped is not established. Exclusion clauses (8 in SQL + 2 in the sender) are KEPT. Open: find out why the probe stopped writing. |
 | F6 | Rename the "all 4 source table names in Section 2" test to what it asserts, or make it assert Section-2 membership. |
 | F7 | Fix `sessions.project` at the writer (`log_session.sh`) so worktree and agent sessions record the project, not the branch slug or harness dir. |
-| F8 | **Decided: drop the overnight config (3c) and knowledge-base (3d) sections**; the 08:05 emails stay. Cron health (3e) kept (llm#1145 tests; duplication of the 08:00 email unproven). |
+| F8 | **Blocked, needs a decision (see "Corrections").** Removing overnight sections 3c/3d would contradict `housekeeping-framework` component 4 and its checklist line ("Digest email section added to `send_overnight_self_review_email.R`"). Either amend that rule or retire the standalone 08:05 emails instead. Cron health (3e) is not proposed for removal (llm#1145 tests; duplication of the 08:00 email unproven). |
 | F9 | **Withdrawn, see "Corrections".** `fixer_heavy_day` is actionable on 45 of 47 firings; detector KEPT. |
 | F10 | Reconcile `com.claude.launchd-health-weekly`: daily schedule, "weekly" label, "Sunday 09:00" script header. |
 
@@ -407,5 +407,14 @@ Imprecise: those digests read git directly. What repeats is the same *subject*, 
 their own crons populate (`bin/config_digest_cron.sh` `INSERT OR IGNORE INTO config_events`,
 `bin/kb_digest_daily_cron.sh` `INSERT OR IGNORE INTO kb_events`). The only reader of those two
 tables is the overnight sender itself (grep over `bin/`, `.claude/scripts/`, `tests/`, `.github/`,
-`.claude/rules/`). Sections 3c and 3d are removed in the follow-up PR; 3e (Cron health) is
-kept.
+`.claude/rules/`); no test asserts the 3c/3d headers.
+
+**Removal of 3c/3d was attempted and NOT done.** Chesterton guard: sections 3c/3d were added by
+f9fbd66 (#578, llm#552/#553 Phase C) to satisfy `housekeeping-framework` component 4 and its
+checklist ("Digest email section added to `send_overnight_self_review_email.R`"; Forbidden
+Patterns: "New email digest job instead of extending the 06:30 email"). The rule does not name
+these two sections, but it requires a section per housekeeping task, so deleting them would
+leave the config and KB tasks non-compliant and the rule self-contradictory (two standalone
+08:05 emails remain). Whether to amend the rule or retire the 08:05 emails is a policy decision
+for the owner, so 3c/3d, 3e and the Section-3 table-health list (which also names
+`config_events`/`kb_events`) are all left unchanged.
