@@ -35,7 +35,13 @@ set -euo pipefail
 DB="$HOME/.claude/logs/unified.duckdb"
 ACTION="${1:-}"
 SESSION_ID="${2:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo unknown)}"
-PROJECT="${3:-$(basename "$(pwd)")}"
+_RPN="$(dirname "${BASH_SOURCE[0]}")/resolve_project_name.sh"
+if [ -n "${3:-}" ]; then
+  PROJECT="$3"
+else
+  PROJECT="$([ -x "$_RPN" ] && "$_RPN" "$(pwd)" 2>/dev/null || true)"
+  [ -n "$PROJECT" ] || PROJECT="$(basename "$(pwd)")"
+fi
 SUMMARY="${4:-}"
 
 # Ensure DB exists
