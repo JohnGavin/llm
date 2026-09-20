@@ -103,3 +103,27 @@ test_that("median time-to-close is a median, not a mean", {
   expect_gt(hrs, 400)
   expect_lt(hrs, 470)
 })
+
+test_that("Top Stuck Findings prints the JOB id (what roborev show/close accept), not reviews.id", {
+  skip_if_not(file.exists(rollup_script))
+  skip_if_not_installed("duckdb")
+  db <- tempfile(fileext = ".db")
+  make_fixture_db(db, Sys.Date())
+  # One stuck finding whose reviews.id (7) differs from its job id (900).
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  DBI::dbExecute(con, "LOAD sqlite")
+  DBI::dbExecute(con, sprintf("ATTACH '%s' AS f (TYPE sqlite)", db))
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO f.review_jobs VALUES (900,1,'done','%s 10:00:00')",
+    format(Sys.Date() - 20, "%Y-%m-%d")))
+  DBI::dbExecute(con,
+    "INSERT INTO f.reviews VALUES (7,900,0,'','Severity: High stuck one')")
+  DBI::dbDisconnect(con, shutdown = TRUE)
+
+  res <- run_rollup(db)
+  expect_equal(res$status, 0L, info = res$text)
+  expect_match(res$text, "| Job | Project | Age |", fixed = TRUE)
+  lines <- strsplit(res$text, "\n")[[1L]]
+  expect_true(any(grepl("^\\| 900 \\|", lines)))
+  expect_false(any(grepl("^\\| 7 \\|", lines)))
+})
