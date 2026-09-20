@@ -218,3 +218,52 @@ VALUES (
   'llm#1035 / kenn-io/roborev#1104',
   TIMESTAMP '2026-08-27 00:00:00'
 );
+
+-- ---------------------------------------------------------------------------
+-- Incident: llm#1226 -- self_review_findings_stage1 severity='critical' rows
+-- from detector 5 (pivot_signal_threshold) are false alarms
+-- ---------------------------------------------------------------------------
+-- self_review_findings_stage1 has no status column, so the finding rows stay
+-- untouched; these incident rows are the "stale / false" marker.
+--
+-- Exactly three severity='critical' rows exist (verified read-only against
+-- unified.duckdb): all finding_type = 'pivot_signal_threshold', all evidence
+-- tool_name = 'compound_guard'. The bursts are compound_guard BLOCKs -- the
+-- compound-command guard rejecting `&&`/`;`/`|` chains BY DESIGN (rule
+-- bash-safety), not tool failures. `errors` holds 49 compound_guard rows across
+-- the three burst windows (33 + 8 + 8), matching the finding burst sizes.
+-- Detector 3 already excluded these sources; detector 5 lacked the shared
+-- stage1_by_design_block_sources exclusion until PR #1226 (see
+-- self_review_stage1.sql section 0b).
+--
+--   pivot_signal_dbdeb7d09d750da5fbf11fbcf12c477e  detected 2026-08-15 02:30:15
+--     burst 2026-08-14 10:09:56 .. 10:35:33, size 33
+--   pivot_signal_af1e6f3cac5a90d4fa9c868e15b6534a  detected 2026-08-26 02:30:13
+--     burst 2026-08-25 19:57:52 .. 19:57:54, size 8
+--   pivot_signal_1ca649432ea7cb210e4565482c758c4a  detected 2026-08-26 02:30:13
+--     burst 2026-08-25 20:07:18 .. 20:07:20, size 8
+INSERT OR IGNORE INTO data_quality_incidents
+  (id, asset, column_name, window_start, window_end, reason, issue_ref, recorded_at)
+VALUES (
+  'llm1226-stage1-pivot-signal-false-critical-20260814',
+  'self_review_findings_stage1',
+  'severity',
+  TIMESTAMP '2026-08-14 10:09:56',
+  TIMESTAMP '2026-08-14 10:35:33',
+  'severity=critical on finding pivot_signal_dbdeb7d09d750da5fbf11fbcf12c477e is a false alarm: the 33-error burst is compound_guard block output (by-design rule enforcement of the compound-command ban), and detector 5 lacked the shared by-design-block exclusion until PR #1226. Do not count as a real critical finding.',
+  'llm#1226',
+  current_timestamp::TIMESTAMP
+);
+
+INSERT OR IGNORE INTO data_quality_incidents
+  (id, asset, column_name, window_start, window_end, reason, issue_ref, recorded_at)
+VALUES (
+  'llm1226-stage1-pivot-signal-false-critical-20260825',
+  'self_review_findings_stage1',
+  'severity',
+  TIMESTAMP '2026-08-25 19:57:52',
+  TIMESTAMP '2026-08-25 20:07:20',
+  'severity=critical on findings pivot_signal_af1e6f3cac5a90d4fa9c868e15b6534a and pivot_signal_1ca649432ea7cb210e4565482c758c4a is a false alarm: both 8-error bursts (19:57:52-19:57:54 and 20:07:18-20:07:20) are compound_guard block output (by-design rule enforcement of the compound-command ban), and detector 5 lacked the shared by-design-block exclusion until PR #1226. Do not count as real critical findings.',
+  'llm#1226',
+  current_timestamp::TIMESTAMP
+);
