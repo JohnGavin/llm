@@ -116,7 +116,6 @@ When adding a new `bin/*_cron.sh`:
 | `bin/roborev_daily_cron.sh` | `REPO_ROOT` |
 | `bin/config_digest_cron.sh` | `REPO_ROOT` |
 | `bin/kb_digest_daily_cron.sh` | `REPO_ROOT` |
-| `bin/stage1_findings_daily_cron.sh` | `REPO_ROOT` |
 | `bin/roborev_weekly_rollup_cron.sh` | `REPO_DIR` |
 | `bin/launchd_health_weekly_cron.sh` | `REPO_ROOT` |
 
