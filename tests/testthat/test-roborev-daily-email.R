@@ -55,13 +55,13 @@ make_synthetic_snapshot <- function(date = "2026-05-28") {
     outliers_recent_7d = list(
       window_days = 7L,
       by_time = list(
-        list(review_id = 975L, repo = "knowledge", n_attempts = 1L,
+        list(review_id = 975L, job_id = 12975L, repo = "knowledge", n_attempts = 1L,
              time_to_close_hrs = 289.9, close_reason = "fixer", created_at = paste0(date, "T00:00:00Z")),
-        list(review_id = 800L, repo = "llm", n_attempts = 2L,
+        list(review_id = 800L, job_id = 12800L, repo = "llm", n_attempts = 2L,
              time_to_close_hrs = 120.5, close_reason = "manual", created_at = paste0(date, "T01:00:00Z"))
       ),
       by_attempts = list(
-        list(review_id = 4313L, repo = "llmtelemetry", n_attempts = 4L,
+        list(review_id = 4313L, job_id = 14313L, repo = "llmtelemetry", n_attempts = 4L,
              time_to_close_hrs = 48.0, close_reason = "fixer", created_at = paste0(date, "T02:00:00Z"))
       ),
       by_attempts_degenerate = FALSE
@@ -184,7 +184,25 @@ test_that("dry-run output contains outlier review IDs", {
   snap <- make_synthetic_snapshot()
   out <- run_email_dry_run(snap)
   combined <- paste(out, collapse = "\n")
-  expect_true(grepl("975", combined), info = "outlier review_id=975 not found")
+  expect_true(grepl("12975", combined), info = "outlier job_id=12975 not found")
+})
+
+test_that("outlier tables print the JOB id (CLI id space), never reviews.id", {
+  # roborev's CLI (show/close/comment) takes review_jobs.id. reviews.id is a
+  # different id space (review 9409 == job 12500); printing it makes
+  # `roborev close <id>` close an unrelated job.
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap)
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl(">12975<", combined, fixed = TRUE),
+    info = "outlier cell must show job_id 12975")
+  expect_false(grepl(">975<", combined, fixed = TRUE),
+    info = "outlier cell must NOT show reviews.id 975")
+  expect_false(grepl(">4313<", combined, fixed = TRUE),
+    info = "by-attempts outlier cell must NOT show reviews.id 4313")
+  expect_true(grepl(">14313<", combined, fixed = TRUE),
+    info = "by-attempts outlier cell must show job_id 14313")
 })
 
 test_that("script exits non-zero when no JSON found in empty dir", {
@@ -438,7 +456,7 @@ test_that("known public repo is hyperlinked; unresolvable slug stays plain text"
 #     (closed can be either value; verdict_bool is fixed at 1 so these never
 #     leak into the open-findings counts above)
 #     each: list(age_hours=<numeric>, closed=<0L|1L>)
-make_reviews_db_fixture <- function(findings = list(), lagged = list()) {
+make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offset = 0L) {
   skip_if_not_installed("duckdb")
   dir <- tempfile("roborev_db_fixture_")
   dir.create(dir, recursive = TRUE)
@@ -479,12 +497,12 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list()) {
   row_id <- 0L
   insert_row <- function(output, age_hours, closed, verdict_bool) {
     row_id <<- row_id + 1L
-    DBI::dbExecute(con, sprintf("INSERT INTO fix.review_jobs VALUES (%d, 1)", row_id))
+    DBI::dbExecute(con, sprintf("INSERT INTO fix.review_jobs VALUES (%d, 1)", row_id + job_offset))
     ts <- format(now - age_hours * 3600, "%Y-%m-%d %H:%M:%S", tz = "UTC")
     output_escaped <- gsub("'", "''", output, fixed = TRUE)
     DBI::dbExecute(con, sprintf(
       "INSERT INTO fix.reviews (id, job_id, output, created_at, closed, verdict_bool) VALUES (%d, %d, '%s', '%s', %d, %d)",
-      row_id, row_id, output_escaped, ts, closed, verdict_bool
+      row_id, row_id + job_offset, output_escaped, ts, closed, verdict_bool
     ))
   }
   for (f in findings) insert_row(f$output, f$age_hours, 0L, 0L)
@@ -495,6 +513,22 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list()) {
 
 HIGH_SEV_OUTPUT <- "Review found an issue.\n\n**Severity**: High\n\nDetails: something bad."
 NO_SEV_OUTPUT   <- "Review crashed before emitting a severity marker."
+
+test_that("above-threshold banner prints the JOB id, not reviews.id", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = HIGH_SEV_OUTPUT, age_hours = 1)),
+    job_offset = 5000L
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+  # SEVERITY_ORDINAL names are lower-case, so the banner prints "(high)".
+  expect_true(grepl("Job 5001 llm (high)", combined, fixed = TRUE),
+    info = "banner must show job id 5001 (reviews.id is 1)")
+  expect_false(grepl("#1 llm", combined, fixed = TRUE),
+    info = "banner must NOT show reviews.id as #1")
+})
 
 test_that("zero delta: standing above-threshold findings exist but none are new -> no banner, marker is 0", {
   # The single most important property of the llm#961 fix: when nothing NEW
