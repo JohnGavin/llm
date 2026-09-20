@@ -341,7 +341,7 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   # Top stuck findings: open, age > 7 days, order by age desc
   stuck_sql <- "
     SELECT
-      rv.id,
+      rj.id AS id,  -- JOB id: what `roborev show`/`roborev close` accept (NOT reviews.id)
       r.name AS repo,
       CAST((EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 AS INTEGER) AS age_days,
       rv.output
@@ -679,7 +679,7 @@ if (nrow(db_data$stuck_findings) > 0L) {
   )
   section_stuck <- paste0(
     "## Top Stuck Findings (open > 7 days)\n\n",
-    "| ID | Project | Age | Severity | Summary |\n",
+    "| Job | Project | Age | Severity | Summary |\n",
     "|----|---------|-----|----------|---------|\n",
     stuck_rows, "\n"
   )
