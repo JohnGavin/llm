@@ -7,7 +7,8 @@
 #   - dry-run output contains QA markers (overnight_self_review_email, n_new_findings_24h,
 #     n_stale_tables, overnight_email_date)
 #   - dry-run output contains at least 4 <details> collapsible blocks
-#   - dry-run output contains all 4 source table names in Section 2
+#   - Section 2 table has a row for each of the 4 detector-input tables
+#   - errors table idle / empty / missing: IDLE vs UNKNOWN (never all-clear)
 #   - script exits non-zero when DB is absent
 #   - plist passes xmllint syntax check (if xmllint available)
 #
@@ -150,18 +151,93 @@ test_that("dry-run output contains at least 4 collapsible <details> blocks", {
   expect_gte(n_details, 4L, label = "number of <details> blocks")
 })
 
-test_that("dry-run output contains all 4 source table names in Section 2", {
+# ── Section 2 helpers (review F3/F6) ──────────────────────────────────────────
+
+# The Section 2 table only: from its title to the first closing </table>. A
+# whole-document grep for a table name (the old F6 test) is satisfied by any
+# unrelated mention, e.g. Section 3's cumulative-totals table.
+.section2_html <- function(combined) {
+  start <- regexpr("Source table volume (last 24h)", combined, fixed = TRUE)
+  if (start < 0L) return(NA_character_)
+  rest <- substring(combined, start)
+  end  <- regexpr("</table>", rest, fixed = TRUE)
+  if (end < 0L) return(NA_character_)
+  substr(rest, 1L, end)
+}
+
+# Status badge text ("live", "IDLE", "UNKNOWN", ...) of one table's Section 2 row.
+.section2_status <- function(sec2, tbl) {
+  m <- regexec(
+    sprintf("(?s)>%s</td>.*?font-weight:bold;\">([A-Za-z]+)</span>", tbl),
+    sec2, perl = TRUE
+  )
+  hit <- regmatches(sec2, m)[[1]]
+  if (length(hit) < 2L) NA_character_ else hit[[2]]
+}
+
+# Copy the real DB to a temp file and apply `mutate_sql` (via DBI, so no CLI
+# DROP is involved). Returns the temp path, or NULL if the copy fails.
+.mutated_db <- function(mutate_sql) {
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+  tmp <- tempfile("overnight_fixture_", fileext = ".duckdb")
+  expect_true(file.copy(.real_db, tmp), label = "copy of unified.duckdb")
+  con <- DBI::dbConnect(duckdb::duckdb(), tmp)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  for (s in mutate_sql) DBI::dbExecute(con, s)
+  tmp
+}
+
+test_that("Section 2 table lists all 4 detector-input tables as rows (review F3/F6)", {
   skip_if_not_installed("blastula")
   skip_if_not_installed("duckdb")
   skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
 
-  out      <- run_dry_run()
-  combined <- paste(out, collapse = "\n")
+  combined <- paste(run_dry_run(), collapse = "\n")
+  sec2 <- .section2_html(combined)
+  expect_false(is.na(sec2), label = "could locate the Section 2 table")
 
   for (tbl in c("sessions", "agent_runs", "hook_events", "errors")) {
-    expect_true(grepl(tbl, combined),
-                info = sprintf("Source table '%s' not found in output", tbl))
+    expect_true(grepl(sprintf(">%s</td>", tbl), sec2, fixed = TRUE),
+                info = sprintf("Source table '%s' has no row in the Section 2 table", tbl))
   }
+  # ...and the header count must equal the number of rows (was "of 3" while
+  # four tables fed the detectors).
+  expect_true(grepl("of 4 source tables", combined, fixed = TRUE),
+              info = "header does not report 4 source tables")
+})
+
+test_that("errors quiet for a long time is IDLE (informational), not stale, and does not raise an action item (review F3)", {
+  skip_if_not_installed("blastula")
+  db <- .mutated_db("UPDATE errors SET logged_at = TIMESTAMP '2026-01-01 00:00:00'")
+  on.exit(unlink(db), add = TRUE)
+  combined <- paste(run_dry_run(db), collapse = "\n")
+  sec2 <- .section2_html(combined)
+  expect_equal(.section2_status(sec2, "errors"), "IDLE")
+})
+
+test_that("errors table EMPTY is UNKNOWN and forces a non-all-clear verdict (review F3, checks-must-distinguish-unknown)", {
+  skip_if_not_installed("blastula")
+  db <- .mutated_db("DELETE FROM errors")
+  on.exit(unlink(db), add = TRUE)
+  combined <- paste(run_dry_run(db), collapse = "\n")
+  sec2 <- .section2_html(combined)
+  expect_equal(.section2_status(sec2, "errors"), "UNKNOWN")
+  expect_false(grepl("QA:n_stale_tables=0 ", combined, fixed = TRUE),
+               label = "empty errors table left n_stale_tables at 0")
+  expect_false(grepl("all clear", combined, fixed = TRUE),
+               label = "empty errors table still produced an all-clear subject")
+})
+
+test_that("errors table MISSING is UNKNOWN and forces a non-all-clear verdict (review F3)", {
+  skip_if_not_installed("blastula")
+  db <- .mutated_db("ALTER TABLE errors RENAME TO errors_renamed_by_test")
+  on.exit(unlink(db), add = TRUE)
+  combined <- paste(run_dry_run(db), collapse = "\n")
+  sec2 <- .section2_html(combined)
+  expect_equal(.section2_status(sec2, "errors"), "UNKNOWN")
+  expect_false(grepl("all clear", combined, fixed = TRUE),
+               label = "missing errors table still produced an all-clear subject")
 })
 
 test_that("dry-run output references llm#491", {
