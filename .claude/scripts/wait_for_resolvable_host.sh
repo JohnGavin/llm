@@ -73,7 +73,6 @@
 # Callers (llm#947, llm#970):
 #   bin/launchd_health_weekly_cron.sh, bin/overnight_self_review_email_cron.sh,
 #   bin/roborev_daily_cron.sh, bin/roborev_weekly_rollup_cron.sh,
-#   .claude/scripts/stage1_findings_daily_cron.sh,
 #   .claude/scripts/capability_registry_regen_cron.sh, bin/config_digest_cron.sh,
 #   bin/kb_digest_daily_cron.sh.
 #
