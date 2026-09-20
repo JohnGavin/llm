@@ -345,9 +345,67 @@ action" never returns.
 | F2 | Delete `send_stage1_findings_email.R`, `bin/stage1_findings_daily_cron.sh` and the deprecated plist (Chesterton evidence in §4). |
 | F3 | Assign `errors` a cadence in `staleness`, then add it to `source_tables` so all four detector inputs are watched; fix the false "no producer" comment either way. |
 | F4 | Give detector 5 the same by-design-block exclusion list as detector 3, or give both the `hook_action` column from llm#573 Path C and delete both allow-lists. |
-| F5 | Establish whether ClaudeProbe is dead (0 session rows for 21+ days) or deliberately retired; if retired, remove the four exclusion clauses it justifies. |
+| F5 | **Corrected, see "Corrections".** ClaudeProbe has an external producer (CodexBar); why it stopped is not established. Exclusion clauses (8 in SQL + 2 in the sender) are KEPT. Open: find out why the probe stopped writing. |
 | F6 | Rename the "all 4 source table names in Section 2" test to what it asserts, or make it assert Section-2 membership. |
 | F7 | Fix `sessions.project` at the writer (`log_session.sh`) so worktree and agent sessions record the project, not the branch slug or harness dir. |
-| F8 | Retire the 08:05 config-digest and kb-digest emails into the 08:45 digest, or drop those two sections from the digest — pick one surface per table. |
-| F9 | Recalibrate or retire `fixer_heavy_day`; at minimum raise the minimum-dispatch guard above 5 so "2 fixer runs" cannot present as a heavy day. |
+| F8 | **Decided: drop the overnight config (3c) and knowledge-base (3d) sections**; the 08:05 emails stay. Cron health (3e) kept (llm#1145 tests; duplication of the 08:00 email unproven). |
+| F9 | **Withdrawn, see "Corrections".** `fixer_heavy_day` is actionable on 45 of 47 firings; detector KEPT. |
 | F10 | Reconcile `com.claude.launchd-health-weekly`: daily schedule, "weekly" label, "Sunday 09:00" script header. |
+
+---
+
+## Corrections (2026-09-20, later the same day)
+
+Findings above are left as written; these items were re-verified afterwards and four were wrong
+or imprecise. Each was re-checked against code or a READ-ONLY copy of `unified.duckdb`
+(`/tmp` copy) before this section was written.
+
+### F9 / E9 (`fixer_heavy_day`) — the audit was wrong; detector KEPT
+
+The audit claimed the detector fires at its own floor and is never actionable. It generalised from
+the single 2026-09-19 row shown in that morning's email. The data:
+
+```
+47 findings, all severity=info
+  at the floor (total 5, fixer 2 = 40%):  2 of 47  (2026-09-19, 2026-06-08)
+  not at the floor:                       45 of 47
+daily dispatch totals: 5..52; fixer share: 0.40..1.00
+  2026-08-29  39 of 52     2026-09-02  30 of 34     2026-09-13  9 of 9
+```
+
+Nothing filters on this finding type (only the detector, two comments in
+`send_overnight_self_review_email.R`, this document and exported finding rows). The
+"never actionable" claim and F9's proposal to raise the guard are withdrawn.
+
+> ⚠ AI-inferred: that 39-of-52 and 30-of-34 days were "actionable" in any operational sense. It
+> is verified only that they are far from the floor; whether a reader acts on them is unmeasured.
+
+### F5 (ClaudeProbe) — not "dead"; exclusions stay
+
+A producer exists outside this repo: CodexBar's working directory
+`~/Library/Application Support/CodexBar/ClaudeProbe/` (CodexBar is a third-party app loaded via
+launchd, treated as external). It wrote 3166 `sessions` rows (2026-05..08), last row 2026-08-16
+21:50; `agent_runs` last row 2026-07-14. **Why it stopped is not established.** Zero rows for 21
+days is compatible with "retired" and with "broken and about to resume"; the exclusions guard the
+second case (on 2026-07-24, 107 of 108 new session rows were synthetic).
+
+Exclusion count, re-derived on current main: **8 SQL clauses** in
+`.claude/scripts/self_review_stage1.sql` (lines 102, 228, 241, 344, 449, 527, 582, 638) and
+**2 filters** in `.claude/scripts/send_overnight_self_review_email.R` (lines 211, 470), not
+"four". A further hit at sender line 691 is a display flag, not a filter.
+
+### launchd-health has 8 sections, not 4
+
+`.claude/scripts/launchd_health_report.R` declares Sections 1-8 (plist inventory, run metrics,
+suggestions, cloud crons, stale/wedged processes, braindumps freshness, missing-timeout,
+failing-job). The "4" in the §4 table was wrong.
+
+### F8 wording
+
+The §4 table says config-digest and kb-digest "already emailed `config_events`/`kb_events`".
+Imprecise: those digests read git directly. What repeats is the same *subject*, in tables that
+their own crons populate (`bin/config_digest_cron.sh` `INSERT OR IGNORE INTO config_events`,
+`bin/kb_digest_daily_cron.sh` `INSERT OR IGNORE INTO kb_events`). The only reader of those two
+tables is the overnight sender itself (grep over `bin/`, `.claude/scripts/`, `tests/`, `.github/`,
+`.claude/rules/`). Sections 3c and 3d are removed in the follow-up PR; 3e (Cron health) is
+kept.
