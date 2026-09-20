@@ -32,6 +32,33 @@ CREATE TABLE IF NOT EXISTS self_review_findings_stage1 (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 0b. ONE shared definition of "errors rows that are not errors"
+--
+-- PreToolUse hooks that exit 2 by design when blocking a forbidden operation
+-- write a row to `errors`, but the non-zero exit is the intended behaviour, not
+-- a tool failure (llm#573). Detectors 3 (high_tool_error_rate) and 5
+-- (pivot_signal_threshold) both read `errors` and BOTH must exclude exactly
+-- this set. Before this table existed only detector 3 excluded it, so identical
+-- rows were "not errors" to one detector and a possible `critical` pivot signal
+-- to the other (self-review review 2026-09-20, E6/F4): the three critical
+-- pivot findings of 2026-08-26 were all compound_guard blocks.
+--
+-- Define the set HERE, once; never copy the list into a detector.
+-- TODO: replace with a hook_action column (block_intended/block_error/pass)
+-- per llm#573 Path C, which makes this allow-list unnecessary.
+-- TEMP so it never persists in unified.duckdb and needs no schema migration.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE TEMP TABLE stage1_by_design_block_sources (source VARCHAR);
+INSERT INTO stage1_by_design_block_sources VALUES
+    ('compound_guard'),        -- blocks compound bash commands
+    ('agent_push_guard'),      -- blocks cross-branch / protected-branch pushes
+    ('destructive_fs_guard'),  -- blocks destructive filesystem ops
+    ('destructive_api_guard'), -- blocks destructive API calls
+    ('file_protection'),       -- blocks edits to protected paths
+    ('wiki_health_onwrite'),   -- blocks writes failing wiki health checks
+    ('skill_quality_onwrite'); -- blocks writes failing skill quality checks
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- DETECTOR 1: Stuck loop — agents dispatched multiple times but never completed
 --
 -- Fix (#269): The original query used no status filter and matched status='done'
@@ -192,19 +219,9 @@ WITH daily_errors AS (
         -- Exclude PreToolUse hooks that exit 2 by design when blocking
         -- forbidden operations. The non-zero exit is the intended behaviour,
         -- not a tool failure. Counting them as errors produces false-positive
-        -- MAJOR findings (see llm#573).
-        -- TODO: replace this allow-list with a hook_action column
-        -- (block_intended/block_error/pass) per llm#573 Path C — that's the
-        -- durable cross-hook fix. This allow-list is the stopgap.
-        AND source NOT IN (
-            'compound_guard',        -- blocks compound bash commands
-            'agent_push_guard',      -- blocks cross-branch / protected-branch pushes
-            'destructive_fs_guard',  -- blocks destructive filesystem ops
-            'destructive_api_guard', -- blocks destructive API calls
-            'file_protection',       -- blocks edits to protected paths
-            'wiki_health_onwrite',   -- blocks writes failing wiki health checks
-            'skill_quality_onwrite'  -- blocks writes failing skill quality checks
-        )
+        -- MAJOR findings (see llm#573). The set is defined once in
+        -- stage1_by_design_block_sources (section 0b), shared with detector 5.
+        AND source NOT IN (SELECT source FROM stage1_by_design_block_sources)
         -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) from
         -- both the numerator and denominator below so the rate stays internally
         -- consistent — see daily_agent_calls for the matching exclusion.
@@ -319,6 +336,9 @@ WITH session_error_bursts AS (
     WHERE
         session_id IS NOT NULL
         AND logged_at IS NOT NULL
+        -- Same by-design-block exclusion as detector 3 (one shared definition,
+        -- section 0b): a guard hook blocking on purpose is not a failure burst.
+        AND source NOT IN (SELECT source FROM stage1_by_design_block_sources)
         -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) —
         -- its error bursts are probe-fleet noise, not real pivot-signal events.
         AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
