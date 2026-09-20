@@ -322,6 +322,110 @@ CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP
   )
 })
 
+# ── Detectors 3 and 5: ONE shared by-design-block exclusion (review F4) ───────
+#
+# Before: detector 3 excluded guard-hook rows from `errors`, detector 5 did not,
+# so 3 compound_guard blocks were a `critical` pivot signal to one detector and
+# "not errors" to the other. Both now read stage1_by_design_block_sources.
+
+fixture_tables_except_errors <- "
+CREATE TABLE agent_runs (
+    id INTEGER, session_id VARCHAR, agent_type VARCHAR, model VARCHAR,
+    started_at TIMESTAMP, ended_at TIMESTAMP, duration_sec DOUBLE,
+    prompt_preview VARCHAR, status VARCHAR, tool_use_id VARCHAR, backfilled BOOLEAN
+);
+CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+"
+
+errors_ddl <- "CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);"
+
+test_that("pivot_signal_threshold IGNORES by-design guard blocks but still fires on real errors", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  skip_if_not(file.exists(sql_file()), "self_review_stage1.sql not found")
+
+  # 8 compound_guard rows in one session would be `critical` (>= 7) without the
+  # exclusion. 3 bad_tool rows in another session must still produce a finding
+  # (the positive control: proves the detector can still go red).
+  setup_sql <- paste(fixture_tables_except_errors, errors_ddl, "
+INSERT INTO errors
+SELECT i, 'sess-guard', 'compound_guard', 'blocked', '{}', now() - INTERVAL '2' HOUR
+FROM range(8) t(i);
+INSERT INTO errors VALUES
+  (100, 'sess-real', 'bad_tool', 'e1', '{}', now() - INTERVAL '3' HOUR),
+  (101, 'sess-real', 'bad_tool', 'e2', '{}', now() - INTERVAL '2' HOUR),
+  (102, 'sess-real', 'bad_tool', 'e3', '{}', now() - INTERVAL '1' HOUR);
+", sep = "\n")
+  out <- run_sql(setup_sql, sql_file())
+  expect_false(is.null(out), label = "duckdb returned NULL")
+  combined <- paste(out, collapse = "\n")
+
+  # Summary row is `pivot_signal_threshold | <severity> | <n>`: exactly one
+  # finding (minor, the bad_tool burst). A critical means compound_guard leaked.
+  expect_true(grepl("pivot_signal_threshold", combined),
+              label = "positive control: real 3-error burst no longer produces a pivot finding")
+  expect_false(grepl("pivot_signal_threshold\\s*[|│]\\s*critical", combined),
+               label = "compound_guard blocks produced a critical pivot finding (exclusion missing)")
+})
+
+test_that("guard-block-only errors produce NO pivot finding and NO high_tool_error_rate finding", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  skip_if_not(file.exists(sql_file()), "self_review_stage1.sql not found")
+
+  setup_sql <- paste(fixture_tables_except_errors, errors_ddl, "
+INSERT INTO errors
+SELECT i, 'sess-guard', 'agent_push_guard', 'blocked', '{}', now() - INTERVAL '2' HOUR
+FROM range(8) t(i);
+INSERT INTO agent_runs VALUES
+  (1, 'sess-guard', 'fixer', 'sonnet', now() - INTERVAL '3' HOUR, now() - INTERVAL '2' HOUR, 3600.0, 't', 'done', 'x', false);
+", sep = "\n")
+  out <- run_sql(setup_sql, sql_file())
+  expect_false(is.null(out), label = "duckdb returned NULL")
+  combined <- paste(out, collapse = "\n")
+  expect_false(grepl("pivot_signal_threshold", combined))
+  expect_false(grepl("high_tool_error_rate", combined))
+})
+
+test_that("the by-design-block source list is defined ONCE and used by both detectors", {
+  f <- sql_file()
+  skip_if_not(file.exists(f), "self_review_stage1.sql not found")
+  # Code only: strip `-- ...` comments (detector 2's comment quotes 'compound_guard').
+  sql_text <- paste(sub("--.*$", "", readLines(f, warn = FALSE)), collapse = "\n")
+  # Each excluded source appears as a quoted literal exactly once (the VALUES
+  # row) -- a second copy in a detector would reintroduce the F4 drift.
+  for (src in c("compound_guard", "agent_push_guard", "destructive_fs_guard",
+                "destructive_api_guard", "file_protection",
+                "wiki_health_onwrite", "skill_quality_onwrite")) {
+    n <- lengths(regmatches(sql_text, gregexpr(sprintf("'%s'", src), sql_text, fixed = TRUE)))
+    expect_equal(n, 1L, label = sprintf("occurrences of '%s' literal", src))
+  }
+  n_uses <- lengths(regmatches(
+    sql_text,
+    gregexpr("source NOT IN \\(SELECT source FROM stage1_by_design_block_sources\\)", sql_text)
+  ))
+  expect_equal(n_uses, 2L, label = "detectors referencing the shared exclusion set")
+})
+
+test_that("errors table MISSING is loud, never a silent all-clear (checks-must-distinguish-unknown)", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  skip_if_not(file.exists(sql_file()), "self_review_stage1.sql not found")
+
+  # No errors table at all: detectors 3 and 5 cannot read their input. The
+  # output must say so (a duckdb error naming `errors`) rather than look like
+  # "ran, found nothing".
+  # duckdb also exits non-zero here; system() reports that as a warning, which
+  # is itself part of the assertion (failure is signalled by exit status too).
+  expect_warning(
+    out <- run_sql(fixture_tables_except_errors, sql_file()),
+    "had status [1-9]"
+  )
+  expect_false(is.null(out), label = "duckdb returned NULL")
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("Error", combined) && grepl("errors", combined),
+              label = "missing errors table produced no visible error (silent all-clear)")
+  expect_false(grepl("pivot_signal_threshold|high_tool_error_rate", combined))
+})
+
 # ── Shell syntax check ────────────────────────────────────────────────────────
 
 test_that("self_review_stage1.sh passes bash -n syntax check", {

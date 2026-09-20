@@ -404,10 +404,24 @@ sec1_block <- collapsible_block(
 )
 
 # ── Section 2: Source table volume (last 24h) — ETL starvation detector ────────
-# errors: retired from this DEAD/STALE flagging set — no producer (llm#784);
-# re-add when a producer is wired. Table still appears in Section 3 below
-# (cumulative totals only, no alarm).
-source_tables <- c("sessions", "agent_runs", "hook_events")
+# All FOUR tables that feed the Stage-1 detectors are listed here, so the
+# header's "N source tables" is the true input surface (self-review review
+# 2026-09-20, F3).
+#
+# errors: was retired from this set on the claim "no producer (llm#784)". That
+# claim is false -- the table had 98 rows (79 in the last 60 days, latest
+# 2026-09-13; all from by-design blocking hooks compound_guard/agent_push_guard)
+# when re-measured 2026-09-20. It is nonetheless legitimately SPORADIC:
+# across its 29 active days the gap between active days has median 2d, p90 8d,
+# max 48d. Any fixed staleness window would either cry wolf on quiet weeks or
+# be too wide to mean anything, so it gets NO stale/dead verdict by recency.
+# Instead it is reported informationally: live/sparse when rows landed in the
+# last 24h, otherwise IDLE with the age of the last row (never counted as
+# stale). It IS still treated as a dependency: an unreadable or EMPTY table is
+# UNKNOWN and counts toward n_stale_tables, because "the detectors had nothing
+# to read" must not render the same as "the detectors read it and found
+# nothing" (checks-must-distinguish-unknown).
+source_tables <- c("sessions", "agent_runs", "hook_events", "errors")
 
 # ── Shared staleness view lookup (llm#893 step 3) ─────────────────────────────
 # `sessions` and `agent_runs` are tracked as `etl_source` assets in the
@@ -446,7 +460,8 @@ sec2_rows <- lapply(source_tables, function(tbl) {
   ts_col <- switch(tbl,
     sessions   = "started_at",
     agent_runs = "started_at",
-    hook_events = "fired_at"
+    hook_events = "fired_at",
+    errors     = "logged_at"
   )
 
   # Exclude synthetic health-probe rows (project='ClaudeProbe') from the sessions
@@ -470,7 +485,13 @@ sec2_rows <- lapply(source_tables, function(tbl) {
   obs_age_txt <- if (!is.null(sv)) (fmt_observation_age(sv$observation_age_min) %||% "—") else NA_character_
 
   if (nrow(info) == 0L) {
-    fallback_status <- if (!is.null(sv)) toupper(sv$status) else "DEAD"
+    fallback_status <- if (!is.null(sv)) {
+      toupper(sv$status)
+    } else if (identical(tbl, "errors")) {
+      "UNKNOWN"   # query failed: could not read the table at all (F3)
+    } else {
+      "DEAD"
+    }
     return(list(table = tbl, total = 0L, last_24h = 0L,
                 latest_ts = NA_character_, status = fallback_status,
                 observation_age = obs_age_txt))
@@ -488,10 +509,17 @@ sec2_rows <- lapply(source_tables, function(tbl) {
     Inf
   }
 
-  status <- if (n24 >= 10L) {
+  status <- if (identical(tbl, "errors") && total == 0L) {
+    # Empty table: detectors 3 and 5 had no input at all. Not "idle".
+    "UNKNOWN"
+  } else if (n24 >= 10L) {
     "live"
   } else if (n24 >= 1L) {
     "sparse"
+  } else if (identical(tbl, "errors")) {
+    # Sporadic by nature (see source_tables comment): informational only,
+    # never STALE/DEAD by recency. The "Latest row" column carries the age.
+    "IDLE"
   } else if (!is.null(sv)) {
     # llm#893: verdict comes from the shared staleness_status view (per-asset
     # cadence), NOT a local hardcoded 48h gap rule. Replaces the old
@@ -515,7 +543,8 @@ status_color <- function(s) {
     "FRESH"  = ACCENT_GREEN,   # llm#893: shared-view verdict for tracked assets
     "STALE"  = "#ff5252",
     "DEAD"   = "#ff5252",
-    DARK_MUTED
+    "UNKNOWN" = "#ff5252",   # could not read the table: never a green/quiet colour
+    DARK_MUTED               # incl. "IDLE" (informational, errors table)
   )
 }
 
@@ -525,7 +554,7 @@ status_badge <- function(s) {
     '<span style="background-color:%s;color:%s;padding:2px 8px;border-radius:3px;
 font-size:12px;font-weight:bold;">%s</span>',
     col,
-    if (s %in% c("STALE", "DEAD")) "#fff" else "#000",
+    if (s %in% c("STALE", "DEAD", "UNKNOWN")) "#fff" else "#000",
     s
   )
 }
@@ -591,7 +620,7 @@ sec2_rows_html <- paste(lapply(sec2_rows, function(r) {
   )
 }), collapse = "\n")
 
-n_stale_tables <- sum(sapply(sec2_rows, function(r) r$status %in% c("STALE", "DEAD")))
+n_stale_tables <- sum(sapply(sec2_rows, function(r) r$status %in% c("STALE", "DEAD", "UNKNOWN")))
 
 sec2_table <- sprintf(
   '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
@@ -614,7 +643,12 @@ sec2_table <- sprintf(
   verdict from the shared <code>staleness_status</code> view for tracked
   assets (sessions, agent_runs) &nbsp;|&nbsp;
   <b style="color:#ff5252;">DEAD</b> 0 rows/24h, untracked asset (hook_events),
-  gap &ge;48h
+  gap &ge;48h &nbsp;|&nbsp;
+  <b>IDLE</b> 0 rows/24h, <code>errors</code> only: sporadic by nature
+  (median 2d, max 48d between active days), shown for coverage, never
+  counted stale &nbsp;|&nbsp;
+  <b style="color:#ff5252;">UNKNOWN</b> <code>errors</code> unreadable or
+  empty: the detectors had no input, counted as needing attention
 </p>
 <p style="color:%s;font-size:%s;margin-top:4px;">
   "Observed" is the shared view\'s <code>observation_age</code> -- how old the
@@ -630,7 +664,7 @@ sec2_table <- sprintf(
   DARK_MUTED, EMAIL_FONT_SUBTITLE
 )
 
-sec2_summary <- sprintf("%d source tables · %d stale/dead · sessions excl. synthetic ClaudeProbe (#812)",
+sec2_summary <- sprintf("%d source tables · %d stale/dead/unknown · sessions excl. synthetic ClaudeProbe (#812)",
                         length(source_tables), n_stale_tables)
 
 # ── Section 2b: Sessions by project (last 24h) — llm#818 slice ────────────────
@@ -1691,7 +1725,7 @@ if (.cron_n_fail > 0L) {
 }
 
 if (n_stale_tables > 0L) {
-  action_items <- c(action_items, sprintf("%d source table(s) stale/dead", n_stale_tables))
+  action_items <- c(action_items, sprintf("%d source table(s) stale/dead/unknown", n_stale_tables))
   action_slugs <- c(action_slugs, "source-stale")
 }
 
@@ -1761,7 +1795,7 @@ border-radius:6px;">
   Overnight Self-Review &mdash; %s
 </h2>
 <p style="color:%s;font-size:%s;margin:0;">
-  %s &nbsp;·&nbsp; %d of %d source tables stale or dead
+  %s &nbsp;·&nbsp; %d of %d source tables stale, dead or unreadable
 </p>
 <p style="color:%s;font-size:%s;margin:6px 0 0 0;">
   Scope: session-telemetry patterns only (long sessions, agent sprawl, stuck loops,
