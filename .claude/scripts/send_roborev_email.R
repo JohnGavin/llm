@@ -936,9 +936,28 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
   # Requirement 2 (llm#972), re-based on the not-passed denominator per the
   # comment above: if "unclassified" is absorbing most of the bucket that
   # actually represents problems, say so rather than letting it hide.
-  unclassified_warn <- if (isTRUE(
+  #
+  # Minimum-denominator guard (2026-09-20): with a denominator of 1 a single
+  # finding is "1 of 1 (>50%)" — a small-N artefact, not classifier drift
+  # (that day's lone row, id 10014, was a genuine review with no marker).
+  # DQ_MIN_DENOM = 5: below 5 one row moves the share by >= 20 points, so
+  # the ratio cannot separate "patterns stale" from "one odd review"; the
+  # historic denominators (13, 26 of 80 -> 56.8% after llm#1035) are all
+  # comfortably above it. Below the threshold the warning is suppressed but
+  # NOT silently: a note says the ratio was not judged (indeterminate, not
+  # "healthy").
+  DQ_MIN_DENOM <- 5L
+  dq_small_n <- isTRUE(!is.na(dq_denom_n) && dq_denom_n > 0L && dq_denom_n < DQ_MIN_DENOM)
+  unclassified_warn <- if (dq_small_n) {
+    sprintf(
+      '<br><span style="opacity:0.75;">&#8505; Too few findings needing
+       explanation (%s, minimum %d) to judge classifier health — the
+       &gt;50%% unclassified check was not applied.</span>',
+      fmt_int(dq_denom_n), DQ_MIN_DENOM
+    )
+  } else if (isTRUE(
     !is.na(total_unclassified_open_n) && !is.na(dq_denom_n) &&
-    dq_denom_n > 0L &&
+    dq_denom_n >= DQ_MIN_DENOM &&
     (total_unclassified_open_n / dq_denom_n) > 0.5
   )) {
     sprintf(
