@@ -1191,7 +1191,15 @@ phase_11d_selfheal || true
 _log_script="$CLAUDE_DIR/scripts/log_session.sh"
 _session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
 if [ -x "$_log_script" ]; then
-  nohup "$_log_script" start "$_session_id" "$(basename "$(pwd)")" "" > /dev/null 2>&1 &
+  # F7: resolve the canonical project (main repo name for linked worktrees),
+  # not basename of cwd (which is the branch slug in a worktree). Fail-safe:
+  # any failure falls back to the old basename.
+  _project_name=""
+  if [ -x "$CLAUDE_DIR/scripts/resolve_project_name.sh" ]; then
+    _project_name="$("$CLAUDE_DIR/scripts/resolve_project_name.sh" "$(pwd)" 2>/dev/null)" || _project_name=""
+  fi
+  [ -n "$_project_name" ] || _project_name="$(basename "$(pwd)")"
+  nohup "$_log_script" start "$_session_id" "$_project_name" "" > /dev/null 2>&1 &
 fi
 # Record session start time for session_stop braindump sweep (fast write, stay sync)
 date '+%Y-%m-%d %H:%M:%S' > "$CLAUDE_RUNTIME_ROOT/logs/.session_start_time"
