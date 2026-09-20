@@ -154,6 +154,7 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     repo_name        = character(0),
     opened_this_week = integer(0),
     closed_this_week = integer(0),
+    cohort_closed    = integer(0),
     close_rate       = numeric(0),
     stringsAsFactors = FALSE
   )
@@ -166,6 +167,7 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     message("roborev_weekly_rollup: reviews.db not found at ", db_path)
     return(list(per_project = empty, global_close_rate = NA_real_,
                 global_opened = 0L, global_closed = 0L,
+                global_cohort_closed = 0L,
                 prev_global_close_rate = NA_real_,
                 median_ttc_hrs = NA_real_,
                 stuck_findings = empty_stuck,
@@ -226,103 +228,114 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     }
   )
 
-  # Per-project opened / closed in current week
-  per_proj_sql <- sprintf("
-    SELECT
-      r.name AS repo_name,
+  # ── One definition of "closed this week" (used everywhere) ────────────────
+  # closed_this_week = reviews with closed=1 whose closure timestamp falls in
+  # the window, REGARDLESS of when they were opened (activity). Closure
+  # timestamp = closed_at when the reviews table has that column, else
+  # updated_at (reviews.db currently has no closed_at; note updated_at is bumped
+  # by any later edit, so it is an approximation).
+  # Cohort figures are separate: cohort_closed = of the reviews opened this week
+  # (finished_at in window), how many are closed now. cohort_closed <= opened
+  # by construction, so cohort_close_rate <= 100%.
+  rv_cols <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT column_name FROM information_schema.columns
+                          WHERE table_name = 'reviews'")$column_name,
+    error = function(e) {
+      cat(sprintf("ERROR: cannot inspect reviews schema — %s\n", conditionMessage(e)))
+      quit(status = 1L)
+    }
+  )
+  close_col <- if ("closed_at" %in% rv_cols) "rv.closed_at" else "rv.updated_at"
+  close_ts  <- sprintf("TRY_CAST(%s AS TIMESTAMP)", close_col)
+
+  run_q <- function(sql, what) {
+    tryCatch(
+      DBI::dbGetQuery(con, sql),
+      error = function(e) {
+        cat(sprintf("ERROR: %s query failed — %s\n", what, conditionMessage(e)))
+        quit(status = 1L)
+      }
+    )
+  }
+
+  # Shared aggregate expressions; window substituted via sprintf.
+  agg_sql <- function(ws, we) {
+    sprintf("
       COUNT(CASE WHEN CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS opened_this_week,
       COUNT(CASE WHEN rv.closed = 1
-                   AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed_this_week
+                   AND CAST(%s AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed_this_week,
+      COUNT(CASE WHEN rv.closed = 1
+                   AND CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS cohort_closed",
+            ws, we, close_ts, ws, we, ws, we)
+  }
+  # Same FROM/JOIN/WHERE for per-project, global, and previous week.
+  from_sql <- "
     FROM src.reviews rv
     JOIN src.review_jobs rj ON rj.id = rv.job_id
     JOIN src.repos r ON r.id = rj.repo_id
-    WHERE rj.status = 'done'
-    GROUP BY r.name
-    ORDER BY opened_this_week DESC
-  ", week_start_str, week_end_str,
-     week_start_str, week_end_str)
+    WHERE rj.status = 'done'"
 
-  per_project <- tryCatch(
-    DBI::dbGetQuery(con, per_proj_sql),
-    error = function(e) {
-      message("roborev_weekly_rollup: per-project query failed — ", conditionMessage(e))
-      empty
-    }
+  per_project <- run_q(sprintf("SELECT r.name AS repo_name, %s %s GROUP BY r.name ORDER BY opened_this_week DESC, closed_this_week DESC",
+                               agg_sql(week_start_str, week_end_str), from_sql),
+                       "per-project")
+  per_project$opened_this_week <- as.integer(per_project$opened_this_week)
+  per_project$closed_this_week <- as.integer(per_project$closed_this_week)
+  per_project$cohort_closed    <- as.integer(per_project$cohort_closed)
+  # Cohort close rate: cohort_closed / opened (<= 100% by construction).
+  per_project$close_rate <- ifelse(
+    per_project$opened_this_week > 0L,
+    per_project$cohort_closed / per_project$opened_this_week,
+    NA_real_
   )
+  if (nrow(per_project) == 0L) per_project <- empty
 
-  # Compute per-project close rate (avoid division by zero)
+  global_row <- run_q(sprintf("SELECT %s %s", agg_sql(week_start_str, week_end_str), from_sql),
+                      "global")
+  global_opened        <- as.integer(global_row$opened_this_week[1L])
+  global_closed        <- as.integer(global_row$closed_this_week[1L])
+  global_cohort_closed <- as.integer(global_row$cohort_closed[1L])
+  global_close_rate <- if (global_opened > 0L) global_cohort_closed / global_opened else NA_real_
+
+  # Consistency check (fails loudly): per-project rows must sum to global.
+  # Runs on the UNFILTERED per-project frame (before the canonical filter).
   if (nrow(per_project) > 0L) {
-    per_project$close_rate <- ifelse(
-      per_project$opened_this_week > 0L,
-      per_project$closed_this_week / per_project$opened_this_week,
-      NA_real_
-    )
-  } else {
-    per_project <- empty
+    sums <- c(opened = sum(per_project$opened_this_week),
+              closed = sum(per_project$closed_this_week),
+              cohort = sum(per_project$cohort_closed))
+    glob <- c(opened = global_opened, closed = global_closed, cohort = global_cohort_closed)
+    if (!identical(unname(sums), unname(glob))) {
+      cat(sprintf(
+        "ERROR: per-project rows do not sum to global (opened %d vs %d, closed %d vs %d, cohort_closed %d vs %d) — inconsistent metric definitions\n",
+        sums[["opened"]], glob[["opened"]], sums[["closed"]], glob[["closed"]],
+        sums[["cohort"]], glob[["cohort"]]))
+      quit(status = 1L)
+    }
   }
 
-  # Global counts for current week
-  global_sql <- sprintf("
-    SELECT
-      COUNT(*) AS opened_this_week,
-      COUNT(CASE WHEN rv.closed = 1
-                   AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed_this_week
-    FROM src.reviews rv
-    JOIN src.review_jobs rj ON rj.id = rv.job_id
-    WHERE rj.status = 'done'
-      AND CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'
-  ", week_start_str, week_end_str,
-     week_start_str, week_end_str)
-
-  global_row <- tryCatch(
-    DBI::dbGetQuery(con, global_sql),
-    error = function(e) data.frame(opened_this_week = 0L, closed_this_week = 0L)
-  )
-
-  global_opened <- as.integer(global_row$opened_this_week[1L])
-  global_closed <- as.integer(global_row$closed_this_week[1L])
-  global_close_rate <- if (global_opened > 0L) global_closed / global_opened else NA_real_
-
-  # Previous week close rate for delta
+  # Previous week close rate for delta — same definition (cohort) as current.
   prev_start <- format(week_start - 7L, "%Y-%m-%d")
   prev_end   <- format(week_end   - 7L, "%Y-%m-%d")
-  prev_sql <- sprintf("
-    SELECT
-      COUNT(*) AS opened,
-      COUNT(CASE WHEN rv.closed = 1
-                   AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s' THEN 1 END) AS closed
-    FROM src.reviews rv
-    JOIN src.review_jobs rj ON rj.id = rv.job_id
-    WHERE rj.status = 'done'
-      AND CAST(rj.finished_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'
-  ", prev_start, prev_end, prev_start, prev_end)
+  prev_row <- run_q(sprintf("SELECT %s %s", agg_sql(prev_start, prev_end), from_sql),
+                    "previous-week")
+  prev_opened <- as.integer(prev_row$opened_this_week[1L])
+  prev_cohort <- as.integer(prev_row$cohort_closed[1L])
+  prev_global_close_rate <- if (prev_opened > 0L) prev_cohort / prev_opened else NA_real_
 
-  prev_row <- tryCatch(
-    DBI::dbGetQuery(con, prev_sql),
-    error = function(e) data.frame(opened = 0L, closed = 0L)
-  )
-  prev_opened <- as.integer(prev_row$opened[1L])
-  prev_closed <- as.integer(prev_row$closed[1L])
-  prev_global_close_rate <- if (prev_opened > 0L) prev_closed / prev_opened else NA_real_
-
-  # Median time-to-close this week (hours) — best-effort from updated_at vs finished_at
+  # Median time-to-close (hours) of reviews closed this week (activity set).
   ttc_sql <- sprintf("
     SELECT
-      AVG(
-        CAST(EPOCH(CAST(rv.updated_at AS TIMESTAMP)) - EPOCH(CAST(rj.finished_at AS TIMESTAMP)) AS DOUBLE) / 3600.0
+      median(
+        CAST(EPOCH(%s) - EPOCH(CAST(rj.finished_at AS TIMESTAMP)) AS DOUBLE) / 3600.0
       ) AS median_ttc_hrs
     FROM src.reviews rv
     JOIN src.review_jobs rj ON rj.id = rv.job_id
     WHERE rj.status = 'done'
       AND rv.closed = 1
-      AND CAST(rv.updated_at AS DATE) BETWEEN DATE '%s' AND DATE '%s'
-      AND CAST(rv.updated_at AS TIMESTAMP) >= CAST(rj.finished_at AS TIMESTAMP)
-  ", week_start_str, week_end_str)
+      AND CAST(%s AS DATE) BETWEEN DATE '%s' AND DATE '%s'
+      AND %s >= CAST(rj.finished_at AS TIMESTAMP)
+  ", close_ts, close_ts, week_start_str, week_end_str, close_ts)
 
-  ttc_row <- tryCatch(
-    DBI::dbGetQuery(con, ttc_sql),
-    error = function(e) data.frame(median_ttc_hrs = NA_real_)
-  )
+  ttc_row <- run_q(ttc_sql, "time-to-close")
   median_ttc_hrs <- as.numeric(ttc_row$median_ttc_hrs[1L])
 
   # Top stuck findings: open, age > 7 days, order by age desc
@@ -390,6 +403,7 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     global_closed        = global_closed,
     prev_global_close_rate = prev_global_close_rate,
     median_ttc_hrs       = median_ttc_hrs,
+    global_cohort_closed = global_cohort_closed,
     stuck_findings       = stuck_findings,
     evidence_count       = evidence_count
   )
@@ -595,10 +609,11 @@ rate_delta_str <- fmt_delta(
 
 # §1 Global summary
 section_global <- sprintf(
-  "## Global Summary\n\nPeriod: %s to %s\n\n| Metric | Value |\n|--------|-------|\n| Opened this week | %d |\n| Closed this week | %d |\n| Close rate | %s%s |\n| Median time-to-close | %s |\n| Daily backlog files found | %d / 7 |\n",
+  "## Global Summary\n\nPeriod: %s to %s\n\n| Metric | Value |\n|--------|-------|\n| Opened this week | %d |\n| Closed this week (any age) | %d |\n| Of which opened this week | %d |\n| Cohort close rate (opened this week, now closed / opened) | %s%s |\n| Median time-to-close (closed this week) | %s |\n| Daily backlog files found | %d / 7 |\n",
   week_start_str, week_end_str,
   db_data$global_opened,
   db_data$global_closed,
+  db_data$global_cohort_closed,
   fmt_rate(db_data$global_close_rate), rate_delta_str,
   fmt_hrs(db_data$median_ttc_hrs),
   daily_info$files_found
@@ -609,18 +624,19 @@ if (nrow(db_data$per_project) > 0L) {
   proj_rows <- paste0(
     vapply(seq_len(nrow(db_data$per_project)), function(i) {
       row <- db_data$per_project[i, ]
-      sprintf("| %s | %d | %d | %s |",
+      sprintf("| %s | %d | %d | %d | %s |",
               row$repo_name,
               row$opened_this_week,
               row$closed_this_week,
+              row$cohort_closed,
               fmt_rate(row$close_rate))
     }, character(1L)),
     collapse = "\n"
   )
   section_projects <- paste0(
     "## Per-Project Backlog\n\n",
-    "| Project | Opened | Closed | Close Rate |\n",
-    "|---------|--------|--------|------------|\n",
+    "| Project | Opened | Closed (any age) | Of which opened this week | Cohort Close Rate |\n",
+    "|---------|--------|------------------|---------------------------|-------------------|\n",
     proj_rows, "\n"
   )
 } else {
