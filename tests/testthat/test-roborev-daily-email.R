@@ -957,13 +957,13 @@ test_that("llm#1035: 'passed' rows are excluded from the data-quality denominato
   # updating". On the live DB it was silent at 26.2% because `passed` (43 of
   # 80 rows) padded its denominator; on the not-passed denominator the same
   # data reads 56.8%. This fixture reproduces that shape in miniature:
-  #   1 not_reviewed + 2 unclassified + 10 passed
-  #   old denominator: 2/13 = 15%  -> silent
-  #   new denominator: 2/3  = 67%  -> fires
+  #   1 not_reviewed + 4 unclassified + 10 passed
+  #   old denominator: 4/15 = 27%  -> silent
+  #   new denominator: 4/5  = 80%  -> fires (5 = DQ_MIN_DENOM, at threshold)
   skip_if_not_installed("blastula")
   findings <- c(
     list(list(output = NOT_REVIEWED_EXACT_OUTPUT, age_hours = 1)),
-    replicate(2, list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1), simplify = FALSE),
+    replicate(4, list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1), simplify = FALSE),
     replicate(10, list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 1), simplify = FALSE)
   )
   db_path <- make_reviews_db_fixture(findings = findings)
@@ -973,14 +973,14 @@ test_that("llm#1035: 'passed' rows are excluded from the data-quality denominato
     collapse = "\n")
 
   # Sub-counts must still sum to the unchanged total (other tests rely on it).
-  expect_true(grepl("QA:total_unparseable_open_n=13", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unparseable_open_n=15", combined, fixed = TRUE))
   expect_true(grepl("QA:total_not_reviewed_open_n=1", combined, fixed = TRUE))
   expect_true(grepl("QA:total_passed_open_n=10", combined, fixed = TRUE))
-  expect_true(grepl("QA:total_unclassified_open_n=2", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_unclassified_open_n=4", combined, fixed = TRUE))
 
   # The guard must fire on the not-passed denominator.
   expect_true(grepl("may need updating", combined, fixed = TRUE),
-    info = "2 of 3 non-passed findings unclassified (>50%) must trigger the guard")
+    info = "4 of 5 non-passed findings unclassified (>50%) must trigger the guard")
   # And `passed` must be labelled correct rather than counted as a problem.
   expect_true(grepl("Clean reviews with no severity marker:", combined, fixed = TRUE),
     info = "passed rows must be shown as context, explicitly labelled correct")
@@ -1003,6 +1003,67 @@ test_that("llm#1035: the guard stays silent when unclassified is genuinely low",
   expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
   expect_false(grepl("may need updating", combined, fixed = TRUE),
     info = "1 of 10 non-passed unclassified (10%) must NOT trigger the guard")
+})
+
+# ── Tests: minimum-denominator guard (2026-09-20) ──
+# The daily report said "1 of 1 findings ... (>50%) are unclassified" — a
+# small-N artefact. Below DQ_MIN_DENOM (5) the warning is suppressed, but a
+# "too few findings" note must print instead of nothing (indeterminate is not
+# healthy). Real live row: id 10014 (genuine review, no Severity marker).
+UNCLASSIFIED_LIVE_10014_OUTPUT <- paste(
+  "**Summary**: Refactors activity lists to a single constant and dynamically",
+  "generates vignette sentence literals. **Review Findings**: * **Testing gaps**",
+  "* **Problem**: a required vignette RDS has not been generated/committed.",
+  "* **Fix**: Generate and commit the missing RDS file. * No other issues found."
+)
+
+test_that("live id 10014 phrasing (real finding, no marker) stays unclassified", {
+  # Control: a genuine finding must NOT be forced into passed/not_reviewed.
+  # "No other issues found" must not match the "no issues found" pattern.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = UNCLASSIFIED_LIVE_10014_OUTPUT, age_hours = 1)))
+  combined <- paste(
+    run_email_dry_run(make_synthetic_snapshot(),
+                      extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_passed_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
+})
+
+run_dq_case <- function(n_unclass, n_notrev) {
+  findings <- c(
+    replicate(n_unclass, list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1), simplify = FALSE),
+    replicate(n_notrev, list(output = NOT_REVIEWED_EXACT_OUTPUT, age_hours = 1), simplify = FALSE)
+  )
+  db_path <- make_reviews_db_fixture(findings = findings)
+  paste(run_email_dry_run(make_synthetic_snapshot(),
+                          extra_env = paste0("ROBOREV_DB=", db_path)),
+        collapse = "\n")
+}
+
+test_that("dq guard: denominator below minimum -> no warning, 'too few' note shown", {
+  skip_if_not_installed("blastula")
+  combined <- run_dq_case(n_unclass = 1, n_notrev = 0)  # 1 of 1 = 100%
+  expect_false(grepl("may need updating", combined, fixed = TRUE))
+  expect_true(grepl("Too few findings", combined, fixed = TRUE))
+  expect_true(grepl("Unclassified severity (data-quality)", combined, fixed = TRUE),
+    info = "the plain count line must still print")
+})
+
+test_that("dq guard: at minimum denominator with >50% -> warning fires", {
+  skip_if_not_installed("blastula")
+  combined <- run_dq_case(n_unclass = 3, n_notrev = 2)  # 3 of 5 = 60%
+  expect_true(grepl("may need updating", combined, fixed = TRUE))
+  expect_false(grepl("Too few findings", combined, fixed = TRUE))
+})
+
+test_that("dq guard: at minimum denominator with <=50% -> nothing", {
+  skip_if_not_installed("blastula")
+  combined <- run_dq_case(n_unclass = 2, n_notrev = 3)  # 2 of 5 = 40%
+  expect_false(grepl("may need updating", combined, fixed = TRUE))
+  expect_false(grepl("Too few findings", combined, fixed = TRUE))
 })
 
 # ── Tests: llm#1035 follow-up (2026-09-02) — re-measured the live backlog ──
