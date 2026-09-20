@@ -420,6 +420,7 @@ load_commit_sha <- function(lifecycle_df) {
     sql <- sprintf("
       SELECT
         rv.id AS review_id,
+        rv.job_id AS job_id,
         rj.git_ref AS commit_sha
       FROM rdb.reviews rv
       LEFT JOIN rdb.review_jobs rj ON rj.id = rv.job_id
@@ -444,8 +445,8 @@ enrich_with_commit_sha <- function(lifecycle_df) {
 
   sha_df <- load_commit_sha(lifecycle_df)
   if (is.null(sha_df)) {
-    sha_df <- data.frame(review_id = integer(), commit_sha = character(),
-                          stringsAsFactors = FALSE)
+    sha_df <- data.frame(review_id = integer(), job_id = integer(),
+                          commit_sha = character(), stringsAsFactors = FALSE)
   }
 
   # Left-join: reviews without a resolvable git_ref get commit_sha = NA
@@ -688,6 +689,7 @@ compute_outliers <- function(df, bounds = NULL) {
   format_outlier_row <- function(row) {
     list(
       review_id         = as.integer(row$review_id),
+      job_id            = if (!is.null(row$job_id)) as.integer(row$job_id) else NA_integer_,
       repo              = as.character(row$repo),
       n_attempts        = if (!is.null(row$n_attempts)) as.integer(row$n_attempts) else NA_integer_,
       time_to_close_hrs = if (!is.null(row$time_to_close_hrs)) round(as.numeric(row$time_to_close_hrs), 2) else NA_real_,
@@ -698,7 +700,7 @@ compute_outliers <- function(df, bounds = NULL) {
 
   if (nrow(found_closed) == 0L) {
     empty_df <- data.frame(
-      review_id = integer(), repo = character(),
+      review_id = integer(), job_id = integer(), repo = character(),
       n_attempts = integer(), time_to_close_hrs = double(),
       close_reason = character(), created_at = character(),
       commit_sha = character(),
@@ -715,12 +717,21 @@ compute_outliers <- function(df, bounds = NULL) {
     rep(NA_character_, nrow(found_closed))
   }
   found_closed$commit_sha <- sha_col
+  # job_id is the id the roborev CLI accepts (`roborev show|close|comment`);
+  # review_id (reviews.id) is a different id space. Absent when the input df
+  # never went through enrich_with_commit_sha() -> NA, never review_id.
+  found_closed$job_id <- if (!is.null(found_closed$job_id)) {
+    as.integer(found_closed$job_id)
+  } else {
+    rep(NA_integer_, nrow(found_closed))
+  }
 
   # Top-10 by attempts
   by_att <- found_closed[order(-found_closed$n_attempts, -found_closed$time_to_close_hrs), ]
   by_att <- head(by_att, 10L)
   by_att_out <- data.frame(
     review_id         = as.integer(by_att$review_id),
+    job_id            = as.integer(by_att$job_id),
     repo              = as.character(by_att$repo),
     n_attempts        = as.integer(by_att$n_attempts),
     time_to_close_hrs = round(as.numeric(by_att$time_to_close_hrs), 2),
@@ -735,6 +746,7 @@ compute_outliers <- function(df, bounds = NULL) {
   by_ttc <- head(by_ttc, 10L)
   by_ttc_out <- data.frame(
     review_id         = as.integer(by_ttc$review_id),
+    job_id            = as.integer(by_ttc$job_id),
     repo              = as.character(by_ttc$repo),
     n_attempts        = as.integer(by_ttc$n_attempts),
     time_to_close_hrs = round(as.numeric(by_ttc$time_to_close_hrs), 2),
@@ -1107,13 +1119,13 @@ by_ttc <- outliers_recent$by_time
 if (nrow(by_ttc) > 0L) {
   n_show <- min(5L, nrow(by_ttc))
   catd(sprintf("  %-8s  %-20s  %10s  %8s  %s",
-               "review_id", "repo", "TTC(hrs)", "attempts", "close_reason"))
+               "Job", "repo", "TTC(hrs)", "attempts", "close_reason"))
   catd(sprintf("  %-8s  %-20s  %10s  %8s  %s",
                "---------", "----", "--------", "--------", "------------"))
   for (i in seq_len(n_show)) {
     r <- by_ttc[i, ]
     catd(sprintf("  %-8d  %-20s  %10.1f  %8d  %s",
-                 r$review_id, r$repo, r$time_to_close_hrs, r$n_attempts, r$close_reason))
+                 r$job_id, r$repo, r$time_to_close_hrs, r$n_attempts, r$close_reason))
   }
 } else {
   catd(sprintf("  (no closed issues-found reviews in %dd window)", OUTLIER_WINDOW_DAYS))
@@ -1130,13 +1142,13 @@ if (outliers_by_attempts_degenerate) {
   by_att <- outliers_recent$by_attempts
   n_show <- min(5L, nrow(by_att))
   catd(sprintf("  %-8s  %-20s  %8s  %10s  %s",
-               "review_id", "repo", "attempts", "TTC(hrs)", "close_reason"))
+               "Job", "repo", "attempts", "TTC(hrs)", "close_reason"))
   catd(sprintf("  %-8s  %-20s  %8s  %10s  %s",
                "---------", "----", "--------", "--------", "------------"))
   for (i in seq_len(n_show)) {
     r <- by_att[i, ]
     catd(sprintf("  %-8d  %-20s  %8d  %10.1f  %s",
-                 r$review_id, r$repo, r$n_attempts, r$time_to_close_hrs, r$close_reason))
+                 r$job_id, r$repo, r$n_attempts, r$time_to_close_hrs, r$close_reason))
   }
 }
 catd("")
