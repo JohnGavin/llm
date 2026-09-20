@@ -56,6 +56,17 @@ library(testthat)
   mustWork = FALSE
 )
 
+# TRUE when the .claude/ tree is absent from the package root -- i.e. a build
+# tree with .Rbuildignore (`^\.claude$`) applied, as under
+# covr::package_coverage(). Skipping on THIS condition (not on the individual
+# file being missing) keeps the "exists" assertions below falsifiable: with
+# .claude/ present, a moved/renamed file still fails. The pkg root can be
+# overridden via option llm.test_pkg_root (used to falsify this in testing).
+.claude_tree_stripped <- function() {
+  root <- getOption("llm.test_pkg_root", pkgload::pkg_path())
+  !dir.exists(file.path(root, ".claude"))
+}
+
 # ── Real DuckDB (if available) ─────────────────────────────────────────────────
 
 .real_db <- normalizePath("~/.claude/logs/unified.duckdb", mustWork = FALSE)
@@ -96,6 +107,10 @@ test_that("sender script exists", {
   # verification-before-completion). Assert directly instead: this is a real
   # falsifiable check (fails if the script is ever moved/renamed) rather than
   # a guard for tests further down the file. See llm#1192.
+  skip_if(
+    .claude_tree_stripped(),
+    ".claude/ not in build tree (.Rbuildignore, e.g. under covr)"
+  )
   expect_true(
     nzchar(.email_script) && file.exists(.email_script),
     info = paste("Script not found at:", .email_script)
@@ -311,6 +326,10 @@ test_that("launchd plist file exists", {
   # Same defect as "sender script exists" above: skip_if_not() with no
   # expectation after it is an empty test that can never fail. Assert
   # directly. See llm#1192.
+  skip_if(
+    .claude_tree_stripped(),
+    ".claude/ not in build tree (.Rbuildignore, e.g. under covr)"
+  )
   expect_true(
     file.exists(.plist_path),
     info = paste("Plist not found at:", .plist_path)
