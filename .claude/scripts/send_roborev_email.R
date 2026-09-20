@@ -207,7 +207,7 @@ repo_link_or_text <- function(slug, colour) {
 # no link, since review_id is a roborev DB primary key, not a GitHub issue
 # number.
 id_link_for_outlier <- function(rid, commit_sha, repo, colour) {
-  if (is.null(rid) || !nzchar(as.character(rid))) return("")
+  if (is.null(rid) || length(rid) != 1L || is.na(rid) || !nzchar(as.character(rid))) return("")
   if (is.null(commit_sha) || is.na(commit_sha) || !nzchar(commit_sha)) {
     return(as.character(rid))
   }
@@ -588,6 +588,7 @@ classify_open_findings <- function(rows) {
       sev_label <- names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
       above_rows[[length(above_rows) + 1L]] <- list(
         review_id    = r[["review_id"]],
+        job_id       = r[["job_id"]],
         repo         = if (is.null(r[["repo"]])) "" else r[["repo"]],
         max_severity = sev_label
       )
@@ -616,7 +617,7 @@ classify_open_findings <- function(rows) {
 NEW_WINDOW_HOURS <- 24L
 
 open_findings_sql_base <- paste(
-  "SELECT rv.id AS review_id, rv.output AS output, rp.name AS repo",
+  "SELECT rv.id AS review_id, rv.job_id AS job_id, rv.output AS output, rp.name AS repo",
   "FROM reviews rv",
   "JOIN review_jobs rj ON rj.id = rv.job_id",
   "JOIN repos rp ON rp.id = rj.repo_id",
@@ -829,7 +830,7 @@ if (file.exists(deploy_status_file)) {
 # as parenthetical context, not as part of the alarm condition.
 above_threshold_block <- if (above_threshold_fired) {
   detail_items <- vapply(new_above_threshold_rows, function(x) {
-    sprintf("#%s %s (%s)", x$review_id, x$repo, x$max_severity)
+    sprintf("Job %s %s (%s)", x$job_id %||% "?", x$repo, x$max_severity)
   }, character(1L))
   shown    <- utils::head(detail_items, 10L)
   more_n   <- new_above_threshold_open_n - length(shown)
@@ -1148,7 +1149,7 @@ outlier_ttc_inner <- sprintf(
   '<p style="color:%s; font-size:%s; margin-bottom:6px;">Full detail (top-10) in the JSON snapshot and on the dashboard.</p>
 <table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
-    <th style="padding:5px; border:1px solid %s; color:white;">ID</th>
+    <th style="padding:5px; border:1px solid %s; color:white;">Job</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Repo</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Hours to close (h)</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Attempts</th>
@@ -1161,7 +1162,7 @@ if (n_outliers > 0L) {
   for (i in seq_len(n_outliers)) {
     r <- outliers_by_time[[i]]
     bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-    rid  <- r[["review_id"]] %||% ""
+    rid  <- r[["job_id"]] %||% ""
     repo <- r[["repo"]] %||% ""
     commit_sha <- r[["commit_sha"]] %||% NA_character_
     id_link <- id_link_for_outlier(rid, commit_sha, repo, accent_blue)
@@ -1214,7 +1215,7 @@ if (outliers_by_attempts_degenerate) {
   outlier_att_inner <- sprintf(
     '<table style="border-collapse:collapse; width:100%%; font-size:%s;">
   <tr style="background-color:%s;">
-    <th style="padding:5px; border:1px solid %s; color:white;">ID</th>
+    <th style="padding:5px; border:1px solid %s; color:white;">Job</th>
     <th style="padding:5px; border:1px solid %s; color:white;">Repo</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Attempts</th>
     <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Hours to close (h)</th>
@@ -1226,7 +1227,7 @@ if (outliers_by_attempts_degenerate) {
     for (i in seq_len(n_outliers_att)) {
       r <- outliers_by_att[[i]]
       bg <- if (i %% 2 == 0) dark_row_alt else dark_card
-      rid  <- r[["review_id"]] %||% ""
+      rid  <- r[["job_id"]] %||% ""
       repo <- r[["repo"]] %||% ""
       commit_sha <- r[["commit_sha"]] %||% NA_character_
       id_link <- id_link_for_outlier(rid, commit_sha, repo, accent_blue)
