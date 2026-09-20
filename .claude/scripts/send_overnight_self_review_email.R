@@ -195,10 +195,20 @@ n_new_findings <- if (nrow(sec1_data) > 0L) sum(sec1_data$n) else 0L
 # ~1.5h in active use; 72h tolerates a weekend — see the derivation in
 # staleness_collect.sh), so a quiet day is correct and expected. This counts
 # the window's input so the reader can tell "clean" from "unexamined".
+# ClaudeProbe is excluded here so the coverage DENOMINATOR matches the
+# detectors' NUMERATOR. Every Stage-1 detector filters `project = 'ClaudeProbe'`
+# out (llm#812), and Section 2's own sessions-volume row already applies the
+# same filter — this one call site did not, so the header could credit the
+# detectors with probe sessions they never looked at. Currently latent: the
+# probe has written 0 session rows since at least 2026-08-30, so today's count
+# is unchanged by this fix. It is corrected now rather than when the probe
+# restarts, because the failure mode is silent — the number would simply read
+# higher and nothing would flag it (llm#1037's "clean vs unexamined" point).
 n_sessions_in_window <- tryCatch({
   r <- safe_query(sprintf("
     SELECT count(*) AS n FROM sessions
     WHERE started_at >= %s - INTERVAL '24' HOUR
+      AND project NOT IN ('ClaudeProbe')
   ", sql_utc_now()), fallback = data.frame(n = NA_integer_))
   if (nrow(r) > 0L) suppressWarnings(as.integer(r$n[[1]])) else NA_integer_
 }, error = function(e) NA_integer_)
@@ -1687,15 +1697,41 @@ if (n_stale_tables > 0L) {
 
 n_action_items <- length(action_items)
 
+# "All clear — nothing needs action" contradicted the scope banner rendered
+# directly above it, which says a quiet morning here is NOT evidence that
+# nothing needs changing. Two specific overclaims:
+#   1. The verdict is computed from critical/major findings, cron failures and
+#      stale source tables ONLY. `info` and `minor` findings never reach it, so
+#      a day with N info findings still rendered as "nothing needs action" —
+#      the 2026-09-20 report said exactly that while carrying a fixer_heavy_day
+#      finding. Since 2026-08-26 every finding emitted has been `info`, so the
+#      box has been structurally green for weeks regardless of content.
+#   2. "All clear" is unqualified, but this report reads four telemetry tables.
+#      It cannot see config, rules, code, or anything said in a conversation.
+# Say what was actually checked and name what was logged-but-not-action-rated.
+# `checks-must-distinguish-unknown`: a green that cannot go red teaches the
+# reader to skip it.
 action_digest_html <- if (n_action_items == 0L) {
+  .non_action_n <- max(n_new_findings - n_critical - n_major, 0L)
+  .verdict_txt <- if (.non_action_n > 0L) {
+    sprintf("No action-level findings &mdash; %d info/minor finding(s) logged, not action-rated.",
+            .non_action_n)
+  } else {
+    "No action-level findings, and none logged at any severity."
+  }
   sprintf(
     '<div style="background-color:%s;padding:14px 20px;margin-bottom:12px;
 border-radius:6px;border-left:4px solid %s;">
 <p style="color:%s;font-size:%s;margin:0;font-weight:bold;">
-  &#10003; All clear &mdash; nothing needs action.
+  &#10003; %s
+</p>
+<p style="color:%s;font-size:%s;margin:4px 0 0 0;">
+  Checked: session telemetry, cron health, source-table freshness.
+  Not checked: config, rules, code, or anything said in a conversation.
 </p>
 </div>',
-    DARK_CARD, ACCENT_GREEN, ACCENT_GREEN, EMAIL_FONT_SUBTITLE
+    DARK_CARD, ACCENT_GREEN, ACCENT_GREEN, EMAIL_FONT_SUBTITLE, .verdict_txt,
+    DARK_MUTED, EMAIL_FONT_FOOTER
   )
 } else {
   items_html <- paste(sprintf('<li style="margin:2px 0;">%s</li>', action_items), collapse = "\n")
@@ -2583,6 +2619,64 @@ agent_failure_section <- tryCatch({
   )
 })
 
+# ── Section: Lessons captured in the last 24h ────────────────────────────────
+# Every Stage-1 detector reads telemetry only — durations, counts, statuses.
+# A lesson learned in a conversation and written down as a memory file or a
+# rule amendment is invisible to all ten of them. On 2026-09-19 two commits
+# (d14365f, 2901194) added two memory lessons and amended two rules after a
+# stray-worktree incident; the 2026-09-20 report said "1 new finding · all
+# clear" and never mentioned them.
+#
+# This is deliberately NOT transcript mining. It reads git and nothing else:
+# a lesson that was actually written down is a commit touching .claude/memory/
+# or .claude/rules/. That is deterministic, needs no model, and cannot invent
+# a lesson that was not recorded. It measures capture, not insight — a lesson
+# nobody wrote down stays invisible here, and that gap is stated in the body
+# rather than papered over.
+lessons_section <- local({
+  repo <- Sys.getenv("LLM_REPO_ROOT", unset = file.path(Sys.getenv("HOME"), "docs_gh", "llm"))
+  indet <- function(why) list(summary = "indeterminate", body = sprintf(
+    '<p style="color:#ff9800;">&#9888; Could not determine &mdash; %s. This is NOT the same as "no lessons captured".</p>',
+    htmlEscape(why)))
+  if (!dir.exists(file.path(repo, ".git"))) return(indet(sprintf("no git repo at %s", repo)))
+  # Every arg is shQuote'd: system2() pastes args into ONE shell command line
+  # and does NOT quote them. The format string contains a literal TAB, so
+  # unquoted it split into two argv entries (`--format=%h` and `%s`), git read
+  # `%s` as a revision and exited 128. Caught because this section reported
+  # `indeterminate` rather than silently rendering "none in 24h" — which is
+  # the whole point of keeping the two outcomes distinguishable.
+  out <- suppressWarnings(tryCatch(
+    system2("git", shQuote(c("-C", repo, "log", "--since=24.hours.ago", "--no-merges",
+                             "--format=%h\t%s", "--", ".claude/memory/", ".claude/rules/")),
+            stdout = TRUE, stderr = FALSE),
+    error = function(e) structure(character(0), status = 1L)))
+  st <- attr(out, "status")
+  if (!is.null(st) && !identical(as.integer(st), 0L)) return(indet(sprintf("git log exited %s", st)))
+  out <- out[nzchar(out)]
+  if (length(out) == 0L) {
+    return(list(summary = "none in 24h", body = sprintf(
+      '<p style="color:%s;">No commit touched <code>.claude/memory/</code> or <code>.claude/rules/</code> in the last 24h. Counts what was written down, not what was learned.</p>',
+      DARK_TEXT)))
+  }
+  rows <- paste(vapply(strsplit(out, "\t", fixed = TRUE), function(p) sprintf(
+    '<tr style="background-color:%s;"><td style="padding:4px 10px;"><code>%s</code></td><td style="padding:4px 10px;">%s</td></tr>',
+    DARK_CARD, htmlEscape(p[[1]]), htmlEscape(if (length(p) > 1L) p[[2]] else "")), character(1)),
+    collapse = "\n")
+  list(summary = sprintf("%d commit(s)", length(out)),
+       body = sprintf('<table style="border-collapse:collapse;color:%s;font-size:%s;">%s</table>',
+                      DARK_TEXT, EMAIL_FONT_BODY, rows))
+})
+
+sec_lessons_block <- collapsible_block(
+  "Lessons captured (memory + rules commits, 24h)",
+  lessons_section$summary,
+  lessons_section$body,
+  # An indeterminate result must not be painted the same green as a determinate
+  # one — that is exactly how "I could not check" gets read as "I checked and
+  # it was fine" (`checks-must-distinguish-unknown`).
+  summary_color = if (identical(lessons_section$summary, "indeterminate")) "#ff9800" else ACCENT_GREEN
+)
+
 sec_agent_failure_block <- collapsible_block(
   "Agent failed with empty stdout (cause unknown, llm#954)",
   agent_failure_section$summary,
@@ -2595,6 +2689,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   header_html,
   action_digest_html, "\n",
   sec1_block, "\n",
+  sec_lessons_block, "\n",
   sec2_block, "\n",
   sec_staleness_block, "\n",
   sec3_block, "\n",
