@@ -24,9 +24,29 @@ done
 phase_env() {
   if [ "${IN_NIX_SHELL:-}" = "impure" ] || [ "${IN_NIX_SHELL:-}" = "pure" ] || [ "${IN_NIX_SHELL:-}" = "1" ]; then
     echo "Nix Shell: active (${IN_NIX_SHELL:-})"
+  elif command -v nix >/dev/null 2>&1 || [ -x "${NIX_FALLBACK_BIN:-/nix/var/nix/profiles/default/bin/nix}" ]; then
+    # llm#1232: nix is installed, the session just was not launched in a shell.
+    echo "Nix Shell: not-in-shell (nix installed)"
+    if [ -f "$PWD/flake.nix" ]; then
+      echo "hint: nix develop $PWD --command <cmd>"
+    elif [ -f "$PWD/default.nix" ]; then
+      echo "hint: nix-shell $PWD/default.nix --run \"<cmd>\""
+    fi
   else
-    echo "Nix Shell: WARNING — not in nix shell"
+    echo "Nix Shell: WARNING — nix not found"
   fi
+}
+
+# Map phase_env's first line to the banner label (three states, llm#1232).
+nix_summary() {
+  local r
+  r=$(phase_env 2>/dev/null)
+  r="${r%%$'\n'*}"
+  case "$r" in
+    *active*)        echo "nix:ok" ;;
+    *not-in-shell*)  echo "nix:not-in-shell" ;;
+    *)               echo "nix:MISSING" ;;
+  esac
 }
 
 as_int_or_zero() {
@@ -816,8 +836,15 @@ phase_burn_rate() {
 WARNINGS=""
 
 # Phase 1: Nix
-phase_env_result=$(phase_env 2>/tmp/phase_env_err.log | head -1)
-echo "$phase_env_result" | grep -qi "active" && nix_ok="Y" || nix_ok="N"
+phase_env_full=$(phase_env 2>/tmp/phase_env_err.log)
+nix_label=$(nix_summary)
+nix_hint=$(echo "$phase_env_full" | grep '^hint:' | head -1 || true)
+# nix_ok: Y = in shell, S = installed but not in a shell, N = not found
+case "$nix_label" in
+  nix:ok) nix_ok="Y" ;;
+  nix:not-in-shell) nix_ok="S" ;;
+  *) nix_ok="N" ;;
+esac
 
 # Phase 1b: Permission Mode
 perm_output=$(phase_perm_mode 2>/dev/null)
@@ -1330,7 +1357,7 @@ fi
 
 # ── Compact summary line ──
 summary=""
-[ "$nix_ok" = "Y" ] && summary="nix:ok" || summary="nix:MISSING"
+summary="$nix_label"
 [ "$perm_ok" = "Y" ] && summary="$summary | perm:ok" || summary="$summary | perm:WARN"
 summary="$summary | env-class:${env_class_val} | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
 [ "$is_worktree" = "Y" ] && summary="$summary | worktree:active"
@@ -1339,6 +1366,7 @@ summary="$summary | env-class:${env_class_val} | config:ok | ${n_skills:-skills:
 [ -n "$rvc_status" ] && summary="$summary | $rvc_status"
 [ -n "$burn_output" ] && summary="$summary | $burn_output"
 echo "$summary"
+[ -n "${nix_hint:-}" ] && echo "$nix_hint"
 
 # Show warnings (only if any)
 if [ -n "$WARNINGS" ]; then
