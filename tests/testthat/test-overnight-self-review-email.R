@@ -561,3 +561,83 @@ test_that("cron-health: zero indeterminate is rendered explicitly, not omitted (
   expect_true(grepl("0 indeterminate", combined, fixed = TRUE),
               info = "zero-indeterminate case did not explicitly print '0 indeterminate'")
 })
+
+# ── Lessons-captured section ─────────────────────────────────────────────────
+# Every Stage-1 detector reads telemetry only, so a lesson written to
+# .claude/memory/ or .claude/rules/ was invisible to the whole report. These
+# three tests pin the two things that matter about the new section: it CAN go
+# non-empty (Trap A — a check that can never fire is not a check), and a broken
+# dependency renders distinguishably from a genuine "nothing captured"
+# (`checks-must-distinguish-unknown`).
+
+test_that("lessons section reports INDETERMINATE, not 'none', when the repo is unreadable", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+
+  bad_root <- file.path(tempdir(), "lessons-not-a-repo")
+  dir.create(bad_root, showWarnings = FALSE, recursive = TRUE)
+  on.exit(unlink(bad_root, recursive = TRUE), add = TRUE)
+
+  out      <- run_dry_run(extra_env = paste0("LLM_REPO_ROOT=", bad_root))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("Could not determine", combined, fixed = TRUE),
+              info = "Broken repo path did not render an indeterminate marker")
+  # The load-bearing assertion: a dependency failure must NOT be reported as a
+  # clean negative result. These two share no exit.
+  expect_false(grepl("No commit touched", combined, fixed = TRUE),
+               info = "Unreadable repo rendered as a determinate 'no lessons' result")
+})
+
+test_that("lessons section lists commits touching .claude/memory (the check can go non-empty)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+  skip_if(unname(Sys.which("git")) == "", "git not on PATH")
+
+  fixture <- file.path(tempdir(), "lessons-fixture-repo")
+  unlink(fixture, recursive = TRUE)
+  dir.create(file.path(fixture, ".claude", "memory"), recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(fixture, recursive = TRUE), add = TRUE)
+
+  git <- function(...) system2("git", shQuote(c("-C", fixture, ...)),
+                               stdout = FALSE, stderr = FALSE)
+  git("init", "--quiet")
+  git("config", "user.email", "test@example.invalid")
+  git("config", "user.name", "Test")
+  writeLines("lesson body", file.path(fixture, ".claude", "memory", "feedback_probe.md"))
+  git("add", "-A")
+  git("commit", "--quiet", "-m", "docs(memory): PROBE-LESSON-MARKER")
+
+  out      <- run_dry_run(extra_env = paste0("LLM_REPO_ROOT=", fixture))
+  combined <- paste(out, collapse = "\n")
+
+  expect_true(grepl("PROBE-LESSON-MARKER", combined, fixed = TRUE),
+              info = "A memory-file commit inside the 24h window was not surfaced")
+  expect_false(grepl("Could not determine", combined, fixed = TRUE),
+               info = "A healthy fixture repo was reported as indeterminate")
+})
+
+test_that("the all-clear box states what it did NOT check, and never claims 'nothing needs action'", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+
+  out      <- run_dry_run()
+  combined <- paste(out, collapse = "\n")
+
+  # The verdict escalates on critical/major findings, cron failures and stale
+  # tables only. `info`/`minor` findings never reach it, so an unqualified
+  # "nothing needs action" overclaims across surfaces this report cannot see —
+  # and contradicts the scope banner rendered immediately above it.
+  expect_false(grepl("nothing needs action", combined, fixed = TRUE),
+               info = "Verdict still claims 'nothing needs action' beyond its own scope")
+
+  if (grepl("QA:n_action_items=0", combined, fixed = TRUE)) {
+    expect_true(grepl("No action-level findings", combined, fixed = TRUE),
+                info = "Zero action items did not render the scoped all-clear wording")
+    expect_true(grepl("Not checked: config, rules, code", combined, fixed = TRUE),
+                info = "All-clear box omitted the not-checked scope disclaimer")
+  }
+})
