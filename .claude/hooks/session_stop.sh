@@ -55,6 +55,9 @@ fi
 AUDIT_WRAPPER="$CLAUDE_DIR/scripts/audit_skills_if_changed.sh"
 if [ -x "$AUDIT_WRAPPER" ]; then
   timeout 15 "$AUDIT_WRAPPER" 2>/dev/null || true
+else
+  # llm#1067: a missing audit wrapper must not look like "no skill changes".
+  echo "Skill audit: INDETERMINATE — check DID NOT RUN: $AUDIT_WRAPPER missing or not executable" >&2
 fi
 
 # ── Model mix log ────────────────────────────────────────────────────
