@@ -897,10 +897,17 @@ while IFS= read -r repo_json; do
 
             if [ -n "$digest_num" ]; then
               # Idempotency: check if job already in digest body
+              # llm#1067: a failed `gh issue view` used to collapse to "" (via
+              # `|| echo ""`), which then read as "digest is empty, job absent"
+              # and the edit below OVERWROTE the whole digest with only the new
+              # block. Capture the status so "could not read" is a third state.
+              _eb_rc=0
               existing_body=$(
-                "$GH" issue view "$digest_num" --repo "$owner_repo" --json body -q '.body' 2>/dev/null || echo ""
-              )
-              if echo "$existing_body" | grep -q "job $job_id"; then
+                "$GH" issue view "$digest_num" --repo "$owner_repo" --json body -q '.body' 2>/dev/null
+              ) || _eb_rc=$?
+              if [ "$_eb_rc" -ne 0 ]; then
+                log "INDETERMINATE: gh issue view #$digest_num failed (rc=$_eb_rc) for job=$job_id — digest NOT edited, job left open"
+              elif echo "$existing_body" | grep -q "job $job_id"; then
                 log "skip: $repo_name job=$job_id already in digest #$digest_num"
               else
                 new_body="${existing_body}${append_block}"
