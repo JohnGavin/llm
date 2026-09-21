@@ -70,16 +70,7 @@ renders a bright white rectangle, and any marker colour picked to be visible
 against black (e.g. medium grey `#6c757d`) instead reads as near-invisible
 against that unthemed white background.
 
-**Recognise this defect from its symptom, not just by reading code:** a
-chart, or occasionally a whole tab, that "looks blank/wrong in one browser
-but fine in another" is the pattern this produces — check for missing
-`paper_bgcolor`/`plot_bgcolor`/`font` on every `renderPlotly`/`plot_ly()`
-call BEFORE chasing a browser-specific JS theory. See `visualization-detailed`
-skill's "Plotly Theming" section for the audit grep pattern and full writeup
-(origin: mycare dashboard incident, 2026-07-26 — reported as Chrome-only
-blank tabs; confirmed defect was missing theming on every plot in the app,
-found while investigating, though the causal link to the Chrome symptom was
-never proven via a captured console error).
+**Recognise this defect from its symptom:** a chart or tab that "looks blank/wrong in one browser but fine in another" is the pattern; check for missing `paper_bgcolor`/`plot_bgcolor`/`font` on every `renderPlotly`/`plot_ly()` call BEFORE chasing a browser-specific JS theory. Audit grep: `visualization-detailed` skill, "Plotly Theming". Origin (mycare, 2026-07-26): companion doc.
 
 ## Caption Minimum
 
@@ -96,25 +87,9 @@ without first reading the surrounding prose. More than one question is
 fine when a figure genuinely answers more than one (e.g. "does X track
 with Y? does the effect differ by Z?").
 
-```r
-# WRONG — describes the axes, states no question
-subtitle = "Strokes hit vs stroke-in accuracy, one point per drill instance"
+Example. WRONG (describes the axes, states no question): `subtitle = "Strokes hit vs stroke-in accuracy, one point per drill instance"`. RIGHT (the question the chart answers): `subtitle = "Does hitting more strokes in a drill instance track with accuracy — a within-drill fatigue or warm-up signal?"`. The same applies to a table's intro sentence (`section-note`, caption, `<p>` above the table), e.g. "Which rallies were flagged, and why?" rather than only "columns are X, Y, Z." Verbatim examples: companion doc.
 
-# RIGHT — the question the chart exists to answer
-subtitle = "Does hitting more strokes in a drill instance track with accuracy — a within-drill fatigue or warm-up signal?"
-```
-
-Applies equally to a table's intro sentence (`section-note`, caption,
-`<p>` above the table) — e.g. "Which rallies were flagged, and why?" or
-"Does each proposed split actually resolve the rally under threshold?"
-rather than only "columns are X, Y, Z."
-
-**When there's no real question** (a pure reference/lookup table — a
-glossary, a raw variable listing, a schema diagram) this doesn't apply;
-don't force a question onto content that is genuinely just data-shape
-description. The test is "wherever possible," not "always" — see
-`checks-must-distinguish-unknown`'s spirit: don't manufacture a false
-question to satisfy a checklist.
+**When there's no real question** (glossary, raw variable listing, schema diagram) this doesn't apply; don't manufacture a false question to satisfy a checklist (rationale: companion doc).
 
 ### Related
 
@@ -160,6 +135,7 @@ glossary and every plot/table it appears in (JohnGavin/llm#730).
 
 ## Related
 
+- [`_companions/visualization-details.md`](_companions/visualization-details.md) — worked examples and incident detail split out of this rule
 - `accessibility` rule — contrast, alt text
 - `visualization-detailed` skill — full caption spec, plotly, Mermaid, variable-label worked example
 - `mermaid-click-anchors` — every clickable node URL into project source must include `#L<n>`

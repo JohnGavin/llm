@@ -56,3 +56,57 @@ Agent(subagent_type="quick-fix", model="haiku",  # lightweight tier
 ### quick-fix tool-limitation note
 
 > **Lightweight-tier (`quick-fix`) tool limitation:** the quick-fix agent has Read, Grep, Glob, Edit — but NO Bash. It cannot `git commit`, `git push`, `gh pr create`, or `roborev close`. Dispatching quick-fix for tasks that require any of these is a dispatch error — use fixer (worker tier) instead. Documented to prevent the recurrence pattern from #223.
+
+
+## Sections Moved from the Rule Body (2026-09-21 line-limit pass)
+
+Original verbatim text moved out of the rule; the normative summary stays in the rule. (Dispatch-related originals are in this file rather than auto-delegation-dispatch-details.md, which is already over its own line limit.)
+
+A dispatch is the most expensive thing the orchestrator can do (~300k tokens and
+5–20 minutes each). Spending one to discover "already fixed" is pure waste, and
+it happens often: on 2026-09-02, **2 of 5** issues worked in one session were
+already resolved — #1075 by a commit landed the day after it was filed, and the
+body of #1035 by a PR merged a week earlier. Neither had been closed. A third
+item's four sub-tasks were already tracked verbatim in another repo's tracker.
+
+1. **Grep `main` for the concrete thing it names** — the file, symbol, config
+   key, or behaviour. `git log --oneline --all -S '<symbol>' -- <path>` finds
+   the commit that introduced or removed a string, which is usually decisive.
+2. **Look for a merged PR** — `gh pr list --state merged --search "<number>"`.
+3. **Check unmerged branches and worktrees** — the work may be complete but
+   unlanded: `git log --all --oneline --grep '#<number>'` covers every branch
+   without visiting each of the (often dozens of) worktrees.
+
+An issue too vague to have a checkable "fixed" state is itself a finding: it
+cannot be verified done later either, so it wants rewriting before working.
+
+Corollary for the agent: a dispatch prompt should tell the agent to confirm the
+premise before implementing, and to report "already fixed" as a **successful**
+outcome rather than manufacturing a diff to justify the dispatch.
+
+**Therefore:** ANY Agent dispatch where the agent may invoke Bash — `fixer`,
+`r-debugger`, `targets-runner`, `nix-env`, `shiny-async-debugger`,
+`data-quality-guardian`, `data-engineer`, `shinylive-builder`, `wiki-curator` —
+MUST be called with `isolation: "worktree"`. `quick-fix` (no Bash) and `critic`
+(read-only) are exempt. Per-agent table + the quick-fix tool-limitation note
+(#223) are in [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
+
+Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include BOTH prefixes verbatim at the top of the prompt, before any task-specific instructions. Missing either prefix causes the failure modes in `JohnGavin/llm#182` and `JohnGavin/llm#191`.
+
+See [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegation-dispatch-details.md) for the full verbatim text of both prefixes, orchestrator responsibilities, Tier 3 post-verification pattern, and right/wrong examples.
+
+When the follow-up work for an agent involves any **write** (edit, commit, push),
+do NOT use `SendMessage` to continue the agent.
+
+See the "SendMessage Continuations" section in the companion doc for the full anti-pattern table and evidence from llm#304.
+
+Agents dispatched with `isolation: "worktree"` cannot write outside their sandbox.
+
+See the "Cross-Repo Writes" section in the companion doc for the full pattern,
+dual-repo post-verify example, and the #182 decision rationale.
+
+Dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or `general-purpose`
+restricted to Read/Grep/Glob) that target a separate repo in parallel, WITHOUT
+`isolation: "worktree"`. See the companion doc for the full rule, the cross-repo
+task/isolation/concurrency table, the write-side corollary, and the 2026-07-03/04
+origin incident.
