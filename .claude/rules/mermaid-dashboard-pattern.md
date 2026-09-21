@@ -57,7 +57,8 @@ command (audited to `~/.claude/logs/mermaid_dashboard_guard_skip.log`).
 
 ## Tombstone: `verify_mermaid_dashboard.sh` (removed 2026-07-13)
 
-[#773](https://github.com/JohnGavin/llm/pull/773) deleted
+[#773](https://github.com/JohnGavin/llm/pull/773) (commit `ab14383f`,
+`chore(dashboards): prune unused mermaid loader apparatus`) deleted
 `.claude/scripts/verify_mermaid_dashboard.sh` (plus `audit_mermaid_dashboards.sh`,
 `scaffold-mermaid-dashboard.sh`, and the `.claude/templates/mermaid-dashboard/`
 scaffold) as unused. It was not unused: a downstream project's Quarto
