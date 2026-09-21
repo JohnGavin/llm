@@ -91,23 +91,14 @@ When `burn_rate_check.sh` reports **WARN**, prefer worker/lightweight agents, us
 
 ## CRITICAL: Verify the work is not already done BEFORE dispatching
 
-A dispatch is the most expensive thing the orchestrator can do (~300k tokens and
-5–20 minutes each). Spending one to discover "already fixed" is pure waste, and
-it happens often: on 2026-09-02, **2 of 5** issues worked in one session were
-already resolved — #1075 by a commit landed the day after it was filed, and the
-body of #1035 by a PR merged a week earlier. Neither had been closed. A third
-item's four sub-tasks were already tracked verbatim in another repo's tracker.
+A dispatch (~300k tokens, 5-20 minutes) spent discovering "already fixed" is pure waste; on 2026-09-02, 2 of 5 issues worked in one session were already resolved. Incident detail: companion doc.
 
 Before dispatching work on any issue or task, run these three probes and state
 the result:
 
-1. **Grep `main` for the concrete thing it names** — the file, symbol, config
-   key, or behaviour. `git log --oneline --all -S '<symbol>' -- <path>` finds
-   the commit that introduced or removed a string, which is usually decisive.
+1. **Grep `main` for the concrete thing it names** (file, symbol, config key); `git log --oneline --all -S '<symbol>' -- <path>` is usually decisive.
 2. **Look for a merged PR** — `gh pr list --state merged --search "<number>"`.
-3. **Check unmerged branches and worktrees** — the work may be complete but
-   unlanded: `git log --all --oneline --grep '#<number>'` covers every branch
-   without visiting each of the (often dozens of) worktrees.
+3. **Check unmerged branches and worktrees** — `git log --all --oneline --grep '#<number>'` covers every branch.
 
 Report one of three verdicts, never two — per `checks-must-distinguish-unknown`:
 
@@ -117,29 +108,17 @@ Report one of three verdicts, never two — per `checks-must-distinguish-unknown
 | **OPEN** | Dispatch. Say what you grepped and did not find. |
 | **INDETERMINATE** | You could not tell — the issue names nothing testable, or spans a repo/runtime you cannot observe. Say so; do NOT report it as OPEN. |
 
-An issue too vague to have a checkable "fixed" state is itself a finding: it
-cannot be verified done later either, so it wants rewriting before working.
-
-Corollary for the agent: a dispatch prompt should tell the agent to confirm the
-premise before implementing, and to report "already fixed" as a **successful**
-outcome rather than manufacturing a diff to justify the dispatch.
+An issue too vague to have a checkable "fixed" state wants rewriting before working. The dispatch prompt must tell the agent to confirm the premise first and to report "already fixed" as a **successful** outcome rather than manufacturing a diff.
 
 ## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
 
 Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Full rationale (main-checkout credential risk, `~/.claude/` symlink sandbox-escape, `worktree_symlink_guard` hook llm#692) is in the companion doc.
 
-**Therefore:** ANY Agent dispatch where the agent may invoke Bash — `fixer`,
-`r-debugger`, `targets-runner`, `nix-env`, `shiny-async-debugger`,
-`data-quality-guardian`, `data-engineer`, `shinylive-builder`, `wiki-curator` —
-MUST be called with `isolation: "worktree"`. `quick-fix` (no Bash) and `critic`
-(read-only) are exempt. Per-agent table + the quick-fix tool-limitation note
-(#223) are in [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
+**Therefore:** ANY Agent dispatch where the agent may invoke Bash (`fixer`, `r-debugger`, `targets-runner`, `nix-env`, `shiny-async-debugger`, `data-quality-guardian`, `data-engineer`, `shinylive-builder`, `wiki-curator`) MUST be called with `isolation: "worktree"`. `quick-fix` (no Bash) and `critic` (read-only) are exempt. Per-agent table + quick-fix tool-limitation note (#223): [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
 
 ### Mandatory Agent Dispatch Prefixes (BOTH required)
 
-Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include BOTH prefixes verbatim at the top of the prompt, before any task-specific instructions. Missing either prefix causes the failure modes in `JohnGavin/llm#182` and `JohnGavin/llm#191`.
-
-See [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegation-dispatch-details.md) for the full verbatim text of both prefixes, orchestrator responsibilities, Tier 3 post-verification pattern, and right/wrong examples.
+Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include BOTH prefixes verbatim at the top of the prompt, before any task-specific instructions (missing either causes the failures in `JohnGavin/llm#182` and `#191`). Verbatim text, orchestrator responsibilities, Tier 3 post-verification and examples: [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegation-dispatch-details.md).
 
 ### CRITICAL — Long verification commands go in the prompt VERBATIM, never as prose
 
@@ -153,25 +132,15 @@ Bash(command="<worktree>/scripts/verify.sh > /tmp/verify.txt 2>&1", timeout=6000
 
 ### CRITICAL — SendMessage Continuations for Write Operations (#304)
 
-When the follow-up work for an agent involves any **write** (edit, commit, push),
-do NOT use `SendMessage` to continue the agent.
-
-See the "SendMessage Continuations" section in the companion doc for the full anti-pattern table and evidence from llm#304.
+Do NOT use `SendMessage` to continue an agent whose follow-up involves any **write** (edit, commit, push). Anti-pattern table and llm#304 evidence: companion doc ("SendMessage Continuations").
 
 ### Cross-Repo Writes (#182 resolution)
 
-Agents dispatched with `isolation: "worktree"` cannot write outside their sandbox.
-
-See the "Cross-Repo Writes" section in the companion doc for the full pattern,
-dual-repo post-verify example, and the #182 decision rationale.
+Agents dispatched with `isolation: "worktree"` cannot write outside their sandbox. Pattern, dual-repo post-verify example and #182 rationale: companion doc ("Cross-Repo Writes").
 
 ### Read-Only Cross-Repo Verify → Parallel, NO Worktree
 
-Dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or `general-purpose`
-restricted to Read/Grep/Glob) that target a separate repo in parallel, WITHOUT
-`isolation: "worktree"`. See the companion doc for the full rule, the cross-repo
-task/isolation/concurrency table, the write-side corollary, and the 2026-07-03/04
-origin incident.
+Dispatch read-only verifiers (`critic`, `reviewer`, `Explore`, or `general-purpose` restricted to Read/Grep/Glob) that target a separate repo in parallel, WITHOUT `isolation: "worktree"`. Full rule, cross-repo table and 2026-07-03/04 origin: companion doc.
 
 ## Parallel Worktree Sessions
 
