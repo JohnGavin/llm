@@ -42,3 +42,39 @@ don't force a question onto content that is genuinely just data-shape
 description. The test is "wherever possible," not "always" — see
 `checks-must-distinguish-unknown`'s spirit: don't manufacture a false
 question to satisfy a checklist.
+
+## Axis Ranges Are Data-Driven, Never Preset — worked example and origin
+
+```r
+# WRONG — bakes in a 0-100 range regardless of what the data does
+scale_y_continuous(limits = c(0, 100), labels = scales::percent)
+
+# RIGHT — range comes from the data; ggplot's default already does this
+scale_y_continuous(labels = scales::percent,
+                    breaks = scales::pretty_breaks(),
+                    expand = ggplot2::expansion(mult = 0.05))
+```
+
+Full text of the user correction (2026-09-11): an earlier draft of the rule
+carved out a zero-baseline exception for `geom_col`/`geom_bar` on Tufte/Cairo
+lie-factor grounds (a truncated bar's *length* misrepresents its value). That
+exception is removed: the house style already forbids bar charts outright
+(see "Core Principles" — "NEVER pie charts. NEVER bar charts. — Use dot plots
+(Cleveland)"), so the geometry the exception was written for is not used here
+in the first place. The axis-range rule is unconditional: **every** chart's
+range comes from the data, full stop — prefer a line/point/dot-plot geometry
+(which never needed a zero baseline) over a bar/column geometry (which would)
+in every case, rather than making the axis rule conditional on which geometry
+was chosen. Every audit-grep hit needs removal — there is no justified
+exception.
+
+### Origin
+
+`tennis` project, 2026-09-10 — "Stroke-in accuracy across sessions, by
+drill" (a line/point chart, data range ~50-100%) had `limits = c(0, 100)`
+hardcoded, flattening a real, visible trend into the top half of the
+chart. An audit of the same script found two more instances of the same
+mistake on similarly-shaped charts (a share-trend line and a per-instance
+accuracy distribution) — none of the three needed a zero baseline; all
+three were fixed by removing the literal `limits=` and relying on
+`pretty_breaks()` + `expansion()` to size the range from the data.
