@@ -14,31 +14,11 @@ this rule.
 
 ## Why
 
-Sibling worktrees (`~/docs_gh/<proj>-<branch>/`) pollute the project-parent
-directory. When `ls ~/docs_gh/` grows to include `llm`, `llm-fix-foo`,
-`llm-feat-bar`, `mycare`, `mycare-fix-baz`, the signal-to-noise ratio
-collapses. `~/docs_gh/worktrees/` separates ephemeral workspaces from canonical
-checkouts while keeping the whole docs_gh tree a single unit (one path to
-back up, find, and grep across all project worktrees — llm#582).
-
-Benefits:
-
-- `ls ~/docs_gh/` shows canonical repos plus exactly one `worktrees/` dir
-- `ls ~/docs_gh/worktrees/llm/` shows all active worktrees for one project
-- `ls ~/docs_gh/worktrees/` shows which projects have active worktrees
-- Worktrees live next to the projects, not at home root — easier backup
-  and discovery
-- Path is off the project directory, so nix `default.nix` paths and
-  `_targets.R` relative paths stay unambiguous
+Sibling worktrees (`~/docs_gh/<proj>-<branch>/`) pollute the project-parent directory. `~/docs_gh/worktrees/` separates ephemeral workspaces from canonical checkouts while keeping the docs_gh tree one unit (llm#582). Benefits and full rationale: companion doc.
 
 ## Transition (llm#582, decided 2026-06-12)
 
-The previous convention was `~/worktrees/<project>/<branch>/`. Existing
-worktrees there remain valid until they finish their lifecycle — do NOT
-mass-migrate live worktrees. No NEW worktrees go to the legacy base.
-`worktree_gc.sh` sweeps both bases; `cc.sh`'s worktree-parent redirect and
-session-init Phase 1e recognise both. The `~/worktrees/` references die
-with the last legacy worktree.
+The previous convention was `~/worktrees/<project>/<branch>/`. Existing worktrees there stay valid until finished: do NOT mass-migrate live worktrees, and put NO NEW worktrees there. `worktree_gc.sh`, `cc.sh` and session-init Phase 1e recognise both bases.
 
 ## Required Pattern
 
@@ -59,16 +39,7 @@ Branch names with slashes are kept as-is in the path, e.g.
 
 `~/.claude/scripts/cc-worktree.sh <project-name> <branch-name> [base-branch=main]`
 
-- Resolves project path by searching under `~/docs_gh/` for a git repo root
-  whose basename matches `<project-name>`
-- Creates worktree at `~/docs_gh/worktrees/<project-name>/<branch-name>/`
-- Calls `git worktree add -b <branch-name> <path> <base-branch>`
-- Re-applies overlays if `default.post.sh` exists in the new worktree
-  (per `nix-agent-shell-protocol` rule)
-- Logs every invocation to `~/.claude/logs/cc-worktree.log`
-- `--dry-run` flag prints the commands without executing them
-- Exits non-zero with a clear message on: branch already exists, project not
-  found, worktree path already exists
+Resolves the project under `~/docs_gh/`, creates the worktree at the required path via `git worktree add -b`, re-applies `default.post.sh` overlays (per `nix-agent-shell-protocol`), logs to `~/.claude/logs/cc-worktree.log`, supports `--dry-run`, and exits non-zero on: branch already exists, project not found, worktree path already exists.
 
 See the script source at `.claude/scripts/cc-worktree.sh`.
 
@@ -123,17 +94,7 @@ happened to find. A worktree whose last commit is identical to another
 worktree's *older* tip is a strong signal it forked off and was abandoned —
 see `branch-harvest-on-fork`.
 
-**Origin:** 2026-09-18/19, mycare project. An agent worked an entire session
-in `~/docs_gh/worktrees/mycare/feat/cc-20260907-100559` — found via a
-`docs_gh`-scoped search and picked because it had the most recent commit
-timestamp among the worktrees that search surfaced — while the actual live
-checkout was `~/docs_/pers/NHS_health/data/antigravity/mycare/` on `main`,
-kept outside `docs_gh` specifically because it holds real patient data. The
-two had genuinely diverged: `main` already had independent, more current
-work (new issues at numbers the stray branch's new issues collided with,
-a same-day document already captured under a different, correct
-convention). The stray branch's commits had to be re-derived and re-applied
-on the real `main` by hand, and the stray worktree/branch deleted.
+**Origin:** 2026-09-18/19, mycare project. An agent worked a whole session in a stale `~/docs_gh/worktrees/mycare/feat/...` worktree, chosen because it had the newest commit among those a `docs_gh`-scoped search surfaced, while the live checkout sat outside `docs_gh` (it holds real patient data) and had genuinely diverged; the work had to be re-applied by hand. Full narrative: companion doc.
 
 ## Never start a session in the worktree-parent dir
 
@@ -150,16 +111,7 @@ Valid session-start cwds:
 - `~/docs_gh/worktrees/<project>/<branch>/` — a specific worktree (only when deliberately
   working on that branch in isolation)
 
-Two layers enforce this:
-
-1. **`cc.sh` auto-redirect (primary).** If launched anywhere under
-   `~/docs_gh/worktrees/<project>/` that is not a real worktree, the wrapper `cd`s to
-   `~/docs_gh/<project>/` and prints a one-line note before exec'ing `claude`.
-   Set `CC_NO_REDIRECT=1` to skip (rarely needed).
-2. **`session_init.sh` Phase 1e (backstop).** If a session somehow starts in a
-   worktree-parent (e.g. `claude` invoked directly, not via `cc.sh`), Phase 1e
-   prints a `WORKTREE-PARENT:` block listing the active worktrees and the two
-   valid `cd` targets. Advisory — does not block.
+Two layers enforce this: `cc.sh` auto-redirects to `~/docs_gh/<project>/` with a one-line note (`CC_NO_REDIRECT=1` to skip); `session_init.sh` Phase 1e (backstop, advisory) prints a `WORKTREE-PARENT:` block listing active worktrees and the two valid `cd` targets. Details: companion doc.
 
 ## Agent Dispatch
 
@@ -171,6 +123,7 @@ work or manual branch sessions.
 
 ## Related
 
+- [`_companions/worktree-location-details.md`](_companions/worktree-location-details.md) — rationale, benefits, origin incident, enforcement detail split out of this rule
 - `nix-agent-shell-protocol` — when regenerating `default.nix` in a worktree,
   use Form A (subshell) or Form B (setwd) to avoid cwd-drift; if
   `default.post.sh` exists, `cc-worktree.sh` runs it automatically
