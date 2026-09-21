@@ -59,6 +59,14 @@ legend adds no information.
 | Legend inside the plot area | Overlaps data |
 | Different positions across plots in the same dashboard | Inconsistent reader experience |
 
+## Axis Ranges Are Data-Driven, Never Preset (MANDATORY)
+
+**Never hardcode an axis range — including a zero baseline — unless the zero point is itself meaningful to the comparison being made.** A percentage/rate axis with `limits = c(0, 100)` (or any literal `limits`/`ylim`/`xlim` bound) forces real values into a sliver of the chart when the data only ranges narrowly (e.g. 50-100), burying the variation the chart exists to show. Let the range come from the data (`pretty_breaks()` + `expansion(mult = 0.05)`).
+
+**No exceptions — including bar/column charts (user correction, 2026-09-11).** An earlier draft carved out a zero-baseline exception for `geom_col`/`geom_bar` on Tufte/Cairo lie-factor grounds; that exception is removed: the house style already forbids bar charts ("Core Principles" above), so the geometry it was written for is not used here. The rule is unconditional — **every** chart's range comes from the data; prefer line/point/dot-plot geometry (no zero baseline needed) over bar/column, rather than making the axis rule conditional on geometry.
+
+**Audit before publishing:** `grep -n "limits = c(0\|ylim(0\|xlim(0" scripts/*.R vignettes/*.qmd R/*.R` — every hit needs removal; there is no justified exception. WRONG/RIGHT code + origin (tennis, 2026-09-10): companion doc.
+
 ## Plotly Dark Theming (MANDATORY for any dark-themed app)
 
 Every `plotly::layout(...)` call in an app/vignette using a dark theme (bslib

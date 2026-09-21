@@ -96,6 +96,16 @@ A data-externalization redesign (embedded data to a separately fetched asset) is
 
 Full narrative and evidence (2026-09; local-only knowledge base): [`lessons-learned-dashboard-data-separation`](https://github.com/JohnGavin/llm/blob/main/knowledge/wiki/lessons-learned-dashboard-data-separation.md). Original text: companion doc.
 
+## Part 7: A clean structural diff proves the artifact was published, not that its JS runs
+
+`verify_artifact_publish.sh`-style checks (chart/heading/table counts, payload hashes or asset ids) and a platform `action:"read"`/fetch both operate on the artifact's **bytes**; neither executes a line of its inline `<script>`. An uncaught JS exception partway through a top-level script aborts every later init statement (tab activation, chart swaps, table population) with zero effect on any byte-level check — Trap B from `verification-before-completion`: same bytes, not the same *check*.
+
+**Required pattern:** before treating a generated HTML+JS artifact as safe to ship, execute its real `<script>` tags in document order (not an isolated unit test of one extracted function) and assert zero uncaught errors, plus that real interactive elements (nav links, tab buttons, `<details>`) still change state after `.click()`. [`verify_html_artifact_js.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/verify_html_artifact_js.sh) (JohnGavin/llm#1129) does this via jsdom plus an eslint `no-undef` sweep — tune with `--nav-attr`/`--tab-attr`/`--globals`/`--config`, don't fork. **A tool existing is not the same as it being used**: it existed and was never wired into the project's publish workflow, and the second incident happened anyway — wire it (or an equivalent execute-the-real-script check) into the committed publish workflow.
+
+**Fragment contract:** a document meant to be a content *fragment* (no `<!doctype>`/`<html>`/`<head>`/`<body>`, e.g. the Claude Artifact tool's contract) can accumulate stray full-document wrapper bytes at its very start/end unnoticed, since reviews target deep lines, never the literal first/last bytes. **Required check:** assert it does NOT start with `<!doctype`/`<html`/`<head` and does NOT end with `</body>`/`</html>` — a two-line grep, run on every publish.
+
+**Diff-stat trap:** `git diff --stat` (even `--no-ext-diff`) counts *lines*, not bytes; a file of few, extremely long single lines can lose kilobytes while the stat says "1 insertion, 1 deletion". Do not treat a small diff-stat as a small change — check `wc -c` directly. Incident detail: companion doc.
+
 ## Forbidden Patterns
 
 | Pattern | Why wrong | Fix |
@@ -109,6 +119,9 @@ Full narrative and evidence (2026-09; local-only knowledge base): [`lessons-lear
 | Considering an edit done because the tool call succeeded | A corrupted file can still write successfully | Structural integrity check before publish (Part 5) |
 | Redesigning a dashboard's data delivery around a platform capability that was never confirmed to exist | Assumed feasibility, not verified feasibility | Load the capability's own authoritative docs first (Part 6) |
 | Replacing an existing build pipeline without reading what it already does | May already be a better instance of the pattern you're about to add | Read the artifact's own build trail before redesigning it (Part 6) |
+| Treating a clean `verify_artifact_publish.sh`/`action:"read"` diff as proof the page works | Both operate on bytes, never execute the JS | Execute the real `<script>` tags (Part 7) |
+| Unit-testing one extracted function with a hand-built mock of its dependencies | The mock's construction order/shape can silently diverge from what the real generated code produces, hiding exactly this failure class | Execute the whole real file, not an extracted fragment (Part 7) |
+| Assuming a small `git diff --stat` means a small content change | Diff stat counts lines, not bytes — one huge single-line chunk shows as "1 deletion" | Check `wc -c` when the file has long lines (Part 7) |
 
 ## Origin
 
@@ -116,6 +129,7 @@ Full narrative and evidence (2026-09; local-only knowledge base): [`lessons-lear
 - [llm#889](https://github.com/JohnGavin/llm/issues/889) / [#890](https://github.com/JohnGavin/llm/pull/890) — worktree-exclusion regex matched its own scan root; `vig_scrolly_config` regenerated 222 rows → 0 by [#868](https://github.com/JohnGavin/llm/pull/868) and shipped silently
 - `tennis` project, 2026-08-29 — `readLines()`/`writeLines()` round-trip silently split an embedded ~25KB data line, orphaning stale records (Part 5; full narrative in companion doc)
 - [llm#1163](https://github.com/JohnGavin/llm/issues/1163) — Observable Framework gap analysis; both proposed test cases (Vienna, Tennis) were NO-GO on evidence (Part 6)
+- `tennis` project, ISSUES.md #125, 2026-09-20 — uncaught `TypeError` in a sparkline helper aborted all later init in the artifact's main `<script>`; every existing check passed because none executed the real script (Part 7; full narrative in companion doc)
 
 ## Related
 
