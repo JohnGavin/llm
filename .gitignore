@@ -36,6 +36,8 @@ my_new_md_database
 *.vtt
 *.srt
 *.tsv
+# Committed, append-only CI outage ledger (llm#1234) -- small, must be tracked
+!.claude/state/ci_outages.tsv
 
 # Sensitive/personal files
 *.pdf

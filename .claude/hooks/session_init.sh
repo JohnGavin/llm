@@ -1800,6 +1800,30 @@ if [ "${CLAUDE_CREDENTIAL_HYGIENE_CHECK:-1}" != "0" ]; then
   fi
 fi
 
+# ── Phase 15g: CI availability — BACKGROUND (llm#1234) ───────────────────────
+# A gate that does not run looks identical to a gate that passed. When the
+# Actions budget is exhausted no workflow starts, so surface one banner word:
+# ci:ok | ci:UNAVAILABLE | ci:unknown (unknown = could not determine; never
+# treated as ok). Cached result prints immediately; a bounded background run
+# refreshes it, so startup never waits on the network.
+# Skippable: CLAUDE_CI_AVAILABILITY_CHECK=0
+phase_ci_availability() {
+  [ "${CLAUDE_CI_AVAILABILITY_CHECK:-1}" != "0" ] || return 0
+  local cache="${HOME}/.claude/logs/session_init_ci_cache.txt"
+  local script="${CLAUDE_DIR}/scripts/ci_availability_check.sh"
+  if [ -s "$cache" ]; then
+    cat "$cache" 2>/dev/null || echo "ci:unknown"
+  else
+    echo "ci:unknown"
+  fi
+  if [ -x "$script" ]; then
+    mkdir -p "$(dirname "$cache")"
+    nohup bash -c "timeout 20 '$script' --banner 2>/dev/null > '$cache.tmp' && mv '$cache.tmp' '$cache' || rm -f '$cache.tmp'" > /dev/null 2>&1 &
+  fi
+  return 0
+}
+phase_ci_availability
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
