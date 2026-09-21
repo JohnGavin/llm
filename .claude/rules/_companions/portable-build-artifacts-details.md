@@ -91,3 +91,72 @@ from a plausible-sounding external pattern and two named artifacts. Full
 narrative, evidence, and the disposition of every related issue:
 [`lessons-learned-dashboard-data-separation`](https://github.com/JohnGavin/llm/blob/main/knowledge/wiki/lessons-learned-dashboard-data-separation.md)
 (local-only knowledge base; not fetchable from a public clone).
+
+## Part 7 — full incident narrative and detail (tennis, ISSUES.md #125, 2026-09-20)
+
+`verify_artifact_publish.sh`-style checks (chart/heading/table counts, payload
+hashes or asset ids) and a platform `action:"read"`/fetch of the published
+document both operate on the artifact's **bytes**. Neither executes a single
+line of its inline `<script>` content. A generated HTML+JS artifact can pass
+every structural check, every publish, every re-fetch — while an uncaught JS
+exception thrown partway through its own top-level script aborts every later
+init statement in that script block, silently disabling everything downstream
+(page/tab activation, chart image swaps, table population) with zero effect
+on any byte-level check. This is Trap B from `verification-before-completion`
+(inspects a different artifact than production uses) in a specific, common
+shape: the artifact you diffed and the artifact a real browser *executes* are
+the same bytes but not the same *check*.
+
+`verify_html_artifact_js.sh` (JohnGavin/llm#1129) executes the real inline
+scripts via jsdom (`runScripts: "dangerously"`) plus an eslint `no-undef`
+sweep — reusable across projects, tune per-project naming conventions via
+`--nav-attr`/`--tab-attr`/`--globals`/`--config` rather than forking it (see
+`tennis`'s `scripts/verify_artifact_js.sh` for a worked per-project wrapper).
+**A tool built for exactly this failure class already existing is not the
+same as it being used** — this exact script existed, built from an earlier
+incident in the same project, and was never wired into that project's own
+publish workflow; the second incident happened anyway. If a project ships
+generated interactive HTML, wire this (or an equivalent execute-the-real-script
+check) into its own committed publish workflow, not just into institutional
+memory of "a tool exists somewhere."
+
+Why an isolated unit test of one extracted function fails to catch this: its
+hand-built mock of the function's dependencies can silently diverge, in
+construction order or shape, from what the real generated code produces.
+
+**Second, independent defect from the same incident (fragment contract):** a
+document meant to be a content *fragment* (no `<!doctype>`/`<html>`/`<head>`/
+`<body>` of its own — e.g. the Claude Artifact tool's explicit contract, which
+wraps published content in its own skeleton) can accumulate stray
+full-document wrapper bytes at its very start or end and go undetected
+indefinitely, because every routine review targets specific line numbers or
+search patterns deep in the real content — never the literal first/last bytes
+of the file. In the originating incident this had sat in the committed file
+since a very old commit (a 14KB stray platform-wrapper preamble/trailing tag),
+surviving every subsequent review, because the file's diffs are dominated by
+large regenerated payloads that make a small anomaly at the very top invisible
+in a normal review pass. **Required check:** for any file with a documented
+"fragment only" contract, assert it does NOT start with
+`<!doctype`/`<html`/`<head` and does NOT end with `</body>`/`</html>` — a
+two-line grep, cheap enough to run on every publish.
+
+**Related diff-reading trap, same incident:** `git diff --stat` (even with
+`--no-ext-diff`) counts *logical lines* changed, not bytes. A file that is
+mostly a small number of extremely long single lines (typical of minified
+injected JS/data blobs in these artifacts) can have a multi-kilobyte chunk of
+content added or removed while the diff stat reports something like "1
+insertion, 1 deletion" — because the whole chunk was one unbroken line. Do
+not use a small diff-stat as evidence that a change was small; check byte
+counts (`wc -c`) directly when the file is known to contain long lines.
+
+### Origin
+
+`tennis` project, ISSUES.md #125, 2026-09-20 — an uncaught `TypeError` inside a
+sparkline helper (`Array.indexOf(NaN)` always returns `-1`) aborted every later
+init statement in the artifact's main `<script>` block; every existing check
+(`node --check`, `verify_artifact_publish.sh`, an isolated unit test of one
+function with a hand-built mock) passed throughout, because none of them
+executed the real script. Root-caused only by loading the actual published
+file into jsdom and executing it in document order. A 14KB stray
+platform-wrapper preamble/trailing tag, present since a much older commit, was
+found and removed in the same pass.
