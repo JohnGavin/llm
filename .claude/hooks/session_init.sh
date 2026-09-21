@@ -809,6 +809,9 @@ phase_burn_rate() {
   local script="$CLAUDE_DIR/scripts/burn_rate_check.sh"
   if [ -x "$script" ]; then
     timeout 45 "$script" full 2>/dev/null || echo "Burn rate: check failed"
+  else
+    # llm#1067: a missing checker must not be silent (same as "no output").
+    echo "Burn rate: INDETERMINATE — check DID NOT RUN: $script missing or not executable" >&2
   fi
 }
 
