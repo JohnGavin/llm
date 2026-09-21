@@ -18,6 +18,8 @@
 
 - [ ] All related roborev findings ≥ HIGH severity are either closed (cited as `closes roborev #N`) or acked (`acks roborev #N --reason "…"`). See `bin/roborev_merge_gate.sh <pr#>`.
 
+- [ ] If the session banner shows `ci:UNAVAILABLE` (or `ci:unknown`): this PR body states **CI unavailable** and lists which local gates were run and their result (see `.claude/rules/_companions/ci-outage-local-gates.md`). Auto-Merge cannot apply while CI is absent; merge stays Class C.
+
 ## Notes
 
 <!-- Anything reviewers should know -->
