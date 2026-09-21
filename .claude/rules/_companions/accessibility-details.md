@@ -124,6 +124,20 @@ in hue, only lightened — `#9BA69C`, `#78827A`). Secondary/muted text tones
 dimmed" rather than "grey" — target ≥ 85% lightness on a near-black
 background, not a distinct grey hue.
 
+**Do not build a separate, dimmer token for secondary/muted text at all.**
+The recurring failure mode is not "the muted token is slightly too dark" —
+it is designing a `--muted`/`--faint` token as a *distinct, lower-lightness*
+color from the start, on the (reasonable-sounding, wrong) theory that
+visual hierarchy requires dimming secondary text. It doesn't: hierarchy
+comes from font size, weight, and letter-spacing (already used throughout
+this rule's own tab/label/caption styling), not from sacrificing legibility.
+**Default new dashboards to `--muted`/`--faint` == the same value as
+`--ink`** (full contrast, no dimming) and reach for size/weight instead. If
+a project has a specific, deliberate reason to dim secondary text anyway,
+it still MUST clear the ≥85%-lightness floor above — "dimmer than the
+default text" and "grey" are not the same design, and only the first is
+permitted.
+
 This is a stricter bar than Part 1's Color and Contrast table (4.5:1
 minimum) — Clause 6 does not relax that floor, it raises it for the
 *default* body-text token specifically. Grey-on-black is measurably harder
@@ -133,13 +147,38 @@ background well before the WCAG AA floor.
 
 A dark-mode ink family may keep its light-mode counterpart's hue for accents
 (`--accent`, badges, links, semantic status colors) — Clause 6 governs
-reading-text tokens only, not the whole palette.
+reading-text tokens only, not the whole palette. A categorical status color
+used ONLY as text-on-its-own-contrasting-chip-background (e.g. a "Shipped"
+badge whose text and background are a matched pair, distinct from the
+page's `--ground`) is judged by its own chip contrast, not by Clause 6 —
+but if the same token is ever used as plain text directly on the page
+background, Clause 6 applies to it there.
+
+**Applies beyond Quarto/vignettes — explicitly covers Claude Artifacts and
+any other generated/hosted HTML dashboard.** This rule's `paths:`
+frontmatter only loads it automatically for committed project files
+(`*.qmd`, `*.css`, `dashboard/**`, etc.); a Claude Artifact is generated and
+published directly, with no matching tracked file, so the path-scoped
+auto-load never fires for it. That is a gap in *automatic reminding*, not
+in *scope* — Clause 6's requirement is unconditional for any dark-themed
+page a person reads, regardless of how it was built or published. When
+building or reviewing a themed dashboard/report of any kind — Quarto,
+Shiny, or a Claude Artifact — check this clause explicitly rather than
+relying on it to auto-load.
 
 Origin: user instruction 2026-09-05, after reporting that a generated
 trip-dashboard's default text (grey-green `--ink-soft`/`--ink-faint` tones
 against a near-black `--paper`) was too hard to read; escalated from a
 one-off fix to a global rule so it applies to every project's dark mode, not
-just the one that prompted it.
+just the one that prompted it. Recurred 2026-09-17 in the `tennis` project's
+Claude Artifact design-review dashboard: a `--muted`/`--faint` token pair
+(`#8ba1a8`/`#65797f` in dark mode, ~65%/~50% lightness) was used throughout
+for secondary text — labels, table captions, tab numbers, decision-card
+metadata — sitting well under the 85% floor Clause 6 already required. The
+rule existed and was correct; it simply never loaded, because the artifact
+was never a file matching this rule's `paths:` list. Fixed by making
+`--muted`/`--faint` equal to `--ink` outright (the "don't build a dimmer
+token" guidance above), not by picking a new, still-distinct grey.
 
 | Light hex | Dark pair (≥4.5:1 on `#000`) |
 |---|---|
