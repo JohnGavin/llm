@@ -34,6 +34,16 @@ writes. A draft in the wrong register costs him a rewrite every time.
 | Sign-off | `John.` | `Many thanks,` · `Best wishes,` · `Kind regards,` · surname |
 | Em dashes | Fine — he keeps them | — |
 | Paragraph breaks | Blank line between topic blocks | Wall of text |
+| Phone number | Omit unless the recipient genuinely needs it (e.g. they must call, not email, to act) | Reflexively appended to every sign-off "for completeness" |
+
+### Don't disclose the phone number by default
+
+His email address already carries his full name, so it identifies him on its
+own. The mobile number is private and goes in an outbound email only when
+there's a concrete reason the recipient needs to *call* rather than reply —
+not as a routine part of the sign-off block. Default sign-off is bare
+`John.`; add contact detail only if the ask requires it, and prefer email
+over phone when either would do.
 
 ### One clause per line
 
@@ -96,6 +106,7 @@ Self-test before formatting: *is this to read, or to copy?* If copy — plain, p
 | Email body wrapped in `>` | Vertical bars get copied | Plain text + `.txt` |
 | Paragraph-shaped email body | He reformats it every time | One clause per line |
 | Asking about payment/logistics before confirmation | Pre-empts a reply not yet earned | Cut it |
+| Phone number appended to every sign-off by default | Discloses a private number the recipient didn't need | Bare `John.`; add contact detail only when the ask requires a call |
 | Applying this to commit messages or rules | Internal prose stays house style | Part 1 is for outbound only |
 
 ## Origin
@@ -103,6 +114,10 @@ Self-test before formatting: *is this to read, or to copy?* If copy — plain, p
 User, 2026-08-27. A booking email was drafted in assistant register; John rewrote it in
 his own style and asked what the difference was. In the same exchange he could not
 copy-paste the draft from chat because it had been rendered as a blockquote.
+
+Phone-number clause added 2026-09-22, premortem project: a drafted email to a charity
+signed off with full name, email and mobile number appended by default; John asked for
+the phone number removed and the rule updated so it isn't disclosed by default again.
 
 ## Related
 
