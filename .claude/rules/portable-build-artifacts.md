@@ -30,12 +30,33 @@ The second is far more dangerous: it does not error, it returns nothing.
 
 `saveRDS()` preserves an object's internals verbatim, **including absolute filesystem paths the object captured at construction time**. The clearest case is `htmltools::htmlDependency()`, which every htmlwidget carries:
 
-Example: `readRDS("inst/extdata/vignettes/vig_github_activity_table.rds")$dependencies[[2]]$src$file` is a `/nix/store/...-r-DT-.../datatables` path that exists on the machine that ran the export and **nowhere else**; CI installs the same package at a different prefix and the render aborts with `path for html_dependency not found`. Verbatim output: companion doc.
+```r
+x <- readRDS("inst/extdata/vignettes/vig_github_activity_table.rds")
+x$dependencies[[2]]$src$file
+#> "/nix/store/y630zvw…-r-DT-0.34.0/library/DT/htmlwidgets/lib/datatables"
+```
+
+That path exists on the machine that ran the export and **nowhere else**. CI installs the same package at a different prefix and the render aborts:
+
+```
+Error: path for html_dependency not found: /nix/store/y630zvw…/lib/datatables
+```
+
 ### Required pattern — repair at READ time, never by regenerating
 
 Regenerating the artifact does **not** fix this — it only re-acquires whichever path the *new* exporting machine has, so the defect returns on the next export from anywhere else. Repair when the artifact is loaded:
 
-For each dependency whose recorded path is absent on THIS machine, re-resolve it via `system.file()` from the installed package (a regex on `/library/([^/]+)/(.*)$` extracts package and subpath). Verbatim implementation: companion doc.
+```r
+# For each dependency whose recorded path is absent on THIS machine,
+# re-resolve it from the installed package.
+if (!file.exists(f) && !dir.exists(f)) {
+  m <- regmatches(f, regexec("/library/([^/]+)/(.*)$", f))[[1]]
+  if (length(m) == 3L) {
+    resolved <- system.file(m[3], package = m[2])
+    if (nzchar(resolved)) dep$src$file <- resolved
+  }
+}
+```
 
 Three properties this must have: **no-op when the path already resolves** (changes nothing on the machine that wrote the artifact); **leave `package`-relative dependencies alone** (already portable); **leave unresolvable paths at their original value** — do not blank them, a visible failure beats a silently-missing asset.
 
@@ -85,26 +106,104 @@ Once a text file has large generated assets spliced into it as very long single 
 
 **Once a file crosses this threshold, use whole-file string operations only** — `readChar()`/`writeChar()` in R, never `readLines()`/`writeLines()`, never `sed` with line addressing; don't mix the two styles on the same file. **Splice large generated assets last** — do structural/text edits on the small, clean version first, embed large assets as the final build step. **Verify structural integrity after every edit** — a syntax check for embedded code, a tag/section-balance count, a record-count sanity check; do not treat "the edit tool reported success" as sufficient, since a corrupted file can still write successfully.
 
-WRONG: `readLines()`/`writeLines()` line-addressed edits (can silently split a nearby long line). RIGHT: `readChar()` + `sub(old, new, content, fixed = TRUE)` + `writeChar(content, path, eos = NULL, useBytes = TRUE)`. Verbatim example: companion doc.
+```r
+# WRONG — line-oriented API on a file with embedded long lines
+lines <- readLines("artifact.html")
+lines[42] <- "<section>...</section>"
+writeLines(lines, "artifact.html")   # risks silently splitting a nearby long line
+
+# RIGHT — whole-file string substitution
+content <- readChar("artifact.html", file.info("artifact.html")$size, useBytes = TRUE)
+content <- sub(old_string, new_string, content, fixed = TRUE)
+writeChar(content, "artifact.html", eos = NULL, useBytes = TRUE)
+```
 
 ## Part 6: Before re-architecting a dashboard's data-delivery mechanism, verify the capability and the incumbent pipeline
 
-A data-externalization redesign (embedded data to a separately fetched asset) is itself a change to how a committed artifact is built. Two checks are required **before** starting, not after:
+A build-time-loader / data-externalization redesign (embedded data → a
+separately fetched asset, à la Observable Framework) is itself a change to
+how a committed artifact is built — the same class of change Parts 1-5
+govern. Two checks are required **before** starting the redesign, not after:
 
-1. **Does the target platform actually support it?** Verify the mechanism exists by loading the authoritative capability list (e.g. the `artifact-capabilities` skill); "it's a reasonable pattern" is not evidence it is buildable here.
-2. **Does the incumbent pipeline already solve the problem?** Read what actually built the artifact (a "Build" page, a `Makefile`, a render script) before assuming its surface shape is how it was authored; the `travel` YAML-to-R pipeline with a build-time privacy gate was already ahead of the proposed fetch-a-JSON model.
+1. **Does the target platform actually support it?** A Claude Artifact's
+   `assets` runtime capability was assumed available and was not — confirmed
+   only by loading the `artifact-capabilities` skill directly and reading its
+   authoritative capability list. Verify the mechanism exists on the actual
+   target platform before designing around it; "it's a reasonable pattern"
+   is not evidence it is buildable here.
+2. **Does the incumbent pipeline already solve the problem this redesign is
+   for?** A YAML→R-render pipeline in the `travel` project already produced
+   fully-formed static HTML with a build-time privacy gate — architecturally
+   ahead of the proposed fetch-a-JSON-asset model, not behind it. Redesigning
+   it would have added a client-side dependency and moved private-data content
+   out from behind a scanned build step, for no evidenced benefit. Read what
+   actually built the artifact (check for a "Build" page, a `Makefile`, a
+   render script) before assuming an artifact's surface shape *is* how it was
+   authored.
 
-Full narrative and evidence (2026-09; local-only knowledge base): [`lessons-learned-dashboard-data-separation`](https://github.com/JohnGavin/llm/blob/main/knowledge/wiki/lessons-learned-dashboard-data-separation.md). Original text: companion doc.
+Both checks failed to hold in a live investigation (2026-09) that started
+from a plausible-sounding external pattern and two named artifacts. Full
+narrative, evidence, and the disposition of every related issue:
+[`lessons-learned-dashboard-data-separation`](https://github.com/JohnGavin/llm/blob/main/knowledge/wiki/lessons-learned-dashboard-data-separation.md)
+(local-only knowledge base; not fetchable from a public clone).
 
 ## Part 7: A clean structural diff proves the artifact was published, not that its JS runs
 
-`verify_artifact_publish.sh`-style checks (chart/heading/table counts, payload hashes or asset ids) and a platform `action:"read"`/fetch both operate on the artifact's **bytes**; neither executes a line of its inline `<script>`. An uncaught JS exception partway through a top-level script aborts every later init statement (tab activation, chart swaps, table population) with zero effect on any byte-level check — Trap B from `verification-before-completion`: same bytes, not the same *check*.
+`verify_artifact_publish.sh`-style checks (chart/heading/table counts, payload
+hashes or asset ids) and a platform `action:"read"`/fetch of the published
+document both operate on the artifact's **bytes**. Neither executes a single
+line of its inline `<script>` content. A generated HTML+JS artifact can pass
+every structural check, every publish, every re-fetch — while an uncaught JS
+exception thrown partway through its own top-level script aborts every later
+init statement in that script block, silently disabling everything downstream
+(page/tab activation, chart image swaps, table population) with zero effect
+on any byte-level check. This is Trap B from `verification-before-completion`
+(inspects a different artifact than production uses) in a specific, common
+shape: the artifact you diffed and the artifact a real browser *executes* are
+the same bytes but not the same *check*.
 
-**Required pattern:** before treating a generated HTML+JS artifact as safe to ship, execute its real `<script>` tags in document order (not an isolated unit test of one extracted function) and assert zero uncaught errors, plus that real interactive elements (nav links, tab buttons, `<details>`) still change state after `.click()`. [`verify_html_artifact_js.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/verify_html_artifact_js.sh) (JohnGavin/llm#1129) does this via jsdom plus an eslint `no-undef` sweep — tune with `--nav-attr`/`--tab-attr`/`--globals`/`--config`, don't fork. **A tool existing is not the same as it being used**: it existed and was never wired into the project's publish workflow, and the second incident happened anyway — wire it (or an equivalent execute-the-real-script check) into the committed publish workflow.
+**Required pattern:** before treating a generated HTML+JS artifact as safe to
+ship, execute its real `<script>` tags in document order (not an isolated
+unit test of one extracted function — see the Forbidden Patterns entry below
+for why that specifically fails to catch this) and assert zero uncaught
+errors, plus that its real interactive elements (nav links, tab buttons,
+`<details>`) still produce their expected state change after a `.click()`.
+[`verify_html_artifact_js.sh`](https://github.com/JohnGavin/llm/blob/main/.claude/scripts/verify_html_artifact_js.sh)
+(JohnGavin/llm#1129) does exactly this via jsdom (`runScripts: "dangerously"`)
+plus an eslint `no-undef` sweep — reusable across projects, tune per-project
+naming conventions via `--nav-attr`/`--tab-attr`/`--globals`/`--config` rather
+than forking it (see `tennis`'s `scripts/verify_artifact_js.sh` for a worked
+per-project wrapper). **A tool built for exactly this failure class already
+existing is not the same as it being used** — this exact script existed,
+built from an earlier incident in the same project, and was never wired into
+that project's own publish workflow; the second incident (ISSUES.md #125)
+happened anyway. If a project ships generated interactive HTML, wire this (or
+an equivalent execute-the-real-script check) into its own committed publish
+workflow, not just into institutional memory of "a tool exists somewhere."
 
-**Fragment contract:** a document meant to be a content *fragment* (no `<!doctype>`/`<html>`/`<head>`/`<body>`, e.g. the Claude Artifact tool's contract) can accumulate stray full-document wrapper bytes at its very start/end unnoticed, since reviews target deep lines, never the literal first/last bytes. **Required check:** assert it does NOT start with `<!doctype`/`<html`/`<head` and does NOT end with `</body>`/`</html>` — a two-line grep, run on every publish.
+**A second, independent defect from the same incident:** a document meant to
+be a content *fragment* (no `<!doctype>`/`<html>`/`<head>`/`<body>` of its
+own — e.g. the Claude Artifact tool's explicit contract, which wraps
+published content in its own skeleton) can accumulate stray full-document
+wrapper bytes at its very start or end and go undetected indefinitely, because
+every routine review targets specific line numbers or search patterns deep in
+the real content — never the literal first/last bytes of the file. In the
+originating incident this had sat in the committed file since a very old
+commit, surviving every subsequent review, because the file's diffs are
+dominated by large regenerated payloads that make a small anomaly at the very
+top invisible in a normal review pass. **Required check:** for any file with
+a documented "fragment only" contract, assert it does NOT start with
+`<!doctype`/`<html`/`<head` and does NOT end with `</body>`/`</html>` —
+a two-line grep, cheap enough to run on every publish.
 
-**Diff-stat trap:** `git diff --stat` (even `--no-ext-diff`) counts *lines*, not bytes; a file of few, extremely long single lines can lose kilobytes while the stat says "1 insertion, 1 deletion". Do not treat a small diff-stat as a small change — check `wc -c` directly. Incident detail: companion doc.
+**A related diff-reading trap, same incident:** `git diff --stat` (even with
+`--no-ext-diff`) counts *logical lines* changed, not bytes. A file that is
+mostly a small number of extremely long single lines (typical of minified
+injected JS/data blobs in these artifacts) can have a multi-kilobyte chunk of
+content added or removed while the diff stat reports something like "1
+insertion, 1 deletion" — because the whole chunk was one unbroken line. Do
+not use a small diff-stat as evidence that a change was small; check byte
+counts (`wc -c`) directly when the file is known to contain long lines.
 
 ## Forbidden Patterns
 
@@ -129,7 +228,7 @@ Full narrative and evidence (2026-09; local-only knowledge base): [`lessons-lear
 - [llm#889](https://github.com/JohnGavin/llm/issues/889) / [#890](https://github.com/JohnGavin/llm/pull/890) — worktree-exclusion regex matched its own scan root; `vig_scrolly_config` regenerated 222 rows → 0 by [#868](https://github.com/JohnGavin/llm/pull/868) and shipped silently
 - `tennis` project, 2026-08-29 — `readLines()`/`writeLines()` round-trip silently split an embedded ~25KB data line, orphaning stale records (Part 5; full narrative in companion doc)
 - [llm#1163](https://github.com/JohnGavin/llm/issues/1163) — Observable Framework gap analysis; both proposed test cases (Vienna, Tennis) were NO-GO on evidence (Part 6)
-- `tennis` project, ISSUES.md #125, 2026-09-20 — uncaught `TypeError` in a sparkline helper aborted all later init in the artifact's main `<script>`; every existing check passed because none executed the real script (Part 7; full narrative in companion doc)
+- `tennis` project, ISSUES.md #125, 2026-09-20 — an uncaught `TypeError` inside a sparkline helper (`Array.indexOf(NaN)` always returns `-1`) aborted every later init statement in the artifact's main `<script>` block; every existing check (`node --check`, `verify_artifact_publish.sh`, an isolated unit test of one function with a hand-built mock) passed throughout, because none of them executed the real script. Root-caused only by loading the actual published file into jsdom and executing it in document order. A 14KB stray platform-wrapper preamble/trailing tag, present since a much older commit, was found and removed in the same pass (Part 7)
 
 ## Related
 

@@ -61,11 +61,55 @@ legend adds no information.
 
 ## Axis Ranges Are Data-Driven, Never Preset (MANDATORY)
 
-**Never hardcode an axis range — including a zero baseline — unless the zero point is itself meaningful to the comparison being made.** A percentage/rate axis with `limits = c(0, 100)` (or any literal `limits`/`ylim`/`xlim` bound) forces real values into a sliver of the chart when the data only ranges narrowly (e.g. 50-100), burying the variation the chart exists to show. Let the range come from the data (`pretty_breaks()` + `expansion(mult = 0.05)`).
+**Never hardcode an axis range — including a zero baseline — unless the
+zero point is itself meaningful to the comparison being made.** A
+percentage/rate axis with `limits = c(0, 100)` (or any other literal
+`limits`/`ylim`/`xlim` bound) forces every real value into the top sliver
+of the chart when the data only ever ranges narrowly (e.g. 50-100), which
+buries the actual variation the chart exists to show.
 
-**No exceptions — including bar/column charts (user correction, 2026-09-11).** An earlier draft carved out a zero-baseline exception for `geom_col`/`geom_bar` on Tufte/Cairo lie-factor grounds; that exception is removed: the house style already forbids bar charts ("Core Principles" above), so the geometry it was written for is not used here. The rule is unconditional — **every** chart's range comes from the data; prefer line/point/dot-plot geometry (no zero baseline needed) over bar/column, rather than making the axis rule conditional on geometry.
+```r
+# WRONG — bakes in a 0-100 range regardless of what the data does
+scale_y_continuous(limits = c(0, 100), labels = scales::percent)
 
-**Audit before publishing:** `grep -n "limits = c(0\|ylim(0\|xlim(0" scripts/*.R vignettes/*.qmd R/*.R` — every hit needs removal; there is no justified exception. WRONG/RIGHT code + origin (tennis, 2026-09-10): companion doc.
+# RIGHT — range comes from the data; ggplot's default already does this
+scale_y_continuous(labels = scales::percent,
+                    breaks = scales::pretty_breaks(),
+                    expand = ggplot2::expansion(mult = 0.05))
+```
+
+**No exceptions — including bar/column charts (user correction, 2026-09-11).**
+An earlier draft of this rule carved out a zero-baseline exception for
+`geom_col`/`geom_bar` on Tufte/Cairo lie-factor grounds (a truncated bar's
+*length* misrepresents its value). That exception is removed: the house
+style already forbids bar charts outright (see "Core Principles" above —
+"NEVER pie charts. NEVER bar charts. — Use dot plots (Cleveland)"), so the
+geometry the exception was written for is not used here in the first
+place. The axis-range rule is unconditional: **every** chart's range comes
+from the data, full stop — prefer a line/point/dot-plot geometry (which
+never needed a zero baseline) over a bar/column geometry (which would) in
+every case, rather than making the axis rule conditional on which geometry
+was chosen.
+
+**Audit before publishing:** grep the chart script for hardcoded bounds
+before considering axis work done —
+
+```bash
+grep -n "limits = c(0\|ylim(0\|xlim(0" scripts/*.R vignettes/*.qmd R/*.R
+```
+
+Every hit needs removal — there is no justified exception.
+
+### Origin
+
+`tennis` project, 2026-09-10 — "Stroke-in accuracy across sessions, by
+drill" (a line/point chart, data range ~50-100%) had `limits = c(0, 100)`
+hardcoded, flattening a real, visible trend into the top half of the
+chart. An audit of the same script found two more instances of the same
+mistake on similarly-shaped charts (a share-trend line and a per-instance
+accuracy distribution) — none of the three needed a zero baseline; all
+three were fixed by removing the literal `limits=` and relying on
+`pretty_breaks()` + `expansion()` to size the range from the data.
 
 ## Plotly Dark Theming (MANDATORY for any dark-themed app)
 
@@ -78,7 +122,16 @@ renders a bright white rectangle, and any marker colour picked to be visible
 against black (e.g. medium grey `#6c757d`) instead reads as near-invisible
 against that unthemed white background.
 
-**Recognise this defect from its symptom:** a chart or tab that "looks blank/wrong in one browser but fine in another" is the pattern; check for missing `paper_bgcolor`/`plot_bgcolor`/`font` on every `renderPlotly`/`plot_ly()` call BEFORE chasing a browser-specific JS theory. Audit grep: `visualization-detailed` skill, "Plotly Theming". Origin (mycare, 2026-07-26): companion doc.
+**Recognise this defect from its symptom, not just by reading code:** a
+chart, or occasionally a whole tab, that "looks blank/wrong in one browser
+but fine in another" is the pattern this produces — check for missing
+`paper_bgcolor`/`plot_bgcolor`/`font` on every `renderPlotly`/`plot_ly()`
+call BEFORE chasing a browser-specific JS theory. See `visualization-detailed`
+skill's "Plotly Theming" section for the audit grep pattern and full writeup
+(origin: mycare dashboard incident, 2026-07-26 — reported as Chrome-only
+blank tabs; confirmed defect was missing theming on every plot in the app,
+found while investigating, though the causal link to the Chrome symptom was
+never proven via a captured console error).
 
 ## Caption Minimum
 
@@ -95,9 +148,25 @@ without first reading the surrounding prose. More than one question is
 fine when a figure genuinely answers more than one (e.g. "does X track
 with Y? does the effect differ by Z?").
 
-Example. WRONG (describes the axes, states no question): `subtitle = "Strokes hit vs stroke-in accuracy, one point per drill instance"`. RIGHT (the question the chart answers): `subtitle = "Does hitting more strokes in a drill instance track with accuracy — a within-drill fatigue or warm-up signal?"`. The same applies to a table's intro sentence (`section-note`, caption, `<p>` above the table), e.g. "Which rallies were flagged, and why?" rather than only "columns are X, Y, Z." Verbatim examples: companion doc.
+```r
+# WRONG — describes the axes, states no question
+subtitle = "Strokes hit vs stroke-in accuracy, one point per drill instance"
 
-**When there's no real question** (glossary, raw variable listing, schema diagram) this doesn't apply; don't manufacture a false question to satisfy a checklist (rationale: companion doc).
+# RIGHT — the question the chart exists to answer
+subtitle = "Does hitting more strokes in a drill instance track with accuracy — a within-drill fatigue or warm-up signal?"
+```
+
+Applies equally to a table's intro sentence (`section-note`, caption,
+`<p>` above the table) — e.g. "Which rallies were flagged, and why?" or
+"Does each proposed split actually resolve the rally under threshold?"
+rather than only "columns are X, Y, Z."
+
+**When there's no real question** (a pure reference/lookup table — a
+glossary, a raw variable listing, a schema diagram) this doesn't apply;
+don't force a question onto content that is genuinely just data-shape
+description. The test is "wherever possible," not "always" — see
+`checks-must-distinguish-unknown`'s spirit: don't manufacture a false
+question to satisfy a checklist.
 
 ### Related
 
@@ -143,7 +212,6 @@ glossary and every plot/table it appears in (JohnGavin/llm#730).
 
 ## Related
 
-- [`_companions/visualization-details.md`](_companions/visualization-details.md) — worked examples and incident detail split out of this rule
 - `accessibility` rule — contrast, alt text
 - `visualization-detailed` skill — full caption spec, plotly, Mermaid, variable-label worked example
 - `mermaid-click-anchors` — every clickable node URL into project source must include `#L<n>`
