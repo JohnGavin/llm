@@ -201,7 +201,7 @@ plan_predictions <- function() {
           ggplot2::annotate("text", x = 1, y = 0.26,
                             label = "Uninformative baseline",
                             hjust = 0, size = 3, color = "#ffd93d") +
-          ggplot2::scale_y_continuous(limits = c(0, 0.5)) +
+          ggplot2::scale_y_continuous(limits = c(0, NA)) +
           ggplot2::scale_color_manual(values = proj_palette) +
           ggplot2::labs(
             title = "Cross-Project Rolling Brier Score",
