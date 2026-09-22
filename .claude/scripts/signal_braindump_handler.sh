@@ -45,6 +45,14 @@ LOG="$HOME/.claude/logs/signal_sync.log"
 PROCESSED_LOG="$HOME/.claude/logs/whisper_processed.txt"
 SIGNAL_HTTP="http://localhost:7583"
 
+# Group-scoped attachment allowlist for signal_attachment_ingest.sh (llm#1113
+# follow-up — see that script's own header for the full design). #1113 fixed
+# the group filter for TEXT messages only; this closes the same gap one layer
+# down, for attachments. Unique per invocation (this script's own PID) so
+# overlapping runs never collide; cleaned up unconditionally on exit.
+SIGNAL_INGEST_ALLOWLIST_FILE="${SIGNAL_INGEST_ALLOWLIST_FILE:-$HOME/.claude/logs/.signal_ingest_allowlist_$$.txt}"
+trap 'rm -f "$SIGNAL_INGEST_ALLOWLIST_FILE"' EXIT
+
 # Only messages whose Signal groupInfo.groupName (or groupId, when the name
 # is unset) case-insensitively matches this are captured into braindumps
 # (llm#1113). Every OTHER group is logged as skipped, never silently
@@ -159,6 +167,11 @@ if ! _signal_daemon_listening 7583; then
     # read again — a genuine silent-drop path (text messages received while
     # the daemon was down were captured but never ingested). Parse and
     # ingest exactly as process_daemon_messages() does for the daemon path.
+    # NOTE: this Python block duplicates process_daemon_messages()'s message
+    # filter below (llm#1113 already flagged this duplication when it fixed
+    # the text-message group filter; this attachment-allowlist fix is the
+    # SECOND bug to require touching both copies — consolidating them is now
+    # doubly motivated, but is a larger refactor and out of scope here).
     echo "$MESSAGES" | python3 -c "
 import sys, json, os, subprocess
 from datetime import datetime
@@ -168,6 +181,8 @@ db_path = '$DB'
 account = '$ACCOUNT'
 target_group_name_display = '$TARGET_GROUP_NAME'
 target_group_name = target_group_name_display.strip().lower()
+allowlist_path = '$SIGNAL_INGEST_ALLOWLIST_FILE'
+allowlisted_ids = []
 
 for line in sys.stdin:
     line = line.strip()
@@ -193,10 +208,23 @@ for line in sys.stdin:
         is_group_message = bool(group.get('groupName') or group.get('groupId'))
         if is_group_message and group_name.strip().lower() != target_group_name:
             print(f'SKIPPED (off-channel group): message in group {group_name!r} does not match target group {target_group_name_display!r} — not captured', file=sys.stderr)
+            off_atts = sent.get('attachments', []) or []
+            if off_atts:
+                off_ids = ', '.join(str(a.get('id', '?')) for a in off_atts)
+                print(f'  off-channel message also carried {len(off_atts)} attachment(s) [{off_ids}] — will NOT be ingested (allowlist scoped to {target_group_name_display!r})', file=sys.stderr)
             continue
 
         ts = env.get('timestamp', 0) / 1000
         dt = datetime.fromtimestamp(ts) if ts > 0 else datetime.now()
+
+        # In-scope message: any attachments it carries go into this run's
+        # allowlist for signal_attachment_ingest.sh (llm#1113 follow-up),
+        # regardless of whether the message also has a text body.
+        atts = sent.get('attachments', []) or []
+        for a in atts:
+            aid = a.get('id')
+            if aid:
+                allowlisted_ids.append(aid)
 
         body = sent.get('message', '')
         if body:
@@ -214,7 +242,6 @@ for line in sys.stdin:
         # Same accounting as the daemon path (llm#1001): a message that
         # produced no text must still leave a record of having arrived.
         if not body:
-            atts = sent.get('attachments', []) or []
             if atts:
                 desc = ', '.join(
                     f\"{a.get('contentType', 'unknown')}:{a.get('id', '?')}\"
@@ -227,6 +254,13 @@ for line in sys.stdin:
 
     except (json.JSONDecodeError, KeyError, ValueError):
         continue
+
+# Written unconditionally (even when empty) so signal_attachment_ingest.sh's
+# fail-closed check is correct: the file's mere existence, not its content,
+# is what this run guarantees.
+with open(allowlist_path, 'w') as f:
+    for aid in allowlisted_ids:
+        f.write(aid + '\n')
 " 2>>"$LOG" || true
     rm -f "/tmp/signal_messages_$$.json"
   fi
@@ -362,6 +396,11 @@ process_daemon_messages() {
   exc_count_file="$(mktemp)"
   echo 0 > "$exc_count_file"
 
+  # NOTE: this Python block duplicates the direct-receive-fallback block
+  # above (llm#1113 already flagged this duplication when it fixed the
+  # text-message group filter; this attachment-allowlist fix is the SECOND
+  # bug to require touching both copies — consolidating them is now doubly
+  # motivated, but is a larger refactor and out of scope here).
   tail -c "+$((last_pos + 1))" "$stdout_log" 2>/dev/null | python3 -c "
 import sys, json, os, subprocess
 from datetime import datetime
@@ -373,6 +412,8 @@ target_group_name_display = '$TARGET_GROUP_NAME'
 target_group_name = target_group_name_display.strip().lower()
 exc_count_file = '$exc_count_file'
 exceptions = 0
+allowlist_path = '$SIGNAL_INGEST_ALLOWLIST_FILE'
+allowlisted_ids = []
 
 for line in sys.stdin:
     line = line.strip()
@@ -434,10 +475,23 @@ for line in sys.stdin:
         is_group_message = bool(group.get('groupName') or group.get('groupId'))
         if is_group_message and group_name.strip().lower() != target_group_name:
             print(f'SKIPPED (off-channel group): message in group {group_name!r} does not match target group {target_group_name_display!r} — not captured', file=sys.stderr)
+            off_atts = sent.get('attachments', []) or []
+            if off_atts:
+                off_ids = ', '.join(str(a.get('id', '?')) for a in off_atts)
+                print(f'  off-channel message also carried {len(off_atts)} attachment(s) [{off_ids}] — will NOT be ingested (allowlist scoped to {target_group_name_display!r})', file=sys.stderr)
             continue
 
         ts = env.get('timestamp', 0) / 1000
         dt = datetime.fromtimestamp(ts) if ts > 0 else datetime.now()
+
+        # In-scope message: any attachments it carries go into this run's
+        # allowlist for signal_attachment_ingest.sh (llm#1113 follow-up),
+        # regardless of whether the message also has a text body.
+        atts = sent.get('attachments', []) or []
+        for a in atts:
+            aid = a.get('id')
+            if aid:
+                allowlisted_ids.append(aid)
 
         # Handle text
         body = sent.get('message', '')
@@ -458,7 +512,6 @@ for line in sys.stdin:
         # line at all — which is how a scanned PDF and 93 images disappeared
         # without trace for ten weeks.
         if not body:
-            atts = sent.get('attachments', []) or []
             if atts:
                 desc = ', '.join(
                     f\"{a.get('contentType', 'unknown')}:{a.get('id', '?')}\"
@@ -474,6 +527,13 @@ for line in sys.stdin:
 
 with open(exc_count_file, 'w') as f:
     f.write(str(exceptions))
+
+# Written unconditionally (even when empty) so signal_attachment_ingest.sh's
+# fail-closed check is correct: the file's mere existence, not its content,
+# is what this run guarantees.
+with open(allowlist_path, 'w') as f:
+    for aid in allowlisted_ids:
+        f.write(aid + '\n')
 " 2>>"$LOG" || true
 
   local exc_count
@@ -510,6 +570,15 @@ done
 #
 # It never exits non-zero on a per-file failure, but guard the call anyway so a
 # missing dependency can't take down audio transcription above.
+#
+# SIGNAL_INGEST_ALLOWLIST scopes the ingest to attachments this invocation
+# actually saw arrive in-channel (llm#1113 follow-up). Exported unconditionally:
+# whenever this invocation's message-processing block ran, the allowlist file
+# exists (possibly empty); when it did not run at all (no new daemon stdout,
+# failed/empty direct receive), the file is absent and the ingest script fails
+# closed for this run — attachments simply wait for a future invocation whose
+# allowlist actually names them, rather than being ingested on trust.
+export SIGNAL_INGEST_ALLOWLIST="$SIGNAL_INGEST_ALLOWLIST_FILE"
 if [ -x "$SCRIPT_DIR/signal_attachment_ingest.sh" ]; then
   "$SCRIPT_DIR/signal_attachment_ingest.sh" || log "WARN: signal_attachment_ingest.sh exited non-zero"
 else
