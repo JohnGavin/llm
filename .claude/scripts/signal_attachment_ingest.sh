@@ -48,6 +48,27 @@ DB="${SIGNAL_INGEST_DB:-$HOME/.claude/logs/unified.duckdb}"
 LOG="${SIGNAL_INGEST_LOG:-$HOME/.claude/logs/signal_sync.log}"
 PROCESSED_LOG="${SIGNAL_ATTACH_PROCESSED_LOG:-$HOME/.claude/logs/attachment_processed.txt}"
 
+# Group-scoped allowlist of attachment IDs, written by signal_braindump_handler.sh
+# for THIS run only (llm#1113 follow-up). #1113 fixed the group filter for TEXT
+# messages one layer up, in the message JSON envelope — that filter was never
+# wired down to this script's flat directory scan, so images/PDFs from
+# off-channel Signal chats kept being silently ingested into the append-only
+# braindumps store even after #1113 landed (recurred 2026-09-17, 2026-09-21).
+#
+#   unset (default)           -> allow everything. This is the behaviour for
+#                                 manual runs, --backfill, and --selftest —
+#                                 none of those has a per-run group context to
+#                                 filter by, and silently narrowing them would
+#                                 be its own surprise.
+#   set, file exists          -> only attachment IDs listed in the file (one
+#                                 per line) are ingested this run.
+#   set, file does NOT exist  -> ingest NOTHING this run. Fail closed: an
+#                                 allowlist that was supposed to be written but
+#                                 wasn't must never silently degrade into
+#                                 "ingest everything" — that is exactly the
+#                                 bug this closes.
+ALLOWLIST_FILE="${SIGNAL_INGEST_ALLOWLIST:-}"
+
 # Cutoff. Attachments older than this are recorded once as skipped-pre-cutoff
 # and never looked at again unless --backfill is passed. Default is the date of
 # the dropped PDF in llm#1001, so the fix starts from the incident rather than
@@ -201,6 +222,22 @@ _mark_processed() {
   [ "$DRY_RUN" -eq 1 ] && return 0
   mkdir -p "$(dirname "$PROCESSED_LOG")" 2>/dev/null
   printf '%s\t%s\n' "$base" "$outcome" >> "$PROCESSED_LOG"
+}
+
+# ---------------------------------------------------------------------------
+# Group allowlist (see ALLOWLIST_FILE above for the full design)
+# ---------------------------------------------------------------------------
+
+# Mirrors the id-in-filename substring match already proven in
+# signal_notes_sync.sh for audio attachments — signal-cli's on-disk naming
+# (bare attachment ID vs ID+extension) is not guaranteed, so this matches the
+# allowlisted ID as a substring of the basename rather than requiring an exact
+# match against a bare ID.
+_in_allowlist() {
+  local base="$1"
+  [ -n "$ALLOWLIST_FILE" ] || return 0
+  [ -f "$ALLOWLIST_FILE" ] || return 1
+  grep -qF -f "$ALLOWLIST_FILE" <<< "$base"
 }
 
 # ---------------------------------------------------------------------------
@@ -507,6 +544,18 @@ scan_dir() {
       fi
     fi
 
+    if ! _in_allowlist "$base"; then
+      # Deliberately NOT ledgered via _mark_processed — see ALLOWLIST_FILE's
+      # header comment. The check is cheap (one grep, no OCR, no note file),
+      # so leaving it unledgered costs nothing but a repeated log line; but
+      # marking it processed here would risk irreversibly misclassifying a
+      # genuinely in-channel file that lands on disk in this same run just
+      # ahead of its message being tailed by signal_braindump_handler.sh. A
+      # truly off-channel file is just cheaply re-skipped on every future run.
+      log "SKIPPED (off-channel attachment): $base — not in this run's group allowlist; will be reconsidered on a future run"
+      continue
+    fi
+
     if [ "$BACKFILL" -eq 0 ]; then
       local mtime
       mtime=$(_file_mtime "$f")
@@ -756,6 +805,65 @@ selftest() {
     ok "--dry-run wrote no note and no ledger entry"
   else
     bad "--dry-run wrote state"
+  fi
+
+  # Test 11: group allowlist (llm#1113 follow-up). Exercised via scan_dir(),
+  # not process_file() — the allowlist is deliberately enforced only in the
+  # automatic directory scan, never for an explicit file argument, so calling
+  # process_file() directly here would test the wrong code path.
+  rm -f "$PROCESSED_LOG"
+  rm -rf "$DUMP_DIR"
+  mkdir -p "$DUMP_DIR"
+  "$GS_BIN" -q -dNOPAUSE -dBATCH -sDEVICE=png16m -r72 -o "$ATTACH_DIR/alpha123abc.png" "$tmp/blank.pdf" >/dev/null 2>&1
+  "$GS_BIN" -q -dNOPAUSE -dBATCH -sDEVICE=png16m -r72 -o "$ATTACH_DIR/beta456xyz.png" "$tmp/blank.pdf" >/dev/null 2>&1
+  printf 'alpha123abc\n' > "$tmp/allowlist.txt"
+
+  ALLOWLIST_FILE="$tmp/allowlist.txt"
+  scan_dir >/dev/null
+  ALLOWLIST_FILE=""
+
+  if [ -n "$(_processed_outcome alpha123abc.png)" ]; then
+    ok "allowlisted attachment was processed"
+  else
+    bad "allowlisted attachment was NOT processed"
+  fi
+  if [ -z "$(_processed_outcome beta456xyz.png)" ]; then
+    ok "off-channel attachment left unledgered (reconsiderable on a later run, not permanently skipped)"
+  else
+    bad "off-channel attachment was ledgered as '$(_processed_outcome beta456xyz.png)' — must stay unledgered"
+  fi
+  if grep -q "SKIPPED (off-channel attachment): beta456xyz.png" "$LOG"; then
+    ok "off-channel attachment skip was logged, not silent"
+  else
+    bad "off-channel attachment skip produced no log line — this is the #1113-follow-up bug"
+  fi
+
+  # Fail-closed: ALLOWLIST_FILE configured but the file itself is missing ->
+  # nothing is processed this run, never a silent fall-through to "allow all".
+  rm -f "$PROCESSED_LOG"
+  rm -rf "$DUMP_DIR"
+  mkdir -p "$DUMP_DIR"
+  ALLOWLIST_FILE="$tmp/does-not-exist-allowlist.txt"
+  scan_dir >/dev/null
+  ALLOWLIST_FILE=""
+  if [ -z "$(_processed_outcome alpha123abc.png)" ] && [ -z "$(_processed_outcome beta456xyz.png)" ]; then
+    ok "missing allowlist file fails closed (nothing processed this run)"
+  else
+    bad "missing allowlist file did not fail closed — something was processed"
+  fi
+
+  # Regression guard: an unset allowlist (the default for manual/--backfill/
+  # --selftest use) must still process everything, unchanged from before this
+  # fix.
+  rm -f "$PROCESSED_LOG"
+  rm -rf "$DUMP_DIR"
+  mkdir -p "$DUMP_DIR"
+  ALLOWLIST_FILE=""
+  scan_dir >/dev/null
+  if [ -n "$(_processed_outcome alpha123abc.png)" ] && [ -n "$(_processed_outcome beta456xyz.png)" ]; then
+    ok "unset allowlist (default) still processes everything — no regression"
+  else
+    bad "unset allowlist changed default behaviour — regression"
   fi
 
   echo "  $pass passed, $fail failed"
