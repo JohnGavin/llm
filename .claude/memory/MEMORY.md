@@ -62,3 +62,4 @@ One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 - [altdoc / astgrepr: Not Adopted](decision-altdoc-astgrepr-not-adopted.md) — evaluated 2026-08-28; staying with pkgdown and CLI ast-grep. Cite before re-researching
 - [Agent Worktree Pinning](feedback_agent-worktree-pinning.md) — an agent is pinned to ITS OWN harness worktree; to land on an existing PR branch, pre-create ~/docs_gh/worktrees/<project>/<branch>/ (llm#1190)
 - [Shared Fixture Keys Make Tests Non-Deterministic](feedback_shared-fixture-keys-make-tests-nondeterministic.md) — two tests sharing a key tie on a second-resolution timestamp; green-over-broken is the danger (llm#1190)
+- [`historical` Repo Is Intentionally Public](feedback_historical-repo-is-intentionally-public.md) — quant/market research, not personal data; public-private-boundary's "money" trigger doesn't apply
