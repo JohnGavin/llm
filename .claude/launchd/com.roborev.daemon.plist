@@ -148,6 +148,8 @@
     <dict>
         <key>PATH</key>
         <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin</string>
+        <key>GEMINI_CLI_TRUST_WORKSPACE</key>
+        <string>true</string>
     </dict>
 
     <key>RunAtLoad</key>
