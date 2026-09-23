@@ -15,6 +15,10 @@
 #   CLAUDE_BRANCH_HARVEST=0      skip entirely (logged)
 #   CLAUDE_HOOK_SELFTEST=1       run the embedded selftest battery and exit
 #   BRANCH_HARVEST_STALE_DAYS    override default 3 days
+#   BRANCH_HARVEST_AHEAD_MIN_COMMITS  override default 5 — a branch whose tip
+#                                is at least this many commits ahead of the
+#                                CURRENT session's HEAD is flagged AHEAD_OF_HEAD,
+#                                independent of STALE/SURFACE_TOUCHED (llm#1238)
 #   BRANCH_HARVEST_KEYWORDS_EXTRA  OR-joined into the surface keyword regex
 #   BRANCH_HARVEST_REPO          path to the repo to audit (default: $PWD)
 
@@ -89,6 +93,18 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   GIT_AUTHOR_DATE='2026-05-01T00:00:00Z' \
     git commit -q -m 'feat(model): tweak'
 
+  # Branch 6 — fresh (tip < 1 day old) AND far ahead of HEAD (llm#1238).
+  # Off-topic commit subjects so it is neither SURFACE_TOUCHED nor STALE —
+  # isolates that AHEAD_OF_HEAD alone is what must flag it. Before this fix,
+  # a branch like this was exempt precisely because it is fresh.
+  git checkout -q main
+  git checkout -q -b feat/cc-fresh-far-ahead
+  for i in 1 2 3 4 5; do
+    echo "content-$i" > "ahead_file_$i"
+    git add "ahead_file_$i"
+    git commit -q -m "chore: unrelated change $i"
+  done
+
   git checkout -q main
 
   # Run the audit
@@ -113,6 +129,39 @@ if [ "${CLAUDE_HOOK_SELFTEST:-0}" = "1" ]; then
   echo "$output" | grep -q 'worktree-agent-deadbeef' \
     && _fail 'should ignore worktree-agent-* branches' \
     || _ok 'ignores worktree-agent-* branches'
+
+  echo "$output" | grep -q 'feat/cc-fresh-far-ahead' \
+    && _ok 'flags fresh branch that is far ahead of HEAD (AHEAD_OF_HEAD)' \
+    || _fail 'did not flag fresh far-ahead branch (AHEAD_OF_HEAD, llm#1238)'
+
+  echo "$output" | grep -q 'AHEAD_OF_HEAD' \
+    && _ok 'AHEAD_OF_HEAD flag text present in output' \
+    || _fail 'AHEAD_OF_HEAD flag text missing from output'
+
+  # Dedicated, isolated fixture: nothing ahead of HEAD by the threshold ->
+  # AHEAD_OF_HEAD must stay silent (checks-must-distinguish-unknown: silence
+  # here must mean "nothing ahead", not "could not determine").
+  ahead_silent_dir="$(mktemp -d -t branch_harvest_selftest_ahead.XXXX)"
+  (
+    cd "$ahead_silent_dir"
+    git init -q -b main
+    git config user.email selftest@local
+    git config user.name selftest
+    echo init > seed; git add seed; git commit -q -m 'init'
+
+    git checkout -q -b feat/cc-barely-ahead
+    echo a > a; git add a; git commit -q -m 'chore: unrelated tiny change'
+    git checkout -q main
+  )
+  output4="$(BRANCH_HARVEST_REPO="$ahead_silent_dir" \
+             CLAUDE_HOOK_SELFTEST=0 \
+             CLAUDE_BRANCH_HARVEST=1 \
+             BRANCH_HARVEST_STALE_DAYS=3 \
+             bash "$0" 2>&1)" || true
+  echo "$output4" | grep -q 'AHEAD_OF_HEAD' \
+    && _fail 'AHEAD_OF_HEAD flagged when no branch is far enough ahead' \
+    || _ok 'AHEAD_OF_HEAD silent when nothing is far ahead of HEAD'
+  rm -rf "$ahead_silent_dir"
 
   # Add a git note to silence the wip-interrupt branch; rerun; should not flag
   tip_sha="$(git -C "$selftest_dir" rev-parse feat/cc-wip-interrupt)"
@@ -173,6 +222,12 @@ stale_days="${BRANCH_HARVEST_STALE_DAYS:-3}"
 # Reference epoch: now minus stale_days
 now_epoch="$(date -u +%s)"
 stale_epoch=$(( now_epoch - stale_days * 86400 ))
+
+# Ahead-of-HEAD threshold (commits). A branch whose tip is at least this many
+# commits ahead of the CURRENT session's HEAD is flagged AHEAD_OF_HEAD,
+# independent of STALE/SURFACE_TOUCHED — a fresh, active lineage is exactly
+# the case that was previously exempt (llm#1238).
+ahead_min="${BRANCH_HARVEST_AHEAD_MIN_COMMITS:-5}"
 
 # Surface-keyword regex (case-insensitive). Project override is OR-joined.
 default_kw='dashboard|vignette|readme|\.qmd|\.css|\.scss|model/|R/|app/|plumber|shiny|figure|chart|plot|table|caption|font|render|website|docs/'
@@ -253,6 +308,12 @@ while IFS= read -r branch; do
   # Last 5 commit subjects
   recent="$(git log -5 --format='%h  %s' "$branch" 2>/dev/null)"
 
+  # Commits the branch has that HEAD (the current session's checkout) lacks.
+  # Guard against a non-numeric result (e.g. rev-list failing) the same way
+  # tip_epoch is guarded above — a bad count must not silently pass -ge.
+  ahead_count="$(git rev-list --count "HEAD..$branch" 2>/dev/null || echo 0)"
+  case "$ahead_count" in ''|*[!0-9]*) ahead_count=0 ;; esac
+
   # Flag detection
   flags=""
   if printf '%s\n' "$recent" \
@@ -267,14 +328,22 @@ while IFS= read -r branch; do
     flags="${flags:+$flags, }STALE"
     stale=1
   fi
+  if [ "$ahead_count" -ge "$ahead_min" ]; then
+    flags="${flags:+$flags, }AHEAD_OF_HEAD"
+  fi
 
-  # Report iff SESSION_INTERRUPTED OR (SURFACE_TOUCHED AND STALE)
+  # Report iff SESSION_INTERRUPTED OR (SURFACE_TOUCHED AND STALE) OR
+  # AHEAD_OF_HEAD. AHEAD_OF_HEAD is reported independent of STALE — a fresh,
+  # far-ahead branch is exactly the case that must not be exempt (llm#1238).
   report=0
   case "$flags" in
     *SESSION_INTERRUPTED*) report=1 ;;
   esac
   if [ $report -eq 0 ] && [ $stale -eq 1 ] && \
      printf '%s' "$flags" | grep -q 'SURFACE_TOUCHED'; then
+    report=1
+  fi
+  if [ $report -eq 0 ] && printf '%s' "$flags" | grep -q 'AHEAD_OF_HEAD'; then
     report=1
   fi
   [ $report -eq 1 ] || continue
