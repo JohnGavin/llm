@@ -2,6 +2,19 @@
 # Enhanced refresh script with proper branch management and error handling
 # Preserves complete history and handles git operations correctly
 # Runs via launchd every 12 hours
+#
+# Usage:
+#   refresh_and_preserve.sh             # normal run
+#   refresh_and_preserve.sh --selftest  # run the branch-safety self-test only
+#
+# CRITICAL (llm#1242): this script must NEVER switch which branch is checked
+# out in the shared main checkout — a concurrent interactive session or agent
+# may be mid-work on a different branch, and having a background job silently
+# `git checkout main` out from under it corrupts that session's next
+# `git status`/`git add`/`git commit`. It only fast-forwards whatever is
+# ALREADY checked out (must be $MAIN_BRANCH); if that isn't the case, or it
+# has no fast-forward path, the entire run is skipped, loudly, and HEAD is
+# never touched. See _guard_branch_and_pull() below.
 
 set -e
 
@@ -11,6 +24,142 @@ LOG_FILE="$LLM_REPO/inst/logs/refresh_preserve.log"
 ERROR_LOG="$LLM_REPO/inst/logs/refresh_preserve_error.log"
 LOCK_FILE="/tmp/refresh_preserve.lock"
 MAIN_BRANCH="main"
+
+# ── Branch-safety guard (llm#1242) ───────────────────────────────────────────
+# Never calls `git checkout`. Prints "proceed" and returns 0 when the caller
+# should continue (already on $main_branch, and it fast-forwarded cleanly, or
+# was already up to date with origin/$main_branch); prints "skip: <reason>"
+# and returns 1 otherwise — the caller must not do any further work.
+_guard_branch_and_pull() {
+  local repo="$1" main_branch="$2"
+  local current_branch
+  current_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [ "$current_branch" != "$main_branch" ]; then
+    echo "skip: non-default branch checked out (${repo} is on ${current_branch:-unknown}, not ${main_branch})"
+    return 1
+  fi
+  git -C "$repo" fetch origin "$main_branch" >/dev/null 2>&1 || true
+  if ! git -C "$repo" merge --ff-only "origin/${main_branch}" >/dev/null 2>&1; then
+    echo "skip: non-fast-forwardable (${repo}'s ${main_branch} cannot fast-forward to origin/${main_branch})"
+    return 1
+  fi
+  echo "proceed"
+  return 0
+}
+
+# Restores a stash created earlier in the run (see issue #100 — must ALWAYS
+# run when STASH_REF is set, regardless of which exit path is taken). Reuses
+# the `log`/`error_log` functions defined later in the script; only called
+# after those exist.
+_restore_stash_if_any() {
+  local repo="$1" stash_ref="$2"
+  if [ -z "${stash_ref}" ]; then
+    return 0
+  fi
+  log "Restoring stashed changes from ${stash_ref}..."
+  if git -C "$repo" stash apply "${stash_ref}" >> "$LOG_FILE" 2>&1; then
+    # Drop the labelled stash entry so the list stays clean. The reflog
+    # still holds the ref for 90 days for recovery if apply silently lost
+    # something.
+    local stash_index
+    stash_index=$(git -C "$repo" stash list | grep -n -F "${stash_ref}" | head -1 | cut -d: -f1)
+    if [ -n "${stash_index}" ]; then
+      git -C "$repo" stash drop "stash@{$((stash_index-1))}" >> "$LOG_FILE" 2>&1 || \
+        log "stash drop by index failed (harmless — reflog keeps it 90d)"
+    fi
+    log "Stash restored and entry dropped"
+  else
+    error_log "stash apply failed — keeping ${stash_ref} for manual recovery"
+  fi
+}
+
+# ── Self-test (llm#1242) ─────────────────────────────────────────────────────
+# Exercises _guard_branch_and_pull() only, against throwaway fixture repos —
+# NOT the nix-shell/R/cmonitor pipeline below, which needs project-specific
+# dependencies unavailable to a generic self-test.
+_run_selftest() {
+  local fail=0 tmp origin_dir clone_dir clone2_dir
+  local before_branch after_branch result rc after_sha origin_sha
+
+  tmp=$(mktemp -d /tmp/refresh_and_preserve_selftest_XXXXXX)
+  origin_dir="$tmp/origin.git"
+  clone_dir="$tmp/clone"
+
+  git init -q --bare "$origin_dir"
+  git clone -q "$origin_dir" "$clone_dir"
+  git -C "$clone_dir" config user.email "test@example.com"
+  git -C "$clone_dir" config user.name "Test"
+  echo "one" > "$clone_dir/f.txt"
+  git -C "$clone_dir" add f.txt
+  git -C "$clone_dir" commit -q -m "initial"
+  git -C "$clone_dir" branch -M main
+  git -C "$clone_dir" push -q -u origin main
+
+  # Case 1: fixture is on a NON-default branch — must skip on branch identity
+  # alone and must NOT switch branches (this is the exact llm#1242 bug).
+  git -C "$clone_dir" checkout -q -b feature/wip
+  before_branch=$(git -C "$clone_dir" rev-parse --abbrev-ref HEAD)
+  set +e
+  result=$(_guard_branch_and_pull "$clone_dir" "main")
+  rc=$?
+  set -e
+  after_branch=$(git -C "$clone_dir" rev-parse --abbrev-ref HEAD)
+  if [ "$rc" -eq 0 ]; then
+    echo "FAIL: [1/2] non-default-branch case: expected skip (rc=1), got proceed (rc=0)" >&2
+    fail=1
+  elif [ "$after_branch" != "$before_branch" ] || [ "$after_branch" != "feature/wip" ]; then
+    echo "FAIL: [1/2] non-default-branch case: branch was switched (${before_branch} -> ${after_branch})" >&2
+    fail=1
+  else
+    echo "  [1/2] non-default branch checked out -> skip without switching: PASS (${result})"
+  fi
+
+  # Case 2: fixture is on main, cleanly fast-forwardable from origin/main —
+  # must proceed and fast-forward (no regression).
+  git -C "$clone_dir" checkout -q main
+  clone2_dir="$tmp/clone2"
+  git clone -q "$origin_dir" "$clone2_dir"
+  git -C "$clone2_dir" config user.email "test@example.com"
+  git -C "$clone2_dir" config user.name "Test"
+  echo "two" >> "$clone2_dir/f.txt"
+  git -C "$clone2_dir" add f.txt
+  git -C "$clone2_dir" commit -q -m "second"
+  git -C "$clone2_dir" push -q origin main
+
+  set +e
+  result=$(_guard_branch_and_pull "$clone_dir" "main")
+  rc=$?
+  set -e
+  after_branch=$(git -C "$clone_dir" rev-parse --abbrev-ref HEAD)
+  after_sha=$(git -C "$clone_dir" rev-parse HEAD)
+  origin_sha=$(git -C "$origin_dir" rev-parse main)
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL: [2/2] default-branch ff-able case: expected proceed (rc=0), got skip (rc=1): ${result}" >&2
+    fail=1
+  elif [ "$after_branch" != "main" ]; then
+    echo "FAIL: [2/2] default-branch ff-able case: branch changed to ${after_branch}" >&2
+    fail=1
+  elif [ "$after_sha" != "$origin_sha" ]; then
+    echo "FAIL: [2/2] default-branch ff-able case: did not fast-forward (local=${after_sha} origin=${origin_sha})" >&2
+    fail=1
+  else
+    echo "  [2/2] default branch, fast-forwardable -> pulls normally: PASS"
+  fi
+
+  rm -rf "$tmp"
+
+  if [ "$fail" -ne 0 ]; then
+    echo "refresh_and_preserve.sh: self-test FAILED" >&2
+    return 1
+  fi
+  echo "refresh_and_preserve.sh: self-test PASSED (2/2)"
+  return 0
+}
+
+if [ "${1:-}" = "--selftest" ]; then
+  _run_selftest
+  exit $?
+fi
 
 # Source Nix if available
 if [ -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]; then
@@ -80,13 +229,18 @@ log "===== Starting history-preserving refresh ====="
 
 cd "$LLM_REPO"
 
-# CRITICAL: Save current branch and ensure we're on main
+# CRITICAL (llm#1242): never switch branches — only proceed if this checkout
+# is ALREADY on $MAIN_BRANCH and can fast-forward. Otherwise skip the entire
+# run, loudly, and leave HEAD exactly as found.
 ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 log "Current branch: $ORIGINAL_BRANCH"
 
-# Stash any uncommitted changes (track exact ref so the post-work pop targets the
-# right stash even if user adds another stash in between, or this script races
-# itself). Restored unconditionally at the end of the script — see issue #100.
+# Stash any uncommitted changes BEFORE attempting the fast-forward below —
+# same reasoning as the old pre-checkout stash: a dirty tree can block a
+# fast-forward merge just as it could block a checkout (see issue #100).
+# Track the exact ref so the post-work pop targets the right stash even if
+# user adds another stash in between, or this script races itself. Restored
+# unconditionally at the end of the script.
 STASH_REF=""
 if ! git diff --quiet || ! git diff --staged --quiet; then
     log "Stashing uncommitted changes..."
@@ -101,18 +255,16 @@ if ! git diff --quiet || ! git diff --staged --quiet; then
     fi
 fi
 
-# Switch to main branch
-if [ "$ORIGINAL_BRANCH" != "$MAIN_BRANCH" ]; then
-    log "Switching to $MAIN_BRANCH branch..."
-    git checkout "$MAIN_BRANCH" 2>&1 | tee -a "$LOG_FILE"
+set +e
+GUARD_RESULT=$(_guard_branch_and_pull "$LLM_REPO" "$MAIN_BRANCH")
+GUARD_RC=$?
+set -e
+if [ "$GUARD_RC" -ne 0 ]; then
+    log "SKIPPED (non-default or non-fast-forwardable branch checked out): ${GUARD_RESULT#skip: }"
+    _restore_stash_if_any "$LLM_REPO" "$STASH_REF"
+    exit 0
 fi
-
-# Pull latest changes
-log "Pulling latest changes from origin..."
-if ! git pull origin "$MAIN_BRANCH" 2>&1 | tee -a "$LOG_FILE"; then
-    error_log "Failed to pull from origin"
-    # Continue anyway - we can still update locally
-fi
+log "Pulled latest changes from origin (${GUARD_RESULT})"
 
 # 1. Archive current JSON files (in case something goes wrong)
 ARCHIVE_DIR="$LLM_REPO/inst/extdata/archive/$(date +%Y%m%d_%H%M%S)"
@@ -375,32 +527,14 @@ Total cost: \$$TOTAL_COST
     fi
 fi
 
-# 5. Return to original branch if different
-if [ "$ORIGINAL_BRANCH" != "$MAIN_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "HEAD" ]; then
-    log "Returning to original branch: $ORIGINAL_BRANCH"
-    git checkout "$ORIGINAL_BRANCH" 2>&1 | tee -a "$LOG_FILE"
-fi
-
-# 5b. Restore the stash created at line 87, if any. Outside the branch-switch
-# block so it ALWAYS runs when STASH_REF was set — fixes #100 (37 leaked
-# auto-stashes accumulated 2026-01 through 2026-05 because the pop was
-# previously gated on switching branches).
-if [ -n "$STASH_REF" ]; then
-    log "Restoring stashed changes from $STASH_REF..."
-    if git stash apply "$STASH_REF" >> "$LOG_FILE" 2>&1; then
-        # Drop the labelled stash entry so the list stays clean. The reflog
-        # still holds the ref for 90 days for recovery if apply silently lost
-        # something.
-        STASH_INDEX=$(git stash list | grep -n -F "$STASH_REF" | head -1 | cut -d: -f1)
-        if [ -n "$STASH_INDEX" ]; then
-            git stash drop "stash@{$((STASH_INDEX-1))}" >> "$LOG_FILE" 2>&1 || \
-                log "stash drop by index failed (harmless — reflog keeps it 90d)"
-        fi
-        log "Stash restored and entry dropped"
-    else
-        error_log "stash apply failed — keeping $STASH_REF for manual recovery"
-    fi
-fi
+# 5. Restore the stash created earlier, if any. `git checkout` back to
+# $ORIGINAL_BRANCH is no longer needed here (llm#1242): the branch-safety
+# guard above already guarantees ORIGINAL_BRANCH == MAIN_BRANCH before any
+# of this file's work runs, so this script never leaves that branch — fixes
+# #100 (37 leaked auto-stashes accumulated 2026-01 through 2026-05 because
+# the pop was previously gated on switching branches, which no longer
+# happens at all).
+_restore_stash_if_any "$LLM_REPO" "$STASH_REF"
 
 # 6. Clean up old archive directories (keep last 10)
 log "Cleaning old archives..."
