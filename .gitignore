@@ -60,6 +60,8 @@ proj/stats/simulations/randomwalk/
 .claude/CURRENT_WORK.md
 .claude/worktrees/
 .claude/skills/.system/
+# Claude Code local skill-sync cache (Anthropic example skills — auto-managed, not project content)
+.claude/skills/synced/
 
 # Nix build artifacts
 result
