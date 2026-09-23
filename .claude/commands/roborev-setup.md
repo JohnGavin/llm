@@ -4,6 +4,20 @@ Set up roborev with proper configuration for the current project.
 
 ## Prerequisites (gemini — required for fallback chain, fixes llm#283)
 
+**⚠ Superseded by llm#746 (2026-07-08) — read before setting any `*_backup_agent`.**
+Pointing a `*_backup_agent` at `gemini` (or any provider) is only safe if the
+corresponding `*_backup_model` is ALSO set explicitly. Otherwise the backup
+silently inherits the PRIMARY agent's pinned model (e.g. a `review_model_thorough`
+pin like `gemini-2.5-flash-lite`) instead of its own default — a claude-code
+backup then dies with `404 model_not_found`, and a gemini/codex backup just
+fails the same quota error the primary already hit. This poisoned every review
+in #746 until the backup was pinned explicitly. The current live global config
+(`~/.roborev/config.toml`) and this repo's `.roborev.toml` both use
+`*_backup_agent = 'claude-code'` + `*_backup_model = 'sonnet'` (review/refine/fix)
+as the verified-working combo — do NOT reset these back to `gemini` without also
+setting a gemini-specific `*_backup_model`, or you reintroduce #746. See the
+`roborev-gemini-dead-silent-failure` memory for the full incident history.
+
 The intended fallback order is `codex → gemini → claude-code (last resort)`.
 For this to work, the gemini-cli binary must be installed AND trusted for headless use:
 
@@ -24,18 +38,24 @@ export GEMINI_CLI_TRUST_WORKSPACE=true
 #    Then: launchctl bootout gui/$(id -u)/com.roborev.auto-refine
 #           launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.roborev.auto-refine.plist
 
-# 5. Set review_backup_agent explicitly (fixes llm#283):
-roborev config set --global review_backup_agent gemini
-roborev config set --global refine_backup_agent gemini
-roborev config set --global fix_backup_agent gemini
+# 5. Set the backup agent AND its own model explicitly (see #746 warning above —
+#    never set *_backup_agent without also pinning *_backup_model):
+roborev config set --global review_backup_agent claude-code
+roborev config set --global review_backup_model sonnet
+roborev config set --global refine_backup_agent claude-code
+roborev config set --global refine_backup_model sonnet
+roborev config set --global fix_backup_agent claude-code
+roborev config set --global fix_backup_model sonnet
 
 # 6. Verify
-roborev check-agents   # gemini should show OK
+roborev check-agents   # claude-code should show OK
 ```
 
-Note: `default_backup_agent = 'gemini'` in `~/.roborev/config.toml` is
-already correct. The above steps fill in the per-operation backup keys
-(`review_backup_agent`, etc.) to make the chain explicit.
+Note: `default_backup_agent = 'claude-code'` in `~/.roborev/config.toml` is
+the current correct value (changed from `gemini` per #746 — gemini quota
+outages otherwise take the whole fallback chain down with them). The steps
+above fill in the per-operation backup keys (`review_backup_agent`, etc.)
+with their own model pins so a fallback never inherits a poisoned model.
 
 ## Steps
 
