@@ -137,6 +137,14 @@ _load_config() {
   SCAN_DEPTH="${REPO_VISIBILITY_SCAN_DEPTH:-6}"
   GH_TIMEOUT="${GH_REPO_VISIBILITY_TIMEOUT:-8}"
   MAX_CANDIDATES_SCAN="${REPO_VISIBILITY_MAX_CANDIDATES_SCAN:-500}"
+  # Concurrency guard for _build_candidates()'s final publish step (llm
+  # repo_visibility-refresh-race fix, 2026-09-22) — see that function's
+  # comment for the full race this defends against. A lock held longer than
+  # this is treated as abandoned (its holder was killed mid-refresh) rather
+  # than blocking every future refresh forever. WAIT_SECS bounds how long a
+  # concurrent refresh will queue behind another before giving up.
+  CANDIDATES_LOCK_STALE_SECS="${REPO_VISIBILITY_LOCK_STALE_SECS:-60}"
+  CANDIDATES_LOCK_WAIT_SECS="${REPO_VISIBILITY_LOCK_WAIT_SECS:-30}"
 }
 _load_config
 
@@ -343,14 +351,131 @@ classify_one() {
   printf '%s\n' "$result"
 }
 
+# ─── candidates refresh lock ────────────────────────────────────────────────
+# Serializes the final "publish" step of _build_candidates() (the mv into
+# place + the .epoch stamp) across concurrent `candidates --refresh`
+# invocations — see that function's own comment for the race this fixes.
+#
+# Prefers flock(1) (atomic, kernel-arbitrated, no polling) when present.
+# Falls back to an mkdir-based lock (mkdir is atomic on any POSIX
+# filesystem) when flock is unavailable. Correction, 2026-09-23: an earlier
+# version of this comment claimed "flock is absent on this machine" as a
+# fact about the hardware -- that was measured from a shell that had NOT
+# entered the mandatory nix dev shell (`~/docs_gh/llm/default.sh` /
+# `nix-agent-shell-protocol`), where PATH lacks the nix-provided toybox
+# package. Re-verified: `nix-shell ~/docs_gh/llm/default.nix --run "command
+# -v flock"` DOES find flock (via toybox) on this same machine. The
+# mkdir-based fallback stays -- this script (invoked by
+# private_repo_detail_guard.sh, a PreToolUse hook) may legitimately run
+# outside any nix-entered shell, and the fallback needs to be correct
+# regardless -- but its existence should not be justified by a false claim
+# about flock's general availability here.
+#
+# A lock older than CANDIDATES_LOCK_STALE_SECS is treated as abandoned (its
+# holder was killed mid-refresh) and reclaimed rather than blocking every
+# future refresh forever.
+#
+# Uses a FIXED numeric file descriptor (200), never bash 4's `{varname}fd`
+# auto-allocation syntax — macOS ships bash 3.2 (GPLv2-frozen, verified
+# still the version at /bin/bash on this machine) as its system bash, and
+# `exec {fd}>...` is a bash-4.1+ feature that fails outright under it. A
+# fixed numeric fd works unchanged back to bash's earliest versions
+# (verified against both /bin/bash 3.2.57 and the newer bash on $PATH here).
+_acquire_candidates_lock() {
+  mkdir -p "$(dirname "$CANDIDATES_FILE")" 2>/dev/null || true
+  if command -v flock >/dev/null 2>&1; then
+    exec 200>"${CANDIDATES_FILE}.flock" 2>/dev/null || return 1
+    flock -w "$CANDIDATES_LOCK_WAIT_SECS" 200
+    return $?
+  fi
+
+  local lock_dir="${CANDIDATES_FILE}.lock" waited=0 lock_mtime lock_age
+  local max_waits=$(( CANDIDATES_LOCK_WAIT_SECS * 5 ))   # polls every 0.2s
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    if [ -d "$lock_dir" ]; then
+      lock_mtime="$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo 0)"
+      lock_age=$(( $(_now) - lock_mtime ))
+      if [ "$lock_age" -gt "$CANDIDATES_LOCK_STALE_SECS" ]; then
+        # Abandoned lock (holder crashed/was killed mid-refresh) — reclaim
+        # it rather than waiting out the full timeout below every time.
+        rmdir "$lock_dir" 2>/dev/null
+        continue
+      fi
+    fi
+    waited=$((waited + 1))
+    if [ "$waited" -gt "$max_waits" ]; then
+      return 1
+    fi
+    sleep 0.2
+  done
+  return 0
+}
+
+_release_candidates_lock() {
+  if command -v flock >/dev/null 2>&1; then
+    flock -u 200 2>/dev/null || true
+    exec 200>&- 2>/dev/null || true
+    return 0
+  fi
+  rmdir "${CANDIDATES_FILE}.lock" 2>/dev/null || true
+}
+
 # ─── candidates [--refresh] ─────────────────────────────────────────────────
 # Prints TSV: name<TAB>path<TAB>visibility for every repo under $SCAN_ROOT
 # classified private, local_only, or confidential_by_policy. NEVER rebuilds
 # inline unless --refresh is passed or no cache file exists at all (first
 # run) — a PreToolUse hook consuming this must stay fast.
+#
+# ── Concurrency (fix, 2026-09-22) ───────────────────────────────────────────
+# Two concurrent `candidates --refresh` invocations (a scheduled background
+# refresh overlapping a manual one, or two sessions both publishing at once)
+# used to race on a FIXED shared "${CANDIDATES_FILE}.tmp" path: one
+# process's `: > tmp` could truncate the OTHER process's in-progress tmp
+# file mid-write, the losing process's final `mv` could fail outright, and
+# — critically — the function's LAST line stamped a FRESH .epoch
+# unconditionally, regardless of whether the `mv` before it had succeeded,
+# silently masking the failure (`set -uo pipefail`, no `-e`, so the
+# function's own return status became the unconditional printf's). Net
+# effect: a losing/corrupting refresh could leave the real cache file
+# severely truncated while ALSO stamping a fresh .epoch — so the staleness
+# check in candidates() below would report the corrupted, truncated cache as
+# current. Found while investigating a private_repo_detail_guard.sh false
+# clear during crypto_swarms work; reproduced with 3 concurrent
+# `--refresh` calls against ~30 fake repos (candidates.tsv row counts across
+# 5 trials: 90, 2, 1, 1, 90 — 90 is the correct/expected count).
+#
+# Fixed two ways, together:
+#   1. Every invocation accumulates into its OWN uniquely-named tmp file
+#      (mktemp), so no concurrent writer can ever truncate or interleave
+#      into another writer's in-progress output. This alone removes the
+#      data-loss hazard.
+#   2. The final publish step (rename into place + .epoch stamp) is
+#      serialized under a lock (_acquire_candidates_lock /
+#      _release_candidates_lock, above), so two racing refreshes cannot
+#      leave the rename and the epoch stamp as two separate, non-atomic
+#      events observable half-applied by a concurrent reader, and a failed
+#      rename is propagated as a real error rather than swallowed by the
+#      unconditional epoch write that used to follow it unconditionally.
 _build_candidates() {
-  local d name vis count=0 entry root gitdir
-  : > "${CANDIDATES_FILE}.tmp"
+  local d name vis count=0 entry root gitdir tmp_file lock_rc
+  tmp_file="$(mktemp "${CANDIDATES_FILE}.XXXXXX" 2>/dev/null)" || {
+    echo "repo_visibility.sh: ERROR — could not create a temp file for candidates rebuild (mktemp failed near $CANDIDATES_FILE)" >&2
+    return 1
+  }
+  # Cleanup is explicit at each return path below (rm -f "$tmp_file" on the
+  # two failure paths; the mv on success already removes it), rather than a
+  # `trap ... RETURN` — deliberately. A RETURN trap set here does NOT fire
+  # only once for this function's own return: bash re-fires it again when
+  # this function's CALLER (candidates()) subsequently returns, by which
+  # point $tmp_file is out of scope. Under `set -u`, that second firing's
+  # `rm -f "$tmp_file"` throws an unbound-variable error, and because it
+  # fires from inside candidates()'s own return (called by the self-test as
+  # `candidates --refresh >/dev/null 2>&1`), the error is silently
+  # swallowed by that redirection and the ENTIRE script exits — no output,
+  # no diagnostic. Reproduced and confirmed in isolation while writing this
+  # fix (a trap-based version of this exact structure kills the process
+  # silently; the same structure without the trap does not). Explicit
+  # per-path cleanup has no such caller-leakage hazard.
 
   # ── Declared entries first (llm#1183), from BOTH confidential sources ──────
   # Every entry from _confidential_entries — the TRACKED, public list
@@ -386,7 +511,7 @@ _build_candidates() {
   # first match -- and the path row adds a genuinely distinct match target.
   while IFS= read -r entry; do
     [ -z "$entry" ] && continue
-    printf '%s\t%s\t%s\n' "$entry" "" "confidential_by_policy" >> "${CANDIDATES_FILE}.tmp"
+    printf '%s\t%s\t%s\n' "$entry" "" "confidential_by_policy" >> "$tmp_file"
   done < <(_confidential_entries)
 
   # ── Filesystem discovery (safety net) ─────────────────────────────────────
@@ -425,13 +550,34 @@ _build_candidates() {
       vis="$(classify_one "$d")"
       case "$vis" in
         private|local_only|confidential_by_policy)
-          printf '%s\t%s\t%s\n' "$name" "$d" "$vis" >> "${CANDIDATES_FILE}.tmp"
+          printf '%s\t%s\t%s\n' "$name" "$d" "$vis" >> "$tmp_file"
           ;;
       esac
     done < <(find "$root" -mindepth 1 -maxdepth "$SCAN_DEPTH" -name .git -print -type d -prune 2>/dev/null)
   done
-  mv "${CANDIDATES_FILE}.tmp" "$CANDIDATES_FILE"
-  printf '%s\n' "$(_now)" > "${CANDIDATES_FILE}.epoch"
+
+  # ── Serialize the final publish (rename + epoch stamp) under a lock ──────
+  # By this point $tmp_file is this invocation's own complete, internally
+  # consistent result — the mktemp fix above already prevents any other
+  # writer from having corrupted it. The lock additionally orders WHICH
+  # writer's result becomes the final $CANDIDATES_FILE, so a slow writer
+  # that started earlier can never overwrite a faster writer's fresher
+  # result with its own older one.
+  if ! _acquire_candidates_lock; then
+    echo "repo_visibility.sh: ERROR — could not acquire the candidates refresh lock within ${CANDIDATES_LOCK_WAIT_SECS}s (another refresh appears stuck); leaving $CANDIDATES_FILE untouched" >&2
+    rm -f "$tmp_file"
+    return 1
+  fi
+  if mv "$tmp_file" "$CANDIDATES_FILE" 2>/dev/null; then
+    printf '%s\n' "$(_now)" > "${CANDIDATES_FILE}.epoch"
+    lock_rc=0
+  else
+    echo "repo_visibility.sh: ERROR — mv of refreshed candidates into place failed; NOT stamping .epoch (a stale/missing .epoch correctly reports INDETERMINATE rather than lying about freshness)" >&2
+    rm -f "$tmp_file"
+    lock_rc=1
+  fi
+  _release_candidates_lock
+  return "$lock_rc"
 }
 
 candidates() {
@@ -455,10 +601,22 @@ candidates() {
   #       an empty-because-broken cache was previously indistinguishable
   #       from an empty-because-nothing-found one, and both silently
   #       allowed).
-  local refresh="${1:-}" epoch ts_now out rc stale=0
+  local refresh="${1:-}" epoch ts_now out rc stale=0 build_rc=0
   mkdir -p "$(dirname "$CANDIDATES_FILE")" 2>/dev/null || true
   if [ "$refresh" = "--refresh" ]; then
     _build_candidates
+    build_rc=$?
+    if [ "$build_rc" -ne 0 ]; then
+      # Per checks-must-distinguish-unknown: a refresh that silently failed
+      # to update the cache must not be indistinguishable from one that
+      # succeeded. _build_candidates already reported the specific cause to
+      # stderr; do NOT invent a new exit code here — fall through to
+      # whatever is currently on disk (a still-fresh previous cache, a
+      # stale one, or none at all), which the existing checks below already
+      # classify correctly and report as exit 3 INDETERMINATE whenever the
+      # data on disk cannot be trusted as current.
+      echo "repo_visibility.sh: WARNING — candidates --refresh failed to update the cache (see error above); falling through to whatever is currently on disk" >&2
+    fi
   fi
 
   if [ ! -f "$CANDIDATES_FILE" ]; then
@@ -756,6 +914,49 @@ if [ "${1:-}" = "--selftest" ]; then
   _case "(falsification) a shallower depth misses the nested worktree again" \
     "$(printf '%s' "$shallow_out" | grep -c 'branchA')" "0"
   unset REPO_VISIBILITY_SCAN_DEPTH
+  unset REPO_VISIBILITY_SCAN_ROOTS
+
+  # ── concurrency: overlapping --refresh invocations never corrupt the
+  #    cache (regression case for the refresh-race fix, 2026-09-22) ────────
+  # _build_candidates() used to write into a FIXED shared
+  # "${CANDIDATES_FILE}.tmp" path, so two concurrent `candidates --refresh`
+  # calls could truncate each other's in-progress output, race the final
+  # mv, and still stamp a FRESH .epoch regardless — silently reporting a
+  # corrupted, truncated cache as current. Forcing the exact interleaving
+  # deterministically (rather than by timing luck) is not attempted here;
+  # this is instead a best-effort concurrent-trial test. It is nonetheless
+  # a meaningful regression check under the fix: mktemp + the publish lock
+  # make the OUTCOME deterministic regardless of scheduling (every
+  # concurrent writer produces a complete, uncorrupted result and only one
+  # of them "wins" the final rename), so a passing run here is evidence of
+  # correctness, not a lucky non-reproduction — unlike on the pre-fix code,
+  # where the same test reliably produced mv errors and/or a truncated
+  # cache on every run during manual verification of this fix.
+  concurrency_root="$TMP_DIR/concurrency_scan_root"
+  mkdir -p "$concurrency_root"
+  for _i in $(seq 1 15); do
+    mkdir -p "$concurrency_root/repo_$_i/.git"
+  done
+  export REPO_VISIBILITY_SCAN_ROOTS="$concurrency_root"
+  unset REPO_VISIBILITY_SCAN_ROOT
+  export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/concurrency_candidates.tsv"
+  export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/concurrency_confidential.txt"
+  export REPO_VISIBILITY_CONFIDENTIAL_LOCAL_LIST="$TMP_DIR/overlay_unused_concurrency.txt"
+  : > "$REPO_VISIBILITY_CONFIDENTIAL_LIST"
+  _load_config
+  concurrency_err="$TMP_DIR/concurrency_stderr.txt"
+  : > "$concurrency_err"
+  for _c in 1 2 3; do
+    ( candidates --refresh >/dev/null 2>>"$concurrency_err" ) &
+  done
+  wait
+  concurrency_rows="$(wc -l < "$REPO_VISIBILITY_CANDIDATES_FILE" 2>/dev/null | tr -d ' ')"
+  concurrency_mv_errors="$(grep -c 'No such file or directory' "$concurrency_err" 2>/dev/null)"
+  [ -n "$concurrency_mv_errors" ] || concurrency_mv_errors=0
+  _case "concurrent --refresh invocations: no 'mv: ... No such file' on stderr" \
+    "$concurrency_mv_errors" "0"
+  _case "concurrent --refresh invocations: candidates.tsv has all 15 rows, not truncated" \
+    "$concurrency_rows" "15"
   unset REPO_VISIBILITY_SCAN_ROOTS
 
   unset REPO_VISIBILITY_SCAN_ROOT
