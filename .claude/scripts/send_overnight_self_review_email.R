@@ -1686,6 +1686,92 @@ sec4_block <- collapsible_block(
 # ── Assemble email body ────────────────────────────────────────────────────────
 today_str <- format(Sys.Date(), "%Y-%m-%d")
 
+# ── Sustained-green meta-check (llm#1241) ─────────────────────────────────────
+# Detectors 1-5 are the only ones that can ever be 'critical'/'major' (6-10 are
+# usage-efficiency nudges capped well below action-level -- see the "USAGE-
+# EFFICIENCY DETECTORS" header in self_review_stage1.sql). If they have logged
+# nothing above 'minor' for SUSTAINED_GREEN_DAYS running -- while lessons are
+# demonstrably still being captured elsewhere (a commit touching
+# .claude/memory/, .claude/rules/ or .claude/incidents/ in the same window) --
+# that gap is itself a finding: `checks-must-distinguish-unknown` applied to
+# the self-review's own verdict. A check that cannot go red for two weeks
+# needs to say so, not just keep reporting green. N=14 is llm#1241's own
+# suggested starting point, derived from its 8-week data (53/56 all-clear days
+# vs. 22 lesson-writing days).
+SUSTAINED_GREEN_DAYS <- 14L
+
+meta_green_check <- local({
+  repo <- Sys.getenv("LLM_REPO_ROOT", unset = file.path(Sys.getenv("HOME"), "docs_gh", "llm"))
+  indet <- function(why) list(
+    fired   = NA,
+    summary = "indeterminate",
+    body    = sprintf(
+      '<p style="color:%s;">&#9888; Could not determine &mdash; %s. This is NOT the same as "the green verdict is real".</p>',
+      ACCENT_ORANGE, htmlEscape(why)
+    )
+  )
+
+  action_recent <- safe_query(sprintf("
+    SELECT COUNT(*) AS n
+    FROM self_review_findings_stage1
+    WHERE severity IN ('critical', 'major')
+      AND detected_at >= current_timestamp::TIMESTAMP - INTERVAL '%d' DAY
+  ", SUSTAINED_GREEN_DAYS), fallback = data.frame(n = NA_integer_))
+  n_action_recent <- if (nrow(action_recent) > 0L) {
+    suppressWarnings(as.integer(action_recent$n[[1]]))
+  } else {
+    NA_integer_
+  }
+  if (is.na(n_action_recent)) return(indet("self_review_findings_stage1 query failed"))
+
+  if (!dir.exists(file.path(repo, ".git"))) return(indet(sprintf("no git repo at %s", repo)))
+  out <- suppressWarnings(tryCatch(
+    system2("git", shQuote(c(
+      "-C", repo, "log", sprintf("--since=%d.days.ago", SUSTAINED_GREEN_DAYS),
+      "--no-merges", "--format=%h",
+      "--", ".claude/memory/", ".claude/rules/", ".claude/incidents/"
+    )), stdout = TRUE, stderr = FALSE),
+    error = function(e) structure(character(0), status = 1L)
+  ))
+  st <- attr(out, "status")
+  if (!is.null(st) && !identical(as.integer(st), 0L)) {
+    return(indet(sprintf("git log exited %s", st)))
+  }
+  n_lesson_commits <- length(out[nzchar(out)])
+
+  fired <- identical(n_action_recent, 0L) && n_lesson_commits > 0L
+  list(
+    fired            = fired,
+    n_action_recent  = n_action_recent,
+    n_lesson_commits = n_lesson_commits,
+    summary          = if (fired) {
+      sprintf("FIRING — 0 action-level findings, %d lesson commit(s), %dd window",
+              n_lesson_commits, SUSTAINED_GREEN_DAYS)
+    } else {
+      sprintf("clear — %d action-level finding(s) in %dd", n_action_recent, SUSTAINED_GREEN_DAYS)
+    },
+    body = if (fired) {
+      sprintf(
+        '<p style="color:%s;">Detectors 1-5 have logged nothing above <code>minor</code>
+for <b>%d days</b>, while <b>%d commit(s)</b> touched <code>.claude/memory/</code>,
+<code>.claude/rules/</code> or <code>.claude/incidents/</code> in the same window.
+A check that has been unable to go red for two weeks straight needs to say so,
+not just keep reporting green (<code>checks-must-distinguish-unknown</code>,
+llm#1241). Treat the recent all-clear verdict as unverified until a human
+rechecks whether it is real.</p>',
+        ACCENT_ORANGE, SUSTAINED_GREEN_DAYS, n_lesson_commits
+      )
+    } else {
+      sprintf(
+        '<p style="color:%s;">%d action-level (critical/major) finding(s) logged in
+the last %d days &mdash; the recent all-clear verdict has evidence behind it,
+this meta-check has not fired.</p>',
+        DARK_TEXT, n_action_recent, SUSTAINED_GREEN_DAYS
+      )
+    }
+  )
+})
+
 # ── Action-required verdict (llm#749 Part B, bounded slice) ──────────────────
 # llm#749 Part B asks for a full action-first redesign (subject verdict, a
 # lead digest, a false-positive cron classifier, and collapsing 5 sections
@@ -1729,7 +1815,34 @@ if (n_stale_tables > 0L) {
   action_slugs <- c(action_slugs, "source-stale")
 }
 
+# llm#1241: sustained-green meta-check — see its definition above. Fires as an
+# action item (bumps the subject line + red box) rather than a silent info
+# finding, because the whole point is that a two-week-unbreakable green
+# verdict must not stay easy to miss.
+if (isTRUE(meta_green_check$fired)) {
+  action_items <- c(action_items, sprintf(
+    "sustained green: 0 action-level findings in %d days while %d lesson commit(s) captured elsewhere",
+    SUSTAINED_GREEN_DAYS, meta_green_check$n_lesson_commits
+  ))
+  action_slugs <- c(action_slugs, "sustained-green")
+}
+
 n_action_items <- length(action_items)
+
+# Collapsible detail for the sustained-green meta-check, regardless of whether
+# it fired — transparency for the "clear" case matters too (the reader should
+# be able to confirm the meta-check actually ran, not just infer it from an
+# absent warning).
+sec_meta_green_block <- collapsible_block(
+  "Sustained-green meta-check (llm#1241)",
+  meta_green_check$summary,
+  meta_green_check$body,
+  summary_color = if (identical(meta_green_check$summary, "indeterminate") || isTRUE(meta_green_check$fired)) {
+    ACCENT_ORANGE
+  } else {
+    ACCENT_GREEN
+  }
+)
 
 # "All clear — nothing needs action" contradicted the scope banner rendered
 # directly above it, which says a quiet morning here is NOT evidence that
@@ -1781,6 +1894,119 @@ border-radius:6px;border-left:4px solid #ff5252;">
   )
 }
 
+# ── Lesson-capture vs action-level verdict, by window (llm#1241) ─────────────
+# The 24h-only "Lessons captured" section further below shows a single day's
+# snapshot. llm#1241's own investigation found the sustained divergence only
+# by querying self_review_findings_stage1 and `git log` by hand across
+# 1/2/4/8-week windows (8-week data: 53/56 all-clear days vs. 22 lesson-
+# writing days). This renders the same comparison beside the verdict box
+# every day the report runs, not only when someone queries it manually.
+lessons_window_section <- local({
+  windows <- c(`Last 1 week` = 7L, `Last 2 weeks` = 14L, `Last 4 weeks` = 28L, `Last 8 weeks` = 56L)
+  repo <- Sys.getenv("LLM_REPO_ROOT", unset = file.path(Sys.getenv("HOME"), "docs_gh", "llm"))
+
+  action_days <- safe_query("
+    SELECT
+      COUNT(DISTINCT CASE WHEN detected_at >= current_timestamp::TIMESTAMP - INTERVAL '7'  DAY THEN CAST(detected_at AS DATE) END) AS d7,
+      COUNT(DISTINCT CASE WHEN detected_at >= current_timestamp::TIMESTAMP - INTERVAL '14' DAY THEN CAST(detected_at AS DATE) END) AS d14,
+      COUNT(DISTINCT CASE WHEN detected_at >= current_timestamp::TIMESTAMP - INTERVAL '28' DAY THEN CAST(detected_at AS DATE) END) AS d28,
+      COUNT(DISTINCT CASE WHEN detected_at >= current_timestamp::TIMESTAMP - INTERVAL '56' DAY THEN CAST(detected_at AS DATE) END) AS d56
+    FROM self_review_findings_stage1
+    WHERE severity IN ('critical', 'major')
+  ", fallback = data.frame(d7 = NA_integer_, d14 = NA_integer_, d28 = NA_integer_, d56 = NA_integer_))
+  action_days_vec <- if (nrow(action_days) > 0L) {
+    suppressWarnings(as.integer(unlist(action_days[1, c("d7", "d14", "d28", "d56")])))
+  } else {
+    rep(NA_integer_, 4L)
+  }
+  names(action_days_vec) <- names(windows)
+
+  lesson_commits_vec <- rep(NA_integer_, 4L)
+  names(lesson_commits_vec) <- names(windows)
+  git_ok <- dir.exists(file.path(repo, ".git"))
+  if (git_ok) {
+    out <- suppressWarnings(tryCatch(
+      system2("git", shQuote(c(
+        "-C", repo, "log", "--since=56.days.ago", "--no-merges",
+        "--format=%ad", "--date=short",
+        "--", ".claude/memory/", ".claude/rules/", ".claude/incidents/"
+      )), stdout = TRUE, stderr = FALSE),
+      error = function(e) structure(character(0), status = 1L)
+    ))
+    st <- attr(out, "status")
+    if (is.null(st) || identical(as.integer(st), 0L)) {
+      dates <- suppressWarnings(as.Date(out[nzchar(out)]))
+      dates <- dates[!is.na(dates)]
+      today <- Sys.Date()
+      lesson_commits_vec <- vapply(windows, function(w) sum(dates >= (today - w + 1L)), integer(1))
+      names(lesson_commits_vec) <- names(windows)
+    } else {
+      git_ok <- FALSE
+    }
+  }
+
+  indeterminate <- !git_ok || anyNA(action_days_vec)
+
+  rows_html <- paste(vapply(seq_along(windows), function(i) {
+    label    <- names(windows)[i]
+    win_days <- windows[i]
+    act_days <- action_days_vec[i]
+    lesson_n <- lesson_commits_vec[i]
+    divergence <- !is.na(act_days) && !is.na(lesson_n) && act_days == 0L && lesson_n > 0L
+    row_color <- if (divergence) "color:#ff9800;font-weight:bold;" else sprintf("color:%s;", DARK_TEXT)
+    sprintf(
+      '<tr style="background-color:%s;"><td style="padding:4px 10px;%s">%s</td>
+<td style="padding:4px 10px;text-align:right;%s">%s / %d</td>
+<td style="padding:4px 10px;text-align:right;%s">%s</td></tr>',
+      DARK_CARD, row_color, label,
+      row_color, if (is.na(act_days)) "?" else act_days, win_days,
+      row_color, if (is.na(lesson_n)) "?" else lesson_n
+    )
+  }, character(1)), collapse = "\n")
+
+  body <- sprintf(
+    '<table style="border-collapse:collapse;color:%s;font-size:%s;width:100%%;">
+<tr style="color:%s;"><th style="text-align:left;padding:4px 10px;">Window</th>
+<th style="text-align:right;padding:4px 10px;">Action-level days</th>
+<th style="text-align:right;padding:4px 10px;">Lesson commits</th></tr>
+%s
+</table>
+<p style="color:%s;font-size:%s;margin:6px 0 0 0;">
+  Action-level days = calendar days with a critical/major finding
+  (<code>self_review_findings_stage1</code>). Lesson commits = commits
+  touching <code>.claude/memory/</code>, <code>.claude/rules/</code> or
+  <code>.claude/incidents/</code> in the same window. A window with 0
+  action-level days and &gt;0 lesson commits (highlighted) is the divergence
+  llm#1241 exists to surface.%s
+</p>',
+    DARK_TEXT, EMAIL_FONT_BODY,
+    DARK_MUTED,
+    rows_html,
+    DARK_MUTED, EMAIL_FONT_FOOTER,
+    if (indeterminate) {
+      ' Some cells could not be determined (git or DB query failed) — shown as "?", not 0.'
+    } else {
+      ""
+    }
+  )
+
+  list(body = body, indeterminate = indeterminate)
+})
+
+lessons_window_block <- sprintf(
+  '<div style="background-color:%s;padding:14px 20px;margin-bottom:12px;
+border-radius:6px;border-left:4px solid %s;">
+<p style="color:%s;font-size:%s;margin:0 0 8px 0;font-weight:bold;">
+  Lesson-capture vs action-level verdict, by window (llm#1241)
+</p>
+%s
+</div>',
+  DARK_CARD,
+  if (lessons_window_section$indeterminate) ACCENT_ORANGE else ACCENT_BLUE,
+  DARK_TEXT, EMAIL_FONT_SUBTITLE,
+  lessons_window_section$body
+)
+
 email_subject <- if (n_action_items == 0L) {
   sprintf("[llm] Overnight ✓ all clear — %s", today_str)
 } else {
@@ -1799,8 +2025,11 @@ border-radius:6px;">
 </p>
 <p style="color:%s;font-size:%s;margin:6px 0 0 0;">
   Scope: session-telemetry patterns only (long sessions, agent sprawl, stuck loops,
-  tool-error rate). This report does <b>not</b> inspect config, rules or code &mdash;
-  a quiet morning here is not evidence that nothing needs changing.
+  tool-error rate), plus how many memory/rules/incidents commits were captured
+  across the last 1/2/4/8 weeks. This report still does <b>not</b> inspect config,
+  rules or code content, or anything said in a conversation &mdash; a quiet
+  action-level verdict here is not evidence that nothing needs changing, especially
+  if lessons are visibly being captured elsewhere in the same window (llm#1241).
 </p>
 </div>',
   DARK_CARD, ACCENT_BLUE, EMAIL_FONT_H2,
@@ -2662,11 +2891,14 @@ agent_failure_section <- tryCatch({
 # clear" and never mentioned them.
 #
 # This is deliberately NOT transcript mining. It reads git and nothing else:
-# a lesson that was actually written down is a commit touching .claude/memory/
-# or .claude/rules/. That is deterministic, needs no model, and cannot invent
-# a lesson that was not recorded. It measures capture, not insight — a lesson
-# nobody wrote down stays invisible here, and that gap is stated in the body
-# rather than papered over.
+# a lesson that was actually written down is a commit touching .claude/memory/,
+# .claude/rules/ or .claude/incidents/ (llm#1241 added the third path so this
+# 24h section counts the same three paths as the by-window table above and
+# the sustained-green meta-check, so all three agree on what "a lesson" is).
+# That is deterministic, needs no model, and cannot invent a lesson that was
+# not recorded. It measures capture, not insight — a lesson nobody wrote down
+# stays invisible here, and that gap is stated in the body rather than
+# papered over.
 lessons_section <- local({
   repo <- Sys.getenv("LLM_REPO_ROOT", unset = file.path(Sys.getenv("HOME"), "docs_gh", "llm"))
   indet <- function(why) list(summary = "indeterminate", body = sprintf(
@@ -2681,7 +2913,8 @@ lessons_section <- local({
   # the whole point of keeping the two outcomes distinguishable.
   out <- suppressWarnings(tryCatch(
     system2("git", shQuote(c("-C", repo, "log", "--since=24.hours.ago", "--no-merges",
-                             "--format=%h\t%s", "--", ".claude/memory/", ".claude/rules/")),
+                             "--format=%h\t%s", "--", ".claude/memory/", ".claude/rules/",
+                             ".claude/incidents/")),
             stdout = TRUE, stderr = FALSE),
     error = function(e) structure(character(0), status = 1L)))
   st <- attr(out, "status")
@@ -2689,7 +2922,7 @@ lessons_section <- local({
   out <- out[nzchar(out)]
   if (length(out) == 0L) {
     return(list(summary = "none in 24h", body = sprintf(
-      '<p style="color:%s;">No commit touched <code>.claude/memory/</code> or <code>.claude/rules/</code> in the last 24h. Counts what was written down, not what was learned.</p>',
+      '<p style="color:%s;">No commit touched <code>.claude/memory/</code>, <code>.claude/rules/</code> or <code>.claude/incidents/</code> in the last 24h. Counts what was written down, not what was learned.</p>',
       DARK_TEXT)))
   }
   rows <- paste(vapply(strsplit(out, "\t", fixed = TRUE), function(p) sprintf(
@@ -2722,6 +2955,8 @@ email_body <- paste0(
 padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   header_html,
   action_digest_html, "\n",
+  lessons_window_block, "\n",
+  sec_meta_green_block, "\n",
   sec1_block, "\n",
   sec_lessons_block, "\n",
   sec2_block, "\n",
