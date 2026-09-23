@@ -381,7 +381,11 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- ═════════════════════════════════════════════════════════════════════════════
 -- USAGE-EFFICIENCY DETECTORS (6-10)
 -- Source: Anthropic usage panel signals — efficiency nudges, not correctness bugs.
--- All severity: info
+-- Default severity: info. Detectors 6-9 (each has a variable magnitude) escalate
+-- to 'major' at ~1.75x their base threshold — the same ratio as the fixer-share
+-- example (70%/40%) that motivated this — so an extreme instance is no longer
+-- capped at info regardless of magnitude (llm#1241). Detector 10 is a static
+-- one-off "data gap" finding with no magnitude to escalate; it stays 'info'.
 -- ═════════════════════════════════════════════════════════════════════════════
 
 
@@ -419,7 +423,7 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- Threshold: ≥ 4 concurrent sessions at any moment on a calendar day.
 -- Finding scope: one finding per flagged calendar day (stable, idempotent).
 -- Recommendation: queue instead of running 4+ at once.
--- Severity: info
+-- Severity: info (4-6 concurrent), major (≥ 7 — extreme, llm#1241)
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Ref: #804 — global unbounded running sum + COALESCE(ended_at, now()) made
 -- peak_concurrent grow without bound; fixed via per-day partitioning + a
@@ -487,12 +491,16 @@ SELECT
     'parallel_sprawl_' || md5(day_bucket::VARCHAR)  AS finding_id,
     'parallel_session_sprawl'                        AS finding_type,
     NULL                                             AS session_id,
-    'info'                                           AS severity,
+    -- llm#1241: escalate to 'major' at ~1.75x the base threshold (7+
+    -- concurrent) instead of capping every instance at 'info' regardless of
+    -- magnitude — same ratio as the fixer-share example that motivated this.
+    CASE WHEN peak_concurrent >= 7 THEN 'major' ELSE 'info' END AS severity,
     json_object(
-        'day',              day_bucket::VARCHAR,
-        'peak_concurrent',  peak_concurrent::VARCHAR,
-        'threshold',        '4 concurrent sessions',
-        'recommendation',   'All sessions share one rate limit — queue instead of running 4+ at once'
+        'day',                day_bucket::VARCHAR,
+        'peak_concurrent',    peak_concurrent::VARCHAR,
+        'threshold',          '4 concurrent sessions',
+        'extreme_threshold',  '7 concurrent sessions (escalates to major, llm#1241)',
+        'recommendation',     'All sessions share one rate limit — queue instead of running 4+ at once'
     )::JSON                                         AS evidence,
     current_timestamp                               AS detected_at
 FROM parallel_daily_peak
@@ -513,7 +521,7 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- if real data shows the 90th-percentile is below 10.
 -- Recommendation: be deliberate about spawning subagents; use a cheaper model
 -- for simple ones.
--- Severity: info
+-- Severity: info (10-17 dispatches), major (≥ 18 — extreme, llm#1241)
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Threshold constant: 10 agent_runs per session
 WITH subagent_heavy_sessions AS (
@@ -534,11 +542,14 @@ SELECT
     'subagent_heavy_' || md5(session_id)    AS finding_id,
     'subagent_heavy_session'                AS finding_type,
     session_id,
-    'info'                                  AS severity,
+    -- llm#1241: escalate to 'major' at ~1.75x the base threshold (18+
+    -- dispatches) instead of capping every instance at 'info'.
+    CASE WHEN agent_run_count >= 18 THEN 'major' ELSE 'info' END AS severity,
     json_object(
         'agent_run_count',       agent_run_count::VARCHAR,
         'distinct_agent_types',  distinct_agent_types::VARCHAR,
         'threshold',             '10 agent dispatches per session',
+        'extreme_threshold',     '18 agent dispatches per session (escalates to major, llm#1241)',
         'recommendation',        'Be deliberate about spawning subagents; use a cheaper model for simple ones'
     )::JSON                                 AS evidence,
     current_timestamp                       AS detected_at
@@ -559,7 +570,7 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- Sessions with NULL ended_at are potential "stuck running" events and are
 -- handled by DETECTOR 1 (stuck_loop) instead.
 -- Recommendation: verify long/background sessions are intentional.
--- Severity: info
+-- Severity: info (8-13h), major (≥ 14h — extreme, llm#1241)
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Threshold: 8 hours of elapsed wall-clock time
 WITH marathon_sessions AS (
@@ -587,13 +598,16 @@ SELECT
     'marathon_session_' || md5(session_id)  AS finding_id,
     'marathon_session'                       AS finding_type,
     session_id,
-    'info'                                   AS severity,
+    -- llm#1241: escalate to 'major' at ~1.75x the base threshold (14+
+    -- hours) instead of capping every instance at 'info'.
+    CASE WHEN duration_hours >= 14 THEN 'major' ELSE 'info' END AS severity,
     json_object(
-        'started_at',       started_at::VARCHAR,
-        'ended_at',         ended_at::VARCHAR,
-        'duration_hours',   duration_hours::VARCHAR,
-        'threshold',        '8 hours',
-        'recommendation',   'Verify long/background sessions are intentional — continuous usage adds up'
+        'started_at',         started_at::VARCHAR,
+        'ended_at',           ended_at::VARCHAR,
+        'duration_hours',     duration_hours::VARCHAR,
+        'threshold',          '8 hours',
+        'extreme_threshold',  '14 hours (escalates to major, llm#1241)',
+        'recommendation',     'Verify long/background sessions are intentional — continuous usage adds up'
     )::JSON                                  AS evidence,
     current_timestamp                        AS detected_at
 FROM marathon_sessions
@@ -614,7 +628,9 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- Threshold: fixer_run_count / total_run_count >= 0.40 AND total_runs >= 5.
 -- The minimum total-run guard of 5 prevents noisy small-N days from firing.
 -- Recommendation: configure fixer subagents with a cheaper model / tighten prompts.
--- Severity: info
+-- Severity: info (40-69% share), major (>= 70% — extreme, llm#1241). 70% is
+-- the worked example from llm#1241 itself (1.75x the 40% base threshold, the
+-- same ratio applied to detectors 6-8 above).
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Threshold: fixer share >= 40% of daily dispatches, minimum 5 total dispatches
 WITH daily_fixer_share AS (
@@ -651,14 +667,17 @@ SELECT
     'fixer_heavy_' || md5(day_bucket::VARCHAR)  AS finding_id,
     'fixer_heavy_day'                            AS finding_type,
     NULL                                         AS session_id,
-    'info'                                       AS severity,
+    -- llm#1241: escalate to 'major' at the 70% "extreme" threshold named in
+    -- the issue itself, instead of capping every instance at 'info'.
+    CASE WHEN fixer_share >= 0.70 THEN 'major' ELSE 'info' END AS severity,
     json_object(
-        'day',            day_bucket::VARCHAR,
-        'total_runs',     total_runs::VARCHAR,
-        'fixer_runs',     fixer_runs::VARCHAR,
-        'fixer_share',    fixer_share::VARCHAR,
-        'threshold',      'fixer share >= 40% AND total dispatches >= 5',
-        'recommendation', 'Configure fixer subagents with a cheaper model / tighten their prompts'
+        'day',                day_bucket::VARCHAR,
+        'total_runs',         total_runs::VARCHAR,
+        'fixer_runs',         fixer_runs::VARCHAR,
+        'fixer_share',        fixer_share::VARCHAR,
+        'threshold',          'fixer share >= 40% AND total dispatches >= 5',
+        'extreme_threshold',  'fixer share >= 70% (escalates to major, llm#1241)',
+        'recommendation',     'Configure fixer subagents with a cheaper model / tighten their prompts'
     )::JSON                                     AS evidence,
     current_timestamp                           AS detected_at
 FROM daily_fixer_share
@@ -685,7 +704,8 @@ ON CONFLICT (finding_id) DO NOTHING;
 --   2. Replace this static INSERT with a real detector:
 --        WHERE max_context_tokens > 150000 per session
 --
--- Severity: info
+-- Severity: info (no escalation — a static one-off "data gap" note has no
+-- magnitude to grow extreme; unlike detectors 6-9, llm#1241 leaves it as-is).
 -- ─────────────────────────────────────────────────────────────────────────────
 -- TODO: replace with a real detector once max_context_tokens is in sessions ETL
 INSERT INTO self_review_findings_stage1
