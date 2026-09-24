@@ -23,12 +23,14 @@
        REPORT_RECIPIENT=you@gmail.com
 
      ROBOREV_DASHBOARD_URL is an OPTIONAL override, not a required field --
-     leave it unset. resolve_dashboard_links()/dashboard_cta_block() in
-     email_styles.R (llm#946, #1009) already default to the llmtelemetry
-     GitHub repo URL, since the repo's GH Pages dashboard went offline when
-     it was made private on 2026-08-22. Setting this var to the old
-     https://johngavin.github.io/llmtelemetry/#roborev value re-breaks the
-     button by overriding that fixed default with the same dead link.
+     leave it unset unless you have a real http(s) URL to point at. As of
+     2026-09-24 (llm#1123), dashboard_cta_block() in email_styles.R only
+     renders a clickable button when this var is set to an http(s) URL --
+     with it unset, the email shows the local rendered-vignette path as
+     plain text (with a staleness note) instead of a button, because
+     neither a file:// href (stripped by mail clients) nor the llmtelemetry
+     repo URL (private, no GitHub Pages, since 2026-08-22) ever worked as a
+     clickable target.
 
      Tracked in llm#287.
 -->
