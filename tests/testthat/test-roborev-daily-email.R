@@ -480,7 +480,12 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
   DBI::dbExecute(con, sprintf("ATTACH '%s' AS fix (TYPE sqlite)", db_path))
 
   DBI::dbExecute(con, "CREATE TABLE fix.repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
-  DBI::dbExecute(con, "CREATE TABLE fix.review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER)")
+  # agent/model: added for the llm#1044 per-agent review-health block — a
+  # default of 'codex'/NULL mirrors the live schema's
+  # review_jobs.agent NOT NULL DEFAULT 'codex' (model has no default there
+  # either) so every EXISTING caller of this fixture (which never passes
+  # agent/model) keeps constructing the same rows it always did.
+  DBI::dbExecute(con, "CREATE TABLE fix.review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER, agent TEXT DEFAULT 'codex', model TEXT)")
   DBI::dbExecute(con, "
     CREATE TABLE fix.reviews (
       id INTEGER PRIMARY KEY,
@@ -495,9 +500,14 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
 
   now <- as.POSIXct(format(Sys.time(), tz = "UTC"), tz = "UTC")
   row_id <- 0L
-  insert_row <- function(output, age_hours, closed, verdict_bool) {
+  insert_row <- function(output, age_hours, closed, verdict_bool,
+                          agent = "codex", model = NA_character_) {
     row_id <<- row_id + 1L
-    DBI::dbExecute(con, sprintf("INSERT INTO fix.review_jobs VALUES (%d, 1)", row_id + job_offset))
+    model_sql <- if (is.na(model)) "NULL" else sprintf("'%s'", gsub("'", "''", model, fixed = TRUE))
+    DBI::dbExecute(con, sprintf(
+      "INSERT INTO fix.review_jobs (id, repo_id, agent, model) VALUES (%d, 1, '%s', %s)",
+      row_id + job_offset, gsub("'", "''", agent, fixed = TRUE), model_sql
+    ))
     ts <- format(now - age_hours * 3600, "%Y-%m-%d %H:%M:%S", tz = "UTC")
     output_escaped <- gsub("'", "''", output, fixed = TRUE)
     DBI::dbExecute(con, sprintf(
@@ -505,7 +515,11 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
       row_id, row_id + job_offset, output_escaped, ts, closed, verdict_bool
     ))
   }
-  for (f in findings) insert_row(f$output, f$age_hours, 0L, 0L)
+  for (f in findings) {
+    insert_row(f$output, f$age_hours, 0L, 0L,
+               agent = if (is.null(f$agent)) "codex" else f$agent,
+               model = if (is.null(f$model)) NA_character_ else f$model)
+  }
   for (l in lagged)   insert_row("", l$age_hours, l$closed, 1L)
 
   db_path
@@ -1294,4 +1308,110 @@ test_that("llm#1127: a genuine Severity:High finding (no tooling-failure signatu
     info = "a real High-severity finding with no tooling-failure signature must still count as above-threshold")
   expect_true(grepl("QA:total_not_reviewed_open_n=0", combined, fixed = TRUE))
   expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE))
+})
+
+# ── Tests: llm#1044 item 3 — per-agent not-reviewed rate ────────────────────
+#
+# llm#1044 found gemini silently failed to read its diff on 15.5% of open
+# reviews and nothing in the daily email surfaced it PER AGENT — the
+# aggregate not_reviewed count (asserted above) dilutes a single misbehaving
+# agent into the whole standing backlog. These tests pin the new
+# "Per-Agent Review Health" block against a fixture reviews.db, reusing
+# make_reviews_db_fixture()'s agent/model support added for this feature.
+#
+# Unlike the above-threshold/unparseable blocks (which query CLOSED=0 open
+# findings only), the per-agent block queries EVERY completed review in the
+# last 7 days regardless of open/closed status — agent health is about
+# whether the review ran, not what happened to the finding afterwards. The
+# fixture rows created by make_reviews_db_fixture()'s `findings=` arg are
+# all closed=0/verdict_bool=0, which is exactly "a completed review that
+# produced an open, unresolved finding" — a subset of, not different from,
+# what the per-agent query counts.
+
+test_that("llm#1044: per-agent table shows a 100% not-reviewed rate for a single-agent, single-not-reviewed fixture", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(
+      list(output = NOT_REVIEWED_EXACT_OUTPUT, age_hours = 1,
+           agent = "gemini", model = "gemini-2.5-flash-lite")
+    )
+  )
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:agent_rate_available=true", combined, fixed = TRUE),
+    info = "a working DB query must mark agent_rate_available=true")
+  expect_true(grepl("QA:agent_rate_n_combos=1", combined, fixed = TRUE))
+  expect_true(grepl("Per-Agent Review Health", combined, fixed = TRUE))
+  expect_true(grepl(">gemini<", combined, fixed = TRUE))
+  expect_true(grepl(">gemini-2.5-flash-lite<", combined, fixed = TRUE))
+  expect_true(grepl(">100.0%<", combined, fixed = TRUE),
+    info = "the lone review is not_reviewed, so the agent's rate must be 100%")
+})
+
+test_that("llm#1044: per-agent table splits mixed not_reviewed/passed outcomes by agent+model, rate computed per group", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(
+    findings = list(
+      # gemini/flash-lite: 1 of 2 not_reviewed -> 50.0%
+      list(output = NOT_REVIEWED_EXACT_OUTPUT, age_hours = 1,
+           agent = "gemini", model = "gemini-2.5-flash-lite"),
+      list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 1,
+           agent = "gemini", model = "gemini-2.5-flash-lite"),
+      # claude-code/sonnet: 0 of 1 not_reviewed -> 0.0%, must stay a
+      # SEPARATE row/rate from the gemini group above
+      list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 1,
+           agent = "claude-code", model = "sonnet")
+    )
+  )
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:agent_rate_n_combos=2", combined, fixed = TRUE),
+    info = "two distinct agent+model groups must not be merged")
+  expect_true(grepl(">50.0%<", combined, fixed = TRUE),
+    info = "gemini/gemini-2.5-flash-lite must show 1 of 2 not_reviewed = 50.0%")
+  expect_true(grepl(">0.0%<", combined, fixed = TRUE),
+    info = "claude-code/sonnet must show 0 of 1 not_reviewed = 0.0%, unaffected by gemini's rate")
+  expect_true(grepl(">claude-code<", combined, fixed = TRUE))
+  expect_true(grepl(">sonnet<", combined, fixed = TRUE))
+})
+
+test_that("llm#1044: missing reviews.db renders UNKNOWN, never 0% or a silently-empty table", {
+  # checks-must-distinguish-unknown: a DB that cannot be queried must not
+  # read as \"all agents healthy\". Points ROBOREV_DB at a path that does
+  # not exist -- query_reviews_db() returns NULL, classify_by_agent(NULL)
+  # returns NULL, and the render step must take the explicit UNKNOWN branch.
+  skip_if_not_installed("blastula")
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = "ROBOREV_DB=/nonexistent/path/reviews.db"),
+    collapse = "\n")
+  expect_true(grepl("QA:agent_rate_available=false", combined, fixed = TRUE),
+    info = "a failed query must mark agent_rate_available=false, not true")
+  expect_true(grepl("QA:agent_rate_n_combos=0", combined, fixed = TRUE))
+  expect_true(grepl("UNKNOWN", combined, fixed = TRUE),
+    info = "the block must render an explicit UNKNOWN state, not a 0% rate")
+  expect_false(grepl("agent/model combo(s) tracked", combined, fixed = TRUE),
+    info = "the 'N combos tracked' summary must not appear when the query failed")
+})
+
+test_that("llm#1044: zero completed reviews in the 7d window renders a distinguishable empty state, not UNKNOWN", {
+  # Companion to the UNKNOWN test above: an empty RESULT (query ran fine,
+  # zero rows) is a different, real state from a FAILED query and must not
+  # collapse into the same UNKNOWN rendering.
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list())
+  snap <- make_synthetic_snapshot()
+  combined <- paste(
+    run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path)),
+    collapse = "\n")
+  expect_true(grepl("QA:agent_rate_available=true", combined, fixed = TRUE),
+    info = "the query itself succeeded (zero rows is not a failure)")
+  expect_true(grepl("QA:agent_rate_n_combos=0", combined, fixed = TRUE))
+  expect_true(grepl("no completed reviews in the last 7 days", combined, fixed = TRUE))
+  expect_false(grepl("Could not query reviews.db", combined, fixed = TRUE),
+    info = "an empty result must not be reported as a query failure")
 })

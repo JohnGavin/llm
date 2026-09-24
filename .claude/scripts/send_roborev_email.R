@@ -668,6 +668,73 @@ if (!is.null(new_open_findings)) {
           "delta counts unavailable (rendering nothing rather than a false alert)")
 }
 
+# ── Per-agent review-health rate (7d, completed reviews) — llm#1044 ───────────
+# llm#1044: gemini silently failed to read its diff on 15.5% of open reviews
+# (20 of 129) and nothing in this report surfaced it PER AGENT — the
+# aggregate not_reviewed count above (total_not_reviewed_open_n) dilutes a
+# single misbehaving agent into the whole standing backlog. This block
+# reuses classify_unparseable_finding() — the SAME not_reviewed/passed/
+# unclassified classifier the aggregate block above already runs, priority
+# rule unchanged (llm#1127: a matched not_reviewed signature always wins
+# over any parsed severity, fabricated or not) — against EVERY COMPLETED
+# review from the last AGENT_RATE_WINDOW_DAYS days, grouped by
+# review_jobs.agent (+ .model, when recorded). "Completed" here means any
+# row in `reviews` (a row only exists once the agent's output was written),
+# independent of whether the finding it produced is still open — agent
+# health is about whether the review RAN, not what happened to the finding
+# afterwards.
+#
+# checks-must-distinguish-unknown: a failed/unavailable DB query must never
+# render as a 0% or an empty-looking table — that reads as "all agents
+# healthy" when the truth is "could not check". query_reviews_db() already
+# returns NULL (not an empty list) on any query failure; per_agent_rate_agg
+# stays NULL in that case and the render step (below, near the severity
+# table) renders an explicit UNKNOWN state instead of a table.
+AGENT_RATE_WINDOW_DAYS <- 7L
+per_agent_sql <- sprintf(
+  paste(
+    "SELECT rj.agent AS agent, rj.model AS model, rv.output AS output",
+    "FROM reviews rv",
+    "JOIN review_jobs rj ON rj.id = rv.job_id",
+    "WHERE datetime(rv.created_at) >= datetime('now', '-%d days');"
+  ),
+  AGENT_RATE_WINDOW_DAYS
+)
+per_agent_rows <- query_reviews_db(per_agent_sql)
+
+# classify_by_agent(): aggregates {n, not_reviewed_n} keyed by "agent · model"
+# (NA/blank model normalised to "(unspecified)", NA/blank agent to
+# "(unknown)" — review_jobs.agent is NOT NULL DEFAULT 'codex' in the live
+# schema, so "(unknown)" should never actually appear; kept defensive rather
+# than assumed). Returns NULL (not list()) when `rows` itself is NULL, so
+# the caller can distinguish "query failed" from "query ran, zero completed
+# reviews in the window" — the latter is a real, renderable empty state.
+classify_by_agent <- function(rows) {
+  if (is.null(rows)) return(NULL)
+  agg <- list()
+  for (r in rows) {
+    agent_val <- r[["agent"]]
+    if (is.null(agent_val) || is.na(agent_val) || !nzchar(agent_val)) agent_val <- "(unknown)"
+    model_val <- r[["model"]]
+    if (is.null(model_val) || is.na(model_val) || !nzchar(model_val)) model_val <- "(unspecified)"
+    key <- paste(agent_val, model_val, sep = "␟")
+    if (is.null(agg[[key]])) {
+      agg[[key]] <- list(agent = agent_val, model = model_val, n = 0L, not_reviewed_n = 0L)
+    }
+    if (identical(classify_unparseable_finding(r[["output"]]), "not_reviewed")) {
+      agg[[key]]$not_reviewed_n <- agg[[key]]$not_reviewed_n + 1L
+    }
+    agg[[key]]$n <- agg[[key]]$n + 1L
+  }
+  agg
+}
+
+agent_rate_agg <- classify_by_agent(per_agent_rows)
+if (is.null(agent_rate_agg)) {
+  message("send_roborev_email.R: could not query reviews.db for per-agent review health — ",
+          "rendering UNKNOWN rather than a false 0% (checks-must-distinguish-unknown)")
+}
+
 # ── Extract window slices ──────────────────────────────────────────────────────
 
 d1 <- snap[["global_windows"]][["d1"]]  # 1-day window — llm#449
@@ -1330,6 +1397,90 @@ severity_html <- collapsible_block(
   open = FALSE
 )
 
+# §6 Per-agent review-health rate (7d) — llm#1044 (data computed above, near
+# the other reviews.db reads). Renders one of three states, in priority
+# order:
+#   1. UNKNOWN — the DB query failed (agent_rate_agg is NULL). Never
+#      rendered as 0% or a silently-empty table (checks-must-distinguish-unknown).
+#   2. Empty state — the query ran but there were zero completed reviews in
+#      the window. A real, distinguishable state from (1).
+#   3. The table, worst not-reviewed rate first, so a single misbehaving
+#      agent is not buried alphabetically among healthy ones.
+agent_rate_inner <- if (is.null(agent_rate_agg)) {
+  sprintf(
+    '<p style="color:%s; font-size:%s; margin:4px 0;">
+      <strong>&#9888; Could not query reviews.db</strong> &mdash; per-agent
+      review-health rate is <strong>UNKNOWN</strong> for this report
+      (missing DB, missing <code>sqlite3</code>, or a query failure). Not
+      rendered as 0%% or an empty table.
+    </p>',
+    accent_orange, EMAIL_FONT_BODY
+  )
+} else if (length(agent_rate_agg) == 0L) {
+  sprintf(
+    '<p style="color:%s; font-size:%s;">(no completed reviews in the last %d days)</p>',
+    dark_muted, EMAIL_FONT_BODY, AGENT_RATE_WINDOW_DAYS
+  )
+} else {
+  agent_rate_ord <- order(
+    -vapply(agent_rate_agg, function(x) x$not_reviewed_n / x$n, numeric(1L))
+  )
+  agent_rate_table <- sprintf(
+    '<table style="border-collapse:collapse; width:100%%; font-size:12px;">
+    <tr style="background-color:%s;">
+      <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Agent</th>
+      <th style="padding:5px 8px; border:1px solid %s; color:white; text-align:left;">Model</th>
+      <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Reviews</th>
+      <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Not reviewed</th>
+      <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Rate</th>
+    </tr>',
+    dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
+  )
+  for (i in seq_along(agent_rate_ord)) {
+    e <- agent_rate_agg[[agent_rate_ord[i]]]
+    rate <- e$not_reviewed_n / e$n
+    bg <- if (i %% 2 == 0) dark_row_alt else dark_card
+    # #f08080 matches the danger-red already used elsewhere in this file
+    # (unparseable_block's >50%-unclassified warning) rather than inventing
+    # a new hex — llm#1035 style: a High/Critical-style alert colour.
+    rate_colour <- if (rate > 0.10) "#f08080" else dark_text
+    agent_rate_table <- paste0(agent_rate_table, sprintf(
+      '<tr style="background-color:%s;">
+        <td style="padding:4px 8px; border:1px solid %s; color:%s;">%s</td>
+        <td style="padding:4px 8px; border:1px solid %s; color:%s;">%s</td>
+        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
+        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
+        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right; font-weight:bold;">%s</td>
+      </tr>',
+      bg,
+      dark_border, dark_text, e$agent,
+      dark_border, dark_muted, e$model,
+      dark_border, dark_text, fmt_int(e$n),
+      dark_border, dark_text, fmt_int(e$not_reviewed_n),
+      dark_border, rate_colour, fmt_rate(rate)
+    ))
+  }
+  paste0(agent_rate_table, "</table>")
+}
+
+agent_rate_summary <- if (is.null(agent_rate_agg)) {
+  "UNKNOWN — DB query failed"
+} else if (length(agent_rate_agg) == 0L) {
+  sprintf("0 agent/model combos in %dd window", AGENT_RATE_WINDOW_DAYS)
+} else {
+  sprintf("%d agent/model combo(s) tracked, %dd window",
+          length(agent_rate_agg), AGENT_RATE_WINDOW_DAYS)
+}
+agent_rate_summary_colour <- if (is.null(agent_rate_agg)) accent_orange else accent_green
+
+agent_rate_html <- collapsible_block(
+  "Per-Agent Review Health (7d) — llm#1044",
+  agent_rate_summary,
+  agent_rate_inner,
+  open = FALSE,
+  summary_color = agent_rate_summary_colour
+)
+
 # QA markers (tested by test-roborev-daily-email.R)
 # llm#484: added n_reviews and d1_n_reviews markers for diagnostic visibility
 # llm#961: zero_action_trap_fired is kept as the marker KEY (test compat) but
@@ -1344,8 +1495,12 @@ severity_html <- collapsible_block(
 # not_reviewed/passed/unclassified (new + total, six markers) — these three
 # always sum to new_unparseable_open_n / total_unparseable_open_n
 # respectively, by construction of classify_open_findings().
+# llm#1044: agent_rate_available distinguishes "the per-agent query failed"
+# (agent_rate_agg is NULL, marker="false") from "it ran" (marker="true") —
+# the marker itself must never collapse those two into a shared value, per
+# checks-must-distinguish-unknown.
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d -->',
   report_date, issues_found_closed, fmt_rate(close_rate), effective_dashboard_url(),
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
   if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
@@ -1359,7 +1514,10 @@ qa_markers <- sprintf(
   if (is.na(new_unclassified_open_n)) "NA" else as.character(new_unclassified_open_n),
   if (is.na(total_unclassified_open_n)) "NA" else as.character(total_unclassified_open_n),
   NEW_WINDOW_HOURS,
-  LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS
+  LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS,
+  tolower(as.character(!is.null(agent_rate_agg))),
+  AGENT_RATE_WINDOW_DAYS,
+  if (is.null(agent_rate_agg)) 0L else length(agent_rate_agg)
 )
 
 # Assemble full body
@@ -1371,6 +1529,7 @@ email_body <- sprintf(
 <p style="color:%s; font-size:%s; margin-top:0;">
   Generated: %s UTC &nbsp;|&nbsp; Lineage: %s
 </p>
+%s
 %s
 %s
 %s
@@ -1393,6 +1552,7 @@ email_body <- sprintf(
   outlier_ttc_html,
   outlier_att_html,
   severity_html,
+  agent_rate_html,
   dark_muted, EMAIL_FONT_FOOTER, json_path,
   qa_markers
 )

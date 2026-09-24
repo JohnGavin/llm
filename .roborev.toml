@@ -127,8 +127,6 @@ CRITICAL SEVERITY EXAMPLES (flag at Critical, not High — use Critical for thes
 - `install.packages()` / `pak::pkg_install()` / `devtools::install()` in any file
   that runs inside the Nix shell (will brick the reproducible environment).
 """
-# Override the review job timeout in minutes for this repo.
-job_timeout_minutes = 0
 # Branches that should be skipped for automatic review in this repo.
 excluded_branches = []
 # Commit message substrings that should skip review for this repo.
