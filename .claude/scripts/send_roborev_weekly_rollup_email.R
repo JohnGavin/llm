@@ -18,10 +18,16 @@
 #   UNIFIED_DUCKDB              override unified.duckdb path
 #   ROBOREV_WEEKLY_DIR          override weekly rollup output dir
 #   EMAIL_DRY_RUN               "1" → print body to stdout, do not send
-#   ROBOREV_DASHBOARD_URL        Explicit dashboard link override (wins outright)
-#   ROBOREV_DASHBOARD_REPO_URL   GitHub repo fallback (default: llmtelemetry)
+#   ROBOREV_DASHBOARD_URL        Explicit http(s) dashboard link override
+#                                 (wins outright, renders a real button).
+#                                 2026-09-24: with no override there is no
+#                                 button at all (file:// links don't work in
+#                                 mail clients, and the llmtelemetry repo
+#                                 fallback has been private with no GitHub
+#                                 Pages since 2026-08-22 -- see
+#                                 dashboard_cta_block() in email_styles.R).
 #   ROBOREV_DASHBOARD_LOCAL_PATH Locally-rendered dashboard path (default:
-#                                 ~/docs_gh/llmtelemetry/_site/index.html)
+#                                 ~/docs_gh/llmtelemetry/vignettes/roborev_summary.html)
 #   See resolve_dashboard_links()/dashboard_cta_block() in email_styles.R.
 #
 # Usage:
@@ -55,10 +61,10 @@ source(file.path(.scripts_dir, "email_styles.R"))
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 #
-# ROBOREV_DASHBOARD_URL / _REPO_URL / _LOCAL_PATH: resolved by
-# resolve_dashboard_links() / dashboard_cta_block() in email_styles.R (sourced
-# above). See that file for the full env-var contract and the 2026-08-22
-# llmtelemetry-went-private rationale.
+# ROBOREV_DASHBOARD_URL / _LOCAL_PATH: resolved by resolve_dashboard_links()
+# / dashboard_cta_block() in email_styles.R (sourced above). See that file
+# for the full env-var contract and the 2026-08-22 llmtelemetry-went-private
+# / 2026-09-24 button-removal rationale.
 
 ROBOREV_WEEKLY_DIR <- Sys.getenv(
   "ROBOREV_WEEKLY_DIR",
