@@ -67,16 +67,39 @@ if [ -x "$MIX_SCRIPT" ]; then
 fi
 
 # ── Resolve stable session ID (llm#273) ──────────────────────────────────────
-# Priority: CLAUDE_SESSION_ID → PPID-anchored file → .current_session
+# Priority: CLAUDE_CODE_SESSION_ID -> CLAUDE_SESSION_ID -> fresh PPID-anchored
+# file -> .current_session
 # Moved ahead of the DB-stop write below (llm#803) so that write uses the
 # same robust resolution as the rest of this file, instead of trusting the
 # single global `.current_session` marker on its own (see llm#803 rationale
 # in the block below).
-_STOP_SESSION_ID="${CLAUDE_SESSION_ID:-}"
+#
+# 2026-09-24 self-review finding (llm#803 follow-up): the harness exports
+# CLAUDE_CODE_SESSION_ID (a real, stable, lowercase UUID -- confirmed to match
+# this session's own transcript filename), NOT CLAUDE_SESSION_ID, which has
+# never been observed set. Every session therefore fell through to the PPID
+# anchor / .current_session fallbacks below on every single Stop event, not
+# just as a rare last resort. Combined with anchor files that are written
+# once and never cleaned up (21 found, some ~1 month old), a reused PPID let
+# THIS session's stop resolve to and close an UNRELATED, much older session's
+# `sessions` row -- root cause of a 62.85h phantom "marathon_session" finding
+# (tennis, session 7006110F...). Preferring the real harness id here means
+# the anchor/marker fallbacks are consulted only when it is genuinely absent.
+_STOP_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
 _STOP_LOG_DIR="$CLAUDE_RUNTIME_ROOT/logs"
 _STOP_PPID_ANCHOR="$_STOP_LOG_DIR/.llmtelemetry_ppid_session.${PPID:-0}"
 if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_PPID_ANCHOR" ]; then
-  _STOP_SESSION_ID=$(cat "$_STOP_PPID_ANCHOR" 2>/dev/null || echo "")
+  # Defense-in-depth (llm#803 follow-up): even with the env-var fix above, do
+  # not trust a PPID anchor written by a much older, unrelated process that
+  # happened to reuse this PPID. `find -mtime +1` is the portable BSD/GNU
+  # form already used for MEMORY_DIR staleness above in this same file.
+  # Ignoring is logged rather than silently falling through, per
+  # checks-must-distinguish-unknown.
+  if [ -n "$(find "$_STOP_PPID_ANCHOR" -mtime +1 2>/dev/null)" ]; then
+    echo "session_stop: ignoring stale (>24h) PPID anchor: $_STOP_PPID_ANCHOR" >&2
+  else
+    _STOP_SESSION_ID=$(cat "$_STOP_PPID_ANCHOR" 2>/dev/null || echo "")
+  fi
 fi
 if [ -z "$_STOP_SESSION_ID" ] && [ -f "$_STOP_LOG_DIR/.current_session" ]; then
   _STOP_SESSION_ID=$(cat "$_STOP_LOG_DIR/.current_session" 2>/dev/null || echo "")
@@ -129,8 +152,9 @@ fi
 #
 # Fix: gate this write on the same one-shot `_bye_detected` sentinel used by
 # the pattern-detection/refine blocks further down, and resolve the session
-# id via `_STOP_SESSION_ID` (CLAUDE_SESSION_ID → PPID anchor → marker file)
-# instead of the raw marker file. The write now fires exactly once, at the
+# id via `_STOP_SESSION_ID` (CLAUDE_CODE_SESSION_ID -> CLAUDE_SESSION_ID ->
+# fresh PPID anchor -> marker file; see llm#803 follow-up above) instead of
+# the raw marker file. The write now fires exactly once, at the
 # session's real end. Sessions that never call /bye (crash, kill, /clear)
 # still show `ended_at IS NULL` afterward — that gap is by design, and is
 # closed by the `session_reaper.sql` sweep (see session_init.sh) rather than

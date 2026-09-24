@@ -36,7 +36,11 @@ _resolve_session_id() {
   # llmtelemetry_emit.sh) because hook_events tolerates a shared "unknown"
   # bucket for the rare case both are absent -- this is a fire-and-forget
   # telemetry signal, not a billing record.
-  local sid="${CLAUDE_SESSION_ID:-}"
+  #
+  # 2026-09-24 (llm#803 follow-up): prefer CLAUDE_CODE_SESSION_ID -- the
+  # harness's real env var -- over CLAUDE_SESSION_ID, which has never been
+  # observed set.
+  local sid="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
   if [ -z "$sid" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
     sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null || echo "")
   fi
@@ -78,6 +82,13 @@ if [ "${1:-}" = "--selftest" ]; then
 
   # ── Case 1: emit writes one valid JSON line ─────────────────────────────
   export HOOK_EVENTS_SPOOL="$TMPDIR_ST/spool.jsonl"
+  # 2026-09-24 (llm#803 follow-up): _resolve_session_id() now prefers
+  # CLAUDE_CODE_SESSION_ID. Unset it here so this case genuinely exercises
+  # the CLAUDE_SESSION_ID back-compat fallback rather than picking up the
+  # REAL harness session id of whatever shell happens to run this selftest
+  # (this bit a live agent dispatch: its own CLAUDE_CODE_SESSION_ID leaked
+  # into the assertion below and made it fail for an unrelated reason).
+  unset CLAUDE_CODE_SESSION_ID
   export CLAUDE_SESSION_ID="selftest-session"
   _emit "unit_test_hook" "PreToolUse:blocked" "hello world"
   if [ -f "$HOOK_EVENTS_SPOOL" ] && \

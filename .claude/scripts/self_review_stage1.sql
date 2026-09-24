@@ -445,7 +445,31 @@ WITH session_bounds AS (
         CAST(started_at AS DATE)                              AS day_bucket,
         -- NULL ended_at (session-stop hook never fired / crashed session) is
         -- capped at +1 minute instead of "now" (#804 fix for bug 2).
-        COALESCE(ended_at, started_at + INTERVAL '1' MINUTE)   AS effective_end
+        --
+        -- 2026-09-24 self-review finding (llm#803 follow-up): a
+        -- reaper-estimated ended_at (session_reaper.sql writes
+        -- started_at + 2h when no Stop event was observed within 6h --
+        -- see the `summary` marker it stamps) can later be silently
+        -- overwritten by session_events_staging_import.sh with a
+        -- MISATTRIBUTED stop timestamp from an UNRELATED session. Root
+        -- cause: the harness never sets CLAUDE_SESSION_ID (it sets
+        -- CLAUDE_CODE_SESSION_ID instead), so session_stop.sh falls back
+        -- to a stale/reused PPID-anchor file and closes the wrong row.
+        -- One observed instance misattributed a stop 63h after the real
+        -- start. Trusting such an `ended_at` inflates same-day
+        -- concurrency with a phantom long-lived session. Treat a
+        -- mismatched reaper-estimate row the same as a genuinely NULL
+        -- ended_at (bounded +1 minute cap) rather than trusting either
+        -- the reaper's own guess or a possibly-misattributed overwrite.
+        COALESCE(
+            CASE
+                WHEN summary LIKE '%reaper: ended_at is an ESTIMATE%'
+                     AND ended_at - started_at <> INTERVAL '2' HOUR
+                    THEN NULL
+                ELSE ended_at
+            END,
+            started_at + INTERVAL '1' MINUTE
+        )                                                      AS effective_end
     FROM sessions
     WHERE
         started_at IS NOT NULL
@@ -591,6 +615,19 @@ WITH marathon_sessions AS (
         -- session running long is a probe/infra artifact, not a real
         -- background-work marathon session worth flagging to a human.
         AND project NOT IN ('ClaudeProbe')
+        -- 2026-09-24 self-review finding (llm#803 follow-up): a reaper
+        -- estimate (session_reaper.sql, `summary` carries the marker
+        -- below) is not an OBSERVED marathon -- it is either the reaper's
+        -- own conservative 2h guess, or that guess later silently
+        -- overwritten with a MISATTRIBUTED stop timestamp belonging to a
+        -- different session (root cause: the harness never sets
+        -- CLAUDE_SESSION_ID, only CLAUDE_CODE_SESSION_ID, so session_stop.sh
+        -- falls back to a stale/reused PPID-anchor file). One instance
+        -- (tennis, 2026-09-20) was flagged as a 62.85h marathon this way.
+        -- Exclude every reaper-estimated row outright, whether or not it
+        -- was subsequently overwritten -- neither case is an observed
+        -- marathon session.
+        AND (summary IS NULL OR summary NOT LIKE '%reaper: ended_at is an ESTIMATE%')
 )
 INSERT INTO self_review_findings_stage1
     BY NAME

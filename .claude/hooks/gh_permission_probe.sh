@@ -184,7 +184,10 @@ _default_mode() {
 }
 
 _resolve_session_id() {
-  local sid="${CLAUDE_SESSION_ID:-}"
+  # 2026-09-24 (llm#803 follow-up): the harness exports CLAUDE_CODE_SESSION_ID,
+  # not CLAUDE_SESSION_ID (never observed set) -- prefer it. See
+  # session_stop.sh's matching fix for the incident this addresses.
+  local sid="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
   if [ -z "$sid" ] && [ -f "$HOME/.claude/logs/.current_session" ]; then
     local rc
     sid=$(cat "$HOME/.claude/logs/.current_session" 2>/dev/null)
