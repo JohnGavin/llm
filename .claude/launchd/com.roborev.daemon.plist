@@ -147,15 +147,15 @@
 
          /opt/homebrew/bin was REMOVED from PATH entirely on 2026-09-24
          (llm#1136): `roborev daemon run` shells out to
-         `/opt/homebrew/bin/agentsview session usage <id> --format json` to
+         `/opt/homebrew/bin/agentsview session usage <id>` (JSON output) to
          backfill token/cost data on every review. With no agentsview
          server reachable on 127.0.0.1, that client self-spawns
          `agentsview serve`, which re-parents to PID 1 (the daemon does not
          supervise it) and was found running 66h straight at ~97% CPU;
          killing it, it respawned within ~5s on the next review. Neither
          roborev nor agentsview exposes a config switch to suppress this
-         (`[cost].include_costs = false` and `[cost].endpoint = ''` were
-         already set in .roborev.toml and made no difference — the client
+         (`[ci].include_costs = false` and `[cost].endpoint = ''` were
+         already set in ~/.roborev/config.toml and made no difference; the client
          call happens regardless). Since agentsview lives ONLY under
          /opt/homebrew/bin and nowhere else on this machine, dropping that
          directory from the daemon's PATH makes `command -v agentsview`
