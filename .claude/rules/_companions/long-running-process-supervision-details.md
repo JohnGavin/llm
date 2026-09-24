@@ -32,3 +32,43 @@ client-spawned rival holds the port, the launchd copy fails to bind, exits,
 and is held off by `ThrottleInterval` before retrying — so a rival can own
 the queue for up to that interval. Supervision is not a substitute for
 knowing what else starts the process.
+
+## 2026-09-14 → 09-24: launchd's roborev daemon never held its port (llm#1136, llm#984 item 4)
+
+`~/.claude/logs/roborev-daemon.log` shows launchd's `com.roborev.daemon`
+failing every ~60s with `daemon already running (pid N)`, across three
+distinct orphan pids over a ten-day window: pid 21182 (started 09-14), pid
+89460 (09-14 22:00 through 09-23 20:46, spawned by a `roborev stream` call),
+and pid 27294 (09-23 20:47 through 09-24 16:27, started from an interactive
+shell — `XPC_SERVICE_NAME=0`, with the full shell PATH including homebrew).
+Nothing alerted for those ten days.
+
+Why this happened: every roborev client auto-starts a daemon when none is
+reachable, and there is no global switch to suppress this (`--no-daemon`
+exists only on `roborev init`). launchd's `KeepAlive` retries roughly once a
+minute, so whichever client process happens to start first after any daemon
+exit wins the race and becomes the long-lived daemon — not launchd's own
+copy.
+
+Consequence observed: the orphan daemon carried a homebrew-inclusive PATH,
+which let it keep spawning `agentsview serve` — the same problem llm#1136
+was opened to fix.
+
+Remediation sequence that actually cleared it: `launchctl bootout` the
+`com.roborev.auto-refine` job first (it is the client that keeps
+respawning a rival daemon), kill the orphan daemon process, then
+`launchctl bootout` followed by `bootstrap` on `com.roborev.daemon`, then
+verify the listener on port 7373 belongs to launchd's own copy (`ps eww` on
+the pid holding the port should show `XPC_SERVICE_NAME=com.roborev.daemon`,
+not `0` or a shell-inherited value), and only then `bootstrap` the
+`com.roborev.auto-refine` job again.
+
+Gotcha: `launchctl kickstart -k` restarts a job using the plist definition
+that was cached at the job's last bootstrap — editing the plist file on
+disk has no effect on an already-loaded job until it is booted out and
+bootstrapped again.
+
+Detection follow-up (not done here, separate PR): add a check to
+`roborev-failure-alert` for "the process holding port 7373 is not
+launchd's `com.roborev.daemon`", so a repeat of this incident pages instead
+of sitting silent for ten days.

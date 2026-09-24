@@ -12,7 +12,13 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin</string>
+        <!-- 2026-09-24 (llm#1136 follow up): this job's "roborev stream" auto
+             starts a roborev daemon when none is reachable. That daemon
+             inherits this PATH, and with /opt/homebrew/bin present it finds
+             agentsview and restarts the orphan server problem fixed by
+             PR #1259. Narrowed PATH so a client spawned daemon cannot find
+             agentsview via homebrew. -->
+        <string>/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/usr/local/bin</string>
         <key>GEMINI_CLI_TRUST_WORKSPACE</key>
         <string>true</string>
     </dict>
