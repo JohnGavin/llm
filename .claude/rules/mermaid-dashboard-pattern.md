@@ -55,7 +55,7 @@ The `mermaid_dashboard_guard.sh` hook (`PreToolUse:Edit|Write`, wired in
 Escape hatch: `CLAUDE_MERMAID_DASHBOARD_GUARD=0` bypasses for one
 command (audited to `~/.claude/logs/mermaid_dashboard_guard_skip.log`).
 
-## Tombstone: `verify_mermaid_dashboard.sh` (removed 2026-07-13)
+## Tombstone: `verify_mermaid_dashboard.sh` (removed 2026-07-13, restored 2026-09-24)
 
 [#773](https://github.com/JohnGavin/llm/pull/773) (commit `ab14383f`,
 `chore(dashboards): prune unused mermaid loader apparatus`) deleted
@@ -67,13 +67,29 @@ scaffold) as unused. It was not unused: a downstream project's Quarto
 produce the identical exit code — the breakage ran silently for six weeks
 ([#1067](https://github.com/JohnGavin/llm/issues/1067)).
 
-If your project mounts Mermaid diagrams at runtime via an external JS loader
-(the exact pattern this rule documents) and relies on a verifier to catch a
-failed mount, that verifier no longer ships from this repo. Options: restore
-your own copy of the check locally, or replace it with an
-indeterminate-vs-clean-vs-failed three-state check per
-[`checks-must-distinguish-unknown`](checks-must-distinguish-unknown.md) so a
-missing/renamed tool is never silently read as "passed."
+**Restored 2026-09-24** per [#1067](https://github.com/JohnGavin/llm/issues/1067):
+`.claude/scripts/verify_mermaid_dashboard.sh` ships again — same F1-F5
+findings, same 0/1/2 exit codes plus a new 3 (INDETERMINATE, required
+dependency `perl` missing — see `checks-must-distinguish-unknown`). At least
+one live consumer still calls it, and the verifier's failure mode is silent
+by construction: these dashboards mount Mermaid diagrams into initially-empty
+`<div id="*-mount">` elements via an external JS loader at browser runtime,
+so a broken mount produces no error anywhere in the static rendered HTML —
+without this check, the only way to notice is opening the page in a browser
+and looking.
+
+The restore also fixed two false-positive heuristics (F2, F3) that only
+covered the CDN-ESM loader pattern (`<script type="module">` importing
+mermaid from a URL) and false-fired on a second, equally valid loader
+pattern: a vendored mermaid UMD bundle inlined into a classic (non-module)
+`<script>` tag, followed by another classic `<script>` that calls
+`mermaid.initialize()`/`.run()`/`.render()` — used because Chrome and Brave
+block cross-origin ES-module imports from `file://` pages. F2 now recognises
+either loader pattern as evidence a mount div's emptiness is expected; F3
+now excludes `<script>` body content from its match, so a vendored bundle's
+own minified error-message templates (which literally contain "Syntax error
+in text" and "mermaid version" as library source, not runtime output) are
+no longer mistaken for a real parser failure.
 
 ## Related
 
