@@ -91,10 +91,20 @@ touch "${FAKE_HOME}/.claude/.bye-session-stop.${SID}"     # owned by session_sto
 
 # Run the REAL hooks in the REAL Stop-chain order (settings.json: 581 before
 # 607 — llmtelemetry_emit.sh stop, then session_stop.sh).
-HOME="${FAKE_HOME}" CLAUDE_SESSION_ID="${SID}" CLAUDE_PROJECT_DIR="${FAKE_PROJECT}" \
+#
+# 2026-09-24 (llm#803 follow-up): both hooks now resolve CLAUDE_CODE_SESSION_ID
+# ahead of CLAUDE_SESSION_ID. Set BOTH to the same synthetic SID -- setting
+# only CLAUDE_SESSION_ID let the REAL CLAUDE_CODE_SESSION_ID of whatever shell
+# happens to run this test leak in via inheritance, resolving to a different
+# session id than the one the sentinel files above were named for (this bit a
+# live agent dispatch running this exact test). Setting both also matches
+# production reality, where only CLAUDE_CODE_SESSION_ID is ever actually set.
+HOME="${FAKE_HOME}" CLAUDE_CODE_SESSION_ID="${SID}" CLAUDE_SESSION_ID="${SID}" \
+  CLAUDE_PROJECT_DIR="${FAKE_PROJECT}" \
   bash "${LLMTELEMETRY_EMIT}" stop >/dev/null 2>&1
 
-HOME="${FAKE_HOME}" CLAUDE_SESSION_ID="${SID}" CLAUDE_PROJECT_DIR="${FAKE_PROJECT}" \
+HOME="${FAKE_HOME}" CLAUDE_CODE_SESSION_ID="${SID}" CLAUDE_SESSION_ID="${SID}" \
+  CLAUDE_PROJECT_DIR="${FAKE_PROJECT}" \
   bash "${SESSION_STOP}" >/dev/null 2>&1 || true   # session_stop.sh may exit non-zero on
                                                     # optional sub-steps in a bare sandbox;
                                                     # irrelevant to what we assert below.
