@@ -143,11 +143,51 @@
          to Apple-signed /bin/bash. Neither codex/gemini/claude nor roborev
          itself live under /usr/bin or /bin, so moving these two ahead does
          not change which review-agent binaries resolve — only which `bash`
-         a bare invocation finds. -->
+         a bare invocation finds.
+
+         /opt/homebrew/bin was REMOVED from PATH entirely on 2026-09-24
+         (llm#1136): `roborev daemon run` shells out to
+         `/opt/homebrew/bin/agentsview session usage <id> --format json` to
+         backfill token/cost data on every review. With no agentsview
+         server reachable on 127.0.0.1, that client self-spawns
+         `agentsview serve`, which re-parents to PID 1 (the daemon does not
+         supervise it) and was found running 66h straight at ~97% CPU;
+         killing it, it respawned within ~5s on the next review. Neither
+         roborev nor agentsview exposes a config switch to suppress this
+         (`[cost].include_costs = false` and `[cost].endpoint = ''` were
+         already set in .roborev.toml and made no difference — the client
+         call happens regardless). Since agentsview lives ONLY under
+         /opt/homebrew/bin and nowhere else on this machine, dropping that
+         directory from the daemon's PATH makes `command -v agentsview`
+         fail inside the daemon's process tree, so the shellout errors
+         instead of spawning a replacement server. Re-verified every other
+         tool this PATH must resolve, under the NEW PATH (env -i PATH=<new>
+         /bin/sh -c 'command -v <tool>'):
+           claude     -> /Users/johngavin/.local/bin/claude
+           codex      -> /Users/johngavin/.nvm/versions/node/v24.13.0/bin/codex
+           gemini     -> /Users/johngavin/.nvm/versions/node/v24.13.0/bin/gemini
+           git        -> /usr/bin/git
+           node       -> /Users/johngavin/.nvm/versions/node/v24.13.0/bin/node
+           sqlite3    -> /usr/bin/sqlite3
+           roborev    -> /Users/johngavin/.local/bin/roborev
+           agentsview -> MISSING (intended — see above)
+           gh         -> MISSING (deliberate, and fine: [ci].enabled = false
+                         in .roborev.toml, and `strings` on the roborev
+                         binary shows no `gh` invocation — it talks to
+                         GitHub over HTTP with GH_TOKEN, not via the CLI)
+         This also removes the last remaining use of /opt/homebrew/bin from
+         this daemon's PATH, so the ad-hoc-signed-bash TCC exposure the
+         2026-08-28 change above already warned about (bare `bash` in a
+         homebrew-first PATH) no longer has a homebrew entry to resolve to
+         at all — a residual hardening, not just the agentsview fix.
+         Revert: re-add ":/opt/homebrew/bin" to the PATH string below if a
+         future tool genuinely needs it; re-litigate the agentsview
+         self-spawn problem separately rather than reflexively restoring
+         the old PATH. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin</string>
+        <string>/Users/johngavin/.local/bin:/Users/johngavin/.nvm/versions/node/v24.13.0/bin:/usr/bin:/bin:/usr/local/bin</string>
         <key>GEMINI_CLI_TRUST_WORKSPACE</key>
         <string>true</string>
     </dict>
