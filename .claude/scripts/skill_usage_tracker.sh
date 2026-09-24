@@ -26,7 +26,10 @@ case "$ACTION" in
     log)
         SKILL_NAME="${2:-unknown}"
         TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-        SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
+        # 2026-09-24 (llm#803 follow-up): prefer CLAUDE_CODE_SESSION_ID -- the
+        # harness's real env var -- over CLAUDE_SESSION_ID, which has never
+        # been observed set.
+        SESSION_ID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-unknown}}"
 
         echo "$TIMESTAMP|$SKILL_NAME|$SESSION_ID" >> "$LOG_FILE"
         echo "✓ Logged usage: $SKILL_NAME" >&2

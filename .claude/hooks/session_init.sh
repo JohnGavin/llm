@@ -1219,7 +1219,18 @@ phase_11d_selfheal || true
 
 # ── Phase 12: Log session start to unified DuckDB — BACKGROUND (~0.74s DuckDB cost) ──
 _log_script="$CLAUDE_DIR/scripts/log_session.sh"
-_session_id="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}"
+# 2026-09-24 self-review finding (llm#803 follow-up): the harness exports
+# CLAUDE_CODE_SESSION_ID (a real, stable, lowercase UUID -- confirmed live and
+# matching the session's own transcript filename), NOT CLAUDE_SESSION_ID.
+# CLAUDE_SESSION_ID has never been observed set, so this always fell through
+# to a fresh uuidgen mint on EVERY session, making session_stop.sh unable to
+# resolve back to this row via env var and fall back to a stale/reused PPID
+# anchor file instead -- the root cause of a 62.85h phantom "marathon_session"
+# false positive (tennis, session 7006110F...). Prefer the real harness id;
+# keep CLAUDE_SESSION_ID for back-compat/future harness versions; the uuidgen
+# fallback stays UPPERCASE (uuidgen's native case) so a fallback-minted id is
+# visually distinguishable in the DB from a real (lowercase) harness id.
+_session_id="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null || echo unknown)}}"
 if [ -x "$_log_script" ]; then
   # F7: resolve the canonical project (main repo name for linked worktrees),
   # not basename of cwd (which is the branch slug in a worktree). Fail-safe:

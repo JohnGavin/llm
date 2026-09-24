@@ -27,10 +27,11 @@
 # for normal sessions). Set by exporting CLAUDE_TRIGGER=scheduled in launcher
 # scripts before invoking claude.
 #
-# Concurrent-session safety (llm#273):
-#   - SESSION_ID is stable: prefer $CLAUDE_SESSION_ID → PPID-anchored fallback
-#     written at start time. A PPID-keyed anchor file ensures start/stop resolve
-#     the same ID even when CLAUDE_SESSION_ID is absent.
+# Concurrent-session safety (llm#273; env-var priority fixed llm#803 follow-up):
+#   - SESSION_ID is stable: prefer $CLAUDE_CODE_SESSION_ID (the harness's real
+#     env var), then $CLAUDE_SESSION_ID (back-compat), then a PPID-anchored
+#     fallback written at start time. A PPID-keyed anchor file ensures
+#     start/stop resolve the same ID even when neither env var is set.
 #   - Sentinels are per-session: ~/.claude/.bye-requested.<SESSION_ID>
 #     A /bye in session B CANNOT consume session A's sentinel.
 #   - State files are namespaced by SESSION_ID.
@@ -51,13 +52,25 @@ if [ ! -f "$GLOBAL_FLAG" ] && [ ! -f "$PROJECT_FLAG" ]; then
 fi
 
 # ── Stable session ID resolution (llm#273) ──────────────────────────────────
-# Priority: CLAUDE_SESSION_ID env var → PPID-anchored file → .current_session
-# → generate + anchor. The PPID anchor persists the generated ID across
-# start/stop invocations that share the same parent process (one Claude session).
+# Priority: CLAUDE_CODE_SESSION_ID -> CLAUDE_SESSION_ID env var (back-compat)
+# → fresh PPID-anchored file → .current_session → generate + anchor. The PPID
+# anchor persists the generated ID across start/stop invocations that share
+# the same parent process (one Claude session).
+#
+# 2026-09-24 self-review finding (llm#803 follow-up): the harness exports
+# CLAUDE_CODE_SESSION_ID, not CLAUDE_SESSION_ID (never observed set), so this
+# always fell through to the PPID anchor / .current_session / fresh-uuid path
+# on every invocation. Combined with anchors never being cleaned up, a reused
+# PPID let a Stop event resolve to and close an unrelated, much older
+# session's row -- see session_stop.sh's matching fix for the full incident
+# (62.85h phantom "marathon_session" finding, tennis project).
 _PPID_ANCHOR="$LOG_DIR/.llmtelemetry_ppid_session.${PPID:-0}"
-SESSION_ID="${CLAUDE_SESSION_ID:-}"
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
 if [ -z "$SESSION_ID" ]; then
-  if [ -f "$_PPID_ANCHOR" ]; then
+  # Defense-in-depth: ignore an anchor written by a much older, unrelated
+  # process that happened to reuse this PPID (portable BSD/GNU `find -mtime`
+  # form, matching session_stop.sh's identical check).
+  if [ -f "$_PPID_ANCHOR" ] && [ -z "$(find "$_PPID_ANCHOR" -mtime +1 2>/dev/null)" ]; then
     SESSION_ID=$(cat "$_PPID_ANCHOR" 2>/dev/null || echo "")
   fi
 fi

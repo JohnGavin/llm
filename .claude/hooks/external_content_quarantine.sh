@@ -169,7 +169,10 @@ if [ -z "$HOST" ]; then
 fi
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-AGENT_ID="${CLAUDE_AGENT_ID:-${CLAUDE_SESSION_ID:-unknown}}"
+# 2026-09-24 (llm#803 follow-up): prefer CLAUDE_CODE_SESSION_ID -- the
+# harness's real env var -- over CLAUDE_SESSION_ID, which has never been
+# observed set.
+AGENT_ID="${CLAUDE_AGENT_ID:-${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-unknown}}}"
 
 if is_allowed_domain "$HOST"; then
   # Trusted domain — log ALLOW

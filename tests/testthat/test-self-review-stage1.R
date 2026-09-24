@@ -140,7 +140,7 @@ INSERT INTO agent_runs VALUES
 -- Other tables required by the SQL file but not used by detector 1:
 CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
 CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);
-CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
 "
   out <- run_sql(setup_sql, sql_file())
   expect_false(is.null(out), label = "duckdb returned NULL")
@@ -180,7 +180,7 @@ INSERT INTO agent_runs VALUES
 
 CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
 CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);
-CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
 "
   out <- run_sql(setup_sql, sql_file())
   expect_false(is.null(out), label = "duckdb returned NULL")
@@ -220,7 +220,7 @@ INSERT INTO agent_runs VALUES
 
 CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
 CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);
-CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
 "
   out <- run_sql(setup_sql, sql_file())
   expect_false(is.null(out), label = "duckdb returned NULL")
@@ -266,7 +266,7 @@ CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text 
 INSERT INTO errors VALUES
   (1, 'sess-old-001', 'signal_notes', 'old error', '{}', now() - INTERVAL '40' DAY);
 
-CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
 "
   out <- run_sql(setup_sql, sql_file())
   expect_false(is.null(out), label = "duckdb returned NULL")
@@ -310,7 +310,7 @@ INSERT INTO errors VALUES
   (1, 'sess-rate-001', 'bad_tool', 'error 1', '{}', now() - INTERVAL '2' HOUR),
   (2, 'sess-rate-001', 'bad_tool', 'error 2', '{}', now() - INTERVAL '1' HOUR);
 
-CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
 "
   out <- run_sql(setup_sql, sql_file())
   expect_false(is.null(out), label = "duckdb returned NULL")
@@ -335,7 +335,7 @@ CREATE TABLE agent_runs (
     prompt_preview VARCHAR, status VARCHAR, tool_use_id VARCHAR, backfilled BOOLEAN
 );
 CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
-CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
 "
 
 errors_ddl <- "CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);"
