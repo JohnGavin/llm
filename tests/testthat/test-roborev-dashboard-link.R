@@ -6,36 +6,54 @@
 # publishing another project's personal-finance data), taking its GitHub
 # Pages dashboard offline. Both daily/weekly roborev emails previously
 # hardcoded https://johngavin.github.io/llmtelemetry/#roborev as the "View
-# Full roborev Dashboard" button target — a link that now 404s. The fix
-# (resolve_dashboard_links() / resolve_dashboard_href() /
+# Full roborev Dashboard" button target -- a link that now 404s. A
+# 2026-09-09 fix (llm#1123 follow-up) replaced that hardcoded string with a
+# file:// link to a locally-rendered vignette, falling back to the (private)
+# llmtelemetry repo URL when the local file was absent.
+#
+# 2026-09-24 (user: "the dashboard button is not working. fix it or remove
+# it"): the button was REMOVED for the no-override case. Neither of the two
+# targets it could previously point at actually worked:
+#   1. file:// hrefs are documented to be stripped by major mail clients
+#      (Gmail included) -- this was a known, unresolved caveat from
+#      2026-09-09 that was never re-verified.
+#   2. The repo-URL fallback (github.com/JohnGavin/llmtelemetry) is a
+#      PRIVATE repo with no GitHub Pages since 2026-08-22 -- it never showed
+#      the dashboard, only GitHub's repo-listing page.
+#
+# Current contract (resolve_dashboard_links() / resolve_dashboard_href() /
 # dashboard_cta_block() / effective_dashboard_url() in
-# .claude/scripts/email_styles.R) replaces that single hardcoded string
-# with three independently-overridable env vars and a fallback chain:
-#   1. ROBOREV_DASHBOARD_URL (explicit override -- wins outright)
-#   2. file://ROBOREV_DASHBOARD_LOCAL_PATH -- used directly as the button
-#      href WHEN that file actually exists on the machine generating the
-#      email (checked at send-time via file.exists()) (llm#1123 follow-up,
-#      2026-09-09)
-#   3. ROBOREV_DASHBOARD_REPO_URL (default: the llmtelemetry GitHub repo) --
-#      fallback when neither of the above applies
-# The local path is ALSO always surfaced as selectable <code> text below the
-# button (major mail clients, Gmail included, are documented to strip
-# file:// <a href> links, so the copyable text is the reliable fallback even
-# when the button itself uses a file:// href).
+# .claude/scripts/email_styles.R):
+#   - ROBOREV_DASHBOARD_URL set to an http(s) URL: dashboard_cta_block()
+#     renders a real, clickable <a> button to it. This is the ONLY case
+#     that renders a button.
+#   - Otherwise: no <a>, no href of any kind (never file://). Plain text
+#     names ROBOREV_DASHBOARD_LOCAL_PATH and, when the file exists, its
+#     mtime-derived age ("Last rendered: ... (N days ago)"), with a visible
+#     "stale" note when N > 2. When the file does not exist, the text says
+#     "not rendered on this machine" plus the render command -- freshness is
+#     never claimed without a successful file.exists()/file.info() check
+#     (checks-must-distinguish-unknown).
+#   - effective_dashboard_url() mirrors what dashboard_cta_block() rendered
+#     as a single string: the http(s) override, else the local path (no
+#     file:// prefix) if it exists, else the literal string "none".
 #
 # Coverage:
-#   - resolve_dashboard_links(): default values, and each env var override
-#   - dashboard_cta_block(): href resolution, explanatory note only when no
-#     explicit override, local path shown as text (not a file:// link)
-#   - effective_dashboard_url(): matches the href dashboard_cta_block() renders
-#   - Integration: both send_*_email.R scripts render the resolved link in
-#     dry-run output, with and without ROBOREV_DASHBOARD_URL set
+#   - resolve_dashboard_links(): defaults, and ROBOREV_DASHBOARD_LOCAL_PATH
+#     override
+#   - dashboard_cta_block(): http(s) override -> button; non-http(s)
+#     override -> no button; no override + file absent -> "not rendered"
+#     text, no href of any kind; no override + file exists (fresh) -> path
+#     + "Last rendered", no stale wording; no override + file exists (stale)
+#     -> stale wording
+#   - effective_dashboard_url(): matches dashboard_cta_block() in each case
+#   - Integration: send_roborev_email.R and send_roborev_weekly_rollup_email.R
+#     dry-run output never contains a file:// href or the dead GH Pages URL
 #
 # MUTATION-TEST performed manually for this PR (see fixer report): reverting
-# dashboard_cta_block()/resolve_dashboard_links() back to the old hardcoded
-# ROBOREV_DASHBOARD_URL default made every test in the first block below fail
-# (function not found / wrong default), confirming the tests exercise the
-# new code and are not vacuously true.
+# resolve_dashboard_href() to construct a "file://" href for the no-override
+# case made the "must NOT use a file:// href" tests below fail, confirming
+# they exercise the removal and are not vacuously true.
 
 library(testthat)
 
@@ -66,119 +84,46 @@ locate_claude_script <- function(relative_path) {
 
 email_styles_path <- locate_claude_script("email_styles.R")
 
-# ── Unit tests: resolve_dashboard_links() / dashboard_cta_block() /───────────
-#   effective_dashboard_url() — sourced directly, no subprocess needed
+# ── Unit tests: resolve_dashboard_links() ─────────────────────────────────────
 
-test_that("resolve_dashboard_links() defaults point at the llmtelemetry repo and the roborev vignette path", {
+test_that("resolve_dashboard_links() defaults point at no override and the roborev vignette path", {
   skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
   env <- new.env()
   withr::local_envvar(c(
     ROBOREV_DASHBOARD_URL = NA,
-    ROBOREV_DASHBOARD_REPO_URL = NA,
     ROBOREV_DASHBOARD_LOCAL_PATH = NA
   ))
   sys.source(email_styles_path, envir = env)
 
   links <- env$resolve_dashboard_links()
   expect_null(links$explicit_url)
-  expect_identical(links$repo_url, "https://github.com/JohnGavin/llmtelemetry")
   expect_identical(
     links$local_path,
     file.path(Sys.getenv("HOME"), "docs_gh", "llmtelemetry", "vignettes", "roborev_summary.html")
   )
 })
 
-test_that("ROBOREV_DASHBOARD_URL, when set, wins outright over the repo default", {
-  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
-  env <- new.env()
-  withr::local_envvar(c(
-    ROBOREV_DASHBOARD_URL = "https://example.com/custom-dashboard",
-    ROBOREV_DASHBOARD_REPO_URL = NA,
-    ROBOREV_DASHBOARD_LOCAL_PATH = NA
-  ))
-  sys.source(email_styles_path, envir = env)
-
-  links <- env$resolve_dashboard_links()
-  expect_identical(links$explicit_url, "https://example.com/custom-dashboard")
-  expect_identical(env$effective_dashboard_url(), "https://example.com/custom-dashboard")
-})
-
-test_that("ROBOREV_DASHBOARD_REPO_URL and ROBOREV_DASHBOARD_LOCAL_PATH are independently overridable", {
+test_that("ROBOREV_DASHBOARD_LOCAL_PATH is independently overridable", {
   skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
   env <- new.env()
   withr::local_envvar(c(
     ROBOREV_DASHBOARD_URL = NA,
-    ROBOREV_DASHBOARD_REPO_URL = "https://github.com/JohnGavin/some-other-repo",
     ROBOREV_DASHBOARD_LOCAL_PATH = "/tmp/custom-dashboard/index.html"
   ))
   sys.source(email_styles_path, envir = env)
 
   links <- env$resolve_dashboard_links()
   expect_null(links$explicit_url)
-  expect_identical(links$repo_url, "https://github.com/JohnGavin/some-other-repo")
   expect_identical(links$local_path, "/tmp/custom-dashboard/index.html")
-  expect_identical(env$effective_dashboard_url(), "https://github.com/JohnGavin/some-other-repo")
 })
 
-test_that("dashboard_cta_block() when local file absent: repo href, explanatory note, local path as text (not file://)", {
-  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
-  env <- new.env()
-  local_path <- file.path(tempdir(), "definitely-does-not-exist", "roborev_summary.html")
-  withr::local_envvar(c(
-    ROBOREV_DASHBOARD_URL = NA,
-    ROBOREV_DASHBOARD_REPO_URL = NA,
-    ROBOREV_DASHBOARD_LOCAL_PATH = local_path
-  ))
-  sys.source(email_styles_path, envir = env)
-  stopifnot(!file.exists(local_path))  # test premise: the file must genuinely be absent
+# ── Unit tests: dashboard_cta_block() / effective_dashboard_url() ────────────
 
-  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
-
-  expect_true(grepl('href="https://github.com/JohnGavin/llmtelemetry"', html, fixed = TRUE),
-    info = "button href must fall back to the llmtelemetry repo when the local file does not exist")
-  expect_true(grepl("went offline when llmtelemetry was made private", html, fixed = TRUE),
-    info = "must explain what changed and why, so a reader who clicked yesterday isn't confused")
-  expect_true(grepl(local_path, html, fixed = TRUE),
-    info = "local rendered path must be surfaced as text")
-  expect_false(grepl('href="file://', html, fixed = TRUE),
-    info = "with no local file present, the button must NOT use a file:// href -- it would 404 on click")
-})
-
-test_that("dashboard_cta_block() when local file exists: file:// href used directly, different note", {
-  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
-  env <- new.env()
-  local_dir <- tempfile("dashboard_link_true_branch_")
-  dir.create(local_dir)
-  local_path <- file.path(local_dir, "roborev_summary.html")
-  writeLines("<html><body>fixture</body></html>", local_path)
-  on.exit(unlink(local_dir, recursive = TRUE), add = TRUE)
-
-  withr::local_envvar(c(
-    ROBOREV_DASHBOARD_URL = NA,
-    ROBOREV_DASHBOARD_REPO_URL = NA,
-    ROBOREV_DASHBOARD_LOCAL_PATH = local_path
-  ))
-  sys.source(email_styles_path, envir = env)
-  stopifnot(file.exists(local_path))  # test premise: the file must genuinely exist
-
-  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
-
-  expect_true(grepl(sprintf('href="file://%s"', local_path), html, fixed = TRUE),
-    info = "button href must be the file:// link directly when the local render exists")
-  expect_false(grepl('href="https://github.com/JohnGavin/llmtelemetry"', html, fixed = TRUE),
-    info = "must NOT fall back to the repo URL when a local file is available")
-  expect_true(grepl("opens the locally rendered dashboard directly", html, fixed = TRUE),
-    info = "note text must differ from the no-local-file case")
-  expect_identical(env$effective_dashboard_url(), sprintf("file://%s", local_path),
-    info = "effective_dashboard_url() must match the href dashboard_cta_block() actually rendered")
-})
-
-test_that("dashboard_cta_block() with an explicit override: no explanatory note, override href used", {
+test_that("dashboard_cta_block() with an http(s) override: real button, no local-path text", {
   skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
   env <- new.env()
   withr::local_envvar(c(
     ROBOREV_DASHBOARD_URL = "https://example.com/custom-dashboard",
-    ROBOREV_DASHBOARD_REPO_URL = NA,
     ROBOREV_DASHBOARD_LOCAL_PATH = NA
   ))
   sys.source(email_styles_path, envir = env)
@@ -186,8 +131,108 @@ test_that("dashboard_cta_block() with an explicit override: no explanatory note,
   html <- env$dashboard_cta_block(env$ACCENT_BLUE)
 
   expect_true(grepl('href="https://example.com/custom-dashboard"', html, fixed = TRUE))
-  expect_false(grepl("went offline when llmtelemetry was made private", html, fixed = TRUE),
-    info = "an explicit override means nothing changed from the caller's point of view -- no note needed")
+  expect_false(grepl("not rendered on this machine", html, fixed = TRUE),
+    info = "an explicit http(s) override renders a button, not the local-path fallback text")
+  expect_identical(env$effective_dashboard_url(), "https://example.com/custom-dashboard")
+})
+
+test_that("dashboard_cta_block() with a non-http(s) override: no button rendered", {
+  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
+  env <- new.env()
+  local_path <- file.path(tempdir(), "definitely-does-not-exist", "roborev_summary.html")
+  withr::local_envvar(c(
+    ROBOREV_DASHBOARD_URL = "ftp://example.com/not-http",
+    ROBOREV_DASHBOARD_LOCAL_PATH = local_path
+  ))
+  sys.source(email_styles_path, envir = env)
+  stopifnot(!file.exists(local_path))  # test premise
+
+  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
+
+  expect_false(grepl("<a ", html, fixed = TRUE),
+    info = "a non-http(s) override must not be treated as a clickable target")
+  expect_true(grepl("not rendered on this machine", html, fixed = TRUE))
+})
+
+test_that("dashboard_cta_block() when local file absent: no <a>, no file:// href, 'not rendered' text", {
+  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
+  env <- new.env()
+  local_path <- file.path(tempdir(), "definitely-does-not-exist", "roborev_summary.html")
+  withr::local_envvar(c(
+    ROBOREV_DASHBOARD_URL = NA,
+    ROBOREV_DASHBOARD_LOCAL_PATH = local_path
+  ))
+  sys.source(email_styles_path, envir = env)
+  stopifnot(!file.exists(local_path))  # test premise: the file must genuinely be absent
+
+  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
+
+  expect_false(grepl("<a ", html, fixed = TRUE),
+    info = "with no override and no local file, there is nothing to link to")
+  expect_false(grepl("file://", html, fixed = TRUE),
+    info = "must NEVER construct a file:// href -- mail clients strip it")
+  expect_true(grepl("not rendered on this machine", html, fixed = TRUE),
+    info = "absence must be stated explicitly, never silently assumed fresh")
+  expect_true(grepl(local_path, html, fixed = TRUE),
+    info = "the expected local path is still surfaced as text so the reader knows what to render")
+  expect_identical(env$effective_dashboard_url(), "none")
+})
+
+test_that("dashboard_cta_block() when local file exists and is fresh: path + 'Last rendered', no stale wording", {
+  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
+  env <- new.env()
+  local_dir <- tempfile("dashboard_link_fresh_")
+  dir.create(local_dir)
+  local_path <- file.path(local_dir, "roborev_summary.html")
+  writeLines("<html><body>fixture</body></html>", local_path)
+  on.exit(unlink(local_dir, recursive = TRUE), add = TRUE)
+
+  withr::local_envvar(c(
+    ROBOREV_DASHBOARD_URL = NA,
+    ROBOREV_DASHBOARD_LOCAL_PATH = local_path
+  ))
+  sys.source(email_styles_path, envir = env)
+  stopifnot(file.exists(local_path))  # test premise
+
+  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
+
+  expect_false(grepl("<a ", html, fixed = TRUE),
+    info = "no override means no button, even when the local file exists")
+  expect_false(grepl("file://", html, fixed = TRUE))
+  expect_true(grepl(local_path, html, fixed = TRUE))
+  expect_true(grepl("Last rendered:", html, fixed = TRUE))
+  expect_false(grepl("stale", html, fixed = TRUE),
+    info = "a freshly-written file (mtime = now) must not be reported as stale")
+  expect_identical(env$effective_dashboard_url(), local_path)
+})
+
+test_that("dashboard_cta_block() when local file exists and is stale (>2 days): stale wording present", {
+  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
+  env <- new.env()
+  local_dir <- tempfile("dashboard_link_stale_")
+  dir.create(local_dir)
+  local_path <- file.path(local_dir, "roborev_summary.html")
+  writeLines("<html><body>fixture</body></html>", local_path)
+  on.exit(unlink(local_dir, recursive = TRUE), add = TRUE)
+  # Back-date the file's mtime by 10 days so it crosses the >2-day threshold.
+  Sys.setFileTime(local_path, Sys.time() - as.difftime(10, units = "days"))
+  stopifnot(file.exists(local_path))  # test premise
+
+  withr::local_envvar(c(
+    ROBOREV_DASHBOARD_URL = NA,
+    ROBOREV_DASHBOARD_LOCAL_PATH = local_path
+  ))
+  sys.source(email_styles_path, envir = env)
+
+  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
+
+  expect_false(grepl("<a ", html, fixed = TRUE))
+  expect_false(grepl("file://", html, fixed = TRUE))
+  expect_true(grepl("stale", html, fixed = TRUE),
+    info = "a file rendered 10 days ago (> the 2-day threshold) must be flagged as stale")
+  expect_true(grepl("Last rendered:", html, fixed = TRUE))
+  expect_true(grepl("(10 days ago)", html, fixed = TRUE))
+  expect_identical(env$effective_dashboard_url(), local_path)
 })
 
 # ── Integration tests: send_roborev_email.R dry-run ───────────────────────────
@@ -222,13 +267,19 @@ run_daily_email_dry_run <- function(extra_env = character(0)) {
   }
   skip_if_not(file.exists(email_script), "send_roborev_email.R not found")
 
+  # A definitely-absent default local path keeps the "no override" assertions
+  # below deterministic regardless of whether this machine happens to have a
+  # locally-rendered roborev vignette on disk.
+  missing_local_path <- file.path(tempdir(), "roborev_dashlink_absent_", "roborev_summary.html")
+
   env_vars <- c(
     "EMAIL_DRY_RUN=1",
     paste0("ROBOREV_DAILY_DIR=", dir),
     "GMAIL_USERNAME=", "GMAIL_APP_PASSWORD=", "REPORT_RECIPIENT=",
-    # Explicitly unset so a developer's real shell env can't leak into the
-    # "default" assertions below.
+    # Explicitly unset/defaulted so a developer's real shell env or local
+    # machine state can't leak into the "default" assertions below.
     "ROBOREV_DASHBOARD_URL=",
+    paste0("ROBOREV_DASHBOARD_LOCAL_PATH=", missing_local_path),
     extra_env
   )
   withr::with_envvar(
@@ -240,16 +291,20 @@ run_daily_email_dry_run <- function(extra_env = character(0)) {
   )
 }
 
-test_that("send_roborev_email.R dry-run: default dashboard link points at the repo, not the dead GH Pages URL", {
+test_that("send_roborev_email.R dry-run: no override + no local file -> no button, no file://, no dead URL", {
   skip_if_not_installed("blastula")
   out <- paste(run_daily_email_dry_run(), collapse = "\n")
 
   expect_false(grepl("johngavin.github.io/llmtelemetry", out, fixed = TRUE),
     info = "the dead GH Pages URL must never appear in the rendered email")
-  expect_true(grepl("github.com/JohnGavin/llmtelemetry", out, fixed = TRUE),
-    info = "default dashboard link must fall back to the (private) GitHub repo")
-  expect_true(grepl("QA:dashboard_url=https://github.com/JohnGavin/llmtelemetry", out, fixed = TRUE),
-    info = "QA marker must reflect the resolved (not raw env var) dashboard URL")
+  expect_false(grepl("href=\"file://", out, fixed = TRUE),
+    info = "must never render a file:// href -- mail clients strip it")
+  expect_false(grepl('href="https://github.com/JohnGavin/llmtelemetry"', out, fixed = TRUE),
+    info = "must never fall back to the private repo URL as a button -- it never showed the dashboard")
+  expect_true(grepl("not rendered on this machine", out, fixed = TRUE),
+    info = "absence of a local render must be stated explicitly in the dry-run body")
+  expect_true(grepl("QA:dashboard_url=none", out, fixed = TRUE),
+    info = "QA marker must report 'none' when there is no override and no local file")
 })
 
 test_that("send_roborev_email.R dry-run: ROBOREV_DASHBOARD_URL override still works end-to-end", {
@@ -259,12 +314,13 @@ test_that("send_roborev_email.R dry-run: ROBOREV_DASHBOARD_URL override still wo
     collapse = "\n"
   )
   expect_true(grepl("example.com/roborev", out, fixed = TRUE),
-    info = "explicit override must still be honoured end-to-end")
+    info = "explicit http(s) override must still be honoured end-to-end")
+  expect_true(grepl("QA:dashboard_url=https://example.com/roborev", out, fixed = TRUE))
 })
 
 # ── Integration test: send_roborev_weekly_rollup_email.R dry-run ─────────────
 
-test_that("send_roborev_weekly_rollup_email.R dry-run: default dashboard link points at the repo, not the dead GH Pages URL", {
+test_that("send_roborev_weekly_rollup_email.R dry-run: no override + no local file -> no button, no dead URL", {
   skip_if_not_installed("blastula")
   rollup_script <- locate_claude_script("send_roborev_weekly_rollup_email.R")
   skip_if_not(!is.na(rollup_script) && file.exists(rollup_script),
@@ -278,11 +334,14 @@ test_that("send_roborev_weekly_rollup_email.R dry-run: default dashboard link po
     file.path(dir, "2026-05-28.md")
   )
 
+  missing_local_path <- file.path(tempdir(), "roborev_weekly_dashlink_absent_", "roborev_summary.html")
+
   env_vars <- c(
     "EMAIL_DRY_RUN=1",
     paste0("ROBOREV_WEEKLY_DIR=", dir),
     "GMAIL_USERNAME=", "GMAIL_APP_PASSWORD=", "REPORT_RECIPIENT=",
-    "ROBOREV_DASHBOARD_URL="
+    "ROBOREV_DASHBOARD_URL=",
+    paste0("ROBOREV_DASHBOARD_LOCAL_PATH=", missing_local_path)
   )
   out <- withr::with_envvar(
     setNames(sub("^[^=]+=", "", env_vars), sub("=.*$", "", env_vars)),
@@ -292,6 +351,10 @@ test_that("send_roborev_weekly_rollup_email.R dry-run: default dashboard link po
 
   expect_false(grepl("johngavin.github.io/llmtelemetry", combined, fixed = TRUE),
     info = "the dead GH Pages URL must never appear in the rendered weekly email")
-  expect_true(grepl("github.com/JohnGavin/llmtelemetry", combined, fixed = TRUE),
-    info = "default dashboard link must fall back to the (private) GitHub repo")
+  expect_false(grepl("href=\"file://", combined, fixed = TRUE),
+    info = "must never render a file:// href -- mail clients strip it")
+  expect_false(grepl('href="https://github.com/JohnGavin/llmtelemetry"', combined, fixed = TRUE),
+    info = "must never fall back to the private repo URL as a button")
+  expect_true(grepl("not rendered on this machine", combined, fixed = TRUE),
+    info = "absence of a local render must be stated explicitly in the dry-run body")
 })
