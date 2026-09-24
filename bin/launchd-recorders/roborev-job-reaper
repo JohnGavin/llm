@@ -1,9 +1,27 @@
 #!/bin/bash
-# Deployed dry-run only (no --apply): roborev_job_reaper.sh mutates a
-# third-party database (~/.roborev/reviews.db) it does not own, and its own
-# SOAK_END guard (2026-08-29) forces dry-run before that date regardless of
-# this wrapper's args. Whether to add --apply and start marking stuck jobs
-# 'failed' for real is a live-system policy decision left to a human after
-# reviewing a run or two of this dry-run [would-reap]/[keep] log output —
-# see JohnGavin/llm#984 items 3-4, explicitly not decided here.
-exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-job-reaper" -- "/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_job_reaper.sh"
+# Apply mode (--apply): decided by the user, 2026-09-24 — "switching the
+# roborev job reaper from dry-run to actually clearing stuck jobs — yes."
+#
+# roborev_job_reaper.sh mutates a third-party database (~/.roborev/reviews.db)
+# it does not own, so this was deferred pending dry-run evidence (JohnGavin/llm#984
+# items 3-4). Evidence reviewed before flipping the switch: 317 recorded
+# dry-run runs in ~/.claude/logs/roborev_job_reaper.log (every 30 min since
+# 2026-08-22), apply=0 on every one (this wrapper never passed --apply, so the
+# script's own SOAK_END guard was moot in practice). Only ONE run ever saw a
+# 'running' job at all (2026-09-20 18:57:46, inspected=1 kept=1) and it was
+# correctly kept (within threshold) — zero would-reap/reaped across the whole
+# log. daemon_count=1 (a single live `roborev daemon run` process) on 316/317
+# runs, =2 on one run (report-only duplicate-daemon warning; never killed).
+#
+# To revert to dry-run: remove the "--apply" argument below. The script's own
+# SOAK_END guard (2026-08-29, now in the past) no longer forces dry-run, so
+# this wrapper's flag is what actually controls apply vs. dry-run.
+#
+# Recovery for a wrongly-reaped job: the reaper only ever marks a
+# review_jobs row status='failed' (never touches the reviews/findings
+# tables), and status='failed' is terminal — roborev does not auto-retry it.
+# Re-queue a review for the affected commit manually:
+#   roborev review --sha <sha> --repo <root_path>
+# (see JohnGavin/llm#927 / roborev_requeue_dropped.sh, which does the same
+# re-queue for a different class of failed job).
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-job-reaper" -- "/Users/johngavin/docs_gh/llm/.claude/scripts/roborev_job_reaper.sh" "--apply"
