@@ -77,6 +77,37 @@ columns empty/NULL" must never read as clean) made explicit and testable,
 rather than relying on every caller's pre-existing fail-closed handling of
 an empty string to (correctly, but implicitly) achieve the same thing.
 
+SEVERITY IS JSON-DIRECT, NEVER REGEX-OVER-RENDERED-TEXT (PR #1269 round 3,
+2026-09-25)
+----------------------------------------------------------------------------
+The first version of this module computed severity by calling
+``parse_max_severity_ordinal()`` (a ``Severity:``/``**Severity**:`` regex)
+over the text ``review_output_text()`` synthesizes from JSON findings. That
+text includes each finding's own free-form ``problem``/``fix`` prose --
+which can itself quote a severity marker as an EXAMPLE (e.g. a finding
+recommending "Add a fixture where ... a real 'Severity: High' review").
+Live proof: review ids 10523/10524 in ~/.roborev/reviews.db each have a
+JSON ``findings`` list whose real max severity is "medium", but the
+regex-over-rendered-text path read "high" because a lower-severity
+finding's own ``problem`` text quoted "Severity: High"/"**Severity**:
+High" as illustration.
+
+``review_severity_ordinal()`` below fixes this: for a structured row with
+a recognised ``schema_version`` (1 or 2) and a non-empty ``findings``
+list, it reads each finding's ``severity`` JSON field DIRECTLY (via
+``_findings_max_severity_ordinal()``) and takes the max ordinal --
+``problem``/``fix`` prose is never consulted for severity at all, so a
+quoted marker inside it cannot inflate the result. ``review_top_finding()``
+extends the same JSON-direct reasoning to LOCATION/PROBLEM: it returns the
+single finding whose severity is the row's max, sourced directly from its
+``location``/``problem`` JSON fields, so a caller displaying "the finding
+that drove this row's severity" never has to regex the rendered text
+either. Schema_version 0 rows (pre-migration free text, no structured
+findings to read) and any row whose only usable text is the legacy
+``output`` column fall back to the regex path exactly as before -- there
+is no structured JSON to read a severity/location/problem field from in
+that case, so the fallback is unchanged, deliberate, and still correct.
+
 Known gap NOT fixed here (out of scope for llm#1265, flagged 2026-09-25):
 NOT_REVIEWED_PATTERNS in this file has 7 entries; send_roborev_email.R's
 copy has grown 4 more since (llm#1127/#1141: "inaccessible due to
@@ -310,8 +341,17 @@ def review_output_text(output, structured_output):
       1. structured_output, schema_version 0 -> legacy.markdown verbatim.
       2. structured_output, schema_version >= 1 -> synthesized markdown
          from verdict/summary/findings.
-      3. legacy `output` column text (pre-v0.68.2 rows, or any future
-         schema roll-back).
+      3. legacy `output` column text -- used both for pre-v0.68.2 rows (no
+         structured_output at all) AND, since PR #1269 round 3 (review id
+         10523: "when structured_output is valid-but-unusable JSON, fall
+         back to legacy output text... before returning ''"), for a row
+         whose structured_output IS valid JSON but yields nothing
+         renderable (`{}`, an unrecognised/missing schema_version, or
+         schema_version 0 with a blank/missing legacy.markdown). Before
+         this fix such a row returned "" straight from the structured
+         branch and never consulted `output` at all, even when `output`
+         held real text -- silently discarding a usable fallback the
+         docstring above already promised as priority 3.
       4. "" when BOTH are empty/unusable -- callers MUST treat "" as
          INDETERMINATE, never as "passed"/"clean" (llm#1265 requirement
          #3). Every existing consumer already fails closed on "" (no
@@ -326,15 +366,158 @@ def review_output_text(output, structured_output):
         legacy_md = _legacy_markdown_from_structured(data)
         if legacy_md is not None:
             return legacy_md
-        return _render_structured_findings_as_markdown(data)
+        rendered = _render_structured_findings_as_markdown(data)
+        if rendered:
+            return rendered
+        # structured_output was valid JSON but produced nothing usable
+        # (unrecognised schema, {}, or blank legacy.markdown) -- fall
+        # through to the legacy `output` column rather than giving up.
     return (output or "").strip()
 
 
+# ── JSON-direct severity / top-finding reader (PR #1269 round 3) ───────────
+# See the module docstring's "SEVERITY IS JSON-DIRECT..." section for why
+# this exists: parse_max_severity_ordinal() over review_output_text()'s
+# SYNTHESIZED text is vulnerable to a finding's own problem/fix prose
+# quoting a severity marker as an example. The functions below read
+# `findings[].severity` (and `.location`/`.problem`) directly from the
+# parsed JSON for schema_version 1/2 rows with a non-empty findings list,
+# and only fall back to the regex-over-text path when there is no
+# structured findings list to read from at all.
+
+
+def _known_structured_schema(schema_version):
+    """True iff `schema_version` is the Python int 1 or 2 (never a bool --
+    `isinstance(True, int)` is True in Python, and a JSON boolean has no
+    business being treated as a schema version)."""
+    return (
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version in (1, 2)
+    )
+
+
+def _structured_findings_normalized(data):
+    """Return a list of dicts ``{"ordinal", "severity", "location",
+    "problem"}`` read DIRECTLY from a schema_version 1/2 dict's JSON
+    `findings` entries -- never via regex over rendered text. Returns None
+    when there is nothing usable to read (unrecognised/missing
+    schema_version, findings missing/empty, or no entry has a recognised
+    `severity` value) -- callers MUST treat None as "fall back to the
+    legacy regex-over-text path", NOT as "no findings" (which is
+    represented by a present-but-recognised-empty findings list and is a
+    genuine "passed" state, handled by the caller BEFORE this function is
+    even reached in practice, but this function stays agnostic to that
+    distinction and simply reports what it could read)."""
+    if not _known_structured_schema(data.get("schema_version")):
+        return None
+    findings = data.get("findings")
+    if not isinstance(findings, list) or not findings:
+        return None
+    out = []
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        sev = f.get("severity")
+        if not isinstance(sev, str):
+            continue
+        ordv = SEVERITY_ORDINAL.get(sev.strip().lower())
+        if ordv is None:
+            continue
+        loc = f.get("location")
+        problem = f.get("problem")
+        out.append({
+            "ordinal": ordv,
+            "severity": sev.strip().lower(),
+            "location": loc.strip() if isinstance(loc, str) and loc.strip() else None,
+            "problem": problem.strip() if isinstance(problem, str) and problem.strip() else None,
+        })
+    return out if out else None
+
+
+def review_structured_findings(output, structured_output):
+    """Public entry: parse `structured_output` and return
+    _structured_findings_normalized(data), or None if structured_output is
+    not usable JSON at all (malformed, not an object, empty/NULL). None
+    means "no per-finding JSON to read -- use review_output_text() with
+    your own regex instead"; this is the schema_version 0 / legacy-`output`
+    -only case, which never had structured findings to begin with."""
+    data = _parse_structured_json(structured_output)
+    if data is None:
+        return None
+    return _structured_findings_normalized(data)
+
+
 def review_severity_ordinal(output, structured_output):
-    """Max severity ordinal (1-4) for a review row sourced from either
-    column via review_output_text(), or None if the row has no severity
-    marker (passed/not_reviewed/unclassified/indeterminate)."""
+    """Max severity ordinal (1-4) for a review row, sourced from EITHER
+    column. For a structured row (schema_version 1/2, non-empty findings)
+    this reads each finding's `severity` JSON field DIRECTLY -- NEVER via
+    regex over rendered/synthesized text -- so a finding whose own
+    `problem`/`fix` prose happens to quote a severity marker (e.g.
+    "Severity: High" used as an illustrative example) cannot inflate the
+    row's true max severity. See the module docstring's "SEVERITY IS
+    JSON-DIRECT..." section for the live incident this fixes (review ids
+    10523/10524 in ~/.roborev/reviews.db: true max severity "medium",
+    regex-over-text read "high").
+
+    Returns None if the row has no severity to report at all -- either a
+    recognised structured schema with empty findings ("passed": nothing to
+    fall back to, by design -- see below), or the legacy regex path found
+    no `Severity:` marker.
+
+    Falls back to `parse_max_severity_ordinal(review_output_text(...))`
+    (the pre-existing regex path) for: schema_version 0 rows (real
+    pre-migration free text, no per-finding JSON), an unrecognised/missing
+    schema_version, structured_output that is not usable JSON at all, and
+    (implicitly, via review_output_text()'s own fallback) the legacy
+    `output` column. A RECOGNISED schema_version with an EMPTY findings
+    list is NOT included in the fallback -- an empty findings list is
+    itself the "review ran, found nothing" signal (schema_version 1 has no
+    separate verdict key; schema_version 2 makes it explicit via
+    verdict=="pass"), so there is genuinely no severity to report, and
+    falling back to `output` there would risk resurrecting stale text from
+    an unrelated column on a migrated row (`output` is empty on every live
+    migrated row, so this is currently a no-op in practice, but the
+    distinction is deliberate, not incidental)."""
+    data = _parse_structured_json(structured_output)
+    if data is not None:
+        schema_version = data.get("schema_version")
+        legacy_md = _legacy_markdown_from_structured(data)
+        if legacy_md is not None:
+            return parse_max_severity_ordinal(legacy_md)
+        if _known_structured_schema(schema_version):
+            findings = data.get("findings")
+            normalized = _structured_findings_normalized(data)
+            if normalized is not None:
+                return max(f["ordinal"] for f in normalized)
+            if isinstance(findings, list):
+                # Recognised schema, but either genuinely empty (passed)
+                # or non-empty with no entry carrying a recognised
+                # severity value -- either way, nothing to report and
+                # nothing to fall back to (see docstring above).
+                return None
+        # Unrecognised/missing schema_version and no legacy.markdown --
+        # fall through to the legacy `output` column below (matches
+        # review_output_text()'s own PR #1269-round-3 fallback fix).
     return parse_max_severity_ordinal(review_output_text(output, structured_output))
+
+
+def review_top_finding(output, structured_output):
+    """Return the finding dict (``{"ordinal","severity","location",
+    "problem"}``) whose severity equals the row's max, sourced DIRECTLY
+    from JSON for schema_version 1/2 rows -- so a caller wanting to show
+    "the finding that drove this severity" never has to regex Location:/
+    Problem: markers out of rendered text either (the same corruption risk
+    as severity: a lower-severity finding's problem/fix prose could
+    contain those literal marker strings too). Returns None when there is
+    no structured findings list to read from (falls back the same way
+    review_severity_ordinal() does -- callers needing a location/problem
+    for a legacy/regex-path row must still parse review_output_text()
+    themselves, unchanged pre-existing behaviour)."""
+    normalized = review_structured_findings(output, structured_output)
+    if not normalized:
+        return None
+    return max(normalized, key=lambda f: f["ordinal"])
 
 
 def classify_review_row(output, structured_output):
@@ -526,6 +709,100 @@ def _selftest():
           "indeterminate", classify_review_row(None, unknown_schema_version))
     check("classify_review_row(): missing schema_version key -> indeterminate",
           "indeterminate", classify_review_row(None, missing_schema_version_key))
+
+    # ── PR #1269 round 3 (llm#1265 follow-up) ───────────────────────────
+    # Finding 1: review_output_text() valid-but-unusable JSON must fall
+    # back to legacy `output` text before returning "" (review id 10523).
+    unusable_structured_real_output = (
+        legacy_text_only,  # "- **Severity**: Low\n  **Problem**: minor thing"
+        empty_object,      # "{}"
+    )
+    check("review_output_text(): {} structured falls back to real `output` text",
+          True, "Severity" in review_output_text(*unusable_structured_real_output))
+    check("review_severity_ordinal(): {} structured falls back to `output` -> 1 (low)",
+          1, review_severity_ordinal(*unusable_structured_real_output))
+    check("classify_review_row(): {} structured falls back to `output` -> parsed",
+          "parsed", classify_review_row(*unusable_structured_real_output))
+
+    # Finding 2 (the headline bug, PR #1269 review ids 10523/10524): a v2
+    # row whose real max severity is "medium" must NOT be inflated to
+    # "high" just because a (lower-severity) finding's own problem/fix
+    # prose quotes "Severity: High"/"**Severity**: Critical" as an
+    # illustrative example. review_severity_ordinal() must read the JSON
+    # `severity` fields directly and ignore prose entirely.
+    v2_medium_with_quoted_high_in_problem = json.dumps({
+        "schema_version": 2,
+        "summary": "one real finding, quoted example text elsewhere",
+        "verdict": "fail",
+        "findings": [
+            {
+                "severity": "medium",
+                "location": "a.R:1",
+                "problem": (
+                    "When X happens the reader mis-parses. Add a fixture "
+                    "where structured_output is `{}` and `output` holds a "
+                    "real 'Severity: High' review."
+                ),
+                "fix": (
+                    "Have the caller emit **Severity**: Critical only when "
+                    "genuinely critical; do not infer it from prose."
+                ),
+            },
+        ],
+    })
+    check("review_severity_ordinal(): v2 medium finding, problem/fix TEXT quotes "
+          "High/Critical -> 2 (medium, NOT inflated by prose)",
+          2, review_severity_ordinal(None, v2_medium_with_quoted_high_in_problem))
+    check("parse_max_severity_ordinal() over the OLD rendered-text path WOULD have "
+          "read Critical (4, from the quoted 'fix' text) instead of the true medium "
+          "-- proves the bug this fix closes, not just the fix itself",
+          4, parse_max_severity_ordinal(
+              review_output_text(None, v2_medium_with_quoted_high_in_problem)))
+    check("classify_review_row(): same fixture -> parsed",
+          "parsed", classify_review_row(None, v2_medium_with_quoted_high_in_problem))
+
+    # review_structured_findings() / review_top_finding(): JSON-direct,
+    # never regex -- and the SAME quoted-marker-in-prose case must not
+    # corrupt location/problem either.
+    v2_multi_with_quoted_markers = json.dumps({
+        "schema_version": 2,
+        "summary": "x",
+        "verdict": "fail",
+        "findings": [
+            {"severity": "low", "location": "a.R:1",
+             "problem": "mentions **Location**: b.R:99 and **Problem**: fake as an example"},
+            {"severity": "high", "location": "c.R:42", "problem": "the real problem"},
+        ],
+    })
+    check("review_severity_ordinal(): max of [low, high] -> 3 (high), not corrupted "
+          "by the low finding's own quoted markers",
+          3, review_severity_ordinal(None, v2_multi_with_quoted_markers))
+    top = review_top_finding(None, v2_multi_with_quoted_markers)
+    check("review_top_finding(): top finding severity == 'high'",
+          "high", top["severity"] if top else None)
+    check("review_top_finding(): top finding location read from JSON, not regex "
+          "(the low finding's problem text ALSO contains a '**Location**:' marker)",
+          "c.R:42", top["location"] if top else None)
+    check("review_top_finding(): top finding problem read from JSON",
+          "the real problem", top["problem"] if top else None)
+
+    # A recognised schema with an EMPTY findings list is "passed" -- must
+    # NOT fall back to `output`, even when `output` holds real severity
+    # text (deliberate: see review_severity_ordinal()'s own docstring).
+    v2_pass_with_stale_output = "**Severity**: Critical\nstale text in `output`"
+    check("review_severity_ordinal(): recognised schema + empty findings does NOT "
+          "fall back to `output`, even when `output` has real severity text",
+          None, review_severity_ordinal(v2_pass_with_stale_output, v2_pass_no_findings))
+
+    # review_structured_findings() returns None (not []) when there is no
+    # per-finding JSON to read at all -- the "use the regex path instead"
+    # signal, distinct from a recognised-but-empty findings list.
+    check("review_structured_findings(): schema_version 0 -> None (no per-finding JSON)",
+          None, review_structured_findings(None, schema0_legacy))
+    check("review_structured_findings(): malformed JSON -> None",
+          None, review_structured_findings(legacy_text_only, malformed_json))
+    check("review_top_finding(): malformed JSON -> None",
+          None, review_top_finding(legacy_text_only, malformed_json))
 
     print(f"\n{passed}/{passed + failed} PASS")
     return 0 if failed == 0 else 1

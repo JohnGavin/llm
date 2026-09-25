@@ -286,6 +286,8 @@ try:
         parse_max_severity_ordinal,
         classify_unparseable_finding,
         review_output_text,
+        review_severity_ordinal,
+        review_top_finding,
         classify_review_row,
         SEVERITY_ORDINAL,
     )
@@ -336,15 +338,21 @@ prb_re = re.compile(r"\*\*Problem\*\*:\s*([^\n]+)", re.IGNORECASE)
 findings = []
 unparseable = []
 for (rid, output, structured_output, sha) in rows:
-    # llm#1265: roborev v0.68.2 migrated every row's review text out of the
-    # output column (empty on all live rows) into structured_output (JSON).
-    # review_output_text() reconstructs the same markdown shape loc_re/
-    # prb_re/parse_max_severity_ordinal already expect, falling back to
-    # output when structured_output is NULL/empty/unparseable.
+    # llm#1265 / PR #1269 round 3: severity comes from review_severity_ordinal(),
+    # which reads a structured row's findings[].severity JSON fields
+    # DIRECTLY -- never via parse_max_severity_ordinal() over the
+    # review_output_text()-rendered markdown. A finding's own problem/fix
+    # prose can legitimately quote a severity marker as an EXAMPLE (live
+    # proof: review ids 10523/10524 in reviews.db each have a real max
+    # severity of "medium", but a lower-severity finding's problem text
+    # quotes "Severity: High"/"**Severity**: Critical", which the old
+    # regex-over-text path misread as the row's severity). Legacy
+    # schema_version 0 rows and the output column fallback still go
+    # through the regex path inside review_severity_ordinal() itself --
+    # this call site does not need to know which path was taken.
     # (NOTE: this heredoc is unquoted <<PYEOF — no backticks in this block,
     # they trigger bash command substitution here, not markdown emphasis.)
-    text = review_output_text(output, structured_output)
-    max_ord = parse_max_severity_ordinal(text)
+    max_ord = review_severity_ordinal(output, structured_output)
     if max_ord is None:
         # llm#1146: previously "continue # skip (conservative: don't block
         # on unparseable)" — that silent skip WAS the bug. Distinguish text
@@ -363,10 +371,25 @@ for (rid, output, structured_output, sha) in rows:
         continue
     if max_ord < min_idx:
         continue  # below threshold
-    loc_m   = loc_re.search(text)
-    prb_m   = prb_re.search(text)
-    location = loc_m.group(1).strip() if loc_m else "(location unknown)"
-    problem  = prb_m.group(1).strip()[:120] if prb_m else "(see review output)"
+    # llm#1265 round 3: location/problem for display are sourced the SAME
+    # way severity is -- JSON-direct via review_top_finding() when the row
+    # has structured findings, falling back to the pre-existing Location:/
+    # Problem: regex over review_output_text() only when it does not (i.e.
+    # the same legacy/regex-path rows review_severity_ordinal() itself
+    # fell back for above). Prevents a lower-severity finding's own
+    # problem/fix prose from ALSO corrupting the displayed location/problem
+    # for the row's true top finding -- the same corruption class as the
+    # severity bug this round fixes.
+    top = review_top_finding(output, structured_output)
+    if top is not None:
+        location = top["location"] or "(location unknown)"
+        problem  = (top["problem"] or "(see review output)")[:120]
+    else:
+        text    = review_output_text(output, structured_output)
+        loc_m   = loc_re.search(text)
+        prb_m   = prb_re.search(text)
+        location = loc_m.group(1).strip() if loc_m else "(location unknown)"
+        problem  = prb_m.group(1).strip()[:120] if prb_m else "(see review output)"
     label = next(k for k, v in SEVERITY_ORDINAL.items() if v == max_ord)
     findings.append({
         "id":         rid,
