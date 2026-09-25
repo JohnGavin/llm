@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/_companions/ci-outage-local-gates.md"
+---
+
 # Companion: CI Outage -- Local Substitutes for CI-Only Gates
 
 Origin: [JohnGavin/llm#1234](https://github.com/JohnGavin/llm/issues/1234)

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/branch-harvest-on-fork.md"
+---
+
 # Companion: Branch Harvest on Fork — Incident Narrative + Worked Examples
 
 Incident narrative and worked code/output examples split out of the

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/checks-must-distinguish-unknown.md"
+---
+
 # Companion: Checks Must Distinguish Unknown — Worked Incident Walkthroughs
 
 Dated worked-incident detail split out of the always-loaded

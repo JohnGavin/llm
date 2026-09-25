@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/nix-nested-shell-isolation.md"
+---
+
 # Companion: Nix Nested Shell Isolation — Background + Worked Examples
 
 Background explanation, worked code, and the full cross-reference list split

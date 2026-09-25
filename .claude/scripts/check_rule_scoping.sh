@@ -35,7 +35,15 @@
 #
 # Four checks, two directions:
 #   A. Context-bloat direction: a rule in NEITHER tier with no `paths:`
-#      frontmatter loads into every session/subagent unconditionally.
+#      frontmatter loads into every session/subagent unconditionally. This
+#      now INCLUDES `.claude/rules/_companions/**` (llm#1140 follow-up): a
+#      companion doc with no `paths:` also loads unconditionally despite its
+#      own header text claiming "loaded on demand" — see the origin incident
+#      in `rule-scoping-guard.md`. Companions can never land in check B/C:
+#      the mandatory/safety-critical tiers are name-matched against the
+#      basenames declared in AGENTS.md's tier lines, and no companion
+#      basename appears there, so an unscoped companion always resolves to
+#      check A (exit 1, non-blocking), never check B/C (exit 3, blocking).
 #   B. Safety direction: a MANDATORY or SAFETY-CRITICAL rule that DOES carry
 #      `paths:` frontmatter — so despite being declared "always loads" it
 #      silently only fires for matching files.
@@ -238,9 +246,12 @@ audit() {
         fi
 
         content_heuristic_check "$f" "$name"
-    # Companion documents are loaded on demand via explicit Read, not auto-injected
-    # by paths: matching, so they don't need (and must not carry) paths: frontmatter.
-    done < <(find "$dir" -name '*.md' -type f -not -path '*/_companions/*' | sort)
+    # Companion documents under _companions/ are INCLUDED here (llm#1140
+    # follow-up) — a companion with no paths: frontmatter loads into every
+    # session/subagent exactly like a top-level rule; "loaded on demand" in
+    # its own header text is not itself an enforcement mechanism. 32 of 34
+    # companions were found unscoped in this repo before that follow-up.
+    done < <(find "$dir" -name '*.md' -type f | sort)
 
     for m in $mandatory; do
         if [ ! -f "$dir/$m.md" ]; then
@@ -431,6 +442,21 @@ if [ "${1:-}" = "--selftest" ]; then
     out13="$(audit "$r13/.claude/rules")"
     c="$(printf '%s\n' "$out13" | grep -c 'ADVISORY-HIGH-RISK-UNJUSTIFIED: high-risk-justified' || true)"
     check_eq "content heuristic silent when scoping-justification present" "$c" "0"
+
+    # --- Companions (llm#1140 follow-up): check A now covers _companions/ ---
+    r14="$tmp/repo14"
+    mk_repo "$r14" "mand-ok"
+    printf -- '---\ndescription: x\n---\n# ok\n' > "$r14/.claude/rules/mand-ok.md"
+    mkdir -p "$r14/.claude/rules/_companions"
+    printf -- '# unscoped companion\nbody\n' > "$r14/.claude/rules/_companions/comp-unscoped.md"
+    printf -- '---\npaths:\n  - ".claude/rules/mand-ok.md"\n---\n# scoped companion\nbody\n' \
+        > "$r14/.claude/rules/_companions/comp-scoped.md"
+    out14="$(audit "$r14/.claude/rules")" && rc14=0 || rc14=$?
+    check_eq "unscoped companion -> exit 1 (context bloat, not blocking)" "$rc14" "1"
+    c="$(printf '%s\n' "$out14" | grep -c 'UNSCOPED: _companions/comp-unscoped.md' || true)"
+    check_eq "unscoped companion flagged UNSCOPED" "$c" "1"
+    c="$(printf '%s\n' "$out14" | grep -c 'comp-scoped' || true)"
+    check_eq "scoped companion (correctly configured) NOT mentioned" "$c" "0"
 
     echo "selftest: ${pass}/${total} PASS"
     [ "$pass" -eq "$total" ]

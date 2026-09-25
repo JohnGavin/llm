@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/secret-exposure-scanning.md"
+---
+
 # Companion: Secret Exposure Scanning — Origin, Tuning History, and Worked Detail
 
 Dated incident narrative, tuning-round history, and verbose worked-example

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/human-in-the-loop-decision-points.md"
+---
+
 # Companion: Human-in-the-Loop Decision Points — Worked Examples
 
 Worked examples split out of the always-loaded

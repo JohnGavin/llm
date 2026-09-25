@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/visualization.md"
+---
+
 # Companion: Visualization Standards (Core) — Worked Examples and Incident Detail
 
 Worked examples and incident detail split out of the always-loaded

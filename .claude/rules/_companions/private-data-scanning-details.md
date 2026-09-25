@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/private-data-scanning.md"
+---
+
 # Companion: Private-Data Scanning — Origin Incident, Self-Reference Exemption Investigation, and Merge Detail
 
 Dated incident narrative and verbose investigation detail split out of the

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/exit-code-conventions.md"
+---
+
 # Companion: Exit-Code Conventions — Full Audit (JohnGavin/llm#1140)
 
 Full per-script exit-code audit split out of the always-loaded

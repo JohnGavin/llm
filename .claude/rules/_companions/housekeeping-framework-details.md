@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/housekeeping-framework.md"
+---
+
 # Companion: Housekeeping Framework — Full Code Templates + Task Inventory
 
 Full code templates and the current task-inventory table split out of the

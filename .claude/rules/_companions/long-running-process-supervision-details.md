@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/long-running-process-supervision.md"
+---
+
 # Companion: Long-Running Process Supervision — Client-Spawns-Daemon Incident Detail
 
 Dated incident detail split out of the always-loaded
