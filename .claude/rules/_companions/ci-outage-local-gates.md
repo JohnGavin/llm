@@ -1,6 +1,8 @@
 ---
 paths:
   - ".claude/rules/pr-shipping-discipline.md"
+  - ".claude/rules/human-in-the-loop-decision-points.md"
+  - ".github/PULL_REQUEST_TEMPLATE.md"
   - ".claude/scripts/ci_availability_check.sh"
   - ".claude/state/ci_outages.tsv"
   - ".github/workflows/**"
