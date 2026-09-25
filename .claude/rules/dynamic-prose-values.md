@@ -41,7 +41,7 @@ from its source of truth; never maintain a second copy by hand.
 |---|---|
 | Quarto / Rmd | inline R: `` `r n_sessions` `` |
 | Captions/subtitles built in R | `sprintf("%d of %d sessions", n_x, n_sessions)` |
-| Generated HTML / Claude Artifact | `<span data-fact="n_sessions"></span>` placeholders, filled at build from a facts file the build computes (e.g. `page_facts.json`); the fill step **errors** on a key the build did not compute |
+| Generated HTML / Claude Artifact | `<span data-fact="n_sessions"></span>` placeholders, filled at build from a facts file the build computes (e.g. `facts.json`); the fill step **errors** on a key the build did not compute |
 | Reference table in a page | generated from its source (`params()`, catalogue, audit CSV) and injected by id |
 | Page JavaScript strings | computed from the page's own embedded data, not a literal |
 | Email templates | values from the summary object passed in |
@@ -66,9 +66,9 @@ computed. Minimum:
   run it on the pre-fix page (it must report the known hits) and on a copy
   with one planted hand-typed count (it must catch it).
 
-Reference implementation: `tennis` project, `R/page_facts.R`
-(`find_hand_typed_numbers()`, `fill_page_facts()`), wired into
-`scripts/splice_charts.R` Steps 7b and 10.
+A reference implementation exists in a private dashboard project (an
+exported gate function plus a fill function, run as the last two steps of
+its splice/publish script); ask the owner for it rather than re-deriving.
 
 ## `data-fixed`: the only allowed hand-typed numbers
 
@@ -99,7 +99,7 @@ code, it is not fixed: compute it.
 
 ## Origin
 
-`tennis` project, 2026-09-25 (ISSUES.md #143/#144). A chart title read
+A private dashboard project, 2026-09-25. A chart title read
 n = 11 while its caption said "n = 9"; the gate then found 77 hand-typed
 numbers on one page, two of them already false (a "fastest stroke" claim, a
 chart count), plus two reference tables maintained by hand. User: "never do
