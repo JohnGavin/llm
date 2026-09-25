@@ -232,6 +232,30 @@ def _render_structured_findings_as_markdown(data):
         findings = []
     summary = data.get("summary") or ""
     verdict = data.get("verdict")
+    schema_version = data.get("schema_version")
+    # llm#1265 finding 2: only a RECOGNISED schema_version (1 or 2 today --
+    # see this module's docstring) may reach the "No issues found."/
+    # Summary-only paths below when findings is empty. Before this fix,
+    # `elif verdict in (None, "pass")` fired for ANY empty-findings dict
+    # whose verdict key happened to be absent -- which includes {} (no
+    # schema_version key at all), a schema_version 0 row whose
+    # legacy.markdown is blank/missing (already failed that path above,
+    # before this function was even called), and an unrecognised
+    # schema_version (e.g. a future 3+ this reader has never heard of) --
+    # all three were silently rendered as "No issues found." and then
+    # classified "passed", exactly the "both columns empty must never read
+    # as clean" requirement (llm#1265 requirement #3) this reader exists to
+    # satisfy. Such a row has nothing reliable to synthesize from, so it
+    # must classify as INDETERMINATE instead -- returning "" here achieves
+    # that via review_output_text()'s existing empty-text handling, with no
+    # separate branch needed. Findings-non-empty rendering below is
+    # UNAFFECTED by this gate -- a genuine finding is real signal
+    # regardless of whether this function recognises its schema_version.
+    known_schema = (
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version in (1, 2)
+    )
 
     lines = []
     if findings:
@@ -252,6 +276,8 @@ def _render_structured_findings_as_markdown(data):
             if fix:
                 lines.append("  **Fix**: {}".format(fix))
             lines.append("")
+    elif not known_schema:
+        return ""
     elif verdict in (None, "pass"):
         # A v1/v2 review that ran and found nothing (schema_version 1 has
         # no "verdict" key at all -- an empty findings list alone IS the
@@ -442,6 +468,19 @@ def _selftest():
         '{"schema_version":1,"summary":"I am unable to access the diff file",'
         '"findings":[]}'
     )
+    # llm#1265 finding 2: valid JSON, empty findings, but nothing reliable
+    # to render from -- each of these MUST classify as indeterminate, never
+    # "passed", even though the pre-fix code synthesized "No issues found."
+    # for every one of them.
+    empty_object = "{}"
+    schema0_blank_legacy = (
+        '{"legacy":{"markdown":""},"schema_version":0,"summary":"","findings":[]}'
+    )
+    schema0_missing_legacy = '{"schema_version":0,"summary":"","findings":[]}'
+    unknown_schema_version = (
+        '{"schema_version":99,"summary":"x","findings":[]}'
+    )
+    missing_schema_version_key = '{"summary":"x","findings":[]}'
 
     check("review_severity_ordinal(): v2 JSON with medium+high findings -> 3 (high)",
           3, review_severity_ordinal(None, v2_with_findings))
@@ -471,6 +510,22 @@ def _selftest():
           "not_reviewed", classify_review_row(None, not_reviewed_structured))
     check("review_output_text(): structured_output takes priority over legacy output",
           True, "Critical" in review_output_text("Severity: Low", schema0_legacy))
+
+    # llm#1265 finding 2: fixtures for the four ways a row can have valid
+    # JSON, empty findings, and STILL be unusable -- every one of these
+    # MUST classify as indeterminate, never "passed".
+    check("classify_review_row(): {} (no schema_version, no findings key) -> indeterminate",
+          "indeterminate", classify_review_row(None, empty_object))
+    check("review_output_text(): {} -> ''",
+          "", review_output_text(None, empty_object))
+    check("classify_review_row(): schema_version 0, legacy.markdown blank -> indeterminate",
+          "indeterminate", classify_review_row(None, schema0_blank_legacy))
+    check("classify_review_row(): schema_version 0, legacy key entirely missing -> indeterminate",
+          "indeterminate", classify_review_row(None, schema0_missing_legacy))
+    check("classify_review_row(): unrecognised schema_version (99) -> indeterminate",
+          "indeterminate", classify_review_row(None, unknown_schema_version))
+    check("classify_review_row(): missing schema_version key -> indeterminate",
+          "indeterminate", classify_review_row(None, missing_schema_version_key))
 
     print(f"\n{passed}/{passed + failed} PASS")
     return 0 if failed == 0 else 1

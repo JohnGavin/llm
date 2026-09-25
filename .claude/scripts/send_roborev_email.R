@@ -276,9 +276,27 @@ query_reviews_db <- function(sql, timeout_sec = 15L) {
 # every query below fail outright (query_reviews_db() returns NULL on any
 # sqlite3 error) rather than degrading gracefully. Checked once via
 # PRAGMA table_info, not per-query.
+# llm#1265 finding 4: query_reviews_db() returns NULL both when the PRAGMA
+# genuinely has no rows to say "column absent" AND when the query itself
+# failed (transient sqlite3 timeout/lock/crash) -- collapsing those two
+# into the same "treat as absent" branch silently degrades every later
+# query to `NULL AS structured_output` (all live rows read as empty text,
+# every review classifies "unclassified") with NO log line distinguishing
+# a genuinely pre-migration DB from a live DB this run merely failed to
+# introspect. Log the NULL-PRAGMA case loudly so it's distinguishable in
+# the digest/cron log from an actually-absent column.
 HAS_STRUCTURED_OUTPUT_COL <- local({
   cols <- query_reviews_db("PRAGMA table_info(reviews);")
-  !is.null(cols) && any(vapply(cols, function(c) identical(c[["name"]], "structured_output"), logical(1L)))
+  if (is.null(cols)) {
+    message("send_roborev_email.R: WARNING — PRAGMA table_info(reviews) query ",
+            "failed (sqlite3 error, not \"column absent\"); falling back to ",
+            "NULL AS structured_output for this run, which will misclassify ",
+            "every open review's severity/passed status as unclassified. ",
+            "If this persists across runs, check reviews.db availability, ",
+            "not the schema.")
+    return(FALSE)
+  }
+  any(vapply(cols, function(c) identical(c[["name"]], "structured_output"), logical(1L)))
 })
 .reviews_structured_output_col <- function() {
   if (HAS_STRUCTURED_OUTPUT_COL) "rv.structured_output" else "NULL"
@@ -572,6 +590,23 @@ classify_unparseable_finding <- function(text) {
   summary_txt <- data[["summary"]]
   if (is.null(summary_txt) || is.na(summary_txt)) summary_txt <- ""
   verdict <- data[["verdict"]]
+  schema_version <- data[["schema_version"]]
+  # llm#1265 finding 2: only a RECOGNISED schema_version (1 or 2 today --
+  # see the Python module's docstring) may reach the "No issues found."/
+  # Summary-only paths below when findings is empty. Before this fix,
+  # `is.null(verdict) || identical(verdict, "pass")` fired for ANY
+  # empty-findings dict whose verdict key happened to be absent -- which
+  # includes {} (no schema_version key at all), a schema_version 0 row
+  # whose legacy.markdown is blank/missing (already failed that path
+  # before this function was even called), and an unrecognised
+  # schema_version -- all three were silently rendered as "No issues
+  # found." and then classified "passed". Such a row has nothing reliable
+  # to synthesize from, so it must classify as INDETERMINATE instead --
+  # returning "" here achieves that via classify_review_row()'s existing
+  # empty-text handling. Findings-non-empty rendering below is UNAFFECTED
+  # by this gate.
+  known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
 
   lines <- character(0)
   if (length(findings) > 0L) {
@@ -596,6 +631,8 @@ classify_unparseable_finding <- function(text) {
       }
       lines <- c(lines, "")
     }
+  } else if (!known_schema) {
+    return("")
   } else if (is.null(verdict) || identical(verdict, "pass")) {
     # A v1/v2 review that ran and found nothing. Synthesize the exact
     # phrase PASSED_PATTERNS already matches. verdict=="fail" with an empty
@@ -643,8 +680,15 @@ classify_review_row <- function(output, structured_output) {
 # signature — see llm#1127 below). A row lands in at most one top-level
 # bucket, so the two counts never double-count the same finding.
 # Unparseable rows are further split into not_reviewed / passed /
-# unclassified via classify_unparseable_finding() (llm#972 cause 2) — those
-# three sub-counts always sum to unparse_n.
+# unclassified / indeterminate via classify_unparseable_finding() (llm#972
+# cause 2) plus the llm#1265-finding-4 indeterminate branch below — those
+# FOUR sub-counts always sum to unparse_n. "indeterminate" (BOTH output and
+# structured_output empty/NULL/unparseable — classify_review_row()'s
+# terminal state) is counted SEPARATELY from "unclassified" (text existed
+# but matched no known shape) rather than being silently folded into it —
+# they mean different things for triage: indeterminate means "there is
+# nothing to read"; unclassified means "there is text, but it doesn't fit
+# any pattern this classifier knows".
 #
 #   llm#1127 (2026-09-02): originally this function ran
 #   classify_unparseable_finding() ONLY when parse_max_severity_ordinal()
@@ -685,19 +729,25 @@ classify_open_findings <- function(rows) {
   above_n    <- 0L
   above_rows <- list()
   unparse_n  <- 0L
-  not_reviewed_n <- 0L
-  passed_n       <- 0L
-  unclassified_n <- 0L
+  not_reviewed_n  <- 0L
+  passed_n        <- 0L
+  unclassified_n  <- 0L
+  indeterminate_n <- 0L
   for (r in rows) {
     # llm#1265: reads structured_output first (roborev v0.68.2 migrated
     # every row's text there, leaving `output` empty on all live rows),
-    # falling back to the legacy `output` column. review_output_text("")
-    # cannot happen for both-empty rows here specifically because it
-    # returns "" only when BOTH columns are unusable, and "" already
-    # classifies as "unclassified" below (never "passed") — satisfies the
-    # "both columns empty must never read as clean" requirement without a
-    # separate branch.
+    # falling back to the legacy `output` column.
     text <- review_output_text(r[["output"]], r[["structured_output"]])
+    if (!nzchar(text)) {
+      # llm#1265 finding 4: classify_review_row()'s "indeterminate" state
+      # — BOTH output and structured_output are empty/NULL/unparseable, so
+      # there is no review text to classify at all. Counted separately
+      # from "unclassified" (see doc comment above) rather than being
+      # folded into it via classify_unparseable_finding("") -> "unclassified".
+      unparse_n <- unparse_n + 1L
+      indeterminate_n <- indeterminate_n + 1L
+      next
+    }
     sub_cls <- classify_unparseable_finding(text)
     if (identical(sub_cls, "not_reviewed") || identical(sub_cls, "passed")) {
       # A known tooling-failure/empty-diff signature was matched — this
@@ -728,7 +778,7 @@ classify_open_findings <- function(rows) {
   list(
     above_n = above_n, above_rows = above_rows, unparse_n = unparse_n,
     not_reviewed_n = not_reviewed_n, passed_n = passed_n,
-    unclassified_n = unclassified_n
+    unclassified_n = unclassified_n, indeterminate_n = indeterminate_n
   )
 }
 
@@ -766,12 +816,14 @@ total_unparseable_open_n     <- NA_integer_
 total_not_reviewed_open_n    <- NA_integer_
 total_passed_open_n          <- NA_integer_
 total_unclassified_open_n    <- NA_integer_
+total_indeterminate_open_n   <- NA_integer_
 new_above_threshold_open_n   <- NA_integer_
 new_above_threshold_rows     <- list()
 new_unparseable_open_n       <- NA_integer_
 new_not_reviewed_open_n      <- NA_integer_
 new_passed_open_n            <- NA_integer_
 new_unclassified_open_n      <- NA_integer_
+new_indeterminate_open_n     <- NA_integer_
 
 total_open_findings <- query_reviews_db(total_open_findings_sql)
 if (!is.null(total_open_findings)) {
@@ -781,6 +833,7 @@ if (!is.null(total_open_findings)) {
   total_not_reviewed_open_n    <- cls_total$not_reviewed_n
   total_passed_open_n          <- cls_total$passed_n
   total_unclassified_open_n    <- cls_total$unclassified_n
+  total_indeterminate_open_n   <- cls_total$indeterminate_n
 } else {
   message("send_roborev_email.R: could not query open findings from reviews.db — ",
           "standing backlog counts unavailable")
@@ -795,6 +848,7 @@ if (!is.null(new_open_findings)) {
   new_not_reviewed_open_n    <- cls_new$not_reviewed_n
   new_passed_open_n          <- cls_new$passed_n
   new_unclassified_open_n    <- cls_new$unclassified_n
+  new_indeterminate_open_n   <- cls_new$indeterminate_n
 } else {
   message("send_roborev_email.R: could not query new open findings from reviews.db — ",
           "delta counts unavailable (rendering nothing rather than a false alert)")
@@ -1126,6 +1180,23 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
     fmt_int(total_unclassified_open_n)
   )
 
+  # Line 2b — indeterminate rows (llm#1265 finding 4): BOTH output and
+  # structured_output are empty/NULL/unparseable, i.e. there is no review
+  # text at all to classify -- distinct from "unclassified" (text existed
+  # but matched no known shape) and from "passed" (a real clean verdict).
+  indeterminate_line <- if (isTRUE(!is.na(total_indeterminate_open_n) &&
+                                    total_indeterminate_open_n > 0L)) {
+    sprintf(
+      '<strong style="color:#f0a860;">&#9888; No review text at all
+       (indeterminate): %s open.</strong>
+       Both the legacy <code>output</code> column and the
+       <code>structured_output</code> JSON column are empty, NULL, or
+       unparseable for these rows — there is nothing to classify. Never
+       treated as "passed".<br>',
+      fmt_int(total_indeterminate_open_n)
+    )
+  } else ""
+
   # Line 3 — context only. Explicitly labelled as correct so it is never
   # read as part of the problem.
   passed_line <- sprintf(
@@ -1177,11 +1248,11 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
       <strong>Findings with no parsed severity:</strong>
       %s new in the last %dh, %s open in total —
       <em>three different things, separated below.</em><br>
-      %s%s%s%s
+      %s%s%s%s%s
     </div>',
     dark_card, dark_text, accent_purple, EMAIL_FONT_BODY,
     new_str, NEW_WINDOW_HOURS, fmt_int(total_unparseable_open_n),
-    not_reviewed_line, unclassified_line, passed_line, unclassified_warn
+    not_reviewed_line, indeterminate_line, unclassified_line, passed_line, unclassified_warn
   )
 } else ""
 
@@ -1635,7 +1706,7 @@ agent_rate_html <- collapsible_block(
 # the marker itself must never collapse those two into a shared value, per
 # checks-must-distinguish-unknown.
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_indeterminate_open_n=%s --><!-- QA:total_indeterminate_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d -->',
   report_date, issues_found_closed, fmt_rate(close_rate), effective_dashboard_url(),
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
   if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
@@ -1648,6 +1719,8 @@ qa_markers <- sprintf(
   if (is.na(total_passed_open_n)) "NA" else as.character(total_passed_open_n),
   if (is.na(new_unclassified_open_n)) "NA" else as.character(new_unclassified_open_n),
   if (is.na(total_unclassified_open_n)) "NA" else as.character(total_unclassified_open_n),
+  if (is.na(new_indeterminate_open_n)) "NA" else as.character(new_indeterminate_open_n),
+  if (is.na(total_indeterminate_open_n)) "NA" else as.character(total_indeterminate_open_n),
   NEW_WINDOW_HOURS,
   LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS,
   tolower(as.character(!is.null(agent_rate_agg))),
