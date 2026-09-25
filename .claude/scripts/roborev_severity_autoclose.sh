@@ -222,23 +222,39 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
   # rv.id instead of rv.job_id (the two id spaces overlap so the wrong review was closed).
   _run_case_job_id_parse() {
     local label="$1"
-    # Construct a tab-separated candidate row matching the PRODUCTION
-    # main-mode row layout: id=100, output=..., sev_ord=..., root=...,
+    # Construct a PIPE-delimited candidate row matching the PRODUCTION
+    # main-mode row layout: id=100, output=..., sev_ord=<EMPTY>, root=...,
     # repo=..., verdict=0, job_id=999. llm#1265 round 3 inserted a new
     # sev_ord field (position 3, JSON-direct severity from Python) between
     # output and root, shifting job_id from field 6 to field 7 -- this
-    # fixture and its `cut -f7` MUST track the real row layout in the main
-    # loop above, or this regression guard silently stops guarding
+    # fixture and its `cut -d'|' -f7` MUST track the real row layout in the
+    # main loop above, or this regression guard silently stops guarding
     # anything (llm#312: `roborev close` called with rv.id instead of
     # rv.job_id, since the two id spaces overlap so the wrong review got
     # closed).
-    local _test_row="100	No issues found.	2	/some/path	testrepo	0	999"
+    #
+    # sev_ord is deliberately EMPTY here (roborev id 10530, caught live on
+    # this branch's own commits): review_severity_ordinal() returns None
+    # for every clean review, which Python prints as an empty field. A
+    # TAB-delimited row with an empty field silently collapses under
+    # `read`/`cut` (bash treats consecutive IFS-whitespace delimiters as
+    # one), shifting every later field left by one -- corrupting root/
+    # repo/verdict/job_id for the MOST COMMON case (clean reviews). Pipe is
+    # a non-whitespace delimiter, so `read`/`cut -f` never collapse it
+    # (same property `roborev_handoff.sh`'s pipe-delimited meta files
+    # already rely on). This fixture's empty field is the regression
+    # guard for that fix, not incidental.
+    local _test_row="100|No issues found.||/some/path|testrepo|0|999"
     local _parsed_id
+    local _parsed_sev_ord
     local _parsed_job_id
-    _parsed_id=$(echo "$_test_row" | cut -f1)
-    _parsed_job_id=$(echo "$_test_row" | cut -f7)
-    # job_id must be 999, not 100 (review id)
-    if [ "$_parsed_job_id" = "999" ] && [ "$_parsed_id" = "100" ] && [ "$_parsed_job_id" != "$_parsed_id" ]; then
+    _parsed_id=$(echo "$_test_row" | cut -d'|' -f1)
+    _parsed_sev_ord=$(echo "$_test_row" | cut -d'|' -f3)
+    _parsed_job_id=$(echo "$_test_row" | cut -d'|' -f7)
+    # job_id must be 999, not 100 (review id); sev_ord must stay empty
+    # (not silently absorb "/some/path" or any other field's value).
+    if [ "$_parsed_job_id" = "999" ] && [ "$_parsed_id" = "100" ] \
+       && [ "$_parsed_job_id" != "$_parsed_id" ] && [ -z "$_parsed_sev_ord" ]; then
       PASS=$((PASS+1))
       echo "  PASS [$label]: job_id=$_parsed_job_id correctly parsed from field 7 (review_id=$_parsed_id)"
     else
@@ -246,7 +262,44 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
       echo "  FAIL [$label]: expected job_id=999 review_id=100, got job_id=$_parsed_job_id review_id=$_parsed_id"
     fi
   }
+  # Case 11 (roborev id 10530, caught live on this branch's own commits):
+  # exercises the ACTUAL `while IFS='|' read -r ...` pattern the main/
+  # replay loops use to consume the python heredoc's stdout -- `cut -f`
+  # (Case 10 above) never collapses consecutive delimiters even with tab,
+  # so it could not have caught the real bug; `read` with IFS as a single
+  # WHITESPACE character (tab) does collapse them, silently dropping an
+  # empty field and shifting every later field left by one. A clean
+  # review (review_severity_ordinal() returns None, printed as an empty
+  # sev_ord field) is the MOST COMMON row shape, so this is not an edge
+  # case. Two synthetic rows: row 1 has an empty sev_ord (clean review,
+  # job_id=901); row 2 has a real sev_ord=3 (job_id=902). Both job_ids
+  # must land correctly, and row 1's sev_ord must stay empty rather than
+  # silently absorbing "root1".
+  _run_case_read_delimiter() {
+    local label="$1"
+    local _py_out
+    _py_out="$(printf '1|clean text||root1|repo1|1|901\n2|finding text|3|root2|repo2|0|902\n')"
+    local rows=()
+    local _rid _rout _rsev _rroot _rrepo _rverd _rjob
+    while IFS='|' read -r _rid _rout _rsev _rroot _rrepo _rverd _rjob; do
+      [ -n "$_rid" ] && rows+=("${_rid}|${_rout}|${_rsev}|${_rroot}|${_rrepo}|${_rverd}|${_rjob}")
+    done <<< "$_py_out"
+    local row1_job_id row1_sev row2_job_id row2_sev
+    row1_job_id=$(echo "${rows[0]}" | cut -d'|' -f7)
+    row1_sev=$(echo "${rows[0]}" | cut -d'|' -f3)
+    row2_job_id=$(echo "${rows[1]}" | cut -d'|' -f7)
+    row2_sev=$(echo "${rows[1]}" | cut -d'|' -f3)
+    if [ "$row1_job_id" = "901" ] && [ -z "$row1_sev" ] && [ "$row2_job_id" = "902" ] && [ "$row2_sev" = "3" ]; then
+      PASS=$((PASS+1))
+      echo "  PASS [$label]: a clean review's empty sev_ord field does NOT shift later fields (job_id/root/repo/verdict all land correctly for both rows)"
+    else
+      FAIL=$((FAIL+1))
+      echo "  FAIL [$label]: row1_job_id=$row1_job_id row1_sev='$row1_sev' row2_job_id=$row2_job_id row2_sev=$row2_sev (expected 901/'' and 902/3)"
+    fi
+  }
+
   _run_case_job_id_parse "job_id-field7-parse"
+  _run_case_read_delimiter "read-delimiter-empty-field-no-shift"
 
   TOTAL=$((PASS+FAIL))
   echo ""
@@ -662,17 +715,29 @@ rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
     text = review_output_text(row[1], row[2])
-    text = text.replace('\t', ' ').replace('\n', ' ')
+    # llm#1265 round 3 (roborev id 10530): the FIELD DELIMITER here MUST be
+    # a non-IFS-whitespace character. Bash `read` collapses CONSECUTIVE
+    # IFS-whitespace delimiters (tab included) into one, so a tab-delimited
+    # row with an EMPTY severity field (every clean review -- the most
+    # common case) silently loses a field and every later field shifts
+    # left by one, corrupting root/repo for that row. Pipe is a non-
+    # whitespace character, so `read`/`cut -f` never collapse it (verified:
+    # `roborev_handoff.sh` already documents and relies on this same
+    # property for its own pipe-delimited meta files). `text` is free-form
+    # rendered markdown and MAY legitimately contain a literal `|` (e.g. a
+    # markdown table) -- strip/replace it along with tab/newline so it can
+    # never introduce a spurious extra field.
+    text = text.replace('\t', ' ').replace('\n', ' ').replace('|', ' ')
     # llm#1265 round 3: severity is read JSON-direct via
     # review_severity_ordinal() -- never via the bash-side
     # _parse_max_severity() regex over this synthesized `text` -- so a
     # finding's own problem/fix prose quoting a severity marker as an
     # example cannot inflate the replay decision (review ids 10523/10524
-    # live shape). Printed as an extra tab-separated field; empty string
+    # live shape). Printed as an extra pipe-delimited field; empty string
     # means "no severity found" (bash side treats it the same as before).
     sev_ord = review_severity_ordinal(row[1], row[2])
     sev_str = str(sev_ord) if sev_ord is not None else ''
-    print(f"{row[0]}\t{text}\t{sev_str}\t{row[3]}\t{row[4]}")
+    print(f"{row[0]}|{text}|{sev_str}|{row[3]}|{row[4]}")
 PYEOF
   )"
   _replay_py_rc=$?
@@ -682,8 +747,8 @@ PYEOF
     log "INDETERMINATE: roborev_classify import failed (rc=${_replay_py_rc}) in --replay mode"
     exit 3
   fi
-  while IFS=$'\t' read -r _id _output _sev_ord _root _repo; do
-    [ -n "$_id" ] && REPLAY_ROWS+=("${_id}	${_output}	${_sev_ord}	${_root}	${_repo}")
+  while IFS='|' read -r _id _output _sev_ord _root _repo; do
+    [ -n "$_id" ] && REPLAY_ROWS+=("${_id}|${_output}|${_sev_ord}|${_root}|${_repo}")
   done <<< "$_replay_py_out"
 
   N=${#REPLAY_ROWS[@]}
@@ -696,11 +761,11 @@ PYEOF
   REOPENED=0
   KEPT=0
   for _row in "${REPLAY_ROWS[@]}"; do
-    _id=$(echo "$_row" | cut -f1)
-    _output=$(echo "$_row" | cut -f2)
-    _sev_ord=$(echo "$_row" | cut -f3)
-    _root=$(echo "$_row" | cut -f4)
-    _repo=$(echo "$_row" | cut -f5)
+    _id=$(echo "$_row" | cut -d'|' -f1)
+    _output=$(echo "$_row" | cut -d'|' -f2)
+    _sev_ord=$(echo "$_row" | cut -d'|' -f3)
+    _root=$(echo "$_row" | cut -d'|' -f4)
+    _repo=$(echo "$_row" | cut -d'|' -f5)
 
     # Determine effective threshold for this repo
     _eff_threshold=""
@@ -813,12 +878,18 @@ rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
     text = review_output_text(row[1], row[2])
-    text = text.replace('\t', ' ').replace('\n', ' ')
+    # llm#1265 round 3 (roborev id 10530): pipe delimiter, not tab -- see
+    # the --replay block's identical comment above for why (bash `read`
+    # collapses consecutive IFS-whitespace delimiters, so a tab-delimited
+    # row with an EMPTY severity field -- every clean review -- would
+    # silently lose a field and shift everything after it, corrupting
+    # root/repo/verdict/job_id for the most common case).
+    text = text.replace('\t', ' ').replace('\n', ' ').replace('|', ' ')
     # llm#1265 round 3: JSON-direct severity, never the bash-side regex --
     # see the --replay block's identical comment above.
     sev_ord = review_severity_ordinal(row[1], row[2])
     sev_str = str(sev_ord) if sev_ord is not None else ''
-    print(f"{row[0]}\t{text}\t{sev_str}\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}")
+    print(f"{row[0]}|{text}|{sev_str}|{row[3]}|{row[4]}|{row[5]}|{row[6]}")
 PYEOF
 )"
 _main_py_rc=$?
@@ -828,8 +899,8 @@ if [ "$_main_py_rc" -ne 0 ]; then
   log "INDETERMINATE: roborev_classify import failed (rc=${_main_py_rc}) in main mode"
   exit 3
 fi
-while IFS=$'\t' read -r _id _output _sev_ord _root _repo _verdict _job_id; do
-  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_sev_ord}	${_root}	${_repo}	${_verdict}	${_job_id}")
+while IFS='|' read -r _id _output _sev_ord _root _repo _verdict _job_id; do
+  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}|${_output}|${_sev_ord}|${_root}|${_repo}|${_verdict}|${_job_id}")
 done <<< "$_main_py_out"
 
 N=${#REVIEW_ROWS[@]}
@@ -848,13 +919,13 @@ TOTAL_SKIPPED=0
 TOTAL_PARSE_FAIL=0
 
 for _row in "${REVIEW_ROWS[@]}"; do
-  _id=$(echo "$_row"       | cut -f1)
-  _output=$(echo "$_row"   | cut -f2)
-  _sev_ord=$(echo "$_row"  | cut -f3)
-  _root=$(echo "$_row"     | cut -f4)
-  _repo=$(echo "$_row"     | cut -f5)
-  _verdict=$(echo "$_row"  | cut -f6)
-  _job_id=$(echo "$_row"   | cut -f7)
+  _id=$(echo "$_row"       | cut -d'|' -f1)
+  _output=$(echo "$_row"   | cut -d'|' -f2)
+  _sev_ord=$(echo "$_row"  | cut -d'|' -f3)
+  _root=$(echo "$_row"     | cut -d'|' -f4)
+  _repo=$(echo "$_row"     | cut -d'|' -f5)
+  _verdict=$(echo "$_row"  | cut -d'|' -f6)
+  _job_id=$(echo "$_row"   | cut -d'|' -f7)
 
   # Determine effective threshold + source for this repo
   _eff_threshold=""
