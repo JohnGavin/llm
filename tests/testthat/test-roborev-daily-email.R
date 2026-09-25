@@ -491,6 +491,7 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
       id INTEGER PRIMARY KEY,
       job_id INTEGER,
       output TEXT DEFAULT '',
+      structured_output TEXT DEFAULT NULL,
       created_at TEXT,
       closed INTEGER DEFAULT 0,
       verdict_bool INTEGER
@@ -500,8 +501,12 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
 
   now <- as.POSIXct(format(Sys.time(), tz = "UTC"), tz = "UTC")
   row_id <- 0L
+  # `structured_output`: PR #1269 round 3 -- optional, defaults to NA (no
+  # existing caller passes it, so every pre-existing fixture row keeps
+  # constructing exactly what it always did with output-only rows).
   insert_row <- function(output, age_hours, closed, verdict_bool,
-                          agent = "codex", model = NA_character_) {
+                          agent = "codex", model = NA_character_,
+                          structured_output = NA_character_) {
     row_id <<- row_id + 1L
     model_sql <- if (is.na(model)) "NULL" else sprintf("'%s'", gsub("'", "''", model, fixed = TRUE))
     DBI::dbExecute(con, sprintf(
@@ -510,15 +515,21 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
     ))
     ts <- format(now - age_hours * 3600, "%Y-%m-%d %H:%M:%S", tz = "UTC")
     output_escaped <- gsub("'", "''", output, fixed = TRUE)
+    structured_sql <- if (is.na(structured_output)) {
+      "NULL"
+    } else {
+      sprintf("'%s'", gsub("'", "''", structured_output, fixed = TRUE))
+    }
     DBI::dbExecute(con, sprintf(
-      "INSERT INTO fix.reviews (id, job_id, output, created_at, closed, verdict_bool) VALUES (%d, %d, '%s', '%s', %d, %d)",
-      row_id, row_id + job_offset, output_escaped, ts, closed, verdict_bool
+      "INSERT INTO fix.reviews (id, job_id, output, structured_output, created_at, closed, verdict_bool) VALUES (%d, %d, '%s', %s, '%s', %d, %d)",
+      row_id, row_id + job_offset, output_escaped, structured_sql, ts, closed, verdict_bool
     ))
   }
   for (f in findings) {
     insert_row(f$output, f$age_hours, 0L, 0L,
                agent = if (is.null(f$agent)) "codex" else f$agent,
-               model = if (is.null(f$model)) NA_character_ else f$model)
+               model = if (is.null(f$model)) NA_character_ else f$model,
+               structured_output = if (is.null(f$structured_output)) NA_character_ else f$structured_output)
   }
   for (l in lagged)   insert_row("", l$age_hours, l$closed, 1L)
 
@@ -527,6 +538,45 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
 
 HIGH_SEV_OUTPUT <- "Review found an issue.\n\n**Severity**: High\n\nDetails: something bad."
 NO_SEV_OUTPUT   <- "Review crashed before emitting a severity marker."
+
+# PR #1269 round 3 (llm#1265 follow-up, review ids 10523/10524): a v2
+# structured_output row whose real max severity is MEDIUM, but whose
+# finding's OWN problem/fix prose quotes "Severity: High"/"**Severity**:
+# Critical" as an illustrative example of a DIFFERENT bug it describes --
+# the exact live shape found in ~/.roborev/reviews.db. Default threshold
+# is "medium" (AUTOCLOSE_THRESHOLD_STR default), so a Medium finding is
+# NOT above-threshold (`ord > AUTOCLOSE_THRESHOLD_ORD` requires strictly
+# greater); the old regex-over-rendered-text bug would have read High or
+# Critical here and misclassified it as above-threshold.
+V2_MEDIUM_QUOTED_HIGH_STRUCTURED <- paste0(
+  '{"schema_version":2,"summary":"one medium finding, prose quotes a higher ',
+  'severity as an example","verdict":"fail","findings":[{"severity":"medium",',
+  '"location":"R/quux.R:5","problem":"Add a fixture where output holds a real ',
+  'Severity: High review.","fix":"Emit **Severity**: Critical only when ',
+  'genuinely critical."}]}'
+)
+
+test_that("PR #1269 round 3: structured Medium finding is NOT inflated to above-threshold by quoted prose", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = "", age_hours = 1,
+                          structured_output = V2_MEDIUM_QUOTED_HIGH_STRUCTURED))
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = paste(
+      "A true-Medium finding must NOT count as above-threshold (default",
+      "threshold is medium, requires STRICTLY greater). The old",
+      "regex-over-rendered-text bug read High/Critical from the finding's",
+      "own problem/fix prose (which quotes those words as an example) and",
+      "would have counted it here."
+    ))
+  expect_true(grepl("QA:total_unparseable_open_n=0", combined, fixed = TRUE),
+    info = "a genuinely parseable Medium severity must not land in the unparseable bucket either")
+})
 
 test_that("above-threshold banner prints the JOB id, not reviews.id", {
   skip_if_not_installed("blastula")

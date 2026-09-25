@@ -651,14 +651,110 @@ classify_unparseable_finding <- function(text) {
 # legacy `output` column text; "" when BOTH are empty/unusable (callers
 # MUST treat "" as indeterminate, never as clean — see classify_review_row()).
 review_output_text <- function(output, structured_output) {
+  out_fallback <- if (is.null(output) || is.na(output)) "" else trimws(output)
   data <- .parse_structured_json(structured_output)
   if (!is.null(data)) {
     legacy_md <- .legacy_markdown_from_structured(data)
     if (!is.null(legacy_md)) return(legacy_md)
-    return(.render_structured_findings_as_markdown(data))
+    rendered <- .render_structured_findings_as_markdown(data)
+    if (nzchar(rendered)) return(rendered)
+    # PR #1269 round 3: structured_output was valid JSON but produced
+    # nothing usable (unrecognised schema, {}, or blank legacy.markdown) --
+    # fall through to the legacy `output` column rather than giving up.
+    # Mirrors the identical fix in .claude/scripts/lib/roborev_classify.py's
+    # review_output_text() (review id 10523: "when structured_output is
+    # valid-but-unusable JSON, fall back to legacy output text... before
+    # returning ''").
   }
-  if (is.null(output) || is.na(output)) return("")
-  trimws(output)
+  out_fallback
+}
+
+# ── JSON-direct severity / top-finding reader (PR #1269 round 3) ──────────
+# R mirror of roborev_classify.py's review_structured_findings()/
+# review_severity_ordinal(). See that module's docstring "SEVERITY IS
+# JSON-DIRECT, NEVER REGEX-OVER-RENDERED-TEXT" section for the full
+# rationale: parse_max_severity_ordinal() over review_output_text()'s
+# SYNTHESIZED text is vulnerable to a finding's own problem/fix prose
+# quoting a severity marker as an example (review ids 10523/10524 live
+# shape). These functions read findings[].severity DIRECTLY from parsed
+# JSON for a schema_version 1/2 row with a non-empty findings list, and
+# are used by classify_open_findings() below instead of
+# parse_max_severity_ordinal(text).
+
+.known_structured_schema <- function(schema_version) {
+  is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+}
+
+# Returns a list of list(ordinal=, severity=, location=, problem=) read
+# DIRECTLY from JSON `findings` entries, or NULL when there is nothing
+# usable to read (unrecognised/missing schema_version, findings missing/
+# empty, or no entry has a recognised `severity` value) -- callers MUST
+# treat NULL as "fall back to the legacy regex-over-text path".
+.structured_findings_normalized <- function(data) {
+  if (!.known_structured_schema(data[["schema_version"]])) return(NULL)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(NULL)
+  out <- list()
+  for (f in findings) {
+    if (!is.list(f)) next
+    sev <- f[["severity"]]
+    if (is.null(sev)) next
+    sev_chr <- trimws(tolower(as.character(sev)))
+    if (!nzchar(sev_chr) || !(sev_chr %in% names(SEVERITY_ORDINAL))) next
+    loc <- f[["location"]]
+    problem <- f[["problem"]]
+    out[[length(out) + 1L]] <- list(
+      ordinal  = unname(SEVERITY_ORDINAL[[sev_chr]]),
+      severity = sev_chr,
+      location = if (!is.null(loc) && nzchar(trimws(as.character(loc)))) trimws(as.character(loc)) else NA_character_,
+      problem  = if (!is.null(problem) && nzchar(trimws(as.character(problem)))) trimws(as.character(problem)) else NA_character_
+    )
+  }
+  if (length(out) == 0L) return(NULL)
+  out
+}
+
+# Public entry: parse structured_output and return
+# .structured_findings_normalized(data), or NULL if structured_output is
+# not usable JSON at all -- callers should read NULL as "use
+# review_output_text() with your own regex instead" (schema_version 0 /
+# legacy `output`-only rows never had per-finding JSON to begin with).
+review_structured_findings <- function(output, structured_output) {
+  data <- .parse_structured_json(structured_output)
+  if (is.null(data)) return(NULL)
+  .structured_findings_normalized(data)
+}
+
+# Max severity ordinal (1-4) for a review row, sourced from EITHER column.
+# JSON-direct for a structured row (schema_version 1/2, non-empty
+# findings); falls back to parse_max_severity_ordinal(review_output_text())
+# for schema_version 0 rows, an unrecognised/missing schema_version, or
+# structured_output that is not usable JSON at all. A RECOGNISED schema
+# with an EMPTY findings list ("passed") returns NA_integer_ WITHOUT
+# falling back -- see roborev_classify.py's review_severity_ordinal()
+# docstring for why (an empty findings list IS the "nothing to report"
+# signal; falling back to `output` there would risk resurrecting stale
+# text from an unrelated column).
+review_severity_ordinal <- function(output, structured_output) {
+  data <- .parse_structured_json(structured_output)
+  if (!is.null(data)) {
+    legacy_md <- .legacy_markdown_from_structured(data)
+    if (!is.null(legacy_md)) return(parse_max_severity_ordinal(legacy_md))
+    if (.known_structured_schema(data[["schema_version"]])) {
+      normalized <- .structured_findings_normalized(data)
+      if (!is.null(normalized)) {
+        return(max(vapply(normalized, function(f) f$ordinal, integer(1L))))
+      }
+      # Recognised schema, but either genuinely empty (passed) or non-empty
+      # with no entry carrying a recognised severity value -- nothing to
+      # report, nothing to fall back to.
+      return(NA_integer_)
+    }
+    # Unrecognised/missing schema_version and no legacy.markdown -- fall
+    # through to the legacy `output` column below.
+  }
+  parse_max_severity_ordinal(review_output_text(output, structured_output))
 }
 
 # classify_review_row(): explicit-outcome reader adding ONE new terminal
@@ -760,7 +856,9 @@ classify_open_findings <- function(rows) {
       }
       next
     }
-    ord <- parse_max_severity_ordinal(text)
+    # llm#1265 round 3: JSON-direct severity (never regex over the
+    # rendered `text`) -- see review_severity_ordinal()'s docstring above.
+    ord <- review_severity_ordinal(r[["output"]], r[["structured_output"]])
     if (is.na(ord)) {
       unparse_n <- unparse_n + 1L
       unclassified_n <- unclassified_n + 1L
