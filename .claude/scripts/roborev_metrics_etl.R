@@ -571,6 +571,55 @@ parse_max_severity <- function(text) {
   paste(blocks, collapse = "\n")
 }
 
+# ── JSON-direct severity (llm#1265 round 3, PR #1269 review id 10524) ──────
+#
+# parse_max_severity() over .metrics_review_text()'s rendered text is
+# vulnerable to a finding's own problem/fix prose quoting a severity
+# marker as an example (review ids 10523/10524 live shape: a Medium
+# finding's problem text quoted "Severity: High"/"**Severity**: Critical",
+# which the substring/regex match would misread as the row's severity --
+# this file's renderer above doesn't even include problem/fix text today,
+# but SEVERITY_PATTERN has no way to know that and would misparse the same
+# way if it ever did). .metrics_structured_max_severity() reads
+# findings[].severity DIRECTLY from parsed JSON for a schema_version 1/2
+# row with a non-empty findings list -- never via regex -- and is tried
+# BEFORE parse_max_severity(review_text) below. Returns NA_character_ when
+# there is no structured findings list to read (schema_version 0 /
+# legacy `output`-only rows, or an unrecognised schema_version -- also
+# fixes the inconsistency PR #1269 review id 10524 flagged: this reader
+# previously accepted ANY numeric schema_version >= 1, while
+# roborev_weekly_rollup.R's equivalent reader only accepts 1 or 2; both
+# now agree).
+.METRICS_SEVERITY_ORDINAL_LC <- c(critical = 4L, high = 3L, medium = 2L, low = 1L)
+
+.metrics_structured_max_severity <- function(output, structured_output) {
+  so <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+  if (!nzchar(so)) return(NA_character_)
+  data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(NA_character_)
+  schema_version <- data[["schema_version"]]
+  known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+  if (!known_schema) return(NA_character_)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(NA_character_)
+  ords <- vapply(findings, function(f) {
+    if (!is.list(f)) return(NA_integer_)
+    sev <- f[["severity"]]
+    if (is.null(sev)) return(NA_integer_)
+    # JSON `severity` values are always lowercase (critical/high/medium/low
+    # -- see roborev_classify.py's docstring); .METRICS_SEVERITY_ORDINAL_LC
+    # is keyed lowercase to match directly, unlike SEVERITY_LEVELS above
+    # (keyed "Critical"/"High"/... to match parse_max_severity()'s
+    # capitalised regex captures).
+    idx <- .METRICS_SEVERITY_ORDINAL_LC[tolower(trimws(as.character(sev)))]
+    if (length(idx) == 0L || is.na(idx)) NA_integer_ else unname(idx)
+  }, integer(1L))
+  if (all(is.na(ords))) return(NA_character_)
+  best_ord <- max(ords, na.rm = TRUE)
+  SEVERITY_NAMES[[as.character(best_ord)]]
+}
+
 # ── Classify a job failure from review_jobs.error (llm#928) ──────────────────
 #
 # Vocabulary (4 values). Deliberately coarse: the question these answer is
@@ -980,8 +1029,18 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
     function(i) .metrics_review_text(merged$output[[i]], merged_structured_output[[i]]),
     character(1L)
   )
-  severity_max <- vapply(review_text, parse_max_severity,
-                         character(1L), USE.NAMES = FALSE)
+  # llm#1265 round 3: JSON-direct severity first (structured findings,
+  # never regex over rendered text); fall back to parse_max_severity() over
+  # review_text only when there is no structured findings list to read
+  # from at all (schema_version 0 / legacy `output`-only rows).
+  severity_json <- vapply(
+    seq_len(nrow(merged)),
+    function(i) .metrics_structured_max_severity(merged$output[[i]], merged_structured_output[[i]]),
+    character(1L)
+  )
+  severity_regex <- vapply(review_text, parse_max_severity,
+                           character(1L), USE.NAMES = FALSE)
+  severity_max <- ifelse(!is.na(severity_json), severity_json, severity_regex)
 
   # ── Populate closed_at and close_reason ─────────────────────────────────
   #
