@@ -430,7 +430,59 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     character(1L)
   )
 
-  # Extract one-line summary and severity from output text
+  # llm#1265 round 3 (PR #1269 review id 10524): JSON-direct (severity,
+  # summary) for schema_version 1/2 rows with a non-empty findings list --
+  # reads findings[].severity and the top (max-severity) finding's own
+  # problem field DIRECTLY, never via the regex/first-line heuristics
+  # below. Two independent bugs in the OLD text-only path this closes:
+  #   1. extract_sev() ran `grepl("Severity.*<sev>", ignore.case=TRUE)`
+  #      over the WHOLE multi-line stuck_text. R's default TRE regex lets
+  #      `.` match newlines, so a Low finding whose Problem text mentions
+  #      "high" or "critical" could be reported as that higher severity.
+  #   2. extract_summary() takes the first non-empty/non-#/non-"---" line,
+  #      which for .weekly_review_text()'s rendered blocks is ALWAYS
+  #      "- **Severity**: X" (the first line of the first finding block) --
+  #      the Problem text was never shown as the summary at all.
+  # Returns list(severity=NA, summary=NA) when there is no usable
+  # structured findings list to read (schema 0, unrecognised schema, or
+  # unusable JSON) -- callers fall back to extract_sev()/extract_summary()
+  # on .weekly_review_text()'s text in that case, unchanged.
+  WEEKLY_SEVERITY_ORDINAL <- c(critical = 4L, high = 3L, medium = 2L, low = 1L)
+  .weekly_structured_top_finding <- function(structured_output) {
+    so <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+    if (!nzchar(so)) return(list(severity = NA_character_, summary = NA_character_))
+    data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(data) || !is.list(data)) return(list(severity = NA_character_, summary = NA_character_))
+    schema_version <- data[["schema_version"]]
+    known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+      !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+    if (!known_schema) return(list(severity = NA_character_, summary = NA_character_))
+    findings <- data[["findings"]]
+    if (!is.list(findings) || length(findings) == 0L) return(list(severity = NA_character_, summary = NA_character_))
+    ords <- vapply(findings, function(f) {
+      if (!is.list(f)) return(NA_integer_)
+      sev <- f[["severity"]]
+      if (is.null(sev)) return(NA_integer_)
+      idx <- WEEKLY_SEVERITY_ORDINAL[tolower(trimws(as.character(sev)))]
+      if (length(idx) == 0L || is.na(idx)) NA_integer_ else unname(idx)
+    }, integer(1L))
+    if (all(is.na(ords))) return(list(severity = NA_character_, summary = NA_character_))
+    top_i <- which.max(ifelse(is.na(ords), -Inf, ords))
+    top <- findings[[top_i]]
+    sev_label <- tolower(trimws(as.character(top[["severity"]])))
+    problem <- top[["problem"]]
+    summary <- if (!is.null(problem) && nzchar(trimws(as.character(problem)))) {
+      substr(trimws(as.character(problem)), 1L, 80L)
+    } else {
+      NA_character_
+    }
+    list(severity = sev_label, summary = summary)
+  }
+
+  # Extract one-line summary and severity from output text -- LEGACY /
+  # fallback path only, used when .weekly_structured_top_finding() above
+  # has no structured findings list to read from (schema_version 0 or
+  # legacy `output`-only rows).
   extract_sev <- function(txt) {
     txt <- txt %||% ""
     for (sev in c("Critical", "High", "Medium", "Low")) {
@@ -448,13 +500,21 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     substr(lines[1L], 1L, 80L)
   }
 
+  stuck_top          <- lapply(stuck_structured, .weekly_structured_top_finding)
+  stuck_json_sev     <- vapply(stuck_top, function(x) x$severity, character(1L))
+  stuck_json_summary <- vapply(stuck_top, function(x) x$summary, character(1L))
+  stuck_regex_sev     <- vapply(stuck_text, extract_sev, character(1L))
+  stuck_regex_summary <- vapply(stuck_text, extract_summary, character(1L))
+  stuck_final_sev     <- ifelse(!is.na(stuck_json_sev), stuck_json_sev, stuck_regex_sev)
+  stuck_final_summary <- ifelse(!is.na(stuck_json_summary), stuck_json_summary, stuck_regex_summary)
+
   if (nrow(stuck_raw) > 0L) {
     stuck_findings <- data.frame(
       id       = stuck_raw$id,
       repo     = stuck_raw$repo,
       age_days = stuck_raw$age_days,
-      severity = vapply(stuck_text, extract_sev, character(1L)),
-      summary  = vapply(stuck_text, extract_summary, character(1L)),
+      severity = stuck_final_sev,
+      summary  = stuck_final_summary,
       stringsAsFactors = FALSE
     )
   } else {
