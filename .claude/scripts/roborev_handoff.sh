@@ -21,9 +21,14 @@
 # "pass clean" = verdict_bool=1 AND output starts with "No issues found."
 # "pass with comments" = verdict_bool=1 AND output has substantive content beyond that
 #
-# DB schema note (verified 2026-05-13):
-#   reviews.verdict_bool  INTEGER  1=pass, 0=fail
-#   reviews.output        TEXT     markdown review body  (NOT a "body" column)
+# DB schema note (verified 2026-05-13; updated 2026-09-25 for llm#1265):
+#   reviews.verdict_bool     INTEGER  1=pass, 0=fail
+#   reviews.output           TEXT     markdown review body — EMPTY on every
+#                                      row since roborev v0.68.2 (2026-09-24)
+#   reviews.structured_output TEXT    JSON review body (schema_version-keyed)
+#                                      — read via review_output_text() from
+#                                      lib/roborev_classify.py, which falls
+#                                      back to reviews.output unchanged.
 #   (no "verdict" text column exists — the spec used "verdict" but the actual
 #    column is verdict_bool)
 #
@@ -83,6 +88,9 @@ SQLITE="${SQLITE:-/usr/bin/sqlite3}"
 GH="${GH:-$(command -v gh 2>/dev/null || echo /usr/bin/gh)}"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# same LIB_DIR pattern as roborev_severity_autoclose.sh.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 THRESHOLD_DAYS="${THRESHOLD_DAYS:-7}"
 ROBOREV_REPO="${ROBOREV_REPO:-}"  # optional: restrict to a single repo by name
 FINDINGS_DIR="${FINDINGS_DIR:-$HOME/.roborev/findings}"
@@ -443,11 +451,32 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 # ── Python: export all stale done jobs to per-job JSON files ─────────────────
 # This avoids shell pipe-splitting on multiline/pipe-containing output text.
-"$PYTHON" - "$ROBOREV_DB" "$THRESHOLD_DAYS" "$WORKDIR" "$ROBOREV_REPO" <<'PYEOF'
+"$PYTHON" - "$ROBOREV_DB" "$THRESHOLD_DAYS" "$WORKDIR" "$ROBOREV_REPO" "$LIB_DIR" <<'PYEOF'
 import sys, json, sqlite3, os
 
 db_path, threshold_days, workdir = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 filter_repo = sys.argv[4] if len(sys.argv) > 4 else ""
+lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
+
+# llm#1265: reviews.output is empty on every live row since roborev v0.68.2
+# migrated review text into reviews.structured_output (JSON). Unlike some
+# other consumers, an import failure here does NOT fail open to the empty
+# `output` column — that would silently reproduce the exact "every
+# verdict_bool=1 row falls into pass-comments, output_<job_id>.txt bodies
+# are empty" bug this migration exists to fix. Fail loudly instead: print
+# to stderr and exit non-zero, which (this script runs under
+# `set -euo pipefail`) aborts the whole run rather than proceeding on
+# silently-blank data.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception as e:
+    print(f"roborev_handoff: FATAL — could not import review_output_text from "
+          f"{lib_dir!r} (roborev_classify.py): {e}. Refusing to classify "
+          f"reviews against the empty legacy `output` column.", file=sys.stderr)
+    sys.exit(1)
+
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
 
@@ -493,7 +522,8 @@ for r in repos:
             rj.id         AS job_id,
             COALESCE(c.sha,'') AS commit_sha,
             rv.verdict_bool,
-            rv.output
+            rv.output,
+            rv.structured_output
         FROM review_jobs rj
         JOIN repos repo ON repo.id = rj.repo_id
         LEFT JOIN commits c ON c.id = rj.commit_id
@@ -522,7 +552,10 @@ for r in repos:
             job_id = j["job_id"]
             commit_sha = (j["commit_sha"] or "").strip()
             verdict_bool = j["verdict_bool"]
-            output = j["output"] or ""
+            # llm#1265: prefer structured_output (roborev v0.68.2 schema);
+            # falls back to the legacy `output` column unchanged when
+            # structured_output is NULL/empty/unparseable.
+            output = review_output_text(j["output"], j["structured_output"])
             output_trimmed = output.lstrip()
 
             if verdict_bool == 0:

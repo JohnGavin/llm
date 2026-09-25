@@ -247,6 +247,11 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   )
   close_col <- if ("closed_at" %in% rv_cols) "rv.closed_at" else "rv.updated_at"
   close_ts  <- sprintf("TRY_CAST(%s AS TIMESTAMP)", close_col)
+  # llm#1265: roborev v0.68.2 migrated every row's review text out of
+  # reviews.output (empty on all live rows since) into a new
+  # reviews.structured_output JSON column. A pre-migration/fixture DB has
+  # no such column -- same has_*_col guard pattern as close_col above.
+  structured_output_col <- if ("structured_output" %in% rv_cols) "rv.structured_output" else "CAST(NULL AS VARCHAR)"
 
   run_q <- function(sql, what) {
     tryCatch(
@@ -339,12 +344,13 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   median_ttc_hrs <- as.numeric(ttc_row$median_ttc_hrs[1L])
 
   # Top stuck findings: open, age > 7 days, order by age desc
-  stuck_sql <- "
+  stuck_sql <- sprintf("
     SELECT
       rj.id AS id,  -- JOB id: what `roborev show`/`roborev close` accept (NOT reviews.id)
       r.name AS repo,
       CAST((EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 AS INTEGER) AS age_days,
-      rv.output
+      rv.output,
+      %s AS structured_output
     FROM src.reviews rv
     JOIN src.review_jobs rj ON rj.id = rv.job_id
     JOIN src.repos r ON r.id = rj.repo_id
@@ -353,12 +359,75 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
       AND (EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 > 7
     ORDER BY age_days DESC
     LIMIT 10
-  "
+  ", structured_output_col)
 
   stuck_raw <- tryCatch(
     DBI::dbGetQuery(con, stuck_sql),
     error = function(e) data.frame(id = integer(0), repo = character(0),
-                                   age_days = integer(0), output = character(0))
+                                   age_days = integer(0), output = character(0),
+                                   structured_output = character(0))
+  )
+
+  # ── structured_output reader (llm#1265) ──────────────────────────────────
+  # roborev v0.68.2 migrated every row's review text out of `output` (now
+  # '' on all live rows) into `structured_output` (JSON, schema_version-
+  # keyed: 0 -> legacy.markdown verbatim; 1/2 -> verdict/summary/findings).
+  # Self-contained mirror of the shared reader in
+  # .claude/scripts/lib/roborev_classify.py / send_roborev_email.R's R
+  # copy -- this consumer only needs enough of it to feed extract_sev()/
+  # extract_summary() below real text for OPEN findings that are already
+  # known to be stuck (rj.status='done' AND rv.closed=0), so it
+  # deliberately does NOT synthesize any "No issues found."/clean text the
+  # way the fuller readers do (llm#1265 finding 2's bug class: fabricating
+  # a "clean" result for an empty/unrecognised-schema row). A row with no
+  # renderable findings falls back to `output` (empty on live rows);
+  # extract_sev() already degrades to "unknown" for that, which is the
+  # correct display here — this table exists precisely to surface stuck
+  # reviews, so a text-less row must still appear, never be silently
+  # dropped or mislabelled clean.
+  .weekly_review_text <- function(output, structured_output) {
+    out <- if (is.null(output) || is.na(output)) "" else output
+    so  <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+    if (!nzchar(so)) return(out)
+    data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(data) || !is.list(data)) return(out)
+    legacy <- data[["legacy"]]
+    if (is.list(legacy)) {
+      md <- legacy[["markdown"]]
+      if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
+    }
+    schema_version <- data[["schema_version"]]
+    # llm#1265 finding 2: only a RECOGNISED schema_version (1 or 2 today,
+    # per roborev_classify.py's own docstring) may be rendered from —
+    # schema 0 without usable legacy.markdown (handled above), an
+    # unrecognised value, or a missing schema_version entirely falls back
+    # to `output` rather than being treated as renderable.
+    known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+      !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+    if (!known_schema) return(out)
+    findings <- data[["findings"]]
+    if (!is.list(findings) || length(findings) == 0L) return(out)
+    blocks <- vapply(findings, function(f) {
+      if (!is.list(f)) return("")
+      sev <- f[["severity"]]
+      sev <- if (is.null(sev)) "" else trimws(as.character(sev))
+      sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
+      prob <- f[["problem"]]
+      prob_line <- if (!is.null(prob) && nzchar(as.character(prob))) sprintf("  **Problem**: %s", prob) else NA_character_
+      paste(stats::na.omit(c(sprintf("- **Severity**: %s", sev_cap), prob_line)), collapse = "\n")
+    }, character(1L))
+    paste(blocks, collapse = "\n")
+  }
+
+  stuck_structured <- if ("structured_output" %in% names(stuck_raw)) {
+    stuck_raw$structured_output
+  } else {
+    rep(NA_character_, nrow(stuck_raw))
+  }
+  stuck_text <- vapply(
+    seq_len(nrow(stuck_raw)),
+    function(i) .weekly_review_text(stuck_raw$output[[i]], stuck_structured[[i]]),
+    character(1L)
   )
 
   # Extract one-line summary and severity from output text
@@ -384,8 +453,8 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
       id       = stuck_raw$id,
       repo     = stuck_raw$repo,
       age_days = stuck_raw$age_days,
-      severity = vapply(stuck_raw$output, extract_sev, character(1L)),
-      summary  = vapply(stuck_raw$output, extract_summary, character(1L)),
+      severity = vapply(stuck_text, extract_sev, character(1L)),
+      summary  = vapply(stuck_text, extract_summary, character(1L)),
       stringsAsFactors = FALSE
     )
   } else {

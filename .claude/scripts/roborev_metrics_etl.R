@@ -259,6 +259,21 @@ if (!has_source_col) {
   log_msg("WARN: review_jobs.source column absent — using NULL AS source in sql_jobs (llm#706 Cause-1 guard)")
 }
 
+# ── Guard: reviews.structured_output (llm#1265) ───────────────────────────────
+# roborev v0.68.2 (2026-09-24) migrated every row's review text out of
+# reviews.output (empty on all live rows since) into a new structured_output
+# JSON column. A fixture/pre-migration DB has no such column — same guard
+# pattern as source/error/root_path above: absent column degrades to
+# NULL AS structured_output in sql_reviews rather than throwing, and
+# .metrics_review_text() below already falls back to `output` unchanged
+# when structured_output is NA.
+has_structured_output_col <- tryCatch({
+  "structured_output" %in% names(dbGetQuery(read_con, "SELECT * FROM src.reviews LIMIT 0"))
+}, error = function(e) FALSE)
+if (!has_structured_output_col) {
+  log_msg("WARN: reviews.structured_output column absent — falling back to reviews.output only (pre-v0.68.2 DB, llm#1265)")
+}
+
 # ── Guard: repos.root_path (llm#928 item 3) ───────────────────────────────────
 # root_path is used downstream by is_ephemeral_repo_path() to flag mirror rows
 # whose repo lives under a temp root (agent worktree / test fixture, llm#923) —
@@ -359,6 +374,11 @@ if (!include_fixtures && nrow(jobs_raw) > 0L && "repo" %in% names(jobs_raw)) {
 }
 # ─────────────────────────────────────────────────────────────────────────────
 
+# llm#1265: structured_output_col selects the real column when present,
+# else a literal NULL cast to VARCHAR (DuckDB requires an explicit type on
+# a bare NULL column so downstream character-vector handling doesn't choke
+# on a logical NA) — same has_*_col guard pattern as source/error above.
+structured_output_col <- if (has_structured_output_col) "rv.structured_output" else "CAST(NULL AS VARCHAR)"
 sql_reviews <- sprintf("
   SELECT
     rv.id          AS review_id,
@@ -366,6 +386,7 @@ sql_reviews <- sprintf("
     rv.closed,
     rv.verdict_bool,
     rv.output,
+    %s AS structured_output,
     rv.created_at,
     rv.updated_at
   FROM src.reviews rv
@@ -374,7 +395,7 @@ sql_reviews <- sprintf("
   WHERE date(rj.enqueued_at) >= DATE '%s'
   %s
   ORDER BY rv.id
-", since_str, repo_clause)
+", structured_output_col, since_str, repo_clause)
 
 reviews_raw <- tryCatch(
   dbGetQuery(read_con, sql_reviews),
@@ -501,6 +522,53 @@ parse_max_severity <- function(text) {
     if (length(ords) == 0L) return(NA_character_)
     SEVERITY_NAMES[[as.character(max(ords))]]
   }, error = function(e) NA_character_)
+}
+
+# ── structured_output reader (llm#1265) ────────────────────────────────────
+#
+# roborev v0.68.2 migrated every row's review text out of `output` (now ''
+# on all live rows) into a new `structured_output` JSON column keyed by
+# schema_version (0: data$legacy$markdown holds the original markdown
+# verbatim; 1/2: verdict/summary/findings, findings carrying
+# severity/problem/fix/location). Self-contained mirror of the shared
+# reader in .claude/scripts/lib/roborev_classify.py / send_roborev_email.R's
+# R copy -- this script only needs enough of it to feed parse_max_severity()
+# real text (a `**Severity**:` marker), so it reconstructs ONLY the bullet
+# lines SEVERITY_PATTERN above already expects, not the full
+# classify_review_row() passed/not_reviewed/indeterminate vocabulary. It
+# deliberately does NOT synthesize any "no issues" text for an empty
+# findings list (unlike the fuller reader in send_roborev_email.R) --
+# parse_max_severity("") already returns NA_character_ for that case, which
+# is exactly what a clean/indeterminate row should produce here: no
+# fabricated severity, nothing silently promoted to "clean".
+# `structured_output` may be NA (a fixture data.frame, or a live DB
+# predating the migration) -- treated the same as an unusable value and
+# falls back to `output` unchanged.
+.metrics_review_text <- function(output, structured_output) {
+  out <- if (is.null(output) || is.na(output)) "" else output
+  so  <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+  if (!nzchar(so)) return(out)
+  data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(out)
+  legacy <- data[["legacy"]]
+  if (is.list(legacy)) {
+    md <- legacy[["markdown"]]
+    if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
+  }
+  schema_version <- data[["schema_version"]]
+  valid_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && schema_version >= 1
+  if (!valid_schema) return(out)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(out)
+  blocks <- vapply(findings, function(f) {
+    if (!is.list(f)) return("")
+    sev <- f[["severity"]]
+    sev <- if (is.null(sev)) "" else trimws(as.character(sev))
+    sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
+    sprintf("- **Severity**: %s", sev_cap)
+  }, character(1L))
+  paste(blocks, collapse = "\n")
 }
 
 # ── Classify a job failure from review_jobs.error (llm#928) ──────────────────
@@ -898,7 +966,21 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
                     ifelse(merged$verdict_bool == 1L, "P", "F"))
 
   cat("roborev_metrics_etl.R: parsing severity from", nrow(merged), "review outputs...\n")
-  severity_max <- vapply(merged$output, parse_max_severity,
+  # llm#1265: merged$structured_output may be entirely absent (a fixture
+  # data.frame built without it, or a query against a pre-migration DB via
+  # has_structured_output_col above) -- treat as all-NA in that case, which
+  # .metrics_review_text() already falls back to `output` unchanged for.
+  merged_structured_output <- if ("structured_output" %in% names(merged)) {
+    merged$structured_output
+  } else {
+    rep(NA_character_, nrow(merged))
+  }
+  review_text <- vapply(
+    seq_len(nrow(merged)),
+    function(i) .metrics_review_text(merged$output[[i]], merged_structured_output[[i]]),
+    character(1L)
+  )
+  severity_max <- vapply(review_text, parse_max_severity,
                          character(1L), USE.NAMES = FALSE)
 
   # ── Populate closed_at and close_reason ─────────────────────────────────
