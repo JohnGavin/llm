@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/verification-before-completion.md"
+---
+
 # Companion: Verification Before Completion — Dated Worked Incidents
 
 Dated worked-incident narratives split out of the always-loaded

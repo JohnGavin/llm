@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/portable-build-artifacts.md"
+---
+
 # Companion: Portable Build Artifacts — Part 5 Incident Narrative
 
 Dated incident narrative split out of the always-loaded

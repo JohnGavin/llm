@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/wiki-conventions.md"
+---
+
 # Companion: Wiki Conventions — Migration History + Enforcement-Scope Detail
 
 Historical/rationale detail split out of the always-loaded

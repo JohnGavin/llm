@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/secrets-single-source.md"
+---
+
 # Companion: Secrets Single Source — Incident Narratives and Extended Rationale
 
 Dated incident narratives and verbose rationale split out of the

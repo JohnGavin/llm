@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/data-validation-timeseries.md"
+---
+
 # Companion: Time-Series Data Validation — Worked Code Examples
 
 Worked code examples split out of the always-loaded

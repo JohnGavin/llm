@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/worktree-location.md"
+---
+
 # Companion: Worktree Location Convention — Rationale, Origin Incident, Enforcement Detail
 
 Rationale, incident narrative and verbose detail split out of the

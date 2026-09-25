@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/secret-leak-prevention.md"
+---
+
 # Companion: Secret Leak Prevention — Egress-Matcher Feasibility Investigation + Extended Rule Detail
 
 Dated investigation narrative and verbose rule-tuning detail split out of the

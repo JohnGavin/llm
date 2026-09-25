@@ -1,3 +1,9 @@
+---
+paths:
+  - ".claude/rules/roborev-resolution.md"
+  - ".claude/rules/_companions/roborev-resolution-details.md"
+---
+
 # Companion: roborev Resolution — Dated Incidents and Rollout History
 
 Dated incident narratives and one-time rollout procedures split out of

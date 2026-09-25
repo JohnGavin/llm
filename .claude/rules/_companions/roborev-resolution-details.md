@@ -1,3 +1,9 @@
+---
+paths:
+  - ".claude/rules/roborev-resolution.md"
+  - ".claude/rules/_companions/roborev-resolution-incidents.md"
+---
+
 # Companion: roborev Resolution — Verbose How-Tos and Reference Tables
 
 Verbose-usage detail split out of the always-loaded

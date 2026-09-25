@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/bash-safety.md"
+---
+
 # Companion: Bash Command Safety — Verified Reproduction and One-Time Audit
 
 Verified reproduction output and a one-time completed audit split out of the
