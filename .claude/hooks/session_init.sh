@@ -1564,13 +1564,19 @@ lib_dir = sys.argv[3] if len(sys.argv) > 3 else ""
 # llm#1035: a review classified "passed" (ran, found nothing) is excluded
 # from the open count -- it is not a backlog item. Fail-open: if the shared
 # module can't be imported, every open row counts as before (pre-llm#1035).
+# llm#1265: roborev v0.68.2 migrated every row's review text out of
+# `output` (empty on all live rows) into `structured_output` (JSON).
+# review_output_text() reconstructs equivalent text so classify_review()
+# below keeps working unchanged.
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import classify_review
+    from roborev_classify import classify_review, review_output_text
 except Exception:
     def classify_review(text):
         return "parsed"
+    def review_output_text(output, structured_output):
+        return output or ""
 
 try:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -1582,7 +1588,13 @@ if repo_row is None: sys.exit(0)
 repo_id = repo_row["id"]
 try:
     rows = con.execute("""
-        SELECT rv.output AS output, rv.closed AS closed
+        SELECT rv.output AS output, rv.structured_output AS structured_output, rv.closed AS closed
+        FROM reviews rv JOIN review_jobs rj ON rj.id = rv.job_id
+        WHERE rj.repo_id = ? AND rj.status = 'done'
+    """, (repo_id,)).fetchall()
+except sqlite3.OperationalError:
+    rows = con.execute("""
+        SELECT rv.output AS output, NULL AS structured_output, rv.closed AS closed
         FROM reviews rv JOIN review_jobs rj ON rj.id = rv.job_id
         WHERE rj.repo_id = ? AND rj.status = 'done'
     """, (repo_id,)).fetchall()
@@ -1594,7 +1606,8 @@ total_count = len(rows)
 closed_count = sum(1 for r in rows if r["closed"])
 open_count = sum(
     1 for r in rows
-    if not r["closed"] and classify_review(r["output"]) != "passed"
+    if not r["closed"]
+    and classify_review(review_output_text(r["output"], r["structured_output"])) != "passed"
 )
 addressed_pct = round(100.0 * closed_count / total_count) if total_count > 0 else 0
 print(f"OPEN:{open_count}")

@@ -38,9 +38,58 @@ Usage:
     outcome = classify_review(output_text)
     # -> "parsed" | "not_reviewed" | "passed" | "unclassified"
 
+STRUCTURED_OUTPUT (llm#1265, roborev v0.68.2 schema migration)
+----------------------------------------------------------------
+2026-09-24: roborev v0.68.2 migrated every row's review text out of
+``reviews.output`` (now an empty string on all 9,863 live rows) into a new
+``reviews.structured_output`` column -- JSON, keyed by ``schema_version``:
+
+  schema_version 0  -- the ORIGINAL pre-migration text, copied verbatim into
+                       ``data["legacy"]["markdown"]``. Top-level "findings"
+                       and "summary" are always empty/[] for these rows --
+                       the real content lives in "legacy.markdown".
+  schema_version 1  -- {"schema_version":1,"summary":str,"findings":[...]}.
+                       No "verdict" key. An EMPTY "findings" list here (most
+                       of the live backlog: 4,021 of 7,466 schema_version-1
+                       rows) means the review ran and found nothing -- there
+                       is no separate "clean" signal, the empty list IS it.
+  schema_version 2  -- adds a top-level "verdict": "pass"|"fail". Each
+                       finding is {"severity","problem","fix","location"}
+                       (severity always lowercase: critical/high/medium/low).
+
+Rather than teach every consumer's Location:/Problem:/Severity:/Category:
+regex and NOT_REVIEWED_PATTERNS/PASSED_PATTERNS substring matching a second,
+JSON-shaped code path, ``review_output_text()`` below RECONSTRUCTS the same
+markdown shape those regexes already expect (verbatim for schema_version 0,
+synthesized from verdict/summary/findings for schema_version >= 1) and
+falls back to the legacy ``output`` column when structured_output is
+NULL/empty/unparseable. Every existing regex/substring consumer keeps
+working unmodified against the reconstructed text -- callers only need to
+select ``structured_output`` alongside ``output`` and swap in
+``review_output_text(output, structured_output)`` wherever they used to
+read the raw ``output`` column directly.
+
+``classify_review_row()`` adds one NEW terminal state beyond
+``classify_review()``'s four: "indeterminate" -- BOTH ``output`` and
+``structured_output`` are empty/NULL/unparseable, i.e. there is no review
+text to classify at all. This is the llm#1265 fix's requirement #3 ("both
+columns empty/NULL" must never read as clean) made explicit and testable,
+rather than relying on every caller's pre-existing fail-closed handling of
+an empty string to (correctly, but implicitly) achieve the same thing.
+
+Known gap NOT fixed here (out of scope for llm#1265, flagged 2026-09-25):
+NOT_REVIEWED_PATTERNS in this file has 7 entries; send_roborev_email.R's
+copy has grown 4 more since (llm#1127/#1141: "inaccessible due to
+configured ignore patterns", "unable to proceed with the review", "blocked
+by ignore patterns", "blocked by configured ignore patterns"). This
+pre-dates the structured_output migration and is unrelated to it -- a
+pre-existing sync gap between the two files, not introduced or widened by
+this change. Tracked for a follow-up, not fixed in this PR.
+
 Self-test:
     python3 roborev_classify.py --selftest
 """
+import json
 import re
 import sys
 
@@ -141,6 +190,148 @@ def classify_review(text):
     return classify_unparseable_finding(text)
 
 
+# ── structured_output reader (llm#1265) ────────────────────────────────────
+
+def _parse_structured_json(structured_output):
+    """Parse ``structured_output`` as JSON. Returns a dict, or None if the
+    value is None/empty/not valid JSON/not a JSON object -- any of which
+    means "nothing usable here, fall back to legacy output text"."""
+    if not structured_output:
+        return None
+    try:
+        data = json.loads(structured_output)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _legacy_markdown_from_structured(data):
+    """schema_version 0 rows carry the ORIGINAL pre-migration markdown text
+    verbatim under data['legacy']['markdown'] (roborev's own migration
+    copied it there byte-for-byte). Returns that string, or None if absent
+    or blank."""
+    legacy = data.get("legacy")
+    if isinstance(legacy, dict):
+        md = legacy.get("markdown")
+        if isinstance(md, str) and md.strip():
+            return md
+    return None
+
+
+def _render_structured_findings_as_markdown(data):
+    """Reconstruct markdown-equivalent text from a schema_version >= 1
+    structured_output dict (verdict/summary/findings) so every EXISTING
+    regex/substring consumer (Severity:/Location:/Problem:/Category:
+    markers, NOT_REVIEWED_PATTERNS, PASSED_PATTERNS) keeps working
+    unchanged against JSON-backed data -- this is the shared reader's core
+    trick: synthesize equivalent text, don't rewrite every regex."""
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        findings = []
+    summary = data.get("summary") or ""
+    verdict = data.get("verdict")
+
+    lines = []
+    if findings:
+        lines.append("## Review Findings")
+        lines.append("")
+        for f in findings:
+            if not isinstance(f, dict):
+                continue
+            sev = str(f.get("severity") or "").strip()
+            lines.append("- **Severity**: {}".format(sev.capitalize()))
+            loc = f.get("location")
+            if loc:
+                lines.append("  **Location**: {}".format(loc))
+            problem = f.get("problem")
+            if problem:
+                lines.append("  **Problem**: {}".format(problem))
+            fix = f.get("fix")
+            if fix:
+                lines.append("  **Fix**: {}".format(fix))
+            lines.append("")
+    elif verdict in (None, "pass"):
+        # A v1/v2 review that ran and found nothing (schema_version 1 has
+        # no "verdict" key at all -- an empty findings list alone IS the
+        # clean signal there; schema_version 2 makes it explicit via
+        # verdict=="pass"). Synthesize the exact phrase PASSED_PATTERNS
+        # already matches so every existing consumer's substring/prefix
+        # check keeps working without a second code path. A verdict of
+        # "fail" with an empty findings list (never observed live, but not
+        # provably impossible) is a data inconsistency -- deliberately NOT
+        # synthesized as clean; the render stays finding-less and
+        # summary-only, which downstream classifies as "unclassified", not
+        # "passed".
+        lines.append("No issues found.")
+        lines.append("")
+
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(summary)
+    return "\n".join(lines).strip()
+
+
+def review_output_text(output, structured_output):
+    """THE shared reader (llm#1265). Returns the best available plain-text
+    rendering of a review row, so every consumer's EXISTING Severity:/
+    Location:/Problem:/Category: regex and NOT_REVIEWED_PATTERNS/
+    PASSED_PATTERNS substring matching keeps working unchanged regardless
+    of which schema the row was written under.
+
+    Priority:
+      1. structured_output, schema_version 0 -> legacy.markdown verbatim.
+      2. structured_output, schema_version >= 1 -> synthesized markdown
+         from verdict/summary/findings.
+      3. legacy `output` column text (pre-v0.68.2 rows, or any future
+         schema roll-back).
+      4. "" when BOTH are empty/unusable -- callers MUST treat "" as
+         INDETERMINATE, never as "passed"/"clean" (llm#1265 requirement
+         #3). Every existing consumer already fails closed on "" (no
+         Severity: marker -> unparseable -> classify_unparseable_finding("")
+         -> "unclassified", never "passed"), so this is a safe drop-in even
+         for callers not yet updated to check the indeterminate case
+         explicitly. classify_review_row() below makes the state explicit
+         for callers that want it.
+    """
+    data = _parse_structured_json(structured_output)
+    if data is not None:
+        legacy_md = _legacy_markdown_from_structured(data)
+        if legacy_md is not None:
+            return legacy_md
+        return _render_structured_findings_as_markdown(data)
+    return (output or "").strip()
+
+
+def review_severity_ordinal(output, structured_output):
+    """Max severity ordinal (1-4) for a review row sourced from either
+    column via review_output_text(), or None if the row has no severity
+    marker (passed/not_reviewed/unclassified/indeterminate)."""
+    return parse_max_severity_ordinal(review_output_text(output, structured_output))
+
+
+def classify_review_row(output, structured_output):
+    """The shared, explicit-outcome reader (llm#1265). Classifies a review
+    row from EITHER column, preferring structured_output.
+
+    Returns one of "parsed" | "not_reviewed" | "passed" | "unclassified" |
+    "indeterminate":
+      "parsed"        -- a severity marker was found (call
+                          review_severity_ordinal() for the ordinal).
+      "not_reviewed"  -- review did not run (agent-failure text).
+      "passed"        -- review ran, found nothing.
+      "unclassified"  -- genuine residual, matches no known shape.
+      "indeterminate" -- BOTH output and structured_output are empty/NULL/
+                          unparseable -- there is no review text at all to
+                          classify. NEVER a "clean"/"passed" result.
+    """
+    text = review_output_text(output, structured_output)
+    if not text:
+        return "indeterminate"
+    return classify_review(text)
+
+
 # ── Self-test ─────────────────────────────────────────────────────────────
 def _selftest():
     passed = 0
@@ -227,6 +418,59 @@ def _selftest():
           "unclassified", classify_review(None))
     check("no-bold 'Severity: High' still parses",
           3, parse_max_severity_ordinal("- Severity: High\nplain form"))
+
+    # ── structured_output reader (llm#1265) ─────────────────────────────
+    v2_with_findings = (
+        '{"schema_version":2,"summary":"x","verdict":"fail",'
+        '"findings":[{"severity":"medium","problem":"p1","location":"a.R:1","fix":"f1"},'
+        '{"severity":"high","problem":"p2","location":"b.R:2","fix":"f2"}]}'
+    )
+    v2_pass_no_findings = (
+        '{"schema_version":2,"summary":"clean diff","verdict":"pass","findings":[]}'
+    )
+    v1_empty_findings_no_verdict = (
+        '{"schema_version":1,"summary":"trivial gitignore change","findings":[]}'
+    )
+    schema0_legacy = (
+        '{"legacy":{"markdown":"- **Severity**: Critical\\n  '
+        '**Problem**: bad thing","recorded_verdict":false},'
+        '"schema_version":0,"summary":"","findings":[]}'
+    )
+    malformed_json = "{not valid json"
+    legacy_text_only = "- **Severity**: Low\n  **Problem**: minor thing"
+    not_reviewed_structured = (
+        '{"schema_version":1,"summary":"I am unable to access the diff file",'
+        '"findings":[]}'
+    )
+
+    check("review_severity_ordinal(): v2 JSON with medium+high findings -> 3 (high)",
+          3, review_severity_ordinal(None, v2_with_findings))
+    check("classify_review_row(): v2 JSON with findings -> parsed",
+          "parsed", classify_review_row(None, v2_with_findings))
+    check("classify_review_row(): v2 verdict=pass, no findings -> passed",
+          "passed", classify_review_row(None, v2_pass_no_findings))
+    check("review_severity_ordinal(): v2 pass/no-findings -> None",
+          None, review_severity_ordinal(None, v2_pass_no_findings))
+    check("classify_review_row(): v1 empty findings, no verdict key -> passed",
+          "passed", classify_review_row(None, v1_empty_findings_no_verdict))
+    check("classify_review_row(): schema_version 0 legacy.markdown -> parsed (Critical)",
+          "parsed", classify_review_row(None, schema0_legacy))
+    check("review_severity_ordinal(): schema_version 0 legacy.markdown -> 4 (critical)",
+          4, review_severity_ordinal(None, schema0_legacy))
+    check("classify_review_row(): malformed JSON falls back to legacy `output` text -> parsed",
+          "parsed", classify_review_row(legacy_text_only, malformed_json))
+    check("review_severity_ordinal(): malformed JSON falls back to legacy `output` -> 1 (low)",
+          1, review_severity_ordinal(legacy_text_only, malformed_json))
+    check("classify_review_row(): BOTH output and structured_output empty -> indeterminate",
+          "indeterminate", classify_review_row("", None))
+    check("classify_review_row(): BOTH output and structured_output None -> indeterminate",
+          "indeterminate", classify_review_row(None, None))
+    check("classify_review_row(): malformed JSON AND empty output -> indeterminate",
+          "indeterminate", classify_review_row("", malformed_json))
+    check("classify_review_row(): structured_output not-reviewed text -> not_reviewed",
+          "not_reviewed", classify_review_row(None, not_reviewed_structured))
+    check("review_output_text(): structured_output takes priority over legacy output",
+          True, "Critical" in review_output_text("Severity: Low", schema0_legacy))
 
     print(f"\n{passed}/{passed + failed} PASS")
     return 0 if failed == 0 else 1

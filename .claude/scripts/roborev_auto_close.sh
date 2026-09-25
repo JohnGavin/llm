@@ -52,6 +52,47 @@ ROBOREV_DB="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
 SQLITE3="${SQLITE3:-$(command -v sqlite3 2>/dev/null || echo /usr/bin/sqlite3)}"
 LOGFILE="${HOME}/.claude/logs/roborev_auto_close.log"
 
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# reconstructs markdown text from the v0.68.2 structured_output JSON column
+# (falling back to legacy `output`) so this script's own severity/Category:
+# parsing below keeps working unchanged.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+
+# Fetch the shared-reader text for one review id (output column, falling
+# back through structured_output — see roborev_classify.py's
+# review_output_text() docstring). Returns "" if the row does not exist.
+_fetch_review_text() {
+  local review_id="$1"
+  /usr/bin/python3 - "$ROBOREV_DB" "$review_id" "$LIB_DIR" <<'PY'
+import sqlite3, sys
+
+db_path, review_id, lib_dir = sys.argv[1], sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else "")
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception:
+    def review_output_text(output, structured_output):
+        return output or ""
+
+con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+try:
+    row = con.execute(
+        "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1", (review_id,)
+    ).fetchone()
+except sqlite3.OperationalError:
+    # Defensive fallback for a reviews.db predating the v0.68.2 migration
+    # (no structured_output column at all) -- not expected on a live
+    # ~/.roborev/reviews.db, but a schema this script itself creates for
+    # its own selftest fixture verified both shapes work.
+    row = con.execute(
+        "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
+    ).fetchone()
+con.close()
+print(review_output_text(row[0], row[1]) if row is not None else "")
+PY
+}
+
 log() {
   local ts
   ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')
@@ -131,6 +172,7 @@ CREATE TABLE reviews (
   closed INTEGER NOT NULL DEFAULT 0,
   verdict_bool INTEGER,
   output TEXT DEFAULT '',
+  structured_output TEXT DEFAULT NULL,
   updated_at TEXT DEFAULT (datetime('now'))
 );
 CREATE TABLE closures (
@@ -158,52 +200,52 @@ INSERT INTO review_jobs VALUES (2, 1, 'done');
 -- finding 1: High severity open
 INSERT INTO reviews VALUES (1, 1, 0, 0, '**Severity**: High
 **Location**: R/foo.R:10
-**Problem**: dangerous', NULL);
+**Problem**: dangerous', NULL, NULL);
 -- finding 2: High severity; approving review is Medium-only (downgrade attack test)
 INSERT INTO reviews VALUES (2, 2, 0, 0, '**Severity**: High
-**Problem**: issue', NULL);
+**Problem**: issue', NULL, NULL);
 -- finding 3: security finding
 INSERT INTO reviews VALUES (3, 1, 0, 0, '**Severity**: Medium
 **Category**: security
-**Problem**: token leakage', NULL);
+**Problem**: token leakage', NULL, NULL);
 -- finding 4: error-handling finding
 INSERT INTO reviews VALUES (4, 1, 0, 0, '**Severity**: Low
 **Category**: error-handling
-**Problem**: missing tryCatch', NULL);
+**Problem**: missing tryCatch', NULL, NULL);
 -- finding 5: High severity, approving review also High — should close
 INSERT INTO reviews VALUES (5, 1, 0, 0, '**Severity**: High
-**Problem**: issue', NULL);
+**Problem**: issue', NULL, NULL);
 -- approving review for finding 5 (review_id=6): also High → OK to close
 INSERT INTO review_jobs VALUES (6, 1, 'done');
 INSERT INTO reviews VALUES (6, 6, 0, 1, '**Severity**: High
-**Problem**: still issue', NULL);
+**Problem**: still issue', NULL, NULL);
 -- approving review for downgrade attack (review_id=7): Medium only
 INSERT INTO review_jobs VALUES (7, 1, 'done');
 INSERT INTO reviews VALUES (7, 7, 0, 1, '**Severity**: Medium
-**Problem**: fine', NULL);
+**Problem**: fine', NULL, NULL);
 -- llm#974 bypass A: finding severity in PLAIN form (no bold markers) —
 -- reproduces the downgrade-attack guard bypass caused by the old regex
 -- (\*\*Severity\*\*:) failing to match "Severity: High" so FINDING_ORD read
 -- as 0 (unknown) and the guard's precondition never fired.
 INSERT INTO review_jobs VALUES (8, 1, 'done');
 INSERT INTO reviews VALUES (8, 8, 0, 0, 'Severity: High
-Problem: issue found', NULL);
+Problem: issue found', NULL, NULL);
 -- approving review for bypass A (review_id=9): bold Medium — a genuine
 -- downgrade once the finding's plain-form severity parses correctly.
 INSERT INTO review_jobs VALUES (9, 1, 'done');
 INSERT INTO reviews VALUES (9, 9, 0, 1, '**Severity**: Medium
-**Problem**: fine', NULL);
+**Problem**: fine', NULL, NULL);
 -- llm#974 bypass B: finding severity is bold High (parses fine either way);
 -- the approving review's severity is in PLAIN form — reproduces the second
 -- bypass where APPROVING_ORD read as 0 (unknown) under the old regex and
 -- the old guard's `-gt 0` clause exempted ord=0 from rejection.
 INSERT INTO review_jobs VALUES (10, 1, 'done');
 INSERT INTO reviews VALUES (10, 10, 0, 0, '**Severity**: High
-**Problem**: issue found', NULL);
+**Problem**: issue found', NULL, NULL);
 -- approving review for bypass B (review_id=11): plain Medium.
 INSERT INTO review_jobs VALUES (11, 1, 'done');
 INSERT INTO reviews VALUES (11, 11, 0, 1, 'Severity: Medium
-Problem: fine', NULL);
+Problem: fine', NULL, NULL);
 -- llm#974 Change 2 regression: finding is bold High; approving review has
 -- NO severity marker of any shape (genuinely unparseable, not a regex bug —
 -- this is the llm#972 cause 2 shape: no findings block at all). This case
@@ -212,30 +254,30 @@ Problem: fine', NULL);
 -- how well the regex parses markup, because there is no marker to parse.
 INSERT INTO review_jobs VALUES (12, 1, 'done');
 INSERT INTO reviews VALUES (12, 12, 0, 0, '**Severity**: High
-**Problem**: issue found', NULL);
+**Problem**: issue found', NULL, NULL);
 -- approving review for the unparseable case (review_id=13): no marker at all.
 INSERT INTO review_jobs VALUES (13, 1, 'done');
-INSERT INTO reviews VALUES (13, 13, 0, 1, 'LGTM, looks fine to me. No issues found.', NULL);
+INSERT INTO reviews VALUES (13, 13, 0, 1, 'LGTM, looks fine to me. No issues found.', NULL, NULL);
 -- llm#974b: finding severity itself unparseable (no marker at all),
 -- approved by a valid bold-Medium review. Reproduces the fail-open this
 -- dispatch fixes: FINDING_ORD=0 matched neither `-ge 3` branch above, so
 -- the finding closed unexamined even though an unreadable severity might
 -- have been Critical/High.
 INSERT INTO review_jobs VALUES (14, 1, 'done');
-INSERT INTO reviews VALUES (14, 14, 0, 0, 'Problem: something odd, no severity line at all.', NULL);
+INSERT INTO reviews VALUES (14, 14, 0, 0, 'Problem: something odd, no severity line at all.', NULL, NULL);
 -- approving review for the finding-unparseable case (review_id=15): a
 -- genuinely valid, well-formed bold-Medium approval — must NOT be enough to
 -- close a finding whose own severity cannot be read.
 INSERT INTO review_jobs VALUES (15, 1, 'done');
 INSERT INTO reviews VALUES (15, 15, 0, 1, '**Severity**: Medium
-**Problem**: fine', NULL);
+**Problem**: fine', NULL, NULL);
 -- llm#974b regression guard: a genuinely Low/Medium finding (parseable,
 -- below the High/Critical threshold, no security/error-handling category)
 -- must still close on a valid approval — the new finding-unparseable
 -- branch must not turn into "refuse everything".
 INSERT INTO review_jobs VALUES (16, 1, 'done');
 INSERT INTO reviews VALUES (16, 16, 0, 0, '**Severity**: Medium
-**Problem**: minor cosmetic issue', NULL);
+**Problem**: minor cosmetic issue', NULL, NULL);
 SQL
 
   # ── Test 1: High severity + High approve → closes ─────────────────────────
@@ -531,10 +573,14 @@ fi
 
 # ── Fetch finding severity from DB ────────────────────────────────────────────
 
-FINDING_OUTPUT=$("$SQLITE3" "$ROBOREV_DB" \
-  "SELECT output FROM reviews WHERE id=${FINDING_ID} LIMIT 1")
+# llm#1265: roborev v0.68.2 migrated every row's review text out of
+# `output` (empty on all live rows) into `structured_output` (JSON).
+# _fetch_review_text() reads both, via the shared roborev_classify.py
+# reader, and reconstructs the same markdown shape _parse_max_severity()
+# and the Category: grep below already expect.
+FINDING_OUTPUT=$(_fetch_review_text "$FINDING_ID")
 if [ -z "$FINDING_OUTPUT" ]; then
-  log "WARN: finding_id=${FINDING_ID} not found in DB or has empty output"
+  log "WARN: finding_id=${FINDING_ID} not found in DB or has empty output/structured_output"
   FINDING_OUTPUT=""
 fi
 FINDING_SEVERITY=$(_parse_max_severity "$FINDING_OUTPUT")
@@ -543,8 +589,7 @@ FINDING_SEVERITY=$(_parse_max_severity "$FINDING_OUTPUT")
 
 APPROVING_OUTPUT=""
 if [ -n "$APPROVING_REVIEW_ID" ]; then
-  APPROVING_OUTPUT=$("$SQLITE3" "$ROBOREV_DB" \
-    "SELECT output FROM reviews WHERE id=${APPROVING_REVIEW_ID} LIMIT 1")
+  APPROVING_OUTPUT=$(_fetch_review_text "$APPROVING_REVIEW_ID")
 fi
 APPROVING_SEVERITY=$(_parse_max_severity "$APPROVING_OUTPUT")
 

@@ -235,7 +235,11 @@ SELECT
        OR rv.output LIKE '%severity**: high%'
        OR rv.output LIKE '%**Severity**: High%'
        OR rv.output LIKE '%Severity: High%'
-       OR rv.output LIKE '%severity: high%')
+       OR rv.output LIKE '%severity: high%'
+       OR EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                  WHERE lower(json_extract(json_each.value, '\$.severity')) = 'high')
+       OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: High%'
+       OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: High%')
     THEN 1 ELSE 0 END), 0) AS high_open,
   COALESCE(SUM(CASE
     WHEN rv.closed = 0
@@ -243,7 +247,11 @@ SELECT
        OR rv.output LIKE '%severity**: medium%'
        OR rv.output LIKE '%**Severity**: Medium%'
        OR rv.output LIKE '%Severity: Medium%'
-       OR rv.output LIKE '%severity: medium%')
+       OR rv.output LIKE '%severity: medium%'
+       OR EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                  WHERE lower(json_extract(json_each.value, '\$.severity')) = 'medium')
+       OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: Medium%'
+       OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: Medium%')
     THEN 1 ELSE 0 END), 0) AS medium_open,
   COALESCE(SUM(CASE
     WHEN rv.closed = 0
@@ -251,7 +259,11 @@ SELECT
        OR rv.output LIKE '%severity**: low%'
        OR rv.output LIKE '%**Severity**: Low%'
        OR rv.output LIKE '%Severity: Low%'
-       OR rv.output LIKE '%severity: low%')
+       OR rv.output LIKE '%severity: low%'
+       OR EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                  WHERE lower(json_extract(json_each.value, '\$.severity')) = 'low')
+       OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: Low%'
+       OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: Low%')
     THEN 1 ELSE 0 END), 0) AS low_open,
   COALESCE(MAX(CASE
     WHEN rv.closed = 0 AND rj.finished_at IS NOT NULL
@@ -294,8 +306,21 @@ while IFS='|' read -r _project _total_open _closed_today _high _medium _low _old
 
   # Top-3 findings snippet for digest context (highest severity first)
   _detail_json="null"
+  # llm#1265: roborev v0.68.2 migrated every row's review text out of
+  # `output` (empty on all live rows) into `structured_output` (JSON) --
+  # prefer schema_version 0's legacy.markdown (byte-identical to the old
+  # `output` text), then a severity:problem summary of any structured
+  # findings, then the bare JSON summary, in that order.
   _top3_output="$(sqlite3 "${ROBOREV_DB}" "
-    SELECT substr(rv.output, 1, 200)
+    SELECT substr(COALESCE(
+      NULLIF(rv.output, ''),
+      json_extract(rv.structured_output, '\$.legacy.markdown'),
+      (SELECT group_concat('- ' || json_extract(value, '\$.severity') || ': '
+                            || json_extract(value, '\$.problem'), ' | ')
+       FROM json_each(rv.structured_output, '\$.findings')),
+      json_extract(rv.structured_output, '\$.summary'),
+      ''
+    ), 1, 200)
     FROM reviews rv
     JOIN review_jobs rj ON rv.job_id = rj.id
     JOIN repos r ON rj.repo_id = r.id
@@ -303,9 +328,17 @@ while IFS='|' read -r _project _total_open _closed_today _high _medium _low _old
     ORDER BY
       CASE
         WHEN rv.output LIKE '%Severity**: High%' OR rv.output LIKE '%severity**: high%'
-          OR rv.output LIKE '%Severity: High%' OR rv.output LIKE '%severity: high%' THEN 1
+          OR rv.output LIKE '%Severity: High%' OR rv.output LIKE '%severity: high%'
+          OR EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                     WHERE lower(json_extract(json_each.value, '\$.severity')) = 'high')
+          OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: High%'
+          OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: High%' THEN 1
         WHEN rv.output LIKE '%Severity**: Medium%' OR rv.output LIKE '%severity**: medium%'
-          OR rv.output LIKE '%Severity: Medium%' OR rv.output LIKE '%severity: medium%' THEN 2
+          OR rv.output LIKE '%Severity: Medium%' OR rv.output LIKE '%severity: medium%'
+          OR EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                     WHERE lower(json_extract(json_each.value, '\$.severity')) = 'medium')
+          OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: Medium%'
+          OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: Medium%' THEN 2
         ELSE 3
       END,
       rv.created_at DESC

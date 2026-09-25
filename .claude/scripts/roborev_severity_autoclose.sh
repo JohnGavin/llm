@@ -38,6 +38,12 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 set -euo pipefail
 
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# reconstructs markdown text from the v0.68.2 structured_output JSON column
+# (falling back to legacy `output`) so this script's own Severity:/"no
+# issues found" regex/substring checks below keep working unchanged.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+
 # ── Self-test (must appear before any side effects) ──────────────────────
 if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
   PASS=0
@@ -599,17 +605,29 @@ if [ "$MODE" = "replay" ]; then
   while IFS=$'\t' read -r _id _output _root _repo; do
     [ -n "$_id" ] && REPLAY_ROWS+=("${_id}	${_output}	${_root}	${_repo}")
   done < <(
-    /usr/bin/python3 - "$ROBOREV_DB" "$MARKER_PATTERN" "$FILTER_REPO" <<'PYEOF'
+    /usr/bin/python3 - "$ROBOREV_DB" "$MARKER_PATTERN" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
 db_path = sys.argv[1]
 marker  = sys.argv[2]
 repo_filter = sys.argv[3] if len(sys.argv) > 3 else ''
+lib_dir = sys.argv[4] if len(sys.argv) > 4 else ''
+
+# llm#1265: fail-open to the raw `output` column if the shared module can't
+# be imported (matches this script's pre-existing fail-open posture on any
+# other setup error, e.g. reviews.db not found, above).
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception:
+    def review_output_text(output, structured_output):
+        return output or ""
 
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
 sql = """
-    SELECT DISTINCT rv.id, rv.output, rp.root_path, rp.name
+    SELECT DISTINCT rv.id, rv.output, rv.structured_output, rp.root_path, rp.name
     FROM reviews rv
     JOIN review_jobs rj ON rj.id = rv.job_id
     JOIN repos rp ON rp.id = rj.repo_id
@@ -626,8 +644,9 @@ if repo_filter:
 rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
-    output = (row[1] or '').replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}")
+    text = review_output_text(row[1], row[2])
+    text = text.replace('\t', ' ').replace('\n', ' ')
+    print(f"{row[0]}\t{text}\t{row[3]}\t{row[4]}")
 PYEOF
   )
 
@@ -709,16 +728,27 @@ REVIEW_ROWS=()
 while IFS=$'\t' read -r _id _output _root _repo _verdict _job_id; do
   [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}	${_verdict}	${_job_id}")
 done < <(
-  /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" <<'PYEOF'
+  /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
 db_path = sys.argv[1]
 repo_filter = sys.argv[2] if len(sys.argv) > 2 else ''
+lib_dir = sys.argv[3] if len(sys.argv) > 3 else ''
+
+# llm#1265: fail-open to the raw `output` column if the shared module can't
+# be imported.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception:
+    def review_output_text(output, structured_output):
+        return output or ""
 
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
 sql = """
-    SELECT rv.id, rv.output, rp.root_path, rp.name, rv.verdict_bool, rv.job_id
+    SELECT rv.id, rv.output, rv.structured_output, rp.root_path, rp.name, rv.verdict_bool, rv.job_id
     FROM reviews rv
     JOIN review_jobs rj ON rj.id = rv.job_id
     JOIN repos rp ON rp.id = rj.repo_id
@@ -735,8 +765,9 @@ sql += " ORDER BY rv.id"
 rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
-    output = (row[1] or '').replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}\t{row[4]}\t{row[5]}")
+    text = review_output_text(row[1], row[2])
+    text = text.replace('\t', ' ').replace('\n', ' ')
+    print(f"{row[0]}\t{text}\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}")
 PYEOF
 )
 

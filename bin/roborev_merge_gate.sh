@@ -53,6 +53,16 @@
 # proof and .claude/scripts/lib/roborev_classify.py's own docstring for why
 # R and Python keep parallel (not shared) implementations.
 #
+# llm#1265 (2026-09-25): roborev v0.68.2 migrated every row's review text
+# out of `reviews.output` (empty on all live rows as of this fix) into a new
+# `reviews.structured_output` JSON column.  review_output_text() (imported
+# from roborev_classify.py below) reconstructs the same markdown shape the
+# Location:/Problem:/Severity: regexes above already expect, falling back to
+# `output` when structured_output is NULL/empty/unparseable, and returning
+# "" only when BOTH are empty/unusable — classify_review_row() then reports
+# that as "indeterminate", which is NEVER dropped from the unparseable list
+# (same fail-closed guarantee as llm#1146, extended to the new schema).
+#
 # Citation patterns recognised in PR commit messages (case-insensitive):
 #   closes roborev #N
 #   close roborev #N
@@ -275,6 +285,8 @@ try:
     from roborev_classify import (
         parse_max_severity_ordinal,
         classify_unparseable_finding,
+        review_output_text,
+        classify_review_row,
         SEVERITY_ORDINAL,
     )
 except Exception as e:
@@ -301,7 +313,7 @@ try:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     placeholders = ",".join("?" * len(shas))
     rows = con.execute("""
-        SELECT r.id, r.output, c.sha
+        SELECT r.id, r.output, r.structured_output, c.sha
         FROM reviews r
         JOIN review_jobs rj ON r.job_id = rj.id
         JOIN commits    c  ON rj.commit_id = c.id
@@ -323,16 +335,24 @@ prb_re = re.compile(r"\*\*Problem\*\*:\s*([^\n]+)", re.IGNORECASE)
 
 findings = []
 unparseable = []
-for (rid, output, sha) in rows:
-    output = output or ""
-    max_ord = parse_max_severity_ordinal(output)
+for (rid, output, structured_output, sha) in rows:
+    # llm#1265: roborev v0.68.2 migrated every row's review text out of the
+    # output column (empty on all live rows) into structured_output (JSON).
+    # review_output_text() reconstructs the same markdown shape loc_re/
+    # prb_re/parse_max_severity_ordinal already expect, falling back to
+    # output when structured_output is NULL/empty/unparseable.
+    # (NOTE: this heredoc is unquoted <<PYEOF — no backticks in this block,
+    # they trigger bash command substitution here, not markdown emphasis.)
+    text = review_output_text(output, structured_output)
+    max_ord = parse_max_severity_ordinal(text)
     if max_ord is None:
         # llm#1146: previously "continue # skip (conservative: don't block
         # on unparseable)" — that silent skip WAS the bug. Distinguish text
         # that genuinely means "no issues" (dropped, same as before) from
-        # text where the review never ran or matches no known shape at all
-        # (surfaced as unparseable, never silently dropped).
-        outcome = classify_unparseable_finding(output)
+        # text where the review never ran, matches no known shape, or
+        # (llm#1265) BOTH output and structured_output are empty/unusable
+        # ("indeterminate" — never silently dropped either).
+        outcome = classify_review_row(output, structured_output)
         if outcome == "passed":
             continue
         unparseable.append({
@@ -343,8 +363,8 @@ for (rid, output, sha) in rows:
         continue
     if max_ord < min_idx:
         continue  # below threshold
-    loc_m   = loc_re.search(output)
-    prb_m   = prb_re.search(output)
+    loc_m   = loc_re.search(text)
+    prb_m   = prb_re.search(text)
     location = loc_m.group(1).strip() if loc_m else "(location unknown)"
     problem  = prb_m.group(1).strip()[:120] if prb_m else "(see review output)"
     label = next(k for k, v in SEVERITY_ORDINAL.items() if v == max_ord)

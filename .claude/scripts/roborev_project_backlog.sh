@@ -181,7 +181,7 @@ lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import classify_review
+    from roborev_classify import classify_review, review_output_text
 except Exception:
     # Fail-open: if the shared module can't be imported (e.g. lib_dir wrong
     # on some future layout), fall back to treating every row as "parsed"
@@ -189,6 +189,8 @@ except Exception:
     # crashing the backlog writer.
     def classify_review(text):
         return "parsed"
+    def review_output_text(output, structured_output):
+        return output or ""
 
 # ── Severity / category weight tables ────────────────────────────────────────
 # "not_reviewed" sits ABOVE high (5) but below critical (10) -- an agent that
@@ -325,7 +327,8 @@ try:
             rv.id                 AS rid,
             rj.id                 AS job_id,
             CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
-            rv.output
+            rv.output,
+            rv.structured_output
         FROM reviews rv
         JOIN review_jobs rj ON rj.id = rv.job_id
         WHERE rj.repo_id = ?
@@ -334,18 +337,37 @@ try:
         LIMIT 100
     """, (repo_id,)).fetchall()
 except Exception:
-    rows = con.execute("""
-        SELECT
-            rv.id                 AS rid,
-            rj.id                 AS job_id,
-            CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
-            rv.output
-        FROM reviews rv
-        JOIN review_jobs rj ON rj.id = rv.job_id
-        WHERE rj.repo_id = ?
-          AND rj.status = 'done'
-        LIMIT 100
-    """, (repo_id,)).fetchall()
+    # llm#1265: also fall back if `structured_output` doesn't exist (a
+    # reviews.db predating the v0.68.2 migration) as well as the pre-
+    # existing `rj.finished_at`/`rv.closed` fallback below.
+    try:
+        rows = con.execute("""
+            SELECT
+                rv.id                 AS rid,
+                rj.id                 AS job_id,
+                CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+                rv.output,
+                rv.structured_output
+            FROM reviews rv
+            JOIN review_jobs rj ON rj.id = rv.job_id
+            WHERE rj.repo_id = ?
+              AND rj.status = 'done'
+            LIMIT 100
+        """, (repo_id,)).fetchall()
+    except Exception:
+        rows = con.execute("""
+            SELECT
+                rv.id                 AS rid,
+                rj.id                 AS job_id,
+                CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+                rv.output,
+                NULL AS structured_output
+            FROM reviews rv
+            JOIN review_jobs rj ON rj.id = rv.job_id
+            WHERE rj.repo_id = ?
+              AND rj.status = 'done'
+            LIMIT 100
+        """, (repo_id,)).fetchall()
 
 con.close()
 
@@ -363,7 +385,13 @@ if not rows:
 scored = []
 passed_excluded_n = 0
 for row in rows:
-    outcome = classify_review(row["output"])
+    # llm#1265: roborev v0.68.2 migrated every row's review text out of
+    # `output` (empty on all live rows) into `structured_output` (JSON).
+    # review_output_text() reconstructs equivalent text so classify_review()/
+    # max_sev_ord()/infer_category()/get_file_mention() below keep working
+    # unchanged.
+    text = review_output_text(row["output"], row["structured_output"])
+    outcome = classify_review(text)
     if outcome == "passed":
         # The review ran and explicitly found nothing -- not a backlog item.
         # Excluded from OPEN_COUNT and the priority table entirely, rather
@@ -375,13 +403,13 @@ for row in rows:
         category = "agent-health"
     elif outcome == "unclassified":
         sev_label, sev_weight = "unclassified", SEV_WEIGHT["unclassified"]
-        category = infer_category(row["output"])
+        category = infer_category(text)
     else:  # "parsed" -- a genuine Severity: marker was found
-        sev_label, sev_weight = max_sev_ord(row["output"])
-        category = infer_category(row["output"])
+        sev_label, sev_weight = max_sev_ord(text)
+        category = infer_category(text)
     cat_risk  = CAT_RISK.get(category, 1.0)
     age       = row["age_days"] if row["age_days"] is not None else 1
-    file_path = get_file_mention(row["output"])
+    file_path = get_file_mention(text)
     touches   = get_file_touches(root_path, file_path)
     priority  = compute_priority(sev_weight, cat_risk, age, touches)
     scored.append({
@@ -391,7 +419,7 @@ for row in rows:
         "age_days": age,
         "file_touches_30d": touches,
         "priority": priority,
-        "output": row["output"],
+        "output": text,
     })
 
 # Sort by priority DESC, take top_n

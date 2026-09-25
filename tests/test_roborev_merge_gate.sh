@@ -110,6 +110,7 @@ cur.executescript("""
     agent TEXT NOT NULL,
     prompt TEXT NOT NULL DEFAULT '',
     output TEXT NOT NULL,
+    structured_output TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed INTEGER NOT NULL DEFAULT 0,
     verdict_bool INTEGER DEFAULT 0
@@ -130,6 +131,9 @@ commits = [
     (6, 'fff006fff006fff006fff006fff006fff006fff006', 'Touch F'),          # unparseable ("not_reviewed"), uncited
     (7, 'ggg007ggg007ggg007ggg007ggg007ggg007ggg007', 'Touch G'),          # unparseable ("not_reviewed"), will be cited
     (8, 'hhh008hhh008hhh008hhh008hhh008hhh008hhh008', 'Touch H'),          # unparseable but "passed"-shaped text
+    # llm#1265 regression fixture: roborev v0.68.2 schema — `output` is
+    # empty, the real finding lives in `structured_output` (v2 JSON).
+    (9, 'iii009iii009iii009iii009iii009iii009iii009', 'Touch I'),          # structured_output-only, HIGH, open
 ]
 for cid, sha, subj in commits:
     cur.execute(
@@ -138,7 +142,7 @@ for cid, sha, subj in commits:
     )
 
 # review_jobs
-for jid, cid in [(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8)]:
+for jid, cid in [(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)]:
     cur.execute(
         "INSERT INTO review_jobs (id,repo_id,commit_id,git_ref) VALUES (?,1,?,?)",
         (jid, cid, f'refs/heads/feat/test')
@@ -184,20 +188,29 @@ UNPARSEABLE_NOT_REVIEWED_OUTPUT = (
 # cry wolf on ordinary "no issues found" reviews.
 PASSED_SHAPED_OUTPUT = "No issues found."
 
+# llm#1265: roborev v0.68.2 schema. `output` is '' on this row; the real
+# finding (HIGH) lives entirely in structured_output as v2 JSON.
+V2_STRUCTURED_HIGH = (
+    '{"schema_version":2,"summary":"one high finding","verdict":"fail",'
+    '"findings":[{"severity":"high","problem":"Missing input validation.",'
+    '"location":"R/qux.R:9","fix":"Add a guard clause."}]}'
+)
+
 reviews = [
-    (1, 1, HIGH_OUTPUT,   0, 0),   # id=1, job=1 (aaa001), HIGH, open
-    (2, 2, HIGH_OUTPUT,   0, 0),   # id=2, job=2 (bbb002), HIGH, open → cited
-    (3, 3, MEDIUM_OUTPUT, 0, 0),   # id=3, job=3 (ccc003), MEDIUM, open
-    (4, 4, HIGH_OUTPUT,   0, 0),   # id=4, job=4 (ddd004), HIGH, open → acked
-    (5, 5, NONBOLD_HIGH_OUTPUT,             0, 0),  # id=5, job=5 (eee005), HIGH non-bold, open
-    (6, 6, UNPARSEABLE_NOT_REVIEWED_OUTPUT, 0, 0),  # id=6, job=6 (fff006), unparseable, open, uncited
-    (7, 7, UNPARSEABLE_NOT_REVIEWED_OUTPUT, 0, 0),  # id=7, job=7 (ggg007), unparseable, open → cited
-    (8, 8, PASSED_SHAPED_OUTPUT,            0, 0),  # id=8, job=8 (hhh008), "passed"-shaped noise
+    (1, 1, HIGH_OUTPUT,   None, 0, 0),   # id=1, job=1 (aaa001), HIGH, open
+    (2, 2, HIGH_OUTPUT,   None, 0, 0),   # id=2, job=2 (bbb002), HIGH, open → cited
+    (3, 3, MEDIUM_OUTPUT, None, 0, 0),   # id=3, job=3 (ccc003), MEDIUM, open
+    (4, 4, HIGH_OUTPUT,   None, 0, 0),   # id=4, job=4 (ddd004), HIGH, open → acked
+    (5, 5, NONBOLD_HIGH_OUTPUT,             None, 0, 0),  # id=5, job=5 (eee005), HIGH non-bold, open
+    (6, 6, UNPARSEABLE_NOT_REVIEWED_OUTPUT, None, 0, 0),  # id=6, job=6 (fff006), unparseable, open, uncited
+    (7, 7, UNPARSEABLE_NOT_REVIEWED_OUTPUT, None, 0, 0),  # id=7, job=7 (ggg007), unparseable, open → cited
+    (8, 8, PASSED_SHAPED_OUTPUT,            None, 0, 0),  # id=8, job=8 (hhh008), "passed"-shaped noise
+    (9, 9, "", V2_STRUCTURED_HIGH,          0, 0),  # id=9, job=9 (iii009), v0.68.2 schema, HIGH, open
 ]
-for rid, jid, out, closed, verdict in reviews:
+for rid, jid, out, structured, closed, verdict in reviews:
     cur.execute(
-        "INSERT INTO reviews (id,job_id,agent,output,closed,verdict_bool) VALUES (?,?,'codex',?,?,?)",
-        (rid, jid, out, closed, verdict)
+        "INSERT INTO reviews (id,job_id,agent,output,structured_output,closed,verdict_bool) VALUES (?,?,'codex',?,?,?,?)",
+        (rid, jid, out, structured, closed, verdict)
     )
 
 con.commit()
@@ -269,6 +282,9 @@ SHA_HIGH_NONBOLD="eee005eee005eee005eee005eee005eee005eee005"
 SHA_UNPARSEABLE_OPEN="fff006fff006fff006fff006fff006fff006fff006"
 SHA_UNPARSEABLE_CITED="ggg007ggg007ggg007ggg007ggg007ggg007ggg007"
 SHA_PASSED_SHAPED="hhh008hhh008hhh008hhh008hhh008hhh008hhh008"
+# llm#1265: roborev v0.68.2 schema — output='' but structured_output carries
+# a real HIGH finding as v2 JSON.
+SHA_V2_STRUCTURED_HIGH="iii009iii009iii009iii009iii009iii009iii009"
 
 # Acks file
 ACKS_FILE="${FIXTURE_DIR}/acks.jsonl"
@@ -702,6 +718,32 @@ run_gate "$BIN18" \
   "--min-severity High" \
   "0" \
   "test18: 'no issues found' text (verdict_bool=0 noise) → exit 0 (PASS, not INDETERMINATE)"
+
+# Test 19 — llm#1265: roborev v0.68.2 schema migration. `output` is empty on
+# this row; the real HIGH finding lives entirely in `structured_output` (v2
+# JSON). Uncited/unacked → the gate must reach a REAL verdict (BLOCK, exit 1)
+# via the shared review_output_text() reader, NOT fall through to
+# INDETERMINATE (exit 3) the way it did before this fix landed (the bug
+# llm#1265 exists to close: bin/roborev_merge_gate.sh 1264 returned
+# INDETERMINATE/unparseable_severity for exactly this shape on the live DB).
+BIN19="${TMPDIR_ROOT}/bin19"
+mkdir -p "$BIN19"
+run_gate "$BIN19" \
+  "[\"${SHA_V2_STRUCTURED_HIGH}\"]" \
+  "" \
+  "--min-severity High" \
+  "1" \
+  "test19: v2 structured_output-only HIGH finding, uncited → exit 1 (BLOCK, a real verdict — not INDETERMINATE)"
+
+# Test 19b — same fixture, cited via 'closes roborev #9' → exit 0 (PASS).
+# Confirms the structured_output path reaches an ordinary resolvable
+# verdict, not just a block.
+run_gate "$BIN19" \
+  "[\"${SHA_V2_STRUCTURED_HIGH}\"]" \
+  "fix: thing (closes roborev #9)" \
+  "--min-severity High" \
+  "0" \
+  "test19b: v2 structured_output-only HIGH finding, cited via closes roborev #9 → exit 0 (PASS)"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
