@@ -45,13 +45,15 @@ CONTEXT_LINES      <- script_env$CONTEXT_LINES
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-make_review_row <- function(review_id, job_id, git_ref = "abc123", output) {
+make_review_row <- function(review_id, job_id, git_ref = "abc123", output,
+                             structured_output = NA_character_) {
   data.frame(
     review_id  = review_id,
     job_id     = job_id,
     git_ref    = git_ref,
     created_at = "2026-05-01 00:00:00",
     output     = output,
+    structured_output = structured_output,
     stringsAsFactors = FALSE
   )
 }
@@ -254,6 +256,90 @@ test_that("classify_review: still-present beats likely-fixed (weakest wins)", {
   result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
 
   expect_equal(result$verdict, "still-present")
+})
+
+# ── Test 4a2: .review_structured_findings_list() in isolation ────────────────
+#
+# The end-to-end classify_review() test below (4b) happens to produce the
+# SAME verdict whether or not the JSON-direct path is used, because this
+# file's regex path was independently investigated and found to be
+# ALREADY safe against the quoted-marker-in-prose corruption for
+# classify_review()'s specific use (see the docstring on
+# .review_structured_findings_list() in roborev_revalidate.R for the full
+# three-part reasoning) -- verified empirically: reverting the JSON-direct
+# override locally does NOT turn test 4b red. This test therefore checks
+# the new function directly, so it has its own falsifiable regression
+# guard independent of that coincidental equivalence.
+.review_structured_findings_list <- script_env$.review_structured_findings_list
+
+test_that(".review_structured_findings_list: reads severity/location/problem directly from JSON", {
+  structured <- paste0(
+    '{"schema_version":2,"summary":"x","verdict":"fail",',
+    '"findings":[{"severity":"medium","location":"R/quux.R:5",',
+    '"problem":"real problem text"}]}'
+  )
+  findings <- .review_structured_findings_list(structured)
+  expect_equal(length(findings), 1L)
+  expect_equal(findings[[1L]]$severity, "Medium")
+  expect_equal(findings[[1L]]$location, "R/quux.R:5")
+  expect_equal(findings[[1L]]$problem, "real problem text")
+})
+
+test_that(".review_structured_findings_list: schema_version 0 -> NULL (legacy regex path)", {
+  structured <- '{"legacy":{"markdown":"- **Severity**: Critical"},"schema_version":0,"findings":[]}'
+  expect_null(.review_structured_findings_list(structured))
+})
+
+test_that(".review_structured_findings_list: empty findings -> NULL", {
+  structured <- '{"schema_version":1,"summary":"nothing found","findings":[]}'
+  expect_null(.review_structured_findings_list(structured))
+})
+
+test_that(".review_structured_findings_list: malformed JSON -> NULL (no crash)", {
+  expect_null(.review_structured_findings_list("{not valid json"))
+})
+
+test_that(".review_structured_findings_list: NA structured_output -> NULL", {
+  expect_null(.review_structured_findings_list(NA_character_))
+})
+
+# ── Test 4b: PR #1269 round 3 — JSON-direct findings from structured_output ──
+
+test_that("classify_review: reads findings JSON-direct from structured_output, severity not inflated by quoted prose", {
+  repo_root <- setup_repo_tree()
+
+  # A single Medium finding whose location pattern is still present in
+  # foo.R (so it verifies against a REAL still-present case), whose OWN
+  # problem/fix prose quotes "Severity: High"/"**Severity**: Critical" as
+  # an example (the review ids 10523/10524 live shape). `output` is empty
+  # (the roborev v0.68.2 shape); the severity/location/problem MUST come
+  # from the JSON, not any text reconstruction.
+  structured <- paste0(
+    '{"schema_version":2,"summary":"one medium finding, prose quotes a higher ',
+    'severity as an example","verdict":"fail","findings":[{"severity":"medium",',
+    '"location":"R/foo.R:2","problem":"The list.files call is non-recursive. ',
+    'Add a fixture where output holds a real Severity: High review.",',
+    '"fix":"Use recursive = TRUE. Emit **Severity**: Critical only when ',
+    'genuinely critical."}]}'
+  )
+  row <- make_review_row(6L, 106L, output = "", structured_output = structured)
+
+  # At min_severity_num=3 (High), the true-Medium finding must NOT qualify
+  # -- if severity were inflated to High/Critical by the quoted prose, it
+  # WOULD qualify and this would return a still-present/ambiguous verdict
+  # instead of likely-fixed via the "no sub-findings at or above severity
+  # threshold" path.
+  result_high <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  expect_equal(result_high$verdict, "likely-fixed")
+  expect_match(result_high$reason, "no sub-findings at or above severity threshold", fixed = TRUE)
+
+  # At min_severity_num=2 (Medium), the true-Medium finding DOES qualify,
+  # and its location (read directly from JSON) genuinely still has the
+  # pattern present in foo.R -> still-present. Proves the JSON-direct path
+  # is not just fail-closed by accident -- it correctly reads the real
+  # severity AND the real location.
+  result_medium <- classify_review(row, repo_root, min_severity_num = 2L, sev_order = SEV_ORDER)
+  expect_equal(result_medium$verdict, "still-present")
 })
 
 # ── Test 5: format_report sections ────────────────────────────────────────────

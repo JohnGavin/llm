@@ -314,6 +314,66 @@ fetch_open_reviews <- function(db, repo, min_severity_num, sev_order, limit) {
   ""
 }
 
+# ── JSON-direct findings (PR #1269 round 3) ─────────────────────────────────
+#
+# Investigated whether this file's regex path (.review_findings_text() +
+# parse_findings() below) is vulnerable to the same corruption class fixed
+# elsewhere in this round (a finding's own problem/fix prose quoting a
+# severity marker as an example, e.g. review ids 10523/10524). Conclusion:
+# NOT vulnerable in classify_review()'s use, for three independent reasons
+# specific to this file's design: (1) blocks are split one-per-finding on
+# "---", so a DIFFERENT finding's prose can never corrupt this one; (2)
+# .review_findings_text() always emits "**Severity**: X" as EACH block's
+# first line, before Location/Problem; (3) parse_findings() extracts
+# severity via regexpr() (first match only, not gregexpr()), so it always
+# reads the synthesized leading marker, never a later one embedded in the
+# same finding's own Problem text. The `fix` field (where the live
+# examples actually quoted the marker) is also never rendered by
+# .review_findings_text() to begin with. This function is added anyway,
+# as a strict, defense-in-depth replacement: reading findings[].severity/
+# location/problem DIRECTLY from JSON removes even the residual
+# fragility of "regex happens to still be correct because of block/field
+# ordering", and keeps this file's severity source consistent with every
+# other roborev_*.sh/R consumer fixed in this round. Returns a list of
+# list(severity=,location=,problem=) -- severity CAPITALISED to match
+# sev_order's naming convention (Critical/High/Medium/Low), same as
+# parse_findings()'s own regex-captured values -- for a schema_version 1/2
+# row with a non-empty findings list, or NULL when there is nothing to
+# read (schema_version 0 / legacy rows use the existing regex path over
+# legacy.markdown / `output`, unchanged).
+.review_structured_findings_list <- function(structured_output) {
+  if (is.null(structured_output) || is.na(structured_output) || !nzchar(structured_output)) return(NULL)
+  data <- tryCatch(jsonlite::fromJSON(structured_output, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(NULL)
+  legacy <- data[["legacy"]]
+  if (is.list(legacy)) {
+    md <- legacy[["markdown"]]
+    if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(NULL)  # schema 0 -> legacy regex path
+  }
+  schema_version <- data[["schema_version"]]
+  known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+  if (!known_schema) return(NULL)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(NULL)
+  out <- lapply(findings, function(f) {
+    if (!is.list(f)) return(NULL)
+    sev <- f[["severity"]]
+    sev_chr <- if (is.null(sev)) "" else trimws(as.character(sev))
+    sev_cap <- if (nzchar(sev_chr)) paste0(toupper(substr(sev_chr, 1, 1)), substr(sev_chr, 2, nchar(sev_chr))) else NA_character_
+    loc  <- f[["location"]]
+    prob <- f[["problem"]]
+    list(
+      severity = sev_cap,
+      location = if (!is.null(loc) && nzchar(trimws(as.character(loc)))) trimws(as.character(loc)) else NA_character_,
+      problem  = if (!is.null(prob) && nzchar(trimws(as.character(prob)))) trimws(as.character(prob)) else NA_character_
+    )
+  })
+  out <- Filter(Negate(is.null), out)
+  if (length(out) == 0L) return(NULL)
+  out
+}
+
 # ── Finding parser ────────────────────────────────────────────────────────────
 
 SEVERITY_RE   <- "\\*\\*Severity\\*\\*:\\s*([A-Za-z]+)"
@@ -507,11 +567,19 @@ classify_finding <- function(finding, repo_root) {
 VERDICT_WEIGHT <- c("still-present" = 3L, "ambiguous" = 2L, "likely-fixed" = 1L)
 
 classify_review <- function(review_row, repo_root, min_severity_num, sev_order) {
-  # llm#1265: `output` is empty on every row post-v0.68.2; reconstruct
-  # "---"-separated finding blocks from structured_output first.
-  findings <- parse_findings(.review_findings_text(
-    review_row$output, review_row$structured_output
-  ))
+  # PR #1269 round 3: JSON-direct findings first (see
+  # .review_structured_findings_list()'s docstring above for why this
+  # file's regex path was already safe, and why this is added anyway).
+  # Falls back to the regex path (llm#1265: `output` is empty on every row
+  # post-v0.68.2; reconstruct "---"-separated finding blocks from
+  # structured_output) only when there is no structured findings list to
+  # read from at all (schema_version 0 / legacy rows).
+  findings <- .review_structured_findings_list(review_row$structured_output)
+  if (is.null(findings)) {
+    findings <- parse_findings(.review_findings_text(
+      review_row$output, review_row$structured_output
+    ))
+  }
 
   # Filter to sub-findings at or above threshold
   sev_names <- names(sev_order)
