@@ -93,6 +93,68 @@ print(review_output_text(row[0], row[1]) if row is not None else "")
 PY
 }
 
+# Fetch the JSON-direct max severity label for one review id (Critical |
+# High | Medium | Low | unknown | IMPORT_ERROR). llm#1265 round 3 / PR
+# #1269: severity is read DIRECTLY from structured_output's
+# findings[].severity JSON fields via review_severity_ordinal() -- never
+# via _parse_max_severity() over review_output_text()-rendered markdown,
+# which is vulnerable to a finding's own problem/fix prose quoting a
+# severity marker as an example (review ids 10523/10524 live shape). This
+# matters more here than anywhere else in the codebase: this file's Guard
+# 1 is a security-critical downgrade-attack guard, so a corrupted severity
+# read on EITHER side (the finding's own severity, or the approving
+# review's) could defeat the guard's entire purpose. Returns "unknown" for
+# a missing row or a row with no severity to report (mirrors
+# _parse_max_severity()'s own contract, so _severity_ordinal() and the
+# downstream guard logic need no changes). Returns the literal string
+# "IMPORT_ERROR" -- and ALSO writes a loud message to stderr -- if
+# roborev_classify cannot be imported at all: an unreadable severity
+# reader is a reason to refuse the closure outright (exit 2, hard error,
+# per this file's own documented exit-code contract), NOT a reason to fall
+# back to "unknown" and let the guard's normal fail-closed handling mask a
+# broken environment indefinitely (checks-must-distinguish-unknown).
+_fetch_review_severity() {
+  local review_id="$1"
+  /usr/bin/python3 - "$ROBOREV_DB" "$review_id" "$LIB_DIR" <<'PY'
+import sqlite3, sys
+
+db_path, review_id, lib_dir = sys.argv[1], sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else "")
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_severity_ordinal, SEVERITY_ORDINAL
+except Exception as e:
+    sys.stderr.write(
+        f"roborev_auto_close: FATAL - could not import roborev_classify "
+        f"from {lib_dir!r}: {type(e).__name__}: {e}\n"
+    )
+    print("IMPORT_ERROR")
+    sys.exit(0)
+
+con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+try:
+    row = con.execute(
+        "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1", (review_id,)
+    ).fetchone()
+except sqlite3.OperationalError:
+    row = con.execute(
+        "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
+    ).fetchone()
+con.close()
+
+if row is None:
+    print("unknown")
+    sys.exit(0)
+
+ordv = review_severity_ordinal(row[0], row[1])
+if ordv is None:
+    print("unknown")
+else:
+    label = next(k for k, v in SEVERITY_ORDINAL.items() if v == ordv)
+    print(label.capitalize())
+PY
+}
+
 log() {
   local ts
   ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')
@@ -278,6 +340,40 @@ INSERT INTO reviews VALUES (15, 15, 0, 1, '**Severity**: Medium
 INSERT INTO review_jobs VALUES (16, 1, 'done');
 INSERT INTO reviews VALUES (16, 16, 0, 0, '**Severity**: Medium
 **Problem**: minor cosmetic issue', NULL, NULL);
+-- PR #1269 round 3 (llm#1265 follow-up, SECURITY-CRITICAL): finding 17 is
+-- a structured (schema_version 2) row whose real max severity is High. The
+-- approving review 18 is ALSO structured, with an EMPTY findings list
+-- (verdict=pass -- a genuine "found nothing" re-review) but whose SUMMARY
+-- text praises a prior fix using the words "Severity: Critical" as
+-- commentary, not as a real finding marker. Under the pre-fix
+-- regex-over-rendered-text path, that summary text would have been
+-- synthesized into the rendered markdown and misread as a Critical
+-- severity marker, satisfying the downgrade guard (APPROVING_ORD=4 >=
+-- FINDING_ORD=3) and closing a real High finding on a re-review that found
+-- NOTHING. This is exactly the attack class Guard 1 exists to prevent.
+-- review_severity_ordinal() must read severity JSON-direct: an empty
+-- findings list with verdict=pass is "unknown" (no severity to report),
+-- not "Critical" -- so the guard must REJECT this closure.
+INSERT INTO review_jobs VALUES (17, 1, 'done');
+INSERT INTO reviews VALUES (17, 17, 0, 0, '',
+  '{"schema_version":2,"summary":"Real finding.","verdict":"fail","findings":[{"severity":"high","location":"R/qux.R:9","problem":"Missing input validation.","fix":"Add a guard clause."}]}',
+  NULL);
+INSERT INTO review_jobs VALUES (18, 1, 'done');
+INSERT INTO reviews VALUES (18, 18, 0, 1, '',
+  '{"schema_version":2,"summary":"Confirmed the previous Severity: Critical finding is now fully resolved; no remaining issues.","verdict":"pass","findings":[]}',
+  NULL);
+-- Positive-path companion: finding 19 is structured with a TRUE severity
+-- of Medium, but its own problem/fix prose quotes "Severity: High" as an
+-- illustrative example of a DIFFERENT bug (the review ids 10523/10524 live
+-- shape) -- must be read as Medium, not inflated to High, and must still
+-- close normally against a genuine Medium+ approval (review 20).
+INSERT INTO review_jobs VALUES (19, 1, 'done');
+INSERT INTO reviews VALUES (19, 19, 0, 0, '',
+  '{"schema_version":2,"summary":"one medium finding, prose quotes a higher severity as an example","verdict":"fail","findings":[{"severity":"medium","location":"R/quux.R:5","problem":"Add a fixture where output holds a real Severity: High review.","fix":"Emit **Severity**: Critical only when genuinely critical."}]}',
+  NULL);
+INSERT INTO review_jobs VALUES (20, 1, 'done');
+INSERT INTO reviews VALUES (20, 20, 0, 1, '**Severity**: Medium
+**Problem**: fine', NULL, NULL);
 SQL
 
   # ── Test 1: High severity + High approve → closes ─────────────────────────
@@ -409,6 +505,40 @@ SQL
     _check "parseable-medium-finding-still-closes" "pass"
   else
     _check "parseable-medium-finding-still-closes" "fail: got '$OUT' (over-tightened guard?)"
+  fi
+
+  # ── PR #1269 round 3 Test 2g (SECURITY-CRITICAL): structured finding is
+  # real High severity; the "approving" re-review found NOTHING (empty
+  # findings, verdict=pass) but its summary text praises a prior fix using
+  # the words "Severity: Critical". Must be REJECTED -- an empty-findings
+  # structured review has NO severity to report and must never be inflated
+  # by summary prose, or a genuinely-unreviewed High finding could be
+  # closed on a fabricated-looking Critical "approval".
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 17 --approving-review-id 18 --commit "structdowngrade111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^REJECTED=1"; then
+    _check "structured-downgrade-attack-via-summary-prose-rejected" "pass"
+    if echo "$OUT" | grep -q "reject_reason=approving_severity_unparseable"; then
+      _check "structured-downgrade-reject-reason-distinct" "pass"
+    else
+      _check "structured-downgrade-reject-reason-distinct" "fail: got '$OUT'"
+    fi
+  else
+    _check "structured-downgrade-attack-via-summary-prose-rejected" "fail: got '$OUT' (PR #1269 round 3 JSON-direct severity fix not applied — summary prose inflated the approving severity)"
+    _check "structured-downgrade-reject-reason-distinct" "fail: not rejected"
+  fi
+
+  # ── PR #1269 round 3 Test 2h: structured finding, real severity Medium,
+  # own problem/fix prose quotes "Severity: High"/"**Severity**: Critical"
+  # as an example -- must be read as Medium (not inflated), and must still
+  # close normally against a genuine Medium approval (proves the fix does
+  # NOT over-reject legitimate structured closures either).
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 19 --approving-review-id 20 --commit "structmedium111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^CLOSED=1"; then
+    _check "structured-medium-finding-quoted-high-prose-still-closes" "pass"
+  else
+    _check "structured-medium-finding-quoted-high-prose-still-closes" "fail: got '$OUT' (severity read as High instead of Medium, or guard over-rejected)"
   fi
 
   # ── Test 3: security finding → queued to fix_rejected_queue (guard 2) ────
@@ -576,14 +706,24 @@ fi
 # llm#1265: roborev v0.68.2 migrated every row's review text out of
 # `output` (empty on all live rows) into `structured_output` (JSON).
 # _fetch_review_text() reads both, via the shared roborev_classify.py
-# reader, and reconstructs the same markdown shape _parse_max_severity()
-# and the Category: grep below already expect.
+# reader, and reconstructs the same markdown shape the Category: grep
+# below expects -- used ONLY for the security-category check now (Guard
+# 2), not for severity.
 FINDING_OUTPUT=$(_fetch_review_text "$FINDING_ID")
 if [ -z "$FINDING_OUTPUT" ]; then
   log "WARN: finding_id=${FINDING_ID} not found in DB or has empty output/structured_output"
   FINDING_OUTPUT=""
 fi
-FINDING_SEVERITY=$(_parse_max_severity "$FINDING_OUTPUT")
+# llm#1265 round 3: severity comes from _fetch_review_severity(), which
+# reads findings[].severity JSON DIRECTLY -- never via _parse_max_severity()
+# over $FINDING_OUTPUT, which would re-run the exact quoted-marker-in-prose
+# corruption this round fixes (security-critical here: see Guard 1 below).
+FINDING_SEVERITY=$(_fetch_review_severity "$FINDING_ID")
+if [ "$FINDING_SEVERITY" = "IMPORT_ERROR" ]; then
+  log "ERR: finding_id=${FINDING_ID} — roborev_classify import failed; refusing to evaluate the severity guard without a working severity reader"
+  echo "roborev_auto_close: FATAL — roborev_classify import failed (see stderr above); refusing to close finding_id=${FINDING_ID} without a working severity reader" >&2
+  exit 2
+fi
 
 # ── Fetch approving review severity from DB ───────────────────────────────────
 
@@ -591,7 +731,15 @@ APPROVING_OUTPUT=""
 if [ -n "$APPROVING_REVIEW_ID" ]; then
   APPROVING_OUTPUT=$(_fetch_review_text "$APPROVING_REVIEW_ID")
 fi
-APPROVING_SEVERITY=$(_parse_max_severity "$APPROVING_OUTPUT")
+APPROVING_SEVERITY="unknown"
+if [ -n "$APPROVING_REVIEW_ID" ]; then
+  APPROVING_SEVERITY=$(_fetch_review_severity "$APPROVING_REVIEW_ID")
+  if [ "$APPROVING_SEVERITY" = "IMPORT_ERROR" ]; then
+    log "ERR: approving_review_id=${APPROVING_REVIEW_ID} — roborev_classify import failed; refusing to evaluate the severity guard without a working severity reader"
+    echo "roborev_auto_close: FATAL — roborev_classify import failed (see stderr above); refusing to close finding_id=${FINDING_ID} without a working severity reader" >&2
+    exit 2
+  fi
+fi
 
 # ── Guard 2: security / error-handling → queue ────────────────────────────────
 
