@@ -40,6 +40,15 @@ The discipline is one-way: PR is always safe; direct merge requires explicit use
 | User says "land this" + explicit `--merge` flag context | — | OK to merge (explicit intent) |
 | Auto-Merge Policy is ON (`~/.claude/CLAUDE.md` global toggle) AND the PR is CI-green, merge-gate-clean (genuine pass, not indeterminate), and touches no Auto-Merge Exclusion List path | — | Merge automatically — no explicit verb needed. See `human-in-the-loop-decision-points` § Conditional Auto-Merge for the full condition set and exclusion list. |
 
+## When CI is unavailable
+
+If GitHub Actions is not running (the session banner shows `ci:UNAVAILABLE` or `ci:unknown`, or `.claude/scripts/ci_availability_check.sh` exits 1 or 3), a PR has no CI result. A check that never ran is not a pass. In that case:
+
+- Run the local stand-ins for the CI-only gates and list each one in the PR body with its result, under a `CI unavailable` line.
+- PR merge stays a publish gate (explicit "merge" verb), even when the Auto-Merge Policy is ON, because "every CI check reports success" cannot be met.
+
+Gate-by-gate local commands, the `ci_outages.tsv` ledger, and how to attribute stale scheduled data to an outage: [`_companions/ci-outage-local-gates.md`](_companions/ci-outage-local-gates.md) ([#1234](https://github.com/JohnGavin/llm/issues/1234)).
+
 ## Forbidden patterns
 
 | Pattern | Why wrong | Fix |
