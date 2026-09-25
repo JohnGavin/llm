@@ -170,6 +170,71 @@ Summary: adds a lockfile.")
     && _assert "3. classify fail (verdict_bool=0 overrides)" "ok" \
     || _assert "3. classify fail (verdict_bool=0 overrides)" "got '$got'"
 
+  # ── 3b-3g. structured_output reader wiring (PR #1269 round 2, review id
+  # 10524: "No tests for the new readers in ... roborev_handoff.sh"). Tests
+  # 1-3 above exercise the CLASSIFICATION logic (_classify) with already-
+  # rendered text; these cases exercise the ACTUAL query-time wiring this
+  # script uses at the Phase 1a python heredoc (LIB_DIR + a real sqlite DB +
+  # the real roborev_classify.review_output_text(), not a hand-copied
+  # mirror) -- schema 0, schema 1/2 with findings, empty findings, an
+  # unrecognised schema_version, malformed JSON, and NULL structured_output
+  # (the column-absent-equivalent fallback shape).
+  _HANDOFF_FIXTURE_DB="$(mktemp "${TMPDIR:-/tmp}/roborev_handoff_reader_test_XXXXXX")".db
+  rm -f "${_HANDOFF_FIXTURE_DB%.db}"
+  "$SQLITE" "$_HANDOFF_FIXTURE_DB" <<'SQL'
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, output TEXT, structured_output TEXT);
+INSERT INTO reviews VALUES (1, '',
+  '{"legacy":{"markdown":"- **Severity**: Critical\n  **Problem**: legacy text"},"schema_version":0,"summary":"","findings":[]}');
+INSERT INTO reviews VALUES (2, '',
+  '{"schema_version":2,"summary":"x","verdict":"fail","findings":[{"severity":"high","problem":"real finding text"}]}');
+INSERT INTO reviews VALUES (3, '',
+  '{"schema_version":1,"summary":"nothing found","findings":[]}');
+INSERT INTO reviews VALUES (4, '',
+  '{"schema_version":99,"summary":"x","findings":[]}');
+INSERT INTO reviews VALUES (5, '**Severity**: Medium
+**Problem**: malformed-json fallback finding', '{not valid json');
+INSERT INTO reviews VALUES (6, '**Severity**: Low
+**Problem**: null-structured-output fallback finding', NULL);
+SQL
+  _handoff_reader_out=$("$PYTHON" - "$_HANDOFF_FIXTURE_DB" "$LIB_DIR" <<'PYEOF'
+import sys, sqlite3
+db_path, lib_dir = sys.argv[1], sys.argv[2]
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+from roborev_classify import review_output_text
+con = sqlite3.connect(db_path)
+con.row_factory = sqlite3.Row
+for row in con.execute("SELECT id, output, structured_output FROM reviews ORDER BY id"):
+    text = review_output_text(row["output"], row["structured_output"])
+    print(f"{row['id']}|{text.replace(chr(10), ' ')}")
+PYEOF
+)
+  rm -f "$_HANDOFF_FIXTURE_DB"
+
+  echo "$_handoff_reader_out" | grep -q "^1|.*Critical" \
+    && _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "ok" \
+    || _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "got: $(echo "$_handoff_reader_out" | grep '^1|')"
+
+  echo "$_handoff_reader_out" | grep -q "^2|.*real finding text" \
+    && _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "ok" \
+    || _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "got: $(echo "$_handoff_reader_out" | grep '^2|')"
+
+  echo "$_handoff_reader_out" | grep -q "^3|No issues found" \
+    && _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "ok" \
+    || _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "got: $(echo "$_handoff_reader_out" | grep '^3|')"
+
+  echo "$_handoff_reader_out" | grep -q "^4|$" \
+    && _assert "3e. unrecognised schema_version (99) -> empty text (no crash)" "ok" \
+    || _assert "3e. unrecognised schema_version (99) -> empty text (no crash)" "got: $(echo "$_handoff_reader_out" | grep '^4|')"
+
+  echo "$_handoff_reader_out" | grep -q "^5|.*malformed-json fallback finding" \
+    && _assert "3f. malformed JSON falls back to legacy output text" "ok" \
+    || _assert "3f. malformed JSON falls back to legacy output text" "got: $(echo "$_handoff_reader_out" | grep '^5|')"
+
+  echo "$_handoff_reader_out" | grep -q "^6|.*null-structured-output fallback finding" \
+    && _assert "3g. NULL structured_output falls back to legacy output text" "ok" \
+    || _assert "3g. NULL structured_output falls back to legacy output text" "got: $(echo "$_handoff_reader_out" | grep '^6|')"
+
   # ── 4. Digest title format matches YYYY-Www ────────────────────────────────
   iso_week=$(date -u +%G-W%V)
   digest_title="roborev pass-comments digest $iso_week"
