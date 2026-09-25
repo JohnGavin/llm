@@ -222,22 +222,31 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
   # rv.id instead of rv.job_id (the two id spaces overlap so the wrong review was closed).
   _run_case_job_id_parse() {
     local label="$1"
-    # Construct a tab-separated candidate row: id=100, output=..., root=..., repo=..., verdict=0, job_id=999
-    local _test_row="100	No issues found.	/some/path	testrepo	0	999"
+    # Construct a tab-separated candidate row matching the PRODUCTION
+    # main-mode row layout: id=100, output=..., sev_ord=..., root=...,
+    # repo=..., verdict=0, job_id=999. llm#1265 round 3 inserted a new
+    # sev_ord field (position 3, JSON-direct severity from Python) between
+    # output and root, shifting job_id from field 6 to field 7 -- this
+    # fixture and its `cut -f7` MUST track the real row layout in the main
+    # loop above, or this regression guard silently stops guarding
+    # anything (llm#312: `roborev close` called with rv.id instead of
+    # rv.job_id, since the two id spaces overlap so the wrong review got
+    # closed).
+    local _test_row="100	No issues found.	2	/some/path	testrepo	0	999"
     local _parsed_id
     local _parsed_job_id
     _parsed_id=$(echo "$_test_row" | cut -f1)
-    _parsed_job_id=$(echo "$_test_row" | cut -f6)
+    _parsed_job_id=$(echo "$_test_row" | cut -f7)
     # job_id must be 999, not 100 (review id)
     if [ "$_parsed_job_id" = "999" ] && [ "$_parsed_id" = "100" ] && [ "$_parsed_job_id" != "$_parsed_id" ]; then
       PASS=$((PASS+1))
-      echo "  PASS [$label]: job_id=$_parsed_job_id correctly parsed from field 6 (review_id=$_parsed_id)"
+      echo "  PASS [$label]: job_id=$_parsed_job_id correctly parsed from field 7 (review_id=$_parsed_id)"
     else
       FAIL=$((FAIL+1))
       echo "  FAIL [$label]: expected job_id=999 review_id=100, got job_id=$_parsed_job_id review_id=$_parsed_id"
     fi
   }
-  _run_case_job_id_parse "job_id-field6-parse"
+  _run_case_job_id_parse "job_id-field7-parse"
 
   TOTAL=$((PASS+FAIL))
   echo ""
@@ -602,9 +611,8 @@ if [ "$MODE" = "replay" ]; then
   echo "Replaying closed reviews against current threshold..."
 
   REPLAY_ROWS=()
-  while IFS=$'\t' read -r _id _output _root _repo; do
-    [ -n "$_id" ] && REPLAY_ROWS+=("${_id}	${_output}	${_root}	${_repo}")
-  done < <(
+  set +e
+  _replay_py_out="$(
     /usr/bin/python3 - "$ROBOREV_DB" "$MARKER_PATTERN" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
@@ -613,16 +621,25 @@ marker  = sys.argv[2]
 repo_filter = sys.argv[3] if len(sys.argv) > 3 else ''
 lib_dir = sys.argv[4] if len(sys.argv) > 4 else ''
 
-# llm#1265: fail-open to the raw `output` column if the shared module can't
-# be imported (matches this script's pre-existing fail-open posture on any
-# other setup error, e.g. reviews.db not found, above).
+# llm#1265 / PR #1269 round 3: an import failure here used to fail OPEN --
+# silently degrading to the raw `output` column (empty on every live
+# migrated row, since v0.68.2) with no severity read at all. This script
+# runs unattended via launchd (paused pending this fix; see the `--replay`/
+# main-mode docstring note below), so a degraded severity parse would
+# silently mis-close or mis-reopen reviews with nobody watching. Fail LOUD
+# and non-zero instead: print to stderr and exit distinctly so the caller
+# (this heredoc's exit status, captured below) can refuse to proceed rather
+# than reopen/close anything on a guess.
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import review_output_text
-except Exception:
-    def review_output_text(output, structured_output):
-        return output or ""
+    from roborev_classify import review_output_text, review_severity_ordinal
+except Exception as e:
+    sys.stderr.write(
+        f"roborev_severity_autoclose: FATAL - could not import roborev_classify "
+        f"from {lib_dir!r}: {type(e).__name__}: {e}\n"
+    )
+    sys.exit(3)
 
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
@@ -646,9 +663,28 @@ con.close()
 for row in rows:
     text = review_output_text(row[1], row[2])
     text = text.replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{text}\t{row[3]}\t{row[4]}")
+    # llm#1265 round 3: severity is read JSON-direct via
+    # review_severity_ordinal() -- never via the bash-side
+    # _parse_max_severity() regex over this synthesized `text` -- so a
+    # finding's own problem/fix prose quoting a severity marker as an
+    # example cannot inflate the replay decision (review ids 10523/10524
+    # live shape). Printed as an extra tab-separated field; empty string
+    # means "no severity found" (bash side treats it the same as before).
+    sev_ord = review_severity_ordinal(row[1], row[2])
+    sev_str = str(sev_ord) if sev_ord is not None else ''
+    print(f"{row[0]}\t{text}\t{sev_str}\t{row[3]}\t{row[4]}")
 PYEOF
-  )
+  )"
+  _replay_py_rc=$?
+  set -e
+  if [ "$_replay_py_rc" -ne 0 ]; then
+    echo "roborev_severity_autoclose: FATAL — roborev_classify import/severity read failed (rc=${_replay_py_rc}) in --replay mode; see stderr above. Refusing to replay with a silently-degraded severity parse (this script runs unattended via launchd)." >&2
+    log "INDETERMINATE: roborev_classify import failed (rc=${_replay_py_rc}) in --replay mode"
+    exit 3
+  fi
+  while IFS=$'\t' read -r _id _output _sev_ord _root _repo; do
+    [ -n "$_id" ] && REPLAY_ROWS+=("${_id}	${_output}	${_sev_ord}	${_root}	${_repo}")
+  done <<< "$_replay_py_out"
 
   N=${#REPLAY_ROWS[@]}
   if [ "$N" -eq 0 ]; then
@@ -662,8 +698,9 @@ PYEOF
   for _row in "${REPLAY_ROWS[@]}"; do
     _id=$(echo "$_row" | cut -f1)
     _output=$(echo "$_row" | cut -f2)
-    _root=$(echo "$_row" | cut -f3)
-    _repo=$(echo "$_row" | cut -f4)
+    _sev_ord=$(echo "$_row" | cut -f3)
+    _root=$(echo "$_row" | cut -f4)
+    _repo=$(echo "$_row" | cut -f5)
 
     # Determine effective threshold for this repo
     _eff_threshold=""
@@ -692,7 +729,11 @@ PYEOF
     fi
 
     _t_ord=$(_sev_ordinal "$_eff_threshold")
-    _max_ord=$(_parse_max_severity "$_output")
+    # llm#1265 round 3: severity comes pre-parsed from Python's JSON-direct
+    # review_severity_ordinal() (see the heredoc above) -- NOT re-derived
+    # here via _parse_max_severity() over $_output, which would re-run the
+    # exact regex-over-rendered-text bug this round fixes.
+    _max_ord="$_sev_ord"
 
     # If threshold is off, or max severity exceeds threshold: reopen
     local_should_close=0
@@ -725,9 +766,8 @@ fi
 
 # Fetch all open reviews with repo info (both findings and clean verdicts)
 REVIEW_ROWS=()
-while IFS=$'\t' read -r _id _output _root _repo _verdict _job_id; do
-  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}	${_verdict}	${_job_id}")
-done < <(
+set +e
+_main_py_out="$(
   /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
@@ -735,15 +775,22 @@ db_path = sys.argv[1]
 repo_filter = sys.argv[2] if len(sys.argv) > 2 else ''
 lib_dir = sys.argv[3] if len(sys.argv) > 3 else ''
 
-# llm#1265: fail-open to the raw `output` column if the shared module can't
-# be imported.
+# llm#1265 / PR #1269 round 3: an import failure here used to fail OPEN --
+# silently degrading to the raw `output` column with no severity read at
+# all. This script runs unattended via launchd (paused pending this fix),
+# so a degraded severity parse could silently mis-close reviews with
+# nobody watching. Fail LOUD and non-zero instead (see the --replay
+# block's identical comment above for the full rationale).
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import review_output_text
-except Exception:
-    def review_output_text(output, structured_output):
-        return output or ""
+    from roborev_classify import review_output_text, review_severity_ordinal
+except Exception as e:
+    sys.stderr.write(
+        f"roborev_severity_autoclose: FATAL - could not import roborev_classify "
+        f"from {lib_dir!r}: {type(e).__name__}: {e}\n"
+    )
+    sys.exit(3)
 
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
@@ -767,9 +814,23 @@ con.close()
 for row in rows:
     text = review_output_text(row[1], row[2])
     text = text.replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{text}\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}")
+    # llm#1265 round 3: JSON-direct severity, never the bash-side regex --
+    # see the --replay block's identical comment above.
+    sev_ord = review_severity_ordinal(row[1], row[2])
+    sev_str = str(sev_ord) if sev_ord is not None else ''
+    print(f"{row[0]}\t{text}\t{sev_str}\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}")
 PYEOF
-)
+)"
+_main_py_rc=$?
+set -e
+if [ "$_main_py_rc" -ne 0 ]; then
+  echo "roborev_severity_autoclose: FATAL — roborev_classify import/severity read failed (rc=${_main_py_rc}); see stderr above. Refusing to run with a silently-degraded severity parse (this script runs unattended via launchd)." >&2
+  log "INDETERMINATE: roborev_classify import failed (rc=${_main_py_rc}) in main mode"
+  exit 3
+fi
+while IFS=$'\t' read -r _id _output _sev_ord _root _repo _verdict _job_id; do
+  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_sev_ord}	${_root}	${_repo}	${_verdict}	${_job_id}")
+done <<< "$_main_py_out"
 
 N=${#REVIEW_ROWS[@]}
 if [ "$N" -eq 0 ]; then
@@ -789,10 +850,11 @@ TOTAL_PARSE_FAIL=0
 for _row in "${REVIEW_ROWS[@]}"; do
   _id=$(echo "$_row"       | cut -f1)
   _output=$(echo "$_row"   | cut -f2)
-  _root=$(echo "$_row"     | cut -f3)
-  _repo=$(echo "$_row"     | cut -f4)
-  _verdict=$(echo "$_row"  | cut -f5)
-  _job_id=$(echo "$_row"   | cut -f6)
+  _sev_ord=$(echo "$_row"  | cut -f3)
+  _root=$(echo "$_row"     | cut -f4)
+  _repo=$(echo "$_row"     | cut -f5)
+  _verdict=$(echo "$_row"  | cut -f6)
+  _job_id=$(echo "$_row"   | cut -f7)
 
   # Determine effective threshold + source for this repo
   _eff_threshold=""
@@ -821,7 +883,11 @@ for _row in "${REVIEW_ROWS[@]}"; do
   fi
 
   _t_ord=$(_sev_ordinal "$_eff_threshold")
-  _max_ord=$(_parse_max_severity "$_output")
+  # llm#1265 round 3: severity comes pre-parsed from Python's JSON-direct
+  # review_severity_ordinal() (see the heredoc above) -- NOT re-derived
+  # here via _parse_max_severity() over $_output, which would re-run the
+  # exact regex-over-rendered-text bug this round fixes.
+  _max_ord="$_sev_ord"
 
   # Record threshold per repo
   THRESHOLD_BY_REPO["$_repo"]="$_eff_threshold"
