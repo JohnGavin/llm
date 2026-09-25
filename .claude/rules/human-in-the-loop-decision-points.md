@@ -67,7 +67,7 @@ PR merge is Class C by default (explicit verb, every time). A **global toggle** 
 **When the toggle is ON**, a PR merges without asking IFF **all** of:
 
 1. Every CI check reports success — not pending, not skipped, not
-   inconclusive.
+   inconclusive. If CI is unavailable (banner `ci:UNAVAILABLE`/`ci:unknown`), this condition cannot be met: merge stays Class C, and the PR body lists the local stand-in gates run and their results — see [`_companions/ci-outage-local-gates.md`](_companions/ci-outage-local-gates.md).
 2. The merge-gate / roborev consistency check reports a genuine PASS, **never** an indeterminate result (exit code 3, per `checks-must-distinguish-unknown`) treated as a pass. An indeterminate gate always falls back to Class C (ask), regardless of the toggle.
 3. The PR's diff touches **none** of the Auto-Merge Exclusion List paths
    below.
