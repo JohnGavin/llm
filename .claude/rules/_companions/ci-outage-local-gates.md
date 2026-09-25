@@ -1,6 +1,9 @@
 ---
 paths:
-  - ".claude/rules/_companions/ci-outage-local-gates.md"
+  - ".claude/rules/pr-shipping-discipline.md"
+  - ".claude/scripts/ci_availability_check.sh"
+  - ".claude/state/ci_outages.tsv"
+  - ".github/workflows/**"
 ---
 
 # Companion: CI Outage -- Local Substitutes for CI-Only Gates
