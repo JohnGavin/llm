@@ -3,12 +3,16 @@
 # outage (like the 74h gemini one, llm#791) can't run undetected.
 #
 # Detects: (a) daemon down, (b) >= FAIL_DELTA NEW failed jobs since the last
-# check (i.e. failures actively accumulating — not a stale 24h count), or
-# (c) the daemon process has been up longer than ROBOREV_DAEMON_MAX_AGE_DAYS.
-# (a)/(b) are deduped via a state file: alerts once on healthy->failing and
-# once on recovery. (c) is visibility only, not a health verdict — see its
-# block below for why an automatic restart is deliberately NOT what this does
-# (llm#956).
+# check (i.e. failures actively accumulating — not a stale 24h count),
+# (c) the daemon process has been up longer than ROBOREV_DAEMON_MAX_AGE_DAYS,
+# or (d) the port-7373 listener is not launchd's supervised daemon (llm#1136
+# — a client such as `roborev stream` can auto-start its OWN daemon on the
+# same port; launchd's copy then fails to bind every cycle and `roborev
+# status` still reports healthy, because something IS listening — just not
+# the supervised copy). (a)/(b) are deduped via a state file: alerts once on
+# healthy->failing and once on recovery. (c) and (d) are visibility only,
+# not a health verdict — see their blocks below for why an automatic
+# restart is deliberately NOT what this does (llm#956, llm#936).
 #
 # Channel: macOS notification (with sound) + a log line. Runs every 30 min via
 # com.johngavin.roborev-failure-alert. Override FAIL_DELTA to tune.
@@ -23,6 +27,15 @@ mkdir -p "$(dirname "$LOG")" "$(dirname "$STATE")" 2>/dev/null
 # collides with the 3-field parse of $STATE above.
 DAEMON_AGE_STATE="$HOME/.roborev/alert_state_daemon_age"
 DAEMON_MAX_AGE_DAYS="${ROBOREV_DAEMON_MAX_AGE_DAYS:-7}"
+
+# (d) listener ownership — own state file, own format ("ok"|"alert").
+# Overridable for tests (never touch the real machine when set).
+DAEMON_OWNER_STATE="${ROBOREV_ALERT_OWNER_STATE:-$HOME/.roborev/alert_state_daemon_owner}"
+ROBOREV_PORT="${ROBOREV_PORT:-7373}"
+LSOF_BIN="${LSOF_BIN:-/usr/sbin/lsof}"
+PS_BIN="${PS_BIN:-ps}"
+EXPECTED_DAEMON_LABEL="${ROBOREV_EXPECTED_DAEMON_LABEL:-com.roborev.daemon}"
+mkdir -p "$(dirname "$DAEMON_OWNER_STATE")" 2>/dev/null
 
 SIGNAL_URL="http://localhost:7583/api/v1/rpc"
 
@@ -57,6 +70,46 @@ signal(){ curl -s -m 5 -X POST "$SIGNAL_URL" -H "Content-Type: application/json"
 note() { command -v "$OSASCRIPT_BIN" >/dev/null 2>&1 && \
            "$OSASCRIPT_BIN" -e "display notification \"$2\" with title \"$1\" sound name \"$3\"" >/dev/null 2>&1 || true
          signal "$1: $2"; }
+
+# (d) listener ownership — runs unconditionally, BEFORE the (a) early-exit
+# below, so it still fires even in the (rare, different) case where
+# `roborev status` itself is unreachable but something is still bound to
+# the port. Visibility only: this script NEVER kills or restarts anything
+# (llm#936/#956) — see long-running-process-supervision.md. A human decides
+# whether/how to intervene.
+prev_owner_state="$(cat "$DAEMON_OWNER_STATE" 2>/dev/null || echo "ok")"
+if ! command -v "$LSOF_BIN" >/dev/null 2>&1; then
+  log "indeterminate: listener-ownership check skipped -- $LSOF_BIN not found"
+else
+  listener_pid="$("$LSOF_BIN" -nP -iTCP:"$ROBOREV_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+  if [ -z "$listener_pid" ]; then
+    # No listener at all on the port -- check (a) below already alerts on
+    # "daemon down" via `roborev status`; avoid a second, redundant alert
+    # here. Just log, distinctly from a real ownership ALERT.
+    log "indeterminate: no listener on port $ROBOREV_PORT (lsof found nothing) -- see (a) daemon-down check"
+  else
+    owner_cmd="$("$PS_BIN" eww -o command= -p "$listener_pid" 2>/dev/null)"
+    if [ -z "$owner_cmd" ]; then
+      log "indeterminate: listener pid=$listener_pid on port $ROBOREV_PORT present but ps could not read its environment"
+    else
+      owner_label="$(printf '%s\n' "$owner_cmd" | grep -oE 'XPC_SERVICE_NAME=[^[:space:]]*' | head -1 | cut -d= -f2-)"
+      if [ "$owner_label" = "$EXPECTED_DAEMON_LABEL" ]; then
+        [ "$prev_owner_state" = "alert" ] && log "listener ownership back to launchd (pid=$listener_pid, XPC_SERVICE_NAME=$owner_label)"
+        echo "ok" > "$DAEMON_OWNER_STATE"
+      else
+        owner_label_display="${owner_label:-<none>}"
+        if [ "$prev_owner_state" != "alert" ]; then
+          log "ALERT: port $ROBOREV_PORT listener pid=$listener_pid is NOT launchd's daemon (XPC_SERVICE_NAME=$owner_label_display, expected $EXPECTED_DAEMON_LABEL) -- likely a client-spawned rival (llm#1136)"
+          note "roborev daemon hijacked" "pid $listener_pid owns port $ROBOREV_PORT, owner=$owner_label_display (expected $EXPECTED_DAEMON_LABEL). Fix (human, not this script): launchctl bootout gui/\$(id -u)/com.roborev.auto-refine; kill $listener_pid; launchctl bootout gui/\$(id -u)/com.roborev.daemon; launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.roborev.daemon.plist; launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.roborev.auto-refine.plist (bootstrap, not kickstart -- kickstart reuses the already-loaded/cached plist)" "Basso"
+          echo "roborev-failure-alert: ALERT — listener pid=$listener_pid owner=$owner_label_display (expected $EXPECTED_DAEMON_LABEL)"
+        else
+          log "still hijacked: pid=$listener_pid owner=$owner_label_display"
+        fi
+        echo "alert" > "$DAEMON_OWNER_STATE"
+      fi
+    fi
+  fi
+fi
 
 status="$("$ROBOREV_BIN" status 2>/dev/null)"
 read -r pstate pfail pcomp <<EOF
