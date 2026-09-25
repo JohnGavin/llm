@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/quarto-vignettes.md"
+---
+
 # Companion: Quarto Vignette Standards — Worked Code Examples
 
 Worked code examples and consolidation history split out of the always-loaded

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/huggingface-upload.md"
+---
+
 # Companion: HuggingFace Dataset Upload — Worked Code Examples
 
 Worked code examples split out of the always-loaded

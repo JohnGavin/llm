@@ -102,9 +102,12 @@ that doesn't touch rule files emits nothing at all (the check never ran).
 
 ## Selftests
 
-- `check_rule_scoping.sh --selftest` — 23/23 (llm#943 added the
-  safety-critical-tier and content-heuristic cases; the original 11 mandatory-
-  tier cases are unchanged). Covers the checker's own A/B/C/D logic.
+- `check_rule_scoping.sh --selftest` — 26/26 (llm#943 added the
+  safety-critical-tier and content-heuristic cases, bringing the count to 23;
+  llm#1140's follow-up widened check A to cover `.claude/rules/_companions/**`
+  and added 3 more cases proving an unscoped companion is flagged UNSCOPED
+  at exit 1 while a scoped one is silent; the original 11 mandatory-tier
+  cases are unchanged). Covers the checker's own A/B/C/D logic.
 - `rule_scoping_precommit.sh --selftest` — covers the wiring: exit 3 blocks,
   exit 1 warns and allows, exit 0 is silent and allows, a commit touching no
   rule files skips entirely (checker never invoked), the kill switch

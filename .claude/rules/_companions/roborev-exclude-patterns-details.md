@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/roborev-exclude-patterns.md"
+---
+
 # Companion: roborev exclude_patterns — Case Study + Audit Results
 
 Case-study detail and the one-time audit table split out of the

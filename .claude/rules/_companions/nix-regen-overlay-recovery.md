@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/nix-agent-shell-protocol.md"
+---
+
 # Companion: Nix Agent Shell — Overlay-Recovery Workflow + Incident Log
 
 Detailed recovery workflow and the dated incident narratives split out of the always-loaded [`nix-agent-shell-protocol`](../nix-agent-shell-protocol.md) rule. The **normative MANDATORY pattern** (use cwd-safe Form A / Form B, never a bare absolute path) stays in the rule (see its "MANDATORY pattern when an agent regenerates a worktree's `default.nix`" section). This file is the incident evidence + the step-by-step overlay-recovery procedure, loaded on demand when actually regenerating a `default.nix` that carries hand-edited overlays.

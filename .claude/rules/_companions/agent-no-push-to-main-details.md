@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/agent-no-push-to-main.md"
+---
+
 # Companion: Agent No-Push-to-Main — Worked Flow + llm#318 Incident
 
 Worked example flow and the dated incident narrative split out of the

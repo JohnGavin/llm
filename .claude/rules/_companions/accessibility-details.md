@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/accessibility.md"
+---
+
 # Companion: Accessibility Standards — Worked Examples
 
 Worked code examples and consolidation history split out of the

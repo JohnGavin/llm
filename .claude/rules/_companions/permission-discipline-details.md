@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/permission-discipline.md"
+---
+
 # Companion: Permission Discipline — Known Gap Rationale (mcp__* Content Guard)
 
 Dated rationale detail split out of the always-loaded

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/auto-delegation.md"
+---
+
 # Companion: Auto-Delegation — Context Summarisation + Parallel Worktree Sessions
 
 Illustrative/edge-case detail split out of the always-loaded [`auto-delegation`](../auto-delegation.md) rule. The normative tier model, delegation tables, burn-rate escalation table, and `isolation:"worktree"` mandate stay in the rule; these two example-driven sections load on demand.

@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/agent-identity-and-task-scopes.md"
+---
+
 # Companion: Agent Identity & Task Scopes — Worked Example + Phase Roadmap
 
 Illustrative detail split out of the always-loaded [`agent-identity-and-task-scopes`](../agent-identity-and-task-scopes.md) rule to keep that mandatory rule lean. The normative content (CRITICAL statements, dispatch-ID propagation table, scope-block format, Forbidden Patterns) stays in the rule; this file is the worked example and roadmap, loaded on demand.

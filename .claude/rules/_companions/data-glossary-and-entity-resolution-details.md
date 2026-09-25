@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/data-glossary-and-entity-resolution.md"
+---
+
 # Companion: Data Glossary and Entity Resolution — Worked Examples
 
 Worked code examples split out of the always-loaded

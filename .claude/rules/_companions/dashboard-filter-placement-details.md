@@ -1,3 +1,8 @@
+---
+paths:
+  - ".claude/rules/dashboard-filter-placement.md"
+---
+
 # Companion: Dashboard Filter Placement — Worked Code Examples
 
 Worked code examples split out of the always-loaded
