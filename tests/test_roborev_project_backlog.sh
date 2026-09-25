@@ -126,6 +126,55 @@ con.close()
 PYEOF
 }
 
+# PR #1269 round 3 (llm#1265 follow-up): insert a review row whose severity
+# lives ONLY in structured_output JSON (roborev v0.68.2 schema), `output`
+# left empty -- exercises max_sev_ord_structured()'s JSON-direct path
+# rather than the legacy substring-match fallback every other fixture in
+# this file goes through (none of them set structured_output at all).
+insert_finding_structured() {
+    local db="$1"
+    local repo_name="$2"
+    local structured_json="$3"
+    local age_days="${4:-5}"
+    local closed="${5:-0}"
+
+    /usr/bin/python3 - "$db" "$repo_name" "$structured_json" "$age_days" "$closed" <<'PYEOF'
+import sqlite3, sys
+from datetime import datetime, timedelta, timezone
+db_path, repo_name, structured_json, age_days_str, closed_str = sys.argv[1:6]
+age_days = int(age_days_str)
+closed = int(closed_str)
+
+con = sqlite3.connect(db_path)
+# Idempotent: add the column only if this DB doesn't already have it.
+cols = [r[1] for r in con.execute("PRAGMA table_info(reviews)").fetchall()]
+if "structured_output" not in cols:
+    con.execute("ALTER TABLE reviews ADD COLUMN structured_output TEXT")
+
+finished_at = (datetime.now(timezone.utc) - timedelta(days=age_days)).isoformat()
+
+row = con.execute("SELECT id FROM repos WHERE name = ?", (repo_name,)).fetchone()
+if row:
+    repo_id = row[0]
+else:
+    cur = con.execute("INSERT INTO repos (name, root_path) VALUES (?, '')", (repo_name,))
+    repo_id = cur.lastrowid
+
+cur = con.execute(
+    "INSERT INTO review_jobs (repo_id, status, finished_at, enqueued_at) VALUES (?, 'done', ?, ?)",
+    (repo_id, finished_at, finished_at)
+)
+job_id = cur.lastrowid
+
+con.execute(
+    "INSERT INTO reviews (job_id, output, structured_output, closed) VALUES (?, '', ?, ?)",
+    (job_id, structured_json, closed)
+)
+con.commit()
+con.close()
+PYEOF
+}
+
 # Make a minimal git repo
 make_git_repo() {
     local dir="$1"
@@ -382,6 +431,27 @@ assert_eq "test10: exit 0" "0" "${exit10}"
 assert_contains "test10: 2 open findings" "2 open findings" "${out10}"
 assert_contains "test10: critical finding present" "critical" "${out10}"
 assert_contains "test10: not_reviewed finding present" "not_reviewed" "${out10}"
+
+# ── Test 11: PR #1269 round 3 — structured JSON severity is read directly,
+# not inflated by a finding's own problem/fix prose quoting a higher
+# severity as an example (review ids 10523/10524 live shape). ─────────────
+DB11="${TMPDIR_ROOT}/db11.sqlite"
+REPO11="${TMPDIR_ROOT}/repo11"
+mkdir -p "${REPO11}"
+make_roborev_db "${DB11}"
+make_git_repo "${REPO11}"
+
+insert_finding_structured "${DB11}" "teststructured" \
+    '{"schema_version":2,"summary":"one medium finding, prose quotes a higher severity as an example","verdict":"fail","findings":[{"severity":"medium","location":"R/quux.R:5","problem":"Add a fixture where output holds a real Severity: High review.","fix":"Emit **Severity**: Critical only when genuinely critical."}]}' \
+    5 0
+
+out11=$(ROBOREV_DB="${DB11}" bash "${BACKLOG_SCRIPT}" teststructured \
+    --repo-root "${REPO11}" --dry-run 2>&1)
+exit11=$?
+
+assert_eq "test11: exit 0" "0" "${exit11}"
+assert_contains "test11: severity reported as medium (JSON-direct)" "medium" "${out11}"
+assert_not_contains "test11: severity NOT inflated to critical by quoted prose" "critical" "${out11}"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

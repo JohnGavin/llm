@@ -181,7 +181,7 @@ lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import classify_review, review_output_text
+    from roborev_classify import classify_review, review_output_text, review_structured_findings
 except Exception:
     # Fail-open: if the shared module can't be imported (e.g. lib_dir wrong
     # on some future layout), fall back to treating every row as "parsed"
@@ -191,6 +191,8 @@ except Exception:
         return "parsed"
     def review_output_text(output, structured_output):
         return output or ""
+    def review_structured_findings(output, structured_output):
+        return None
 
 # ── Severity / category weight tables ────────────────────────────────────────
 # "not_reviewed" sits ABOVE high (5) but below critical (10) -- an agent that
@@ -211,7 +213,9 @@ CAT_RISK   = {
 }
 
 def max_sev_ord(output):
-    """Return (sev_label, sev_weight) for the highest severity in output text."""
+    """Return (sev_label, sev_weight) for the highest severity in output text.
+    Legacy/fallback path only -- see max_sev_ord_structured() below, which
+    every "parsed" row tries FIRST."""
     text = output or ""
     best_ord = 0
     best_label = "unknown"
@@ -223,6 +227,24 @@ def max_sev_ord(output):
                 best_ord = ord_val
                 best_label = sev
     return best_label, SEV_WEIGHT.get(best_label, 1)
+
+def max_sev_ord_structured(output, structured_output):
+    """JSON-direct (label, weight) for schema_version 1/2 rows with a
+    non-empty findings list (llm#1265 round 3, PR #1269) -- reads
+    findings[].severity DIRECTLY, never via max_sev_ord()'s substring
+    match over rendered text, which is vulnerable to a finding's own
+    problem/fix prose quoting a severity marker as an example (review ids
+    10523/10524 live shape: a Medium finding's problem text quoted
+    "Severity: High"/"**Severity**: Critical", which the substring match
+    would misread as the row's severity). Returns None when there is no
+    structured findings list to read -- callers MUST fall back to
+    max_sev_ord(text) in that case (schema_version 0 / legacy `output`
+    -only rows never had per-finding JSON to begin with)."""
+    findings = review_structured_findings(output, structured_output)
+    if not findings:
+        return None
+    best = max(findings, key=lambda f: f["ordinal"])
+    return best["severity"], SEV_WEIGHT.get(best["severity"], 1)
 
 def infer_category(output):
     """Infer risk category from review output text keywords."""
@@ -405,7 +427,16 @@ for row in rows:
         sev_label, sev_weight = "unclassified", SEV_WEIGHT["unclassified"]
         category = infer_category(text)
     else:  # "parsed" -- a genuine Severity: marker was found
-        sev_label, sev_weight = max_sev_ord(text)
+        # llm#1265 round 3: JSON-direct severity first (structured
+        # findings, never regex/substring over rendered text); fall back
+        # to the legacy substring match only when there is no structured
+        # findings list to read from at all (schema_version 0 / legacy
+        # `output`-only rows).
+        structured_sev = max_sev_ord_structured(row["output"], row["structured_output"])
+        if structured_sev is not None:
+            sev_label, sev_weight = structured_sev
+        else:
+            sev_label, sev_weight = max_sev_ord(text)
         category = infer_category(text)
     cat_risk  = CAT_RISK.get(category, 1.0)
     age       = row["age_days"] if row["age_days"] is not None else 1
