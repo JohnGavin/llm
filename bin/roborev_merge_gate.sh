@@ -441,26 +441,38 @@ _print_table() {
   "$PYTHON" - "$findings_json" <<'PYEOF'
 import sys, json
 
+# llm#1265 finding 7: this heredoc runs as a plain module (`python3 -`), not
+# a function -- `return` at module top level is a SyntaxError caught at
+# COMPILE time, before any statement runs, regardless of whether the
+# `if not findings:` branch is actually taken at runtime. That made every
+# BLOCK-path call to _print_table crash immediately (reproduced live:
+# `bin/roborev_merge_gate.sh --repo JohnGavin/llm --min-severity Medium
+# 1269` -> "File \"<stdin>\", line 6 / SyntaxError: 'return' outside
+# function", right after the "merge-gate: BLOCK" line was printed by bash).
+# Fixed by moving the width-computation/print logic into an `else:` branch
+# instead of an early `return` -- which also fixes a second, latent bug in
+# the same branch: `max(len(r[i]) for r in rows)` over an EMPTY `rows` list
+# raises `ValueError: max() arg is an empty sequence`, so the un-guarded
+# code below would have crashed a second way even without the `return`.
 findings = json.loads(sys.argv[1])
 if not findings:
     print("  (none)")
-    return
+else:
+    # column widths
+    hdr = ("ID", "Severity", "Commit", "Location", "Problem")
+    rows = [(str(f["id"]), f["severity"], f["commit_sha"],
+             f["location"][:40], f["problem"][:60]) for f in findings]
 
-# column widths
-hdr = ("ID", "Severity", "Commit", "Location", "Problem")
-rows = [(str(f["id"]), f["severity"], f["commit_sha"],
-         f["location"][:40], f["problem"][:60]) for f in findings]
-
-widths = [max(len(h), max(len(r[i]) for r in rows))
-          for i, h in enumerate(hdr)]
-fmt = "  {:<{w0}}  {:<{w1}}  {:<{w2}}  {:<{w3}}  {:<{w4}}"
-line = fmt.format(*hdr, w0=widths[0], w1=widths[1],
-                  w2=widths[2], w3=widths[3], w4=widths[4])
-print(line)
-print("  " + "-" * (sum(widths) + 8))
-for r in rows:
-    print(fmt.format(*r, w0=widths[0], w1=widths[1],
-                     w2=widths[2], w3=widths[3], w4=widths[4]))
+    widths = [max(len(h), max(len(r[i]) for r in rows))
+              for i, h in enumerate(hdr)]
+    fmt = "  {:<{w0}}  {:<{w1}}  {:<{w2}}  {:<{w3}}  {:<{w4}}"
+    line = fmt.format(*hdr, w0=widths[0], w1=widths[1],
+                      w2=widths[2], w3=widths[3], w4=widths[4])
+    print(line)
+    print("  " + "-" * (sum(widths) + 8))
+    for r in rows:
+        print(fmt.format(*r, w0=widths[0], w1=widths[1],
+                         w2=widths[2], w3=widths[3], w4=widths[4]))
 PYEOF
 }
 

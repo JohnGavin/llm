@@ -745,6 +745,43 @@ run_gate "$BIN19" \
   "0" \
   "test19b: v2 structured_output-only HIGH finding, cited via closes roborev #9 → exit 0 (PASS)"
 
+# Test 20 — llm#1265 finding 7: the BLOCK-listing path (_print_table) must
+# render its table without ever raising a Python-level crash. Reuses the
+# test19 BLOCK scenario (v2 structured_output HIGH finding, uncited) but
+# captures and inspects the raw output text directly, rather than only the
+# exit code — a regression here previously crashed with "SyntaxError:
+# 'return' outside function" right after printing the BLOCK summary line
+# (reproduced live before this fix: `bin/roborev_merge_gate.sh --repo
+# JohnGavin/llm --min-severity Medium 1269`). `return` at Python module top
+# level is a COMPILE-time SyntaxError, so it fired regardless of whether
+# the `if not findings:` branch it sat in was actually taken.
+BIN20="${TMPDIR_ROOT}/bin20"
+mkdir -p "$BIN20"
+make_mock_gh "$BIN20" "[\"${SHA_V2_STRUCTURED_HIGH}\"]"
+out20=$(
+  GH="$BIN20/gh" \
+  ROBOREV_DB="$FIXTURE_DB" \
+  ACKS_JSONL="$ACKS_FILE" \
+  GIT_DIR="$GIT_REPO/.git" \
+  GIT_WORK_TREE="$GIT_REPO" \
+    bash "$GATE" --min-severity High 99 2>&1
+) || true
+if echo "$out20" | grep -qE "Traceback|SyntaxError"; then
+  fail "test20: BLOCK-listing output must not contain a Python Traceback/SyntaxError" "output: $out20"
+else
+  pass "test20: BLOCK-listing output must not contain a Python Traceback/SyntaxError"
+fi
+if echo "$out20" | grep -q "BLOCK"; then
+  pass "test20b: BLOCK-listing reaches a real BLOCK verdict"
+else
+  fail "test20b: BLOCK-listing reaches a real BLOCK verdict" "output: $out20"
+fi
+if echo "$out20" | grep -qE "ID +Severity"; then
+  pass "test20c: BLOCK-listing table header actually rendered (proves _print_table ran to completion, not just that it didn't crash)"
+else
+  fail "test20c: BLOCK-listing table header actually rendered (proves _print_table ran to completion, not just that it didn't crash)" "output: $out20"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: ${PASS} PASS, ${FAIL} FAIL"

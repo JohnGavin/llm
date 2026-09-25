@@ -184,7 +184,7 @@ assert_eq "test3b: BOTH output and structured_output empty -> indeterminate (nev
 
 assert_eq "test3b: BOTH columns absent (None) -> indeterminate" \
     "indeterminate" \
-    "$(classify_row "" "")"
+    "$(classify_row "__NONE__" "__NONE__")"
 
 assert_eq "test3b: malformed JSON AND empty output -> indeterminate" \
     "indeterminate" \
@@ -194,10 +194,28 @@ assert_eq "test3b: malformed JSON AND empty output -> indeterminate" \
 # Break _parse_structured_json (temp copy) to confirm the v2/passed/legacy
 # cases above are actually exercising the structured_output code path, not
 # silently passing for an unrelated reason.
+#
+# llm#1265 finding 6: this used to be a `sed 's/.../...\n    return
+# None.../'` replacement, but `\n` inside a sed replacement is a GNU
+# extension — on BSD/macOS sed it inserts a literal "n" instead of a
+# newline, producing invalid Python and making this falsification block
+# fail for the WRONG reason (a syntax error, not "the fixtures don't
+# exercise the real code path"), which violates this repo's
+# nix-shell-portability rule. Build the falsified module with python3
+# instead (already a hard dependency of this test via $PYTHON), which is
+# portable by construction.
 FALSIFY_TMP="$(mktemp -d)"
 FALSIFY_MODULE="${FALSIFY_TMP}/roborev_classify.py"
-sed 's/^def _parse_structured_json(structured_output):$/def _parse_structured_json(structured_output):\n    return None  # FALSIFICATION INJECTED/' \
-    "${CLASSIFY_MODULE}" > "${FALSIFY_MODULE}"
+"${PYTHON}" -c "
+marker = 'def _parse_structured_json(structured_output):'
+with open('${CLASSIFY_MODULE}') as f:
+    src = f.read()
+idx = src.index(marker)
+insert_at = idx + len(marker)
+patched = src[:insert_at] + '\n    return None  # FALSIFICATION INJECTED' + src[insert_at:]
+with open('${FALSIFY_MODULE}', 'w') as f:
+    f.write(patched)
+"
 falsify_out=$("${PYTHON}" "${FALSIFY_MODULE}" --selftest 2>&1)
 falsify_fail_n=$(echo "${falsify_out}" | grep -c '^  FAIL')
 rm -rf "${FALSIFY_TMP}"
