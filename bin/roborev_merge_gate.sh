@@ -53,6 +53,16 @@
 # proof and .claude/scripts/lib/roborev_classify.py's own docstring for why
 # R and Python keep parallel (not shared) implementations.
 #
+# llm#1265 (2026-09-25): roborev v0.68.2 migrated every row's review text
+# out of `reviews.output` (empty on all live rows as of this fix) into a new
+# `reviews.structured_output` JSON column.  review_output_text() (imported
+# from roborev_classify.py below) reconstructs the same markdown shape the
+# Location:/Problem:/Severity: regexes above already expect, falling back to
+# `output` when structured_output is NULL/empty/unparseable, and returning
+# "" only when BOTH are empty/unusable — classify_review_row() then reports
+# that as "indeterminate", which is NEVER dropped from the unparseable list
+# (same fail-closed guarantee as llm#1146, extended to the new schema).
+#
 # Citation patterns recognised in PR commit messages (case-insensitive):
 #   closes roborev #N
 #   close roborev #N
@@ -275,6 +285,10 @@ try:
     from roborev_classify import (
         parse_max_severity_ordinal,
         classify_unparseable_finding,
+        review_output_text,
+        review_severity_ordinal,
+        review_top_finding,
+        classify_review_row,
         SEVERITY_ORDINAL,
     )
 except Exception as e:
@@ -301,7 +315,7 @@ try:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     placeholders = ",".join("?" * len(shas))
     rows = con.execute("""
-        SELECT r.id, r.output, c.sha
+        SELECT r.id, r.output, r.structured_output, c.sha
         FROM reviews r
         JOIN review_jobs rj ON r.job_id = rj.id
         JOIN commits    c  ON rj.commit_id = c.id
@@ -323,16 +337,30 @@ prb_re = re.compile(r"\*\*Problem\*\*:\s*([^\n]+)", re.IGNORECASE)
 
 findings = []
 unparseable = []
-for (rid, output, sha) in rows:
-    output = output or ""
-    max_ord = parse_max_severity_ordinal(output)
+for (rid, output, structured_output, sha) in rows:
+    # llm#1265 / PR #1269 round 3: severity comes from review_severity_ordinal(),
+    # which reads a structured row's findings[].severity JSON fields
+    # DIRECTLY -- never via parse_max_severity_ordinal() over the
+    # review_output_text()-rendered markdown. A finding's own problem/fix
+    # prose can legitimately quote a severity marker as an EXAMPLE (live
+    # proof: review ids 10523/10524 in reviews.db each have a real max
+    # severity of "medium", but a lower-severity finding's problem text
+    # quotes "Severity: High"/"**Severity**: Critical", which the old
+    # regex-over-text path misread as the row's severity). Legacy
+    # schema_version 0 rows and the output column fallback still go
+    # through the regex path inside review_severity_ordinal() itself --
+    # this call site does not need to know which path was taken.
+    # (NOTE: this heredoc is unquoted <<PYEOF — no backticks in this block,
+    # they trigger bash command substitution here, not markdown emphasis.)
+    max_ord = review_severity_ordinal(output, structured_output)
     if max_ord is None:
         # llm#1146: previously "continue # skip (conservative: don't block
         # on unparseable)" — that silent skip WAS the bug. Distinguish text
         # that genuinely means "no issues" (dropped, same as before) from
-        # text where the review never ran or matches no known shape at all
-        # (surfaced as unparseable, never silently dropped).
-        outcome = classify_unparseable_finding(output)
+        # text where the review never ran, matches no known shape, or
+        # (llm#1265) BOTH output and structured_output are empty/unusable
+        # ("indeterminate" — never silently dropped either).
+        outcome = classify_review_row(output, structured_output)
         if outcome == "passed":
             continue
         unparseable.append({
@@ -343,10 +371,25 @@ for (rid, output, sha) in rows:
         continue
     if max_ord < min_idx:
         continue  # below threshold
-    loc_m   = loc_re.search(output)
-    prb_m   = prb_re.search(output)
-    location = loc_m.group(1).strip() if loc_m else "(location unknown)"
-    problem  = prb_m.group(1).strip()[:120] if prb_m else "(see review output)"
+    # llm#1265 round 3: location/problem for display are sourced the SAME
+    # way severity is -- JSON-direct via review_top_finding() when the row
+    # has structured findings, falling back to the pre-existing Location:/
+    # Problem: regex over review_output_text() only when it does not (i.e.
+    # the same legacy/regex-path rows review_severity_ordinal() itself
+    # fell back for above). Prevents a lower-severity finding's own
+    # problem/fix prose from ALSO corrupting the displayed location/problem
+    # for the row's true top finding -- the same corruption class as the
+    # severity bug this round fixes.
+    top = review_top_finding(output, structured_output)
+    if top is not None:
+        location = top["location"] or "(location unknown)"
+        problem  = (top["problem"] or "(see review output)")[:120]
+    else:
+        text    = review_output_text(output, structured_output)
+        loc_m   = loc_re.search(text)
+        prb_m   = prb_re.search(text)
+        location = loc_m.group(1).strip() if loc_m else "(location unknown)"
+        problem  = prb_m.group(1).strip()[:120] if prb_m else "(see review output)"
     label = next(k for k, v in SEVERITY_ORDINAL.items() if v == max_ord)
     findings.append({
         "id":         rid,
@@ -421,26 +464,38 @@ _print_table() {
   "$PYTHON" - "$findings_json" <<'PYEOF'
 import sys, json
 
+# llm#1265 finding 7: this heredoc runs as a plain module (`python3 -`), not
+# a function -- `return` at module top level is a SyntaxError caught at
+# COMPILE time, before any statement runs, regardless of whether the
+# `if not findings:` branch is actually taken at runtime. That made every
+# BLOCK-path call to _print_table crash immediately (reproduced live:
+# `bin/roborev_merge_gate.sh --repo JohnGavin/llm --min-severity Medium
+# 1269` -> "File \"<stdin>\", line 6 / SyntaxError: 'return' outside
+# function", right after the "merge-gate: BLOCK" line was printed by bash).
+# Fixed by moving the width-computation/print logic into an `else:` branch
+# instead of an early `return` -- which also fixes a second, latent bug in
+# the same branch: `max(len(r[i]) for r in rows)` over an EMPTY `rows` list
+# raises `ValueError: max() arg is an empty sequence`, so the un-guarded
+# code below would have crashed a second way even without the `return`.
 findings = json.loads(sys.argv[1])
 if not findings:
     print("  (none)")
-    return
+else:
+    # column widths
+    hdr = ("ID", "Severity", "Commit", "Location", "Problem")
+    rows = [(str(f["id"]), f["severity"], f["commit_sha"],
+             f["location"][:40], f["problem"][:60]) for f in findings]
 
-# column widths
-hdr = ("ID", "Severity", "Commit", "Location", "Problem")
-rows = [(str(f["id"]), f["severity"], f["commit_sha"],
-         f["location"][:40], f["problem"][:60]) for f in findings]
-
-widths = [max(len(h), max(len(r[i]) for r in rows))
-          for i, h in enumerate(hdr)]
-fmt = "  {:<{w0}}  {:<{w1}}  {:<{w2}}  {:<{w3}}  {:<{w4}}"
-line = fmt.format(*hdr, w0=widths[0], w1=widths[1],
-                  w2=widths[2], w3=widths[3], w4=widths[4])
-print(line)
-print("  " + "-" * (sum(widths) + 8))
-for r in rows:
-    print(fmt.format(*r, w0=widths[0], w1=widths[1],
-                     w2=widths[2], w3=widths[3], w4=widths[4]))
+    widths = [max(len(h), max(len(r[i]) for r in rows))
+              for i, h in enumerate(hdr)]
+    fmt = "  {:<{w0}}  {:<{w1}}  {:<{w2}}  {:<{w3}}  {:<{w4}}"
+    line = fmt.format(*hdr, w0=widths[0], w1=widths[1],
+                      w2=widths[2], w3=widths[3], w4=widths[4])
+    print(line)
+    print("  " + "-" * (sum(widths) + 8))
+    for r in rows:
+        print(fmt.format(*r, w0=widths[0], w1=widths[1],
+                         w2=widths[2], w3=widths[3], w4=widths[4]))
 PYEOF
 }
 

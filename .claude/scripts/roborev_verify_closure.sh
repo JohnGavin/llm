@@ -63,6 +63,11 @@ VERDICT_DIR="${HOME}/.claude/logs/roborev_verify_closure"
 ROBOREV_DB="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
 ROBOREV_BIN="${ROBOREV:-$(command -v roborev 2>/dev/null || echo /usr/local/bin/roborev)}"
 
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# reconstructs markdown text from the v0.68.2 structured_output JSON column
+# (falling back to legacy `output`).
+_LIB_DIR_ROBOREV_VC="$(cd "$(dirname "$0")/lib" 2>/dev/null && pwd || true)"
+
 POLL_TIMEOUT_SECS="${ROBOREV_VERIFY_TIMEOUT:-300}"
 POLL_INTERVAL_SECS=5
 
@@ -258,25 +263,43 @@ fi
 # "Location:" line(s) for each finding so we can compare against the new
 # review output to detect whether the finding was actually fixed.
 
-FINDING_LOCATIONS=$(/usr/bin/python3 - "$ROBOREV_DB" "${FINDING_IDS[@]}" <<'PY'
+FINDING_LOCATIONS=$(/usr/bin/python3 - "$ROBOREV_DB" "${_LIB_DIR_ROBOREV_VC}" "${FINDING_IDS[@]}" <<'PY'
 import sys, sqlite3, re, json
 
 db_path     = sys.argv[1]
-finding_ids = [int(x) for x in sys.argv[2:]]
+lib_dir     = sys.argv[2]
+finding_ids = [int(x) for x in sys.argv[3:]]
+
+# llm#1265: roborev v0.68.2 migrated every row's review text out of
+# `output` (empty on all live rows) into `structured_output` (JSON).
+# review_output_text() reconstructs the same markdown shape the
+# Location: regex below already expects.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception:
+    def review_output_text(output, structured_output):
+        return output or ""
 
 try:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
     result = {}
     for fid in finding_ids:
-        row = conn.execute(
-            "SELECT output FROM reviews WHERE id = ?", (fid,)
-        ).fetchone()
+        try:
+            row = conn.execute(
+                "SELECT output, structured_output FROM reviews WHERE id = ?", (fid,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = conn.execute(
+                "SELECT output, NULL FROM reviews WHERE id = ?", (fid,)
+            ).fetchone()
         if row is None:
             result[str(fid)] = None
         else:
-            output = row[0] or ''
-            # Extract all Location: lines from the finding output
-            locs = re.findall(r'\*\*Location\*\*:\s*`?([^`\n]+)`?', output)
+            text = review_output_text(row[0], row[1])
+            # Extract all Location: lines from the finding text
+            locs = re.findall(r'\*\*Location\*\*:\s*`?([^`\n]+)`?', text)
             result[str(fid)] = locs if locs else None
     conn.close()
     print(json.dumps(result))
@@ -362,28 +385,49 @@ VERDICT_BOOL=""
 REVIEW_STATUS=""
 
 while [ "$ELAPSED" -lt "$POLL_TIMEOUT_SECS" ]; do
-  REVIEW_STATUS=$(/usr/bin/python3 - "$ROBOREV_DB" "$REVIEW_JOB_ID" "$_POLL_TMPFILE" <<'PY'
+  REVIEW_STATUS=$(/usr/bin/python3 - "$ROBOREV_DB" "$REVIEW_JOB_ID" "$_POLL_TMPFILE" "${_LIB_DIR_ROBOREV_VC}" <<'PY'
 import sys, sqlite3, json
 
 db_path   = sys.argv[1]
 job_id    = int(sys.argv[2])
 tmpfile   = sys.argv[3]
+lib_dir   = sys.argv[4] if len(sys.argv) > 4 else ""
+
+# llm#1265: reconstruct text from structured_output (v0.68.2 schema),
+# falling back to the legacy `output` column.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception:
+    def review_output_text(output, structured_output):
+        return output or ""
 
 try:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
-    row = conn.execute(
-        """SELECT rj.status, rv.verdict_bool, rv.output
-           FROM review_jobs rj
-           LEFT JOIN reviews rv ON rv.job_id = rj.id
-           WHERE rj.id = ?
-           LIMIT 1""",
-        (job_id,)
-    ).fetchone()
+    try:
+        row = conn.execute(
+            """SELECT rj.status, rv.verdict_bool, rv.output, rv.structured_output
+               FROM review_jobs rj
+               LEFT JOIN reviews rv ON rv.job_id = rj.id
+               WHERE rj.id = ?
+               LIMIT 1""",
+            (job_id,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = conn.execute(
+            """SELECT rj.status, rv.verdict_bool, rv.output, NULL
+               FROM review_jobs rj
+               LEFT JOIN reviews rv ON rv.job_id = rj.id
+               WHERE rj.id = ?
+               LIMIT 1""",
+            (job_id,)
+        ).fetchone()
     conn.close()
     if row:
         status  = row[0] or 'unknown'
         verdict = '' if row[1] is None else str(row[1])
-        output  = row[2] or ''
+        output  = review_output_text(row[2], row[3])
         # Write a JSON payload to tmpfile so multi-line output survives
         with open(tmpfile, 'w') as f:
             json.dump({"verdict": verdict, "output": output}, f)

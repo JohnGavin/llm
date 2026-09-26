@@ -303,3 +303,38 @@ test_that("build_review_lifecycle: idempotent — two runs produce identical res
   expect_equal(res1$close_reason, res2$close_reason)
   expect_equal(as.numeric(res1$closed_at), as.numeric(res2$closed_at))
 })
+
+# ── PR #1269 round 4 (review 10534): schema_version gate + non-scalar
+# severity crash guard, .metrics_review_text() / .metrics_structured_max_severity() ──
+
+test_that(".metrics_review_text: schema_version 3 (unrecognised) does NOT render bullets", {
+  # Finding 1: this gate previously accepted ANY numeric schema_version >= 1,
+  # inconsistent with .metrics_structured_max_severity()'s `1 or 2` gate.
+  # Both readers must now agree on what counts as a "known" schema.
+  so <- '{"schema_version":3,"findings":[{"severity":"high"}]}'
+  expect_equal(.metrics_review_text("", so), "")
+})
+
+test_that(".metrics_review_text: schema_version 1 still renders a severity bullet", {
+  so <- '{"schema_version":1,"findings":[{"severity":"high"}]}'
+  expect_true(grepl("\\*\\*Severity\\*\\*: High", .metrics_review_text("", so)))
+})
+
+test_that(".metrics_structured_max_severity: array-valued severity does not crash, returns NA", {
+  # Finding 4: as.character() on a JSON-array `severity` is length>1, which
+  # used to crash `if (length(idx) == 0L || is.na(idx))` in R 4.3+.
+  so <- '{"schema_version":2,"findings":[{"severity":["high","low"]}]}'
+  expect_no_error(result <- .metrics_structured_max_severity("", so))
+  expect_true(is.na(result))
+})
+
+test_that(".metrics_structured_max_severity: mixed valid/invalid severities takes the max of the valid ones", {
+  so <- paste0(
+    '{"schema_version":2,"findings":[',
+    '{"severity":["bad","shape"]},',
+    '{"severity":"critical"},',
+    '{"severity":"low"}',
+    ']}'
+  )
+  expect_equal(.metrics_structured_max_severity("", so), "Critical")
+})

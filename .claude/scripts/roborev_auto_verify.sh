@@ -63,6 +63,11 @@ LOGFILE="${HOME}/.claude/logs/roborev_auto_verify.log"
 ROBOREV_DB="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
 ROBOREV_BIN="${ROBOREV:-$(command -v roborev 2>/dev/null || echo /usr/local/bin/roborev)}"
 
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# reconstructs markdown text from the v0.68.2 structured_output JSON column
+# (falling back to legacy `output`).
+_SCRIPT_DIR_ROBOREV_AV="$(cd "$(dirname "$0")/lib" 2>/dev/null && pwd || true)"
+
 # Maximum seconds to poll for a re-review job to complete
 POLL_TIMEOUT_SECS=120
 POLL_INTERVAL_SECS=5
@@ -792,26 +797,50 @@ log "INFO: polling job_id=${REVIEW_JOB_ID} for commit=${COMMIT_SHA}"
 ELAPSED=0
 VERDICT=""
 while [ "$ELAPSED" -lt "$POLL_TIMEOUT_SECS" ]; do
-  JOB_STATUS=$(/usr/bin/python3 - "$ROBOREV_DB" "$REVIEW_JOB_ID" <<'PY'
+  JOB_STATUS=$(/usr/bin/python3 - "$ROBOREV_DB" "$REVIEW_JOB_ID" "${_SCRIPT_DIR_ROBOREV_AV:-}" <<'PY'
 import sys, sqlite3
 
 db_path = sys.argv[1]
 job_id  = int(sys.argv[2])
+lib_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+
+# llm#1265: roborev v0.68.2 migrated every row's review text out of
+# `output` (empty on all live rows) into `structured_output` (JSON).
+# review_output_text() reconstructs equivalent text; falls back to the
+# raw `output` column if the shared module can't be imported or the
+# column doesn't exist (older reviews.db schema).
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception:
+    def review_output_text(output, structured_output):
+        return output or ""
 
 try:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
-    row = conn.execute(
-        """SELECT rj.status, rv.verdict_bool, rv.output
-           FROM review_jobs rj
-           LEFT JOIN reviews rv ON rv.job_id = rj.id
-           WHERE rj.id = ? LIMIT 1""",
-        (job_id,)
-    ).fetchone()
+    try:
+        row = conn.execute(
+            """SELECT rj.status, rv.verdict_bool, rv.output, rv.structured_output
+               FROM review_jobs rj
+               LEFT JOIN reviews rv ON rv.job_id = rj.id
+               WHERE rj.id = ? LIMIT 1""",
+            (job_id,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = conn.execute(
+            """SELECT rj.status, rv.verdict_bool, rv.output, NULL
+               FROM review_jobs rj
+               LEFT JOIN reviews rv ON rv.job_id = rj.id
+               WHERE rj.id = ? LIMIT 1""",
+            (job_id,)
+        ).fetchone()
     conn.close()
     if row:
         status  = row[0] or 'unknown'
         verdict = row[1]
-        output  = (row[2] or '')[:500].replace('\n', ' ')
+        text    = review_output_text(row[2], row[3])
+        output  = text[:500].replace('\n', ' ')
         print(f"{status}\t{verdict}\t{output}")
     else:
         print("notfound\t\t")

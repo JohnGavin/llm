@@ -235,7 +235,20 @@ SELECT
        OR rv.output LIKE '%severity**: high%'
        OR rv.output LIKE '%**Severity**: High%'
        OR rv.output LIKE '%Severity: High%'
-       OR rv.output LIKE '%severity: high%')
+       OR rv.output LIKE '%severity: high%'
+       -- llm#1265 finding 3: json_valid(rv.structured_output) AND ... does
+       -- NOT reliably short-circuit in this sqlite3 build -- 'AND' left it
+       -- reachable regardless of the guard, aborting the whole statement on
+       -- one malformed row (verified empirically: sqlite3 3.51.0 still
+       -- raises 'stepping, malformed JSON' through the AND form). CASE WHEN
+       -- json_valid(...) THEN (...) ELSE 0 END is the form that actually
+       -- short-circuits and was verified not to raise.
+       OR CASE WHEN json_valid(rv.structured_output) THEN (
+            EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                    WHERE lower(json_extract(json_each.value, '\$.severity')) = 'high')
+            OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: High%'
+            OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: High%'
+          ) ELSE 0 END)
     THEN 1 ELSE 0 END), 0) AS high_open,
   COALESCE(SUM(CASE
     WHEN rv.closed = 0
@@ -243,7 +256,13 @@ SELECT
        OR rv.output LIKE '%severity**: medium%'
        OR rv.output LIKE '%**Severity**: Medium%'
        OR rv.output LIKE '%Severity: Medium%'
-       OR rv.output LIKE '%severity: medium%')
+       OR rv.output LIKE '%severity: medium%'
+       OR CASE WHEN json_valid(rv.structured_output) THEN (
+            EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                    WHERE lower(json_extract(json_each.value, '\$.severity')) = 'medium')
+            OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: Medium%'
+            OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: Medium%'
+          ) ELSE 0 END)
     THEN 1 ELSE 0 END), 0) AS medium_open,
   COALESCE(SUM(CASE
     WHEN rv.closed = 0
@@ -251,7 +270,13 @@ SELECT
        OR rv.output LIKE '%severity**: low%'
        OR rv.output LIKE '%**Severity**: Low%'
        OR rv.output LIKE '%Severity: Low%'
-       OR rv.output LIKE '%severity: low%')
+       OR rv.output LIKE '%severity: low%'
+       OR CASE WHEN json_valid(rv.structured_output) THEN (
+            EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                    WHERE lower(json_extract(json_each.value, '\$.severity')) = 'low')
+            OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: Low%'
+            OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: Low%'
+          ) ELSE 0 END)
     THEN 1 ELSE 0 END), 0) AS low_open,
   COALESCE(MAX(CASE
     WHEN rv.closed = 0 AND rj.finished_at IS NOT NULL
@@ -271,6 +296,26 @@ ORDER BY total_open DESC;
 "
 
 log "Step 3: INSERTing roborev_daily_summary rows to unified.duckdb..."
+
+# llm#1265 finding 3: previously `sqlite3 ... "${_SQLITE_QUERY}" 2>/dev/null
+# || true` discarded BOTH stderr and the exit status, so a query failure
+# (e.g. malformed JSON reaching a json_each/json_extract call the CASE-WHEN
+# guards above don't cover, or any other sqlite3 error) silently produced
+# zero rows piped into the while loop — indistinguishable from "no repos
+# have open/closed/autoclosed activity today", i.e. a real failure read as
+# a clean zero-findings result. Capture stdout and stderr/exit status
+# separately and treat a query failure as INDETERMINATE (loud log line +
+# housekeeping_runs status='failed' via _fail_and_exit, exit 3 per this
+# repo's exit-code convention) rather than a silent empty run.
+_sqlite_query_stderr="$(mktemp)"
+_sqlite_query_stdout="$(sqlite3 "${ROBOREV_DB}" "${_SQLITE_QUERY}" 2>"${_sqlite_query_stderr}")"
+_sqlite_query_rc=$?
+if [ "${_sqlite_query_rc}" -ne 0 ]; then
+  _sqlite_query_err="$(cat "${_sqlite_query_stderr}" 2>/dev/null)"
+  rm -f "${_sqlite_query_stderr}"
+  _fail_and_exit "aggregation query failed (sqlite3 exit=${_sqlite_query_rc}): ${_sqlite_query_err} -- INDETERMINATE, not zero findings" 3
+fi
+rm -f "${_sqlite_query_stderr}"
 
 while IFS='|' read -r _project _total_open _closed_today _high _medium _low _oldest_days _autoclose; do
   [ -z "${_project}" ] && continue
@@ -294,8 +339,34 @@ while IFS='|' read -r _project _total_open _closed_today _high _medium _low _old
 
   # Top-3 findings snippet for digest context (highest severity first)
   _detail_json="null"
+  # llm#1265: roborev v0.68.2 migrated every row's review text out of
+  # `output` (empty on all live rows) into `structured_output` (JSON) --
+  # prefer schema_version 0's legacy.markdown (byte-identical to the old
+  # `output` text), then a severity:problem summary of any structured
+  # findings, then the bare JSON summary, in that order.
+  # llm#1265 finding 3: every json_extract/json_each call below is guarded
+  # by CASE WHEN json_valid(rv.structured_output) THEN (...) ELSE ... END,
+  # NOT `json_valid(...) AND ...` -- verified empirically (sqlite3 3.51.0)
+  # that the AND form does NOT short-circuit for these functions and still
+  # raises 'stepping, malformed JSON' on a malformed row; only the CASE
+  # WHEN form actually avoids evaluating json_extract/json_each on invalid
+  # JSON. This is a per-row cosmetic detail query (already has a `|| true`
+  # fallback below), but the guard prevents the error rather than merely
+  # swallowing it.
   _top3_output="$(sqlite3 "${ROBOREV_DB}" "
-    SELECT substr(rv.output, 1, 200)
+    SELECT substr(COALESCE(
+      NULLIF(rv.output, ''),
+      CASE WHEN json_valid(rv.structured_output)
+           THEN json_extract(rv.structured_output, '\$.legacy.markdown') END,
+      CASE WHEN json_valid(rv.structured_output) THEN (
+        SELECT group_concat('- ' || json_extract(value, '\$.severity') || ': '
+                              || json_extract(value, '\$.problem'), ' | ')
+        FROM json_each(rv.structured_output, '\$.findings')
+      ) END,
+      CASE WHEN json_valid(rv.structured_output)
+           THEN json_extract(rv.structured_output, '\$.summary') END,
+      ''
+    ), 1, 200)
     FROM reviews rv
     JOIN review_jobs rj ON rv.job_id = rj.id
     JOIN repos r ON rj.repo_id = r.id
@@ -303,9 +374,21 @@ while IFS='|' read -r _project _total_open _closed_today _high _medium _low _old
     ORDER BY
       CASE
         WHEN rv.output LIKE '%Severity**: High%' OR rv.output LIKE '%severity**: high%'
-          OR rv.output LIKE '%Severity: High%' OR rv.output LIKE '%severity: high%' THEN 1
+          OR rv.output LIKE '%Severity: High%' OR rv.output LIKE '%severity: high%'
+          OR CASE WHEN json_valid(rv.structured_output) THEN (
+               EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                       WHERE lower(json_extract(json_each.value, '\$.severity')) = 'high')
+               OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: High%'
+               OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: High%'
+             ) ELSE 0 END THEN 1
         WHEN rv.output LIKE '%Severity**: Medium%' OR rv.output LIKE '%severity**: medium%'
-          OR rv.output LIKE '%Severity: Medium%' OR rv.output LIKE '%severity: medium%' THEN 2
+          OR rv.output LIKE '%Severity: Medium%' OR rv.output LIKE '%severity: medium%'
+          OR CASE WHEN json_valid(rv.structured_output) THEN (
+               EXISTS (SELECT 1 FROM json_each(rv.structured_output, '\$.findings')
+                       WHERE lower(json_extract(json_each.value, '\$.severity')) = 'medium')
+               OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity**: Medium%'
+               OR json_extract(rv.structured_output, '\$.legacy.markdown') LIKE '%Severity: Medium%'
+             ) ELSE 0 END THEN 2
         ELSE 3
       END,
       rv.created_at DESC
@@ -353,7 +436,7 @@ while IFS='|' read -r _project _total_open _closed_today _high _medium _low _old
   else
     log "  SKIP (duckdb unavailable): project=${_project} open=${_total_open}"
   fi
-done < <(sqlite3 "${ROBOREV_DB}" "${_SQLITE_QUERY}" 2>/dev/null || true)
+done <<< "${_sqlite_query_stdout}"
 
 log "Step 3 done: attempted=${_ROWS_ATTEMPTED} written=${_ROWS_WRITTEN}"
 

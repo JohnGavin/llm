@@ -97,7 +97,8 @@ if (requireNamespace("RSQLite", quietly = TRUE)) {
       job_id INTEGER,
       closed INTEGER DEFAULT 0,
       updated_at TEXT,
-      output TEXT
+      output TEXT,
+      structured_output TEXT
     )
   ")
   # Insert synthetic findings in the current week
@@ -117,10 +118,63 @@ if (requireNamespace("RSQLite", quietly = TRUE)) {
     closed <- if (rid <= 3L) 1L else 0L
     upd    <- if (closed == 1L) paste0(week_end, " 11:00:00") else ""
     DBI::dbExecute(con, sprintf(
-      "INSERT INTO reviews VALUES (%d, %d, %d, '%s', '**Severity**: High\n\nTest finding %d')",
+      "INSERT INTO reviews VALUES (%d, %d, %d, '%s', '**Severity**: High\n\nTest finding %d', NULL)",
       rid, jid, closed, upd, rid
     ))
   }
+
+  # ── PR #1269 round 3 (llm#1265 follow-up, review id 10524) ────────────────
+  # Stuck (open, age > 7 days) reviews sourced ONLY from structured_output
+  # JSON -- exercises .weekly_structured_top_finding()'s JSON-direct
+  # severity/summary path, which every fixture above (plain `output` text)
+  # never reaches. finished_at is set 10 days before "today" (well past
+  # the >7-day stuck threshold, unlike the 7-day-exact fixtures above) so
+  # these rows are guaranteed to appear in the Top Stuck Findings table
+  # regardless of time-of-day rounding.
+  stuck_ts <- paste0(format(today - 10L, "%Y-%m-%d"), " 09:00:00")
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO review_jobs VALUES (5, 1, 'done', '%s')", stuck_ts
+  ))
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO review_jobs VALUES (6, 1, 'done', '%s')", stuck_ts
+  ))
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO review_jobs VALUES (7, 1, 'done', '%s')", stuck_ts
+  ))
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO review_jobs VALUES (8, 1, 'done', '%s')", stuck_ts
+  ))
+  # id=7: real max severity MEDIUM, but the finding's own problem/fix
+  # prose quotes "Severity: High"/"**Severity**: Critical" as an example --
+  # must be read as medium (not inflated), and the summary must show the
+  # REAL problem text (not the first-line "- **Severity**: X" bullet).
+  DBI::dbExecute(con,
+    "INSERT INTO reviews (id, job_id, closed, updated_at, output, structured_output) VALUES (7, 5, 0, '',
+     '',
+     '{\"schema_version\":2,\"summary\":\"one medium finding, prose quotes a higher severity as an example\",\"verdict\":\"fail\",\"findings\":[{\"severity\":\"medium\",\"location\":\"R/quux.R:5\",\"problem\":\"A distinctive real problem sentence about quux handling.\",\"fix\":\"Emit **Severity**: Critical only when genuinely critical.\"}]}')"
+  )
+  # id=8: schema_version 1, empty findings (a genuine clean re-review) --
+  # must NOT crash, and falls back to extract_sev()/extract_summary() on
+  # the (empty) rendered text rather than a structured severity/summary.
+  DBI::dbExecute(con,
+    "INSERT INTO reviews (id, job_id, closed, updated_at, output, structured_output) VALUES (8, 6, 0, '',
+     '',
+     '{\"schema_version\":1,\"summary\":\"nothing found\",\"findings\":[]}')"
+  )
+  # id=9: unrecognised schema_version (99) -- must NOT crash, falls back to
+  # legacy text handling (empty output here, so severity reads 'unknown').
+  DBI::dbExecute(con,
+    "INSERT INTO reviews (id, job_id, closed, updated_at, output, structured_output) VALUES (9, 7, 0, '',
+     '',
+     '{\"schema_version\":99,\"summary\":\"x\",\"findings\":[]}')"
+  )
+  # id=10: malformed JSON -- must NOT crash, falls back to the legacy
+  # `output` column text (a real Critical marker here).
+  DBI::dbExecute(con,
+    "INSERT INTO reviews (id, job_id, closed, updated_at, output, structured_output) VALUES (10, 8, 0, '',
+     '**Severity**: Critical\n**Problem**: malformed-JSON fallback finding',
+     '{not valid json')"
+  )
   DBI::dbDisconnect(con)
 }
 
@@ -199,6 +253,44 @@ test_that("rollup contains Close-Reason Distribution section", {
   # Section appears even when unified.duckdb is absent (shows 'no data' note)
   expect_match(rollup_text, "Close-Reason Distribution", fixed = TRUE)
 })
+
+# ── PR #1269 round 3 (llm#1265 follow-up, review id 10524) ────────────────
+
+if (requireNamespace("RSQLite", quietly = TRUE) && file.exists(db_path)) {
+  test_that("structured finding (id=7): severity is medium, NOT inflated by quoted prose", {
+    testthat::skip_if_not(file.exists(rollup_script), "rollup script not found")
+    expect_match(rollup_text, "medium", fixed = TRUE)
+  })
+
+  test_that("structured finding (id=7): summary shows the REAL problem text, not the severity bullet", {
+    testthat::skip_if_not(file.exists(rollup_script), "rollup script not found")
+    expect_match(rollup_text, "distinctive real problem sentence", fixed = TRUE)
+  })
+
+  test_that("structured finding (id=7): summary is NOT the first-line severity bullet", {
+    testthat::skip_if_not(file.exists(rollup_script), "rollup script not found")
+    # Old bug: extract_summary() picked the first non-empty line of the
+    # rendered block, which is ALWAYS "- **Severity**: X" -- never the
+    # Problem text. If that string appears as a table-row SUMMARY value
+    # (immediately followed by the closing " |"), the bug has regressed.
+    expect_false(grepl("**Severity**: Medium |", rollup_text, fixed = TRUE))
+  })
+
+  test_that("empty-findings structured row (id=8) does not crash the rollup", {
+    testthat::skip_if_not(file.exists(rollup_script), "rollup script not found")
+    expect_false(grepl("Error", rollup_text, fixed = TRUE))
+  })
+
+  test_that("unrecognised schema_version (id=9) does not crash the rollup", {
+    testthat::skip_if_not(file.exists(rollup_script), "rollup script not found")
+    expect_gt(nchar(rollup_text), 100L)
+  })
+
+  test_that("malformed JSON (id=10) falls back to legacy output text (Critical)", {
+    testthat::skip_if_not(file.exists(rollup_script), "rollup script not found")
+    expect_match(rollup_text, "malformed-JSON fallback finding", fixed = TRUE)
+  })
+}
 
 test_that("rollup handles missing daily backlog dir gracefully", {
   out <- run_rollup(list(ROBOREV_DAILY_BACKLOG_DIR = file.path(tmpdir, "nonexistent_backlog")))

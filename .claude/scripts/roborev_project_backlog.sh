@@ -164,7 +164,11 @@ _query_backlog() {
   fi
 
   local lib_dir
-  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+  # roborev id 10532 (medium): honours a pre-set ROBOREV_BACKLOG_LIB_DIR
+  # override so the selftest can point it at an empty directory to
+  # exercise the import-failure warning path without touching the real
+  # roborev_classify.py. Unset/empty in every real invocation.
+  lib_dir="${ROBOREV_BACKLOG_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 
   "$PYTHON" - "$db" "$repo_name" "$root_path_override" "$top_n" "$lib_dir" <<'PYEOF'
 import sys, sqlite3, math, re, subprocess, os
@@ -181,14 +185,41 @@ lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import classify_review
-except Exception:
+    from roborev_classify import (
+        classify_review, review_output_text, review_structured_findings,
+        _parse_structured_json, _known_structured_schema,
+    )
+except Exception as _import_exc:
     # Fail-open: if the shared module can't be imported (e.g. lib_dir wrong
     # on some future layout), fall back to treating every row as "parsed"
     # so behaviour degrades to the pre-llm#1035 status quo rather than
     # crashing the backlog writer.
+    #
+    # roborev id 10532 (medium): a silent `review_structured_findings`
+    # stub of None makes max_sev_ord_structured() return None for every
+    # row, so EVERY row falls back to max_sev_ord()'s substring-over-text
+    # scan -- the exact severity-inflation vulnerability this file's
+    # structured-severity read exists to close (review ids 10523/10524).
+    # A broken lib_dir must not silently re-open that hole; write a loud,
+    # one-line stderr warning so a broken import is visible in the log
+    # instead of looking identical to "every row is legacy schema_version
+    # 0" (checks-must-distinguish-unknown).
+    sys.stderr.write(
+        f"roborev_project_backlog: WARNING - could not import roborev_classify "
+        f"from {lib_dir!r}: {type(_import_exc).__name__}: {_import_exc}. "
+        f"Falling back to legacy substring severity scan for ALL rows -- "
+        f"structured JSON-direct severity is DISABLED this run.\n"
+    )
     def classify_review(text):
         return "parsed"
+    def review_output_text(output, structured_output):
+        return output or ""
+    def review_structured_findings(output, structured_output):
+        return None
+    def _parse_structured_json(structured_output):
+        return None
+    def _known_structured_schema(schema_version):
+        return False
 
 # ── Severity / category weight tables ────────────────────────────────────────
 # "not_reviewed" sits ABOVE high (5) but below critical (10) -- an agent that
@@ -209,7 +240,9 @@ CAT_RISK   = {
 }
 
 def max_sev_ord(output):
-    """Return (sev_label, sev_weight) for the highest severity in output text."""
+    """Return (sev_label, sev_weight) for the highest severity in output text.
+    Legacy/fallback path only -- see max_sev_ord_structured() below, which
+    every "parsed" row tries FIRST."""
     text = output or ""
     best_ord = 0
     best_label = "unknown"
@@ -221,6 +254,40 @@ def max_sev_ord(output):
                 best_ord = ord_val
                 best_label = sev
     return best_label, SEV_WEIGHT.get(best_label, 1)
+
+def max_sev_ord_structured(output, structured_output):
+    """JSON-direct (label, weight) for schema_version 1/2 rows with a
+    non-empty findings list (llm#1265 round 3, PR #1269) -- reads
+    findings[].severity DIRECTLY, never via max_sev_ord()'s substring
+    match over rendered text, which is vulnerable to a finding's own
+    problem/fix prose quoting a severity marker as an example (review ids
+    10523/10524 live shape: a Medium finding's problem text quoted
+    "Severity: High"/"**Severity**: Critical", which the substring match
+    would misread as the row's severity). Returns None when there is no
+    structured findings list to read -- callers MUST fall back to
+    max_sev_ord(text) in that case (schema_version 0 / legacy `output`
+    -only rows never had per-finding JSON to begin with). Returns
+    ("unclassified", weight) -- NEVER None -- when the row genuinely IS a
+    recognised structured schema with a non-empty findings list but no
+    entry had a recognised severity value (roborev id 10532, low): falling
+    back to max_sev_ord(text) in that case would re-open the exact
+    prose-quoting inflation this function exists to prevent, on a row that
+    unambiguously has structured JSON to read."""
+    findings = review_structured_findings(output, structured_output)
+    if findings:
+        best = max(findings, key=lambda f: f["ordinal"])
+        return best["severity"], SEV_WEIGHT.get(best["severity"], 1)
+    # review_structured_findings() returns None for two different things
+    # (see its own docstring): "no structured JSON at all" (legitimate
+    # fall-back) and "recognised schema + non-empty findings, but none had
+    # a recognised severity" (NOT a fall-back case). Distinguish them here
+    # via the same schema/JSON helpers, without duplicating their logic.
+    data = _parse_structured_json(structured_output)
+    if data is not None and _known_structured_schema(data.get("schema_version")):
+        raw_findings = data.get("findings")
+        if isinstance(raw_findings, list) and raw_findings:
+            return "unclassified", SEV_WEIGHT.get("unclassified", 1)
+    return None
 
 def infer_category(output):
     """Infer risk category from review output text keywords."""
@@ -325,7 +392,8 @@ try:
             rv.id                 AS rid,
             rj.id                 AS job_id,
             CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
-            rv.output
+            rv.output,
+            rv.structured_output
         FROM reviews rv
         JOIN review_jobs rj ON rj.id = rv.job_id
         WHERE rj.repo_id = ?
@@ -334,18 +402,37 @@ try:
         LIMIT 100
     """, (repo_id,)).fetchall()
 except Exception:
-    rows = con.execute("""
-        SELECT
-            rv.id                 AS rid,
-            rj.id                 AS job_id,
-            CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
-            rv.output
-        FROM reviews rv
-        JOIN review_jobs rj ON rj.id = rv.job_id
-        WHERE rj.repo_id = ?
-          AND rj.status = 'done'
-        LIMIT 100
-    """, (repo_id,)).fetchall()
+    # llm#1265: also fall back if `structured_output` doesn't exist (a
+    # reviews.db predating the v0.68.2 migration) as well as the pre-
+    # existing `rj.finished_at`/`rv.closed` fallback below.
+    try:
+        rows = con.execute("""
+            SELECT
+                rv.id                 AS rid,
+                rj.id                 AS job_id,
+                CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+                rv.output,
+                rv.structured_output
+            FROM reviews rv
+            JOIN review_jobs rj ON rj.id = rv.job_id
+            WHERE rj.repo_id = ?
+              AND rj.status = 'done'
+            LIMIT 100
+        """, (repo_id,)).fetchall()
+    except Exception:
+        rows = con.execute("""
+            SELECT
+                rv.id                 AS rid,
+                rj.id                 AS job_id,
+                CAST(julianday('now') - julianday(rj.finished_at) AS INTEGER) AS age_days,
+                rv.output,
+                NULL AS structured_output
+            FROM reviews rv
+            JOIN review_jobs rj ON rj.id = rv.job_id
+            WHERE rj.repo_id = ?
+              AND rj.status = 'done'
+            LIMIT 100
+        """, (repo_id,)).fetchall()
 
 con.close()
 
@@ -363,7 +450,13 @@ if not rows:
 scored = []
 passed_excluded_n = 0
 for row in rows:
-    outcome = classify_review(row["output"])
+    # llm#1265: roborev v0.68.2 migrated every row's review text out of
+    # `output` (empty on all live rows) into `structured_output` (JSON).
+    # review_output_text() reconstructs equivalent text so classify_review()/
+    # max_sev_ord()/infer_category()/get_file_mention() below keep working
+    # unchanged.
+    text = review_output_text(row["output"], row["structured_output"])
+    outcome = classify_review(text)
     if outcome == "passed":
         # The review ran and explicitly found nothing -- not a backlog item.
         # Excluded from OPEN_COUNT and the priority table entirely, rather
@@ -375,13 +468,22 @@ for row in rows:
         category = "agent-health"
     elif outcome == "unclassified":
         sev_label, sev_weight = "unclassified", SEV_WEIGHT["unclassified"]
-        category = infer_category(row["output"])
+        category = infer_category(text)
     else:  # "parsed" -- a genuine Severity: marker was found
-        sev_label, sev_weight = max_sev_ord(row["output"])
-        category = infer_category(row["output"])
+        # llm#1265 round 3: JSON-direct severity first (structured
+        # findings, never regex/substring over rendered text); fall back
+        # to the legacy substring match only when there is no structured
+        # findings list to read from at all (schema_version 0 / legacy
+        # `output`-only rows).
+        structured_sev = max_sev_ord_structured(row["output"], row["structured_output"])
+        if structured_sev is not None:
+            sev_label, sev_weight = structured_sev
+        else:
+            sev_label, sev_weight = max_sev_ord(text)
+        category = infer_category(text)
     cat_risk  = CAT_RISK.get(category, 1.0)
     age       = row["age_days"] if row["age_days"] is not None else 1
-    file_path = get_file_mention(row["output"])
+    file_path = get_file_mention(text)
     touches   = get_file_touches(root_path, file_path)
     priority  = compute_priority(sev_weight, cat_risk, age, touches)
     scored.append({
@@ -391,7 +493,7 @@ for row in rows:
         "age_days": age,
         "file_touches_30d": touches,
         "priority": priority,
-        "output": row["output"],
+        "output": text,
     })
 
 # Sort by priority DESC, take top_n
@@ -551,6 +653,35 @@ _selftest() {
     echo "$_qout" | grep -q "No open findings" && _has_priority=1
     _t "query_backlog: output has priority col or no-findings" "1" "$_has_priority"
   fi
+
+  # Test 8 (roborev id 10532): a broken lib_dir (roborev_classify cannot be
+  # imported) must emit a loud stderr warning, not silently degrade every
+  # row to the legacy substring-severity scan with no signal. Uses a real
+  # fixture DB (mirroring Test 1's missing-DB fixture, but present and
+  # populated with one row) so _query_backlog reaches the Python heredoc
+  # at all -- a missing DB returns early (Test 1) and never touches the
+  # import. Falsify by reverting the stderr warning in the except block
+  # above: this case then fails (exit 0/output unchanged, but no warning).
+  local _empty_lib_dir
+  _empty_lib_dir=$(mktemp -d "${TMPDIR:-/tmp}/roborev_backlog_emptylib_XXXXXX")
+  local _fixture_db8
+  _fixture_db8=$(mktemp "${TMPDIR:-/tmp}/roborev_backlog_test8_XXXXXX").db
+  rm -f "${_fixture_db8%.db}"
+  sqlite3 "$_fixture_db8" <<'SQL8' 2>/dev/null
+CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL, root_path TEXT);
+CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER, status TEXT DEFAULT 'done', finished_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, job_id INTEGER, closed INTEGER DEFAULT 0, output TEXT DEFAULT '', structured_output TEXT DEFAULT NULL);
+INSERT INTO repos VALUES (1, 'llm', '');
+INSERT INTO review_jobs VALUES (1, 1, 'done', datetime('now'));
+INSERT INTO reviews VALUES (1, 1, 0, '', '{"schema_version":2,"summary":"x","verdict":"fail","findings":[{"severity":"high","location":"R/x.R:1","problem":"p","fix":"f"}]}');
+SQL8
+  local _out8 _rc8
+  _out8=$(ROBOREV_BACKLOG_LIB_DIR="$_empty_lib_dir" _query_backlog "llm" "$_fixture_db8" "" 10 2>&1 >/dev/null)
+  _rc8=$?
+  rm -f "$_fixture_db8"
+  rm -rf "$_empty_lib_dir"
+  _t "broken lib_dir: still exits 0 (fail-open)" "0" "$_rc8"
+  _t "broken lib_dir: stderr warns import failed" "1" "$(echo "$_out8" | grep -qi "roborev_classify" && echo 1 || echo 0)"
 
   echo ""
   echo "${pass}/$((pass+fail)) PASS"

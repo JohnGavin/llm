@@ -38,6 +38,32 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 set -euo pipefail
 
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# reconstructs markdown text from the v0.68.2 structured_output JSON column
+# (falling back to legacy `output`) so this script's own Severity:/"no
+# issues found" regex/substring checks below keep working unchanged.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+
+# roborev id 10538: filters blank lines out of a pipe-delimited python
+# heredoc's stdout, exactly the way `while IFS='|' read -r ...; do [ -n
+# "$first" ] && ...; done` did inline at both the --replay and main-mode
+# call sites below -- extracted into ONE function so both of those loops
+# AND the selftest's Case 11 regression case call the SAME code, rather
+# than the selftest re-implementing the pattern in a copy that could
+# silently diverge from production (e.g. if a future edit reverted the
+# loops below to `IFS=$'\t'` without touching the selftest's own copy).
+# Field-count-agnostic: the caller still does its own field extraction
+# (cut -d'|' -f<n> or a positional `read`), this only strips fully-blank
+# lines from the python side's stdout.
+_pipe_rows_nonblank() {
+  local _input="$1"
+  local _line _first
+  while IFS= read -r _line; do
+    _first="${_line%%|*}"
+    [ -n "$_first" ] && printf '%s\n' "$_line"
+  done <<< "$_input"
+}
+
 # ── Self-test (must appear before any side effects) ──────────────────────
 if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
   PASS=0
@@ -216,22 +242,92 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
   # rv.id instead of rv.job_id (the two id spaces overlap so the wrong review was closed).
   _run_case_job_id_parse() {
     local label="$1"
-    # Construct a tab-separated candidate row: id=100, output=..., root=..., repo=..., verdict=0, job_id=999
-    local _test_row="100	No issues found.	/some/path	testrepo	0	999"
+    # Construct a PIPE-delimited candidate row matching the PRODUCTION
+    # main-mode row layout: id=100, output=..., sev_ord=<EMPTY>, root=...,
+    # repo=..., verdict=0, job_id=999. llm#1265 round 3 inserted a new
+    # sev_ord field (position 3, JSON-direct severity from Python) between
+    # output and root, shifting job_id from field 6 to field 7 -- this
+    # fixture and its `cut -d'|' -f7` MUST track the real row layout in the
+    # main loop above, or this regression guard silently stops guarding
+    # anything (llm#312: `roborev close` called with rv.id instead of
+    # rv.job_id, since the two id spaces overlap so the wrong review got
+    # closed).
+    #
+    # sev_ord is deliberately EMPTY here (roborev id 10530, caught live on
+    # this branch's own commits): review_severity_ordinal() returns None
+    # for every clean review, which Python prints as an empty field. A
+    # TAB-delimited row with an empty field silently collapses under
+    # `read`/`cut` (bash treats consecutive IFS-whitespace delimiters as
+    # one), shifting every later field left by one -- corrupting root/
+    # repo/verdict/job_id for the MOST COMMON case (clean reviews). Pipe is
+    # a non-whitespace delimiter, so `read`/`cut -f` never collapse it
+    # (same property `roborev_handoff.sh`'s pipe-delimited meta files
+    # already rely on). This fixture's empty field guards FIELD-INDEX
+    # tracking only (that `cut -d'|' -f7` still points at job_id after the
+    # sev_ord field was inserted) -- `cut` never collapsed delimiters even
+    # under the old tab-delimited scheme, so this case alone could not have
+    # caught the empty-field collapse regression; Case 11 below is the
+    # guard for that.
+    local _test_row="100|No issues found.||/some/path|testrepo|0|999"
     local _parsed_id
+    local _parsed_sev_ord
     local _parsed_job_id
-    _parsed_id=$(echo "$_test_row" | cut -f1)
-    _parsed_job_id=$(echo "$_test_row" | cut -f6)
-    # job_id must be 999, not 100 (review id)
-    if [ "$_parsed_job_id" = "999" ] && [ "$_parsed_id" = "100" ] && [ "$_parsed_job_id" != "$_parsed_id" ]; then
+    _parsed_id=$(echo "$_test_row" | cut -d'|' -f1)
+    _parsed_sev_ord=$(echo "$_test_row" | cut -d'|' -f3)
+    _parsed_job_id=$(echo "$_test_row" | cut -d'|' -f7)
+    # job_id must be 999, not 100 (review id); sev_ord must stay empty
+    # (not silently absorb "/some/path" or any other field's value).
+    if [ "$_parsed_job_id" = "999" ] && [ "$_parsed_id" = "100" ] \
+       && [ "$_parsed_job_id" != "$_parsed_id" ] && [ -z "$_parsed_sev_ord" ]; then
       PASS=$((PASS+1))
-      echo "  PASS [$label]: job_id=$_parsed_job_id correctly parsed from field 6 (review_id=$_parsed_id)"
+      echo "  PASS [$label]: job_id=$_parsed_job_id correctly parsed from field 7 (review_id=$_parsed_id)"
     else
       FAIL=$((FAIL+1))
       echo "  FAIL [$label]: expected job_id=999 review_id=100, got job_id=$_parsed_job_id review_id=$_parsed_id"
     fi
   }
-  _run_case_job_id_parse "job_id-field6-parse"
+  # Case 11 (roborev id 10530, caught live on this branch's own commits):
+  # exercises the SAME `_pipe_rows_nonblank()` function the main/replay
+  # loops call in production (defined once, near the top of this file) --
+  # NOT a hand-copied re-implementation of a `while IFS='|' read` loop.
+  # roborev id 10538: a re-implemented copy here could silently diverge
+  # from production (e.g. a future revert of the loops below to
+  # `IFS=$'\t'` would leave this case green even though the bug it exists
+  # to catch had returned); calling the shared function makes that
+  # impossible. `cut -f` (Case 10 above) never collapses consecutive
+  # delimiters even with tab, so it could not have caught the real bug;
+  # `read` with IFS as a single WHITESPACE character (tab) does collapse
+  # them, silently dropping an empty field and shifting every later field
+  # left by one. A clean review (review_severity_ordinal() returns None,
+  # printed as an empty sev_ord field) is the MOST COMMON row shape, so
+  # this is not an edge case. Two synthetic rows: row 1 has an empty
+  # sev_ord (clean review, job_id=901); row 2 has a real sev_ord=3
+  # (job_id=902). Both job_ids must land correctly, and row 1's sev_ord
+  # must stay empty rather than silently absorbing "root1".
+  _run_case_read_delimiter() {
+    local label="$1"
+    local _py_out
+    _py_out="$(printf '1|clean text||root1|repo1|1|901\n2|finding text|3|root2|repo2|0|902\n')"
+    local rows=()
+    while IFS= read -r _row; do
+      rows+=("$_row")
+    done < <(_pipe_rows_nonblank "$_py_out")
+    local row1_job_id row1_sev row2_job_id row2_sev
+    row1_job_id=$(echo "${rows[0]}" | cut -d'|' -f7)
+    row1_sev=$(echo "${rows[0]}" | cut -d'|' -f3)
+    row2_job_id=$(echo "${rows[1]}" | cut -d'|' -f7)
+    row2_sev=$(echo "${rows[1]}" | cut -d'|' -f3)
+    if [ "$row1_job_id" = "901" ] && [ -z "$row1_sev" ] && [ "$row2_job_id" = "902" ] && [ "$row2_sev" = "3" ]; then
+      PASS=$((PASS+1))
+      echo "  PASS [$label]: a clean review's empty sev_ord field does NOT shift later fields (job_id/root/repo/verdict all land correctly for both rows)"
+    else
+      FAIL=$((FAIL+1))
+      echo "  FAIL [$label]: row1_job_id=$row1_job_id row1_sev='$row1_sev' row2_job_id=$row2_job_id row2_sev=$row2_sev (expected 901/'' and 902/3)"
+    fi
+  }
+
+  _run_case_job_id_parse "job_id-field7-parse"
+  _run_case_read_delimiter "read-delimiter-empty-field-no-shift"
 
   TOTAL=$((PASS+FAIL))
   echo ""
@@ -596,20 +692,40 @@ if [ "$MODE" = "replay" ]; then
   echo "Replaying closed reviews against current threshold..."
 
   REPLAY_ROWS=()
-  while IFS=$'\t' read -r _id _output _root _repo; do
-    [ -n "$_id" ] && REPLAY_ROWS+=("${_id}	${_output}	${_root}	${_repo}")
-  done < <(
-    /usr/bin/python3 - "$ROBOREV_DB" "$MARKER_PATTERN" "$FILTER_REPO" <<'PYEOF'
+  set +e
+  _replay_py_out="$(
+    /usr/bin/python3 - "$ROBOREV_DB" "$MARKER_PATTERN" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
 db_path = sys.argv[1]
 marker  = sys.argv[2]
 repo_filter = sys.argv[3] if len(sys.argv) > 3 else ''
+lib_dir = sys.argv[4] if len(sys.argv) > 4 else ''
+
+# llm#1265 / PR #1269 round 3: an import failure here used to fail OPEN --
+# silently degrading to the raw `output` column (empty on every live
+# migrated row, since v0.68.2) with no severity read at all. This script
+# runs unattended via launchd (paused pending this fix; see the `--replay`/
+# main-mode docstring note below), so a degraded severity parse would
+# silently mis-close or mis-reopen reviews with nobody watching. Fail LOUD
+# and non-zero instead: print to stderr and exit distinctly so the caller
+# (this heredoc's exit status, captured below) can refuse to proceed rather
+# than reopen/close anything on a guess.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text, review_severity_ordinal
+except Exception as e:
+    sys.stderr.write(
+        f"roborev_severity_autoclose: FATAL - could not import roborev_classify "
+        f"from {lib_dir!r}: {type(e).__name__}: {e}\n"
+    )
+    sys.exit(3)
 
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
 sql = """
-    SELECT DISTINCT rv.id, rv.output, rp.root_path, rp.name
+    SELECT DISTINCT rv.id, rv.output, rv.structured_output, rp.root_path, rp.name
     FROM reviews rv
     JOIN review_jobs rj ON rj.id = rv.job_id
     JOIN repos rp ON rp.id = rj.repo_id
@@ -626,10 +742,48 @@ if repo_filter:
 rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
-    output = (row[1] or '').replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}")
+    text = review_output_text(row[1], row[2])
+    # llm#1265 round 3 (roborev id 10530): the FIELD DELIMITER here MUST be
+    # a non-IFS-whitespace character. Bash `read` collapses CONSECUTIVE
+    # IFS-whitespace delimiters (tab included) into one, so a tab-delimited
+    # row with an EMPTY severity field (every clean review -- the most
+    # common case) silently loses a field and every later field shifts
+    # left by one, corrupting root/repo for that row. Pipe is a non-
+    # whitespace character, so `read`/`cut -f` never collapse it (verified:
+    # `roborev_handoff.sh` already documents and relies on this same
+    # property for its own pipe-delimited meta files). `text` is free-form
+    # rendered markdown and MAY legitimately contain a literal `|` (e.g. a
+    # markdown table) -- strip/replace it along with tab/newline so it can
+    # never introduce a spurious extra field.
+    text = text.replace('\t', ' ').replace('\n', ' ').replace('|', ' ')
+    # llm#1265 round 3: severity is read JSON-direct via
+    # review_severity_ordinal() -- never via the bash-side
+    # _parse_max_severity() regex over this synthesized `text` -- so a
+    # finding's own problem/fix prose quoting a severity marker as an
+    # example cannot inflate the replay decision (review ids 10523/10524
+    # live shape). Printed as an extra pipe-delimited field; empty string
+    # means "no severity found" (bash side treats it the same as before).
+    sev_ord = review_severity_ordinal(row[1], row[2])
+    sev_str = str(sev_ord) if sev_ord is not None else ''
+    # roborev id 10538 (low): root_path/repo name go through this same
+    # pipe-delimited channel unsanitised -- a `|` in either would shift
+    # every field after it, the identical class of bug this commit fixes
+    # for `text`. Unlikely in practice, but sanitise it the same way.
+    root_path = (row[3] or '').replace('|', ' ')
+    repo_name = (row[4] or '').replace('|', ' ')
+    print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}")
 PYEOF
-  )
+  )"
+  _replay_py_rc=$?
+  set -e
+  if [ "$_replay_py_rc" -ne 0 ]; then
+    echo "roborev_severity_autoclose: FATAL — roborev_classify import/severity read failed (rc=${_replay_py_rc}) in --replay mode; see stderr above. Refusing to replay with a silently-degraded severity parse (this script runs unattended via launchd)." >&2
+    log "INDETERMINATE: roborev_classify import failed (rc=${_replay_py_rc}) in --replay mode"
+    exit 3
+  fi
+  while IFS= read -r _row; do
+    REPLAY_ROWS+=("$_row")
+  done < <(_pipe_rows_nonblank "$_replay_py_out")
 
   N=${#REPLAY_ROWS[@]}
   if [ "$N" -eq 0 ]; then
@@ -641,10 +795,11 @@ PYEOF
   REOPENED=0
   KEPT=0
   for _row in "${REPLAY_ROWS[@]}"; do
-    _id=$(echo "$_row" | cut -f1)
-    _output=$(echo "$_row" | cut -f2)
-    _root=$(echo "$_row" | cut -f3)
-    _repo=$(echo "$_row" | cut -f4)
+    _id=$(echo "$_row" | cut -d'|' -f1)
+    _output=$(echo "$_row" | cut -d'|' -f2)
+    _sev_ord=$(echo "$_row" | cut -d'|' -f3)
+    _root=$(echo "$_row" | cut -d'|' -f4)
+    _repo=$(echo "$_row" | cut -d'|' -f5)
 
     # Determine effective threshold for this repo
     _eff_threshold=""
@@ -673,7 +828,11 @@ PYEOF
     fi
 
     _t_ord=$(_sev_ordinal "$_eff_threshold")
-    _max_ord=$(_parse_max_severity "$_output")
+    # llm#1265 round 3: severity comes pre-parsed from Python's JSON-direct
+    # review_severity_ordinal() (see the heredoc above) -- NOT re-derived
+    # here via _parse_max_severity() over $_output, which would re-run the
+    # exact regex-over-rendered-text bug this round fixes.
+    _max_ord="$_sev_ord"
 
     # If threshold is off, or max severity exceeds threshold: reopen
     local_should_close=0
@@ -706,19 +865,36 @@ fi
 
 # Fetch all open reviews with repo info (both findings and clean verdicts)
 REVIEW_ROWS=()
-while IFS=$'\t' read -r _id _output _root _repo _verdict _job_id; do
-  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}	${_output}	${_root}	${_repo}	${_verdict}	${_job_id}")
-done < <(
-  /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" <<'PYEOF'
+set +e
+_main_py_out="$(
+  /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
 db_path = sys.argv[1]
 repo_filter = sys.argv[2] if len(sys.argv) > 2 else ''
+lib_dir = sys.argv[3] if len(sys.argv) > 3 else ''
+
+# llm#1265 / PR #1269 round 3: an import failure here used to fail OPEN --
+# silently degrading to the raw `output` column with no severity read at
+# all. This script runs unattended via launchd (paused pending this fix),
+# so a degraded severity parse could silently mis-close reviews with
+# nobody watching. Fail LOUD and non-zero instead (see the --replay
+# block's identical comment above for the full rationale).
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text, review_severity_ordinal
+except Exception as e:
+    sys.stderr.write(
+        f"roborev_severity_autoclose: FATAL - could not import roborev_classify "
+        f"from {lib_dir!r}: {type(e).__name__}: {e}\n"
+    )
+    sys.exit(3)
 
 con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
 sql = """
-    SELECT rv.id, rv.output, rp.root_path, rp.name, rv.verdict_bool, rv.job_id
+    SELECT rv.id, rv.output, rv.structured_output, rp.root_path, rp.name, rv.verdict_bool, rv.job_id
     FROM reviews rv
     JOIN review_jobs rj ON rj.id = rv.job_id
     JOIN repos rp ON rp.id = rj.repo_id
@@ -735,10 +911,35 @@ sql += " ORDER BY rv.id"
 rows = con.execute(sql, params).fetchall()
 con.close()
 for row in rows:
-    output = (row[1] or '').replace('\t', ' ').replace('\n', ' ')
-    print(f"{row[0]}\t{output}\t{row[2]}\t{row[3]}\t{row[4]}\t{row[5]}")
+    text = review_output_text(row[1], row[2])
+    # llm#1265 round 3 (roborev id 10530): pipe delimiter, not tab -- see
+    # the --replay block's identical comment above for why (bash `read`
+    # collapses consecutive IFS-whitespace delimiters, so a tab-delimited
+    # row with an EMPTY severity field -- every clean review -- would
+    # silently lose a field and shift everything after it, corrupting
+    # root/repo/verdict/job_id for the most common case).
+    text = text.replace('\t', ' ').replace('\n', ' ').replace('|', ' ')
+    # llm#1265 round 3: JSON-direct severity, never the bash-side regex --
+    # see the --replay block's identical comment above.
+    sev_ord = review_severity_ordinal(row[1], row[2])
+    sev_str = str(sev_ord) if sev_ord is not None else ''
+    # roborev id 10538 (low): sanitise root_path/repo the same way as
+    # `text` above -- see the --replay block's identical comment.
+    root_path = (row[3] or '').replace('|', ' ')
+    repo_name = (row[4] or '').replace('|', ' ')
+    print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}|{row[5]}|{row[6]}")
 PYEOF
-)
+)"
+_main_py_rc=$?
+set -e
+if [ "$_main_py_rc" -ne 0 ]; then
+  echo "roborev_severity_autoclose: FATAL — roborev_classify import/severity read failed (rc=${_main_py_rc}); see stderr above. Refusing to run with a silently-degraded severity parse (this script runs unattended via launchd)." >&2
+  log "INDETERMINATE: roborev_classify import failed (rc=${_main_py_rc}) in main mode"
+  exit 3
+fi
+while IFS= read -r _row; do
+  REVIEW_ROWS+=("$_row")
+done < <(_pipe_rows_nonblank "$_main_py_out")
 
 N=${#REVIEW_ROWS[@]}
 if [ "$N" -eq 0 ]; then
@@ -756,12 +957,13 @@ TOTAL_SKIPPED=0
 TOTAL_PARSE_FAIL=0
 
 for _row in "${REVIEW_ROWS[@]}"; do
-  _id=$(echo "$_row"       | cut -f1)
-  _output=$(echo "$_row"   | cut -f2)
-  _root=$(echo "$_row"     | cut -f3)
-  _repo=$(echo "$_row"     | cut -f4)
-  _verdict=$(echo "$_row"  | cut -f5)
-  _job_id=$(echo "$_row"   | cut -f6)
+  _id=$(echo "$_row"       | cut -d'|' -f1)
+  _output=$(echo "$_row"   | cut -d'|' -f2)
+  _sev_ord=$(echo "$_row"  | cut -d'|' -f3)
+  _root=$(echo "$_row"     | cut -d'|' -f4)
+  _repo=$(echo "$_row"     | cut -d'|' -f5)
+  _verdict=$(echo "$_row"  | cut -d'|' -f6)
+  _job_id=$(echo "$_row"   | cut -d'|' -f7)
 
   # Determine effective threshold + source for this repo
   _eff_threshold=""
@@ -790,7 +992,11 @@ for _row in "${REVIEW_ROWS[@]}"; do
   fi
 
   _t_ord=$(_sev_ordinal "$_eff_threshold")
-  _max_ord=$(_parse_max_severity "$_output")
+  # llm#1265 round 3: severity comes pre-parsed from Python's JSON-direct
+  # review_severity_ordinal() (see the heredoc above) -- NOT re-derived
+  # here via _parse_max_severity() over $_output, which would re-run the
+  # exact regex-over-rendered-text bug this round fixes.
+  _max_ord="$_sev_ord"
 
   # Record threshold per repo
   THRESHOLD_BY_REPO["$_repo"]="$_eff_threshold"
