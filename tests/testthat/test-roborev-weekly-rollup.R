@@ -127,3 +127,67 @@ test_that("Top Stuck Findings prints the JOB id (what roborev show/close accept)
   expect_true(any(grepl("^\\| 900 \\|", lines)))
   expect_false(any(grepl("^\\| 7 \\|", lines)))
 })
+
+# ── PR #1269 round 4 (review 10533): .weekly_structured_top_finding() ──────
+#
+# .weekly_structured_top_finding() is a nested function inside
+# query_reviews_db(), self-contained (only touches its own locals and the
+# WEEKLY_SEVERITY_ORDINAL constant defined immediately above it, plus
+# jsonlite::fromJSON) -- extracted by anchor + brace-depth walk, same
+# pattern as test-roborev-etl-lifecycle.R / test-roborev-fix-commit-link.R,
+# so these tests don't drift if unrelated lines are added elsewhere in the
+# script.
+
+local({
+  all_lines <- readLines(rollup_script)
+  start_line <- grep("^  WEEKLY_SEVERITY_ORDINAL <- ", all_lines)[[1L]]
+  fn_line <- grep("^  \\.weekly_structured_top_finding <- function", all_lines)[[1L]]
+  depth <- 0L
+  end_line <- fn_line
+  for (li in fn_line:length(all_lines)) {
+    opens  <- nchar(gsub("[^{]", "", all_lines[[li]]))
+    closes <- nchar(gsub("[^}]", "", all_lines[[li]]))
+    depth  <- depth + opens - closes
+    if (li > fn_line && depth == 0L) {
+      end_line <- li
+      break
+    }
+  }
+  fn_block <- all_lines[start_line:end_line]
+  eval(parse(text = paste(fn_block, collapse = "\n")), envir = globalenv())
+})
+
+test_that(".weekly_structured_top_finding: array-valued severity does not crash, is skipped", {
+  # Finding 2 (crash guard): a JSON-array `severity` used to make
+  # as.character()+is.na() length>1, crashing the `||` check.
+  so <- '{"schema_version":2,"findings":[{"severity":["high","low"],"problem":"bad shape"}]}'
+  expect_no_error(result <- .weekly_structured_top_finding(so))
+  expect_equal(result$severity, "unclassified")
+})
+
+test_that(".weekly_structured_top_finding: all-unusable severities -> 'unclassified', not NA", {
+  # Finding 4a: must NOT return NA here (that would resurrect the
+  # cross-newline extract_sev() regex fallback at the call site).
+  so <- '{"schema_version":2,"findings":[{"severity":"bogus","problem":"x"}]}'
+  result <- .weekly_structured_top_finding(so)
+  expect_equal(result$severity, "unclassified")
+  expect_true(is.na(result$summary))
+})
+
+test_that(".weekly_structured_top_finding: multi-line problem text is collapsed to one line", {
+  # Finding 1: an embedded newline in `problem` used to split the markdown
+  # table row across lines.
+  so <- '{"schema_version":2,"findings":[{"severity":"high","problem":"line one\\nline two"}]}'
+  result <- .weekly_structured_top_finding(so)
+  expect_equal(result$severity, "high")
+  expect_false(grepl("\n", result$summary, fixed = TRUE))
+  expect_equal(result$summary, "line one line two")
+})
+
+test_that(".weekly_structured_top_finding: empty problem text -> placeholder, not NA", {
+  # Finding 4b: NA here used to fall back to extract_summary()'s regex,
+  # which just re-shows the same severity bullet as a fake "summary".
+  so <- '{"schema_version":2,"findings":[{"severity":"high"}]}'
+  result <- .weekly_structured_top_finding(so)
+  expect_equal(result$summary, "(no problem text)")
+})

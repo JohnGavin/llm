@@ -118,6 +118,113 @@ assert_eq "test3: 'diff file could not be read' (live phrasing) -> not_reviewed"
     "not_reviewed" \
     "$(classify_one "Cannot review code changes as the diff file could not be read.")"
 
+# ── Test 3b: structured_output reader (llm#1265) ───────────────────────────
+# roborev v0.68.2 migrated every row's review text out of `output` (empty on
+# all live rows) into `structured_output` (JSON, schema_version 0/1/2). See
+# roborev_classify.py's module docstring for the full shape catalogue.
+classify_row() {
+    local output="$1" structured_output="$2"
+    "${PYTHON}" -c "
+import sys
+sys.path.insert(0, '$(dirname "${CLASSIFY_MODULE}")')
+from roborev_classify import classify_review_row
+output = sys.argv[1] if sys.argv[1] != '__NONE__' else None
+structured = sys.argv[2] if sys.argv[2] != '__NONE__' else None
+print(classify_review_row(output, structured))
+" "${output:-__NONE__}" "${structured_output:-__NONE__}"
+}
+
+severity_ordinal_row() {
+    local output="$1" structured_output="$2"
+    "${PYTHON}" -c "
+import sys
+sys.path.insert(0, '$(dirname "${CLASSIFY_MODULE}")')
+from roborev_classify import review_severity_ordinal
+output = sys.argv[1] if sys.argv[1] != '__NONE__' else None
+structured = sys.argv[2] if sys.argv[2] != '__NONE__' else None
+ord_ = review_severity_ordinal(output, structured)
+print('' if ord_ is None else ord_)
+" "${output:-__NONE__}" "${structured_output:-__NONE__}"
+}
+
+V2_WITH_FINDINGS='{"schema_version":2,"summary":"x","verdict":"fail","findings":[{"severity":"medium","problem":"p1","location":"a.R:1","fix":"f1"},{"severity":"high","problem":"p2","location":"b.R:2","fix":"f2"}]}'
+V2_PASS_NO_FINDINGS='{"schema_version":2,"summary":"clean diff","verdict":"pass","findings":[]}'
+V1_EMPTY_NO_VERDICT='{"schema_version":1,"summary":"trivial gitignore change","findings":[]}'
+LEGACY_TEXT_ONLY='- **Severity**: Low
+  **Problem**: minor thing'
+MALFORMED_JSON='{not valid json'
+
+assert_eq "test3b: v2 JSON with medium+high findings -> parsed" \
+    "parsed" \
+    "$(classify_row "" "${V2_WITH_FINDINGS}")"
+
+assert_eq "test3b: v2 JSON with findings -> severity ordinal 3 (high, the max)" \
+    "3" \
+    "$(severity_ordinal_row "" "${V2_WITH_FINDINGS}")"
+
+assert_eq "test3b: v2 verdict=pass, no findings -> passed" \
+    "passed" \
+    "$(classify_row "" "${V2_PASS_NO_FINDINGS}")"
+
+assert_eq "test3b: v1 empty findings, no verdict key -> passed" \
+    "passed" \
+    "$(classify_row "" "${V1_EMPTY_NO_VERDICT}")"
+
+assert_eq "test3b: legacy text only (no structured_output) -> parsed" \
+    "parsed" \
+    "$(classify_row "${LEGACY_TEXT_ONLY}" "")"
+
+assert_eq "test3b: malformed JSON falls back to legacy \`output\` text -> parsed" \
+    "parsed" \
+    "$(classify_row "${LEGACY_TEXT_ONLY}" "${MALFORMED_JSON}")"
+
+assert_eq "test3b: BOTH output and structured_output empty -> indeterminate (never clean)" \
+    "indeterminate" \
+    "$(classify_row "" "")"
+
+assert_eq "test3b: BOTH columns absent (None) -> indeterminate" \
+    "indeterminate" \
+    "$(classify_row "__NONE__" "__NONE__")"
+
+assert_eq "test3b: malformed JSON AND empty output -> indeterminate" \
+    "indeterminate" \
+    "$(classify_row "" "${MALFORMED_JSON}")"
+
+# ── Test 3b falsification: prove the fixtures can go red ───────────────────
+# Break _parse_structured_json (temp copy) to confirm the v2/passed/legacy
+# cases above are actually exercising the structured_output code path, not
+# silently passing for an unrelated reason.
+#
+# llm#1265 finding 6: this used to be a `sed 's/.../...\n    return
+# None.../'` replacement, but `\n` inside a sed replacement is a GNU
+# extension — on BSD/macOS sed it inserts a literal "n" instead of a
+# newline, producing invalid Python and making this falsification block
+# fail for the WRONG reason (a syntax error, not "the fixtures don't
+# exercise the real code path"), which violates this repo's
+# nix-shell-portability rule. Build the falsified module with python3
+# instead (already a hard dependency of this test via $PYTHON), which is
+# portable by construction.
+FALSIFY_TMP="$(mktemp -d)"
+FALSIFY_MODULE="${FALSIFY_TMP}/roborev_classify.py"
+"${PYTHON}" -c "
+marker = 'def _parse_structured_json(structured_output):'
+with open('${CLASSIFY_MODULE}') as f:
+    src = f.read()
+idx = src.index(marker)
+insert_at = idx + len(marker)
+patched = src[:insert_at] + '\n    return None  # FALSIFICATION INJECTED' + src[insert_at:]
+with open('${FALSIFY_MODULE}', 'w') as f:
+    f.write(patched)
+"
+falsify_out=$("${PYTHON}" "${FALSIFY_MODULE}" --selftest 2>&1)
+falsify_fail_n=$(echo "${falsify_out}" | grep -c '^  FAIL')
+rm -rf "${FALSIFY_TMP}"
+if [ "${falsify_fail_n}" -ge 5 ]; then
+    pass "test3b-falsify: breaking the structured_output reader turns >=5 selftest cases red (got ${falsify_fail_n})"
+else
+    fail "test3b-falsify: breaking the structured_output reader only broke ${falsify_fail_n} cases — fixtures may not exercise the real code path"
+fi
+
 # ── Test 4: bash -n syntax check on the consumer script ───────────────────
 BACKLOG_SCRIPT="${SCRIPT_DIR}/../.claude/scripts/roborev_project_backlog.sh"
 bash_n_out=$(bash -n "${BACKLOG_SCRIPT}" 2>&1)
