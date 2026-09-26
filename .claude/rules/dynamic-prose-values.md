@@ -14,6 +14,7 @@ paths:
   - "**/template/**"
   - "**/dashboard/**"
   - "**/render*.R"
+  - "**/R/*.R"
 ---
 
 # Rule: One Home Per Value — Dynamic Prose Values (Mandatory, No Exceptions)
@@ -52,7 +53,7 @@ A rule that says "be careful" fails at some rate per edit, and the number of edi
 | **Legacy artifacts use a ratchet**: report the debt as one line; a per-artifact `strict` flag turns it into an error. | Older work is not broken, but the debt is never silent. Flag it on sight. |
 | **Values about the artifact itself are derived too** (version, page/fact counts). | A hand-typed "Version 2026-08-29" and "Facts 16" outlived two releases. |
 
-A reference implementation (a gate function plus a `data-fact` fill function, run as the last two steps of a splice/publish script) exists in a private dashboard project; ask the owner for it rather than re-deriving.
+**Enforcement is per-project today.** This repo ships no shared checker yet — tracked in [#1272](https://github.com/JohnGavin/llm/issues/1272) (a `check_dark_contrast.sh`-style script over rendered HTML). Until it lands, each publishing project wires its own gate; a project that publishes text without one has an open defect, not an exemption. A working gate plus a `data-fact` fill function exists in a private dashboard project (run as the last two steps of its splice/publish script); read it for the idea, as #1272 describes.
 
 ### Prove it — and test the generator, not only the validator
 
