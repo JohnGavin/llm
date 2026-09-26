@@ -288,18 +288,26 @@ fetch_open_reviews <- function(db, repo, min_severity_num, sev_order, limit) {
     }
     findings <- data[["findings"]]
     if (is.list(findings) && length(findings) > 0L) {
+      # PR #1269 round 4 (defense-in-depth, same crash class as review
+      # 10536 finding 2 in .review_structured_findings_list() above): a
+      # JSON array field becomes a non-scalar list/vector under
+      # simplifyVector=FALSE, and as.character()+nzchar() on that crashes
+      # `if()` in R 4.2+. Only a length-1 character value is used; anything
+      # else renders as blank rather than aborting this fallback path
+      # (which is itself the regex path's OWN input, exercised whenever the
+      # JSON-direct reader above finds nothing usable to read).
       blocks <- vapply(findings, function(f) {
         if (!is.list(f)) return("")
         sev <- f[["severity"]]
-        sev <- if (is.null(sev)) "" else trimws(as.character(sev))
+        sev <- if (is.character(sev) && length(sev) == 1L) trimws(sev) else ""
         sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
         lines <- sprintf("**Severity**: %s", sev_cap)
         loc <- f[["location"]]
-        if (!is.null(loc) && nzchar(as.character(loc))) {
+        if (is.character(loc) && length(loc) == 1L && nzchar(loc)) {
           lines <- c(lines, sprintf("**Location**: %s", loc))
         }
         prob <- f[["problem"]]
-        if (!is.null(prob) && nzchar(as.character(prob))) {
+        if (is.character(prob) && length(prob) == 1L && nzchar(prob)) {
           lines <- c(lines, sprintf("**Problem**: %s", prob))
         }
         paste(lines, collapse = "\n")
@@ -358,15 +366,40 @@ fetch_open_reviews <- function(db, repo, min_severity_num, sev_order, limit) {
   if (!is.list(findings) || length(findings) == 0L) return(NULL)
   out <- lapply(findings, function(f) {
     if (!is.list(f)) return(NULL)
+    # PR #1269 round 4 (review 10536 finding 2): `severity`/`location`/
+    # `problem` can be a JSON array, which simplifyVector=FALSE turns into
+    # an R list rather than a scalar. as.character() on that, followed by
+    # `nzchar(...)` inside an `if`, crashes in R 4.2+ ("condition has
+    # length > 1"). Only a length-1 character value is accepted here;
+    # anything else is treated as absent. A finding with no usable severity
+    # is dropped entirely (returns NULL, filtered out below) rather than
+    # kept with severity=NA -- so that when EVERY finding in this row is
+    # unusable, this function returns NULL and the caller falls through to
+    # the regex path instead of reporting a determinate-looking "no
+    # findings above threshold" from data that was never actually read
+    # (review 10536 finding 3, checks-must-distinguish-unknown).
     sev <- f[["severity"]]
-    sev_chr <- if (is.null(sev)) "" else trimws(as.character(sev))
-    sev_cap <- if (nzchar(sev_chr)) paste0(toupper(substr(sev_chr, 1, 1)), substr(sev_chr, 2, nchar(sev_chr))) else NA_character_
+    if (!is.character(sev) || length(sev) != 1L || !nzchar(trimws(sev))) return(NULL)
+    # Lower-case first, THEN capitalise the first letter, so any input
+    # casing ("HIGH", "high", "High") normalises to the "High" shape
+    # sev_order's names use (Critical/High/Medium/Low) -- review 10536
+    # finding 1. Upper-casing only the first character left "HIGH" as
+    # "HIGH", which never matches sev_order's "High".
+    sev_lower <- tolower(trimws(sev))
+    sev_cap <- paste0(toupper(substr(sev_lower, 1, 1)), substr(sev_lower, 2, nchar(sev_lower)))
+    # An off-vocabulary word (not Critical/High/Medium/Low) is not a usable
+    # severity either -- drop the finding rather than keep a value
+    # classify_review()'s sev_order lookup will just discard anyway. This
+    # keeps "no finding has a recognised severity" (review 10536 finding 3)
+    # meaning exactly the same thing here as it does for the vocabulary
+    # check every other JSON-direct reader fixed in this round applies.
+    if (!(sev_cap %in% c("Critical", "High", "Medium", "Low"))) return(NULL)
     loc  <- f[["location"]]
     prob <- f[["problem"]]
     list(
       severity = sev_cap,
-      location = if (!is.null(loc) && nzchar(trimws(as.character(loc)))) trimws(as.character(loc)) else NA_character_,
-      problem  = if (!is.null(prob) && nzchar(trimws(as.character(prob)))) trimws(as.character(prob)) else NA_character_
+      location = if (is.character(loc) && length(loc) == 1L && nzchar(trimws(loc))) trimws(loc) else NA_character_,
+      problem  = if (is.character(prob) && length(prob) == 1L && nzchar(trimws(prob))) trimws(prob) else NA_character_
     )
   })
   out <- Filter(Negate(is.null), out)
@@ -585,7 +618,14 @@ classify_review <- function(review_row, repo_root, min_severity_num, sev_order) 
   sev_names <- names(sev_order)
   findings_above_threshold <- Filter(function(f) {
     if (is.na(f$severity)) return(FALSE)
-    sev_num <- sev_order[[f$severity]]
+    # PR #1269 round 4 (review 10536 finding 1): `[[` on an atomic named
+    # vector raises "subscript out of bounds" for a name not present,
+    # instead of returning NA -- an off-vocabulary severity (or a casing
+    # miss, before the capitalisation fix above) would abort classify_review()
+    # for the WHOLE review, silently skipping the is.null/is.na guard on the
+    # next line. `[` returns a length-1 NA for an unmatched name instead of
+    # erroring.
+    sev_num <- unname(sev_order[f$severity])
     if (is.null(sev_num) || is.na(sev_num)) return(FALSE)
     sev_num >= min_severity_num
   }, findings)

@@ -556,15 +556,28 @@ parse_max_severity <- function(text) {
     if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
   }
   schema_version <- data[["schema_version"]]
+  # PR #1269 round 4 (review 10534 finding 1): this gate previously accepted
+  # ANY numeric schema_version >= 1 (e.g. a future 3+), while
+  # .metrics_structured_max_severity() below only accepts 1 or 2 -- for a
+  # schema_version 3 row, this function would render severity bullets and
+  # the regex fallback would derive a severity while the JSON-direct reader
+  # returned NA, silently reintroducing the inconsistency review 10524
+  # already flagged (and masking it, since the regex fallback quietly
+  # produces a value). Both readers now use the identical
+  # `schema_version %in% c(1, 2)` gate, matching
+  # roborev_classify.py's/roborev_weekly_rollup.R's equivalent readers.
   valid_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
-    !is.na(schema_version) && schema_version >= 1
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
   if (!valid_schema) return(out)
   findings <- data[["findings"]]
   if (!is.list(findings) || length(findings) == 0L) return(out)
   blocks <- vapply(findings, function(f) {
     if (!is.list(f)) return("")
+    # `severity` can be a JSON array, which simplifyVector=FALSE turns into
+    # a non-scalar list/vector; as.character()+nzchar() on that crashes
+    # `if()` in R 4.2+. Only a length-1 character value is used.
     sev <- f[["severity"]]
-    sev <- if (is.null(sev)) "" else trimws(as.character(sev))
+    sev <- if (is.character(sev) && length(sev) == 1L) trimws(sev) else ""
     sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
     sprintf("- **Severity**: %s", sev_cap)
   }, character(1L))
@@ -606,14 +619,22 @@ parse_max_severity <- function(text) {
   ords <- vapply(findings, function(f) {
     if (!is.list(f)) return(NA_integer_)
     sev <- f[["severity"]]
-    if (is.null(sev)) return(NA_integer_)
+    # PR #1269 round 4 (review 10534 finding 4): `severity` can be a JSON
+    # array, which simplifyVector=FALSE turns into a non-scalar list/vector.
+    # as.character(sev) on that is length>1, so indexing
+    # .METRICS_SEVERITY_ORDINAL_LC by it and then testing `is.na(idx)` in
+    # `if (length(idx) == 0L || is.na(idx))` crashes ("argument is of length
+    # > 1") in R 4.3+. Only a length-1 character `severity` is scored;
+    # anything else degrades to NA (unscored) instead of aborting the whole
+    # vapply/ETL run.
+    if (!is.character(sev) || length(sev) != 1L) return(NA_integer_)
     # JSON `severity` values are always lowercase (critical/high/medium/low
     # -- see roborev_classify.py's docstring); .METRICS_SEVERITY_ORDINAL_LC
     # is keyed lowercase to match directly, unlike SEVERITY_LEVELS above
     # (keyed "Critical"/"High"/... to match parse_max_severity()'s
     # capitalised regex captures).
-    idx <- .METRICS_SEVERITY_ORDINAL_LC[tolower(trimws(as.character(sev)))]
-    if (length(idx) == 0L || is.na(idx)) NA_integer_ else unname(idx)
+    idx <- .METRICS_SEVERITY_ORDINAL_LC[tolower(trimws(sev))]
+    if (length(idx) != 1L || is.na(idx)) NA_integer_ else unname(idx)
   }, integer(1L))
   if (all(is.na(ords))) return(NA_character_)
   best_ord <- max(ords, na.rm = TRUE)

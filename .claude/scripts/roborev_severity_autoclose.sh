@@ -44,6 +44,26 @@ set -euo pipefail
 # issues found" regex/substring checks below keep working unchanged.
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 
+# roborev id 10538: filters blank lines out of a pipe-delimited python
+# heredoc's stdout, exactly the way `while IFS='|' read -r ...; do [ -n
+# "$first" ] && ...; done` did inline at both the --replay and main-mode
+# call sites below -- extracted into ONE function so both of those loops
+# AND the selftest's Case 11 regression case call the SAME code, rather
+# than the selftest re-implementing the pattern in a copy that could
+# silently diverge from production (e.g. if a future edit reverted the
+# loops below to `IFS=$'\t'` without touching the selftest's own copy).
+# Field-count-agnostic: the caller still does its own field extraction
+# (cut -d'|' -f<n> or a positional `read`), this only strips fully-blank
+# lines from the python side's stdout.
+_pipe_rows_nonblank() {
+  local _input="$1"
+  local _line _first
+  while IFS= read -r _line; do
+    _first="${_line%%|*}"
+    [ -n "$_first" ] && printf '%s\n' "$_line"
+  done <<< "$_input"
+}
+
 # ── Self-test (must appear before any side effects) ──────────────────────
 if [ "${ROBOREV_SEVAUTOCLOSE_SELFTEST:-0}" = "1" ]; then
   PASS=0
@@ -242,8 +262,12 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
     # repo/verdict/job_id for the MOST COMMON case (clean reviews). Pipe is
     # a non-whitespace delimiter, so `read`/`cut -f` never collapse it
     # (same property `roborev_handoff.sh`'s pipe-delimited meta files
-    # already rely on). This fixture's empty field is the regression
-    # guard for that fix, not incidental.
+    # already rely on). This fixture's empty field guards FIELD-INDEX
+    # tracking only (that `cut -d'|' -f7` still points at job_id after the
+    # sev_ord field was inserted) -- `cut` never collapsed delimiters even
+    # under the old tab-delimited scheme, so this case alone could not have
+    # caught the empty-field collapse regression; Case 11 below is the
+    # guard for that.
     local _test_row="100|No issues found.||/some/path|testrepo|0|999"
     local _parsed_id
     local _parsed_sev_ord
@@ -263,27 +287,31 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
     fi
   }
   # Case 11 (roborev id 10530, caught live on this branch's own commits):
-  # exercises the ACTUAL `while IFS='|' read -r ...` pattern the main/
-  # replay loops use to consume the python heredoc's stdout -- `cut -f`
-  # (Case 10 above) never collapses consecutive delimiters even with tab,
-  # so it could not have caught the real bug; `read` with IFS as a single
-  # WHITESPACE character (tab) does collapse them, silently dropping an
-  # empty field and shifting every later field left by one. A clean
-  # review (review_severity_ordinal() returns None, printed as an empty
-  # sev_ord field) is the MOST COMMON row shape, so this is not an edge
-  # case. Two synthetic rows: row 1 has an empty sev_ord (clean review,
-  # job_id=901); row 2 has a real sev_ord=3 (job_id=902). Both job_ids
-  # must land correctly, and row 1's sev_ord must stay empty rather than
-  # silently absorbing "root1".
+  # exercises the SAME `_pipe_rows_nonblank()` function the main/replay
+  # loops call in production (defined once, near the top of this file) --
+  # NOT a hand-copied re-implementation of a `while IFS='|' read` loop.
+  # roborev id 10538: a re-implemented copy here could silently diverge
+  # from production (e.g. a future revert of the loops below to
+  # `IFS=$'\t'` would leave this case green even though the bug it exists
+  # to catch had returned); calling the shared function makes that
+  # impossible. `cut -f` (Case 10 above) never collapses consecutive
+  # delimiters even with tab, so it could not have caught the real bug;
+  # `read` with IFS as a single WHITESPACE character (tab) does collapse
+  # them, silently dropping an empty field and shifting every later field
+  # left by one. A clean review (review_severity_ordinal() returns None,
+  # printed as an empty sev_ord field) is the MOST COMMON row shape, so
+  # this is not an edge case. Two synthetic rows: row 1 has an empty
+  # sev_ord (clean review, job_id=901); row 2 has a real sev_ord=3
+  # (job_id=902). Both job_ids must land correctly, and row 1's sev_ord
+  # must stay empty rather than silently absorbing "root1".
   _run_case_read_delimiter() {
     local label="$1"
     local _py_out
     _py_out="$(printf '1|clean text||root1|repo1|1|901\n2|finding text|3|root2|repo2|0|902\n')"
     local rows=()
-    local _rid _rout _rsev _rroot _rrepo _rverd _rjob
-    while IFS='|' read -r _rid _rout _rsev _rroot _rrepo _rverd _rjob; do
-      [ -n "$_rid" ] && rows+=("${_rid}|${_rout}|${_rsev}|${_rroot}|${_rrepo}|${_rverd}|${_rjob}")
-    done <<< "$_py_out"
+    while IFS= read -r _row; do
+      rows+=("$_row")
+    done < <(_pipe_rows_nonblank "$_py_out")
     local row1_job_id row1_sev row2_job_id row2_sev
     row1_job_id=$(echo "${rows[0]}" | cut -d'|' -f7)
     row1_sev=$(echo "${rows[0]}" | cut -d'|' -f3)
@@ -737,7 +765,13 @@ for row in rows:
     # means "no severity found" (bash side treats it the same as before).
     sev_ord = review_severity_ordinal(row[1], row[2])
     sev_str = str(sev_ord) if sev_ord is not None else ''
-    print(f"{row[0]}|{text}|{sev_str}|{row[3]}|{row[4]}")
+    # roborev id 10538 (low): root_path/repo name go through this same
+    # pipe-delimited channel unsanitised -- a `|` in either would shift
+    # every field after it, the identical class of bug this commit fixes
+    # for `text`. Unlikely in practice, but sanitise it the same way.
+    root_path = (row[3] or '').replace('|', ' ')
+    repo_name = (row[4] or '').replace('|', ' ')
+    print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}")
 PYEOF
   )"
   _replay_py_rc=$?
@@ -747,9 +781,9 @@ PYEOF
     log "INDETERMINATE: roborev_classify import failed (rc=${_replay_py_rc}) in --replay mode"
     exit 3
   fi
-  while IFS='|' read -r _id _output _sev_ord _root _repo; do
-    [ -n "$_id" ] && REPLAY_ROWS+=("${_id}|${_output}|${_sev_ord}|${_root}|${_repo}")
-  done <<< "$_replay_py_out"
+  while IFS= read -r _row; do
+    REPLAY_ROWS+=("$_row")
+  done < <(_pipe_rows_nonblank "$_replay_py_out")
 
   N=${#REPLAY_ROWS[@]}
   if [ "$N" -eq 0 ]; then
@@ -889,7 +923,11 @@ for row in rows:
     # see the --replay block's identical comment above.
     sev_ord = review_severity_ordinal(row[1], row[2])
     sev_str = str(sev_ord) if sev_ord is not None else ''
-    print(f"{row[0]}|{text}|{sev_str}|{row[3]}|{row[4]}|{row[5]}|{row[6]}")
+    # roborev id 10538 (low): sanitise root_path/repo the same way as
+    # `text` above -- see the --replay block's identical comment.
+    root_path = (row[3] or '').replace('|', ' ')
+    repo_name = (row[4] or '').replace('|', ' ')
+    print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}|{row[5]}|{row[6]}")
 PYEOF
 )"
 _main_py_rc=$?
@@ -899,9 +937,9 @@ if [ "$_main_py_rc" -ne 0 ]; then
   log "INDETERMINATE: roborev_classify import failed (rc=${_main_py_rc}) in main mode"
   exit 3
 fi
-while IFS='|' read -r _id _output _sev_ord _root _repo _verdict _job_id; do
-  [ -n "$_id" ] && REVIEW_ROWS+=("${_id}|${_output}|${_sev_ord}|${_root}|${_repo}|${_verdict}|${_job_id}")
-done <<< "$_main_py_out"
+while IFS= read -r _row; do
+  REVIEW_ROWS+=("$_row")
+done < <(_pipe_rows_nonblank "$_main_py_out")
 
 N=${#REVIEW_ROWS[@]}
 if [ "$N" -eq 0 ]; then

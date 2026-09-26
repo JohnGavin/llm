@@ -303,6 +303,51 @@ test_that(".review_structured_findings_list: NA structured_output -> NULL", {
   expect_null(.review_structured_findings_list(NA_character_))
 })
 
+# ── PR #1269 round 4 (review 10536): coverage for the crash guard, the
+# capitalisation fix, and the safe sev_order lookup ─────────────────────────
+
+test_that(".review_structured_findings_list: two findings of mixed severity are both read", {
+  structured <- paste0(
+    '{"schema_version":1,"findings":[',
+    '{"severity":"low","location":"a.R:1","problem":"p1"},',
+    '{"severity":"critical","location":"b.R:2","problem":"p2"}',
+    ']}'
+  )
+  findings <- .review_structured_findings_list(structured)
+  expect_equal(length(findings), 2L)
+  expect_equal(vapply(findings, function(f) f$severity, character(1L)), c("Low", "Critical"))
+})
+
+test_that(".review_structured_findings_list: upper-case severity normalises to Title-case (finding 1)", {
+  # Upper-casing only the FIRST character (the old bug) left "HIGH" as
+  # "HIGH", which never matches sev_order's "High".
+  structured <- '{"schema_version":1,"findings":[{"severity":"HIGH"}]}'
+  findings <- .review_structured_findings_list(structured)
+  expect_equal(findings[[1L]]$severity, "High")
+})
+
+test_that(".review_structured_findings_list: array-valued severity does not crash, finding is dropped (finding 2)", {
+  structured <- '{"schema_version":1,"findings":[{"severity":["high","low"],"problem":"bad shape"}]}'
+  expect_no_error(findings <- .review_structured_findings_list(structured))
+  expect_null(findings)
+})
+
+test_that(".review_structured_findings_list: all-unrecognised severities -> NULL, falls through to regex path (finding 3)", {
+  structured <- '{"schema_version":1,"findings":[{"severity":"bogus","problem":"x"}]}'
+  expect_null(.review_structured_findings_list(structured))
+})
+
+test_that("classify_review: unknown severity passed through does not error (finding 1/4)", {
+  repo_root <- setup_repo_tree()
+  structured <- '{"schema_version":1,"findings":[{"severity":"bogus","location":"a.R:1","problem":"x"}]}'
+  row <- make_review_row(9L, 109L, output = "", structured_output = structured)
+  expect_no_error(
+    result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  )
+  # An off-vocabulary severity is treated as below-threshold, not a crash.
+  expect_equal(result$verdict, "likely-fixed")
+})
+
 # ── Test 4b: PR #1269 round 3 — JSON-direct findings from structured_output ──
 
 test_that("classify_review: reads findings JSON-direct from structured_output, severity not inflated by quoted prose", {

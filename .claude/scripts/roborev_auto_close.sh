@@ -56,7 +56,11 @@ LOGFILE="${HOME}/.claude/logs/roborev_auto_close.log"
 # reconstructs markdown text from the v0.68.2 structured_output JSON column
 # (falling back to legacy `output`) so this script's own severity/Category:
 # parsing below keeps working unchanged.
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+# roborev id 10531 (low): honours a pre-set LIB_DIR so the selftest can
+# point it at an empty directory to exercise the IMPORT_ERROR/exit-2 path
+# without touching the real roborev_classify.py. Unset/empty in every
+# real invocation, so production behaviour is unchanged.
+LIB_DIR="${LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 
 # Fetch the shared-reader text for one review id (output column, falling
 # back through structured_output — see roborev_classify.py's
@@ -94,8 +98,8 @@ PY
 }
 
 # Fetch the JSON-direct max severity label for one review id (Critical |
-# High | Medium | Low | unknown | IMPORT_ERROR). llm#1265 round 3 / PR
-# #1269: severity is read DIRECTLY from structured_output's
+# High | Medium | Low | unknown | IMPORT_ERROR | READ_ERROR). llm#1265
+# round 3 / PR #1269: severity is read DIRECTLY from structured_output's
 # findings[].severity JSON fields via review_severity_ordinal() -- never
 # via _parse_max_severity() over review_output_text()-rendered markdown,
 # which is vulnerable to a finding's own problem/fix prose quoting a
@@ -113,6 +117,20 @@ PY
 # per this file's own documented exit-code contract), NOT a reason to fall
 # back to "unknown" and let the guard's normal fail-closed handling mask a
 # broken environment indefinitely (checks-must-distinguish-unknown).
+#
+# roborev id 10531 (medium): the import-failure `except` above was the
+# ONLY error path that produced a loud sentinel. Any OTHER failure inside
+# the DB-read/ordinal-compute block below (a missing/locked/corrupt DB
+# raised outside the connect() try, an unreadable file, an unexpected
+# exception inside review_severity_ordinal itself) previously propagated
+# as a Python traceback, so the `$(...)` capture at the call site got
+# empty stdout with a non-zero python exit status DISCARDED by `$(...)`.
+# That mapped to FINDING_SEVERITY="" -> ordinal 0 -> the guard's normal
+# "finding_severity_unparseable" reject-and-exit-1 path -- a broken
+# environment reported as if the finding legitimately had no severity.
+# The broad `except Exception` below turns every such failure into the
+# same loud, exit-1 "READ_ERROR" sentinel the caller already knows how to
+# treat as a hard error (see the call sites' rc+sentinel check).
 _fetch_review_severity() {
   local review_id="$1"
   /usr/bin/python3 - "$ROBOREV_DB" "$review_id" "$LIB_DIR" <<'PY'
@@ -131,28 +149,55 @@ except Exception as e:
     print("IMPORT_ERROR")
     sys.exit(0)
 
-con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
 try:
-    row = con.execute(
-        "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1", (review_id,)
-    ).fetchone()
-except sqlite3.OperationalError:
-    row = con.execute(
-        "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
-    ).fetchone()
-con.close()
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = con.execute(
+            "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1", (review_id,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = con.execute(
+            "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
+        ).fetchone()
+    con.close()
 
-if row is None:
-    print("unknown")
-    sys.exit(0)
-
-ordv = review_severity_ordinal(row[0], row[1])
-if ordv is None:
-    print("unknown")
-else:
-    label = next(k for k, v in SEVERITY_ORDINAL.items() if v == ordv)
-    print(label.capitalize())
+    if row is None:
+        print("unknown")
+    else:
+        ordv = review_severity_ordinal(row[0], row[1])
+        if ordv is None:
+            print("unknown")
+        else:
+            label = next(k for k, v in SEVERITY_ORDINAL.items() if v == ordv)
+            print(label.capitalize())
+except Exception as e:
+    # roborev id 10531 (medium): any non-import failure -- a missing or
+    # locked DB, an unreadable file, an unexpected exception inside
+    # review_severity_ordinal -- is a hard error, NOT "no severity found".
+    sys.stderr.write(
+        f"roborev_auto_close: FATAL - severity read failed for review_id="
+        f"{review_id!r}: {type(e).__name__}: {e}\n"
+    )
+    print("READ_ERROR")
+    sys.exit(1)
 PY
+}
+
+# roborev id 10531 (medium): true if the severity reader's captured
+# output/exit-status pair indicates a hard failure rather than a
+# legitimate "unknown" result -- either explicit sentinel, ANY non-zero
+# exit status (covers a python3 invocation that failed before printing
+# anything at all, e.g. the interpreter itself missing), or empty output
+# (belt-and-braces for the same case). Never returns true for "unknown",
+# which is a normal, expected result the downstream guard already
+# fail-closes on.
+_severity_read_failed() {
+  local rc="$1" out="$2"
+  [ "$rc" -ne 0 ] && return 0
+  [ -z "$out" ] && return 0
+  [ "$out" = "IMPORT_ERROR" ] && return 0
+  [ "$out" = "READ_ERROR" ] && return 0
+  return 1
 }
 
 log() {
@@ -165,6 +210,17 @@ log() {
 
 # Parse the maximum severity from a review output string.
 # Returns: Critical | High | Medium | Low | unknown
+#
+# roborev id 10531 (low): DO NOT USE for Guard 1 (the downgrade-attack
+# check below) -- this regexes over RENDERED markdown, so a finding's own
+# problem/fix prose quoting "Severity: High" as an example inflates the
+# result (the live 10523/10524 bug this file's severity handling was
+# rewritten to avoid). Guard 1 reads severity JSON-direct via
+# _fetch_review_severity() / review_severity_ordinal() instead. This
+# function has no remaining callers in this file; kept only because
+# roborev_severity_autoclose.sh's own `_parse_max_severity()` and
+# send_roborev_email.R's `parse_max_severity_ordinal()` are documented
+# elsewhere as mirroring it and a consistency check may reference it.
 _parse_max_severity() {
   local output="$1"
   /usr/bin/python3 - "$output" <<'PY'
@@ -602,6 +658,35 @@ SQL
     _check "stale-closure-db-row" "fail: not closed"
   fi
 
+  # ── Test 7 (roborev id 10531): roborev_classify import failure → exit 2,
+  # never a silent "unparseable" reject. Points LIB_DIR at an empty temp
+  # dir (no roborev_classify.py) for a case that would otherwise close
+  # cleanly (finding 16 / approving review 6, per Test 2f above), and
+  # asserts: exit code exactly 2, no CLOSED=1 anywhere in the output, and
+  # the FATAL message on stderr. Falsify by reverting the LIB_DIR override
+  # support above — this case must then fail (env override ignored, the
+  # real roborev_classify.py loads, and the finding just closes normally).
+  EMPTY_LIB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/roborev_ac_emptylib_XXXXXX")"
+  OUT=$(LIB_DIR="$EMPTY_LIB_DIR" ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 16 --approving-review-id 6 --commit "importerr111" --type approved 2>&1)
+  RC=$?
+  rm -rf "$EMPTY_LIB_DIR"
+  if [ "$RC" -eq 2 ]; then
+    _check "import-failure-exits-2" "pass"
+  else
+    _check "import-failure-exits-2" "fail: exit=$RC out='$OUT'"
+  fi
+  if echo "$OUT" | grep -q "^CLOSED=1"; then
+    _check "import-failure-no-closure" "fail: closed despite broken severity reader: '$OUT'"
+  else
+    _check "import-failure-no-closure" "pass"
+  fi
+  if echo "$OUT" | grep -qi "FATAL"; then
+    _check "import-failure-fatal-message" "pass"
+  else
+    _check "import-failure-fatal-message" "fail: no FATAL message in output: '$OUT'"
+  fi
+
   TOTAL=$((PASS+FAIL))
   echo ""
   if [ "$FAIL" -eq 0 ]; then
@@ -719,9 +804,10 @@ fi
 # over $FINDING_OUTPUT, which would re-run the exact quoted-marker-in-prose
 # corruption this round fixes (security-critical here: see Guard 1 below).
 FINDING_SEVERITY=$(_fetch_review_severity "$FINDING_ID")
-if [ "$FINDING_SEVERITY" = "IMPORT_ERROR" ]; then
-  log "ERR: finding_id=${FINDING_ID} — roborev_classify import failed; refusing to evaluate the severity guard without a working severity reader"
-  echo "roborev_auto_close: FATAL — roborev_classify import failed (see stderr above); refusing to close finding_id=${FINDING_ID} without a working severity reader" >&2
+FINDING_SEVERITY_RC=$?
+if _severity_read_failed "$FINDING_SEVERITY_RC" "$FINDING_SEVERITY"; then
+  log "ERR: finding_id=${FINDING_ID} — severity reader failed (rc=${FINDING_SEVERITY_RC} out='${FINDING_SEVERITY}'); refusing to evaluate the severity guard without a working severity reader"
+  echo "roborev_auto_close: FATAL — severity reader failed for finding_id=${FINDING_ID} (rc=${FINDING_SEVERITY_RC}, see stderr above); refusing to close without a working severity reader" >&2
   exit 2
 fi
 
@@ -734,9 +820,10 @@ fi
 APPROVING_SEVERITY="unknown"
 if [ -n "$APPROVING_REVIEW_ID" ]; then
   APPROVING_SEVERITY=$(_fetch_review_severity "$APPROVING_REVIEW_ID")
-  if [ "$APPROVING_SEVERITY" = "IMPORT_ERROR" ]; then
-    log "ERR: approving_review_id=${APPROVING_REVIEW_ID} — roborev_classify import failed; refusing to evaluate the severity guard without a working severity reader"
-    echo "roborev_auto_close: FATAL — roborev_classify import failed (see stderr above); refusing to close finding_id=${FINDING_ID} without a working severity reader" >&2
+  APPROVING_SEVERITY_RC=$?
+  if _severity_read_failed "$APPROVING_SEVERITY_RC" "$APPROVING_SEVERITY"; then
+    log "ERR: approving_review_id=${APPROVING_REVIEW_ID} — severity reader failed (rc=${APPROVING_SEVERITY_RC} out='${APPROVING_SEVERITY}'); refusing to evaluate the severity guard without a working severity reader"
+    echo "roborev_auto_close: FATAL — severity reader failed for approving_review_id=${APPROVING_REVIEW_ID} (rc=${APPROVING_SEVERITY_RC}, see stderr above); refusing to close finding_id=${FINDING_ID} without a working severity reader" >&2
     exit 2
   fi
 fi

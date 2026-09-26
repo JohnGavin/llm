@@ -578,6 +578,81 @@ test_that("PR #1269 round 3: structured Medium finding is NOT inflated to above-
     info = "a genuinely parseable Medium severity must not land in the unparseable bucket either")
 })
 
+# ── PR #1269 round 4 (review 10535): non-scalar crash guard + legacy.markdown
+# priority ordering ─────────────────────────────────────────────────────────
+
+test_that("PR #1269 round 4: array-valued severity/location/problem does not crash the daily email", {
+  # Finding 1: a JSON-array severity/location/problem field used to make
+  # as.character()+nzchar()/`||` crash in .structured_findings_normalized()
+  # and .render_structured_findings_as_markdown() -- aborting
+  # classify_open_findings() for EVERY open finding, not just this one row.
+  bad_structured <- paste0(
+    '{"schema_version":2,"summary":"x","verdict":"fail","findings":[',
+    '{"severity":["high","low"],"location":["a.R:1","b.R:2"],"problem":["p1","p2"]}',
+    ']}'
+  )
+  db_path <- make_reviews_db_fixture(
+    findings = list(
+      list(output = "", age_hours = 1, structured_output = bad_structured),
+      list(output = HIGH_SEV_OUTPUT, age_hours = 1)
+    )
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+  # If the crash this test guards against reappears, the script aborts
+  # before ever printing the QA marker line, so these two assertions alone
+  # (with the full output in `info=`) are enough to reveal it -- no separate
+  # exit-code plumbing needed.
+  #
+  # The malformed row has no usable severity to read -> unclassified. The
+  # OTHER (well-formed High) row must still be counted normally, proving the
+  # malformed row did not abort the whole classification loop.
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE), info = combined)
+  expect_true(grepl("QA:total_above_threshold_open_n=1", combined, fixed = TRUE), info = combined)
+})
+
+test_that("PR #1269 round 4: line-wrapped SEVERITY_THRESHOLD_MET token is still classified 'passed'", {
+  # review_id 10411 in the live backlog: a schema_version 0 row whose
+  # legacy.markdown text has a hard line-wrap splitting the
+  # SEVERITY_THRESHOLD_MET token across two lines. normalize_ws() collapses
+  # the embedded newline to a space rather than removing it, so the tight
+  # "severity_threshold_met" literal never matched -- landing this genuinely
+  # passed review in "unclassified" instead.
+  wrapped_structured <- paste0(
+    '{"legacy":{"markdown":"Summary: refactor x.\\nSEVERITY_THRESHOLD_\\nMET",',
+    '"recorded_verdict":false},"schema_version":0,"summary":"","findings":[]}'
+  )
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = "", age_hours = 1, structured_output = wrapped_structured))
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("QA:total_unclassified_open_n=0", combined, fixed = TRUE), info = combined)
+  expect_true(grepl("QA:total_passed_open_n=1", combined, fixed = TRUE), info = combined)
+})
+
+test_that("PR #1269 round 4: JSON-direct severity wins over a stale legacy.markdown block on a schema 2 row", {
+  # Finding 4: a schema_version 2 row that ALSO carries a legacy.markdown
+  # block quoting a higher severity than the real (JSON-direct) Medium
+  # finding must NOT be scored from that legacy.markdown text.
+  structured <- paste0(
+    '{"schema_version":2,"summary":"x","verdict":"fail",',
+    '"legacy":{"markdown":"- **Severity**: Critical\\n\\n## Summary\\n\\nstale text"},',
+    '"findings":[{"severity":"medium","location":"a.R:1","problem":"real problem"}]}'
+  )
+  db_path <- make_reviews_db_fixture(
+    findings = list(list(output = "", age_hours = 1, structured_output = structured))
+  )
+  snap <- make_synthetic_snapshot()
+  out <- run_email_dry_run(snap, extra_env = paste0("ROBOREV_DB=", db_path))
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("QA:total_above_threshold_open_n=0", combined, fixed = TRUE),
+    info = paste("a real Medium finding must not be inflated to Critical by a stale",
+                  "legacy.markdown block on the same schema 2 row:", combined))
+})
+
 test_that("above-threshold banner prints the JOB id, not reviews.id", {
   skip_if_not_installed("blastula")
   db_path <- make_reviews_db_fixture(

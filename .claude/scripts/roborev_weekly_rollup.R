@@ -459,22 +459,54 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     if (!known_schema) return(list(severity = NA_character_, summary = NA_character_))
     findings <- data[["findings"]]
     if (!is.list(findings) || length(findings) == 0L) return(list(severity = NA_character_, summary = NA_character_))
+    # PR #1269 round 4: `severity` can be a JSON array, which
+    # simplifyVector=FALSE turns into a non-scalar list/vector.
+    # as.character()+is.na() on that is length>1 and crashes the `||` below
+    # in R 4.2+. Only a length-1 character `severity` is scored; anything
+    # else is treated as unusable (NA), matching every other reader fixed
+    # in this round.
     ords <- vapply(findings, function(f) {
       if (!is.list(f)) return(NA_integer_)
       sev <- f[["severity"]]
-      if (is.null(sev)) return(NA_integer_)
-      idx <- WEEKLY_SEVERITY_ORDINAL[tolower(trimws(as.character(sev)))]
-      if (length(idx) == 0L || is.na(idx)) NA_integer_ else unname(idx)
+      if (!is.character(sev) || length(sev) != 1L) return(NA_integer_)
+      idx <- WEEKLY_SEVERITY_ORDINAL[tolower(trimws(sev))]
+      if (length(idx) != 1L || is.na(idx)) NA_integer_ else unname(idx)
     }, integer(1L))
-    if (all(is.na(ords))) return(list(severity = NA_character_, summary = NA_character_))
+    if (all(is.na(ords))) {
+      # PR #1269 round 4 (review 10533 finding 4a): a known schema with a
+      # non-empty findings list, but no entry carrying a recognised
+      # severity, is NOT the same as "no structured data at all" (the
+      # NA_character_ case above, which legitimately falls back to
+      # extract_sev()'s regex). Falling back here would let extract_sev()'s
+      # cross-newline "Severity.*<sev>" regex re-scan this row's WHOLE
+      # rendered text and pick up an unrelated finding's Problem prose --
+      # exactly the bug this JSON-direct reader exists to avoid. An
+      # explicit, non-NA "unclassified" label is returned instead, so the
+      # caller's `ifelse(!is.na(stuck_json_sev), ...)` takes THIS value
+      # rather than falling through to the regex path.
+      return(list(severity = "unclassified", summary = NA_character_))
+    }
     top_i <- which.max(ifelse(is.na(ords), -Inf, ords))
     top <- findings[[top_i]]
     sev_label <- tolower(trimws(as.character(top[["severity"]])))
     problem <- top[["problem"]]
-    summary <- if (!is.null(problem) && nzchar(trimws(as.character(problem)))) {
-      substr(trimws(as.character(problem)), 1L, 80L)
+    # PR #1269 round 4 (review 10533 finding 1): collapse ALL whitespace
+    # (including embedded newlines/carriage returns) to a single space
+    # before truncating. The renderer below only escapes "|", so an
+    # untouched newline in a multi-sentence LLM finding split the
+    # "| id | repo | age | severity | summary |" markdown table row across
+    # lines and corrupted the Top Stuck Findings table.
+    summary <- if (is.character(problem) && length(problem) == 1L && nzchar(trimws(problem))) {
+      substr(gsub("[[:space:]]+", " ", trimws(problem)), 1L, 80L)
     } else {
-      NA_character_
+      # PR #1269 round 4 (review 10533 finding 4b): NA here would fall back
+      # to extract_summary()'s regex path, which always yields the SAME
+      # "- **Severity**: X" bullet already shown in the severity column
+      # (see extract_summary()'s docstring above) -- not a summary at all.
+      # An explicit placeholder is more informative and, like the severity
+      # branch above, avoids resurrecting the regex fallback for a row that
+      # was genuinely read via the JSON-direct path.
+      "(no problem text)"
     }
     list(severity = sev_label, summary = summary)
   }

@@ -520,8 +520,19 @@ NOT_REVIEWED_PATTERNS <- c(
 #   extra "were" in between. Added as its own literal entry rather than
 #   switching .pattern_matches() to regex, matching this list's existing
 #   convention of near-duplicate phrasings as separate fixed strings.
+#   "severity_threshold_ met" — PR #1269 round 4, review_id 10411 in the
+#   live backlog (schema_version 0, legacy.markdown text): the SAME
+#   `SEVERITY_THRESHOLD_MET` token from the entry above, but stored with a
+#   hard line-wrap inserted mid-token ("SEVERITY_THRESHOLD_\nMET").
+#   normalize_ws() collapses that embedded newline to a single space rather
+#   than removing it, so the normalized text reads "...severity_threshold_
+#   met" and never matches the tight "severity_threshold_met" literal above.
+#   Added as its own literal entry (matching this list's convention) rather
+#   than de-wrapping generally, which would risk changing matches for every
+#   other multi-word pattern in this list.
 PASSED_PATTERNS <- c(
   "severity_threshold_met",
+  "severity_threshold_ met",
   "no issues found",
   "no issues were found",
   "no code changes were provided",
@@ -613,20 +624,28 @@ classify_unparseable_finding <- function(text) {
     lines <- c(lines, "## Review Findings", "")
     for (f in findings) {
       if (!is.list(f)) next
+      # PR #1269 round 4: a finding field can be a JSON array (parsed as an
+      # R list under simplifyVector=FALSE, or a length>1 character vector),
+      # not just a scalar string. as.character()/nzchar() on a non-scalar
+      # crashes `if (nzchar(sev))`/`&&` in R 4.2+ ("condition has length >
+      # 1" / "argument is of length > 1"). Mirrors the Python module's
+      # `isinstance(x, str)` guard: only a length-1 character value is used;
+      # anything else (list, numeric, logical, longer vector) is treated as
+      # absent rather than crashing the whole render.
       sev <- f[["severity"]]
-      sev <- if (is.null(sev)) "" else trimws(as.character(sev))
+      sev <- if (is.character(sev) && length(sev) == 1L) trimws(sev) else ""
       sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
       lines <- c(lines, sprintf("- **Severity**: %s", sev_cap))
       loc <- f[["location"]]
-      if (!is.null(loc) && nzchar(as.character(loc))) {
+      if (is.character(loc) && length(loc) == 1L && nzchar(loc)) {
         lines <- c(lines, sprintf("  **Location**: %s", loc))
       }
       problem <- f[["problem"]]
-      if (!is.null(problem) && nzchar(as.character(problem))) {
+      if (is.character(problem) && length(problem) == 1L && nzchar(problem)) {
         lines <- c(lines, sprintf("  **Problem**: %s", problem))
       }
       fix <- f[["fix"]]
-      if (!is.null(fix) && nzchar(as.character(fix))) {
+      if (is.character(fix) && length(fix) == 1L && nzchar(fix)) {
         lines <- c(lines, sprintf("  **Fix**: %s", fix))
       }
       lines <- c(lines, "")
@@ -650,9 +669,14 @@ classify_unparseable_finding <- function(text) {
 # legacy.markdown verbatim; schema_version >= 1 -> synthesized markdown;
 # legacy `output` column text; "" when BOTH are empty/unusable (callers
 # MUST treat "" as indeterminate, never as clean — see classify_review_row()).
-review_output_text <- function(output, structured_output) {
+# `.parsed` lets a caller that already ran .parse_structured_json() on this
+# row's structured_output (e.g. classify_open_findings()'s per-row loop)
+# pass the result in directly instead of re-parsing the same JSON text a
+# second time (PR #1269 round 4, review 10535 finding 5); left NULL, this
+# function parses structured_output itself exactly as before.
+review_output_text <- function(output, structured_output, .parsed = NULL) {
   out_fallback <- if (is.null(output) || is.na(output)) "" else trimws(output)
-  data <- .parse_structured_json(structured_output)
+  data <- if (!is.null(.parsed)) .parsed else .parse_structured_json(structured_output)
   if (!is.null(data)) {
     legacy_md <- .legacy_markdown_from_structured(data)
     if (!is.null(legacy_md)) return(legacy_md)
@@ -698,17 +722,28 @@ review_output_text <- function(output, structured_output) {
   out <- list()
   for (f in findings) {
     if (!is.list(f)) next
+    # PR #1269 round 4 (review 10535 finding 1): `severity`/`location`/
+    # `problem` can be a JSON array, which .parse_structured_json()'s
+    # simplifyVector=FALSE turns into an R list (or, occasionally, a
+    # length>1 character vector) rather than a scalar. as.character() on
+    # that, followed by `nzchar(...) || ...`, crashes in R 4.2+ ("argument
+    # is of length > 1" / "condition has length > 1"). Mirrors the Python
+    # module's `isinstance(sev, str)` guard: only a length-1 character
+    # value is accepted; anything else is treated as absent, never crashed
+    # on.
     sev <- f[["severity"]]
-    if (is.null(sev)) next
-    sev_chr <- trimws(tolower(as.character(sev)))
+    if (!is.character(sev) || length(sev) != 1L) next
+    sev_chr <- trimws(tolower(sev))
     if (!nzchar(sev_chr) || !(sev_chr %in% names(SEVERITY_ORDINAL))) next
     loc <- f[["location"]]
+    loc_chr <- if (is.character(loc) && length(loc) == 1L && nzchar(trimws(loc))) trimws(loc) else NA_character_
     problem <- f[["problem"]]
+    problem_chr <- if (is.character(problem) && length(problem) == 1L && nzchar(trimws(problem))) trimws(problem) else NA_character_
     out[[length(out) + 1L]] <- list(
       ordinal  = unname(SEVERITY_ORDINAL[[sev_chr]]),
       severity = sev_chr,
-      location = if (!is.null(loc) && nzchar(trimws(as.character(loc)))) trimws(as.character(loc)) else NA_character_,
-      problem  = if (!is.null(problem) && nzchar(trimws(as.character(problem)))) trimws(as.character(problem)) else NA_character_
+      location = loc_chr,
+      problem  = problem_chr
     )
   }
   if (length(out) == 0L) return(NULL)
@@ -720,7 +755,15 @@ review_output_text <- function(output, structured_output) {
 # not usable JSON at all -- callers should read NULL as "use
 # review_output_text() with your own regex instead" (schema_version 0 /
 # legacy `output`-only rows never had per-finding JSON to begin with).
-review_structured_findings <- function(output, structured_output) {
+# No R caller currently uses this (classify_open_findings() below calls
+# review_severity_ordinal()/.structured_findings_normalized() directly) --
+# kept only for parity with roborev_classify.py's identically-named public
+# function. Takes ONLY structured_output: the legacy `output` (rendered
+# text) column has no bearing on a JSON-direct read, so unlike the Python
+# mirror (which keeps `output` for its own call-site parity) the unused
+# parameter is dropped here rather than carried and ignored (PR #1269
+# round 4, review 10535 finding 3).
+review_structured_findings <- function(structured_output) {
   data <- .parse_structured_json(structured_output)
   if (is.null(data)) return(NULL)
   .structured_findings_normalized(data)
@@ -736,11 +779,17 @@ review_structured_findings <- function(output, structured_output) {
 # docstring for why (an empty findings list IS the "nothing to report"
 # signal; falling back to `output` there would risk resurrecting stale
 # text from an unrelated column).
-review_severity_ordinal <- function(output, structured_output) {
-  data <- .parse_structured_json(structured_output)
+review_severity_ordinal <- function(output, structured_output, .parsed = NULL) {
+  data <- if (!is.null(.parsed)) .parsed else .parse_structured_json(structured_output)
   if (!is.null(data)) {
-    legacy_md <- .legacy_markdown_from_structured(data)
-    if (!is.null(legacy_md)) return(parse_max_severity_ordinal(legacy_md))
+    # PR #1269 round 4 (review 10535 finding 4): a known schema (1/2) with
+    # a non-empty findings list is scored JSON-direct FIRST, before the
+    # legacy.markdown shortcut -- a schema 1/2 row that ALSO happens to
+    # carry a stale/incidental `legacy.markdown` block must not be scored
+    # by the regex-over-rendered-text path this whole change exists to
+    # avoid. legacy.markdown is only consulted for schema 0 rows or an
+    # unrecognised/missing schema_version, where there is no JSON findings
+    # list to read directly.
     if (.known_structured_schema(data[["schema_version"]])) {
       normalized <- .structured_findings_normalized(data)
       if (!is.null(normalized)) {
@@ -751,10 +800,12 @@ review_severity_ordinal <- function(output, structured_output) {
       # report, nothing to fall back to.
       return(NA_integer_)
     }
+    legacy_md <- .legacy_markdown_from_structured(data)
+    if (!is.null(legacy_md)) return(parse_max_severity_ordinal(legacy_md))
     # Unrecognised/missing schema_version and no legacy.markdown -- fall
     # through to the legacy `output` column below.
   }
-  parse_max_severity_ordinal(review_output_text(output, structured_output))
+  parse_max_severity_ordinal(review_output_text(output, structured_output, .parsed = data))
 }
 
 # classify_review_row(): explicit-outcome reader adding ONE new terminal
@@ -830,10 +881,15 @@ classify_open_findings <- function(rows) {
   unclassified_n  <- 0L
   indeterminate_n <- 0L
   for (r in rows) {
+    # PR #1269 round 4 (review 10535 finding 5): parse structured_output
+    # ONCE per row and hand the parsed list to both readers below, instead
+    # of each of review_output_text()/review_severity_ordinal() re-parsing
+    # the same JSON text independently inside this loop.
+    parsed <- .parse_structured_json(r[["structured_output"]])
     # llm#1265: reads structured_output first (roborev v0.68.2 migrated
     # every row's text there, leaving `output` empty on all live rows),
     # falling back to the legacy `output` column.
-    text <- review_output_text(r[["output"]], r[["structured_output"]])
+    text <- review_output_text(r[["output"]], r[["structured_output"]], .parsed = parsed)
     if (!nzchar(text)) {
       # llm#1265 finding 4: classify_review_row()'s "indeterminate" state
       # — BOTH output and structured_output are empty/NULL/unparseable, so
@@ -858,7 +914,7 @@ classify_open_findings <- function(rows) {
     }
     # llm#1265 round 3: JSON-direct severity (never regex over the
     # rendered `text`) -- see review_severity_ordinal()'s docstring above.
-    ord <- review_severity_ordinal(r[["output"]], r[["structured_output"]])
+    ord <- review_severity_ordinal(r[["output"]], r[["structured_output"]], .parsed = parsed)
     if (is.na(ord)) {
       unparse_n <- unparse_n + 1L
       unclassified_n <- unclassified_n + 1L

@@ -90,7 +90,11 @@ PYTHON="${PYTHON:-/usr/bin/python3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 # llm#1265: dir containing roborev_classify.py's review_output_text() —
 # same LIB_DIR pattern as roborev_severity_autoclose.sh.
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+# roborev id 10537 (medium, case 3h below): honours a pre-set LIB_DIR so
+# the selftest can exercise the fail-closed import-failure branch without
+# touching the real roborev_classify.py. Unset/empty in every real
+# invocation, so production behaviour is unchanged.
+LIB_DIR="${LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 THRESHOLD_DAYS="${THRESHOLD_DAYS:-7}"
 ROBOREV_REPO="${ROBOREV_REPO:-}"  # optional: restrict to a single repo by name
 FINDINGS_DIR="${FINDINGS_DIR:-$HOME/.roborev/findings}"
@@ -170,17 +174,30 @@ Summary: adds a lockfile.")
     && _assert "3. classify fail (verdict_bool=0 overrides)" "ok" \
     || _assert "3. classify fail (verdict_bool=0 overrides)" "got '$got'"
 
-  # ── 3b-3g. structured_output reader wiring (PR #1269 round 2, review id
-  # 10524: "No tests for the new readers in ... roborev_handoff.sh"). Tests
-  # 1-3 above exercise the CLASSIFICATION logic (_classify) with already-
-  # rendered text; these cases exercise the ACTUAL query-time wiring this
-  # script uses at the Phase 1a python heredoc (LIB_DIR + a real sqlite DB +
-  # the real roborev_classify.review_output_text(), not a hand-copied
-  # mirror) -- schema 0, schema 1/2 with findings, empty findings, an
+  # ── 3b-3g. review_output_text() reader coverage (PR #1269 round 2, review
+  # id 10524: "No tests for the new readers in ... roborev_handoff.sh").
+  # Tests 1-3 above exercise the CLASSIFICATION logic (_classify) with
+  # already-rendered text.
+  #
+  # roborev id 10537 (medium): these cases call the real, imported
+  # roborev_classify.review_output_text() (never a hand-copied
+  # re-implementation) against a fixture sqlite DB, through the SAME
+  # LIB_DIR + import + row-shape pattern the production Phase 1a heredoc
+  # uses below -- schema 0, schema 1/2 with findings, empty findings, an
   # unrecognised schema_version, malformed JSON, and NULL structured_output
-  # (the column-absent-equivalent fallback shape).
+  # (the column-absent-equivalent fallback shape). What this does NOT do:
+  # exercise the production heredoc's own query-time wiring (the
+  # repos/review_jobs/commits JOIN, the meta_<repo_id>.psv write, the
+  # classification-from-output_trimmed step) -- that requires a much
+  # larger fixture DB matching that whole schema and is not attempted
+  # here. A change to review_output_text() itself IS caught by these
+  # cases; a change to how the production heredoc CALLS it (argument
+  # order, a different lib_dir variable, a swapped SELECT column) is NOT.
+  # Case 3h below covers the one piece of that wiring most worth pinning
+  # separately: the fail-closed contract on an import failure.
   _HANDOFF_FIXTURE_DB="$(mktemp "${TMPDIR:-/tmp}/roborev_handoff_reader_test_XXXXXX")".db
   rm -f "${_HANDOFF_FIXTURE_DB%.db}"
+  trap 'rm -f "$_HANDOFF_FIXTURE_DB"' EXIT
   "$SQLITE" "$_HANDOFF_FIXTURE_DB" <<'SQL'
 CREATE TABLE reviews (id INTEGER PRIMARY KEY, output TEXT, structured_output TEXT);
 INSERT INTO reviews VALUES (1, '',
@@ -196,6 +213,12 @@ INSERT INTO reviews VALUES (5, '**Severity**: Medium
 INSERT INTO reviews VALUES (6, '**Severity**: Low
 **Problem**: null-structured-output fallback finding', NULL);
 SQL
+  # roborev id 10537 (low): capture the exit status explicitly rather than
+  # letting a python failure abort the whole selftest under `set -euo
+  # pipefail` (which would skip the cleanup below and emit no PASS/FAIL
+  # line for 3b-3g at all -- an unusable reader would look like a hang or
+  # a crash, not a reported failure).
+  _handoff_reader_rc=0
   _handoff_reader_out=$("$PYTHON" - "$_HANDOFF_FIXTURE_DB" "$LIB_DIR" <<'PYEOF'
 import sys, sqlite3
 db_path, lib_dir = sys.argv[1], sys.argv[2]
@@ -208,32 +231,88 @@ for row in con.execute("SELECT id, output, structured_output FROM reviews ORDER 
     text = review_output_text(row["output"], row["structured_output"])
     print(f"{row['id']}|{text.replace(chr(10), ' ')}")
 PYEOF
-)
+) || _handoff_reader_rc=$?
   rm -f "$_HANDOFF_FIXTURE_DB"
+  trap - EXIT
 
-  echo "$_handoff_reader_out" | grep -q "^1|.*Critical" \
+  if [ "$_handoff_reader_rc" -ne 0 ]; then
+    _assert "3b-3g. fixture reader ran without error" "got: exit ${_handoff_reader_rc}, output: ${_handoff_reader_out}"
+  else
+    _assert "3b-3g. fixture reader ran without error" "ok"
+  fi
+
+  # roborev id 10537 (low): here-strings instead of `echo ... | grep -q`
+  # -- under `set -o pipefail`, `grep -q` can exit as soon as it sees its
+  # first match while `echo` is still writing, which can SIGPIPE the
+  # `echo` and turn a genuinely-passing case into a failure via a stray
+  # 141 exit status from the pipeline.
+  grep -q "^1|.*Critical" <<< "$_handoff_reader_out" \
     && _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "ok" \
-    || _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "got: $(echo "$_handoff_reader_out" | grep '^1|')"
+    || _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "got: $(grep '^1|' <<< "$_handoff_reader_out")"
 
-  echo "$_handoff_reader_out" | grep -q "^2|.*real finding text" \
+  grep -q "^2|.*real finding text" <<< "$_handoff_reader_out" \
     && _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "ok" \
-    || _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "got: $(echo "$_handoff_reader_out" | grep '^2|')"
+    || _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "got: $(grep '^2|' <<< "$_handoff_reader_out")"
 
-  echo "$_handoff_reader_out" | grep -q "^3|No issues found" \
+  grep -q "^3|No issues found" <<< "$_handoff_reader_out" \
     && _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "ok" \
-    || _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "got: $(echo "$_handoff_reader_out" | grep '^3|')"
+    || _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "got: $(grep '^3|' <<< "$_handoff_reader_out")"
 
-  echo "$_handoff_reader_out" | grep -q "^4|$" \
-    && _assert "3e. unrecognised schema_version (99) -> empty text (no crash)" "ok" \
-    || _assert "3e. unrecognised schema_version (99) -> empty text (no crash)" "got: $(echo "$_handoff_reader_out" | grep '^4|')"
+  # roborev id 10537 (low): "row 4 -> empty text" alone cannot distinguish
+  # "no crash, legitimately no text" from "reader silently swallowed an
+  # exception". Cases 3f/3g below run in the SAME single python process,
+  # AFTER row 4, and assert real non-empty content -- if row 4 had instead
+  # raised an unhandled exception, the whole process would have aborted
+  # and 3f/3g would see empty output too, so their pass is itself the
+  # sentinel that execution continued past row 4 uninterrupted.
+  grep -q "^4|$" <<< "$_handoff_reader_out" \
+    && _assert "3e. unrecognised schema_version (99) -> empty text (no crash, see 3f/3g sentinel)" "ok" \
+    || _assert "3e. unrecognised schema_version (99) -> empty text (no crash, see 3f/3g sentinel)" "got: $(grep '^4|' <<< "$_handoff_reader_out")"
 
-  echo "$_handoff_reader_out" | grep -q "^5|.*malformed-json fallback finding" \
+  grep -q "^5|.*malformed-json fallback finding" <<< "$_handoff_reader_out" \
     && _assert "3f. malformed JSON falls back to legacy output text" "ok" \
-    || _assert "3f. malformed JSON falls back to legacy output text" "got: $(echo "$_handoff_reader_out" | grep '^5|')"
+    || _assert "3f. malformed JSON falls back to legacy output text" "got: $(grep '^5|' <<< "$_handoff_reader_out")"
 
-  echo "$_handoff_reader_out" | grep -q "^6|.*null-structured-output fallback finding" \
+  grep -q "^6|.*null-structured-output fallback finding" <<< "$_handoff_reader_out" \
     && _assert "3g. NULL structured_output falls back to legacy output text" "ok" \
-    || _assert "3g. NULL structured_output falls back to legacy output text" "got: $(echo "$_handoff_reader_out" | grep '^6|')"
+    || _assert "3g. NULL structured_output falls back to legacy output text" "got: $(grep '^6|' <<< "$_handoff_reader_out")"
+
+  # ── 3h. fail-closed import branch (roborev id 10537, medium: "add one
+  # case for the fail-closed import branch"). Mirrors the EXACT
+  # try/except shape at the real Phase 1a heredoc below (the "roborev_handoff:
+  # FATAL — could not import review_output_text" block) with LIB_DIR
+  # pointed at an empty directory so roborev_classify cannot be imported.
+  # This is the one piece of the production wiring (as opposed to the
+  # library function itself) that 3b-3g's honest scope note above says is
+  # NOT covered there -- pinned separately here. Asserts the process
+  # exits non-zero and prints the FATAL message: the contract this branch
+  # exists to guarantee is "abort loudly", never "silently classify every
+  # row against the empty legacy output column".
+  _EMPTY_LIB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/roborev_handoff_emptylib_XXXXXX")"
+  _import_fail_rc=0
+  _import_fail_out=$("$PYTHON" - "$_EMPTY_LIB_DIR" <<'PYEOF' 2>&1
+import sys
+lib_dir = sys.argv[1]
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception as e:
+    print(f"roborev_handoff: FATAL — could not import review_output_text from "
+          f"{lib_dir!r} (roborev_classify.py): {e}. Refusing to classify "
+          f"reviews against the empty legacy `output` column.", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+) || _import_fail_rc=$?
+  rm -rf "$_EMPTY_LIB_DIR"
+
+  [ "$_import_fail_rc" -ne 0 ] \
+    && _assert "3h. fail-closed import branch: exits non-zero" "ok" \
+    || _assert "3h. fail-closed import branch: exits non-zero" "got rc=${_import_fail_rc}"
+
+  grep -qi "FATAL" <<< "$_import_fail_out" \
+    && _assert "3h. fail-closed import branch: prints FATAL message" "ok" \
+    || _assert "3h. fail-closed import branch: prints FATAL message" "got: ${_import_fail_out}"
 
   # ── 4. Digest title format matches YYYY-Www ────────────────────────────────
   iso_week=$(date -u +%G-W%V)
