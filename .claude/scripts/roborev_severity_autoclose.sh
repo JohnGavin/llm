@@ -28,13 +28,26 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 #   off=0  low=1  medium=2  high=3  critical=4
 # Close iff max(finding_severities) <= threshold AND threshold > 0.
 #
+# Clean-review path (checked FIRST, before the severity/threshold logic
+# above, and unconditional -- no threshold applies): a review closes as
+# "clean" iff it has ZERO findings, per roborev_classify.review_is_clean()
+# (llm#1270) -- NEVER because roborev's own verdict_bool/verdict said
+# "pass" alone. A pass verdict does not imply an empty findings list (live
+# incident, 2026-09-26: reviews 10478/10507/10521/10522/10525/10566 each
+# had verdict=pass and 1-4 Low findings, and were wrongly auto-closed under
+# the pre-#1270 `verdict_bool == 1` condition, bypassing every repo's
+# severity_threshold policy). A pass-verdict review WITH findings falls
+# through to the severity-threshold path above instead (surfaced there as
+# SKIP_HAS_FINDINGS when threshold=off).
+#
 # Close marker written as a comment:
-#   auto-closed: severity<=<T> [config:<source>] [run:<ISO-8601>]
+#   auto-closed: severity<=<T> [config:<source>] [run:<ISO-8601>]     (severity path)
+#   auto-closed: clean verdict [run:<ISO-8601>]                        (clean path)
 #
 # Log file: ~/.claude/logs/roborev_severity_autoclose.log
 # Counter file: ~/.claude/.roborev_autoclose_counters.json
 #
-# Tracked in llm#224.
+# Tracked in llm#224, llm#1270.
 
 set -euo pipefail
 
@@ -208,19 +221,38 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
   # Case 7: empty output → must SKIP (SKIP_PARSE_FAIL)
   _run_case "empty-output" "" "$THRESHOLD_FOR_TEST" "SKIP"
 
-  # Case 8: clean verdict (verdict_bool=1, output begins with "No issues found") →
-  # must CLOSE via the clean-verdict path, NOT SKIP_PARSE_FAIL.
+  # Case 8 (llm#1270): "clean" means ZERO findings, NEVER roborev's own
+  # pass/fail verdict alone — verdict_bool=1 does not imply an empty
+  # findings list (live incident: reviews 10478/10507/10521/10522/10525 had
+  # verdict=pass and 1-4 Low findings each, and were wrongly auto-closed
+  # under the old `[ "$_verdict" = "1" ]` condition). These cases call the
+  # REAL production decision function -- roborev_classify.review_is_clean(),
+  # imported from the SAME $LIB_DIR the main/replay heredocs above import
+  # from -- not a re-implemented bash mirror, so this selftest cannot
+  # silently drift from what actually runs in production (exactly the
+  # "third copy quietly diverges" failure llm#1265/#1146 already warn
+  # about elsewhere in this file).
+  _call_review_is_clean() {
+    local _output="$1" _structured="$2"
+    /usr/bin/python3 - "$LIB_DIR" "$_output" "$_structured" <<'PYEOF'
+import sys
+lib_dir, output, structured = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, lib_dir)
+from roborev_classify import review_is_clean
+result = review_is_clean(output or None, structured or None)
+print('1' if result is True else ('0' if result is False else ''))
+PYEOF
+  }
+
   _run_case_clean() {
-    local label="$1" verdict="$2" output="$3" expected="$4"
-    local result
-    # Mirror the clean-verdict branch in the main loop:
-    # clean iff verdict=1 OR output starts with "no issues found" (case-insensitive)
-    local output_lower
-    output_lower=$(echo "$output" | tr '[:upper:]' '[:lower:]')
-    if [ "$verdict" = "1" ] || [[ "$output_lower" == "no issues found"* ]]; then
+    local label="$1" output="$2" structured="$3" expected="$4"
+    local clean result
+    clean=$(_call_review_is_clean "$output" "$structured")
+    if [ "$clean" = "1" ]; then
       result="CLOSE_CLEAN"
     else
-      # Fall through to severity path (simplified: just note not-clean)
+      # Covers both "0" (confirmed has findings) and "" (indeterminate) --
+      # the main loop treats both identically: fall through, never close.
       result="SKIP"
     fi
     if [ "$result" = "$expected" ]; then
@@ -228,13 +260,26 @@ The code has some issues but nothing specific is flagged here." "$THRESHOLD_FOR_
       echo "  PASS [$label]: got $result"
     else
       FAIL=$((FAIL+1))
-      echo "  FAIL [$label]: expected $expected, got $result (verdict='$verdict')"
+      echo "  FAIL [$label]: expected $expected, got $result (is_clean='$clean')"
     fi
   }
 
-  _run_case_clean "clean-verdict-bool" "1" "No issues found." "CLOSE_CLEAN"
-  _run_case_clean "clean-verdict-prefix" "0" "No issues found. All checks passed." "CLOSE_CLEAN"
-  _run_case_clean "findings-verdict-bool-0" "0" "## Review Findings\n- **Severity**: Low" "SKIP"
+  # The exact regression this fix closes: roborev's own verdict is "pass"
+  # but the review DOES have findings -- must NOT be CLOSE_CLEAN.
+  _run_case_clean "pass-verdict-with-findings" "" \
+    '{"schema_version":2,"summary":"ok","verdict":"pass","findings":[{"severity":"low","problem":"p1"},{"severity":"low","problem":"p2"}]}' \
+    "SKIP"
+  _run_case_clean "pass-verdict-empty-findings" "" \
+    '{"schema_version":2,"summary":"clean diff","verdict":"pass","findings":[]}' \
+    "CLOSE_CLEAN"
+  _run_case_clean "legacy-no-issues-found-text" "No issues found. All checks passed." "" \
+    "CLOSE_CLEAN"
+  _run_case_clean "fail-verdict-with-findings" "" \
+    '{"schema_version":2,"summary":"x","verdict":"fail","findings":[{"severity":"low","problem":"p1"}]}' \
+    "SKIP"
+  _run_case_clean "unknown-schema-skip" "" \
+    '{"schema_version":99,"summary":"x","findings":[]}' \
+    "SKIP"
 
   # Case 10: job_id field parsing — candidate row with distinct id and job_id
   # Asserts that field 6 (job_id) is parsed correctly and is NOT equal to field 1 (review_id).
@@ -883,7 +928,12 @@ lib_dir = sys.argv[3] if len(sys.argv) > 3 else ''
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
-    from roborev_classify import review_output_text, review_severity_ordinal
+    from roborev_classify import (
+        review_output_text,
+        review_severity_ordinal,
+        review_is_clean,
+        review_structured_findings,
+    )
 except Exception as e:
     sys.stderr.write(
         f"roborev_severity_autoclose: FATAL - could not import roborev_classify "
@@ -923,11 +973,23 @@ for row in rows:
     # see the --replay block's identical comment above.
     sev_ord = review_severity_ordinal(row[1], row[2])
     sev_str = str(sev_ord) if sev_ord is not None else ''
+    # llm#1270: "clean" means ZERO findings, never roborev's own verdict --
+    # see review_is_clean()'s docstring for the live incident (reviews
+    # 10478/10507/10521/10522/10525: verdict=pass, 1-4 Low findings each).
+    # True/False/None printed as '1'/'0'/'' -- bash side treats '' (could
+    # not determine) exactly like a parse failure: never close.
+    is_clean = review_is_clean(row[1], row[2])
+    is_clean_str = '1' if is_clean is True else ('0' if is_clean is False else '')
+    # Finding count for the SKIP_HAS_FINDINGS dry-run/log line only -- None
+    # (no structured findings list to read, e.g. schema_version 0 rows)
+    # prints as '' and is simply not shown.
+    findings = review_structured_findings(row[1], row[2])
+    n_findings_str = str(len(findings)) if findings is not None else ''
     # roborev id 10538 (low): sanitise root_path/repo the same way as
     # `text` above -- see the --replay block's identical comment.
     root_path = (row[3] or '').replace('|', ' ')
     repo_name = (row[4] or '').replace('|', ' ')
-    print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}|{row[5]}|{row[6]}")
+    print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}|{row[5]}|{row[6]}|{is_clean_str}|{n_findings_str}")
 PYEOF
 )"
 _main_py_rc=$?
@@ -964,6 +1026,8 @@ for _row in "${REVIEW_ROWS[@]}"; do
   _repo=$(echo "$_row"     | cut -d'|' -f5)
   _verdict=$(echo "$_row"  | cut -d'|' -f6)
   _job_id=$(echo "$_row"   | cut -d'|' -f7)
+  _is_clean=$(echo "$_row" | cut -d'|' -f8)
+  _n_findings=$(echo "$_row" | cut -d'|' -f9)
 
   # Determine effective threshold + source for this repo
   _eff_threshold=""
@@ -1001,9 +1065,16 @@ for _row in "${REVIEW_ROWS[@]}"; do
   # Record threshold per repo
   THRESHOLD_BY_REPO["$_repo"]="$_eff_threshold"
 
-  # Decision — clean-verdict branch FIRST (before severity checks)
-  _output_lower=$(echo "$_output" | tr '[:upper:]' '[:lower:]')
-  if [ "$_verdict" = "1" ] || [[ "$_output_lower" == "no issues found"* ]]; then
+  # Decision — clean-review branch FIRST (before severity checks).
+  # llm#1270: "clean" means ZERO findings (per review_is_clean() in the
+  # heredoc above), NEVER roborev's own verdict_bool/verdict alone --
+  # verdict_bool=1 ("pass") does not imply an empty findings list (live
+  # incident: reviews 10478/10507/10521/10522/10525 had verdict=pass and
+  # 1-4 Low findings each, and were wrongly auto-closed under the old
+  # `[ "$_verdict" = "1" ]` condition). `_is_clean` is '1' only when
+  # review_is_clean() returned True (confirmed zero findings); '0' or ''
+  # (has findings, or could not be determined) both fall through below.
+  if [ "$_is_clean" = "1" ]; then
     # Clean review: close unconditionally (no threshold check needed)
     if [ "$MODE" = "apply" ]; then
       _close_ok=0
@@ -1044,11 +1115,25 @@ for _row in "${REVIEW_ROWS[@]}"; do
     log "${ACTION} review_id=${_id} repo=${_repo} max_severity=UNKNOWN threshold=${_eff_threshold} source=${_eff_source}"
     echo "  SKIP_PARSE_FAIL review_id=${_id} repo=${_repo} (no severity markers found)"
   elif [ "$_t_ord" -eq 0 ]; then
-    ACTION="SKIP_THRESHOLD_OFF"
-    TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
-    SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
-    log "${ACTION} review_id=${_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=off source=${_eff_source}"
-    echo "  SKIP_THRESHOLD_OFF review_id=${_id} repo=${_repo} max=$(_sev_name "$_max_ord")"
+    if [ "$_verdict" = "1" ] && [ -n "$_n_findings" ]; then
+      # llm#1270: this is exactly the scenario the clean-review branch used
+      # to misclassify -- roborev's own verdict is "pass" but the review
+      # DOES carry findings. Label it distinctly (SKIP_HAS_FINDINGS, with
+      # the finding count) so this is visible in dry-run/log output as
+      # "correctly not auto-closed" rather than blending into the generic
+      # threshold-off skip a verdict=fail review would also produce.
+      ACTION="SKIP_HAS_FINDINGS"
+      TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
+      SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
+      log "${ACTION} review_id=${_id} repo=${_repo} verdict=pass n=${_n_findings} max_severity=$(_sev_name "$_max_ord") threshold=off source=${_eff_source}"
+      echo "  SKIP_HAS_FINDINGS review_id=${_id} repo=${_repo} verdict=pass n=${_n_findings} max=$(_sev_name "$_max_ord")"
+    else
+      ACTION="SKIP_THRESHOLD_OFF"
+      TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
+      SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
+      log "${ACTION} review_id=${_id} repo=${_repo} max_severity=$(_sev_name "$_max_ord") threshold=off source=${_eff_source}"
+      echo "  SKIP_THRESHOLD_OFF review_id=${_id} repo=${_repo} max=$(_sev_name "$_max_ord")"
+    fi
   elif [ "$_max_ord" -le "$_t_ord" ]; then
     # Close — use job_id for roborev close/comment (fix #312: roborev close expects
     # job_id not review_id; job:review is 1:1 so this closes exactly the right review)

@@ -520,6 +520,56 @@ def review_top_finding(output, structured_output):
     return max(normalized, key=lambda f: f["ordinal"])
 
 
+def review_is_clean(output, structured_output):
+    """True iff this review has ZERO findings (llm#1270). This is NOT the
+    same question as "did roborev's own verdict_bool/verdict say pass?" --
+    that overall pass/fail bit can be "pass" on a review that still lists
+    real findings (verified live in ~/.roborev/reviews.db, 2026-09-26:
+    review ids 10478/10507/10521/10522/10525 each have verdict="pass" and
+    1-4 Low-severity findings in structured_output). The auto-closer
+    (roborev_severity_autoclose.sh) must not treat those as "clean" --
+    doing so bypassed every repo's severity_threshold policy (12 Low
+    findings across 5 reviews were auto-closed with severity_threshold=off
+    everywhere, which should have skipped them).
+
+    Definition of "clean":
+      - Structured row (schema_version 1/2): the `findings` list is
+        present and literally empty. A non-empty `findings` list is NEVER
+        clean, regardless of `verdict`.
+      - Legacy row (schema_version 0, or no usable structured_output at
+        all): the existing free-text "no issues found" prefix test over
+        review_output_text()'s rendering (the pre-#1270 behaviour for this
+        population is unchanged).
+
+    Returns:
+      True  -- confirmed zero findings; safe to auto-close unconditionally.
+      False -- confirmed non-empty findings; must NOT be treated as clean
+               (falls through to the severity-threshold path instead).
+      None  -- could not determine (malformed findings field, or no text
+               to read at all). Callers MUST treat None exactly like a
+               parse failure -- skip, never close.
+    """
+    data = _parse_structured_json(structured_output)
+    if data is not None:
+        legacy_md = _legacy_markdown_from_structured(data)
+        if legacy_md is None:
+            schema_version = data.get("schema_version")
+            if _known_structured_schema(schema_version):
+                findings = data.get("findings")
+                if isinstance(findings, list):
+                    return len(findings) == 0
+                # Recognised schema but `findings` is malformed (not a
+                # list at all) -- nothing reliable to read.
+                return None
+            # Unrecognised/missing schema_version and no legacy markdown --
+            # fall through to the text-based check below, mirroring
+            # review_output_text()'s own fallback-to-`output` behaviour.
+    text = review_output_text(output, structured_output)
+    if not text:
+        return None
+    return text.strip().lower().startswith("no issues found")
+
+
 def classify_review_row(output, structured_output):
     """The shared, explicit-outcome reader (llm#1265). Classifies a review
     row from EITHER column, preferring structured_output.
@@ -803,6 +853,41 @@ def _selftest():
           None, review_structured_findings(legacy_text_only, malformed_json))
     check("review_top_finding(): malformed JSON -> None",
           None, review_top_finding(legacy_text_only, malformed_json))
+
+    # ── review_is_clean() (llm#1270) ─────────────────────────────────────
+    # "clean" means ZERO findings, never roborev's own pass/fail verdict.
+    v2_pass_with_findings = (
+        '{"schema_version":2,"summary":"ok","verdict":"pass",'
+        '"findings":[{"severity":"low","problem":"p1"},'
+        '{"severity":"low","problem":"p2"}]}'
+    )
+    legacy_no_issues_text = "No issues found. All checks passed."
+    malformed_findings_field = (
+        '{"schema_version":2,"summary":"x","verdict":"pass","findings":"oops"}'
+    )
+
+    check("review_is_clean(): llm#1270 regression -- pass verdict + 2 low "
+          "findings is NOT clean",
+          False, review_is_clean(None, v2_pass_with_findings))
+    check("review_is_clean(): pass verdict + empty findings -> clean",
+          True, review_is_clean(None, v2_pass_no_findings))
+    check("review_is_clean(): fail verdict + findings -> NOT clean",
+          False, review_is_clean(None, v2_with_findings))
+    check("review_is_clean(): v1 empty findings, no verdict key -> clean",
+          True, review_is_clean(None, v1_empty_findings_no_verdict))
+    check("review_is_clean(): legacy free text 'No issues found.' -> clean",
+          True, review_is_clean(legacy_no_issues_text, None))
+    check("review_is_clean(): legacy free text with a real finding -> NOT clean",
+          False, review_is_clean(legacy_text_only, None))
+    check("review_is_clean(): unknown schema_version -> indeterminate (None)",
+          None, review_is_clean(None, unknown_schema_version))
+    check("review_is_clean(): malformed JSON -> indeterminate (None)",
+          None, review_is_clean(None, malformed_json))
+    check("review_is_clean(): BOTH columns empty -> indeterminate (None)",
+          None, review_is_clean("", ""))
+    check("review_is_clean(): recognised schema with malformed `findings` "
+          "field (not a list) -> indeterminate (None)",
+          None, review_is_clean(None, malformed_findings_field))
 
     print(f"\n{passed}/{passed + failed} PASS")
     return 0 if failed == 0 else 1
