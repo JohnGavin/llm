@@ -259,6 +259,21 @@ if (!has_source_col) {
   log_msg("WARN: review_jobs.source column absent — using NULL AS source in sql_jobs (llm#706 Cause-1 guard)")
 }
 
+# ── Guard: reviews.structured_output (llm#1265) ───────────────────────────────
+# roborev v0.68.2 (2026-09-24) migrated every row's review text out of
+# reviews.output (empty on all live rows since) into a new structured_output
+# JSON column. A fixture/pre-migration DB has no such column — same guard
+# pattern as source/error/root_path above: absent column degrades to
+# NULL AS structured_output in sql_reviews rather than throwing, and
+# .metrics_review_text() below already falls back to `output` unchanged
+# when structured_output is NA.
+has_structured_output_col <- tryCatch({
+  "structured_output" %in% names(dbGetQuery(read_con, "SELECT * FROM src.reviews LIMIT 0"))
+}, error = function(e) FALSE)
+if (!has_structured_output_col) {
+  log_msg("WARN: reviews.structured_output column absent — falling back to reviews.output only (pre-v0.68.2 DB, llm#1265)")
+}
+
 # ── Guard: repos.root_path (llm#928 item 3) ───────────────────────────────────
 # root_path is used downstream by is_ephemeral_repo_path() to flag mirror rows
 # whose repo lives under a temp root (agent worktree / test fixture, llm#923) —
@@ -359,6 +374,11 @@ if (!include_fixtures && nrow(jobs_raw) > 0L && "repo" %in% names(jobs_raw)) {
 }
 # ─────────────────────────────────────────────────────────────────────────────
 
+# llm#1265: structured_output_col selects the real column when present,
+# else a literal NULL cast to VARCHAR (DuckDB requires an explicit type on
+# a bare NULL column so downstream character-vector handling doesn't choke
+# on a logical NA) — same has_*_col guard pattern as source/error above.
+structured_output_col <- if (has_structured_output_col) "rv.structured_output" else "CAST(NULL AS VARCHAR)"
 sql_reviews <- sprintf("
   SELECT
     rv.id          AS review_id,
@@ -366,6 +386,7 @@ sql_reviews <- sprintf("
     rv.closed,
     rv.verdict_bool,
     rv.output,
+    %s AS structured_output,
     rv.created_at,
     rv.updated_at
   FROM src.reviews rv
@@ -374,7 +395,7 @@ sql_reviews <- sprintf("
   WHERE date(rj.enqueued_at) >= DATE '%s'
   %s
   ORDER BY rv.id
-", since_str, repo_clause)
+", structured_output_col, since_str, repo_clause)
 
 reviews_raw <- tryCatch(
   dbGetQuery(read_con, sql_reviews),
@@ -501,6 +522,123 @@ parse_max_severity <- function(text) {
     if (length(ords) == 0L) return(NA_character_)
     SEVERITY_NAMES[[as.character(max(ords))]]
   }, error = function(e) NA_character_)
+}
+
+# ── structured_output reader (llm#1265) ────────────────────────────────────
+#
+# roborev v0.68.2 migrated every row's review text out of `output` (now ''
+# on all live rows) into a new `structured_output` JSON column keyed by
+# schema_version (0: data$legacy$markdown holds the original markdown
+# verbatim; 1/2: verdict/summary/findings, findings carrying
+# severity/problem/fix/location). Self-contained mirror of the shared
+# reader in .claude/scripts/lib/roborev_classify.py / send_roborev_email.R's
+# R copy -- this script only needs enough of it to feed parse_max_severity()
+# real text (a `**Severity**:` marker), so it reconstructs ONLY the bullet
+# lines SEVERITY_PATTERN above already expects, not the full
+# classify_review_row() passed/not_reviewed/indeterminate vocabulary. It
+# deliberately does NOT synthesize any "no issues" text for an empty
+# findings list (unlike the fuller reader in send_roborev_email.R) --
+# parse_max_severity("") already returns NA_character_ for that case, which
+# is exactly what a clean/indeterminate row should produce here: no
+# fabricated severity, nothing silently promoted to "clean".
+# `structured_output` may be NA (a fixture data.frame, or a live DB
+# predating the migration) -- treated the same as an unusable value and
+# falls back to `output` unchanged.
+.metrics_review_text <- function(output, structured_output) {
+  out <- if (is.null(output) || is.na(output)) "" else output
+  so  <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+  if (!nzchar(so)) return(out)
+  data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(out)
+  legacy <- data[["legacy"]]
+  if (is.list(legacy)) {
+    md <- legacy[["markdown"]]
+    if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
+  }
+  schema_version <- data[["schema_version"]]
+  # PR #1269 round 4 (review 10534 finding 1): this gate previously accepted
+  # ANY numeric schema_version >= 1 (e.g. a future 3+), while
+  # .metrics_structured_max_severity() below only accepts 1 or 2 -- for a
+  # schema_version 3 row, this function would render severity bullets and
+  # the regex fallback would derive a severity while the JSON-direct reader
+  # returned NA, silently reintroducing the inconsistency review 10524
+  # already flagged (and masking it, since the regex fallback quietly
+  # produces a value). Both readers now use the identical
+  # `schema_version %in% c(1, 2)` gate, matching
+  # roborev_classify.py's/roborev_weekly_rollup.R's equivalent readers.
+  valid_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+  if (!valid_schema) return(out)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(out)
+  blocks <- vapply(findings, function(f) {
+    if (!is.list(f)) return("")
+    # `severity` can be a JSON array, which simplifyVector=FALSE turns into
+    # a non-scalar list/vector; as.character()+nzchar() on that crashes
+    # `if()` in R 4.2+. Only a length-1 character value is used.
+    sev <- f[["severity"]]
+    sev <- if (is.character(sev) && length(sev) == 1L) trimws(sev) else ""
+    sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
+    sprintf("- **Severity**: %s", sev_cap)
+  }, character(1L))
+  paste(blocks, collapse = "\n")
+}
+
+# ── JSON-direct severity (llm#1265 round 3, PR #1269 review id 10524) ──────
+#
+# parse_max_severity() over .metrics_review_text()'s rendered text is
+# vulnerable to a finding's own problem/fix prose quoting a severity
+# marker as an example (review ids 10523/10524 live shape: a Medium
+# finding's problem text quoted "Severity: High"/"**Severity**: Critical",
+# which the substring/regex match would misread as the row's severity --
+# this file's renderer above doesn't even include problem/fix text today,
+# but SEVERITY_PATTERN has no way to know that and would misparse the same
+# way if it ever did). .metrics_structured_max_severity() reads
+# findings[].severity DIRECTLY from parsed JSON for a schema_version 1/2
+# row with a non-empty findings list -- never via regex -- and is tried
+# BEFORE parse_max_severity(review_text) below. Returns NA_character_ when
+# there is no structured findings list to read (schema_version 0 /
+# legacy `output`-only rows, or an unrecognised schema_version -- also
+# fixes the inconsistency PR #1269 review id 10524 flagged: this reader
+# previously accepted ANY numeric schema_version >= 1, while
+# roborev_weekly_rollup.R's equivalent reader only accepts 1 or 2; both
+# now agree).
+.METRICS_SEVERITY_ORDINAL_LC <- c(critical = 4L, high = 3L, medium = 2L, low = 1L)
+
+.metrics_structured_max_severity <- function(output, structured_output) {
+  so <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+  if (!nzchar(so)) return(NA_character_)
+  data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(NA_character_)
+  schema_version <- data[["schema_version"]]
+  known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+  if (!known_schema) return(NA_character_)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(NA_character_)
+  ords <- vapply(findings, function(f) {
+    if (!is.list(f)) return(NA_integer_)
+    sev <- f[["severity"]]
+    # PR #1269 round 4 (review 10534 finding 4): `severity` can be a JSON
+    # array, which simplifyVector=FALSE turns into a non-scalar list/vector.
+    # as.character(sev) on that is length>1, so indexing
+    # .METRICS_SEVERITY_ORDINAL_LC by it and then testing `is.na(idx)` in
+    # `if (length(idx) == 0L || is.na(idx))` crashes ("argument is of length
+    # > 1") in R 4.3+. Only a length-1 character `severity` is scored;
+    # anything else degrades to NA (unscored) instead of aborting the whole
+    # vapply/ETL run.
+    if (!is.character(sev) || length(sev) != 1L) return(NA_integer_)
+    # JSON `severity` values are always lowercase (critical/high/medium/low
+    # -- see roborev_classify.py's docstring); .METRICS_SEVERITY_ORDINAL_LC
+    # is keyed lowercase to match directly, unlike SEVERITY_LEVELS above
+    # (keyed "Critical"/"High"/... to match parse_max_severity()'s
+    # capitalised regex captures).
+    idx <- .METRICS_SEVERITY_ORDINAL_LC[tolower(trimws(sev))]
+    if (length(idx) != 1L || is.na(idx)) NA_integer_ else unname(idx)
+  }, integer(1L))
+  if (all(is.na(ords))) return(NA_character_)
+  best_ord <- max(ords, na.rm = TRUE)
+  SEVERITY_NAMES[[as.character(best_ord)]]
 }
 
 # ── Classify a job failure from review_jobs.error (llm#928) ──────────────────
@@ -898,8 +1036,32 @@ build_review_lifecycle <- function(jobs, reviews, markers) {
                     ifelse(merged$verdict_bool == 1L, "P", "F"))
 
   cat("roborev_metrics_etl.R: parsing severity from", nrow(merged), "review outputs...\n")
-  severity_max <- vapply(merged$output, parse_max_severity,
-                         character(1L), USE.NAMES = FALSE)
+  # llm#1265: merged$structured_output may be entirely absent (a fixture
+  # data.frame built without it, or a query against a pre-migration DB via
+  # has_structured_output_col above) -- treat as all-NA in that case, which
+  # .metrics_review_text() already falls back to `output` unchanged for.
+  merged_structured_output <- if ("structured_output" %in% names(merged)) {
+    merged$structured_output
+  } else {
+    rep(NA_character_, nrow(merged))
+  }
+  review_text <- vapply(
+    seq_len(nrow(merged)),
+    function(i) .metrics_review_text(merged$output[[i]], merged_structured_output[[i]]),
+    character(1L)
+  )
+  # llm#1265 round 3: JSON-direct severity first (structured findings,
+  # never regex over rendered text); fall back to parse_max_severity() over
+  # review_text only when there is no structured findings list to read
+  # from at all (schema_version 0 / legacy `output`-only rows).
+  severity_json <- vapply(
+    seq_len(nrow(merged)),
+    function(i) .metrics_structured_max_severity(merged$output[[i]], merged_structured_output[[i]]),
+    character(1L)
+  )
+  severity_regex <- vapply(review_text, parse_max_severity,
+                           character(1L), USE.NAMES = FALSE)
+  severity_max <- ifelse(!is.na(severity_json), severity_json, severity_regex)
 
   # ── Populate closed_at and close_reason ─────────────────────────────────
   #

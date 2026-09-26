@@ -269,6 +269,39 @@ query_reviews_db <- function(sql, timeout_sec = 15L) {
   tryCatch(jsonlite::fromJSON(txt, simplifyVector = FALSE), error = function(e) NULL)
 }
 
+# llm#1265: reviews.structured_output exists on the live ~/.roborev/reviews.db
+# since roborev v0.68.2 (2026-09-24), but a fixture DB built before this
+# change (e.g. tests/testthat/test-roborev-daily-email.R's make_reviews_db_
+# fixture()) has no such column -- selecting it unconditionally would make
+# every query below fail outright (query_reviews_db() returns NULL on any
+# sqlite3 error) rather than degrading gracefully. Checked once via
+# PRAGMA table_info, not per-query.
+# llm#1265 finding 4: query_reviews_db() returns NULL both when the PRAGMA
+# genuinely has no rows to say "column absent" AND when the query itself
+# failed (transient sqlite3 timeout/lock/crash) -- collapsing those two
+# into the same "treat as absent" branch silently degrades every later
+# query to `NULL AS structured_output` (all live rows read as empty text,
+# every review classifies "unclassified") with NO log line distinguishing
+# a genuinely pre-migration DB from a live DB this run merely failed to
+# introspect. Log the NULL-PRAGMA case loudly so it's distinguishable in
+# the digest/cron log from an actually-absent column.
+HAS_STRUCTURED_OUTPUT_COL <- local({
+  cols <- query_reviews_db("PRAGMA table_info(reviews);")
+  if (is.null(cols)) {
+    message("send_roborev_email.R: WARNING — PRAGMA table_info(reviews) query ",
+            "failed (sqlite3 error, not \"column absent\"); falling back to ",
+            "NULL AS structured_output for this run, which will misclassify ",
+            "every open review's severity/passed status as unclassified. ",
+            "If this persists across runs, check reviews.db availability, ",
+            "not the schema.")
+    return(FALSE)
+  }
+  any(vapply(cols, function(c) identical(c[["name"]], "structured_output"), logical(1L)))
+})
+.reviews_structured_output_col <- function() {
+  if (HAS_STRUCTURED_OUTPUT_COL) "rv.structured_output" else "NULL"
+}
+
 # ── Lagged close rate (reviews aged 2-8 days) — replaces the 24h close rate ───
 LAGGED_WINDOW_MIN_DAYS <- 2L
 LAGGED_WINDOW_MAX_DAYS <- 8L
@@ -487,8 +520,19 @@ NOT_REVIEWED_PATTERNS <- c(
 #   extra "were" in between. Added as its own literal entry rather than
 #   switching .pattern_matches() to regex, matching this list's existing
 #   convention of near-duplicate phrasings as separate fixed strings.
+#   "severity_threshold_ met" — PR #1269 round 4, review_id 10411 in the
+#   live backlog (schema_version 0, legacy.markdown text): the SAME
+#   `SEVERITY_THRESHOLD_MET` token from the entry above, but stored with a
+#   hard line-wrap inserted mid-token ("SEVERITY_THRESHOLD_\nMET").
+#   normalize_ws() collapses that embedded newline to a single space rather
+#   than removing it, so the normalized text reads "...severity_threshold_
+#   met" and never matches the tight "severity_threshold_met" literal above.
+#   Added as its own literal entry (matching this list's convention) rather
+#   than de-wrapping generally, which would risk changing matches for every
+#   other multi-word pattern in this list.
 PASSED_PATTERNS <- c(
   "severity_threshold_met",
+  "severity_threshold_ met",
   "no issues found",
   "no issues were found",
   "no code changes were provided",
@@ -512,6 +556,269 @@ classify_unparseable_finding <- function(text) {
   "unclassified"
 }
 
+# ── structured_output reader (llm#1265) — R mirror of
+# .claude/scripts/lib/roborev_classify.py's review_output_text() /
+# classify_review_row(). roborev v0.68.2 (2026-09-24) migrated every
+# review's text out of `reviews.output` (now '' on all live rows) into a
+# new `reviews.structured_output` JSON column, keyed by schema_version:
+#   0 -- data$legacy$markdown holds the ORIGINAL pre-migration text
+#        verbatim (top-level findings/summary are always empty for these).
+#   1 -- {schema_version, summary, findings}. No "verdict" key -- an EMPTY
+#        findings list alone means the review ran and found nothing.
+#   2 -- adds top-level verdict: "pass"|"fail". findings carry
+#        severity/problem/fix/location (severity lowercase).
+# Rather than teach every regex above (Severity:/Location:/Problem:/
+# NOT_REVIEWED_PATTERNS/PASSED_PATTERNS) a second JSON-shaped code path,
+# .render_structured_findings_as_markdown() reconstructs the SAME markdown
+# shape those regexes already expect, so classify_unparseable_finding() and
+# parse_max_severity_ordinal() above keep working UNMODIFIED against text
+# sourced via review_output_text() instead of the raw `output` column.
+# Keep in sync with the Python module's same-named functions by hand (same
+# discipline as NOT_REVIEWED_PATTERNS/PASSED_PATTERNS/the severity regex
+# above); parity is covered by tests/test_roborev_classify.sh.
+.parse_structured_json <- function(structured_output) {
+  if (is.null(structured_output) || is.na(structured_output) || !nzchar(structured_output)) {
+    return(NULL)
+  }
+  data <- tryCatch(jsonlite::fromJSON(structured_output, simplifyVector = FALSE),
+                    error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(NULL)
+  data
+}
+
+.legacy_markdown_from_structured <- function(data) {
+  legacy <- data[["legacy"]]
+  if (is.list(legacy)) {
+    md <- legacy[["markdown"]]
+    if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
+  }
+  NULL
+}
+
+.render_structured_findings_as_markdown <- function(data) {
+  findings <- data[["findings"]]
+  if (!is.list(findings)) findings <- list()
+  summary_txt <- data[["summary"]]
+  if (is.null(summary_txt) || is.na(summary_txt)) summary_txt <- ""
+  verdict <- data[["verdict"]]
+  schema_version <- data[["schema_version"]]
+  # llm#1265 finding 2: only a RECOGNISED schema_version (1 or 2 today --
+  # see the Python module's docstring) may reach the "No issues found."/
+  # Summary-only paths below when findings is empty. Before this fix,
+  # `is.null(verdict) || identical(verdict, "pass")` fired for ANY
+  # empty-findings dict whose verdict key happened to be absent -- which
+  # includes {} (no schema_version key at all), a schema_version 0 row
+  # whose legacy.markdown is blank/missing (already failed that path
+  # before this function was even called), and an unrecognised
+  # schema_version -- all three were silently rendered as "No issues
+  # found." and then classified "passed". Such a row has nothing reliable
+  # to synthesize from, so it must classify as INDETERMINATE instead --
+  # returning "" here achieves that via classify_review_row()'s existing
+  # empty-text handling. Findings-non-empty rendering below is UNAFFECTED
+  # by this gate.
+  known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+
+  lines <- character(0)
+  if (length(findings) > 0L) {
+    lines <- c(lines, "## Review Findings", "")
+    for (f in findings) {
+      if (!is.list(f)) next
+      # PR #1269 round 4: a finding field can be a JSON array (parsed as an
+      # R list under simplifyVector=FALSE, or a length>1 character vector),
+      # not just a scalar string. as.character()/nzchar() on a non-scalar
+      # crashes `if (nzchar(sev))`/`&&` in R 4.2+ ("condition has length >
+      # 1" / "argument is of length > 1"). Mirrors the Python module's
+      # `isinstance(x, str)` guard: only a length-1 character value is used;
+      # anything else (list, numeric, logical, longer vector) is treated as
+      # absent rather than crashing the whole render.
+      sev <- f[["severity"]]
+      sev <- if (is.character(sev) && length(sev) == 1L) trimws(sev) else ""
+      sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
+      lines <- c(lines, sprintf("- **Severity**: %s", sev_cap))
+      loc <- f[["location"]]
+      if (is.character(loc) && length(loc) == 1L && nzchar(loc)) {
+        lines <- c(lines, sprintf("  **Location**: %s", loc))
+      }
+      problem <- f[["problem"]]
+      if (is.character(problem) && length(problem) == 1L && nzchar(problem)) {
+        lines <- c(lines, sprintf("  **Problem**: %s", problem))
+      }
+      fix <- f[["fix"]]
+      if (is.character(fix) && length(fix) == 1L && nzchar(fix)) {
+        lines <- c(lines, sprintf("  **Fix**: %s", fix))
+      }
+      lines <- c(lines, "")
+    }
+  } else if (!known_schema) {
+    return("")
+  } else if (is.null(verdict) || identical(verdict, "pass")) {
+    # A v1/v2 review that ran and found nothing. Synthesize the exact
+    # phrase PASSED_PATTERNS already matches. verdict=="fail" with an empty
+    # findings list is a data inconsistency (never observed live) and is
+    # deliberately NOT synthesized as clean.
+    lines <- c(lines, "No issues found.", "")
+  }
+  lines <- c(lines, "## Summary", "", summary_txt)
+  trimws(paste(lines, collapse = "\n"))
+}
+
+# review_output_text(): THE shared reader. Returns the best available
+# plain-text rendering of a review row so every regex/substring check above
+# keeps working unchanged. Priority: structured_output schema_version 0 ->
+# legacy.markdown verbatim; schema_version >= 1 -> synthesized markdown;
+# legacy `output` column text; "" when BOTH are empty/unusable (callers
+# MUST treat "" as indeterminate, never as clean — see classify_review_row()).
+# `.parsed` lets a caller that already ran .parse_structured_json() on this
+# row's structured_output (e.g. classify_open_findings()'s per-row loop)
+# pass the result in directly instead of re-parsing the same JSON text a
+# second time (PR #1269 round 4, review 10535 finding 5); left NULL, this
+# function parses structured_output itself exactly as before.
+review_output_text <- function(output, structured_output, .parsed = NULL) {
+  out_fallback <- if (is.null(output) || is.na(output)) "" else trimws(output)
+  data <- if (!is.null(.parsed)) .parsed else .parse_structured_json(structured_output)
+  if (!is.null(data)) {
+    legacy_md <- .legacy_markdown_from_structured(data)
+    if (!is.null(legacy_md)) return(legacy_md)
+    rendered <- .render_structured_findings_as_markdown(data)
+    if (nzchar(rendered)) return(rendered)
+    # PR #1269 round 3: structured_output was valid JSON but produced
+    # nothing usable (unrecognised schema, {}, or blank legacy.markdown) --
+    # fall through to the legacy `output` column rather than giving up.
+    # Mirrors the identical fix in .claude/scripts/lib/roborev_classify.py's
+    # review_output_text() (review id 10523: "when structured_output is
+    # valid-but-unusable JSON, fall back to legacy output text... before
+    # returning ''").
+  }
+  out_fallback
+}
+
+# ── JSON-direct severity / top-finding reader (PR #1269 round 3) ──────────
+# R mirror of roborev_classify.py's review_structured_findings()/
+# review_severity_ordinal(). See that module's docstring "SEVERITY IS
+# JSON-DIRECT, NEVER REGEX-OVER-RENDERED-TEXT" section for the full
+# rationale: parse_max_severity_ordinal() over review_output_text()'s
+# SYNTHESIZED text is vulnerable to a finding's own problem/fix prose
+# quoting a severity marker as an example (review ids 10523/10524 live
+# shape). These functions read findings[].severity DIRECTLY from parsed
+# JSON for a schema_version 1/2 row with a non-empty findings list, and
+# are used by classify_open_findings() below instead of
+# parse_max_severity_ordinal(text).
+
+.known_structured_schema <- function(schema_version) {
+  is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+}
+
+# Returns a list of list(ordinal=, severity=, location=, problem=) read
+# DIRECTLY from JSON `findings` entries, or NULL when there is nothing
+# usable to read (unrecognised/missing schema_version, findings missing/
+# empty, or no entry has a recognised `severity` value) -- callers MUST
+# treat NULL as "fall back to the legacy regex-over-text path".
+.structured_findings_normalized <- function(data) {
+  if (!.known_structured_schema(data[["schema_version"]])) return(NULL)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(NULL)
+  out <- list()
+  for (f in findings) {
+    if (!is.list(f)) next
+    # PR #1269 round 4 (review 10535 finding 1): `severity`/`location`/
+    # `problem` can be a JSON array, which .parse_structured_json()'s
+    # simplifyVector=FALSE turns into an R list (or, occasionally, a
+    # length>1 character vector) rather than a scalar. as.character() on
+    # that, followed by `nzchar(...) || ...`, crashes in R 4.2+ ("argument
+    # is of length > 1" / "condition has length > 1"). Mirrors the Python
+    # module's `isinstance(sev, str)` guard: only a length-1 character
+    # value is accepted; anything else is treated as absent, never crashed
+    # on.
+    sev <- f[["severity"]]
+    if (!is.character(sev) || length(sev) != 1L) next
+    sev_chr <- trimws(tolower(sev))
+    if (!nzchar(sev_chr) || !(sev_chr %in% names(SEVERITY_ORDINAL))) next
+    loc <- f[["location"]]
+    loc_chr <- if (is.character(loc) && length(loc) == 1L && nzchar(trimws(loc))) trimws(loc) else NA_character_
+    problem <- f[["problem"]]
+    problem_chr <- if (is.character(problem) && length(problem) == 1L && nzchar(trimws(problem))) trimws(problem) else NA_character_
+    out[[length(out) + 1L]] <- list(
+      ordinal  = unname(SEVERITY_ORDINAL[[sev_chr]]),
+      severity = sev_chr,
+      location = loc_chr,
+      problem  = problem_chr
+    )
+  }
+  if (length(out) == 0L) return(NULL)
+  out
+}
+
+# Public entry: parse structured_output and return
+# .structured_findings_normalized(data), or NULL if structured_output is
+# not usable JSON at all -- callers should read NULL as "use
+# review_output_text() with your own regex instead" (schema_version 0 /
+# legacy `output`-only rows never had per-finding JSON to begin with).
+# No R caller currently uses this (classify_open_findings() below calls
+# review_severity_ordinal()/.structured_findings_normalized() directly) --
+# kept only for parity with roborev_classify.py's identically-named public
+# function. Takes ONLY structured_output: the legacy `output` (rendered
+# text) column has no bearing on a JSON-direct read, so unlike the Python
+# mirror (which keeps `output` for its own call-site parity) the unused
+# parameter is dropped here rather than carried and ignored (PR #1269
+# round 4, review 10535 finding 3).
+review_structured_findings <- function(structured_output) {
+  data <- .parse_structured_json(structured_output)
+  if (is.null(data)) return(NULL)
+  .structured_findings_normalized(data)
+}
+
+# Max severity ordinal (1-4) for a review row, sourced from EITHER column.
+# JSON-direct for a structured row (schema_version 1/2, non-empty
+# findings); falls back to parse_max_severity_ordinal(review_output_text())
+# for schema_version 0 rows, an unrecognised/missing schema_version, or
+# structured_output that is not usable JSON at all. A RECOGNISED schema
+# with an EMPTY findings list ("passed") returns NA_integer_ WITHOUT
+# falling back -- see roborev_classify.py's review_severity_ordinal()
+# docstring for why (an empty findings list IS the "nothing to report"
+# signal; falling back to `output` there would risk resurrecting stale
+# text from an unrelated column).
+review_severity_ordinal <- function(output, structured_output, .parsed = NULL) {
+  data <- if (!is.null(.parsed)) .parsed else .parse_structured_json(structured_output)
+  if (!is.null(data)) {
+    # PR #1269 round 4 (review 10535 finding 4): a known schema (1/2) with
+    # a non-empty findings list is scored JSON-direct FIRST, before the
+    # legacy.markdown shortcut -- a schema 1/2 row that ALSO happens to
+    # carry a stale/incidental `legacy.markdown` block must not be scored
+    # by the regex-over-rendered-text path this whole change exists to
+    # avoid. legacy.markdown is only consulted for schema 0 rows or an
+    # unrecognised/missing schema_version, where there is no JSON findings
+    # list to read directly.
+    if (.known_structured_schema(data[["schema_version"]])) {
+      normalized <- .structured_findings_normalized(data)
+      if (!is.null(normalized)) {
+        return(max(vapply(normalized, function(f) f$ordinal, integer(1L))))
+      }
+      # Recognised schema, but either genuinely empty (passed) or non-empty
+      # with no entry carrying a recognised severity value -- nothing to
+      # report, nothing to fall back to.
+      return(NA_integer_)
+    }
+    legacy_md <- .legacy_markdown_from_structured(data)
+    if (!is.null(legacy_md)) return(parse_max_severity_ordinal(legacy_md))
+    # Unrecognised/missing schema_version and no legacy.markdown -- fall
+    # through to the legacy `output` column below.
+  }
+  parse_max_severity_ordinal(review_output_text(output, structured_output, .parsed = data))
+}
+
+# classify_review_row(): explicit-outcome reader adding ONE new terminal
+# state beyond classify_unparseable_finding()'s three — "indeterminate":
+# BOTH output and structured_output are empty/NULL/unparseable, i.e. there
+# is no review text to classify at all. NEVER a "clean"/"passed" result.
+classify_review_row <- function(output, structured_output) {
+  text <- review_output_text(output, structured_output)
+  if (!nzchar(text)) return("indeterminate")
+  if (!is.na(parse_max_severity_ordinal(text))) return("parsed")
+  classify_unparseable_finding(text)
+}
+
 # classify_open_findings(): splits a set of open-findings rows (each with
 # `output`/`review_id`/`repo`) into two DISJOINT top-level buckets —
 # above-threshold (parseable severity > AUTOCLOSE_THRESHOLD_ORD) and
@@ -520,8 +827,15 @@ classify_unparseable_finding <- function(text) {
 # signature — see llm#1127 below). A row lands in at most one top-level
 # bucket, so the two counts never double-count the same finding.
 # Unparseable rows are further split into not_reviewed / passed /
-# unclassified via classify_unparseable_finding() (llm#972 cause 2) — those
-# three sub-counts always sum to unparse_n.
+# unclassified / indeterminate via classify_unparseable_finding() (llm#972
+# cause 2) plus the llm#1265-finding-4 indeterminate branch below — those
+# FOUR sub-counts always sum to unparse_n. "indeterminate" (BOTH output and
+# structured_output empty/NULL/unparseable — classify_review_row()'s
+# terminal state) is counted SEPARATELY from "unclassified" (text existed
+# but matched no known shape) rather than being silently folded into it —
+# they mean different things for triage: indeterminate means "there is
+# nothing to read"; unclassified means "there is text, but it doesn't fit
+# any pattern this classifier knows".
 #
 #   llm#1127 (2026-09-02): originally this function ran
 #   classify_unparseable_finding() ONLY when parse_max_severity_ordinal()
@@ -562,11 +876,30 @@ classify_open_findings <- function(rows) {
   above_n    <- 0L
   above_rows <- list()
   unparse_n  <- 0L
-  not_reviewed_n <- 0L
-  passed_n       <- 0L
-  unclassified_n <- 0L
+  not_reviewed_n  <- 0L
+  passed_n        <- 0L
+  unclassified_n  <- 0L
+  indeterminate_n <- 0L
   for (r in rows) {
-    text <- r[["output"]]
+    # PR #1269 round 4 (review 10535 finding 5): parse structured_output
+    # ONCE per row and hand the parsed list to both readers below, instead
+    # of each of review_output_text()/review_severity_ordinal() re-parsing
+    # the same JSON text independently inside this loop.
+    parsed <- .parse_structured_json(r[["structured_output"]])
+    # llm#1265: reads structured_output first (roborev v0.68.2 migrated
+    # every row's text there, leaving `output` empty on all live rows),
+    # falling back to the legacy `output` column.
+    text <- review_output_text(r[["output"]], r[["structured_output"]], .parsed = parsed)
+    if (!nzchar(text)) {
+      # llm#1265 finding 4: classify_review_row()'s "indeterminate" state
+      # — BOTH output and structured_output are empty/NULL/unparseable, so
+      # there is no review text to classify at all. Counted separately
+      # from "unclassified" (see doc comment above) rather than being
+      # folded into it via classify_unparseable_finding("") -> "unclassified".
+      unparse_n <- unparse_n + 1L
+      indeterminate_n <- indeterminate_n + 1L
+      next
+    }
     sub_cls <- classify_unparseable_finding(text)
     if (identical(sub_cls, "not_reviewed") || identical(sub_cls, "passed")) {
       # A known tooling-failure/empty-diff signature was matched — this
@@ -579,7 +912,9 @@ classify_open_findings <- function(rows) {
       }
       next
     }
-    ord <- parse_max_severity_ordinal(text)
+    # llm#1265 round 3: JSON-direct severity (never regex over the
+    # rendered `text`) -- see review_severity_ordinal()'s docstring above.
+    ord <- review_severity_ordinal(r[["output"]], r[["structured_output"]], .parsed = parsed)
     if (is.na(ord)) {
       unparse_n <- unparse_n + 1L
       unclassified_n <- unclassified_n + 1L
@@ -597,7 +932,7 @@ classify_open_findings <- function(rows) {
   list(
     above_n = above_n, above_rows = above_rows, unparse_n = unparse_n,
     not_reviewed_n = not_reviewed_n, passed_n = passed_n,
-    unclassified_n = unclassified_n
+    unclassified_n = unclassified_n, indeterminate_n = indeterminate_n
   )
 }
 
@@ -617,7 +952,8 @@ classify_open_findings <- function(rows) {
 NEW_WINDOW_HOURS <- 24L
 
 open_findings_sql_base <- paste(
-  "SELECT rv.id AS review_id, rv.job_id AS job_id, rv.output AS output, rp.name AS repo",
+  "SELECT rv.id AS review_id, rv.job_id AS job_id, rv.output AS output,",
+  sprintf("%s AS structured_output, rp.name AS repo", .reviews_structured_output_col()),
   "FROM reviews rv",
   "JOIN review_jobs rj ON rj.id = rv.job_id",
   "JOIN repos rp ON rp.id = rj.repo_id",
@@ -634,12 +970,14 @@ total_unparseable_open_n     <- NA_integer_
 total_not_reviewed_open_n    <- NA_integer_
 total_passed_open_n          <- NA_integer_
 total_unclassified_open_n    <- NA_integer_
+total_indeterminate_open_n   <- NA_integer_
 new_above_threshold_open_n   <- NA_integer_
 new_above_threshold_rows     <- list()
 new_unparseable_open_n       <- NA_integer_
 new_not_reviewed_open_n      <- NA_integer_
 new_passed_open_n            <- NA_integer_
 new_unclassified_open_n      <- NA_integer_
+new_indeterminate_open_n     <- NA_integer_
 
 total_open_findings <- query_reviews_db(total_open_findings_sql)
 if (!is.null(total_open_findings)) {
@@ -649,6 +987,7 @@ if (!is.null(total_open_findings)) {
   total_not_reviewed_open_n    <- cls_total$not_reviewed_n
   total_passed_open_n          <- cls_total$passed_n
   total_unclassified_open_n    <- cls_total$unclassified_n
+  total_indeterminate_open_n   <- cls_total$indeterminate_n
 } else {
   message("send_roborev_email.R: could not query open findings from reviews.db — ",
           "standing backlog counts unavailable")
@@ -663,6 +1002,7 @@ if (!is.null(new_open_findings)) {
   new_not_reviewed_open_n    <- cls_new$not_reviewed_n
   new_passed_open_n          <- cls_new$passed_n
   new_unclassified_open_n    <- cls_new$unclassified_n
+  new_indeterminate_open_n   <- cls_new$indeterminate_n
 } else {
   message("send_roborev_email.R: could not query new open findings from reviews.db — ",
           "delta counts unavailable (rendering nothing rather than a false alert)")
@@ -693,7 +1033,8 @@ if (!is.null(new_open_findings)) {
 AGENT_RATE_WINDOW_DAYS <- 7L
 per_agent_sql <- sprintf(
   paste(
-    "SELECT rj.agent AS agent, rj.model AS model, rv.output AS output",
+    "SELECT rj.agent AS agent, rj.model AS model, rv.output AS output,",
+    sprintf("%s AS structured_output", .reviews_structured_output_col()),
     "FROM reviews rv",
     "JOIN review_jobs rj ON rj.id = rv.job_id",
     "WHERE datetime(rv.created_at) >= datetime('now', '-%d days');"
@@ -721,7 +1062,9 @@ classify_by_agent <- function(rows) {
     if (is.null(agg[[key]])) {
       agg[[key]] <- list(agent = agent_val, model = model_val, n = 0L, not_reviewed_n = 0L)
     }
-    if (identical(classify_unparseable_finding(r[["output"]]), "not_reviewed")) {
+    if (identical(classify_unparseable_finding(
+      review_output_text(r[["output"]], r[["structured_output"]])
+    ), "not_reviewed")) {
       agg[[key]]$not_reviewed_n <- agg[[key]]$not_reviewed_n + 1L
     }
     agg[[key]]$n <- agg[[key]]$n + 1L
@@ -991,6 +1334,23 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
     fmt_int(total_unclassified_open_n)
   )
 
+  # Line 2b — indeterminate rows (llm#1265 finding 4): BOTH output and
+  # structured_output are empty/NULL/unparseable, i.e. there is no review
+  # text at all to classify -- distinct from "unclassified" (text existed
+  # but matched no known shape) and from "passed" (a real clean verdict).
+  indeterminate_line <- if (isTRUE(!is.na(total_indeterminate_open_n) &&
+                                    total_indeterminate_open_n > 0L)) {
+    sprintf(
+      '<strong style="color:#f0a860;">&#9888; No review text at all
+       (indeterminate): %s open.</strong>
+       Both the legacy <code>output</code> column and the
+       <code>structured_output</code> JSON column are empty, NULL, or
+       unparseable for these rows — there is nothing to classify. Never
+       treated as "passed".<br>',
+      fmt_int(total_indeterminate_open_n)
+    )
+  } else ""
+
   # Line 3 — context only. Explicitly labelled as correct so it is never
   # read as part of the problem.
   passed_line <- sprintf(
@@ -1042,11 +1402,11 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
       <strong>Findings with no parsed severity:</strong>
       %s new in the last %dh, %s open in total —
       <em>three different things, separated below.</em><br>
-      %s%s%s%s
+      %s%s%s%s%s
     </div>',
     dark_card, dark_text, accent_purple, EMAIL_FONT_BODY,
     new_str, NEW_WINDOW_HOURS, fmt_int(total_unparseable_open_n),
-    not_reviewed_line, unclassified_line, passed_line, unclassified_warn
+    not_reviewed_line, indeterminate_line, unclassified_line, passed_line, unclassified_warn
   )
 } else ""
 
@@ -1500,7 +1860,7 @@ agent_rate_html <- collapsible_block(
 # the marker itself must never collapse those two into a shared value, per
 # checks-must-distinguish-unknown.
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_indeterminate_open_n=%s --><!-- QA:total_indeterminate_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d -->',
   report_date, issues_found_closed, fmt_rate(close_rate), effective_dashboard_url(),
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
   if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
@@ -1513,6 +1873,8 @@ qa_markers <- sprintf(
   if (is.na(total_passed_open_n)) "NA" else as.character(total_passed_open_n),
   if (is.na(new_unclassified_open_n)) "NA" else as.character(new_unclassified_open_n),
   if (is.na(total_unclassified_open_n)) "NA" else as.character(total_unclassified_open_n),
+  if (is.na(new_indeterminate_open_n)) "NA" else as.character(new_indeterminate_open_n),
+  if (is.na(total_indeterminate_open_n)) "NA" else as.character(total_indeterminate_open_n),
   NEW_WINDOW_HOURS,
   LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS,
   tolower(as.character(!is.null(agent_rate_agg))),

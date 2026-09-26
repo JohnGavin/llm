@@ -107,12 +107,15 @@ close_reviews_db <- function(db) {
 
 # Fetch via RSQLite
 .fetch_rsqlite <- function(con, repo) {
+  # llm#1265: roborev v0.68.2 migrated every row's review text out of
+  # `output` (empty on all live rows) into `structured_output` (JSON).
   sql <- "
     SELECT r.id AS review_id,
            r.job_id,
            rj.git_ref,
            r.created_at,
-           r.output
+           r.output,
+           r.structured_output
     FROM reviews r
     JOIN review_jobs rj ON r.job_id = rj.id
     JOIN repos rep      ON rj.repo_id = rep.id
@@ -120,30 +123,66 @@ close_reviews_db <- function(db) {
       AND r.closed = 0
     ORDER BY r.created_at
   "
-  DBI::dbGetQuery(con, sql, params = list(repo))
+  tryCatch(
+    DBI::dbGetQuery(con, sql, params = list(repo)),
+    error = function(e) {
+      # Defensive fallback for a reviews.db predating the v0.68.2 migration
+      # (no structured_output column).
+      sql2 <- "
+        SELECT r.id AS review_id,
+               r.job_id,
+               rj.git_ref,
+               r.created_at,
+               r.output,
+               NULL AS structured_output
+        FROM reviews r
+        JOIN review_jobs rj ON r.job_id = rj.id
+        JOIN repos rep      ON rj.repo_id = rep.id
+        WHERE rep.name = ?
+          AND r.closed = 0
+        ORDER BY r.created_at
+      "
+      DBI::dbGetQuery(con, sql2, params = list(repo))
+    }
+  )
 }
 
 # Fetch via python3 subprocess — outputs JSON array
 .fetch_python3 <- function(db_path, repo) {
+  # llm#1265: roborev v0.68.2 migrated every row's review text out of
+  # `output` (empty on all live rows) into `structured_output` (JSON).
+  # Falls back to an `output`-only query if the column doesn't exist (a
+  # reviews.db predating the migration).
   py_script <- sprintf(
     paste(
       "import sqlite3, json, sys",
       "con = sqlite3.connect('file:%s?mode=ro', uri=True)",
       "cur = con.cursor()",
-      "cur.execute('''",
-      "  SELECT r.id, r.job_id, rj.git_ref, r.created_at, r.output",
-      "  FROM reviews r",
-      "  JOIN review_jobs rj ON r.job_id = rj.id",
-      "  JOIN repos rep ON rj.repo_id = rep.id",
-      "  WHERE rep.name = ? AND r.closed = 0",
-      "  ORDER BY r.created_at",
-      "''', (%s,))",
+      "try:",
+      "  cur.execute('''",
+      "    SELECT r.id, r.job_id, rj.git_ref, r.created_at, r.output, r.structured_output",
+      "    FROM reviews r",
+      "    JOIN review_jobs rj ON r.job_id = rj.id",
+      "    JOIN repos rep ON rj.repo_id = rep.id",
+      "    WHERE rep.name = ? AND r.closed = 0",
+      "    ORDER BY r.created_at",
+      "  ''', (%s,))",
+      "except sqlite3.OperationalError:",
+      "  cur.execute('''",
+      "    SELECT r.id, r.job_id, rj.git_ref, r.created_at, r.output, NULL",
+      "    FROM reviews r",
+      "    JOIN review_jobs rj ON r.job_id = rj.id",
+      "    JOIN repos rep ON rj.repo_id = rep.id",
+      "    WHERE rep.name = ? AND r.closed = 0",
+      "    ORDER BY r.created_at",
+      "  ''', (%s,))",
       "rows = cur.fetchall()",
       "con.close()",
       "print(json.dumps(rows))",
       sep = "\n"
     ),
     db_path,
+    paste0('"', repo, '"'),
     paste0('"', repo, '"')
   )
 
@@ -156,6 +195,7 @@ close_reviews_db <- function(db) {
       git_ref    = character(0),
       created_at = character(0),
       output     = character(0),
+      structured_output = character(0),
       stringsAsFactors = FALSE
     ))
   }
@@ -168,6 +208,7 @@ close_reviews_db <- function(db) {
       git_ref    = character(0),
       created_at = character(0),
       output     = character(0),
+      structured_output = character(0),
       stringsAsFactors = FALSE
     ))
   }
@@ -178,6 +219,9 @@ close_reviews_db <- function(db) {
     git_ref    = vapply(rows_list, function(r) as.character(r[[3L]]), character(1L)),
     created_at = vapply(rows_list, function(r) as.character(r[[4L]]), character(1L)),
     output     = vapply(rows_list, function(r) as.character(r[[5L]]), character(1L)),
+    structured_output = vapply(rows_list, function(r) {
+      if (length(r) < 6L || is.null(r[[6L]])) NA_character_ else as.character(r[[6L]])
+    }, character(1L)),
     stringsAsFactors = FALSE
   )
 }
@@ -189,9 +233,20 @@ fetch_open_reviews <- function(db, repo, min_severity_num, sev_order, limit) {
     .fetch_python3(db$db_path, repo)
   }
 
+  # llm#1265: `output` is empty on every row since roborev v0.68.2 migrated
+  # review text into `structured_output`. Reconstruct per-row text (via the
+  # findings-block builder below, which handles schema_version 0/1/2 and
+  # falls back to `output`) BEFORE running the severity-marker regex, so the
+  # threshold filter keeps working unchanged.
+  findings_text <- vapply(
+    seq_len(nrow(rows)),
+    function(i) .review_findings_text(rows$output[[i]], rows$structured_output[[i]]),
+    character(1L)
+  )
+
   # Filter by minimum severity: keep reviews that contain at least one
   # sub-finding at or above the threshold.
-  keep <- vapply(rows$output, function(out) {
+  keep <- vapply(findings_text, function(out) {
     found_sevs <- regmatches(out,
       gregexpr("(?<=\\*\\*Severity\\*\\*:\\s)[A-Za-z]+", out, perl = TRUE))[[1L]]
     any(sev_order[found_sevs] >= min_severity_num, na.rm = TRUE)
@@ -200,6 +255,156 @@ fetch_open_reviews <- function(db, repo, min_severity_num, sev_order, limit) {
 
   if (limit > 0L && nrow(rows) > limit) rows <- rows[seq_len(limit), , drop = FALSE]
   rows
+}
+
+# ── structured_output reader (llm#1265) ─────────────────────────────────────
+#
+# roborev v0.68.2 migrated every row's review text out of `output` into a
+# new `structured_output` JSON column (schema_version 0: original markdown
+# verbatim under data$legacy$markdown; schema_version >= 1: verdict/summary/
+# findings, findings carrying severity/problem/fix/location). This script's
+# OWN parse_findings() below expects "---"-separated blocks (a format unique
+# to this file, distinct from the "## Review Findings" bullet-list shape the
+# other roborev_*.sh/R consumers reconstruct) -- so rather than reuse the
+# shared roborev_classify.py/.R review_output_text() reconstruction (blank-
+# line separated, would silently collapse a multi-finding structured review
+# into ONE block and drop all but the first finding's detail), this builds
+# "---"-joined blocks directly from the findings array, which parse_findings()
+# already knows how to split. schema_version 0 rows return legacy.markdown
+# verbatim (byte-identical to the pre-migration `output` text, so the
+# existing "---"-block parsing behaves exactly as before). Both-empty/
+# unparseable falls back to the raw `output` column, then "".
+.review_findings_text <- function(output, structured_output) {
+  data <- NULL
+  if (!is.null(structured_output) && !is.na(structured_output) && nzchar(structured_output)) {
+    data <- tryCatch(jsonlite::fromJSON(structured_output, simplifyVector = FALSE),
+                      error = function(e) NULL)
+  }
+  if (!is.null(data) && is.list(data)) {
+    legacy <- data[["legacy"]]
+    if (is.list(legacy)) {
+      md <- legacy[["markdown"]]
+      if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
+    }
+    findings <- data[["findings"]]
+    if (is.list(findings) && length(findings) > 0L) {
+      # PR #1269 round 4 (defense-in-depth, same crash class as review
+      # 10536 finding 2 in .review_structured_findings_list() above): a
+      # JSON array field becomes a non-scalar list/vector under
+      # simplifyVector=FALSE, and as.character()+nzchar() on that crashes
+      # `if()` in R 4.2+. Only a length-1 character value is used; anything
+      # else renders as blank rather than aborting this fallback path
+      # (which is itself the regex path's OWN input, exercised whenever the
+      # JSON-direct reader above finds nothing usable to read).
+      blocks <- vapply(findings, function(f) {
+        if (!is.list(f)) return("")
+        sev <- f[["severity"]]
+        sev <- if (is.character(sev) && length(sev) == 1L) trimws(sev) else ""
+        sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
+        lines <- sprintf("**Severity**: %s", sev_cap)
+        loc <- f[["location"]]
+        if (is.character(loc) && length(loc) == 1L && nzchar(loc)) {
+          lines <- c(lines, sprintf("**Location**: %s", loc))
+        }
+        prob <- f[["problem"]]
+        if (is.character(prob) && length(prob) == 1L && nzchar(prob)) {
+          lines <- c(lines, sprintf("**Problem**: %s", prob))
+        }
+        paste(lines, collapse = "\n")
+      }, character(1L))
+      return(paste(blocks, collapse = "\n---\n"))
+    }
+    # Valid structured_output, no findings (a "passed" review) -- nothing
+    # for parse_findings() to extract; distinct from the both-empty case.
+    return("")
+  }
+  if (!is.null(output) && !is.na(output) && nzchar(output)) return(output)
+  ""
+}
+
+# ── JSON-direct findings (PR #1269 round 3) ─────────────────────────────────
+#
+# Investigated whether this file's regex path (.review_findings_text() +
+# parse_findings() below) is vulnerable to the same corruption class fixed
+# elsewhere in this round (a finding's own problem/fix prose quoting a
+# severity marker as an example, e.g. review ids 10523/10524). Conclusion:
+# NOT vulnerable in classify_review()'s use, for three independent reasons
+# specific to this file's design: (1) blocks are split one-per-finding on
+# "---", so a DIFFERENT finding's prose can never corrupt this one; (2)
+# .review_findings_text() always emits "**Severity**: X" as EACH block's
+# first line, before Location/Problem; (3) parse_findings() extracts
+# severity via regexpr() (first match only, not gregexpr()), so it always
+# reads the synthesized leading marker, never a later one embedded in the
+# same finding's own Problem text. The `fix` field (where the live
+# examples actually quoted the marker) is also never rendered by
+# .review_findings_text() to begin with. This function is added anyway,
+# as a strict, defense-in-depth replacement: reading findings[].severity/
+# location/problem DIRECTLY from JSON removes even the residual
+# fragility of "regex happens to still be correct because of block/field
+# ordering", and keeps this file's severity source consistent with every
+# other roborev_*.sh/R consumer fixed in this round. Returns a list of
+# list(severity=,location=,problem=) -- severity CAPITALISED to match
+# sev_order's naming convention (Critical/High/Medium/Low), same as
+# parse_findings()'s own regex-captured values -- for a schema_version 1/2
+# row with a non-empty findings list, or NULL when there is nothing to
+# read (schema_version 0 / legacy rows use the existing regex path over
+# legacy.markdown / `output`, unchanged).
+.review_structured_findings_list <- function(structured_output) {
+  if (is.null(structured_output) || is.na(structured_output) || !nzchar(structured_output)) return(NULL)
+  data <- tryCatch(jsonlite::fromJSON(structured_output, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(NULL)
+  legacy <- data[["legacy"]]
+  if (is.list(legacy)) {
+    md <- legacy[["markdown"]]
+    if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(NULL)  # schema 0 -> legacy regex path
+  }
+  schema_version <- data[["schema_version"]]
+  known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+    !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+  if (!known_schema) return(NULL)
+  findings <- data[["findings"]]
+  if (!is.list(findings) || length(findings) == 0L) return(NULL)
+  out <- lapply(findings, function(f) {
+    if (!is.list(f)) return(NULL)
+    # PR #1269 round 4 (review 10536 finding 2): `severity`/`location`/
+    # `problem` can be a JSON array, which simplifyVector=FALSE turns into
+    # an R list rather than a scalar. as.character() on that, followed by
+    # `nzchar(...)` inside an `if`, crashes in R 4.2+ ("condition has
+    # length > 1"). Only a length-1 character value is accepted here;
+    # anything else is treated as absent. A finding with no usable severity
+    # is dropped entirely (returns NULL, filtered out below) rather than
+    # kept with severity=NA -- so that when EVERY finding in this row is
+    # unusable, this function returns NULL and the caller falls through to
+    # the regex path instead of reporting a determinate-looking "no
+    # findings above threshold" from data that was never actually read
+    # (review 10536 finding 3, checks-must-distinguish-unknown).
+    sev <- f[["severity"]]
+    if (!is.character(sev) || length(sev) != 1L || !nzchar(trimws(sev))) return(NULL)
+    # Lower-case first, THEN capitalise the first letter, so any input
+    # casing ("HIGH", "high", "High") normalises to the "High" shape
+    # sev_order's names use (Critical/High/Medium/Low) -- review 10536
+    # finding 1. Upper-casing only the first character left "HIGH" as
+    # "HIGH", which never matches sev_order's "High".
+    sev_lower <- tolower(trimws(sev))
+    sev_cap <- paste0(toupper(substr(sev_lower, 1, 1)), substr(sev_lower, 2, nchar(sev_lower)))
+    # An off-vocabulary word (not Critical/High/Medium/Low) is not a usable
+    # severity either -- drop the finding rather than keep a value
+    # classify_review()'s sev_order lookup will just discard anyway. This
+    # keeps "no finding has a recognised severity" (review 10536 finding 3)
+    # meaning exactly the same thing here as it does for the vocabulary
+    # check every other JSON-direct reader fixed in this round applies.
+    if (!(sev_cap %in% c("Critical", "High", "Medium", "Low"))) return(NULL)
+    loc  <- f[["location"]]
+    prob <- f[["problem"]]
+    list(
+      severity = sev_cap,
+      location = if (is.character(loc) && length(loc) == 1L && nzchar(trimws(loc))) trimws(loc) else NA_character_,
+      problem  = if (is.character(prob) && length(prob) == 1L && nzchar(trimws(prob))) trimws(prob) else NA_character_
+    )
+  })
+  out <- Filter(Negate(is.null), out)
+  if (length(out) == 0L) return(NULL)
+  out
 }
 
 # ── Finding parser ────────────────────────────────────────────────────────────
@@ -395,13 +600,32 @@ classify_finding <- function(finding, repo_root) {
 VERDICT_WEIGHT <- c("still-present" = 3L, "ambiguous" = 2L, "likely-fixed" = 1L)
 
 classify_review <- function(review_row, repo_root, min_severity_num, sev_order) {
-  findings <- parse_findings(review_row$output)
+  # PR #1269 round 3: JSON-direct findings first (see
+  # .review_structured_findings_list()'s docstring above for why this
+  # file's regex path was already safe, and why this is added anyway).
+  # Falls back to the regex path (llm#1265: `output` is empty on every row
+  # post-v0.68.2; reconstruct "---"-separated finding blocks from
+  # structured_output) only when there is no structured findings list to
+  # read from at all (schema_version 0 / legacy rows).
+  findings <- .review_structured_findings_list(review_row$structured_output)
+  if (is.null(findings)) {
+    findings <- parse_findings(.review_findings_text(
+      review_row$output, review_row$structured_output
+    ))
+  }
 
   # Filter to sub-findings at or above threshold
   sev_names <- names(sev_order)
   findings_above_threshold <- Filter(function(f) {
     if (is.na(f$severity)) return(FALSE)
-    sev_num <- sev_order[[f$severity]]
+    # PR #1269 round 4 (review 10536 finding 1): `[[` on an atomic named
+    # vector raises "subscript out of bounds" for a name not present,
+    # instead of returning NA -- an off-vocabulary severity (or a casing
+    # miss, before the capitalisation fix above) would abort classify_review()
+    # for the WHOLE review, silently skipping the is.null/is.na guard on the
+    # next line. `[` returns a length-1 NA for an unmatched name instead of
+    # erroring.
+    sev_num <- unname(sev_order[f$severity])
     if (is.null(sev_num) || is.na(sev_num)) return(FALSE)
     sev_num >= min_severity_num
   }, findings)

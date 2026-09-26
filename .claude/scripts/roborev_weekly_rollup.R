@@ -247,6 +247,11 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   )
   close_col <- if ("closed_at" %in% rv_cols) "rv.closed_at" else "rv.updated_at"
   close_ts  <- sprintf("TRY_CAST(%s AS TIMESTAMP)", close_col)
+  # llm#1265: roborev v0.68.2 migrated every row's review text out of
+  # reviews.output (empty on all live rows since) into a new
+  # reviews.structured_output JSON column. A pre-migration/fixture DB has
+  # no such column -- same has_*_col guard pattern as close_col above.
+  structured_output_col <- if ("structured_output" %in% rv_cols) "rv.structured_output" else "CAST(NULL AS VARCHAR)"
 
   run_q <- function(sql, what) {
     tryCatch(
@@ -339,12 +344,13 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
   median_ttc_hrs <- as.numeric(ttc_row$median_ttc_hrs[1L])
 
   # Top stuck findings: open, age > 7 days, order by age desc
-  stuck_sql <- "
+  stuck_sql <- sprintf("
     SELECT
       rj.id AS id,  -- JOB id: what `roborev show`/`roborev close` accept (NOT reviews.id)
       r.name AS repo,
       CAST((EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 AS INTEGER) AS age_days,
-      rv.output
+      rv.output,
+      %s AS structured_output
     FROM src.reviews rv
     JOIN src.review_jobs rj ON rj.id = rv.job_id
     JOIN src.repos r ON r.id = rj.repo_id
@@ -353,15 +359,162 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
       AND (EPOCH(CURRENT_TIMESTAMP) - EPOCH(CAST(rj.finished_at AS TIMESTAMP))) / 86400.0 > 7
     ORDER BY age_days DESC
     LIMIT 10
-  "
+  ", structured_output_col)
 
   stuck_raw <- tryCatch(
     DBI::dbGetQuery(con, stuck_sql),
     error = function(e) data.frame(id = integer(0), repo = character(0),
-                                   age_days = integer(0), output = character(0))
+                                   age_days = integer(0), output = character(0),
+                                   structured_output = character(0))
   )
 
-  # Extract one-line summary and severity from output text
+  # ── structured_output reader (llm#1265) ──────────────────────────────────
+  # roborev v0.68.2 migrated every row's review text out of `output` (now
+  # '' on all live rows) into `structured_output` (JSON, schema_version-
+  # keyed: 0 -> legacy.markdown verbatim; 1/2 -> verdict/summary/findings).
+  # Self-contained mirror of the shared reader in
+  # .claude/scripts/lib/roborev_classify.py / send_roborev_email.R's R
+  # copy -- this consumer only needs enough of it to feed extract_sev()/
+  # extract_summary() below real text for OPEN findings that are already
+  # known to be stuck (rj.status='done' AND rv.closed=0), so it
+  # deliberately does NOT synthesize any "No issues found."/clean text the
+  # way the fuller readers do (llm#1265 finding 2's bug class: fabricating
+  # a "clean" result for an empty/unrecognised-schema row). A row with no
+  # renderable findings falls back to `output` (empty on live rows);
+  # extract_sev() already degrades to "unknown" for that, which is the
+  # correct display here — this table exists precisely to surface stuck
+  # reviews, so a text-less row must still appear, never be silently
+  # dropped or mislabelled clean.
+  .weekly_review_text <- function(output, structured_output) {
+    out <- if (is.null(output) || is.na(output)) "" else output
+    so  <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+    if (!nzchar(so)) return(out)
+    data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(data) || !is.list(data)) return(out)
+    legacy <- data[["legacy"]]
+    if (is.list(legacy)) {
+      md <- legacy[["markdown"]]
+      if (is.character(md) && length(md) == 1L && nzchar(trimws(md))) return(md)
+    }
+    schema_version <- data[["schema_version"]]
+    # llm#1265 finding 2: only a RECOGNISED schema_version (1 or 2 today,
+    # per roborev_classify.py's own docstring) may be rendered from —
+    # schema 0 without usable legacy.markdown (handled above), an
+    # unrecognised value, or a missing schema_version entirely falls back
+    # to `output` rather than being treated as renderable.
+    known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+      !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+    if (!known_schema) return(out)
+    findings <- data[["findings"]]
+    if (!is.list(findings) || length(findings) == 0L) return(out)
+    blocks <- vapply(findings, function(f) {
+      if (!is.list(f)) return("")
+      sev <- f[["severity"]]
+      sev <- if (is.null(sev)) "" else trimws(as.character(sev))
+      sev_cap <- if (nzchar(sev)) paste0(toupper(substr(sev, 1, 1)), substr(sev, 2, nchar(sev))) else ""
+      prob <- f[["problem"]]
+      prob_line <- if (!is.null(prob) && nzchar(as.character(prob))) sprintf("  **Problem**: %s", prob) else NA_character_
+      paste(stats::na.omit(c(sprintf("- **Severity**: %s", sev_cap), prob_line)), collapse = "\n")
+    }, character(1L))
+    paste(blocks, collapse = "\n")
+  }
+
+  stuck_structured <- if ("structured_output" %in% names(stuck_raw)) {
+    stuck_raw$structured_output
+  } else {
+    rep(NA_character_, nrow(stuck_raw))
+  }
+  stuck_text <- vapply(
+    seq_len(nrow(stuck_raw)),
+    function(i) .weekly_review_text(stuck_raw$output[[i]], stuck_structured[[i]]),
+    character(1L)
+  )
+
+  # llm#1265 round 3 (PR #1269 review id 10524): JSON-direct (severity,
+  # summary) for schema_version 1/2 rows with a non-empty findings list --
+  # reads findings[].severity and the top (max-severity) finding's own
+  # problem field DIRECTLY, never via the regex/first-line heuristics
+  # below. Two independent bugs in the OLD text-only path this closes:
+  #   1. extract_sev() ran `grepl("Severity.*<sev>", ignore.case=TRUE)`
+  #      over the WHOLE multi-line stuck_text. R's default TRE regex lets
+  #      `.` match newlines, so a Low finding whose Problem text mentions
+  #      "high" or "critical" could be reported as that higher severity.
+  #   2. extract_summary() takes the first non-empty/non-#/non-"---" line,
+  #      which for .weekly_review_text()'s rendered blocks is ALWAYS
+  #      "- **Severity**: X" (the first line of the first finding block) --
+  #      the Problem text was never shown as the summary at all.
+  # Returns list(severity=NA, summary=NA) when there is no usable
+  # structured findings list to read (schema 0, unrecognised schema, or
+  # unusable JSON) -- callers fall back to extract_sev()/extract_summary()
+  # on .weekly_review_text()'s text in that case, unchanged.
+  WEEKLY_SEVERITY_ORDINAL <- c(critical = 4L, high = 3L, medium = 2L, low = 1L)
+  .weekly_structured_top_finding <- function(structured_output) {
+    so <- if (is.null(structured_output) || is.na(structured_output)) "" else structured_output
+    if (!nzchar(so)) return(list(severity = NA_character_, summary = NA_character_))
+    data <- tryCatch(jsonlite::fromJSON(so, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(data) || !is.list(data)) return(list(severity = NA_character_, summary = NA_character_))
+    schema_version <- data[["schema_version"]]
+    known_schema <- is.numeric(schema_version) && length(schema_version) == 1L &&
+      !is.na(schema_version) && (schema_version == 1 || schema_version == 2)
+    if (!known_schema) return(list(severity = NA_character_, summary = NA_character_))
+    findings <- data[["findings"]]
+    if (!is.list(findings) || length(findings) == 0L) return(list(severity = NA_character_, summary = NA_character_))
+    # PR #1269 round 4: `severity` can be a JSON array, which
+    # simplifyVector=FALSE turns into a non-scalar list/vector.
+    # as.character()+is.na() on that is length>1 and crashes the `||` below
+    # in R 4.2+. Only a length-1 character `severity` is scored; anything
+    # else is treated as unusable (NA), matching every other reader fixed
+    # in this round.
+    ords <- vapply(findings, function(f) {
+      if (!is.list(f)) return(NA_integer_)
+      sev <- f[["severity"]]
+      if (!is.character(sev) || length(sev) != 1L) return(NA_integer_)
+      idx <- WEEKLY_SEVERITY_ORDINAL[tolower(trimws(sev))]
+      if (length(idx) != 1L || is.na(idx)) NA_integer_ else unname(idx)
+    }, integer(1L))
+    if (all(is.na(ords))) {
+      # PR #1269 round 4 (review 10533 finding 4a): a known schema with a
+      # non-empty findings list, but no entry carrying a recognised
+      # severity, is NOT the same as "no structured data at all" (the
+      # NA_character_ case above, which legitimately falls back to
+      # extract_sev()'s regex). Falling back here would let extract_sev()'s
+      # cross-newline "Severity.*<sev>" regex re-scan this row's WHOLE
+      # rendered text and pick up an unrelated finding's Problem prose --
+      # exactly the bug this JSON-direct reader exists to avoid. An
+      # explicit, non-NA "unclassified" label is returned instead, so the
+      # caller's `ifelse(!is.na(stuck_json_sev), ...)` takes THIS value
+      # rather than falling through to the regex path.
+      return(list(severity = "unclassified", summary = NA_character_))
+    }
+    top_i <- which.max(ifelse(is.na(ords), -Inf, ords))
+    top <- findings[[top_i]]
+    sev_label <- tolower(trimws(as.character(top[["severity"]])))
+    problem <- top[["problem"]]
+    # PR #1269 round 4 (review 10533 finding 1): collapse ALL whitespace
+    # (including embedded newlines/carriage returns) to a single space
+    # before truncating. The renderer below only escapes "|", so an
+    # untouched newline in a multi-sentence LLM finding split the
+    # "| id | repo | age | severity | summary |" markdown table row across
+    # lines and corrupted the Top Stuck Findings table.
+    summary <- if (is.character(problem) && length(problem) == 1L && nzchar(trimws(problem))) {
+      substr(gsub("[[:space:]]+", " ", trimws(problem)), 1L, 80L)
+    } else {
+      # PR #1269 round 4 (review 10533 finding 4b): NA here would fall back
+      # to extract_summary()'s regex path, which always yields the SAME
+      # "- **Severity**: X" bullet already shown in the severity column
+      # (see extract_summary()'s docstring above) -- not a summary at all.
+      # An explicit placeholder is more informative and, like the severity
+      # branch above, avoids resurrecting the regex fallback for a row that
+      # was genuinely read via the JSON-direct path.
+      "(no problem text)"
+    }
+    list(severity = sev_label, summary = summary)
+  }
+
+  # Extract one-line summary and severity from output text -- LEGACY /
+  # fallback path only, used when .weekly_structured_top_finding() above
+  # has no structured findings list to read from (schema_version 0 or
+  # legacy `output`-only rows).
   extract_sev <- function(txt) {
     txt <- txt %||% ""
     for (sev in c("Critical", "High", "Medium", "Low")) {
@@ -379,13 +532,21 @@ query_reviews_db <- function(db_path, week_start_str, week_end_str) {
     substr(lines[1L], 1L, 80L)
   }
 
+  stuck_top          <- lapply(stuck_structured, .weekly_structured_top_finding)
+  stuck_json_sev     <- vapply(stuck_top, function(x) x$severity, character(1L))
+  stuck_json_summary <- vapply(stuck_top, function(x) x$summary, character(1L))
+  stuck_regex_sev     <- vapply(stuck_text, extract_sev, character(1L))
+  stuck_regex_summary <- vapply(stuck_text, extract_summary, character(1L))
+  stuck_final_sev     <- ifelse(!is.na(stuck_json_sev), stuck_json_sev, stuck_regex_sev)
+  stuck_final_summary <- ifelse(!is.na(stuck_json_summary), stuck_json_summary, stuck_regex_summary)
+
   if (nrow(stuck_raw) > 0L) {
     stuck_findings <- data.frame(
       id       = stuck_raw$id,
       repo     = stuck_raw$repo,
       age_days = stuck_raw$age_days,
-      severity = vapply(stuck_raw$output, extract_sev, character(1L)),
-      summary  = vapply(stuck_raw$output, extract_summary, character(1L)),
+      severity = stuck_final_sev,
+      summary  = stuck_final_summary,
       stringsAsFactors = FALSE
     )
   } else {

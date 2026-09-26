@@ -110,6 +110,7 @@ cur.executescript("""
     agent TEXT NOT NULL,
     prompt TEXT NOT NULL DEFAULT '',
     output TEXT NOT NULL,
+    structured_output TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed INTEGER NOT NULL DEFAULT 0,
     verdict_bool INTEGER DEFAULT 0
@@ -130,6 +131,15 @@ commits = [
     (6, 'fff006fff006fff006fff006fff006fff006fff006', 'Touch F'),          # unparseable ("not_reviewed"), uncited
     (7, 'ggg007ggg007ggg007ggg007ggg007ggg007ggg007', 'Touch G'),          # unparseable ("not_reviewed"), will be cited
     (8, 'hhh008hhh008hhh008hhh008hhh008hhh008hhh008', 'Touch H'),          # unparseable but "passed"-shaped text
+    # llm#1265 regression fixture: roborev v0.68.2 schema — `output` is
+    # empty, the real finding lives in `structured_output` (v2 JSON).
+    (9, 'iii009iii009iii009iii009iii009iii009iii009', 'Touch I'),          # structured_output-only, HIGH, open
+    # PR #1269 round 3 regression fixture: real max severity is MEDIUM, but
+    # the finding's own problem/fix prose QUOTES "Severity: High"/
+    # "**Severity**: Critical" as an illustrative example — the exact shape
+    # of live review ids 10523/10524 in ~/.roborev/reviews.db, which the
+    # regex-over-rendered-text path misread as High/Critical.
+    (10, 'jjj010jjj010jjj010jjj010jjj010jjj010jjj010', 'Touch J'),        # structured_output-only, true MEDIUM, quoted-High-in-prose
 ]
 for cid, sha, subj in commits:
     cur.execute(
@@ -138,7 +148,7 @@ for cid, sha, subj in commits:
     )
 
 # review_jobs
-for jid, cid in [(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8)]:
+for jid, cid in [(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)]:
     cur.execute(
         "INSERT INTO review_jobs (id,repo_id,commit_id,git_ref) VALUES (?,1,?,?)",
         (jid, cid, f'refs/heads/feat/test')
@@ -184,20 +194,45 @@ UNPARSEABLE_NOT_REVIEWED_OUTPUT = (
 # cry wolf on ordinary "no issues found" reviews.
 PASSED_SHAPED_OUTPUT = "No issues found."
 
+# llm#1265: roborev v0.68.2 schema. `output` is '' on this row; the real
+# finding (HIGH) lives entirely in structured_output as v2 JSON.
+V2_STRUCTURED_HIGH = (
+    '{"schema_version":2,"summary":"one high finding","verdict":"fail",'
+    '"findings":[{"severity":"high","problem":"Missing input validation.",'
+    '"location":"R/qux.R:9","fix":"Add a guard clause."}]}'
+)
+
+# PR #1269 round 3: true max severity is MEDIUM. The finding's OWN
+# problem/fix text quotes "Severity: High" and "**Severity**: Critical" as
+# an illustrative example of a DIFFERENT bug it is describing — the exact
+# live shape of review ids 10523/10524. A regex over the rendered markdown
+# (the pre-fix behaviour) would read Critical (4); review_severity_ordinal()
+# must read the JSON severity field directly and report medium (2).
+V2_STRUCTURED_MEDIUM_QUOTED_HIGH = (
+    '{"schema_version":2,"summary":"one medium finding, prose quotes higher '
+    'severities as an example","verdict":"fail",'
+    '"findings":[{"severity":"medium",'
+    '"problem":"Add a fixture where output holds a real Severity: High review.",'
+    '"location":"R/quux.R:5",'
+    '"fix":"Emit **Severity**: Critical only when genuinely critical."}]}'
+)
+
 reviews = [
-    (1, 1, HIGH_OUTPUT,   0, 0),   # id=1, job=1 (aaa001), HIGH, open
-    (2, 2, HIGH_OUTPUT,   0, 0),   # id=2, job=2 (bbb002), HIGH, open → cited
-    (3, 3, MEDIUM_OUTPUT, 0, 0),   # id=3, job=3 (ccc003), MEDIUM, open
-    (4, 4, HIGH_OUTPUT,   0, 0),   # id=4, job=4 (ddd004), HIGH, open → acked
-    (5, 5, NONBOLD_HIGH_OUTPUT,             0, 0),  # id=5, job=5 (eee005), HIGH non-bold, open
-    (6, 6, UNPARSEABLE_NOT_REVIEWED_OUTPUT, 0, 0),  # id=6, job=6 (fff006), unparseable, open, uncited
-    (7, 7, UNPARSEABLE_NOT_REVIEWED_OUTPUT, 0, 0),  # id=7, job=7 (ggg007), unparseable, open → cited
-    (8, 8, PASSED_SHAPED_OUTPUT,            0, 0),  # id=8, job=8 (hhh008), "passed"-shaped noise
+    (1, 1, HIGH_OUTPUT,   None, 0, 0),   # id=1, job=1 (aaa001), HIGH, open
+    (2, 2, HIGH_OUTPUT,   None, 0, 0),   # id=2, job=2 (bbb002), HIGH, open → cited
+    (3, 3, MEDIUM_OUTPUT, None, 0, 0),   # id=3, job=3 (ccc003), MEDIUM, open
+    (4, 4, HIGH_OUTPUT,   None, 0, 0),   # id=4, job=4 (ddd004), HIGH, open → acked
+    (5, 5, NONBOLD_HIGH_OUTPUT,             None, 0, 0),  # id=5, job=5 (eee005), HIGH non-bold, open
+    (6, 6, UNPARSEABLE_NOT_REVIEWED_OUTPUT, None, 0, 0),  # id=6, job=6 (fff006), unparseable, open, uncited
+    (7, 7, UNPARSEABLE_NOT_REVIEWED_OUTPUT, None, 0, 0),  # id=7, job=7 (ggg007), unparseable, open → cited
+    (8, 8, PASSED_SHAPED_OUTPUT,            None, 0, 0),  # id=8, job=8 (hhh008), "passed"-shaped noise
+    (9, 9, "", V2_STRUCTURED_HIGH,          0, 0),  # id=9, job=9 (iii009), v0.68.2 schema, HIGH, open
+    (10, 10, "", V2_STRUCTURED_MEDIUM_QUOTED_HIGH, 0, 0),  # id=10, job=10 (jjj010), true MEDIUM, quoted-High prose, open
 ]
-for rid, jid, out, closed, verdict in reviews:
+for rid, jid, out, structured, closed, verdict in reviews:
     cur.execute(
-        "INSERT INTO reviews (id,job_id,agent,output,closed,verdict_bool) VALUES (?,?,'codex',?,?,?)",
-        (rid, jid, out, closed, verdict)
+        "INSERT INTO reviews (id,job_id,agent,output,structured_output,closed,verdict_bool) VALUES (?,?,'codex',?,?,?,?)",
+        (rid, jid, out, structured, closed, verdict)
     )
 
 con.commit()
@@ -269,6 +304,12 @@ SHA_HIGH_NONBOLD="eee005eee005eee005eee005eee005eee005eee005"
 SHA_UNPARSEABLE_OPEN="fff006fff006fff006fff006fff006fff006fff006"
 SHA_UNPARSEABLE_CITED="ggg007ggg007ggg007ggg007ggg007ggg007ggg007"
 SHA_PASSED_SHAPED="hhh008hhh008hhh008hhh008hhh008hhh008hhh008"
+# llm#1265: roborev v0.68.2 schema — output='' but structured_output carries
+# a real HIGH finding as v2 JSON.
+SHA_V2_STRUCTURED_HIGH="iii009iii009iii009iii009iii009iii009iii009"
+# PR #1269 round 3: true severity MEDIUM, problem/fix prose quotes a higher
+# severity as an example (review ids 10523/10524 live shape).
+SHA_V2_STRUCTURED_MEDIUM_QUOTED_HIGH="jjj010jjj010jjj010jjj010jjj010jjj010jjj010"
 
 # Acks file
 ACKS_FILE="${FIXTURE_DIR}/acks.jsonl"
@@ -702,6 +743,118 @@ run_gate "$BIN18" \
   "--min-severity High" \
   "0" \
   "test18: 'no issues found' text (verdict_bool=0 noise) → exit 0 (PASS, not INDETERMINATE)"
+
+# Test 19 — llm#1265: roborev v0.68.2 schema migration. `output` is empty on
+# this row; the real HIGH finding lives entirely in `structured_output` (v2
+# JSON). Uncited/unacked → the gate must reach a REAL verdict (BLOCK, exit 1)
+# via the shared review_output_text() reader, NOT fall through to
+# INDETERMINATE (exit 3) the way it did before this fix landed (the bug
+# llm#1265 exists to close: bin/roborev_merge_gate.sh 1264 returned
+# INDETERMINATE/unparseable_severity for exactly this shape on the live DB).
+BIN19="${TMPDIR_ROOT}/bin19"
+mkdir -p "$BIN19"
+run_gate "$BIN19" \
+  "[\"${SHA_V2_STRUCTURED_HIGH}\"]" \
+  "" \
+  "--min-severity High" \
+  "1" \
+  "test19: v2 structured_output-only HIGH finding, uncited → exit 1 (BLOCK, a real verdict — not INDETERMINATE)"
+
+# Test 19b — same fixture, cited via 'closes roborev #9' → exit 0 (PASS).
+# Confirms the structured_output path reaches an ordinary resolvable
+# verdict, not just a block.
+run_gate "$BIN19" \
+  "[\"${SHA_V2_STRUCTURED_HIGH}\"]" \
+  "fix: thing (closes roborev #9)" \
+  "--min-severity High" \
+  "0" \
+  "test19b: v2 structured_output-only HIGH finding, cited via closes roborev #9 → exit 0 (PASS)"
+
+# Test 20 — llm#1265 finding 7: the BLOCK-listing path (_print_table) must
+# render its table without ever raising a Python-level crash. Reuses the
+# test19 BLOCK scenario (v2 structured_output HIGH finding, uncited) but
+# captures and inspects the raw output text directly, rather than only the
+# exit code — a regression here previously crashed with "SyntaxError:
+# 'return' outside function" right after printing the BLOCK summary line
+# (reproduced live before this fix: `bin/roborev_merge_gate.sh --repo
+# JohnGavin/llm --min-severity Medium 1269`). `return` at Python module top
+# level is a COMPILE-time SyntaxError, so it fired regardless of whether
+# the `if not findings:` branch it sat in was actually taken.
+BIN20="${TMPDIR_ROOT}/bin20"
+mkdir -p "$BIN20"
+make_mock_gh "$BIN20" "[\"${SHA_V2_STRUCTURED_HIGH}\"]"
+out20=$(
+  GH="$BIN20/gh" \
+  ROBOREV_DB="$FIXTURE_DB" \
+  ACKS_JSONL="$ACKS_FILE" \
+  GIT_DIR="$GIT_REPO/.git" \
+  GIT_WORK_TREE="$GIT_REPO" \
+    bash "$GATE" --min-severity High 99 2>&1
+) || true
+if echo "$out20" | grep -qE "Traceback|SyntaxError"; then
+  fail "test20: BLOCK-listing output must not contain a Python Traceback/SyntaxError" "output: $out20"
+else
+  pass "test20: BLOCK-listing output must not contain a Python Traceback/SyntaxError"
+fi
+if echo "$out20" | grep -q "BLOCK"; then
+  pass "test20b: BLOCK-listing reaches a real BLOCK verdict"
+else
+  fail "test20b: BLOCK-listing reaches a real BLOCK verdict" "output: $out20"
+fi
+if echo "$out20" | grep -qE "ID +Severity"; then
+  pass "test20c: BLOCK-listing table header actually rendered (proves _print_table ran to completion, not just that it didn't crash)"
+else
+  fail "test20c: BLOCK-listing table header actually rendered (proves _print_table ran to completion, not just that it didn't crash)" "output: $out20"
+fi
+
+# Test 21 — PR #1269 round 3 (the headline bug this round fixes): a finding
+# whose real max severity is MEDIUM, but whose own problem/fix prose quotes
+# "Severity: High"/"**Severity**: Critical" as an illustrative example, must
+# NOT be read as High/Critical. At --min-severity High (above the true
+# severity) this must PASS (exit 0) — before the fix, the regex-over-
+# rendered-text path read Critical from the quoted example text and BLOCKed.
+BIN21="${TMPDIR_ROOT}/bin21"
+mkdir -p "$BIN21"
+run_gate "$BIN21" \
+  "[\"${SHA_V2_STRUCTURED_MEDIUM_QUOTED_HIGH}\"]" \
+  "" \
+  "--min-severity High" \
+  "0" \
+  "test21: v2 finding, real severity Medium but problem/fix prose quotes High/Critical → exit 0 (PASS, not inflated)"
+
+# Test 21b — same fixture, at --min-severity Medium (AT the true severity)
+# must BLOCK — proves the real medium severity is still correctly detected
+# and used for the threshold comparison, not silently dropped to "no
+# severity found" while fixing the inflation bug.
+run_gate "$BIN21" \
+  "[\"${SHA_V2_STRUCTURED_MEDIUM_QUOTED_HIGH}\"]" \
+  "" \
+  "--min-severity Medium" \
+  "1" \
+  "test21b: same fixture at --min-severity Medium → exit 1 (BLOCK, true medium severity correctly detected)"
+
+# Test 21c — the BLOCK-listing table (at Medium threshold) must show
+# "Medium" as the severity, and the finding's REAL location/problem (JSON-
+# direct via review_top_finding()), never a location/problem harvested from
+# the quoted example markers inside the finding's own problem/fix text.
+out21c=$(
+  GH="$BIN21/gh" \
+  ROBOREV_DB="$FIXTURE_DB" \
+  ACKS_JSONL="$ACKS_FILE" \
+  GIT_DIR="$GIT_REPO/.git" \
+  GIT_WORK_TREE="$GIT_REPO" \
+    bash "$GATE" --min-severity Medium 99 2>&1
+) || true
+if echo "$out21c" | grep -q "Medium"; then
+  pass "test21c: BLOCK-listing shows severity=Medium (JSON-direct, not inflated)"
+else
+  fail "test21c: BLOCK-listing shows severity=Medium (JSON-direct, not inflated)" "output: $out21c"
+fi
+if echo "$out21c" | grep -q "R/quux.R:5"; then
+  pass "test21d: BLOCK-listing shows the REAL location (R/quux.R:5) from JSON, not a corrupted regex match"
+else
+  fail "test21d: BLOCK-listing shows the REAL location (R/quux.R:5) from JSON, not a corrupted regex match" "output: $out21c"
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

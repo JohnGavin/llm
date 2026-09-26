@@ -21,9 +21,14 @@
 # "pass clean" = verdict_bool=1 AND output starts with "No issues found."
 # "pass with comments" = verdict_bool=1 AND output has substantive content beyond that
 #
-# DB schema note (verified 2026-05-13):
-#   reviews.verdict_bool  INTEGER  1=pass, 0=fail
-#   reviews.output        TEXT     markdown review body  (NOT a "body" column)
+# DB schema note (verified 2026-05-13; updated 2026-09-25 for llm#1265):
+#   reviews.verdict_bool     INTEGER  1=pass, 0=fail
+#   reviews.output           TEXT     markdown review body — EMPTY on every
+#                                      row since roborev v0.68.2 (2026-09-24)
+#   reviews.structured_output TEXT    JSON review body (schema_version-keyed)
+#                                      — read via review_output_text() from
+#                                      lib/roborev_classify.py, which falls
+#                                      back to reviews.output unchanged.
 #   (no "verdict" text column exists — the spec used "verdict" but the actual
 #    column is verdict_bool)
 #
@@ -83,6 +88,13 @@ SQLITE="${SQLITE:-/usr/bin/sqlite3}"
 GH="${GH:-$(command -v gh 2>/dev/null || echo /usr/bin/gh)}"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
+# llm#1265: dir containing roborev_classify.py's review_output_text() —
+# same LIB_DIR pattern as roborev_severity_autoclose.sh.
+# roborev id 10537 (medium, case 3h below): honours a pre-set LIB_DIR so
+# the selftest can exercise the fail-closed import-failure branch without
+# touching the real roborev_classify.py. Unset/empty in every real
+# invocation, so production behaviour is unchanged.
+LIB_DIR="${LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 THRESHOLD_DAYS="${THRESHOLD_DAYS:-7}"
 ROBOREV_REPO="${ROBOREV_REPO:-}"  # optional: restrict to a single repo by name
 FINDINGS_DIR="${FINDINGS_DIR:-$HOME/.roborev/findings}"
@@ -161,6 +173,146 @@ Summary: adds a lockfile.")
   [ "$got" = "fail" ] \
     && _assert "3. classify fail (verdict_bool=0 overrides)" "ok" \
     || _assert "3. classify fail (verdict_bool=0 overrides)" "got '$got'"
+
+  # ── 3b-3g. review_output_text() reader coverage (PR #1269 round 2, review
+  # id 10524: "No tests for the new readers in ... roborev_handoff.sh").
+  # Tests 1-3 above exercise the CLASSIFICATION logic (_classify) with
+  # already-rendered text.
+  #
+  # roborev id 10537 (medium): these cases call the real, imported
+  # roborev_classify.review_output_text() (never a hand-copied
+  # re-implementation) against a fixture sqlite DB, through the SAME
+  # LIB_DIR + import + row-shape pattern the production Phase 1a heredoc
+  # uses below -- schema 0, schema 1/2 with findings, empty findings, an
+  # unrecognised schema_version, malformed JSON, and NULL structured_output
+  # (the column-absent-equivalent fallback shape). What this does NOT do:
+  # exercise the production heredoc's own query-time wiring (the
+  # repos/review_jobs/commits JOIN, the meta_<repo_id>.psv write, the
+  # classification-from-output_trimmed step) -- that requires a much
+  # larger fixture DB matching that whole schema and is not attempted
+  # here. A change to review_output_text() itself IS caught by these
+  # cases; a change to how the production heredoc CALLS it (argument
+  # order, a different lib_dir variable, a swapped SELECT column) is NOT.
+  # Case 3h below covers the one piece of that wiring most worth pinning
+  # separately: the fail-closed contract on an import failure.
+  _HANDOFF_FIXTURE_DB="$(mktemp "${TMPDIR:-/tmp}/roborev_handoff_reader_test_XXXXXX")".db
+  rm -f "${_HANDOFF_FIXTURE_DB%.db}"
+  trap 'rm -f "$_HANDOFF_FIXTURE_DB"' EXIT
+  "$SQLITE" "$_HANDOFF_FIXTURE_DB" <<'SQL'
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, output TEXT, structured_output TEXT);
+INSERT INTO reviews VALUES (1, '',
+  '{"legacy":{"markdown":"- **Severity**: Critical\n  **Problem**: legacy text"},"schema_version":0,"summary":"","findings":[]}');
+INSERT INTO reviews VALUES (2, '',
+  '{"schema_version":2,"summary":"x","verdict":"fail","findings":[{"severity":"high","problem":"real finding text"}]}');
+INSERT INTO reviews VALUES (3, '',
+  '{"schema_version":1,"summary":"nothing found","findings":[]}');
+INSERT INTO reviews VALUES (4, '',
+  '{"schema_version":99,"summary":"x","findings":[]}');
+INSERT INTO reviews VALUES (5, '**Severity**: Medium
+**Problem**: malformed-json fallback finding', '{not valid json');
+INSERT INTO reviews VALUES (6, '**Severity**: Low
+**Problem**: null-structured-output fallback finding', NULL);
+SQL
+  # roborev id 10537 (low): capture the exit status explicitly rather than
+  # letting a python failure abort the whole selftest under `set -euo
+  # pipefail` (which would skip the cleanup below and emit no PASS/FAIL
+  # line for 3b-3g at all -- an unusable reader would look like a hang or
+  # a crash, not a reported failure).
+  _handoff_reader_rc=0
+  _handoff_reader_out=$("$PYTHON" - "$_HANDOFF_FIXTURE_DB" "$LIB_DIR" <<'PYEOF'
+import sys, sqlite3
+db_path, lib_dir = sys.argv[1], sys.argv[2]
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+from roborev_classify import review_output_text
+con = sqlite3.connect(db_path)
+con.row_factory = sqlite3.Row
+for row in con.execute("SELECT id, output, structured_output FROM reviews ORDER BY id"):
+    text = review_output_text(row["output"], row["structured_output"])
+    print(f"{row['id']}|{text.replace(chr(10), ' ')}")
+PYEOF
+) || _handoff_reader_rc=$?
+  rm -f "$_HANDOFF_FIXTURE_DB"
+  trap - EXIT
+
+  if [ "$_handoff_reader_rc" -ne 0 ]; then
+    _assert "3b-3g. fixture reader ran without error" "got: exit ${_handoff_reader_rc}, output: ${_handoff_reader_out}"
+  else
+    _assert "3b-3g. fixture reader ran without error" "ok"
+  fi
+
+  # roborev id 10537 (low): here-strings instead of `echo ... | grep -q`
+  # -- under `set -o pipefail`, `grep -q` can exit as soon as it sees its
+  # first match while `echo` is still writing, which can SIGPIPE the
+  # `echo` and turn a genuinely-passing case into a failure via a stray
+  # 141 exit status from the pipeline.
+  grep -q "^1|.*Critical" <<< "$_handoff_reader_out" \
+    && _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "ok" \
+    || _assert "3b. schema_version 0 -> legacy.markdown verbatim (Critical)" "got: $(grep '^1|' <<< "$_handoff_reader_out")"
+
+  grep -q "^2|.*real finding text" <<< "$_handoff_reader_out" \
+    && _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "ok" \
+    || _assert "3c. schema_version 2 with findings -> synthesized text contains real finding" "got: $(grep '^2|' <<< "$_handoff_reader_out")"
+
+  grep -q "^3|No issues found" <<< "$_handoff_reader_out" \
+    && _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "ok" \
+    || _assert "3d. schema_version 1 empty findings -> synthesized 'No issues found.' (no crash)" "got: $(grep '^3|' <<< "$_handoff_reader_out")"
+
+  # roborev id 10537 (low): "row 4 -> empty text" alone cannot distinguish
+  # "no crash, legitimately no text" from "reader silently swallowed an
+  # exception". Cases 3f/3g below run in the SAME single python process,
+  # AFTER row 4, and assert real non-empty content -- if row 4 had instead
+  # raised an unhandled exception, the whole process would have aborted
+  # and 3f/3g would see empty output too, so their pass is itself the
+  # sentinel that execution continued past row 4 uninterrupted.
+  grep -q "^4|$" <<< "$_handoff_reader_out" \
+    && _assert "3e. unrecognised schema_version (99) -> empty text (no crash, see 3f/3g sentinel)" "ok" \
+    || _assert "3e. unrecognised schema_version (99) -> empty text (no crash, see 3f/3g sentinel)" "got: $(grep '^4|' <<< "$_handoff_reader_out")"
+
+  grep -q "^5|.*malformed-json fallback finding" <<< "$_handoff_reader_out" \
+    && _assert "3f. malformed JSON falls back to legacy output text" "ok" \
+    || _assert "3f. malformed JSON falls back to legacy output text" "got: $(grep '^5|' <<< "$_handoff_reader_out")"
+
+  grep -q "^6|.*null-structured-output fallback finding" <<< "$_handoff_reader_out" \
+    && _assert "3g. NULL structured_output falls back to legacy output text" "ok" \
+    || _assert "3g. NULL structured_output falls back to legacy output text" "got: $(grep '^6|' <<< "$_handoff_reader_out")"
+
+  # ── 3h. fail-closed import branch (roborev id 10537, medium: "add one
+  # case for the fail-closed import branch"). Mirrors the EXACT
+  # try/except shape at the real Phase 1a heredoc below (the "roborev_handoff:
+  # FATAL — could not import review_output_text" block) with LIB_DIR
+  # pointed at an empty directory so roborev_classify cannot be imported.
+  # This is the one piece of the production wiring (as opposed to the
+  # library function itself) that 3b-3g's honest scope note above says is
+  # NOT covered there -- pinned separately here. Asserts the process
+  # exits non-zero and prints the FATAL message: the contract this branch
+  # exists to guarantee is "abort loudly", never "silently classify every
+  # row against the empty legacy output column".
+  _EMPTY_LIB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/roborev_handoff_emptylib_XXXXXX")"
+  _import_fail_rc=0
+  _import_fail_out=$("$PYTHON" - "$_EMPTY_LIB_DIR" <<'PYEOF' 2>&1
+import sys
+lib_dir = sys.argv[1]
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception as e:
+    print(f"roborev_handoff: FATAL — could not import review_output_text from "
+          f"{lib_dir!r} (roborev_classify.py): {e}. Refusing to classify "
+          f"reviews against the empty legacy `output` column.", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+) || _import_fail_rc=$?
+  rm -rf "$_EMPTY_LIB_DIR"
+
+  [ "$_import_fail_rc" -ne 0 ] \
+    && _assert "3h. fail-closed import branch: exits non-zero" "ok" \
+    || _assert "3h. fail-closed import branch: exits non-zero" "got rc=${_import_fail_rc}"
+
+  grep -qi "FATAL" <<< "$_import_fail_out" \
+    && _assert "3h. fail-closed import branch: prints FATAL message" "ok" \
+    || _assert "3h. fail-closed import branch: prints FATAL message" "got: ${_import_fail_out}"
 
   # ── 4. Digest title format matches YYYY-Www ────────────────────────────────
   iso_week=$(date -u +%G-W%V)
@@ -443,11 +595,32 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 # ── Python: export all stale done jobs to per-job JSON files ─────────────────
 # This avoids shell pipe-splitting on multiline/pipe-containing output text.
-"$PYTHON" - "$ROBOREV_DB" "$THRESHOLD_DAYS" "$WORKDIR" "$ROBOREV_REPO" <<'PYEOF'
+"$PYTHON" - "$ROBOREV_DB" "$THRESHOLD_DAYS" "$WORKDIR" "$ROBOREV_REPO" "$LIB_DIR" <<'PYEOF'
 import sys, json, sqlite3, os
 
 db_path, threshold_days, workdir = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 filter_repo = sys.argv[4] if len(sys.argv) > 4 else ""
+lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
+
+# llm#1265: reviews.output is empty on every live row since roborev v0.68.2
+# migrated review text into reviews.structured_output (JSON). Unlike some
+# other consumers, an import failure here does NOT fail open to the empty
+# `output` column — that would silently reproduce the exact "every
+# verdict_bool=1 row falls into pass-comments, output_<job_id>.txt bodies
+# are empty" bug this migration exists to fix. Fail loudly instead: print
+# to stderr and exit non-zero, which (this script runs under
+# `set -euo pipefail`) aborts the whole run rather than proceeding on
+# silently-blank data.
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import review_output_text
+except Exception as e:
+    print(f"roborev_handoff: FATAL — could not import review_output_text from "
+          f"{lib_dir!r} (roborev_classify.py): {e}. Refusing to classify "
+          f"reviews against the empty legacy `output` column.", file=sys.stderr)
+    sys.exit(1)
+
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
 
@@ -493,7 +666,8 @@ for r in repos:
             rj.id         AS job_id,
             COALESCE(c.sha,'') AS commit_sha,
             rv.verdict_bool,
-            rv.output
+            rv.output,
+            rv.structured_output
         FROM review_jobs rj
         JOIN repos repo ON repo.id = rj.repo_id
         LEFT JOIN commits c ON c.id = rj.commit_id
@@ -522,7 +696,10 @@ for r in repos:
             job_id = j["job_id"]
             commit_sha = (j["commit_sha"] or "").strip()
             verdict_bool = j["verdict_bool"]
-            output = j["output"] or ""
+            # llm#1265: prefer structured_output (roborev v0.68.2 schema);
+            # falls back to the legacy `output` column unchanged when
+            # structured_output is NULL/empty/unparseable.
+            output = review_output_text(j["output"], j["structured_output"])
             output_trimmed = output.lstrip()
 
             if verdict_bool == 0:
