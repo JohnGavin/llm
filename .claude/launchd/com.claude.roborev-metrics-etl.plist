@@ -19,6 +19,9 @@
      Tracked in llm#226.
 -->
 <plist version="1.0">
+<!-- NOTE: in these comments a "—" before a flag name stands for two hyphens,
+         because XML comments cannot contain them. Retype it as two hyphens
+         when copying a command from here. -->
 <dict>
     <key>Label</key>
     <string>com.claude.roborev-metrics-etl</string>
