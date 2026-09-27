@@ -138,7 +138,10 @@ test_that("Top Stuck Findings prints the JOB id (what roborev show/close accept)
 # so these tests don't drift if unrelated lines are added elsewhere in the
 # script.
 
-local({
+# The script lives under .claude/, which .Rbuildignore drops from the covr
+# build tree, so guard the extraction like the test_that() blocks above do;
+# the tests below then skip instead of erroring outside test_that().
+if (file.exists(rollup_script)) local({
   all_lines <- readLines(rollup_script)
   start_line <- grep("^  WEEKLY_SEVERITY_ORDINAL <- ", all_lines)[[1L]]
   fn_line <- grep("^  \\.weekly_structured_top_finding <- function", all_lines)[[1L]]
@@ -158,6 +161,7 @@ local({
 })
 
 test_that(".weekly_structured_top_finding: array-valued severity does not crash, is skipped", {
+  skip_if_not(exists(".weekly_structured_top_finding"), "roborev_weekly_rollup.R not in build tree")
   # Finding 2 (crash guard): a JSON-array `severity` used to make
   # as.character()+is.na() length>1, crashing the `||` check.
   so <- '{"schema_version":2,"findings":[{"severity":["high","low"],"problem":"bad shape"}]}'
@@ -166,6 +170,7 @@ test_that(".weekly_structured_top_finding: array-valued severity does not crash,
 })
 
 test_that(".weekly_structured_top_finding: all-unusable severities -> 'unclassified', not NA", {
+  skip_if_not(exists(".weekly_structured_top_finding"), "roborev_weekly_rollup.R not in build tree")
   # Finding 4a: must NOT return NA here (that would resurrect the
   # cross-newline extract_sev() regex fallback at the call site).
   so <- '{"schema_version":2,"findings":[{"severity":"bogus","problem":"x"}]}'
@@ -175,6 +180,7 @@ test_that(".weekly_structured_top_finding: all-unusable severities -> 'unclassif
 })
 
 test_that(".weekly_structured_top_finding: multi-line problem text is collapsed to one line", {
+  skip_if_not(exists(".weekly_structured_top_finding"), "roborev_weekly_rollup.R not in build tree")
   # Finding 1: an embedded newline in `problem` used to split the markdown
   # table row across lines.
   so <- '{"schema_version":2,"findings":[{"severity":"high","problem":"line one\\nline two"}]}'
@@ -185,6 +191,7 @@ test_that(".weekly_structured_top_finding: multi-line problem text is collapsed 
 })
 
 test_that(".weekly_structured_top_finding: empty problem text -> placeholder, not NA", {
+  skip_if_not(exists(".weekly_structured_top_finding"), "roborev_weekly_rollup.R not in build tree")
   # Finding 4b: NA here used to fall back to extract_summary()'s regex,
   # which just re-shows the same severity bullet as a fake "summary".
   so <- '{"schema_version":2,"findings":[{"severity":"high"}]}'
