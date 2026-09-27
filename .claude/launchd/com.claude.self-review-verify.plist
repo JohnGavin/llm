@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- NOTE: in these comments a "—" before a flag name stands for two hyphens,
+         because XML comments cannot contain them. Retype it as two hyphens
+         when copying a command from here. -->
 <dict>
-    <!-- Verify that the overnight Stage-1 self-review --write run succeeded.  -->
+    <!-- Verify that the overnight Stage-1 self-review —write run succeeded.  -->
     <!-- Runs at 08:06 daily — after 02:30 stage1 run + ~03:00 backup.        -->
     <!-- Staggered 6 min past :00 to avoid clock-minute contention (llm#1154). -->
     <!-- Tracks: JohnGavin/llm#235.                                            -->

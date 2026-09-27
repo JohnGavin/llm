@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- NOTE: in these comments a "—" before a flag name stands for two hyphens,
+         because XML comments cannot contain them. Retype it as two hyphens
+         when copying a command from here. -->
 <dict>
     <key>Label</key>
     <string>com.claude.roborev-job-reaper</string>
@@ -11,8 +14,8 @@
     <!-- JohnGavin/llm#984: sweeps ~/.roborev/reviews.db review_jobs rows stuck
          status='running' with no worker left to finish them (observed: 10h12m
          and 6h04m old with zero matching agent process). Deployed in APPLY
-         mode (wrapper passes --apply) as of 2026-09-24, after a dry-run soak
-         showed zero would-reap candidates across 317 runs since 2026-08-22 --
+         mode (wrapper passes —apply) as of 2026-09-24, after a dry-run soak
+         showed zero would-reap candidates across 317 runs since 2026-08-22 —
          see the wrapper's own comment for the full evidence and how to revert
          to dry-run. StartInterval matches roborev-failure-alert's 30-minute
          cadence (both are lightweight read-mostly roborev health checks). -->
