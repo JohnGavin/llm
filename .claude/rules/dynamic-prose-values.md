@@ -1,7 +1,8 @@
 ---
 name: dynamic-prose-values
 description: One home per value — every number/date/time/count/version in prose, captions, dashboards and generated artifacts is derived from its single source, never hand-typed; enforced by a build/publish gate, not by care
-globs: ["**/*.qmd", "**/*.Rmd", "**/R/*.R", "**/*.html"]
+metadata:
+  type: rule
 paths:
   - "**/*.qmd"
   - "**/*.Rmd"
@@ -76,25 +77,9 @@ A literal is allowed only when it must **not** change with the data, and each ca
 
 Evidence must say when or on what it was checked, so a reader knows it is a snapshot. If code would re-derive it, it is not fixed: compute it.
 
-## Violations
+## Violations and origin
 
-| Pattern | Problem | Fix |
-|---------|---------|-----|
-| `"29.9 m"`, `"2026-03-01"`, `"5 stations"` in prose | Hardcoded value/date/count | inline expression from the target |
-| `"n = 9"`, `"6 of 9 sessions"` in a caption | Stale at session 10 | `data-fact` / inline R |
-| `"0 of 42 charts mislabelled"` | Catalogue grew to 53 | count from the catalogue |
-| Static thresholds table beside `dq_params()` | Two sources, will drift | generate from `dq_params()` |
-| `title="... wrong for 5 of 9 sessions"` in JS | Invisible to a text-only gate | compute, or drop the count |
-| A departure time typed in the booking **and** the day plan | Two copies | One record; the plan uses `{{ref:...}}` |
-| `Version: 2026-08-29` / `Facts: 16` on a Build page | Values about the artifact | Derive from the version field and list lengths |
-| A duplication check that skips times/dates/counts "as noise" | The exemption is the drift | Remove it; use a reasoned allow-list |
-| A check that only warns, forever | Debt nobody reads | Ratchet to `strict` per artifact |
-| Fixing only the numbers the user named | The rest stay stale | Run the gate over the whole page |
-
-## Origin
-Two incidents on 2026-09-25, both in private dashboard projects:
-- A trip dashboard's Build page showed a hand-typed "Version 2026-08-29" and "Facts 16" after the data had changed twice. 89 restated values were measured across ~40 strings — clock times, dates, night counts and a traveller count that an earlier check had deliberately excluded.
-- A chart title read n = 11 while its caption said "n = 9". A gate then found 77 hand-typed numbers on one page, two already false, plus two reference tables maintained by hand. User: "never do this by hand again … make this mandatory."
+The worked table of violations (hardcoded captions, copied reference tables, JS tooltip counts, values about the artifact, "noise"-exempt checks, warn-forever checks, fixing only the named numbers) and the two 2026-09-25 origin incidents are in [`_companions/dynamic-prose-values-details.md`](_companions/dynamic-prose-values-details.md). The normative rule above is complete without it.
 
 ## Related
 - `provisional-constants` — hand-typed literals that admit they are provisional; the same defect seen from the code side
