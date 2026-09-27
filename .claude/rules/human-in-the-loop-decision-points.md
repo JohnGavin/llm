@@ -68,7 +68,7 @@ PR merge is Class C by default (explicit verb, every time). A **global toggle** 
 
 1. Every CI check reports success — not pending, not skipped, not
    inconclusive. If CI is unavailable (banner `ci:UNAVAILABLE`/`ci:unknown`), this condition cannot be met: merge stays Class C, and the PR body lists the local stand-in gates run and their results — see [`_companions/ci-outage-local-gates.md`](_companions/ci-outage-local-gates.md).
-2. The merge-gate / roborev consistency check reports a genuine PASS, **never** an indeterminate result (exit code 3, per `checks-must-distinguish-unknown`) treated as a pass. An indeterminate gate always falls back to Class C (ask), regardless of the toggle.
+2. The merge-gate / roborev consistency check reports a genuine PASS, **never** an indeterminate result (exit code 3, per `checks-must-distinguish-unknown`) treated as a pass. An indeterminate gate always falls back to Class C (ask), regardless of the toggle. That includes a gate that has not yet seen a completed review for every commit in the PR: a missing or still-running review is not a clean one (#1274).
 3. The PR's diff touches **none** of the Auto-Merge Exclusion List paths
    below.
 
@@ -84,6 +84,7 @@ This is advisory, not hook-enforced: no mechanism blocks a merge call the way `a
 | `.claude/hooks/**` | Controls what every future action is allowed to do — the trust boundary itself |
 | `.claude/rules/**` (especially mandatory / safety-critical rules) | Same reasoning as hooks — this is the policy layer, including the auto-merge policy defined in this very section |
 | `.claude/scripts/**` that handle credentials, secrets, or destructive operations | Direct incident history: the 2026-08-11 credential leak and the phone-number leak both originated in script-level handling |
+| Scripts that change state on their own schedule — anything that closes, reopens, deletes, reaps, garbage-collects or (re)loads things (e.g. `roborev_*autoclose*`, `roborev_auto_close.sh`, `roborev_revalidate.R`, reapers, `worktree_gc.sh`, `branch_gc.sh`), their `bin/launchd-recorders/*` wrappers, and `.claude/launchd/**` | A merged change goes live within hours via launchd with no human in the loop. On 2026-09-27 a paused auto-closer was reloaded by an unidentified mechanism and closed 117 reviews (#1274) |
 | `default.nix`, `default.R`, `.claude/settings.json` | Environment/permission configuration — a bad merge here can silently change what every subsequent session is allowed to do |
 | Any diff touching a credential/secret file, `.Renviron`, `secrets.env`, or a rotation script | `credential-management` / `secrets-single-source` safety-critical surface |
 | DB schema / migration files (`*_schema.sql`, `*_schema_apply.sh`) | Effectively irreversible once other writers depend on the new shape |
