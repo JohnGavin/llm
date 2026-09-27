@@ -58,3 +58,5 @@ tests/test_signal_braindump_handler.sh	tests/test_signal_braindump_handler.sh;.c
 tests/test_signal_notes_sync.sh	tests/test_signal_notes_sync.sh;.claude/scripts/signal_notes_sync.sh	skip-ci	observed failing heavily on the Linux CI runner (16 PASS, 11 FAIL — JohnGavin/llm#1279) while passing cleanly on macOS (27/27, verified locally); root cause not isolated within this PR's scope — tracked as a follow-up
 tests/test_stdin_null_guard.sh	tests/test_stdin_null_guard.sh;.claude/launchd/**	skip-ci	macOS-only: calls `plutil -lint` unconditionally with no availability check or fallback; plutil does not exist on Linux runners
 tests/test_wait_for_resolvable_host.sh	tests/test_wait_for_resolvable_host.sh;.claude/scripts/wait_for_resolvable_host.sh	run
+tests/test_agents_md_audit.sh	tests/test_agents_md_audit.sh;.claude/scripts/agents_md_audit.sh;AGENTS.md;.claude/SKILLS.md;.claude/skills/**;.claude/agents/**;.claude/commands/**	run
+tests/test_session_init_roborev_backlog.sh	tests/test_session_init_roborev_backlog.sh;.claude/hooks/session_init.sh	run
