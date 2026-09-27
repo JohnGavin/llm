@@ -1,3 +1,7 @@
+---
+name: subagent-delegation
+description: "Use when deciding whether and how to delegate work to a subagent: mandatory triggers, model routing (haiku/sonnet/opus) and dispatch conventions. Triggers: delegate, subagent, dispatch an agent, which model, auto-delegation."
+---
 # Subagent Delegation Rules
 
 When and how to use subagents effectively, with automatic model routing.
