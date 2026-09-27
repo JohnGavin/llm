@@ -49,7 +49,8 @@ else
   fail "output does not name the AGENTS.md path -> '$out'"
 fi
 case "$rc" in
-  0|1) ok "real run exits determinate (0=ok or 1=DRIFT), got $rc" ;;
+  0) ok "real run exits determinate (0=ok), got $rc" ;;
+  1) ok "real run exits determinate (1=DRIFT), got $rc -> '$out'" ;;
   *)   fail "real run exit code $rc is not 0 or 1 -> '$out'" ;;
 esac
 # The real agents/commands sections are known (as of this test's writing)

@@ -267,7 +267,7 @@ con = sqlite3.connect(db)
 con.executescript("""
 CREATE TABLE repos (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, root_path TEXT);
 CREATE TABLE review_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id INTEGER, status TEXT DEFAULT 'done', finished_at TEXT);
-CREATE TABLE reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, output TEXT, closed INTEGER DEFAULT 0);
+CREATE TABLE reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, output TEXT, structured_output TEXT, closed INTEGER DEFAULT 0);
 """)
 cur = con.execute("INSERT INTO repos (name, root_path) VALUES ('test6repo', '')")
 repo_id = cur.lastrowid
@@ -289,7 +289,11 @@ PYEOF
         LIB_DIR="$(cd "${SCRIPT_DIR}/../.claude/scripts/lib" && pwd)"
         CACHE6="${TMPDIR6}/cache.txt"
         chmod +x "${RBB_SCRIPT}"
-        bash "${RBB_SCRIPT}" "${DB6}" "test6repo" "${CACHE6}" "${LIB_DIR}"
+        # 5th arg: the main checkout root (llm#1276). Without it the block
+        # correctly writes 'unknown (...)' rather than a count. The repo row
+        # has an empty root_path, so this also exercises the name fallback.
+        ROOT6="${TMPDIR6}/root6"; mkdir -p "${ROOT6}"
+        bash "${RBB_SCRIPT}" "${DB6}" "test6repo" "${CACHE6}" "${LIB_DIR}" "${ROOT6}"
         rc6=$?
         assert_eq "test6: extracted block exits 0" "0" "${rc6}"
 
