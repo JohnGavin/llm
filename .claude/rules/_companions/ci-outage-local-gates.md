@@ -40,7 +40,7 @@ exist in this repo, so they are not listed. Use the real commands below.
 | `quarto-publish.yaml` (build job) | `quarto render`, HTML error scan, blank-plot scan, link check | `quarto render`, then `Rscript -e 'source("R/tar_plans/plan_qa_gates.R"); scan_html_for_errors("docs")'` and `check_no_blank_plots("docs")`, plus `bash .claude/scripts/check_internal_links.sh`. The deploy job is CI-only and cannot be substituted |
 | `coverage.yml` | `covr::package_coverage()`, commits `inst/extdata/coverage.rds` | Informational only; `Rscript -e 'covr::package_coverage()'` via the project nix shell. Do not hand-commit coverage.rds |
 | (no workflow) code quality | ast-grep + jarl | `~/.claude/scripts/r_code_check.sh R/` |
-| (no workflow) shell tests | `tests/test_*.sh` | run the ones for the scripts you changed, foreground |
+| `shell-tests.yml` | Runs the `tests/test_*.sh` suites relevant to the PR's changed files, per `tests/ci_test_map.tsv` (llm#1274) | `bash tests/<name>.sh` for each row in `tests/ci_test_map.tsv` whose `globs` match a file you changed; `status=skip-ci` rows never run in CI either way |
 | (no workflow) merge gate | roborev findings | `bin/roborev_merge_gate.sh <pr#>` (exit 3 = indeterminate, not pass) |
 
 ## PR and merge rules while CI is unavailable

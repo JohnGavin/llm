@@ -1,0 +1,220 @@
+# shell-tests.yml — run the shell test suites relevant to a PR's changes.
+#
+# Before this workflow, no PR check ran anything under tests/ (only
+# cross-repo-symlink-check, private-data-scan, skill-security-scan and
+# wiki-sync-check) — "CI green" said nothing about whether tests pass.
+# See JohnGavin/llm#1274 step 4.
+#
+# Relevance: a test runs if the PR changes the test file itself or any
+# script it exercises, per the mapping in tests/ci_test_map.tsv (built by
+# reading each test's header/sourced paths, not guessed). A PR that touches
+# this workflow file or the map runs every mapped test, since either one
+# could itself be wrong.
+#
+# Scope: only tests genuinely classified as passing on a Linux runner (see
+# tests/ci_test_map.tsv's status column) are ever selected. Tests classified
+# skip-ci (macOS-only tools, or a missing R toolchain) are never run here —
+# see the map file and the PR description for the reasoning per test.
+#
+# No Nix required — pure bash, git, python3, sqlite3 (all preinstalled on
+# ubuntu-latest), plus two small on-demand shims (duckdb CLI; ghostscript +
+# tesseract-ocr) installed only when a selected test needs them.
+name: Shell Tests
+
+on:
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  shell-tests:
+    name: Run relevant tests/test_*.sh suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select relevant tests and report untested changes
+        id: select
+        run: |
+          set -uo pipefail
+          MAP="tests/ci_test_map.tsv"
+
+          git fetch -q --no-tags origin main
+          CHANGED_FILES="$(git diff --name-only --no-ext-diff origin/main...HEAD)"
+          echo "Changed files:"
+          echo "${CHANGED_FILES}" | sed 's/^/  /'
+
+          RUN_ALL=0
+          if echo "${CHANGED_FILES}" | grep -qxE '\.github/workflows/shell-tests\.yml|tests/ci_test_map\.tsv'; then
+            RUN_ALL=1
+            echo "This PR touches the workflow or the test map — running every mapped test."
+          fi
+
+          : > /tmp/selected_tests.txt
+          : > /tmp/skip_ci_tests.txt
+          : > /tmp/matched_globs.txt
+
+          # Parse the TSV (skip comments and the header row).
+          while IFS=$'\t' read -r test globs status reason; do
+            [ -z "${test}" ] && continue
+            case "${test}" in
+              \#*|test) continue ;;
+            esac
+
+            IFS=';' read -r -a glob_arr <<< "${globs}"
+
+            if [ "${status}" = "skip-ci" ]; then
+              echo "${test}	${reason}" >> /tmp/skip_ci_tests.txt
+              # Still record its globs so the "untested change" check can
+              # note when a change IS mapped, just not to a runnable test.
+              for g in "${glob_arr[@]}"; do
+                echo "skip	${g}" >> /tmp/matched_globs.txt
+              done
+              continue
+            fi
+
+            matched=0
+            if [ "${RUN_ALL}" = "1" ]; then
+              matched=1
+            else
+              while IFS= read -r f; do
+                [ -z "${f}" ] && continue
+                for g in "${glob_arr[@]}"; do
+                  # shellcheck disable=SC2053
+                  if [[ "${f}" == ${g} ]]; then
+                    matched=1
+                    break 2
+                  fi
+                done
+              done <<< "${CHANGED_FILES}"
+            fi
+
+            for g in "${glob_arr[@]}"; do
+              echo "run	${g}" >> /tmp/matched_globs.txt
+            done
+
+            if [ "${matched}" = "1" ]; then
+              echo "${test}" >> /tmp/selected_tests.txt
+            fi
+          done < "${MAP}"
+
+          echo ""
+          echo "Selected tests:"
+          cat /tmp/selected_tests.txt | sed 's/^/  /'
+
+          # Untested-change detection: a changed file under .claude/scripts/**,
+          # bin/** or .claude/hooks/** that matches no "run" glob is a warning,
+          # not a failure. Note separately if it's covered only by a skip-ci test.
+          : > /tmp/untested_changes.txt
+          while IFS= read -r f; do
+            [ -z "${f}" ] && continue
+            case "${f}" in
+              .claude/scripts/*|bin/*|.claude/hooks/*) ;;
+              *) continue ;;
+            esac
+
+            run_matched=0
+            skip_matched=0
+            while IFS=$'\t' read -r kind g; do
+              [ -z "${g}" ] && continue
+              # shellcheck disable=SC2053
+              if [[ "${f}" == ${g} ]]; then
+                if [ "${kind}" = "run" ]; then run_matched=1; else skip_matched=1; fi
+              fi
+            done < /tmp/matched_globs.txt
+
+            if [ "${run_matched}" = "0" ]; then
+              if [ "${skip_matched}" = "1" ]; then
+                echo "${f} (mapped only to a skip-ci test — still untested in CI)" >> /tmp/untested_changes.txt
+              else
+                echo "${f} (no mapped test at all)" >> /tmp/untested_changes.txt
+              fi
+            fi
+          done <<< "${CHANGED_FILES}"
+
+          NEED_DUCKDB=0
+          NEED_GS_TESSERACT=0
+          grep -qx "tests/test_etl_freshness_upsert.sh" /tmp/selected_tests.txt && NEED_DUCKDB=1
+          grep -qx "tests/test_launchd_run_record_timeout.sh" /tmp/selected_tests.txt && NEED_DUCKDB=1
+          grep -qx "tests/test_signal_attachment_ingest.sh" /tmp/selected_tests.txt && NEED_GS_TESSERACT=1
+          {
+            echo "need_duckdb=${NEED_DUCKDB}"
+            echo "need_gs_tesseract=${NEED_GS_TESSERACT}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Install duckdb CLI shim
+        if: steps.select.outputs.need_duckdb == '1'
+        run: |
+          set -uo pipefail
+          curl -fsSL https://install.duckdb.org | sh
+          echo "${HOME}/.duckdb/cli/latest" >> "${GITHUB_PATH}"
+
+      - name: Install ghostscript + tesseract shim
+        if: steps.select.outputs.need_gs_tesseract == '1'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ghostscript tesseract-ocr
+
+      - name: Run selected tests
+        id: run_tests
+        run: |
+          set -uo pipefail
+          OVERALL=0
+          : > /tmp/results.txt
+          if [ ! -s /tmp/selected_tests.txt ]; then
+            echo "No shell test suite is relevant to this PR's changed files."
+          fi
+          while IFS= read -r test; do
+            [ -z "${test}" ] && continue
+            echo "::group::${test}"
+            if timeout 120 bash "${test}"; then
+              echo "PASS	${test}" >> /tmp/results.txt
+            else
+              rc=$?
+              echo "FAIL (exit ${rc})	${test}" >> /tmp/results.txt
+              OVERALL=1
+            fi
+            echo "::endgroup::"
+          done < /tmp/selected_tests.txt
+          exit "${OVERALL}"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Shell test results"
+            echo ""
+            if [ -s /tmp/results.txt ]; then
+              echo "| Result | Test |"
+              echo "|---|---|"
+              while IFS=$'\t' read -r result test; do
+                echo "| ${result} | \`${test}\` |"
+              done < /tmp/results.txt
+            else
+              echo "_No shell test suite was relevant to this PR's changed files._"
+            fi
+            echo ""
+            echo "## Always skipped in CI (see tests/ci_test_map.tsv)"
+            echo ""
+            echo "| Test | Reason |"
+            echo "|---|---|"
+            while IFS=$'\t' read -r test reason; do
+              echo "| \`${test}\` | ${reason} |"
+            done < /tmp/skip_ci_tests.txt
+            echo ""
+            if [ -s /tmp/untested_changes.txt ]; then
+              echo "## :warning: Untested changes"
+              echo ""
+              echo "These changed files under \`.claude/scripts/**\`, \`bin/**\` or \`.claude/hooks/**\` have no shell test that runs in CI:"
+              echo ""
+              while IFS= read -r line; do
+                echo "- ${line}"
+              done < /tmp/untested_changes.txt
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
