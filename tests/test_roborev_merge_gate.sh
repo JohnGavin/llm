@@ -856,6 +856,87 @@ else
   fail "test21d: BLOCK-listing shows the REAL location (R/quux.R:5) from JSON, not a corrupted regex match" "output: $out21c"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════
+# JohnGavin/llm#1267 "Also found" — a reviews.db QUERY failure (the file
+# EXISTS, but the SELECT itself raises: locked, corrupt, schema drift) must
+# be INDETERMINATE (exit 3), never a silent PASS. Distinct from test11
+# (db_absent — the file does not exist at all, caught by _main()'s `-f`
+# check BEFORE the query ever runs); this exercises the `except Exception`
+# inside _query_open_findings's own SQL query, which used to print
+# `{"findings":[],"unparseable":[]}` and exit 0 ("fail-open: DB error →
+# pass gate") — collapsing "could not ask the question" into "the answer is
+# clean", exactly the shape checks-must-distinguish-unknown forbids.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Test 22 — a reviews.db that EXISTS but is not a valid SQLite file (passes
+# the `-f` preflight, then sqlite3 raises DatabaseError on the SELECT).
+CORRUPT_DB="${TMPDIR_ROOT}/corrupt_reviews.db"
+printf 'not a real sqlite database, but a real file\n' > "$CORRUPT_DB"
+
+BIN22="${TMPDIR_ROOT}/bin22"
+mkdir -p "$BIN22"
+make_mock_gh "$BIN22" "[\"${SHA_HIGH_OPEN}\"]"
+
+out22=""
+exit22=0
+out22=$(
+  GH="$BIN22/gh" ROBOREV_DB="$CORRUPT_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo 99 2>&1
+) || exit22=$?
+
+if [ "$exit22" = "3" ]; then
+  pass "test22: reviews.db query failure (corrupt file) → exit 3 (INDETERMINATE)"
+else
+  fail "test22: reviews.db query failure (corrupt file) → exit 3 (INDETERMINATE)" "got exit=$exit22 | output: $out22"
+fi
+
+if echo "$out22" | grep -q "PASS"; then
+  fail "test22b: db-query-failure output must not contain 'PASS'" "output: $out22"
+else
+  pass "test22b: db-query-failure output must not contain 'PASS'"
+fi
+
+# The failure reason must reach the operator (same discipline as test10c for
+# the gh-401 case) — otherwise "could not evaluate" leaves them guessing
+# among db_absent/gh_unavailable/db_query_failed/etc.
+if echo "$out22" | grep -q "reviews.db query failed"; then
+  pass "test22c: db-query-failure reason is surfaced to the operator"
+else
+  fail "test22c: db-query-failure reason is surfaced to the operator" "output: $out22"
+fi
+
+# Test 22d — MERGE_GATE_FAIL_OPEN=1 downgrades this exit too, same as test12
+# for db_absent — the escape hatch is uniform across every INDETERMINATE
+# cause, not special-cased per reason.
+out22d=""
+exit22d=0
+out22d=$(
+  MERGE_GATE_FAIL_OPEN=1 GH="$BIN22/gh" ROBOREV_DB="$CORRUPT_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo 99 2>&1
+) || exit22d=$?
+
+if [ "$exit22d" = "0" ] && echo "$out22d" | grep -q "INDETERMINATE"; then
+  pass "test22d: MERGE_GATE_FAIL_OPEN=1 downgrades exit 3 → 0, but still says INDETERMINATE (never PASS)"
+else
+  fail "test22d: MERGE_GATE_FAIL_OPEN=1 downgrades exit 3 → 0, but still says INDETERMINATE (never PASS)" "got exit=$exit22d | output: $out22d"
+fi
+
+# Falsification (verification-before-completion: a check must be shown red
+# before it is trusted green). Run the SAME corrupt-DB fixture against the
+# script as it existed at HEAD — i.e. before this fix's edits to the
+# `except Exception` block inside _query_open_findings. Confirmed manually
+# during development: HEAD (d1ece921, JohnGavin/llm#1273) prints
+# "merge-gate: PASS (no unresolved High-severity findings)" and exits 0 on
+# this exact fixture — reproducing the "Also found" bug in llm#1267 exactly.
+# This block is not run automatically (a moving HEAD would make it meaningless
+# once this fix is committed); it is recorded here as the falsification
+# evidence for test22, run once by hand:
+#   git show HEAD:bin/roborev_merge_gate.sh > /tmp/pre_fix_gate.sh
+#   GH="$BIN22/gh" ROBOREV_DB="$CORRUPT_DB" ACKS_JSONL="$ACKS_FILE" \
+#     bash /tmp/pre_fix_gate.sh --repo JohnGavin/fakerepo 99
+#   # -> exit 0, "merge-gate: PASS ..." (RED — confirms test22 exercises the
+#   #    real fix, not a check that was always green)
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: ${PASS} PASS, ${FAIL} FAIL"
