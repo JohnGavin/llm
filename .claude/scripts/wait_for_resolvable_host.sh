@@ -182,7 +182,7 @@ wait_for_resolvable_host() {
 
     if [ -n "${resolved_host}" ]; then
       elapsed=$(( $(date +%s) - start_ts ))
-      _wfrh_log "network: resolved ${resolved_host} after ${elapsed}s — proceeding"
+      _wfrh_log "network: FALSIFY-TEST-TMP ${resolved_host} after ${elapsed}s — proceeding"
       return 0
     fi
 
