@@ -1,3 +1,7 @@
+---
+name: erddap-ocean-data
+description: "Use for any task involving ERDDAP URLs or the Irish Weather Buoy Network: correct queries, variable names, column mappings and pointblank validation rules. Triggers: ERDDAP, buoy data, Irish buoys, ocean data query."
+---
 # ERDDAP Ocean Data — Irish Weather Buoy Network
 
 Spec-bundled skill for generating correct ERDDAP queries, pointblank

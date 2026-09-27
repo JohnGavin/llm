@@ -1,3 +1,7 @@
+---
+name: spec-bundled-skills
+description: "Use when building a skill that must follow an external specification (API schema, data dictionary, standard): bundle the spec as a reference file beside the skill prompt so answers come from the spec, not training memory. Triggers: spec-bundled skill, bundle a spec, data dictionary skill, reduce hallucination."
+---
 # Spec-Bundled Skills Pattern
 
 ## Pattern

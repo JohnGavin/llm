@@ -1,4 +1,4 @@
-# Skills by Category (65)
+# Skills by Category
 
 Companion to `AGENTS.md`. See `AGENTS.md` for project identity, mandatory rules, and core operating instructions; this file holds only the skill catalogue.
 
@@ -14,6 +14,7 @@ To invoke a skill, the user types `/<skill-name>` or asks for the topic and the 
 - `readme-qmd-standard` — README.qmd conventions
 - `subagent-delegation` — When/how to delegate to agents
 - `spec-bundled-skills` — Bundled skill specifications
+- `knowledge-base-wiki` — Compile raw source material into a provenance-tracked wiki
 
 ## R Package Development
 - `cli-package` — cli inline markup, conditions, progress
@@ -40,6 +41,9 @@ To invoke a skill, the user types `/<skill-name>` or asks for the topic and the 
 - `analysis-rationale-logging` — Decision logging
 - `gdc-genomics` — GDC/genomics data
 - `erddap-ocean-data` — ERDDAP ocean data access
+- `duckdb-patterns` — DuckDB in R: duckplyr, connections, security hardening
+- `robust-statistics` — Robust methods for outlier-prone data
+- `visualization-detailed` — Detailed R data-visualisation guidance (incl. plotly theming)
 
 ## Targets & Pipelines
 - `targets-pipeline-spec` — Pipeline architecture + tool choice
@@ -84,6 +88,7 @@ To invoke a skill, the user types `/<skill-name>` or asks for the topic and the 
 - `requirements-spec` — MUST/SHOULD/MAY requirements before complex tasks
 - `per-project-claude-md` — Slim project-level config template (overrides global CLAUDE.md)
 - `skill-authoring` — Checklist and template for creating new skills (quality gate)
+- `skillify` — Turn a repeated workflow from conversation history into a new skill
 
 ## AI/LLM Tools
 - `gemini-cli-codebase-analysis` — Gemini CLI + subagent patterns
@@ -91,17 +96,18 @@ To invoke a skill, the user types `/<skill-name>` or asks for the topic and the 
 - `huggingface-r` — HuggingFace from R
 - `mcp-servers` — MCP server management
 - `hooks-automation` — Hook automation patterns
+- `claude-api` — Build, debug and migrate Claude API / Anthropic SDK apps
 
 ## Specialized
 - `mlops-deployment` — MLOps patterns
+- `focus` — FOCUS method: exhaustive, quote-preserving summaries of papers and reports
 
 ## Adding a new skill
 
 When a new skill is added under `.claude/skills/<name>/SKILL.md`:
 
 1. Add a one-line bullet to the appropriate section above (name + 1-line description)
-2. Bump the count in the `# Skills by Category (N)` heading
-3. Bump the count in `AGENTS.md`'s `## Skills (link to this file) (N)` pointer (keep the two counts in sync)
-4. Mention the new skill in any relevant rule file's `## Related` block
+2. Run `.claude/scripts/agents_md_audit.sh` — it checks this list against `.claude/skills/*/` by name (no counts to bump)
+3. Mention the new skill in any relevant rule file's `## Related` block
 
 The `skill_quality_onwrite.sh` hook enforces the 500-line per-skill ceiling.
