@@ -22,10 +22,10 @@
        rm ~/Library/LaunchAgents/com.claude.unified-duckdb-backup.plist
 
      Manual dry-run (no writes):
-       ~/.claude/scripts/unified_duckdb_backup.sh --dry-run
+       ~/.claude/scripts/unified_duckdb_backup.sh —dry-run
 
      Manual apply (writes backup):
-       ~/.claude/scripts/unified_duckdb_backup.sh --apply --prune
+       ~/.claude/scripts/unified_duckdb_backup.sh —apply —prune
 
      Self-test:
        SELFTEST=1 bash ~/.claude/scripts/unified_duckdb_backup.sh

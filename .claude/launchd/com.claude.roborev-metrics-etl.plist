@@ -14,7 +14,7 @@
        rm ~/Library/LaunchAgents/com.claude.roborev-metrics-etl.plist
 
      Manual run (apply):
-       ~/.claude/scripts/roborev_metrics_etl.sh --apply
+       ~/.claude/scripts/roborev_metrics_etl.sh —apply
 
      Tracked in llm#226.
 -->

@@ -11,8 +11,8 @@
     <!-- JohnGavin/llm#984: sweeps ~/.roborev/reviews.db review_jobs rows stuck
          status='running' with no worker left to finish them (observed: 10h12m
          and 6h04m old with zero matching agent process). Deployed in APPLY
-         mode (wrapper passes --apply) as of 2026-09-24, after a dry-run soak
-         showed zero would-reap candidates across 317 runs since 2026-08-22 --
+         mode (wrapper passes —apply) as of 2026-09-24, after a dry-run soak
+         showed zero would-reap candidates across 317 runs since 2026-08-22 —
          see the wrapper's own comment for the full evidence and how to revert
          to dry-run. StartInterval matches roborev-failure-alert's 30-minute
          cadence (both are lightweight read-mostly roborev health checks). -->

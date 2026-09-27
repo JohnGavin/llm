@@ -20,7 +20,7 @@
      Manual run:
        ~/.claude/scripts/roborev_daily_backlog_aggregator.sh
      Dry-run:
-       ~/.claude/scripts/roborev_daily_backlog_aggregator.sh --dry-run
+       ~/.claude/scripts/roborev_daily_backlog_aggregator.sh —dry-run
 
      Tracked in llm#355.
 -->
