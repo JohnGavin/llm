@@ -243,6 +243,8 @@ _exit_indeterminate() {
 #     "findings":     [{"id":N,"severity":"High","commit_sha":"abc","location":"...","problem":"..."}, ...],
 #     "unparseable":  [{"id":N,"commit_sha":"abc","outcome":"not_reviewed"|"unclassified"}, ...],
 #     "import_error": "<message>"   # present only if the shared module could not be imported
+#     "db_error":     "<message>"   # present only if the query/connection against
+#                                    # reviews.db raised (llm#1267) — never a silent PASS
 #   }
 #
 # "findings" = open, closed=0/verdict_bool=0 rows whose severity parsed AND
@@ -325,11 +327,18 @@ try:
     """.format(ph=placeholders), shas).fetchall()
     con.close()
 except Exception as e:
-    # Fail-open: DB error → pass gate (pre-existing behaviour, unchanged by
-    # llm#1146 — this is a query/connection failure, not an unparseable
-    # severity, and reviews.db's mere absence is already caught earlier in
-    # _main() as its own INDETERMINATE case).
-    print(json.dumps({"findings": [], "unparseable": []}))
+    # llm#1267 "Also found": this used to be "fail-open: DB error -> pass
+    # gate" — printing empty findings and exiting 0 turned a query/connection
+    # failure into a silent PASS, exactly the collapse
+    # checks-must-distinguish-unknown forbids (the gate never actually asked
+    # the question, so an unresolved Critical finding would look identical to
+    # a clean PR). reviews.db's mere ABSENCE is already caught earlier in
+    # _main() as its own "db_absent" INDETERMINATE case; this is the case
+    # where the file exists but the query against it fails (locked, corrupt,
+    # missing table/column, etc.) — reported back to bash as db_error and
+    # turned into an INDETERMINATE verdict by _main(), mirroring how
+    # import_error is handled above. Never silently degraded to a pass.
+    print(json.dumps({"findings": [], "unparseable": [], "db_error": f"{type(e).__name__}: {e}"}))
     sys.exit(0)
 
 loc_re = re.compile(r"\*\*(?:Location|File)\*\*:\s*([^\n]+)", re.IGNORECASE)
@@ -432,6 +441,17 @@ PYEOF
 }
 
 # Parse acks.jsonl.  Returns JSON array of integers.
+#
+# llm#1267 "Also found": both `except` clauses below (a single malformed
+# JSON line, and the whole file being unreadable) swallow the error and
+# return whatever ids WERE parsed rather than propagating failure — unlike
+# _query_open_findings's db_error handling above, this is deliberately left
+# unchanged. The direction matters: an id dropped from this list is one
+# fewer "resolved" entry in _main()'s `resolved = cited | acked` set, which
+# only ever makes MORE findings unresolved, never fewer — i.e. a read
+# failure here biases toward BLOCK/INDETERMINATE, the safe direction, and
+# can never manufacture a PASS the way the DB-query fail-open did. So this
+# is not the same collapse checks-must-distinguish-unknown forbids.
 _parse_acked_ids() {
   local acks_file="$1"
   [ -f "$acks_file" ] || { echo "[]"; return 0; }
@@ -598,6 +618,21 @@ _main() {
   if [ -n "$import_error" ]; then
     GATE_INDETERMINATE_DETAIL="severity-parser module unavailable: ${import_error}"
     _exit_indeterminate "severity_parser_unavailable" "$pr_num"
+  fi
+
+  # llm#1267 "Also found": a query/connection failure against reviews.db
+  # (file exists, but the SELECT itself raised — locked, corrupt, schema
+  # drift, etc.) is reported back as db_error. This must NEVER fall through
+  # to the PASS/BLOCK decision below — same treatment as import_error and
+  # the earlier "db_absent"/"gh_unavailable" cases: the gate never actually
+  # queried the reviews, so an unresolved Critical finding would look
+  # identical to a clean PR. Respects MERGE_GATE_FAIL_OPEN=1 the same way
+  # every other _exit_indeterminate call site does.
+  local db_error
+  db_error=$("$PYTHON" -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('db_error') or '')" "$findings_json")
+  if [ -n "$db_error" ]; then
+    GATE_INDETERMINATE_DETAIL="reviews.db query failed: ${db_error}"
+    _exit_indeterminate "db_query_failed" "$pr_num"
   fi
 
   # Parse citations and acks
