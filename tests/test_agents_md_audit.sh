@@ -49,7 +49,8 @@ else
   fail "output does not name the AGENTS.md path -> '$out'"
 fi
 case "$rc" in
-  0|1) ok "real run exits determinate (0=ok or 1=DRIFT), got $rc" ;;
+  0) ok "real run exits determinate (0=ok), got $rc" ;;
+  1) ok "real run exits determinate (1=DRIFT), got $rc -> '$out'" ;;
   *)   fail "real run exit code $rc is not 0 or 1 -> '$out'" ;;
 esac
 # The real agents/commands sections are known (as of this test's writing)
@@ -120,11 +121,40 @@ cat > "$FAKE_SKILLS_MD" <<'EOF'
 EOF
 FAKE_CLAUDE_DOTTED="$TMP/fake_claude_dotted"
 mkdir -p "$FAKE_CLAUDE_DOTTED/skills/dotted-1.1-name" "$FAKE_CLAUDE_DOTTED/agents" "$FAKE_CLAUDE_DOTTED/commands"
+touch "$FAKE_CLAUDE_DOTTED/skills/dotted-1.1-name/SKILL.md"
 out=$(AGENTS_MD_AUDIT_PATH="$AGENTS_MD" AGENTS_MD_AUDIT_CLAUDE_DIR="$FAKE_CLAUDE_DOTTED" AGENTS_MD_AUDIT_SKILLS_MD="$FAKE_SKILLS_MD" bash "$AUDIT" 2>&1)
 if printf '%s' "$out" | grep -q 'dotted-1.1-name'; then
   fail "dotted skill name 'dotted-1.1-name' wrongly reported as drift -> '$out'"
 else
   ok "dotted skill name 'dotted-1.1-name' matches listed<->actual, no false drift"
+fi
+
+# ── 3c. A skill is a dir holding SKILL.md. A local non-skill dir (like the
+#       gitignored skills/generated/ or skills/synced/) must not be flagged
+#       undocumented; a listed name that is only a flat <name>.md (which
+#       Claude Code never loads) must be flagged missing; an unlisted dir
+#       WITH SKILL.md must still be flagged undocumented. ────────────────
+FAKE_CLAUDE_SK="$TMP/fake_claude_skillmd"
+mkdir -p "$FAKE_CLAUDE_SK/skills/real-skill" "$FAKE_CLAUDE_SK/skills/generated" "$FAKE_CLAUDE_SK/skills/unlisted-skill"
+touch "$FAKE_CLAUDE_SK/skills/real-skill/SKILL.md" "$FAKE_CLAUDE_SK/skills/generated/report.md" \
+      "$FAKE_CLAUDE_SK/skills/unlisted-skill/SKILL.md" "$FAKE_CLAUDE_SK/skills/flat-only.md"
+FAKE_SKILLS_SK="$TMP/SKILLS_skillmd.md"
+printf '%s\n' '## Test' '- `real-skill` — has SKILL.md' '- `flat-only` — only a flat .md' > "$FAKE_SKILLS_SK"
+out=$(AGENTS_MD_AUDIT_PATH="$AGENTS_MD" AGENTS_MD_AUDIT_CLAUDE_DIR="$FAKE_CLAUDE_SK" AGENTS_MD_AUDIT_SKILLS_MD="$FAKE_SKILLS_SK" bash "$AUDIT" 2>&1)
+if printf '%s' "$out" | grep -q 'generated'; then
+  fail "non-skill dir 'generated' (no SKILL.md) reported as a skill -> '$out'"
+else
+  ok "non-skill dir without SKILL.md is not counted as a skill"
+fi
+if printf '%s' "$out" | grep -q 'skills-missing:[^ ]*flat-only'; then
+  ok "listed skill that is only a flat .md -> skills-missing"
+else
+  fail "flat-only .md should be skills-missing -> '$out'"
+fi
+if printf '%s' "$out" | grep -q 'skills-undocumented:[^ ]*unlisted-skill'; then
+  ok "unlisted dir with SKILL.md -> skills-undocumented"
+else
+  fail "unlisted-skill should be skills-undocumented -> '$out'"
 fi
 
 # ── 4. Falsify: unreadable AGENTS.md -> exit 3, never 0 or 1 ──────────────
