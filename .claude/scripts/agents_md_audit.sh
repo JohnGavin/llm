@@ -20,7 +20,7 @@
 #   skills   — AGENTS.md does not name skills individually; it points at
 #              SKILLS.md ("Full categorised list at `.claude/SKILLS.md`").
 #              So the names actually audited come from THAT file
-#              (`- \`skill-name\` — ...` list items) vs <claude-dir>/skills/*/
+#              (`- \`skill-name\` — ...` list items) vs <claude-dir>/skills/*/SKILL.md
 #
 # Display-only counts (not name-diffed — AGENTS.md's Rules/Memory sections
 # are deliberately curated references, not exhaustive listings, so a
@@ -134,7 +134,11 @@ commands_actual=$(ls "$CLAUDE_DIR"/commands/*.md 2>/dev/null | xargs -n1 basenam
 skills_source_ok=1
 if [ -f "$SKILLS_MD" ] && [ -r "$SKILLS_MD" ]; then
   skills_listed=$(grep -oE '^- `[a-zA-Z0-9_.-]+`' "$SKILLS_MD" | grep -oE '`[a-zA-Z0-9_.-]+`' | tr -d '`' | sorted_uniq)
-  skills_actual=$(ls -d "$CLAUDE_DIR"/skills/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | sorted_uniq)
+  # A skill is a directory holding SKILL.md -- the only shape Claude Code
+  # loads. Counting every directory would flag local, gitignored non-skill
+  # dirs (e.g. skills/generated/, skills/synced/) as undocumented skills,
+  # and would miss a flat skills/<name>.md that never loads.
+  skills_actual=$(ls "$CLAUDE_DIR"/skills/*/SKILL.md 2>/dev/null | xargs -n1 dirname 2>/dev/null | xargs -n1 basename 2>/dev/null | sorted_uniq)
 else
   skills_listed=""
   skills_actual=""
