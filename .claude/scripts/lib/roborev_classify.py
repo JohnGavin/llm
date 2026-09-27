@@ -448,6 +448,34 @@ def review_structured_findings(output, structured_output):
     return _structured_findings_normalized(data)
 
 
+def review_findings_raw_count(output, structured_output):
+    """llm#1273: the TRUE length of the JSON `findings` array for a
+    schema_version 1/2 row -- unlike review_structured_findings(), which
+    silently DROPS any entry whose `severity` field is missing or not one
+    of the recognised words (see _structured_findings_normalized()'s own
+    docstring: "no entry has a recognised severity value" -> None). A
+    caller that does `len(review_structured_findings(...))` for a
+    display/log count therefore undercounts whenever even one finding in
+    an otherwise-normal array lacks a recognised severity -- this is the
+    function to call instead for "how many findings does this row have",
+    as opposed to "how many findings can I read a severity ordinal from".
+
+    Returns the raw `len(findings)` (which MAY be 0) for a recognised
+    schema_version 1/2 row with a `findings` field that is a list.
+    Returns None when there is nothing to count at all: malformed JSON,
+    an unrecognised/missing schema_version, or `findings` present but not
+    a list."""
+    data = _parse_structured_json(structured_output)
+    if data is None:
+        return None
+    if not _known_structured_schema(data.get("schema_version")):
+        return None
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return None
+    return len(findings)
+
+
 def review_severity_ordinal(output, structured_output):
     """Max severity ordinal (1-4) for a review row, sourced from EITHER
     column. For a structured row (schema_version 1/2, non-empty findings)
@@ -532,22 +560,42 @@ def review_is_clean(output, structured_output):
     findings across 5 reviews were auto-closed with severity_threshold=off
     everywhere, which should have skipped them).
 
+    llm#1273: an empty `findings` list is ALSO not enough on its own. A
+    schema_version 2 row can carry `verdict: "fail"` (or
+    "unable_to_review", or anything other than "pass") together with an
+    empty findings list -- meaning the review could not actually inspect
+    the diff, not that it inspected the diff and found nothing. That is
+    the same "could not tell -> treated as clean" shape #1265 already
+    fixed for classify_review_row(): treating it as clean here would
+    auto-close a review that never ran. Verified against
+    ~/.roborev/reviews.db on 2026-09-27: 19 rows currently have
+    verdict="fail", and every one of them has a non-empty findings list
+    (2-7 findings each) -- so this is a latent bug, not (yet) a live
+    misclassification, but the shape is identical to #1265's and must be
+    closed the same way.
+
     Definition of "clean":
       - Structured row (schema_version 1/2): the `findings` list is
-        present and literally empty. A non-empty `findings` list is NEVER
-        clean, regardless of `verdict`.
+        present and literally empty, AND the verdict is either absent
+        (schema_version 1 has no verdict key at all) or explicitly
+        "pass" (schema_version 2). A non-empty `findings` list is NEVER
+        clean, regardless of `verdict`. An empty findings list paired
+        with any OTHER verdict (e.g. "fail", "unable_to_review") is
+        indeterminate, not clean -- see the None case below.
       - Legacy row (schema_version 0, or no usable structured_output at
         all): the existing free-text "no issues found" prefix test over
         review_output_text()'s rendering (the pre-#1270 behaviour for this
         population is unchanged).
 
     Returns:
-      True  -- confirmed zero findings; safe to auto-close unconditionally.
+      True  -- confirmed zero findings AND a pass/absent verdict; safe to
+               auto-close unconditionally.
       False -- confirmed non-empty findings; must NOT be treated as clean
                (falls through to the severity-threshold path instead).
-      None  -- could not determine (malformed findings field, or no text
-               to read at all). Callers MUST treat None exactly like a
-               parse failure -- skip, never close.
+      None  -- could not determine (malformed findings field, empty
+               findings with a non-pass verdict, or no text to read at
+               all). Callers MUST treat None exactly like a parse
+               failure -- skip, never close.
     """
     data = _parse_structured_json(structured_output)
     if data is not None:
@@ -557,7 +605,18 @@ def review_is_clean(output, structured_output):
             if _known_structured_schema(schema_version):
                 findings = data.get("findings")
                 if isinstance(findings, list):
-                    return len(findings) == 0
+                    if len(findings) > 0:
+                        return False
+                    # Empty findings list: clean ONLY when the verdict
+                    # key is absent (schema_version 1) or explicitly
+                    # "pass" (schema_version 2). Any other verdict (e.g.
+                    # "fail", "unable_to_review") paired with an empty
+                    # findings list means the review could not tell --
+                    # llm#1273, see docstring above.
+                    verdict = data.get("verdict")
+                    if verdict is None or verdict == "pass":
+                        return True
+                    return None
                 # Recognised schema but `findings` is malformed (not a
                 # list at all) -- nothing reliable to read.
                 return None
@@ -888,6 +947,50 @@ def _selftest():
     check("review_is_clean(): recognised schema with malformed `findings` "
           "field (not a list) -> indeterminate (None)",
           None, review_is_clean(None, malformed_findings_field))
+
+    # llm#1273: empty findings + a non-pass verdict is indeterminate, NOT
+    # clean -- the same "could not tell -> treated as clean" shape #1265
+    # fixed for classify_review_row(). A "pass" verdict (or the absent-key
+    # schema_version 1 case, already covered above) is the only path to
+    # True.
+    v2_fail_empty_findings = (
+        '{"schema_version":2,"summary":"could not read diff",'
+        '"verdict":"fail","findings":[]}'
+    )
+    v2_unable_to_review_empty_findings = (
+        '{"schema_version":2,"summary":"agent crashed",'
+        '"verdict":"unable_to_review","findings":[]}'
+    )
+    check("review_is_clean(): llm#1273 -- fail verdict + EMPTY findings is "
+          "indeterminate (None), never clean",
+          None, review_is_clean(None, v2_fail_empty_findings))
+    check("review_is_clean(): llm#1273 -- unable_to_review verdict + EMPTY "
+          "findings is indeterminate (None), never clean",
+          None, review_is_clean(None, v2_unable_to_review_empty_findings))
+
+    # ── review_findings_raw_count() (llm#1273) ────────────────────────────
+    # The raw findings-array length, NOT the severity-filtered count that
+    # review_structured_findings() returns -- a finding whose `severity`
+    # field is missing/unrecognised must still be counted.
+    v2_mixed_recognised_and_unrecognised_severity = (
+        '{"schema_version":2,"summary":"x","verdict":"pass",'
+        '"findings":[{"severity":"medium","problem":"p1"},'
+        '{"severity":"weird","problem":"p2"},'
+        '{"severity":"high","problem":"p3"}]}'
+    )
+    check("review_findings_raw_count(): counts ALL findings, including one "
+          "with an unrecognised severity (3, not the filtered 2)",
+          3, review_findings_raw_count(None, v2_mixed_recognised_and_unrecognised_severity))
+    check("review_findings_raw_count(): v2 empty findings -> 0",
+          0, review_findings_raw_count(None, v2_pass_no_findings))
+    check("review_findings_raw_count(): schema_version 0 (no per-finding "
+          "JSON) -> None",
+          None, review_findings_raw_count(None, schema0_legacy))
+    check("review_findings_raw_count(): malformed JSON -> None",
+          None, review_findings_raw_count(None, malformed_json))
+    check("review_findings_raw_count(): recognised schema with malformed "
+          "`findings` field (not a list) -> None",
+          None, review_findings_raw_count(None, malformed_findings_field))
 
     print(f"\n{passed}/{passed + failed} PASS")
     return 0 if failed == 0 else 1

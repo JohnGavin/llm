@@ -280,6 +280,62 @@ PYEOF
   _run_case_clean "unknown-schema-skip" "" \
     '{"schema_version":99,"summary":"x","findings":[]}' \
     "SKIP"
+  # llm#1273: an empty findings list is NOT clean on its own -- a non-pass
+  # verdict (fail, unable_to_review, ...) paired with empty findings means
+  # the review could not tell, the same "could not tell -> treated as
+  # clean" shape #1265 fixed for classify_review_row(). 0 such open rows
+  # today (verified against ~/.roborev/reviews.db: every verdict="fail"
+  # row currently has 2-7 findings), but this must never silently become
+  # CLOSE_CLEAN if one shows up.
+  _run_case_clean "fail-verdict-EMPTY-findings-llm1273" "" \
+    '{"schema_version":2,"summary":"could not read diff","verdict":"fail","findings":[]}' \
+    "SKIP"
+  # schema_version 1 rows have no verdict key at all -- an empty findings
+  # list there IS the "review ran, found nothing" signal (unchanged from
+  # before #1273; this fixture matches the module's own
+  # v1_empty_findings_no_verdict selftest fixture).
+  _run_case_clean "schema1-no-verdict-key-empty-findings" "" \
+    '{"schema_version":1,"summary":"trivial gitignore change","findings":[]}' \
+    "CLOSE_CLEAN"
+
+  # llm#1273: the SKIP_HAS_FINDINGS line's n= must report the TRUE
+  # findings-array length, not review_structured_findings()'s
+  # severity-filtered count -- a finding whose severity is missing or
+  # unrecognised must still be counted. Calls the REAL production
+  # function (roborev_classify.review_findings_raw_count), same pattern
+  # as _call_review_is_clean() above, so this cannot silently drift from
+  # what the main loop's heredoc actually computes.
+  _call_review_findings_raw_count() {
+    local _output="$1" _structured="$2"
+    /usr/bin/python3 - "$LIB_DIR" "$_output" "$_structured" <<'PYEOF'
+import sys
+lib_dir, output, structured = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, lib_dir)
+from roborev_classify import review_findings_raw_count
+result = review_findings_raw_count(output or None, structured or None)
+print(result if result is not None else '')
+PYEOF
+  }
+
+  _run_case_raw_count() {
+    local label="$1" output="$2" structured="$3" expected="$4"
+    local got
+    got=$(_call_review_findings_raw_count "$output" "$structured")
+    if [ "$got" = "$expected" ]; then
+      PASS=$((PASS+1))
+      echo "  PASS [$label]: got n=$got"
+    else
+      FAIL=$((FAIL+1))
+      echo "  FAIL [$label]: expected n=$expected, got n='$got'"
+    fi
+  }
+
+  # 3 findings total, but only 2 carry a recognised severity string --
+  # the old `len(review_structured_findings(...))` line would have
+  # printed n=2 here (undercount); the fix must print the true n=3.
+  _run_case_raw_count "raw-count-includes-finding-with-no-recognised-severity" "" \
+    '{"schema_version":2,"summary":"x","verdict":"pass","findings":[{"severity":"medium","problem":"p1"},{"severity":"weird","problem":"p2"},{"severity":"high","problem":"p3"}]}' \
+    "3"
 
   # Case 10: job_id field parsing — candidate row with distinct id and job_id
   # Asserts that field 6 (job_id) is parsed correctly and is NOT equal to field 1 (review_id).
@@ -420,6 +476,15 @@ _sev_name() {
     4) echo "critical" ;;
     *) echo "unknown" ;;
   esac
+}
+
+# llm#1273: for a display/log line reporting a finding count alongside a
+# max severity, an EMPTY ordinal means "no recognised severity found" --
+# distinct from `_sev_name`'s own "unknown" (a genuinely out-of-range
+# ordinal, which should not happen). Report "?" for the empty case so the
+# two are never confused in a log line.
+_sev_name_or_q() {
+  [ -z "$1" ] && echo "?" || _sev_name "$1"
 }
 
 # Parse Severity: <word> markers from text; echo the max ordinal or "" if none.
@@ -932,7 +997,7 @@ try:
         review_output_text,
         review_severity_ordinal,
         review_is_clean,
-        review_structured_findings,
+        review_findings_raw_count,
     )
 except Exception as e:
     sys.stderr.write(
@@ -981,10 +1046,14 @@ for row in rows:
     is_clean = review_is_clean(row[1], row[2])
     is_clean_str = '1' if is_clean is True else ('0' if is_clean is False else '')
     # Finding count for the SKIP_HAS_FINDINGS dry-run/log line only -- None
-    # (no structured findings list to read, e.g. schema_version 0 rows)
-    # prints as '' and is simply not shown.
-    findings = review_structured_findings(row[1], row[2])
-    n_findings_str = str(len(findings)) if findings is not None else ''
+    # (no findings array to read, e.g. schema_version 0 rows) prints as ''
+    # and is simply not shown. llm#1273: this MUST be the raw findings-
+    # array length (review_findings_raw_count()), NOT
+    # review_structured_findings()'s severity-filtered count -- the latter
+    # silently drops any finding whose severity is missing/unrecognised,
+    # undercounting the true number of findings on the row.
+    n_findings = review_findings_raw_count(row[1], row[2])
+    n_findings_str = str(n_findings) if n_findings is not None else ''
     # roborev id 10538 (low): sanitise root_path/repo the same way as
     # `text` above -- see the --replay block's identical comment.
     root_path = (row[3] or '').replace('|', ' ')
@@ -1125,8 +1194,8 @@ for _row in "${REVIEW_ROWS[@]}"; do
       ACTION="SKIP_HAS_FINDINGS"
       TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
       SKIPPED_BY_REPO["$_repo"]=$(( ${SKIPPED_BY_REPO["$_repo"]:-0} + 1 ))
-      log "${ACTION} review_id=${_id} repo=${_repo} verdict=pass n=${_n_findings} max_severity=$(_sev_name "$_max_ord") threshold=off source=${_eff_source}"
-      echo "  SKIP_HAS_FINDINGS review_id=${_id} repo=${_repo} verdict=pass n=${_n_findings} max=$(_sev_name "$_max_ord")"
+      log "${ACTION} review_id=${_id} repo=${_repo} verdict=pass n=${_n_findings} max_severity=$(_sev_name_or_q "$_max_ord") threshold=off source=${_eff_source}"
+      echo "  SKIP_HAS_FINDINGS review_id=${_id} repo=${_repo} verdict=pass n=${_n_findings} max=$(_sev_name_or_q "$_max_ord")"
     else
       ACTION="SKIP_THRESHOLD_OFF"
       TOTAL_SKIPPED=$((TOTAL_SKIPPED+1))
