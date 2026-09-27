@@ -4,6 +4,18 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-27 (session: single-source-of-truth rule generalisation, feat/single-source-of-truth-rule)
+
+### Completed
+
+- **Generalised `dynamic-prose-values` into a global "one home per value" rule** and added a short core paragraph to `AGENTS.md`. Merged as [#1271](https://github.com/JohnGavin/llm/pull/1271) (squash `7b557f6`). Originated in the `travel` project: a trip dashboard's Build page showed a hand-typed "Version 2026-08-29" and "Facts 16" after both had changed, because an earlier duplication check had deliberately excluded clock times, dates and counts as "noise" — exactly where the drift then happened (89 restated values measured on that project). Rather than a one-off fix, the user asked for it made structural and global. Extended the existing rule (no new rule file, per subtractive-first) to cover every generated artifact and values *about* the artifact itself; requires enforcement in the generator (build fails on a restated literal, no exempt category, a reasoned allow-list as the only escape hatch, a ratchet for legacy artifacts) and a propagation test that exercises the renderer, not just the validator. `paths:` widened to `**/*.yml`/`**/*.yaml`/`**/template/**`/`**/dashboard/**`/`**/render*.R`.
+- Checks before merge: `check_rule_scoping.sh` clean; roborev merge-gate PASS; pre-commit and pre-push `private_data_scan` clean, 0 findings; 4/4 CI checks green (`gh pr checks --watch`).
+
+### Known Limitations
+
+- `agents_md_audit.sh` reports pre-existing `AGENTS.md` count drift (skills 73→74, rules 91→100, mem 18→55) — confirmed identical on unmodified `main` prior to this session; not introduced or fixed by this change.
+- roborev repo-wide backlog shows `verdicts.failed=32`/`addressed=27` (a gap of 5), `crash=0`/`quota=0`, consistency check reports `roborev:consistent` — pre-existing, not from this session's 2-file docs PR (whose own commit-scoped merge-gate check passed).
+
 ## 2026-09-19 (session: weekly health-report icu bug + Downloads housekeeping, feat/cc-20260913-122624)
 
 ### Completed
