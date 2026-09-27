@@ -22,10 +22,10 @@
        GMAIL_APP_PASSWORD=<16-char app password>
        REPORT_RECIPIENT=you@gmail.com
 
-     ROBOREV_DASHBOARD_URL is an OPTIONAL override, not a required field --
+     ROBOREV_DASHBOARD_URL is an OPTIONAL override, not a required field —
      leave it unset unless you have a real http(s) URL to point at. As of
      2026-09-24 (llm#1123), dashboard_cta_block() in email_styles.R only
-     renders a clickable button when this var is set to an http(s) URL --
+     renders a clickable button when this var is set to an http(s) URL —
      with it unset, the email shows the local rendered-vignette path as
      plain text (with a staleness note) instead of a button, because
      neither a file:// href (stripped by mail clients) nor the llmtelemetry

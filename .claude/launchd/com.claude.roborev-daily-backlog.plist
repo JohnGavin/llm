@@ -20,11 +20,14 @@
      Manual run:
        ~/.claude/scripts/roborev_daily_backlog_aggregator.sh
      Dry-run:
-       ~/.claude/scripts/roborev_daily_backlog_aggregator.sh --dry-run
+       ~/.claude/scripts/roborev_daily_backlog_aggregator.sh —dry-run
 
      Tracked in llm#355.
 -->
 <plist version="1.0">
+<!-- NOTE: in these comments a "—" before a flag name stands for two hyphens,
+         because XML comments cannot contain them. Retype it as two hyphens
+         when copying a command from here. -->
 <dict>
     <key>Label</key>
     <string>com.claude.roborev-daily-backlog</string>

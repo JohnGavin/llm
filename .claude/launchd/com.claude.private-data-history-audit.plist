@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Full-history PII audit -- Layer 5 of private-data-scanning.md.       -->
+    <!-- Full-history PII audit — Layer 5 of private-data-scanning.md.        -->
     <!-- Weekly (not daily): scans every blob changed across ALL reachable    -->
     <!-- history via `git cat-file` per changed path per commit, which is     -->
     <!-- materially more expensive than the daily secret_exposure_scan.sh's   -->
@@ -32,7 +32,7 @@
         <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/private-data-history-audit</string>
     </array>
 
-    <!-- launchd's default PATH omits Homebrew/duckdb -- same fix as         -->
+    <!-- launchd's default PATH omits Homebrew/duckdb — same fix as          -->
     <!-- worktree-gc's plist. HOME is set so gh reads ~/.config/gh for auth  -->
     <!-- (public/private repo detection) and private_data_scan.sh reads      -->
     <!-- ~/.config/private_values.env (the deny-list).                       -->
@@ -64,7 +64,7 @@
     <key>ThrottleInterval</key>
     <integer>30</integer>
 
-    <!-- Do NOT run on load -- only on the schedule. -->
+    <!-- Do NOT run on load — only on the schedule. -->
     <key>RunAtLoad</key>
     <false/>
 
