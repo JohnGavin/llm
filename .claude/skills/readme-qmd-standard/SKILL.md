@@ -1,3 +1,7 @@
+---
+name: readme-qmd-standard
+description: "Use when creating or editing an R package's README.qmd / README.md: required Nix installation instructions and an auto-updating project-structure section. Triggers: README.qmd, README standard, package README, install instructions."
+---
 # README.qmd Standard for R Packages
 
 ## Purpose
