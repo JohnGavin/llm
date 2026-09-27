@@ -14,7 +14,24 @@
 #   2   Usage error
 #   3   INDETERMINATE — the gate could not evaluate the PR,
 #       OR an unresolved finding's severity text could not
-#       be parsed (llm#1146)                                  (NOT a pass)
+#       be parsed (llm#1146),                                 (NOT a pass)
+#       OR a PR commit has no completed roborev review yet
+#       (reason "review_pending": no review_jobs row, or the
+#       latest one is queued/running — llm#1274),
+#       OR a PR commit's only review attempt(s) did not
+#       complete (reason "review_failed": failed/canceled,
+#       e.g. the agent crashed or hit a quota — llm#1274)
+#
+# llm#1274: before this fix, a commit with no completed review was
+# indistinguishable from a clean one — both produce zero rows from the
+# findings query. On 2026-09-25, `bin/roborev_merge_gate.sh 1269` returned
+# PASS while roborev was still reviewing the PR's only commit (job 13649,
+# status running); that review then failed with a High finding. The gate
+# now checks review_jobs completeness for every PR commit BEFORE looking
+# at findings — see _query_review_completeness(). A commit whose changed
+# files are ALL covered by this repo's .roborev.toml exclude_patterns (or
+# a merge commit with an empty diff) is exempt: roborev legitimately never
+# reviews it, so it must not block the gate forever.
 #
 # Exit 3 exists because of llm#1012.  Before it, every way of failing to *ask*
 # the question — `gh` missing, `gh` auth rejected, repo not resolvable, network
@@ -85,6 +102,7 @@
 #   .github/PULL_REQUEST_TEMPLATE.md           — checklist row
 #   tests/test_roborev_merge_gate.sh           — test suite
 #   tests/test_roborev_classify.sh             — shared-parser parity tests
+#   .claude/rules/roborev-exclude-patterns.md  — exclude_patterns convention (llm#1274)
 
 set -euo pipefail
 
@@ -412,6 +430,190 @@ print(json.dumps({"findings": findings, "unparseable": unparseable}))
 PYEOF
 }
 
+# Query review-job COMPLETENESS for the given commit SHAs (llm#1274).
+#
+# A commit with no review_jobs row at all, or whose latest attempt is still
+# queued/running, produces zero rows from _query_open_findings above —
+# exactly the same shape as a commit that WAS reviewed and found clean. On
+# 2026-09-25, `bin/roborev_merge_gate.sh 1269` returned PASS while roborev
+# was still reviewing the PR's only commit (job 13649, status running);
+# that review then failed with a High finding. This function is called
+# BEFORE the findings query in _main() so a missing/incomplete review is
+# never silently read as "nothing found".
+#
+# Per-commit status resolution. A commit can have MULTIPLE review_jobs rows
+# (retries, an autoclose-cancel followed by a later successful run, etc.)
+# — verified against the live DB (`sqlite3 ~/.roborev/reviews.db "select
+# commit_id, count(*) from review_jobs group by commit_id having
+# count(*)>1"` returns real commits with 2-4 rows) — so "the latest row" is
+# not a reliable signal on its own:
+#   - ANY job with status in {done,applied,rebased,skipped} -> reviewed.
+#     ("skipped" means roborev made a considered decision not to review —
+#     e.g. an ignored/empty diff — not an omission, so it counts the same
+#     as a completed review.)
+#   - else ANY job with status in {queued,running}          -> pending.
+#   - else (only failed/canceled rows, or none at all)      -> unreviewed
+#     ("no_job", "failed", or "canceled").
+#
+# Returns a JSON object:
+#   {"incomplete": [{"commit_sha":"...",
+#                     "status":"no_job"|"queued"|"running"|"failed"|"canceled",
+#                     "job_id": N}, ...]}         # job_id omitted for no_job
+# or
+#   {"incomplete": [], "db_error": "<message>"}   # query/connection failure
+#
+# db_error is NEVER silently dropped, same discipline as
+# _query_open_findings's db_error handling (llm#1267) — a query failure is
+# "could not ask", never a silent "nothing incomplete".
+#
+# "no_job" entries are then filtered against this repo's .roborev.toml
+# exclude_patterns (llm#1274 "second gap", Option list): a commit whose
+# changed files are ALL covered by exclude_patterns (or a merge commit
+# with an empty diff against its first parent) is one roborev legitimately
+# never creates a job for — verified directly against the live DB: e.g.
+# llm commit 6ebe7f1 (a CHANGELOG-only-looking session-end commit) DOES
+# have a `done` job (it touched non-excluded files too), while other real
+# llm commits — e.g. "chore(gitignore): ignore .claude/skills/synced/
+# local cache" — have NO review_jobs row at all despite touching ordinary
+# code, confirming per-commit review coverage has genuine, pre-existing
+# gaps that must not block a gate forever. A commit whose changed files
+# could not be determined (git failure, unknown SHA in this checkout) is
+# NEVER treated as excluded — exclusion must be proven, never assumed
+# (checks-must-distinguish-unknown).
+_query_review_completeness() {
+  local shas_newline="$1"   # newline-separated SHAs
+  local db="$2"
+
+  [ -f "$db" ] || { echo '{"incomplete":[]}'; return 0; }
+  [ -z "$shas_newline" ] && { echo '{"incomplete":[]}'; return 0; }
+
+  "$PYTHON" - "$db" <<PYEOF
+import sys, sqlite3, json, subprocess, re, os
+
+db_path = sys.argv[1]
+shas_raw = """${shas_newline}"""
+shas = [s.strip() for s in shas_raw.splitlines() if s.strip()]
+
+if not shas:
+    print(json.dumps({"incomplete": []}))
+    sys.exit(0)
+
+COMPLETE = {"done", "applied", "rebased", "skipped"}
+PENDING  = {"queued", "running"}
+
+try:
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    placeholders = ",".join("?" * len(shas))
+    rows = con.execute("""
+        SELECT c.sha, rj.id, rj.status
+        FROM commits c
+        LEFT JOIN review_jobs rj ON rj.commit_id = c.id
+        WHERE c.sha IN ({ph})
+    """.format(ph=placeholders), shas).fetchall()
+    con.close()
+except Exception as e:
+    # Same discipline as _query_open_findings's db_error handling
+    # (llm#1267): a query failure is "could not ask", never a silent
+    # "nothing incomplete" that would fall through to PASS/BLOCK below.
+    print(json.dumps({"incomplete": [], "db_error": f"{type(e).__name__}: {e}"}))
+    sys.exit(0)
+
+by_sha = {}
+for sha, job_id, status in rows:
+    by_sha.setdefault(sha, []).append((job_id, status))
+
+incomplete = []
+for sha in shas:
+    jobs = [(jid, st) for jid, st in by_sha.get(sha, []) if jid is not None]
+    if not jobs:
+        incomplete.append({"commit_sha": sha, "status": "no_job"})
+        continue
+    if any(st in COMPLETE for _, st in jobs):
+        continue  # reviewed
+    pending = [(jid, st) for jid, st in jobs if st in PENDING]
+    if pending:
+        jid, st = pending[-1]
+        incomplete.append({"commit_sha": sha, "status": st, "job_id": jid})
+        continue
+    # only failed/canceled rows remain
+    jid, st = jobs[-1]
+    incomplete.append({"commit_sha": sha, "status": st, "job_id": jid})
+
+# llm#1274 "second gap": drop "no_job" entries this repo's .roborev.toml
+# says roborev never reviews. Only "no_job" is eligible — a commit with a
+# queued/running/failed/canceled job WAS attempted, so exclusion (which
+# means "roborev never even tried") does not apply to it.
+def _load_exclude_patterns():
+    try:
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if toplevel.returncode != 0:
+            return []
+        toml_path = os.path.join(toplevel.stdout.strip(), ".roborev.toml")
+        with open(toml_path, "r") as f:
+            text = f.read()
+    except Exception:
+        return []
+    m = re.search(r"exclude_patterns\s*=\s*\[(.*?)\]", text, re.DOTALL)
+    if not m:
+        return []
+    pairs = re.findall(r'"([^"]*)"|\'([^\']*)\'', m.group(1))
+    return [a or b for a, b in pairs]
+
+def _glob_to_regex(pat):
+    # roborev's exclude_patterns use "**" to match across path separators
+    # and a single "*" to match within one path segment — the same
+    # convention documented in .claude/rules/roborev-exclude-patterns.md's
+    # worked examples (e.g. "inst/extdata/**").
+    out = []
+    i = 0
+    while i < len(pat):
+        if pat[i:i+2] == "**":
+            out.append(".*"); i += 2
+        elif pat[i] == "*":
+            out.append("[^/]*"); i += 1
+        elif pat[i] == "?":
+            out.append("."); i += 1
+        else:
+            out.append(re.escape(pat[i])); i += 1
+    return "^" + "".join(out) + "$"
+
+def _is_commit_excluded(sha, regexes):
+    try:
+        result = subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        # Could not determine the changed files (unknown SHA in this
+        # checkout, git unavailable, ...) — never assume exclusion from an
+        # unanswered question (checks-must-distinguish-unknown).
+        return False
+    changed = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+    if not changed:
+        # No files changed against the first parent — e.g. a merge commit
+        # — vacuously nothing here for roborev to have reviewed.
+        return True
+    if not regexes:
+        return False
+    return all(any(r.match(f) for r in regexes) for f in changed)
+
+no_job_shas = [i["commit_sha"] for i in incomplete if i["status"] == "no_job"]
+if no_job_shas:
+    patterns = _load_exclude_patterns()
+    regexes = [re.compile(_glob_to_regex(p)) for p in patterns]
+    excluded = {sha for sha in no_job_shas if _is_commit_excluded(sha, regexes)}
+    incomplete = [i for i in incomplete
+                  if not (i["status"] == "no_job" and i["commit_sha"] in excluded)]
+
+print(json.dumps({"incomplete": incomplete}))
+PYEOF
+}
+
 # Parse "closes/acks/fixes roborev #N" from commit messages.
 # Returns a Python set literal encoded as JSON array of integers.
 _parse_citations() {
@@ -601,6 +803,67 @@ _main() {
       echo "merge-gate: PASS (PR #${pr_num} has no commits — nothing to gate)"
     fi
     exit 0
+  fi
+
+  # llm#1274: check review-job COMPLETENESS for every PR commit BEFORE
+  # looking at findings. A commit with no completed review produces zero
+  # rows from the findings query below — identical to a clean review — so
+  # this check must run first, or a pending/failed review looks like a
+  # pass (the exact #1269 bug: the gate PASSed while roborev was still
+  # reviewing the PR's only commit; that review then failed with a High).
+  local completeness_json
+  completeness_json=$(_query_review_completeness "$commit_shas" "$ROBOREV_DB")
+
+  local completeness_db_error
+  completeness_db_error=$("$PYTHON" -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('db_error') or '')" "$completeness_json")
+  if [ -n "$completeness_db_error" ]; then
+    GATE_INDETERMINATE_DETAIL="reviews.db query failed while checking review completeness: ${completeness_db_error}"
+    _exit_indeterminate "review_status_query_failed" "$pr_num"
+  fi
+
+  # "no_job", "queued", or "running" — the review has not completed yet.
+  # This is the headline #1269 case and takes priority in the message even
+  # when failed/canceled commits are ALSO present, since it is the more
+  # urgent of the two ("nothing has looked at this yet" vs. "something
+  # looked and did not finish").
+  local pending_count pending_detail
+  pending_count=$("$PYTHON" -c "
+import json, sys
+items = json.loads(sys.argv[1]).get('incomplete', [])
+print(sum(1 for i in items if i['status'] in ('no_job', 'queued', 'running')))
+" "$completeness_json")
+  if [ "$pending_count" -gt 0 ]; then
+    pending_detail=$("$PYTHON" -c "
+import json, sys
+items = json.loads(sys.argv[1]).get('incomplete', [])
+pending = [i for i in items if i['status'] in ('no_job', 'queued', 'running')]
+parts = [i['commit_sha'][:12] + ' (' + i['status'] +
+         (', job=' + str(i['job_id']) if i.get('job_id') else '') + ')'
+         for i in pending]
+print(', '.join(parts))
+" "$completeness_json")
+    GATE_INDETERMINATE_DETAIL="${pending_count} PR commit(s) have no completed roborev review yet: ${pending_detail}"
+    _exit_indeterminate "review_pending" "$pr_num"
+  fi
+
+  # "failed" or "canceled" — a review WAS attempted but never completed
+  # (agent crashed, hit a quota, or was autoclose-canceled). The commit is
+  # effectively unreviewed and must not read as a pass either.
+  local failed_count failed_detail
+  failed_count=$("$PYTHON" -c "
+import json, sys
+items = json.loads(sys.argv[1]).get('incomplete', [])
+print(sum(1 for i in items if i['status'] in ('failed', 'canceled')))
+" "$completeness_json")
+  if [ "$failed_count" -gt 0 ]; then
+    failed_detail=$("$PYTHON" -c "
+import json, sys
+items = json.loads(sys.argv[1]).get('incomplete', [])
+failed = [i for i in items if i['status'] in ('failed', 'canceled')]
+print(', '.join(i['commit_sha'][:12] + ' (' + i['status'] + ', job=' + str(i['job_id']) + ')' for i in failed))
+" "$completeness_json")
+    GATE_INDETERMINATE_DETAIL="${failed_count} PR commit(s) had a review attempt that never completed (agent crashed/quota/canceled), so the commit is effectively unreviewed: ${failed_detail}"
+    _exit_indeterminate "review_failed" "$pr_num"
   fi
 
   # Query open findings (llm#1146: now {"findings":[...],"unparseable":[...]},

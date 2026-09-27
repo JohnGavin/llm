@@ -140,6 +140,10 @@ commits = [
     # of live review ids 10523/10524 in ~/.roborev/reviews.db, which the
     # regex-over-rendered-text path misread as High/Critical.
     (10, 'jjj010jjj010jjj010jjj010jjj010jjj010jjj010', 'Touch J'),        # structured_output-only, true MEDIUM, quoted-High-in-prose
+    # llm#1274 fixtures: review-job COMPLETENESS, not severity content.
+    (15, 'kkk015kkk015kkk015kkk015kkk015kkk015kkk015', 'WIP: still running'),   # job status='running', no reviews row
+    (16, 'lll016lll016lll016lll016lll016lll016lll016', 'Attempt review, agent crashed'), # job status='failed', no reviews row
+    (17, 'mmm017mmm017mmm017mmm017mmm017mmm017mmm017', 'Totally clean change'), # job status='done', reviews row is clean
 ]
 for cid, sha, subj in commits:
     cur.execute(
@@ -147,12 +151,23 @@ for cid, sha, subj in commits:
         (cid, sha, 'author', subj, '2026-01-01T00:00:00Z')
     )
 
-# review_jobs
+# review_jobs — status defaults to 'done' for the severity-content fixtures
+# above (1-10). llm#1274 fixtures (15-17) need explicit non-default
+# statuses to exercise the completeness check.
 for jid, cid in [(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)]:
     cur.execute(
         "INSERT INTO review_jobs (id,repo_id,commit_id,git_ref) VALUES (?,1,?,?)",
         (jid, cid, f'refs/heads/feat/test')
     )
+for jid, cid, status in [(15, 15, 'running'), (16, 16, 'failed'), (17, 17, 'done')]:
+    cur.execute(
+        "INSERT INTO review_jobs (id,repo_id,commit_id,git_ref,status) VALUES (?,1,?,?,?)",
+        (jid, cid, 'refs/heads/feat/test', status)
+    )
+# Commit 18 (sha only, no fixture row at all in `commits` or `review_jobs`)
+# represents a PR commit roborev has never even seen — the "no_job" case
+# where the commit itself is unknown to reviews.db, not just missing a
+# job. See SHA_NO_JOB below; nothing is inserted for it here.
 
 # reviews — severity is embedded in output text
 HIGH_OUTPUT = """\
@@ -228,6 +243,10 @@ reviews = [
     (8, 8, PASSED_SHAPED_OUTPUT,            None, 0, 0),  # id=8, job=8 (hhh008), "passed"-shaped noise
     (9, 9, "", V2_STRUCTURED_HIGH,          0, 0),  # id=9, job=9 (iii009), v0.68.2 schema, HIGH, open
     (10, 10, "", V2_STRUCTURED_MEDIUM_QUOTED_HIGH, 0, 0),  # id=10, job=10 (jjj010), true MEDIUM, quoted-High prose, open
+    # llm#1274: commit 17's job is 'done' and genuinely clean — no reviews
+    # rows exist for commits 15 (running) or 16 (failed); a job that never
+    # completed has no review output to insert.
+    (17, 17, PASSED_SHAPED_OUTPUT,           None, 0, 0),  # id=17, job=17 (mmm017), done + clean
 ]
 for rid, jid, out, structured, closed, verdict in reviews:
     cur.execute(
@@ -310,6 +329,14 @@ SHA_V2_STRUCTURED_HIGH="iii009iii009iii009iii009iii009iii009iii009"
 # PR #1269 round 3: true severity MEDIUM, problem/fix prose quotes a higher
 # severity as an example (review ids 10523/10524 live shape).
 SHA_V2_STRUCTURED_MEDIUM_QUOTED_HIGH="jjj010jjj010jjj010jjj010jjj010jjj010jjj010"
+# llm#1274: review-job COMPLETENESS fixtures (severity content is
+# irrelevant to these — none of them have a completed review at all).
+SHA_JOB_RUNNING="kkk015kkk015kkk015kkk015kkk015kkk015kkk015"
+SHA_JOB_FAILED="lll016lll016lll016lll016lll016lll016lll016"
+SHA_ALL_CLEAN="mmm017mmm017mmm017mmm017mmm017mmm017mmm017"
+# Not present ANYWHERE in the fixture DB (no commits row, no review_jobs
+# row) — the "roborev has never even seen this commit" case.
+SHA_NO_JOB="nnn018nnn018nnn018nnn018nnn018nnn018nnn018"
 
 # Acks file
 ACKS_FILE="${FIXTURE_DIR}/acks.jsonl"
@@ -338,6 +365,39 @@ run_gate() {
     git -C "$GIT_REPO" add "$(basename "$tmpfile")" 2>/dev/null
     git -C "$GIT_REPO" commit -qm "$cite_msg" 2>/dev/null
     git_sha=$(git -C "$GIT_REPO" rev-parse HEAD 2>/dev/null)
+
+    # llm#1274: this scaffold commit exists ONLY so _parse_citations can
+    # find the citation text via `git log` — it is not meant to represent
+    # a real PR commit under the new review-completeness check added in
+    # this round. Without a "done" job of its own, every test that uses a
+    # citation message would now ALSO see this commit as "no_job" (roborev
+    # never reviewed the fixture's scaffold text) and INDETERMINATE would
+    # mask the PASS/BLOCK verdict the test actually exercises. Mark it
+    # reviewed-and-clean so it never affects the completeness check.
+    if [ -n "$git_sha" ]; then
+      /usr/bin/python3 - "$FIXTURE_DB" "$git_sha" <<'PYEOF'
+import sqlite3, sys
+db, sha = sys.argv[1], sys.argv[2]
+con = sqlite3.connect(db)
+cur = con.cursor()
+cur.execute("SELECT id FROM commits WHERE sha=?", (sha,))
+if cur.fetchone() is None:
+    cid = cur.execute("SELECT COALESCE(MAX(id),0)+1 FROM commits").fetchone()[0]
+    cur.execute(
+        "INSERT INTO commits (id,repo_id,sha,author,subject,timestamp) "
+        "VALUES (?,1,?,'test','scaffold citation commit','2026-01-01T00:00:00Z')",
+        (cid, sha),
+    )
+    jid = cur.execute("SELECT COALESCE(MAX(id),0)+1 FROM review_jobs").fetchone()[0]
+    cur.execute(
+        "INSERT INTO review_jobs (id,repo_id,commit_id,git_ref,status) "
+        "VALUES (?,1,?,'refs/heads/feat/test','done')",
+        (jid, cid),
+    )
+    con.commit()
+con.close()
+PYEOF
+    fi
   fi
 
   # Build the SHA list including real git SHA if we have it
@@ -936,6 +996,197 @@ fi
 #     bash /tmp/pre_fix_gate.sh --repo JohnGavin/fakerepo 99
 #   # -> exit 0, "merge-gate: PASS ..." (RED — confirms test22 exercises the
 #   #    real fix, not a check that was always green)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# JohnGavin/llm#1274 — a commit with no completed roborev review must be
+# INDETERMINATE, never a silent PASS. On 2026-09-25 `bin/roborev_merge_gate.sh
+# 1269` returned PASS while roborev was still reviewing the PR's only commit
+# (job 13649, status running); that review then failed with a High finding.
+# A missing review produced zero rows from the findings query — identical
+# to a genuinely clean review.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Test 23 — a PR commit whose only review_jobs row is still 'running',
+# uncited. Must be INDETERMINATE (exit 3), never PASS.
+BIN23="${TMPDIR_ROOT}/bin23"
+mkdir -p "$BIN23"
+run_gate "$BIN23" \
+  "[\"${SHA_JOB_RUNNING}\"]" \
+  "" \
+  "--min-severity High" \
+  "3" \
+  "test23: PR commit with a running review job, uncited → exit 3 (INDETERMINATE)"
+
+out23=$(
+  GH="$BIN23/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || true
+if echo "$out23" | grep -q "review_pending"; then
+  pass "test23b: message names the reason review_pending"
+else
+  fail "test23b: message names the reason review_pending" "output: $out23"
+fi
+if echo "$out23" | grep -q "PASS"; then
+  fail "test23c: running-job output must not contain 'PASS'" "output: $out23"
+else
+  pass "test23c: running-job output must not contain 'PASS'"
+fi
+
+# Falsification (verification-before-completion: a check must be shown red
+# before it is trusted green). Run the SAME fixture (commit 15, job status
+# 'running', no reviews row) against the script as it existed at HEAD --
+# i.e. before this round's _query_review_completeness addition. Confirmed
+# manually during development against the PR #1275 branch tip
+# (bin/roborev_merge_gate.sh with no completeness check): the pre-fix
+# script prints "merge-gate: PASS (no unresolved High-severity findings)"
+# and exits 0 on this exact fixture -- reproducing the #1269 bug exactly.
+# Reproduce by hand:
+#   git show origin/fix/merge-gate-db-error-indeterminate:bin/roborev_merge_gate.sh \
+#     > /tmp/pre_fix_gate.sh
+#   GH="$BIN23/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+#     bash /tmp/pre_fix_gate.sh --repo JohnGavin/fakerepo --min-severity High 99
+#   # -> exit 0, "merge-gate: PASS ..." (RED)
+
+# Test 24 — a PR commit roborev has never even seen: no row in `commits`,
+# no row in `review_jobs`. Must be INDETERMINATE (exit 3), reason
+# review_pending (status "no_job"), never PASS.
+BIN24="${TMPDIR_ROOT}/bin24"
+mkdir -p "$BIN24"
+run_gate "$BIN24" \
+  "[\"${SHA_NO_JOB}\"]" \
+  "" \
+  "--min-severity High" \
+  "3" \
+  "test24: PR commit with no review_jobs row at all → exit 3 (INDETERMINATE)"
+
+out24=$(
+  GH="$BIN24/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || true
+if echo "$out24" | grep -q "review_pending"; then
+  pass "test24b: message names the reason review_pending"
+else
+  fail "test24b: message names the reason review_pending" "output: $out24"
+fi
+if echo "$out24" | grep -q "no_job"; then
+  pass "test24c: detail names the no_job status"
+else
+  fail "test24c: detail names the no_job status" "output: $out24"
+fi
+
+# Test 25 — a PR commit whose only review attempt 'failed' (the agent
+# crashed / hit a quota). The commit is effectively unreviewed and must be
+# INDETERMINATE (exit 3), reason review_failed, never PASS.
+BIN25="${TMPDIR_ROOT}/bin25"
+mkdir -p "$BIN25"
+run_gate "$BIN25" \
+  "[\"${SHA_JOB_FAILED}\"]" \
+  "" \
+  "--min-severity High" \
+  "3" \
+  "test25: PR commit whose only review attempt failed, uncited → exit 3 (INDETERMINATE)"
+
+out25=$(
+  GH="$BIN25/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || true
+if echo "$out25" | grep -q "review_failed"; then
+  pass "test25b: message names the reason review_failed"
+else
+  fail "test25b: message names the reason review_failed" "output: $out25"
+fi
+if echo "$out25" | grep -q "PASS"; then
+  fail "test25c: failed-job output must not contain 'PASS'" "output: $out25"
+else
+  pass "test25c: failed-job output must not contain 'PASS'"
+fi
+
+# Test 26 (control) — a PR commit whose review job is 'done' and genuinely
+# clean (no findings at all — not just below threshold). With the
+# completeness check now running BEFORE the findings query, this control
+# proves the new check does not itself block a real clean PR.
+BIN26="${TMPDIR_ROOT}/bin26"
+mkdir -p "$BIN26"
+run_gate "$BIN26" \
+  "[\"${SHA_ALL_CLEAN}\"]" \
+  "" \
+  "--min-severity High" \
+  "0" \
+  "test26 (control): PR commit reviewed and clean → exit 0 (PASS)"
+
+# Test 27 — a PR commit whose changed files are ALL covered by this repo's
+# .roborev.toml exclude_patterns. roborev legitimately never creates a job
+# for it (verified against the live DB: real llm commits with no
+# review_jobs row at all exist alongside commits that DO get reviewed --
+# see _query_review_completeness's own comment), so it must NOT block the
+# gate forever the way a genuine "no_job" commit does in test24. Uses its
+# own throwaway git repo (not $GIT_REPO) so a real .roborev.toml can sit at
+# the toplevel _query_review_completeness's `git rev-parse --show-toplevel`
+# call resolves to.
+EXCLUDED_REPO="${TMPDIR_ROOT}/excluded_repo"
+mkdir -p "$EXCLUDED_REPO"
+make_git_repo "$EXCLUDED_REPO"
+cat > "${EXCLUDED_REPO}/.roborev.toml" <<'EOF'
+exclude_patterns = [
+  "EXCLUDED.md",
+]
+EOF
+echo "excluded content" > "${EXCLUDED_REPO}/EXCLUDED.md"
+git -C "$EXCLUDED_REPO" add EXCLUDED.md
+git -C "$EXCLUDED_REPO" commit -qm "docs: update excluded-only file" 2>/dev/null
+EXCLUDED_SHA=$(git -C "$EXCLUDED_REPO" rev-parse HEAD 2>/dev/null)
+
+BIN27="${TMPDIR_ROOT}/bin27"
+mkdir -p "$BIN27"
+make_mock_gh "$BIN27" "[\"${EXCLUDED_SHA}\"]"
+
+out27=""
+exit27=0
+out27=$(
+  GH="$BIN27/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+  GIT_DIR="${EXCLUDED_REPO}/.git" GIT_WORK_TREE="$EXCLUDED_REPO" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || exit27=$?
+
+if [ "$exit27" = "0" ]; then
+  pass "test27: PR commit touching only .roborev.toml-excluded files, no job → exit 0 (PASS, not blocked forever)"
+else
+  fail "test27: PR commit touching only .roborev.toml-excluded files, no job → exit 0 (PASS, not blocked forever)" "got exit=$exit27 | output: $out27"
+fi
+if echo "$out27" | grep -q "PASS"; then
+  pass "test27b: excluded-only commit reaches a real PASS message"
+else
+  fail "test27b: excluded-only commit reaches a real PASS message" "output: $out27"
+fi
+
+# Test 27c — the same excluded-only SHA, but with .roborev.toml absent (a
+# repo with no exclude_patterns at all). Must fall back to blocking
+# (INDETERMINATE, review_pending) — exclusion must be PROVEN from an
+# actual config, never assumed just because the commit is small.
+NOEXCLUDE_REPO="${TMPDIR_ROOT}/noexclude_repo"
+mkdir -p "$NOEXCLUDE_REPO"
+make_git_repo "$NOEXCLUDE_REPO"
+echo "some content" > "${NOEXCLUDE_REPO}/PLAIN.md"
+git -C "$NOEXCLUDE_REPO" add PLAIN.md
+git -C "$NOEXCLUDE_REPO" commit -qm "docs: update plain file" 2>/dev/null
+NOEXCLUDE_SHA=$(git -C "$NOEXCLUDE_REPO" rev-parse HEAD 2>/dev/null)
+
+BIN27C="${TMPDIR_ROOT}/bin27c"
+mkdir -p "$BIN27C"
+make_mock_gh "$BIN27C" "[\"${NOEXCLUDE_SHA}\"]"
+
+exit27c=0
+out27c=$(
+  GH="$BIN27C/gh" ROBOREV_DB="$FIXTURE_DB" ACKS_JSONL="$ACKS_FILE" \
+  GIT_DIR="${NOEXCLUDE_REPO}/.git" GIT_WORK_TREE="$NOEXCLUDE_REPO" \
+    bash "$GATE" --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+) || exit27c=$?
+
+if [ "$exit27c" = "3" ]; then
+  pass "test27c: same shape but no .roborev.toml exclude_patterns → exit 3 (INDETERMINATE, exclusion not assumed)"
+else
+  fail "test27c: same shape but no .roborev.toml exclude_patterns → exit 3 (INDETERMINATE, exclusion not assumed)" "got exit=$exit27c | output: $out27c"
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
