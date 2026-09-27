@@ -147,6 +147,22 @@ else
   fail "nonexistent AGENTS.md path -> expected exit 3, got $rc: '$out'"
 fi
 
+# ── 4b. Missing SKILLS.md degrades only the skills question ──────────────
+#       No other drift -> exit 3 (INDETERMINATE), never 0 "ok" or 1 "DRIFT".
+out=$(AGENTS_MD_AUDIT_PATH="$AGENTS_MD" AGENTS_MD_AUDIT_CLAUDE_DIR="$REPO_ROOT/.claude" AGENTS_MD_AUDIT_SKILLS_MD="$TMP/no-SKILLS.md" bash "$AUDIT" 2>&1); rc=$?
+if [ "$rc" -eq 3 ] && printf '%s' "$out" | grep -q 'skills not checked'; then
+  ok "missing SKILLS.md, agents/commands clean -> exit 3 (INDETERMINATE)"
+else
+  fail "missing SKILLS.md, agents/commands clean -> expected exit 3, got $rc: '$out'"
+fi
+#       Agent drift found without SKILLS.md is still determinate -> exit 1.
+out=$(AGENTS_MD_AUDIT_PATH="$FAKE_MD" AGENTS_MD_AUDIT_CLAUDE_DIR="$REPO_ROOT/.claude" AGENTS_MD_AUDIT_SKILLS_MD="$TMP/no-SKILLS.md" bash "$AUDIT" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'agents-undocumented:.*critic' && printf '%s' "$out" | grep -q 'skills not checked'; then
+  ok "missing SKILLS.md + real agent drift -> exit 1 (DRIFT), notes skills unchecked"
+else
+  fail "missing SKILLS.md + real agent drift -> expected exit 1, got $rc: '$out'"
+fi
+
 # ── 5. The cwd bug is fixed: running from elsewhere still finds THIS repo's
 #       AGENTS.md (no AGENTS_MD_AUDIT_PATH override — exercises the git
 #       -C "$(dirname "$0")" resolution path directly) ────────────────────

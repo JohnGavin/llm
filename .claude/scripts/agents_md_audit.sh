@@ -40,13 +40,12 @@
 #   AGENTS_MD_AUDIT_PATH        - AGENTS.md path
 #   AGENTS_MD_AUDIT_CLAUDE_DIR  - .claude dir holding agents/commands/skills/rules
 #   AGENTS_MD_AUDIT_SKILLS_MD   - path to SKILLS.md
-#   AGENTS_MD_AUDIT_RULES_MD    - path to RULES.md (read only for its own
-#                                 existence check; names are not diffed)
 #   AGENTS_MD_AUDIT_MEMORY_DIR  - path to the memory dir
 #
 # Exit codes (see `exit-code-conventions` rule):
 #   0 ok            1 DRIFT            2 usage error            3 INDETERMINATE
-#   (AGENTS.md — or the repo it should live in — could not be resolved or read)
+#   (AGENTS.md — or the repo it should live in — could not be resolved or
+#   read; or SKILLS.md is unreadable and nothing else drifted)
 set -uo pipefail
 
 usage() {
@@ -92,7 +91,6 @@ fi
 
 CLAUDE_DIR="${AGENTS_MD_AUDIT_CLAUDE_DIR:-$(dirname "$AGENTS_MD")/.claude}"
 SKILLS_MD="${AGENTS_MD_AUDIT_SKILLS_MD:-$CLAUDE_DIR/SKILLS.md}"
-RULES_MD="${AGENTS_MD_AUDIT_RULES_MD:-$CLAUDE_DIR/RULES.md}"
 MEMORY_DIR="${AGENTS_MD_AUDIT_MEMORY_DIR:-$CLAUDE_DIR/memory}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -153,17 +151,24 @@ drift="${drift}$(diff_names agents "$agents_listed" "$agents_actual")"
 drift="${drift}$(diff_names commands "$commands_listed" "$commands_actual")"
 if [ "$skills_source_ok" = "1" ]; then
   drift="${drift}$(diff_names skills "$skills_listed" "$skills_actual")"
-else
-  drift="${drift}skills-source-missing:$SKILLS_MD "
 fi
 
 agents_n=$(printf '%s\n' "$agents_actual" | count_nonblank)
 commands_n=$(printf '%s\n' "$commands_actual" | count_nonblank)
 skills_n=$(printf '%s\n' "$skills_actual" | count_nonblank)
 
+# An unreadable SKILLS.md leaves only the skills question unanswered: agent or
+# command drift found without it is still a determinate DRIFT (exit 1). With
+# no other drift, the result is INDETERMINATE (exit 3), never "ok".
+skills_note=""
+[ "$skills_source_ok" = "1" ] || skills_note=" [skills not checked: SKILLS.md not found or unreadable at $SKILLS_MD]"
+
 if [ -n "$drift" ]; then
-  echo "AGENTS.md ($AGENTS_MD): DRIFT $drift"
+  echo "AGENTS.md ($AGENTS_MD): DRIFT ${drift}${skills_note}"
   exit 1
+elif [ "$skills_source_ok" != "1" ]; then
+  echo "AGENTS.md ($AGENTS_MD): INDETERMINATE agents and commands ok${skills_note}"
+  exit 3
 else
   echo "AGENTS.md ($AGENTS_MD): ok (${agents_n}a ${commands_n}c ${skills_n}s ${rules_actual_n}r ${memory_actual_n}m)"
   exit 0
