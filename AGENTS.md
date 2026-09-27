@@ -87,7 +87,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **DuckDB queries:** Use `duckplyr` (tidyverse syntax) instead of raw SQL strings where possible. Reserve SQL for complex operations not expressible in dplyr.
 
-## Agents (12)
+## Agents
 
 | Agent | Model | Use When |
 |-------|-------|----------|
@@ -104,11 +104,11 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 | `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
 | `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
 
-## Skills (73)
+## Skills
 
 Full categorised list at `.claude/SKILLS.md` (Mandatory · R Package · Data · Targets · Shiny · Quarto · Prose · DevOps · PM · AI · Specialized). Mandatory subset enforced via the `**Mandatory skills:**` line above.
 
-## Commands (14)
+## Commands
 
 `/hi`(`/session-start`), `/bye`(`/session-end`), `/check`, `/cleanup-worktrees`, `/issue-triage`, `/new-issue`, `/wiki-promote`, `/write-alt-text`, `/roborev`, `/roborev-setup`, `/roborev-clear-backlog`, `/braindump`
 
@@ -143,7 +143,7 @@ Pruned 2026-07-08 (chore/prune-vestigial-slash-commands): `/pr-status`, `/wiki-h
 
 `deploy-new-project.md`, `onboard-dataset.md`, `debug-ci-failure.md`, `publish-vignette.md`
 
-## Rules (91)
+## Rules
 
 Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
 
@@ -151,7 +151,7 @@ Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data 
 
 `session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `skill_quality_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
 
-## Memory (18 files at `.claude/memory/`)
+## Memory (files at `.claude/memory/`)
 
 In-repo at `.claude/memory/`; the runtime path `~/.claude/projects/-Users-johngavin-docs-gh-llm/memory` is a symlink into this directory (#144).
 

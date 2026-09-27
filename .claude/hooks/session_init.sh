@@ -1424,130 +1424,78 @@ echo "     Auto-loop suggestions: /loop 1h /check"
 # Surfaces open-count + top finding + addressed-rate for the current project.
 # Format: roborev-backlog: open=N (priority-1=sev:cat, top=#id) | addressed=XX%
 # Silent if DB missing or no project entry — graceful degradation.
-phase_roborev_backlog() {
-  local _rb_db="${HOME}/.roborev/reviews.db"
-  local _rb_python="/usr/bin/python3"
-
-  # Require python3 and DB — both must exist; silent skip otherwise
-  [ -f "$_rb_db" ] || return 0
-  [ -x "$_rb_python" ] || return 0
-
-  # Derive project name from git toplevel (same logic as Phase 14)
-  local _rb_root _rb_name
-  _rb_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
-  _rb_name=$(basename "$_rb_root")
-  [ -n "$_rb_name" ] || return 0
-
-  # Read top-finding from backlog.md if present (fast path — avoids re-querying DB)
-  local _rb_backlog="${_rb_root}/.roborev/backlog.md"
-  local _rb_top_sev="" _rb_top_cat="" _rb_top_id=""
-  if [ -f "$_rb_backlog" ]; then
-    # Extract first data row: | id | sev | category | ...
-    local _rb_first_row
-    _rb_first_row=$(grep -E '^\| [0-9]' "$_rb_backlog" | head -1) || true
-    if [ -n "$_rb_first_row" ]; then
-      _rb_top_id=$(echo "$_rb_first_row"  | awk -F'|' '{gsub(/ /,"",$2); print $2}')
-      _rb_top_sev=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$3); print $3}')
-      _rb_top_cat=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
-    fi
+# llm#1276: resolve the repo from the MAIN checkout, never from `pwd`/
+# `--show-toplevel` directly — in a worktree
+# (~/docs_gh/worktrees/llm/feat/foo or .claude/worktrees/agent-<id>),
+# `--show-toplevel` returns the worktree path itself, whose basename is the
+# worktree/branch name, not the project name. `--git-common-dir` returns the
+# MAIN repo's .git dir for every worktree that shares it, so its dirname is
+# stable across worktrees. Cache is per-project (llm#1276: was a single
+# shared file, so whichever project refreshed last "won" for everyone), and
+# every failure path writes an explicit "unknown (<reason>)" line instead of
+# silently leaving a stale or absent cache in place.
+# rbb_resolve_root: print the MAIN checkout's absolute root path on stdout
+# (empty if it cannot be resolved). Extracted as a function so tests can
+# source and call it in isolation (see tests/test_session_init_roborev_backlog.sh).
+rbb_resolve_root() {
+  local _common_dir _root
+  _common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || true
+  _root=""
+  if [ -n "$_common_dir" ]; then
+    case "$_common_dir" in
+      /*) : ;;
+      *) _common_dir="$(pwd)/$_common_dir" ;;
+    esac
+    _root=$(cd "$(dirname "$_common_dir")" 2>/dev/null && pwd) || _root=""
   fi
-
-  # Query DB for open count + addressed rate
-  local _rb_out
-  _rb_out=$("$_rb_python" - "$_rb_db" "$_rb_name" <<'PYEOF'
-import sys, sqlite3
-
-db_path   = sys.argv[1]
-repo_name = sys.argv[2]
-
-try:
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
-except Exception:
-    sys.exit(0)
-
-repo_row = con.execute(
-    "SELECT id FROM repos WHERE name = ? ORDER BY id DESC LIMIT 1",
-    (repo_name,)
-).fetchone()
-
-if repo_row is None:
-    sys.exit(0)
-
-repo_id = repo_row["id"]
-
-try:
-    stats = con.execute("""
-        SELECT
-            SUM(CASE WHEN rv.closed = 0 THEN 1 ELSE 0 END) AS open_count,
-            COUNT(*) AS total_count,
-            SUM(rv.closed) AS closed_count
-        FROM reviews rv
-        JOIN review_jobs rj ON rj.id = rv.job_id
-        WHERE rj.repo_id = ?
-          AND rj.status = 'done'
-    """, (repo_id,)).fetchone()
-except Exception:
-    sys.exit(0)
-
-con.close()
-
-open_count   = stats["open_count"]  or 0
-total_count  = stats["total_count"] or 0
-closed_count = stats["closed_count"] or 0
-
-addressed_pct = round(100.0 * closed_count / total_count) if total_count > 0 else 0
-print(f"OPEN:{open_count}")
-print(f"ADDRESSED:{addressed_pct}")
-PYEOF
-  ) || true
-
-  [ -n "$_rb_out" ] || return 0
-
-  local _rb_open _rb_pct
-  _rb_open=$(printf '%s\n' "$_rb_out" | grep "^OPEN:"      | sed 's/^OPEN://')
-  _rb_pct=$(printf  '%s\n' "$_rb_out" | grep "^ADDRESSED:" | sed 's/^ADDRESSED://')
-
-  [ -n "$_rb_open" ] || return 0
-
-  # Build the banner line
-  local _rb_top_part=""
-  if [ -n "$_rb_top_sev" ] && [ -n "$_rb_top_cat" ] && [ -n "$_rb_top_id" ]; then
-    _rb_top_part=" (priority-1=${_rb_top_sev}:${_rb_top_cat}, top=#${_rb_top_id})"
-  fi
-
-  local _rb_pct_part=""
-  [ -n "$_rb_pct" ] && _rb_pct_part=" | addressed=${_rb_pct}%"
-
-  echo "roborev-backlog: open=${_rb_open}${_rb_top_part}${_rb_pct_part}"
+  printf '%s' "$_root"
 }
-# Phase 13d: roborev backlog — BACKGROUND (sqlite3 + python3 query)
-# Show cached line instantly; refresh in background for next session.
-_rbb_cache="${HOME}/.claude/logs/session_init_roborev_backlog_cache.txt"
+
+# rbb_format_cache_line: given the raw cached line and its age in seconds,
+# print the line, appending a "[cache Nh old]" suffix once the cache is
+# more than a day stale. Extracted for the same testability reason.
+rbb_format_cache_line() {
+  local _line="$1" _age="${2:-0}"
+  if [ "$_age" -gt 86400 ]; then
+    printf '%s [cache %sh old]' "$_line" "$(( _age / 3600 ))"
+  else
+    printf '%s' "$_line"
+  fi
+}
+
+_rbb_root=$(rbb_resolve_root)
+_rbb_name=$(basename "${_rbb_root:-unknown}")
+# Sanitize for use in a filename (project names are simple slugs in practice,
+# but never trust a derived value in a path without normalizing it first).
+_rbb_name_safe=$(echo "$_rbb_name" | tr -c 'A-Za-z0-9_-' '_')
+[ -n "$_rbb_name_safe" ] || _rbb_name_safe="unknown"
+_rbb_cache="${HOME}/.claude/logs/session_init_roborev_backlog_cache_${_rbb_name_safe}.txt"
 if [ -f "$_rbb_cache" ]; then
   _rbb_cached=$(cat "$_rbb_cache" 2>/dev/null) || true
-  [ -n "$_rbb_cached" ] && echo "$_rbb_cached"
+  if [ -n "$_rbb_cached" ]; then
+    _rbb_mtime=$(/usr/bin/stat -f %m "$_rbb_cache" 2>/dev/null || /usr/bin/stat -c %Y "$_rbb_cache" 2>/dev/null || echo 0)
+    _rbb_now_sec=$(date +%s)
+    _rbb_age=$(( _rbb_now_sec - _rbb_mtime ))
+    echo "$(rbb_format_cache_line "$_rbb_cached" "$_rbb_age")"
+  fi
 fi
 _rbb_db="${HOME}/.roborev/reviews.db"
-_rbb_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
-_rbb_name=$(basename "${_rbb_root:-unknown}")
 # llm#1035: shared classifier lives beside this hook at ../scripts/lib —
 # resolved here (where BASH_SOURCE still points at session_init.sh) and
 # passed positionally, since the heredoc below runs as a separate `bash -s`
 # process reading from stdin, where BASH_SOURCE would not resolve.
 _rbb_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib" 2>/dev/null && pwd) || _rbb_lib_dir=""
 mkdir -p "$(dirname "$_rbb_cache")"
-nohup bash -s "$_rbb_db" "$_rbb_name" "$_rbb_cache" "$_rbb_lib_dir" > /dev/null 2>&1 <<'RBBEOF' &
+nohup bash -s "$_rbb_db" "$_rbb_name" "$_rbb_cache" "$_rbb_lib_dir" "${_rbb_root:-}" > /dev/null 2>&1 <<'RBBEOF' &
 #!/usr/bin/env bash
-_rb_db="$1"; _rb_name="$2"; _rb_cache="$3"; _rb_lib_dir="$4"
-[ -f "$_rb_db" ] || exit 0
-[ -x /usr/bin/python3 ] || exit 0
-_rb_backlog_file=$(dirname "$_rb_db")/../.roborev/backlog.md 2>/dev/null || true
+_rb_db="$1"; _rb_name="$2"; _rb_cache="$3"; _rb_lib_dir="$4"; _rb_root="$5"
+write_unknown() { echo "roborev-backlog: unknown ($1)" > "$_rb_cache"; }
+[ -f "$_rb_db" ] || { write_unknown "no roborev DB at ~/.roborev/reviews.db"; exit 0; }
+[ -x /usr/bin/python3 ] || { write_unknown "no /usr/bin/python3"; exit 0; }
+[ -n "$_rb_root" ] || { write_unknown "could not resolve main checkout root"; exit 0; }
 _rb_top_sev=""; _rb_top_cat=""; _rb_top_id=""
-# Find backlog.md relative to repo root (passed as name, need path)
-_rb_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
-[ -n "$_rb_root" ] && _rb_backlog="$_rb_root/.roborev/backlog.md" || _rb_backlog=""
-if [ -n "$_rb_backlog" ] && [ -f "$_rb_backlog" ]; then
+_rb_backlog="$_rb_root/.roborev/backlog.md"
+if [ -f "$_rb_backlog" ]; then
   _rb_first_row=$(grep -E '^\| [0-9]' "$_rb_backlog" | head -1) || true
   if [ -n "$_rb_first_row" ]; then
     _rb_top_id=$(echo "$_rb_first_row"  | awk -F'|' '{gsub(/ /,"",$2); print $2}')
@@ -1555,11 +1503,12 @@ if [ -n "$_rb_backlog" ] && [ -f "$_rb_backlog" ]; then
     _rb_top_cat=$(echo "$_rb_first_row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
   fi
 fi
-_rb_out=$(/usr/bin/python3 - "$_rb_db" "$_rb_name" "$_rb_lib_dir" <<'PYEOF'
+_rb_out=$(/usr/bin/python3 - "$_rb_db" "$_rb_name" "$_rb_lib_dir" "$_rb_root" <<'PYEOF'
 import sys, sqlite3
 
 db_path = sys.argv[1]; repo_name = sys.argv[2]
 lib_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+root_path = sys.argv[4] if len(sys.argv) > 4 else ""
 
 # llm#1035: a review classified "passed" (ran, found nothing) is excluded
 # from the open count -- it is not a backlog item. Fail-open: if the shared
@@ -1582,9 +1531,27 @@ try:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
 except Exception:
+    print("REASON:db-connect-failed")
     sys.exit(0)
-repo_row = con.execute("SELECT id FROM repos WHERE name = ? ORDER BY id DESC LIMIT 1", (repo_name,)).fetchone()
-if repo_row is None: sys.exit(0)
+
+# llm#1276: prefer an exact match on the MAIN checkout's root_path — this is
+# unambiguous even if several repos share a `name`. Fall back to the most
+# recent name match only when no root_path row exists (e.g. this checkout
+# was never itself passed to `roborev review`, only a worktree of it was).
+repo_row = None
+if root_path:
+    repo_row = con.execute(
+        "SELECT id FROM repos WHERE root_path = ? ORDER BY id DESC LIMIT 1",
+        (root_path,)
+    ).fetchone()
+if repo_row is None:
+    repo_row = con.execute(
+        "SELECT id FROM repos WHERE name = ? ORDER BY id DESC LIMIT 1",
+        (repo_name,)
+    ).fetchone()
+if repo_row is None:
+    print(f"REASON:no repo row for '{repo_name}'")
+    sys.exit(0)
 repo_id = repo_row["id"]
 try:
     rows = con.execute("""
@@ -1599,6 +1566,7 @@ except sqlite3.OperationalError:
         WHERE rj.repo_id = ? AND rj.status = 'done'
     """, (repo_id,)).fetchall()
 except Exception:
+    print("REASON:query-error")
     sys.exit(0)
 con.close()
 
@@ -1614,10 +1582,15 @@ print(f"OPEN:{open_count}")
 print(f"ADDRESSED:{addressed_pct}")
 PYEOF
 ) || true
-[ -n "$_rb_out" ] || exit 0
+if printf '%s\n' "$_rb_out" | grep -q '^REASON:'; then
+  _rb_reason=$(printf '%s\n' "$_rb_out" | grep '^REASON:' | sed 's/^REASON://')
+  write_unknown "$_rb_reason"
+  exit 0
+fi
+[ -n "$_rb_out" ] || { write_unknown "empty query result"; exit 0; }
 _rb_open=$(printf '%s\n' "$_rb_out" | grep "^OPEN:"      | sed 's/^OPEN://')
 _rb_pct=$(printf  '%s\n' "$_rb_out" | grep "^ADDRESSED:" | sed 's/^ADDRESSED://')
-[ -n "$_rb_open" ] || exit 0
+[ -n "$_rb_open" ] || { write_unknown "no OPEN: line in query output"; exit 0; }
 _rb_top_part=""
 [ -n "$_rb_top_sev" ] && [ -n "$_rb_top_cat" ] && [ -n "$_rb_top_id" ] && \
   _rb_top_part=" (priority-1=${_rb_top_sev}:${_rb_top_cat}, top=#${_rb_top_id})"
