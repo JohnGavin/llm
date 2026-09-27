@@ -38,6 +38,8 @@ my_new_md_database
 *.tsv
 # Committed, append-only CI outage ledger (llm#1234) -- small, must be tracked
 !.claude/state/ci_outages.tsv
+# Committed test->script relevance map for shell-tests.yml (llm#1274) -- small, must be tracked
+!tests/ci_test_map.tsv
 
 # Sensitive/personal files
 *.pdf

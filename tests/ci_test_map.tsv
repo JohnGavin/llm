@@ -1,0 +1,60 @@
+# tests/ci_test_map.tsv — JohnGavin/llm#1274 step 4
+#
+# Maps each tests/test_*.sh suite to the paths it exercises, so
+# .github/workflows/shell-tests.yml can select only the tests relevant to a
+# PR's changed files. Built by reading each test's header comment and the
+# REPO_ROOT/SCRIPT_DIR-relative paths it sources/invokes (grepped, not
+# guessed) — see the PR description for the audit.
+#
+# Columns (tab-separated):
+#   test    - path to the test file, relative to repo root
+#   globs   - semicolon-separated list of path globs this test exercises
+#             (always includes the test's own path). A changed file matching
+#             ANY of these globs makes this test "relevant" for the PR.
+#   status  - "run" (executed in CI) or "skip-ci" (never run in CI)
+#   reason  - required when status=skip-ci; empty for status=run
+#
+# A PR that changes .github/workflows/shell-tests.yml or this map file runs
+# ALL status=run tests, regardless of the glob match (see the workflow).
+#
+# Scope note: this map covers only the top-level tests/test_*.sh suites
+# named in JohnGavin/llm#1274. tests/hooks/test_*.sh, tests/codex_fallback/
+# test_*.sh, and every tests/test_*.R / tests/testthat/** suite are out of
+# scope for this PR (R suites are a follow-up; the two sh files under
+# tests/hooks/ and tests/codex_fallback/ were not part of the requested
+# glob and are not audited here).
+test	globs	status	reason
+tests/test_agentsview_quality_baseline.sh	tests/test_agentsview_quality_baseline.sh;.claude/scripts/agentsview_quality_baseline.sh	run
+tests/test_bws_ground_truth_verify.sh	tests/test_bws_ground_truth_verify.sh;.claude/scripts/lib/secret_ground_truth.sh	run
+tests/test_bye_sentinel_ownership.sh	tests/test_bye_sentinel_ownership.sh;.claude/hooks/llmtelemetry_emit.sh;.claude/hooks/session_stop.sh;.claude/scripts/sentinel_log_sweep.sh	run
+tests/test_ci_availability_check.sh	tests/test_ci_availability_check.sh;.claude/scripts/ci_availability_check.sh	run
+tests/test_etl_freshness_upsert.sh	tests/test_etl_freshness_upsert.sh;.claude/scripts/etl_freshness_upsert.sh	run
+tests/test_launchd_health_audit.sh	tests/test_launchd_health_audit.sh;bin/launchd_health_audit.sh;tests/fixtures/launchd_audit/**	skip-ci	macOS-only: bin/launchd_health_audit.sh hardcodes PLUTIL=/usr/bin/plutil with no override; plutil does not exist on Linux runners
+tests/test_launchd_run_record_timeout.sh	tests/test_launchd_run_record_timeout.sh;bin/launchd_run_record.sh	run
+tests/test_permissions_allow_invariants.sh	tests/test_permissions_allow_invariants.sh;.claude/settings.json	run
+tests/test_prompt_caching.sh	tests/test_prompt_caching.sh;.claude/scripts/cross_modal_eval.sh;.claude/scripts/detect_patterns.sh	run
+tests/test_record_prediction.sh	tests/test_record_prediction.sh;.claude/scripts/record_prediction.sh	run
+tests/test_render_signal_launchd_plists.sh	tests/test_render_signal_launchd_plists.sh;.claude/scripts/render_signal_launchd_plists.sh;.claude/launchd/**	run
+tests/test_roborev_auto_verify_predictions.sh	tests/test_roborev_auto_verify_predictions.sh;.claude/scripts/roborev_auto_verify.sh	run
+tests/test_roborev_autoclose.sh	tests/test_roborev_autoclose.sh;.claude/scripts/roborev_autoclose.sh	run
+tests/test_roborev_classify.sh	tests/test_roborev_classify.sh;.claude/scripts/lib/roborev_classify.py	run
+tests/test_roborev_commit_msg_hook.sh	tests/test_roborev_commit_msg_hook.sh;bin/roborev_install_commit_msg_hook.sh;bin/roborev_install_commit_msg_hook_all.sh	run
+tests/test_roborev_daily_backlog_aggregator.sh	tests/test_roborev_daily_backlog_aggregator.sh;.claude/scripts/roborev_daily_backlog_aggregator.sh	run
+tests/test_roborev_failure_alert_owner.sh	tests/test_roborev_failure_alert_owner.sh;.claude/scripts/roborev-failure-alert	run
+tests/test_roborev_failure_alert.sh	tests/test_roborev_failure_alert.sh;.claude/scripts/roborev-failure-alert	run
+tests/test_roborev_install_all_hooks.sh	tests/test_roborev_install_all_hooks.sh;bin/roborev_install_all_hooks.sh	run
+tests/test_roborev_merge_gate.sh	tests/test_roborev_merge_gate.sh;bin/roborev_merge_gate.sh;.claude/scripts/lib/roborev_classify.py	run
+tests/test_roborev_poll_merges_ephemeral_skip.sh	tests/test_roborev_poll_merges_ephemeral_skip.sh;.claude/scripts/roborev_poll_merges.sh	run
+tests/test_roborev_post_merge_hook.sh	tests/test_roborev_post_merge_hook.sh;bin/roborev_install_post_merge_hook.sh	run
+tests/test_roborev_project_backlog.sh	tests/test_roborev_project_backlog.sh;.claude/scripts/roborev_project_backlog.sh	run
+tests/test_roborev_severity_consistency.sh	tests/test_roborev_severity_consistency.sh;.claude/scripts/roborev_severity_autoclose.sh;.claude/scripts/roborev_auto_close.sh;.claude/scripts/roborev_bridge_to_unified.sh;.claude/scripts/lib/roborev_classify.py;.claude/scripts/send_roborev_email.R	run
+tests/test_roborev_verify_closure.sh	tests/test_roborev_verify_closure.sh;.claude/scripts/roborev_verify_closure.sh;bin/roborev_install_post_commit_verifier.sh	run
+tests/test_secrets_cache_regen_removal_guard.sh	tests/test_secrets_cache_regen_removal_guard.sh;.claude/scripts/secrets_cache_regen.sh	run
+tests/test_session_init_nix_state.sh	tests/test_session_init_nix_state.sh;.claude/hooks/session_init.sh	run
+tests/test_severity_regex_parity.sh	tests/test_severity_regex_parity.sh;.claude/scripts/lib/roborev_classify.py;.claude/scripts/roborev_severity_autoclose.sh;.claude/scripts/send_roborev_email.R	skip-ci	requires Rscript (R toolchain) on PATH — R-dependent tests are deferred to the R/testthat CI follow-up noted in this PR (see also test_roborev_severity_consistency.sh, which degrades gracefully instead of hard-failing when Rscript is absent)
+tests/test_signal_attachment_ingest.sh	tests/test_signal_attachment_ingest.sh;.claude/scripts/signal_attachment_ingest.sh	run
+tests/test_signal_bounded_kill.sh	tests/test_signal_bounded_kill.sh;.claude/scripts/lib_signal_process_guard.sh	run
+tests/test_signal_braindump_handler.sh	tests/test_signal_braindump_handler.sh;.claude/scripts/lib_signal_process_guard.sh;.claude/scripts/signal_braindump_handler.sh	run
+tests/test_signal_notes_sync.sh	tests/test_signal_notes_sync.sh;.claude/scripts/signal_notes_sync.sh	run
+tests/test_stdin_null_guard.sh	tests/test_stdin_null_guard.sh;.claude/launchd/**	skip-ci	macOS-only: calls `plutil -lint` unconditionally with no availability check or fallback; plutil does not exist on Linux runners
+tests/test_wait_for_resolvable_host.sh	tests/test_wait_for_resolvable_host.sh;.claude/scripts/wait_for_resolvable_host.sh	run
