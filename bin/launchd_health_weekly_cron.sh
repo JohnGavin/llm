@@ -214,7 +214,7 @@ log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT
 # are inherited — calling the Rscript binary directly loses those.
 
 LLM_NIX="${REPO_ROOT}/default.nix"
-NIX_SHELL_BIN="/nix/var/nix/profiles/default/bin/nix-shell"
+NIX_SHELL_BIN="${NIX_SHELL_BIN:-/nix/var/nix/profiles/default/bin/nix-shell}"  # overridable for tests
 
 if [ ! -f "${LLM_NIX}" ]; then
   log "ERROR: nix file not found at ${LLM_NIX}"
@@ -510,7 +510,11 @@ if [ "${HEALTH_EMAIL_FORCE}" = "1" ] || [ "${HEALTH_EMAIL_TODAY}" = "${HEALTH_EM
     # Stamp only on success -- a persistently-failing send must keep
     # reporting "not sent" so the catch-up window keeps retrying it, rather
     # than looking done after one attempted-but-failed send.
-    if printf '%s\n' "$(date -u +%s)" > "${HEALTH_EMAIL_STATE_FILE}" 2>/dev/null; then
+    # Never on a dry run: EMAIL_DRY_RUN=1 prints the body without sending, so
+    # a stamp would suppress the real email for a week (roborev #10663).
+    if [ "${EMAIL_DRY_RUN}" = "1" ]; then
+      log "Step 2: dry run -- last-sent stamp NOT written"
+    elif printf '%s\n' "$(date -u +%s)" > "${HEALTH_EMAIL_STATE_FILE}" 2>/dev/null; then
       log "Step 2: recorded last-sent stamp at ${HEALTH_EMAIL_STATE_FILE}"
     else
       log "WARNING: could not write email state file ${HEALTH_EMAIL_STATE_FILE} (non-fatal)"

@@ -294,6 +294,48 @@ test_invalid_weekday_does_not_send_on_nonmatching_day() {
   fi
 }
 
+# make_fake_nix_shell HOME_DIR -- an executable stand-in for nix-shell that
+# exits 0 without running anything, so Step 2 counts as a SUCCESSFUL send and
+# the last-sent stamp path is reachable (the real nix-shell always fails
+# against this fixture's invalid default.nix). Nothing is sent.
+make_fake_nix_shell() {
+  local f="$1/fake-nix-shell"
+  printf '#!/bin/bash\nexit 0\n' > "${f}"
+  chmod +x "${f}"
+  echo "${f}"
+}
+
+test_dry_run_success_writes_no_stamp() {
+  local home_dir fake
+  home_dir="$(make_home dryrun_stamp)"
+  fake="$(make_fake_nix_shell "${home_dir}")"
+  local state_file="${home_dir}/.claude/logs/.launchd_health_email_last_sent"
+  run_cron_home "${home_dir}" 7 env NIX_SHELL_BIN="${fake}" EMAIL_DRY_RUN=1
+  local log="${home_dir}/.claude/logs/launchd_health_weekly.log"
+  if grep -q "Step 2 done" "${log}" 2>/dev/null \
+     && [ ! -f "${state_file}" ] \
+     && grep -q "dry run -- last-sent stamp NOT written" "${log}" 2>/dev/null; then
+    pass "successful DRY-RUN send writes no last-sent stamp (roborev #10663)"
+  else
+    fail "successful DRY-RUN send writes no last-sent stamp (roborev #10663)" \
+      "stamp exists: $([ -f "${state_file}" ] && echo yes || echo no); log: $(cat "${log}" 2>/dev/null)"
+  fi
+}
+
+test_real_success_writes_stamp() {
+  local home_dir fake
+  home_dir="$(make_home real_stamp)"
+  fake="$(make_fake_nix_shell "${home_dir}")"
+  local state_file="${home_dir}/.claude/logs/.launchd_health_email_last_sent"
+  run_cron_home "${home_dir}" 7 env NIX_SHELL_BIN="${fake}" EMAIL_DRY_RUN=0
+  if [ -f "${state_file}" ] && grep -qE '^[0-9]+$' "${state_file}"; then
+    pass "successful non-dry-run send writes a numeric last-sent stamp"
+  else
+    fail "successful non-dry-run send writes a numeric last-sent stamp" \
+      "log: $(cat "${home_dir}/.claude/logs/launchd_health_weekly.log" 2>/dev/null)"
+  fi
+}
+
 echo "=== test_launchd_health_weekly_email_gate.sh ==="
 test_default_sunday_sends
 test_default_monday_skips
@@ -305,6 +347,8 @@ test_catchup_sends_after_missed_week
 test_no_catchup_when_sent_yesterday
 test_invalid_weekday_falls_back_to_default
 test_invalid_weekday_does_not_send_on_nonmatching_day
+test_dry_run_success_writes_no_stamp
+test_real_success_writes_stamp
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
