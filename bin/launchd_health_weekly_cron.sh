@@ -28,10 +28,14 @@
 #   SKIP_CRON_PULL           Set to 1 to skip git ff-only pull (testing only)
 #   UNIFIED_DB_PATH          Override unified DuckDB path
 #   HEALTH_EMAIL_WEEKDAY     1-7 (date +%u), default 7=Sunday — Step 2 only
-#                            sends on this weekday
+#                            sends on this weekday. Invalid values (not
+#                            1-7) are logged as an ERROR and fall back to 7.
 #   HEALTH_EMAIL_FORCE       Set to 1 to send Step 2's email regardless of
 #                            weekday
 #   HEALTH_EMAIL_TODAY_OVERRIDE  Test-only override for "today" (date +%u)
+#   HEALTH_EMAIL_STATE_FILE  Override the "last successful send" stamp file
+#                            path (default: $LOG_DIR/.launchd_health_email_last_sent);
+#                            test-only
 #
 # Manual run (dry):
 #   EMAIL_DRY_RUN=1 SKIP_CRON_PULL=1 bash bin/launchd_health_weekly_cron.sh
@@ -79,9 +83,15 @@ export EMAIL_DRY_RUN
 # HEALTH_EMAIL_TODAY_OVERRIDE overrides today's `date +%u` for tests only --
 # never set this in production; it exists so tests can exercise both the
 # send and skip branches without waiting for a real weekday to roll around.
-HEALTH_EMAIL_WEEKDAY="${HEALTH_EMAIL_WEEKDAY:-7}"
+# Raw values are validated (and, if invalid, logged + defaulted) below, once
+# log() exists -- see "Weekly email gate: validation + catch-up" further down.
+HEALTH_EMAIL_WEEKDAY_RAW="${HEALTH_EMAIL_WEEKDAY:-7}"
 HEALTH_EMAIL_FORCE="${HEALTH_EMAIL_FORCE:-0}"
-HEALTH_EMAIL_TODAY="${HEALTH_EMAIL_TODAY_OVERRIDE:-$(date +%u)}"
+HEALTH_EMAIL_TODAY_RAW="${HEALTH_EMAIL_TODAY_OVERRIDE:-$(date +%u)}"
+# Stamp file recording the epoch seconds of the last successful (STEP2_EXIT=0)
+# send. Used for the missed-weekday catch-up window below. Written only after
+# a successful send -- a persistently-failing send must never look "done".
+HEALTH_EMAIL_STATE_FILE="${HEALTH_EMAIL_STATE_FILE:-$LOG_DIR/.launchd_health_email_last_sent}"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -94,6 +104,57 @@ log() {
 }
 
 log "=== launchd_health_weekly_cron.sh starting (EMAIL_DRY_RUN=${EMAIL_DRY_RUN}) ==="
+
+# ── Weekly email gate: validation + missed-weekday catch-up (roborev #1292 review) ─
+# HEALTH_EMAIL_WEEKDAY/HEALTH_EMAIL_TODAY_OVERRIDE must be 1-7 (per `date
+# +%u`). An unvalidated typo (0, 8, "sun", empty) would never equality-match
+# `date +%u` and Step 2 would be skipped every week forever with a log line
+# indistinguishable from ordinary "not today" -- the exact
+# checks-must-distinguish-unknown failure mode: a misconfiguration and a
+# correct skip must not share the same exit. Validate and fall back loudly.
+if [[ "${HEALTH_EMAIL_WEEKDAY_RAW}" =~ ^[1-7]$ ]]; then
+  HEALTH_EMAIL_WEEKDAY="${HEALTH_EMAIL_WEEKDAY_RAW}"
+else
+  log "ERROR: HEALTH_EMAIL_WEEKDAY='${HEALTH_EMAIL_WEEKDAY_RAW}' is not 1-7 (per date +%u) -- falling back to default 7"
+  HEALTH_EMAIL_WEEKDAY=7
+fi
+if [[ "${HEALTH_EMAIL_TODAY_RAW}" =~ ^[1-7]$ ]]; then
+  HEALTH_EMAIL_TODAY="${HEALTH_EMAIL_TODAY_RAW}"
+else
+  log "ERROR: HEALTH_EMAIL_TODAY_OVERRIDE='${HEALTH_EMAIL_TODAY_RAW}' is not 1-7 (per date +%u) -- falling back to the real date +%u"
+  HEALTH_EMAIL_TODAY="$(date +%u)"
+fi
+
+# Missed-weekday catch-up: if the exact weekday match is missed entirely (the
+# laptop is off/asleep all of the configured weekday and launchd coalesces
+# the missed StartCalendarInterval fire to whenever it next wakes, which may
+# land on a different weekday), the exact-equality gate alone drops the
+# whole week's email with no signal anywhere -- "sends daily" becomes
+# "occasionally sends never". Track the epoch of the last successful send in
+# HEALTH_EMAIL_STATE_FILE (written only on STEP2_EXIT=0, below) and also
+# send if at least 7 days have elapsed since then, regardless of today's
+# weekday. A missing/unreadable/non-numeric stamp is treated as "not due" --
+# NOT as "overdue" -- so a fresh deploy (no stamp yet) waits for the next
+# scheduled weekday exactly as before, rather than immediately sending
+# off-schedule on whatever day this fix happens to first run. Catch-up only
+# engages once a real prior send has gone stale.
+_email_last_sent_epoch=""
+if [ -f "${HEALTH_EMAIL_STATE_FILE}" ]; then
+  _email_last_sent_raw="$(cat "${HEALTH_EMAIL_STATE_FILE}" 2>/dev/null || true)"
+  if [[ "${_email_last_sent_raw}" =~ ^[0-9]+$ ]]; then
+    _email_last_sent_epoch="${_email_last_sent_raw}"
+  fi
+fi
+_email_now_epoch="$(date -u +%s)"
+_email_catchup_due=0
+if [ -n "${_email_last_sent_epoch}" ]; then
+  _email_days_since_send=$(( (_email_now_epoch - _email_last_sent_epoch) / 86400 ))
+  if [ "$(( _email_now_epoch - _email_last_sent_epoch ))" -ge 604800 ]; then
+    _email_catchup_due=1
+  fi
+else
+  _email_days_since_send="unknown (no prior stamp)"
+fi
 
 # ── Lock ──────────────────────────────────────────────────────────────────────
 if [ -f "${LOCK_FILE}" ]; then
@@ -426,8 +487,12 @@ fi
 
 export LAUNCHD_SCRIPTS_DIR="${SCRIPTS_DIR}"
 _email_failed=0
-if [ "${HEALTH_EMAIL_FORCE}" = "1" ] || [ "${HEALTH_EMAIL_TODAY}" = "${HEALTH_EMAIL_WEEKDAY}" ]; then
-  log "Step 2: sending launchd health email..."
+if [ "${HEALTH_EMAIL_FORCE}" = "1" ] || [ "${HEALTH_EMAIL_TODAY}" = "${HEALTH_EMAIL_WEEKDAY}" ] || [ "${_email_catchup_due}" = "1" ]; then
+  if [ "${HEALTH_EMAIL_TODAY}" != "${HEALTH_EMAIL_WEEKDAY}" ] && [ "${HEALTH_EMAIL_FORCE}" != "1" ] && [ "${_email_catchup_due}" = "1" ]; then
+    log "Step 2: sending launchd health email... (catch-up: ${_email_days_since_send}d since last successful send, >= 7d threshold)"
+  else
+    log "Step 2: sending launchd health email..."
+  fi
   "${NIX_SHELL_BIN}" "${NIX_TARGET}" --run "Rscript '${SCRIPTS_DIR}/send_launchd_health_email.R'" 2>>"${LOG_FILE}"
   STEP2_EXIT=$?
 
@@ -442,12 +507,26 @@ if [ "${HEALTH_EMAIL_FORCE}" = "1" ] || [ "${HEALTH_EMAIL_TODAY}" = "${HEALTH_EM
     _email_failed=1
   else
     log "Step 2 done"
+    # Stamp only on success -- a persistently-failing send must keep
+    # reporting "not sent" so the catch-up window keeps retrying it, rather
+    # than looking done after one attempted-but-failed send.
+    if printf '%s\n' "$(date -u +%s)" > "${HEALTH_EMAIL_STATE_FILE}" 2>/dev/null; then
+      log "Step 2: recorded last-sent stamp at ${HEALTH_EMAIL_STATE_FILE}"
+    else
+      log "WARNING: could not write email state file ${HEALTH_EMAIL_STATE_FILE} (non-fatal)"
+    fi
   fi
 else
   # A skip is not a failure and MUST NOT flip _run_status to 'partial' below
   # -- _email_failed stays 0 on this branch.
-  log "Step 2: skipped (weekly email sends on weekday ${HEALTH_EMAIL_WEEKDAY}; today is ${HEALTH_EMAIL_TODAY})"
+  log "Step 2: skipped (weekly email sends on weekday ${HEALTH_EMAIL_WEEKDAY}; today is ${HEALTH_EMAIL_TODAY}; last send ${_email_days_since_send}d ago, catch-up at >=7d)"
 fi
+
+# Explicit, greppable status of the internal flag Step 3 uses to decide
+# _run_status -- lets tests assert "a skip never sets _email_failed" without
+# depending on Step 3's duckdb-gated log line (which is silent when duckdb
+# is unavailable, e.g. in the test fixture).
+log "Step 2: _email_failed=${_email_failed}"
 
 # ── Step 3: Update housekeeping_runs end row ──────────────────────────────────
 if [ "${_duckdb_ok}" = "1" ]; then
