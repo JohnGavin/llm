@@ -245,7 +245,7 @@ fi
 
 # Run ID for this invocation (used in housekeeping_runs + worktree_gc_events)
 _run_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
-_run_started=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
+_run_started=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + 'Z')")
 _script_abs=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P && echo "$(basename "$0")" || echo "$0")
 
 # Insert housekeeping_runs start row
@@ -467,7 +467,7 @@ write_gc_event() {
   local _evt_id
   _evt_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
   local _now_ts
-  _now_ts=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
+  _now_ts=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + 'Z')")
   local _pattern_label="$1" _project="$2" _wt_path="$3" _branch="$4"
   local _action="$5" _reason="$6" _size_mb="$7"
 
@@ -780,12 +780,19 @@ done  # end patterns loop
 
 # ─── Empty convention parent cleanup ─────────────────────────────────────────
 if [ "$APPLY" = "1" ] && [ "${#CONVENTION_PARENTS[@]}" -gt 0 ]; then
-  # Deduplicate and try rmdir on each parent (rmdir only removes empty dirs)
-  declare -A _seen_parents=()
+  # Deduplicate and try rmdir on each parent (rmdir only removes empty dirs).
+  # NOTE: no `declare -A` here — launchd invokes this script with macOS's
+  # system /bin/bash (3.2), which has no associative arrays (llm#1291).
+  # A plain " "-delimited seen-list with a substring `case` match is the
+  # bash-3.2-compatible equivalent for this small, non-adversarial value set
+  # (parent directory paths never contain literal spaces here).
+  _seen_parents=""
   for _parent in "${CONVENTION_PARENTS[@]}"; do
     [ -z "$_parent" ] && continue
-    [ "${_seen_parents[$_parent]+set}" = "set" ] && continue
-    _seen_parents[$_parent]=1
+    case " $_seen_parents " in
+      *" $_parent "*) continue ;;
+    esac
+    _seen_parents="$_seen_parents $_parent"
     if [ -d "$_parent" ] && rmdir "$_parent" 2>/dev/null; then
       log "[rmdir-empty-parent] $_parent"
     fi
@@ -832,7 +839,7 @@ date -u +%Y-%m-%dT%H:%M:%SZ > "${HOME}/.claude/logs/stamps/worktree-gc.stamp"
 
 # Update housekeeping_runs end row
 if [ "$_duckdb_ok" = "1" ]; then
-  _run_ended=$(python3 -c "import datetime; print(datetime.datetime.utcnow().isoformat() + 'Z')")
+  _run_ended=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + 'Z')")
   duckdb "$UNIFIED_DB" "
     UPDATE housekeeping_runs
     SET ended_at = TIMESTAMPTZ '${_run_ended}',
