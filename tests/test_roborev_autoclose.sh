@@ -314,6 +314,102 @@ test_discovery_passes_scope_flags() {
   fi
 }
 
+# ── Tests 10-12 (roborev #1292 review, 10655 Medium+Low): the repo-path
+# resolution block itself (the sqlite `repos` lookup that resolves
+# ROBOREV_REPO -> ROBOREV_REPO_PATH) was previously untested -- every test
+# above sets ROBOREV_REPO_PATH directly, bypassing the lookup entirely. That
+# lookup ran with `2>/dev/null || true`, so a sqlite FAILURE (locked DB,
+# schema error, corrupt file) looked identical to "no matching repos row".
+# These tests exercise the lookup for real against a tiny fixture sqlite DB
+# and assert all three outcomes (row found / no row / sqlite failure) are
+# distinguishable, per checks-must-distinguish-unknown.
+
+SQLITE_BIN="$(command -v sqlite3 || echo /usr/bin/sqlite3)"
+
+# ── Test 10: a matching repos row resolves and is passed to Phase 1's
+# `roborev list --repo <root_path> --all-branches` call.
+test_repo_path_lookup_success() {
+  local home_dir="${TMPDIR_ROOT}/home10" fake="${TMPDIR_ROOT}/roborev10"
+  mkdir -p "$home_dir/.claude/logs"
+  make_fake_roborev_retry "$fake"
+  local argv_log="${TMPDIR_ROOT}/argv10.log" count_file="${TMPDIR_ROOT}/count10"
+  rm -f "$argv_log" "$count_file"
+
+  local db="${TMPDIR_ROOT}/reviews10.db"
+  rm -f "$db"
+  "$SQLITE_BIN" "$db" \
+    "CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT, root_path TEXT); INSERT INTO repos (name, root_path) VALUES ('llm', '/fake/repo/from-db');"
+
+  HOME="$home_dir" ROBOREV="$fake" ROBOREV_DB="$db" ROBOREV_REPO="llm" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    ARGV_LOG="$argv_log" COUNT_FILE="$count_file" FAIL_COUNT=0 \
+    FAKE_ROBOREV_STDOUT='{"jobs": []}' \
+    "$AUTOCLOSE" --dry-run >/dev/null 2>&1 || true
+
+  local argv_recorded
+  argv_recorded="$(cat "$argv_log" 2>/dev/null || true)"
+  if echo "$argv_recorded" | grep -q -- "--all-branches" \
+     && echo "$argv_recorded" | grep -qF -- "--repo /fake/repo/from-db"; then
+    pass "repo-path lookup: matching repos row -> --repo <root_path> --all-branches"
+  else
+    fail "repo-path lookup: matching repos row -> --repo <root_path> --all-branches" "argv=$argv_recorded"
+  fi
+}
+
+# ── Test 11: sqlite runs cleanly but no repos row matches ROBOREV_REPO ->
+# exit 3, INDETERMINATE, with a reason distinct from a sqlite FAILURE.
+test_repo_path_lookup_no_matching_row() {
+  local home_dir="${TMPDIR_ROOT}/home11" fake="${TMPDIR_ROOT}/roborev11"
+  mkdir -p "$home_dir/.claude/logs"
+  make_fake_roborev "$fake"
+
+  local db="${TMPDIR_ROOT}/reviews11.db"
+  rm -f "$db"
+  "$SQLITE_BIN" "$db" \
+    "CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT, root_path TEXT); INSERT INTO repos (name, root_path) VALUES ('other-repo', '/some/path');"
+
+  local out rc=0
+  out="$(HOME="$home_dir" ROBOREV="$fake" ROBOREV_DB="$db" ROBOREV_REPO="llm" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    "$AUTOCLOSE" --dry-run 2>&1)" || rc=$?
+
+  local logfile="$home_dir/.claude/logs/roborev_autoclose.log"
+  if [ "$rc" -eq 3 ] && grep -qF "no repos row matches ROBOREV_REPO=llm" "$logfile" 2>/dev/null; then
+    pass "repo-path lookup: no matching row -> exit 3, distinct 'no repos row' reason"
+  else
+    fail "repo-path lookup: no matching row -> exit 3, distinct 'no repos row' reason" \
+      "rc=$rc out=$out logfile=$(cat "$logfile" 2>/dev/null)"
+  fi
+}
+
+# ── Test 12: sqlite3 itself fails against a corrupt/non-database file ->
+# exit 3, INDETERMINATE, with a "sqlite3 lookup ... failed" reason distinct
+# from Test 11's "no matching row". This is the exact llm#1292-review gap:
+# both cases used to share the same log line via `2>/dev/null || true`.
+test_repo_path_lookup_sqlite_failure() {
+  local home_dir="${TMPDIR_ROOT}/home12" fake="${TMPDIR_ROOT}/roborev12"
+  mkdir -p "$home_dir/.claude/logs"
+  make_fake_roborev "$fake"
+
+  local db="${TMPDIR_ROOT}/corrupt12.db"
+  printf 'not a real sqlite database\n' > "$db"
+
+  local out rc=0
+  out="$(HOME="$home_dir" ROBOREV="$fake" ROBOREV_DB="$db" ROBOREV_REPO="llm" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    "$AUTOCLOSE" --dry-run 2>&1)" || rc=$?
+
+  local logfile="$home_dir/.claude/logs/roborev_autoclose.log"
+  if [ "$rc" -eq 3 ] \
+     && grep -qF "sqlite3 lookup for ROBOREV_REPO=llm failed" "$logfile" 2>/dev/null \
+     && ! grep -qF "no repos row matches" "$logfile" 2>/dev/null; then
+    pass "repo-path lookup: sqlite3 failure (corrupt DB) -> exit 3, distinct 'sqlite3 lookup failed' reason"
+  else
+    fail "repo-path lookup: sqlite3 failure (corrupt DB) -> exit 3, distinct 'sqlite3 lookup failed' reason" \
+      "rc=$rc out=$out logfile=$(cat "$logfile" 2>/dev/null)"
+  fi
+}
+
 echo "=== test_roborev_autoclose.sh ==="
 test_ok_empty
 test_indeterminate_empty_stdout
@@ -324,6 +420,9 @@ test_log_line_distinct
 test_retry_then_success
 test_retry_exhausted_is_indeterminate
 test_discovery_passes_scope_flags
+test_repo_path_lookup_success
+test_repo_path_lookup_no_matching_row
+test_repo_path_lookup_sqlite_failure
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

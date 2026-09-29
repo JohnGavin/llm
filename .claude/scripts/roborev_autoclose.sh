@@ -143,13 +143,57 @@ ROBOREV_REPO="${ROBOREV_REPO:-llm}"
 SQLITE="${SQLITE:-/usr/bin/sqlite3}"
 
 ROBOREV_REPO_PATH="${ROBOREV_REPO_PATH:-}"
-if [ -z "$ROBOREV_REPO_PATH" ] && [ -f "$ROBOREV_DB" ] && [ -x "$SQLITE" ]; then
-  ROBOREV_REPO_PATH="$("$SQLITE" "$ROBOREV_DB" "SELECT root_path FROM repos WHERE name='$ROBOREV_REPO' LIMIT 1;" 2>/dev/null || true)"
-fi
 if [ -z "$ROBOREV_REPO_PATH" ]; then
-  log "INDETERMINATE: could not resolve filesystem path for ROBOREV_REPO=$ROBOREV_REPO (missing $ROBOREV_DB, $SQLITE not executable, or no matching repos row)"
-  echo "roborev: INDETERMINATE — could not resolve repo path for ROBOREV_REPO=$ROBOREV_REPO; see $LOGFILE" >&2
-  exit 3
+  # Distinguish EVERY way this can fail to resolve, rather than one shared
+  # "could not resolve" bucket -- roborev #1292 review (10655): the prior
+  # single-branch version ran the sqlite lookup with `2>/dev/null || true`,
+  # so a locked-DB/schema-error sqlite FAILURE looked identical to a clean
+  # "no repos row named $ROBOREV_REPO" result, and a missing reviews.db
+  # could not be told apart from either. Phase 1 cannot scope its stale-job
+  # discovery correctly without a resolved path (see the "Repo scoping"
+  # comment above), so every one of these is INDETERMINATE (exit 3) -- never
+  # "proceed unscoped" and never conflated with "0 stale jobs".
+  if [ ! -f "$ROBOREV_DB" ]; then
+    log "INDETERMINATE: could not resolve filesystem path for ROBOREV_REPO=$ROBOREV_REPO -- reviews DB not found at $ROBOREV_DB"
+    echo "roborev: INDETERMINATE — reviews DB not found at $ROBOREV_DB; see $LOGFILE" >&2
+    exit 3
+  fi
+  if [ ! -x "$SQLITE" ]; then
+    log "INDETERMINATE: could not resolve filesystem path for ROBOREV_REPO=$ROBOREV_REPO -- sqlite3 not executable at $SQLITE"
+    echo "roborev: INDETERMINATE — sqlite3 not executable at $SQLITE; see $LOGFILE" >&2
+    exit 3
+  fi
+  # ROBOREV_REPO is operator-controlled (env var) but is interpolated
+  # directly into the SQL string below -- the sqlite3 CLI's one-shot mode
+  # has no parameterised-query support. Validate rather than escape.
+  if [[ ! "$ROBOREV_REPO" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    log "INDETERMINATE: ROBOREV_REPO='$ROBOREV_REPO' contains characters outside [A-Za-z0-9._-] -- refusing to interpolate into SQL"
+    echo "roborev: INDETERMINATE — ROBOREV_REPO contains invalid characters; see $LOGFILE" >&2
+    exit 3
+  fi
+
+  REPO_LOOKUP_ERR="$(mktemp "${TMPDIR:-/tmp}/roborev_autoclose_repo_lookup_err.XXXXXX")"
+  set +e
+  ROBOREV_REPO_PATH="$("$SQLITE" "$ROBOREV_DB" "SELECT root_path FROM repos WHERE name='$ROBOREV_REPO' LIMIT 1;" 2>"$REPO_LOOKUP_ERR")"
+  REPO_LOOKUP_RC=$?
+  set -e
+  REPO_LOOKUP_ERR_TEXT="$(tail -c 500 "$REPO_LOOKUP_ERR" 2>/dev/null | tr '\n' ' ')"
+  rm -f "$REPO_LOOKUP_ERR"
+
+  if [ "$REPO_LOOKUP_RC" -ne 0 ]; then
+    # sqlite3 itself failed (locked DB, schema error, corrupt file, ...) --
+    # this is NOT "no matching repo"; distinct reason, distinct log line.
+    log "INDETERMINATE: sqlite3 lookup for ROBOREV_REPO=$ROBOREV_REPO failed rc=$REPO_LOOKUP_RC: ${REPO_LOOKUP_ERR_TEXT}"
+    echo "roborev: INDETERMINATE — sqlite3 repo-path lookup failed (rc=$REPO_LOOKUP_RC); see $LOGFILE" >&2
+    exit 3
+  fi
+  if [ -z "$ROBOREV_REPO_PATH" ]; then
+    # sqlite3 ran cleanly and returned zero rows -- genuinely no repos row
+    # named $ROBOREV_REPO, distinct from a lookup FAILURE above.
+    log "INDETERMINATE: no repos row matches ROBOREV_REPO=$ROBOREV_REPO in $ROBOREV_DB"
+    echo "roborev: INDETERMINATE — no repos row matches ROBOREV_REPO=$ROBOREV_REPO; see $LOGFILE" >&2
+    exit 3
+  fi
 fi
 
 # Fetch open jobs, filter by enqueued_at < cutoff, emit ids.
