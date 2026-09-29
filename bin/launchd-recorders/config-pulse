@@ -1,2 +1,28 @@
 #!/bin/bash
-exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.config-pulse" -- "/nix/var/nix/profiles/default/bin/nix-shell" "/Users/johngavin/docs_gh/llm/default.nix" "--run" "/Users/johngavin/docs_gh/llm/.claude/scripts/config_pulse.sh"
+# Wait for DNS to resolve github.com before entering nix-shell (llm#1274
+# follow-up, 2026-09-28 incident): nix-shell evaluation of default.nix
+# fetches the pinned nixpkgs tarball over the network. This job fires at
+# 08:xx/09:xx, before the machine's network is reliably up after
+# sleep/wake, and on 2026-09-28 it (and knowledge-pulse) died at 09:17 with
+# "unable to download 'https://github.com/rstats-on-nix/nixpkgs/archive/
+# 2026-02-02.tar.gz': Could not resolve host: github.com". Six other cron
+# scripts already gate their network work on
+# .claude/scripts/wait_for_resolvable_host.sh (see that script's header
+# "Callers" list) -- config-pulse and knowledge-pulse were the two
+# remaining bin/launchd-recorders/* wrappers that exec'd nix-shell directly
+# with no wait. The DNS wait is '&&'-chained to the nix-shell exec, so a
+# timed-out wait exits this whole recorded unit non-zero -- fail loudly
+# (visible as a failed run in launchd_run_record.sh's ledger), never a
+# silent skip.
+#
+# Timeout budget (roborev #1292 review, 10656 Medium): the DNS wait runs
+# INSIDE launchd_run_record.sh's per-label timeout bound
+# (.claude/state/launchd-timeouts.txt), so that bound must stay strictly
+# above the wait's own budget (default 120s, wait_for_resolvable_host.sh) --
+# otherwise the outer bound kills the run at the same instant the wait
+# would have failed cleanly, and a DNS-wait failure becomes
+# indistinguishable from a job hang. com.claude.config-pulse's entry is
+# 240s = 120s DNS wait + 120s job-only bound; see that entry's comment.
+# tests/test_pulse_wrappers_wait_for_dns.sh asserts this relationship.
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.config-pulse" -- \
+  /bin/bash -c '/Users/johngavin/docs_gh/llm/.claude/scripts/wait_for_resolvable_host.sh --hosts github.com && exec "/nix/var/nix/profiles/default/bin/nix-shell" "/Users/johngavin/docs_gh/llm/default.nix" "--run" "/Users/johngavin/docs_gh/llm/.claude/scripts/config_pulse.sh"'

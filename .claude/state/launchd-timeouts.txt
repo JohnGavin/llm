@@ -78,7 +78,17 @@ com.claude.unified-duckdb-backup          60    # p95=5.95s, n=42, method A — 
 # for a job that already has a plist number would make the report's
 # "Timeout" column show a value that is not the one actually enforced —
 # exactly the kind of silent mismatch this whole change exists to prevent.
-com.claude.config-pulse                   120   # p95=22.9s, n=43, method A
+com.claude.config-pulse                   240   # p95=22.9s, n=43, method A -> 120s job-only
+                                                  # bound, PLUS the 120s default DNS wait
+                                                  # (wait_for_resolvable_host.sh) that now
+                                                  # runs INSIDE this same bound (llm#1292
+                                                  # review, roborev 10656 Medium) -- 120+120=
+                                                  # 240s. Without this, the DNS wait's own
+                                                  # timeout and the outer kill coincide, so a
+                                                  # clean "DNS never came up" is
+                                                  # indistinguishable from a job hang. See
+                                                  # tests/test_pulse_wrappers_wait_for_dns.sh
+                                                  # item 6, which asserts DNS budget < bound.
 com.johngavin.chrome-tab-backup           60    # p95=5.25s, n=16, method A — floor
 com.claude.roborev-project-backlog        60    # p95=2.95s, n=42, method A — floor
 com.claude.wiki-health-pulse              60    # p95=0s, n=41, method A — floor
@@ -89,7 +99,14 @@ com.claude.roborev-autoclose              4740  # p95=941.95s, n=4 only, method 
 com.claude.roborev-weekly-update          7500  # p95=1490.5s, n=7, method A
 com.claude.config-digest-email            420   # p95=74.65s, n=42, method A — single 582s hang, 2nd-highest only 89s
 com.claude.kb-digest-email                360   # p95=61.75s, n=42, method A — single 490s hang, 2nd-highest only 120s
-com.claude.knowledge-pulse                120   # p95=20.9s, n=42, method A — single 646s hang, 2nd-highest only 27s
+com.claude.knowledge-pulse                240   # p95=20.9s, n=42, method A — single 646s hang,
+                                                  # 2nd-highest only 27s -> 120s job-only bound,
+                                                  # PLUS the 120s default DNS wait
+                                                  # (wait_for_resolvable_host.sh) that now runs
+                                                  # INSIDE this same bound (llm#1292 review,
+                                                  # roborev 10656 Medium) -- 120+120=240s. See
+                                                  # com.claude.config-pulse's entry above for the
+                                                  # full rationale.
 com.claude.pr-status-pulse                60    # p95=3.0s, n=124, method A — single 703s hang, 2nd-highest only 4s
 com.claude.roborev-severity-autoclose     300   # p95=51.7s, n=42, method A — single 419s hang, 2nd-highest only 97s
 com.claude.roborev-agent-health           60    # p95=1.0s, n=1733, method A — floor
