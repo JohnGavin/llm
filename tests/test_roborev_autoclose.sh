@@ -69,11 +69,19 @@ EOF
 # Runs the real roborev_autoclose.sh --dry-run against an isolated HOME
 # (so LOGFILE / Phase-0 retention never touch the real ~/.claude or
 # ~/.roborev) with the given fake roborev fixture wired in via ROBOREV.
+#
+# ROBOREV_REPO_PATH is set to a dummy fixed path so the script's repo-path
+# resolution (normally a `sqlite3 $ROBOREV_DB` lookup against the `repos`
+# table -- llm#1274 follow-up) is bypassed; none of these fixtures set up a
+# real reviews.db. ROBOREV_AUTOCLOSE_RETRY_BACKOFF is set to "0 0" so the
+# discovery retry loop (up to 3 attempts on failure) never sleeps in tests.
 run_autoclose() {
   local home_dir="$1" fake_roborev="$2" \
         stdout_content="$3" stderr_content="$4" exit_code="$5"
   mkdir -p "$home_dir/.claude/logs"
   HOME="$home_dir" ROBOREV="$fake_roborev" \
+    ROBOREV_REPO_PATH="${ROBOREV_REPO_PATH:-$home_dir/fake-repo}" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="${ROBOREV_AUTOCLOSE_RETRY_BACKOFF:-0 0}" \
     FAKE_ROBOREV_STDOUT="$stdout_content" \
     FAKE_ROBOREV_STDERR="$stderr_content" \
     FAKE_ROBOREV_EXIT="$exit_code" \
@@ -186,6 +194,126 @@ test_log_line_distinct() {
   fi
 }
 
+# ── Tests 7-9 (llm#1274 follow-up, 2026-09-28 incident): retry-on-transient-
+# failure + explicit --all-branches/--repo scoping.
+#
+# 2026-09-28 13:05: ~/.claude/logs/roborev_autoclose.log recorded
+# "INDETERMINATE: stale-job discovery failed (roborev_list_rc=1
+# parse_rc=1): Error: failed to parse response: jsontext: read error:
+# unexpected EOF" -- a truncated daemon response. The identical command
+# succeeded moments later. A single-shot failure should no longer be fatal;
+# the discovery pipeline now retries up to 3 attempts before giving up.
+#
+# Separately: `roborev list --help` documents that list defaults to "jobs
+# for current repo and branch" -- Phase 1 previously passed neither
+# --all-branches nor --repo, so its scope silently depended on the caller's
+# cwd/branch while Phase 2 explicitly scoped to $ROBOREV_REPO via SQL. Both
+# phases must now scope identically.
+
+# make_fake_roborev_retry -- logs every invocation's full argv (one line
+# per call) to $ARGV_LOG, and fails its first $FAIL_COUNT "list"
+# invocations (exit $FAKE_ROBOREV_FAIL_EXIT, stderr $FAKE_ROBOREV_STDERR)
+# before succeeding with $FAKE_ROBOREV_STDOUT. Call count is tracked via
+# $COUNT_FILE so repeated invocations (the retry loop) see it increment.
+make_fake_roborev_retry() {
+  local path="$1"
+  cat > "$path" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "list" ]; then
+  printf '%s\n' "$*" >> "${ARGV_LOG}"
+  count=0
+  [ -f "${COUNT_FILE}" ] && count="$(cat "${COUNT_FILE}")"
+  count=$((count + 1))
+  printf '%s' "$count" > "${COUNT_FILE}"
+  if [ "$count" -le "${FAIL_COUNT:-0}" ]; then
+    printf '%s' "${FAKE_ROBOREV_STDERR:-fail}" >&2
+    exit "${FAKE_ROBOREV_FAIL_EXIT:-1}"
+  fi
+  printf '%s' "${FAKE_ROBOREV_STDOUT:-}"
+  exit 0
+fi
+exit 0
+EOF
+  chmod +x "$path"
+}
+
+# ── Test 7: fails once, succeeds on retry -> exit 0, one retry logged ─────
+test_retry_then_success() {
+  local home_dir="${TMPDIR_ROOT}/home7" fake="${TMPDIR_ROOT}/roborev7"
+  mkdir -p "$home_dir/.claude/logs"
+  make_fake_roborev_retry "$fake"
+  local argv_log="${TMPDIR_ROOT}/argv7.log" count_file="${TMPDIR_ROOT}/count7"
+  rm -f "$argv_log" "$count_file"
+
+  local out rc=0
+  out="$(HOME="$home_dir" ROBOREV="$fake" ROBOREV_REPO_PATH="$home_dir/fake-repo" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    ARGV_LOG="$argv_log" COUNT_FILE="$count_file" FAIL_COUNT=1 \
+    FAKE_ROBOREV_STDOUT='{"jobs": []}' \
+    "$AUTOCLOSE" --dry-run 2>&1)" || rc=$?
+
+  local logfile="$home_dir/.claude/logs/roborev_autoclose.log"
+  if [ "$rc" -eq 0 ] && echo "$out" | grep -qF "roborev: 0 stale jobs" \
+     && grep -q "retry 1/3" "$logfile" 2>/dev/null; then
+    pass "retry: fails once then succeeds -> exit 0, one retry logged"
+  else
+    fail "retry: fails once then succeeds -> exit 0, one retry logged" \
+      "rc=$rc out=$out logfile=$(cat "$logfile" 2>/dev/null)"
+  fi
+}
+
+# ── Test 8: fails every attempt -> exit 3 (INDETERMINATE) after 3 tries,
+# never "0 stale jobs" -- a retry that exhausts is still indeterminate.
+test_retry_exhausted_is_indeterminate() {
+  local home_dir="${TMPDIR_ROOT}/home8" fake="${TMPDIR_ROOT}/roborev8"
+  mkdir -p "$home_dir/.claude/logs"
+  make_fake_roborev_retry "$fake"
+  local argv_log="${TMPDIR_ROOT}/argv8.log" count_file="${TMPDIR_ROOT}/count8"
+  rm -f "$argv_log" "$count_file"
+
+  local out rc=0
+  out="$(HOME="$home_dir" ROBOREV="$fake" ROBOREV_REPO_PATH="$home_dir/fake-repo" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    ARGV_LOG="$argv_log" COUNT_FILE="$count_file" FAIL_COUNT=99 \
+    FAKE_ROBOREV_STDERR="daemon unreachable" FAKE_ROBOREV_FAIL_EXIT=1 \
+    "$AUTOCLOSE" --dry-run 2>&1)" || rc=$?
+
+  local calls
+  calls="$(cat "$count_file" 2>/dev/null || echo 0)"
+  if [ "$rc" -eq 3 ] && ! echo "$out" | grep -qF "0 stale jobs" && [ "$calls" -eq 3 ]; then
+    pass "retry: always fails -> exit 3 after exactly 3 attempts"
+  else
+    fail "retry: always fails -> exit 3 after exactly 3 attempts" \
+      "rc=$rc calls=$calls out=$out"
+  fi
+}
+
+# ── Test 9: Phase 1's `roborev list` call passes --all-branches and
+# --repo <ROBOREV_REPO_PATH>, so its scope matches Phase 2's and no longer
+# depends on the caller's cwd/branch.
+test_discovery_passes_scope_flags() {
+  local home_dir="${TMPDIR_ROOT}/home9" fake="${TMPDIR_ROOT}/roborev9"
+  mkdir -p "$home_dir/.claude/logs"
+  make_fake_roborev_retry "$fake"
+  local argv_log="${TMPDIR_ROOT}/argv9.log" count_file="${TMPDIR_ROOT}/count9"
+  rm -f "$argv_log" "$count_file"
+
+  HOME="$home_dir" ROBOREV="$fake" ROBOREV_REPO_PATH="/fake/repo/path" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    ARGV_LOG="$argv_log" COUNT_FILE="$count_file" FAIL_COUNT=0 \
+    FAKE_ROBOREV_STDOUT='{"jobs": []}' \
+    "$AUTOCLOSE" --dry-run >/dev/null 2>&1 || true
+
+  local argv_recorded
+  argv_recorded="$(cat "$argv_log" 2>/dev/null || true)"
+  if echo "$argv_recorded" | grep -q -- "--all-branches" \
+     && echo "$argv_recorded" | grep -qF -- "--repo /fake/repo/path"; then
+    pass "scope: Phase 1 passes --all-branches and --repo <ROBOREV_REPO_PATH>"
+  else
+    fail "scope: Phase 1 passes --all-branches and --repo <ROBOREV_REPO_PATH>" "argv=$argv_recorded"
+  fi
+}
+
 echo "=== test_roborev_autoclose.sh ==="
 test_ok_empty
 test_indeterminate_empty_stdout
@@ -193,6 +321,9 @@ test_indeterminate_garbage_stdout
 test_indeterminate_wrong_shape
 test_indeterminate_roborev_list_fails
 test_log_line_distinct
+test_retry_then_success
+test_retry_exhausted_is_indeterminate
+test_discovery_passes_scope_flags
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

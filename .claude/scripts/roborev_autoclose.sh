@@ -125,6 +125,33 @@ fi
 CUTOFF=$(date -u -v "-${THRESHOLD_DAYS}d" +%s 2>/dev/null \
        || date -u -d "${THRESHOLD_DAYS} days ago" +%s)
 
+# ── Repo scoping (llm#1274 follow-up, transient-failure + scope hardening) ──
+# ROBOREV_DB/ROBOREV_REPO/SQLITE were previously defined only down in Phase
+# 2 (below), where ROBOREV_REPO is used purely as a NAME in a SQL `WHERE
+# r.name = ...` clause. Phase 1's discovery step, by contrast, called
+# `roborev list --json --open --limit 1000` with NEITHER --all-branches NOR
+# --repo — `roborev list` defaults to "current repo, current branch" (see
+# `roborev list --help`), so Phase 1's scope silently depended on the
+# CALLER's cwd/branch while Phase 2's scope was pinned explicitly to
+# $ROBOREV_REPO. Move the declarations up and resolve $ROBOREV_REPO (a name)
+# to its filesystem root_path via the same `repos` table Phase 2 already
+# reads, so Phase 1 can pass that path to `--repo` and scope identically.
+# ROBOREV_REPO_PATH can be set directly to skip the lookup (tests, escape
+# hatch). Unresolvable -> INDETERMINATE (exit 3): never guess a repo scope.
+ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
+ROBOREV_REPO="${ROBOREV_REPO:-llm}"
+SQLITE="${SQLITE:-/usr/bin/sqlite3}"
+
+ROBOREV_REPO_PATH="${ROBOREV_REPO_PATH:-}"
+if [ -z "$ROBOREV_REPO_PATH" ] && [ -f "$ROBOREV_DB" ] && [ -x "$SQLITE" ]; then
+  ROBOREV_REPO_PATH="$("$SQLITE" "$ROBOREV_DB" "SELECT root_path FROM repos WHERE name='$ROBOREV_REPO' LIMIT 1;" 2>/dev/null || true)"
+fi
+if [ -z "$ROBOREV_REPO_PATH" ]; then
+  log "INDETERMINATE: could not resolve filesystem path for ROBOREV_REPO=$ROBOREV_REPO (missing $ROBOREV_DB, $SQLITE not executable, or no matching repos row)"
+  echo "roborev: INDETERMINATE — could not resolve repo path for ROBOREV_REPO=$ROBOREV_REPO; see $LOGFILE" >&2
+  exit 3
+fi
+
 # Fetch open jobs, filter by enqueued_at < cutoff, emit ids.
 #
 # CRITICAL (llm#1100): capture BOTH pipeline stages' exit codes explicitly.
@@ -143,13 +170,30 @@ CUTOFF=$(date -u -v "-${THRESHOLD_DAYS}d" +%s 2>/dev/null \
 # temp file, and check both exit codes BEFORE trusting an empty result.
 # Also stop discarding roborev's stderr — capture it so a real failure is
 # diagnosable from the log line instead of vanishing.
+#
+# CRITICAL (2026-09-28 incident): the daemon returned a genuinely truncated
+# response once — "failed to parse response: jsontext: read error:
+# unexpected EOF" — and the very same command succeeded moments later on
+# retry. A single-shot failure here used to go straight to INDETERMINATE
+# even though the daemon had simply hiccuped. Retry up to 3 attempts with a
+# short backoff before giving up; still exit 3 (never "0 stale jobs") if all
+# 3 fail — a retry that exhausts is still indeterminate, not a negative
+# result. ROBOREV_AUTOCLOSE_RETRY_BACKOFF overrides the two backoff delays
+# (space-separated seconds, default "5 15"); tests set it to "0 0".
 DISCOVERY_OUT="$(mktemp "${TMPDIR:-/tmp}/roborev_autoclose_discovery.XXXXXX")"
 DISCOVERY_ERR="$(mktemp "${TMPDIR:-/tmp}/roborev_autoclose_discovery_err.XXXXXX")"
 trap 'rm -f "$DISCOVERY_OUT" "$DISCOVERY_ERR"' EXIT
 
-set +e
-"$ROBOREV" list --json --open --limit 1000 2>"$DISCOVERY_ERR" \
-  | python3 -c "
+read -ra _RETRY_BACKOFFS <<< "${ROBOREV_AUTOCLOSE_RETRY_BACKOFF:-5 15}"
+
+ROBOREV_LIST_RC=1
+PARSE_RC=1
+for _attempt in 1 2 3; do
+  : > "$DISCOVERY_OUT"
+  : > "$DISCOVERY_ERR"
+  set +e
+  "$ROBOREV" list --json --open --limit 1000 --all-branches --repo "$ROBOREV_REPO_PATH" 2>"$DISCOVERY_ERR" \
+    | python3 -c "
 import json, sys
 from datetime import datetime, timezone
 cutoff = int(sys.argv[1])
@@ -177,15 +221,26 @@ for j in jobs:
     if ds < cutoff:
         print(j['id'])
 " "$CUTOFF" >"$DISCOVERY_OUT" 2>>"$DISCOVERY_ERR"
-DISCOVERY_PIPE_STATUS=("${PIPESTATUS[@]}")
-set -e
+  DISCOVERY_PIPE_STATUS=("${PIPESTATUS[@]}")
+  set -e
 
-ROBOREV_LIST_RC="${DISCOVERY_PIPE_STATUS[0]}"
-PARSE_RC="${DISCOVERY_PIPE_STATUS[1]}"
+  ROBOREV_LIST_RC="${DISCOVERY_PIPE_STATUS[0]}"
+  PARSE_RC="${DISCOVERY_PIPE_STATUS[1]}"
+
+  if [ "$ROBOREV_LIST_RC" -eq 0 ] && [ "$PARSE_RC" -eq 0 ]; then
+    break
+  fi
+
+  if [ "$_attempt" -lt 3 ]; then
+    _backoff="${_RETRY_BACKOFFS[$((_attempt - 1))]:-5}"
+    log "retry $_attempt/3: stale-job discovery failed (roborev_list_rc=$ROBOREV_LIST_RC parse_rc=$PARSE_RC) — retrying in ${_backoff}s"
+    sleep "$_backoff"
+  fi
+done
 
 if [ "$ROBOREV_LIST_RC" -ne 0 ] || [ "$PARSE_RC" -ne 0 ]; then
   DISCOVERY_ERR_TEXT="$(tail -c 2000 "$DISCOVERY_ERR" 2>/dev/null | tr '\n' ' ')"
-  log "INDETERMINATE: stale-job discovery failed (roborev_list_rc=$ROBOREV_LIST_RC parse_rc=$PARSE_RC): ${DISCOVERY_ERR_TEXT}"
+  log "INDETERMINATE: stale-job discovery failed after 3 attempts (roborev_list_rc=$ROBOREV_LIST_RC parse_rc=$PARSE_RC): ${DISCOVERY_ERR_TEXT}"
   echo "roborev: INDETERMINATE — stale-job discovery failed (roborev_list_rc=$ROBOREV_LIST_RC parse_rc=$PARSE_RC); see $LOGFILE" >&2
   exit 3
 fi
@@ -229,9 +284,8 @@ echo "roborev: closed $CLOSED / $N stale jobs (>${THRESHOLD_DAYS}d, $FAILED fail
 # a review, so the daemon API rejects `close` with 404. Resolve by
 # direct DB UPDATE — stop daemon, backup DB, transition status='failed'
 # → 'canceled', restart daemon. Scoped to the current repo only.
-ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
-ROBOREV_REPO="${ROBOREV_REPO:-llm}"
-SQLITE="${SQLITE:-/usr/bin/sqlite3}"
+# ROBOREV_DB / ROBOREV_REPO / SQLITE are declared earlier (see "Repo
+# scoping" above Phase 1) so both phases reuse the same resolved values.
 if [ ! -f "$ROBOREV_DB" ] || [ ! -x "$SQLITE" ]; then
   log "phase2 skipped: missing $ROBOREV_DB or $SQLITE"
   exit 0
