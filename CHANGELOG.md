@@ -22,6 +22,51 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - `agents_md_audit.sh` reports pre-existing `AGENTS.md` count drift (skills 73→74, rules 91→100, mem 18→55) — confirmed identical on unmodified `main` prior to this session; not introduced or fixed by this change.
 - roborev repo-wide backlog shows `verdicts.failed=32`/`addressed=27` (a gap of 5), `crash=0`/`quota=0`, consistency check reports `roborev:consistent` — pre-existing, not from this session's 2-file docs PR (whose own commit-scoped merge-gate check passed).
 
+## 2026-09-20 (session: roborev report defects, overnight self-review audit, Actions storage, feat/cc-20260920-095744)
+
+### Completed
+
+- **Weekly rollup "closed" made consistent** ([#1221](https://github.com/JohnGavin/llm/pull/1221)). The global row counted only reviews opened AND closed this week; per-project rows counted every closure in the week, so `closed / opened` reached 8552% and the "median" was an `AVG`. Now one definition (closed in the week, any age), the opened-this-week cohort is a separate labelled column, real median, and the script exits 1 if per-project rows do not sum to the global total or a query fails (no more swallowed-to-zero). Real week 09-13..19: closed 3178 (any age), of which 50 opened this week (89.3% cohort rate).
+- **Job ids, not review ids, wherever a reader could paste into the CLI** ([#1225](https://github.com/JohnGavin/llm/pull/1225) rollup, [#1230](https://github.com/JohnGavin/llm/pull/1230) daily report). `roborev show|close|comment` take `review_jobs.id`; `reviews.id` is a different id space (review 9409 is job 12500).
+- **Daily report** ([#1222](https://github.com/JohnGavin/llm/pull/1222)): the ">50% unclassified" warning needs at least 5 findings (it fired on "1 of 1"). The one unclassified finding (micromort #10014) is a genuine finding with no severity marker and stays unclassified.
+- **Overnight self-review** ([#1223](https://github.com/JohnGavin/llm/pull/1223), [#1226](https://github.com/JohnGavin/llm/pull/1226), [#1231](https://github.com/JohnGavin/llm/pull/1231)): audit found the review reads only four metrics tables, so no conversation lesson could reach it (two memory files and two rules were written 2026-09-19 and never surfaced). Added a git-derived "Lessons captured" section, an honest verdict wording, `errors` as a fourth source table, and one shared by-design-block exclusion for detectors 3 and 5 (3 false criticals to 0). [#1224](https://github.com/JohnGavin/llm/pull/1224) deleted the dead stage-1 email code (no consumers, plist not loaded). #1231 corrects the audit document itself.
+- **`sessions.project` records the project, not the branch slug** ([#1228](https://github.com/JohnGavin/llm/pull/1228)): 517 of 2834 sessions (18%) over 60 days carried a slug. History is not rewritten.
+- **Code Coverage green again** ([#1227](https://github.com/JohnGavin/llm/pull/1227)): red since #1194 (2026-09-13) because two hard `file.exists` assertions ran where covr strips `.claude/`. Now skips on the stripped tree, still hard-fails in the real tree.
+- **False-alarm criticals recorded** ([#1229](https://github.com/JohnGavin/llm/pull/1229)): two `data_quality_incidents` rows cover the 3 `compound_guard` criticals; applied to the live DB.
+- **Roborev triage:** 7 of 10 "stuck" findings closed with evidence; roborev 9507/9508 closed as applying only to an archived branch of a private repo (tag `archive/template-20260811`, harvest note on the tip, local only).
+- **Actions storage over quota traced to `llmtelemetry` R-package caches** (not artifacts): 6 x 384 MB from `setup-r-dependencies`' lockfile-hash key; pruned to 2; [llmtelemetry#370](https://github.com/JohnGavin/llmtelemetry/pull/370) sets `cache: false` on the two daily workflows (setup measured 48-61 s on miss days vs 43-67 s on hit days). No charge incurred (net $0).
+
+### Failed Approaches
+
+- **Recommended retiring `fixer_heavy_day` on the audit's claim that it fires at its own floor.** Only 2 of 47 findings sit at the floor; 45 are above it (up to 39 of 52 dispatches). Caught because the dispatch told the agent to verify the premise before editing. Same session: the audit's advice to drop overnight sections 3c/3d conflicts with `housekeeping-framework` (each task needs a digest section), and ClaudeProbe is dormant, not dead (external CodexBar producer, silent since 2026-08-16). All three kept; #1231 records the corrections.
+- **Ran `data_quality_incidents_seed_apply.sh --help` to find a dry-run flag.** The script has no argument handling and applied the seed to the live DB (one older `llm1035` row; idempotent, no harm, but not what I had said I would do).
+- **Predicted "3 to 5 rows" for the seed apply** without checking the seed against the live table; the seed also held an unapplied older incident.
+- **Five agents stalled together ("no progress for 600s").** Three had uncommitted work that was salvaged (read the diff, ran the tests, fixed one wrong expectation, falsified, committed); one worktree had been removed as unchanged (nothing to salvage). Later dispatches were told to commit early.
+- **Said the cron wrappers would pick up merged fixes, unverified.** The main checkout was 12 commits behind; the fast-forward was safe (no overlap with local edits) and is now done.
+
+### Accuracy / Metrics
+
+- Coverage workflow: red since 2026-09-13, green on `b422cbc`.
+- Tests: daily-email 49 tests (0 failed, 164 assertions passed); overnight self-review 88 assertions passed.
+- Actions storage (Sept, to the 20th): 1038 GB-hours vs about 360 included; `llmtelemetry` alone 372. Caches now 2 x 384 MB.
+
+### Known Limitations
+
+- `llmtelemetry` stays over the Actions storage quota until its 2 remaining caches age out (about 7 idle days). Budget setting at github.com/settings/billing/budgets was NOT checked (API returns 404 for personal accounts). After #370: verify the next scheduled runs show no cache-save step and no new cache.
+- `deploy-dashboard.yaml` and `self-review-email.yml` in `llmtelemetry` still cache; their no-cache cost is unmeasured.
+- `test-roborev-dashboard-link.R` has 3 pre-existing failures (identical on unmodified main).
+- Per-tool-call hooks (`context_monitor.sh`, `compound_command_guard.sh`, `log_agent_run.sh`) still pass `basename $(pwd)` into `errors.context`/hook events; resolving there adds git spawns per tool call.
+- Overnight sections 3c/3d/3e duplicate the 08:00-08:05 emails by design (`housekeeping-framework`); reducing email count means retiring those emails or amending the rule (open design decision).
+- A private repo has about 26 other unmerged branches; not triaged.
+- Roborev at session end: 11 gemini crash-class job failures since 09-13, 5 failed verdicts (1 addressed), 64 open reviews.
+
+## 2026-09-19 (session-end continued: feat/cc-20260913-122624)
+
+### Completed
+
+- **Merged** [#1220](https://github.com/JohnGavin/llm/pull/1220) (the icu/self-location fix below) after explicit "merge 1220" instruction — MERGEABLE/CLEAN, all CI checks passing, squash-merged. Confirmed live on `origin/main` (`eb27638`).
+- **Closed** [#1133](https://github.com/JohnGavin/llm/pull/1133) without merging, with an explanatory comment. Investigation found: all 3 non-CHANGELOG files it added were already byte-identical on `main` (shipped via #1116); the issue it resolves (#1121) was already closed; the PRs it references merging (#1130, #1131) were already merged; and its one reusable "Failed Approaches" lesson (`launchctl bootout`+`bootstrap` alone doesn't clear a stale BTM Name cache) was already documented in the current CHANGELOG from an earlier entry on the same issue. The remaining conflict was purely CHANGELOG.md's prepend-point on a 17-day-stale branch — no content was actually lost by closing.
+
 ## 2026-09-19 (session: weekly health-report icu bug + Downloads housekeeping, feat/cc-20260913-122624)
 
 ### Completed
@@ -117,6 +162,32 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 ### Known Limitations
 - Unrelated uncommitted work found in the working tree at session end (`.claude/rules/visualization.md` modified, `.claude/rules/shinylive-vs-js-duplication.md` untracked, both about a different topic — dual JS/Shinylive implementations) — not made by this session; left untouched and flagged to the user rather than committed, stashed, or discarded.
+
+## 2026-09-02 (session-end continued: feat/cc-20260831-110702)
+
+### Completed
+- **Merged** [#1130](https://github.com/JohnGavin/llm/pull/1130) (prior session's changelog PR) and [#1131](https://github.com/JohnGavin/llm/pull/1131) (the original 3 `llm#1121` jobs — chrome-tab-backup, secret-exposure-scan, private-data-history-audit).
+- **6 new Signal braindumps triaged** (ids 44-49): micromort quiz-timestamp + timing-distribution requests combined into [micromort#141](https://github.com/JohnGavin/micromort/issues/141); a personal contact reference filed in a private repo (local-only, per `public-private-repo-boundary`); two notes for a private project appended as requirements onto its existing issue (same initiative, not a new issue number); one AI-hygiene/session-tagging business note recorded informational — no forced project match, no invented false-precision issue.
+- **tlang CI root-caused correctly on re-check**: the prior session's "macos-latest regression" framing was revised after finding the sibling `macos-latest` job in the *same run* succeeded at the identical `Install Nix` step — that's a transient `cachix/install-nix-action` nix-daemon-kickstart flake (`Could not kickstart service "org.nixos.nix-daemon": Operation not permitted`), not a deterministic image regression. Re-ran the failed job rather than pinning `macos-14` (which the evidence didn't support) — passed.
+- **AgentsView vendor feedback drafted** (no code fix possible — closed-source binary) as a plain-text report in the session scratchpad, in John's voice per `outbound-writing-style`, citing the full diagnostic evidence chain from the prior entry.
+- **llm#1121 — remaining live-machine work completed and verified**:
+  - Solved the stale-BTM-cache mystery: a normal `launchctl bootout`+`bootstrap` never clears a Background Task Management "Name" cached before a job's wrapper existed. A full remove-plist-file → bootout → restore → re-register cycle does. Verified live on 2 of the 3 stale roborev jobs (`roborev-agent-health`, `roborev-autoclose`) — both now correctly show their real name instead of "bash". `roborev-bridge` deliberately left untouched: the fix worked cleanly once and needed a `launchctl load -w` fallback (after `bootstrap` failed twice) on the second — didn't want to risk a third job ending up unloaded for a cosmetic fix.
+  - Deployed PR #1131's fix live: copied the 3 updated plists to `~/Library/LaunchAgents/`, reloaded via `bootout`+`bootstrap` (private-data-history-audit's `bootout` returned exit 5/IO-error — harmless, `bootstrap` alone succeeded), verified via `sfltool dumpbtm` that all 3 now show their correct names.
+  - Net result: 5 of the 6 jobs originally flagged in `llm#1121` are fixed and verified live (`secret-exposure-scan`, `private-data-history-audit`, `chrome-tab-backup`, `roborev-agent-health`, `roborev-autoclose`). Only `roborev-bridge` and the separate "item from unidentified developer" code-signing sub-problem remain open.
+
+### Failed Approaches
+- `launchctl bootout`+`bootstrap` alone to clear a stale BTM Name cache — silently does nothing; the cache only clears on a full remove-and-recreate of the LaunchAgent registration.
+- Retrying `launchctl bootstrap` a second time immediately after a failed first attempt (post remove+recreate) — failed identically twice for `roborev-autoclose`; `launchctl load -w` (the legacy, non-preferred syntax) succeeded immediately where `bootstrap` kept failing. Root cause of the `bootstrap`-specific flakiness not identified.
+
+### Accuracy / Metrics
+- roborev: 0 crash, 0 quota this window — clean.
+- `llm#1121`: 5/6 originally-flagged jobs fixed and live-verified; 0 jobs left in a broken/unregistered state (both roborev-job experiments that hit trouble were fully restored before moving on).
+
+### Known Limitations
+- `roborev-bridge` still shows "bash" in Background Task Management — the fix recipe is proven, just not applied here due to the `bootstrap` flakiness observed on the sibling job.
+- "Item from unidentified developer" code-signing sub-problem — still not attempted.
+- AgentsView vendor report is drafted but not sent — needs John to submit it via agentsview.io's contact form (no public issue tracker exists).
+- The stray uncommitted `.claude/rules/visualization.md` change sitting in the main checkout (not this session's work) was left untouched throughout — flagging its continued presence for whoever owns it.
 
 ## 2026-09-01 (session-end: feat/cc-20260831-110702)
 
@@ -231,6 +302,73 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
   the source this session (workaround only: `env -u GH_TOKEN`).
 - llmtelemetry dashboard scoping produced a recommendation only — no implementation, no
   tracked issue filed yet.
+
+## 2026-08-27 (session 3) — a subagent's correction was itself wrong, and a config regen nearly erased why
+
+### Completed
+
+- **[#1049](https://github.com/JohnGavin/llm/pull/1049) (llm#1044)** — golden-fixture eval
+  harness for roborev review-agent regressions. 5 fixtures (real bug / clean / empty /
+  severity-parser trip / larger) replayed through the live `roborev` binary; 5/5 pass. The
+  harness caught and fixed a real bug in its own error path (`set -e` swallowing an ERROR
+  case) during its own dogfooding run.
+- **[#1050](https://github.com/JohnGavin/llm/pull/1050) (llm#1045)** — `agent_runs` gains
+  `dispatch_id`/`parent_dispatch_id`/`outcome` (nullable, additive — population is a
+  separate Phase 2). New reaper mirrors `session_reaper.sql`; the 49 rows stuck at
+  `status='running'` since 2026-08-09 (18+ days) were backfilled to `'unknown'` against the
+  live DB (backed up first), recorded in `data_quality_incidents`, not silently rewritten.
+- **[#1051](https://github.com/JohnGavin/llm/pull/1051) (llm#1035, DB-side half)** — the
+  not-reviewed classifier that #1043 already applied to the daily email is now shared:
+  ported into `roborev_project_backlog.sh` and the `session_init.sh` banner, so a review
+  that never ran stops reading as clean everywhere except the one email that already knew
+  better.
+- **[procedural-scenes#1](https://github.com/JohnGavin/procedural-scenes/pull/1),
+  [coMMpass-analysis#103](https://github.com/JohnGavin/coMMpass-analysis/pull/103)** — the
+  actual root-cause fix (pin `agent = 'claude-code'`; gemini refuses to read roborev's
+  gitignored snapshot diff) applied to the two remaining exposed repos, matching
+  llmtelemetry (#356) and historical, which already had it.
+- Filed [kenn-io/roborev#1104](https://github.com/kenn-io/roborev/issues/1104) upstream
+  requesting a first-class "could not review" status distinct from `verdict=0`.
+- Deleted two dead branches: `fix/1035-roborev-report-split` (turned out to be a normal
+  merged-branch remnant — PR #1043 was opened *from* it, not a stranded duplicate as first
+  assumed) and `fix/roborev-agent-pin-1035` in procedural-scenes (abandoned after
+  discovering that repo's local `main` shares no history with `origin/main`).
+- All five PRs merged on explicit instruction.
+
+### Failed Approaches
+
+- Dispatched three `isolation: "worktree"` fixer agents from a session whose own cwd is
+  already a non-main worktree. Isolation silently failed to create a fresh worktree for two
+  of three — both correctly self-halted before writing, per their own mandatory self-check,
+  but landed their finished work as uncommitted files in the *parent session's* shared
+  worktree instead. Recovered by hand: inventoried the disjoint file sets, copied each into
+  a properly isolated worktree, verified, committed, PR'd. The third dispatch needed
+  `$WORKTREE_PATH` hard-pinned in the prompt (no "capture your own pwd") before it would
+  land cleanly the first time. Filed as product feedback.
+- Nearly deleted a documented, reasoned decision: trusted a subagent's claim that
+  richard/coMMpass were "still exposed" without re-verifying against that repo's own
+  history first. `roborev config set` on coMMpass silently stripped a 7-line comment
+  explaining a prior incident (llm#964 — a codex pin that failed terminally) before I
+  checked what I was overwriting. Reverted, verified the premise properly against
+  `~/.roborev/reviews.db` (both repos did have live not-reviewed failures, confirmed by
+  output text), then hand-edited the file to keep the original reasoning alongside the new
+  decision instead of letting the tool's regeneration erase it.
+- A subagent asserted "the briefing was wrong" (claiming #1035's report-side fix was
+  unmerged) based on finding a similarly-titled commit on what it assumed was a stranded
+  branch — it hadn't checked whether that commit was reachable from `origin/main`, nor that
+  the branch itself was the actual source of the already-merged PR. Verified with `git
+  merge-base --is-ancestor` and a content diff before acting on the claim either way; it was
+  wrong on both counts.
+
+### Known Limitations
+
+- richard's and coMMpass's pre-existing not-reviewed backlog rows are not retroactively
+  reclassified — only reviews run after today's agent pin benefit.
+- `agent_runs.dispatch_id`/`parent_dispatch_id` population (Phase 2 of
+  `agent-identity-and-task-scopes`) is still not implemented — columns exist and are
+  nullable, nothing writes them yet.
+- richard's local `main` checkout has no common git history with `origin/main` — a
+  pre-existing repo-hygiene issue, left untouched, flagged for follow-up.
 
 ## 2026-08-27 (session 2) — the same defect in eleven places, twice in my own new code
 
@@ -1245,6 +1383,24 @@ will look different in the particulars and identical in shape.
 - Vignette selected-tab is black in BOTH light and dark mode (per instruction); light mode may want a lighter selected style — awaiting user call.
 - Vignette changes go live only after CI re-renders `docs/` (gitignored) on the deploy run.
 - 7 unaddressed roborev verdict findings remain (standing backlog).
+
+## 2026-07-22 — cross-project session: micromort deploy+contrast, best-stats-ideas repo, a private repo, KB hygiene
+
+### Completed
+- **micromort** — shipped two PRs, merged + deployed + verified live (all 10 articles 200):
+  - [#127](https://github.com/JohnGavin/micromort/pull/127) (deploy/#126): fixed `architecture.html` shipping a `tar_make()` placeholder — two targets built to NULL because `tar_visnetwork()`/`tar_network()` were called re-entrantly inside `tar_make()` (error swallowed by `tryCatch→NULL`); wrapped in `callr::r()`, added `visNetwork` to DESCRIPTION, regenerated the RDS fallbacks (80 B NULL → 3440/1000 B). Hardened the deploy gate: strip code-fold blocks before the error-pattern grep (killed 4 false positives) + a `check-html` job gating deploy on push **and** PR. The deploy workflow, red since 2026-07-10, is green again.
+  - [#128](https://github.com/JohnGavin/micromort/pull/128) (contrast/#125): WCAG-AA sweep across all quiz/dashboard vignettes (`.help-link` 1.5→5.4:1, `.explanation-panel` 1.05→14.6:1, causes_of_death container, etc.) + wired the shared post-render contrast script into `vignettes/_quarto.yml`.
+- **best-stats-ideas** — new PUBLIC repo (https://github.com/JohnGavin/best-stats-ideas) from `proj/stats/ideas`; published only the plan + notes, excluded all symlinks (3, into private locations) and `.DS_Store`. Added a "further candidates" subsection + moved EDA/randomized-experiments into Foundations. Later removed `PerformanceCurves_db.md` to a local archive outside git on request.
+- **a local private repo** — data update, removed a redundant page, and made its update script resolve the repo root from its own path (`commandArgs`) so it runs from any cwd.
+- Filed KB-hygiene [#801](https://github.com/JohnGavin/llm/issues/801) (2 raw/ files stale >90d). PR #798 (commands-table parser) merged earlier.
+
+### Failed Approaches
+- micromort #128 took **4 fixer dispatches** — repeated "launch a background build then end the turn" self-termination (agents claimed they'd "monitor" a bg build but died); one zombie re-notified 5×. Lesson: for foreground-critical multi-build work, explicitly forbid background-and-return and require finish-before-report; stop zombies with TaskStop.
+- The contrast fix initially rebuilt `vignettes/*.html` but not the pkgdown `docs/articles/*.html` the workflow actually **deploys** → would have been a merged-≠-live no-op. Then `pkgdown::build_article()` silently **skipped** overwriting `chronic_quiz_shinylive.html` ("not generated by pkgdown"), so the fix never reached that page though the source had it; `git rm` + rebuild fixed it. Lesson: `check_dark_contrast.sh` only flags inline light backgrounds, not class fg/bg pairs — it passed on the stale file, so it's not a sufficient proof the fix landed.
+
+### Known Limitations
+- roborev NOT-CLEAN: 8 gemini crashes recorded (all >24h old — consistency check reports consistent, 0 reviews in-window; the persistent gemini-agent outage, not a new regression).
+- micromort: `_includes/toolbar.html` dark-mode CSS reaches `build_article` output inconsistently — verified NOT a live gap after #128 (no uncovered callout), so no issue filed; watch on future articles.
 
 ## 2026-07-17 — vignette paging (#778), publish-gate grob/blank-plot fixes, dead telemetry tables
 
