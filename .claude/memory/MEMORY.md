@@ -63,3 +63,7 @@ One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 - [Agent Worktree Pinning](feedback_agent-worktree-pinning.md) — an agent is pinned to ITS OWN harness worktree; to land on an existing PR branch, pre-create ~/docs_gh/worktrees/<project>/<branch>/ (llm#1190)
 - [Shared Fixture Keys Make Tests Non-Deterministic](feedback_shared-fixture-keys-make-tests-nondeterministic.md) — two tests sharing a key tie on a second-resolution timestamp; green-over-broken is the danger (llm#1190)
 - [`historical` Repo Is Intentionally Public](feedback_historical-repo-is-intentionally-public.md) — quant/market research, not personal data; public-private-boundary's "money" trigger doesn't apply
+- [roborev: Job Id vs Review Id](reference_roborev-job-id-vs-review-id.md) — `roborev show/close/comment` take review_jobs.id, not reviews.id; resolve via sqlite before acting (llm#1225/#1230)
+- [Verify Inherited Conclusions](feedback_verify-inherited-conclusions.md) — an audit/subagent conclusion is a claim; fixer_heavy_day "at its floor" was 2 of 47; tell dispatches to verify the premise first (2026-09-20)
+- [`--help` May Execute the Script](feedback_help-flag-may-execute.md) — a script without arg parsing just runs; read its header instead (an accidental live-DB seed apply, 2026-09-20)
+- [GitHub Actions Storage Alert](reference_github-actions-storage-billing.md) — billing usage API works, budgets 404; setup-r-dependencies writes a 384 MB cache per dependency release, `cache: false` measured neutral (llmtelemetry#370)
