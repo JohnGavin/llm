@@ -4,6 +4,12 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-28 (session: private_repo_detail_guard.sh word-boundary fix, fix/private-repo-guard-word-boundary)
+
+### Completed
+
+- **Fixed a false positive in `private_repo_detail_guard.sh`'s NAME matching.** User report: a private repo whose name is a short common-word stem (clears `PRIVATE_DETAIL_MIN_NAME_LEN`) false-blocked a `gh issue create`/`gh pr create` whose body used an unrelated longer word containing that stem as a substring, in an unrelated public repo's radiation-dose data (the micromort project). Root cause: the NAME check used `grep -qF` (fixed-string substring match, no word-boundary anchoring), so the stem matched inside the longer word exactly as it would inside a genuine mention. Fixed by adding `-w` to the NAME-matching grep only (`grep -qwF`) — whole-word, fixed-string, no manual regex-escaping needed for names containing metacharacters. PATH matching (a separate grep a few lines below) stays substring-based on purpose — a path is inherently distinctive. Added two new `--selftest` cases (synthetic fixture only, never a real repo name) proving the substring-inside-a-longer-word case now ALLOWs and the same name as its own standalone word still BLOCKs (falsification pair). Full selftest: 22/22 PASS.
+
 ## 2026-09-27 (session: single-source-of-truth rule generalisation, feat/single-source-of-truth-rule)
 
 ### Completed
