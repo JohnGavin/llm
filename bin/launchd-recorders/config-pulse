@@ -14,5 +14,15 @@
 # timed-out wait exits this whole recorded unit non-zero -- fail loudly
 # (visible as a failed run in launchd_run_record.sh's ledger), never a
 # silent skip.
+#
+# Timeout budget (roborev #1292 review, 10656 Medium): the DNS wait runs
+# INSIDE launchd_run_record.sh's per-label timeout bound
+# (.claude/state/launchd-timeouts.txt), so that bound must stay strictly
+# above the wait's own budget (default 120s, wait_for_resolvable_host.sh) --
+# otherwise the outer bound kills the run at the same instant the wait
+# would have failed cleanly, and a DNS-wait failure becomes
+# indistinguishable from a job hang. com.claude.config-pulse's entry is
+# 240s = 120s DNS wait + 120s job-only bound; see that entry's comment.
+# tests/test_pulse_wrappers_wait_for_dns.sh asserts this relationship.
 exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.config-pulse" -- \
   /bin/bash -c '/Users/johngavin/docs_gh/llm/.claude/scripts/wait_for_resolvable_host.sh --hosts github.com && exec "/nix/var/nix/profiles/default/bin/nix-shell" "/Users/johngavin/docs_gh/llm/default.nix" "--run" "/Users/johngavin/docs_gh/llm/.claude/scripts/config_pulse.sh"'

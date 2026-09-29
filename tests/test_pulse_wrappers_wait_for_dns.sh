@@ -102,7 +102,32 @@ for wrapper in config-pulse knowledge-pulse; do
   # /bin/bash -c '...' and substitute fixture stand-ins for the real
   # absolute helper/nix-shell paths, so a DNS-wait failure is PROVEN to
   # short-circuit before nix-shell runs -- not merely asserted by grep.
-  inner="$(printf '%s' "${CONTENT}" | sed -n "s/^.*\/bin\/bash -c '\(.*\)'\$/\1/p")"
+  #
+  # roborev #1292 review (10656 Low): the prior extraction used a
+  # line-anchored greedy sed pattern (`^.*'...'$`), which only works because
+  # the wrapper's inner command happens to be the last thing on a single
+  # physical line. Reformatting it across multiple lines, or adding an
+  # embedded quote, would silently change what gets captured (or fail
+  # extraction entirely, which this function does still catch below --
+  # the fragility was in what a REFORMAT could do, not in a missing check).
+  # Flatten the whole file to one line first (so line boundaries can't
+  # matter), then use bash parameter-expansion suffix/prefix stripping
+  # instead of a regex: `${FLAT#*pattern}` strips the SHORTEST prefix up to
+  # the first "/bin/bash -c '" (unambiguous -- there is exactly one), and
+  # `${after%\'*}` strips the SHORTEST suffix starting at a `'`, which bash
+  # resolves to the LAST quote in the string (shortest-suffix-match anchors
+  # as late as possible) -- i.e. the closing quote of the outer '...', same
+  # result as before but independent of line layout.
+  FLAT_CONTENT="$(printf '%s' "${CONTENT}" | tr '\n' ' ')"
+  case "${FLAT_CONTENT}" in
+    *"/bin/bash -c '"*)
+      after="${FLAT_CONTENT#*/bin/bash -c \'}"
+      inner="${after%\'*}"
+      ;;
+    *)
+      inner=""
+      ;;
+  esac
   if [ -z "${inner}" ]; then
     fail "${wrapper}: could not extract inner /bin/bash -c command for behavioral test" "content=${CONTENT}"
     continue
@@ -153,6 +178,34 @@ EOF
     pass "${wrapper}: DNS-wait success proceeds to nix-shell"
   else
     fail "${wrapper}: DNS-wait success proceeds to nix-shell" "marker missing"
+  fi
+done
+
+# ── 6. Timing relationship: the DNS wait's own timeout budget must stay
+# strictly BELOW each label's launchd-timeouts.txt bound (roborev #1292
+# review, 10656 Medium). The DNS wait now runs INSIDE
+# launchd_run_record.sh's per-label timeout bound -- if the two coincide (or
+# the wait's budget exceeds the outer bound), a clean DNS-wait timeout and
+# the outer bound killing the whole unit become indistinguishable (they fire
+# at the same instant, or the outer kill fires first), defeating the "fail
+# loudly with a clean DNS-wait failure" design these wrappers' own header
+# comments describe. Reads the DNS wait's default straight from
+# wait_for_resolvable_host.sh (not hardcoded) so this stays correct if that
+# default ever changes.
+DNS_DEFAULT_TIMEOUT="$(grep -oE 'WAIT_FOR_HOST_TIMEOUT:-[0-9]+' "${REPO_ROOT}/.claude/scripts/wait_for_resolvable_host.sh" | head -1 | grep -oE '[0-9]+$')"
+DNS_DEFAULT_TIMEOUT="${DNS_DEFAULT_TIMEOUT:-120}"
+
+for wrapper_label in com.claude.config-pulse com.claude.knowledge-pulse; do
+  bound="$(grep -E "^${wrapper_label}[[:space:]]" "${REPO_ROOT}/.claude/state/launchd-timeouts.txt" | awk '{print $2}')"
+  if [ -z "${bound}" ]; then
+    fail "${wrapper_label}: has a launchd-timeouts.txt bound" "no entry found in .claude/state/launchd-timeouts.txt"
+    continue
+  fi
+  if [ "${DNS_DEFAULT_TIMEOUT}" -lt "${bound}" ]; then
+    pass "${wrapper_label}: DNS-wait budget (${DNS_DEFAULT_TIMEOUT}s) < launchd-timeouts.txt bound (${bound}s)"
+  else
+    fail "${wrapper_label}: DNS-wait budget (${DNS_DEFAULT_TIMEOUT}s) < launchd-timeouts.txt bound (${bound}s)" \
+      "DNS wait budget must stay strictly below the outer timeout bound, else a DNS timeout and an outer-bound kill are indistinguishable"
   fi
 done
 
