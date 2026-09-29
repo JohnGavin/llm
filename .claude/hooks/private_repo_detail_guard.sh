@@ -53,6 +53,11 @@
 #     would false-positive on ordinary prose constantly. Candidate PATHS are
 #     always used regardless of length (an absolute path is inherently
 #     distinctive, unlike a short bare word).
+#   * NAME matching requires a WHOLE-WORD match (`grep -qwF`), not a bare
+#     substring — a private repo whose name was a short common-word stem
+#     false-positived when that stem appeared as a substring inside a
+#     longer, unrelated word in a public repo's PR text (micromort project,
+#     2026-09-28). PATH matching stays substring-based on purpose.
 #   * Bypassable via a command-string PREFIX
 #     (PRIVATE_DETAIL_GUARD_BYPASS=1 <command>) — the same interface
 #     convention secret_leak_guard.sh uses for SECRET_GUARD_BYPASS. An
@@ -241,12 +246,27 @@ $body_content"
     # basenames already in the candidate list (`crew`, `aver`) would match
     # ordinary English and block legitimate issues -- which gets the guard
     # disabled, which is worse than the leak it prevents.
+    #
+    # NAME matches (below) require a WHOLE WORD, not a bare substring -- a
+    # private repo whose name was a short common-word stem would otherwise
+    # false-positive when that stem appeared as a substring inside a longer,
+    # unrelated word (micromort project, 2026-09-28). PATH matches stay
+    # substring-based on purpose (see the loop below).
     is_declared=0
     if [ -z "$path" ] && [ "$vis" = "confidential_by_policy" ]; then
       is_declared=1
     fi
     if [ "$is_declared" -eq 1 ] || [ "${#name}" -ge "$MIN_NAME_LEN" ]; then
-      if printf '%s' "$scan_text" | grep -qF -- "$name"; then
+      # -w (whole-word) alongside -F (fixed-string): a bare -F substring
+      # match let a private repo whose name was a short common-word stem
+      # false-positive when that stem appeared inside a longer, unrelated
+      # word in an unrelated public repo's PR/issue text (observed in the
+      # micromort project, 2026-09-28). -wF matches the fixed string as a
+      # whole word with no manual regex-escaping, unlike a bare
+      # -E "\b${name}\b" which would mis-escape names containing regex
+      # metacharacters. Path matching below stays substring-based on
+      # purpose — a path is inherently distinctive.
+      if printf '%s' "$scan_text" | grep -qwF -- "$name"; then
         matched_term="$name"
         break
       fi
@@ -454,6 +474,29 @@ if [ "${1:-}" = "--selftest" ]; then
     _case "a 1-char candidate name is never used as a bare scan term -> ALLOW" \
     'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "this is an R package"' \
     "ALLOW"
+
+  # ── name matching requires a WHOLE WORD, not a bare substring ───────────
+  # A private repo whose name was a short common-word stem (clears
+  # MIN_NAME_LEN) false-blocked a `gh` publish whose body used an unrelated
+  # longer word containing that stem as a substring (micromort project,
+  # 2026-09-28). Fixed via `grep -qwF` (whole-word, fixed-string) on the
+  # NAME check only — PATH matching is untouched and stays substring-based.
+  #
+  # Synthetic fixture only, never a real repo name, so this selftest never
+  # couples to a real private repo. "zzqrst" plays the role of the short
+  # candidate name; "zzqrstplus" plays the role of the longer, unrelated
+  # word it appears inside as a substring.
+  printf 'zzqrst\t%s/fake/zzqrst\tprivate\n' "$TMP_DIR" > "$TMP_DIR/rv_candidates_word_boundary.tsv"
+  date -u +%s > "$TMP_DIR/rv_candidates_word_boundary.tsv.epoch"
+  REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_word_boundary.tsv" \
+    _case "candidate name appears only as a substring inside a longer word -> ALLOW (was BLOCK pre-fix)" \
+    'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "a note about zzqrstplus for context"' \
+    "ALLOW"
+
+  REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates_word_boundary.tsv" \
+    _case "the same candidate name as its own standalone word still -> BLOCK (falsifies the ALLOW above)" \
+    'gh issue create --repo fake-public-owner/fake-public-repo --title x --body "a note about zzqrst for context"' \
+    "BLOCK"
 
   # ── two-tier name matching (llm#1183) ────────────────────────────────────
   # DECLARED rows -- empty path + confidential_by_policy, the shape
