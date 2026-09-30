@@ -735,6 +735,26 @@ else
   log "WARN: record_prediction.sh not found or not executable at ${_RECORD_PREDICTION_SCRIPT} — skipping prediction logging"
 fi
 
+# Per-repo opt-out (llm#1296): never queue a re-review for a marked / no-remote /
+# private-root repo. Fail closed when the shared guard cannot be found.
+_RRA_LIB=""
+for _c in "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
+          "$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"; do
+  [ -r "$_c" ] && { _RRA_LIB="$_c"; break; }
+done
+if [ -z "$_RRA_LIB" ]; then
+  log "WARN: repo guard not found — not queuing re-review (fail closed)"
+  exit 0
+fi
+# shellcheck disable=SC1090
+. "$_RRA_LIB"
+_RRA_DIR="${PROJECT_ROOT_PATH:-.}"
+[ -d "$_RRA_DIR" ] || _RRA_DIR="."
+if ! roborev_repo_allowed "$_RRA_DIR" >/dev/null; then
+  log "SKIP: repo opted out of roborev — not queuing re-review"
+  exit 0
+fi
+
 # Trigger roborev re-review
 REVIEW_JOB_ID=""
 if ! REVIEW_OUTPUT=$("$ROBOREV_BIN" review --commit "$COMMIT_SHA" 2>&1); then

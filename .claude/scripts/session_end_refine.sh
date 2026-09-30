@@ -53,6 +53,28 @@ if [ -z "$PROJECT_ROOT" ]; then
 fi
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 
+# ── Per-repo opt-out (llm#1296) ───────────────────────────────────────────────
+# This runner forces --agent codex (non-Anthropic). A marked / no-remote /
+# private-root repo must never reach it. Fail closed if the guard is missing.
+_RRA_LIB=""
+for _c in "$(cd "$(dirname "$0")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
+          "$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"; do
+  [ -r "$_c" ] && { _RRA_LIB="$_c"; break; }
+done
+if [ -z "$_RRA_LIB" ]; then
+  log "result=skipped reason=repo-guard-missing"
+  exit 0
+fi
+# shellcheck disable=SC1090
+. "$_RRA_LIB"
+if ! roborev_repo_allowed "$PROJECT_ROOT" >/dev/null; then
+  log "result=skipped reason=roborev-opt-out"
+  if [ "${SESSION_END_REFINE_DRYRUN:-}" = "1" ]; then
+    echo "skipping (repo opted out of roborev / undecidable)"
+  fi
+  exit 0
+fi
+
 # ── Read session-start SHA (non-destructive, needed for logging) ──────────────
 SLUG=$(sanitize "$PROJECT_NAME")
 STATE_FILE="$HOME/.claude/.session_start_sha_${SLUG}"
