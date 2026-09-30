@@ -108,7 +108,9 @@ A pipeline that loads its own package (`load_all()`, `library(<pkg>)`) without t
 - Own-package code is tracked via `tar_option_set(imports = "<pkg>")` or `tar_source()`.
 - Any file a target reads (data, parameters, lookups) is a `format = "file"` target, not an untracked path.
 
-Checker: `.claude/scripts/check_targets_tracks_own_package.sh [dir]` (`--selftest`). 0 PASS / 1 FAIL (own package loaded, untracked) / 2 usage / 3 INDETERMINATE (no Rscript, unparsable pipeline, or non-literal `imports=`). Follows literal `source("f.R")` calls; a hand-sourced `R/` pipeline that never loads the package, and the `format = "file"` requirement, are prose-only (not checked). Not yet wired into pre-commit or the session banner (follow-up).
+Checker: `.claude/scripts/check_targets_tracks_own_package.sh [dir]` (`--selftest`). 0 PASS / 1 FAIL (own package loaded, untracked) / 2 usage / 3 INDETERMINATE (no Rscript, unparsable pipeline, or non-literal `imports=`). Follows literal `source("f.R")` calls; a hand-sourced `R/` pipeline that never loads the package, and the `format = "file"` requirement, are prose-only (not checked).
+
+Wired in two places: `r_code_check.sh` (the pre-commit check) runs it on the package above its target directory, and a FAIL makes it exit 1 (INDETERMINATE is reported, not blocking); `session_init.sh` Phase 15h runs it in the background for the session's checkout and prints a cached FAIL or INDETERMINATE as `targets-tracking: ...` (a PASS is silent; skip with `CLAUDE_TARGETS_TRACKING_CHECK=0`). Test: `tests/test_targets_tracking_wiring.sh`.
 
 ## Forbidden Patterns
 
