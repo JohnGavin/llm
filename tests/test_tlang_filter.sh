@@ -70,7 +70,7 @@ chmod +x "${STUB}"
 # run_filter <qmd> -> HTML on stdout, stderr in ${WORK}/stderr
 run_filter() {
   TLANG_BIN="${TLANG_BIN_OVERRIDE:-${STUB}}" "${PANDOC}" -f markdown -t html \
-    --syntax-highlighting=none --lua-filter "${FILTER}" "$1" 2> "${WORK}/stderr"
+    --lua-filter "${FILTER}" "$1" 2> "${WORK}/stderr"
 }
 
 count_of() { grep -o -- "$2" <<<"$1" | wc -l | tr -d ' '; }
@@ -158,7 +158,7 @@ print("x")
 ```
 EOF
 html="$(env -u TLANG_BIN PATH=/usr/bin:/bin "${PANDOC}" -f markdown -t html \
-  --syntax-highlighting=none --lua-filter "${FILTER}" "${WORK}/four.md" 2>/dev/null)"
+  --lua-filter "${FILTER}" "${WORK}/four.md" 2>/dev/null)"
 if grep -q 'Could not run' <<<"${html}"; then
   pass "a genuinely missing binary is labelled as missing"
 else
