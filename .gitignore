@@ -162,3 +162,7 @@ explorations/*
 # vig_*.rds snapshots under inst/extdata/vignettes/, exported by
 # data-raw/export_vignette_snapshots.R.
 _targets/
+
+# tlang Quarto extension install marker: an absolute /nix/store path written
+# by `t` when it installs the extension -- machine-specific, never committed.
+_extensions/tlang/.tlang-store-path
