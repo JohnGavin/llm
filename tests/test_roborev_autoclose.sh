@@ -410,6 +410,55 @@ test_repo_path_lookup_sqlite_failure() {
   fi
 }
 
+# ── Tests 13-14 (llm#929, owner-approved 2026-09-30): Phase 0 retention
+# inherits --apply. The autoclose script resolves roborev_retention.sh as
+# $(dirname "$0")/roborev_retention.sh, so a COPY of autoclose placed beside a
+# stub retention script lets us record the flag it is called with, without
+# ever touching a real ~/.roborev.
+run_phase0_flag() {
+  local n="$1" mode="$2"
+  local d="${TMPDIR_ROOT}/phase0_$n"
+  mkdir -p "$d/bin" "$d/home/.claude/logs"
+  cp "$AUTOCLOSE" "$d/bin/roborev_autoclose.sh"
+  cat > "$d/bin/roborev_retention.sh" <<EOS
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$d/retention_argv"
+exit 0
+EOS
+  chmod +x "$d/bin/roborev_retention.sh" "$d/bin/roborev_autoclose.sh"
+  make_fake_roborev "$d/roborev"
+  HOME="$d/home" ROBOREV="$d/roborev" ROBOREV_REPO_PATH="$d/fake-repo" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" FAKE_ROBOREV_STDOUT='{"jobs": []}' \
+    "$d/bin/roborev_autoclose.sh" "$mode" >/dev/null 2>&1 || true
+  # Stub never ran -> distinct sentinel, not empty output (checks-must-
+  # distinguish-unknown): empty would conflate "not called" with "no result".
+  if [ ! -f "$d/retention_argv" ]; then
+    echo "STUB-NOT-CALLED"
+    return 2
+  fi
+  cat "$d/retention_argv"
+}
+
+test_phase0_apply_inherited() {
+  local got
+  got="$(run_phase0_flag 13 --apply)"
+  if [ "$got" = "--apply" ]; then
+    pass "phase0: parent --apply -> retention called with --apply"
+  else
+    fail "phase0: parent --apply -> retention called with --apply" "argv=[$got]"
+  fi
+}
+
+test_phase0_dry_run_inherited() {
+  local got
+  got="$(run_phase0_flag 14 --dry-run)"
+  if [ "$got" = "--dry-run" ]; then
+    pass "phase0: parent dry-run -> retention called with --dry-run"
+  else
+    fail "phase0: parent dry-run -> retention called with --dry-run" "argv=[$got]"
+  fi
+}
+
 echo "=== test_roborev_autoclose.sh ==="
 test_ok_empty
 test_indeterminate_empty_stdout
@@ -423,6 +472,8 @@ test_discovery_passes_scope_flags
 test_repo_path_lookup_success
 test_repo_path_lookup_no_matching_row
 test_repo_path_lookup_sqlite_failure
+test_phase0_apply_inherited
+test_phase0_dry_run_inherited
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

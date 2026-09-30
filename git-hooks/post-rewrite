@@ -5,4 +5,10 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
+# Per-repo opt-out (llm#1296): remap touches only already-registered repos, but
+# honour the same guard so a blocked repo never reaches roborev at all.
+_lib="$(dirname "$0")/lib/roborev_repo_allowed.sh"
+[ -r "$_lib" ] || exit 0
+. "$_lib"
+roborev_repo_allowed . >/dev/null || exit 0
 "$ROBOREV" remap --quiet 2>/dev/null
