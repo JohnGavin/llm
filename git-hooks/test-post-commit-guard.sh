@@ -1,5 +1,12 @@
 #!/bin/bash
-# Two-sided test of the post-commit ephemeral-path guard (llm#923).
+# Two-sided tests of the roborev hook guards:
+#   * the ephemeral-path guard in post-commit (llm#923)
+#   * the per-repo opt-out guard shared by every enqueue path (llm#1296):
+#     marker file, no remote, locally configured private roots, and the opt-in
+#     allow-list mode.
+# Every "blocked" case is paired with a falsification: change ONLY the thing
+# that blocked it and assert the stub IS now called. A guard that cannot be seen
+# to let a repo through proves nothing.
 #
 # HOOK resolves from this script's OWN directory. It must never be an absolute
 # path to a particular checkout: the first version of this file hardcoded a
@@ -8,10 +15,25 @@
 # that worktree happened to hold the fixed hook, then FAILed once the worktree
 # moved to a branch predating it -- a green result that was never evidence
 # about the file shipped alongside it (portable-build-artifacts).
+#
+# roborev is STUBBED via a copied hook that points at a recording stub: no real
+# job is ever queued, and the real ~/.config roots files are never read
+# (ROBOREV_PRIVATE_ROOTS_FILE / ROBOREV_ALLOWED_ROOTS_FILE are pinned below).
 set -u
-HOOK="$(cd "$(dirname "$0")" && pwd)/post-commit"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+HOOK="$HERE/post-commit"
+REWRITE="$HERE/post-rewrite"
+LIB="$HERE/lib/roborev_repo_allowed.sh"
 WORK=$(mktemp -d)
+WORK=$(cd -P "$WORK" && pwd -P)
 MARKER="$WORK/roborev_was_called"
+REAL=""
+trap 'rm -rf "$WORK" ${REAL:+"$REAL"}' EXIT
+
+# Pin config so the developer's real local lists never influence the result.
+export ROBOREV_PRIVATE_ROOTS_FILE="$WORK/private-roots"
+export ROBOREV_ALLOWED_ROOTS_FILE="$WORK/allowed-roots"
+unset ROBOREV_ALLOWLIST_MODE
 
 # Stub roborev: records that it was invoked.
 mkdir -p "$WORK/bin"
@@ -21,61 +43,136 @@ echo "invoked \$*" >> "$MARKER"
 EOF
 chmod +x "$WORK/bin/roborev"
 
-# Copy the hook, pointing it at the stub instead of /usr/local/bin/roborev,
-# and drop the git-lfs tail (irrelevant to this guard).
-mkdir -p "$WORK/repo"
+# Copy each hook next to a copy of the lib, pointing at the stub instead of
+# /usr/local/bin/roborev, and drop the git-lfs tail (irrelevant to this guard).
+mkdir -p "$WORK/hookdir/lib"
+cp "$LIB" "$WORK/hookdir/lib/roborev_repo_allowed.sh"
 sed -e "s#ROBOREV=\"/usr/local/bin/roborev\"#ROBOREV=\"$WORK/bin/roborev\"#" \
-    -e '/git-lfs/d' -e '/git lfs/d' "$HOOK" > "$WORK/hook.sh"
-chmod +x "$WORK/hook.sh"
-
-git -C "$WORK/repo" init -q -b main
-git -C "$WORK/repo" config user.email t@e.com
-git -C "$WORK/repo" config user.name T
-echo hi > "$WORK/repo/f.txt"
-git -C "$WORK/repo" add .
-git -c core.hooksPath=/dev/null -C "$WORK/repo" commit -qm "test commit"
+    -e '/git-lfs/d' -e '/git lfs/d' "$HOOK" > "$WORK/hookdir/post-commit"
+sed -e "s#ROBOREV=\"/usr/local/bin/roborev\"#ROBOREV=\"$WORK/bin/roborev\"#" \
+    "$REWRITE" > "$WORK/hookdir/post-rewrite"
+chmod +x "$WORK/hookdir/post-commit" "$WORK/hookdir/post-rewrite"
 
 fail=0
+pass=0
+ok()  { echo "PASS $1"; pass=$((pass + 1)); }
+bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 
-# Case 1: temp path -> roborev MUST NOT be invoked.
-( cd "$WORK/repo" && "$WORK/hook.sh" )
-if [ -f "$MARKER" ]; then
-  echo "FAIL case 1: roborev was invoked from a temp repo ($(cat "$MARKER"))"
-  fail=1
-else
-  echo "PASS case 1: guard blocked roborev in $WORK/repo"
-fi
+# run_hook DIR [ENV=VAL ...] : run the copied post-commit hook inside DIR.
+run_hook() {
+  _d=$1; shift
+  rm -f "$MARKER"
+  ( cd "$_d" && env "$@" "$WORK/hookdir/post-commit" )
+}
+expect_blocked() { # label
+  if [ -f "$MARKER" ]; then bad "$1 (roborev WAS invoked: $(cat "$MARKER"))"; else ok "$1"; fi
+}
+expect_called() { # label
+  if [ -f "$MARKER" ]; then ok "$1"; else bad "$1 (roborev NOT invoked)"; fi
+}
 
-# Case 2: override set -> roborev MUST be invoked (proves the guard is the
-# thing blocking, not a hook that silently does nothing).
-( cd "$WORK/repo" && ROBOREV_ALLOW_TMP_REPOS=1 "$WORK/hook.sh" )
-if [ -f "$MARKER" ]; then
-  echo "PASS case 2: override re-enabled roborev"
-else
-  echo "FAIL case 2: roborev not invoked even with ROBOREV_ALLOW_TMP_REPOS=1"
-  fail=1
-fi
+mkrepo() { # dir [with-remote]
+  mkdir -p "$1"
+  git -C "$1" init -q -b main
+  git -C "$1" config user.email t@e.com
+  git -C "$1" config user.name T
+  echo hi > "$1/f.txt"
+  git -C "$1" add .
+  git -c core.hooksPath=/dev/null -C "$1" commit -qm "test commit"
+  if [ "${2:-}" = "remote" ]; then
+    git -C "$1" remote add origin https://example.invalid/x.git
+  fi
+}
 
-# Case 3: a non-temp repo must still be reviewed.
+mkrepo "$WORK/repo" remote
+ALLOW="ROBOREV_ALLOW_TMP_REPOS=1"
+
+# ---- llm#923: ephemeral-path guard -----------------------------------------
+run_hook "$WORK/repo" X=1
+expect_blocked "case 1: temp path blocked (ephemeral guard)"
+run_hook "$WORK/repo" "$ALLOW"
+expect_called  "case 2: override re-enables (repo has a remote, no marker)"
+
+# Case 3: a non-temp repo (with a remote) must still be reviewed.
+REAL="$HERE/../.roborev_guard_test_repo_$$"
+mkrepo "$REAL" remote
+REAL=$(cd -P "$REAL" && pwd -P)
+run_hook "$REAL" X=1
+expect_called  "case 3: non-temp repo with a remote still reviewed"
+rm -rf "$REAL"; REAL=""
+
+# ---- llm#1296: marker -------------------------------------------------------
+touch "$WORK/repo/.roborev-disable"
+run_hook "$WORK/repo" "$ALLOW"
+expect_blocked "case 4: .roborev-disable marker blocks"
+rm -f "$WORK/repo/.roborev-disable"
+run_hook "$WORK/repo" "$ALLOW"
+expect_called  "case 4b (falsify): marker removed -> called"
+
+touch "$WORK/repo/PRIVATE"
+run_hook "$WORK/repo" "$ALLOW"
+expect_blocked "case 5: PRIVATE marker blocks"
+rm -f "$WORK/repo/PRIVATE"
+run_hook "$WORK/repo" "$ALLOW"
+expect_called  "case 5b (falsify): PRIVATE removed -> called"
+
+# ---- llm#1296: no remote ----------------------------------------------------
+mkrepo "$WORK/localonly"
+run_hook "$WORK/localonly" "$ALLOW"
+expect_blocked "case 6: repo with no remote blocked"
+git -C "$WORK/localonly" remote add origin https://example.invalid/y.git
+run_hook "$WORK/localonly" "$ALLOW"
+expect_called  "case 6b (falsify): remote added -> called"
+
+# ---- llm#1296: private-roots file ------------------------------------------
+printf '# local list\n%s\n' "$WORK" > "$ROBOREV_PRIVATE_ROOTS_FILE"
+run_hook "$WORK/repo" "$ALLOW"
+expect_blocked "case 7: repo under a private root blocked"
+mkdir -p "$WORK/repo/sub"
+( cd "$WORK/repo/sub" && rm -f "$MARKER" && env "$ALLOW" "$WORK/hookdir/post-commit" )
+expect_blocked "case 7a: subdirectory of a private-root repo blocked"
+printf '# emptied\n' > "$ROBOREV_PRIVATE_ROOTS_FILE"
+run_hook "$WORK/repo" "$ALLOW"
+expect_called  "case 7b (falsify): root removed from list -> called"
+rm -f "$ROBOREV_PRIVATE_ROOTS_FILE"
+
+# ---- llm#1296: marker in the main checkout covers its linked worktrees -----
+git -C "$WORK/repo" worktree add -q -b wt "$WORK/wt"
+touch "$WORK/repo/.roborev-disable"
+run_hook "$WORK/wt" "$ALLOW"
+expect_blocked "case 8: marker in main checkout blocks its linked worktree"
+rm -f "$WORK/repo/.roborev-disable"
+run_hook "$WORK/wt" "$ALLOW"
+expect_called  "case 8b (falsify): marker removed -> worktree called"
+
+# ---- llm#1296: opt-in allow-list mode (default OFF) -------------------------
+run_hook "$WORK/repo" "$ALLOW"
+expect_called  "case 9: default mode reviews an unlisted repo (allow-list OFF)"
+run_hook "$WORK/repo" "$ALLOW" ROBOREV_ALLOWLIST_MODE=1
+expect_blocked "case 9a: allow-list mode, no list -> fail closed"
+printf '%s\n' "$WORK/repo" > "$ROBOREV_ALLOWED_ROOTS_FILE"
+run_hook "$WORK/repo" "$ALLOW" ROBOREV_ALLOWLIST_MODE=1
+expect_called  "case 9b (falsify): allow-list mode, repo listed -> called"
+run_hook "$WORK/localonly" "$ALLOW" ROBOREV_ALLOWLIST_MODE=1
+expect_blocked "case 9c: allow-list mode, other repo unlisted -> blocked"
+
+# ---- llm#1296: post-rewrite honours the guard too ---------------------------
 rm -f "$MARKER"
-REAL="$HOME/.cache/llm923_guard_test_repo"
-rm -rf "$REAL"
-mkdir -p "$REAL"
-git -C "$REAL" init -q -b main
-git -C "$REAL" config user.email t@e.com
-git -C "$REAL" config user.name T
-echo hi > "$REAL/f.txt"
-git -C "$REAL" add .
-git -c core.hooksPath=/dev/null -C "$REAL" commit -qm "test commit"
-( cd "$REAL" && "$WORK/hook.sh" )
-if [ -f "$MARKER" ]; then
-  echo "PASS case 3: non-temp repo still reviewed"
-else
-  echo "FAIL case 3: guard over-matched — non-temp repo was skipped"
-  fail=1
-fi
-rm -rf "$REAL" "$WORK"
+touch "$WORK/repo/.roborev-disable"
+( cd "$WORK/repo" && "$WORK/hookdir/post-rewrite" )
+expect_blocked "case 10: post-rewrite blocked by marker"
+rm -f "$WORK/repo/.roborev-disable" "$MARKER"
+( cd "$WORK/repo" && "$WORK/hookdir/post-rewrite" )
+expect_called  "case 10b (falsify): post-rewrite called without marker"
+
+# ---- guard lib: indeterminate is not allowed --------------------------------
+mkdir -p "$WORK/notarepo"
+out=$(sh -c ". '$LIB'; roborev_repo_allowed '$WORK/notarepo'"; echo "rc=$?")
+case "$out" in
+  *rc=3) ok "case 11: non-git dir -> indeterminate (rc=3), not allowed" ;;
+  *)     bad "case 11: expected rc=3, got: $out" ;;
+esac
 
 echo "---"
-if [ "$fail" -eq 0 ]; then echo "3/3 PASS"; else echo "FAILURES"; fi
+if [ "$fail" -eq 0 ]; then echo "$pass/$pass PASS"; else echo "FAILURES: $fail (passed $pass)"; fi
 exit "$fail"

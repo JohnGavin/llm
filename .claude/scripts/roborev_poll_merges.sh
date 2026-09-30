@@ -108,6 +108,20 @@ for cmd in "$DB" "$SQLITE" "$ROBOREV" "$GIT"; do
   fi
 done
 
+# Per-repo opt-out guard (llm#1296). Fail closed: no guard => nothing enqueued.
+_RRA_LIB=""
+for _c in "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
+          "$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"; do
+  [ -r "$_c" ] && { _RRA_LIB="$_c"; break; }
+done
+if [ -z "$_RRA_LIB" ]; then
+  log "skip: repo guard (git-hooks/lib/roborev_repo_allowed.sh) not found — fail closed"
+  echo "roborev_poll_merges: skipped (repo guard missing)"
+  exit 0
+fi
+# shellcheck disable=SC1090
+. "$_RRA_LIB"
+
 # ── --clean-repos-table mode ──────────────────────────────────────────────────
 if [ "$CLEAN_REPOS_TABLE" -eq 1 ]; then
   # Preview rows that would be deleted
@@ -158,7 +172,7 @@ done < <(
   "$SQLITE" "$DB" "SELECT id || '|' || name || '|' || root_path FROM repos;"
 )
 
-total=0; behind=0; enqueued=0; skipped=0; ephemeral_skipped=0
+total=0; behind=0; enqueued=0; skipped=0; ephemeral_skipped=0; optout_skipped=0
 for line in "${REPOS[@]}"; do
   IFS='|' read -r repo_id name root_path <<<"$line"
   total=$((total + 1))
@@ -183,6 +197,14 @@ for line in "${REPOS[@]}"; do
   if [ ! -d "$root_path/.git" ] && [ ! -f "$root_path/.git" ]; then
     skipped=$((skipped + 1))
     log "skip: $name — no .git at $root_path"
+    continue
+  fi
+
+  # Opt-out guard (llm#1296): marker / no-remote / private-root / indeterminate.
+  # Count only -- never log the repo name of a blocked (possibly private) repo.
+  if ! roborev_repo_allowed "$root_path" >/dev/null; then
+    skipped=$((skipped + 1))
+    optout_skipped=$((optout_skipped + 1))
     continue
   fi
 
@@ -254,8 +276,8 @@ for line in "${REPOS[@]}"; do
 done
 
 mode="dry-run"; [ "$DRY_RUN" -eq 0 ] && mode="applied"
-log "summary [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped (ephemeral=$ephemeral_skipped)"
-echo "roborev_poll_merges [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped (ephemeral=$ephemeral_skipped)"
+log "summary [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped (ephemeral=$ephemeral_skipped optout=$optout_skipped)"
+echo "roborev_poll_merges [$mode]: repos=$total behind=$behind enqueued=$enqueued skipped=$skipped (ephemeral=$ephemeral_skipped optout=$optout_skipped)"
 
 # ── Requeue dropped quota failures (llm#927 bolt-on sweep) ───────────────────
 # roborev_requeue_dropped.sh finds review_jobs stuck in the TERMINAL

@@ -79,6 +79,11 @@ cat > "${HOOK_FILE}" <<'HOOK'
 # Uses roborev_review.sh wrapper (#365) to route codex calls through
 # codex_with_fallback.sh (429→gemini fallback + JSONL telemetry).
 set -uo pipefail
+# Per-repo opt-out (llm#1296); fail closed if the shared guard is missing.
+RRA_LIB="$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"
+[ -r "$RRA_LIB" ] || exit 0
+. "$RRA_LIB"
+roborev_repo_allowed . > /dev/null || exit 0
 REVIEW_WRAPPER="$HOME/docs_gh/llm/.claude/scripts/roborev_review.sh"
 if [ -x "$REVIEW_WRAPPER" ]; then
   "$REVIEW_WRAPPER" --since "${1:-ORIG_HEAD}" --quiet > /dev/null 2>&1 || true
