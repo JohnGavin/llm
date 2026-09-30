@@ -996,10 +996,30 @@ fi
 
 # Phase 7g: Branch Harvest on Fork — BACKGROUND (advisory, ~1.15s foreground cost)
 # Output written to cache; shown at next session start if non-empty.
-_bharvest_cache="${HOME}/.claude/logs/session_init_branch_harvest_cache.txt"
+# The audit reports on the CURRENT repo (cwd), so the cache MUST be keyed per
+# repo: a single global file printed repo B's last result in a repo-A session
+# (llm session showed statues_named_john's branches). Key = MAIN checkout
+# (via --git-common-dir, so worktrees of one repo share a cache) basename +
+# cksum of its path (two repos with the same basename stay distinct).
+# sinit_repo_key: print "<name>_<cksum>" for the cwd's repo ("unknown" if none).
+sinit_repo_key() {
+  local _cd _root _name _sum
+  _cd=$(git rev-parse --git-common-dir 2>/dev/null) || true
+  [ -n "$_cd" ] || { printf 'unknown'; return; }
+  case "$_cd" in /*) : ;; *) _cd="$(pwd)/$_cd" ;; esac
+  _root=$(cd "$(dirname "$_cd")" 2>/dev/null && pwd -P) || _root=""
+  [ -n "$_root" ] || { printf 'unknown'; return; }
+  _name=$(printf '%s' "${_root##*/}" | tr -c 'A-Za-z0-9_-' '_')
+  _sum=$(printf '%s' "$_root" | cksum | cut -d' ' -f1)
+  printf '%s_%s' "$_name" "$_sum"
+}
+_sinit_repo_key=$(sinit_repo_key)
+_sinit_repo_label="${_sinit_repo_key%_*}"
+_bharvest_cache="${HOME}/.claude/logs/session_init_branch_harvest_cache_${_sinit_repo_key}.txt"
 if [ -f "$_bharvest_cache" ]; then
   _bharvest_cached=$(cat "$_bharvest_cache" 2>/dev/null) || true
-  [ -n "$_bharvest_cached" ] && printf '%s\n' "$_bharvest_cached"
+  # Label with the repo name so a mismatch is visible.
+  [ -n "$_bharvest_cached" ] && printf '%s\n' "$_bharvest_cached" | sed "1s/^branch-harvest:/branch-harvest[${_sinit_repo_label}]:/"
 fi
 _bharvest_script="${HOME}/.claude/scripts/branch_harvest_audit.sh"
 if [ -x "$_bharvest_script" ]; then
@@ -1688,7 +1708,9 @@ fi
 # ── Phase 14b: Surface open ci-failure issues — BACKGROUND (gh network call ≤5s) ──
 # Cache pattern: show cached line; refresh in background for next session.
 # See JohnGavin/llm#387.
-_cifail_cache="${HOME}/.claude/logs/session_init_cifail_cache.txt"
+# Per-repo key (same trivial fix as Phase 7g): the refresh queries the cwd
+# repo's issues, so a global file showed another project's ci-failures.
+_cifail_cache="${HOME}/.claude/logs/session_init_cifail_cache_${_sinit_repo_key}.txt"
 if [ -f "$_cifail_cache" ]; then
   _cifail_cached=$(cat "$_cifail_cache" 2>/dev/null) || true
   [ -n "$_cifail_cached" ] && echo "$_cifail_cached"
