@@ -57,7 +57,11 @@ file="${@: -1}"
 re='^print\("(.*)"\)$'
 while IFS= read -r line || [ -n "${line}" ]; do
   if [[ "${line}" =~ ${re} ]]; then
-    printf '%s \n' "${BASH_REMATCH[1]}"
+    if [ -n "${STUB_SENTINEL_NO_NL:-}" ] && [[ "${BASH_REMATCH[1]}" == @@tlang* ]]; then
+      printf '%s' "${BASH_REMATCH[1]}"   # sentinel with NO terminator at all
+    else
+      printf '%s \n' "${BASH_REMATCH[1]}"
+    fi
   elif [ "${line}" = "boom()" ]; then
     echo "boom: stub failure" >&2; exit 2
   elif [ "${line}" = "varmissing()" ]; then
@@ -177,6 +181,50 @@ elif grep -q 'T execution failed' <<<"${html}"; then
   pass "'variable not found' from a T program is reported as an execution failure"
 else
   fail "no error rendered for a failing T program"
+fi
+
+# ---- 6. failure path must not leak earlier output or the sentinel -----------
+cat > "${WORK}/six.md" <<'EOF'
+```t
+#| echo: false
+print("EARLIER-OUT")
+```
+
+```t
+#| echo: false
+boom()
+```
+EOF
+html="$(run_filter "${WORK}/six.md")"
+if ! grep -q 'T execution failed' <<<"${html}"; then
+  fail "failing later chunk rendered no error (html: ${html})"
+elif [ "$(count_of "${html}" 'EARLIER-OUT')" != 1 ]; then
+  # exactly 1 = the earlier chunk's own output block; a 2nd copy is in the error
+  fail "rendered error repeats an earlier chunk's output (count=$(count_of "${html}" 'EARLIER-OUT'), expected 1)"
+elif grep -q '@@tlang' <<<"${html}"; then
+  fail "rendered error leaks the internal chunk sentinel"
+else
+  pass "failure path shows neither earlier output nor the sentinel"
+fi
+
+# ---- 7. sentinel with no trailing newline -----------------------------------
+cat > "${WORK}/seven.md" <<'EOF'
+```t
+#| echo: false
+print("FIRST-OUT")
+```
+
+```t
+#| echo: false
+print("SECOND-OUT")
+```
+EOF
+html="$(STUB_SENTINEL_NO_NL=1 run_filter "${WORK}/seven.md")"
+n="$(count_of "${html}" 'SECOND-OUT')"
+if [ "${n}" = 1 ] && [ "$(count_of "${html}" 'FIRST-OUT')" = 1 ]; then
+  pass "output after a newline-less sentinel renders exactly once (second=${n})"
+else
+  fail "output after a newline-less sentinel lost or repeated (second=${n}, first=$(count_of "${html}" 'FIRST-OUT'))"
 fi
 
 echo "---"

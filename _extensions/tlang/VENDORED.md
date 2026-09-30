@@ -58,7 +58,11 @@ any upstream update, then run `tests/test_tlang_filter.sh`.
    **Remaining limitations:** the re-run is still O(n^2) in the number of
    chunks, and side effects of earlier chunks (file writes, network, timing,
    randomness) still repeat on every later chunk. A chunk that prints the
-   sentinel text itself would truncate its own output.
+   sentinel text itself would truncate its own output. After the last
+   sentinel only optional trailing spaces/tabs and at most one `\r?\n` are
+   dropped (the real CLI, 0.51.2, prints `<text> \n`, i.e. a space then a
+   newline; the terminator is not assumed, so a newline-less sentinel does not
+   swallow the next chunk's output).
 2. **Silent failure with `include: false` (LOW).** A failed chunk now writes
    `[tlang] chunk failed ...` and the error to stderr. State handling is
    unchanged and now documented: a failed chunk is not added to the session,
@@ -72,5 +76,7 @@ any upstream update, then run `tests/test_tlang_filter.sh`.
    "variable not found" was mislabelled. It is now chosen from how
    `pandoc.pipe` failed: a table with `error_code` means the process ran and
    exited non-zero (reported as an execution failure, with the process's
-   stdout appended); anything else means it could not be spawned.
+   stdout appended, trimmed to the part after the last chunk sentinel so the
+   error neither repeats earlier chunks' output nor leaks the sentinel);
+   anything else means it could not be spawned.
 5. **This file (LOW).** Provenance, hashes, licence status and patch list.

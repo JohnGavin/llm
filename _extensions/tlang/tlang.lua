@@ -103,6 +103,27 @@ local function render_error(message)
                             pandoc.Attr("", {"text", "t-error"}))
 end
 
+-- LOCAL PATCH (VENDORED.md #1): marker printed between chunks of the
+-- accumulated source so earlier chunks' output can be discarded.
+local CHUNK_SENTINEL = "@@tlang-chunk-boundary@@"
+
+-- Returns the text after the last sentinel, or nil when none is present.
+-- Only optional trailing spaces/tabs and at most one line terminator directly
+-- after the sentinel are dropped; the real CLI emits "<text> \n" but the
+-- terminator is not assumed.
+local function after_last_sentinel(output)
+    local last_end
+    local pos = 1
+    while true do
+        local _, e = string.find(output, CHUNK_SENTINEL, pos, true)
+        if e == nil then break end
+        last_end = e
+        pos = e + 1
+    end
+    if last_end == nil then return nil end
+    return (string.sub(output, last_end + 1):gsub("^[ \t]*\r?\n?", "", 1))
+end
+
 -- Execute Quarto T chunks in strict mode while intentionally bypassing the
 -- normal pipeline-only script guard so prose-first documents can render.
 local function execute_t_unsafe(chunk_source)
@@ -139,35 +160,36 @@ local function execute_t_unsafe(chunk_source)
                    binary, message)
     end
     if type(output.output) == "string" and output.output ~= "" then
-        message = message .. "\n" .. output.output
+        -- LOCAL PATCH (VENDORED.md #4): the script is the accumulated source
+        -- of earlier chunks, so keep only the failing chunk's own stdout.
+        -- pandoc already embeds the full stdout in its own error message
+        -- ("... (error code N): <stdout>"), so cut that suffix before
+        -- appending the trimmed text. Only when a sentinel is present.
+        local raw = output.output
+        local stdout = after_last_sentinel(raw)
+        if stdout ~= nil then
+            if message:sub(-#raw) == raw then
+                message = message:sub(1, #message - #raw):gsub("%s+$", "")
+            end
+            if stdout ~= "" then message = message .. "\n" .. stdout end
+        else
+            message = message .. "\n" .. raw
+        end
     end
     return false, message
 end
 
--- LOCAL PATCH (VENDORED.md #1): marker printed between chunks of the
--- accumulated source so earlier chunks' output can be discarded.
-local CHUNK_SENTINEL = "@@tlang-chunk-boundary@@"
-
--- Returns the output following the last sentinel line. If the sentinel is
--- absent (should not happen) the full output is returned and a warning logged,
+-- Returns the output following the last sentinel. If the sentinel is absent
+-- (should not happen) the full output is returned and a warning logged,
 -- rather than silently dropping output.
 local function last_chunk_output(output)
-    local last_start, last_end
-    local pos = 1
-    while true do
-        local s, e = string.find(output, CHUNK_SENTINEL, pos, true)
-        if s == nil then break end
-        last_start, last_end = s, e
-        pos = e + 1
-    end
-    if last_start == nil then
+    local rest = after_last_sentinel(output)
+    if rest == nil then
         io.stderr:write(
             "[tlang] chunk-boundary sentinel missing from output; rendering unsplit output\n")
         return output
     end
-    local newline = string.find(output, "\n", last_end + 1, true)
-    if newline == nil then return "" end
-    return string.sub(output, newline + 1)
+    return rest
 end
 
 local function make_output_block(output)
