@@ -63,3 +63,4 @@ tests/test_stdin_null_guard.sh	tests/test_stdin_null_guard.sh;.claude/launchd/**
 tests/test_wait_for_resolvable_host.sh	tests/test_wait_for_resolvable_host.sh;.claude/scripts/wait_for_resolvable_host.sh	run
 tests/test_agents_md_audit.sh	tests/test_agents_md_audit.sh;.claude/scripts/agents_md_audit.sh;AGENTS.md;.claude/SKILLS.md;.claude/skills/**;.claude/agents/**;.claude/commands/**	run
 tests/test_session_init_roborev_backlog.sh	tests/test_session_init_roborev_backlog.sh;.claude/hooks/session_init.sh	run
+tests/test_check_targets_tracks_own_package.sh	tests/test_check_targets_tracks_own_package.sh;.claude/scripts/check_targets_tracks_own_package.sh;.claude/scripts/check_targets_presence.sh	skip-ci	requires Rscript (R toolchain) on PATH — R-dependent tests are deferred to the R/testthat CI follow-up (same class as test_severity_regex_parity.sh)
