@@ -24,6 +24,28 @@
 #      logs/daemon.std{out,err}.log are NOT touched here — they are small
 #      (<250KB combined) and actively appended by the running daemon.
 #
+#   3. Purge quarantine + search-index backups — when the owner purges a
+#      repo's roborev data, findings/*.md files are MOVED (not deleted) into
+#      ~/.roborev/purged-findings-<YYYYMMDD>/ and reviews.search.db is copied
+#      to reviews.search.db.pre-purge-<YYYYMMDD>.bak. Nothing ever removed
+#      them (2026-09-30 purge: 1,464 files + a 55MB index copy). Policy:
+#        - directories matching EXACTLY purged-findings-* directly under
+#          ROBOREV_HOME whose mtime is older than ROBOREV_QUARANTINE_DAYS
+#        - files matching EXACTLY reviews.search.db.*.bak (same age rule)
+#      Default N=14, clamped to >= 7, non-numeric -> 14. Why 14: long enough
+#      that a bad purge is noticed across two weekly autoclose runs while the
+#      quarantine is still restorable; short enough that purged PRIVATE data
+#      does not linger on disk. Why age (not keep-newest-K) for the search
+#      backups: they are point-in-time copies of a DERIVED index taken
+#      immediately before a purge — they have the same lifecycle as the
+#      quarantine they accompany, and the index is rebuildable from
+#      reviews.db, so "keep the newest K forever" would retain purged data's
+#      index indefinitely. The live reviews.search.db, its -wal/-shm, and the
+#      live reviews.db never match these globs, and every candidate path is
+#      re-checked to lie strictly inside ROBOREV_HOME (no symlinks, no '..').
+#      (reviews.db.pre-purge-*.bak already matches reviews.db.*.bak and is
+#      handled by the keep-N backup policy in (1).)
+#
 # Both policies default to dry-run. Pass --apply to actually delete.
 #
 # Usage:
@@ -31,6 +53,7 @@
 #   roborev_retention.sh --apply               # delete
 #   ROBOREV_BACKUP_KEEP=3 roborev_retention.sh --apply
 #   ROBOREV_LOG_RETENTION_DAYS=14 roborev_retention.sh --apply
+#   ROBOREV_QUARANTINE_DAYS=21 roborev_retention.sh --apply   # min 7, default 14
 #   SELFTEST=1 roborev_retention.sh            # fixture-based unit tests
 #                                               # (always a temp dir, never
 #                                               # touches the real ~/.roborev)
@@ -71,6 +94,7 @@ ROBOREV_HOME="${ROBOREV_HOME:-$HOME/.roborev}"
 ROBOREV_DB="${ROBOREV_DB:-$ROBOREV_HOME/reviews.db}"
 ROBOREV_BACKUP_KEEP="${ROBOREV_BACKUP_KEEP:-2}"
 ROBOREV_LOG_RETENTION_DAYS="${ROBOREV_LOG_RETENTION_DAYS:-30}"
+ROBOREV_QUARANTINE_DAYS="${ROBOREV_QUARANTINE_DAYS:-14}"
 LOGFILE="${ROBOREV_RETENTION_LOGFILE:-$HOME/.claude/logs/roborev_retention.log}"
 UNIFIED_DB="${UNIFIED_DB_PATH:-$HOME/.claude/logs/unified.duckdb}"
 
@@ -85,6 +109,18 @@ esac
 if [ "$ROBOREV_BACKUP_KEEP" -lt 1 ]; then
   ROBOREV_BACKUP_KEEP=1
 fi
+
+# Clamp quarantine age: non-numeric -> 14, below 7 -> 7 (never let
+# misconfiguration wipe a just-made quarantine). Prints the clamped value.
+clamp_quarantine_days() {
+  local d="$1"
+  case "$d" in
+    '' | *[!0-9]*) d=14 ;;
+  esac
+  [ "$d" -lt 7 ] && d=7
+  printf '%s' "$d"
+}
+ROBOREV_QUARANTINE_DAYS=$(clamp_quarantine_days "$ROBOREV_QUARANTINE_DAYS")
 
 # ─── portable stat helpers (macOS BSD stat first, GNU stat fallback) ────────
 _mtime_epoch() { stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null; }
@@ -133,13 +169,120 @@ plan_log_removals() {
   find "$dir" -type f -name '*.log' -mtime "+${days}" 2>/dev/null
 }
 
+# plan_quarantine_removals <roborev_home> <days>
+#   purged-findings-* DIRECTORIES (not symlinks) directly under home older than N days.
+plan_quarantine_removals() {
+  local home="$1" days="$2"
+  [ -d "$home" ] || return 0
+  find "$home" -maxdepth 1 -type d -name 'purged-findings-*' -mtime "+${days}" 2>/dev/null
+}
+
+# plan_search_backup_removals <roborev_home> <days>
+#   reviews.search.db.*.bak FILES directly under home older than N days.
+#   Cannot match reviews.search.db, -wal, -shm (no '.bak' suffix segment).
+plan_search_backup_removals() {
+  local home="$1" days="$2"
+  [ -d "$home" ] || return 0
+  find "$home" -maxdepth 1 -type f -name 'reviews.search.db.*.bak' -mtime "+${days}" 2>/dev/null
+}
+
+# list_expiry_candidates <roborev_home> <kind>   kind = quarantine | search_backup
+#   ALL matching items (due or not), one path per line — for KEPT reporting.
+list_expiry_candidates() {
+  local home="$1" kind="$2"
+  [ -d "$home" ] || return 0
+  if [ "$kind" = quarantine ]; then
+    find "$home" -maxdepth 1 -type d -name 'purged-findings-*' 2>/dev/null
+  else
+    find "$home" -maxdepth 1 -type f -name 'reviews.search.db.*.bak' 2>/dev/null
+  fi
+}
+
+# path_within_home <path> — true only for a path strictly inside ROBOREV_HOME,
+# with no '..' component and not a symlink.
+path_within_home() {
+  local p="$1"
+  [ -n "${ROBOREV_HOME:-}" ] || return 1
+  case "$p" in
+    *"/../"* | */..) return 1 ;;
+    "$ROBOREV_HOME"/?*) ;;
+    *) return 1 ;;
+  esac
+  [ -L "$p" ] && return 1
+  return 0
+}
+
+# _item_bytes <path> — size in bytes (recursive for directories).
+_item_bytes() {
+  local p="$1" kb
+  if [ -d "$p" ]; then
+    kb=$(du -sk -- "$p" 2>/dev/null | awk '{print $1}')
+    echo $((${kb:-0} * 1024))
+  else
+    _size_bytes "$p" || echo 0
+  fi
+}
+
+# Counters set by process_expiry (globals: bash 3.2 has no namerefs).
+EXP_N=0
+EXP_BYTES=0
+
+# process_expiry <kind> <label>
+#   Lists every candidate of <kind> as REMOVE/KEPT with size + age; on APPLY
+#   deletes the due ones. A failed delete is logged and non-fatal.
+process_expiry() {
+  local kind="$1" label="$2" due all f sz age_days
+  EXP_N=0
+  EXP_BYTES=0
+  if [ "$kind" = quarantine ]; then
+    due=$(plan_quarantine_removals "$ROBOREV_HOME" "$ROBOREV_QUARANTINE_DAYS")
+  else
+    due=$(plan_search_backup_removals "$ROBOREV_HOME" "$ROBOREV_QUARANTINE_DAYS")
+  fi
+  all=$(list_expiry_candidates "$ROBOREV_HOME" "$kind")
+  if [ -z "$all" ]; then
+    echo "$label: none present"
+    return 0
+  fi
+  echo "$label (older than ${ROBOREV_QUARANTINE_DAYS}d -> $mode_word):"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    sz=$(_item_bytes "$f")
+    sz=${sz:-0}
+    age_days=$(((now - $(_mtime_epoch "$f")) / 86400))
+    if printf '%s\n' "$due" | grep -Fxq -- "$f"; then
+      if ! path_within_home "$f"; then
+        printf '  SKIP (outside ROBOREV_HOME or symlink) %s\n' "$f"
+        log "skip unsafe $kind path: $f"
+        continue
+      fi
+      printf '  %-9s %-62s %8s  %3dd old\n' "$mode_word" "$f" "$(human_size "$sz")" "$age_days"
+      if [ "$APPLY" -eq 1 ]; then
+        if rm -rf -- "${f:?}"; then
+          log "removed $kind: $f ($(human_size "$sz"), ${age_days}d)"
+          EXP_N=$((EXP_N + 1))
+          EXP_BYTES=$((EXP_BYTES + sz))
+        else
+          echo "  FAILED to remove $f (continuing)" >&2
+          log "FAILED to remove $kind: $f"
+        fi
+      else
+        EXP_N=$((EXP_N + 1))
+        EXP_BYTES=$((EXP_BYTES + sz))
+      fi
+    else
+      printf '  %-9s %-62s %8s  %3dd old (not yet due)\n' "KEPT" "$f" "$(human_size "$sz")" "$age_days"
+    fi
+  done <<<"$all"
+}
+
 # ── arg parsing ─────────────────────────────────────────────────────────
 APPLY=0
 case "${1:-}" in
   --apply) APPLY=1 ;;
   --dry-run | "") APPLY=0 ;;
   -h | --help)
-    sed -n '2,45p' "$0"
+    sed -n '2,65p' "$0"
     exit 0
     ;;
   *)
@@ -177,6 +320,7 @@ main() {
   echo "roborev_retention: live DB = $ROBOREV_DB ($(human_size "$live_size"))"
   echo "roborev_retention: backup policy — keep ${ROBOREV_BACKUP_KEEP} most recent (both naming conventions), never the live DB"
   echo "roborev_retention: log policy — logs/jobs/*.log older than ${ROBOREV_LOG_RETENTION_DAYS}d"
+  echo "roborev_retention: quarantine policy — purged-findings-*/ dirs and reviews.search.db.*.bak older than ${ROBOREV_QUARANTINE_DAYS}d"
   echo ""
 
   if [ -n "$backup_removals" ]; then
@@ -222,10 +366,21 @@ main() {
     echo "Job logs: nothing older than ${ROBOREV_LOG_RETENTION_DAYS}d"
   fi
   echo ""
-  echo "roborev_retention: $([ "$APPLY" -eq 1 ] && echo 'reclaimed' || echo 'would reclaim') $(human_size "$total_bytes") ($n_backups backups + $n_logs job logs)"
+
+  local n_quar=0 quar_bytes=0 n_sbak=0 sbak_bytes=0
+  process_expiry quarantine "Purge quarantine dirs"
+  n_quar=$EXP_N
+  quar_bytes=$EXP_BYTES
+  echo ""
+  process_expiry search_backup "Search-index backups"
+  n_sbak=$EXP_N
+  sbak_bytes=$EXP_BYTES
+  echo ""
+  total_bytes=$((total_bytes + quar_bytes + sbak_bytes))
+  echo "roborev_retention: $([ "$APPLY" -eq 1 ] && echo 'reclaimed' || echo 'would reclaim') $(human_size "$total_bytes") ($n_backups backups + $n_logs job logs + $n_quar quarantine dirs + $n_sbak search backups)"
 
   if [ "$APPLY" -eq 1 ]; then
-    log "apply: reclaimed $(human_size "$total_bytes") ($n_backups backups + $n_logs job logs)"
+    log "apply: reclaimed $(human_size "$total_bytes") ($n_backups backups + $n_logs job logs + $n_quar quarantine dirs + $n_sbak search backups)"
     # Heartbeat + per-run event count — apply-only (see header comment).
     if command -v duckdb >/dev/null 2>&1 && [ -f "$UNIFIED_DB" ]; then
       local run_id started
@@ -235,7 +390,7 @@ main() {
         INSERT OR IGNORE INTO housekeeping_runs
           (id, task, source_script, started_at, ended_at, status, rows_written)
         VALUES ('${run_id}', 'roborev_retention', '$0', TIMESTAMPTZ '${started}',
-                TIMESTAMPTZ '${started}', 'ok', $((n_backups + n_logs)));
+                TIMESTAMPTZ '${started}', 'ok', $((n_backups + n_logs + n_quar + n_sbak)));
         INSERT OR IGNORE INTO roborev_retention_events
           (id, fired_at, source, run_id, item_type, action, count, bytes)
         VALUES ('${run_id}-backups', TIMESTAMPTZ '${started}', 'roborev_retention.sh',
@@ -244,10 +399,18 @@ main() {
           (id, fired_at, source, run_id, item_type, action, count, bytes)
         VALUES ('${run_id}-joblogs', TIMESTAMPTZ '${started}', 'roborev_retention.sh',
                 '${run_id}', 'joblog', 'removed', $n_logs, $log_bytes);
+        INSERT OR IGNORE INTO roborev_retention_events
+          (id, fired_at, source, run_id, item_type, action, count, bytes)
+        VALUES ('${run_id}-quarantine', TIMESTAMPTZ '${started}', 'roborev_retention.sh',
+                '${run_id}', 'quarantine', 'removed', $n_quar, $quar_bytes);
+        INSERT OR IGNORE INTO roborev_retention_events
+          (id, fired_at, source, run_id, item_type, action, count, bytes)
+        VALUES ('${run_id}-searchbak', TIMESTAMPTZ '${started}', 'roborev_retention.sh',
+                '${run_id}', 'search_backup', 'removed', $n_sbak, $sbak_bytes);
       " 2>/dev/null || true
     fi
   else
-    log "dry-run: would reclaim $(human_size "$total_bytes") ($n_backups backups + $n_logs job logs)"
+    log "dry-run: would reclaim $(human_size "$total_bytes") ($n_backups backups + $n_logs job logs + $n_quar quarantine dirs + $n_sbak search backups)"
   fi
 }
 
@@ -367,6 +530,53 @@ if [ "${SELFTEST:-0}" = "1" ]; then
   _check "old job log removed" "absent" "$_old_log_removed"
   _new_log_kept=$([ -e "$ROBOREV_HOME/logs/jobs/2.log" ] && echo present || echo absent)
   _check "recent job log kept" "present" "$_new_log_kept"
+
+  # ── quarantine + search-backup expiry ──
+  ROBOREV_QUARANTINE_DAYS=14
+  mkdir -p "$ROBOREV_HOME/purged-findings-20250101" "$ROBOREV_HOME/purged-findings-20250102 with space" "$ROBOREV_HOME/purged-findings-fresh"
+  echo f >"$ROBOREV_HOME/purged-findings-20250101/a.md"
+  echo f >"$ROBOREV_HOME/purged-findings-20250102 with space/b.md"
+  echo f >"$ROBOREV_HOME/purged-findings-fresh/c.md"
+  touch -t 202501010900 "$ROBOREV_HOME/purged-findings-20250101" "$ROBOREV_HOME/purged-findings-20250102 with space"
+  echo s >"$ROBOREV_HOME/reviews.search.db.pre-purge-old.bak"
+  echo s >"$ROBOREV_HOME/reviews.search.db.pre-purge-new.bak"
+  touch -t 202501010900 "$ROBOREV_HOME/reviews.search.db.pre-purge-old.bak"
+  echo live >"$ROBOREV_HOME/reviews.search.db"
+  echo wal >"$ROBOREV_HOME/reviews.search.db-wal"
+  echo shm >"$ROBOREV_HOME/reviews.search.db-shm"
+  touch -t 202501010900 "$ROBOREV_HOME/reviews.search.db" "$ROBOREV_HOME/reviews.search.db-wal" "$ROBOREV_HOME/reviews.search.db-shm" "$ROBOREV_DB"
+  mkdir -p "$ROBOREV_HOME/not-purged-findings-x"
+  touch -t 202501010900 "$ROBOREV_HOME/not-purged-findings-x"
+
+  _exists() { [ -e "$1" ] && echo present || echo absent; }
+
+  APPLY=0
+  main >/dev/null 2>&1
+  _check "dry-run keeps old quarantine dir" "present" "$(_exists "$ROBOREV_HOME/purged-findings-20250101")"
+  _check "dry-run keeps old search backup" "present" "$(_exists "$ROBOREV_HOME/reviews.search.db.pre-purge-old.bak")"
+
+  APPLY=1
+  main >/dev/null 2>&1
+  _check "apply removes old quarantine dir" "absent" "$(_exists "$ROBOREV_HOME/purged-findings-20250101")"
+  _check "apply removes old quarantine dir with a space in its name" "absent" "$(_exists "$ROBOREV_HOME/purged-findings-20250102 with space")"
+  _check "apply keeps quarantine dir newer than N days" "present" "$(_exists "$ROBOREV_HOME/purged-findings-fresh")"
+  _check "apply removes old search-index backup" "absent" "$(_exists "$ROBOREV_HOME/reviews.search.db.pre-purge-old.bak")"
+  _check "apply keeps search-index backup newer than N days" "present" "$(_exists "$ROBOREV_HOME/reviews.search.db.pre-purge-new.bak")"
+  _check "live reviews.search.db never removed" "present" "$(_exists "$ROBOREV_HOME/reviews.search.db")"
+  _check "reviews.search.db-wal never removed" "present" "$(_exists "$ROBOREV_HOME/reviews.search.db-wal")"
+  _check "reviews.search.db-shm never removed" "present" "$(_exists "$ROBOREV_HOME/reviews.search.db-shm")"
+  _check "live reviews.db never removed (old mtime)" "present" "$(_exists "$ROBOREV_DB")"
+  _check "non-matching old dir (not-purged-findings-x) untouched" "present" "$(_exists "$ROBOREV_HOME/not-purged-findings-x")"
+
+  _check "ROBOREV_QUARANTINE_DAYS=3 clamps to 7" "7" "$(clamp_quarantine_days 3)"
+  _check "ROBOREV_QUARANTINE_DAYS=abc -> 14" "14" "$(clamp_quarantine_days abc)"
+  _check "ROBOREV_QUARANTINE_DAYS empty -> 14" "14" "$(clamp_quarantine_days '')"
+  _check "ROBOREV_QUARANTINE_DAYS=30 kept" "30" "$(clamp_quarantine_days 30)"
+
+  _check "path_within_home rejects outside path" "1" "$(path_within_home /etc/passwd && echo 0 || echo 1)"
+  _check "path_within_home rejects .. traversal" "1" "$(path_within_home "$ROBOREV_HOME/../x" && echo 0 || echo 1)"
+  _check "path_within_home rejects ROBOREV_HOME itself" "1" "$(path_within_home "$ROBOREV_HOME" && echo 0 || echo 1)"
+  _check "path_within_home accepts child" "0" "$(path_within_home "$ROBOREV_HOME/purged-findings-x" && echo 0 || echo 1)"
 
   echo ""
   echo "SELFTEST: ${_pass}/$((_pass + _fail)) PASS"
