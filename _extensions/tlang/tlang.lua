@@ -81,7 +81,9 @@ local function resolve_binary()
         error("TLANG_BIN contains unsupported characters.")
     end
 
-    if normalized:match("%.%.") ~= nil then
+    -- LOCAL PATCH (VENDORED.md #3): reject ".." only as a whole path segment,
+    -- so names such as "t..old" are not refused.
+    if ("/" .. normalized:gsub("\\", "/") .. "/"):match("/%.%./") ~= nil then
         error("TLANG_BIN may not contain parent-directory traversal segments.")
     end
 
@@ -99,6 +101,27 @@ end
 local function render_error(message)
     return pandoc.CodeBlock("T execution failed:\n" .. tostring(message),
                             pandoc.Attr("", {"text", "t-error"}))
+end
+
+-- LOCAL PATCH (VENDORED.md #1): marker printed between chunks of the
+-- accumulated source so earlier chunks' output can be discarded.
+local CHUNK_SENTINEL = "@@tlang-chunk-boundary@@"
+
+-- Returns the text after the last sentinel, or nil when none is present.
+-- Only optional trailing spaces/tabs and at most one line terminator directly
+-- after the sentinel are dropped; the real CLI emits "<text> \n" but the
+-- terminator is not assumed.
+local function after_last_sentinel(output)
+    local last_end
+    local pos = 1
+    while true do
+        local _, e = string.find(output, CHUNK_SENTINEL, pos, true)
+        if e == nil then break end
+        last_end = e
+        pos = e + 1
+    end
+    if last_end == nil then return nil end
+    return (string.sub(output, last_end + 1):gsub("^[ \t]*\r?\n?", "", 1))
 end
 
 -- Execute Quarto T chunks in strict mode while intentionally bypassing the
@@ -126,13 +149,47 @@ local function execute_t_unsafe(chunk_source)
 
     if ok then return true, output end
 
+    -- LOCAL PATCH (VENDORED.md #4): decide "binary missing" from how the call
+    -- failed, not from the message text. pandoc.pipe raises a table with an
+    -- `error_code` when the process ran and exited non-zero; any other error
+    -- value means the process could not be spawned at all.
     local message = tostring(output)
-    if message:match("not found") or message:match("No such file") then
+    if type(output) ~= "table" or output.error_code == nil then
         return false, string.format(
                    "Could not run `%s`. Make sure the T CLI is installed or set TLANG_BIN to the correct binary.\n%s",
                    binary, message)
     end
+    if type(output.output) == "string" and output.output ~= "" then
+        -- LOCAL PATCH (VENDORED.md #4): the script is the accumulated source
+        -- of earlier chunks, so keep only the failing chunk's own stdout.
+        -- pandoc already embeds the full stdout in its own error message
+        -- ("... (error code N): <stdout>"), so cut that suffix before
+        -- appending the trimmed text. Only when a sentinel is present.
+        local raw = output.output
+        local stdout = after_last_sentinel(raw)
+        if stdout ~= nil then
+            if message:sub(-#raw) == raw then
+                message = message:sub(1, #message - #raw):gsub("%s+$", "")
+            end
+            if stdout ~= "" then message = message .. "\n" .. stdout end
+        else
+            message = message .. "\n" .. raw
+        end
+    end
     return false, message
+end
+
+-- Returns the output following the last sentinel. If the sentinel is absent
+-- (should not happen) the full output is returned and a warning logged,
+-- rather than silently dropping output.
+local function last_chunk_output(output)
+    local rest = after_last_sentinel(output)
+    if rest == nil then
+        io.stderr:write(
+            "[tlang] chunk-boundary sentinel missing from output; rendering unsplit output\n")
+        return output
+    end
+    return rest
 end
 
 local function make_output_block(output)
@@ -173,21 +230,37 @@ function CodeBlock(el)
 
     if not should_eval then return rendered_blocks end
 
-    -- Build the new session source incrementally without rebuilding all chunks
+    -- LOCAL PATCH (VENDORED.md #1): the `t` CLI has no persistent session mode
+    -- for `run`, so each chunk still re-runs the accumulated source of all
+    -- earlier chunks (O(n^2); side effects of earlier chunks repeat). What no
+    -- longer repeats is their printed OUTPUT: a sentinel line is printed
+    -- between chunks and only the text after the last sentinel is rendered.
     local new_session_source
     if t_state.session_source == "" then
         new_session_source = body
     else
-        new_session_source = t_state.session_source .. "\n\n" .. body
+        new_session_source = t_state.session_source .. "\n\n" ..
+                                 string.format("print(%q)", CHUNK_SENTINEL) ..
+                                 "\n\n" .. body
     end
 
     local ok, output = execute_t_unsafe(new_session_source)
     if not ok then
+        -- LOCAL PATCH (VENDORED.md #2): never fail silently. The failed chunk
+        -- is NOT added to the session, so later chunks run without it.
+        io.stderr:write("[tlang] chunk failed", include and "" or
+                            " (include: false, nothing rendered)",
+                        "; excluded from the session state:\n",
+                        tostring(output), "\n")
         if include then
             table.insert(rendered_blocks, render_error(output))
             return rendered_blocks
         end
         return {}
+    end
+
+    if t_state.session_source ~= "" then
+        output = last_chunk_output(output)
     end
 
     -- Only update the session state after successful execution
