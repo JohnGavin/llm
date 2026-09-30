@@ -17,6 +17,7 @@
 ^docs$
 ^\.quarto$
 ^_quarto\.yml$
+^_extensions$
 
 # Development scripts
 ^R/dev$
