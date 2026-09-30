@@ -60,19 +60,24 @@ FILE_READ_CAP = 262144
 # Two independent signal families. Either alone is enough to warn; neither is
 # a credential-shape signal (this hook shares nothing with cred_patterns.py —
 # it is a different domain, not a duplicate of the secret guard).
+# Units are case-sensitive and must end at a word boundary, so ordinary words
+# after a number ("5 pages", "3 floors", "2 PGs") never read as pg or fL.
 UNIT_RE = re.compile(
-    r'\d+(\.\d+)?\s*'
+    r'(?<![\w.])\d+(\.\d+)?\s*'
     r'(g/L|mg/L|mmol/L|[uµ]mol/L|x10\^9/L|x10\^12/L|fL|pg|IU/L|mIU/L|'
-    r'ng/mL|pmol/L|nmol/L|mL/min)',
-    re.IGNORECASE,
+    r'ng/mL|pmol/L|nmol/L|mL/min)'
+    r'(?![A-Za-z])',
 )
+# Analyte names match in any case; abbreviations only in upper case, so the
+# HTML attribute alt= or the word "cast" cannot match ALT or AST.
 COMPONENT_RE = re.compile(
-    r'(neutrophil|monocyte|lymphocyte|h[ae]emoglobin|platelet|creatinine|'
-    r'immunoglobulin|\bIgG\b|\bIgA\b|\bIgM\b|\bCRP\b|\bESR\b|\begfr\b|'
-    r'bilirubin|\bALT\b|\bAST\b|potassium|sodium|calcium|\bpsa\b)'
+    r'((?i:neutrophil|monocyte|lymphocyte|h[ae]emoglobin|platelet|creatinine|'
+    r'immunoglobulin|bilirubin|potassium|sodium|calcium|\begfr\b)|'
+    r'\b(IgG|IgA|IgM|CRP|ESR|ALT|AST|PSA)\b)'
     r'.{0,40}?\d+(\.\d+)?',
-    re.IGNORECASE,
 )
+# Tags (and their attributes) are markup, not page text.
+TAG_RE = re.compile(r'<[^>]*>')
 
 
 def _utc_ts():
@@ -88,10 +93,9 @@ def _append(path, line):
         pass  # logging must never block or affect a publish
 
 
-def warn(file_path, line_num, sample):
-    # NEVER include the raw matched value beyond a short, already-non-secret
-    # sample used purely to help the user locate the line -- clinical values
-    # are not credentials, but there is no reason to echo more than needed.
+def warn(file_path, line_num, kind):
+    # The matched text itself is never logged or echoed: it may be a real lab
+    # value, and the file path plus line number is enough to find it.
     msg = (
         'WARN (clinical_data_provenance_guard): %s line %d looks like it may '
         'contain a hand-transcribed clinical value (%s). Per the '
@@ -100,9 +104,9 @@ def warn(file_path, line_num, sample):
         'never transcribed directly from a letter/PDF/portal screen -- even '
         'when the pipeline is broken and fixing it feels slower. If this '
         'value was already DB-sourced, ignore this warning. Log: %s'
-        % (file_path, line_num, sample, LOG_FILE)
+        % (file_path, line_num, kind, LOG_FILE)
     )
-    _append(LOG_FILE, '%s\tfile=%s\tline=%d\tsample=%s' % (_utc_ts(), file_path, line_num, sample))
+    _append(LOG_FILE, '%s\tfile=%s\tline=%d\tsignal=%s' % (_utc_ts(), file_path, line_num, kind))
     sys.stderr.write(msg + '\n')
 
 
@@ -136,13 +140,12 @@ def main():
     # check; a line-by-line flood would just train the user to ignore it —
     # same "too loud is also broken" lesson as this repo's other guards).
     for line_num, line in enumerate(content.splitlines(), start=1):
-        m = UNIT_RE.search(line)
-        if m:
-            warn(file_path, line_num, m.group(0).strip())
+        text = TAG_RE.sub(' ', line)
+        if UNIT_RE.search(text):
+            warn(file_path, line_num, 'number with a lab unit')
             return
-        m = COMPONENT_RE.search(line)
-        if m:
-            warn(file_path, line_num, m.group(0).strip())
+        if COMPONENT_RE.search(text):
+            warn(file_path, line_num, 'lab analyte name near a number')
             return
 
 
@@ -222,6 +225,23 @@ if [ "${1:-}" = "--selftest" ]; then
   printf 'line1\nline2\nHaemoglobin 999 g/L (Low)\nline4\n' > "$TMP_DIR/mid_line.html"
   _case_warn "match on a non-first line is still found (line number tracked)" "$TMP_DIR/mid_line.html"
 
+  printf '<p>ALT 999</p>\n' > "$TMP_DIR/upper_alt.html"
+  _case_warn "upper-case ALT abbreviation near a number" "$TMP_DIR/upper_alt.html"
+
+  # The warning and the log must name the line, never the value itself.
+  TOTAL=$((TOTAL + 1))
+  out=$(run_guard "$(_payload_for_file "$TMP_DIR/with_unit.html")" 2>&1 1>/dev/null)
+  if printf '%s' "$out" | grep -q '99\.99'; then
+    printf 'FAIL  matched value echoed in the warning\n'
+  elif grep -q '99\.99' "$CLINICAL_GUARD_LOG_DIR/clinical_data_provenance_guard.log" 2>/dev/null; then
+    printf 'FAIL  matched value written to the log\n'
+  elif [ ! -s "$CLINICAL_GUARD_LOG_DIR/clinical_data_provenance_guard.log" ]; then
+    printf 'FAIL  log not written, so the no-value check saw nothing\n'
+  else
+    PASS=$((PASS + 1))
+    printf 'PASS  matched value is not echoed or logged\n'
+  fi
+
   # ── MUST STAY SILENT (regression guards — over-warning trains ignoring) ──
   printf '<html><body>\n<h1>My dashboard</h1>\n<p>No clinical values here.</p>\n</body></html>\n' \
     > "$TMP_DIR/clean.html"
@@ -235,10 +255,27 @@ if [ "${1:-}" = "--selftest" ]; then
 
   _case_silent "file_path points at a directory — fail open, no warn" "$TMP_DIR"
 
-  printf 'Neutrophils 99.99 x10^9/L\n' > "$TMP_DIR/unreadable.html"
-  chmod 000 "$TMP_DIR/unreadable.html"
-  _case_silent "file_path points at an unreadable file — fail open, no warn" "$TMP_DIR/unreadable.html"
-  chmod 644 "$TMP_DIR/unreadable.html"
+  printf '<html><body>\n<img alt="Chart 1" src="c.png"><img ALT="Figure 2">\n</body></html>\n' \
+    > "$TMP_DIR/alt_attr.html"
+  _case_silent "HTML alt= attribute near a number is markup, not ALT" "$TMP_DIR/alt_attr.html"
+
+  printf '<html><body>\n<p>Read 5 pages, climbed 3 floors, 2 PGs, 7 flats.</p>\n</body></html>\n' \
+    > "$TMP_DIR/unit_like_words.html"
+  _case_silent "ordinary words after a number (pages, floors) are not pg or fL" "$TMP_DIR/unit_like_words.html"
+
+  printf 'Hold alt and press 5, or type ast then 9.\n' > "$TMP_DIR/lower_alt.html"
+  _case_silent "lower-case alt/ast words are not the ALT/AST abbreviations" "$TMP_DIR/lower_alt.html"
+
+  # Root can read a mode-000 file, so this case only means something as a
+  # normal user.
+  if [ "$(id -u)" -ne 0 ]; then
+    printf 'Neutrophils 99.99 x10^9/L\n' > "$TMP_DIR/unreadable.html"
+    chmod 000 "$TMP_DIR/unreadable.html"
+    _case_silent "file_path points at an unreadable file — fail open, no warn" "$TMP_DIR/unreadable.html"
+    chmod 644 "$TMP_DIR/unreadable.html"
+  else
+    printf 'SKIP  unreadable-file case (running as root)\n'
+  fi
 
   # ── Malformed / absent-key inputs never crash or warn ─────────────────────
   TOTAL=$((TOTAL + 1))

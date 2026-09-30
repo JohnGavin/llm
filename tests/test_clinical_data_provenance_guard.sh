@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/test_clinical_data_provenance_guard.sh — runs the hook's own
-# --selftest (11 cases) as the tests/test_*.sh suite CI selects on.
+# --selftest as the tests/test_*.sh suite CI selects on.
 #
 # The hook (.claude/hooks/clinical_data_provenance_guard.sh) is a
 # PreToolUse:Artifact WARN-only guard that flags content shaped like a
@@ -12,16 +12,17 @@
 # file_path key) plus an always-exit-0 (never-blocks) check.
 #
 # Usage: bash tests/test_clinical_data_provenance_guard.sh
-# Exit 0: all 11 selftest cases pass. Exit 1: one or more failed.
+# Exit 0: every selftest case passes. Exit 1: one or more failed.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$REPO_ROOT/.claude/hooks/clinical_data_provenance_guard.sh"
 
-if [ ! -x "$HOOK" ] && [ ! -f "$HOOK" ]; then
-  echo "FAIL   hook not found: $HOOK"
+# Claude Code runs the hook directly, so it must be executable, not merely present.
+if [ ! -x "$HOOK" ]; then
+  echo "FAIL   hook missing or not executable: $HOOK"
   exit 1
 fi
 
-bash "$HOOK" --selftest
+"$HOOK" --selftest
