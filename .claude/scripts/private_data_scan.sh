@@ -446,6 +446,38 @@ is_html_entity_like() {
 }
 
 # ---------------------------------------------------------------------------
+# CSS hex colour collision guard -- uk-postcode ONLY.
+# ---------------------------------------------------------------------------
+# RE_UK_POSTCODE also matches the hex digits of a CSS colour literal such as
+# #E4E9EF (E,4,E,9,EF = letter + digit + alnum + digit + 2 letters). Found
+# live in .claude/reports/capability_registry_template.html ("--ink:#E4E9EF;")
+# on PR #1303 (2026-09-30).
+#
+# Like the HTML entity guard this is a literal-context check, not a shape
+# heuristic: the candidate is exempt only when the line contains
+# "#<match>" where <match> is ENTIRELY hex digits, is exactly 3, 4, 6 or 8
+# digits long (the only valid CSS colour lengths), and is followed by a
+# non-alphanumeric character or end of line. Consequences:
+#   #E4E9EF;       -> exempt (6 hex digits, bounded)
+#   EC1A 1BB       -> not exempt (no '#', contains a space)
+#   #EC1A1BB       -> not exempt (7 digits is not a valid colour length)
+#   #E4E9EFzz      -> not exempt (not bounded by a non-alnum character)
+# The leading '#' is required, so a postcode written without '#' is never
+# exempted. Residual accepted gap: a real compact postcode of exactly 6
+# characters, all hex, written directly after a '#' (e.g. "#EC1A1B" is not
+# a postcode, but "#E11AAB"-style strings can be) would be exempted; human
+# written addresses do not put '#' in front of a postcode.
+#
+# Scoped to uk-postcode only: e164 needs a leading '+' and iban an
+# uppercase country-code prefix followed by digits/alnum of different shape.
+is_css_hex_colour_like() {
+    local match="$1" line="$2"
+    case "${#match}" in 3|4|6|8) ;; *) return 1 ;; esac
+    printf '%s' "$match" | "$GREP" -qE '^[0-9A-Fa-f]+$' || return 1
+    printf '%s' "$line" | "$GREP" -qiE -- "#${match}([^0-9A-Za-z]|\$)"
+}
+
+# ---------------------------------------------------------------------------
 # Self-reference exemption -- GENERIC-PATTERN DETECTION ONLY, never deny-list.
 # ---------------------------------------------------------------------------
 # This scanner's own source (and its sibling private_values_sync.sh, whose
@@ -588,7 +620,8 @@ scan_generic() {
                 local pc_exempt_all=1 pc_match
                 while IFS= read -r pc_match; do
                     [ -n "$pc_match" ] || continue
-                    if is_git_sha_like "$pc_match" || is_html_entity_like "$pc_match" "$line"; then
+                    if is_git_sha_like "$pc_match" || is_html_entity_like "$pc_match" "$line" \
+                        || is_css_hex_colour_like "$pc_match" "$line"; then
                         continue
                     fi
                     pc_exempt_all=0
@@ -1134,6 +1167,30 @@ run_selftest() {
     printf '%s\n' "&#x1F4CB; postcode EC1A 1BB lives here" | scan_blob "R/some_other_file.R"
     _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "real postcode on the same line as an HTML entity is still flagged"
     rm -f "$FINDINGS_FILE"
+
+    # 22a: CSS hex colour collision guard (see is_css_hex_colour_like()'s
+    # header comment) -- the exact line from PR #1303 must NOT be flagged.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f14.XXXXXX")"
+    printf '%s\n' "      --ink:#E4E9EF; --ink-2:#C6CFD8; --muted:#AAB6C2; --line:#28323D;" | scan_blob "R/some_other_file.R"
+    _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" "CSS hex colours '#E4E9EF' are NOT flagged as uk-postcode false positives"
+    rm -f "$FINDINGS_FILE"
+
+    # 22b: a real postcode on the SAME line as a CSS hex colour is still flagged.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f15.XXXXXX")"
+    printf '%s\n' "--ink:#E4E9EF; postcode EC1A 1BB lives here" | scan_blob "R/some_other_file.R"
+    _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "real postcode on the same line as a CSS hex colour is still flagged"
+    rm -f "$FINDINGS_FILE"
+
+    # 22c: a compact postcode after '#' (7 chars, not a valid colour length)
+    # is still flagged. (A colour-shaped token NOT bounded by a non-alnum
+    # char, e.g. "#E4E9EFzz", cannot arise: RE_UK_POSTCODE's own \b anchors
+    # would not match a substring of it, so there is nothing to exempt.)
+    for frag in "#EC1A1BB here"; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_f16.XXXXXX")"
+        printf 'ref %s\n' "$frag" | scan_blob "R/some_other_file.R"
+        _check "$([ "$(awk -F'\t' '$5=="uk-postcode"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "non-colour '#' token '$frag' is still flagged"
+        rm -f "$FINDINGS_FILE"
+    done
 
     # ── 23-27: NUL-byte truncation (JohnGavin/llm#1160) ────────────────────
     # bash's printf can WRITE a literal NUL byte to a file's output stream
