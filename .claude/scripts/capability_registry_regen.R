@@ -250,6 +250,27 @@ fetch_agent_usage <- function(db_path) {
   out
 }
 
+fetch_row_count <- function(db_path, table) {
+  rows <- query_duckdb(sprintf("SELECT COUNT(*) AS n FROM %s", table), db_path)
+  if (length(rows) == 0L || is.null(rows[[1L]]$n)) return(0L)
+  as.integer(rows[[1L]]$n)
+}
+
+# Slash-command usage, most-used first (name ties broken alphabetically so the
+# render is deterministic).
+fetch_command_usage <- function(db_path) {
+  rows <- query_duckdb(
+    "SELECT command_name, COUNT(*) AS n FROM command_usage
+     WHERE command_name IS NOT NULL GROUP BY command_name",
+    db_path
+  )
+  out <- lapply(rows, function(r) list(name = r$command_name, count = as.integer(r$n %||% 0L)))
+  if (length(out) == 0L) return(out)
+  ord <- order(-vapply(out, function(x) x$count, integer(1)),
+               vapply(out, function(x) x$name, character(1)))
+  out[ord]
+}
+
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 # ── Build DATA object ─────────────────────────────────────────────────────────
@@ -297,6 +318,33 @@ items_out <- lapply(all_items, function(x) {
   )
 })
 
+# ── Facts: the single home for every count quoted in the page prose ──────────
+# Template prose never hand-types these (llm#1294, dynamic-prose-values rule):
+# it carries <span data-fact="key"></span> and the values below are filled in.
+
+commands <- fetch_command_usage(cfg$db)
+agent_inv_vals <- vapply(agents, function(x) as.integer(x$invocations %||% 0L), integer(1))
+agent_inv_total <- sum(agent_inv_vals)
+top_agent_idx <- if (length(agents) > 0L) {
+  order(-agent_inv_vals, vapply(agents, function(x) x$name, character(1)))[1L]
+} else NA_integer_
+FACTS <- list(
+  n_skills  = length(skills),
+  n_agents  = length(agents),
+  n_rules   = length(rules),
+  n_total   = length(all_items),
+  agents_fired = agents_with_usage,
+  agents_idle  = length(agents) - agents_with_usage,
+  top_agent = if (is.na(top_agent_idx)) "none" else agents[[top_agent_idx]]$name,
+  top_agent_share_pct = if (agent_inv_total > 0L) {
+    as.integer(round(100 * agent_inv_vals[top_agent_idx] / agent_inv_total))
+  } else 0L,
+  skill_invocations_total = sum(vapply(skills, function(x) as.integer(x$invocations %||% 0L), integer(1))),
+  cmd_total = sum(vapply(commands, function(x) x$count, integer(1))),
+  skill_usage_rows   = fetch_row_count(cfg$db, "skill_usage"),
+  command_usage_rows = fetch_row_count(cfg$db, "command_usage")
+)
+
 DATA <- list(
   generated_note = "usage from unified.duckdb (skill_usage, agent_runs); rules are always-on/path-scoped and carry no invocation count",
   counts = list(
@@ -310,6 +358,8 @@ DATA <- list(
     agents_with_any_usage = agents_with_usage
   ),
   top_5_by_invocations = top5_out,
+  commands = commands,
+  facts = FACTS,
   items = items_out
 )
 
@@ -321,7 +371,92 @@ template_text <- paste(readLines(cfg$template, warn = FALSE), collapse = "\n")
 
 generated_date <- format(Sys.Date(), "%Y-%m-%d")
 
-html_out <- template_text
+# ── Literal gate (llm#1294) ───────────────────────────────────────────────────
+# Every number in the template's prose and JS strings must come from FACTS (via
+# a data-fact span) or carry an explicit reason (data-fixed="<reason>"). Zero
+# tolerance, no category exempt: counts, dates, percentages, phase labels.
+# A violation fails the build BEFORE anything is written.
+
+check_template_literals <- function(tpl, facts) {
+  viol <- character(0)
+  flag <- function(kind, tok, ctx) {
+    homes <- names(facts)[vapply(facts, function(v) identical(as.character(v), tok), logical(1))]
+    hint <- if (length(homes)) sprintf(" (equals home value %s)", paste(homes, collapse = "/")) else ""
+    viol <<- c(viol, sprintf("  [%s] literal '%s'%s in: ...%s...", kind, tok, hint, trimws(ctx)))
+  }
+  scan_digits <- function(text, kind) {
+    m <- gregexpr("[0-9]+([.,][0-9]+)*", text, perl = TRUE)[[1L]]
+    if (m[1L] == -1L) return(invisible())
+    lens <- attr(m, "match.length")
+    for (i in seq_along(m)) {
+      tok <- substr(text, m[i], m[i] + lens[i] - 1L)
+      ctx <- substr(text, max(1L, m[i] - 40L), min(nchar(text), m[i] + lens[i] + 30L))
+      flag(kind, tok, gsub("[\r\n]+", " ", ctx))
+    }
+  }
+
+  prose <- tpl
+  # JS / CSS / comments are not prose (JS strings are scanned separately below).
+  scripts <- regmatches(prose, gregexpr("(?s)<script[^>]*>.*?</script>", prose, perl = TRUE))[[1L]]
+  prose <- gsub("(?s)<script[^>]*>.*?</script>", " ", prose, perl = TRUE)
+  prose <- gsub("(?s)<style[^>]*>.*?</style>", " ", prose, perl = TRUE)
+  prose <- gsub("(?s)<!--.*?-->", " ", prose, perl = TRUE)
+
+  # data-fixed without a reason is itself a violation.
+  if (grepl("data-fixed=(\"\"|'')|data-fixed([[:space:]]|>|/)", prose, perl = TRUE)) {
+    viol <- c(viol, "  [data-fixed] an element has data-fixed with no reason; the escape hatch is data-fixed=\"<reason>\"")
+  }
+  prose <- gsub("(?s)<(\\w+)\\b[^>]*\\bdata-fixed=\"[^\"]+\"[^>]*>.*?</\\1>", " ", prose, perl = TRUE)
+  # A data-fact span must be EMPTY in the template; typed content inside one is
+  # just a literal wearing a costume.
+  typed <- regmatches(prose, gregexpr("<span data-fact=\"[A-Za-z0-9_]+\">[^<]+</span>", prose, perl = TRUE))[[1L]]
+  for (t in typed) viol <- c(viol, sprintf("  [data-fact] span is not empty (hand-typed value): %s", t))
+  prose <- gsub("(?s)<span data-fact=\"[A-Za-z0-9_]+\">.*?</span>", " ", prose, perl = TRUE)
+  prose <- gsub("(?s)<[^>]+>", " ", prose, perl = TRUE)
+  prose <- gsub("&[a-z]+;", " ", prose)
+  scan_digits(prose, "prose")
+
+  # JS string literals (single- or double-quoted). Numeric code (thresholds,
+  # animation timings) is not prose and is not scanned.
+  js_str_re <- "'([^'\\\\\n]|\\\\.)*'|\"([^\"\\\\\n]|\\\\.)*\""
+  for (sc in scripts) {
+    sc <- sub("(?s)^<script[^>]*>", "", sc, perl = TRUE)
+    sc <- sub("(?s)</script>$", "", sc, perl = TRUE)
+    sc <- gsub("__CAPABILITY_REGISTRY_DATA_JSON__", "null", sc, fixed = TRUE)
+    sc <- gsub("(?m)^[[:space:]]*//[^\n]*$", "", sc, perl = TRUE)
+    strs <- regmatches(sc, gregexpr(js_str_re, sc, perl = TRUE))[[1L]]
+    for (st in strs) scan_digits(st, "js-string")
+  }
+
+  # Every data-fact key used must exist in FACTS.
+  used <- regmatches(tpl, gregexpr("data-fact=\"[A-Za-z0-9_]+\"", tpl))[[1L]]
+  keys <- unique(sub("^data-fact=\"([^\"]+)\"$", "\\1", used))
+  unknown <- setdiff(keys, names(facts))
+  if (length(unknown)) {
+    viol <- c(viol, sprintf("  [data-fact] unknown fact key(s): %s", paste(unknown, collapse = ", ")))
+  }
+  viol
+}
+
+literal_violations <- check_template_literals(template_text, FACTS)
+if (length(literal_violations) > 0L) {
+  message(sprintf(
+    "capability_registry_regen.R: ERROR %d hand-typed literal(s) in %s -- every value has ONE home (dynamic-prose-values); use <span data-fact=\"key\"></span> or data-fixed=\"<reason>\":",
+    length(literal_violations), cfg$template))
+  for (v in literal_violations) message(v)
+  quit(status = 1L)
+}
+
+fill_facts <- function(tpl, facts) {
+  for (k in names(facts)) {
+    tpl <- gsub(sprintf("<span data-fact=\"%s\"></span>", k),
+                sprintf("<span data-fact=\"%s\">%s</span>", k, as.character(facts[[k]])),
+                tpl, fixed = TRUE)
+  }
+  tpl
+}
+
+html_out <- fill_facts(template_text, FACTS)
 html_out <- sub("__CAPABILITY_REGISTRY_DATA_JSON__", data_json, html_out, fixed = TRUE)
 html_out <- sub("__CAPABILITY_REGISTRY_GENERATED__", generated_date, html_out, fixed = TRUE)
 
