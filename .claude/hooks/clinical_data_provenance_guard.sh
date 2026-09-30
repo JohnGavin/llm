@@ -71,24 +71,54 @@ UNIT_RE = re.compile(
 )
 # Analyte names match in any case; abbreviations only in upper case, so the
 # HTML attribute alt= or the word "cast" cannot match ALT or AST.
+#
+# The word must be followed by a VALUE SHAPE, not merely any digit within 40
+# characters: optional plural, separators (space : = - ( ), optional filler
+# words (was/is/of/at/level/result...), optional comparator, then a digit.
+# So "creatinine was 999", "ALT = 999", "Sodium: <5" warn, while a CSS class
+# or selector ("sodium-icon" ... "3 items", ".potassium{margin:5px}") stays
+# silent. Tradeoff, stated openly: a unit-less value with other words in
+# between ("creatinine (umol) 999") is now a false negative (a value with a
+# unit is still caught by UNIT_RE), and a nutrition line like "Sodium 2
+# servings" still warns -- a number directly after the word is exactly the
+# shape of a transcribed value and cannot be told apart by form alone.
 COMPONENT_RE = re.compile(
-    r'((?i:neutrophil|monocyte|lymphocyte|h[ae]emoglobin|platelet|creatinine|'
-    r'immunoglobulin|bilirubin|potassium|sodium|calcium|\begfr\b)|'
-    r'\b(IgG|IgA|IgM|CRP|ESR|ALT|AST|PSA)\b)'
-    r'.{0,40}?\d+(\.\d+)?',
+    r'(?:(?i:neutrophil|monocyte|lymphocyte|h[ae]emoglobin|platelet|creatinine|'
+    r'immunoglobulin|bilirubin|potassium|sodium|calcium|\begfr\b)(?:s|es)?|'
+    r'\b(?:IgG|IgA|IgM|CRP|ESR|ALT|AST|PSA)\b)'
+    r'[\s:=\-–(]*'
+    r'(?:(?i:was|is|of|at|now|levels?|results?|value|reading)\b[\s:=\-–]*)*'
+    r'[<>≤≥~]?\s*\d',
 )
-# A real tag starts with a letter, / or !, so a comparator such as
-# "CRP < 5 mg/L" is left alone. Attribute names (alt=, title=) are dropped
-# but quoted attribute values are kept: a tooltip is visible page text.
-TAG_RE = re.compile(r'</?[A-Za-z!][^>]*>')
-ATTR_VALUE_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
+# Tag stripping (so markup never matches, and visible attribute text does).
+# A tag is "<" + letter-led name + ZERO OR MORE well-formed attributes + ">".
+# Requiring well-formed attributes (name, optionally =value) is what keeps
+# "x<y 99.99 mg/L >" and "<ULN 999 mg/L>" as text: their content is not an
+# attribute list, so they are not tags. Tradeoff: a malformed real tag is
+# left in place (a false positive at worst, e.g. ALT= in it); a real value
+# is never deleted (no false negative). Attribute values, quoted OR unquoted,
+# are kept: a tooltip is visible page text. Tags may span lines (the
+# replacement keeps the newlines so reported line numbers stay right).
+_ATTR = (r'\s+[A-Za-z_:@][-\w:.@]*'
+         r'(?:\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s"\'<>=`]+))?')
+TAG_RE = re.compile(r'</?[A-Za-z][A-Za-z0-9-]*(?:%s)*\s*/?>' % _ATTR)
+ATTR_VALUE_RE = re.compile(r'=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'<>=`]+))')
+# Comments: only the markers are removed; the body is kept as text, because a
+# comment ships in the page and a value in it is still a transcribed value.
+# Dropping the body (old behaviour) was a false negative, and its apostrophes
+# could pair up as a quote.
+COMMENT_MARK_RE = re.compile(r'<!--|--!?>')
 
 
-def visible_text(line):
-    return TAG_RE.sub(
-        lambda t: ' %s ' % ' '.join(a or b for a, b in ATTR_VALUE_RE.findall(t.group(0))),
-        line,
-    )
+def visible_text(content):
+    content = COMMENT_MARK_RE.sub(' ', content)
+
+    def repl(t):
+        tag = t.group(0)
+        vals = ' '.join(a or b or c for a, b, c in ATTR_VALUE_RE.findall(tag))
+        return ' %s ' % vals + '\n' * tag.count('\n')
+
+    return TAG_RE.sub(repl, content)
 
 
 def _utc_ts():
@@ -150,8 +180,7 @@ def main():
     # Warn at most once per publish (the first hit is enough to prompt a
     # check; a line-by-line flood would just train the user to ignore it —
     # same "too loud is also broken" lesson as this repo's other guards).
-    for line_num, line in enumerate(content.splitlines(), start=1):
-        text = visible_text(line)
+    for line_num, text in enumerate(visible_text(content).splitlines(), start=1):
         if UNIT_RE.search(text):
             warn(file_path, line_num, 'number with a lab unit')
             return
@@ -251,6 +280,19 @@ if [ "${1:-}" = "--selftest" ]; then
   printf '<p>ALT 999</p>\n' > "$TMP_DIR/upper_alt.html"
   _case_warn "upper-case ALT abbreviation near a number" "$TMP_DIR/upper_alt.html"
 
+  # roborev 13848: tag stripping must not eat real values, nor keep markup.
+  printf '<p>x<y 99.99 mg/L ></p>\n' > "$TMP_DIR/lt_not_tag.html"
+  _case_warn "x<y 99.99 mg/L > is text with a comparator, not a tag" "$TMP_DIR/lt_not_tag.html"
+
+  printf '<p>Result <ULN 999 mg/L></p>\n' > "$TMP_DIR/uln.html"
+  _case_warn "<ULN 999 mg/L> (non-attribute content) is not stripped as a tag" "$TMP_DIR/uln.html"
+
+  printf '<span title=99.99mg/L>x</span>\n' > "$TMP_DIR/unquoted_attr.html"
+  _case_warn "unquoted attribute value is kept, like a quoted one" "$TMP_DIR/unquoted_attr.html"
+
+  printf '<!-- Hb 99.99 g/L, don'"'"'t publish -->\n<p>x</p>\n' > "$TMP_DIR/comment.html"
+  _case_warn "value inside an HTML comment (with an apostrophe) is still seen" "$TMP_DIR/comment.html"
+
   # The warning and the log must name the line, never the value itself.
   TOTAL=$((TOTAL + 1))
   GUARD_LOG="$CLINICAL_GUARD_LOG_DIR/clinical_data_provenance_guard.log"
@@ -287,6 +329,15 @@ if [ "${1:-}" = "--selftest" ]; then
   printf '<html><body>\n<p>Read 5 pages (5 pgs), climbed 3 floors, 2 PG, 4 FL, 7 flats.</p>\n</body></html>\n' \
     > "$TMP_DIR/unit_like_words.html"
   _case_silent "ordinary words after a number (pages, floors) are not pg or fL" "$TMP_DIR/unit_like_words.html"
+
+  printf '<img src="c.png"\n  ALT="Figure 2">\n' > "$TMP_DIR/multiline_tag.html"
+  _case_silent "multi-line tag carrying an ALT= attribute is stripped whole" "$TMP_DIR/multiline_tag.html"
+
+  printf '<i class="sodium-icon"></i> 3 items\n' > "$TMP_DIR/sodium_icon.html"
+  _case_silent "analyte word in a class name, unrelated digit nearby (roborev 13842)" "$TMP_DIR/sodium_icon.html"
+
+  printf '<style>.potassium{margin:5px}</style>\n' > "$TMP_DIR/css_analyte.html"
+  _case_silent "analyte word as a CSS selector with a digit in the rule" "$TMP_DIR/css_analyte.html"
 
   printf 'Hold alt and press 5, or type ast then 9.\n' > "$TMP_DIR/lower_alt.html"
   _case_silent "lower-case alt/ast words are not the ALT/AST abbreviations" "$TMP_DIR/lower_alt.html"
