@@ -123,8 +123,12 @@ clamp_quarantine_days() {
 ROBOREV_QUARANTINE_DAYS=$(clamp_quarantine_days "$ROBOREV_QUARANTINE_DAYS")
 
 # ─── portable stat helpers (macOS BSD stat first, GNU stat fallback) ────────
-_mtime_epoch() { stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null; }
-_size_bytes() { stat -f '%z' "$1" 2>/dev/null || stat -c '%s' "$1" 2>/dev/null; }
+# GNU `stat -c` first: GNU `stat -f` means "file-system status" and prints that
+# to stdout before failing on the format argument, so trying BSD `-f` first on
+# Linux concatenates junk onto the fallback's number. BSD stat rejects `-c`
+# with nothing on stdout, so this order is clean on both.
+_mtime_epoch() { stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null; }
+_size_bytes() { stat -c '%s' "$1" 2>/dev/null || stat -f '%z' "$1" 2>/dev/null; }
 
 human_size() {
   # No numfmt dependency (not present on stock macOS).
