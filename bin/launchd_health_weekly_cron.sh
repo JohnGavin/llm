@@ -176,27 +176,15 @@ if [[ -f "$ENV_FILE" ]]; then
   log "sourced credentials from $ENV_FILE"
 fi
 
-# GMAIL creds for the Step 2 health email live in a separate secured env file
-# (the same one the roborev email cron sources — bin/roborev_weekly_rollup_cron.sh).
-# Without this, send_launchd_health_email.R aborts with "GMAIL_USERNAME or
-# GMAIL_APP_PASSWORD not set" and the whole job exits 1 (#749 Part A).
-#
-# set -a / set +a: the #753 fix sourced this file WITHOUT auto-export, so
-# GMAIL_USERNAME/GMAIL_APP_PASSWORD were set as shell-local variables only —
-# invisible to the nix-shell subprocess that runs send_launchd_health_email.R
-# (Step 2), which reads them via Sys.getenv(). Every run since (2026-07-05,
-# 07-12, 07-19) logged "sourced email credentials..." yet Step 2 still failed
-# with "GMAIL_USERNAME or GMAIL_APP_PASSWORD not set". set -a/set +a matches
-# the already-working pattern in roborev_weekly_rollup_cron.sh and
-# roborev_daily_cron.sh.
-EMAIL_ENV_FILE="$HOME/.claude/env/roborev_email.env"
-if [[ -f "$EMAIL_ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
-  set -a
-  source "$EMAIL_ENV_FILE"
-  set +a
-  log "sourced email credentials from $EMAIL_ENV_FILE"
-fi
+# GMAIL creds for the Step 2 health email come from the single source (the
+# process environment, else ~/.config/secrets.env) via lib/load_email_creds.sh
+# -- no per-job env file (llm#949). Loaded with export semantics so the
+# nix-shell subprocess that runs send_launchd_health_email.R sees them (#749
+# Part A / #753). Step 1 does not need them, so a failed load only warns here;
+# Step 2's R script aborts fail-closed when GMAIL_* is absent.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/lib/load_email_creds.sh"
+load_email_credentials log || log "WARN: email credentials unavailable -- Step 2 (health email) will fail closed"
 
 # ── Deploy: pull latest main before running (llm#510, attempt #3) ────────────
 # Cron wrappers run against ${REPO_ROOT}; without this step every gh pr merge
