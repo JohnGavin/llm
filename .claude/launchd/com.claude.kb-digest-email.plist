@@ -20,10 +20,8 @@
      Manual dry-run:
        DRYRUN=1 EMAIL_DRY_RUN=1 bash ~/docs_gh/llm/bin/kb_digest_daily_cron.sh
 
-     Credentials: ~/.claude/env/kb_digest.env (not committed; create manually)
-       GMAIL_USERNAME=you@gmail.com
-       GMAIL_APP_PASSWORD=<16-char app password>
-       REPORT_RECIPIENT=you@gmail.com
+     Credentials: single source (~/.config/secrets.env via with-secrets and
+     .claude/scripts/lib/load_email_creds.sh); no per-job env file (llm#949).
 
      Tracked in llm#298.
 -->
