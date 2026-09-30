@@ -267,6 +267,8 @@ var skills=items.filter(function(i){return i.kind==='skill';});
 var agents=items.filter(function(i){return i.kind==='agent';});
 var rules=items.filter(function(i){return i.kind==='rule';});
 var firable=skills.concat(agents);
+function unk(i){ return i.kind!=='rule' && i.inv==null; }  // usage unreadable: unknown, never zero (llm#1304)
+var skillsUnk=skills.some(unk), agentsUnk=agents.some(unk), anyUnk=skillsUnk||agentsUnk;
 var fired=firable.filter(function(i){return (i.inv||0)>0;}).length;
 var darkPct=Math.round((1-fired/firable.length)*100);
 var agentInv=agents.reduce(function(a,i){return a+(i.inv||0);},0);
@@ -278,18 +280,22 @@ var agentsFired=agents.filter(function(i){return (i.inv||0)>0;}).length;
 // ---- stat tiles ----
 var tiles=[
   {big:items.length, unit:'', lab:'Capabilities engineered', note:skills.length+' skills · '+agents.length+' agents · '+rules.length+' rules'},
-  {big:fired, unit:'/ '+firable.length, lab:'Have a recorded invocation', note:agentsFired+' of '+agents.length+' agents · '+skillsFired+' of '+skills.length+' skills'},
-  {big:darkPct, unit:'%', lab:'Dark inventory', note:'no capture yet — see caveat', hot:true},
-  {big:topShare, unit:'%', lab:'Agent work via one agent', note:'through '+topAgent.name+' ('+topAgent.inv+' runs)', hot:true}
+  anyUnk ? {big:'—', unit:'', lab:'Have a recorded invocation', note:'usage tables unreadable'}
+         : {big:fired, unit:'/ '+firable.length, lab:'Have a recorded invocation', note:agentsFired+' of '+agents.length+' agents · '+skillsFired+' of '+skills.length+' skills'},
+  anyUnk ? {big:'—', unit:'', lab:'Dark inventory', note:'usage tables unreadable', hot:true}
+         : {big:darkPct, unit:'%', lab:'Dark inventory', note:'no capture yet — see caveat', hot:true},
+  agentsUnk ? {big:'—', unit:'', lab:'Agent work via one agent', note:'usage tables unreadable', hot:true}
+            : {big:topShare, unit:'%', lab:'Agent work via one agent', note:'through '+topAgent.name+' ('+topAgent.inv+' runs)', hot:true}
 ];
 var stats=document.getElementById('stats');
 stats.innerHTML=tiles.map(function(t,i){
   return '<div class="tile'+(t.hot?' hot':'')+(RM?'':' reveal')+'" style="'+(RM?'':'animation-delay:'+(i*70)+'ms')+'">'+
-    '<div class="big"><span class="cv" data-to="'+t.big+'">'+(RM?t.big:0)+'</span>'+(t.unit?' <span class="unit">'+t.unit+'</span>':'')+'</div>'+
+    '<div class="big"><span class="cv" data-to="'+t.big+'">'+((RM||typeof t.big!=='number')?t.big:0)+'</span>'+(t.unit?' <span class="unit">'+t.unit+'</span>':'')+'</div>'+
     '<div class="lab">'+t.lab+'</div><div class="note">'+t.note+'</div></div>';
 }).join('');
 if(!RM){ document.querySelectorAll('.cv').forEach(function(el){
   var to=+el.getAttribute('data-to'), start=null, dur=850;
+  if(isNaN(to)) return;
   function step(ts){ if(!start)start=ts; var p=Math.min(1,(ts-start)/dur);
     el.textContent=Math.round(to*(1-Math.pow(1-p,3))); if(p<1)requestAnimationFrame(step); }
   requestAnimationFrame(step); }); }
@@ -298,19 +304,20 @@ if(!RM){ document.querySelectorAll('.cv').forEach(function(el){
 function segs(arr, litClass, restClass, hotAt){
   return arr.slice().sort(function(a,b){return (b.inv||0)-(a.inv||0);}).map(function(i){
     var n=i.inv||0;
+    if(unk(i)) return '<i class="seg unmeasured" title="'+i.name+': usage unknown"></i>';
     if(n>0){ var hot=(hotAt!=null && n>=hotAt); return '<i class="seg lit'+(hot?' hot':'')+'" title="'+i.name+': '+n+'"></i>'; }
     return '<i class="seg '+restClass+'" title="'+i.name+': not fired"></i>';
   }).join('');
 }
 document.getElementById('gauges').innerHTML=[
   {cls:'', name:'Agents', sub:'complete record',
-   frac:'<b>'+agentsFired+'</b> / '+agents.length+' fired',
+   frac:(agentsUnk?'<b>—</b>':'<b>'+agentsFired+'</b>')+' / '+agents.length+' fired',
    bar:segs(agents,'lit','idle',21),
-   cap:'Every dispatch logged. The '+(agents.length-agentsFired)+' empty squares are genuinely idle agents.'},
+   cap:agentsUnk?'Usage tables unreadable: agent usage is unknown, not zero.':'Every dispatch logged. The '+(agents.length-agentsFired)+' empty squares are genuinely idle agents.'},
   {cls:'', name:'Skills', sub:'instrumentation partial',
-   frac:'<b>'+skillsFired+'</b> / '+skills.length+' recorded',
+   frac:(skillsUnk?'<b>—</b>':'<b>'+skillsFired+'</b>')+' / '+skills.length+' recorded',
    bar:segs(skills,'lit','unmeasured',21),
-   cap:'Dashed squares are "not yet measured", not "never used" — a floor that further backfill will raise.'},
+   cap:skillsUnk?'Usage tables unreadable: skill usage is unknown, not zero.':'Dashed squares are "not yet measured", not "never used" — a floor that further backfill will raise.'},
   {cls:'', name:'Rules', sub:'always-on / path-scoped',
    frac:'<b>'+rules.length+'</b> active',
    bar:rules.map(function(){return '<i class="seg always"></i>';}).join(''),
@@ -342,6 +349,7 @@ document.getElementById('sort').addEventListener('change', function(e){ state.so
 var listEl=document.getElementById('list'), countEl=document.getElementById('count');
 function marker(i){
   if(i.kind==='rule') return '<span class="mark-rule" title="always-on"></span>';
+  if(unk(i)) return '<span class="dot du" title="usage unknown"></span>';
   var n=i.inv||0;
   if(n>0) return '<span class="dot h'+bucket(n)+'" title="'+n+' invocations"></span>';
   return i.kind==='skill' ? '<span class="dot du" title="not yet measured"></span>'
@@ -349,6 +357,7 @@ function marker(i){
 }
 function metric(i){
   if(i.kind==='rule') return '<span class="n on">always-on</span>';
+  if(unk(i)) return '<span class="n zero" title="usage tables unreadable">—</span>';
   var n=i.inv||0;
   var when=n>0 && i.last ? '<span class="when">'+fmtDate(i.last)+'</span>' : '';
   return '<span class="n'+(n>0?'':' zero')+'">'+n+'</span>'+when;
@@ -356,7 +365,7 @@ function metric(i){
 function render(){
   var rows=items.filter(function(i){
     if(state.kind!=='all' && i.kind!==state.kind) return false;
-    if(state.dormant && (i.kind==='rule' || (i.inv||0)>0)) return false;
+    if(state.dormant && (i.kind==='rule' || unk(i) || (i.inv||0)>0)) return false;
     if(state.q){ var hay=(i.name+' '+i.desc+' '+i.kind).toLowerCase(); if(hay.indexOf(state.q)<0) return false; }
     return true;
   });
