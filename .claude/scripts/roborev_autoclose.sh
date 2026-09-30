@@ -13,7 +13,9 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 # hook emits "trigger":"scheduled" without requiring a /bye sentinel.
 export CLAUDE_TRIGGER="${CLAUDE_TRIGGER:-scheduled}"
 #
-# Three phases:
+# Steps (Step 0a added after the 2026-09-28 discovery failure skipped the backup):
+#   Step 0a — --apply only: verified WAL-safe DB backup, before retention and
+#             before any closure; failure -> exit 1, no closures.
 #   Phase 0 — prune ~/.roborev DB backups + stale job logs. See
 #             roborev_retention.sh (llm#929) for the policy; delegated to
 #             that script and invoked unconditionally, before Phase 1/2,
@@ -78,6 +80,59 @@ esac
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"; }
 
+# ROBOREV_DB / ROBOREV_REPO / SQLITE are declared up here (not down by the repo
+# scoping block) because the pre-flight backup below needs ROBOREV_DB.
+ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
+ROBOREV_REPO="${ROBOREV_REPO:-llm}"
+SQLITE="${SQLITE:-/usr/bin/sqlite3}"
+
+# ── Step 0a: WAL-safe DB backup, BEFORE retention and BEFORE any closure ──
+# Follow-up to #1308. The weekly backup used to be taken only in Phase 2, which
+# is reached only when Phase 1 stale-job discovery succeeds AND finds stale
+# jobs. On 2026-09-28 discovery failed (INDETERMINATE, `roborev list` ->
+# "jsontext: read error: unexpected EOF") so NO backup was made that week,
+# silently. The backup is now independent of discovery.
+#   - --apply only (dry-run mutates nothing, so it makes no backup — same as
+#     before).
+#   - Ordered BEFORE Phase 0 retention: retention keeps the 2 newest backups,
+#     so taking the fresh one first guarantees it is always among the kept,
+#     instead of pruning down to 2 and then adding a 3rd.
+#   - Verified: sqlite3 Online Backup API (WAL-safe; a plain cp would miss
+#     un-checkpointed WAL pages), then PRAGMA integrity_check == ok and a
+#     non-zero file size. Any failure removes the partial file, logs a
+#     DISTINCT "BACKUP FAILED" line and exits 1 before retention and before
+#     every closure: never close without a verified backup.
+BACKUP=""
+if [ "$APPLY" -eq 1 ]; then
+  if [ ! -f "$ROBOREV_DB" ]; then
+    log "BACKUP FAILED: reviews DB not found at $ROBOREV_DB — no closures attempted"
+    echo "roborev: BACKUP FAILED — reviews DB not found at $ROBOREV_DB; no closures attempted; see $LOGFILE" >&2
+    exit 1
+  fi
+  BACKUP="$ROBOREV_DB.bak-$(date +%Y%m%d_%H%M%S)"
+  BACKUP_ERR="$(mktemp "${TMPDIR:-/tmp}/roborev_autoclose_backup_err.XXXXXX")"
+  if ! /usr/bin/python3 -c "
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+src.close()
+res = dst.execute('PRAGMA integrity_check').fetchone()
+dst.close()
+if not res or res[0] != 'ok':
+    sys.stderr.write('integrity_check: ' + repr(res) + chr(10))
+    sys.exit(2)
+" "$ROBOREV_DB" "$BACKUP" 2>"$BACKUP_ERR" || [ ! -s "$BACKUP" ]; then
+    BACKUP_ERR_TEXT="$(tail -c 500 "$BACKUP_ERR" 2>/dev/null | tr '\n' ' ')"
+    rm -f "$BACKUP_ERR" "$BACKUP"
+    log "BACKUP FAILED: WAL-safe backup of $ROBOREV_DB to $BACKUP failed or did not verify — no closures attempted: ${BACKUP_ERR_TEXT}"
+    echo "roborev: BACKUP FAILED — no closures attempted; see $LOGFILE" >&2
+    exit 1
+  fi
+  rm -f "$BACKUP_ERR"
+  log "backup: verified WAL-safe backup at $BACKUP"
+fi
+
 # ── Phase 0: prune ~/.roborev DB backups + stale job logs (llm#929) ──────
 # Runs FIRST, unconditionally, on every invocation — Phase 1 and Phase 2
 # below both have early `exit 0` paths (0 stale jobs, missing DB, etc.), so
@@ -135,10 +190,6 @@ CUTOFF=$(date -u -v "-${THRESHOLD_DAYS}d" +%s 2>/dev/null \
 # reads, so Phase 1 can pass that path to `--repo` and scope identically.
 # ROBOREV_REPO_PATH can be set directly to skip the lookup (tests, escape
 # hatch). Unresolvable -> INDETERMINATE (exit 3): never guess a repo scope.
-ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
-ROBOREV_REPO="${ROBOREV_REPO:-llm}"
-SQLITE="${SQLITE:-/usr/bin/sqlite3}"
-
 ROBOREV_REPO_PATH="${ROBOREV_REPO_PATH:-}"
 if [ -z "$ROBOREV_REPO_PATH" ]; then
   # Distinguish EVERY way this can fail to resolve, rather than one shared
@@ -350,21 +401,11 @@ fi
 
 echo "roborev phase2: $PHASE2_N stale failed jobs (repo=$ROBOREV_REPO, no review attached) — cancelling via DB"
 
-# Backup BEFORE mutating using Python's sqlite3.backup() — this is WAL-safe because
-# it uses the SQLite Online Backup API which snapshots committed state including any
-# un-checkpointed WAL pages. A plain `cp reviews.db` would miss those pages.
-# We use /usr/bin/python3 to avoid depending on sqlite3 CLI being on PATH inside nix.
-BACKUP="$ROBOREV_DB.bak-$(date +%Y%m%d_%H%M%S)"
-if ! /usr/bin/python3 -c "
-import sqlite3, sys
-src = sqlite3.connect(sys.argv[1])
-dst = sqlite3.connect(sys.argv[2])
-src.backup(dst)
-src.close()
-dst.close()
-" "$ROBOREV_DB" "$BACKUP"; then
-  log "phase2 abort: WAL-safe backup to $BACKUP failed"
-  echo "roborev phase2: backup failed"
+# The verified backup ($BACKUP) was already taken in Step 0a, before any
+# closure (see top of script), so nothing is mutated here without one.
+if [ -z "$BACKUP" ] || [ ! -s "$BACKUP" ]; then
+  log "phase2 abort: no verified backup available (BACKUP='$BACKUP')"
+  echo "roborev phase2: no verified backup — aborting"
   exit 1
 fi
 
