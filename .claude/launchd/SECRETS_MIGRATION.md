@@ -47,22 +47,22 @@ are not coupled to the leak and are left unwrapped.
 | `com.claude.branch-gc.plist` | `branch_gc.sh` | none | no |
 | `com.claude.capability-registry.plist` | `capability_registry_regen_cron.sh` | none | no |
 | `com.claude.codex-overnight-learning.plist` | `codex_overnight_learning.py` | none | no |
-| `com.claude.config-digest-email.plist` | `bin/config_digest_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`; sources `~/.claude/env/roborev_email.env` **with fallback** "relying on existing environment" if absent | **yes** |
+| `com.claude.config-digest-email.plist` | `bin/config_digest_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`; single source via `lib/load_email_creds.sh` (env from `with-secrets`, else `~/.config/secrets.env`); **fails closed** (exit 1) unless a dry run | **yes** |
 | `com.claude.cron-catchup.plist` | `cron_catchup.sh` | none | no |
-| `com.claude.kb-digest-email.plist` | `bin/kb_digest_daily_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`; sources `~/.claude/env/kb_digest.env` **with fallback** "relying on existing environment" if absent | **yes** |
-| `com.claude.launchd-health-weekly.plist` | `bin/launchd_health_weekly_cron.sh` | `GMAIL_*` via `~/.claude/.env` + `~/.claude/env/roborev_email.env`; **no** fallback branch — job fails closed (R script aborts) if the dedicated files are absent | no |
-| `com.claude.overnight-self-review-email.plist` | `bws_launcher.sh` → `bin/overnight_self_review_email_cron.sh` | `GMAIL_*` via `~/.claude/env/overnight_self_review.env` **with fallback** "relying on existing environment" if absent | **yes** |
+| `com.claude.kb-digest-email.plist` | `bin/kb_digest_daily_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`; single source via `lib/load_email_creds.sh`; **fails closed** unless a dry run | **yes** |
+| `com.claude.launchd-health-weekly.plist` | `bin/launchd_health_weekly_cron.sh` | `GMAIL_*` via `lib/load_email_creds.sh` (env, else `~/.config/secrets.env` — the wrapper loads only the three email keys itself, so it needs no `with-secrets`); Step 2's R script aborts fail-closed if absent | no |
+| `com.claude.overnight-self-review-email.plist` | `bws_launcher.sh` → `bin/overnight_self_review_email_cron.sh` | `GMAIL_*` via `lib/load_email_creds.sh` (bws/`with-secrets` env, else `~/.config/secrets.env`); **fails closed** unless a dry run | **yes** |
 | `com.claude.pr-status-pulse.plist` | `pr_status_pulse.sh` | none | no |
 | `com.claude.roborev-agent-health.plist` | `roborev_agent_health.sh` | none | no |
 | `com.claude.roborev-autoclose.plist` | `roborev_weekly_chain.sh` | none | no |
 | `com.claude.roborev-bridge.plist` | `roborev_bridge_to_unified.sh` | none | no |
 | `com.claude.roborev-daily-backlog.plist` | `roborev_daily_backlog_aggregator.sh` | none | no |
-| `com.claude.roborev-daily-email.plist` | `bin/roborev_daily_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`/`ROBOREV_DASHBOARD_URL`; sources `~/.claude/env/roborev_email.env` **with fallback** "relying on existing environment" if absent | **yes** |
+| `com.claude.roborev-daily-email.plist` | `bin/roborev_daily_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT` via `lib/load_email_creds.sh`; **fails closed** unless a dry run. `ROBOREV_DASHBOARD_URL` is an optional non-secret override (set in the plist `EnvironmentVariables` if wanted) | **yes** |
 | `com.claude.roborev-metrics-etl.plist` | `roborev_metrics_etl.sh` | none | no |
 | `com.claude.roborev-poll-merges.plist` | `roborev_poll_merges.sh` | none | no |
 | `com.claude.roborev-project-backlog.plist` | `roborev_project_backlog.sh` | none | no |
 | `com.claude.roborev-severity-autoclose.plist` | `roborev_severity_autoclose.sh` | none | no |
-| `com.claude.roborev-weekly-rollup-email.plist` | `bin/roborev_weekly_rollup_cron.sh` | `GMAIL_*` via `~/.claude/env/roborev_email.env`; **no** fallback — sets `EMAIL_DRY_RUN=1` and logs "no credentials file" instead of using inherited env | no |
+| `com.claude.roborev-weekly-rollup-email.plist` | `bin/roborev_weekly_rollup_cron.sh` | `GMAIL_*` via `lib/load_email_creds.sh` (env, else `~/.config/secrets.env`); with no credentials sets `EMAIL_DRY_RUN=1` and logs a WARN instead of using inherited env | no |
 | `com.claude.self-review-stage1.plist` | `self_review_stage1.sh` | none | no |
 | `com.claude.self-review-verify.plist` | `self_review_verify.sh` | `gh workflow run` (uses `gh`'s own stored auth, not `~/.config/secrets.env`) | no |
 | `com.claude.unified-duckdb-backup.plist` | `unified_duckdb_backup.sh` | none | no |
@@ -169,3 +169,27 @@ Trigger one wrapped job on demand and check its log for a successful (or
 /bin/launchctl kickstart -k "gui/$(id -u)/com.claude.roborev-daily-email"
 tail -n 40 "$HOME/.claude/logs/roborev_daily_email_launchd.log"
 ```
+
+## Per-job credential files retired (llm#949)
+
+`~/.claude/env/{kb_digest,overnight_self_review,roborev_email}.env` each held
+their own copy of `GMAIL_APP_PASSWORD`, which `credential_single_source_check.sh`
+reports as a `DUPLICATE_NAME` violation. All six email wrappers now load
+`GMAIL_USERNAME`, `GMAIL_APP_PASSWORD` and `REPORT_RECIPIENT` through one helper,
+`.claude/scripts/lib/load_email_creds.sh`:
+
+1. the process environment (already populated by `with-secrets` / `bws_launcher.sh`);
+2. else `~/.config/secrets.env` (the BWS cache), reading only those three keys,
+   never overriding a value already present, never printing one.
+
+Missing `GMAIL_USERNAME` or `GMAIL_APP_PASSWORD` **fails closed**: the wrapper
+logs `ABORT` and exits 1, unless `DRYRUN=1`/`EMAIL_DRY_RUN=1` (nothing is sent)
+or, for the weekly rollup, which has always degraded to a dry run, it forces
+`EMAIL_DRY_RUN=1` and logs a WARN. The old "relying on existing environment"
+fallback is gone. `rotate_gmail_password.sh` no longer writes per-job files.
+
+`ROBOREV_DASHBOARD_URL` is deliberately not in `secrets.env`: it is a non-secret
+optional override (see the roborev plists), so it belongs in a plist
+`EnvironmentVariables` entry, not in a credential store.
+
+Tested by `tests/test_email_cron_single_source_creds.sh`.

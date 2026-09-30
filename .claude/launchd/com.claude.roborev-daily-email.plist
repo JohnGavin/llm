@@ -17,10 +17,9 @@
      Manual dry-run:
        DRYRUN=1 EMAIL_DRY_RUN=1 bash ~/docs_gh/llm/bin/roborev_daily_cron.sh
 
-     Credentials: ~/.claude/env/roborev_email.env (not committed; create manually)
-       GMAIL_USERNAME=you@gmail.com
-       GMAIL_APP_PASSWORD=<16-char app password>
-       REPORT_RECIPIENT=you@gmail.com
+     Credentials: GMAIL_USERNAME / GMAIL_APP_PASSWORD / REPORT_RECIPIENT come from
+     the single source (~/.config/secrets.env, the BWS cache) via with-secrets and
+     .claude/scripts/lib/load_email_creds.sh. There is no per-job env file (llm#949).
 
      ROBOREV_DASHBOARD_URL is an OPTIONAL override, not a required field —
      leave it unset unless you have a real http(s) URL to point at. As of

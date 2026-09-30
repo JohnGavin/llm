@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # roborev_weekly_rollup_cron.sh — wrapper for the weekly roborev rollup.
 #
-# 1. Sources ~/.claude/env/roborev_email.env (credentials, optional).
+# 1. Loads GMAIL_* from the single source (env / ~/.config/secrets.env); with no
+#    credentials the run is forced to EMAIL_DRY_RUN=1 (never sends, never silent).
 # 2. Generates the weekly markdown rollup via roborev_weekly_rollup.R.
 # 3. Sends the digest email via send_roborev_weekly_rollup_email.R.
 #
@@ -36,16 +37,14 @@ export EMAIL_DRY_RUN
 
 log "START roborev_weekly_rollup_cron.sh dryrun=$DRYRUN"
 
-# ── Load credentials (if available) ──────────────────────────────────────────
-ENV_FILE="$HOME/.claude/env/roborev_email.env"
-if [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  set -a
-  . "$ENV_FILE"
-  set +a
-  log "credentials loaded from $ENV_FILE"
-else
-  log "no credentials file at $ENV_FILE — EMAIL_DRY_RUN forced to 1"
+# ── Load credentials from the single source (llm#949) ─────────────────────────
+# Unlike the daily wrappers this job has always degraded to a dry run (report
+# generated, nothing emailed) when credentials are missing; that behaviour is
+# kept, but the source is now env / ~/.config/secrets.env, not a per-job file.
+# shellcheck disable=SC1091
+source "${REPO_DIR}/.claude/scripts/lib/load_email_creds.sh"
+if ! load_email_credentials log; then
+  log "WARN: email credentials unavailable -- EMAIL_DRY_RUN forced to 1 (nothing will be sent)"
   EMAIL_DRY_RUN=1
   export EMAIL_DRY_RUN
 fi

@@ -99,6 +99,8 @@ make_home() {
 
   cp "${LIB_SCRIPTS_DIR}/cron_deploy_pull.sh" "${fake_repo}/.claude/scripts/"
   cp "${LIB_SCRIPTS_DIR}/wait_for_resolvable_host.sh" "${fake_repo}/.claude/scripts/"
+  mkdir -p "${fake_repo}/.claude/scripts/lib"
+  cp "${LIB_SCRIPTS_DIR}/lib/load_email_creds.sh" "${fake_repo}/.claude/scripts/lib/"
   cp "${LIB_SCRIPTS_DIR}/nix_gcroot_refresh.sh" "${fake_repo}/.claude/scripts/" 2>/dev/null || true
   touch "${fake_repo}/.claude/scripts/launchd_health_report.R"
   touch "${fake_repo}/.claude/scripts/send_launchd_health_email.R"

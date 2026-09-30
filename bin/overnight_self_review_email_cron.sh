@@ -1,12 +1,11 @@
 #!/bin/bash
 # overnight_self_review_email_cron.sh — Wrapper for 06:30 overnight digest email.
 #
-# Same pattern as kb_digest_daily_cron.sh: launchd cannot inherit ~/.zshenv,
-# so SMTP creds (GMAIL_USERNAME / GMAIL_APP_PASSWORD / REPORT_RECIPIENT) must be
-# sourced from ~/.claude/env/overnight_self_review.env before invoking Rscript.
-#
-# Env vars sourced from ~/.claude/env/overnight_self_review.env:
-#   GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT
+# launchd cannot inherit ~/.zshenv, so SMTP creds (GMAIL_USERNAME /
+# GMAIL_APP_PASSWORD / REPORT_RECIPIENT) come from the single source -- the
+# environment (with-secrets / bws injection) or ~/.config/secrets.env -- via
+# .claude/scripts/lib/load_email_creds.sh before invoking Rscript. Fails closed
+# unless a dry run.
 #
 # All R execution wrapped in nix-shell per nix-agent-shell-protocol rule.
 # Auto-pulls main per cron-auto-pull-discipline rule.
@@ -39,7 +38,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LLM_NIX="${REPO_ROOT}/default.nix"
 LOG_FILE="${HOME}/.claude/logs/overnight_self_review_email_launchd.log"
-ENV_FILE="${HOME}/.claude/env/overnight_self_review.env"
 LOCK_FILE="/tmp/overnight_self_review_email_cron.lock"
 
 # Dry-run flag (passes through to the R script)
@@ -82,24 +80,13 @@ source "${REPO_ROOT}/.claude/scripts/cron_deploy_pull.sh"
 cron_deploy_pull "${REPO_ROOT}" log
 log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
 
-# ── Load credentials (bws injection takes priority over flat file) ─────────────
-if [[ -n "${GMAIL_USERNAME:-}" ]]; then
-  log "Credentials in environment (bws injection)"
-elif [ -f "${ENV_FILE}" ]; then
-  log "Loading env from ${ENV_FILE} (flat-file fallback)"
-  set -a
-  while IFS='=' read -r key val; do
-    [[ "${key}" =~ ^[[:space:]]*# ]] && continue
-    [[ -z "${key}" ]] && continue
-    val="${val#\"}"; val="${val%\"}"
-    val="${val#\'}"; val="${val%\'}"
-    export "${key}=${val}"
-  done < "${ENV_FILE}"
-  set +a
-else
-  log "INFO: ${ENV_FILE} not found — relying on existing environment"
-  log "  Create it with: GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT"
-fi
+# ── Load credentials from the single source (llm#949) ─────────────────────────
+# GMAIL_* come from the process environment (with-secrets / bws injection) or
+# ~/.config/secrets.env (BWS cache) -- never a per-job env file. Fails closed
+# unless this is a dry run. See .claude/scripts/lib/load_email_creds.sh.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/lib/load_email_creds.sh"
+email_credentials_gate log || exit 1
 
 # ── Verify nix shell ──────────────────────────────────────────────────────────
 if [ ! -f "${LLM_NIX}" ]; then

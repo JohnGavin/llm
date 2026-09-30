@@ -6,8 +6,11 @@
 # As of 2026-08-13 the Gmail app password existed in three places with THREE
 # DIFFERENT VALUES: a 21-char corrupted variant in ~/.config/secrets.env (a bad
 # append with no trailing newline glued FRED_API_KEY onto it), a 16-char value
-# in the three ~/.claude/env/*.env fallback files, and a DIFFERENT 16-char
+# in the three ~/.claude/env/*.env per-job files, and a DIFFERENT 16-char
 # value in Bitwarden. Six launchd email jobs read some combination of these.
+# Since llm#949 the email wrappers read GMAIL_* only from the single source
+# (env / ~/.config/secrets.env via lib/load_email_creds.sh), so this script
+# rotates BWS and regenerates the cache; it no longer writes per-job files.
 # Rotating by hand across that many copies is how a partial rotation happens
 # and then fails silently days later.
 #
@@ -58,7 +61,9 @@ MODE="${1:---dry-run}"
 
 BWS_SECRET_ID="${BWS_GMAIL_SECRET_ID:-be3edaf9-ea64-4ec6-a57c-b469013af5a8}"
 SECRETS="$HOME/.config/secrets.env"
-ENV_FILES=(
+# Legacy per-job files (retired, llm#949). NEVER written by this script. Only
+# inspected, so a leftover stale copy is reported instead of silently drifting.
+LEGACY_ENV_FILES=(
     "$HOME/.claude/env/overnight_self_review.env"
     "$HOME/.claude/env/kb_digest.env"
     "$HOME/.claude/env/roborev_email.env"
@@ -72,8 +77,9 @@ log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; printf '%s %s\n' "$(date -u +%
 # ── consumer map + restart/verify machinery — shared with rotate_secret.sh
 #    (llm#958). Defines CONSUMERS_GMAIL_APP_PASSWORD, kind_get_pid,
 #    kind_restart, pid_start_time, CONSUMER_ROWS, restart_and_verify_consumer.
-#    Keep the map in lib/secret_consumers.sh in sync with the ENV_FILES
-#    readers above if a new job starts reading GMAIL_APP_PASSWORD. Path
+#    Keep the map in lib/secret_consumers.sh in sync with the email wrappers
+#    (bin/*_cron.sh using lib/load_email_creds.sh) if a new job starts reading
+#    GMAIL_APP_PASSWORD. Path
 #    resolved relative to THIS script's location, not the caller's cwd — both
 #    scripts run from arbitrary directories (launchd, cron, interactive).
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -232,9 +238,9 @@ cur_bws=$(bws secret get "$BWS_SECRET_ID" -o json 2>/dev/null | python3 -c 'impo
                   || echo "  BWS                 UNREADABLE — check token/permissions"
 cur_cache=$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?GMAIL_APP_PASSWORD=' "$SECRETS" 2>/dev/null | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
 [ -n "$cur_cache" ] && printf '  secrets.env (cache) sha=%s len=%s\n' "$(h12 "$cur_cache")" "${#cur_cache}"
-for f in "${ENV_FILES[@]}"; do
+for f in "${LEGACY_ENV_FILES[@]}"; do
     v=$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?GMAIL_APP_PASSWORD=' "$f" 2>/dev/null | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
-    [ -n "$v" ] && printf '  %-20s sha=%s len=%s\n' "$(basename "$f")" "$(h12 "$v")" "${#v}"
+    [ -n "$v" ] && printf '  LEGACY %-13s sha=%s len=%s  (no longer read or updated; delete it)\n' "$(basename "$f")" "$(h12 "$v")" "${#v}"
 done
 
 # ── read the new value ──────────────────────────────────────────────────────
@@ -272,7 +278,7 @@ fi
 
 # ── 1. Bitwarden (system of record) ─────────────────────────────────────────
 echo ""
-echo "=== 1/3 updating Bitwarden (system of record) ==="
+echo "=== 1/2 updating Bitwarden (system of record) ==="
 if bws secret edit --value "$NEW1" "$BWS_SECRET_ID" >/dev/null 2>&1; then
     echo "  BWS updated"
     log "bws updated sha=$(h12 "$NEW1")"
@@ -284,34 +290,12 @@ fi
 
 # ── 2. regenerate the cache from BWS ────────────────────────────────────────
 echo ""
-echo "=== 2/3 regenerating ~/.config/secrets.env from BWS ==="
+echo "=== 2/2 regenerating ~/.config/secrets.env from BWS ==="
 if [ -x "$REGEN" ]; then
     bash "$REGEN" --apply || { echo "FATAL: cache regen failed" >&2; exit 1; }
 else
     echo "FATAL: $REGEN not found/executable" >&2; exit 1
 fi
-
-# ── 3. the fallback files ───────────────────────────────────────────────────
-echo ""
-echo "=== 3/3 updating ~/.claude/env fallback files ==="
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-for f in "${ENV_FILES[@]}"; do
-    [ -r "$f" ] || { echo "  skip (absent): $f"; continue; }
-    cp -a "$f" "$f.bak-$stamp"
-    chmod 600 "$f.bak-$stamp" 2>/dev/null || true
-    tmp="$(mktemp)"; chmod 600 "$tmp"
-    awk -v newv="$NEW1" '
-      /^[[:space:]]*(export[[:space:]]+)?GMAIL_APP_PASSWORD=/ {
-        if ($0 ~ /^[[:space:]]*export/) print "export GMAIL_APP_PASSWORD=\"" newv "\""
-        else                             print "GMAIL_APP_PASSWORD=\"" newv "\""
-        next
-      }
-      { print }
-    ' "$f" > "$tmp"
-    mv "$tmp" "$f"; chmod 600 "$f"
-    echo "  updated $(basename "$f")  (backup: $(basename "$f").bak-$stamp)"
-done
-log "fallback files updated"
 
 # ── verify ──────────────────────────────────────────────────────────────────
 echo ""
@@ -322,10 +306,12 @@ v=$(bws secret get "$BWS_SECRET_ID" -o json 2>/dev/null | python3 -c 'import jso
 [ "$(h12 "$v")" = "$want" ] && echo "  BWS                 OK" || { echo "  BWS                 MISMATCH"; bad=1; }
 v=$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?GMAIL_APP_PASSWORD=' "$SECRETS" 2>/dev/null | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
 [ "$(h12 "$v")" = "$want" ] && echo "  secrets.env         OK" || { echo "  secrets.env         MISMATCH"; bad=1; }
-for f in "${ENV_FILES[@]}"; do
+# A leftover legacy per-job file still holding the password is a stale copy no
+# job reads any more: flag it (non-fatal) rather than update it.
+for f in "${LEGACY_ENV_FILES[@]}"; do
     [ -r "$f" ] || continue
-    v=$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?GMAIL_APP_PASSWORD=' "$f" 2>/dev/null | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
-    [ "$(h12 "$v")" = "$want" ] && printf '  %-20s OK\n' "$(basename "$f")" || { printf '  %-20s MISMATCH\n' "$(basename "$f")"; bad=1; }
+    grep -qE '^[[:space:]]*(export[[:space:]]+)?GMAIL_APP_PASSWORD=' "$f" 2>/dev/null \
+        && printf '  %-20s STALE LEGACY COPY (not updated, not read by any job) -- delete it\n' "$(basename "$f")"
 done
 
 # ── restart & VERIFY consumers (llm#955) ─────────────────────────────────────
@@ -346,9 +332,7 @@ fi
 
 echo ""
 if [ "$bad" -eq 0 ] && [ "$consumer_bad" -eq 0 ]; then
-    echo "All copies now share sha=$want"
-    echo ""
-    echo "NEXT: delete the .bak files once you've confirmed the jobs above are healthy."
+    echo "BWS and the secrets.env cache now share sha=$want"
     log "rotation complete sha=$want"
 else
     [ "$bad" -eq 0 ] || echo "ONE OR MORE COPIES MISMATCH — investigate before trusting the rotation." >&2

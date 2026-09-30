@@ -3,7 +3,8 @@
 # reaching shell history.
 #
 # Generalises rotate_gmail_password.sh (which keeps its Gmail-specific handling
-# of the three ~/.claude/env fallback files). Use this for every other secret.
+# of the retired per-job ~/.claude/env files -- now read-only there, llm#949).
+# Use this for every other secret.
 #
 # WHY
 # ---

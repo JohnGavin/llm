@@ -21,8 +21,9 @@
 # All R calls are wrapped in nix-shell per the nix-agent-shell-protocol rule.
 # Dry-run mode (DRYRUN=1 / EMAIL_DRY_RUN=1) passes through to child scripts.
 #
-# Env vars sourced from ~/.claude/env/kb_digest.env if it exists:
-#   GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT
+# Credentials (GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT) come from the
+# single source -- the environment (with-secrets) or ~/.config/secrets.env -- via
+# .claude/scripts/lib/load_email_creds.sh. Fails closed unless a dry run.
 #
 # Optional env vars:
 #   KB_KNOWLEDGE_REPO   Path to knowledge repo (default: ~/docs_gh/llm/knowledge)
@@ -58,7 +59,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LLM_NIX="${REPO_ROOT}/default.nix"
 LOG_FILE="${HOME}/.claude/logs/kb_digest.log"
-ENV_FILE="${HOME}/.claude/env/kb_digest.env"
 LOCK_FILE="/tmp/kb_digest_daily_cron.lock"
 UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME}/.claude/logs/unified.duckdb}"
 
@@ -100,24 +100,13 @@ source "${REPO_ROOT}/.claude/scripts/cron_deploy_pull.sh"
 cron_deploy_pull "${REPO_ROOT}" log
 log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
 
-# ── Load credentials from env file ────────────────────────────────────────────
-if [ -f "${ENV_FILE}" ]; then
-  log "Loading env from ${ENV_FILE}"
-  set -a
-  # Source only KEY=VALUE lines; skip comments and blanks
-  while IFS='=' read -r key val; do
-    [[ "${key}" =~ ^[[:space:]]*# ]] && continue
-    [[ -z "${key}" ]] && continue
-    # Strip one layer of surrounding quotes (handles KEY="value" style env files)
-    val="${val#\"}"; val="${val%\"}"
-    val="${val#\'}"; val="${val%\'}"
-    export "${key}=${val}"
-  done < "${ENV_FILE}"
-  set +a
-else
-  log "INFO: ${ENV_FILE} not found — relying on existing environment"
-  log "  Create it with: GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT"
-fi
+# ── Load credentials from the single source (llm#949) ─────────────────────────
+# GMAIL_* come from the process environment (with-secrets / bws injection) or
+# ~/.config/secrets.env (BWS cache) -- never a per-job env file. Fails closed
+# unless this is a dry run. See .claude/scripts/lib/load_email_creds.sh.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/lib/load_email_creds.sh"
+email_credentials_gate log || exit 1
 
 # ── Verify nix shell is accessible ────────────────────────────────────────────
 if [ ! -f "${LLM_NIX}" ]; then

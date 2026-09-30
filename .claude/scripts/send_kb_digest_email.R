@@ -901,7 +901,7 @@ gmail_pass <- Sys.getenv("GMAIL_APP_PASSWORD", "")
 
 if (!nzchar(gmail_user) || !nzchar(gmail_pass)) {
   message("send_kb_digest_email.R: GMAIL_USERNAME or GMAIL_APP_PASSWORD not set")
-  message("  Set in ~/.claude/env/kb_digest.env or export before running")
+  message("  Provided by the single source (~/.config/secrets.env via with-secrets); see bin/kb_digest_daily_cron.sh")
   cat("\n--- Email body (credentials missing, not sent) ---\n")
   cat(email_body, "\n")
   quit(status = 1L)
