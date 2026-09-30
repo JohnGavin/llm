@@ -4,6 +4,38 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-30 (session: #1295 item 3, wire the own-package tracking check, feat/1295-wire-own-package-check)
+
+### Completed
+
+- **Wired `check_targets_tracks_own_package.sh` (from #1299) into the two places it was missing** — [#1309](https://github.com/JohnGavin/llm/pull/1309). Origin: statues_named_john#105, where `tar_make()` skipped every target after a code edit because `_targets.R` used `load_all()` without `imports =`.
+  - `r_code_check.sh`: a new section walks up from the target directory to `DESCRIPTION`. FAIL → exit 1; INDETERMINATE → reported, not blocking.
+  - `session_init.sh` Phase 15h: runs the checker in the background for the session's checkout when it has `_targets.R` and `DESCRIPTION`, through the llm nix shell when `Rscript` is not on PATH. A cached FAIL/INDETERMINATE prints as `targets-tracking: ...`; a PASS is silent; a run with no result caches INDETERMINATE rather than keeping a stale verdict. Skip: `CLAUDE_TARGETS_TRACKING_CHECK=0`.
+  - `pipeline-validation` rule updated to say where it runs.
+- **Audited all 50 `_targets.R` under `~/docs_gh`** (worktrees excluded). Real failures:
+  - micromort: `load_all()` without `imports`, also on `origin/main`; filed micromort#206.
+  - One private local-only project with no remote, so no issue filed.
+  - statues_named_john's local `main` checkout fails only because it is behind `origin/main`, where statues_named_john#107 fixed it.
+
+### Failed Approaches
+
+- **First audit loop captured the wrong exit code.** `rc=$?` after `msg=$(chk | head -1)` records `head`'s status, not the checker's. Classified by the PASS/FAIL/INDETERMINATE prefix of the message instead.
+- **Delegating to a subagent was not used.** `isolation: "worktree"` from a statues_named_john session creates a statues worktree, not an llm one. Worked directly in an llm worktree made with `cc-worktree.sh`.
+
+### Accuracy / Metrics
+
+- `tests/test_targets_tracking_wiring.sh`:
+  - In the llm nix shell: 8/8 pass.
+  - Outside it: 6 pass, 1 skip (needs ast-grep + Rscript; it skips rather than passes).
+  - Falsified against the unwired `main` scripts: 3 failures, rc=1.
+- CI on #1309: 4/4 green. roborev review 13874: pass.
+
+### Known Limitations
+
+- Phase 15h in a nix-less checkout on a slow machine may take up to 300s in the background (nix-shell start). The banner shows the previous result until then.
+- The `format = "file"` half of the rule (data/param files a target reads) is still prose-only; the checker does not detect untracked `system.file()` reads.
+- `r_code_check.sh` will now exit 1 for micromort until micromort#206 is fixed.
+
 ## 2026-09-28 (session: private_repo_detail_guard.sh word-boundary fix, fix/private-repo-guard-word-boundary)
 
 ### Completed

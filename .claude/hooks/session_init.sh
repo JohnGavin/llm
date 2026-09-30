@@ -1874,6 +1874,48 @@ phase_ci_availability() {
 }
 phase_ci_availability
 
+# ── Phase 15h: Targets pipeline tracks its own package — BACKGROUND (llm#1295) ─
+# A pipeline that load_all()s its own package without
+# tar_option_set(imports = "<pkg>") or tar_source() never notices code edits:
+# tar_make() reports "skipped pipeline" and results go stale silently
+# (statues_named_john#105). Runs check_targets_tracks_own_package.sh on the
+# cwd checkout, only when it has both _targets.R and DESCRIPTION. Prints the
+# cached FAIL or INDETERMINATE line (a PASS is silent); a background run
+# refreshes the cache, via the llm nix shell when Rscript is not on PATH, so
+# a missing R degrades to INDETERMINATE only if nix is unavailable too.
+# Cache keyed per checkout (worktrees can differ), not per repo.
+# Skippable: CLAUDE_TARGETS_TRACKING_CHECK=0
+phase_targets_own_package() {
+  [ "${CLAUDE_TARGETS_TRACKING_CHECK:-1}" != "0" ] || return 0
+  local root key cache script nixfile
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(pwd -P)
+  [ -f "$root/_targets.R" ] && [ -f "$root/DESCRIPTION" ] || return 0
+  key="$(printf '%s' "${root##*/}" | tr -c 'A-Za-z0-9_-' '_')_$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+  cache="${HOME}/.claude/logs/session_init_targets_tracking_${key}.txt"
+  script="${TARGETS_TRACKING_SCRIPT:-${CLAUDE_DIR}/scripts/check_targets_tracks_own_package.sh}"
+  nixfile="${TARGETS_TRACKING_NIX:-$HOME/docs_gh/llm/default.nix}"
+  if [ -s "$cache" ]; then
+    grep -E '^(FAIL|INDETERMINATE)' "$cache" 2>/dev/null | head -1 | sed 's/^/targets-tracking: /' || true
+  fi
+  [ -x "$script" ] || return 0
+  mkdir -p "$(dirname "$cache")"
+  TT_SCRIPT="$script" TT_ROOT="$root" TT_CACHE="$cache" TT_NIX="$nixfile" \
+    nohup bash -c '
+      if command -v Rscript >/dev/null 2>&1; then
+        timeout 60 "$TT_SCRIPT" "$TT_ROOT" > "$TT_CACHE.tmp" 2>&1
+      elif command -v nix-shell >/dev/null 2>&1 && [ -f "$TT_NIX" ]; then
+        timeout 300 nix-shell "$TT_NIX" --run "\"$TT_SCRIPT\" \"$TT_ROOT\"" 2>&1 \
+          | grep -E "^(PASS|FAIL|INDETERMINATE)" > "$TT_CACHE.tmp"
+      else
+        "$TT_SCRIPT" "$TT_ROOT" > "$TT_CACHE.tmp" 2>&1
+      fi
+      [ -s "$TT_CACHE.tmp" ] || echo "INDETERMINATE: check_targets_tracks_own_package.sh gave no result for $TT_ROOT (timeout or nix-shell failure)" > "$TT_CACHE.tmp"
+      mv "$TT_CACHE.tmp" "$TT_CACHE"
+    ' > /dev/null 2>&1 &
+  return 0
+}
+phase_targets_own_package
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.

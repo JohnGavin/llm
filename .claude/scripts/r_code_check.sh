@@ -335,12 +335,45 @@ EOF
   fi
 fi
 
+# ── Targets pipeline tracks its own package (JohnGavin/llm#1295) ─────────────
+# A _targets.R that load_all()s / library()s its own package without
+# imports = "<pkg>" or tar_source() leaves results silently stale after code
+# edits. The checker takes the project root, and TARGET_DIR is usually R/,
+# so walk up to the DESCRIPTION first. FAIL blocks; INDETERMINATE (no
+# Rscript, unparsable pipeline, non-literal imports=) is reported, not blocking.
+echo ""
+echo "=== Targets Pipeline Tracks Own Package (JohnGavin/llm#1295) ==="
+tt_errors=0
+TT_SCRIPT="$(dirname "$0")/check_targets_tracks_own_package.sh"
+TT_ROOT="$TARGET_DIR"
+while [ "$TT_ROOT" != "/" ] && [ ! -f "$TT_ROOT/DESCRIPTION" ]; do
+  TT_ROOT=$(dirname "$TT_ROOT")
+done
+if [ ! -f "$TT_ROOT/DESCRIPTION" ]; then
+  echo "No DESCRIPTION above $TARGET_DIR — not a package; nothing to track."
+elif [ ! -f "$TT_ROOT/_targets.R" ]; then
+  echo "No _targets.R in $TT_ROOT — see check_targets_presence.sh for whether that is declared."
+elif [ ! -x "$TT_SCRIPT" ]; then
+  echo "INDETERMINATE: $TT_SCRIPT not found or not executable."
+else
+  set +e
+  tt_out=$("$TT_SCRIPT" "$TT_ROOT" 2>&1)
+  tt_rc=$?
+  set -e
+  echo "$tt_out"
+  case "$tt_rc" in
+    0) : ;;
+    1) tt_errors=1 ;;
+    *) echo "(rc=$tt_rc — reported, not blocking)" ;;
+  esac
+fi
+
 # Exit code: 1 if any errors (ast-grep, jarl, qmd fence, graduated-block
-# provisional constants, or stale MANUAL markers), 0 if clean or warnings/
-# indeterminates only. An INDETERMINATE result is reported but does NOT
-# silently pass as clean and does NOT silently block — see
-# checks-must-distinguish-unknown.
-if [ "$n_error" -gt 0 ] || [ "$jarl_errors" -gt 0 ] || [ "$qmd_errors" -gt 0 ] || [ "$pc_block" -gt 0 ] || [ "$manual_stale" -gt 0 ]; then
+# provisional constants, stale MANUAL markers, or an untracked own package
+# in _targets.R), 0 if clean or warnings/indeterminates only. An
+# INDETERMINATE result is reported but does NOT silently pass as clean and
+# does NOT silently block — see checks-must-distinguish-unknown.
+if [ "$n_error" -gt 0 ] || [ "$jarl_errors" -gt 0 ] || [ "$qmd_errors" -gt 0 ] || [ "$pc_block" -gt 0 ] || [ "$manual_stale" -gt 0 ] || [ "$tt_errors" -gt 0 ]; then
   exit 1
 else
   exit 0
