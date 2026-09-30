@@ -4,6 +4,7 @@ paths:
   - "_targets.R"
   - ".claude/CLAUDE.md"
   - ".claude/scripts/check_targets_presence.sh"
+  - ".claude/scripts/check_targets_tracks_own_package.sh"
 ---
 
 # Rule: Pipeline Validation (ALL PROJECTS)
@@ -100,10 +101,20 @@ pre-commit path as a hard gate in this change. Wiring it in (a session-init
 warn phase, per the issue's Acceptance criteria, or a pre-commit block) is a
 follow-up; see the PR that shipped this rule.
 
+## Track Your Own Package's Code ([#1295](https://github.com/JohnGavin/llm/issues/1295))
+
+A pipeline that loads its own package (`load_all()`, `library(<pkg>)`) without telling targets to hash it leaves results **silently stale**: edit a function and `tar_make()` prints `skipped pipeline`. Required:
+
+- Own-package code is tracked via `tar_option_set(imports = "<pkg>")` or `tar_source()`.
+- Any file a target reads (data, parameters, lookups) is a `format = "file"` target, not an untracked path.
+
+Checker: `.claude/scripts/check_targets_tracks_own_package.sh [dir]` (`--selftest`). 0 PASS / 1 FAIL (own package loaded, untracked) / 2 usage / 3 INDETERMINATE (no Rscript, unparsable pipeline, or non-literal `imports=`). Follows literal `source("f.R")` calls; a hand-sourced `R/` pipeline that never loads the package, and the `format = "file"` requirement, are prose-only (not checked). Not yet wired into pre-commit or the session banner (follow-up).
+
 ## Forbidden Patterns
 
 | Pattern | Why wrong | Fix |
 |---|---|---|
+| `load_all()` / `library(<own pkg>)` in `_targets.R` with no `imports =` / `tar_source()` | Package edits never invalidate targets | Add `tar_option_set(imports = "<pkg>")` |
 | No `_targets.R`, no exemption row, nobody notices | Exactly the vacuous-pass bug this rule replaces | Declare the exemption or add a pipeline |
 | Exemption row present but `<reason>` is empty or a placeholder | Same defect wearing a different shape — see `checks-must-distinguish-unknown`'s placeholder corollary | Write the actual reason |
 | Treating "no `_targets.R`" as automatically fine because the project is "just docs" | That is a real exemption reason — but it still has to be **declared**, not inferred | Add the row |
