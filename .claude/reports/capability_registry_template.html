@@ -170,9 +170,9 @@
 
 <div class="page"><div class="wrap">
   <header>
-    <div class="eyebrow">Own-your-context · Phase&nbsp;2 preview</div>
+    <div class="eyebrow">Own-your-context · <span data-fixed="roadmap phase label: a name, not a derived count">Phase&nbsp;2</span> preview</div>
     <h1 class="thesis">Which of these actually fire?</h1>
-    <p class="dek"><b>159 capabilities</b> are engineered into this environment — 72 skills, 12 agents, 75 rules. This page is the receipt: what's been exercised, what's dormant, and — the honest part — <b>how confidently we can even tell yet</b>.</p>
+    <p class="dek"><b><span data-fact="n_total"></span> capabilities</b> are engineered into this environment — <span data-fact="n_skills"></span> skills, <span data-fact="n_agents"></span> agents, <span data-fact="n_rules"></span> rules. This page is the receipt: what's been exercised, what's dormant, and — the honest part — <b>how confidently we can even tell yet</b>.</p>
   </header>
 
   <section class="stats" id="stats" aria-label="Headline figures"></section>
@@ -191,15 +191,15 @@
     <div class="honesty-grid">
       <div class="hcard measured">
         <h3>Agents <span class="tag">Complete record</span></h3>
-        <p>Every dispatch is logged. <b>8 of 12</b> agents have fired; the four idle ones are <b>genuinely idle</b>, not unmeasured. And <b>84%</b> of all agent work ran through a single agent — <b>fixer</b> — a real signal about how the fleet is actually used.</p>
+        <p>Every dispatch is logged. <b><span data-fact="agents_fired"></span> of <span data-fact="n_agents"></span></b> agents have fired; the <span data-fact="agents_idle"></span> idle ones are <b>genuinely idle</b>, not unmeasured. And <b><span data-fact="top_agent_share_pct"></span>%</b> of all agent work ran through a single agent — <b><span data-fact="top_agent"></span></b> — a real signal about how the fleet is actually used.</p>
       </div>
       <div class="hcard partial">
         <h3>Skills <span class="tag">Genuinely sparse</span></h3>
-        <p><b>Phase 1b (merged)</b> backfilled the full transcript archive and found only <b>~10</b> Skill-tool invocations total — so the low count is <b>real, not under-capture</b>. The actual usage signal lives in <b>slash-commands</b> (logged as bare tool names, not skills), being instrumented in <b>#745</b>.</p>
+        <p><b><span data-fixed="roadmap phase label: a name, not a derived count">Phase 1b</span> (merged)</b> backfilled the full transcript archive; only <b><span data-fact="skill_invocations_total"></span></b> Skill-tool invocations are recorded in total — so the low count is <b>real, not under-capture</b>. The actual usage signal lives in <b>slash-commands</b> (logged as bare tool names, not skills), being instrumented in <b><span data-fixed="issue reference: an identifier, not a count">#745</span></b>.</p>
       </div>
       <div class="hcard na">
         <h3>Rules <span class="tag">Always-on</span></h3>
-        <p>The 75 rules don't "fire" on demand — they're always-on or path-scoped, injected when matching files are touched. No invocation count applies; they're shown here for completeness of the corpus.</p>
+        <p>The <span data-fact="n_rules"></span> rules don't "fire" on demand — they're always-on or path-scoped, injected when matching files are touched. No invocation count applies; they're shown here for completeness of the corpus.</p>
       </div>
     </div>
   </section>
@@ -207,19 +207,15 @@
   <hr class="rule">
 
   <section aria-label="Slash-commands now captured">
-    <h2 class="sec-label">Slash-commands — now captured (Card 1e, merged)</h2>
-    <p class="dek" style="margin-bottom:14px">Backfilled live on 2026-07-07: <b>11</b> historical slash-command invocations now sit in <b>command_usage</b> — the usage signal that skills-via-Skill-tool were missing. This is where "what I actually do" really shows up.</p>
-    <div class="cmd-row">
-      <span class="cmd"><b>/bye</b> ×7</span>
-      <span class="cmd"><b>/issue-triage</b> ×3</span>
-      <span class="cmd"><b>/cleanup-worktrees</b> ×1</span>
-    </div>
+    <h2 class="sec-label">Slash-commands — now captured (<span data-fixed="roadmap card label: a name, not a derived count">Card 1e</span>, merged)</h2>
+    <p class="dek" style="margin-bottom:14px">Backfilled live on <span data-fixed="date of the one-off backfill event: immutable history, not a moving value">2026-07-07</span>; <b><span data-fact="cmd_total"></span></b> slash-command invocations now sit in <b>command_usage</b> — the usage signal that skills-via-Skill-tool were missing. This is where "what I actually do" really shows up.</p>
+    <div class="cmd-row" id="cmds"></div>
   </section>
 
   <hr class="rule">
 
   <section aria-label="Capability registry">
-    <h2 class="sec-label">The registry — all 159, sorted by heat</h2>
+    <h2 class="sec-label">The registry — all <span data-fact="n_total"></span>, sorted by heat</h2>
     <div class="controls">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
@@ -248,7 +244,7 @@
   <footer class="build">
     <span><b>Source</b> ~/.claude/logs/unified.duckdb</span>
     <span><b>Generated</b> __CAPABILITY_REGISTRY_GENERATED__</span>
-    <span class="flag">Prototype · Phase 1b+1e merged · backfilled live 2026-07-07 — skill_usage 39, command_usage 11</span>
+    <span class="flag">Prototype · <span data-fixed="roadmap phase labels: names, not derived counts">Phase 1b+1e</span> merged · backfilled live <span data-fixed="date of the one-off backfill event: immutable history, not a moving value">2026-07-07</span> — skill_usage <span data-fact="skill_usage_rows"></span> rows, command_usage <span data-fact="command_usage_rows"></span> rows</span>
   </footer>
 </div></div>
 
@@ -282,7 +278,7 @@ var agentsFired=agents.filter(function(i){return (i.inv||0)>0;}).length;
 // ---- stat tiles ----
 var tiles=[
   {big:items.length, unit:'', lab:'Capabilities engineered', note:skills.length+' skills · '+agents.length+' agents · '+rules.length+' rules'},
-  {big:fired, unit:'/ '+firable.length, lab:'Have a recorded invocation', note:agentsFired+' of 12 agents · '+skillsFired+' of 72 skills'},
+  {big:fired, unit:'/ '+firable.length, lab:'Have a recorded invocation', note:agentsFired+' of '+agents.length+' agents · '+skillsFired+' of '+skills.length+' skills'},
   {big:darkPct, unit:'%', lab:'Dark inventory', note:'no capture yet — see caveat', hot:true},
   {big:topShare, unit:'%', lab:'Agent work via one agent', note:'through '+topAgent.name+' ('+topAgent.inv+' runs)', hot:true}
 ];
@@ -308,13 +304,13 @@ function segs(arr, litClass, restClass, hotAt){
 }
 document.getElementById('gauges').innerHTML=[
   {cls:'', name:'Agents', sub:'complete record',
-   frac:'<b>'+agentsFired+'</b> / 12 fired',
+   frac:'<b>'+agentsFired+'</b> / '+agents.length+' fired',
    bar:segs(agents,'lit','idle',21),
-   cap:'Every dispatch logged. The 4 empty squares are genuinely idle agents.'},
+   cap:'Every dispatch logged. The '+(agents.length-agentsFired)+' empty squares are genuinely idle agents.'},
   {cls:'', name:'Skills', sub:'instrumentation partial',
-   frac:'<b>'+skillsFired+'</b> / 72 recorded',
+   frac:'<b>'+skillsFired+'</b> / '+skills.length+' recorded',
    bar:segs(skills,'lit','unmeasured',21),
-   cap:'Dashed squares are "not yet measured", not "never used" — a floor that Phase 1b will raise.'},
+   cap:'Dashed squares are "not yet measured", not "never used" — a floor that further backfill will raise.'},
   {cls:'', name:'Rules', sub:'always-on / path-scoped',
    frac:'<b>'+rules.length+'</b> active',
    bar:rules.map(function(){return '<i class="seg always"></i>';}).join(''),
@@ -323,6 +319,11 @@ document.getElementById('gauges').innerHTML=[
   return '<div class="gauge'+(RM?'':' reveal')+'"><div class="top"><div class="name">'+g.name+
     '<span>'+g.sub+'</span></div><div class="frac">'+g.frac+'</div></div>'+
     '<div class="segbar">'+g.bar+'</div><div class="cap">'+g.cap+'</div></div>';
+}).join('');
+
+// ---- slash-command chips (from DATA.commands, the single home) ----
+document.getElementById('cmds').innerHTML=(DATA.commands||[]).map(function(c){
+  return '<span class="cmd"><b>/'+esc(c.name)+'</b> ×'+c.count+'</span>';
 }).join('');
 
 // ---- registry ----
