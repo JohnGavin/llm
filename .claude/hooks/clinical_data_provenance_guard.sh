@@ -60,12 +60,13 @@ FILE_READ_CAP = 262144
 # Two independent signal families. Either alone is enough to warn; neither is
 # a credential-shape signal (this hook shares nothing with cred_patterns.py —
 # it is a different domain, not a duplicate of the secret guard).
-# Units are case-sensitive and must end at a word boundary, so ordinary words
-# after a number ("5 pages", "3 floors", "2 PGs") never read as pg or fL.
+# Units must end at a word boundary. Most match in any case (mmol/l, ng/ml);
+# only the short ambiguous ones, fL and pg, are case-sensitive, so ordinary
+# words after a number ("5 pages", "3 floors") never read as units.
 UNIT_RE = re.compile(
-    r'(?<![\w.])\d+(\.\d+)?\s*'
-    r'(g/L|mg/L|mmol/L|[uµ]mol/L|x10\^9/L|x10\^12/L|fL|pg|IU/L|mIU/L|'
-    r'ng/mL|pmol/L|nmol/L|mL/min)'
+    r'(?<!\d)(\d*\.)?\d+\s*'
+    r'((?i:g/L|mg/L|mmol/L|[uµ]mol/L|x10\^9/L|x10\^12/L|IU/L|mIU/L|'
+    r'ng/mL|pmol/L|nmol/L|mL/min)|fL|pg)'
     r'(?![A-Za-z])',
 )
 # Analyte names match in any case; abbreviations only in upper case, so the
@@ -76,8 +77,18 @@ COMPONENT_RE = re.compile(
     r'\b(IgG|IgA|IgM|CRP|ESR|ALT|AST|PSA)\b)'
     r'.{0,40}?\d+(\.\d+)?',
 )
-# Tags (and their attributes) are markup, not page text.
-TAG_RE = re.compile(r'<[^>]*>')
+# A real tag starts with a letter, / or !, so a comparator such as
+# "CRP < 5 mg/L" is left alone. Attribute names (alt=, title=) are dropped
+# but quoted attribute values are kept: a tooltip is visible page text.
+TAG_RE = re.compile(r'</?[A-Za-z!][^>]*>')
+ATTR_VALUE_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
+
+
+def visible_text(line):
+    return TAG_RE.sub(
+        lambda t: ' %s ' % ' '.join(a or b for a, b in ATTR_VALUE_RE.findall(t.group(0))),
+        line,
+    )
 
 
 def _utc_ts():
@@ -140,7 +151,7 @@ def main():
     # check; a line-by-line flood would just train the user to ignore it —
     # same "too loud is also broken" lesson as this repo's other guards).
     for line_num, line in enumerate(content.splitlines(), start=1):
-        text = TAG_RE.sub(' ', line)
+        text = visible_text(line)
         if UNIT_RE.search(text):
             warn(file_path, line_num, 'number with a lab unit')
             return
@@ -225,18 +236,32 @@ if [ "${1:-}" = "--selftest" ]; then
   printf 'line1\nline2\nHaemoglobin 999 g/L (Low)\nline4\n' > "$TMP_DIR/mid_line.html"
   _case_warn "match on a non-first line is still found (line number tracked)" "$TMP_DIR/mid_line.html"
 
+  printf '<p>Hb 99 mmol/l, Ferritin 50 ng/ml</p>\n' > "$TMP_DIR/lower_unit.html"
+  _case_warn "lower-case spelling of an unambiguous unit (mmol/l)" "$TMP_DIR/lower_unit.html"
+
+  printf '<p>Result < 999 mg/L, see > notes</p>\n' > "$TMP_DIR/comparator.html"
+  _case_warn "comparator < ... > around a value is not taken as a tag" "$TMP_DIR/comparator.html"
+
+  printf '<span title="Hb 99.99 g/L">x</span>\n' > "$TMP_DIR/tooltip.html"
+  _case_warn "value inside a quoted attribute (tooltip) is still seen" "$TMP_DIR/tooltip.html"
+
+  printf '<p>Hb99 g/L</p>\n' > "$TMP_DIR/glued.html"
+  _case_warn "value glued to a preceding letter (Hb99 g/L)" "$TMP_DIR/glued.html"
+
   printf '<p>ALT 999</p>\n' > "$TMP_DIR/upper_alt.html"
   _case_warn "upper-case ALT abbreviation near a number" "$TMP_DIR/upper_alt.html"
 
   # The warning and the log must name the line, never the value itself.
   TOTAL=$((TOTAL + 1))
+  GUARD_LOG="$CLINICAL_GUARD_LOG_DIR/clinical_data_provenance_guard.log"
+  : > "$GUARD_LOG"
   out=$(run_guard "$(_payload_for_file "$TMP_DIR/with_unit.html")" 2>&1 1>/dev/null)
   if printf '%s' "$out" | grep -q '99\.99'; then
     printf 'FAIL  matched value echoed in the warning\n'
-  elif grep -q '99\.99' "$CLINICAL_GUARD_LOG_DIR/clinical_data_provenance_guard.log" 2>/dev/null; then
+  elif [ "$(grep -c 'signal=' "$GUARD_LOG")" -ne 1 ]; then
+    printf 'FAIL  expected exactly one signal= line in the log from this run\n'
+  elif grep -q '99\.99' "$GUARD_LOG"; then
     printf 'FAIL  matched value written to the log\n'
-  elif [ ! -s "$CLINICAL_GUARD_LOG_DIR/clinical_data_provenance_guard.log" ]; then
-    printf 'FAIL  log not written, so the no-value check saw nothing\n'
   else
     PASS=$((PASS + 1))
     printf 'PASS  matched value is not echoed or logged\n'
@@ -259,7 +284,7 @@ if [ "${1:-}" = "--selftest" ]; then
     > "$TMP_DIR/alt_attr.html"
   _case_silent "HTML alt= attribute near a number is markup, not ALT" "$TMP_DIR/alt_attr.html"
 
-  printf '<html><body>\n<p>Read 5 pages, climbed 3 floors, 2 PGs, 7 flats.</p>\n</body></html>\n' \
+  printf '<html><body>\n<p>Read 5 pages (5 pgs), climbed 3 floors, 2 PG, 4 FL, 7 flats.</p>\n</body></html>\n' \
     > "$TMP_DIR/unit_like_words.html"
   _case_silent "ordinary words after a number (pages, floors) are not pg or fL" "$TMP_DIR/unit_like_words.html"
 
