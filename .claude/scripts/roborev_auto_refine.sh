@@ -72,12 +72,31 @@ ROBOREV="/usr/local/bin/roborev"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"; }
 
+# Per-repo opt-out guard (llm#1296). refine_agent in roborev's own config may be
+# a non-Anthropic provider, and that choice lives inside roborev -- so the only
+# control we have is to never invoke refine for a blocked repo. Fail closed.
+_RRA_LIB=""
+for _c in "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
+          "$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"; do
+  [ -r "$_c" ] && { _RRA_LIB="$_c"; break; }
+done
+if [ -n "$_RRA_LIB" ]; then
+  # shellcheck disable=SC1090
+  . "$_RRA_LIB"
+else
+  roborev_repo_allowed() { return 3; }   # guard missing => block everything
+fi
+
 run_listener() {
     log "Starting auto-refine listener"
 
     # On startup, clear any existing backlog (one-time)
     log "Clearing existing backlog on startup..."
-    "$ROBOREV" refine --min-severity high --max-iterations 10 --quiet >> "$LOGFILE" 2>&1 || true
+    if roborev_repo_allowed . >/dev/null; then
+        "$ROBOREV" refine --min-severity high --max-iterations 10 --quiet >> "$LOGFILE" 2>&1 || true
+    else
+        log "Startup backlog clear skipped: cwd repo opted out / undecidable (llm#1296)"
+    fi
     log "Initial backlog clear complete"
 
     # Stream events, filter for completed reviews with findings
@@ -98,6 +117,7 @@ run_listener() {
             # Run refine in background for that repo, max 2 iterations per trigger
             (
                 cd "$repo" 2>/dev/null || exit 0
+                roborev_repo_allowed . >/dev/null || exit 0   # llm#1296 opt-out
                 "$ROBOREV" refine --max-iterations 2 --min-severity high --quiet >> "$LOGFILE" 2>&1
                 log "Refine completed for $repo"
             ) &

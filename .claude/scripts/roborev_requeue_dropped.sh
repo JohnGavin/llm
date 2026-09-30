@@ -426,6 +426,7 @@ run_selftest() {
   "$git_bin" -C "$fake_git_repo" init -q -b main
   "$git_bin" -C "$fake_git_repo" config user.email "test@example.com"
   "$git_bin" -C "$fake_git_repo" config user.name "Test"
+  "$git_bin" -C "$fake_git_repo" remote add origin https://example.invalid/fixture.git  # llm#1296: guard needs a remote
   mkdir -p "$fake_git_repo/inst/extdata"
   echo '{"a":1}' > "$fake_git_repo/inst/extdata/data.json"
   "$git_bin" -C "$fake_git_repo" add -A
@@ -759,6 +760,7 @@ SQL
     "$git_bin" -C "$rr_repo_path" init -q -b main
     "$git_bin" -C "$rr_repo_path" config user.email "test@example.com"
     "$git_bin" -C "$rr_repo_path" config user.name "Test"
+    "$git_bin" -C "$rr_repo_path" remote add origin https://example.invalid/fixture.git  # llm#1296: guard needs a remote
     local rr_n
     for rr_n in 1 2 3; do
       echo "v${rr_n} <- function() ${rr_n}" > "$rr_repo_path/R/v${rr_n}.R"
@@ -826,6 +828,7 @@ SQL
   "$git_bin" -C "$as_repo" init -q -b main
   "$git_bin" -C "$as_repo" config user.email "test@example.com"
   "$git_bin" -C "$as_repo" config user.name "Test"
+  "$git_bin" -C "$as_repo" remote add origin https://example.invalid/fixture.git  # llm#1296: guard needs a remote
   echo 'x <- function() 1' > "$as_repo/R/x.R"
   "$git_bin" -C "$as_repo" add -A
   "$git_bin" -C "$as_repo" commit -q -m "feat: agent-selection candidate"
@@ -1030,6 +1033,20 @@ FROM candidates
 ORDER BY ROW_NUMBER() OVER (PARTITION BY repo_name ORDER BY sha), repo_name, sha;
 "
 
+# Per-repo opt-out guard (llm#1296). Fail closed: no guard => nothing enqueued.
+_RRA_LIB=""
+for _c in "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
+          "$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"; do
+  [ -r "$_c" ] && { _RRA_LIB="$_c"; break; }
+done
+if [ -z "$_RRA_LIB" ]; then
+  log "skip: repo guard (git-hooks/lib/roborev_repo_allowed.sh) not found — fail closed"
+  echo "roborev_requeue_dropped: skipped (repo guard missing)"
+  exit 0
+fi
+# shellcheck disable=SC1090
+. "$_RRA_LIB"
+
 candidates=0
 enqueued=0
 skipped_excluded=0
@@ -1039,6 +1056,21 @@ skipped_rate_limit=0
 while IFS=$'\x1f' read -r repo_id repo_name root_path commit_id sha subject; do
   [ -n "$repo_id" ] || continue
   candidates=$((candidates + 1))
+
+  # Opt-out guard (llm#1296): never re-queue a review for a marked / no-remote /
+  # private-root repo. Counted as unavailable; the repo name is NOT logged.
+  roborev_repo_allowed "$root_path" >/dev/null
+  _rra_rc=$?
+  if [ "$_rra_rc" -eq 3 ]; then
+    # Indeterminate (checkout gone / not a repo): never enqueue, report as before.
+    skipped_unavailable=$((skipped_unavailable + 1))
+    log "skip(repo_unavailable): $repo_name $sha"
+    echo "skip(repo_unavailable): $repo_name $sha — ${subject}"
+    continue
+  elif [ "$_rra_rc" -ne 0 ]; then
+    skipped_unavailable=$((skipped_unavailable + 1))
+    continue
+  fi
 
   IFS=$'\x1f' read -r -a patterns < <(get_exclude_patterns "$root_path" | tr '\n' $'\x1f')
 

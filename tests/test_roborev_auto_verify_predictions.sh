@@ -227,6 +227,9 @@ _make_fix_commit() {
   git init --quiet "$repo_dir"
   git -C "$repo_dir" config user.email "test@example.com"
   git -C "$repo_dir" config user.name "Test"
+  # A remote is required: the roborev opt-out guard (llm#1296) treats a
+  # remote-less repo as local-only and refuses to queue a re-review for it.
+  git -C "$repo_dir" remote add origin https://example.invalid/fixture.git
   git -C "$repo_dir" commit --quiet --allow-empty -m "$msg"
   git -C "$repo_dir" rev-parse HEAD
 }
