@@ -73,3 +73,4 @@ tests/test_session_init_branch_harvest_cache.sh	tests/test_session_init_branch_h
 tests/test_roborev_retention.sh	tests/test_roborev_retention.sh;.claude/scripts/roborev_retention.sh	run
 tests/test_roborev_merge_gate_severity.sh	tests/test_roborev_merge_gate_severity.sh;.claude/scripts/roborev_merge_gate.sh;.claude/scripts/lib/roborev_classify.py	run
 tests/test_agent_post_verify_ff.sh	tests/test_agent_post_verify_ff.sh;.claude/scripts/agent-post-verify.sh	run
+tests/test_session_end_refine_waterfall.sh	tests/test_session_end_refine_waterfall.sh;.claude/scripts/session_end_refine.sh;git-hooks/lib/roborev_repo_allowed.sh	run
