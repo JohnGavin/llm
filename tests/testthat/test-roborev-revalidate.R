@@ -344,8 +344,89 @@ test_that("classify_review: unknown severity passed through does not error (find
   expect_no_error(
     result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
   )
-  # An off-vocabulary severity is treated as below-threshold, not a crash.
+  # An off-vocabulary severity is unreadable, not below-threshold (#1270):
+  # no crash, and the verdict is indeterminate so --apply never closes it.
+  expect_equal(result$verdict, "indeterminate")
+})
+
+# ── #1270: unreadable reviews are indeterminate, never likely-fixed ───────────
+
+test_that("classify_review: all-off-vocabulary severities -> indeterminate (#1270)", {
+  repo_root <- setup_repo_tree()
+  structured <- paste0(
+    '{"schema_version":2,"findings":[',
+    '{"severity":"bogus","location":"R/foo.R:2","problem":"x"},',
+    '{"severity":"urgent","location":"R/foo.R:3","problem":"y"}]}'
+  )
+  row <- make_review_row(20L, 120L, output = "", structured_output = structured)
+  result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  expect_equal(result$verdict, "indeterminate")
+  expect_match(result$reason, "unreadable", fixed = TRUE)
+})
+
+test_that("classify_review: no readable text and no structured output -> indeterminate (#1270)", {
+  repo_root <- setup_repo_tree()
+  row <- make_review_row(21L, 121L, output = "", structured_output = NA_character_)
+  result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  expect_equal(result$verdict, "indeterminate")
+})
+
+test_that("classify_review: malformed structured_output with empty output -> indeterminate (#1270)", {
+  repo_root <- setup_repo_tree()
+  row <- make_review_row(22L, 122L, output = "", structured_output = "{not json")
+  result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  expect_equal(result$verdict, "indeterminate")
+})
+
+test_that("classify_review: off-vocabulary finding beside a below-threshold one -> indeterminate (#1270)", {
+  # The unreadable finding could be the High one; a readable Low must not
+  # launder it into likely-fixed.
+  repo_root <- setup_repo_tree()
+  structured <- paste0(
+    '{"schema_version":2,"findings":[',
+    '{"severity":"low","location":"R/foo.R:2","problem":"x"},',
+    '{"severity":"bogus","location":"R/foo.R:3","problem":"y"}]}'
+  )
+  row <- make_review_row(23L, 123L, output = "", structured_output = structured)
+  result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  expect_equal(result$verdict, "indeterminate")
+})
+
+test_that("classify_review: genuinely clean readable review stays likely-fixed (#1270)", {
+  repo_root <- setup_repo_tree()
+  # (a) readable findings, all below threshold
+  structured <- '{"schema_version":2,"findings":[{"severity":"low","location":"R/foo.R:2","problem":"x"}]}'
+  row <- make_review_row(24L, 124L, output = "", structured_output = structured)
+  result <- classify_review(row, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
   expect_equal(result$verdict, "likely-fixed")
+  # (b) explicit passed review: valid schema, empty findings array
+  clean <- '{"schema_version":2,"verdict":"pass","findings":[]}'
+  row2 <- make_review_row(25L, 125L, output = "", structured_output = clean)
+  result2 <- classify_review(row2, repo_root, min_severity_num = 3L, sev_order = SEV_ORDER)
+  expect_equal(result2$verdict, "likely-fixed")
+})
+
+test_that("VERDICT_WEIGHT ranks indeterminate highest (#1270)", {
+  expect_equal(names(which.max(VERDICT_WEIGHT)), "indeterminate")
+})
+
+test_that("apply_closures never closes an indeterminate review (#1270)", {
+  apply_closures <- script_env$apply_closures
+  res <- list(
+    list(verdict = "indeterminate", job_id = 1L, review_id = 1L),
+    list(verdict = "ambiguous", job_id = 2L, review_id = 2L)
+  )
+  out <- capture.output(log <- apply_closures(res, "ts"))
+  expect_length(log, 0L)
+  expect_match(paste(out, collapse = "\n"), "closing 0 likely-fixed", fixed = TRUE)
+})
+
+test_that("format_report lists indeterminate reviews in their own section (#1270)", {
+  res <- list(list(review_id = 1L, job_id = 11L, git_ref = "abc", created_at = "t",
+                   verdict = "indeterminate", primary_loc = NA_character_,
+                   reason = "unreadable", sub_results = list()))
+  rep <- format_report(res, "llm", "High", TRUE, "ts")
+  expect_match(rep, "Indeterminate", fixed = TRUE)
 })
 
 # ── Test 4b: PR #1269 round 3 — JSON-direct findings from structured_output ──

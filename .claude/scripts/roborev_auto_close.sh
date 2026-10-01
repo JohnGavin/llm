@@ -15,6 +15,13 @@
 #   2. Security / error-handling queue guard:
 #      Security and error-handling findings are NOT auto-closed. They are
 #      inserted into fix_rejected_queue for human dispatch.
+#      INTERIM POLICY (llm#1270, awaiting an owner decision on the real
+#      signal): structured_output (v1/v2) reviews carry no **Category**:
+#      line, so their category is undeterminable. When no Category line is
+#      present, any High/Critical finding is queued for a human
+#      (queue_reason=high_severity_category_unknown), never auto-closed.
+#      When a Category line is present the security|error-handling path
+#      above applies unchanged. See the "Guard 2 interim policy" block below.
 #   3. Won't-fix tag guard:
 #      Won't-fix closures require a "[reason: ...]" tag in the commit
 #      message. The closure is rejected without this tag.
@@ -52,135 +59,50 @@ ROBOREV_DB="${ROBOREV_DB:-${HOME}/.roborev/reviews.db}"
 SQLITE3="${SQLITE3:-$(command -v sqlite3 2>/dev/null || echo /usr/bin/sqlite3)}"
 LOGFILE="${HOME}/.claude/logs/roborev_auto_close.log"
 
-# llm#1265: dir containing roborev_classify.py's review_output_text() —
-# reconstructs markdown text from the v0.68.2 structured_output JSON column
-# (falling back to legacy `output`) so this script's own severity/Category:
-# parsing below keeps working unchanged.
-# roborev id 10531 (low): honours a pre-set LIB_DIR so the selftest can
-# point it at an empty directory to exercise the IMPORT_ERROR/exit-2 path
-# without touching the real roborev_classify.py. Unset/empty in every
-# real invocation, so production behaviour is unchanged.
-LIB_DIR="${LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
+# llm#1265: dir containing roborev_classify.py -- the shared reader that
+# reconstructs markdown text / JSON-direct severity from the v0.68.2
+# structured_output column (falling back to legacy `output`).
+# roborev id 10531 (low): honours a pre-set ROBOREV_LIB_DIR so the selftest
+# can point it at an empty directory to exercise the IMPORT_ERROR/exit-2 path
+# without touching the real roborev_classify.py. Unset/empty in every real
+# invocation, so production behaviour is unchanged. (llm#1270: renamed from
+# the generic LIB_DIR -- an ambient LIB_DIR in the caller's environment would
+# silently redirect this import.)
+ROBOREV_LIB_DIR="${ROBOREV_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 
-# Fetch the shared-reader text for one review id (output column, falling
-# back through structured_output — see roborev_classify.py's
-# review_output_text() docstring). Returns "" if the row does not exist.
+# llm#1270: _fetch_review_text / _fetch_review_severity used to be inline
+# python heredocs here; the logic now lives in lib/roborev_classify.py
+# (fetch_review_text / fetch_review_severity_label, CLI --fetch-text /
+# --fetch-severity) and these are thin wrappers.
+#
+# Fetch the shared-reader text for one review id. Returns "" if the row does
+# not exist. Used ONLY for the Guard 2 Category check, never for severity.
 _fetch_review_text() {
   local review_id="$1"
-  /usr/bin/python3 - "$ROBOREV_DB" "$review_id" "$LIB_DIR" <<'PY'
-import sqlite3, sys
-
-db_path, review_id, lib_dir = sys.argv[1], sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else "")
-if lib_dir and lib_dir not in sys.path:
-    sys.path.insert(0, lib_dir)
-try:
-    from roborev_classify import review_output_text
-except Exception:
-    def review_output_text(output, structured_output):
-        return output or ""
-
-con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-try:
-    row = con.execute(
-        "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1", (review_id,)
-    ).fetchone()
-except sqlite3.OperationalError:
-    # Defensive fallback for a reviews.db predating the v0.68.2 migration
-    # (no structured_output column at all) -- not expected on a live
-    # ~/.roborev/reviews.db, but a schema this script itself creates for
-    # its own selftest fixture verified both shapes work.
-    row = con.execute(
-        "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
-    ).fetchone()
-con.close()
-print(review_output_text(row[0], row[1]) if row is not None else "")
-PY
+  [ -f "${ROBOREV_LIB_DIR}/roborev_classify.py" ] || return 0
+  /usr/bin/python3 "${ROBOREV_LIB_DIR}/roborev_classify.py" --fetch-text "$ROBOREV_DB" "$review_id"
 }
 
 # Fetch the JSON-direct max severity label for one review id (Critical |
 # High | Medium | Low | unknown | IMPORT_ERROR | READ_ERROR). llm#1265
 # round 3 / PR #1269: severity is read DIRECTLY from structured_output's
-# findings[].severity JSON fields via review_severity_ordinal() -- never
-# via _parse_max_severity() over review_output_text()-rendered markdown,
-# which is vulnerable to a finding's own problem/fix prose quoting a
-# severity marker as an example (review ids 10523/10524 live shape). This
-# matters more here than anywhere else in the codebase: this file's Guard
-# 1 is a security-critical downgrade-attack guard, so a corrupted severity
-# read on EITHER side (the finding's own severity, or the approving
-# review's) could defeat the guard's entire purpose. Returns "unknown" for
-# a missing row or a row with no severity to report (mirrors
-# _parse_max_severity()'s own contract, so _severity_ordinal() and the
-# downstream guard logic need no changes). Returns the literal string
-# "IMPORT_ERROR" -- and ALSO writes a loud message to stderr -- if
-# roborev_classify cannot be imported at all: an unreadable severity
-# reader is a reason to refuse the closure outright (exit 2, hard error,
-# per this file's own documented exit-code contract), NOT a reason to fall
-# back to "unknown" and let the guard's normal fail-closed handling mask a
-# broken environment indefinitely (checks-must-distinguish-unknown).
-#
-# roborev id 10531 (medium): the import-failure `except` above was the
-# ONLY error path that produced a loud sentinel. Any OTHER failure inside
-# the DB-read/ordinal-compute block below (a missing/locked/corrupt DB
-# raised outside the connect() try, an unreadable file, an unexpected
-# exception inside review_severity_ordinal itself) previously propagated
-# as a Python traceback, so the `$(...)` capture at the call site got
-# empty stdout with a non-zero python exit status DISCARDED by `$(...)`.
-# That mapped to FINDING_SEVERITY="" -> ordinal 0 -> the guard's normal
-# "finding_severity_unparseable" reject-and-exit-1 path -- a broken
-# environment reported as if the finding legitimately had no severity.
-# The broad `except Exception` below turns every such failure into the
-# same loud, exit-1 "READ_ERROR" sentinel the caller already knows how to
-# treat as a hard error (see the call sites' rc+sentinel check).
+# findings[].severity JSON fields -- never via _parse_max_severity() over
+# rendered markdown, which a finding's own prose quoting a severity marker
+# (review ids 10523/10524) could inflate. Security-critical: Guard 1 is a
+# downgrade-attack guard.
+#   - roborev_classify.py missing/unimportable -> prints IMPORT_ERROR, loud
+#     FATAL on stderr, returns 0 (caller treats the sentinel as a hard error,
+#     exit 2, per this file's exit-code contract; never a silent "unknown").
+#   - any other read failure (missing/locked DB, unexpected exception) ->
+#     the python CLI prints READ_ERROR and exits 1 (roborev id 10531).
 _fetch_review_severity() {
   local review_id="$1"
-  /usr/bin/python3 - "$ROBOREV_DB" "$review_id" "$LIB_DIR" <<'PY'
-import sqlite3, sys
-
-db_path, review_id, lib_dir = sys.argv[1], sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else "")
-if lib_dir and lib_dir not in sys.path:
-    sys.path.insert(0, lib_dir)
-try:
-    from roborev_classify import review_severity_ordinal, SEVERITY_ORDINAL
-except Exception as e:
-    sys.stderr.write(
-        f"roborev_auto_close: FATAL - could not import roborev_classify "
-        f"from {lib_dir!r}: {type(e).__name__}: {e}\n"
-    )
-    print("IMPORT_ERROR")
-    sys.exit(0)
-
-try:
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    try:
-        row = con.execute(
-            "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1", (review_id,)
-        ).fetchone()
-    except sqlite3.OperationalError:
-        row = con.execute(
-            "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
-        ).fetchone()
-    con.close()
-
-    if row is None:
-        print("unknown")
-    else:
-        ordv = review_severity_ordinal(row[0], row[1])
-        if ordv is None:
-            print("unknown")
-        else:
-            label = next(k for k, v in SEVERITY_ORDINAL.items() if v == ordv)
-            print(label.capitalize())
-except Exception as e:
-    # roborev id 10531 (medium): any non-import failure -- a missing or
-    # locked DB, an unreadable file, an unexpected exception inside
-    # review_severity_ordinal -- is a hard error, NOT "no severity found".
-    sys.stderr.write(
-        f"roborev_auto_close: FATAL - severity read failed for review_id="
-        f"{review_id!r}: {type(e).__name__}: {e}\n"
-    )
-    print("READ_ERROR")
-    sys.exit(1)
-PY
+  if [ ! -f "${ROBOREV_LIB_DIR}/roborev_classify.py" ]; then
+    echo "roborev_auto_close: FATAL - could not find roborev_classify.py in ${ROBOREV_LIB_DIR}" >&2
+    echo "IMPORT_ERROR"
+    return 0
+  fi
+  /usr/bin/python3 "${ROBOREV_LIB_DIR}/roborev_classify.py" --fetch-severity "$ROBOREV_DB" "$review_id"
 }
 
 # roborev id 10531 (medium): true if the severity reader's captured
@@ -430,24 +352,97 @@ INSERT INTO reviews VALUES (19, 19, 0, 0, '',
 INSERT INTO review_jobs VALUES (20, 1, 'done');
 INSERT INTO reviews VALUES (20, 20, 0, 1, '**Severity**: Medium
 **Problem**: fine', NULL, NULL);
+-- llm#1270 Guard 2 interim policy fixtures. Finding 21: High, text form,
+-- Category PRESENT and not security -- the Category path is determinate, so
+-- the High finding may auto-close (valid High approval = review 6).
+INSERT INTO review_jobs VALUES (21, 1, 'done');
+INSERT INTO reviews VALUES (21, 21, 0, 0, '**Severity**: High
+**Category**: style
+**Problem**: naming', NULL, NULL);
+-- Finding 22: High, structured v2 (no Category line is ever rendered for
+-- v2) -- category undeterminable -> human queue, never auto-close.
+INSERT INTO review_jobs VALUES (22, 1, 'done');
+INSERT INTO reviews VALUES (22, 22, 0, 0, '',
+  '{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"high","location":"R/a.R:1","problem":"Unchecked error from tryCatch swallow."}]}',
+  NULL);
+-- Finding 23: Critical, structured v2, no category -> human queue.
+INSERT INTO review_jobs VALUES (23, 1, 'done');
+INSERT INTO reviews VALUES (23, 23, 0, 0, '',
+  '{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"critical","location":"R/b.R:1","problem":"Token echoed to log."}]}',
+  NULL);
+-- Finding 24: Medium, structured v2, no category -> below the interim
+-- threshold, still closes (the interim default is High/Critical only).
+INSERT INTO review_jobs VALUES (24, 1, 'done');
+INSERT INTO reviews VALUES (24, 24, 0, 0, '',
+  '{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"medium","location":"R/c.R:1","problem":"Cosmetic."}]}',
+  NULL);
+-- Finding 25: High with Category: security (text form) -> Category path
+-- still queues, with the original security_finding reason.
+INSERT INTO review_jobs VALUES (25, 1, 'done');
+INSERT INTO reviews VALUES (25, 25, 0, 0, '**Severity**: High
+**Category**: security
+**Problem**: injection', NULL, NULL);
 SQL
 
-  # ── Test 1: High severity + High approve → closes ─────────────────────────
+  # ── Test 1 (llm#1270 interim policy): High severity + High approve, NO
+  # Category line -> category undeterminable, so a High/Critical finding goes
+  # to the human queue (fix_rejected_queue) and is NEVER auto-closed. This
+  # case closed before llm#1270 (Guard 2 keyed only on a **Category**: line
+  # that v2 structured_output reviews never carry).
   OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
     --finding-id 5 --approving-review-id 6 --commit "aaa111" --type approved 2>&1)
-  if echo "$OUT" | grep -q "^CLOSED=1"; then
-    _check "high-severity-high-approve-closes" "pass"
-    # Verify row was actually written
+  if echo "$OUT" | grep -q "^QUEUED=1" && echo "$OUT" | grep -q "queue_reason=high_severity_category_unknown"; then
+    _check "high-severity-no-category-queued" "pass"
     N=$("$SQLITE3" "$FIXTURE_DB" \
-      "SELECT COUNT(*) FROM closures WHERE finding_id=5 AND closure_type='approved'")
-    if [ "$N" = "1" ]; then
-      _check "high-severity-closes-db-row" "pass"
+      "SELECT COUNT(*) FROM closures WHERE finding_id=5")
+    Q=$("$SQLITE3" "$FIXTURE_DB" \
+      "SELECT COUNT(*) FROM fix_rejected_queue WHERE fix_commit='aaa111'")
+    if [ "$N" = "0" ] && [ "$Q" = "1" ]; then
+      _check "high-severity-no-category-not-closed-db" "pass"
     else
-      _check "high-severity-closes-db-row" "fail: closures rows=$N"
+      _check "high-severity-no-category-not-closed-db" "fail: closures rows=$N queue rows=$Q"
     fi
   else
-    _check "high-severity-high-approve-closes" "fail: got '$OUT'"
-    _check "high-severity-closes-db-row" "fail: not closed"
+    _check "high-severity-no-category-queued" "fail: got '$OUT'"
+    _check "high-severity-no-category-not-closed-db" "fail: not queued"
+  fi
+
+  # ── llm#1270 Test 1b: High + Category present (not security) -> closes ────
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 21 --approving-review-id 6 --commit "cat111" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^CLOSED=1"; then
+    _check "high-severity-with-category-closes" "pass"
+  else
+    _check "high-severity-with-category-closes" "fail: got '$OUT'"
+  fi
+
+  # ── llm#1270 Test 1c: structured High / Critical, no category -> queued ───
+  for FID in 22 23; do
+    OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+      --finding-id "$FID" --approving-review-id 6 --commit "struct${FID}" --type approved 2>&1)
+    if echo "$OUT" | grep -q "^QUEUED=1"; then
+      _check "structured-finding-${FID}-no-category-queued" "pass"
+    else
+      _check "structured-finding-${FID}-no-category-queued" "fail: got '$OUT'"
+    fi
+  done
+
+  # ── llm#1270 Test 1d: structured Medium, no category -> still closes ──────
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 24 --approving-review-id 6 --commit "struct24m" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^CLOSED=1"; then
+    _check "structured-medium-no-category-still-closes" "pass"
+  else
+    _check "structured-medium-no-category-still-closes" "fail: got '$OUT'"
+  fi
+
+  # ── llm#1270 Test 1e: High + Category: security -> original reason ────────
+  OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 25 --approving-review-id 6 --commit "sec25" --type approved 2>&1)
+  if echo "$OUT" | grep -q "^QUEUED=1" && echo "$OUT" | grep -q "queue_reason=security_finding"; then
+    _check "high-severity-security-category-keeps-security-reason" "pass"
+  else
+    _check "high-severity-security-category-keeps-security-reason" "fail: got '$OUT'"
   fi
 
   # ── Test 2: High severity + Medium approve → does NOT close (guard 1) ─────
@@ -625,12 +620,12 @@ SQL
 
   # ── Test 5: won't-fix WITH [reason:] tag → closes ─────────────────────────
   OUT=$(ROBOREV_DB="$FIXTURE_DB" bash "$0" \
-    --finding-id 1 --approving-review-id 6 --commit "eee555" \
+    --finding-id 16 --approving-review-id 6 --commit "eee555" \
     --type wontfix --reason "deprecated API, no active users" 2>&1)
   if echo "$OUT" | grep -q "^CLOSED=1"; then
     _check "wontfix-with-reason-closes" "pass"
     N=$("$SQLITE3" "$FIXTURE_DB" \
-      "SELECT COUNT(*) FROM closures WHERE finding_id=1 AND closure_type='wontfix'")
+      "SELECT COUNT(*) FROM closures WHERE finding_id=16 AND closure_type='wontfix'")
     if [ "$N" = "1" ]; then
       _check "wontfix-with-reason-db-row" "pass"
     else
@@ -659,15 +654,15 @@ SQL
   fi
 
   # ── Test 7 (roborev id 10531): roborev_classify import failure → exit 2,
-  # never a silent "unparseable" reject. Points LIB_DIR at an empty temp
+  # never a silent "unparseable" reject. Points ROBOREV_LIB_DIR at an empty temp
   # dir (no roborev_classify.py) for a case that would otherwise close
   # cleanly (finding 16 / approving review 6, per Test 2f above), and
   # asserts: exit code exactly 2, no CLOSED=1 anywhere in the output, and
-  # the FATAL message on stderr. Falsify by reverting the LIB_DIR override
+  # the FATAL message on stderr. Falsify by reverting the ROBOREV_LIB_DIR override
   # support above — this case must then fail (env override ignored, the
   # real roborev_classify.py loads, and the finding just closes normally).
   EMPTY_LIB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/roborev_ac_emptylib_XXXXXX")"
-  OUT=$(LIB_DIR="$EMPTY_LIB_DIR" ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+  OUT=$(ROBOREV_LIB_DIR="$EMPTY_LIB_DIR" ROBOREV_DB="$FIXTURE_DB" bash "$0" \
     --finding-id 16 --approving-review-id 6 --commit "importerr111" --type approved 2>&1)
   RC=$?
   rm -rf "$EMPTY_LIB_DIR"
@@ -685,6 +680,20 @@ SQL
     _check "import-failure-fatal-message" "pass"
   else
     _check "import-failure-fatal-message" "fail: no FATAL message in output: '$OUT'"
+  fi
+
+  # ── Test 8 (llm#1270): an AMBIENT generic LIB_DIR must NOT redirect the
+  # import (it did before the rename to ROBOREV_LIB_DIR). Same closing case as
+  # Test 7, but with LIB_DIR (not ROBOREV_LIB_DIR) pointing at an empty dir:
+  # must still close normally.
+  EMPTY_LIB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/roborev_ac_ambientlib_XXXXXX")"
+  OUT=$(LIB_DIR="$EMPTY_LIB_DIR" ROBOREV_DB="$FIXTURE_DB" bash "$0" \
+    --finding-id 16 --approving-review-id 6 --commit "ambient111" --type approved 2>&1)
+  rm -rf "$EMPTY_LIB_DIR"
+  if echo "$OUT" | grep -q "^CLOSED=1"; then
+    _check "ambient-LIB_DIR-ignored" "pass"
+  else
+    _check "ambient-LIB_DIR-ignored" "fail: ambient LIB_DIR redirected the import: '$OUT'"
   fi
 
   TOTAL=$((PASS+FAIL))
@@ -829,6 +838,43 @@ if [ -n "$APPROVING_REVIEW_ID" ]; then
 fi
 
 # ── Guard 2: security / error-handling → queue ────────────────────────────────
+#
+# Insert one fix_rejected_queue row for human dispatch and exit. Args:
+#   $1 queue_reason (machine-readable, printed on the QUEUED= line)
+#   $2 rejection_summary (human-readable, stored in the queue row)
+_queue_for_human() {
+  local queue_reason="$1" summary="$2"
+  local reason_sql commit_sql review_sql rc
+  log "QUEUE: finding_id=${FINDING_ID} — ${summary}"
+  reason_sql="'${summary}'"
+  commit_sql=$([ -n "$COMMIT_SHA" ] && echo "'${COMMIT_SHA}'" || echo "''")
+  review_sql=$([ -n "$APPROVING_REVIEW_ID" ] && echo "${APPROVING_REVIEW_ID}" || echo "NULL")
+  "$SQLITE3" "$ROBOREV_DB" <<SQL
+PRAGMA busy_timeout=5000;
+INSERT INTO fix_rejected_queue
+  (finding_ids, fix_commit, rejection_review_id, rejection_summary)
+VALUES ('[${FINDING_ID}]', ${commit_sql}, ${review_sql}, ${reason_sql});
+SQL
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log "QUEUED: finding_id=${FINDING_ID} commit=${COMMIT_SHA} (${queue_reason})"
+    printf 'QUEUED=1  queue_reason=%s  finding_id=%s\n' "$queue_reason" "$FINDING_ID"
+    exit 0
+  else
+    log "ERR: DB write to fix_rejected_queue failed rc=${rc} finding_id=${FINDING_ID}"
+    exit 2
+  fi
+}
+
+# Does the finding text carry a **Category**: line at all? (llm#1270)
+# lib/roborev_classify.py's review_output_text() renders v1/v2
+# (structured_output) reviews WITHOUT a Category line -- there is no
+# `category` field in the roborev v0.68.2 JSON -- so for those the category
+# is undeterminable, not "not security".
+HAS_CATEGORY_LINE=0
+if echo "$FINDING_OUTPUT" | grep -iqE '\*\*Category\*\*:[[:space:]]*[A-Za-z]'; then
+  HAS_CATEGORY_LINE=1
+fi
 
 IS_SECURITY_FINDING=0
 if echo "$FINDING_OUTPUT" | grep -iqE '\*\*Category\*\*:[[:space:]]*(security|error.?handling)'; then
@@ -836,26 +882,8 @@ if echo "$FINDING_OUTPUT" | grep -iqE '\*\*Category\*\*:[[:space:]]*(security|er
 fi
 
 if [ "$IS_SECURITY_FINDING" -eq 1 ]; then
-  log "QUEUE: finding_id=${FINDING_ID} — security/error-handling finding queued for human dispatch"
-  # Insert into fix_rejected_queue
-  REASON_SQL="'security or error-handling finding queued for human dispatch'"
-  COMMIT_SQL=$([ -n "$COMMIT_SHA" ] && echo "'${COMMIT_SHA}'" || echo "''")
-  REVIEW_SQL=$([ -n "$APPROVING_REVIEW_ID" ] && echo "${APPROVING_REVIEW_ID}" || echo "NULL")
-  "$SQLITE3" "$ROBOREV_DB" <<SQL
-PRAGMA busy_timeout=5000;
-INSERT INTO fix_rejected_queue
-  (finding_ids, fix_commit, rejection_review_id, rejection_summary)
-VALUES ('[${FINDING_ID}]', ${COMMIT_SQL}, ${REVIEW_SQL}, ${REASON_SQL});
-SQL
-  RC=$?
-  if [ "$RC" -eq 0 ]; then
-    log "QUEUED: finding_id=${FINDING_ID} commit=${COMMIT_SHA} (security/error-handling guard)"
-    printf 'QUEUED=1  queue_reason=security_finding  finding_id=%s\n' "$FINDING_ID"
-    exit 0
-  else
-    log "ERR: DB write to fix_rejected_queue failed rc=${RC} finding_id=${FINDING_ID}"
-    exit 2
-  fi
+  _queue_for_human "security_finding" \
+    "security or error-handling finding queued for human dispatch"
 fi
 
 # ── Guard 1: severity downgrade-attack + unparseable-severity guards ─────────
@@ -919,6 +947,27 @@ if [ "$FINDING_ORD" -ge 3 ] && [ "$APPROVING_ORD" -le 2 ]; then
   printf 'REJECTED=1  reject_reason=severity_downgrade_guard  finding_severity=%s  approving_severity=%s  finding_id=%s\n' \
     "$FINDING_SEVERITY" "$APPROVING_SEVERITY" "$FINDING_ID"
   exit 1
+fi
+
+# ── Guard 2 interim policy (llm#1270, awaiting an owner decision) ────────────
+#
+# Guard 2 above keys on a **Category**: security|error-handling line. That line
+# is absent from every structured_output (v1/v2) review, so for those the
+# category CANNOT be determined and security/error-handling findings used to
+# auto-close instead of reaching a human. The real signal (e.g. keyword
+# inference over problem text, or a roborev-side category) is an OWNER
+# DECISION still pending on llm#1270.
+#
+# SAFE INTERIM DEFAULT until that is decided: when no Category line is present
+# (category undeterminable) and the finding's severity is High or Critical,
+# queue it for a human (fix_rejected_queue) -- never auto-close. When a
+# Category line IS present the existing path above applies unchanged (a High
+# finding with e.g. `Category: style` can still close). Medium/Low findings
+# are unaffected. Placed after Guard 1 so every Guard 1 rejection keeps its
+# own reject_reason; only findings that would otherwise close reach here.
+if [ "$HAS_CATEGORY_LINE" -eq 0 ] && [ "$FINDING_ORD" -ge 3 ]; then
+  _queue_for_human "high_severity_category_unknown" \
+    "High/Critical finding with no determinable category queued for human dispatch (llm#1270 interim policy)"
 fi
 
 # ── All guards passed — write to closures ─────────────────────────────────────

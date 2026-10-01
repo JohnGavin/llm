@@ -89,12 +89,14 @@ GH="${GH:-$(command -v gh 2>/dev/null || echo /usr/bin/gh)}"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 ROBOREV_DB="${ROBOREV_DB:-$HOME/.roborev/reviews.db}"
 # llm#1265: dir containing roborev_classify.py's review_output_text() —
-# same LIB_DIR pattern as roborev_severity_autoclose.sh.
-# roborev id 10537 (medium, case 3h below): honours a pre-set LIB_DIR so
-# the selftest can exercise the fail-closed import-failure branch without
+# same pattern as roborev_severity_autoclose.sh.
+# roborev id 10537 (medium, case 3h below): honours a pre-set ROBOREV_LIB_DIR
+# so the selftest can exercise the fail-closed import-failure branch without
 # touching the real roborev_classify.py. Unset/empty in every real
-# invocation, so production behaviour is unchanged.
-LIB_DIR="${LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
+# invocation, so production behaviour is unchanged. (llm#1270: renamed from
+# the generic LIB_DIR -- an ambient LIB_DIR in the caller's environment would
+# silently redirect this import.)
+ROBOREV_LIB_DIR="${ROBOREV_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 THRESHOLD_DAYS="${THRESHOLD_DAYS:-7}"
 ROBOREV_REPO="${ROBOREV_REPO:-}"  # optional: restrict to a single repo by name
 FINDINGS_DIR="${FINDINGS_DIR:-$HOME/.roborev/findings}"
@@ -182,7 +184,7 @@ Summary: adds a lockfile.")
   # roborev id 10537 (medium): these cases call the real, imported
   # roborev_classify.review_output_text() (never a hand-copied
   # re-implementation) against a fixture sqlite DB, through the SAME
-  # LIB_DIR + import + row-shape pattern the production Phase 1a heredoc
+  # ROBOREV_LIB_DIR + import + row-shape pattern the production Phase 1a heredoc
   # uses below -- schema 0, schema 1/2 with findings, empty findings, an
   # unrecognised schema_version, malformed JSON, and NULL structured_output
   # (the column-absent-equivalent fallback shape). What this does NOT do:
@@ -197,7 +199,24 @@ Summary: adds a lockfile.")
   # separately: the fail-closed contract on an import failure.
   _HANDOFF_FIXTURE_DB="$(mktemp "${TMPDIR:-/tmp}/roborev_handoff_reader_test_XXXXXX")".db
   rm -f "${_HANDOFF_FIXTURE_DB%.db}"
-  trap 'rm -f "$_HANDOFF_FIXTURE_DB"' EXIT
+  # llm#1270: compose with, never clobber, an EXIT trap that is already set.
+  # `trap -p EXIT` prints `trap -- '<cmd>' EXIT`; _get_exit_trap_cmd pulls the
+  # <cmd> out via eval-set so embedded quotes survive. _push_exit_trap runs
+  # the new cleanup THEN the previous command; _pop_exit_trap restores the
+  # previous trap exactly (or clears it if there was none).
+  _get_exit_trap_cmd() { eval "set -- $(trap -p EXIT)"; printf '%s' "${3:-}"; }
+  _prev_exit_cmd=""
+  _push_exit_trap() {
+    _prev_exit_cmd="$(_get_exit_trap_cmd)"
+    trap "$1; ${_prev_exit_cmd}" EXIT
+  }
+  _pop_exit_trap() {
+    trap - EXIT
+    if [ -n "$_prev_exit_cmd" ]; then trap "$_prev_exit_cmd" EXIT; fi
+    _prev_exit_cmd=""
+    return 0
+  }
+  _push_exit_trap 'rm -f "$_HANDOFF_FIXTURE_DB"'
   "$SQLITE" "$_HANDOFF_FIXTURE_DB" <<'SQL'
 CREATE TABLE reviews (id INTEGER PRIMARY KEY, output TEXT, structured_output TEXT);
 INSERT INTO reviews VALUES (1, '',
@@ -219,7 +238,7 @@ SQL
   # line for 3b-3g at all -- an unusable reader would look like a hang or
   # a crash, not a reported failure).
   _handoff_reader_rc=0
-  _handoff_reader_out=$("$PYTHON" - "$_HANDOFF_FIXTURE_DB" "$LIB_DIR" <<'PYEOF'
+  _handoff_reader_out=$("$PYTHON" - "$_HANDOFF_FIXTURE_DB" "$ROBOREV_LIB_DIR" <<'PYEOF'
 import sys, sqlite3
 db_path, lib_dir = sys.argv[1], sys.argv[2]
 if lib_dir and lib_dir not in sys.path:
@@ -233,7 +252,7 @@ for row in con.execute("SELECT id, output, structured_output FROM reviews ORDER 
 PYEOF
 ) || _handoff_reader_rc=$?
   rm -f "$_HANDOFF_FIXTURE_DB"
-  trap - EXIT
+  _pop_exit_trap
 
   if [ "$_handoff_reader_rc" -ne 0 ]; then
     _assert "3b-3g. fixture reader ran without error" "got: exit ${_handoff_reader_rc}, output: ${_handoff_reader_out}"
@@ -278,32 +297,29 @@ PYEOF
     || _assert "3g. NULL structured_output falls back to legacy output text" "got: $(grep '^6|' <<< "$_handoff_reader_out")"
 
   # ── 3h. fail-closed import branch (roborev id 10537, medium: "add one
-  # case for the fail-closed import branch"). Mirrors the EXACT
-  # try/except shape at the real Phase 1a heredoc below (the "roborev_handoff:
-  # FATAL — could not import review_output_text" block) with LIB_DIR
-  # pointed at an empty directory so roborev_classify cannot be imported.
-  # This is the one piece of the production wiring (as opposed to the
-  # library function itself) that 3b-3g's honest scope note above says is
-  # NOT covered there -- pinned separately here. Asserts the process
-  # exits non-zero and prints the FATAL message: the contract this branch
-  # exists to guarantee is "abort loudly", never "silently classify every
-  # row against the empty legacy output column".
+  # case for the fail-closed import branch"). llm#1270 (roborev #10543): this
+  # used to run a hand-written COPY of the try/except, which passes by
+  # construction. It now extracts the PRODUCTION text -- the block between
+  # the `# BEGIN import-guard` / `# END import-guard` markers (column 0)
+  # inside the real Phase 1a heredoc below -- from this very file and runs
+  # THAT with the library dir pointed at an empty directory. Asserts the
+  # process exits non-zero and prints the FATAL message ("abort loudly",
+  # never "silently classify every row against the empty legacy output
+  # column"), plus a positive control: the same extracted block against the
+  # real lib dir must exit 0 (otherwise a mangled extraction would also
+  # "exit non-zero" and the case could not distinguish the two).
+  _IMPORT_GUARD_SRC="$(sed -n '/^# BEGIN import-guard/,/^# END import-guard/p' "$0")"
+  _import_guard_prelude='import sys
+lib_dir = sys.argv[1]
+'
+  if [ -z "$_IMPORT_GUARD_SRC" ]; then
+    _assert "3h. production import-guard block extracted from this file" "markers not found in $0"
+  else
+    _assert "3h. production import-guard block extracted from this file" "ok"
+  fi
   _EMPTY_LIB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/roborev_handoff_emptylib_XXXXXX")"
   _import_fail_rc=0
-  _import_fail_out=$("$PYTHON" - "$_EMPTY_LIB_DIR" <<'PYEOF' 2>&1
-import sys
-lib_dir = sys.argv[1]
-if lib_dir and lib_dir not in sys.path:
-    sys.path.insert(0, lib_dir)
-try:
-    from roborev_classify import review_output_text
-except Exception as e:
-    print(f"roborev_handoff: FATAL — could not import review_output_text from "
-          f"{lib_dir!r} (roborev_classify.py): {e}. Refusing to classify "
-          f"reviews against the empty legacy `output` column.", file=sys.stderr)
-    sys.exit(1)
-PYEOF
-) || _import_fail_rc=$?
+  _import_fail_out=$("$PYTHON" -c "${_import_guard_prelude}${_IMPORT_GUARD_SRC}" "$_EMPTY_LIB_DIR" 2>&1) || _import_fail_rc=$?
   rm -rf "$_EMPTY_LIB_DIR"
 
   [ "$_import_fail_rc" -ne 0 ] \
@@ -313,6 +329,38 @@ PYEOF
   grep -qi "FATAL" <<< "$_import_fail_out" \
     && _assert "3h. fail-closed import branch: prints FATAL message" "ok" \
     || _assert "3h. fail-closed import branch: prints FATAL message" "got: ${_import_fail_out}"
+
+  _import_ok_rc=0
+  _import_ok_out=$("$PYTHON" -c "${_import_guard_prelude}${_IMPORT_GUARD_SRC}" "$ROBOREV_LIB_DIR" 2>&1) || _import_ok_rc=$?
+  [ "$_import_ok_rc" -eq 0 ] \
+    && _assert "3h. import-guard positive control: real lib dir imports (exit 0)" "ok" \
+    || _assert "3h. import-guard positive control: real lib dir imports (exit 0)" "rc=${_import_ok_rc} out=${_import_ok_out}"
+
+  # ── 3i. EXIT-trap composition (llm#1270, roborev #10543): the fixture
+  # cleanup must not clobber an EXIT trap that was already set, and
+  # _pop_exit_trap must restore it. Each case runs in its own subshell so its
+  # trap fires at subshell exit, observable on stdout.
+  _t3i_file="$(mktemp "${TMPDIR:-/tmp}/roborev_handoff_trapfile_XXXXXX")"
+  _t3i_out=$( (
+    trap 'echo PREV_TRAP_RAN' EXIT
+    _push_exit_trap "rm -f '$_t3i_file'"
+    exit 0
+  ) )
+  if grep -q "PREV_TRAP_RAN" <<< "$_t3i_out" && [ ! -e "$_t3i_file" ]; then
+    _assert "3i. push_exit_trap composes: previous trap AND cleanup both ran" "ok"
+  else
+    _assert "3i. push_exit_trap composes: previous trap AND cleanup both ran" "out='${_t3i_out}' file_exists=$([ -e "$_t3i_file" ] && echo yes || echo no)"
+  fi
+  rm -f "$_t3i_file"
+  _t3i_out=$( (
+    trap 'echo PREV_TRAP_RAN' EXIT
+    _push_exit_trap 'true'
+    _pop_exit_trap
+    exit 0
+  ) )
+  grep -q "PREV_TRAP_RAN" <<< "$_t3i_out" \
+    && _assert "3i. pop_exit_trap restores the previous trap" "ok" \
+    || _assert "3i. pop_exit_trap restores the previous trap" "out='${_t3i_out}'"
 
   # ── 4. Digest title format matches YYYY-Www ────────────────────────────────
   iso_week=$(date -u +%G-W%V)
@@ -595,7 +643,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 # ── Python: export all stale done jobs to per-job JSON files ─────────────────
 # This avoids shell pipe-splitting on multiline/pipe-containing output text.
-"$PYTHON" - "$ROBOREV_DB" "$THRESHOLD_DAYS" "$WORKDIR" "$ROBOREV_REPO" "$LIB_DIR" <<'PYEOF'
+"$PYTHON" - "$ROBOREV_DB" "$THRESHOLD_DAYS" "$WORKDIR" "$ROBOREV_REPO" "$ROBOREV_LIB_DIR" <<'PYEOF'
 import sys, json, sqlite3, os
 
 db_path, threshold_days, workdir = sys.argv[1], int(sys.argv[2]), sys.argv[3]
@@ -611,6 +659,7 @@ lib_dir = sys.argv[5] if len(sys.argv) > 5 else ""
 # to stderr and exit non-zero, which (this script runs under
 # `set -euo pipefail`) aborts the whole run rather than proceeding on
 # silently-blank data.
+# BEGIN import-guard (roborev_handoff selftest 3h extracts and runs this block)
 if lib_dir and lib_dir not in sys.path:
     sys.path.insert(0, lib_dir)
 try:
@@ -620,6 +669,7 @@ except Exception as e:
           f"{lib_dir!r} (roborev_classify.py): {e}. Refusing to classify "
           f"reviews against the empty legacy `output` column.", file=sys.stderr)
     sys.exit(1)
+# END import-guard
 
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
