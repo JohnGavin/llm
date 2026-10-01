@@ -75,6 +75,8 @@ PR merge is Class C by default (explicit verb, every time). A **global toggle** 
 **When the toggle is OFF** (the historical default), every merge stays Class
 C exactly as documented above — nothing else in this rule changes.
 
+**Label every auto-merge.** A PR merged under this policy (no explicit "merge" verb in the user's own words) gets the `auto-merged` label at merge time: `gh pr edit <n> --add-label auto-merged`, then `gh pr merge`. A merge the user asked for by name gets no label. GitHub records every merge as the owner, so without the label an automatic merge cannot be told from an instructed one afterwards, and the #1274 audit cannot be done.
+
 This is advisory, not hook-enforced: no mechanism blocks a merge call the way `agent_push_guard.sh` blocks a worktree-agent push to `main`. The policy trades a firm technical backstop for zero session-to-session friction, a deliberate choice; a GitHub branch-protection review requirement was declined because it reintroduces the click-through friction the toggle exists to remove.
 
 ### Auto-Merge Exclusion List (always Class C, regardless of the toggle)
