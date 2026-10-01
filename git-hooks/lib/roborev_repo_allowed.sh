@@ -101,3 +101,122 @@ roborev_repo_allowed() {
     fi
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# roborev_all_files_excluded DIR REV   (sibling of the guard above)
+#
+# A commit whose every changed file matches roborev's `exclude_patterns` still
+# gets a review job -- with an empty diff ("0 files reviewed, 1 excluded"): a
+# wasted agent run and an open review for the merge gate to deal with
+# (job 13884, a CHANGELOG.md-only commit). Skip those up front.
+#
+#   REV is a commit-ish (one commit) or a range "A..B" (e.g. ORIG_HEAD..HEAD).
+#     exit 0 -> every changed file is excluded: DO NOT enqueue
+#               (prints "skip: all files excluded" on stdout)
+#     exit 1 -> at least one file is not excluded, OR there are no files to
+#               judge (merge commit: diff-tree lists nothing without -m; empty
+#               commit) -> enqueue as before. Not judging is not skipping.
+#     exit 3 -> indeterminate (git failed, or a config file has an
+#               exclude_patterns key it cannot parse). Callers MUST enqueue:
+#               fail toward reviewing. A one-line reason is printed on stdout.
+#
+# Patterns: repo-top .roborev.toml plus ROBOREV_GLOBAL_CONFIG
+# (default ~/.roborev/config.toml), key `exclude_patterns`, single- or multi-line
+# array of '..' / ".." strings. Matching (roborev's own matcher is not
+# documented -- "filenames or glob patterns"): a pattern matches a file if the
+# shell glob matches the full repo-relative path OR the basename. Shell `case`
+# globs let `*` cross '/', i.e. slightly broader than gitignore-style; for the
+# real patterns (exact names) this is identical.
+# ---------------------------------------------------------------------------
+
+# _rra_read_patterns FILE : print one pattern per line. rc 0 ok (incl. key
+# absent / file absent), rc 3 = key present but array unparseable.
+_rra_read_patterns() {
+    [ -r "$1" ] || return 0
+    awk '
+        BEGIN { inarr = 0; found = 0; closed = 0; bad = 0 }
+        {
+            line = $0
+            if (!inarr) {
+                if (line ~ /^[ \t]*exclude_patterns[ \t]*=/) {
+                    found = 1
+                    sub(/^[^=]*=[ \t]*/, "", line)
+                    if (line !~ /^\[/) { bad = 1; next }
+                    sub(/^\[/, "", line)
+                    inarr = 1
+                } else next
+            } else if (line ~ /^[ \t]*#/) next
+            while (match(line, /"[^"]*"|\047[^\047]*\047/)) {
+                s = substr(line, RSTART + 1, RLENGTH - 2)
+                if (s != "") print s
+                line = substr(line, 1, RSTART - 1) " " substr(line, RSTART + RLENGTH)
+            }
+            if (line ~ /\]/) { inarr = 0; closed = 1; exit }
+        }
+        END { if (bad || (found && !closed)) exit 3 }
+    ' "$1"
+}
+
+roborev_all_files_excluded() {
+    _rae_dir=${1:-.}
+    _rae_rev=${2:-}
+    [ -n "$_rae_rev" ] || { echo "no-rev"; return 3; }
+    _rae_top=$(git -C "$_rae_dir" rev-parse --show-toplevel 2>/dev/null) || { echo "no-repo"; return 3; }
+
+    case "$_rae_rev" in
+        *..*) _rae_files=$(git -C "$_rae_top" diff --name-only --no-ext-diff "$_rae_rev" 2>/dev/null) || { echo "git-failed"; return 3; } ;;
+        *)    _rae_files=$(git -C "$_rae_top" diff-tree --no-commit-id --name-only -r --no-ext-diff "$_rae_rev" 2>/dev/null) || { echo "git-failed"; return 3; } ;;
+    esac
+    [ -n "$_rae_files" ] || return 1
+
+    _rae_pats=""
+    for _rae_cfg in "$_rae_top/.roborev.toml" "${ROBOREV_GLOBAL_CONFIG:-$HOME/.roborev/config.toml}"; do
+        _rae_out=$(_rra_read_patterns "$_rae_cfg"); _rae_rc=$?
+        if [ "$_rae_rc" -ne 0 ]; then echo "config-unparseable"; return 3; fi
+        if [ -n "$_rae_out" ]; then
+            _rae_pats="$_rae_pats
+$_rae_out"
+        fi
+    done
+    [ -n "$_rae_pats" ] || return 1
+
+    _rae_old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for _rae_f in $_rae_files; do
+        _rae_base=${_rae_f##*/}
+        _rae_hit=1
+        for _rae_p in $_rae_pats; do
+            # shellcheck disable=SC2254
+            case "$_rae_f" in $_rae_p) _rae_hit=0; break ;; esac
+            # shellcheck disable=SC2254
+            case "$_rae_base" in $_rae_p) _rae_hit=0; break ;; esac
+        done
+        if [ "$_rae_hit" -ne 0 ]; then
+            set +f; IFS=$_rae_old_ifs
+            return 1
+        fi
+    done
+    set +f; IFS=$_rae_old_ifs
+    echo "skip: all files excluded"
+    return 0
+}
+
+# _rra_log_skip MSG : append to the hook log; best-effort, never fails the hook.
+_rra_log_skip() {
+    _rra_lf=${ROBOREV_HOOK_LOG:-$HOME/.claude/logs/roborev_hook_skips.log}
+    mkdir -p "$(dirname "$_rra_lf")" 2>/dev/null || return 0
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$_rra_lf" 2>/dev/null || true
+}
+
+# roborev_skip_if_all_excluded DIR REV : 0 = caller should SKIP enqueue (logged);
+# 1 = enqueue (an indeterminate result is logged as such, and still returns 1).
+roborev_skip_if_all_excluded() {
+    _rsa_msg=$(roborev_all_files_excluded "$1" "$2"); _rsa_rc=$?
+    case "$_rsa_rc" in
+        0) _rra_log_skip "skip: all files excluded ($2)"; return 0 ;;
+        3) _rra_log_skip "indeterminate: $_rsa_msg ($2) -- reviewing anyway"; return 1 ;;
+        *) return 1 ;;
+    esac
+}

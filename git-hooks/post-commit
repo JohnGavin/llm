@@ -33,6 +33,9 @@ _lib="$(dirname "$0")/lib/roborev_repo_allowed.sh"
 [ -r "$_lib" ] || return 0
 . "$_lib"
 roborev_repo_allowed . >/dev/null || return 0
+# Every changed file excluded by exclude_patterns => the job would review an
+# empty diff; skip it. Indeterminate (unparseable config etc.) still reviews.
+roborev_skip_if_all_excluded . HEAD && return 0
 "$ROBOREV" post-commit 2>/dev/null
 }
 _roborev_hook
