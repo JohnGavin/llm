@@ -8,19 +8,30 @@
 #   roborev_merge_gate.sh --enforce  <pr#>   (enforce mode — exit 1 on block; NOT active)
 #
 # Exit codes (dry-run mode — default):
-#   0   Always exits 0 in dry-run mode (print verdict, never block)
+#   0   Always exits 0 in dry-run mode (print verdict, never block). An
+#       INDETERMINATE verdict is still printed clearly as [gate-indeterminate]
+#       and never as a pass; only the exit code is relaxed in dry-run.
 #
 # Exit codes (--enforce mode — for future use, NOT wired into CI):
 #   0   gate-pass or gate-warn
 #   1   gate-block (unresolved High/Critical findings)
+#   3   gate-indeterminate (could not determine; must be treated as "ask")
 #
 # Verdicts:
-#   [gate-pass]   All findings cited or no open findings at threshold
-#   [gate-warn]   Open findings at medium severity only (warn, don't block)
-#   [gate-block]  Open High/Critical findings not cited in PR commits
+#   [gate-pass]          All findings cited or no open findings at threshold
+#   [gate-warn]          Open findings at medium severity only (warn, don't block)
+#   [gate-block]         Open High/Critical findings not cited in PR commits
+#   [gate-indeterminate] reviews.db missing/unreadable/query error, or an open
+#                        review whose findings cannot be parsed (#1307)
+#
+# Severity is read from each open review's OWN findings (reviews.structured_output,
+# via .claude/scripts/lib/roborev_classify.py), highest finding per review. A review
+# with no findings or only findings below the threshold does not count. It is NOT
+# read from review_jobs.min_severity (the job's reporting threshold) (#1307).
 #
 # Logs: ~/.claude/logs/merge_gate.log (one JSON line per invocation)
-# Fail-open: exits 0 if DB absent, if gh command fails, or on any internal error.
+# Fail-open (gate-pass) remains only for: gh returns no commits / no PR for branch.
+# DB absent, query errors and unparseable reviews are INDETERMINATE, not pass.
 #
 # Self-test (direct function calls — no subprocess of $0):
 #   SELFTEST=1 bash roborev_merge_gate.sh
@@ -84,7 +95,7 @@ print(m.group(1) if m else 'medium')
 # Fetch PR commit SHAs via gh.  Echoes one SHA per line, or empty on failure.
 _get_pr_commits() {
   local pr_num="$1"
-  gh pr view "$pr_num" \
+  "${GH:-gh}" pr view "$pr_num" \
     --json commits \
     --jq '.commits[].oid' 2>/dev/null || echo ""
 }
@@ -93,14 +104,28 @@ _get_pr_commits() {
 # Echoes the PR number, or "" if not found.
 _branch_to_pr() {
   local branch="$1"
-  gh pr list --head "$branch" --state open --json number --jq '.[0].number' \
+  "${GH:-gh}" pr list --head "$branch" --state open --json number --jq '.[0].number' \
     2>/dev/null | grep -E '^[0-9]+$' || echo ""
 }
 
-# Query reviews.db for open findings whose commit_sha is in the provided list.
+# Query reviews.db for open reviews whose commit_sha is in the provided list and
+# judge each by the severity of its OWN findings (#1307).
 # commit_shas_csv: comma-separated quoted SHAs, e.g. "'abc','def'"
 # threshold: e.g. "medium"
-# Outputs TSV: id | severity | sha (one row per finding)
+# Outputs TSV: id | severity | sha (one row per review that counts).
+#   severity is low|medium|high|critical (only rows >= threshold are printed),
+#   or "indeterminate" when the review's findings cannot be parsed.
+# A review with no findings, or only findings below the threshold, prints nothing.
+# Return codes: 0 = answered (output may be empty); 3 = could not ask (query or
+# import error) -- the error text is printed on stdout and MUST NOT be read as
+# "no findings" (checks-must-distinguish-unknown). A missing DB / empty SHA list
+# still returns 0 with no output; _run_gate checks DB presence itself.
+#
+# Severity source: reviews.structured_output (roborev >= v0.68.2; reviews.output
+# is empty) via the shared reader .claude/scripts/lib/roborev_classify.py. NOT
+# review_jobs.min_severity, which is the job's reporting threshold (#1307).
+_GATE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" 2>/dev/null && pwd)" || _GATE_LIB_DIR=""
+
 _query_open_findings() {
   local commit_shas_csv="$1"
   local threshold="$2"
@@ -109,13 +134,10 @@ _query_open_findings() {
   [ -f "$db" ] || return 0
   [ -z "$commit_shas_csv" ] && return 0
 
-  "$PYTHON" -c "
+  "$PYTHON" - "$db" "$threshold" "$commit_shas_csv" "$_GATE_LIB_DIR" <<'PYEOF'
 import sys, sqlite3
 
-db_path = sys.argv[1]
-threshold = sys.argv[2]
-shas_csv = sys.argv[3]
-
+db_path, threshold, shas_csv, lib_dir = sys.argv[1:5]
 sev_order = ['low', 'medium', 'high', 'critical']
 try:
     thresh_idx = sev_order.index(threshold.lower())
@@ -123,37 +145,46 @@ except ValueError:
     thresh_idx = 1  # default: medium
 
 try:
-    con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-    # Build SHA list — strip any quoting from CSV
-    shas = [s.strip().strip(\"'\").strip('\"') for s in shas_csv.split(',') if s.strip()]
+    if lib_dir and lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    from roborev_classify import (
+        review_severity_ordinal, classify_review_row,
+    )
+    shas = [s.strip().strip("'").strip('"') for s in shas_csv.split(',') if s.strip()]
     if not shas:
-        con.close()
         sys.exit(0)
-
+    con = sqlite3.connect('file:{}?mode=ro'.format(db_path), uri=True)
     placeholders = ','.join('?' * len(shas))
-    # reviews joins review_jobs via job_id; review_jobs joins commits via commit_id
-    rows = con.execute('''
-        SELECT r.id, rj.min_severity, c.sha
-        FROM reviews r
-        JOIN review_jobs rj ON r.job_id = rj.id
-        JOIN commits c ON rj.commit_id = c.id
-        WHERE c.sha IN ({ph})
-          AND r.closed = 0
-    '''.format(ph=placeholders), shas).fetchall()
+    rows = con.execute(
+        'SELECT r.id, r.output, r.structured_output, c.sha '
+        'FROM reviews r '
+        'JOIN review_jobs rj ON r.job_id = rj.id '
+        'JOIN commits c ON rj.commit_id = c.id '
+        'WHERE c.sha IN ({}) AND r.closed = 0'.format(placeholders), shas
+    ).fetchall()
     con.close()
-
-    for rid, sev, sha in rows:
-        sev = (sev or '').lower().strip() or 'medium'
-        try:
-            sev_idx = sev_order.index(sev)
-        except ValueError:
-            sev_idx = 1
-        if sev_idx >= thresh_idx:
-            print(f'{rid}\t{sev}\t{sha}')
+    out = []
+    for rid, output, structured, sha in rows:
+        ordinal = review_severity_ordinal(output, structured)
+        if ordinal is not None:
+            idx = ordinal - 1  # ordinal 1..4 -> low..critical
+            if idx >= thresh_idx:
+                out.append('{}\t{}\t{}'.format(rid, sev_order[idx], sha))
+            continue
+        # No severity readable: either the review genuinely found nothing
+        # ("passed") or we cannot tell -- the latter is INDETERMINATE, never
+        # Medium and never a pass.
+        if classify_review_row(output, structured) == 'passed':
+            continue
+        out.append('{}\tindeterminate\t{}'.format(rid, sha))
+    if out:
+        print('\n'.join(out))
+except SystemExit:
+    raise
 except Exception as e:
-    # Fail-open
-    sys.exit(0)
-" "$db" "$threshold" "$commit_shas_csv" 2>/dev/null || true
+    print('{}: {}'.format(type(e).__name__, e))
+    sys.exit(3)
+PYEOF
 }
 
 # Parse commit messages for "acks roborev #N" and "closes/fixes roborev #N" citations.
@@ -233,10 +264,23 @@ _log_run() {
     >> "$MERGE_GATE_LOG" 2>/dev/null || true
 }
 
-# Core gate logic.  Returns 0 (pass/warn) or 1 (block) based on findings.
+# Core gate logic.  Returns 0 (pass/warn), 1 (block) or 3 (indeterminate);
+# block/indeterminate return non-zero only in enforce mode.
 # Sets _GATE_VERDICT, _GATE_MSG as side-effects.
 _GATE_VERDICT=""
 _GATE_MSG=""
+
+# Record an INDETERMINATE verdict: the gate could not determine the answer.
+# Never reads as pass.  Returns 3 in enforce mode, 0 in dry-run (verdict still
+# printed clearly by the caller).
+_indeterminate() {
+  local pr_num="$1" threshold="$2" mode="$3" reason="$4"
+  _GATE_VERDICT="gate-indeterminate"
+  _GATE_MSG="[gate-indeterminate] PR #${pr_num}: could not determine open-finding severity (${reason}). Treat as NOT passing: ask before merging."
+  _log_run "$pr_num" "$threshold" 0 0 0 0 0 "gate-indeterminate" "$mode"
+  [ "$mode" = "enforce" ] && return 3
+  return 0
+}
 _run_gate() {
   local pr_num="$1"
   local threshold="$2"
@@ -260,8 +304,19 @@ _run_gate() {
   done | sed 's/,$//')
 
   # -- Query DB for open findings
-  local findings_tsv
-  findings_tsv=$(_query_open_findings "$commit_shas_csv" "$threshold" "$ROBOREV_DB")
+  # A DB we cannot read, or a query that errors, is "could not ask" -- never
+  # "no findings" (#1307, checks-must-distinguish-unknown).
+  if [ ! -f "$ROBOREV_DB" ]; then
+    _indeterminate "$pr_num" "$threshold" "$mode" "reviews.db not found at ${ROBOREV_DB}"
+    return $?
+  fi
+
+  local findings_tsv q_rc=0
+  findings_tsv=$(_query_open_findings "$commit_shas_csv" "$threshold" "$ROBOREV_DB") || q_rc=$?
+  if [ "$q_rc" -ne 0 ]; then
+    _indeterminate "$pr_num" "$threshold" "$mode" "reviews.db query failed: ${findings_tsv}"
+    return $?
+  fi
 
   local open_count
   if [ -z "$findings_tsv" ]; then
@@ -288,7 +343,7 @@ _run_gate() {
   local all_resolved_csv="${cited_csv},${acked_csv}"
 
   # -- Compute unresolved and severity breakdown
-  local unresolved_tsv high_count medium_count unresolved_count
+  local unresolved_tsv high_count medium_count indet_count unresolved_count
   unresolved_tsv=$("$PYTHON" -c "
 import sys
 
@@ -326,7 +381,9 @@ print('\n'.join(rows))
   if [ -z "$unresolved_tsv" ]; then
     high_count=0
     medium_count=0
+    indet_count=0
   else
+    indet_count=$(echo "$unresolved_tsv" | grep -cE $'\t''indeterminate'$'\t' 2>/dev/null) || indet_count=0
     high_count=$(echo "$unresolved_tsv" | grep -cE $'\t''(high|critical)'$'\t' 2>/dev/null) || high_count=0
     medium_count=$(echo "$unresolved_tsv" | grep -cE $'\t''medium'$'\t' 2>/dev/null) || medium_count=0
   fi
@@ -352,6 +409,12 @@ print('\n'.join(rows))
       return 1
     fi
     return 0
+  fi
+
+  if [ "$indet_count" -gt 0 ]; then
+    # Unparseable review(s): cannot rule out High -- neither Medium nor pass.
+    _indeterminate "$pr_num" "$threshold" "$mode" "${indet_count} unresolved review(s) with unparseable findings"
+    return $?
   fi
 
   # Medium-only unresolved
@@ -422,6 +485,38 @@ print(','.join(ids))
   local out
   out=$(_query_open_findings "'abc123','def456'" "medium" "/tmp/no_db_$$" 2>/dev/null)
   _t "query: missing DB -> empty" "" "$out"
+
+  # _query_open_findings — severity comes from the review's own findings (#1307)
+  local fdb
+  fdb=$(mktemp /tmp/gate_fix_XXXXXX)
+  "$PYTHON" - "$fdb" <<'PYEOF'
+import sqlite3, sys, json
+con = sqlite3.connect(sys.argv[1])
+con.executescript("""
+CREATE TABLE commits (id INTEGER PRIMARY KEY, sha TEXT);
+CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, commit_id INTEGER, min_severity TEXT DEFAULT '');
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, job_id INTEGER, output TEXT DEFAULT '',
+  structured_output TEXT, closed INTEGER DEFAULT 0);
+""")
+def v2(sevs):
+    return json.dumps({"schema_version": 2, "summary": "s", "verdict": "fail",
+                       "findings": [{"severity": s, "problem": "p"} for s in sevs]})
+rows = {"low": v2(["low"]), "med": v2(["medium", "low"]), "high": v2(["high"]),
+        "bad": "{nope"}
+for i, (sha, so) in enumerate(rows.items(), start=1):
+    con.execute("INSERT INTO commits VALUES (?,?)", (i, sha))
+    con.execute("INSERT INTO review_jobs (id,commit_id) VALUES (?,?)", (i, i))
+    con.execute("INSERT INTO reviews (id,job_id,structured_output) VALUES (?,?,?)", (i, i, so))
+con.commit()
+PYEOF
+  _t "query: Low-only review not counted"  "" "$(_query_open_findings "'low'" medium "$fdb")"
+  _t "query: Medium review -> medium"      "$(printf '2\tmedium\tmed')" "$(_query_open_findings "'med'" medium "$fdb")"
+  _t "query: High review -> high"          "$(printf '3\thigh\thigh')" "$(_query_open_findings "'high'" medium "$fdb")"
+  _t "query: malformed -> indeterminate"   "$(printf '4\tindeterminate\tbad')" "$(_query_open_findings "'bad'" medium "$fdb")"
+  printf 'not sqlite\n' > "$fdb"
+  rc=0; _query_open_findings "'low'" medium "$fdb" >/dev/null || rc=$?
+  _t "query: corrupt DB -> rc 3 (not empty pass)" 3 "$rc"
+  rm -f "$fdb"
 
   # _log_run — writes to a temp log
   local tmp_log
@@ -510,7 +605,7 @@ _main() {
   echo "$_GATE_MSG"
 
   if [ "$mode" = "enforce" ] && [ "$gate_rc" -ne 0 ]; then
-    exit 1
+    exit "$gate_rc"
   fi
   exit 0
 }
