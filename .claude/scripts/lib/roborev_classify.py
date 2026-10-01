@@ -108,14 +108,12 @@ findings to read) and any row whose only usable text is the legacy
 is no structured JSON to read a severity/location/problem field from in
 that case, so the fallback is unchanged, deliberate, and still correct.
 
-Known gap NOT fixed here (out of scope for llm#1265, flagged 2026-09-25):
-NOT_REVIEWED_PATTERNS in this file has 7 entries; send_roborev_email.R's
-copy has grown 4 more since (llm#1127/#1141: "inaccessible due to
+NOT_REVIEWED_PATTERNS now has the same 11 entries as send_roborev_email.R
+(llm#1270 ported the four llm#1127/#1141 additions: "inaccessible due to
 configured ignore patterns", "unable to proceed with the review", "blocked
-by ignore patterns", "blocked by configured ignore patterns"). This
-pre-dates the structured_output migration and is unrelated to it -- a
-pre-existing sync gap between the two files, not introduced or widened by
-this change. Tracked for a follow-up, not fixed in this PR.
+by ignore patterns", "blocked by configured ignore patterns").
+tests/test_roborev_classify.sh test3c compares the two lists as sets, so a
+future one-sided edit fails there.
 
 Self-test:
     python3 roborev_classify.py --selftest
@@ -135,6 +133,11 @@ NOT_REVIEWED_PATTERNS = [
     "unable to perform the code review",
     "diff file could not be read",
     "ignored by configured ignore patterns",
+    # llm#1127/#1141 additions, ported here under llm#1270.
+    "inaccessible due to configured ignore patterns",
+    "unable to proceed with the review",
+    "blocked by ignore patterns",
+    "blocked by configured ignore patterns",
 ]
 
 # Mirrors send_roborev_email.R PASSED_PATTERNS (llm#1035). Keep in sync.
@@ -650,6 +653,75 @@ def classify_review_row(output, structured_output):
     return classify_review(text)
 
 
+# ── DB fetch helpers (llm#1270, moved from roborev_auto_close.sh) ────────────
+# roborev_auto_close.sh used to carry these as inline python heredocs
+# (_fetch_review_text / _fetch_review_severity). They belong with the reader
+# they call. Shell callers use the CLI entry:
+#     python3 roborev_classify.py --fetch-text     <db> <review_id>
+#     python3 roborev_classify.py --fetch-severity <db> <review_id>
+
+def _fetch_review_row(db_path, review_id):
+    """(output, structured_output) for one reviews.id, or None if no such row.
+    Read-only. Falls back to selecting only `output` for a reviews.db that
+    predates the v0.68.2 migration (no structured_output column)."""
+    import sqlite3
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        try:
+            row = con.execute(
+                "SELECT output, structured_output FROM reviews WHERE id=? LIMIT 1",
+                (review_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = con.execute(
+                "SELECT output, NULL FROM reviews WHERE id=? LIMIT 1", (review_id,)
+            ).fetchone()
+    finally:
+        con.close()
+    return row
+
+
+def fetch_review_text(db_path, review_id):
+    """Shared-reader text for one review id; "" when the row does not exist."""
+    row = _fetch_review_row(db_path, review_id)
+    return review_output_text(row[0], row[1]) if row is not None else ""
+
+
+def fetch_review_severity_label(db_path, review_id):
+    """JSON-direct max-severity label for one review id: Critical | High |
+    Medium | Low | unknown. "unknown" for a missing row or a row with no
+    severity to report. Raises on a DB/read failure -- the CLI turns that
+    into the READ_ERROR sentinel (a broken environment must not read as "no
+    severity found")."""
+    row = _fetch_review_row(db_path, review_id)
+    if row is None:
+        return "unknown"
+    ordv = review_severity_ordinal(row[0], row[1])
+    if ordv is None:
+        return "unknown"
+    return next(k for k, v in SEVERITY_ORDINAL.items() if v == ordv).capitalize()
+
+
+def _fetch_cli(argv):
+    """CLI for the two fetch helpers. Exit 0 on success; on any read failure
+    print READ_ERROR on stdout, a FATAL line on stderr, and exit 1 (callers
+    treat rc!=0 / sentinel as a hard error)."""
+    mode, db_path, review_id = argv[0], argv[1], argv[2]
+    try:
+        if mode == "--fetch-text":
+            print(fetch_review_text(db_path, review_id))
+        else:
+            print(fetch_review_severity_label(db_path, review_id))
+    except Exception as e:  # noqa: BLE001 -- deliberately broad, see docstring
+        sys.stderr.write(
+            f"roborev_classify: FATAL - {mode} failed for review_id="
+            f"{review_id!r}: {type(e).__name__}: {e}\n"
+        )
+        print("READ_ERROR")
+        return 1
+    return 0
+
+
 # ── Self-test ─────────────────────────────────────────────────────────────
 def _selftest():
     passed = 0
@@ -999,5 +1071,7 @@ def _selftest():
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
+    if len(sys.argv) == 4 and sys.argv[1] in ("--fetch-text", "--fetch-severity"):
+        sys.exit(_fetch_cli(sys.argv[1:]))
     print(__doc__)
     sys.exit(0)
