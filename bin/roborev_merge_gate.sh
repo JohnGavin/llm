@@ -33,6 +33,14 @@
 # a merge commit with an empty diff) is exempt: roborev legitimately never
 # reviews it, so it must not block the gate forever.
 #
+# llm#1274 option A (report-only supersession): when a completed `range`
+# review covering the whole PR (job_type='range', git_ref "<base>..<tip>", tip
+# = the PR's last commit, base not a PR commit) is clean at the threshold,
+# earlier per-commit open findings are listed as "superseded by review N" and
+# excluded from the BLOCK count (never the tip commit's own). Nothing is
+# closed. A range review with findings, or one that is missing / running /
+# failed, supersedes nothing. See _query_range_supersession().
+#
 # Exit 3 exists because of llm#1012.  Before it, every way of failing to *ask*
 # the question — `gh` missing, `gh` auth rejected, repo not resolvable, network
 # down — landed on the same exit 0 and the same word on screen as a genuine
@@ -614,6 +622,94 @@ print(json.dumps({"incomplete": incomplete}))
 PYEOF
 }
 
+# Find a clean, covering PR-level RANGE review (llm#1274 option A).
+#
+# REPORT-ONLY: the result only decides which earlier per-commit findings the
+# gate lists as "superseded by review N" instead of counting them. Nothing is
+# closed, acked or edited.
+#
+# roborev records a range review as a review_jobs row with job_type='range',
+# commit_id NULL and git_ref "<base_sha>..<tip_sha>" (full SHAs; see
+# roborev_poll_merges.sh). A range job COVERS the PR when its tip is the PR's
+# last commit and its base is NOT one of the PR's own commits (a base inside
+# the PR means it reviewed only the tail). Among covering jobs that have a
+# completed review, the LATEST one is used; it is "clean" only when it has no
+# finding at or above the threshold AND its text/JSON could be classified —
+# an unparseable range review is never clean. A missing, queued, running,
+# failed or unclassifiable range review supersedes nothing, so the existing
+# per-commit logic stands unchanged.
+#
+# Returns one JSON object:
+#   {"superseding_review": N|null, "job_id": N|null, "tip": "<12-char sha>"}
+# Any import/query error returns {"superseding_review": null, ...} — the
+# stricter direction (no supersession), never a silent pass.
+_query_range_supersession() {
+  local shas_newline="$1" min_sev="$2" db="$3" lib_dir="${4:-}"
+
+  [ -f "$db" ] || { echo '{"superseding_review":null}'; return 0; }
+  [ -z "$shas_newline" ] && { echo '{"superseding_review":null}'; return 0; }
+
+  "$PYTHON" - "$db" "$min_sev" "$lib_dir" "$shas_newline" <<'PYEOF'
+import sys, sqlite3, json
+
+db_path, min_sev, lib_dir, shas_raw = sys.argv[1], sys.argv[2].strip().lower(), sys.argv[3], sys.argv[4]
+none = {"superseding_review": None}
+shas = [s.strip() for s in shas_raw.splitlines() if s.strip()]
+if not shas:
+    print(json.dumps(none)); sys.exit(0)
+tip = shas[-1]
+none["tip"] = tip[:12]
+
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+try:
+    from roborev_classify import (
+        review_severity_ordinal, classify_review_row, SEVERITY_ORDINAL,
+    )
+except Exception:
+    print(json.dumps(none)); sys.exit(0)
+
+min_idx = SEVERITY_ORDINAL.get(min_sev, -1)
+try:
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    rows = con.execute("""
+        SELECT rj.id, rj.git_ref, r.id, r.output, r.structured_output
+        FROM review_jobs rj
+        JOIN reviews r ON r.job_id = rj.id
+        WHERE rj.job_type = 'range'
+          AND rj.status IN ('done','applied','rebased')
+          AND rj.git_ref LIKE ?
+        ORDER BY rj.id DESC
+    """, ("%.." + tip,)).fetchall()
+    con.close()
+except Exception:
+    print(json.dumps(none)); sys.exit(0)
+
+pr_set = set(shas)
+for job_id, ref, review_id, output, structured in rows:
+    base, sep, ref_tip = ref.partition("..")
+    if not sep or ref_tip != tip or not base or base in pr_set:
+        continue  # not a range that covers the whole PR
+    # Latest covering range review decides. Clean only if classifiable and
+    # below the threshold; anything else means "not clean" -> no supersession.
+    try:
+        ordinal = review_severity_ordinal(output, structured)
+        if ordinal is None:
+            clean = classify_review_row(output, structured) == "passed"
+        else:
+            clean = ordinal < min_idx
+    except Exception:
+        clean = False
+    if clean:
+        print(json.dumps({"superseding_review": review_id, "job_id": job_id, "tip": tip[:12]}))
+    else:
+        print(json.dumps(none))
+    sys.exit(0)
+
+print(json.dumps(none))
+PYEOF
+}
+
 # Parse "closes/acks/fixes roborev #N" from commit messages.
 # Returns a Python set literal encoded as JSON array of integers.
 _parse_citations() {
@@ -718,6 +814,22 @@ else:
     for r in rows:
         print(fmt.format(*r, w0=widths[0], w1=widths[1],
                          w2=widths[2], w3=widths[3], w4=widths[4]))
+PYEOF
+}
+
+# Print findings superseded by a clean range review (llm#1274 option A).
+# Report-only: prints nothing when the list is empty.
+_print_superseded() {
+  "$PYTHON" - "$1" <<'PYEOF'
+import sys, json
+items = json.loads(sys.argv[1])
+if items:
+    print("")
+    print("Superseded (report-only — nothing was closed; excluded from the count above):")
+    for f in items:
+        print("  #{} {} {} {} — superseded by review {}".format(
+            f["id"], f["severity"], f["commit_sha"], f["location"][:40],
+            f["superseded_by_review"]))
 PYEOF
 }
 
@@ -960,15 +1072,40 @@ print(', '.join(f\"#{i['id']} ({i['commit_sha']}, {i['outcome']})\" for i in ite
     _exit_indeterminate "unparseable_severity" "$pr_num"
   fi
 
+  # llm#1274 option A — REPORT-ONLY supersession. If a clean range review
+  # covers the whole PR, earlier per-commit findings (never the tip commit's
+  # own) are listed as superseded and left out of the count. Nothing is
+  # closed. See _query_range_supersession().
+  local range_json split_json superseded_json
+  range_json=$(_query_range_supersession "$commit_shas" "${min_sev,,}" "$ROBOREV_DB" "$CLASSIFY_LIB_DIR")
+  split_json=$("$PYTHON" - "$unresolved_json" "$range_json" <<'PYEOF'
+import sys, json
+unresolved = json.loads(sys.argv[1])
+rng        = json.loads(sys.argv[2])
+by   = rng.get("superseding_review")
+tip  = rng.get("tip")
+kept, superseded = [], []
+for f in unresolved:
+    if by is not None and tip and f["commit_sha"] != tip:
+        superseded.append(dict(f, superseded_by_review=by))
+    else:
+        kept.append(f)
+print(json.dumps({"unresolved": kept, "superseded": superseded}))
+PYEOF
+)
+  unresolved_json=$("$PYTHON" -c "import json,sys; print(json.dumps(json.loads(sys.argv[1])['unresolved']))" "$split_json")
+  superseded_json=$("$PYTHON" -c "import json,sys; print(json.dumps(json.loads(sys.argv[1])['superseded']))" "$split_json")
+
   local unresolved_count
   unresolved_count=$("$PYTHON" -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$unresolved_json")
 
   if [ "$EMIT_JSON" = "1" ]; then
-    "$PYTHON" - "$pr_num" "$min_sev" "$unresolved_json" <<'PYEOF'
+    "$PYTHON" - "$pr_num" "$min_sev" "$unresolved_json" "$superseded_json" <<'PYEOF'
 import sys, json
 pr_num   = sys.argv[1]
 min_sev  = sys.argv[2]
 findings = json.loads(sys.argv[3])
+superseded = json.loads(sys.argv[4])
 verdict  = "pass" if not findings else "block"
 print(json.dumps({
     "verdict":       verdict,
@@ -976,6 +1113,7 @@ print(json.dumps({
     "min_severity":  min_sev,
     "unresolved_count": len(findings),
     "unresolved":    findings,
+    "superseded":    superseded,
 }))
 PYEOF
     [ "$unresolved_count" -eq 0 ] && exit 0 || exit 1
@@ -983,6 +1121,7 @@ PYEOF
 
   if [ "$unresolved_count" -eq 0 ]; then
     printf "merge-gate: PASS (no unresolved %s-severity findings)\n" "$min_sev"
+    _print_superseded "$superseded_json"
     exit 0
   fi
 
@@ -991,6 +1130,7 @@ PYEOF
     "$unresolved_count" "$min_sev" "$pr_num"
   echo ""
   _print_table "$unresolved_json"
+  _print_superseded "$superseded_json"
   echo ""
   echo "Resolve with one of:"
   echo "  closes roborev #N       — in a commit message on this branch"
