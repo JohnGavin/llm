@@ -173,6 +173,73 @@ case "$out" in
   *)     bad "case 11: expected rc=3, got: $out" ;;
 esac
 
+# ---- all-files-excluded skip (job 13884: CHANGELOG.md-only commit) ----------
+# A commit whose every changed file matches exclude_patterns would review an
+# empty diff. Skip it; any non-excluded file, or an unparseable config, reviews.
+mkrepo "$WORK/exrepo" remote
+cat > "$WORK/exrepo/.roborev.toml" <<'TOML'
+# comment
+exclude_patterns = [
+  "CHANGELOG.md",
+  ".claude/CURRENT_WORK.md",   # trailing comment
+]
+TOML
+git -C "$WORK/exrepo" add .roborev.toml
+git -c core.hooksPath=/dev/null -C "$WORK/exrepo" commit -qm cfg
+exc() { # file... : commit exactly these files (content changes each time)
+  for _f in "$@"; do
+    mkdir -p "$WORK/exrepo/$(dirname "$_f")"
+    echo "$RANDOM$_f" >> "$WORK/exrepo/$_f"
+    git -C "$WORK/exrepo" add "$_f"
+  done
+  git -c core.hooksPath=/dev/null -C "$WORK/exrepo" commit -qm "touch $*"
+}
+export ROBOREV_GLOBAL_CONFIG="$WORK/no-global.toml"
+export ROBOREV_HOOK_LOG="$WORK/hook.log"
+
+exc CHANGELOG.md
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_blocked "case 12: CHANGELOG.md-only commit -> not enqueued"
+if grep -q 'skip: all files excluded' "$ROBOREV_HOOK_LOG" 2>/dev/null; then
+  ok "case 12a: distinct 'skip: all files excluded' log line written"
+else
+  bad "case 12a: no 'skip: all files excluded' log line"
+fi
+
+exc CHANGELOG.md .claude/CURRENT_WORK.md
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_blocked "case 12b: both excluded files only -> not enqueued"
+
+exc CHANGELOG.md scripts/x.sh
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_called  "case 13 (falsify): CHANGELOG.md + a .sh file -> enqueued"
+
+# Unparseable exclude_patterns: fail toward reviewing, and say so.
+printf 'exclude_patterns = [\n  "CHANGELOG.md",\n' > "$WORK/exrepo/.roborev.toml"
+exc CHANGELOG.md
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_called  "case 14: unparseable .roborev.toml -> enqueued (fail toward review)"
+if grep -q 'indeterminate: config-unparseable' "$ROBOREV_HOOK_LOG" 2>/dev/null; then
+  ok "case 14a: indeterminate logged"
+else
+  bad "case 14a: no 'indeterminate' log line"
+fi
+
+# Global config patterns apply too; a glob matches by basename.
+printf 'exclude_patterns = ["*.lock"]\n' > "$WORK/no-global.toml"
+printf 'x = 1\n' > "$WORK/exrepo/.roborev.toml"
+exc deep/dir/renv.lock
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_blocked "case 15: global glob '*.lock' matches nested file by basename"
+rm -f "$WORK/no-global.toml"
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_called  "case 15b (falsify): global config gone -> same commit enqueued"
+
+# Empty commit (no files to judge): not skipped.
+git -c core.hooksPath=/dev/null -C "$WORK/exrepo" commit -q --allow-empty -m empty
+run_hook "$WORK/exrepo" "$ALLOW"
+expect_called  "case 16: empty commit (no files) is not skipped"
+
 echo "---"
 if [ "$fail" -eq 0 ]; then echo "$pass/$pass PASS"; else echo "FAILURES: $fail (passed $pass)"; fi
 exit "$fail"
