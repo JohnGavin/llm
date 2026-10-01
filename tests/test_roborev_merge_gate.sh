@@ -102,7 +102,8 @@ cur.executescript("""
     reasoning TEXT NOT NULL DEFAULT 'thorough',
     status TEXT NOT NULL DEFAULT 'done',
     enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-    min_severity TEXT NOT NULL DEFAULT ''
+    min_severity TEXT NOT NULL DEFAULT '',
+    job_type TEXT NOT NULL DEFAULT 'review'
   );
   CREATE TABLE reviews (
     id INTEGER PRIMARY KEY,
@@ -1187,6 +1188,116 @@ if [ "$exit27c" = "3" ]; then
 else
   fail "test27c: same shape but no .roborev.toml exclude_patterns → exit 3 (INDETERMINATE, exclusion not assumed)" "got exit=$exit27c | output: $out27c"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# JohnGavin/llm#1274 option A — REPORT-ONLY supersession by a clean range
+# review. A completed `range` review job whose git_ref is "<base>..<tip>"
+# (commit_id NULL), where tip is the PR's last commit and base is NOT one of
+# the PR's own commits (so the range covers the whole PR), and whose review
+# has no finding at/above the threshold, supersedes earlier per-commit open
+# findings for display: they are reported as "superseded by review N" and
+# left out of the BLOCK count. Nothing is closed. A range review that has
+# findings, is not done, or only partially covers the PR supersedes nothing.
+# ═══════════════════════════════════════════════════════════════════════════
+
+SHA_RANGE_BASE="bas000bas000bas000bas000bas000bas000bas000"
+
+# add_range_job DB GIT_REF STATUS REVIEW_ID OUTPUT   (job id = review id + 1000)
+add_range_job() {
+  local db="$1" ref="$2" status="$3" rid="$4" out="$5"
+  /usr/bin/python3 - "$db" "$ref" "$status" "$rid" "$out" <<'PYEOF'
+import sqlite3, sys
+db, ref, status, rid, out = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+con = sqlite3.connect(db)
+jid = rid + 1000
+con.execute("INSERT INTO review_jobs (id,repo_id,commit_id,git_ref,status,job_type) "
+            "VALUES (?,1,NULL,?,?,'range')", (jid, ref, status))
+if status == "done":
+    con.execute("INSERT INTO reviews (id,job_id,agent,output,structured_output,closed,verdict_bool) "
+                "VALUES (?,?,'codex',?,NULL,0,?)", (rid, jid, out, 1 if "No issues" in out else 0))
+con.commit()
+con.close()
+PYEOF
+}
+
+# run_supersede_gate DB EXPECTED_EXIT NAME EXTRA_ARGS COMMITS_JSON  -> sets SUP_OUT
+run_supersede_gate() {
+  local db="$1" expected="$2" name="$3" extra="$4" commits="$5"
+  local bd="${TMPDIR_ROOT}/bin_sup_$RANDOM"
+  mkdir -p "$bd"
+  make_mock_gh "$bd" "$commits"
+  local rc=0
+  SUP_OUT=$(
+    GH="$bd/gh" ROBOREV_DB="$db" ACKS_JSONL="$ACKS_FILE" \
+    GIT_DIR="$GIT_REPO/.git" GIT_WORK_TREE="$GIT_REPO" \
+      bash "$GATE" $extra --repo JohnGavin/fakerepo --min-severity High 99 2>&1
+  ) || rc=$?
+  if [ "$rc" = "$expected" ]; then pass "$name"
+  else fail "$name" "expected exit=$expected got=$rc | output: $SUP_OUT"; fi
+}
+
+SUP_COMMITS="[\"${SHA_HIGH_OPEN}\",\"${SHA_ALL_CLEAN}\"]"
+CLEAN_RANGE_REF="${SHA_RANGE_BASE}..${SHA_ALL_CLEAN}"
+
+# S1 — open High on commit A + clean range review covering A..tip → superseded
+DB_S1="${TMPDIR_ROOT}/sup1.db"; cp "$FIXTURE_DB" "$DB_S1"
+add_range_job "$DB_S1" "$CLEAN_RANGE_REF" done 50 "No issues found."
+run_supersede_gate "$DB_S1" 0 "test28: High on earlier commit + clean covering range review → exit 0 (superseded)" "" "$SUP_COMMITS"
+if echo "$SUP_OUT" | grep -qF "superseded by review 50"; then
+  pass "test28b: output reports 'superseded by review 50'"
+else
+  fail "test28b: output reports 'superseded by review 50'" "output: $SUP_OUT"
+fi
+# Report-only: the superseded review must still be open in the DB.
+closed_n=$(/usr/bin/python3 -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('select closed from reviews where id=1').fetchone()[0])" "$DB_S1")
+if [ "$closed_n" = "0" ]; then pass "test28c: supersession closes nothing (review 1 still closed=0)"
+else fail "test28c: supersession closes nothing" "closed=$closed_n"; fi
+
+# S1j — --json carries the superseded list
+run_supersede_gate "$DB_S1" 0 "test28d: --json with supersession → exit 0" "--json" "$SUP_COMMITS"
+if echo "$SUP_OUT" | /usr/bin/python3 -c "
+import sys, json
+d = json.loads(sys.stdin.read().strip().splitlines()[-1])
+s = d.get('superseded', [])
+sys.exit(0 if d['verdict']=='pass' and len(s)==1 and s[0]['id']==1 and s[0]['superseded_by_review']==50 else 1)"; then
+  pass "test28e: JSON lists superseded id=1 by review 50"
+else
+  fail "test28e: JSON lists superseded id=1 by review 50" "output: $SUP_OUT"
+fi
+
+# S2 — range review itself has a High finding → nothing superseded → BLOCK
+DB_S2="${TMPDIR_ROOT}/sup2.db"; cp "$FIXTURE_DB" "$DB_S2"
+add_range_job "$DB_S2" "$CLEAN_RANGE_REF" done 51 "$(printf '**Severity**: High\n**Location**: R/foo.R:1\n**Problem**: still broken.\n')"
+run_supersede_gate "$DB_S2" 1 "test29: range review with a High finding → no supersession → exit 1 (BLOCK)" "" "$SUP_COMMITS"
+
+# S3 — no range job at all → unchanged (BLOCK)
+run_supersede_gate "$FIXTURE_DB" 1 "test30: no range job → unchanged → exit 1 (BLOCK)" "" "$SUP_COMMITS"
+
+# S4 — range job still running → no supersession
+DB_S4="${TMPDIR_ROOT}/sup4.db"; cp "$FIXTURE_DB" "$DB_S4"
+add_range_job "$DB_S4" "$CLEAN_RANGE_REF" running 52 ""
+run_supersede_gate "$DB_S4" 1 "test31: range job running → no supersession → exit 1 (BLOCK)" "" "$SUP_COMMITS"
+
+# S5 — range job failed → no supersession
+DB_S5="${TMPDIR_ROOT}/sup5.db"; cp "$FIXTURE_DB" "$DB_S5"
+add_range_job "$DB_S5" "$CLEAN_RANGE_REF" failed 53 ""
+run_supersede_gate "$DB_S5" 1 "test32: range job failed → no supersession → exit 1 (BLOCK)" "" "$SUP_COMMITS"
+
+# S6 — clean range whose base is one of the PR's own commits (covers only the
+# tail of the PR, not commit A) → not a covering range → BLOCK
+DB_S6="${TMPDIR_ROOT}/sup6.db"; cp "$FIXTURE_DB" "$DB_S6"
+add_range_job "$DB_S6" "${SHA_HIGH_OPEN}..${SHA_ALL_CLEAN}" done 54 "No issues found."
+run_supersede_gate "$DB_S6" 1 "test33: clean range that starts inside the PR (does not cover A) → exit 1 (BLOCK)" "" "$SUP_COMMITS"
+
+# S7 — clean range with a different tip than the PR head → not covering → BLOCK
+DB_S7="${TMPDIR_ROOT}/sup7.db"; cp "$FIXTURE_DB" "$DB_S7"
+add_range_job "$DB_S7" "${SHA_RANGE_BASE}..${SHA_HIGH_NONBOLD}" done 55 "No issues found."
+run_supersede_gate "$DB_S7" 1 "test34: clean range with a different tip → exit 1 (BLOCK)" "" "$SUP_COMMITS"
+
+# S8 — the tip commit's OWN finding is never superseded
+DB_S8="${TMPDIR_ROOT}/sup8.db"; cp "$FIXTURE_DB" "$DB_S8"
+add_range_job "$DB_S8" "${SHA_RANGE_BASE}..${SHA_HIGH_OPEN}" done 56 "No issues found."
+run_supersede_gate "$DB_S8" 1 "test35: High on the tip commit itself is not superseded → exit 1 (BLOCK)" "" "[\"${SHA_ALL_CLEAN}\",\"${SHA_HIGH_OPEN}\"]"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
