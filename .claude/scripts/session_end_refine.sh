@@ -10,8 +10,18 @@
 #   SESSION_END_REFINE_DRYRUN=1        — print what would run, no actual roborev call
 #   .roborev.toml session_end_refine = false — per-project opt-out
 #
+# Agent waterfall (llm#1123, owner decision 2026-10-01):
+#   attempt 1 = roborev config default (refine_agent, currently gemini)
+#   attempt 2 = --agent claude-code --model sonnet, ONLY when attempt 1 failed
+#               for an availability reason (see classify_refine_failure).
+#   Unknown failure -> INDETERMINATE, no fallback (conservative on cost);
+#   SESSION_END_REFINE_FALLBACK_ON_UNKNOWN=1 flips that.
+#   SESSION_END_REFINE_GEMINI_BIN (default gemini) — binary probed for the
+#   pre-check; absent -> skip straight to attempt 2.
+#   SESSION_END_REFINE_ROBOREV — roborev binary override (tests only).
+#
 # Bounded by:
-#   timeout 120 — hard wall-clock limit
+#   timeout 120 — hard wall-clock limit (per attempt)
 #   --max-iterations 3 — roborev iteration cap
 #   --min-severity high — only high+ findings
 #
@@ -26,7 +36,7 @@ if [ -x "${_SCRIPT_DIR}/codex_shim/codex" ]; then
 fi
 unset _SCRIPT_DIR
 
-ROBOREV="/usr/local/bin/roborev"
+ROBOREV="${SESSION_END_REFINE_ROBOREV:-/usr/local/bin/roborev}"
 LOGFILE="$HOME/.claude/logs/session_end_refine.log"
 mkdir -p "$(dirname "$LOGFILE")"
 
@@ -54,8 +64,11 @@ fi
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 
 # ── Per-repo opt-out (llm#1296) ───────────────────────────────────────────────
-# This runner forces --agent codex (non-Anthropic). A marked / no-remote /
-# private-root repo must never reach it. Fail closed if the guard is missing.
+# The default refine agent (gemini) is third-party; the claude-code fallback
+# is not what protects a private repo either. THIS guard is the control: it
+# runs here, before any `roborev refine` call below (both attempts), so a
+# marked / no-remote / private-root repo never reaches any agent. Fail closed
+# if the guard is missing.
 _RRA_LIB=""
 for _c in "$(cd "$(dirname "$0")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
           "$HOME/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh"; do
@@ -139,9 +152,48 @@ if [ ! -x "$ROBOREV" ]; then
   exit 0
 fi
 
+# ── Waterfall helpers ─────────────────────────────────────────────────────────
+# Availability patterns (extended regex, case-insensitive), taken from real
+# ~/.claude/logs/session_end_refine.log strings plus the owner's list: the
+# agent could not run at all, so trying another agent is worthwhile.
+AVAIL_PATTERNS='quota|rate.?limit|429|resource_exhausted|terminalquotaerror|unauthorized|401|403|api key|GEMINI_API_KEY|no review agent available|no configured agent available|not supported when using|gemini failed|executable file not found|command not found|ENOTFOUND|ECONNREFUSED|connection refused|no such host|network is unreachable|i/o timeout|TLS handshake'
+# Non-availability patterns: refused/finished for reasons another agent would
+# not change (dirty tree, bad SHA, nothing to do, findings remain).
+NONAVAIL_PATTERNS='working tree not clean|is not an ancestor of HEAD|nothing to refine|All reviews passed|max iterations \([0-9]+\) reached'
+
+# classify_refine_failure EXIT_CODE OUTFILE -> availability | nonavailability | unknown
+# Availability is checked first: "max iterations reached" is printed even when
+# every iteration died on an agent error (401 / unsupported model).
+classify_refine_failure() {
+  local ec="$1" f="$2"
+  if [ "$ec" -eq 124 ]; then echo nonavailability; return; fi
+  if grep -qiE "$AVAIL_PATTERNS" "$f" 2>/dev/null; then echo availability; return; fi
+  if grep -qiE "$NONAVAIL_PATTERNS" "$f" 2>/dev/null; then echo nonavailability; return; fi
+  echo unknown
+}
+
+# run_refine_attempt N DESC [extra roborev args...] ; sets EXIT_CODE and TMPLOG
+run_refine_attempt() {
+  local n="$1" desc="$2"; shift 2
+  TMPLOG=$(mktemp /tmp/session_end_refine_XXXXXX.log)
+  log "project=$PROJECT_NAME attempt=$n agent=$desc starting"
+  timeout 120 \
+    "$ROBOREV" refine \
+      --since "$START_SHA" \
+      --max-iterations 3 \
+      --min-severity high \
+      --quiet \
+      "$@" \
+    > "$TMPLOG" 2>&1
+  EXIT_CODE=$?
+}
+
+GEMINI_BIN="${SESSION_END_REFINE_GEMINI_BIN:-gemini}"
+
 # ── Dry-run mode ──────────────────────────────────────────────────────────────
 if [ "${SESSION_END_REFINE_DRYRUN:-}" = "1" ]; then
-  echo "would run: roborev refine --since $START_SHA --max-iterations 3 --min-severity high --quiet --agent codex"
+  echo "attempt 1 (config default agent, gemini): roborev refine --since $START_SHA --max-iterations 3 --min-severity high --quiet"
+  echo "attempt 2 (only on availability failure, or if $GEMINI_BIN is absent): roborev refine --since $START_SHA --max-iterations 3 --min-severity high --quiet --agent claude-code --model sonnet"
   echo "  project:   $PROJECT_NAME"
   echo "  root:      $PROJECT_ROOT"
   echo "  state:     $STATE_FILE"
@@ -152,28 +204,42 @@ fi
 # ── Execute bounded refine ────────────────────────────────────────────────────
 log "project=$PROJECT_NAME start-sha=$START_SHA starting"
 
-TMPLOG=$(mktemp /tmp/session_end_refine_XXXXXX.log)
-# timeout + roborev: one command, no compound
-timeout 120 \
-  "$ROBOREV" refine \
-    --since "$START_SHA" \
-    --max-iterations 3 \
-    --min-severity high \
-    --quiet \
-    --agent codex \
-  > "$TMPLOG" 2>&1
-EXIT_CODE=$?
-
-if [ "$EXIT_CODE" -eq 124 ]; then
-  log "project=$PROJECT_NAME start-sha=$START_SHA result=timeout duration=120s"
-  echo "TIMEOUT after 120s" >> "$LOGFILE"
-elif [ "$EXIT_CODE" -ne 0 ]; then
-  log "project=$PROJECT_NAME start-sha=$START_SHA result=error exit=$EXIT_CODE"
+ATTEMPT=1
+if ! command -v "$GEMINI_BIN" >/dev/null 2>&1; then
+  log "project=$PROJECT_NAME attempt=1 skipped reason=gemini-absent (bin=$GEMINI_BIN) -> claude-code"
+  ATTEMPT=2
+  run_refine_attempt 2 "claude-code(sonnet)" --agent claude-code --model sonnet
 else
-  log "project=$PROJECT_NAME start-sha=$START_SHA result=ok"
+  run_refine_attempt 1 "config-default(gemini)"
+  if [ "$EXIT_CODE" -ne 0 ]; then
+    CLASS=$(classify_refine_failure "$EXIT_CODE" "$TMPLOG")
+    FALLBACK=0
+    case "$CLASS" in
+      availability) FALLBACK=1 ;;
+      unknown)
+        CLASS="INDETERMINATE"
+        if [ "${SESSION_END_REFINE_FALLBACK_ON_UNKNOWN:-0}" = "1" ]; then FALLBACK=1; fi ;;
+    esac
+    log "project=$PROJECT_NAME attempt=1 exit=$EXIT_CODE class=$CLASS fallback=$FALLBACK"
+    if [ "$FALLBACK" -eq 1 ]; then
+      cat "$TMPLOG" >> "$LOGFILE" 2>/dev/null || true
+      rm -f "$TMPLOG"
+      ATTEMPT=2
+      run_refine_attempt 2 "claude-code(sonnet)" --agent claude-code --model sonnet
+    fi
+  fi
 fi
 
-# Append roborev output to log
+if [ "$EXIT_CODE" -eq 124 ]; then
+  log "project=$PROJECT_NAME start-sha=$START_SHA attempt=$ATTEMPT result=timeout duration=120s"
+  echo "TIMEOUT after 120s" >> "$LOGFILE"
+elif [ "$EXIT_CODE" -ne 0 ]; then
+  log "project=$PROJECT_NAME start-sha=$START_SHA attempt=$ATTEMPT result=error exit=$EXIT_CODE"
+else
+  log "project=$PROJECT_NAME start-sha=$START_SHA attempt=$ATTEMPT result=ok"
+fi
+
+# Append the final attempt's roborev output to the log
 cat "$TMPLOG" >> "$LOGFILE" 2>/dev/null || true
 rm -f "$TMPLOG"
 
