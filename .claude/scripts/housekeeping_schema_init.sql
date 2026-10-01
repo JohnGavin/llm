@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS roborev_retention_events (
   fired_at    TIMESTAMPTZ NOT NULL,
   source      TEXT NOT NULL,             -- 'roborev_retention.sh'
   run_id      TEXT NOT NULL,             -- FK to housekeeping_runs.id
-  item_type   TEXT NOT NULL,             -- 'backup' | 'joblog'
+  item_type   TEXT NOT NULL,             -- 'backup' | 'joblog' | 'quarantine' | 'search_backup' (no CHECK constraint; comment-only doc)
   action      TEXT NOT NULL,             -- 'removed'
   count       INTEGER NOT NULL,          -- number of files removed
   bytes       BIGINT NOT NULL            -- cumulative bytes reclaimed
