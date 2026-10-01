@@ -70,3 +70,4 @@ tests/test_roborev_private_repo_audit.sh	tests/test_roborev_private_repo_audit.s
 tests/test_check_targets_tracks_own_package.sh	tests/test_check_targets_tracks_own_package.sh;.claude/scripts/check_targets_tracks_own_package.sh;.claude/scripts/check_targets_presence.sh	skip-ci	requires Rscript (R toolchain) on PATH — R-dependent tests are deferred to the R/testthat CI follow-up (same class as test_severity_regex_parity.sh)
 tests/test_session_init_branch_harvest_cache.sh	tests/test_session_init_branch_harvest_cache.sh;.claude/hooks/session_init.sh	run
 tests/test_roborev_merge_gate_severity.sh	tests/test_roborev_merge_gate_severity.sh;.claude/scripts/roborev_merge_gate.sh;.claude/scripts/lib/roborev_classify.py	run
+tests/test_agent_post_verify_ff.sh	tests/test_agent_post_verify_ff.sh;.claude/scripts/agent-post-verify.sh	run

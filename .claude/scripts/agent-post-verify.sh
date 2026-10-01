@@ -16,6 +16,9 @@
 #       Read the captured state, compare to current HEAD/branch/status-hash for
 #       BOTH main AND the orchestrator's working branch.  Exit 0 = no drift,
 #       exit 1 = drift detected (recovery suggestions emitted).
+#       A same-branch HEAD move that is a pure fast-forward to the remote-tracking
+#       branch (e.g. a `pull --ff-only`) is benign: FAST_FORWARD_TO_REMOTE, exit 0.
+#       Exit 3 = INDETERMINATE (HEAD moved, no usable remote-tracking ref).
 #       Validates stored repo= matches argument.
 #       Writes to ~/.claude/logs/worktree_post_verify.log.
 #
@@ -215,6 +218,51 @@ case "$MODE" in
             verdict="SESSION_BRANCH_HEAD_MOVED"
         fi
 
+        # --- Classify a same-branch HEAD move (fast-forward to remote is benign) ---
+        # A `pull --ff-only` by the orchestrator or a scheduled job moves HEAD
+        # but is not agent drift.  Uses the LOCAL remote-tracking ref (no fetch:
+        # a check must not mutate the repo), so freshness depends on whoever
+        # last fetched; a pull that moved HEAD has necessarily updated it.
+        local_only_commits=""
+        if [ "$verdict" = "HEAD_MOVED_SAME_BRANCH" ]; then
+            remote_ref=$(git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || remote_ref=""
+            if [ -z "$remote_ref" ] && git -C "$REPO" rev-parse --verify -q "refs/remotes/origin/$branch_after" >/dev/null 2>&1; then
+                remote_ref="origin/$branch_after"
+            fi
+            if [ -z "$remote_ref" ] \
+               || ! git -C "$REPO" rev-parse --verify -q "$remote_ref^{commit}" >/dev/null 2>&1 \
+               || ! git -C "$REPO" cat-file -e "$head_before^{commit}" 2>/dev/null; then
+                log "CHECK id=$DISPATCH_ID INDETERMINATE head_before=$head_before head_after=$head_after branch=$branch_after remote_ref=${remote_ref:-none}"
+                cat >&2 <<EOF
+INDETERMINATE — HEAD moved on $branch_after ($head_before -> $head_after) but this
+check cannot tell whether the move is a fast-forward to the remote: no usable
+remote-tracking ref (found: ${remote_ref:-none}) or the old HEAD is not in the
+object store.  NOT treating this as benign and NOT claiming drift.
+  Inspect:  git -C $REPO reflog -5 $branch_after
+            git -C $REPO log --oneline $head_before..$head_after
+State file kept at: $STATE_FILE
+EOF
+                exit 3
+            fi
+            reflog_subject=$(git -C "$REPO" reflog -1 --format=%gs "$branch_after" 2>/dev/null) || reflog_subject=""
+            if git -C "$REPO" merge-base --is-ancestor "$head_before" "$head_after" 2>/dev/null && $status_ok; then
+                local_only_commits=$(git -C "$REPO" rev-list --oneline "$head_before..$head_after" --not "$remote_ref" 2>/dev/null) || local_only_commits=""
+                if [ -z "$local_only_commits" ]; then
+                    log "CHECK id=$DISPATCH_ID FAST_FORWARD_TO_REMOTE head_before=$head_before head_after=$head_after remote_ref=$remote_ref reflog='$reflog_subject'"
+                    echo "FAST_FORWARD_TO_REMOTE (benign): $branch_after moved $head_before -> $head_after,"
+                    echo "  a pure fast-forward and every new commit is on $remote_ref (local remote-tracking ref, no fetch)."
+                    [ -n "$reflog_subject" ] && echo "  reflog evidence: $branch_after@{0}: $reflog_subject"
+                    echo "  Commits:"
+                    git -C "$REPO" log --oneline "$head_before..$head_after" | sed 's/^/    /'
+                    rm -f "$STATE_FILE"
+                    exit 0
+                fi
+            else
+                # Non-fast-forward (history rewritten) or status also changed: real drift.
+                local_only_commits=$(git -C "$REPO" rev-list --oneline "$head_before..$head_after" --not "$remote_ref" 2>/dev/null) || local_only_commits=""
+            fi
+        fi
+
         log "CHECK id=$DISPATCH_ID DRIFT verdict=$verdict head_before=$head_before head_after=$head_after branch_before=$branch_before branch_after=$branch_after current_head_before=$current_head_before current_branch_before=$current_branch_before status_hash_before=$status_hash_before status_hash_after=$status_hash_after"
 
         cat >&2 <<EOF
@@ -228,10 +276,14 @@ EOF
         case "$verdict" in
             HEAD_MOVED_SAME_BRANCH)
                 cat >&2 <<EOF
-  Agent committed directly to $branch_after. To preserve the work on a
-  feature branch and reset $branch_after:
+  $branch_after moved and the move is NOT a plain fast-forward to the remote.
+  Local-only commits (not on the remote-tracking branch; empty list means the
+  history was rewritten rather than extended):
+$(printf '%s\n' "$local_only_commits" | sed 's/^/    /')
+  First preserve the work on a recovery branch (safe, non-destructive):
     git -C $REPO branch agent-recovery-$(date +%s) $head_after
-    git -C $REPO reset --hard $head_before
+  Do NOT run 'git reset --hard $head_before' until the user confirms: it is a
+  destructive Class B op (destructive-ops-guard) and may discard merged work.
   Then cherry-pick from agent-recovery-* onto the intended target branch.
 EOF
                 ;;
