@@ -26,6 +26,11 @@
 #   - ID does not exist        → exit 1 (typo or stale citation)
 #   - DB unreachable           → exit 0 (fail-open, warning to stderr)
 #
+#   - After validation passes: open reviews (this repo) whose finding location
+#     overlaps the staged files are listed on stderr as
+#     "suggest: closes roborev #N" (llm#1274 option B). Advisory only: never
+#     changes the exit code; any error prints nothing extra.
+#
 # Issue: #163 Phase 2
 # Pattern: \(closes roborev #(\d+(?:[ ,]+#?\d+)*)\)
 
@@ -207,6 +212,87 @@ fi
 
 MSG="$(cat "$MSG_FILE")"
 
+# ── Citation suggestions (llm#1274 option B) ────────────────────────────────
+# After validation PASSES, list open reviews (this repo, closed=0,
+# verdict_bool=0) whose recorded finding location overlaps the staged files and
+# print `suggest: closes roborev #N` to stderr. ADVISORY ONLY: never changes
+# the exit code, never blocks. Any error (no DB, bad DB, no git, python
+# failure) prints nothing extra. The id printed is reviews.id — the same id
+# this validator checks and the merge gate matches "closes roborev #N" against.
+_suggest_citations() {
+  [ -f "$ROBOREV_DB" ] || return 0
+  local staged top origin
+  staged="$(git diff --cached --name-only 2>/dev/null)" || return 0
+  [ -n "$staged" ] || return 0
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
+  origin="$(git remote get-url origin 2>/dev/null)" || origin=""
+  /usr/bin/python3 - "$ROBOREV_DB" "$top" "$origin" "$MSG" "$staged" <<'PY' || true
+import sys, re, json, sqlite3
+
+db_path, top, origin, msg, staged_raw = sys.argv[1:6]
+staged = {s.strip() for s in staged_raw.splitlines() if s.strip()}
+cited = set(re.findall(r'#(\d+)', msg))  # over-broad on purpose: only ever suppresses hints
+
+try:
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
+    repo_ids = [r[0] for r in con.execute(
+        "SELECT id FROM repos WHERE (? != '' AND root_path = ?) OR (? != '' AND identity = ?)",
+        (top, top, origin, origin))]
+    if not repo_ids:
+        sys.exit(0)
+    ph = ",".join("?" * len(repo_ids))
+    rows = con.execute(f"""
+        SELECT r.id, r.output, r.structured_output
+        FROM reviews r JOIN review_jobs rj ON r.job_id = rj.id
+        WHERE rj.repo_id IN ({ph}) AND r.closed = 0 AND r.verdict_bool = 0
+        ORDER BY r.id DESC LIMIT 500
+    """, repo_ids).fetchall()
+    con.close()
+except Exception:
+    sys.exit(0)
+
+TOKEN = re.compile(r'[A-Za-z0-9_.@+/\-]+')
+def paths_in(loc):
+    out = set()
+    for tok in TOKEN.findall(loc or ""):
+        tok = re.sub(r':\d+(-\d+)?$', '', tok)
+        if tok.startswith(top + "/") and top:
+            tok = tok[len(top) + 1:]
+        if '.' in tok or '/' in tok:
+            out.add(tok.lstrip('./') if tok.startswith('./') else tok)
+    return out
+
+def locations(output, structured):
+    locs = []
+    if structured:
+        try:
+            for f in json.loads(structured).get("findings", []) or []:
+                if f.get("location"):
+                    locs.append(str(f["location"]))
+        except Exception:
+            pass
+    if not locs and output:
+        locs = re.findall(r'\*\*(?:Location|File)\*\*:\s*([^\n]+)', output, re.IGNORECASE)
+        locs += re.findall(r'^[\s\-]*(?:Location|File):\s*([^\n]+)', output, re.IGNORECASE | re.MULTILINE)
+    return locs
+
+hints = []
+try:
+    for rid, output, structured in rows:
+        if str(rid) in cited:
+            continue
+        hit = sorted({p for loc in locations(output, structured) for p in paths_in(loc) if p in staged})
+        if hit:
+            hints.append((rid, hit[0]))
+except Exception:
+    sys.exit(0)  # advisory only: print nothing on any error
+for rid, f in hints[:10]:
+    print(f"suggest: closes roborev #{rid}  (open finding in staged file {f})", file=sys.stderr)
+if len(hints) > 10:
+    print(f"suggest: ... and {len(hints) - 10} more open reviews touch staged files", file=sys.stderr)
+PY
+}
+
 # Extract all roborev IDs from citations.
 # Pattern: (closes roborev #N) or (closes roborev #N,#M,...) or (closes roborev #N #M)
 # Handles: single, multi-comma, multi-space, optional # prefix after first
@@ -235,6 +321,7 @@ PY
 
 # No citations → passthrough
 if [ -z "$IDS" ]; then
+  _suggest_citations || true
   exit 0
 fi
 
@@ -326,4 +413,5 @@ if [ "$PYTHON_EXIT" -ne 0 ]; then
   exit 1
 fi
 
+_suggest_citations || true
 exit 0

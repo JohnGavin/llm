@@ -42,6 +42,7 @@ tests/test_roborev_auto_verify_predictions.sh	tests/test_roborev_auto_verify_pre
 tests/test_roborev_autoclose.sh	tests/test_roborev_autoclose.sh;.claude/scripts/roborev_autoclose.sh	run
 tests/test_roborev_classify.sh	tests/test_roborev_classify.sh;.claude/scripts/lib/roborev_classify.py;.claude/hooks/session_init.sh	run
 tests/test_roborev_commit_msg_hook.sh	tests/test_roborev_commit_msg_hook.sh;bin/roborev_install_commit_msg_hook.sh;bin/roborev_install_commit_msg_hook_all.sh	run
+tests/test_roborev_commit_msg_suggest.sh	tests/test_roborev_commit_msg_suggest.sh;.claude/scripts/roborev_commit_msg_validator.sh	run
 tests/test_roborev_daily_backlog_aggregator.sh	tests/test_roborev_daily_backlog_aggregator.sh;.claude/scripts/roborev_daily_backlog_aggregator.sh	run
 tests/test_roborev_failure_alert_owner.sh	tests/test_roborev_failure_alert_owner.sh;.claude/scripts/roborev-failure-alert	run
 tests/test_roborev_failure_alert.sh	tests/test_roborev_failure_alert.sh;.claude/scripts/roborev-failure-alert	run
