@@ -118,6 +118,74 @@ assert_eq "test3: 'diff file could not be read' (live phrasing) -> not_reviewed"
     "not_reviewed" \
     "$(classify_one "Cannot review code changes as the diff file could not be read.")"
 
+# llm#1270: the four NOT_REVIEWED_PATTERNS entries send_roborev_email.R grew
+# (llm#1127/#1141) that were never ported to Python. One fixture each, using
+# text that contains ONLY that phrase (none of the original seven), so each
+# case goes red if its own entry is missing.
+assert_eq "test3: 'inaccessible due to configured ignore patterns' -> not_reviewed (llm#1270)" \
+    "not_reviewed" \
+    "$(classify_one "The changed files are inaccessible due to configured ignore patterns.")"
+
+assert_eq "test3: 'unable to proceed with the review' -> not_reviewed (llm#1270)" \
+    "not_reviewed" \
+    "$(classify_one "Sorry, I am unable to proceed with the review of this change.")"
+
+assert_eq "test3: 'blocked by ignore patterns' -> not_reviewed (llm#1270)" \
+    "not_reviewed" \
+    "$(classify_one "Every path in this diff is blocked by ignore patterns.")"
+
+assert_eq "test3: 'blocked by configured ignore patterns' -> not_reviewed (llm#1270)" \
+    "not_reviewed" \
+    "$(classify_one "Every path in this diff is blocked by configured ignore patterns.")"
+
+# llm#1270: list-level parity. Extract the quoted strings of
+# send_roborev_email.R's NOT_REVIEWED_PATTERNS <- c(...) and compare, as sets,
+# with roborev_classify.NOT_REVIEWED_PATTERNS, so a future entry added to one
+# file and not the other fails here rather than drifting silently.
+R_EMAIL_SCRIPT="${SCRIPT_DIR}/../.claude/scripts/send_roborev_email.R"
+parity_out=$("${PYTHON}" -c "
+import re, sys
+sys.path.insert(0, '$(dirname "${CLASSIFY_MODULE}")')
+from roborev_classify import NOT_REVIEWED_PATTERNS
+src = open(sys.argv[1]).read()
+m = re.search(r'NOT_REVIEWED_PATTERNS <- c\((.*?)\n\)', src, re.S)
+if not m:
+    print('NO_R_LIST'); sys.exit(0)
+r_list = re.findall(r'\"([^\"]+)\"', re.sub(r'#[^\n]*', '', m.group(1)))
+if len(r_list) < 5:
+    print('R_LIST_THIN:%d' % len(r_list)); sys.exit(0)
+py = set(NOT_REVIEWED_PATTERNS)
+rr = set(r_list)
+print('MATCH' if py == rr else 'DIFF only_py=%s only_r=%s' % (sorted(py - rr), sorted(rr - py)))
+" "${R_EMAIL_SCRIPT}")
+assert_eq "test3c: NOT_REVIEWED_PATTERNS identical in roborev_classify.py and send_roborev_email.R (llm#1270)" \
+    "MATCH" "${parity_out}"
+
+# ── Test 3d: --fetch-text / --fetch-severity CLI (llm#1270) ────────────────
+# These two readers moved here from inline heredocs in roborev_auto_close.sh.
+FETCH_DB="$(mktemp "${TMPDIR:-/tmp}/roborev_classify_fetch_XXXXXX").db"
+"${PYTHON}" - "${FETCH_DB}" <<'PYEOF'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("CREATE TABLE reviews (id INTEGER PRIMARY KEY, output TEXT, structured_output TEXT)")
+con.execute("INSERT INTO reviews VALUES (1, '', ?)",
+            ('{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"high","location":"a.R:1","problem":"real problem text"}]}',))
+con.execute("INSERT INTO reviews VALUES (2, 'no marker here', NULL)")
+con.commit()
+con.close()
+PYEOF
+fetch_sev() { "${PYTHON}" "${CLASSIFY_MODULE}" --fetch-severity "${FETCH_DB}" "$1" 2>/dev/null; }
+assert_eq "test3d: --fetch-severity structured High row -> High" "High" "$(fetch_sev 1)"
+assert_eq "test3d: --fetch-severity row without a severity -> unknown" "unknown" "$(fetch_sev 2)"
+assert_eq "test3d: --fetch-severity missing row -> unknown" "unknown" "$(fetch_sev 99)"
+fetch_txt=$("${PYTHON}" "${CLASSIFY_MODULE}" --fetch-text "${FETCH_DB}" 1 2>/dev/null)
+assert_contains "test3d: --fetch-text renders the structured finding's problem" "real problem text" "${fetch_txt}"
+bad_out=$("${PYTHON}" "${CLASSIFY_MODULE}" --fetch-severity "/nonexistent/dir/none.db" 1 2>/dev/null)
+bad_rc=$?
+assert_eq "test3d: --fetch-severity unreadable DB -> READ_ERROR sentinel" "READ_ERROR" "${bad_out}"
+assert_eq "test3d: --fetch-severity unreadable DB -> exit 1" "1" "${bad_rc}"
+rm -f "${FETCH_DB}"
+
 # ── Test 3b: structured_output reader (llm#1265) ───────────────────────────
 # roborev v0.68.2 migrated every row's review text out of `output` (empty on
 # all live rows) into `structured_output` (JSON, schema_version 0/1/2). See

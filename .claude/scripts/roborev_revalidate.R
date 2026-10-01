@@ -596,8 +596,47 @@ classify_finding <- function(finding, repo_root) {
 
 # ── Review-level verdict ───────────────────────────────────────────────────────
 
-# Weakest classification wins: still-present > ambiguous > likely-fixed
-VERDICT_WEIGHT <- c("still-present" = 3L, "ambiguous" = 2L, "likely-fixed" = 1L)
+# Weakest classification wins: indeterminate > still-present > ambiguous >
+# likely-fixed. `indeterminate` (llm#1270) means the review could not be read
+# (no usable findings / off-vocabulary severities): it must outrank everything
+# so an unreadable finding can never be laundered into likely-fixed by a
+# readable sibling. Only `likely-fixed` is ever acted on by --apply.
+VERDICT_WEIGHT <- c("indeterminate" = 4L, "still-present" = 3L,
+                    "ambiguous" = 2L, "likely-fixed" = 1L)
+
+# TRUE only for an explicit "passed" review: a known schema (1/2) and a
+# findings array that is present AND empty. Distinguishes a genuinely clean
+# review from one that merely yielded no readable text.
+.review_explicit_clean <- function(structured_output) {
+  if (is.null(structured_output) || is.na(structured_output) || !nzchar(structured_output)) return(FALSE)
+  data <- tryCatch(jsonlite::fromJSON(structured_output, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data)) return(FALSE)
+  sv <- data[["schema_version"]]
+  if (!(is.numeric(sv) && length(sv) == 1L && !is.na(sv) && (sv == 1 || sv == 2))) return(FALSE)
+  findings <- data[["findings"]]
+  is.list(findings) && length(findings) == 0L && "findings" %in% names(data)
+}
+
+# Number of raw entries in structured_output$findings (0 when unreadable).
+.review_structured_raw_count <- function(structured_output) {
+  if (is.null(structured_output) || is.na(structured_output) || !nzchar(structured_output)) return(0L)
+  data <- tryCatch(jsonlite::fromJSON(structured_output, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(data) || !is.list(data) || !is.list(data[["findings"]])) return(0L)
+  length(data[["findings"]])
+}
+
+.review_result <- function(review_row, verdict, reason) {
+  list(
+    review_id   = review_row$review_id,
+    job_id      = review_row$job_id,
+    git_ref     = review_row$git_ref,
+    created_at  = review_row$created_at,
+    verdict     = verdict,
+    primary_loc = NA_character_,
+    reason      = reason,
+    sub_results = list()
+  )
+}
 
 classify_review <- function(review_row, repo_root, min_severity_num, sev_order) {
   # PR #1269 round 3: JSON-direct findings first (see
@@ -607,41 +646,51 @@ classify_review <- function(review_row, repo_root, min_severity_num, sev_order) 
   # post-v0.68.2; reconstruct "---"-separated finding blocks from
   # structured_output) only when there is no structured findings list to
   # read from at all (schema_version 0 / legacy rows).
-  findings <- .review_structured_findings_list(review_row$structured_output)
+  # llm#1270: findings whose severity cannot be read (NA / off-vocabulary,
+  # or dropped by the structured reader) are counted in `n_unreadable`; a
+  # review is never likely-fixed on the strength of findings it could not read.
+  so <- review_row$structured_output
+  findings <- .review_structured_findings_list(so)
+  n_unreadable <- 0L
   if (is.null(findings)) {
-    findings <- parse_findings(.review_findings_text(
-      review_row$output, review_row$structured_output
-    ))
+    findings <- parse_findings(.review_findings_text(review_row$output, so))
+  } else {
+    n_unreadable <- max(0L, .review_structured_raw_count(so) - length(findings))
+  }
+
+  if (length(findings) == 0L) {
+    if (.review_explicit_clean(so)) {
+      return(.review_result(review_row, "likely-fixed",
+                            "review passed with an empty findings list"))
+    }
+    return(.review_result(review_row, "indeterminate",
+      "unreadable review: no findings could be read (indeterminate, not closed)"))
   }
 
   # Filter to sub-findings at or above threshold
   sev_names <- names(sev_order)
+  is_readable <- function(f) !is.na(f$severity) && f$severity %in% sev_names
+  n_unreadable <- n_unreadable + sum(!vapply(findings, is_readable, logical(1L)))
   findings_above_threshold <- Filter(function(f) {
-    if (is.na(f$severity)) return(FALSE)
-    # PR #1269 round 4 (review 10536 finding 1): `[[` on an atomic named
-    # vector raises "subscript out of bounds" for a name not present,
-    # instead of returning NA -- an off-vocabulary severity (or a casing
-    # miss, before the capitalisation fix above) would abort classify_review()
-    # for the WHOLE review, silently skipping the is.null/is.na guard on the
-    # next line. `[` returns a length-1 NA for an unmatched name instead of
-    # erroring.
+    if (!is_readable(f)) return(FALSE)
+    # `[` returns a length-1 NA for an unmatched name instead of erroring
+    # (PR #1269 round 4, review 10536 finding 1); is_readable() already
+    # guarantees the name is present.
     sev_num <- unname(sev_order[f$severity])
     if (is.null(sev_num) || is.na(sev_num)) return(FALSE)
     sev_num >= min_severity_num
   }, findings)
 
   if (length(findings_above_threshold) == 0L) {
-    # No qualifying sub-findings → skip / likely-fixed
-    return(list(
-      review_id   = review_row$review_id,
-      job_id      = review_row$job_id,
-      git_ref     = review_row$git_ref,
-      created_at  = review_row$created_at,
-      verdict     = "likely-fixed",
-      primary_loc = NA_character_,
-      reason      = "no sub-findings at or above severity threshold",
-      sub_results = list()
-    ))
+    if (n_unreadable > 0L) {
+      return(.review_result(review_row, "indeterminate", sprintf(
+        "unreadable review: %d finding(s) with no recognised severity (indeterminate, not closed)",
+        n_unreadable
+      )))
+    }
+    # Every finding readable and below threshold -> skip / likely-fixed
+    return(.review_result(review_row, "likely-fixed",
+                          "no sub-findings at or above severity threshold"))
   }
 
   sub_results <- lapply(findings_above_threshold, function(f) {
@@ -652,6 +701,13 @@ classify_review <- function(review_row, repo_root, min_severity_num, sev_order) 
   weights  <- VERDICT_WEIGHT[verdicts]
   worst_idx <- which.max(weights)
   review_verdict <- verdicts[[worst_idx]]
+  if (n_unreadable > 0L && review_verdict == "likely-fixed") {
+    # An unreadable sibling finding could be the unresolved one (llm#1270).
+    return(.review_result(review_row, "indeterminate", sprintf(
+      "unreadable review: %d finding(s) with no recognised severity beside readable fixed ones (indeterminate, not closed)",
+      n_unreadable
+    )))
+  }
 
   primary_loc <- findings_above_threshold[[worst_idx]]$location
   primary_reason <- sub_results[[worst_idx]]$reason
@@ -675,6 +731,7 @@ format_report <- function(results, repo, min_severity, dry_run, timestamp) {
   n_fixed     <- sum(vapply(results, function(r) r$verdict == "likely-fixed",  logical(1L)))
   n_present   <- sum(vapply(results, function(r) r$verdict == "still-present", logical(1L)))
   n_ambiguous <- sum(vapply(results, function(r) r$verdict == "ambiguous",     logical(1L)))
+  n_indeterminate <- sum(vapply(results, function(r) r$verdict == "indeterminate", logical(1L)))
 
   mode_str <- if (dry_run) "DRY-RUN" else "APPLY"
 
@@ -692,6 +749,7 @@ format_report <- function(results, repo, min_severity, dry_run, timestamp) {
     paste0("| Likely-fixed (candidate to close) | ", n_fixed, " |"),
     paste0("| Still-present (action needed) | ", n_present, " |"),
     paste0("| Ambiguous (needs human review) | ", n_ambiguous, " |"),
+    paste0("| Indeterminate (unreadable; never closed) | ", n_indeterminate, " |"),
     paste0("")
   )
 
@@ -765,6 +823,22 @@ format_report <- function(results, repo, min_severity, dry_run, timestamp) {
       lines <- c(lines, paste0(
         "| ", r$review_id, " | ", r$job_id, " | ", loc_str, " | ", r$reason, " |"
       ))
+    }
+    lines <- c(lines, "")
+  }
+
+  # Indeterminate table (llm#1270): unreadable reviews, never acted on
+  lines <- c(lines, "## Indeterminate (Unreadable; Never Closed)", "")
+  indet_results <- Filter(function(r) r$verdict == "indeterminate", results)
+  if (length(indet_results) == 0L) {
+    lines <- c(lines, "_None._", "")
+  } else {
+    lines <- c(lines,
+      "| review_id | job_id | reason |",
+      "|---|---|---|"
+    )
+    for (r in indet_results) {
+      lines <- c(lines, paste0("| ", r$review_id, " | ", r$job_id, " | ", r$reason, " |"))
     }
     lines <- c(lines, "")
   }
@@ -901,6 +975,7 @@ main <- function(argv = commandArgs(trailingOnly = TRUE)) {
     n_fixed      = n_fixed,
     n_present    = n_present,
     n_ambiguous  = n_ambig,
+    n_indeterminate = sum(vapply(results, function(r) r$verdict == "indeterminate", logical(1L))),
     report_path  = out_path
   ))
 }
