@@ -427,7 +427,9 @@ exit 0
 EOS
   chmod +x "$d/bin/roborev_retention.sh" "$d/bin/roborev_autoclose.sh"
   make_fake_roborev "$d/roborev"
-  HOME="$d/home" ROBOREV="$d/roborev" ROBOREV_REPO_PATH="$d/fake-repo" \
+  # --apply takes a verified DB backup first (Step 0a), so it needs a real DB.
+  "$SQLITE_BIN" "$d/reviews.db" "CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT, root_path TEXT);"
+  HOME="$d/home" ROBOREV="$d/roborev" ROBOREV_DB="$d/reviews.db" ROBOREV_REPO_PATH="$d/fake-repo" \
     ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" FAKE_ROBOREV_STDOUT='{"jobs": []}' \
     "$d/bin/roborev_autoclose.sh" "$mode" >/dev/null 2>&1 || true
   # Stub never ran -> distinct sentinel, not empty output (checks-must-
@@ -459,6 +461,97 @@ test_phase0_dry_run_inherited() {
   fi
 }
 
+# ── Tests 15-17 (follow-up to #1308; 2026-09-28 incident): the weekly DB
+# backup is independent of stale-job discovery. Previously it lived in Phase 2
+# and was skipped whenever discovery failed (exit 3). Fixture: a COPY of the
+# script beside a stub retention script that records how many backups exist
+# at the moment it runs (proves backup-before-retention ordering), a real
+# fixture sqlite DB, and a fake roborev that records every `close`.
+setup_backup_fixture() {
+  local n="$1"
+  BF="${TMPDIR_ROOT}/backup_$n"
+  mkdir -p "$BF/bin" "$BF/home/.claude/logs"
+  cp "$AUTOCLOSE" "$BF/bin/roborev_autoclose.sh"
+  cat > "$BF/bin/roborev_retention.sh" <<EOS
+#!/usr/bin/env bash
+ls "$BF"/reviews.db.bak-* 2>/dev/null | wc -l | tr -d ' ' >> "$BF/retention_backups_seen"
+exit 0
+EOS
+  chmod +x "$BF/bin/roborev_retention.sh" "$BF/bin/roborev_autoclose.sh"
+  cat > "$BF/roborev" <<EOS
+#!/usr/bin/env bash
+if [ "\$1" = "list" ]; then
+  printf '%s' "\${FAKE_ROBOREV_STDOUT:-}"
+  printf '%s' "\${FAKE_ROBOREV_STDERR:-}" >&2
+  exit "\${FAKE_ROBOREV_EXIT:-0}"
+fi
+if [ "\$1" = "close" ]; then
+  printf '%s\n' "\$2" >> "$BF/close_calls"
+fi
+exit 0
+EOS
+  chmod +x "$BF/roborev"
+  "$SQLITE_BIN" "$BF/reviews.db" \
+    "CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT, root_path TEXT); INSERT INTO repos (name, root_path) VALUES ('llm', '/fake/repo');"
+}
+
+run_backup_fixture() {
+  HOME="$BF/home" ROBOREV="$BF/roborev" ROBOREV_DB="$BF/reviews.db" ROBOREV_REPO="llm" \
+    ROBOREV_AUTOCLOSE_RETRY_BACKOFF="0 0" \
+    "$BF/bin/roborev_autoclose.sh" "$1" 2>&1
+}
+
+# Test 15 (FALSIFICATION TARGET): discovery fails in --apply -> exit 3 AND the
+# backup still exists, taken before retention ran.
+test_backup_survives_discovery_failure() {
+  setup_backup_fixture 15
+  local out rc=0
+  out="$(FAKE_ROBOREV_STDERR='jsontext: read error: unexpected EOF' FAKE_ROBOREV_EXIT=1 \
+    run_backup_fixture --apply)" || rc=$?
+  local nbak seen
+  nbak="$(ls "$BF"/reviews.db.bak-* 2>/dev/null | wc -l | tr -d ' ')"
+  seen="$(cat "$BF/retention_backups_seen" 2>/dev/null || echo none)"
+  if [ "$rc" -eq 3 ] && [ "$nbak" -eq 1 ] && [ "$seen" = "1" ] \
+     && [ -s "$(ls "$BF"/reviews.db.bak-* | head -1)" ] \
+     && grep -q "INDETERMINATE" "$BF/home/.claude/logs/roborev_autoclose.log"; then
+    pass "backup: discovery fails in --apply -> exit 3, backup exists, taken before retention"
+  else
+    fail "backup: discovery fails in --apply -> exit 3, backup exists, taken before retention" \
+      "rc=$rc nbak=$nbak retention_saw=$seen out=$out"
+  fi
+}
+
+# Test 16: backup step fails (corrupt DB) -> no close, no retention, distinct
+# log line, non-zero exit -- even though discovery would have found a stale job.
+test_backup_failure_blocks_closures() {
+  setup_backup_fixture 16
+  printf 'not a real sqlite database\n' > "$BF/reviews.db"
+  local out rc=0
+  out="$(FAKE_ROBOREV_STDOUT='{"jobs": [{"id": 7, "enqueued_at": "2000-01-01T00:00:00Z"}]}' \
+    run_backup_fixture --apply)" || rc=$?
+  local log="$BF/home/.claude/logs/roborev_autoclose.log"
+  if [ "$rc" -ne 0 ] && [ ! -f "$BF/close_calls" ] && [ ! -f "$BF/retention_backups_seen" ] \
+     && grep -qF "BACKUP FAILED" "$log" \
+     && ! ls "$BF"/reviews.db.bak-* >/dev/null 2>&1; then
+    pass "backup: failure -> no close, no retention, distinct 'BACKUP FAILED' log, non-zero exit"
+  else
+    fail "backup: failure -> no close, no retention, distinct 'BACKUP FAILED' log, non-zero exit" \
+      "rc=$rc closes=$(cat "$BF/close_calls" 2>/dev/null) out=$out log=$(cat "$log" 2>/dev/null)"
+  fi
+}
+
+# Test 17: dry-run makes no backup (current dry-run semantics preserved).
+test_dry_run_makes_no_backup() {
+  setup_backup_fixture 17
+  local out rc=0
+  out="$(FAKE_ROBOREV_STDOUT='{"jobs": []}' run_backup_fixture --dry-run)" || rc=$?
+  if [ "$rc" -eq 0 ] && ! ls "$BF"/reviews.db.bak-* >/dev/null 2>&1; then
+    pass "backup: dry-run -> no backup file"
+  else
+    fail "backup: dry-run -> no backup file" "rc=$rc out=$out"
+  fi
+}
+
 echo "=== test_roborev_autoclose.sh ==="
 test_ok_empty
 test_indeterminate_empty_stdout
@@ -474,6 +567,9 @@ test_repo_path_lookup_no_matching_row
 test_repo_path_lookup_sqlite_failure
 test_phase0_apply_inherited
 test_phase0_dry_run_inherited
+test_backup_survives_discovery_failure
+test_backup_failure_blocks_closures
+test_dry_run_makes_no_backup
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
