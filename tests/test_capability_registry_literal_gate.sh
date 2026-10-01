@@ -174,6 +174,93 @@ else
   fail "no data-fixed in template: escape hatch untested"
 fi
 
+# ── Case 4 (llm#1304): an unreadable DB renders usage as UNKNOWN, never 0 ────
+# A locked unified.duckdb used to render agents_fired=0 / cmd_total=0: "could
+# not read the usage tables" and "nothing was ever used" produced one page.
+# Contract: exit 3 (INDETERMINATE), page still written, every usage-derived
+# fact is the em dash, inventory facts stay correct, a visible banner says why.
+EMDASH="$(printf '\xe2\x80\x94')"
+mk_failing_duckdb() { # dir mode(lock|generic|agents-only) callslog
+  mkdir -p "$1"
+  cat > "$1/duckdb" <<EOF
+#!/usr/bin/env bash
+q="\$*"
+echo "\${q}" >> "$3"
+fail() { echo "\$1" >&2; exit 1; }
+mode="$2"
+if [ "\${mode}" = "agents-only" ]; then
+  case "\${q}" in
+    *"FROM agent_runs"*) fail "IO Error: Could not set lock on file: Conflicting lock is held" ;;
+  esac
+  exec "${BIN}/duckdb" "\$@"
+fi
+if [ "\${mode}" = "lock" ]; then fail "IO Error: Could not set lock on file: Conflicting lock is held"; fi
+fail "Catalog Error: Table with name skill_usage does not exist"
+EOF
+  chmod +x "$1/duckdb"
+}
+run_regen_with() { # bindir repo template out
+  REGISTRY_DB_RETRY_SLEEP=0 PATH="$1:${PATH}" LLM_REPO_ROOT="$2" \
+    Rscript "${REGEN}" --db "${TMP}/fake.duckdb" --template "$3" --out "$4" \
+    >"${TMP}/last.log" 2>&1
+}
+assert_unknown() { # file key
+  local got; got="$(fact "$1" "$2")"
+  if [ "${got}" = "${EMDASH}," ]; then pass "degraded: data-fact ${2} is unknown (${EMDASH}), not a number"; else fail "degraded: data-fact ${2}: expected '${EMDASH},' got '${got}'"; fi
+}
+
+CALLS4="${TMP}/calls_lock.log"
+mk_failing_duckdb "${TMP}/bin_lock" lock "${CALLS4}"
+OUT4="${TMP}/out4.html"
+run_regen_with "${TMP}/bin_lock" "${FIX}" "${TEMPLATE}" "${OUT4}"
+RC4=$?
+if [ "${RC4}" -eq 3 ]; then pass "locked DB: regen exits 3 (INDETERMINATE)"; else fail "locked DB: expected exit 3, got ${RC4}: $(cat "${TMP}/last.log")"; fi
+if [ -s "${OUT4}" ]; then pass "locked DB: page still written (inventory is knowable without the DB)"; else fail "locked DB: no page written"; fi
+for k in agents_fired agents_idle top_agent top_agent_share_pct skill_invocations_total cmd_total skill_usage_rows command_usage_rows; do
+  assert_unknown "${OUT4}" "${k}"
+done
+assert_fact "${OUT4}" n_skills 3
+assert_fact "${OUT4}" n_agents 2
+assert_fact "${OUT4}" n_rules 4
+assert_fact "${OUT4}" n_total 9
+if grep -q 'data-usage-unreadable' "${OUT4}" && grep -q 'Usage tables unreadable' "${OUT4}"; then
+  pass "locked DB: visible 'usage tables unreadable' banner"
+else
+  fail "locked DB: banner missing"
+fi
+if grep -qE '"invocations": *[0-9]' "${OUT4}"; then
+  fail "locked DB: embedded DATA still carries a numeric invocations value (0 for unknown)"
+else
+  pass "locked DB: embedded DATA carries no numeric invocation count (null = unknown)"
+fi
+if grep -q 'Could not set lock' "${TMP}/last.log"; then pass "locked DB: duckdb's stderr reason is surfaced in the log"; else fail "locked DB: stderr reason not surfaced: $(cat "${TMP}/last.log")"; fi
+N_AGENT_CALLS="$(grep -c 'FROM agent_runs' "${CALLS4}")"
+if [ "${N_AGENT_CALLS}" -eq 3 ]; then pass "locked DB: lock error retried (3 tries)"; else fail "locked DB: expected 3 tries on a lock error, got ${N_AGENT_CALLS}"; fi
+
+CALLS5="${TMP}/calls_generic.log"
+mk_failing_duckdb "${TMP}/bin_generic" generic "${CALLS5}"
+OUT5="${TMP}/out5.html"
+run_regen_with "${TMP}/bin_generic" "${FIX}" "${TEMPLATE}" "${OUT5}"
+RC5=$?
+if [ "${RC5}" -eq 3 ]; then pass "non-lock DB error: regen exits 3"; else fail "non-lock DB error: expected exit 3, got ${RC5}"; fi
+N_GENERIC="$(grep -c 'FROM agent_runs' "${CALLS5}")"
+if [ "${N_GENERIC}" -eq 1 ]; then pass "non-lock DB error: not retried"; else fail "non-lock DB error: expected 1 try, got ${N_GENERIC}"; fi
+
+# Partial failure: only agent_runs unreadable -> only agent facts degrade.
+mk_failing_duckdb "${TMP}/bin_partial" agents-only "${TMP}/calls_partial.log"
+OUT6="${TMP}/out6.html"
+run_regen_with "${TMP}/bin_partial" "${FIX}" "${TEMPLATE}" "${OUT6}"
+RC6=$?
+if [ "${RC6}" -eq 3 ]; then pass "partial failure: regen exits 3"; else fail "partial failure: expected exit 3, got ${RC6}"; fi
+assert_unknown "${OUT6}" agents_fired
+assert_unknown "${OUT6}" top_agent_share_pct
+assert_fact "${OUT6}" skill_invocations_total 4
+assert_fact "${OUT6}" cmd_total 9
+assert_fact "${OUT6}" skill_usage_rows 11
+
+# A healthy run (case 1) must carry no banner and exit 0.
+if grep -q 'data-usage-unreadable' "${OUT1}"; then fail "healthy render carries the unreadable banner"; else pass "healthy render has no unreadable banner"; fi
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "${FAIL}" -eq 0 ]

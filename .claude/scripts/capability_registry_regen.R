@@ -22,6 +22,11 @@
 #   --template  .claude/reports/capability_registry_template.html (repo-relative)
 #   --dry-run   print summary counts to stdout only, still writes --out
 #
+# Exit codes: 0 ok; 1 error (missing template, hand-typed literal); 3
+# INDETERMINATE -- unified.duckdb unreadable (llm#1304): the page is still
+# written with every usage figure shown as an em dash (unknown, never 0) and a
+# visible banner; lock errors are retried 3x (REGISTRY_DB_RETRY_SLEEP secs).
+#
 # SELFTEST=1 env var: runs against the real duckdb (read-only) into a /tmp
 # output path and validates the result is non-empty + well-formed, then exits.
 #
@@ -130,22 +135,56 @@ if (!file.exists(cfg$template)) {
 
 # ── duckdb query helper (read-only, JSON output) ──────────────────────────────
 
+# Failure contract (llm#1304, checks-must-distinguish-unknown): a query that
+# could not be answered returns NULL and records why in DB_ERRORS; a query that
+# ran and matched nothing returns list(). Callers MUST NOT collapse the two.
+# Lock errors (another writer holds unified.duckdb) are retried briefly.
+DB_ERRORS <- character(0)
+DB_RETRIES <- 3L
+DB_RETRY_SLEEP <- suppressWarnings(as.numeric(Sys.getenv("REGISTRY_DB_RETRY_SLEEP", "2")))
+if (is.na(DB_RETRY_SLEEP) || DB_RETRY_SLEEP < 0) DB_RETRY_SLEEP <- 2
+
 query_duckdb <- function(sql, db_path) {
   # system2() with stdout=TRUE builds and runs the command through a shell
   # (see ?system2), so arguments containing shell metacharacters (SQL has
   # parens/quotes) MUST be shQuote()'d -- unlike a raw execve() call.
-  result <- tryCatch(
-    system2("duckdb", args = c(shQuote(db_path), "-readonly", "-json", "-c", shQuote(sql)),
-            stdout = TRUE, stderr = FALSE),
-    error = function(e) character(0)
-  )
+  err_file <- tempfile("duckdb_stderr_")
+  on.exit(unlink(err_file), add = TRUE)
+  fail_msg <- NULL
+  for (attempt in seq_len(DB_RETRIES)) {
+    failed <- NULL
+    result <- tryCatch(
+      suppressWarnings(system2("duckdb",
+        args = c(shQuote(db_path), "-readonly", "-json", "-c", shQuote(sql)),
+        stdout = TRUE, stderr = err_file)),
+      error = function(e) { failed <<- conditionMessage(e); character(0) }
+    )
+    status <- attr(result, "status")
+    if (is.null(failed) && !is.null(status) && !identical(as.integer(status), 0L)) {
+      err_txt <- trimws(paste(readLines(err_file, warn = FALSE), collapse = " "))
+      failed <- sprintf("duckdb exited %s: %s", status, if (nzchar(err_txt)) err_txt else "(no stderr)")
+    }
+    if (is.null(failed)) { fail_msg <- NULL; break }
+    fail_msg <- failed
+    retryable <- grepl("lock|conflict|busy|could not set", failed, ignore.case = TRUE)
+    if (!retryable || attempt == DB_RETRIES) break
+    Sys.sleep(DB_RETRY_SLEEP)
+  }
+  if (!is.null(fail_msg)) {
+    DB_ERRORS <<- c(DB_ERRORS, sprintf("%s [query: %s]", fail_msg, gsub("[[:space:]]+", " ", trimws(sql))))
+    return(NULL)
+  }
   # duckdb CLI emits "loaded <ext> ;" / "unified: ..." status lines on stdout
   # ahead of the JSON payload when extensions autoload; keep only the JSON
   # array, which starts with '[' (or is empty '[]\n' for zero rows).
   json_lines <- result[grepl("^\\s*[\\[\\{]", result) | grepl("^\\s*[\\]\\},\"]", result)]
   json_text <- paste(json_lines, collapse = "\n")
   if (!nzchar(trimws(json_text))) return(list())
-  tryCatch(jsonlite::fromJSON(json_text, simplifyVector = FALSE), error = function(e) list())
+  parsed <- tryCatch(jsonlite::fromJSON(json_text, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(parsed)) {
+    DB_ERRORS <<- c(DB_ERRORS, sprintf("unparseable duckdb JSON [query: %s]", gsub("[[:space:]]+", " ", trimws(sql))))
+  }
+  parsed
 }
 
 # ── Filesystem inventory ──────────────────────────────────────────────────────
@@ -227,6 +266,7 @@ fetch_skill_usage <- function(db_path) {
      FROM skill_usage GROUP BY skill_name",
     db_path
   )
+  if (is.null(rows)) return(NULL)  # unreadable: unknown, not empty
   # named list keyed by skill_name -> list(inv=, last_used=)
   out <- list()
   for (r in rows) {
@@ -242,6 +282,7 @@ fetch_agent_usage <- function(db_path) {
      FROM agent_runs GROUP BY agent_type",
     db_path
   )
+  if (is.null(rows)) return(NULL)  # unreadable: unknown, not empty
   out <- list()
   for (r in rows) {
     if (is.null(r$agent_type)) next
@@ -252,7 +293,7 @@ fetch_agent_usage <- function(db_path) {
 
 fetch_row_count <- function(db_path, table) {
   rows <- query_duckdb(sprintf("SELECT COUNT(*) AS n FROM %s", table), db_path)
-  if (length(rows) == 0L || is.null(rows[[1L]]$n)) return(0L)
+  if (is.null(rows) || length(rows) == 0L || is.null(rows[[1L]]$n)) return(NULL)  # unknown
   as.integer(rows[[1L]]$n)
 }
 
@@ -264,6 +305,7 @@ fetch_command_usage <- function(db_path) {
      WHERE command_name IS NOT NULL GROUP BY command_name",
     db_path
   )
+  if (is.null(rows)) return(NULL)  # unreadable: unknown, not empty
   out <- lapply(rows, function(r) list(name = r$command_name, count = as.integer(r$n %||% 0L)))
   if (length(out) == 0L) return(out)
   ord <- order(-vapply(out, function(x) x$count, integer(1)),
@@ -281,8 +323,15 @@ rules  <- collect_rules(REPO_ROOT)
 
 skill_usage <- fetch_skill_usage(cfg$db)
 agent_usage <- fetch_agent_usage(cfg$db)
+SKILLS_OK <- !is.null(skill_usage)
+AGENTS_OK <- !is.null(agent_usage)
 
 annotate <- function(item, usage_map) {
+  if (is.null(usage_map)) {  # usage unreadable: NA (unknown), never 0L
+    item$invocations <- NA_integer_
+    item$last_used <- NULL
+    return(item)
+  }
   u <- usage_map[[item$name]]
   item$invocations <- if (is.null(u)) 0L else u$inv
   item$last_used    <- if (is.null(u)) NULL else u$last_used
@@ -299,10 +348,11 @@ rules  <- lapply(rules, function(item) {
 
 all_items <- c(skills, agents, rules)
 
-skills_with_usage <- sum(vapply(skills, function(x) (x$invocations %||% 0L) > 0L, logical(1)))
-agents_with_usage <- sum(vapply(agents, function(x) (x$invocations %||% 0L) > 0L, logical(1)))
+skills_with_usage <- if (SKILLS_OK) sum(vapply(skills, function(x) (x$invocations %||% 0L) > 0L, logical(1))) else NA_integer_
+agents_with_usage <- if (AGENTS_OK) sum(vapply(agents, function(x) (x$invocations %||% 0L) > 0L, logical(1))) else NA_integer_
 
-firable <- c(skills, agents)
+# Top 5 ranks only items whose usage is actually known (NA is not 0).
+firable <- Filter(function(x) !is.na(x$invocations %||% NA_integer_), c(skills, agents))
 inv_vals <- vapply(firable, function(x) as.integer(x$invocations %||% 0L), integer(1))
 ord <- order(inv_vals, decreasing = TRUE)
 top5 <- firable[ord][seq_len(min(5L, length(firable)))]
@@ -323,9 +373,17 @@ items_out <- lapply(all_items, function(x) {
 # it carries <span data-fact="key"></span> and the values below are filled in.
 
 commands <- fetch_command_usage(cfg$db)
-agent_inv_vals <- vapply(agents, function(x) as.integer(x$invocations %||% 0L), integer(1))
+CMDS_OK <- !is.null(commands)
+if (!CMDS_OK) commands <- list()
+skill_rows <- fetch_row_count(cfg$db, "skill_usage")
+cmd_rows   <- fetch_row_count(cfg$db, "command_usage")
+
+# A usage-derived fact whose source could not be read renders as UNKNOWN, never
+# 0 (llm#1304). Inventory facts (n_*) come from the filesystem and always render.
+UNKNOWN <- "\u2014"  # em dash
+agent_inv_vals <- if (AGENTS_OK) vapply(agents, function(x) as.integer(x$invocations %||% 0L), integer(1)) else integer(0)
 agent_inv_total <- sum(agent_inv_vals)
-top_agent_idx <- if (length(agents) > 0L) {
+top_agent_idx <- if (AGENTS_OK && length(agents) > 0L) {
   order(-agent_inv_vals, vapply(agents, function(x) x$name, character(1)))[1L]
 } else NA_integer_
 FACTS <- list(
@@ -333,17 +391,19 @@ FACTS <- list(
   n_agents  = length(agents),
   n_rules   = length(rules),
   n_total   = length(all_items),
-  agents_fired = agents_with_usage,
-  agents_idle  = length(agents) - agents_with_usage,
-  top_agent = if (is.na(top_agent_idx)) "none" else agents[[top_agent_idx]]$name,
-  top_agent_share_pct = if (agent_inv_total > 0L) {
+  agents_fired = if (AGENTS_OK) agents_with_usage else UNKNOWN,
+  agents_idle  = if (AGENTS_OK) length(agents) - agents_with_usage else UNKNOWN,
+  top_agent = if (!AGENTS_OK) UNKNOWN else if (is.na(top_agent_idx)) "none" else agents[[top_agent_idx]]$name,
+  top_agent_share_pct = if (!AGENTS_OK) UNKNOWN else if (agent_inv_total > 0L) {
     as.integer(round(100 * agent_inv_vals[top_agent_idx] / agent_inv_total))
   } else 0L,
-  skill_invocations_total = sum(vapply(skills, function(x) as.integer(x$invocations %||% 0L), integer(1))),
-  cmd_total = sum(vapply(commands, function(x) x$count, integer(1))),
-  skill_usage_rows   = fetch_row_count(cfg$db, "skill_usage"),
-  command_usage_rows = fetch_row_count(cfg$db, "command_usage")
+  skill_invocations_total = if (SKILLS_OK) sum(vapply(skills, function(x) as.integer(x$invocations %||% 0L), integer(1))) else UNKNOWN,
+  cmd_total = if (CMDS_OK) sum(vapply(commands, function(x) x$count, integer(1))) else UNKNOWN,
+  skill_usage_rows   = if (is.null(skill_rows)) UNKNOWN else skill_rows,
+  command_usage_rows = if (is.null(cmd_rows)) UNKNOWN else cmd_rows
 )
+USAGE_UNREADABLE <- length(DB_ERRORS) > 0L ||
+  !(SKILLS_OK && AGENTS_OK && CMDS_OK) || is.null(skill_rows) || is.null(cmd_rows)
 
 DATA <- list(
   generated_note = "usage from unified.duckdb (skill_usage, agent_runs); rules are always-on/path-scoped and carry no invocation count",
@@ -354,9 +414,10 @@ DATA <- list(
     total  = length(all_items)
   ),
   usage_coverage = list(
-    skills_with_any_usage = skills_with_usage,
-    agents_with_any_usage = agents_with_usage
+    skills_with_any_usage = if (SKILLS_OK) skills_with_usage else NULL,
+    agents_with_any_usage = if (AGENTS_OK) agents_with_usage else NULL
   ),
+  usage_unreadable = USAGE_UNREADABLE,
   top_5_by_invocations = top5_out,
   commands = commands,
   facts = FACTS,
@@ -460,15 +521,40 @@ html_out <- fill_facts(template_text, FACTS)
 html_out <- sub("__CAPABILITY_REGISTRY_DATA_JSON__", data_json, html_out, fixed = TRUE)
 html_out <- sub("__CAPABILITY_REGISTRY_GENERATED__", generated_date, html_out, fixed = TRUE)
 
+# Visible degraded-mode banner (added after the literal gate: it is generated,
+# not template prose). No background colour -> nothing for the dark-mode
+# contrast gate to flag.
+if (USAGE_UNREADABLE) {
+  esc_html <- function(x) gsub(">", "&gt;", gsub("<", "&lt;", gsub("&", "&amp;", x, fixed = TRUE), fixed = TRUE), fixed = TRUE)
+  banner <- sprintf(
+    paste0("<div role=\"alert\" data-usage-unreadable style=\"border:2px solid #c0392b;padding:10px 14px;margin:12px;font-weight:600\">",
+           "Usage tables unreadable: every usage figure below is shown as \u2014 (unknown), not 0. ",
+           "The inventory (skills, agents, rules) is unaffected.",
+           "<div style=\"font-weight:400;font-size:0.85em\">%s</div></div>"),
+    esc_html(paste(unique(DB_ERRORS), collapse = " | ")))
+  # The template is a fragment (no <body>; the Artifact wrapper adds it), so
+  # prepend; if a <body> is ever added, insert after it.
+  if (grepl("<body[^>]*>", html_out, perl = TRUE)) {
+    html_out <- sub("(<body[^>]*>)", paste0("\\1\n", gsub("\\", "\\\\", banner, fixed = TRUE)), html_out, perl = TRUE)
+  } else {
+    html_out <- paste0(banner, "\n", html_out)
+  }
+}
+
 dir.create(dirname(cfg$out), showWarnings = FALSE, recursive = TRUE)
 writeLines(html_out, cfg$out)
 
 summary_msg <- sprintf(
   "capability_registry_regen.R: wrote %s | skills=%d agents=%d rules=%d total=%d | skills_with_usage=%d agents_with_usage=%d",
   cfg$out, length(skills), length(agents), length(rules), length(all_items),
-  skills_with_usage, agents_with_usage
+  if (SKILLS_OK) skills_with_usage else -1L, if (AGENTS_OK) agents_with_usage else -1L
 )
 message(summary_msg)
+
+if (USAGE_UNREADABLE) {
+  message("capability_registry_regen.R: WARNING usage tables unreadable -- usage figures rendered as unknown (-1 above = unknown); the inventory is correct")
+  for (e in unique(DB_ERRORS)) message("  duckdb: ", e)
+}
 
 if (cfg$dry_run) {
   message("capability_registry_regen.R: --dry-run (file still written; no downstream publish step exists for this script)")
@@ -508,5 +594,10 @@ if (SELFTEST) {
     quit(status = 1L)
   }
 }
+
+# Exit 3 = INDETERMINATE (exit-code-conventions, checks-must-distinguish-unknown):
+# the file IS written (inventory correct, usage explicitly unknown), but a
+# caller must not read this run as a clean 0.
+if (USAGE_UNREADABLE) quit(status = 3L)
 
 invisible(cfg$out)
