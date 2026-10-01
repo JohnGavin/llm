@@ -4,6 +4,51 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-09-30 (session: banner warnings, #1294/#1295/#1296, roborev purge and retention, feat/cc-20260930-193506)
+
+### Completed
+
+- **Merged** [#1297](https://github.com/JohnGavin/llm/pull/1297) (clinical-data provenance hook, warn-only).
+- **Session-start banner warnings, triaged one by one:**
+  - `secrets-drift` was a stale cached answer: the live check reported every cache key backed by Bitwarden. No action.
+  - `credential-single-source`: `GMAIL_APP_PASSWORD` sat in `secrets.env` and three per-job env files (all four identical by hash). [#1300](https://github.com/JohnGavin/llm/pull/1300) moves the six cron email wrappers to one loader (`lib/load_email_creds.sh`), fails closed without credentials, and stops `rotate_gmail_password.sh` writing the per-job files.
+  - `branch-harvest` showed another project's branches: the cache was one global file. [#1298](https://github.com/JohnGavin/llm/pull/1298) keys it (and the ci-failures cache) per repo and labels the line with the repo.
+  - roborev backlog: 21 open reviews triaged against `origin/main`; 16 closed with evidence comments (FIXED or PASSED), the rest fixed by [#1302](https://github.com/JohnGavin/llm/pull/1302) (clinical guard tag/analyte false positives) and [#1306](https://github.com/JohnGavin/llm/pull/1306) (vendored tlang extension: no repeated chunk output, surfaced hidden-chunk errors, `VENDORED.md`).
+- [#1296](https://github.com/JohnGavin/llm/issues/1296) → [#1301](https://github.com/JohnGavin/llm/pull/1301): one guard (`git-hooks/lib/roborev_repo_allowed.sh`) runs before every roborev enqueue path; it skips repos with a `.roborev-disable`/`PRIVATE` marker, no remote, or a path under a local private-roots list (opt-in allow-list mode, default off). Read-only `roborev_private_repo_audit.sh` reports what the guard would block.
+- **Purged roborev data for the 6 repos the guard now blocks** (owner decision): `roborev repo delete --cascade` (1,959 jobs), the matching search-index rows, 1,464 `findings/*.md` (moved to a quarantine dir), 1,957 job logs. A verified DB backup was taken first. The registry was then re-audited: 0 blocked.
+- [#1295](https://github.com/JohnGavin/llm/issues/1295) → [#1299](https://github.com/JohnGavin/llm/pull/1299): `check_targets_tracks_own_package.sh` (0/1/2/3) fails a pipeline that loads its own package without `imports =` or `tar_source()`; `pipeline-validation` rule extended.
+- [#1294](https://github.com/JohnGavin/llm/issues/1294) → [#1303](https://github.com/JohnGavin/llm/pull/1303): the capability registry derives every count from its data (`data-fact` spans) and the build fails on a hand-typed literal. Live counts were 188/76/12/100 against a hand-typed 159/72/12/75.
+- [#1305](https://github.com/JohnGavin/llm/pull/1305): `private_data_scan.sh` no longer reads CSS hex colours (`#E4E9EF`) as UK postcodes; this false positive had failed #1303's `scan` check on unchanged lines.
+- **roborev retention:** run once by hand (`--apply`: 9 backups + 9,827 job logs, 6.6 GB), then [#1308](https://github.com/JohnGavin/llm/pull/1308) lets the weekly chain apply it (pinned to dry-run since 2026-08-18, llm#929).
+- **Housekeeping:** deleted the merged stale remote branch that still carried a commit describing a private project (local archive ref kept; `refs/pull/1182` still holds it); excluded `~/.roborev` from Time Machine (hourly whole-file copies of a 1.5 GB SQLite DB).
+- Filed and fixed (PRs open, awaiting explicit merge, all CI-green):
+  - [#1304](https://github.com/JohnGavin/llm/issues/1304) → [#1313](https://github.com/JohnGavin/llm/pull/1313): a failed or locked DuckDB read renders usage facts as unknown (—, with a visible banner) instead of 0, retries lock errors, and exits 3; inventory counts still render. Registry test 55/55 (old code 38/55).
+  - [#1307](https://github.com/JohnGavin/llm/issues/1307) → [#1312](https://github.com/JohnGavin/llm/pull/1312): the merge gate reads each review's findings from `structured_output` (via `roborev_classify.py`) instead of `review_jobs.min_severity`, which counted every open review as Medium; Low-only → pass, High → block, unparseable or DB error → `gate-indeterminate` (exit 3), never pass. 18/18 (old code 7/18). Live: PR #1306 now `gate-pass`.
+  - [#1310](https://github.com/JohnGavin/llm/pull/1310): the weekly roborev DB backup is its own verified step (online backup + `integrity_check`) before retention and closures, so a failed discovery no longer skips it (the cause of the missing 2026-09-28 backup); a failed backup blocks closures. Autoclose tests 17/17.
+  - [#1311](https://github.com/JohnGavin/llm/pull/1311): retention expires `purged-findings-*` quarantine dirs and `reviews.search.db.*.bak` after 14 days (`ROBOREV_QUARANTINE_DAYS`, min 7). Selftest 32/32 and now registered in CI.
+
+### Failed Approaches
+
+- **The `--syntax-highlighting` flag in a new test** (tlang) exists only from pandoc 3.8; the llm nix shell has 3.7.0.2, so all 8 cases failed before the filter ran. The agent had reported 8/8 using a different pandoc. Re-running every agent's test in the project nix shell caught it.
+- **The first `.backup` of `reviews.db` looked unreadable** under `sqlite3 -readonly` (WAL-mode backup). Opening it with `?immutable=1` showed the correct 10,810 jobs; always verify a backup by reading it, not by its size.
+- **A post-agent drift check reported `HEAD_MOVED_SAME_BRANCH` and suggested `git reset --hard`.** The move was my own fast-forward of the main checkout mid-dispatch. Not acted on; capture after, not before, any deliberate fast-forward.
+- **Retention's `stat` helpers tried BSD `stat -f` before GNU `stat -c`.** On Linux, GNU `stat -f` prints file-system status to stdout before failing, so the number came back with junk attached and the selftest aborted after 2 checks. Latent on `main` because the selftest had never run in CI; surfaced by #1311 registering it. Swapping the order fixed CI with no other change.
+- **A second drift alarm (`HEAD_MOVED_SAME_BRANCH`) was a scheduled `pull --ff-only -q` of the main checkout**, not an agent (reflog). Check the reflog before trusting the alarm's `reset --hard` advice.
+- **Expected roborev to prune its search index after `repo delete`.** It removed about 600 rows and stopped (1,272 left); deleted the rest directly after a backup.
+
+### Accuracy / Metrics
+
+- Re-run by the orchestrator (not only the agents): hook-guard test 21/21; credentials test 27/27 (falsified 22/27); banner cache test 4/4 (2 fail on old code); own-package checker 13/13 in nix; registry literal gate 28/28; clinical guard 27/27; tlang 10/10 on pandoc 3.7 (old filter 5/8); scanner selftest 59/59; autoclose 14/14.
+- roborev: open llm reviews 21 → 1 (13869, two Low findings on #1306's fallback paths).
+
+### Known Limitations
+
+- Until #1310 and #1311 merge: the weekly backup still depends on discovery succeeding, and the purge quarantine dir and `reviews.search.db.*.bak` are never pruned.
+- Merge gate: when `gh` returns no commits for a PR the `.claude/scripts` gate still passes (outside #1307).
+- `refs/pull/1182/head` still holds the commit that described a private project; only GitHub Support can remove it.
+- Time Machine: no backup since 2026-09-27 (on battery; `RequiresACPower`). Needs the charger plus the backup drive.
+- `tmutil`-local snapshots hold the deleted roborev files until they expire (~24 h), so free space lags.
+
 ## 2026-09-30 (session: #1295 item 3, wire the own-package tracking check, feat/1295-wire-own-package-check)
 
 ### Completed
