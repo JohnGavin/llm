@@ -260,6 +260,17 @@ for line in "${REPOS[@]}"; do
   n=$("$GIT" -C "$root_path" rev-list --count "$last_sha..$head_sha" 2>/dev/null || echo 0)
   behind=$((behind + 1))
 
+  # Every changed file excluded by exclude_patterns => empty-diff review; skip.
+  # Indeterminate (rc 3) falls through and enqueues.
+  excl_msg=$(roborev_all_files_excluded "$root_path" "$last_sha..$head_sha"); excl_rc=$?
+  if [ "$excl_rc" -eq 0 ]; then
+    log "skip: all files excluded: $name ($last_sha..$head_sha)"
+    skipped=$((skipped + 1))
+    continue
+  elif [ "$excl_rc" -eq 3 ]; then
+    log "indeterminate: $excl_msg: $name -- enqueuing anyway"
+  fi
+
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[dry] $name: $n commit(s) behind, would enqueue: roborev review --since $last_sha"
     echo "[dry] $name: $n commit(s) behind ($last_sha..$head_sha)"

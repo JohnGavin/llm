@@ -51,6 +51,20 @@ if ! roborev_repo_allowed . >/dev/null; then
   exit 0
 fi
 
+# Skip a `--since REF` review whose every changed file is excluded by
+# exclude_patterns (it would review an empty diff). Other forms are untouched;
+# an indeterminate result still reviews.
+_since=""
+_prev=""
+for _a in "$@"; do
+  [ "$_prev" = "--since" ] && _since="$_a"
+  case "$_a" in --since=*) _since="${_a#--since=}" ;; esac
+  _prev="$_a"
+done
+if [ -n "$_since" ] && roborev_skip_if_all_excluded . "$_since..HEAD"; then
+  exit 0
+fi
+
 # Prepend shim so roborev's PATH lookup for 'codex' hits our wrapper first.
 export PATH="$SHIM_DIR:$PATH"
 
