@@ -15,7 +15,13 @@
 #   checker rc 2   bad rules dir       -> WARN to stderr,   allow commit
 #   checker rc 3   mandatory rule not  -> BLOCK,            exit 1
 #                  actually loading
-# Only rc 3 blocks. rc 1 (context-bloat direction) is noisy by design —
+# A second pass runs `check_rule_scoping.sh --budget --only <repo>` (check E,
+# the always-loaded instruction budget vs Claude Code's startup limit):
+#   budget rc 0 / 1 / 3 / other   -> silent / WARN / WARN / WARN, allow
+#   budget rc 4 (over the LIMIT)  -> BLOCK only if the staged commit also GROWS
+#                                    the instruction files (net chars > 0);
+#                                    a trimming commit is allowed with a WARN
+# Only rc 3 (and budget rc 4 + growth) blocks. rc 1 (context-bloat direction) is noisy by design —
 # see check_rule_scoping.sh's own header. A hook that blocks on noise gets
 # `--no-verify`d or deleted within a day; better to WARN and stay trusted.
 #
@@ -54,6 +60,68 @@ _touches_rule_files() { # <repo_root>
     | grep -qE '(^|/)\.claude/rules/|(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$'
 }
 
+# Net change, in chars, of the staged instruction-bearing files (rules,
+# AGENTS.md, CLAUDE.md) versus HEAD. Positive = the commit makes the
+# always-loaded budget bigger (scoped rules are counted too: a deliberate
+# over-approximation, the gate only ever acts when the project is ALREADY
+# over the limit). A deleted/new file counts as 0 on its missing side.
+_instruction_growth() { # <repo_root>
+  local root="$1" f new old total=0
+  while IFS= read -r f; do
+    case "$f" in
+      .claude/rules/*|*/.claude/rules/*|AGENTS.md|*/AGENTS.md|CLAUDE.md|*/CLAUDE.md) ;;
+      *) continue ;;
+    esac
+    new="$(git -C "$root" cat-file -s ":$f" 2>/dev/null)" || new=0
+    old="$(git -C "$root" cat-file -s "HEAD:$f" 2>/dev/null)" || old=0
+    total=$((total + new - old))
+  done < <(git -C "$root" diff --cached --name-only 2>/dev/null)
+  echo "$total"
+}
+
+# Always-loaded instruction budget gate (check E of check_rule_scoping.sh).
+# Blocks ONLY when this repo's session is over the LIMIT *and* the commit
+# grows the instruction files — so a trimming commit on an already-over
+# project is never blocked, and an unrelated project's overrun never blocks
+# this repo (`--only` scopes the verdict to this checkout). WARN-level and
+# indeterminate results never block (fail-open, per this script's contract).
+_budget_gate() { # <repo_root> <checker>
+  local root="$1" checker="$2" bout brc growth lines
+  bout="$("$checker" --budget --only "$root" 2>&1)"
+  brc=$?
+  lines="$(printf '%s\n' "$bout" | grep -E 'RULE-BUDGET-(OVER|WARN|INDETERMINATE)' || true)"
+  case "$brc" in
+    0) return 0 ;;
+    4)
+      growth="$(_instruction_growth "$root")"
+      if [ "$growth" -gt 0 ]; then
+        echo "rule-scoping-precommit: BLOCKED — always-loaded instructions exceed the startup limit and this commit grows them by $growth chars:" >&2
+        echo "$lines" >&2
+        echo "Trim an always-loaded rule/CLAUDE.md (or add paths: frontmatter), or bypass once with:" >&2
+        echo "  SKIP_RULE_SCOPING=1 git commit ..." >&2
+        _emit "blocked" "$lines"
+        return 1
+      fi
+      echo "rule-scoping-precommit: WARN — always-loaded instructions are over the startup limit, but this commit does not grow them — allowed:" >&2
+      echo "$lines" >&2
+      _emit "warned" "$lines"
+      return 0
+      ;;
+    1)
+      echo "rule-scoping-precommit: WARN — always-loaded instructions are over the startup WARN threshold (non-blocking):" >&2
+      echo "$lines" >&2
+      _emit "warned" "$lines"
+      return 0
+      ;;
+    *)
+      echo "rule-scoping-precommit: WARN — budget check exit $brc (indeterminate/other), non-blocking:" >&2
+      echo "$bout" >&2
+      _emit "warned" "$bout"
+      return 0
+      ;;
+  esac
+}
+
 _run() {
   local repo_root checker rc out
 
@@ -85,7 +153,6 @@ _run() {
   case "$rc" in
     0)
       _emit "clean" "$out"
-      return 0
       ;;
     3)
       echo "rule-scoping-precommit: BLOCKED — a rule declared mandatory is not loading unconditionally:" >&2
@@ -99,9 +166,10 @@ _run() {
       echo "rule-scoping-precommit: WARN (checker exit $rc) — non-blocking:" >&2
       echo "$out" >&2
       _emit "warned" "$out"
-      return 0
       ;;
   esac
+
+  _budget_gate "$repo_root" "$checker"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -225,6 +293,71 @@ if [ "${1:-}" = "--selftest" ]; then
   grep -q '"event_type":"warned"' "$spool6" 2>/dev/null \
     && _ok "missing checker -> telemetry event_type=warned" \
     || _fail "missing checker -> telemetry event_type=warned"
+
+  # ── Budget gate (check E) ────────────────────────────────────────────────
+  mk_budget_checker() { # <repo-dir> <budget_rc> — main checks clean (rc 0); --budget exits <budget_rc>
+    printf '#!/usr/bin/env bash\nif [ "${1:-}" = "--budget" ]; then echo "RULE-BUDGET-OVER: fake 999999 chars"; exit %s; fi\nexit 0\n' "$2" \
+      > "$1/.claude/scripts/check_rule_scoping.sh"
+    chmod +x "$1/.claude/scripts/check_rule_scoping.sh"
+  }
+
+  # Case 7: budget rc 4 + growth -> BLOCK
+  r7="$TMP/repo7"
+  mk_repo "$r7"
+  mk_budget_checker "$r7" 4
+  stage_rule_change "$r7"
+  spool7="$TMP/spool7.jsonl"
+  ( cd "$r7" && SKIP_RULE_SCOPING=0 HOOK_EVENTS_SPOOL="$spool7" _run ) >/dev/null 2>&1
+  rc7=$?
+  [ "$rc7" -eq 1 ] && _ok "budget over LIMIT + commit grows rules -> precommit blocks (rc=1)" \
+    || _fail "budget over LIMIT + commit grows rules -> precommit blocks (got rc=$rc7)"
+  grep -q '"event_type":"blocked"' "$spool7" 2>/dev/null \
+    && _ok "budget block -> telemetry event_type=blocked" \
+    || _fail "budget block -> telemetry event_type=blocked"
+
+  # Case 8: budget rc 4 but the commit SHRINKS the rule -> allowed with WARN
+  r8="$TMP/repo8"
+  mk_repo "$r8"
+  mk_budget_checker "$r8" 4
+  printf '# rule\nbody body body body body body\n' > "$r8/.claude/rules/foo.md"
+  git -C "$r8" add .claude/rules/foo.md .claude/scripts/check_rule_scoping.sh
+  git -C "$r8" commit -q -m seed
+  printf '# rule\n' > "$r8/.claude/rules/foo.md"
+  git -C "$r8" add .claude/rules/foo.md
+  spool8="$TMP/spool8.jsonl"
+  ( cd "$r8" && SKIP_RULE_SCOPING=0 HOOK_EVENTS_SPOOL="$spool8" _run ) >/dev/null 2>&1
+  rc8=$?
+  [ "$rc8" -eq 0 ] && _ok "budget over LIMIT but commit trims -> precommit allows (rc=0)" \
+    || _fail "budget over LIMIT but commit trims -> precommit allows (got rc=$rc8)"
+  grep -q '"event_type":"warned"' "$spool8" 2>/dev/null \
+    && _ok "budget over LIMIT + trimming commit -> telemetry event_type=warned" \
+    || _fail "budget over LIMIT + trimming commit -> telemetry event_type=warned"
+
+  # Case 9: budget rc 1 (WARN only) never blocks, even when growing
+  r9="$TMP/repo9"
+  mk_repo "$r9"
+  mk_budget_checker "$r9" 1
+  stage_rule_change "$r9"
+  ( cd "$r9" && SKIP_RULE_SCOPING=0 HOOK_EVENTS_SPOOL="$TMP/spool9.jsonl" _run ) >/dev/null 2>&1
+  rc9=$?
+  [ "$rc9" -eq 0 ] && _ok "budget WARN-level -> precommit allows even when growing" \
+    || _fail "budget WARN-level -> precommit allows even when growing (got rc=$rc9)"
+
+  # Case 10: budget rc 3 (indeterminate) fails open
+  r10="$TMP/repo10"
+  mk_repo "$r10"
+  mk_budget_checker "$r10" 3
+  stage_rule_change "$r10"
+  ( cd "$r10" && SKIP_RULE_SCOPING=0 HOOK_EVENTS_SPOOL="$TMP/spool10.jsonl" _run ) >/dev/null 2>&1
+  rc10=$?
+  [ "$rc10" -eq 0 ] && _ok "budget indeterminate (rc 3) -> fail-open, precommit allows" \
+    || _fail "budget indeterminate (rc 3) -> fail-open, precommit allows (got rc=$rc10)"
+
+  # Case 11: kill switch also bypasses the budget gate
+  ( cd "$r7" && SKIP_RULE_SCOPING=1 HOOK_EVENTS_SPOOL="$TMP/spool11.jsonl" _run ) >/dev/null 2>&1
+  rc11=$?
+  [ "$rc11" -eq 0 ] && _ok "SKIP_RULE_SCOPING=1 bypasses the budget block too" \
+    || _fail "SKIP_RULE_SCOPING=1 bypasses the budget block too (got rc=$rc11)"
 
   echo ""
   echo "selftest: ${PASS}/${TOTAL} PASS"

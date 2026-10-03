@@ -57,10 +57,15 @@
 #      lines. Intentionally non-blocking — see the `content_heuristic`
 #      function's own header for why a hard block here would be premature.
 #
+# A fifth check, E (`--budget`), is a separate mode with its own exit codes:
+# it measures the combined always-loaded instruction size per session type
+# against Claude Code's startup limit — see the `budget_report` header below.
+#
 # Usage: check_rule_scoping.sh [rules-dir]
+#        check_rule_scoping.sh --budget [--only DIR]
 #        check_rule_scoping.sh --selftest
 #
-# Exit codes:
+# Exit codes (checks A-D; --budget codes are documented at budget_report):
 #   0 = clean (check D advisories, if any, do not change this)
 #   1 = check-A failures only (context bloat)
 #   2 = rules dir not found / usage error
@@ -274,6 +279,295 @@ audit() {
     return 0
 }
 
+# Check E (--budget): always-loaded instruction budget (llm startup-limit guard).
+#
+# Claude Code warns at startup when the combined size of instruction files
+# that load into EVERY session (each CLAUDE.md, each rules file without
+# `paths:` or with `paths: ["**"]`, each resolvable @import, the first 25KB of
+# the project's MEMORY.md) passes a limit (observed: 150.0k chars). This mode
+# measures that per session type so the number cannot creep back unseen.
+#
+# Session types measured:
+#   GLOBAL          ~/.claude/CLAUDE.md (symlink resolved) + every unscoped
+#                   file under ~/.claude/rules/**
+#   <project>       GLOBAL + that project's CLAUDE.md, .claude/CLAUDE.md,
+#                   unscoped .claude/rules/** and project MEMORY.md. Files are
+#                   de-duplicated by realpath, so the llm main checkout (whose
+#                   rules ARE the global rules via symlink) is not double
+#                   counted. Main checkouts only: worktrees and
+#                   .claude/worktrees are skipped by discovery.
+#   llm worktree    GLOBAL + the llm project's own files counted AGAIN (a
+#                   worktree's copies have different paths, so they are not
+#                   deduplicated), UNLESS `claudeMdExcludes` in
+#                   ~/.claude/settings.json matches them. APPROXIMATION: the
+#                   worktree is modelled at <docs>/worktrees/<llm>/feat/budget-probe/
+#                   and patterns are matched with Python fnmatch (where `*`
+#                   also matches `/`), not Claude Code's real glob engine.
+#                   Worktree memory (a different slug) is not counted.
+#
+# Thresholds (chars): WARN > RULE_BUDGET_WARN (default 120000),
+#                     OVER > RULE_BUDGET_LIMIT (default 150000).
+# Output: `RULE-BUDGET-{OK|WARN|OVER}: <name> <chars> chars ...` — GLOBAL
+# always, any other session type only when over WARN — then one
+# `RULE-BUDGET-SUMMARY:` line.
+#
+# Exit codes (budget mode only; the A-D checks keep their own contract):
+#   0 = every session type <= WARN
+#   1 = at least one WARN, none over the limit
+#   3 = INDETERMINATE (~/.claude/CLAUDE.md, ~/.claude/rules, python3 or
+#       settings.json unreadable) — never reported as 0
+#   4 = at least one session type over the limit (distinct from 2/3)
+# `--only DIR` restricts the verdict to the session for DIR (plus GLOBAL and
+# the llm-worktree row only when DIR is the checkout that owns the global
+# rules/AGENTS.md), for use by the pre-commit gate.
+# Env: RULE_BUDGET_HOME (default $HOME), RULE_BUDGET_DOCS (default $HOME/docs_gh).
+budget_report() { # budget_report [--only DIR]
+    local only=""
+    if [ "${1:-}" = "--only" ]; then only="${2:-}"; fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "RULE-BUDGET-INDETERMINATE: python3 not found on PATH — cannot measure the instruction budget"
+        return 3
+    fi
+    python3 - "${RULE_BUDGET_HOME:-$HOME}" "${RULE_BUDGET_DOCS:-${RULE_BUDGET_HOME:-$HOME}/docs_gh}" "$only" <<'PY'
+import fnmatch, json, os, re, sys
+
+home, docs, only = sys.argv[1], sys.argv[2], sys.argv[3] or None
+WARN = int(os.environ.get("RULE_BUDGET_WARN") or 120000)
+LIMIT = int(os.environ.get("RULE_BUDGET_LIMIT") or 150000)
+MEM_CAP = 25 * 1024
+ALWAYS_STAR = "**"  # a paths: list made only of this pattern still loads everywhere
+SKIP = {"worktrees", ".git", "node_modules", "_targets", "renv", ".venv", "venv", "__pycache__"}
+IMPORT = re.compile(r"(?<![\w@/.])@((?:~|\.{0,2})/?[\w.\-/]+\.[A-Za-z0-9]+)")
+
+
+def indeterminate(msg):
+    print("RULE-BUDGET-INDETERMINATE: " + msg)
+    sys.exit(3)
+
+
+def read(p):
+    with open(p, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def fm_paths(text):
+    """None if no paths: key in the frontmatter, else the list of patterns."""
+    if not text.startswith("---"):
+        return None
+    lines = text.split("\n")
+    end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
+    if end is None:
+        return None
+    fm = lines[1:end]
+    for i, line in enumerate(fm):
+        m = re.match(r"^paths:\s*(.*)$", line)
+        if not m:
+            continue
+        rest = m.group(1).split(" #")[0].strip()
+        pats = []
+        if rest:
+            pats = [x.strip().strip("\"'") for x in rest.strip("[]").split(",") if x.strip()]
+        else:
+            for l2 in fm[i + 1:]:
+                m2 = re.match(r"^\s+-\s*(.*)$", l2)
+                if m2:
+                    pats.append(m2.group(1).strip().strip("\"'"))
+                elif l2.strip():
+                    break
+        return pats
+    return None
+
+
+def always_loaded(text):
+    pats = fm_paths(text)
+    return pats is None or all(p == ALWAYS_STAR for p in pats)
+
+
+def expand(pat):
+    return os.path.expanduser(pat)
+
+
+def load_excludes():
+    p = os.path.join(home, ".claude", "settings.json")
+    if not os.path.isfile(p):
+        return []
+    try:
+        data = json.loads(read(p))
+    except ValueError as e:
+        indeterminate("cannot parse %s: %s" % (p, e))
+    ex = data.get("claudeMdExcludes", []) if isinstance(data, dict) else []
+    return [expand(x) for x in ex if isinstance(x, str)]
+
+
+EXCL = load_excludes()
+
+
+def excluded(path):
+    return any(fnmatch.fnmatch(path, pat) for pat in EXCL)
+
+
+def collect(path, seen, depth=0):
+    """Chars of `path` plus its resolvable @imports, de-duplicated via `seen`."""
+    rp = os.path.realpath(path)
+    if rp in seen or not os.path.isfile(rp):
+        return 0
+    seen.add(rp)
+    text = read(rp)
+    n = len(text)
+    if depth < 5:
+        for m in IMPORT.finditer(text):
+            cand = expand(m.group(1))
+            if not os.path.isabs(cand):
+                cand = os.path.join(os.path.dirname(path), cand)
+            n += collect(cand, seen, depth + 1)
+    return n
+
+
+def instruction_files(root):
+    """(kind, path, relpath) for a project root: its CLAUDE.md files and rules/**."""
+    out = []
+    for rel in ("CLAUDE.md", os.path.join(".claude", "CLAUDE.md")):
+        p = os.path.join(root, rel)
+        if os.path.isfile(p):
+            out.append(("claude", p, rel))
+    rules = os.path.join(root, ".claude", "rules")
+    if os.path.isdir(rules):
+        for r, ds, fs in os.walk(rules, followlinks=True):
+            ds.sort()
+            for f in sorted(fs):
+                if f.endswith(".md"):
+                    p = os.path.join(r, f)
+                    out.append(("rule", p, os.path.relpath(p, root)))
+    return out
+
+
+def measure(files, seen):
+    """(total chars, rule count, rule chars) of the always-loaded files."""
+    total, nrules, rules_chars = 0, 0, 0
+    for kind, p, rel in files:
+        if excluded(p):
+            continue
+        if kind == "rule" and not always_loaded(read(p)):
+            continue
+        n = collect(p, seen)
+        total += n
+        if kind == "rule" and n:
+            nrules += 1
+            rules_chars += n
+    return total, nrules, rules_chars
+
+
+# ---- GLOBAL -----------------------------------------------------------
+g_claude = os.path.join(home, ".claude", "CLAUDE.md")
+g_rules = os.path.join(home, ".claude", "rules")
+if not os.path.isfile(g_claude):
+    indeterminate("cannot resolve %s (missing or dangling symlink)" % g_claude)
+if not os.path.isdir(g_rules):
+    indeterminate("cannot resolve rules dir %s" % g_rules)
+seen_g = set()
+g_cm = 0 if excluded(g_claude) else collect(g_claude, seen_g)
+g_files = []
+for r, ds, fs in os.walk(g_rules, followlinks=True):
+    ds.sort()
+    for f in sorted(fs):
+        if f.endswith(".md"):
+            p = os.path.join(r, f)
+            g_files.append(("rule", p, os.path.relpath(p, g_rules)))
+g_rules_total, g_nrules, _ = measure(g_files, seen_g)
+GLOBAL = g_cm + g_rules_total
+
+owner = os.path.dirname(os.path.dirname(os.path.realpath(g_rules)))  # checkout owning the global rules
+owner_ok = os.path.isdir(os.path.join(owner, ".claude", "rules"))
+affects_global = bool(only) and os.path.realpath(only) == owner
+
+
+def find_projects(root, maxdepth=4):
+    res = []
+
+    def walk(d, depth):
+        try:
+            entries = sorted(os.scandir(d), key=lambda e: e.name)
+        except OSError:
+            return
+        if any(e.name == ".claude" and e.is_dir(follow_symlinks=False) for e in entries):
+            # a linked worktree has a .git FILE (not a dir): main checkouts only
+            if not any(e.name == ".git" and e.is_file(follow_symlinks=False) for e in entries):
+                res.append(d)
+            return
+        if depth >= maxdepth:
+            return
+        for e in entries:
+            if e.name in SKIP or e.name.startswith("."):
+                continue
+            if e.is_dir(follow_symlinks=False):
+                walk(e.path, depth + 1)
+
+    walk(root, 0)
+    return res
+
+
+def memory_chars(path):
+    slug = re.sub(r"[^A-Za-z0-9]", "-", path)
+    m = os.path.join(home, ".claude", "projects", slug, "memory", "MEMORY.md")
+    return min(len(read(m)), MEM_CAP) if os.path.isfile(m) else 0
+
+
+def name_of(path):
+    ap, root = os.path.abspath(path), os.path.abspath(docs)
+    if not ap.startswith(root + os.sep):
+        return os.path.basename(ap)
+    return os.path.relpath(ap, root)
+
+
+rows = []  # (name, total, detail, counted)
+rows.append(("GLOBAL", GLOBAL,
+             "CLAUDE.md %d + %d always-loaded rules %d" % (g_cm, g_nrules, g_rules_total),
+             (not only) or affects_global))
+
+targets = [os.path.abspath(only)] if only else find_projects(docs)
+for d in targets:
+    own, _, _ = measure(instruction_files(d), set(seen_g))
+    mem = memory_chars(d)
+    rows.append((name_of(d), GLOBAL + own + mem,
+                 "global %d + project %d + memory %d" % (GLOBAL, own, mem), True))
+
+if owner_ok and ((not only) or affects_global):
+    wt = os.path.join(os.path.abspath(docs), "worktrees", os.path.basename(owner), "feat", "budget-probe")
+    own = 0
+    for kind, p, rel in instruction_files(owner):
+        if excluded(os.path.join(wt, rel)):
+            continue
+        if kind == "rule" and not always_loaded(read(p)):
+            continue
+        # a worktree's copy has a different path: count it again, never deduplicated
+        own += collect(p, set())
+    rows.append((os.path.basename(owner) + " worktree", GLOBAL + own,
+                 "global %d + worktree copy %d (claudeMdExcludes: %d patterns)" % (GLOBAL, own, len(EXCL)), True))
+
+rank = {"OK": 0, "WARN": 1, "OVER": 4}
+worst, nw, no = 0, 0, 0
+for name, total, detail, counted in sorted(rows, key=lambda r: -r[1]):
+    st = "OVER" if total > LIMIT else "WARN" if total > WARN else "OK"
+    if counted:
+        nw += st == "WARN"
+        no += st == "OVER"
+        worst = max(worst, rank[st])
+    if name == "GLOBAL" or st != "OK":
+        print("RULE-BUDGET-%s: %s %d chars (%s)%s" % (
+            st, name, total, detail, "" if counted else " [informational: not touched by this commit]"))
+print("RULE-BUDGET-SUMMARY: %d session types, %d over warn (>%d), %d over limit (>%d)" % (
+    len([r for r in rows if r[3]]), nw, WARN, no, LIMIT))
+sys.exit(worst)
+PY
+}
+
+if [ "${1:-}" = "--budget" ]; then
+    shift
+    rc=0
+    budget_report "$@" || rc=$?
+    exit "$rc"
+fi
+
 if [ "${1:-}" = "--selftest" ]; then
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
@@ -457,6 +751,89 @@ if [ "${1:-}" = "--selftest" ]; then
     check_eq "unscoped companion flagged UNSCOPED" "$c" "1"
     c="$(printf '%s\n' "$out14" | grep -c 'comp-scoped' || true)"
     check_eq "scoped companion (correctly configured) NOT mentioned" "$c" "0"
+
+    # --- Check E: --budget (always-loaded instruction budget) ---
+    # Thresholds are shrunk via env so tiny fixtures can cross them:
+    # WARN > 2000, OVER > 4000 chars.
+    chars() { head -c "$1" /dev/zero | tr '\0' 'a'; }
+    fsize() { wc -c < "$1" | tr -d ' '; }
+    bud() { # bud <home> [budget_report args...]   (W/L override thresholds)
+        local h="$1"; shift
+        RULE_BUDGET_HOME="$h" RULE_BUDGET_DOCS="$h/docs_gh" \
+            RULE_BUDGET_WARN="${W:-2000}" RULE_BUDGET_LIMIT="${L:-4000}" budget_report "$@"
+    }
+    EXCL_WT='["**/worktrees/**/.claude/rules/**"]'
+    mk_budget_fx() { # mk_budget_fx <home> [claudeMdExcludes-json] — GLOBAL = AGENTS 300 + always-a 600 + star
+        local h="$1" d="$1/docs_gh"
+        mkdir -p "$d/llm/.claude/rules" "$h/.claude" "$d/pA/.claude"
+        chars 300 > "$d/llm/AGENTS.md"
+        chars 600 > "$d/llm/.claude/rules/always-a.md"
+        { printf -- '---\npaths: ["**"]\n---\n'; chars 378; } > "$d/llm/.claude/rules/star.md"
+        { printf -- '---\npaths:\n  - "R/**"\n---\n'; chars 5000; } > "$d/llm/.claude/rules/scoped.md"
+        ln -s "$d/llm/AGENTS.md" "$h/.claude/CLAUDE.md"
+        ln -s "$d/llm/.claude/rules" "$h/.claude/rules"
+        chars 100 > "$d/pA/.claude/CLAUDE.md"
+        if [ -n "${2:-}" ]; then printf '{"claudeMdExcludes": %s}\n' "$2" > "$h/.claude/settings.json"; fi
+    }
+    mk_project() { # mk_project <home> <name> <chars> — adds a project with one CLAUDE.md of that size
+        mkdir -p "$1/docs_gh/$2/.claude"
+        chars "$3" > "$1/docs_gh/$2/.claude/CLAUDE.md"
+    }
+
+    b1="$tmp/b1"; mk_budget_fx "$b1" "$EXCL_WT"
+    expect_global=$(( $(fsize "$b1/docs_gh/llm/AGENTS.md") + $(fsize "$b1/docs_gh/llm/.claude/rules/always-a.md") + $(fsize "$b1/docs_gh/llm/.claude/rules/star.md") ))
+    out="$(bud "$b1")" && rc=0 || rc=$?
+    check_eq "budget: everything under WARN -> exit 0" "$rc" "0"
+    c="$(printf '%s\n' "$out" | grep -c "^RULE-BUDGET-OK: GLOBAL $expect_global chars" || true)"
+    check_eq "budget: GLOBAL line always printed; paths:[\"**\"] counted, paths:[R/**] not" "$c" "1"
+    c="$(printf '%s\n' "$out" | grep -c 'RULE-BUDGET-WARN\|RULE-BUDGET-OVER' || true)"
+    check_eq "budget: nothing over WARN -> no WARN/OVER lines" "$c" "0"
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-SUMMARY' || true)"
+    check_eq "budget: one SUMMARY line" "$c" "1"
+
+    b2="$tmp/b2"; mk_budget_fx "$b2"   # no claudeMdExcludes -> llm worktree double-counts llm's rules
+    out="$(bud "$b2")" && rc=0 || rc=$?
+    check_eq "budget: worktree double-count without claudeMdExcludes -> exit 1" "$rc" "1"
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-WARN: llm worktree' || true)"
+    check_eq "budget: llm worktree variant flagged WARN when not excluded" "$c" "1"
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-OK: GLOBAL' || true)"
+    check_eq "budget: GLOBAL itself still under WARN" "$c" "1"
+    # b1 (same fixture + claudeMdExcludes) already proved the pattern removes the double-count.
+
+    b3="$tmp/b3"; mk_budget_fx "$b3" "$EXCL_WT"; mk_project "$b3" pB 900
+    out="$(bud "$b3")" && rc=0 || rc=$?
+    check_eq "budget: one project over WARN -> exit 1" "$rc" "1"
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-WARN: pB ' || true)"
+    check_eq "budget: pB line printed" "$c" "1"
+    c="$(printf '%s\n' "$out" | grep -c 'pA ' || true)"
+    check_eq "budget: pA (under WARN) not printed" "$c" "0"
+
+    b4="$tmp/b4"; mk_budget_fx "$b4" "$EXCL_WT"; mk_project "$b4" pB 900; mk_project "$b4" pC 3000
+    out="$(bud "$b4")" && rc=0 || rc=$?
+    check_eq "budget: one project over LIMIT -> exit 4" "$rc" "4"
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-OVER: pC ' || true)"
+    check_eq "budget: pC flagged OVER" "$c" "1"
+    out="$(bud "$b4" --only "$b4/docs_gh/pA")" && rc=0 || rc=$?
+    check_eq "budget: --only a clean project ignores other projects' overruns -> exit 0" "$rc" "0"
+    out="$(bud "$b4" --only "$b4/docs_gh/pC")" && rc=0 || rc=$?
+    check_eq "budget: --only the over-limit project -> exit 4" "$rc" "4"
+
+    b5="$tmp/b5"; mk_budget_fx "$b5" "$EXCL_WT"
+    printf '\n@extra.md\n' >> "$b5/docs_gh/pA/.claude/CLAUDE.md"
+    chars 500 > "$b5/docs_gh/pA/.claude/extra.md"
+    out="$(W=1500 bud "$b5")" && rc=0 || rc=$?
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-WARN: pA ' || true)"
+    check_eq "budget: an @import pushes pA over WARN (1300+100+500 > 1500)" "$c" "1"
+
+    b6="$tmp/b6"; mk_budget_fx "$b6" "$EXCL_WT"; rm "$b6/.claude/CLAUDE.md"
+    out="$(bud "$b6")" && rc=0 || rc=$?
+    check_eq "budget: unresolvable ~/.claude/CLAUDE.md -> exit 3 (indeterminate)" "$rc" "3"
+    c="$(printf '%s\n' "$out" | grep -c '^RULE-BUDGET-INDETERMINATE' || true)"
+    check_eq "budget: indeterminate says so" "$c" "1"
+
+    b7="$tmp/b7"; mk_budget_fx "$b7" "$EXCL_WT"; printf '{ not json' > "$b7/.claude/settings.json"
+    out="$(bud "$b7")" && rc=0 || rc=$?
+    check_eq "budget: unparseable settings.json -> exit 3 (not silently no-excludes)" "$rc" "3"
 
     echo "selftest: ${pass}/${total} PASS"
     [ "$pass" -eq "$total" ]

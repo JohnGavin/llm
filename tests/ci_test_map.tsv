@@ -75,3 +75,4 @@ tests/test_roborev_merge_gate_severity.sh	tests/test_roborev_merge_gate_severity
 tests/test_agent_post_verify_ff.sh	tests/test_agent_post_verify_ff.sh;.claude/scripts/agent-post-verify.sh	run
 tests/test_session_end_refine_waterfall.sh	tests/test_session_end_refine_waterfall.sh;.claude/scripts/session_end_refine.sh;git-hooks/lib/roborev_repo_allowed.sh	run
 tests/test_roborev_likely_fixed_report.sh	tests/test_roborev_likely_fixed_report.sh;bin/roborev_likely_fixed_report.sh;.claude/scripts/roborev_likely_fixed_summary.sh	run	
+tests/test_rule_budget.sh	tests/test_rule_budget.sh;.claude/scripts/check_rule_scoping.sh;.claude/scripts/rule_scoping_precommit.sh	run
