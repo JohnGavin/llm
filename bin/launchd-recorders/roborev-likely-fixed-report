@@ -1,0 +1,4 @@
+#!/bin/bash
+# REPORT-ONLY (llm#1274 option C): bin/roborev_likely_fixed_report.sh takes no
+# arguments and refuses --apply, so this job can never close a review.
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.roborev-likely-fixed-report" -- "/Users/johngavin/docs_gh/llm/bin/roborev_likely_fixed_report.sh"

@@ -2000,7 +2000,30 @@ quality_alert_html <- if (length(quality_jump$flags)) {
     fmt_rate(f$prev_rate), f$prev_date, f$prev_nr, f$prev_n, f$delta_pts), ""),
     collapse = "")
 } else ""
-health_alerts_html <- paste0(config_alert_html, quality_alert_html)
+# One-line summary of the scheduled report-only "likely fixed" report
+# (llm#1274 option C). The line comes from roborev_likely_fixed_summary.sh,
+# which says "not run" / "STALE" for a missing, failed or old report -- it never
+# renders such a state as a count. If the reader itself cannot be run, the email
+# says so rather than omitting the line (checks-must-distinguish-unknown).
+likely_fixed_html <- local({
+  script <- file.path(.scripts_dir_rr, "roborev_likely_fixed_summary.sh")
+  txt <- NULL
+  ok <- FALSE
+  if (file.exists(script)) {
+    res <- tryCatch(
+      suppressWarnings(system2("bash", c(shQuote(script)), stdout = TRUE, stderr = FALSE)),
+      error = function(e) NULL
+    )
+    if (!is.null(res) && length(res) >= 1L && nzchar(res[[1L]])) {
+      txt <- res[[1L]]
+      ok <- is.null(attr(res, "status"))
+    }
+  }
+  if (is.null(txt)) txt <- "likely-fixed report: not run (summary reader unavailable)"
+  sprintf('<p style="color:%s; font-size:12px;">%s</p>',
+          if (ok) dark_muted else accent_orange, htmlEscape_rr(txt))
+})
+health_alerts_html <- paste0(config_alert_html, quality_alert_html, likely_fixed_html)
 
 agent_rate_html <- collapsible_block(
   "Per-Agent Review Health (7d) — llm#1044",
