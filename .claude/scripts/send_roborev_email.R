@@ -44,6 +44,16 @@ suppressPackageStartupMessages({
   }
 )
 source(file.path(.scripts_dir_rr, "email_styles.R"))
+# Pure health helpers (llm#984 item 2, llm#1044 items 2+3, llm#1123 addendum 1).
+source(file.path(.scripts_dir_rr, "roborev_health_lib.R"))
+
+# Inputs for those helpers, each overridable for tests / odd installs.
+ROBOREV_CONFIG_TOML <- Sys.getenv(
+  "ROBOREV_CONFIG_TOML", file.path(Sys.getenv("HOME"), ".roborev", "config.toml"))
+ROBOREV_ACKS_JSONL <- Sys.getenv(
+  "ROBOREV_ACKS_JSONL", file.path(Sys.getenv("HOME"), ".roborev", "acks.jsonl"))
+ROBOREV_HEALTH_STATE_DIR <- Sys.getenv(
+  "ROBOREV_HEALTH_STATE_DIR", file.path(Sys.getenv("HOME"), ".claude", "logs", "roborev_health"))
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -872,13 +882,14 @@ classify_review_row <- function(output, structured_output) {
 #   Fixing this file changes what the daily email/backlog REPORTS; it does
 #   NOT change what those two scripts count or act on. Flagged as an open
 #   follow-up, not silently left unmentioned.
-classify_open_findings <- function(rows) {
+classify_open_findings <- function(rows, acked_ids = integer(0)) {
   above_n    <- 0L
   above_rows <- list()
   unparse_n  <- 0L
   not_reviewed_n  <- 0L
   passed_n        <- 0L
   unclassified_n  <- 0L
+  acked_unclassified_n <- 0L
   indeterminate_n <- 0L
   for (r in rows) {
     # PR #1269 round 4 (review 10535 finding 5): parse structured_output
@@ -917,7 +928,15 @@ classify_open_findings <- function(rows) {
     ord <- review_severity_ordinal(r[["output"]], r[["structured_output"]], .parsed = parsed)
     if (is.na(ord)) {
       unparse_n <- unparse_n + 1L
-      unclassified_n <- unclassified_n + 1L
+      # llm#1123 addendum 1: a human already triaged this review (acks.jsonl,
+      # keyed by reviews.id). It stays in unparse_n (the bucket sum is
+      # unchanged) but is reported apart from the still-unexplained residual.
+      rid <- rh_as_number(r[["review_id"]])
+      if (!is.na(rid) && rid %in% acked_ids) {
+        acked_unclassified_n <- acked_unclassified_n + 1L
+      } else {
+        unclassified_n <- unclassified_n + 1L
+      }
     } else if (ord > AUTOCLOSE_THRESHOLD_ORD) {
       above_n <- above_n + 1L
       sev_label <- names(SEVERITY_ORDINAL)[SEVERITY_ORDINAL == ord]
@@ -932,7 +951,8 @@ classify_open_findings <- function(rows) {
   list(
     above_n = above_n, above_rows = above_rows, unparse_n = unparse_n,
     not_reviewed_n = not_reviewed_n, passed_n = passed_n,
-    unclassified_n = unclassified_n, indeterminate_n = indeterminate_n
+    unclassified_n = unclassified_n, indeterminate_n = indeterminate_n,
+    acked_unclassified_n = acked_unclassified_n
   )
 }
 
@@ -979,9 +999,23 @@ new_passed_open_n            <- NA_integer_
 new_unclassified_open_n      <- NA_integer_
 new_indeterminate_open_n     <- NA_integer_
 
+# llm#1123 addendum 1: triage decisions already recorded by roborev_ack.sh.
+# A missing/unparseable file means "nothing acknowledged" -- said out loud
+# (acks_status marker + a note by the unclassified line), never a crash and
+# never a silent "0 acknowledged".
+acks <- rh_read_acks(ROBOREV_ACKS_JSONL)
+if (!identical(acks$status, "ok")) {
+  message("send_roborev_email.R: acks file status '", acks$status, "' (",
+          ROBOREV_ACKS_JSONL, "; ", acks$skipped,
+          " line(s) skipped) -- unacknowledged counts shown as-is")
+}
+total_acked_unclassified_open_n <- NA_integer_
+new_acked_unclassified_open_n   <- NA_integer_
+
 total_open_findings <- query_reviews_db(total_open_findings_sql)
 if (!is.null(total_open_findings)) {
-  cls_total <- classify_open_findings(total_open_findings)
+  cls_total <- classify_open_findings(total_open_findings, acks$ids)
+  total_acked_unclassified_open_n <- cls_total$acked_unclassified_n
   total_above_threshold_open_n <- cls_total$above_n
   total_unparseable_open_n     <- cls_total$unparse_n
   total_not_reviewed_open_n    <- cls_total$not_reviewed_n
@@ -995,7 +1029,8 @@ if (!is.null(total_open_findings)) {
 
 new_open_findings <- query_reviews_db(new_open_findings_sql)
 if (!is.null(new_open_findings)) {
-  cls_new <- classify_open_findings(new_open_findings)
+  cls_new <- classify_open_findings(new_open_findings, acks$ids)
+  new_acked_unclassified_open_n <- cls_new$acked_unclassified_n
   new_above_threshold_open_n <- cls_new$above_n
   new_above_threshold_rows   <- cls_new$above_rows
   new_unparseable_open_n     <- cls_new$unparse_n
@@ -1034,6 +1069,7 @@ AGENT_RATE_WINDOW_DAYS <- 7L
 per_agent_sql <- sprintf(
   paste(
     "SELECT rj.agent AS agent, rj.model AS model, rv.output AS output,",
+    "date(rv.created_at) AS day,",
     sprintf("%s AS structured_output", .reviews_structured_output_col()),
     "FROM reviews rv",
     "JOIN review_jobs rj ON rj.id = rv.job_id",
@@ -1060,14 +1096,24 @@ classify_by_agent <- function(rows) {
     if (is.null(model_val) || is.na(model_val) || !nzchar(model_val)) model_val <- "(unspecified)"
     key <- paste(agent_val, model_val, sep = "␟")
     if (is.null(agg[[key]])) {
-      agg[[key]] <- list(agent = agent_val, model = model_val, n = 0L, not_reviewed_n = 0L)
+      agg[[key]] <- list(agent = agent_val, model = model_val, n = 0L, not_reviewed_n = 0L,
+                         days = list())
     }
-    if (identical(classify_unparseable_finding(
+    is_nr <- identical(classify_unparseable_finding(
       review_output_text(r[["output"]], r[["structured_output"]])
-    ), "not_reviewed")) {
-      agg[[key]]$not_reviewed_n <- agg[[key]]$not_reviewed_n + 1L
-    }
+    ), "not_reviewed")
+    if (is_nr) agg[[key]]$not_reviewed_n <- agg[[key]]$not_reviewed_n + 1L
     agg[[key]]$n <- agg[[key]]$n + 1L
+    # llm#1044 item 3: per-UTC-day tally (rv.created_at is UTC), feeding the
+    # persisted daily quality history below.
+    day_val <- r[["day"]]
+    if (!is.null(day_val) && !is.na(day_val) && nzchar(day_val)) {
+      d <- agg[[key]]$days[[day_val]]
+      if (is.null(d)) d <- list(n = 0L, nr = 0L)
+      d$n <- d$n + 1L
+      if (is_nr) d$nr <- d$nr + 1L
+      agg[[key]]$days[[day_val]] <- d
+    }
   }
   agg
 }
@@ -1077,6 +1123,81 @@ if (is.null(agent_rate_agg)) {
   message("send_roborev_email.R: could not query reviews.db for per-agent review health — ",
           "rendering UNKNOWN rather than a false 0% (checks-must-distinguish-unknown)")
 }
+
+# ── llm#984 item 2: completed jobs over the effective job timeout ────────────
+# roborev's job_timeout_minutes (global config; per-repo .roborev.toml may
+# override) is not reliably enforced: job 13774 ran 59.2 min and finished
+# `done` under a 30-min limit. REPORT-ONLY: count completed (status='done')
+# jobs in the same 7d window whose started_at..finished_at span exceeds the
+# limit that applies to THEIR repo. Duration is computed by sqlite
+# (julianday), which honours the mixed `Z` / `+01:00` timestamp suffixes
+# roborev writes. Unreadable limit or duration -> "unknown", never 0
+# (checks-must-distinguish-unknown).
+timeout_jobs_sql <- sprintf(paste(
+  "SELECT rj.agent AS agent, rj.model AS model, rp.root_path AS root_path,",
+  "ROUND((julianday(rj.finished_at) - julianday(rj.started_at)) * 1440.0, 2) AS minutes",
+  "FROM review_jobs rj JOIN repos rp ON rp.id = rj.repo_id",
+  "WHERE rj.status = 'done' AND rj.started_at IS NOT NULL AND rj.finished_at IS NOT NULL",
+  "AND datetime(rj.finished_at) >= datetime('now', '-%d days');"
+), AGENT_RATE_WINDOW_DAYS)
+timeout_jobs_rows  <- query_reviews_db(timeout_jobs_sql)
+global_timeout_min <- rh_global_timeout_min(ROBOREV_CONFIG_TOML)
+over_timeout_agg   <- if (is.null(timeout_jobs_rows)) NULL else
+  rh_count_over_timeout(timeout_jobs_rows, global_timeout_min)
+if (is.null(timeout_jobs_rows)) {
+  message("send_roborev_email.R: could not query review_jobs durations -- over-timeout shown as unknown")
+}
+if (is.na(global_timeout_min)) {
+  message("send_roborev_email.R: global job_timeout_minutes unreadable in ",
+          ROBOREV_CONFIG_TOML, " -- over-timeout shown as unknown unless a repo override applies")
+}
+over_timeout_total <- if (is.null(over_timeout_agg)) "unknown" else {
+  tot_over <- sum(vapply(over_timeout_agg, function(x) x$over, 0L))
+  tot_unk  <- sum(vapply(over_timeout_agg, function(x) x$unknown, 0L))
+  if (tot_over == 0L && tot_unk > 0L) "unknown" else as.character(tot_over)
+}
+
+# ── llm#1044 item 3: persisted daily per-agent quality history + jump flag ───
+# Store: a small JSONL file owned by this script (see roborev_health_lib.R),
+# not unified.duckdb -- see the PR body. Rows for the 7d window are merged
+# over the existing file after every REAL send (never on dry-run), so the
+# history outlives roborev's own review retention/purge. The jump rule is
+# rh_quality_jump_flags(): yesterday (last complete UTC day) vs the prior day,
+# >= 10 points up, >= 5 reviews on both days, >= 2 not-reviewed yesterday.
+quality_history_path <- file.path(ROBOREV_HEALTH_STATE_DIR, "agent_quality_daily.jsonl")
+config_hash_path     <- file.path(ROBOREV_HEALTH_STATE_DIR, "reviewer_config.hash")
+today_utc <- as.Date(format(Sys.time(), "%Y-%m-%d", tz = "UTC"))
+htmlEscape_rr <- function(x) {
+  x <- gsub("&", "&amp;", as.character(x), fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  gsub(">", "&gt;", x, fixed = TRUE)
+}
+
+quality_new_rows <- list()
+if (!is.null(agent_rate_agg)) {
+  for (e in agent_rate_agg) {
+    for (dn in names(e$days)) {
+      quality_new_rows[[length(quality_new_rows) + 1L]] <- list(
+        date = dn, agent = e$agent, model = e$model,
+        reviews = e$days[[dn]]$n, not_reviewed = e$days[[dn]]$nr)
+    }
+  }
+}
+quality_hist <- rh_history_read(quality_history_path)
+if (!(quality_hist$status %in% c("ok", "missing"))) {
+  message("send_roborev_email.R: quality history ", quality_hist$status, " (",
+          quality_hist$skipped, " line(s) skipped) -- using the parseable rows only")
+}
+quality_rows  <- rh_history_merge(quality_hist$rows, quality_new_rows)
+quality_jump  <- rh_quality_jump_flags(quality_rows, today_utc)
+
+# ── llm#1044 item 2: reviewer-config fingerprint ─────────────────────────────
+config_repo_roots <- local({
+  r <- query_reviews_db("SELECT root_path FROM repos;")
+  if (is.null(r)) character(0) else vapply(r, function(x) as.character(x[["root_path"]]), "")
+})
+config_fp     <- rh_config_fingerprint(ROBOREV_CONFIG_TOML, config_repo_roots)
+config_change <- rh_config_change(config_fp, config_hash_path)
 
 # ── Extract window slices ──────────────────────────────────────────────────────
 
@@ -1327,11 +1448,24 @@ unparseable_block <- if (isTRUE(!is.na(total_unparseable_open_n) && total_unpars
   } else ""
 
   # Line 2 — the genuine data-quality residual.
+  # llm#1123 addendum 1: "(+M acknowledged)" = reviews a human already triaged
+  # via roborev_ack.sh; they no longer count as unclassified. A missing or
+  # unparseable acks file is stated, not silently treated as "0 acknowledged".
+  acked_suffix <- if (isTRUE(!is.na(total_acked_unclassified_open_n) &&
+                             total_acked_unclassified_open_n > 0L)) {
+    sprintf(" (+%s acknowledged)", fmt_int(total_acked_unclassified_open_n))
+  } else ""
+  acks_note <- if (identical(acks$status, "ok")) "" else if (identical(acks$status, "missing")) {
+    ' <span style="opacity:0.75;">[no acks file found &mdash; no triage decisions applied]</span>'
+  } else {
+    sprintf(' <span style="opacity:0.75;">[acks file %s &mdash; %d line(s) skipped; triage decisions may be under-applied]</span>',
+            acks$status, acks$skipped)
+  }
   unclassified_line <- sprintf(
-    '<strong>&#8505; Unclassified severity (data-quality):</strong> %s open.
+    '<strong>&#8505; Unclassified severity (data-quality):</strong> %s open%s.%s
      No <code>Severity:</code> marker and no known did-not-run signature — a
      signal about the parser/agent output format.<br>',
-    fmt_int(total_unclassified_open_n)
+    fmt_int(total_unclassified_open_n), acked_suffix, acks_note
   )
 
   # Line 2b — indeterminate rows (llm#1265 finding 4): BOTH output and
@@ -1793,8 +1927,9 @@ agent_rate_inner <- if (is.null(agent_rate_agg)) {
       <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Reviews</th>
       <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Not reviewed</th>
       <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Rate</th>
+      <th style="padding:5px; border:1px solid %s; color:white; text-align:right;">Over timeout</th>
     </tr>',
-    dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border
+    dark_row_alt, dark_border, dark_border, dark_border, dark_border, dark_border, dark_border
   )
   for (i in seq_along(agent_rate_ord)) {
     e <- agent_rate_agg[[agent_rate_ord[i]]]
@@ -1811,13 +1946,17 @@ agent_rate_inner <- if (is.null(agent_rate_agg)) {
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
         <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right; font-weight:bold;">%s</td>
+        <td style="padding:4px 5px; border:1px solid %s; color:%s; text-align:right;">%s</td>
       </tr>',
       bg,
       dark_border, dark_text, e$agent,
       dark_border, dark_muted, e$model,
       dark_border, dark_text, fmt_int(e$n),
       dark_border, dark_text, fmt_int(e$not_reviewed_n),
-      dark_border, rate_colour, fmt_rate(rate)
+      dark_border, rate_colour, fmt_rate(rate),
+      dark_border, dark_text,
+      rh_over_timeout_cell(over_timeout_agg[[rh_agent_key(e$agent, e$model)]],
+                           jobs_available = !is.null(over_timeout_agg))
     ))
   }
   paste0(agent_rate_table, "</table>")
@@ -1832,6 +1971,36 @@ agent_rate_summary <- if (is.null(agent_rate_agg)) {
           length(agent_rate_agg), AGENT_RATE_WINDOW_DAYS)
 }
 agent_rate_summary_colour <- if (is.null(agent_rate_agg)) accent_orange else accent_green
+
+# Prominent (outside the collapsed block) health alerts: reviewer-config change
+# (llm#1044 item 2) and day-over-day quality jumps (item 3). Report-only: the
+# eval harness is NEVER run from here.
+config_alert_html <- if (identical(config_change$status, "changed")) {
+  '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
+    border-radius:6px; padding:12px 16px; margin:12px 0;">
+    <strong>&#9888; Reviewer config changed &mdash; re-run roborev_eval_run.sh</strong><br>
+    The effective review agent/model config (review_agent, review_model,
+    default_agent and per-repo overrides) differs from the last health run.
+    The golden-set harness is not run automatically; a human runs it before
+    trusting the new reviewer.</div>'
+} else if (identical(config_change$status, "unknown")) {
+  sprintf('<p style="color:%s; font-size:12px;">Reviewer config fingerprint: unknown
+    (could not read %s) &mdash; change detection not applied today.</p>',
+    dark_muted, htmlEscape_rr(ROBOREV_CONFIG_TOML))
+} else ""
+quality_alert_html <- if (length(quality_jump$flags)) {
+  paste0(vapply(quality_jump$flags, function(f) sprintf(
+    '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
+      border-radius:6px; padding:12px 16px; margin:12px 0;">
+      <strong>&#9888; Reviewer quality jump: %s &middot; %s</strong><br>
+      Did-not-run rate %s on %s (%d of %d reviews) vs %s on %s (%d of %d):
+      +%.0f points day-over-day.</div>',
+    htmlEscape_rr(f$agent), htmlEscape_rr(f$model),
+    fmt_rate(f$last_rate), f$last_date, f$last_nr, f$last_n,
+    fmt_rate(f$prev_rate), f$prev_date, f$prev_nr, f$prev_n, f$delta_pts), ""),
+    collapse = "")
+} else ""
+health_alerts_html <- paste0(config_alert_html, quality_alert_html)
 
 agent_rate_html <- collapsible_block(
   "Per-Agent Review Health (7d) — llm#1044",
@@ -1860,7 +2029,7 @@ agent_rate_html <- collapsible_block(
 # the marker itself must never collapse those two into a shared value, per
 # checks-must-distinguish-unknown.
 qa_markers <- sprintf(
-  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_indeterminate_open_n=%s --><!-- QA:total_indeterminate_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d -->',
+  '<!-- QA:report_date=%s --><!-- QA:issues_found_closed=%d --><!-- QA:close_rate=%s --><!-- QA:dashboard_url=%s --><!-- QA:d1_n_reviews=%d --><!-- QA:d7_n_reviews=%d --><!-- QA:d1_other_n=%d --><!-- QA:zero_action_trap_fired=%s --><!-- QA:new_above_threshold_open_n=%s --><!-- QA:total_above_threshold_open_n=%s --><!-- QA:new_unparseable_open_n=%s --><!-- QA:total_unparseable_open_n=%s --><!-- QA:new_not_reviewed_open_n=%s --><!-- QA:total_not_reviewed_open_n=%s --><!-- QA:new_passed_open_n=%s --><!-- QA:total_passed_open_n=%s --><!-- QA:new_unclassified_open_n=%s --><!-- QA:total_unclassified_open_n=%s --><!-- QA:new_indeterminate_open_n=%s --><!-- QA:total_indeterminate_open_n=%s --><!-- QA:new_window_hours=%d --><!-- QA:lagged_close_rate_window=%d-%dd --><!-- QA:agent_rate_available=%s --><!-- QA:agent_rate_window_days=%d --><!-- QA:agent_rate_n_combos=%d --><!-- QA:over_timeout_total=%s --><!-- QA:quality_jump_n=%d --><!-- QA:quality_judged_n=%d --><!-- QA:reviewer_config_status=%s --><!-- QA:acks_status=%s --><!-- QA:new_acked_unclassified_open_n=%s --><!-- QA:total_acked_unclassified_open_n=%s -->',
   report_date, issues_found_closed, fmt_rate(close_rate), effective_dashboard_url(),
   d1_n_reviews, d7_n_reviews, d1_other_n, tolower(as.character(above_threshold_fired)),
   if (is.na(new_above_threshold_open_n)) "NA" else as.character(new_above_threshold_open_n),
@@ -1879,7 +2048,13 @@ qa_markers <- sprintf(
   LAGGED_WINDOW_MIN_DAYS, LAGGED_WINDOW_MAX_DAYS,
   tolower(as.character(!is.null(agent_rate_agg))),
   AGENT_RATE_WINDOW_DAYS,
-  if (is.null(agent_rate_agg)) 0L else length(agent_rate_agg)
+  if (is.null(agent_rate_agg)) 0L else length(agent_rate_agg),
+  over_timeout_total,
+  length(quality_jump$flags), quality_jump$judged_n,
+  config_change$status,
+  acks$status,
+  if (is.na(new_acked_unclassified_open_n)) "NA" else as.character(new_acked_unclassified_open_n),
+  if (is.na(total_acked_unclassified_open_n)) "NA" else as.character(total_acked_unclassified_open_n)
 )
 
 # Assemble full body
@@ -1891,6 +2066,7 @@ email_body <- sprintf(
 <p style="color:%s; font-size:%s; margin-top:0;">
   Generated: %s UTC &nbsp;|&nbsp; Lineage: %s
 </p>
+%s
 %s
 %s
 %s
@@ -1914,6 +2090,7 @@ email_body <- sprintf(
   outlier_ttc_html,
   outlier_att_html,
   severity_html,
+  health_alerts_html,
   agent_rate_html,
   dark_muted, EMAIL_FONT_FOOTER, json_path,
   qa_markers
@@ -1973,6 +2150,15 @@ tryCatch({
     credentials = smtp_creds
   )
   message(sprintf("send_roborev_email.R: email sent to %s", report_to))
+  # Persist health state only after a real, successful send (never on
+  # dry-run, never when the mail was not delivered): a preview or a failed
+  # send must not consume the "config changed" / jump signal it showed.
+  if (!isTRUE(rh_history_write(quality_history_path, quality_rows))) {
+    message("send_roborev_email.R: WARNING could not write ", quality_history_path)
+  }
+  if (identical(config_fp$status, "ok") && !isTRUE(rh_config_record(config_fp, config_hash_path))) {
+    message("send_roborev_email.R: WARNING could not write ", config_hash_path)
+  }
 }, error = function(e) {
   message("send_roborev_email.R: SMTP send failed — ", conditionMessage(e))
   cat("\n--- Email body (SMTP failed) ---\n")
