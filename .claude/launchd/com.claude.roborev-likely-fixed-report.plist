@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.claude.roborev-likely-fixed-report.plist  (llm#1274 option C)
+
+     Weekly REPORT-ONLY "likely fixed" report: runs roborev_revalidate.R in
+     dry-run mode per repo with open reviews and writes counts + job ids to
+     ~/.claude/logs/roborev_revalidate/likely_fixed_<date>.md. It can never
+     close a review: bin/roborev_likely_fixed_report.sh takes no arguments and
+     refuses the apply flag (tests/test_roborev_likely_fixed_report.sh).
+
+     Schedule: Sunday 08:30 local. Weekly, not daily, because a finding only
+     becomes "fixed" as merges land, so a daily run would repeat the same list;
+     weekly also matches the cadence of the auto-merge audit. The daily roborev
+     email shows a one-line summary and says "STALE" once the report is older
+     than 8 days, so a missed run is visible rather than silent. 08:30 sits
+     before launchd-health-weekly (09:00) and roborev-weekly-rollup-email
+     (09:15) so the reviews.db reads do not overlap.
+
+     NOT LOADED by this repository. Loading is a manual owner step:
+
+       cp /Users/johngavin/docs_gh/llm/.claude/launchd/com.claude.roborev-likely-fixed-report.plist \
+          ~/Library/LaunchAgents/com.claude.roborev-likely-fixed-report.plist
+       launchctl load -w ~/Library/LaunchAgents/com.claude.roborev-likely-fixed-report.plist
+
+     Uninstall:
+       launchctl unload ~/Library/LaunchAgents/com.claude.roborev-likely-fixed-report.plist
+       rm ~/Library/LaunchAgents/com.claude.roborev-likely-fixed-report.plist
+
+     Manual run (read-only, safe):
+       bash /Users/johngavin/docs_gh/llm/bin/roborev_likely_fixed_report.sh -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.roborev-likely-fixed-report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/roborev-likely-fixed-report</string>
+    </array>
+
+    <!-- Sunday (Weekday 0) 08:30 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- Do NOT run immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- nix-shell on PATH (the wrapper runs Rscript through it). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/johngavin/.local/bin:/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/johngavin/.nix-profile/bin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+        <key>NIX_SSL_CERT_FILE</key>
+        <string>/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt</string>
+    </dict>
+
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_likely_fixed_report.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/roborev_likely_fixed_report.err</string>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
