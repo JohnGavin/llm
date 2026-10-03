@@ -106,6 +106,11 @@ run_email_dry_run <- function(fixture, extra_env = character(0)) {
     "GMAIL_USERNAME=",
     "GMAIL_APP_PASSWORD=",
     "REPORT_RECIPIENT=",
+    # Hermetic defaults for the llm#984/#1044/#1123 health inputs: a test must
+    # never read the live ~/.roborev config/acks or write the live state dir.
+    paste0("ROBOREV_CONFIG_TOML=", file.path(dir, "no_such_config.toml")),
+    paste0("ROBOREV_ACKS_JSONL=", file.path(dir, "no_such_acks.jsonl")),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", file.path(dir, "health_state")),
     extra_env
   )
 
@@ -456,7 +461,13 @@ test_that("known public repo is hyperlinked; unresolvable slug stays plain text"
 #     (closed can be either value; verdict_bool is fixed at 1 so these never
 #     leak into the open-findings counts above)
 #     each: list(age_hours=<numeric>, closed=<0L|1L>)
-make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offset = 0L) {
+#   findings[[i]]$duration_min / $status: optional (llm#984 item 2) -- the
+#     job's started_at..finished_at span and review_jobs.status; default is a
+#     'done' job of 1 minute so pre-existing callers are unaffected.
+#   repo_root: repos.root_path of the single fixture repo (where a per-repo
+#     .roborev.toml override is looked up).
+make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offset = 0L,
+                                    repo_root = "") {
   skip_if_not_installed("duckdb")
   dir <- tempfile("roborev_db_fixture_")
   dir.create(dir, recursive = TRUE)
@@ -479,13 +490,13 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
   )
   DBI::dbExecute(con, sprintf("ATTACH '%s' AS fix (TYPE sqlite)", db_path))
 
-  DBI::dbExecute(con, "CREATE TABLE fix.repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+  DBI::dbExecute(con, "CREATE TABLE fix.repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL, root_path TEXT)")
   # agent/model: added for the llm#1044 per-agent review-health block — a
   # default of 'codex'/NULL mirrors the live schema's
   # review_jobs.agent NOT NULL DEFAULT 'codex' (model has no default there
   # either) so every EXISTING caller of this fixture (which never passes
   # agent/model) keeps constructing the same rows it always did.
-  DBI::dbExecute(con, "CREATE TABLE fix.review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER, agent TEXT DEFAULT 'codex', model TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE fix.review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER, agent TEXT DEFAULT 'codex', model TEXT, status TEXT DEFAULT 'done', started_at TEXT, finished_at TEXT)")
   DBI::dbExecute(con, "
     CREATE TABLE fix.reviews (
       id INTEGER PRIMARY KEY,
@@ -497,7 +508,7 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
       verdict_bool INTEGER
     )
   ")
-  DBI::dbExecute(con, "INSERT INTO fix.repos VALUES (1, 'llm')")
+  DBI::dbExecute(con, sprintf("INSERT INTO fix.repos (id, name, root_path) VALUES (1, 'llm', '%s')", repo_root))
 
   now <- as.POSIXct(format(Sys.time(), tz = "UTC"), tz = "UTC")
   row_id <- 0L
@@ -506,12 +517,15 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
   # constructing exactly what it always did with output-only rows).
   insert_row <- function(output, age_hours, closed, verdict_bool,
                           agent = "codex", model = NA_character_,
-                          structured_output = NA_character_) {
+                          structured_output = NA_character_,
+                          duration_min = 1, status = "done") {
     row_id <<- row_id + 1L
     model_sql <- if (is.na(model)) "NULL" else sprintf("'%s'", gsub("'", "''", model, fixed = TRUE))
     DBI::dbExecute(con, sprintf(
-      "INSERT INTO fix.review_jobs (id, repo_id, agent, model) VALUES (%d, 1, '%s', %s)",
-      row_id + job_offset, gsub("'", "''", agent, fixed = TRUE), model_sql
+      "INSERT INTO fix.review_jobs (id, repo_id, agent, model, status, started_at, finished_at) VALUES (%d, 1, '%s', %s, '%s', '%s', '%s')",
+      row_id + job_offset, gsub("'", "''", agent, fixed = TRUE), model_sql, status,
+      format(now - age_hours * 3600 - duration_min * 60, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+      format(now - age_hours * 3600, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
     ))
     ts <- format(now - age_hours * 3600, "%Y-%m-%d %H:%M:%S", tz = "UTC")
     output_escaped <- gsub("'", "''", output, fixed = TRUE)
@@ -529,7 +543,9 @@ make_reviews_db_fixture <- function(findings = list(), lagged = list(), job_offs
     insert_row(f$output, f$age_hours, 0L, 0L,
                agent = if (is.null(f$agent)) "codex" else f$agent,
                model = if (is.null(f$model)) NA_character_ else f$model,
-               structured_output = if (is.null(f$structured_output)) NA_character_ else f$structured_output)
+               structured_output = if (is.null(f$structured_output)) NA_character_ else f$structured_output,
+               duration_min = if (is.null(f$duration_min)) 1 else f$duration_min,
+               status = if (is.null(f$status)) "done" else f$status)
   }
   for (l in lagged)   insert_row("", l$age_hours, l$closed, 1L)
 
@@ -1539,4 +1555,265 @@ test_that("llm#1044: zero completed reviews in the 7d window renders a distingui
   expect_true(grepl("no completed reviews in the last 7 days", combined, fixed = TRUE))
   expect_false(grepl("Could not query reviews.db", combined, fixed = TRUE),
     info = "an empty result must not be reported as a query failure")
+})
+
+
+# ── Tests: llm#984 item 2 / llm#1044 items 2+3 / llm#1123 addendum 1 ─────────
+#
+# Report-only health additions to the per-agent block:
+#   (a) completed jobs that ran longer than the effective job_timeout_minutes
+#   (b) a daily per-agent quality history + day-over-day jump flag
+#   (c) a reviewer-config fingerprint with a "re-run roborev_eval_run.sh" line
+#   (d) acknowledged unclassified findings counted separately
+# Every input is injected through an env seam (ROBOREV_CONFIG_TOML,
+# ROBOREV_ACKS_JSONL, ROBOREV_HEALTH_STATE_DIR, ROBOREV_DB); run_email_dry_run()
+# defaults all of them to nonexistent temp paths so nothing live is read.
+
+health_lib_path <- function() {
+  p <- system.file("scripts/roborev_health_lib.R", package = "llm", mustWork = FALSE)
+  if (!nzchar(p) || !file.exists(p)) {
+    p <- normalizePath(
+      file.path(dirname(dirname(testthat::test_path())),
+                ".claude", "scripts", "roborev_health_lib.R"),
+      mustWork = FALSE)
+  }
+  p
+}
+
+write_toml <- function(lines) {
+  f <- tempfile("roborev_cfg_", fileext = ".toml")
+  writeLines(lines, f)
+  f
+}
+
+utc_day <- function(offset_days = 0) {
+  format(Sys.time() + offset_days * 86400, "%Y-%m-%d", tz = "UTC")
+}
+
+write_history <- function(rows) {
+  d <- tempfile("health_state_")
+  dir.create(d, recursive = TRUE)
+  lines <- vapply(rows, function(r) {
+    sprintf('{"date":"%s","agent":"%s","model":"%s","reviews":%d,"not_reviewed":%d}',
+            r[[1]], r[[2]], r[[3]], r[[4]], r[[5]])
+  }, "")
+  writeLines(lines, file.path(d, "agent_quality_daily.jsonl"))
+  d
+}
+
+# -- (a) over-timeout ---------------------------------------------------------
+
+test_that("llm#984: a 59-min completed job under a 30-min limit is counted; a 10-min job is not", {
+  skip_if_not_installed("blastula")
+  cfg <- write_toml(c("job_timeout_minutes = 30"))
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 2, agent = "claude-code",
+         model = "sonnet", duration_min = 59.2),
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 3, agent = "claude-code",
+         model = "sonnet", duration_min = 10),
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 4, agent = "claude-code",
+         model = "sonnet", duration_min = 10)
+  ))
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", db_path), paste0("ROBOREV_CONFIG_TOML=", cfg))), collapse = "\n")
+  expect_true(grepl("QA:over_timeout_total=1", combined, fixed = TRUE),
+    info = "exactly the 59.2-min job exceeds the 30-min limit")
+  expect_true(grepl("Over timeout", combined, fixed = TRUE))
+  expect_true(grepl(">1<", combined, fixed = TRUE), info = "per-agent cell shows 1")
+})
+
+test_that("llm#984: only 10-min jobs -> over_timeout_total=0 (not unknown)", {
+  skip_if_not_installed("blastula")
+  cfg <- write_toml(c("job_timeout_minutes = 30"))
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 2, duration_min = 10)))
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", db_path), paste0("ROBOREV_CONFIG_TOML=", cfg))), collapse = "\n")
+  expect_true(grepl("QA:over_timeout_total=0", combined, fixed = TRUE))
+})
+
+test_that("llm#984: unreadable timeout config renders 'unknown', never 0", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 2, duration_min = 59)))
+  # default ROBOREV_CONFIG_TOML points at a nonexistent file
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(),
+    extra_env = paste0("ROBOREV_DB=", db_path)), collapse = "\n")
+  expect_true(grepl("QA:over_timeout_total=unknown", combined, fixed = TRUE))
+  expect_false(grepl("QA:over_timeout_total=0", combined, fixed = TRUE))
+})
+
+test_that("llm#984: a per-repo job_timeout_minutes override replaces the global limit", {
+  skip_if_not_installed("blastula")
+  root <- tempfile("repo_root_"); dir.create(root)
+  writeLines("job_timeout_minutes = 90", file.path(root, ".roborev.toml"))
+  cfg <- write_toml(c("job_timeout_minutes = 30"))
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = PASSED_THRESHOLD_MET_OUTPUT, age_hours = 2, duration_min = 59.2)),
+    repo_root = root)
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", db_path), paste0("ROBOREV_CONFIG_TOML=", cfg))), collapse = "\n")
+  expect_true(grepl("QA:over_timeout_total=0", combined, fixed = TRUE),
+    info = "59.2 min is under the repo's 90-min override")
+})
+
+# -- (b) daily quality history + jump flag -----------------------------------
+
+test_that("llm#1044: stable week -> no jump flag", {
+  skip_if_not_installed("blastula")
+  state <- write_history(lapply(1:6, function(i)
+    list(utc_day(-i), "gemini", "flash", 10L, 1L)))
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", state))), collapse = "\n")
+  expect_true(grepl("QA:quality_jump_n=0", combined, fixed = TRUE))
+  expect_false(grepl("quality jump", combined, ignore.case = TRUE))
+})
+
+test_that("llm#1044: a +30-point day-over-day jump on >=5 reviews is flagged", {
+  skip_if_not_installed("blastula")
+  state <- write_history(list(
+    list(utc_day(-2), "gemini", "flash", 10L, 0L),
+    list(utc_day(-1), "gemini", "flash", 10L, 3L)))
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", state))), collapse = "\n")
+  expect_true(grepl("QA:quality_jump_n=1", combined, fixed = TRUE))
+  expect_true(grepl("quality jump", combined, ignore.case = TRUE))
+  expect_true(grepl("gemini", combined, fixed = TRUE))
+})
+
+test_that("llm#1044: too few reviews that day -> not judged, no false alarm", {
+  skip_if_not_installed("blastula")
+  state <- write_history(list(
+    list(utc_day(-2), "gemini", "flash", 10L, 0L),
+    list(utc_day(-1), "gemini", "flash", 3L, 3L)))   # 100% but only 3 reviews
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", state))), collapse = "\n")
+  expect_true(grepl("QA:quality_jump_n=0", combined, fixed = TRUE))
+  expect_false(grepl("quality jump", combined, ignore.case = TRUE))
+})
+
+test_that("llm#1044: a rise under the 10-point threshold is not flagged", {
+  skip_if_not_installed("blastula")
+  state <- write_history(list(
+    list(utc_day(-2), "gemini", "flash", 20L, 2L),    # 10%
+    list(utc_day(-1), "gemini", "flash", 20L, 4L)))   # 20% -> +10 is the threshold
+  state2 <- write_history(list(
+    list(utc_day(-2), "gemini", "flash", 40L, 4L),    # 10%
+    list(utc_day(-1), "gemini", "flash", 40L, 7L)))   # 17.5% -> +7.5, below threshold
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", state2))), collapse = "\n")
+  expect_true(grepl("QA:quality_jump_n=0", combined, fixed = TRUE))
+  # exactly at the threshold (+10 points) IS flagged (>=)
+  combined2 <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", state))), collapse = "\n")
+  expect_true(grepl("QA:quality_jump_n=1", combined2, fixed = TRUE))
+})
+
+test_that("llm#1044: unparseable history lines are skipped with a note, never a crash", {
+  skip_if_not_installed("blastula")
+  d <- tempfile("health_state_"); dir.create(d)
+  writeLines(c("not json at all", "{broken"), file.path(d, "agent_quality_daily.jsonl"))
+  out <- run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", d)))
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("QA:quality_jump_n=0", combined, fixed = TRUE))
+  expect_true(grepl("dry-run complete", combined, fixed = TRUE))
+})
+
+# -- (c) reviewer-config fingerprint ------------------------------------------
+
+test_that("llm#1044: reviewer-config hash change -> prominent re-run line; no change -> none; unreadable -> unknown", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("jsonlite")
+  lib <- health_lib_path()
+  expect_true(file.exists(lib))
+  e <- new.env(); sys.source(lib, envir = e)
+
+  cfg <- write_toml(c("default_agent = 'claude-code'", "review_agent = 'claude-code'",
+                      "review_model = ''", "job_timeout_minutes = 30"))
+  fp <- e$rh_config_fingerprint(cfg)
+  expect_identical(fp$status, "ok")
+
+  state_same <- tempfile("health_state_"); dir.create(state_same)
+  writeLines(fp$hash, file.path(state_same, "reviewer_config.hash"))
+  state_diff <- tempfile("health_state_"); dir.create(state_diff)
+  writeLines("0000deadbeef", file.path(state_diff, "reviewer_config.hash"))
+
+  db <- paste0("ROBOREV_DB=", make_reviews_db_fixture())
+  run <- function(state, cfg_path) paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    db, paste0("ROBOREV_CONFIG_TOML=", cfg_path), paste0("ROBOREV_HEALTH_STATE_DIR=", state))),
+    collapse = "\n")
+
+  changed <- run(state_diff, cfg)
+  expect_true(grepl("QA:reviewer_config_status=changed", changed, fixed = TRUE))
+  expect_true(grepl("roborev_eval_run.sh", changed, fixed = TRUE))
+  expect_true(grepl("reviewer config changed", changed, ignore.case = TRUE))
+
+  same <- run(state_same, cfg)
+  expect_true(grepl("QA:reviewer_config_status=same", same, fixed = TRUE))
+  expect_false(grepl("roborev_eval_run.sh", same, fixed = TRUE))
+
+  unknown <- run(state_diff, file.path(tempdir(), "definitely_missing.toml"))
+  expect_true(grepl("QA:reviewer_config_status=unknown", unknown, fixed = TRUE))
+  expect_false(grepl("roborev_eval_run.sh", unknown, fixed = TRUE),
+    info = "an unreadable config must not be reported as a change")
+})
+
+test_that("llm#1044: changing only a non-reviewer key (job_timeout_minutes) does not change the fingerprint", {
+  skip_if_not_installed("jsonlite")
+  e <- new.env(); sys.source(health_lib_path(), envir = e)
+  a <- e$rh_config_fingerprint(write_toml(c("review_agent = 'x'", "job_timeout_minutes = 30")))
+  b <- e$rh_config_fingerprint(write_toml(c("review_agent = 'x'", "job_timeout_minutes = 45")))
+  c <- e$rh_config_fingerprint(write_toml(c("review_agent = 'y'", "job_timeout_minutes = 30")))
+  expect_identical(a$hash, b$hash)
+  expect_false(identical(a$hash, c$hash))
+})
+
+# -- (d) acknowledged triage ---------------------------------------------------
+
+test_that("llm#1123: acknowledged unclassified reviews are counted separately", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1),   # reviews.id 1
+    list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1),   # reviews.id 2
+    list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1)))  # reviews.id 3
+  acks <- tempfile("acks_", fileext = ".jsonl")
+  writeLines(c('{"id":1,"reason":"false positive","acked_at":"2026-09-01T00:00:00"}',
+               '{"id":2,"reason":"wontfix"}'), acks)
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", db_path), paste0("ROBOREV_ACKS_JSONL=", acks))), collapse = "\n")
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_acked_unclassified_open_n=2", combined, fixed = TRUE))
+  expect_true(grepl("(+2 acknowledged)", combined, fixed = TRUE))
+})
+
+test_that("llm#1123: missing acks file -> nothing acknowledged, with a note, no crash", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1)))
+  combined <- paste(run_email_dry_run(make_synthetic_snapshot(),
+    extra_env = paste0("ROBOREV_DB=", db_path)), collapse = "\n")
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
+  expect_true(grepl("QA:total_acked_unclassified_open_n=0", combined, fixed = TRUE))
+  expect_true(grepl("QA:acks_status=missing", combined, fixed = TRUE))
+})
+
+test_that("llm#1123: unparseable acks file -> treated as none, with a note, no crash", {
+  skip_if_not_installed("blastula")
+  db_path <- make_reviews_db_fixture(findings = list(
+    list(output = UNCLASSIFIED_PROSE_OUTPUT, age_hours = 1)))
+  acks <- tempfile("acks_", fileext = ".jsonl")
+  writeLines(c("this is not json", "{also broken"), acks)
+  out <- run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", db_path), paste0("ROBOREV_ACKS_JSONL=", acks)))
+  combined <- paste(out, collapse = "\n")
+  expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
+  expect_true(grepl("QA:acks_status=unparseable", combined, fixed = TRUE))
+  expect_true(grepl("dry-run complete", combined, fixed = TRUE))
 })
