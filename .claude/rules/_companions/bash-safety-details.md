@@ -51,3 +51,55 @@ No follow-up fix is needed in this repo today. Flagging this section so a
 **future** script that adds a new `git diff \| grep`-style content scan
 carries `--no-ext-diff` from the start, rather than being discovered only
 when a review silently passes something it should have caught.
+
+
+## Moved from the `bash-safety` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Part 1 'Why'
+
+### Why
+
+Eliminates all confirmation prompts (no `&&` means no compound-command guards fire), gives an explicit audit trail (each tool call shows exactly one operation), prevents cwd leakage (`cd` in one call would otherwise affect subsequent calls), and isolates failures (command A failing can't let command B run silently in the wrong state).
+
+
+### Forbidden Deletion Patterns (code block)
+
+### Forbidden Deletion Patterns
+
+```bash
+# WRONG: Delete without checking
+rm -rf .claude/worktrees/
+
+# WRONG: Assume untracked = safe to delete
+git clean -fd
+
+# RIGHT: Check, report, ask
+du -sh .claude/worktrees/
+find .claude/worktrees/ -maxdepth 2 -type f | head -20
+# Then ask user
+```
+
+
+### Part 3: verbose external-differ explanation
+
+If `diff.external` (or the `GIT_EXTERNAL_DIFF` env var) is set — e.g. `git config diff.external difft` for [difftastic](https://github.com/Wilfred/difftastic) — every command that goes through git's diff machinery (`git diff`, `git log -p`, `git show <commit>`, `git diff-tree -p`) renders its output through that external tool instead of the standard unified format. A structural differ's output does not use `+`/`-` line prefixes, so any script piping diff output into a `grep '^+'`-style content scan (PII scrubbing, a secret scan, a code-review grep) returns **zero matches regardless of actual content** — no error, no warning, a clean bill of health that means nothing. Verified live reproduction on this machine: companion doc.
+
+### Part 3: 2026-08-29 audit paragraph
+
+A 2026-08-29 audit (llm#997) of every content-parsing `git diff`/`git log -p`/`git show` call site in `.claude/hooks/**` and `.claude/scripts/**` found all of them already guarded (`repo_visibility_guard.sh`, `branch_gc.sh`, `private_data_scan.sh`, and three name-only scanners) — no follow-up fix needed today. Full audit table: companion doc. Flagging this section so a **future** script that adds a new content scan carries `--no-ext-diff` from the start.
+
+
+## Moved from the `bash-safety` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Part 1 status block (full)
+
+> **Status: ENFORCED (block mode)**
+> `COMPOUND_GUARD_MODE=block` is active in `settings.json`. Any Bash call
+> containing `&&`, `||`, `;` (outside a subshell), or `|` between independent
+> commands is rejected by the pre-tool hook with a retry message. The command
+> never reaches the shell. Fix the call and retry — do not attempt to work
+> around the guard.

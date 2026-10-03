@@ -4,7 +4,7 @@ Companion to `AGENTS.md`. Holds only the categorised rule index; the mandatory-r
 
 | Group | Rules |
 |---|---|
-| **Core** | `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `pivot-signal`, `cross-cutting-rename`, `branch-harvest-on-fork`, `branch-salvage-workflow`, `pr-shipping-discipline`, `skills-vs-mcp`, `press-release-first`, `human-in-the-loop-decision-points`, `cross-project-scope`, `worktree-location`, `quadratic-loop-cost`, `rule-scoping-guard` |
+| **Core** | `auto-delegation`, `architecture-planning`, `orchestrator-protocol`, `systematic-debugging`, `verification-before-completion`, `cross-cutting-rename`, `branch-harvest-on-fork`, `branch-salvage-workflow`, `pr-shipping-discipline`, `skills-vs-mcp`, `press-release-first`, `human-in-the-loop-decision-points`, `cross-project-scope`, `worktree-location`, `quadratic-loop-cost`, `rule-scoping-guard` |
 | **Nix** | `nix-agent-shell-protocol`, `nix-nested-shell-isolation` |
 | **MCP** | `btw-timeouts` |
 | **Bash** | `bash-safety` |
