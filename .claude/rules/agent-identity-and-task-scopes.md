@@ -86,12 +86,7 @@ TASK SCOPE (dispatch_id=<uuid>, expires=<ISO-8601 timestamp>):
 
 ### Symlink-trapped paths
 
-See the companion doc for why `~/.claude/scripts/` and `~/.claude/hooks/` are
-symlink-trapped (the Pattern 2 failure from llm#517).
-
-The scope block MUST list `~/.claude/` as forbidden in `forbidden-external-ops`.
-The `PreToolUse:Edit|Write` hook (future: llm#517) will resolve symlinks before
-the boundary check.
+The scope block MUST list `~/.claude/` as forbidden in `forbidden-external-ops` (`~/.claude/scripts/` and `~/.claude/hooks/` are symlink-trapped, llm#517 Pattern 2; companion doc). The `PreToolUse:Edit|Write` hook (future: llm#517) will resolve symlinks before the boundary check.
 
 ## Expiring Permissions
 
@@ -100,20 +95,11 @@ the boundary check.
 | 0–TTL | All scope block operations | Anything outside scope |
 | After TTL | Nothing new | All new operations |
 
-The TTL is advisory in Phase 1 — the orchestrator checks expiry after the agent
-returns. In Phase 2, hooks will check `CLAUDE_DISPATCH_EXPIRES_AT` (ISO
-timestamp) before allowing each Bash call and reject calls after expiry.
-
-See the companion doc for the "Environment variables for hooks (Phase 2)" list.
+The TTL is advisory in Phase 1 (the orchestrator checks expiry after the agent returns); Phase 2 hooks will check `CLAUDE_DISPATCH_EXPIRES_AT` before each Bash call. Env-var list: companion doc.
 
 ## Audit Trail
 
-The orchestrator can reconstruct a full audit of any dispatch. See the companion
-doc for the worked `git log --grep="Dispatch-Id: ..."` audit commands.
-
-The post-verify state file (`agent-post-verify.sh capture/check`) is written
-with the dispatch ID in its path, making dispatch-to-outcome reconciliation
-unambiguous.
+The orchestrator reconstructs a dispatch audit via `git log --grep="Dispatch-Id: ..."` and the post-verify state file (`agent-post-verify.sh capture/check`, dispatch ID in its path). Worked commands: companion doc.
 
 ## Forbidden Patterns
 
@@ -129,16 +115,9 @@ unambiguous.
 
 ## Worked Example & Phase Roadmap
 
-See [`_companions/agent-identity-details.md`](_companions/agent-identity-details.md)
-for the full dispatch worked example (mint → dispatch → post-verify → audit) and
-the phase roadmap. The normative protocol above is complete without it.
+See [`_companions/agent-identity-details.md`](_companions/agent-identity-details.md). The normative protocol above is complete without it.
 
 ## Related
 
-- [`auto-delegation`](.claude/rules/auto-delegation.md) — dispatch model; Mandatory Prefixes 1 + 2; this rule adds Prefix 3 (scope block)
-- [`agent-no-push-to-main`](.claude/rules/agent-no-push-to-main.md) — Guard A + Guard B; Phase 2 will add Guard C (scope + expiry)
-- [`permission-discipline`](.claude/rules/permission-discipline.md) — workspace-based policy; gains identity dimension in Phase 2
-- [`auto-delegation-dispatch-details`](.claude/rules/_companions/auto-delegation-dispatch-details.md) — verbatim prefixes; scope block is Prefix 3
-- `unified-observability-schema` (#475) — the dispatch audit log feeds into the unified schema
-- llm#476 — origin issue (Salesforce Principle 4: Build with trust)
-- llm#517 — two concrete failure modes this rule addresses (AGENT_PUSH_OK misuse + symlink breach)
+- `auto-delegation` (+ `auto-delegation-dispatch-details`: verbatim prefixes; the scope block is Prefix 3); `agent-no-push-to-main` (Guard A/B; Phase 2 adds Guard C); `permission-discipline`; `unified-observability-schema` (#475).
+- llm#476 — origin issue (Salesforce Principle 4: Build with trust); llm#517 — the two failure modes addressed (AGENT_PUSH_OK misuse + symlink breach).

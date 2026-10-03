@@ -14,12 +14,7 @@ Every Bash tool call, without exception.
 
 ## Part 1: No Compound Commands (Universal `&&` Ban)
 
-> **Status: ENFORCED (block mode)**
-> `COMPOUND_GUARD_MODE=block` is active in `settings.json`. Any Bash call
-> containing `&&`, `||`, `;` (outside a subshell), or `|` between independent
-> commands is rejected by the pre-tool hook with a retry message. The command
-> never reaches the shell. Fix the call and retry — do not attempt to work
-> around the guard.
+> **Status: ENFORCED (block mode).** `COMPOUND_GUARD_MODE=block`: any Bash call containing `&&`, `||`, `;` (outside a subshell), or `|` between independent commands is rejected before reaching the shell. Fix the call and retry — do not work around the guard.
 
 ### Agent Dispatch Template
 
@@ -31,7 +26,7 @@ Compound commands with `&&` trigger confirmation prompts that interrupt workflow
 
 ### Why
 
-Eliminates all confirmation prompts (no `&&` means no compound-command guards fire), gives an explicit audit trail (each tool call shows exactly one operation), prevents cwd leakage (`cd` in one call would otherwise affect subsequent calls), and isolates failures (command A failing can't let command B run silently in the wrong state).
+No compound-command confirmation prompts, an explicit audit trail (one operation per call), no cwd leakage, and isolated failures. Full rationale: companion doc.
 
 ### Substitution Patterns
 
@@ -101,18 +96,7 @@ Untracked files may be: WIP from a prior session, generated outputs not yet comm
 
 ### Forbidden Deletion Patterns
 
-```bash
-# WRONG: Delete without checking
-rm -rf .claude/worktrees/
-
-# WRONG: Assume untracked = safe to delete
-git clean -fd
-
-# RIGHT: Check, report, ask
-du -sh .claude/worktrees/
-find .claude/worktrees/ -maxdepth 2 -type f | head -20
-# Then ask user
-```
+Never `rm -rf .claude/worktrees/` or `git clean -fd` unchecked: run `du -sh`, list contents, then ask. Code block: companion doc.
 
 ---
 
@@ -120,7 +104,7 @@ find .claude/worktrees/ -maxdepth 2 -type f | head -20
 
 ### CRITICAL: `git diff | grep '^+'` Silently Sees Nothing When an External Diff Tool Is Configured
 
-If `diff.external` (or the `GIT_EXTERNAL_DIFF` env var) is set — e.g. `git config diff.external difft` for [difftastic](https://github.com/Wilfred/difftastic) — every command that goes through git's diff machinery (`git diff`, `git log -p`, `git show <commit>`, `git diff-tree -p`) renders its output through that external tool instead of the standard unified format. A structural differ's output does not use `+`/`-` line prefixes, so any script piping diff output into a `grep '^+'`-style content scan (PII scrubbing, a secret scan, a code-review grep) returns **zero matches regardless of actual content** — no error, no warning, a clean bill of health that means nothing. Verified live reproduction on this machine: companion doc.
+If `diff.external` (or `GIT_EXTERNAL_DIFF`) is set (e.g. difftastic), `git diff`, `git log -p`, `git show` and `git diff-tree -p` render through the external tool, not unified `+`/`-` format, so any script piping diff output into a `grep '^+'`-style content scan (PII, secret, code-review grep) returns **zero matches regardless of actual content** — no error, a clean bill of health that means nothing. Verified reproduction: companion doc.
 
 ### The Fix: `--no-ext-diff`, Not an Env-Var Override
 
@@ -135,7 +119,7 @@ git log --all -p --no-ext-diff | grep -aoE "$PATTERN"
 git diff HEAD~1 -- file.sh | grep '^+'
 ```
 
-A 2026-08-29 audit (llm#997) of every content-parsing `git diff`/`git log -p`/`git show` call site in `.claude/hooks/**` and `.claude/scripts/**` found all of them already guarded (`repo_visibility_guard.sh`, `branch_gc.sh`, `private_data_scan.sh`, and three name-only scanners) — no follow-up fix needed today. Full audit table: companion doc. Flagging this section so a **future** script that adds a new content scan carries `--no-ext-diff` from the start.
+A 2026-08-29 audit (llm#997) found every existing content-parsing call site in `.claude/hooks/**` and `.claude/scripts/**` already guarded; a **future** script that adds a content scan must carry `--no-ext-diff` from the start. Audit table: companion doc.
 
 ---
 

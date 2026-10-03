@@ -2,25 +2,7 @@
 
 ## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
 
-This rule was scoped (`["**/.Renviron*", ".github/**", "R/**"]`) until
-2026-08-12, which excluded every shell script, dotfile, secrets file and
-launchd plist — i.e. everywhere secrets are actually handled. The forbidden
-`${VAR:-...}` is-it-set construct documented below was consequently used
-verbatim, printing a live key, one step in the chain that ended with 14
-credentials published to a public repo. See
-`.claude/incidents/2026-08-11-credential-leak.md` §4.
-
-Widening the `paths:` list to cover shell/dotfile/plist surfaces was the
-first fix, but it was still a scoped rule: a safety rule that only loads
-where the risk has already materialised is not a safety rule. Per
-[llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is now in
-the **safety-critical tier** declared in AGENTS.md's "Safety-critical rules"
-line, alongside `external-code-zero-trust`, `permission-discipline`, and
-`destructive-ops-guard` — it carries no `paths:` frontmatter at all and
-loads into every session and every subagent, the same contract as the
-mandatory tier. `check_rule_scoping.sh` enforces this: a safety-critical rule
-that regains `paths:` frontmatter, or is deleted, fails the audit (exit 3)
-and blocks the commit.
+Per [llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is in the **safety-critical tier** declared in AGENTS.md and carries no `paths:` frontmatter, so it loads into every session and subagent; `check_rule_scoping.sh` fails (exit 3) if it regains `paths:` or is deleted. Scoping history: companion doc and `.claude/incidents/2026-08-11-credential-leak.md` §4.
 
 ## Source
 
@@ -38,19 +20,7 @@ A committed credential is a potentially exposed credential — even in private r
 
 ### Required Pattern
 
-```r
-# CORRECT: Retrieve from environment
-con <- DBI::dbConnect(
-  odbc::odbc(),
-  server = Sys.getenv("DB_SERVER"),
-  database = Sys.getenv("DB_NAME"),
-  uid = Sys.getenv("DB_USER"),
-  pwd = Sys.getenv("DB_PASSWORD")
-)
-
-# CORRECT: API keys from environment
-httr2::req_auth_bearer_token(req, Sys.getenv("API_TOKEN"))
-```
+Retrieve secrets at runtime: `Sys.getenv("DB_PASSWORD")`, `httr2::req_auth_bearer_token(req, Sys.getenv("API_TOKEN"))`. Full DBI example: companion doc.
 
 ### Storage
 
@@ -95,36 +65,15 @@ When publishing counts derived from individual-level data:
 
 ## Data Connection Hygiene
 
-```r
-# CORRECT: Always close connections, even on error
-con <- DBI::dbConnect(...)
-on.exit(DBI::dbDisconnect(con), add = TRUE)
-
-# CORRECT: withr pattern
-withr::with_db_connection(
-  list(con = DBI::dbConnect(...)),
-  { DBI::dbGetQuery(con, "SELECT ...") }
-)
-```
+Always close connections, even on error (`on.exit(DBI::dbDisconnect(con), add = TRUE)` or `withr::with_db_connection()`).
 
 ## Data Use Agreement Awareness
 
-Before working with restricted data, verify:
-
-- [ ] DUA obtained and reviewed
-- [ ] Permitted uses cover your analysis
-- [ ] Authorised users list is current
-- [ ] Data environment requirements met (secure desktop, air-gapped, etc.)
-- [ ] Dissemination restrictions understood (publication review, suppression)
-- [ ] Data destruction requirements documented
+Before working with restricted data verify: DUA obtained and reviewed; permitted uses cover the analysis; authorised-users list current; data-environment requirements met; dissemination restrictions understood; destruction requirements documented. Checklist: companion doc.
 
 ## HIPAA Quick Reference (18 PHI Identifiers)
 
-Names, geographic data finer than state, dates (except year), phone/fax numbers, email addresses, SSN, medical record numbers, health plan IDs, account numbers, certificate/license numbers, vehicle identifiers, device serial numbers, URLs, IP addresses, biometric identifiers, full-face photos, any unique identifying code.
-
-**De-identification:** Remove all 18 identifiers (Safe Harbor) or obtain expert statistical determination of low re-identification risk.
-
-**Minimum necessary:** Request only variables needed for analysis.
+Safe Harbor requires removing all 18 identifier classes (names, geography finer than state, dates except year, phone/fax, email, SSN, MRN, health-plan IDs, account/certificate/licence numbers, vehicle and device identifiers, URLs, IP addresses, biometrics, full-face photos, any unique code) or expert statistical determination. **Minimum necessary:** request only the variables needed. Full list: companion doc.
 
 ## Related
 
