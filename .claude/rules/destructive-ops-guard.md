@@ -2,22 +2,7 @@
 
 ## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
 
-This rule was scoped to `.claude/hooks/**`, `bin/**`, `.claude/scripts/**`.
-Parts 1-2 (hook-level API blocking, recovery trails) are backed by
-deterministic hooks (`destructive_api_guard.sh`, `destructive_fs_guard.sh`)
-that fire regardless of what the rule loads for — but Part 3 (two-key
-confirmation for `git reset --hard`, force-push, and other irreversible ops)
-applies to any Bash call and has no equivalent hook; it depends entirely on
-the model recalling this rule at the moment of the call. Scoped to
-hooks/bin/scripts paths, it never loaded when Part 3 actually mattered. Per
-[llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is now in
-the **safety-critical tier** declared in AGENTS.md's "Safety-critical rules"
-line and carries no `paths:` frontmatter — it loads into every session and
-every subagent, matching the mandatory tier's contract.
-
-Consolidated from: `destructive-api-calls`, `script-destructive-ops`, `two-key-irreversible-ops`.
-
-Source: PocketOS / Cursor / Railway incident 2026-04-25 — agent deleted production volume via single GraphQL mutation in 9 seconds.
+Per [llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is in the **safety-critical tier** declared in AGENTS.md and carries no `paths:` frontmatter, so it loads into every session and subagent. Parts 1-2 are backed by deterministic hooks (`destructive_api_guard.sh`, `destructive_fs_guard.sh`), but Part 3 (two-key confirmation) has no hook and depends on the model recalling this rule at the moment of the call. Consolidated from `destructive-api-calls`, `script-destructive-ops`, `two-key-irreversible-ops`. Source: PocketOS / Cursor / Railway incident 2026-04-25 (an agent deleted a production volume via one GraphQL mutation in 9 seconds).
 
 ---
 
@@ -30,19 +15,7 @@ Hook-level enforcement exits non-zero *before* the command reaches the shell.
 
 ### Blocked Patterns
 
-The `PreToolUse:Bash` hook `~/.claude/hooks/destructive_api_guard.sh` blocks:
-
-| Pattern | Catches |
-|---|---|
-| `curl .* -X (DELETE\|PATCH\|PUT)` | curl mutation verbs |
-| `curl .* -X POST .* mutation[[:space:]]*\{` | GraphQL mutations |
-| `gh api .* -X (DELETE\|PATCH\|PUT)` | gh api destructive verbs |
-| `aws s3 (rb\|rm)` | S3 bucket/object delete |
-| `aws .* delete-` | aws delete-* subcommands |
-| `flyctl volumes? destroy` | fly.io volume destroy |
-| `railway volumes? (delete\|destroy)` | railway volume delete |
-| `psql.*-c.*(DROP\|TRUNCATE)` | psql destructive SQL |
-| `(duckdb\|sqlite3).*(DROP\|TRUNCATE)` | local DB destructive SQL |
+The `PreToolUse:Bash` hook `~/.claude/hooks/destructive_api_guard.sh` blocks the HTTP mutation verbs DELETE, PATCH and PUT on curl and `gh api`, GraphQL `mutation {` POSTs, `aws s3 rb|rm` and `aws ... delete-*`, `flyctl volumes destroy`, `railway volumes delete|destroy`, `psql -c` with DROP/TRUNCATE, and `duckdb`/`sqlite3` DROP/TRUNCATE. Exact regex table: companion doc.
 
 ### Escape Hatch
 
@@ -67,40 +40,9 @@ Scripts in `bin/`, `.claude/hooks/`, `.claude/scripts/`, or launchd plists that 
 | **Reproducibility justification** | Destroyed state rebuilt by `tar_make()`, `nix-build`, `mktemp` cleanup |
 | **Interactive prompt** | Script runs interactively |
 
-### Recovery-Trail Pattern (Git)
+### Recovery-Trail and Logging Patterns
 
-```bash
-STASH_REF=""
-if ! git diff --quiet || ! git diff --staged --quiet; then
-    STASH_MSG="Auto-stash before script $(date +%Y%m%d_%H%M%S)"
-    STASH_REF=$(git -C "$REPO" stash create "$STASH_MSG")
-    if [ -n "$STASH_REF" ]; then
-        git -C "$REPO" stash store -m "$STASH_MSG" "$STASH_REF"
-        git -C "$REPO" reset --hard
-    fi
-fi
-# ... work ...
-# At exit (UNCONDITIONAL):
-if [ -n "$STASH_REF" ]; then
-    git -C "$REPO" stash apply "$STASH_REF" || echo "Retained: $STASH_REF"
-fi
-```
-
-### Recovery-Trail Pattern (Files)
-
-```bash
-BACKUP="$FILE.$(date +%Y%m%d_%H%M%S).bak"
-cp -a "$FILE" "$BACKUP"
-# ... overwrite $FILE ...
-```
-
-### Logging (Mandatory)
-
-```bash
-LOG="$HOME/.claude/logs/$(basename "$0" .sh).log"
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
-log "DESTRUCTIVE: git reset --hard in $REPO (stash $STASH_REF)"
-```
+Git: `git stash create` + `git stash store` before any `reset --hard`, and `stash apply` at exit UNCONDITIONALLY (report `Retained: <ref>` if apply fails). Files: `cp -a "$FILE" "$FILE.$(date +%Y%m%d_%H%M%S).bak"` before overwriting. **Logging (mandatory):** every destructive op writes a `DESTRUCTIVE:` line to `~/.claude/logs/<script>.log`. Verbatim code: companion doc.
 
 ---
 

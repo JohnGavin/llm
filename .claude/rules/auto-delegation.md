@@ -14,11 +14,11 @@ Every orchestrator decision about whether to do work directly or delegate.
 | **Worker** | Multi-step implementations, complex edits | `sonnet` |
 | **Lightweight** | Single-file edits, doc updates, version bumps | `haiku` |
 
-In Agent() calls use the alias (`model="haiku"`, `model="sonnet"`, `model="opus"`) — Claude Code resolves these to the latest tier model. Do not hardcode dated model IDs (e.g. `claude-sonnet-4-6`) in dispatch prompts; see `llm-portability-statement` rule for the portability rationale.
+In Agent() calls use the alias (`model="haiku"|"sonnet"|"opus"`); never hardcode dated model IDs (see `llm-portability-statement`).
 
 ## CRITICAL: Orchestrator-Tier Role — Plan, Decompose, Synthesise (+ bounded prose exceptions)
 
-**Default rule:** the orchestrator tier delegates all code, script, and configuration edits to subagents. This includes everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree. See the companion doc for the "Clarification" note on when the orchestrator tier still uses Edit/Write directly.
+**Default rule:** the orchestrator tier delegates all code, script, and configuration edits to subagents — everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree (clarification note: companion doc).
 
 | Work type | Delegate to |
 |-----------|-------------|
@@ -29,7 +29,7 @@ In Agent() calls use the alias (`model="haiku"`, `model="sonnet"`, `model="opus"
 
 ### Bounded exceptions — the orchestrator tier MAY use Edit/Write/Bash directly for
 
-The orchestrator tier retains write access for these — they are too small/dialog-driven to be worth the round-trip cost of a subagent, AND they don't benefit from the worker tier's deeper code reasoning:
+The orchestrator tier retains write access for these (too small/dialog-driven to justify a subagent round-trip):
 
 | Path | Scope |
 |------|-------|
@@ -80,8 +80,6 @@ If the task matches a named agent's trigger, MUST delegate:
 - Multi-file architecture decisions
 - Plan creation requiring user dialogue
 - Synthesising results from multiple agents
-- Prose edits to `.claude/rules/*.md`, `.claude/memory/*.md`, `CLAUDE.md`, `CHANGELOG.md` (bounded exceptions in the table above)
-- `CURRENT_WORK.md` **ownership** — the orchestrator tier always decides what to write and when to compress; it writes directly OR delegates the physical write to the lightweight tier (which executes, not directs — see "Lightweight Tier for Context Summarisation" above)
 - Ambiguous requirements needing clarification
 - Roborev triage closures (`comment` + `close` on individual reviews)
 
@@ -91,7 +89,7 @@ When `burn_rate_check.sh` reports **WARN**, prefer worker/lightweight agents, us
 
 ## CRITICAL: Verify the work is not already done BEFORE dispatching
 
-A dispatch (~300k tokens, 5-20 minutes) spent discovering "already fixed" is pure waste; on 2026-09-02, 2 of 5 issues worked in one session were already resolved. Incident detail: companion doc.
+A dispatch (~300k tokens, 5-20 minutes) spent discovering "already fixed" is pure waste. Incident detail: companion doc.
 
 Before dispatching work on any issue or task, run these three probes and state
 the result:
@@ -112,7 +110,7 @@ An issue too vague to have a checkable "fixed" state wants rewriting before work
 
 ## Mandatory: isolation:"worktree" for Agent Dispatches with Bash
 
-Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Full rationale (main-checkout credential risk, `~/.claude/` symlink sandbox-escape, `worktree_symlink_guard` hook llm#692) is in the companion doc.
+Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Rationale (credential risk, symlink sandbox-escape, `worktree_symlink_guard` llm#692): companion doc.
 
 **Therefore:** ANY Agent dispatch where the agent may invoke Bash (`fixer`, `r-debugger`, `targets-runner`, `nix-env`, `shiny-async-debugger`, `data-quality-guardian`, `data-engineer`, `shinylive-builder`, `wiki-curator`) MUST be called with `isolation: "worktree"`. `quick-fix` (no Bash) and `critic` (read-only) are exempt. Per-agent table + quick-fix tool-limitation note (#223): [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
 
@@ -128,7 +126,7 @@ Any dispatch that requires the agent to run a multi-minute verification command 
 Bash(command="<worktree>/scripts/verify.sh > /tmp/verify.txt 2>&1", timeout=600000)
 ```
 
-**Describing the intent does not work.** Writing "run verify.sh in the foreground, up to 10 minutes" reads as satisfied by a backgrounded run, and agents then end their turn with "waiting for the build to complete" — which is not a result. Observed five times across two sessions; even explicit "foreground" prose has failed — the verbatim call plus the negative instruction is the only form that has held. Full incident detail: companion doc. A warm nix shell is ~13s and a full suite runs in a few minutes, so foreground fits inside a 600000 ms timeout comfortably; if a run genuinely exceeds that, poll the output file with repeated `Read` calls until a terminal completion marker appears — never a bare "wait for the notification".
+**Describing the intent does not work** — prose like "run verify.sh in the foreground" reads as satisfied by a backgrounded run; the verbatim call plus the negative instruction is the only form that has held. Foreground fits a 600000 ms timeout; if a run genuinely exceeds that, poll the output file with repeated `Read` calls until a terminal completion marker appears — never a bare "wait for the notification". Incident detail (observed five times across two sessions): companion doc.
 
 ### CRITICAL — SendMessage Continuations for Write Operations (#304)
 

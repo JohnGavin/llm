@@ -1,3 +1,14 @@
+---
+description: r-btw MCP tools have no timeout — run all R via Bash with timeout (the ZERO TOLERANCE summary stays in AGENTS.md)
+paths:
+  - "**/*.R"
+  - "**/*.qmd"
+  - "**/*.Rmd"
+  - "**/DESCRIPTION"
+  - ".mcp.json"
+  - "**/.mcp.json"
+---
+
 # btw MCP Tool Timeout Rules (GLOBAL — ALL PROJECTS)
 
 ## CRITICAL: MCP r-btw Tools Have NO Timeout

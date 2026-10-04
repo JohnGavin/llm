@@ -1,3 +1,14 @@
+---
+description: Hypothesis-experiment-conclusion debugging, baseline-before-regression, causal-claim verification, and the pivot signal on repeated failures (absorbs the former pivot-signal rule)
+paths:
+  - "**/tests/**"
+  - "**/*.R"
+  - "**/*.sh"
+  - "**/*.sql"
+  - "**/default.nix"
+  - ".github/**"
+---
+
 # Systematic Debugging
 
 Scientific method for `R CMD check` failures, test failures, Nix issues, shell
@@ -106,3 +117,26 @@ Output this table:
 | Observation | Hypothesis | Test Command | Result |
 |-------------|-----------|--------------|--------|
 | Test X fails with NA | Data not cleaned | `debugonce(fn)` | `clean_data` was NULL |
+
+## Causal Claims Are Claims (moved from AGENTS.md "Errors")
+
+NEVER speculate about errors: READ the error, QUOTE it, propose fixes. The same rule, generalised: a cause, an onset date, or a blast radius is a CLAIM, not context — name the query that would falsify it and run it before asserting.
+
+- Adjacent dates are not causation: verify the transition falls where the cause is; never infer onset from a merge/changelog timestamp.
+- Grep for the symbol before naming affected surfaces.
+- Boundaries derived from a *delayed* writer (reaper/nightly/cron) understate the present: "nothing marked recently" means "not yet processed", not "not affected".
+- Say which queries back which claims (`feedback_verify-causal-claims` memory).
+
+## Pivot Signal on Repeated Failures (absorbed from the former `pivot-signal` rule)
+
+**When it applies:** any coding task where consecutive tool calls fail on the same objective.
+
+| Consecutive failures | Action |
+|---------------------|--------|
+| 3 | Pause. Re-read the error. State what you've tried and why it failed. Try a different approach. |
+| 5 | Escalate to user: "I've tried N approaches for [task]. The failures are: [list]. Should I continue, pivot, or get your input?" |
+| 7 | Stop attempting. Report all failed approaches with error details. Suggest the user try manually or file an issue. |
+
+- **Counts as a failure:** a Bash command exiting non-zero on the same task; the Edit tool failing to find `old_string`; a test still failing after a fix attempt; the same error message after a change.
+- **Does NOT count:** expected failures in TDD (RED phase); deliberate exploration (several grep patterns); background tasks that have not completed.
+- **How to pivot:** (1) state the current approach and why it is failing; (2) list alternatives not yet tried; (3) pick the most promising one OR escalate to the user; (4) do NOT retry the same approach with minor variations more than twice.

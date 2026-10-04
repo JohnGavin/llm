@@ -2,6 +2,15 @@
 name: nix-agent-shell-protocol
 description: Agents must enter project-specific nix shells with absolute paths to access project packages not in the global shell
 type: rule
+paths:
+  - "**/default.nix"
+  - "**/default.R"
+  - "**/default.post.sh"
+  - "**/flake.nix"
+  - "**/DESCRIPTION"
+  - "**/*.R"
+  - "**/pyproject.toml"
+  - "**/requirements.txt"
 ---
 
 # Rule: Nix Agent Shell Protocol

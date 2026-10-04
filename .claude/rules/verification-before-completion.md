@@ -28,7 +28,7 @@ RESULT: clean — 0 matches across 122 terms
 | Type | Shape | Counter |
 |---|---|---|
 | **A — cannot go red** | Structurally always true: `exit 0` regardless; sentinel supplied by the subject | Run against a value you invented; it must fail |
-| **B — wrong object** | Inspects a different artifact than production uses (file vs embedded copy, source vs built) — includes a resting-state screenshot "verifying" `:hover`/`:focus`-triggered CSS, and static analysis (`grep`, `jsdom`-against-saved-HTML) "verifying" a client-rendered/SPA page's live layout, since `jsdom` executes JS but never renders CSS | Point the check at the **shipped** artifact; diff the two. For interaction-triggered CSS, force the state in a scratch copy (never the shipped file) and screenshot that — see companion doc, 2026-09-05. For an SPA/client-rendered UI or layout claim, drive real interaction (load → interact → observe) in a rendering engine that does CSS layout — static analysis and `jsdom` prove the code shipped and the script ran, never what a user sees — see companion doc, 2026-08-31/09-01 |
+| **B — wrong object** | Inspects a different artifact than production uses (file vs embedded copy, source vs built) — includes a resting-state screenshot "verifying" `:hover`/`:focus` CSS, and static analysis (`grep`, `jsdom`) "verifying" a client-rendered/SPA page's live layout | Point the check at the **shipped** artifact; diff the two. Force interaction-triggered CSS state in a scratch copy (never the shipped file) and screenshot that (companion doc, 2026-09-05); for SPA/layout claims drive real interaction in a rendering engine that does CSS layout, since `jsdom` never renders CSS (companion doc, 2026-08-31/09-01) |
 | **C — wrong property** | Asserts shape/range/count instead of meaning ("all links valid", "parses OK") | Ask what a *correct* result means, not what a *well-formed* one looks like |
 | **D — contaminated measurement** | Inherits the state it measures (env vars, caches, stubs) | Isolate: `env -u`, `env -i`, fresh process, cold cache |
 | **E — verified by authorship** | "I wrote the fix" substituted for "the fix works" | Observe the effect in the environment that was broken |
@@ -46,9 +46,7 @@ Their failure mode is **silence**. A broken test suite eventually goes red becau
 
 #### Too loud is also broken
 
-The first version of that denylist produced **112 false positives** by matching every capitalised word in a config file. It could fail — constantly — and a check that cries wolf gets bypassed. Aim for **quiet in normal operation, demonstrably loud on a fault you have personally triggered.**
-
-Six checks in one session (2026-08-21/22) satisfied the Iron Law completely — each was run fresh, its output read, its result quoted — while the thing each checked was broken. Full incident list: companion doc. Sibling: `systematic-debugging`'s "Measure the Baseline Before Claiming a Regression" is the same habit applied to causation, not verification.
+A check that cries wolf gets bypassed (a first denylist produced 112 false positives). Aim for **quiet in normal operation, demonstrably loud on a fault you have personally triggered.** Six checks in one session (2026-08-21/22) satisfied the Iron Law while the thing each checked was broken: full incident list in the companion doc. Sibling: `systematic-debugging`'s "Measure the Baseline Before Claiming a Regression".
 
 ## Verification Gate
 
@@ -71,31 +69,9 @@ Six checks in one session (2026-08-21/22) satisfied the Iron Law completely — 
 
 Curl deployed URLs. WebFetch has 15-min cache — use `curl -s` directly.
 
-### Error patterns (all must return 0)
+### Error patterns (all must return 0 on every deployed article)
 
-| Pattern | Meaning |
-|---------|---------|
-| `not available`, `not found in targets` | Target missing |
-| `MISSING EVIDENCE` | Target never built |
-| `Error in`, `Error:` | R exception |
-| `#&gt;` | Raw R output leaked to HTML |
-| `NULL`, `NaN`, bare `NA` | Computation error |
-
-### Validation command (run after CI passes)
-
-```bash
-for article in $(grep 'href: articles/' _pkgdown.yml | sed 's/.*articles\///' | sed 's/\.html//'); do
-  url="https://OWNER.github.io/REPO/articles/${article}.html"
-  content=$(curl -s "$url")
-  size=$(echo "$content" | wc -c | tr -d ' ')
-  nulls=$(echo "$content" | grep -ci 'not available\|not found in targets\|MISSING EVIDENCE')
-  errors=$(echo "$content" | grep -ci 'Error in\|Error:')
-  hashgt=$(echo "$content" | grep -c '#&gt;')
-  printf "| %-25s | %7s | nulls:%d | err:%d | #>:%d |\n" "$article" "${size}B" "$nulls" "$errors" "$hashgt"
-done
-```
-
-All articles must show 0 for nulls, errors, #> (except intentional #> in code examples).
+`not available` / `not found in targets` (target missing), `MISSING EVIDENCE` (target never built), `Error in` / `Error:` (R exception), `#&gt;` (raw R output leaked to HTML), `NULL` / `NaN` / bare `NA` (computation error) — except intentional `#>` in code examples. Validation loop over the `_pkgdown.yml` articles (`curl -s` each deployed URL, count the patterns): companion doc.
 
 ## One Change Per Verification Run
 
@@ -103,7 +79,7 @@ When verifying fix A, do not fold in change B "while we're here". A single green
 
 If a second change is already available and tempting to bundle: **keep** the slower/older run as a control (it isolates what fix A did), **then** apply change B and re-run (the delta is attributable to B).
 
-Worked case (2026-08-01): a slow CI run verifying a dependency fix was left to finish as a control rather than cancelled in favour of a combined run — full narrative in companion doc. This is `single-change-experiment` discipline applied to verification runs, not just modelling experiments.
+Worked case (2026-08-01) and the `single-change-experiment` linkage: companion doc.
 
 ## Before Any Commit
 
@@ -116,15 +92,7 @@ devtools::check()      # VERIFY: "0 errors | 0 warnings | 0 notes"
 
 ## Verify Tool Output Counts
 
-Line count ≠ call count. Multi-line matches inflate `wc -l`.
-
-```bash
-# WRONG: wc -l reports 349 (lines), actual matches = 28
-ast-grep run ... | wc -l
-
-# RIGHT: parse JSON for actual count
-ast-grep run ... --json=compact | jq length
-```
+Line count ≠ call count: multi-line matches inflate `wc -l`. Count matches from JSON (`ast-grep run ... --json=compact | jq length`), never `| wc -l`.
 
 ## Red Flags — STOP
 
@@ -135,14 +103,5 @@ ast-grep run ... --json=compact | jq length
 
 ## Forbidden vs Correct
 
-| Wrong | Right |
-|-------|-------|
-| "Tests pass" (no output) | Run, quote: `"[ FAIL 0 | PASS 47 ]"` |
-| "I ran check() earlier" | Run NOW, show output |
-| "The fix should work" | PROVE IT |
-
-| Excuse | Why Invalid |
-|--------|-------------|
-| "Just changed one line" | One line can break everything |
-| "Tests passed before" | Before != now |
-| "I'll check after commit" | Too late |
+- Never "Tests pass" without output: run and quote `[ FAIL 0 | PASS 47 ]`. Never "I ran check() earlier" or "the fix should work": run NOW, show output, PROVE IT.
+- Invalid excuses: "just changed one line", "tests passed before", "I'll check after commit".

@@ -123,3 +123,96 @@ cancelled in favour of a combined run. That control proved (a) the
 dependency fix reached the previously-failing step, and (b) the *separate*
 repo change produced an 11× speedup. Bundled, a fast green run would have
 proved neither individually.
+
+
+## Moved from the `verification-before-completion` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Trap B row (full text)
+
+| **B — wrong object** | Inspects a different artifact than production uses (file vs embedded copy, source vs built) — includes a resting-state screenshot "verifying" `:hover`/`:focus`-triggered CSS, and static analysis (`grep`, `jsdom`-against-saved-HTML) "verifying" a client-rendered/SPA page's live layout, since `jsdom` executes JS but never renders CSS | Point the check at the **shipped** artifact; diff the two. For interaction-triggered CSS, force the state in a scratch copy (never the shipped file) and screenshot that — see companion doc, 2026-09-05. For an SPA/client-rendered UI or layout claim, drive real interaction (load → interact → observe) in a rendering engine that does CSS layout — static analysis and `jsdom` prove the code shipped and the script ran, never what a user sees — see companion doc, 2026-08-31/09-01 |
+
+### Too loud is also broken (incident framing)
+
+The first version of that denylist produced **112 false positives** by matching every capitalised word in a config file. It could fail — constantly — and a check that cries wolf gets bypassed. Aim for **quiet in normal operation, demonstrably loud on a fault you have personally triggered.**
+
+Six checks in one session (2026-08-21/22) satisfied the Iron Law completely — each was run fresh, its output read, its result quoted — while the thing each checked was broken. Full incident list: companion doc. Sibling: `systematic-debugging`'s "Measure the Baseline Before Claiming a Regression" is the same habit applied to causation, not verification.
+
+### Post-deploy validation command
+
+### Validation command (run after CI passes)
+
+```bash
+for article in $(grep 'href: articles/' _pkgdown.yml | sed 's/.*articles\///' | sed 's/\.html//'); do
+  url="https://OWNER.github.io/REPO/articles/${article}.html"
+  content=$(curl -s "$url")
+  size=$(echo "$content" | wc -c | tr -d ' ')
+  nulls=$(echo "$content" | grep -ci 'not available\|not found in targets\|MISSING EVIDENCE')
+  errors=$(echo "$content" | grep -ci 'Error in\|Error:')
+  hashgt=$(echo "$content" | grep -c '#&gt;')
+  printf "| %-25s | %7s | nulls:%d | err:%d | #>:%d |\n" "$article" "${size}B" "$nulls" "$errors" "$hashgt"
+done
+```
+
+All articles must show 0 for nulls, errors, #> (except intentional #> in code examples).
+
+### One Change Per Verification Run: worked case
+
+Worked case (2026-08-01): a slow CI run verifying a dependency fix was left to finish as a control rather than cancelled in favour of a combined run — full narrative in companion doc. This is `single-change-experiment` discipline applied to verification runs, not just modelling experiments.
+
+### Forbidden vs Correct tables
+
+## Forbidden vs Correct
+
+| Wrong | Right |
+|-------|-------|
+| "Tests pass" (no output) | Run, quote: `"[ FAIL 0 | PASS 47 ]"` |
+| "I ran check() earlier" | Run NOW, show output |
+| "The fix should work" | PROVE IT |
+
+| Excuse | Why Invalid |
+|--------|-------------|
+| "Just changed one line" | One line can break everything |
+| "Tests passed before" | Before != now |
+| "I'll check after commit" | Too late |
+
+
+## Moved from the `verification-before-completion` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Verify Tool Output Counts (code block)
+
+## Verify Tool Output Counts
+
+Line count ≠ call count. Multi-line matches inflate `wc -l`.
+
+```bash
+# WRONG: wc -l reports 349 (lines), actual matches = 28
+ast-grep run ... | wc -l
+
+# RIGHT: parse JSON for actual count
+ast-grep run ... --json=compact | jq length
+```
+
+
+## Moved from the `verification-before-completion` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Post-deploy error-pattern table and validation pointer (pass 2 form)
+
+### Error patterns (all must return 0)
+
+| Pattern | Meaning |
+|---------|---------|
+| `not available`, `not found in targets` | Target missing |
+| `MISSING EVIDENCE` | Target never built |
+| `Error in`, `Error:` | R exception |
+| `#&gt;` | Raw R output leaked to HTML |
+| `NULL`, `NaN`, bare `NA` | Computation error |
+
+### Validation command
+
+Loop over the `_pkgdown.yml` articles, `curl -s` each deployed URL, and count the error patterns above plus `#&gt;`. Script: companion doc. All articles must show 0 for nulls, errors, #> (except intentional #> in code examples).

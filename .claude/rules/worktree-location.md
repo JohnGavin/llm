@@ -1,5 +1,11 @@
 ---
 description: Convention for where to create git worktrees — ~/docs_gh/worktrees/<project>/<branch>/ — and the cc-worktree.sh helper for programmatic enforcement
+paths:
+  - ".claude/scripts/cc-worktree.sh"
+  - ".claude/scripts/cc.sh"
+  - ".claude/scripts/worktree_gc.sh"
+  - "**/.claude/worktrees/**"
+  - ".claude/rules/worktree-location.md"
 ---
 # Rule: Worktree Location Convention
 

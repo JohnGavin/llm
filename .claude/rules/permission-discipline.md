@@ -2,18 +2,7 @@
 
 ## Safety-Critical Tier — Loads Unconditionally (No `paths:`)
 
-This rule was scoped to `.claude/settings*.json`, `.claude/hooks/**`,
-`**/.mcp.json` — it did not load when running arbitrary Bash, which is when
-permission decisions (Part 1: `bypassPermissions` binding) are actually
-made. Per [llm#943](https://github.com/JohnGavin/llm/issues/943), this rule
-is now in the **safety-critical tier** declared in AGENTS.md's
-"Safety-critical rules" line and carries no `paths:` frontmatter — it loads
-into every session and every subagent, matching the mandatory tier's
-contract.
-
-Consolidated from: `permission-mode-discipline`, `mcp-destructive-scope`, `prod-staging-context-guard`, `secret-discovery-policy`.
-
-Source: PocketOS / Cursor / Railway incident 2026-04-25.
+Per [llm#943](https://github.com/JohnGavin/llm/issues/943), this rule is in the **safety-critical tier** declared in AGENTS.md and carries no `paths:` frontmatter, so it loads into every session and subagent (permission decisions happen on any Bash call). Consolidated from `permission-mode-discipline`, `mcp-destructive-scope`, `prod-staging-context-guard`, `secret-discovery-policy`. Source: PocketOS / Cursor / Railway incident 2026-04-25.
 
 ## Part 1: Permission Mode Binding
 
@@ -55,49 +44,19 @@ Detection: checkout is a **worktree** iff `git rev-parse --git-common-dir` ≠ `
 |---|---|---|---|
 | r-btw | `docs_*`, `files_list/read/search`, `sessioninfo_*`, `env_describe_*` | `files_write` | `run_r`, `pkg_*` (hang risk — use Bash+timeout) |
 | Gmail/Calendar/Drive | — | — | Auth stubs only; inactive |
-| markitdown-mcp | `convert_to_markdown` (file path → markdown text; no side effects on source) | — (if a write-to-disk variant is exposed, classify as **write** and require per-session approval) | No auth token; local execution only. No destructive tools identified in upstream README. |
+| markitdown-mcp | `convert_to_markdown` (no side effects on source) | — (a write-to-disk variant would be **write**: per-session approval) | None identified; no auth token, local execution only |
 
 ### Pre-Install Checklist
 
-- [ ] Inventory full tool list
-- [ ] Classify each as read/write/destructive
-- [ ] Document in this rule's table
-- [ ] Verify auth-token scope at provider
-- [ ] Test in scratch workspace first
+Before wiring an MCP: inventory its tools, classify each read/write/destructive, document it in the table above, verify auth-token scope at the provider, test in a scratch workspace.
 
-### Known Gap: No `PreToolUse` Content Guard on `mcp__*` (llm#996, dated 2026-08-29)
+### Known Gap: no `PreToolUse` content guard on `mcp__*` (llm#996, 2026-08-29)
 
-`.claude/settings.json` currently has **zero** `PreToolUse` hooks matching `mcp__*` — no content guard and no telemetry shape-probe, unlike `Bash`/`gh --body`/`Artifact`. This is a **known, deliberate, tracked gap**, not an oversight: the `mcp__*` matcher itself is unverified (never probed the way `Artifact`/`WebFetch` were), and only one tool (`mcp__r-btw__btw_tool_files_write`) is even `write`-tier — a probe-then-guard sequence is the right next step, not something to improvise inside an unrelated dispatch. Full rationale and the concrete trigger condition for building the guard: companion doc.
+No `PreToolUse` hook matches `mcp__*` — a known, deliberate, tracked gap (the matcher is unverified; only `mcp__r-btw__btw_tool_files_write` is `write`-tier); probe-then-guard is the next step. Rationale and trigger condition: companion doc.
 
 ## Part 3: Environment Declaration
 
-### The Convention
-
-Every project's `.claude/CLAUDE.md` SHOULD declare:
-
-```markdown
-| Field | Value |
-|-------|-------|
-| Environment | dev |
-```
-
-### Valid Values
-
-| Value | Meaning |
-|---|---|
-| `research` | Exploratory; no live users (default if unspecified) |
-| `dev` | Tooling, config, packages |
-| `prod` | Live service, published website |
-| `mixed` | Both prod and non-prod surfaces |
-
-### Project Audit
-
-| Project | Environment |
-|---|---|
-| `llm` | `dev` |
-| `JohnGavin.github.io` | `prod` |
-| `llmtelemetry` | `prod` |
-| `randomwalk`, `irishbuoys`, `mycare`, `footbet` | `research` |
+Every project's `.claude/CLAUDE.md` SHOULD declare `| Environment | <value> |` with one of `research` (exploratory, no live users; default if unspecified), `dev` (tooling, config, packages), `prod` (live service, published website), `mixed` (both). Project audit (`llm` dev; `JohnGavin.github.io` and `llmtelemetry` prod; `randomwalk`, `irishbuoys`, `mycare`, `footbet` research): companion doc.
 
 ## Part 4: Credential Discovery Policy
 

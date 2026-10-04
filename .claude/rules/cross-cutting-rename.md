@@ -143,6 +143,6 @@ unrelated domain is not accidentally swept up.
 - `verification-before-completion`
 - `dynamic-prose-values`
 - `narrative-colour-persistence`
-- `pivot-signal` — if the second rename attempt fails the same way as the
+- `systematic-debugging` (Pivot Signal section) — if the second rename attempt fails the same way as the
   first, stop and escalate
 - private-repo issue tracker (session origin above) — reference implementation of this rule
