@@ -1393,7 +1393,18 @@ fi
 summary=""
 summary="$nix_label"
 [ "$perm_ok" = "Y" ] && summary="$summary | perm:ok" || summary="$summary | perm:WARN"
-summary="$summary | env-class:${env_class_val} | config:ok | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
+# config: real check that ~/.claude/{settings.json,CLAUDE.md,rules} are symlinks into the llm repo
+# (ok | DRIFT(<names>) | ? = check could not run). Helper: scripts/lib/config_wiring_status.sh
+_cw_status="config:?"
+_cw_hooks_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || _cw_hooks_dir=""
+if [ -n "$_cw_hooks_dir" ] && [ -f "$_cw_hooks_dir/../scripts/lib/config_wiring_status.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_cw_hooks_dir/../scripts/lib/config_wiring_status.sh" 2>/dev/null || true
+  if type config_wiring_status >/dev/null 2>&1; then
+    _cw_status=$(config_wiring_status "$HOME" "$(config_wiring_repo_root "$_cw_hooks_dir")") || _cw_status="config:?"
+  fi
+fi
+summary="$summary | env-class:${env_class_val} | ${_cw_status} | ${n_skills:-skills:?} | $ctx_part | $runiverse_part"
 [ "$is_worktree" = "Y" ] && summary="$summary | worktree:active"
 [ "$wt_count" -gt 0 ] && summary="$summary | worktrees:${wt_count}"
 [ -n "$roborev_status" ] && summary="$summary | $roborev_status"

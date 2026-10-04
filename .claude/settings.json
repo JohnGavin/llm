@@ -321,6 +321,14 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -341,6 +349,14 @@
             "type": "command",
             "command": "~/.claude/hooks/log_command_use.sh",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
           }
         ]
       }
@@ -565,6 +581,14 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -662,6 +686,14 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
       }
     ],
     "Stop": [
@@ -686,8 +718,8 @@
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "(/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0"
+            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = cli ] && (/usr/bin/afplay -v 0.40 /System/Library/Sounds/Morse.aiff &) 2>/dev/null; exit 0",
+            "type": "command"
           }
         ]
       },
@@ -697,6 +729,14 @@
             "type": "command",
             "command": "~/.claude/hooks/session_stop.sh",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
           }
         ]
       }
@@ -715,14 +755,60 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
       }
     ],
     "Notification": [
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "(/usr/bin/afplay -v 0.35 /System/Library/Sounds/Ping.aiff &) 2>/dev/null; exit 0"
+            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = cli ] && (/usr/bin/afplay -v 0.35 /System/Library/Sounds/Ping.aiff &) 2>/dev/null; exit 0",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/johngavin/.config/iterm2/cc-status",
+            "type": "command"
           }
         ]
       }
