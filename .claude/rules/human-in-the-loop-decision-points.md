@@ -4,12 +4,6 @@ description: 5-class decision taxonomy — Classes A/B/C stop for the human; D/E
 
 # Rule: Human-in-the-Loop Decision Points (Mandatory)
 
-## Origin
-
-[#477](https://github.com/JohnGavin/llm/issues/477) — accepted from [#450](https://github.com/JohnGavin/llm/issues/450), Salesforce 8 Design Principles gap analysis, Principle 5 (Design for strategic human intervention and oversight).
-
-Generalises the 3-class op taxonomy in `destructive-ops-guard` Part 3 to a project-wide 5-class decision taxonomy covering ALL human-in-the-loop checkpoints — not just destructive operations.
-
 ## When This Applies
 
 Any orchestrator or agent decision that has one or more of:
@@ -38,27 +32,9 @@ Automation is not wrong. The failure mode is automation that runs **past the bou
 | **D** | Scoped commit / local write | `gh pr create`; branch push (own branch); file Edit/Write in worktree; commit to feature branch; open PR (not merge) | No confirmation — proceed automatically |
 | **E** | Read-only / advisory | `gh issue list`; grep; SQL query; `git log`; `tar_read()`; file Read; test run (no side effects) | No confirmation — proceed silently |
 
-Class D is the key innovation over `destructive-ops-guard` Part 3: it explicitly names the boundary where automation is the CORRECT default. Opening a PR is Class D, merging it is Class C.
+Class D names the boundary where automation is the CORRECT default: opening a PR is Class D, merging it is Class C. Prefer the plain name **"publish gate"** for Class C when talking to the user: it *publishes a change beyond the sandbox into a shared/visible place* and so requires an explicit action verb, never a bare "yes".
 
-> **Working name — "publish gate".** Prefer the plain-language name **"publish gate"** over the jargon label "Class C" when talking to the user or in tooling: a publish-gate action *publishes a change beyond the sandbox into a shared/visible place* (merge to main, close an issue, post an external comment, cut a release) and so requires an explicit action verb, never a bare "yes". "Class C" remains the formal taxonomy label; "publish gate" is its user-facing synonym.
-
-## Application Across Tool Surfaces
-
-| Tool surface | Class A/B (STOP) | Class C (stop + verb) | Class D (proceed) | Class E (silent) |
-|---|---|---|---|---|
-| **Bash** | `rm -rf`, `git reset --hard`, credential commands | `gh pr merge`, `gh release create` | `git commit`, `git push` own branch | `git log`, `grep`, query |
-| **gh CLI** | `gh repo delete`, force-push main | `gh pr merge`, `gh issue close`, `gh issue comment` (external) | `gh pr create`, `gh pr view` | `gh issue list`, `gh pr list` |
-| **Edit / Write** | Overwrite tracked file outside worktree | Batch rename across ≥ 3 repos | Edit/Write in own worktree | Read |
-| **Agent dispatch** | Agent deleting data or force-pushing main | Agent merging PRs or closing issues | Agent creating PRs, committing, pushing own branch | Agent reading, grepping, running read-only checks |
-| **MCP tool** | Destructive write (classified `destructive`) | External publish (`write` tier) | Local write (`write` tier, sandboxed) | Read-only (`read` tier) |
-
-## The Default-PR-Not-Merge Principle
-
-`pr-shipping-discipline` establishes that "ship it" means **open a PR**, not merge. This rule provides the taxonomic reason: **PR open is Class D** (scoped, reversible, local to the PR surface) while **PR merge is Class C** (cross-boundary visible, explicit verb required).
-
-Any ambiguous phrasing — "ship it", "land this", "let's push" — resolves to Class D (open PR) unless the user supplies an explicit Class C verb ("merge", "merge to main", "land directly").
-
-See `pr-shipping-discipline` for the full verb decision table.
+**Default-PR-not-merge:** PR open is Class D; PR merge is Class C. Ambiguous phrasing ("ship it", "land this", "let's push") resolves to Class D (open PR) unless the user supplies an explicit Class C verb ("merge", "merge to main", "land directly"); verb table in `pr-shipping-discipline`. The A-E examples apply to every tool surface (Bash, gh CLI, Edit/Write, Agent dispatch, MCP tool; per-surface table in the companion doc).
 
 ## Conditional Auto-Merge (Auto-Merge Policy)
 
@@ -77,66 +53,53 @@ C exactly as documented above — nothing else in this rule changes.
 
 **Label every auto-merge.** A PR merged under this policy (no explicit "merge" verb in the user's own words) gets the `auto-merged` label at merge time: `gh pr edit <n> --add-label auto-merged`, then `gh pr merge`. A merge the user asked for by name gets no label. GitHub records every merge as the owner, so without the label an automatic merge cannot be told from an instructed one afterwards, and the #1274 audit cannot be done.
 
-This is advisory, not hook-enforced: no mechanism blocks a merge call the way `agent_push_guard.sh` blocks a worktree-agent push to `main`. The policy trades a firm technical backstop for zero session-to-session friction, a deliberate choice; a GitHub branch-protection review requirement was declined because it reintroduces the click-through friction the toggle exists to remove.
+This is advisory, not hook-enforced (no mechanism blocks a merge call); the rationale is in the companion doc.
 
 ### Auto-Merge Exclusion List (always Class C, regardless of the toggle)
 
-| Path / change class | Why excluded |
-|---|---|
-| `.claude/hooks/**` | Controls what every future action is allowed to do — the trust boundary itself |
-| `.claude/rules/**` (especially mandatory / safety-critical rules) | Same reasoning as hooks — this is the policy layer, including the auto-merge policy defined in this very section |
-| `.claude/scripts/**` that handle credentials, secrets, or destructive operations | Direct incident history: the 2026-08-11 credential leak and the phone-number leak both originated in script-level handling |
-| Scripts that change state on their own schedule — anything that closes, reopens, deletes, reaps, garbage-collects or (re)loads things (e.g. `roborev_*autoclose*`, `roborev_auto_close.sh`, `roborev_revalidate.R`, reapers, `worktree_gc.sh`, `branch_gc.sh`), their `bin/launchd-recorders/*` wrappers, and `.claude/launchd/**` | A merged change goes live within hours via launchd with no human in the loop. On 2026-09-27 a paused auto-closer was reloaded by an unidentified mechanism and closed 117 reviews (#1274) |
-| `default.nix`, `default.R`, `.claude/settings.json` | Environment/permission configuration — a bad merge here can silently change what every subsequent session is allowed to do |
-| `AGENTS.md` (which `~/.claude/CLAUDE.md` symlinks to) and any project's `CLAUDE.md` | Holds the Auto-Merge Policy toggle and a copy of this exclusion list; if it could auto-merge, a green PR could switch the toggle or narrow this list with no human "merge" (review 10610, #1285) |
-| Any diff touching a credential/secret file, `.Renviron`, `secrets.env`, or a rotation script | `credential-management` / `secrets-single-source` safety-critical surface |
-| DB schema / migration files (`*_schema.sql`, `*_schema_apply.sh`) | Effectively irreversible once other writers depend on the new shape |
-| Content published to a live, public-facing surface (rendered GH Pages HTML source, public dashboard export scripts) | Public blast radius — see `public-private-repo-boundary` |
+Paths (reasons in the companion doc):
+
+- `.claude/hooks/**`; `.claude/rules/**`
+- `.claude/scripts/**` that handle credentials, secrets, or destructive operations
+- Scripts that change state on their own schedule — anything that closes, reopens, deletes, reaps, garbage-collects or (re)loads things (e.g. `roborev_*autoclose*`, `roborev_auto_close.sh`, `roborev_revalidate.R`, reapers, `worktree_gc.sh`, `branch_gc.sh`), their `bin/launchd-recorders/*` wrappers, and `.claude/launchd/**` (they go live via launchd with no human in the loop, #1274)
+- `default.nix`, `default.R`, `.claude/settings.json`
+- `AGENTS.md` (which `~/.claude/CLAUDE.md` symlinks to) and any project's `CLAUDE.md` (they hold the toggle and a copy of this list, #1285)
+- Any diff touching a credential/secret file, `.Renviron`, `secrets.env`, or a rotation script
+- DB schema / migration files (`*_schema.sql`, `*_schema_apply.sh`)
+- Content published to a live, public-facing surface (rendered GH Pages HTML source, public dashboard export scripts)
 
 A PR touching **any** excluded path reverts to standard Class C; the toggle never overrides this list. Repo visibility (public vs. private) is deliberately NOT a criterion: exclusion is based on change class, never visibility alone.
 
-### Origin
+Origin and full rationale (user request 2026-08-28; incidents #923/#927/#904/#928): companion doc.
 
-User request 2026-08-28: repeated manual "merge" confirmations were the higher-friction cost for a prolific solo maintainer, and a session-scoped verbal grant still had to be restated every session, so the toggle is global. Full auto-merge on green gates alone was rejected because this repo's incident history shows automated checks passing when they should not have; the exclusion list targets the paths where those incidents occurred. Full rationale (incidents #923/#927/#904/#928): companion doc.
-
-## Class D Bounded-Confirm Pattern (New)
+## Class D Bounded-Confirm Pattern
 
 Class D does NOT require confirmation — but when the scope of a Class D action is **larger than what was explicitly authorised**, the agent MUST bound it before executing.
 
 **When to bound:** the agent plans to take ≥ 3 Class D actions OR touches files outside the explicitly named scope.
 
-**Pattern:**
-
-Example: "I'll do these Class D actions: 1. Edit R/foo.R (add NA check) 2. Edit tests/test-foo.R (matching test) 3. git commit + push to feat/fix-foo. Confirm? (or say 'stop' to cancel)" Verbatim block: companion doc.
+**Pattern:** declare the scope before executing, e.g. "I'll do these Class D actions: 1. Edit R/foo.R 2. Edit tests/test-foo.R 3. commit + push to feat/fix-foo. Confirm? (or say 'stop')". Verbatim block: companion doc.
 
 The bounded-confirm is NOT a confirmation prompt for individual Class D ops. It is a **scope declaration** so the human can redirect before the work begins.
 
 ## Forbidden Patterns
 
-| Pattern | Class violated | Why wrong | Fix |
-|---|---|---|---|
-| Agent auto-merges after "ship it" | C | "ship it" is ambiguous shorthand | Default to PR open (Class D); wait for "merge" |
-| Agent accepts "yes" for Class A/B | A/B | No target recall — same-turn echo = single principal | Require target name from memory in a fresh turn |
-| Agent prints target name in the same turn as the Class A prompt | A | The user echoes the agent's own text; confirms nothing | Print prompt without the target; wait for next turn |
-| Agent retries after refusal | A/B | Persistence pressure | Accept refusal, report, stop |
-| Agent skips Class C checkpoint because "user said go ahead earlier in the session" | C | Prior session context is not per-action authorisation | Each Class C action requires its own explicit verb |
-| Agent silently does 7 Class D ops when user said "tidy these up" | D | Scope expanded without bounded-confirm | Emit bounded-confirm for ≥ 3 Class D ops |
-| Agent classifies PR merge as Class D | C | Merge is cross-boundary visible | Reclassify as C; require explicit verb, unless the Auto-Merge Policy conditions are genuinely met |
-| Auto-Merge Policy is ON but the merge-gate returned indeterminate (exit 3), and the agent treats that as a pass | C | An unverifiable gate is not evidence of safety — `checks-must-distinguish-unknown` | Fall back to Class C (ask) whenever the gate result is anything other than a genuine pass |
-| Auto-Merge Policy is ON and the agent merges a PR touching an excluded path (hooks/rules/scripts/schema/credentials/public surface) | C | The exclusion list is absolute — the toggle never overrides it | Reclassify as C; require explicit verb |
-
-## Worked Example
-
-See [`_companions/human-in-the-loop-decision-points-details.md`](_companions/human-in-the-loop-decision-points-details.md) for the full worked examples (wrong/right auto-merge, wrong/right scope expansion) and the full Auto-Merge origin rationale. The normative rule above is complete without it.
+| Pattern | Class | Fix |
+|---|---|---|
+| Agent auto-merges after "ship it" | C | Default to PR open (Class D); wait for "merge" |
+| Agent accepts "yes" for Class A/B | A/B | Require the target name from memory in a fresh turn (same-turn echo = single principal) |
+| Agent prints the target name in the same turn as the Class A prompt | A | Print the prompt without the target; wait for the next turn |
+| Agent retries after refusal | A/B | Accept refusal, report, stop |
+| Agent skips a Class C checkpoint because "user said go ahead earlier" | C | Each Class C action requires its own explicit verb |
+| Agent silently does 7 Class D ops when told "tidy these up" | D | Emit bounded-confirm for ≥ 3 Class D ops |
+| Agent classifies PR merge as Class D | C | Reclassify as C unless the Auto-Merge Policy conditions are genuinely met |
+| Auto-Merge ON, merge-gate returned indeterminate (exit 3), agent treats it as a pass | C | Fall back to Class C (ask) unless the gate is a genuine pass (`checks-must-distinguish-unknown`) |
+| Auto-Merge ON and the agent merges a PR touching an excluded path | C | The exclusion list is absolute: reclassify as C, require explicit verb |
 
 ## Related
 
-- [`destructive-ops-guard`](destructive-ops-guard.md) — Part 3 contains the original 3-class taxonomy (A/B/C destructive ops); this rule generalises it to 5 classes and extends to ALL decision types. The A/B/C classes here are backward-compatible with Part 3.
-- [`pr-shipping-discipline`](pr-shipping-discipline.md) — "ship it" = Class D (open PR); "merge it" = Class C (explicit verb). Taxonomic home for that rule's core principle.
-- [`permission-discipline`](permission-discipline.md) — MCP tool classification (read/write/destructive) maps to E/D/A-C respectively.
-- [`auto-delegation`](auto-delegation.md) — Class D detection hooks into decomposition decisions; bounded-confirm fires when planned Class D scope exceeds explicit authorisation.
-- `agent-identity-and-task-scopes` (#476) — parallel rule; task scope limits what Class D ops an agent may initiate without re-checking.
-- Hook: `~/.claude/hooks/destructive_api_guard.sh` — enforces Class A/B at the Bash level.
-- [#477](https://github.com/JohnGavin/llm/issues/477) — origin issue; [#450](https://github.com/JohnGavin/llm/issues/450) — parent design tracker (Salesforce Principle 5).
-- `checks-must-distinguish-unknown` — the "indeterminate ≠ pass" requirement the Auto-Merge Policy's second condition depends on.
-- `~/.claude/CLAUDE.md` — Core Rules carries the actual `**Auto-Merge Policy:**` toggle line; this file is the mechanism it activates.
+- `destructive-ops-guard` Part 3 (original A/B/C taxonomy); `pr-shipping-discipline` (verb table); `permission-discipline` (MCP tiers map to E/D/A-C); `auto-delegation` (bounded-confirm fires when planned Class D scope exceeds authorisation); `agent-identity-and-task-scopes` (#476); `checks-must-distinguish-unknown` (indeterminate is not a pass).
+- Hook: `~/.claude/hooks/destructive_api_guard.sh` enforces Class A/B at the Bash level.
+- Worked examples (wrong/right auto-merge, wrong/right scope expansion) and Auto-Merge origin rationale: [`_companions/human-in-the-loop-decision-points-details.md`](_companions/human-in-the-loop-decision-points-details.md); the normative rule above is complete without it.
+- `~/.claude/CLAUDE.md` carries the actual `**Auto-Merge Policy:**` toggle line.
+- Origin: [#477](https://github.com/JohnGavin/llm/issues/477), accepted from [#450](https://github.com/JohnGavin/llm/issues/450) (Salesforce Principle 5).

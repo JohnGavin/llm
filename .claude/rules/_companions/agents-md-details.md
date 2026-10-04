@@ -1,0 +1,149 @@
+---
+paths:
+  - "AGENTS.md"
+  - ".claude/CLAUDE.md"
+---
+
+# Companion: AGENTS.md — text trimmed from the always-loaded baseline
+
+Verbatim original text of AGENTS.md paragraphs and sections that were shortened on 2026-10-03 to cut the always-loaded instruction baseline (Claude Code warned: 31 instruction files, 223.6k chars, over the 150.0k limit). The short form in AGENTS.md keeps every MUST/NEVER; this file keeps the supporting detail, incidents and origins. Loaded only when AGENTS.md or a project CLAUDE.md is touched.
+
+## Errors and causal claims (original paragraph)
+
+**Errors:** NEVER speculate. READ error, QUOTE it, propose fixes. **Causal claims (same rule, generalised):** a cause, an onset date, or a blast radius is a CLAIM, not context — name the query that would falsify it and run it before asserting. Adjacent dates are not causation: verify the transition falls where the cause is, never infer onset from a merge/changelog timestamp. Grep for the symbol before naming affected surfaces. Boundaries derived from a *delayed* writer (reaper/nightly/cron) understate the present — "nothing marked recently" means "not yet processed", not "not affected". Say which queries back which claims (`feedback_verify-causal-claims` memory). **R:** 4.5.x. **Deletion:** NEVER rm untracked >1MB without listing, age-check, user confirm (`safe-deletion` rule).
+
+## External Code — ZERO TRUST (original paragraph)
+
+**External Code — ZERO TRUST (MANDATORY, ALL PROJECTS):** NEVER copy code (R / bash / python / JS / yaml / nix / SQL / any language) from external sources into our codebase. External = anything not authored by John or by a trusted internal contributor (CODEOWNERS list). External includes: GitHub issue comments from `author_association != OWNER/COLLABORATOR/MEMBER`; PR review suggestions from non-CODEOWNERS; AI tool output from third-party SaaS (NOT this Claude session); Stack Overflow / blog post snippets without independent verification; any URL we don't control; "free audit" or "config analyser" SaaS tools. We MAY read external content for **ideas** but MUST re-implement in our own style. Specifically forbidden: (a) uploading our config / traces / `.claude/` content to any third-party domain; (b) accepting "free / paid PR" offers from cold contributors; (c) merging PRs from non-trusted contributors without line-by-line human review; (d) `WebFetch`-ing then `Edit`-ing code that mirrors what was fetched. **R preferred over Python** where the language is a choice. Enforcement via hooks tracked in [llm#194](https://github.com/JohnGavin/llm/issues/194). Triggers: a cold contributor offers code AND links to an external SaaS → critique inline, file the relevant issue ourselves, do not copy.
+
+## Checks and diagnosis (original paragraph)
+
+**Checks and diagnosis (ALL PROJECTS):** A check has THREE outcomes — positive, negative, and **indeterminate**. Never let "I could not determine this" exit the same way as a negative result: an error path and a negative-result path must not share an exit. Applies equally to *reading* a tool's output — before attributing a negative result to the subject, confirm the tool could observe the subject at all. A tool complaining about the *shape* of an input may simply not have received it. A check whose output does not vary with the thing it checks is not a check. **Indeterminate is not a catch-all — say *why* you could not answer:** when a dependency is missing, ask whether the question could have been answered without it. If yes, the result is still determinate — report PASS/FAIL, not unknown. `check_targets_presence.sh` returns FAIL (exit 1), not INDETERMINATE (exit 3), for an absent `_targets.R` even with no `Rscript` on PATH, because absence is observable with `test -f`; it returns 3 only when the file exists and cannot be parsed. Degrade only the sub-questions that actually needed the missing thing — blanket "tool missing → everything unknown" is a lazy generalisation, and over-reporting indeterminate trains the reader to ignore it, which costs exactly as much as the silent pass. Exit codes: 0 PASS / 1 FAIL / 2 usage / 3 INDETERMINATE (`exit-code-conventions` rule). Open ledger of unenforced instances: [`.claude/incidents/2026-08-24-lessons-pending-config.md`](.claude/incidents/2026-08-24-lessons-pending-config.md). Rule: `checks-must-distinguish-unknown`; linter: `check_indeterminate_handling.sh`.
+
+## Simplicity — subtractive-first (original paragraph)
+
+**Simplicity — subtractive-first (ALL PROJECTS):** Prefer removing over adding. Automation, config, rules, skills, and commands accrete; nothing reverses that by default. Before building a new mechanism, check whether an existing one already covers it — a hook/pulse/banner field often does (e.g. #750 pruned 7 slash-commands whose deterministic core already ran in hooks/launchd). Periodically census unused surface using the `command_usage`/`skill_usage` tables (#747/#744) via the `housekeeping-framework` rule. **Chesterton guard:** remove something only after verifying it is BOTH unused AND its function is covered elsewhere — essential complexity (provenance redundancy, safety guards) stays; only accidental complexity goes. Advisory, not hook-gated. **Before deleting anything from `.claude/scripts/`, `bin/`, or `.claude/templates/`, run `grep -rl <basename> ~/docs_gh/` — "unused" must be verified by grepping consumers across every project, never by inspection alone.** #773 deleted a script a downstream project's `post-render.sh` still called by absolute path; the breakage ran silently for six weeks because the call site's `cmd || echo ... >&2` swallow made "script missing" and "script ran clean" share an exit code (see `checks-must-distinguish-unknown`, [#1067](https://github.com/JohnGavin/llm/issues/1067)).
+
+## Pipeline Validation (original paragraph)
+
+**Pipeline Validation (ALL PROJECTS):** `_targets.R` is the default expectation, not merely a file whose parse validity is checked IF it happens to exist — a project without one MUST declare why in `.claude/CLAUDE.md` (`| Targets pipeline | none — <reason> |`), or the absence is a reported defect, never a silent pass. When `_targets.R` exists: `parse("_targets.R")` MUST succeed before every commit. Code-as-string targets MUST `parse(text=code)` for R or `bash -n` for bash. Checker: `check_targets_presence.sh` (distinguishes parses/parse-error/declared-exempt/undeclared-absence — see `pipeline-validation` rule).
+
+## Reproducible Ingestion (original paragraph)
+
+**Reproducible Ingestion (ALL PROJECTS) — NEVER ingest data with the model:** When a data source is machine-readable (CSV, JSON, XLSX, fixed-schema PDF/export), you MUST ingest it via committed, tested parser code in the project's ETL — NEVER by having the model read/transcribe/aggregate it in throwaway scripts. A model eyeballing a file is non-reproducible, error-prone (FX conversions, category splits, dedup all silently wrong), and leaves no audit trail. The FIRST action on a new source is to add a parser + routing + tests. Ad-hoc `Read`/`Rscript -e`/`/tmp/*.R` queries are allowed ONLY to *explore data already ingested into the canonical store* (e.g. duckdb) — never to *ingest a new source*. **This applies equally to output surfaces, not just source files** — typing a value read off a document straight into a hosted Artifact or dashboard is the same violation as hardcoding it in a config file, even when the value is correct, and even when the pipeline is broken (fix it, don't bypass it); `clinical_data_provenance_guard.sh` (`Artifact` matcher, WARN-only — a content-shape heuristic, never blocks) flags likely hand-transcribed clinical/lab values as a reminder (origin: a private personal-data project, 2026-09-14). **This applies equally to hand-entered constants in config/data/source files** (e.g. `estate.yaml` account balances, `io.R` pool values, any `value_k:` typed by hand): if a figure exists in a source statement, it MUST be derived by committed parser code — never typed in. A hardcoded balance carrying a `# user-confirmed` / `# from statement` comment is a **violation, not a confirmation**: it has no parser, no test, no audit trail, and silently drifts as statements update. Any value currently hand-entered is technical debt to be discharged by writing the parser, not a stable state — flag it on sight, do not pass over it. A value may be entered by hand ONLY when no machine-readable source exists (e.g. a verbal valuation); such values MUST carry a `# MANUAL: no source` comment and an issue to obtain a parseable source. Origin: a private personal-finance project, two incidents roughly a fortnight apart in 2026-06 — hand-reading a bank CSV produced wrong FX + category-split figures, and separately a set of account balances were hand-typed into a config file while the full source statements sat un-ingested nearby. **Detection is automated (llm#792):** a literal co-located with a provisional-marker comment (`refine|rough|first-pass|placeholder|for now|assumed|approx|guess|hardcod|TODO|FIXME|user-confirmed|from statement`) is caught by `r_code_check.sh`'s ast-grep pass and, in files that feed a published output, blocks the commit; fix via F1 (write the parser), F2 (promote to a cited constant), F3 (`# MANUAL: no source` + tracking issue), or F4 (delete if dead) — full P0-P3 taxonomy and F1-F4 vocabulary in the `provisional-constants` rule.
+
+## One home per value (original paragraph)
+
+**One home per value (ALL PROJECTS):** Every value — number, date, time, count, name, version, "N pages" — has exactly ONE home (a data record, a parameter file, or a computed target); every other mention is derived from it (placeholder / inline expression / generated) — including captions, tooltips, page JavaScript strings, emails and reference tables; in generated HTML or a Claude Artifact, a `<span data-fact="key">` filled from a facts file the build writes. A hand-typed second copy is a defect even while it is still correct: it drifts silently and the reader becomes the integrity check. Enforce it in the generator, not in review: the build MUST FAIL when a home's value appears as a literal elsewhere, with NO category exempted as "noise" (one project excluded clock times, dates and counts from its duplication check — that is exactly where it then drifted). The only escape hatch is an allow-list whose every entry states a reason (in a page: `data-fixed="<reason>"`; stale entries reported); legacy artifacts use a ratchet (report the debt, `strict` per artifact) and are flagged on sight. Applies equally to values *about* the artifact itself (version, page/fact counts). Prove it: change one home value in a scratch copy and count what moves, falsify the gate, and test the generator, not only the validator. See `dynamic-prose-values`. Origin: user, 2026-09-25, after a dashboard's Build page showed a hand-typed "Version 2026-08-29" and "Facts 16" for two releases, and a second dashboard carried 77 hand-typed numbers on one page, two already false.
+
+## Code Quality (original paragraph)
+
+**Code Quality (ast-grep + jarl):** 8 ast-grep rules at `~/.config/ast-grep/rules/`; jarl R idiom linter (`jarl.toml` in project root). Run `~/.claude/scripts/r_code_check.sh R/` before commit — runs both tools. Banned patterns (ast-grep): `suppressWarnings(as.*)`, silent `tryCatch`, raw SQL, `stop()`, `install.packages()`. R idiom checks (jarl): `redundant_equals`, `nzchar`, `fixed_regex`, unused functions, unreachable code. Use `$$$` metavar (NOT `___`) for ast-grep structural search. **jarl is laptop-local only** — manual install at `/usr/local/bin/jarl`, not in nix shell PATH (script handles both), not available in GH Actions CI; skipped silently when missing. Migration to nix tracked in llm#99.
+
+## Knowledge Base (original paragraph)
+
+**Knowledge Base (raw/wiki/outputs):** Use `knowledge-base-wiki` skill. Central hub at `~/docs_gh/llm/knowledge/` (LOCAL git only — NEVER push to GitHub, `PRIVATE` marker + pre-push hook block). raw/ is append-only (enforced by `file_protection.sh`), wiki/ requires `## Sources` section, AI-inferred claims tagged `> ⚠ AI-inferred:`, cross-wiki links use `[[topic]]` syntax. T1 health check on every Edit/Write via `wiki_health_onwrite.sh`. Run `wiki_health_check.sh <wiki_dir>` after batch updates. Use `wiki-curator` agent to compile, `critic` (wiki validation mode) for adversarial review.
+
+## Safety-critical rules (original tier line with origin)
+
+**Safety-critical rules** (auto-loaded — same "never scoped" contract as mandatory rules, distinct tier because their content is a specific credential/trust/destructive-ops posture rather than a general session discipline): `credential-management`, `external-code-zero-trust`, `permission-discipline`, `destructive-ops-guard`, `public-private-repo-boundary`. Origin: [llm#943](https://github.com/JohnGavin/llm/issues/943) — the 2026-08-11 credential leak happened because `credential-management`'s `paths:` scope excluded every shell script and dotfile where secrets are actually handled. A safety rule that only loads where the risk has already materialised is not a safety rule.
+
+## Rule loading via paths: (original paragraph)
+
+**Rule loading is enforced via `paths:` frontmatter (llm#590):** a rule file with NO `paths:` key (or `paths: ["**"]`) loads into EVERY session and EVERY subagent — base-context cost is ~250 tokens/KB, doubled in worktree sessions. Only the mandatory and safety-critical rules above may omit `paths:`. Every other rule MUST carry a real path glob so it injects only when matching files are touched. Audit: `~/.claude/scripts/check_rule_scoping.sh` (any non-mandatory/non-safety-critical rule without paths is a defect; any mandatory/safety-critical rule WITH paths, or missing entirely, is a defect that blocks commits touching rule files — see `rule-scoping-guard`).
+
+## Context-load rules: original Build-artifacts and Checks/gates bullets
+
+- Build artifacts: `portable-build-artifacts` (committed artifacts must not depend on which checkout built them — absolute paths in serialised objects; path filters matching their own scan root)
+- Tooling: `roborev-exclude-patterns`
+- Checks / gates: `checks-must-distinguish-unknown` (any check, gate, probe or health report must be able to say "I could not determine this" distinguishably from a negative — an error path and a negative-result path must never share an exit; six instances in one week, llm#1012/#746/#913/#1013/#1017/#1019)
+
+## Cite the artefact (original paragraph)
+
+**Cite the artefact, never describe it (ALL PROJECTS):** When reporting on anything that has an address — a dashboard, a rendered page, a deployed site, an issue, a PR, a CI run, an artefact — **print the full URL**, embedded as a markdown link. Never write "the dashboard", "the published site", "the leaderboard page" and leave the reader to find it. A generic reference costs the reader a search every single time, and the cost is paid on every message; a URL costs one click, once. This includes the *specific* page, not just the site root — `https://owner.github.io/repo/leaderboard.html`, not "the dashboard". Resolve it rather than guessing: `gh api repos/OWNER/REPO/pages --jq .html_url`, and `curl -s -o /dev/null -w '%{http_code}'` to confirm it is actually live before citing it. **A URL you have not fetched is a claim, not a citation** — the deployed page is a different surface from your local render, and per `verification-before-completion` it must be curl'd (WebFetch caches ~15 min). Extends the existing "always embed the issue/PR link" clause in `pr-shipping-discipline` from issues/PRs to every addressable artefact. Origin: user request 2026-08-24, after a session in which a dashboard was repeatedly called "the feedback surface" without once naming where it is.
+
+## Blocked fetch (original paragraph)
+
+**Blocked fetch → ask for a paste, never reconstruct (ALL PROJECTS):** When `WebFetch` fails — 403, paywall, bot-block, empty body — **stop and ask the user to paste the text**. Do NOT reconstruct the source from search-result snippets, titles, or prior knowledge, and do NOT proceed on a partial picture, even when every gap is honestly labelled INDETERMINATE. Labelling is not a substitute for the content: an analysis built on snippets compares our code against a *guess* at the source, and every conclusion drawn from it inherits that guess — including the confident-sounding ones. The user can paste the article in seconds; a reconstructed comparison costs far more to un-pick later, because its errors are indistinguishable in form from its correct parts. This is the `checks-must-distinguish-unknown` rule applied to inputs rather than outputs: a source you could not read is an indeterminate input, and it must not silently flow into a determinate-looking conclusion. Origin: user instruction 2026-08-27, after an agent hit HTTP 403 twice on a methodology article and reconstructed its argument from WebSearch snippets rather than asking.
+
+## Outbound writing (original paragraph)
+
+**Outbound writing — John's voice, not yours (ALL PROJECTS):** Anything John will *send* under his own name — email, message, issue comment, letter — is drafted in **his** style, not house style. Greeting `Hi,`; **one clause per line**, broken at natural pauses (including mid-sentence after a subordinate clause), never paragraphs left to wrap; sign-off is a bare `John.` — no "Many thanks", no surname. Cut questions that pre-empt a reply (don't ask how to pay before they've confirmed a slot). Separately, **anything meant to be copied — email bodies, commands, messages — is output as plain text and saved as a `.txt`, NEVER in a markdown blockquote**: `>` renders as vertical bars in the terminal and gets copied with the text. See `outbound-writing-style` rule. Origin: user, 2026-08-27, after re-writing a drafted booking email and then failing to copy-paste it.
+
+## Follow the reference fully (original paragraph)
+
+**Follow the reference fully (ALL PROJECTS):** When a file is named as the model — "use X as a template", "match Y's style" — it is a **component library, not a stylesheet**. Reusing its CSS while inventing new markup takes the look and drops the thinking. **Audit every component in the reference BEFORE writing**, and give each an explicit verdict: *use* or *not applicable*. There is no "didn't notice". Then **report which you skipped**, so the user corrects a judgement rather than an omission. A second request to use the template is not a new instruction — it is the same one, unheeded. See `follow-the-reference-fully` rule. Origin: user, 2026-08-27, third repetition of the same instruction on one artifact.
+
+## Shiny UI (original paragraph)
+
+**Shiny UI:** NEVER use `value_box()` or similar large KPI boxes - they waste space. Use compact two-column tables instead (Metric | Value). Time series plots MUST have a range slider and default to last 3 months view. **NEVER pie charts** — use dotcharts (Cleveland dot plots) as first choice, horizontal bars as fallback. For compact filters inside card headers/footers and next to inputs, use `bslib::toolbar()` (bslib 0.11.0+). See `dashboard-filter-placement` rule. See `visualization-standards` rule.
+
+## Agents table with 'Use When' column (original)
+
+| Agent | Model | Use When |
+|-------|-------|----------|
+| `quick-fix` | haiku | Typos, renames, version bumps, obvious syntax fixes |
+| `critic` | sonnet | Read-only adversarial review (cannot edit files) |
+| `fixer` | sonnet | Apply fixes from critic reports (read-write, cannot self-approve) |
+| `r-debugger` | sonnet | Debug R package issues (test failures, R CMD check) |
+| `targets-runner` | sonnet | Run tar_make(), inspect pipeline state |
+| `reviewer` | sonnet | Code review PRs for R package quality |
+| `nix-env` | sonnet | Diagnose Nix shell problems, update deps |
+| `shiny-async-debugger` | sonnet | Debug async/crew/ExtendedTask issues |
+| `data-quality-guardian` | sonnet | Data validation, pointblank |
+| `data-engineer` | sonnet | SQL transforms, dbt pipelines |
+| `shinylive-builder` | sonnet | Build/test Shinylive WASM vignettes |
+| `wiki-curator` | sonnet | Compile raw/ source material into wiki/ |
+
+## Pruned slash commands history (original)
+
+Pruned 2026-07-08 (chore/prune-vestigial-slash-commands): `/pr-status`, `/wiki-health`, `/cleanup`, `/triage`, `/skillify`, `/roborev-list-projects`, `/ctx-check` removed — never-typed twins of automated hooks/launchd pulses/skills (`pr_status_pulse.sh`, `wiki_health_onwrite.sh`, `/cleanup-worktrees` + `/simplify`, `/issue-triage`, `skillify_backlog.sh` + the `/skillify` skill, `gh pr list`, the session-init ctx banner). `skillify.sh` script survives — it is still called by the automated backlog scripts.
+
+## Automation Features (original section body)
+
+**Loop & Schedule:** Automate recurring tasks without manual intervention.
+
+| Command | Syntax | Use Case | Example |
+|---------|--------|----------|---------|
+| `/loop` | `/loop <interval> <command>` | Repeat task at intervals | `/loop 1h /check` — R CMD check hourly |
+| `/schedule` | `/schedule '<cron>' <command>` | Cron-like scheduling | `/schedule '0 9 * * *' /cleanup-worktrees` — daily 9 AM |
+| `/btw` | `/btw <question>` | Side query during work | `/btw "pipeline status?"` while tar_make() runs |
+| `/branch` | `/branch` | Fork current session | Alternative to `--fork-session` |
+| `/teleport` | `/teleport` | Pull cloud session local | Resume interrupted remote work |
+| `/remote-control` | `/remote-control` | Control local from phone/web | Mobile session access |
+
+**Loop intervals:** `30s`, `5m`, `1h`, `2d` (or trailing: `every 30 minutes`). Minimum `/schedule` interval: 1 hour.
+
+**Common loop patterns:** `/loop 30m /check` (continuous R CMD check), `/loop 5m /roborev` (auto code review), `/schedule '0 9 * * 1-5' /issue-triage` (weekday AM triage). List: `/schedule list`. Stop: `/schedule stop <job-id>`.
+
+**Hooks integration:** dark-contrast checks run via pre-commit scripts; see `~/.claude/scripts/check_dark_contrast.sh`. `r_code_check.sh` runs ast-grep + jarl (structural/idiom checks) — it does NOT format code; no formatter (`styler`/`air`) is wired into this repo (llm#905).
+
+**Roborev automation (Phase 1.7, #217):** Three-tier coverage — primary `post-commit` hook (local commits), secondary `post-merge` hook installed per-repo via `roborev_install_post_merge_hook.sh` (pull-time catchup for remote-merged PRs), thrice-daily business-hours safety-net poller (Mon–Fri 09:00/13:00/17:00 via launchd); see `roborev-resolution` rule.
+
+## Templates / Recipes / Rules (original sections)
+
+## Templates (5)
+
+`new-skill.md`, `new-rule.md`, `new-plan.md`, `new-wiki-page.md`, `new-project-claude.md`
+
+## Recipes (4)
+
+`deploy-new-project.md`, `onboard-dataset.md`, `debug-ci-failure.md`, `publish-vignette.md`
+
+## Rules
+
+Full categorised list at `.claude/RULES.md` (Core · Nix · MCP · Bash · Data · Stats · Viz · Quarto · Shiny · Pipeline · Knowledge · Quality · Security · Other). Mandatory subset enforced via the `**Mandatory rules:**` line above.
+
+## Hooks (original section)
+
+## Hooks (9 scripts, 5 event hooks)
+
+`session_init.sh`(SessionStart), `context_survival.sh`(compact/resume+PreCompact), `file_protection.sh`(PreToolUse:Edit|Write), `context_monitor.sh`(PostToolUse:Bash|Task), `wiki_health_onwrite.sh`(PostToolUse:Edit|Write), `skill_quality_onwrite.sh`(PostToolUse:Edit|Write), `session_stop.sh`(Stop). Audit: `agents_md_audit.sh`, `r_code_check.sh`, `qa_gate_check.sh`, `vignette_check.sh`.
+
+## Memory files list (original)
+
+## Memory (files at `.claude/memory/`)
+
+In-repo at `.claude/memory/`; the runtime path `~/.claude/projects/-Users-johngavin-docs-gh-llm/memory` is a symlink into this directory (#144).
+
+`MEMORY.md`(index), `agent-patterns.md`, `architecture.md`, `ci-strategy.md`, `nix-operations.md`, `shinylive-issues.md`, `tool-preferences.md`, `feedback_safe-deletion.md`, `feedback_never-edit-default-nix.md`, `feedback_nix-shell-portability.md`, `feedback_no-compound-cd.md`, `feedback_knowledge-base-discipline.md`, `feedback_github-pages-user-sites.md`, `feedback_ast-grep-lessons.md`, `feedback_delegation-under-pressure.md`, `feedback_symlink-edit-vs-mv.md`

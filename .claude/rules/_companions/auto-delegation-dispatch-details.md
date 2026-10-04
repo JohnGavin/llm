@@ -343,3 +343,42 @@ agent may invoke Bash MUST use `isolation: "worktree"`:
 |----------|---------------------|
 | WARN | Prefer worker-tier agents. Use lightweight tier for all single-file edits. Defer speculative exploration. |
 | CRITICAL | Orchestrator tier for user dialogue only. ALL code work via worker/lightweight agents. Suggest worktree: `git worktree add ../<repo>-worker feat/<task>` then `claude --model sonnet` in that tree |
+
+
+## Moved from the `auto-delegation` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Bounded exceptions: rationale
+
+The orchestrator tier retains write access for these — they are too small/dialog-driven to be worth the round-trip cost of a subagent, AND they don't benefit from the worker tier's deeper code reasoning:
+
+### Keep in Orchestrator Tier: bullets duplicating the bounded-exceptions table
+
+- Prose edits to `.claude/rules/*.md`, `.claude/memory/*.md`, `CLAUDE.md`, `CHANGELOG.md` (bounded exceptions in the table above)
+- `CURRENT_WORK.md` **ownership** — the orchestrator tier always decides what to write and when to compress; it writes directly OR delegates the physical write to the lightweight tier (which executes, not directs — see "Lightweight Tier for Context Summarisation" above)
+
+### Verify-not-already-done: incident framing
+
+A dispatch (~300k tokens, 5-20 minutes) spent discovering "already fixed" is pure waste; on 2026-09-02, 2 of 5 issues worked in one session were already resolved. Incident detail: companion doc.
+
+### isolation:worktree rationale
+
+Per the `permission-discipline` rule, `bypassPermissions` is safe ONLY inside worktrees and `/tmp/*`. Full rationale (main-checkout credential risk, `~/.claude/` symlink sandbox-escape, `worktree_symlink_guard` hook llm#692) is in the companion doc.
+
+### Long verification commands: incident narrative
+
+**Describing the intent does not work.** Writing "run verify.sh in the foreground, up to 10 minutes" reads as satisfied by a backgrounded run, and agents then end their turn with "waiting for the build to complete" — which is not a result. Observed five times across two sessions; even explicit "foreground" prose has failed — the verbatim call plus the negative instruction is the only form that has held. Full incident detail: companion doc. A warm nix shell is ~13s and a full suite runs in a few minutes, so foreground fits inside a 600000 ms timeout comfortably; if a run genuinely exceeds that, poll the output file with repeated `Read` calls until a terminal completion marker appears — never a bare "wait for the notification".
+
+
+## Moved from the `auto-delegation` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Model alias paragraph (full)
+
+In Agent() calls use the alias (`model="haiku"`, `model="sonnet"`, `model="opus"`) — Claude Code resolves these to the latest tier model. Do not hardcode dated model IDs (e.g. `claude-sonnet-4-6`) in dispatch prompts; see `llm-portability-statement` rule for the portability rationale.
+
+### Default rule paragraph (full)
+
+**Default rule:** the orchestrator tier delegates all code, script, and configuration edits to subagents. This includes everything under `R/`, `inst/`, `tests/`, `vignettes/`, `.github/`, `default.R`, `default.nix`, shell scripts in `.claude/scripts/` and `.claude/hooks/`, and any new file in the package source tree. See the companion doc for the "Clarification" note on when the orchestrator tier still uses Edit/Write directly.

@@ -113,3 +113,56 @@ cat ~/.claude/logs/agent_post_verify_abc123ef.json
 | 1 (parent rule) | Dispatch ID protocol documented; commit footer format; scope block format | Shipped |
 | 2 | Hooks read identity env vars for expiry + scope checks | Future (llm#476) |
 | 3 | Helper script `mint-dispatch.sh` automates ID + scope block generation | Future |
+
+
+## Moved from the `agent-identity-and-task-scopes` rule body (2026-10-03, always-loaded baseline trim)
+
+Verbatim text removed from the rule body to cut the always-loaded instruction baseline. The normative requirement is restated in the rule; this is the supporting detail.
+
+### Symlink-trapped paths
+
+### Symlink-trapped paths
+
+See the companion doc for why `~/.claude/scripts/` and `~/.claude/hooks/` are
+symlink-trapped (the Pattern 2 failure from llm#517).
+
+The scope block MUST list `~/.claude/` as forbidden in `forbidden-external-ops`.
+The `PreToolUse:Edit|Write` hook (future: llm#517) will resolve symlinks before
+the boundary check.
+
+### Expiring Permissions: Phase 1/2 detail
+
+The TTL is advisory in Phase 1 — the orchestrator checks expiry after the agent
+returns. In Phase 2, hooks will check `CLAUDE_DISPATCH_EXPIRES_AT` (ISO
+timestamp) before allowing each Bash call and reject calls after expiry.
+
+See the companion doc for the "Environment variables for hooks (Phase 2)" list.
+
+### Audit Trail
+
+## Audit Trail
+
+The orchestrator can reconstruct a full audit of any dispatch. See the companion
+doc for the worked `git log --grep="Dispatch-Id: ..."` audit commands.
+
+The post-verify state file (`agent-post-verify.sh capture/check`) is written
+with the dispatch ID in its path, making dispatch-to-outcome reconciliation
+unambiguous.
+
+### Worked Example pointer and annotated Related
+
+## Worked Example & Phase Roadmap
+
+See [`_companions/agent-identity-details.md`](_companions/agent-identity-details.md)
+for the full dispatch worked example (mint → dispatch → post-verify → audit) and
+the phase roadmap. The normative protocol above is complete without it.
+
+## Related
+
+- [`auto-delegation`](.claude/rules/auto-delegation.md) — dispatch model; Mandatory Prefixes 1 + 2; this rule adds Prefix 3 (scope block)
+- [`agent-no-push-to-main`](.claude/rules/agent-no-push-to-main.md) — Guard A + Guard B; Phase 2 will add Guard C (scope + expiry)
+- [`permission-discipline`](.claude/rules/permission-discipline.md) — workspace-based policy; gains identity dimension in Phase 2
+- [`auto-delegation-dispatch-details`](.claude/rules/_companions/auto-delegation-dispatch-details.md) — verbatim prefixes; scope block is Prefix 3
+- `unified-observability-schema` (#475) — the dispatch audit log feeds into the unified schema
+- llm#476 — origin issue (Salesforce Principle 4: Build with trust)
+- llm#517 — two concrete failure modes this rule addresses (AGENT_PUSH_OK misuse + symlink breach)
