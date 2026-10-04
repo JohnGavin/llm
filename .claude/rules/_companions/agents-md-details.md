@@ -68,6 +68,9 @@ Verbatim original text of AGENTS.md paragraphs and sections that were shortened 
 
 ## Outbound writing (original paragraph)
 
+Superseded 2026-10-04: the "one clause per line" layout below was replaced by
+80-column filled lines; see `outbound-writing-style`.
+
 **Outbound writing — John's voice, not yours (ALL PROJECTS):** Anything John will *send* under his own name — email, message, issue comment, letter — is drafted in **his** style, not house style. Greeting `Hi,`; **one clause per line**, broken at natural pauses (including mid-sentence after a subordinate clause), never paragraphs left to wrap; sign-off is a bare `John.` — no "Many thanks", no surname. Cut questions that pre-empt a reply (don't ask how to pay before they've confirmed a slot). Separately, **anything meant to be copied — email bodies, commands, messages — is output as plain text and saved as a `.txt`, NEVER in a markdown blockquote**: `>` renders as vertical bars in the terminal and gets copied with the text. See `outbound-writing-style` rule. Origin: user, 2026-08-27, after re-writing a drafted booking email and then failing to copy-paste it.
 
 ## Follow the reference fully (original paragraph)
