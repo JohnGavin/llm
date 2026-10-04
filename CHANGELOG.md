@@ -4,6 +4,32 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-10-04 (session continued from 2026-09-30: instruction-size cut, settings drift, roborev privacy prompts, feat/cc-20260930-193506)
+
+### Completed
+- **Startup instruction size** (Claude Code warned 31 files / 223.6k chars over the 150k limit). Phase 0 #1327 (`claudeMdExcludes` for worktree rule copies), Phase 1 #1329 (AGENTS.md 30.5k → 14.0k; always-loaded baseline 131.5k → 74.3k; `worktree-location`, `nix-agent-shell-protocol`, `btw-timeouts`, `systematic-debugging` path-scoped; `pivot-signal` folded into `systematic-debugging`; five new companions), Phase 2 historical#930 (project files ~88k → ~7k), Phase 3 #1328 (`check_rule_scoping.sh --budget`). Final measurement: `32 session types, 0 over warn (>120000), 0 over limit (>150000)`, global 74.1k.
+- **Settings drift** #1332: `~/.claude/settings.json` had been a regular file since ~23 Sep. Repo copy is now the union (10 `cc-status` hook groups, CLI-gated sound hooks, clinical guard, `claudeMdExcludes`); user file backed up to `~/.claude/settings.json.pre-symlink-20261004.bak` and re-symlinked. The banner's `config:ok` was a hard-coded literal; it is now `config_wiring_status` (ok / DRIFT(names) / ?), 12-case test, falsified (`fails=4` with the comparison disabled). Live: `config:DRIFT(settings.json)` before the swap, `config:ok` after.
+- **roborev macOS privacy prompts.** TCC log: the daemon itself (`/usr/local/bin/roborev`, pid 14960) requested Documents, Desktop, Downloads, network volumes, ~/Library, iCloud/Dropbox/Proton File Provider domains and Full Disk Access in a 2-minute burst at the start of gemini job 13904 (cancelled; it never got past startup). Microphone requests were the user `afplay` Stop/Notification hooks inherited by `claude -p` review agents; those hooks are now gated on `CLAUDE_CODE_ENTRYPOINT=cli` (interactive `cli`, `-p` runs `sdk-cli`, both measured). The "self-update" was our own `com.claude.roborev-weekly-update` job (Thu 23:30, 1 Oct), which also explains the unexplained 23:30 upgrade in #1265; unloaded, then reloaded on request. Upstream: kenn-io/roborev#1314 (job_timeout_minutes not enforced), kenn-io/roborev#1315 (privacy prompts).
+- **Outbound writing:** emails hard-wrapped at 80 columns with lines filled, replacing one clause per line (#1330).
+- **Snapshot-errors article** (etiennebacher.com, 2026-09-22) analysed for gaps → #1331 (bare `expect_error` common and unflagged; our `testthat-patterns` skill shows one; no codemod; no message-quality review).
+- historical's local checkout: seven `docs/` files identical to `origin/main` (empty `git diff origin/main -- docs/`) discarded on request, then fast-forwarded.
+- Merged: #1320–#1324, #1326–#1330, #1332, historical#930. Filed: #1331, #1333, #1334.
+
+### Failed Approaches
+- Editing `~/.claude/settings.json` with Edit was blocked by `file_protection.sh` (canonical `.claude/`). Handed the user a backed-up Python script to run instead of working around the hook.
+- Searching the roborev config for an auto-update key: there is none; the updater is our own launchd job. Grep `bin/`, `.claude/scripts/` and `~/Library/LaunchAgents` for the command before assuming a tool updates itself.
+- First `--budget` run showed historical at 168k: its checkout had not pulled #930 because of local `docs/` edits. Measure against a pulled checkout before concluding a phase failed.
+
+### Accuracy / Metrics
+- Always-loaded baseline 131.5k → 74.1k chars; worst session type 233.7k → under 120k.
+- `check_rule_scoping.sh`: OK; selftest 26/26 on the Phase 1 branch.
+
+### Known Limitations
+- **#1333 (High, latent):** `roborev_poll_merges.sh` aborts under `set -e` at the #1316 all-files-excluded check (reproduced). Has not fired yet: the 2 Oct run skipped all 26 repos before that line. Will abort the first weekday run where a repo has advanced.
+- **#1334:** `check_targets_tracks_own_package.sh` reports an R crash as FAIL and gives a false PASS on any `tar_source()` (review 13854, merged in #1299).
+- Exact trigger of the roborev home-folder access is unconfirmed (no symlinks from the worktree into those folders; release notes silent). Weekly auto-update is back on, so v0.70.0+ stays installed.
+- Phase 1 leftovers: `check_rule_scoping.sh` `FALLBACK_ALLOW` still names the four re-tiered rules; two SQL seed files still say `pivot-signal`; `RULES.md` count stale. historical has dead globs on already-scoped rules.
+
 ## 2026-09-30 (session: banner warnings, #1294/#1295/#1296, roborev purge and retention, feat/cc-20260930-193506)
 
 ### Completed
