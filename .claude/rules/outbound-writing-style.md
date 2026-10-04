@@ -1,5 +1,5 @@
 ---
-description: Drafts John sends under his own name use his voice — "Hi,", one clause per line, "John." — and copyable text is never blockquoted
+description: Drafts John sends under his own name use his voice — "Hi,", lines filled to 80 columns, "John." — and copyable text is never blockquoted
 paths:
   - "**/drafts/**"
   - "**/outbound/**"
@@ -30,7 +30,7 @@ writes. A draft in the wrong register costs him a rewrite every time.
 | Element | Required | Not |
 |---|---|---|
 | Greeting | `Hi,` | `Hello,` · `Dear …` · `Good morning` |
-| Line layout | **One clause per line**, broken at natural pauses | Paragraphs left to wrap |
+| Line layout | **Hard-wrapped at 80 columns**, each line filled close to 80 | A newline after every comma or clause · unwrapped paragraphs |
 | Sign-off | `John.` | `Many thanks,` · `Best wishes,` · `Kind regards,` · surname |
 | Em dashes | Fine — he keeps them | — |
 | Paragraph breaks | Blank line between topic blocks | Wall of text |
@@ -45,32 +45,19 @@ not as a routine part of the sign-off block. Default sign-off is bare
 `John.`; add contact detail only if the ask requires it, and prefer email
 over phone when either would do.
 
-### One clause per line
+### Fill lines to 80 columns
 
-Break at natural pauses, **including mid-sentence** after a subordinate clause. Each
-line carries a single idea, so the reader takes them one at a time instead of scanning
-a wrapped block — and it survives re-wrapping by the recipient's mail client.
+Hard-wrap the body at **80 characters**. Keep adding words to a line while it still
+fits within 80; do not start a new line after every comma or clause. Short paragraphs
+separated by blank lines carry the structure. Lists stay one item per line, with a
+two-space hanging indent if an item wraps. An issue title is a single field and is
+not wrapped.
 
-Worked example (his own edit of a drafted booking enquiry, 2026-08-27):
+Fill by tool, not by eye: `textwrap.fill(paragraph, 80)` per paragraph, then assert
+no body line exceeds 80.
 
-```
-Hi,
-
-Which Sundays are you running tours over the next few weeks?
-Your events calendar shows no upcoming dates and the site still mentions reopening on 5 April,
-so I couldn't work out the current schedule.
-
-If you're open this Sunday, 30 August,
-I'd like to book one place in the afternoon — either 13:30 or 15:00, whichever suits.
-I'm flexible on the date too if that Sunday isn't running.
-
-Also, I gather the mill turns 250 this year — are there any anniversary events planned?
-
-John.
-```
-
-Note the break after `If you're open this Sunday, 30 August,` — mid-sentence, at the
-clause boundary. That is the pattern, not an accident of width.
+This supersedes the earlier "one clause per line" layout (2026-08-27), which put a
+newline after nearly every comma and left most of each line empty.
 
 ### Cut questions that pre-empt a reply
 
@@ -104,7 +91,8 @@ Self-test before formatting: *is this to read, or to copy?* If copy — plain, p
 |---|---|---|
 | `Hello,` / `Many thanks,` / `John Gavin` in a draft | Assistant register, not his | `Hi,` … `John.` |
 | Email body wrapped in `>` | Vertical bars get copied | Plain text + `.txt` |
-| Paragraph-shaped email body | He reformats it every time | One clause per line |
+| Newline after every comma or clause | Wastes the line; he asked for full lines | Fill each line to 80 columns |
+| Unwrapped paragraph lines | Width depends on the reader's client | Hard-wrap at 80 |
 | Asking about payment/logistics before confirmation | Pre-empts a reply not yet earned | Cut it |
 | Phone number appended to every sign-off by default | Discloses a private number the recipient didn't need | Bare `John.`; add contact detail only when the ask requires a call |
 | Applying this to commit messages or rules | Internal prose stays house style | Part 1 is for outbound only |
@@ -118,6 +106,10 @@ copy-paste the draft from chat because it had been rendered as a blockquote.
 Phone-number clause added 2026-09-22, premortem project: a drafted email to a charity
 signed off with full name, email and mobile number appended by default; John asked for
 the phone number removed and the rule updated so it isn't disclosed by default again.
+
+80-column layout added 2026-10-04: reviewing two upstream issue drafts written one
+clause per line, John asked for emails to be 80 characters wide with no newline after
+every comma while the line still has room.
 
 ## Related
 

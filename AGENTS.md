@@ -66,7 +66,7 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **Blocked fetch → ask for a paste, never reconstruct (ALL PROJECTS):** when `WebFetch` fails (403, paywall, empty body), **stop and ask the user to paste the text**. Do NOT reconstruct the source from search snippets or prior knowledge, even with gaps labelled INDETERMINATE.
 
-**Outbound writing — John's voice (ALL PROJECTS):** anything John will *send* is drafted in **his** style: greeting `Hi,`; **one clause per line**; sign-off a bare `John.`; no questions that pre-empt a reply. Anything meant to be copied is plain text saved as a `.txt`, NEVER a markdown blockquote. See `outbound-writing-style`.
+**Outbound writing — John's voice (ALL PROJECTS):** anything John will *send* is drafted in **his** style: greeting `Hi,`; **body hard-wrapped at 80 columns, each line filled** (no newline after every comma); sign-off a bare `John.`; no questions that pre-empt a reply. Anything meant to be copied is plain text saved as a `.txt`, NEVER a markdown blockquote. See `outbound-writing-style`.
 
 **Follow the reference fully (ALL PROJECTS):** a file named as the model is a **component library, not a stylesheet**: **audit every component BEFORE writing**, give each a verdict (*use* / *not applicable*), and **report which you skipped**. See `follow-the-reference-fully`.
 
