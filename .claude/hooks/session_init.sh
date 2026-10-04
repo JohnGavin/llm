@@ -1810,12 +1810,13 @@ _rulescope_cache="${HOME}/.claude/logs/session_init_rulescope_cache.txt"
 if [ "${CLAUDE_RULE_SCOPING_CHECK:-1}" != "0" ]; then
   if [ -f "$_rulescope_cache" ]; then
     _rulescope_cached=$(cat "$_rulescope_cache" 2>/dev/null) || true
-    echo "$_rulescope_cached" | grep -q "MANDATORY-BUT" && echo "$_rulescope_cached"
+    # also surface the always-loaded instruction budget (check E) when any session type is OVER the limit
+    echo "$_rulescope_cached" | grep -qE "MANDATORY-BUT|RULE-BUDGET-OVER" && echo "$_rulescope_cached"
   fi
   _rulescope_script="${CLAUDE_DIR}/scripts/check_rule_scoping.sh"
   if [ -x "$_rulescope_script" ]; then
     mkdir -p "$(dirname "$_rulescope_cache")"
-    nohup bash -c "timeout 5 '$_rulescope_script' 2>/dev/null > '$_rulescope_cache' || true" > /dev/null 2>&1 &
+    nohup bash -c "{ timeout 5 '$_rulescope_script' 2>/dev/null; timeout 20 '$_rulescope_script' --budget 2>/dev/null | grep -E '^RULE-BUDGET-(OVER|SUMMARY)'; } > '$_rulescope_cache' || true" > /dev/null 2>&1 &
   fi
 fi
 
