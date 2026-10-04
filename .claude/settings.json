@@ -732,5 +732,10 @@
   "autoCompactWindow": 800000,
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
-  "autoCompactEnabled": true
+  "autoCompactEnabled": true,
+  "claudeMdExcludes": [
+    "/Users/johngavin/docs_gh/worktrees/llm/**/.claude/rules/**",
+    "/Users/johngavin/docs_gh/llm/.claude/worktrees/**/.claude/rules/**",
+    "/Users/johngavin/worktrees/llm/**/.claude/rules/**"
+  ]
 }
