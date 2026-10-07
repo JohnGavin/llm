@@ -47,7 +47,7 @@
 # launchd performs — so a rotation reaches the daemon by construction, not by
 # anyone remembering to keep a second consumer kind listed here.
 CONSUMERS_GEMINI_API_KEY="launchd:com.roborev.auto-refine launchd:com.roborev.daemon"
-CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.kb-digest-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email launchd:com.claude.launchd-health-weekly"
+CONSUMERS_GMAIL_APP_PASSWORD="launchd:com.claude.overnight-self-review-email launchd:com.claude.config-digest-email launchd:com.claude.roborev-daily-email launchd:com.claude.roborev-weekly-rollup-email launchd:com.claude.launchd-health-weekly"
 
 # CONSUMERS_HF_TOKEN and CONSUMERS_OPENAI_API_KEY are deliberately empty
 # (llm#945, audited 2026-08-29). Empty is NOT the same fact as "absent": an

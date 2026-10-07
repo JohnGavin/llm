@@ -501,7 +501,7 @@ test_that("kb_digest_daily_cron.sh DRYRUN=1 exits 0 or 1", {
   skip_if_not(file.exists(cron_script), "kb_digest_daily_cron.sh not found")
 
   cmd <- sprintf(
-    "DRYRUN=1 EMAIL_DRY_RUN=1 timeout 30 bash '%s' > /tmp/kb_digest_cron_test.log 2>&1; echo $?",
+    "SKIP_CRON_PULL=1 DRYRUN=1 EMAIL_DRY_RUN=1 timeout 30 bash '%s' > /tmp/kb_digest_cron_test.log 2>&1; echo $?",
     cron_script
   )
   exit_code <- as.integer(trimws(system(cmd, intern = TRUE)))
@@ -909,4 +909,83 @@ test_that("dry-run email HTML includes all four KB-digest signal QA markers (#47
               info = "Signal #481 section heading missing")
   expect_true(grepl("New skills/rules without wiki context", combined),
               info = "Signal #482 section heading missing")
+})
+
+# ── Tests: section mode (llm#1340) ───────────────────────────────────────────
+#
+# The KB job no longer emails. KB_DIGEST_SECTION_OUT makes send_kb_digest_email.R
+# write its HTML body fragment (+ a .meta sidecar) and exit 0 without SMTP; the
+# config-digest email embeds that fragment.
+
+run_kb_section_mode <- function(digest_lines) {
+  email_script <- file.path(REPO_ROOT, ".claude", "scripts", "send_kb_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_kb_digest_email.R not found")
+  tmp_digest <- tempfile(fileext = ".md")
+  writeLines(digest_lines, tmp_digest)
+  section_out <- file.path(tempfile("kb_section_dir_"), "kb_digest_section_test.html")
+  dir.create(dirname(section_out), recursive = TRUE)
+  out <- system2("Rscript", args = email_script,
+                 stdout = TRUE, stderr = TRUE,
+                 env = c(paste0("KB_DIGEST_FILE=", tmp_digest),
+                         paste0("KB_DIGEST_SECTION_OUT=", section_out),
+                         "EMAIL_DRY_RUN=0",
+                         "GMAIL_USERNAME=", "GMAIL_APP_PASSWORD=", "REPORT_RECIPIENT="))
+  st <- attr(out, "status")
+  meta <- paste0(section_out, ".meta")
+  list(
+    status  = if (is.null(st)) 0L else as.integer(st),
+    output  = paste(out, collapse = "\n"),
+    html    = if (file.exists(section_out)) paste(readLines(section_out, warn = FALSE), collapse = "\n") else NA_character_,
+    meta    = if (file.exists(meta)) readLines(meta, warn = FALSE) else NA_character_,
+    section_out = section_out
+  )
+}
+
+test_that("section mode writes fragment + sidecar, exits 0, and never touches SMTP (#1340)", {
+  skip_if_not_installed("blastula")
+  r <- run_kb_section_mode(c("## Knowledge Base Digest — 2026-10-07", "",
+                             "- wiki page touched", "Body text."))
+  on.exit(unlink(dirname(r$section_out), recursive = TRUE), add = TRUE)
+
+  expect_equal(r$status, 0L)
+  expect_false(is.na(r$html))
+  expect_true(grepl("<details ", r$html), info = "fragment lacks collapsible sections")
+  expect_true(grepl("raw/ files awaiting wiki promotion", r$html, fixed = TRUE))
+  expect_true(any(grepl(paste0("^date=", format(Sys.Date()), "$"), r$meta)))
+  expect_true(any(grepl("^has_changes=1$", r$meta)))
+  expect_false(grepl("SMTP|email sent|credentials", r$output, ignore.case = TRUE),
+               info = "section mode must not attempt to send")
+})
+
+test_that("section mode omits the fix/revert table (shown once, in the Config section) (#1340)", {
+  skip_if_not_installed("blastula")
+  r <- run_kb_section_mode(c("## Knowledge Base Digest — 2026-10-07", "", "- x"))
+  on.exit(unlink(dirname(r$section_out), recursive = TRUE), add = TRUE)
+
+  expect_false(is.na(r$html))
+  expect_false(grepl("Fix/revert commits without KB reference", r$html, fixed = TRUE))
+  expect_false(grepl("QA:kb_signal_479=", r$html, fixed = TRUE))
+})
+
+test_that("section mode sidecar records has_changes=0 on an empty window (#1340)", {
+  skip_if_not_installed("blastula")
+  r <- run_kb_section_mode(c("## Knowledge Base Digest — 2026-10-07", "",
+                             "_No changes in the last 24 hours._"))
+  on.exit(unlink(dirname(r$section_out), recursive = TRUE), add = TRUE)
+
+  expect_equal(r$status, 0L)
+  expect_true(any(grepl("^has_changes=0$", r$meta)))
+})
+
+test_that("kb-digest plist stays at 08:05 and kb cron no longer sends email (#1340)", {
+  pl <- file.path(REPO_ROOT, ".claude", "launchd", "com.claude.kb-digest-email.plist")
+  skip_if_not(file.exists(pl), "plist not found")
+  txt <- paste(readLines(pl, warn = FALSE), collapse = "\n")
+  expect_equal(sub(".*<key>Minute</key>\\s*<integer>([0-9]+)</integer>.*", "\\1", txt), "5")
+
+  cron <- paste(readLines(file.path(REPO_ROOT, "bin", "kb_digest_daily_cron.sh"), warn = FALSE),
+                collapse = "\n")
+  expect_true(grepl("KB_DIGEST_SECTION_OUT", cron, fixed = TRUE))
+  expect_false(grepl("email_credentials_gate", cron, fixed = TRUE),
+               info = "KB job no longer sends, so it must not require SMTP credentials")
 })

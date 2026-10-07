@@ -390,7 +390,9 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
 
   cutoff <- format(Sys.time() - window_days * 86400, "%Y-%m-%d %H:%M:%S")
 
-  # status NOT IN ('ok', 'deferred'): 'deferred' (llm#947, llm#970) means the
+  # 'skipped' (llm#1340) likewise means a job ran and had nothing to do (the
+  # combined config+KB digest on a day with no changes): healthy, not a failure.
+  # status NOT IN ('ok', 'deferred', 'skipped'): 'deferred' (llm#947, llm#970) means the
   # job declined to run because DNS was not up within the bound -- NOT a
   # failure. Bucketing it as a failure here would exactly reproduce the
   # "8 partial / 0 ok" misleading-signal problem this change set out to fix
@@ -399,8 +401,8 @@ read_run_metrics <- function(ledger = LEDGER_PATH, window_days = REPORT_WINDOW_D
     "SELECT
        task AS label,
        COUNT(*) AS run_count,
-       SUM(CASE WHEN status NOT IN ('ok', 'deferred') THEN 1 ELSE 0 END) AS failures,
-       ROUND(100.0 * SUM(CASE WHEN status NOT IN ('ok', 'deferred') THEN 1 ELSE 0 END) / COUNT(*), 1) AS failure_pct,
+       SUM(CASE WHEN status NOT IN ('ok', 'deferred', 'skipped') THEN 1 ELSE 0 END) AS failures,
+       ROUND(100.0 * SUM(CASE WHEN status NOT IN ('ok', 'deferred', 'skipped') THEN 1 ELSE 0 END) / COUNT(*), 1) AS failure_pct,
        ROUND(MEDIAN(EPOCH(ended_at) - EPOCH(started_at)), 1) AS median_duration_s,
        ROUND(MAX(EPOCH(ended_at) - EPOCH(started_at)), 1)    AS max_duration_s,
        arg_max(status, started_at)   AS last_status,

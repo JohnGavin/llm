@@ -5,8 +5,10 @@
 #   0. Write housekeeping_runs start row (if duckdb available)
 #   1. Run kb_digest.R to compute sanitised aggregates into a temp file.
 #   1b. Write kb_events rows to unified.duckdb for each detected KB change
-#   2. Send email locally via blastula+SMTP (NOT via gh workflow run).
-#      The email body must NOT pass through CI logs — KB may contain PHI.
+#   2. Render the KB section's HTML fragment to ~/.claude/logs/
+#      kb_digest_section_<date>.html (+ .meta sidecar). NO EMAIL is sent by
+#      this job (llm#1340): bin/config_digest_cron.sh embeds the fragment in the
+#      single combined "Config & Knowledge Digest" email at 08:20.
 #   3. Update housekeeping_runs end row
 #
 # unified.duckdb writes: gracefully skipped when duckdb is absent.
@@ -21,13 +23,13 @@
 # All R calls are wrapped in nix-shell per the nix-agent-shell-protocol rule.
 # Dry-run mode (DRYRUN=1 / EMAIL_DRY_RUN=1) passes through to child scripts.
 #
-# Credentials (GMAIL_USERNAME, GMAIL_APP_PASSWORD, REPORT_RECIPIENT) come from the
-# single source -- the environment (with-secrets) or ~/.config/secrets.env -- via
-# .claude/scripts/lib/load_email_creds.sh. Fails closed unless a dry run.
+# No credentials: this job sends nothing (llm#1340), so it is not a GMAIL_*
+# consumer and is launched without with-secrets.
 #
 # Optional env vars:
 #   KB_KNOWLEDGE_REPO   Path to knowledge repo (default: ~/docs_gh/llm/knowledge)
 #   KB_SINCE            ISO timestamp cutoff  (default: 24h ago)
+#   KB_DIGEST_SECTION_OUT  Fragment path (default: ~/.claude/logs/kb_digest_section_<date>.html)
 #
 # Log: ~/.claude/logs/kb_digest.log
 #
@@ -100,13 +102,9 @@ source "${REPO_ROOT}/.claude/scripts/cron_deploy_pull.sh"
 cron_deploy_pull "${REPO_ROOT}" log
 log "HEAD: $(git -C "${REPO_ROOT}" rev-parse --short HEAD) $(git -C "${REPO_ROOT}" log -1 --format='%s')"
 
-# ── Load credentials from the single source (llm#949) ─────────────────────────
-# GMAIL_* come from the process environment (with-secrets / bws injection) or
-# ~/.config/secrets.env (BWS cache) -- never a per-job env file. Fails closed
-# unless this is a dry run. See .claude/scripts/lib/load_email_creds.sh.
-# shellcheck disable=SC1091
-source "${REPO_ROOT}/.claude/scripts/lib/load_email_creds.sh"
-email_credentials_gate log || exit 1
+# (llm#1340: no credentials gate -- this job no longer sends email, so it
+# neither needs nor receives GMAIL_*. The combined digest is sent by
+# bin/config_digest_cron.sh.)
 
 # ── Verify nix shell is accessible ────────────────────────────────────────────
 if [ ! -f "${LLM_NIX}" ]; then
@@ -240,8 +238,11 @@ else
   SINCE_ARG=""
   [ -n "${KB_SINCE}" ] && SINCE_ARG="--since ${KB_SINCE}"
 
+  # EMAIL_DRY_RUN=0 here: kb_digest.R treats EMAIL_DRY_RUN=1 as "print to stdout,
+  # skip --out", which would leave DIGEST_TMPFILE empty and make the section
+  # render below fail. Step 1 is pure computation; nothing is emailed by this job.
   nix-shell "${NIX_TARGET}" --run \
-    "Rscript '${DIGEST_SCRIPT}' --knowledge-repo '${KB_KNOWLEDGE_REPO}' ${SINCE_ARG} --out '${DIGEST_TMPFILE}'" \
+    "EMAIL_DRY_RUN=0 Rscript '${DIGEST_SCRIPT}' --knowledge-repo '${KB_KNOWLEDGE_REPO}' ${SINCE_ARG} --out '${DIGEST_TMPFILE}'" \
     >> "${LOG_FILE}" 2>&1
   STEP1_EXIT=$?
 fi
@@ -346,9 +347,14 @@ else
   log "Step 1b: skipped (duckdb not available)"
 fi
 
-# ── Step 2: Send email locally via blastula ────────────────────────────────────
-# NOTE: NOT via `gh workflow run` — the body must NOT pass through CI logs.
-log "Step 2: sending knowledge-base digest email via local SMTP..."
+# ── Step 2: Render the KB section for the combined email (llm#1340) ───────────
+# This job NO LONGER SENDS. It renders its HTML section (+ .meta sidecar) to a
+# stable dated path; bin/config_digest_cron.sh (08:20) embeds it in the single
+# "Config & Knowledge Digest" email. send_kb_digest_email.R in section mode
+# (KB_DIGEST_SECTION_OUT) exits 0 without any SMTP. The body still never
+# passes through CI logs.
+KB_SECTION_OUT="${KB_DIGEST_SECTION_OUT:-${HOME}/.claude/logs/kb_digest_section_$(date +%Y-%m-%d).html}"
+log "Step 2: rendering knowledge-base section to $(basename "${KB_SECTION_OUT}")..."
 
 EMAIL_SCRIPT="${REPO_ROOT}/.claude/scripts/send_kb_digest_email.R"
 
@@ -358,21 +364,21 @@ if [ ! -f "${EMAIL_SCRIPT}" ]; then
 fi
 
 if [ "${DRYRUN}" = "1" ]; then
-  log "  DRYRUN: would run nix-shell ${NIX_TARGET} --run 'Rscript ${EMAIL_SCRIPT}'"
+  log "  DRYRUN: would run nix-shell ${NIX_TARGET} --run 'Rscript ${EMAIL_SCRIPT}' (section mode)"
   STEP2_EXIT=0
-elif [ "${EMAIL_DRY_RUN}" = "1" ]; then
-  log "  EMAIL_DRY_RUN=1: running script in dry-run mode (body to stdout only)"
-  KB_DIGEST_FILE="${DIGEST_TMPFILE}" \
-    nix-shell "${NIX_TARGET}" --run "Rscript '${EMAIL_SCRIPT}'" >> "${LOG_FILE}" 2>&1
-  STEP2_EXIT=$?
 else
-  KB_DIGEST_FILE="${DIGEST_TMPFILE}" \
+  KB_DIGEST_FILE="${DIGEST_TMPFILE}" KB_DIGEST_SECTION_OUT="${KB_SECTION_OUT}" \
     nix-shell "${NIX_TARGET}" --run "Rscript '${EMAIL_SCRIPT}'" >> "${LOG_FILE}" 2>&1
   STEP2_EXIT=$?
+  # Exit 0 is not proof of a written section: verify the artefact exists.
+  if [ "${STEP2_EXIT}" -eq 0 ] && [ ! -s "${KB_SECTION_OUT}" ]; then
+    log "ERROR: section mode exited 0 but ${KB_SECTION_OUT} is missing or empty"
+    STEP2_EXIT=1
+  fi
 fi
 
 if [ "${STEP2_EXIT}" -ne 0 ]; then
-  log "ERROR: send_kb_digest_email.R failed (exit=${STEP2_EXIT})"
+  log "ERROR: KB section render failed (exit=${STEP2_EXIT})"
   # Update housekeeping_runs with failed status before exiting
   if [ "${_duckdb_ok}" = "1" ]; then
     _run_ended="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

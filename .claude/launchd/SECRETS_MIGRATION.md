@@ -49,7 +49,7 @@ are not coupled to the leak and are left unwrapped.
 | `com.claude.codex-overnight-learning.plist` | `codex_overnight_learning.py` | none | no |
 | `com.claude.config-digest-email.plist` | `bin/config_digest_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`; single source via `lib/load_email_creds.sh` (env from `with-secrets`, else `~/.config/secrets.env`); **fails closed** (exit 1) unless a dry run | **yes** |
 | `com.claude.cron-catchup.plist` | `cron_catchup.sh` | none | no |
-| `com.claude.kb-digest-email.plist` | `bin/kb_digest_daily_cron.sh` | `GMAIL_USERNAME`/`GMAIL_APP_PASSWORD`/`REPORT_RECIPIENT`; single source via `lib/load_email_creds.sh`; **fails closed** unless a dry run | **yes** |
+| `com.claude.kb-digest-email.plist` | `bin/kb_digest_daily_cron.sh` | none since llm#1340: the job no longer sends email (it writes a section the config-digest email embeds), so it holds no `GMAIL_*` and is launched without `with-secrets` | no |
 | `com.claude.launchd-health-weekly.plist` | `bin/launchd_health_weekly_cron.sh` | `GMAIL_*` via `lib/load_email_creds.sh` (env, else `~/.config/secrets.env` — the wrapper loads only the three email keys itself, so it needs no `with-secrets`); Step 2's R script aborts fail-closed if absent | no |
 | `com.claude.overnight-self-review-email.plist` | `bws_launcher.sh` → `bin/overnight_self_review_email_cron.sh` | `GMAIL_*` via `lib/load_email_creds.sh` (bws/`with-secrets` env, else `~/.config/secrets.env`); **fails closed** unless a dry run | **yes** |
 | `com.claude.pr-status-pulse.plist` | `pr_status_pulse.sh` | none | no |
