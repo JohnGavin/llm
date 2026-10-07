@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- com.claude.kb-digest-email.plist
-     Daily knowledge-base digest email.
-     Runs at 08:05 local time (offset 5 min from roborev-daily-email at 08:00
-     to avoid launchd contention and nix-shell resource conflicts).
+     Daily knowledge-base digest SECTION (llm#1340: no longer a separate email).
+     Runs at 08:05 local time and writes ~/.claude/logs/kb_digest_section_<date>.html;
+     com.claude.config-digest-email (08:20) embeds it in the combined
+     "Config & Knowledge Digest" email. This job sends nothing and holds no
+     credentials.
 
-     PRIVACY: All computation is local. The email is sent directly via
-     blastula + SMTP. No KB content passes through CI or GitHub logs.
+     PRIVACY: All computation is local. No KB content passes through CI or
+     GitHub logs.
 
      Install:
        cp .claude/launchd/com.claude.kb-digest-email.plist \

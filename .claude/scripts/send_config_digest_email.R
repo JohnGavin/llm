@@ -14,6 +14,12 @@
 #   CONFIG_DIGEST_SINCE  ISO8601 --since arg passed to aggregator (default: 24h ago)
 #   EMAIL_DRY_RUN        Set to "1" to print body to stdout without sending
 #   LLM_REPO_ROOT        Repo root (auto-detected if absent)
+#   KB_DIGEST_SECTION_FILE  Knowledge Base HTML fragment written by the KB job
+#                        (default: ~/.claude/logs/kb_digest_section_<date>.html;
+#                        sidecar <file>.meta holds date= and has_changes=)
+#
+# Sends ONE combined email "Config & Knowledge Digest" (llm#1340). Exit codes:
+#   0 sent (or dry run)   1 failure   10 SKIP (nothing changed anywhere)
 #
 # Usage:
 #   Rscript .claude/scripts/send_config_digest_email.R
@@ -131,6 +137,55 @@ if (is.na(generated_at)) generated_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ"
 if (is.na(since_label))  since_label  <- config_digest_since
 
 report_date <- format(Sys.Date())
+
+# ── Knowledge Base section (llm#1340) ─────────────────────────────────────────
+#
+# The KB job (bin/kb_digest_daily_cron.sh, 08:05) no longer emails; it writes an
+# HTML fragment + `.meta` sidecar (date=, has_changes=) via send_kb_digest_email.R
+# KB_DIGEST_SECTION_OUT. This job (08:20) embeds it. Three outcomes, never silent:
+#   present     fragment is today's and the window had changes
+#   empty       fragment is today's and the window had no changes
+#   unavailable fragment missing/stale/unreadable -- say why, in the email
+# Exit code 10 = SKIP (config empty AND KB empty): nothing is sent.
+EXIT_SKIP <- 10L
+
+kb_section_path <- Sys.getenv(
+  "KB_DIGEST_SECTION_FILE",
+  file.path(Sys.getenv("HOME"), ".claude", "logs",
+            sprintf("kb_digest_section_%s.html", report_date))
+)
+
+read_kb_section <- function(path, today) {
+  unavailable <- function(reason) list(state = "unavailable", html = "", reason = reason)
+  if (!nzchar(path) || !file.exists(path)) {
+    return(unavailable(sprintf("no section file for %s (KB digest job did not write one)", today)))
+  }
+  meta_path <- paste0(path, ".meta")
+  meta <- if (file.exists(meta_path)) readLines(meta_path, warn = FALSE) else character(0L)
+  kv <- function(key) {
+    hit <- sub(sprintf("^%s=", key), "", meta[startsWith(meta, paste0(key, "="))])
+    if (length(hit)) trimws(hit[[1L]]) else NA_character_
+  }
+  written <- kv("date")
+  if (is.na(written)) written <- format(as.Date(file.info(path)$mtime))
+  if (!identical(written, today)) {
+    return(unavailable(sprintf("section is stale (generated %s, expected %s)", written, today)))
+  }
+  html <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  if (!nzchar(trimws(html))) return(unavailable("section file is empty"))
+  list(state = if (identical(kv("has_changes"), "0")) "empty" else "present",
+       html = html, reason = "")
+}
+
+kb_section <- read_kb_section(kb_section_path, report_date)
+
+# Config is "empty" only when the digest affirmatively reports zero files and
+# zero lessons; a missing QA marker (NA) is unknown, so it does not skip.
+config_empty <- identical(total_files, "0") && identical(n_lessons, "0")
+if (config_empty && identical(kb_section$state, "empty")) {
+  message("send_config_digest_email.R: SKIP — no config changes and no Knowledge Base changes in the window; nothing sent")
+  quit(status = EXIT_SKIP)
+}
 
 # ── Colour palette — aliases to shared constants from email_styles.R ──────────
 
@@ -432,14 +487,37 @@ commits_link_html <- sprintf(
   gh_commits_url, accent_blue
 )
 
+# ── Knowledge Base section HTML (llm#1340) ────────────────────────────────────
+
+kb_section_html <- switch(
+  kb_section$state,
+  present = kb_section$html,
+  empty = sprintf(
+    '<h3 style="color:%s; margin-top:20px; margin-bottom:6px;">Knowledge Base</h3>
+<p style="color:%s; font-style:italic;">No Knowledge Base changes in the last 24 hours.</p>',
+    accent_blue, dark_muted
+  ),
+  sprintf(
+    '<h3 style="color:%s; margin-top:20px; margin-bottom:6px;">Knowledge Base</h3>
+<p style="color:%s; font-weight:bold;">Knowledge Base section unavailable: %s</p>',
+    accent_blue, accent_orange, htmlify(kb_section$reason)
+  )
+)
+
+config_heading_html <- sprintf(
+  '<h3 style="color:%s; margin-top:16px; margin-bottom:6px;">Config-Change Digest</h3>',
+  accent_blue
+)
+
 # ── QA markers ────────────────────────────────────────────────────────────────
 
 qa_markers <- sprintf(
-  '<!-- QA:email_report_date=%s --><!-- QA:email_total_files=%s --><!-- QA:email_n_themes=%s --><!-- QA:email_n_lessons=%s --><!-- QA:config_digest_section=present -->',
+  '<!-- QA:email_report_date=%s --><!-- QA:email_total_files=%s --><!-- QA:email_n_themes=%s --><!-- QA:email_n_lessons=%s --><!-- QA:config_digest_section=present --><!-- QA:kb_section=%s -->',
   report_date,
   if (!is.na(total_files)) total_files else "0",
   if (!is.na(n_themes))    n_themes    else "0",
-  if (!is.na(n_lessons))   n_lessons   else "0"
+  if (!is.na(n_lessons))   n_lessons   else "0",
+  kb_section$state
 )
 
 # ── Assemble full body ─────────────────────────────────────────────────────────
@@ -448,10 +526,12 @@ email_body <- sprintf(
   '<div style="background-color:%s; color:%s; padding:20px;
                font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;
                font-size:%s;">
-<h2 style="color:%s; margin-bottom:4px; font-size:%s;">Config-Change Digest — %s</h2>
+<h2 style="color:%s; margin-bottom:4px; font-size:%s;">Config &amp; Knowledge Digest — %s</h2>
 <p style="color:%s; font-size:%s; margin-top:0;">
   Generated: %s UTC &nbsp;|&nbsp; Window: since %s
 </p>
+%s
+%s
 %s
 %s
 %s
@@ -463,17 +543,22 @@ email_body <- sprintf(
   dark_bg, dark_text, EMAIL_FONT_BODY,
   accent_orange, EMAIL_FONT_H2, report_date,
   dark_muted, EMAIL_FONT_SUBTITLE, generated_at, since_label,
+  config_heading_html,
   commits_link_html,
   headline_html,
   digest_html,
+  kb_section_html,
   dark_muted, EMAIL_FONT_FOOTER, config_digest_path,
   qa_markers
 )
+
+email_subject <- sprintf("Config & Knowledge Digest — %s", report_date)
 
 # ── Dry-run ────────────────────────────────────────────────────────────────────
 
 if (dry_run) {
   message("send_config_digest_email.R: EMAIL_DRY_RUN=1 — printing body to stdout")
+  message("Subject: ", email_subject)
   cat(email_body, "\n")
   message("send_config_digest_email.R: dry-run complete (not sent)")
   quit(status = 0L)
@@ -519,7 +604,7 @@ tryCatch({
     email       = email,
     to          = report_to,
     from        = gmail_user,
-    subject     = sprintf("Config-Change Digest — %s", report_date),
+    subject     = email_subject,
     credentials = smtp_creds
   )
   message(sprintf("send_config_digest_email.R: email sent to %s", report_to))

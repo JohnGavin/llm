@@ -5,8 +5,11 @@
 #   0. Write housekeeping_runs start row (if duckdb available)
 #   1. Generate markdown digest via config_change_digest.R
 #   1b. Write config_events rows to unified.duckdb for each detected change
-#   2. Send digest email via send_config_digest_email.R
-#   3. Update housekeeping_runs end row
+#   2. Send ONE combined "Config & Knowledge Digest" email via
+#      send_config_digest_email.R (llm#1340). It embeds the Knowledge Base
+#      section that bin/kb_digest_daily_cron.sh (08:05) wrote; exit 10 from the
+#      script = nothing changed anywhere, nothing sent (recorded 'skipped').
+#   3. Update housekeeping_runs end row (ok | partial | failed | skipped)
 #
 # unified.duckdb writes: gracefully skipped when duckdb is absent.
 # Tables written: housekeeping_runs, config_events
@@ -50,6 +53,9 @@ UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME}/.claude/logs/unified.duckdb}"
 
 EMAIL_DRY_RUN="${EMAIL_DRY_RUN:-0}"
 export EMAIL_DRY_RUN LLM_REPO_ROOT="${REPO_ROOT}"
+# Test seam (llm#1340): tests/test_config_digest_skip_status.sh substitutes a stub
+# for nix-shell. Production never sets this.
+NIX_SHELL_CMD="${NIX_SHELL_CMD:-nix-shell}"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 mkdir -p "$(dirname "${LOG_FILE}")"
@@ -96,7 +102,7 @@ if [ ! -f "${LLM_NIX}" ]; then
   log "ERROR: nix file not found at ${LLM_NIX}"
   exit 1
 fi
-if ! command -v nix-shell > /dev/null 2>&1; then
+if ! command -v "${NIX_SHELL_CMD}" > /dev/null 2>&1; then
   log "ERROR: nix-shell not on PATH (${PATH})"
   exit 1
 fi
@@ -204,7 +210,7 @@ if [ -z "${SINCE}" ]; then
 fi
 log "  since=${SINCE}"
 
-nix-shell "${NIX_TARGET}" --run \
+"${NIX_SHELL_CMD}" "${NIX_TARGET}" --run \
   "Rscript '${AGGREGATOR}' --since '${SINCE}' --out '${DIGEST_PATH}'" \
   >> "${LOG_FILE}" 2>&1
 STEP1_EXIT=$?
@@ -295,7 +301,7 @@ else
 fi
 
 # ── Step 2: Send email ────────────────────────────────────────────────────────
-log "Step 2: sending config digest email..."
+log "Step 2: sending combined Config & Knowledge digest email..."
 EMAIL_SCRIPT="${REPO_ROOT}/.claude/scripts/send_config_digest_email.R"
 
 if [ ! -f "${EMAIL_SCRIPT}" ]; then
@@ -303,10 +309,21 @@ if [ ! -f "${EMAIL_SCRIPT}" ]; then
   exit 1
 fi
 
-nix-shell "${NIX_TARGET}" --run \
+"${NIX_SHELL_CMD}" "${NIX_TARGET}" --run \
   "CONFIG_DIGEST_PATH='${DIGEST_PATH}' CONFIG_DIGEST_SINCE='${SINCE}' Rscript '${EMAIL_SCRIPT}'" \
   >> "${LOG_FILE}" 2>&1
 STEP2_EXIT=$?
+
+# Exit 10 = SKIP (llm#1340): neither the config nor the Knowledge Base section
+# had changes, so nothing was sent. That is a healthy run, not a failure: it is
+# recorded as housekeeping_runs.status='skipped', the catch-up stamp is still
+# written (so cron_catchup.sh does not re-run it), and the wrapper exits 0.
+_skipped=0
+if [ "${STEP2_EXIT}" -eq 10 ]; then
+  _skipped=1
+  STEP2_EXIT=0
+  log "Step 2: SKIP — no config or Knowledge Base changes in the window; no email sent"
+fi
 
 if [ "${STEP2_EXIT}" -ne 0 ]; then
   log "ERROR: send_config_digest_email.R exited ${STEP2_EXIT}"
@@ -329,6 +346,7 @@ log "Step 2 done"
 if [ "${_duckdb_ok}" = "1" ]; then
   _run_ended="$(python3 -c 'import datetime; print(datetime.datetime.utcnow().isoformat() + "Z")')"
   _final_status="ok"
+  [ "${_skipped}" = "1" ] && _final_status="skipped"
   [ "${_step1_failed}" = "1" ] && _final_status="partial"
   duckdb "${UNIFIED_DB}" "
     UPDATE housekeeping_runs

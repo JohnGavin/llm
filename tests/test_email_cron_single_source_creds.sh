@@ -104,8 +104,9 @@ esac
 # ── Part B: real wrappers, fake repo + fake HOME ───────────────────────────
 # wrapper  ->  log file name it writes under $HOME/.claude/logs, and how it reads
 #              missing creds: abort | dryrun (weekly rollup degrades to dry run)
+# kb_digest_daily_cron.sh is deliberately NOT listed (llm#1340): it no longer
+# sends email, so it takes no credentials; see Part C.
 WRAPPERS=(
-  "kb_digest_daily_cron.sh:kb_digest.log:abort"
   "roborev_daily_cron.sh:roborev_daily_email.log:abort"
   "config_digest_cron.sh:config_digest_email.log:abort"
   "overnight_self_review_email_cron.sh:overnight_self_review_email_launchd.log:abort"
@@ -178,6 +179,31 @@ for spec in "${WRAPPERS[@]}"; do
     fail "B2 ${w}: loads from single source" "rc=${rc} log=${log}"
   fi
 done
+
+# ── Part C: the KB job sends nothing, so it must hold no mail credentials ────
+# (llm#1340). Run the real KB wrapper in a fake HOME with NO credentials: it
+# must get past where a credentials gate would have aborted it (it then stops at
+# the fake repo's missing nix file), and it must not be a GMAIL consumer.
+kbw="kb_digest_daily_cron.sh"
+if bash -n "${REPO_ROOT}/bin/${kbw}" 2>/dev/null; then pass "C ${kbw}: bash -n"; else fail "C ${kbw}: bash -n"; fi
+h="$(make_fake "${kbw}_nocreds")"
+rc="$(run_wrapper "${h}" "${kbw}")"
+log="$(cat "${h}/.claude/logs/kb_digest.log" 2>/dev/null)"
+if [ "${rc}" = "1" ] && printf '%s' "${log}" | grep -q "nix file not found" && ! printf '%s' "${log}" | grep -q "ABORT"; then
+  pass "C ${kbw}: no credentials required (reaches the nix check, no ABORT)"
+else
+  fail "C ${kbw}: must not require credentials" "rc=${rc} log=${log}"
+fi
+if grep -q "kb-digest-email" "${REPO_ROOT}/.claude/scripts/lib/secret_consumers.sh"; then
+  fail "C kb-digest-email is not a GMAIL_APP_PASSWORD consumer" "still listed in secret_consumers.sh"
+else
+  pass "C kb-digest-email is not a GMAIL_APP_PASSWORD consumer"
+fi
+if grep -q "with-secrets" "${REPO_ROOT}/bin/launchd-recorders/kb-digest-email"; then
+  fail "C kb-digest-email recorder launches without with-secrets" "still wrapped in with-secrets"
+else
+  pass "C kb-digest-email recorder launches without with-secrets"
+fi
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

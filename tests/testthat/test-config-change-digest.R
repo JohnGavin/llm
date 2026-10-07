@@ -509,3 +509,144 @@ test_that("com.claude.config-digest-email.plist is valid XML (plutil)", {
   exit_code <- system2("plutil", args = c("-lint", pl), stdout = FALSE, stderr = FALSE)
   expect_equal(exit_code, 0L, info = "plist failed plutil -lint validation")
 })
+
+# ── Combined Config + Knowledge Base email (llm#1340) ────────────────────────
+#
+# One email: Config section then Knowledge Base section. Three KB outcomes:
+#   present     -- today's fragment exists, window had changes
+#   empty       -- today's fragment exists, window had no changes
+#   unavailable -- fragment missing/stale: a visible line, never silent omission
+# Skip rule: send nothing ONLY when config is empty AND KB is genuinely empty.
+# Exit code 10 from the script = SKIP (distinct from 0 = sent, 1 = failure).
+
+write_digest_fixture <- function(files = 3L, lessons = 1L) {
+  p <- tempfile("digest_combined_", fileext = ".md")
+  writeLines(c(
+    "## Changes by Category", "",
+    "| Category | Files changed | Lines added | Lines deleted |",
+    "|----------|:---:|:---:|:---:|",
+    sprintf("| **Total** | **%d** | **+10** | **-1** |", files), "",
+    "## Lessons Learnt", "",
+    "_placeholder_", "",
+    "<!-- QA:config_digest_generated=2026-05-29T08:00:00Z -->",
+    "<!-- QA:config_digest_since=2026-05-28T00:00:00 -->",
+    sprintf("<!-- QA:config_digest_total_files=%d -->", files),
+    "<!-- QA:config_digest_total_added=10 -->",
+    "<!-- QA:config_digest_total_deleted=1 -->",
+    "<!-- QA:config_digest_n_themes=1 -->",
+    sprintf("<!-- QA:config_digest_n_lessons=%d -->", lessons)
+  ), p)
+  p
+}
+
+# Write a KB section fragment + sidecar the way send_kb_digest_email.R does.
+write_kb_section_fixture <- function(has_changes = TRUE, date = format(Sys.Date())) {
+  p <- tempfile("kb_digest_section_", fileext = ".html")
+  writeLines("<h2>Knowledge Base</h2><p>KB_FRAGMENT_SENTINEL</p>", p)
+  writeLines(c(sprintf("date=%s", date),
+               sprintf("has_changes=%d", as.integer(has_changes))),
+             paste0(p, ".meta"))
+  p
+}
+
+# Runs send_config_digest_email.R in dry-run mode and returns output + exit status.
+run_combined_status <- function(digest_path, kb_section_path) {
+  email_script <- script_path("send_config_digest_email.R")
+  skip_if_not(file.exists(email_script), "send_config_digest_email.R not found")
+  skip_if_not_installed("blastula")
+  res <- withr::with_envvar(
+    c(EMAIL_DRY_RUN = "1", CONFIG_DIGEST_PATH = digest_path,
+      KB_DIGEST_SECTION_FILE = kb_section_path,
+      GMAIL_USERNAME = "", GMAIL_APP_PASSWORD = "", REPORT_RECIPIENT = ""),
+    # A non-zero status (10 = SKIP) makes system2() warn; it is the expected
+    # signal here and is asserted via attr(, "status") below.
+    suppressWarnings(system2("Rscript", args = email_script, stdout = TRUE, stderr = TRUE))
+  )
+  st <- attr(res, "status")
+  list(output = paste(res, collapse = "\n"),
+       status = if (is.null(st)) 0L else as.integer(st))
+}
+
+test_that("combined email contains the Config section then the Knowledge Base section (#1340)", {
+  kb <- write_kb_section_fixture(has_changes = TRUE)
+  on.exit(unlink(c(kb, paste0(kb, ".meta"))), add = TRUE)
+  r <- run_combined_status(write_digest_fixture(files = 3L), kb)
+
+  expect_equal(r$status, 0L)
+  expect_true(grepl("Config &amp; Knowledge Digest", r$output, fixed = TRUE),
+              info = "combined heading missing")
+  pos_config <- regexpr("Config-Change Digest", r$output, fixed = TRUE)
+  pos_kb     <- regexpr("KB_FRAGMENT_SENTINEL", r$output, fixed = TRUE)
+  expect_gt(pos_config, 0L)
+  expect_gt(pos_kb, 0L)
+  expect_lt(pos_config, pos_kb)  # Config first, then Knowledge Base
+  expect_true(grepl("QA:kb_section=present", r$output, fixed = TRUE))
+  expect_true(grepl("Subject: Config & Knowledge Digest", r$output, fixed = TRUE))
+})
+
+test_that("missing KB fragment yields a visible 'unavailable' line, never silence (#1340)", {
+  missing <- file.path(tempdir(), "no_such_kb_section_today.html")
+  r <- run_combined_status(write_digest_fixture(files = 3L), missing)
+
+  expect_equal(r$status, 0L)
+  expect_true(grepl("Knowledge Base section unavailable:", r$output, fixed = TRUE))
+  expect_true(grepl("QA:kb_section=unavailable", r$output, fixed = TRUE))
+})
+
+test_that("stale KB fragment (older than today) is reported unavailable, not shown (#1340)", {
+  kb <- write_kb_section_fixture(has_changes = TRUE,
+                                 date = format(Sys.Date() - 1L))
+  on.exit(unlink(c(kb, paste0(kb, ".meta"))), add = TRUE)
+  r <- run_combined_status(write_digest_fixture(files = 3L), kb)
+
+  expect_true(grepl("Knowledge Base section unavailable:", r$output, fixed = TRUE))
+  expect_true(grepl("stale", r$output, fixed = TRUE))
+  expect_false(grepl("KB_FRAGMENT_SENTINEL", r$output, fixed = TRUE))
+})
+
+test_that("both sections empty -> nothing sent, exit 10 (skip) (#1340)", {
+  kb <- write_kb_section_fixture(has_changes = FALSE)
+  on.exit(unlink(c(kb, paste0(kb, ".meta"))), add = TRUE)
+  r <- run_combined_status(write_digest_fixture(files = 0L, lessons = 0L), kb)
+
+  expect_equal(r$status, 10L)
+  expect_true(grepl("SKIP", r$output, fixed = TRUE))
+  expect_false(grepl("QA:email_report_date=", r$output, fixed = TRUE),
+               info = "a skipped run must not render an email body")
+})
+
+test_that("only config empty -> still sent (KB has changes) (#1340)", {
+  kb <- write_kb_section_fixture(has_changes = TRUE)
+  on.exit(unlink(c(kb, paste0(kb, ".meta"))), add = TRUE)
+  r <- run_combined_status(write_digest_fixture(files = 0L, lessons = 0L), kb)
+
+  expect_equal(r$status, 0L)
+  expect_true(grepl("KB_FRAGMENT_SENTINEL", r$output, fixed = TRUE))
+})
+
+test_that("only KB empty -> still sent (config has changes) (#1340)", {
+  kb <- write_kb_section_fixture(has_changes = FALSE)
+  on.exit(unlink(c(kb, paste0(kb, ".meta"))), add = TRUE)
+  r <- run_combined_status(write_digest_fixture(files = 3L), kb)
+
+  expect_equal(r$status, 0L)
+  expect_true(grepl("QA:kb_section=empty", r$output, fixed = TRUE))
+  expect_true(grepl("No Knowledge Base changes", r$output, fixed = TRUE))
+})
+
+test_that("config empty + KB unavailable is NOT a skip: the outage must be visible (#1340)", {
+  missing <- file.path(tempdir(), "no_such_kb_section_today.html")
+  r <- run_combined_status(write_digest_fixture(files = 0L, lessons = 0L), missing)
+
+  expect_equal(r$status, 0L)
+  expect_true(grepl("Knowledge Base section unavailable:", r$output, fixed = TRUE))
+})
+
+test_that("config-digest plist fires at 08:20 so the 08:05 KB section is ready (#1340)", {
+  pl <- launchd_path("com.claude.config-digest-email.plist")
+  skip_if_not(file.exists(pl), "plist not found")
+  txt <- paste(readLines(pl, warn = FALSE), collapse = "\n")
+  hour   <- sub(".*<key>Hour</key>\\s*<integer>([0-9]+)</integer>.*", "\\1", txt)
+  minute <- sub(".*<key>Minute</key>\\s*<integer>([0-9]+)</integer>.*", "\\1", txt)
+  expect_equal(c(hour, minute), c("8", "20"))
+})
