@@ -174,6 +174,34 @@ test_that("read_run_metrics returns empty-marker df when ledger does not exist",
   expect_true("empty" %in% names(result))
 })
 
+test_that("read_run_metrics does not count 'skipped' (or 'deferred') housekeeping rows as failures (llm#1340)", {
+  skip_if_not_installed("duckdb")
+  ledger <- tempfile(fileext = ".duckdb")
+  on.exit(unlink(ledger), add = TRUE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = ledger, read_only = FALSE)
+  DBI::dbExecute(con, "
+    CREATE TABLE housekeeping_runs (
+      id TEXT PRIMARY KEY, task TEXT NOT NULL, source_script TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL, ended_at TIMESTAMPTZ,
+      status TEXT NOT NULL, rows_written INTEGER DEFAULT 0,
+      error_text TEXT, detail_json TEXT)")
+  now <- Sys.time()
+  statuses <- c("ok", "skipped", "skipped", "deferred", "failed")
+  for (i in seq_along(statuses)) {
+    DBI::dbExecute(con, sprintf(
+      "INSERT INTO housekeeping_runs (id, task, source_script, started_at, ended_at, status)
+       VALUES ('r%d', 'config_digest', '/x.sh', TIMESTAMPTZ '%s', TIMESTAMPTZ '%s', '%s')",
+      i, format(now - i * 60, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+      format(now - i * 60 + 5, "%Y-%m-%d %H:%M:%S", tz = "UTC"), statuses[i]))
+  }
+  DBI::dbDisconnect(con, shutdown = TRUE)
+
+  res <- suppressMessages(read_run_metrics(ledger = ledger))
+  expect_equal(as.integer(res$run_count), 5L)
+  expect_equal(as.integer(res$failures), 1L)  # only 'failed'
+})
+
 test_that("render_metrics_table emits placeholder when ledger is empty", {
   render_fn <- get("render_metrics_table", envir = .agg_env)
   empty_df <- data.frame(empty = TRUE, stringsAsFactors = FALSE)

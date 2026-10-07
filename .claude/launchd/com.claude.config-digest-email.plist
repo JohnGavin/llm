@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- com.claude.config-digest-email.plist
-     Daily config-change digest: git log → markdown → email.
-     Runs at 08:00 local time (same slot as the roborev daily email).
+     Daily combined "Config & Knowledge Digest" email (llm#1340): config-change
+     digest (git log → markdown) + the Knowledge Base section written by
+     com.claude.kb-digest-email. Runs at 08:20 local time.
 
      Install:
        cp .claude/launchd/com.claude.config-digest-email.plist \
@@ -31,13 +32,14 @@
         <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/config-digest-email</string>
     </array>
 
-    <!-- Daily at 08:05 local time (5 min after roborev daily email slot) -->
+    <!-- Daily at 08:20 local time (llm#1340): 15 min after the 08:05 KB digest
+         job, which writes the Knowledge Base section this email embeds. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>8</integer>
         <key>Minute</key>
-        <integer>5</integer>
+        <integer>20</integer>
     </dict>
 
     <!-- Do NOT run immediately on launchctl load -->

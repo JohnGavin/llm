@@ -43,7 +43,11 @@ CREATE TABLE IF NOT EXISTS housekeeping_runs (
   source_script   TEXT NOT NULL,             -- absolute path to script
   started_at      TIMESTAMPTZ NOT NULL,
   ended_at        TIMESTAMPTZ,
-  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial' | 'deferred'
+  status          TEXT NOT NULL,             -- 'ok' | 'failed' | 'partial' | 'deferred' | 'skipped'
+                                              -- 'skipped' (llm#1340): the job ran and had nothing to
+                                              -- do (e.g. combined config+KB digest, no changes in
+                                              -- the window, no email sent). Healthy, NOT a failure;
+                                              -- readers must bucket it with 'ok'/'deferred'.
                                               -- 'deferred' (llm#947, llm#970): the job declined to
                                               -- run because its precondition (network/DNS) was
                                               -- absent within the bound -- NOT a failure. Written by

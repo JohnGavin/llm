@@ -16,6 +16,10 @@
 #   KB_KNOWLEDGE_REPO    Path to knowledge repo
 #   KB_SINCE             ISO timestamp cutoff (default: 24h ago)
 #   EMAIL_DRY_RUN        Set to "1" to print body to stdout without sending
+#   KB_DIGEST_SECTION_OUT  Section mode (llm#1340): write the HTML body fragment
+#                        to this path (+ <path>.meta sidecar) and exit 0 with NO
+#                        SMTP. This is what bin/kb_digest_daily_cron.sh uses; the
+#                        combined "Config & Knowledge Digest" email embeds it.
 #
 # Usage:
 #   Rscript .claude/scripts/send_kb_digest_email.R
@@ -884,6 +888,41 @@ email_body <- sprintf(
 
 # ── Side-effecting tail (skipped in define-only mode) ─────────────────────────
 if (!.kb_define_only) {
+
+# ── Section mode (llm#1340) ────────────────────────────────────────────────────
+# KB_DIGEST_SECTION_OUT=<path>: write the KB section's HTML body fragment to
+# <path> and a sidecar <path>.meta (date=, has_changes=), then exit 0 WITHOUT
+# any SMTP. The config-digest email (send_config_digest_email.R) embeds it.
+# The fix/revert table (signal #479) is deliberately left out: the Config
+# section's "Lessons Learnt" already lists the same repo/window's fix/revert
+# commits, so it is shown once there.
+section_out <- Sys.getenv("KB_DIGEST_SECTION_OUT", "")
+if (nzchar(section_out)) {
+  kb_has_changes <- !grepl("_No changes in the last 24 hours._", digest_md, fixed = TRUE)
+  section_html <- paste(
+    sprintf('<h3 style="color:%s; margin-top:20px; margin-bottom:6px;">Knowledge Base</h3>',
+            accent_blue),
+    body_inner,
+    signal_480_html,
+    signal_481_html,
+    signal_482_html,
+    sprintf(
+      paste0("<!-- QA:kb_digest_date=%s -->", "<!-- QA:kb_collapsible=true -->",
+             "%s%s%s"),
+      report_date, signal_480_qa, signal_481_qa, signal_482_qa
+    ),
+    sep = "\n"
+  )
+  dir.create(dirname(section_out), recursive = TRUE, showWarnings = FALSE)
+  writeLines(section_html, section_out)
+  writeLines(c(sprintf("date=%s", report_date),
+               sprintf("has_changes=%d", as.integer(kb_has_changes)),
+               sprintf("generated_at=%s", format(Sys.time(), "%Y-%m-%dT%H:%M:%S", tz = "UTC"))),
+             paste0(section_out, ".meta"))
+  message(sprintf("send_kb_digest_email.R: section written to %s (has_changes=%d)",
+                  basename(section_out), as.integer(kb_has_changes)))
+  quit(status = 0L)
+}
 
 # ── Dry-run mode ───────────────────────────────────────────────────────────────
 
