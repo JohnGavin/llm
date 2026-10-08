@@ -79,3 +79,4 @@ tests/test_session_end_refine_waterfall.sh	tests/test_session_end_refine_waterfa
 tests/test_roborev_likely_fixed_report.sh	tests/test_roborev_likely_fixed_report.sh;bin/roborev_likely_fixed_report.sh;.claude/scripts/roborev_likely_fixed_summary.sh	run	
 tests/test_rule_budget.sh	tests/test_rule_budget.sh;.claude/scripts/check_rule_scoping.sh;.claude/scripts/rule_scoping_precommit.sh	run
 tests/test_config_banner_symlinks.sh	tests/test_config_banner_symlinks.sh;.claude/scripts/lib/config_wiring_status.sh;.claude/hooks/session_init.sh	run
+tests/test_housekeeping_schema_comments.sh	tests/test_housekeeping_schema_comments.sh;.claude/scripts/housekeeping_schema_init.sql	skip-ci	needs the duckdb CLI (COMMENT ON, duckdb_tables/duckdb_columns), which the ubuntu-latest shell-tests runner does not provide (not verified there); the test exits 3 (INDETERMINATE), not 0, when duckdb is absent. Run locally via nix-shell (7 assertions)
