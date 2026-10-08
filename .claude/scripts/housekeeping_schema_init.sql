@@ -362,3 +362,186 @@ CREATE INDEX IF NOT EXISTS idx_config_events_fired_at ON config_events(fired_at)
 CREATE INDEX IF NOT EXISTS idx_kb_events_fired_at ON kb_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_launchd_health_events_fired_at ON launchd_health_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_launchd_health_events_plist ON launchd_health_events(plist_label, fired_at);
+
+-- ===========================================================================
+-- Column and table metadata (COMMENT ON). Additive and idempotent: COMMENT ON
+-- only overwrites the comment string, never data, so re-applying this file to
+-- the live DB is safe. A number or status is only readable if its meaning,
+-- unit and provenance travel with it, so every table and column documents:
+-- what it means, the unit for numeric/time columns, the allowed values for
+-- enum-like columns, and whether a value can be estimated or indeterminate.
+-- Each comment was derived from the INSERT/UPDATE in the writing script, not
+-- guessed; where no writer was found the comment says "writer not found".
+-- Guarded by tests/test_housekeeping_schema_comments.sh (fails on any table
+-- or column with a NULL or empty comment).
+--
+-- NOTE: the eval_runs comments live HERE, after the eval_runs index, on
+-- purpose: roborev_eval_run.sh ensure_eval_table() extracts the eval_runs DDL
+-- with a sed range ending at idx_eval_runs, so a table created that way has
+-- no comments until this file is applied.
+-- ===========================================================================
+
+-- worktree_gc_events ---------------------------------------------------------
+COMMENT ON TABLE worktree_gc_events IS 'One row per git worktree inspected, removed or skipped. Written by .claude/scripts/worktree_gc.sh (write_gc_event, overnight sweep) and by the /cleanup-worktrees command (.claude/commands/cleanup-worktrees.md, action "archived"). Rows are observations of a decision, not a live inventory.';
+COMMENT ON COLUMN worktree_gc_events.id IS 'Unique event id. worktree_gc.sh writes a UUID v4 string; /cleanup-worktrees writes 32 hex characters (lower(hex(randomblob(16)))).';
+COMMENT ON COLUMN worktree_gc_events.fired_at IS 'UTC instant the event was recorded (TIMESTAMPTZ).';
+COMMENT ON COLUMN worktree_gc_events.source IS 'Writer identity. Found: "worktree_gc.sh", "cleanup-worktrees-command". The schema file also lists "session_init_phase7f", "session_init_phase1e", "cc.sh": writer not found.';
+COMMENT ON COLUMN worktree_gc_events.session_id IS 'Claude session id. Always NULL in the writers found (worktree_gc.sh and /cleanup-worktrees both write NULL); NULL means not attributed to a session, not unknown-by-error.';
+COMMENT ON COLUMN worktree_gc_events.location_pattern IS 'Which worktree_gc.sh sweep pattern matched the path. Allowed values written by worktree_gc.sh: "siblings", "agent", "convention". /cleanup-worktrees writes whatever pattern label the operator supplies.';
+COMMENT ON COLUMN worktree_gc_events.project IS 'Project (repo directory name) that owns the worktree, as derived by the writer.';
+COMMENT ON COLUMN worktree_gc_events.worktree_path IS 'Absolute filesystem path of the worktree at the time of the event.';
+COMMENT ON COLUMN worktree_gc_events.branch IS 'Branch checked out in the worktree. worktree_gc.sh writes an empty string (not NULL) when it was not resolved (for example the opt-out skip).';
+COMMENT ON COLUMN worktree_gc_events.action IS 'Outcome. Written by worktree_gc.sh: removed, removed_squash, would_remove, would_remove_squash (dry-run, nothing deleted), skipped_optout, skipped_cwd, skipped_locked, skipped_unmerged, skipped_cherry_error, skipped_uncommitted, skipped_age, skipped_remove_failed. Written by /cleanup-worktrees: archived. Listed in the schema file but writer not found: skipped_main, flagged. No CHECK constraint enforces this list. would_* rows are predictions, not deletions.';
+COMMENT ON COLUMN worktree_gc_events.reason IS 'Free-text explanation of the action, set by the writer (for example "all gates passed", "dirty working tree", "age 3600s < threshold 86400s"). Not machine-parseable.';
+COMMENT ON COLUMN worktree_gc_events.size_mb IS 'Disk usage of the worktree directory in megabytes, from du -sm at event time (an integer; 0 when the path is missing or unreadable, so 0 can mean unknown).';
+
+-- housekeeping_runs ----------------------------------------------------------
+COMMENT ON TABLE housekeeping_runs IS 'One row per cron/script invocation (heartbeat). Inserted at start and updated at end by many writers, including worktree_gc.sh, branch_gc.sh, bin/config_digest_cron.sh, bin/kb_digest_daily_cron.sh, bin/launchd_health_weekly_cron.sh, roborev_bridge_to_unified.sh, secret_exposure_scan.sh, private_data_scan.sh, private_data_history_audit.sh, roborev_retention.sh, roborev_requeue_dropped.sh, roborev_job_reaper.sh, roborev_metrics_etl.R, credential_single_source_check.sh, capability_registry_regen_cron.sh, staleness_collect.sh. A row with ended_at NULL is a run that never recorded its end (crashed, killed or still running), not a success.';
+COMMENT ON COLUMN housekeeping_runs.id IS 'Unique run id (UUID string generated by the writing script).';
+COMMENT ON COLUMN housekeeping_runs.task IS 'Job name, free text chosen by each writer. Found: worktree_gc, branch_gc, config_digest, kb_digest, launchd_health, roborev_bridge, secret_exposure_scan, private_data_scan, private_data_history_audit, roborev_retention, roborev_requeue_dropped, roborev_job_reaper, roborev_metrics_etl, credential_single_source_check, capability_registry_regen, staleness_collect. The schema file also lists stage1_findings and self_review_verify: writer not found.';
+COMMENT ON COLUMN housekeeping_runs.source_script IS 'Path of the script that wrote the row. Absolute for most writers; roborev_metrics_etl.R writes a relative path.';
+COMMENT ON COLUMN housekeeping_runs.started_at IS 'UTC instant the run started (TIMESTAMPTZ).';
+COMMENT ON COLUMN housekeeping_runs.ended_at IS 'UTC instant the run finished (TIMESTAMPTZ). NULL means the end was never recorded (indeterminate: crash, kill or still running).';
+COMMENT ON COLUMN housekeeping_runs.status IS 'Run outcome (no CHECK constraint). Values written: ok, failed, partial, deferred, skipped, running. Most writers insert "ok" at START and only overwrite it at end, so status=ok with ended_at NULL is NOT a confirmed success. branch_gc.sh and roborev_metrics_etl.R insert "running" at start. "skipped" (llm#1340): ran and had nothing to do, healthy. "deferred" (llm#947/#970): precondition such as DNS absent, NOT a failure. "partial": some steps failed (for example the digest email). Readers must not bucket skipped or deferred with failed.';
+COMMENT ON COLUMN housekeeping_runs.rows_written IS 'Count of rows the run wrote to its event table(s) (an integer count of rows, not bytes). Default 0. Some writers update it only at end, so 0 on an unfinished run means not yet recorded.';
+COMMENT ON COLUMN housekeeping_runs.error_text IS 'Error message for a failed or partial run. Only branch_gc.sh, roborev_bridge_to_unified.sh and roborev_metrics_etl.R populate it; NULL for every other writer, so NULL does not mean no error.';
+COMMENT ON COLUMN housekeeping_runs.detail_json IS 'Optional run detail text. Only roborev_requeue_dropped.sh writes it; NULL for all other writers.';
+
+-- branch_gc_events -----------------------------------------------------------
+COMMENT ON TABLE branch_gc_events IS 'One row per local git branch inspected by .claude/scripts/branch_gc.sh (llm#585): deleted or kept, with the reason. Written by branch_gc.sh db_emit().';
+COMMENT ON COLUMN branch_gc_events.id IS 'Unique event id (lower-case UUID from uuidgen, or a nanosecond timestamp fallback).';
+COMMENT ON COLUMN branch_gc_events.fired_at IS 'UTC instant the event was recorded (current_timestamp, TIMESTAMPTZ).';
+COMMENT ON COLUMN branch_gc_events.source IS 'Writer identity; always "branch_gc.sh".';
+COMMENT ON COLUMN branch_gc_events.project IS 'Repository (project) name the branch belongs to, for example "llm" or "historical".';
+COMMENT ON COLUMN branch_gc_events.branch_name IS 'Local branch name inspected.';
+COMMENT ON COLUMN branch_gc_events.branch_tip_sha IS 'Commit SHA of the branch tip at inspection time (git hash; recovery handle).';
+COMMENT ON COLUMN branch_gc_events.action IS 'Decision (no CHECK constraint). Written by branch_gc.sh: deleted_merged, deleted_squash, deleted_reimpl, kept_unmerged, kept_protected, kept_checked_out, kept_young, kept_grace, kept_delete_failed, kept_dryrun (would have deleted; dry-run only).';
+COMMENT ON COLUMN branch_gc_events.closing_pr IS 'GitHub PR number that closed the branch via squash-merge. NULL when no closing PR was found or looked up.';
+COMMENT ON COLUMN branch_gc_events.age_days IS 'Age of the branch tip commit in whole days at inspection time.';
+COMMENT ON COLUMN branch_gc_events.reason IS 'Free-text explanation of the action set by branch_gc.sh (for example "git cherry main branch all -"). Not machine-parseable.';
+
+-- config_events --------------------------------------------------------------
+COMMENT ON TABLE config_events IS 'One row per config-file change (per commit and file) detected in the last 24h by bin/config_digest_cron.sh (Step 1b, from git log --numstat). Read by the config digest email.';
+COMMENT ON COLUMN config_events.id IS 'Unique event id (UUID v4 string).';
+COMMENT ON COLUMN config_events.fired_at IS 'UTC instant the digest run recorded the event (TIMESTAMPTZ). This is the cron run time, not the commit time.';
+COMMENT ON COLUMN config_events.source IS 'Writer identity; always "config_digest_cron.sh".';
+COMMENT ON COLUMN config_events.file_path IS 'Config file path as reported by git log --numstat, relative to the repo root.';
+COMMENT ON COLUMN config_events.change_type IS 'Kind of change derived from numstat. Written: added (only lines added), removed (only lines deleted), modified (both, or a binary file). The schema file also lists permission_change: writer not found.';
+COMMENT ON COLUMN config_events.diff_summary IS 'Human-readable diff summary. Never written by bin/config_digest_cron.sh (its INSERT omits the column): writer not found, always NULL.';
+COMMENT ON COLUMN config_events.diff_lines IS 'Count of changed lines in the commit for this file: lines added for added, lines deleted for removed, added plus deleted for modified. 0 for binary files, where git numstat gives no counts (so 0 can mean not measurable).';
+COMMENT ON COLUMN config_events.commit_sha IS 'Short (7-character) git commit SHA that made the change.';
+
+-- kb_events ------------------------------------------------------------------
+COMMENT ON TABLE kb_events IS 'One row per knowledge-base change (per commit and file) detected by bin/kb_digest_daily_cron.sh (Step 1b, from git log --numstat on the knowledge repo raw/, wiki/, outputs/). Read by the knowledge-base digest section.';
+COMMENT ON COLUMN kb_events.id IS 'Unique event id (lower-case UUID from uuidgen).';
+COMMENT ON COLUMN kb_events.fired_at IS 'UTC instant the digest run recorded the event (TIMESTAMPTZ). This is the cron run time, not the commit time.';
+COMMENT ON COLUMN kb_events.source IS 'Writer identity; always "kb_digest_daily_cron.sh".';
+COMMENT ON COLUMN kb_events.layer IS 'Knowledge-base layer, derived from the path prefix. Allowed values: raw, wiki, outputs (anything else falls back to outputs).';
+COMMENT ON COLUMN kb_events.path IS 'File path relative to the knowledge/ repo root.';
+COMMENT ON COLUMN kb_events.action IS 'Kind of change derived from numstat. Written: created (only lines added), modified (everything else, including binary and fully-deleted files). The schema file also lists flagged_no_sources, flagged_ai_inferred, broken_link: writer not found.';
+COMMENT ON COLUMN kb_events.details IS 'Free-text detail. Never written by bin/kb_digest_daily_cron.sh (its INSERT omits the column): writer not found, always NULL.';
+COMMENT ON COLUMN kb_events.commit_sha IS 'Short (7-character) git commit SHA of the knowledge repo that made the change.';
+
+-- launchd_health_events ------------------------------------------------------
+COMMENT ON TABLE launchd_health_events IS 'One row per launchd plist per run: its last observed state, from launchctl print. Written by bin/launchd_health_weekly_cron.sh (Step 1b, with up to 3 insert attempts on lock contention). Read by the cron-health digest section. A missing or stale row is itself the signal of a broken cron job.';
+COMMENT ON COLUMN launchd_health_events.id IS 'Unique event id (lower-case UUID from uuidgen).';
+COMMENT ON COLUMN launchd_health_events.fired_at IS 'UTC instant the health check observed the plist (TIMESTAMPTZ).';
+COMMENT ON COLUMN launchd_health_events.source IS 'Writer identity; always "launchd_health_weekly_cron.sh".';
+COMMENT ON COLUMN launchd_health_events.plist_label IS 'launchd job label, for example "com.claude.worktree-gc".';
+COMMENT ON COLUMN launchd_health_events.state IS 'Observed state. Written: loaded_ok (last exit 0 or 78), loaded_recent_fail (other exit code), unloaded (not loaded), unknown (llm#962: launchctl output could not be parsed; INDETERMINATE, readers must NOT count it as a failure). The schema file also lists orphan and the legacy spelling missing: writer not found for orphan; readers still accept missing for pre-rename rows.';
+COMMENT ON COLUMN launchd_health_events.last_exit_code IS 'Integer exit status of the last run from launchctl print. NULL when the job has never exited or the state is unknown. 0 and 78 (no more processes, idle) are treated as healthy.';
+COMMENT ON COLUMN launchd_health_events.last_fired_at IS 'Intended: UTC instant of the last launchd fire (TIMESTAMPTZ). bin/launchd_health_weekly_cron.sh always writes NULL, so the value is always NULL (not parsed, not zero).';
+COMMENT ON COLUMN launchd_health_events.next_fire_at IS 'Intended: UTC instant of the next scheduled fire (TIMESTAMPTZ). bin/launchd_health_weekly_cron.sh always writes NULL, so the value is always NULL (not parsed, not zero).';
+COMMENT ON COLUMN launchd_health_events.detail IS 'Free-text detail set by the writer, typically "runs=N; last_exit=C" (runs is a count of launchd runs, or "?" when unparsed).';
+
+-- roborev_daily_summary ------------------------------------------------------
+COMMENT ON TABLE roborev_daily_summary IS 'Per-project daily summary mirrored read-only from the roborev SQLite DB (~/.roborev/reviews.db) by .claude/scripts/roborev_bridge_to_unified.sh. One row per (project, UTC day); the primary key is a deterministic md5-derived UUID of project and date, so a same-day re-run is a no-op (INSERT OR IGNORE) and does not refresh the counts. Counts are snapshots at fired_at.';
+COMMENT ON COLUMN roborev_daily_summary.id IS 'Deterministic UUID-formatted md5 of "<project>:<UTC date>" (roborev_bridge_to_unified.sh).';
+COMMENT ON COLUMN roborev_daily_summary.fired_at IS 'UTC instant the bridge ran (TIMESTAMPTZ); also the window end.';
+COMMENT ON COLUMN roborev_daily_summary.window_start IS 'UTC start of the 24-hour aggregation window (TIMESTAMPTZ): fired_at minus 24 hours.';
+COMMENT ON COLUMN roborev_daily_summary.window_end IS 'UTC end of the aggregation window (TIMESTAMPTZ); equals fired_at. Open-review counts are not windowed, only closed_today and autoclose_today are.';
+COMMENT ON COLUMN roborev_daily_summary.project IS 'Canonical project name, roborev repos.name (lower-case basename as stored by roborev).';
+COMMENT ON COLUMN roborev_daily_summary.total_reviews_open IS 'Count of roborev reviews with closed = 0 for the project at run time (count of reviews, not findings).';
+COMMENT ON COLUMN roborev_daily_summary.total_reviews_closed_today IS 'Count of closed reviews whose review created_at falls in the last 24h (filter is on created_at, not close time, so it approximates closures today).';
+COMMENT ON COLUMN roborev_daily_summary.high_open IS 'Count of open reviews classified Severity High, from text or structured findings matching. A classification heuristic (LIKE patterns), not a verified severity.';
+COMMENT ON COLUMN roborev_daily_summary.medium_open IS 'Count of open reviews classified Severity Medium (same heuristic as high_open).';
+COMMENT ON COLUMN roborev_daily_summary.low_open IS 'Count of open reviews classified Severity Low (same heuristic as high_open). high, medium and low need not sum to total_reviews_open: reviews with no recognisable severity are counted in none of them.';
+COMMENT ON COLUMN roborev_daily_summary.oldest_open_days IS 'Age in whole days of the oldest open review, from review_jobs.finished_at to now. 0 when there is none or finished_at is NULL (so 0 can mean unknown).';
+COMMENT ON COLUMN roborev_daily_summary.autoclose_today IS 'Count of closures with closure_type = "stale" created in the last 24h (auto-closed stale reviews). 0 when the closures table has no matching rows.';
+COMMENT ON COLUMN roborev_daily_summary.source_db_path IS 'Path of the roborev SQLite DB that was read.';
+COMMENT ON COLUMN roborev_daily_summary.detail_json IS 'Digest context for the top 3 open findings (highest severity first), as a JSON string value of up to 500 characters, or the JSON literal null when none. Truncated text, not structured findings.';
+
+-- etl_freshness --------------------------------------------------------------
+COMMENT ON TABLE etl_freshness IS 'One row per ETL data source recording FACTS about its freshness; the staleness verdict is computed at read time by the staleness_status view (llm#893), not stored here. Upserted (INSERT OR REPLACE on source_name) by .claude/scripts/etl_freshness_upsert.sh, command_usage_staging_import.sh, skill_usage_staging_import.sh, backfill_command_usage.R and backfill_skill_usage.R.';
+COMMENT ON COLUMN etl_freshness.source_name IS 'Primary key: ETL source identifier (for example "command_usage").';
+COMMENT ON COLUMN etl_freshness.last_row_ts IS 'Timestamp of the newest data row the source holds: MAX of a timestamp column of its table, or the mtime of its file (UTC) in etl_freshness_upsert.sh. TIMESTAMP without time zone. NULL when it could not be determined (indeterminate, not stale).';
+COMMENT ON COLUMN etl_freshness.last_etl_run_ts IS 'Timestamp the ETL writer last ran (current_timestamp at upsert, TIMESTAMP without time zone). Records when the ETL ran, not that it succeeded in loading new data.';
+COMMENT ON COLUMN etl_freshness.expected_cadence_hours IS 'Expected hours between ETL runs (DOUBLE, hours). NULL for event-driven sources with no SLA; a blank or non-numeric cadence argument is stored as NULL.';
+COMMENT ON COLUMN etl_freshness.status IS 'VESTIGIAL (llm#893/#913): no longer written by etl_freshness_upsert.sh (NULL there), but command_usage_staging_import.sh and skill_usage_staging_import.sh still write "unknown". Do not read it; use the staleness_status view.';
+
+-- data_quality_incidents -----------------------------------------------------
+COMMENT ON TABLE data_quality_incidents IS 'One row per known window in which a table/column values are NOT trustworthy (for example imputed or estimated values that would be read as observed). Written once per incident, not continuously: seeded by .claude/scripts/data_quality_incidents_seed.sql (via data_quality_incidents_seed_apply.sh) and by .claude/scripts/backfill_agent_runs_1045.sh. Consumers of the named asset/column must check this table before presenting an aggregate as real.';
+COMMENT ON COLUMN data_quality_incidents.id IS 'Primary key: fixed human-chosen string (for example "llm913-sessions-duration_min-20260724"), so re-seeding is idempotent.';
+COMMENT ON COLUMN data_quality_incidents.asset IS 'Table (or other data asset) affected, for example "sessions" or "agent_runs".';
+COMMENT ON COLUMN data_quality_incidents.column_name IS 'Affected column, for example "duration_min". NULL means the whole asset.';
+COMMENT ON COLUMN data_quality_incidents.window_start IS 'Start of the untrustworthy window (TIMESTAMP without time zone), the earliest affected started_at.';
+COMMENT ON COLUMN data_quality_incidents.window_end IS 'End of the untrustworthy window (TIMESTAMP without time zone). NULL means the incident is still open.';
+COMMENT ON COLUMN data_quality_incidents.reason IS 'Free-text statement of why the values are not trustworthy and what was done (for example a backfilled estimate). Never treat the affected values as observed.';
+COMMENT ON COLUMN data_quality_incidents.issue_ref IS 'GitHub issue reference for the incident, for example "llm#913 / llm#915". NULL if none.';
+COMMENT ON COLUMN data_quality_incidents.recorded_at IS 'Timestamp the incident row was recorded (TIMESTAMP without time zone).';
+
+-- secret_scan_findings -------------------------------------------------------
+COMMENT ON TABLE secret_scan_findings IS 'One row per finding from .claude/scripts/secret_exposure_scan.sh (write_findings_to_db, one batched INSERT per run). Append-only: each run is a distinct observation. Never stores a credential value. Joins to housekeeping_runs.id via run_id (task = secret_exposure_scan).';
+COMMENT ON COLUMN secret_scan_findings.id IS 'Deterministic md5 of run_id:detector:file_path:line_num:name, so replaying the same run write is idempotent.';
+COMMENT ON COLUMN secret_scan_findings.run_id IS 'housekeeping_runs.id of the scan run that produced the finding (no enforced foreign key).';
+COMMENT ON COLUMN secret_scan_findings.fired_at IS 'UTC instant the scan run started (TIMESTAMPTZ); identical for all findings of one run.';
+COMMENT ON COLUMN secret_scan_findings.detector IS 'Detector id as text. Written: "1" (whole-environment capture), "2" (credential shape or assignment), "3" (bad file permissions), "4" (commented-out credential assignment), "5" (known credential store invariants, llm#1196). The schema file comment on this column lists only 1-4 and is out of date.';
+COMMENT ON COLUMN secret_scan_findings.severity IS 'Finding severity. Allowed values written: "high", "critical".';
+COMMENT ON COLUMN secret_scan_findings.file_path IS 'Path of the file (or credential store) the finding is about.';
+COMMENT ON COLUMN secret_scan_findings.line_num IS 'Line number as text (not integer); "-" for file-level findings with no line (detector 3 and the detector 5 non-value findings).';
+COMMENT ON COLUMN secret_scan_findings.name IS 'Finding-class label (for example "cred-shape", "bad-permissions", "known-store-key-delta"), never the matched literal.';
+COMMENT ON COLUMN secret_scan_findings.note IS 'Fixed generic description for the finding class. By contract NEVER contains a credential value.';
+
+-- secret_scan_store_state ----------------------------------------------------
+COMMENT ON TABLE secret_scan_store_state IS 'Latest observed key-NAME set per known credential store (detector 5, llm#1196). Current state, not a ledger: secret_exposure_scan.sh record_store_state() deletes then re-inserts the row each run, and the next run computes a delta against it. Holds variable NAMES only, never values.';
+COMMENT ON COLUMN secret_scan_store_state.store_path IS 'Primary key: path of the known credential store file.';
+COMMENT ON COLUMN secret_scan_store_state.key_count IS 'Count of distinct variable names in the store at the last observation (integer count of names).';
+COMMENT ON COLUMN secret_scan_store_state.key_names IS 'Comma-joined, sorted, de-duplicated variable NAMES in the store. NEVER credential values.';
+COMMENT ON COLUMN secret_scan_store_state.updated_at IS 'UTC instant the baseline was last replaced (TIMESTAMPTZ).';
+
+-- roborev_retention_events ---------------------------------------------------
+COMMENT ON TABLE roborev_retention_events IS 'One row per item type pruned by .claude/scripts/roborev_retention.sh (llm#929). Written only on --apply, never on --dry-run, so no rows for a day means a dry-run or nothing run, not that nothing needed pruning. Joins to housekeeping_runs.id via run_id.';
+COMMENT ON COLUMN roborev_retention_events.id IS 'Unique event id: the run id plus an item suffix (-backups, -joblogs, -quarantine, -searchbak).';
+COMMENT ON COLUMN roborev_retention_events.fired_at IS 'UTC instant the apply run started (TIMESTAMPTZ).';
+COMMENT ON COLUMN roborev_retention_events.source IS 'Writer identity; always "roborev_retention.sh".';
+COMMENT ON COLUMN roborev_retention_events.run_id IS 'housekeeping_runs.id of the retention run (no enforced foreign key).';
+COMMENT ON COLUMN roborev_retention_events.item_type IS 'Kind of item pruned (no CHECK constraint). Allowed values written: backup (DB snapshots), joblog (logs/jobs/<id>.log), quarantine, search_backup.';
+COMMENT ON COLUMN roborev_retention_events.action IS 'What was done; always "removed" in the writer found.';
+COMMENT ON COLUMN roborev_retention_events.count IS 'Number of items (files or directories) removed for this item_type (integer count).';
+COMMENT ON COLUMN roborev_retention_events.bytes IS 'Bytes reclaimed (BIGINT, bytes). CAUTION: the "backup" row stores the run TOTAL bytes across all item types (writer passes total_bytes), while the other rows store their own item_type bytes, so summing bytes over a run double counts.';
+
+-- private_data_scan_findings -------------------------------------------------
+COMMENT ON TABLE private_data_scan_findings IS 'One row per finding from .claude/scripts/private_data_scan.sh (deny-list exact-value hits plus generic E.164 phone, UK postcode and IBAN patterns), batched via write_findings_to_db. Never stores a PII value. Joins to housekeeping_runs.id via run_id (task = private_data_scan).';
+COMMENT ON COLUMN private_data_scan_findings.id IS 'Deterministic md5 of run_id:source:location:line_num:rule, so replaying the same run write is idempotent.';
+COMMENT ON COLUMN private_data_scan_findings.run_id IS 'housekeeping_runs.id of the scan run (no enforced foreign key).';
+COMMENT ON COLUMN private_data_scan_findings.fired_at IS 'UTC instant the scan run started (TIMESTAMPTZ); identical for all findings of one run.';
+COMMENT ON COLUMN private_data_scan_findings.source IS 'Which matcher produced the finding. Allowed values: "denylist" (exact-value deny list), "generic" (pattern match).';
+COMMENT ON COLUMN private_data_scan_findings.severity IS 'Finding severity. Allowed values: "critical", "high".';
+COMMENT ON COLUMN private_data_scan_findings.location IS 'Where the match was found: "staged:<path>", "<sha12>:<path>" (commit history) or "<path>".';
+COMMENT ON COLUMN private_data_scan_findings.line_num IS 'Line number of the match as text (not integer).';
+COMMENT ON COLUMN private_data_scan_findings.rule IS 'Finding-class label. Allowed values: "known-value", "e164-phone", "uk-postcode", "iban". Never the matched literal.';
+COMMENT ON COLUMN private_data_scan_findings.note IS 'Fixed generic description for the rule. By contract NEVER contains a PII value.';
+
+-- eval_runs ------------------------------------------------------------------
+COMMENT ON TABLE eval_runs IS 'One row per eval-harness fixture ATTEMPT (llm#816), written by .claude/scripts/roborev_eval_classify.py insert_sql() on behalf of .claude/scripts/roborev_eval_run.sh (harness = roborev). A --runs N invocation writes N rows per fixture sharing one run_id. The per-fixture verdict is NOT stored: it is derived at read time by roborev_eval_run.sh --report <config_hash>. Natural key (run_id, fixture, attempt).';
+COMMENT ON COLUMN eval_runs.run_id IS 'UUID shared by all attempts of one harness invocation.';
+COMMENT ON COLUMN eval_runs.run_at IS 'UTC instant the harness invocation started (TIMESTAMPTZ); identical for all rows of a run, not the per-attempt time.';
+COMMENT ON COLUMN eval_runs.harness IS 'Which eval harness wrote the row. Currently "roborev"; room for others (llm#816).';
+COMMENT ON COLUMN eval_runs.fixture IS 'Fixture directory name evaluated.';
+COMMENT ON COLUMN eval_runs.attempt IS 'Attempt number within the run, 1..n (integer count; n is the --runs value).';
+COMMENT ON COLUMN eval_runs.agent IS 'Reviewer agent used, or "config-default" when the harness ran with the repo configured default rather than an explicit override.';
+COMMENT ON COLUMN eval_runs.model IS 'Reviewer model used, or "config-default" when no explicit override was given.';
+COMMENT ON COLUMN eval_runs.config_hash IS 'sha256 of the effective reviewer config text (agent/model keys, global plus per-repo), NOT the text itself, or "unspecified" when none was supplied. Lets reports ask whether a config was evaluated.';
+COMMENT ON COLUMN eval_runs.result IS 'Attempt outcome (no CHECK constraint). Allowed values: PASS, FAIL, ERROR. ERROR is INDETERMINATE: never a pass and never a fail; it includes timeouts (reason starts with "TIMEOUT:"), diff apply failures and review errors.';
+COMMENT ON COLUMN eval_runs.reason IS 'Free-text explanation of the result (classifier reason, or error/timeout text). Tabs and newlines are replaced by spaces. NULL is possible.';
+COMMENT ON COLUMN eval_runs.latency_ms IS 'Wall-clock time of the attempt in milliseconds (BIGINT, ms). NULL if non-numeric; 0 for attempts that failed before the review ran (for example a diff that did not apply), so 0 means not measured.';
