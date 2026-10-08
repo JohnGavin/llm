@@ -122,6 +122,132 @@ def classify(result_text, completed_ok, expected):
     return "PASS", f"completed; severities found={severities or 'none'}"
 
 
+def normalize_status(status):
+    """PASS and FAIL are completed outcomes. Everything else (ERROR, TIMEOUT,
+    unknown strings) is indeterminate and is folded into ERROR."""
+    return status if status in ("PASS", "FAIL") else "ERROR"
+
+
+def aggregate_attempts(statuses):
+    """Per-fixture verdict over N attempts (llm#816). Returns (verdict, flaky).
+
+    - PASS only if a strict majority of COMPLETED (PASS/FAIL) attempts passed.
+    - If a strict majority of ALL attempts are ERROR the fixture is ERROR
+      (indeterminate), whatever the remaining attempts said.
+    - No completed attempt at all -> ERROR.
+    - flaky = the completed attempts disagree (both a PASS and a FAIL).
+    A tie among completed attempts is FAIL: not a majority pass.
+    """
+    norm = [normalize_status(s) for s in statuses]
+    n = len(norm)
+    if n == 0:
+        return "ERROR", False
+    passes = norm.count("PASS")
+    fails = norm.count("FAIL")
+    errors = n - passes - fails
+    completed = passes + fails
+    flaky = passes > 0 and fails > 0
+    if completed == 0 or errors * 2 > n:
+        return "ERROR", flaky
+    return ("PASS" if passes * 2 > completed else "FAIL"), flaky
+
+
+def overall_verdict(verdicts):
+    """FAIL beats INDETERMINATE beats PASS. No fixtures -> INDETERMINATE."""
+    if not verdicts:
+        return "INDETERMINATE"
+    if "FAIL" in verdicts:
+        return "FAIL"
+    if "ERROR" in verdicts:
+        return "INDETERMINATE"
+    return "PASS"
+
+
+def overall_exit_code(overall):
+    """0 all PASS, 1 any FAIL, 3 indeterminate (any ERROR and no FAIL)."""
+    return {"PASS": 0, "FAIL": 1}.get(overall, 3)
+
+
+# Column order of the attempts TSV (the eval_runs columns, in order).
+TSV_COLUMNS = [
+    "run_id", "run_at", "harness", "fixture", "attempt", "agent", "model",
+    "config_hash", "result", "reason", "latency_ms",
+]
+
+
+def read_attempts(tsv_path):
+    rows = []
+    with open(tsv_path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            parts += [""] * (len(TSV_COLUMNS) - len(parts))
+            rows.append(dict(zip(TSV_COLUMNS, parts)))
+    return rows
+
+
+def summarise(rows):
+    """Group attempt rows per fixture -> (fixtures list, overall)."""
+    order = []
+    by_fixture = {}
+    for r in rows:
+        f = r["fixture"]
+        if f not in by_fixture:
+            by_fixture[f] = []
+            order.append(f)
+        by_fixture[f].append(r)
+    fixtures = []
+    for f in order:
+        attempts = sorted(by_fixture[f], key=lambda r: int(r["attempt"] or 0))
+        statuses = [normalize_status(a["result"]) for a in attempts]
+        verdict, flaky = aggregate_attempts(statuses)
+        reason = ""
+        for a in attempts:
+            if normalize_status(a["result"]) == verdict:
+                reason = a["reason"]
+                break
+        fixtures.append({
+            "fixture": f, "verdict": verdict, "flaky": flaky,
+            "attempts": statuses, "reason": reason,
+        })
+    overall = overall_verdict([x["verdict"] for x in fixtures])
+    return fixtures, overall
+
+
+def sql_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def insert_sql(rows):
+    """INSERT statements for eval_runs. Values are quoted here so reasons
+    containing quotes cannot break (or inject into) the statement."""
+    out = []
+    for r in rows:
+        lat = str(r["latency_ms"]).strip()
+        lat_sql = str(int(lat)) if lat.lstrip("-").isdigit() else "NULL"
+        values = ", ".join([
+            sql_quote(r["run_id"]),
+            "TIMESTAMPTZ " + sql_quote(r["run_at"]),
+            sql_quote(r["harness"]),
+            sql_quote(r["fixture"]),
+            str(int(r["attempt"])),
+            sql_quote(r["agent"]),
+            sql_quote(r["model"]),
+            sql_quote(r["config_hash"]),
+            sql_quote(r["result"]),
+            sql_quote(r["reason"]),
+            lat_sql,
+        ])
+        out.append(
+            "INSERT INTO eval_runs (run_id, run_at, harness, fixture, attempt, "
+            "agent, model, config_hash, result, reason, latency_ms) VALUES ("
+            + values + ");"
+        )
+    return "\n".join(out)
+
+
 def run_selftest():
     passed = 0
     failed = 0
@@ -210,6 +336,19 @@ def run_selftest():
         f"forms={forms}",
     )
 
+    # Cases I-M: multi-attempt majority logic (llm#816).
+    def agg(name, statuses, want_verdict, want_flaky):
+        v, fl = aggregate_attempts(statuses)
+        ok = (v, fl) == (want_verdict, want_flaky)
+        check(name, "PASS" if ok else "FAIL", "PASS",
+              f"{statuses} -> verdict={v} flaky={fl}, wanted {want_verdict}/{want_flaky}")
+
+    agg("I-pass-pass-fail", ["PASS", "PASS", "FAIL"], "PASS", True)
+    agg("J-error-error-pass", ["ERROR", "ERROR", "PASS"], "ERROR", False)
+    agg("K-fail-fail-pass", ["FAIL", "FAIL", "PASS"], "FAIL", True)
+    agg("L-single-attempt-unchanged", ["PASS"], "PASS", False)
+    agg("M-timeout-counts-as-error", ["TIMEOUT", "TIMEOUT", "PASS"], "ERROR", False)
+
     total = passed + failed
     print("")
     print(f"Selftest: {passed}/{total} PASS")
@@ -258,6 +397,44 @@ def main(argv):
         status, reason = classify(result_text, completed_ok, expected)
         print(f"{status}|{reason}")
         return 0 if status == "PASS" else 1
+
+    if mode == "aggregate":
+        # roborev_eval_classify.py aggregate <attempts.tsv> [json_out] [key=value ...]
+        # Prints a human summary and exits 0 (all PASS) / 1 (any FAIL) /
+        # 3 (indeterminate). Optional json_out gets the machine-readable form.
+        if len(argv) < 3:
+            print("usage: roborev_eval_classify.py aggregate <attempts.tsv> [json_out] [key=value ...]",
+                  file=sys.stderr)
+            return 2
+        fixtures, overall = summarise(read_attempts(argv[2]))
+        for x in fixtures:
+            flag = " FLAKY" if x["flaky"] else ""
+            print(f"{x['fixture']}: {x['verdict']} ({len(x['attempts'])} attempt(s): "
+                  f"{' '.join(x['attempts'])}){flag}")
+        reason = ""
+        if overall == "INDETERMINATE":
+            bad = [x for x in fixtures if x["verdict"] == "ERROR"]
+            reason = (f"{bad[0]['fixture']}: {bad[0]['reason']}" if bad
+                      else "no fixture results")
+        elif overall == "FAIL":
+            bad = [x for x in fixtures if x["verdict"] == "FAIL"]
+            reason = f"{bad[0]['fixture']}: {bad[0]['reason']}"
+        print(f"Overall: {overall}" + (f" ({reason})" if reason else ""))
+        if len(argv) > 3 and argv[3]:
+            meta = dict(kv.split("=", 1) for kv in argv[4:] if "=" in kv)
+            doc = {"overall": overall, "reason": reason, "fixtures": fixtures,
+                   "n_fixtures": len(fixtures), **meta}
+            with open(argv[3], "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+        return overall_exit_code(overall)
+
+    if mode == "insert-sql":
+        # roborev_eval_classify.py insert-sql <attempts.tsv>
+        if len(argv) < 3:
+            print("usage: roborev_eval_classify.py insert-sql <attempts.tsv>", file=sys.stderr)
+            return 2
+        print(insert_sql(read_attempts(argv[2])))
+        return 0
 
     if mode == "selftest":
         return run_selftest()

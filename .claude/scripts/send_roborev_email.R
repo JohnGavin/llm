@@ -1199,6 +1199,34 @@ config_repo_roots <- local({
 config_fp     <- rh_config_fingerprint(ROBOREV_CONFIG_TOML, config_repo_roots)
 config_change <- rh_config_change(config_fp, config_hash_path)
 
+# ── llm#816: run the golden eval once per NEW reviewer-config hash ───────────
+# Replaces the old "re-run roborev_eval_run.sh" advice. Runs BEFORE the body is
+# built and is bounded by ROBOREV_EVAL_TIMEOUT_SECS (default 1200 s = 20 min;
+# 15 reviews at a typical well-under-a-minute each) so a hung eval cannot stop
+# the email -- it becomes an INDETERMINATE line. A hash that already has a
+# completed stored run is reported, not re-run. Seams for tests:
+# ROBOREV_EVAL_RUNNER, ROBOREV_EVAL_ON_CHANGE=0 (disable), ROBOREV_EVAL_IN_DRYRUN=1.
+eval_timeout_secs <- local({
+  v <- rh_as_number(Sys.getenv("ROBOREV_EVAL_TIMEOUT_SECS", "1200"))
+  if (is.na(v) || v <= 0) 1200 else v
+})
+if (identical(config_change$status, "changed")) {
+  message("send_roborev_email.R: reviewer config changed -- checking/running golden eval ",
+          "(timeout ", eval_timeout_secs, "s)")
+}
+eval_res <- rh_eval_on_config_change(
+  config_change, config_fp,
+  runner           = Sys.getenv("ROBOREV_EVAL_RUNNER", file.path(.scripts_dir_rr, "roborev_eval_run.sh")),
+  timeout_secs     = eval_timeout_secs,
+  enabled          = !identical(Sys.getenv("ROBOREV_EVAL_ON_CHANGE", "1"), "0"),
+  dry_run          = dry_run,
+  allow_in_dry_run = identical(Sys.getenv("ROBOREV_EVAL_IN_DRYRUN", "0"), "1")
+)
+if (!identical(eval_res$status, "not_needed")) {
+  message("send_roborev_email.R: golden eval status=", eval_res$status,
+          " overall=", eval_res$overall, if (nzchar(eval_res$reason)) paste0(" (", eval_res$reason, ")") else "")
+}
+
 # ── Extract window slices ──────────────────────────────────────────────────────
 
 d1 <- snap[["global_windows"]][["d1"]]  # 1-day window — llm#449
@@ -1973,16 +2001,15 @@ agent_rate_summary <- if (is.null(agent_rate_agg)) {
 agent_rate_summary_colour <- if (is.null(agent_rate_agg)) accent_orange else accent_green
 
 # Prominent (outside the collapsed block) health alerts: reviewer-config change
-# (llm#1044 item 2) and day-over-day quality jumps (item 3). Report-only: the
-# eval harness is NEVER run from here.
+# (llm#1044 item 2) and day-over-day quality jumps (item 3). On a config change
+# the golden eval result (llm#816) replaces the old "re-run" advice; the eval
+# itself was run above, before the body is built.
 config_alert_html <- if (identical(config_change$status, "changed")) {
-  '<div style="background-color:#5b1a1a; color:#fff5f5; border:2px solid #f08080;
-    border-radius:6px; padding:12px 16px; margin:12px 0;">
-    <strong>&#9888; Reviewer config changed &mdash; re-run roborev_eval_run.sh</strong><br>
-    The effective review agent/model config (review_agent, review_model,
-    default_agent and per-repo overrides) differs from the last health run.
-    The golden-set harness is not run automatically; a human runs it before
-    trusting the new reviewer.</div>'
+  paste0(
+    '<p style="font-size:12px;">The effective review agent/model config ',
+    '(review_agent, review_model, default_agent and per-repo overrides) differs ',
+    'from the last health run.</p>',
+    rh_eval_alert_html(eval_res, htmlEscape_rr))
 } else if (identical(config_change$status, "unknown")) {
   sprintf('<p style="color:%s; font-size:12px;">Reviewer config fingerprint: unknown
     (could not read %s) &mdash; change detection not applied today.</p>',
