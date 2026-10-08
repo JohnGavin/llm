@@ -153,16 +153,16 @@ unambiguous.
 
 ## Worked Example & Phase Roadmap
 
-See [`_companions/agent-identity-details.md`](_companions/agent-identity-details.md)
-for the full dispatch worked example (mint → dispatch → post-verify → audit) and
-the phase roadmap. The normative protocol above is complete without it.
+This file (`_companions/agent-identity-details.md`) holds the full dispatch
+worked example (mint → dispatch → post-verify → audit) and the phase roadmap.
+The normative protocol in the parent rule is complete without it.
 
 ## Related
 
-- [`auto-delegation`](.claude/rules/auto-delegation.md) — dispatch model; Mandatory Prefixes 1 + 2; this rule adds Prefix 3 (scope block)
-- [`agent-no-push-to-main`](.claude/rules/agent-no-push-to-main.md) — Guard A + Guard B; Phase 2 will add Guard C (scope + expiry)
-- [`permission-discipline`](.claude/rules/permission-discipline.md) — workspace-based policy; gains identity dimension in Phase 2
-- [`auto-delegation-dispatch-details`](.claude/rules/_companions/auto-delegation-dispatch-details.md) — verbatim prefixes; scope block is Prefix 3
+- [`auto-delegation`](../auto-delegation.md) — dispatch model; Mandatory Prefixes 1 + 2; this rule adds Prefix 3 (scope block)
+- [`agent-no-push-to-main`](../agent-no-push-to-main.md) — Guard A + Guard B; Phase 2 will add Guard C (scope + expiry)
+- [`permission-discipline`](../permission-discipline.md) — workspace-based policy; gains identity dimension in Phase 2
+- [`auto-delegation-dispatch-details`](auto-delegation-dispatch-details.md) — verbatim prefixes; scope block is Prefix 3
 - `unified-observability-schema` (#475) — the dispatch audit log feeds into the unified schema
 - llm#476 — origin issue (Salesforce Principle 4: Build with trust)
 - llm#517 — two concrete failure modes this rule addresses (AGENT_PUSH_OK misuse + symlink breach)

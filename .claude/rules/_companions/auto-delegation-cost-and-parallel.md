@@ -94,11 +94,11 @@ outcome rather than manufacturing a diff to justify the dispatch.
 `data-quality-guardian`, `data-engineer`, `shinylive-builder`, `wiki-curator` —
 MUST be called with `isolation: "worktree"`. `quick-fix` (no Bash) and `critic`
 (read-only) are exempt. Per-agent table + the quick-fix tool-limitation note
-(#223) are in [`_companions/auto-delegation-dispatch-details.md`](_companions/auto-delegation-dispatch-details.md).
+(#223) are in [`_companions/auto-delegation-dispatch-details.md`](auto-delegation-dispatch-details.md).
 
 Every Bash-capable agent dispatch with `isolation: "worktree"` MUST include BOTH prefixes verbatim at the top of the prompt, before any task-specific instructions. Missing either prefix causes the failure modes in `JohnGavin/llm#182` and `JohnGavin/llm#191`.
 
-See [_companions/auto-delegation-dispatch-details.md](_companions/auto-delegation-dispatch-details.md) for the full verbatim text of both prefixes, orchestrator responsibilities, Tier 3 post-verification pattern, and right/wrong examples.
+See [_companions/auto-delegation-dispatch-details.md](auto-delegation-dispatch-details.md) for the full verbatim text of both prefixes, orchestrator responsibilities, Tier 3 post-verification pattern, and right/wrong examples.
 
 When the follow-up work for an agent involves any **write** (edit, commit, push),
 do NOT use `SendMessage` to continue the agent.

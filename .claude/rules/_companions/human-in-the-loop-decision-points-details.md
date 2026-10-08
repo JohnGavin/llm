@@ -129,9 +129,9 @@ Agent: "I'll do these Class D actions:
 Confirm? (or say 'stop' to cancel)"
 ```
 
-See [`_companions/human-in-the-loop-decision-points-details.md`](_companions/human-in-the-loop-decision-points-details.md)
-for the full worked examples (wrong/right auto-merge, wrong/right scope
-expansion). The normative rule above is complete without it.
+This file (`_companions/human-in-the-loop-decision-points-details.md`) holds
+the full worked examples (wrong/right auto-merge, wrong/right scope
+expansion). The normative rule in the parent is complete without it.
 
 - [#477](https://github.com/JohnGavin/llm/issues/477) — origin issue.
 - [#450](https://github.com/JohnGavin/llm/issues/450) — parent design tracker (Salesforce Principle 5).
@@ -200,10 +200,10 @@ User request 2026-08-28: repeated manual "merge" confirmations were the higher-f
 
 ## Related
 
-- [`destructive-ops-guard`](destructive-ops-guard.md) — Part 3 contains the original 3-class taxonomy (A/B/C destructive ops); this rule generalises it to 5 classes and extends to ALL decision types. The A/B/C classes here are backward-compatible with Part 3.
-- [`pr-shipping-discipline`](pr-shipping-discipline.md) — "ship it" = Class D (open PR); "merge it" = Class C (explicit verb). Taxonomic home for that rule's core principle.
-- [`permission-discipline`](permission-discipline.md) — MCP tool classification (read/write/destructive) maps to E/D/A-C respectively.
-- [`auto-delegation`](auto-delegation.md) — Class D detection hooks into decomposition decisions; bounded-confirm fires when planned Class D scope exceeds explicit authorisation.
+- [`destructive-ops-guard`](../destructive-ops-guard.md) — Part 3 contains the original 3-class taxonomy (A/B/C destructive ops); this rule generalises it to 5 classes and extends to ALL decision types. The A/B/C classes here are backward-compatible with Part 3.
+- [`pr-shipping-discipline`](../pr-shipping-discipline.md) — "ship it" = Class D (open PR); "merge it" = Class C (explicit verb). Taxonomic home for that rule's core principle.
+- [`permission-discipline`](../permission-discipline.md) — MCP tool classification (read/write/destructive) maps to E/D/A-C respectively.
+- [`auto-delegation`](../auto-delegation.md) — Class D detection hooks into decomposition decisions; bounded-confirm fires when planned Class D scope exceeds explicit authorisation.
 - `agent-identity-and-task-scopes` (#476) — parallel rule; task scope limits what Class D ops an agent may initiate without re-checking.
 - Hook: `~/.claude/hooks/destructive_api_guard.sh` — enforces Class A/B at the Bash level.
 - [#477](https://github.com/JohnGavin/llm/issues/477) — origin issue; [#450](https://github.com/JohnGavin/llm/issues/450) — parent design tracker (Salesforce Principle 5).
@@ -257,7 +257,7 @@ Example: "I'll do these Class D actions: 1. Edit R/foo.R (add NA check) 2. Edit 
 
 ## Worked Example
 
-See [`_companions/human-in-the-loop-decision-points-details.md`](_companions/human-in-the-loop-decision-points-details.md) for the full worked examples (wrong/right auto-merge, wrong/right scope expansion) and the full Auto-Merge origin rationale. The normative rule above is complete without it.
+This file (`_companions/human-in-the-loop-decision-points-details.md`) holds the full worked examples (wrong/right auto-merge, wrong/right scope expansion) and the full Auto-Merge origin rationale. The normative rule in the parent is complete without it.
 
 
 

@@ -122,6 +122,27 @@ _budget_gate() { # <repo_root> <checker>
   esac
 }
 
+# Broken relative markdown links between rule files (check_rule_links.sh).
+# WARN-only, never blocks: a dead cross-reference is a documentation defect,
+# not a safety-direction problem (see rule-scoping-guard § Only the Safety
+# Direction Blocks). A missing/unrunnable link checker is silently skipped.
+_links_warn() { # <repo_root>
+  local root="$1" lchecker lout lrc
+  lchecker="$root/.claude/scripts/check_rule_links.sh"
+  [ -x "$lchecker" ] || return 0
+  lout="$("$lchecker" "$root/.claude/rules" 2>&1)"
+  lrc=$?
+  case "$lrc" in
+    0) ;;
+    *)
+      echo "rule-scoping-precommit: WARN — rule link check (exit $lrc), non-blocking:" >&2
+      echo "$lout" >&2
+      _emit "warned" "rule links: $lout"
+      ;;
+  esac
+  return 0
+}
+
 _run() {
   local repo_root checker rc out
 
@@ -169,6 +190,7 @@ _run() {
       ;;
   esac
 
+  _links_warn "$repo_root"
   _budget_gate "$repo_root" "$checker"
 }
 
@@ -358,6 +380,24 @@ if [ "${1:-}" = "--selftest" ]; then
   rc11=$?
   [ "$rc11" -eq 0 ] && _ok "SKIP_RULE_SCOPING=1 bypasses the budget block too" \
     || _fail "SKIP_RULE_SCOPING=1 bypasses the budget block too (got rc=$rc11)"
+
+  # Case 12: broken rule link -> WARN (stderr + telemetry), never blocks
+  r12="$TMP/repo12"
+  mk_repo "$r12"
+  mk_fake_checker "$r12" 0 "rule-scoping: OK"
+  printf '#!/usr/bin/env bash\necho "BROKEN-LINK fake"\nexit 1\n' \
+    > "$r12/.claude/scripts/check_rule_links.sh"
+  chmod +x "$r12/.claude/scripts/check_rule_links.sh"
+  stage_rule_change "$r12"
+  spool12="$TMP/spool12.jsonl"
+  out12="$( ( cd "$r12" && SKIP_RULE_SCOPING=0 HOOK_EVENTS_SPOOL="$spool12" _run ) 2>&1 )"
+  rc12=$?
+  [ "$rc12" -eq 0 ] && _ok "broken rule link -> precommit allows (WARN-only, rc=0)" \
+    || _fail "broken rule link -> precommit allows (got rc=$rc12)"
+  case "$out12" in *"rule link check"*) _ok "broken rule link -> WARN printed" ;; *) _fail "broken rule link -> WARN printed (got: $out12)" ;; esac
+  grep -q '"event_type":"warned"' "$spool12" 2>/dev/null \
+    && _ok "broken rule link -> telemetry event_type=warned" \
+    || _fail "broken rule link -> telemetry event_type=warned"
 
   echo ""
   echo "selftest: ${PASS}/${TOTAL} PASS"
