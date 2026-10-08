@@ -97,4 +97,4 @@ When a public repo has accreted personal wiring: (1) inventory by trigger, not i
 - [`secrets-single-source`](secrets-single-source.md) — runtime secret sourcing; the
   Layer-0 control that keeps values out of repos entirely
 - [`credential-management`](credential-management.md) — credential handling posture
-- [`data-privacy`](data-privacy.md) — PHI/confidential data policy
+- [`credential-management` § HIPAA](credential-management.md#hipaa-quick-reference-18-phi-identifiers) — PHI/confidential data policy (there is no standalone `data-privacy` rule; the policy is the AGENTS.md "Data Privacy" core rule plus this section)
