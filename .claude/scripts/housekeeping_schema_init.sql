@@ -14,6 +14,7 @@
 --   secret_scan_store_state -- latest key-NAME-set baseline per known credential store (llm#1196)
 --   roborev_retention_events -- one row per item-type pruned by roborev_retention.sh (llm#929)
 --   private_data_scan_findings -- one row per finding from private_data_scan.sh (2026-08-22 PII incident)
+--   eval_runs              -- one row per eval-harness fixture attempt (llm#816)
 --
 -- All writers follow unified-observability-schema: id, session_id, source,
 -- action, reason, fired_at / started_at + task-specific columns.
@@ -323,6 +324,35 @@ CREATE TABLE IF NOT EXISTS private_data_scan_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_run_id ON private_data_scan_findings(run_id);
 CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_fired_at ON private_data_scan_findings(fired_at);
+
+-- eval_runs: one row per fixture ATTEMPT from an eval harness run (llm#816).
+-- Written by roborev_eval_run.sh (harness='roborev'); a --runs N invocation
+-- writes N rows per fixture sharing one run_id. The per-fixture verdict
+-- (majority of completed attempts) is NOT stored: it is derived at read time
+-- by `roborev_eval_run.sh --report <config_hash>`, so the aggregation rule can
+-- change without rewriting history (decouple running from grading).
+-- result is PASS | FAIL | ERROR; ERROR is indeterminate (never a pass, never a
+-- fail) and includes timeouts. config_hash is the sha256 of the effective
+-- reviewer config text (agent/model keys, global + per-repo overrides), NOT
+-- the text itself, so the daily email can ask "was this config evaluated?".
+-- agent / model hold 'config-default' when the harness ran with the
+-- repo's configured default rather than an explicit override.
+-- Natural key is (run_id, fixture, attempt).
+CREATE TABLE IF NOT EXISTS eval_runs (
+  run_id      TEXT NOT NULL,
+  run_at      TIMESTAMPTZ NOT NULL,
+  harness     TEXT NOT NULL,             -- 'roborev' (room for other harnesses, llm#816)
+  fixture     TEXT NOT NULL,             -- fixture directory name
+  attempt     INTEGER NOT NULL,          -- 1..n within the run
+  agent       TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  config_hash TEXT NOT NULL,             -- sha256 of effective reviewer config, or 'unspecified'
+  result      TEXT NOT NULL,             -- 'PASS' | 'FAIL' | 'ERROR' (no CHECK constraint; comment-only doc)
+  reason      TEXT,
+  latency_ms  BIGINT,
+  PRIMARY KEY (run_id, fixture, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_eval_runs_config_hash ON eval_runs(config_hash, run_at);
 
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);

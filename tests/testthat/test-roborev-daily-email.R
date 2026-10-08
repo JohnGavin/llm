@@ -111,6 +111,8 @@ run_email_dry_run <- function(fixture, extra_env = character(0)) {
     paste0("ROBOREV_CONFIG_TOML=", file.path(dir, "no_such_config.toml")),
     paste0("ROBOREV_ACKS_JSONL=", file.path(dir, "no_such_acks.jsonl")),
     paste0("ROBOREV_HEALTH_STATE_DIR=", file.path(dir, "health_state")),
+    # llm#816: the eval's stored-run lookup must never touch the live DB.
+    paste0("UNIFIED_DB_PATH=", file.path(dir, "no_such_unified.duckdb")),
     extra_env
   )
 
@@ -1754,6 +1756,8 @@ test_that("llm#1044: reviewer-config hash change -> prominent re-run line; no ch
   expect_true(grepl("QA:reviewer_config_status=changed", changed, fixed = TRUE))
   expect_true(grepl("roborev_eval_run.sh", changed, fixed = TRUE))
   expect_true(grepl("reviewer config changed", changed, ignore.case = TRUE))
+  # llm#816: a dry-run preview does not spend review calls; it says so.
+  expect_true(grepl("QA:reviewer_eval_status=not_run", changed, fixed = TRUE))
 
   same <- run(state_same, cfg)
   expect_true(grepl("QA:reviewer_config_status=same", same, fixed = TRUE))
@@ -1816,4 +1820,239 @@ test_that("llm#1123: unparseable acks file -> treated as none, with a note, no c
   expect_true(grepl("QA:total_unclassified_open_n=1", combined, fixed = TRUE))
   expect_true(grepl("QA:acks_status=unparseable", combined, fixed = TRUE))
   expect_true(grepl("dry-run complete", combined, fixed = TRUE))
+})
+
+# ── Tests: llm#816 — golden eval runs automatically on reviewer-config change ─
+#
+# The email script (not the launchd wrapper) is where the config change is
+# detected, so that is where the harness is invoked: once per new config hash,
+# before the body is built, bounded by a timeout so the email still goes out.
+# Every case uses a FAKE runner (a shell script that logs its argv and emits
+# canned JSON): no live roborev call, no live DB.
+
+make_fake_eval_runner <- function() {
+  dir <- tempfile("fake_eval_"); dir.create(dir)
+  runner <- file.path(dir, "fake_runner.sh")
+  writeLines(c(
+    "#!/usr/bin/env bash",
+    'echo "$*" >> "$FAKE_EVAL_LOG"',
+    'json_out=""; report=""',
+    'while [ $# -gt 0 ]; do',
+    '  case "$1" in',
+    '    --json-out) json_out="$2"; shift 2 ;;',
+    '    --report) report="$2"; shift 2 ;;',
+    '    *) shift ;;',
+    '  esac',
+    'done',
+    'if [ -n "$report" ]; then',
+    '  if [ -n "${FAKE_EVAL_REPORT_JSON:-}" ]; then',
+    '    cp "$FAKE_EVAL_REPORT_JSON" "$json_out"; exit "${FAKE_EVAL_REPORT_RC:-0}"',
+    '  fi',
+    '  echo \'{"overall":"INDETERMINATE","reason":"no fixture results","fixtures":[],"n_fixtures":0}\' > "$json_out"',
+    '  exit 3',
+    'fi',
+    '[ -n "${FAKE_EVAL_SLEEP:-}" ] && sleep "$FAKE_EVAL_SLEEP"',
+    '[ -n "${FAKE_EVAL_RUN_JSON:-}" ] && cp "$FAKE_EVAL_RUN_JSON" "$json_out"',
+    'exit "${FAKE_EVAL_RUN_RC:-0}"'
+  ), runner)
+  Sys.chmod(runner, "0755")
+  list(runner = runner, log = file.path(dir, "calls.log"), dir = dir)
+}
+
+eval_json <- function(overall, fixtures, reason = "") {
+  f <- tempfile("eval_", fileext = ".json")
+  fx <- vapply(fixtures, function(x) {
+    sprintf('{"fixture":"%s","verdict":"%s","flaky":%s,"attempts":[%s],"reason":"r"}',
+            x$name, x$verdict, if (isTRUE(x$flaky)) "true" else "false",
+            paste0('"', x$attempts, '"', collapse = ","))
+  }, "")
+  writeLines(sprintf('{"overall":"%s","reason":"%s","fixtures":[%s],"n_fixtures":%d}',
+                     overall, reason, paste(fx, collapse = ","), length(fixtures)), f)
+  f
+}
+
+eval_calls <- function(fake) {
+  if (!file.exists(fake$log)) character(0) else readLines(fake$log)
+}
+run_calls <- function(fake) Filter(function(l) !grepl("--report", l, fixed = TRUE), eval_calls(fake))
+
+load_health_lib <- function() {
+  e <- new.env(); sys.source(health_lib_path(), envir = e); e
+}
+changed_state <- list(status = "changed", prev = "old", cur = "new")
+ok_fp <- list(status = "ok", hash = "md5hash", sha256 = strrep("a", 64), text = "global:review_agent=x\n")
+
+test_that("llm#816: config fingerprint carries a sha256 of the effective config, not its text", {
+  e <- load_health_lib()
+  fp <- e$rh_config_fingerprint(write_toml(c("review_agent = 'x'")))
+  expect_match(fp$sha256, "^[0-9a-f]{64}$")
+  expect_false(grepl("review_agent", fp$sha256, fixed = TRUE))
+  fp2 <- e$rh_config_fingerprint(write_toml(c("review_agent = 'y'")))
+  expect_false(identical(fp$sha256, fp2$sha256))
+})
+
+test_that("llm#816: unchanged config -> not_needed and the runner is never called", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log)
+  for (st in c("same", "first", "unknown")) {
+    res <- e$rh_eval_on_config_change(list(status = st), ok_fp, fake$runner, timeout_secs = 10)
+    expect_identical(res$status, "not_needed", info = st)
+  }
+  expect_length(eval_calls(fake), 0L)
+})
+
+test_that("llm#816: changed config -> runner invoked exactly once with --runs 3 and the sha256", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  run_json <- eval_json("PASS", list(
+    list(name = "01_real_bug", verdict = "PASS", flaky = TRUE, attempts = c("PASS", "PASS", "FAIL")),
+    list(name = "02_clean", verdict = "PASS", flaky = FALSE, attempts = c("PASS", "PASS", "PASS"))))
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_RUN_JSON = run_json, FAKE_EVAL_RUN_RC = "0")
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 10)
+  expect_identical(res$status, "ran")
+  expect_identical(res$overall, "PASS")
+  expect_length(run_calls(fake), 1L)
+  expect_match(run_calls(fake), "--runs 3", fixed = TRUE)
+  expect_match(run_calls(fake), paste0("--config-hash ", strrep("a", 64)), fixed = TRUE)
+  expect_identical(vapply(res$fixtures, function(x) x$fixture, ""), c("01_real_bug", "02_clean"))
+  expect_true(res$fixtures[[1]]$flaky)
+})
+
+test_that("llm#816: a hash that already has a stored run is reported, not re-run", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  stored <- eval_json("PASS", list(
+    list(name = "01_real_bug", verdict = "PASS", flaky = FALSE, attempts = c("PASS", "PASS", "PASS"))))
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_REPORT_JSON = stored, FAKE_EVAL_REPORT_RC = "0")
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 10)
+  expect_identical(res$status, "reported")
+  expect_identical(res$overall, "PASS")
+  expect_length(run_calls(fake), 0L)
+})
+
+test_that("llm#816: a stored INDETERMINATE run does not count as evaluated -> re-run", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  stored <- eval_json("INDETERMINATE", list(
+    list(name = "01_real_bug", verdict = "ERROR", flaky = FALSE, attempts = c("ERROR", "ERROR", "ERROR"))),
+    reason = "01_real_bug: roborev review did not complete")
+  run_json <- eval_json("PASS", list(
+    list(name = "01_real_bug", verdict = "PASS", flaky = FALSE, attempts = c("PASS", "PASS", "PASS"))))
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_REPORT_JSON = stored,
+                      FAKE_EVAL_REPORT_RC = "3", FAKE_EVAL_RUN_JSON = run_json)
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 10)
+  expect_identical(res$status, "ran")
+  expect_length(run_calls(fake), 1L)
+})
+
+test_that("llm#816: eval FAIL (exit 1) -> overall FAIL", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  run_json <- eval_json("FAIL", list(
+    list(name = "01_real_bug", verdict = "FAIL", flaky = FALSE, attempts = c("FAIL", "FAIL", "FAIL"))))
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_RUN_JSON = run_json, FAKE_EVAL_RUN_RC = "1")
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 10)
+  expect_identical(res$overall, "FAIL")
+})
+
+test_that("llm#816: eval that hangs past the timeout -> INDETERMINATE, not a pass, not a crash", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_SLEEP = "30")
+  t0 <- Sys.time()
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 2)
+  expect_lt(as.numeric(difftime(Sys.time(), t0, units = "secs")), 20)
+  expect_identical(res$overall, "INDETERMINATE")
+  expect_match(res$reason, "timed out", ignore.case = TRUE)
+})
+
+test_that("llm#816: runner exits with no result file -> INDETERMINATE with the exit code", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_RUN_RC = "2")
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 10)
+  expect_identical(res$overall, "INDETERMINATE")
+  expect_match(res$reason, "exit 2", fixed = TRUE)
+})
+
+test_that("llm#816: disabled / dry-run / missing runner -> not_run with a reason, runner not invoked", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log)
+  r1 <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, enabled = FALSE)
+  expect_identical(r1$status, "not_run"); expect_match(r1$reason, "disabled")
+  r2 <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, dry_run = TRUE)
+  expect_identical(r2$status, "not_run"); expect_match(r2$reason, "dry-run")
+  r3 <- e$rh_eval_on_config_change(changed_state, ok_fp, file.path(fake$dir, "nope.sh"))
+  expect_identical(r3$status, "not_run"); expect_match(r3$reason, "not found")
+  expect_length(run_calls(fake), 0L)
+})
+
+email_with_eval <- function(state_hash, fake, extra = character(0)) {
+  cfg <- write_toml(c("default_agent = 'claude-code'", "review_agent = 'claude-code'"))
+  state <- tempfile("health_state_"); dir.create(state)
+  writeLines(state_hash, file.path(state, "reviewer_config.hash"))
+  paste(run_email_dry_run(make_synthetic_snapshot(), extra_env = c(
+    paste0("ROBOREV_DB=", make_reviews_db_fixture()),
+    paste0("ROBOREV_CONFIG_TOML=", cfg),
+    paste0("ROBOREV_HEALTH_STATE_DIR=", state),
+    paste0("ROBOREV_EVAL_RUNNER=", fake$runner),
+    "ROBOREV_EVAL_IN_DRYRUN=1",
+    paste0("FAKE_EVAL_LOG=", fake$log),
+    extra)), collapse = "\n")
+}
+
+test_that("llm#816: email, config unchanged -> no eval, no eval wording", {
+  skip_if_not_installed("blastula"); skip_if_not_installed("jsonlite")
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  cfg_hash <- e$rh_config_fingerprint(write_toml(c("default_agent = 'claude-code'",
+                                                   "review_agent = 'claude-code'")))$hash
+  out <- email_with_eval(cfg_hash, fake)
+  expect_true(grepl("QA:reviewer_config_status=same", out, fixed = TRUE))
+  expect_length(eval_calls(fake), 0L)
+  expect_false(grepl("QA:reviewer_eval_status=", out, fixed = TRUE))
+})
+
+test_that("llm#816: email, config changed -> eval invoked once, per-fixture verdicts + flaky + PASS line", {
+  skip_if_not_installed("blastula"); skip_if_not_installed("jsonlite")
+  fake <- make_fake_eval_runner()
+  run_json <- eval_json("PASS", list(
+    list(name = "01_real_bug", verdict = "PASS", flaky = TRUE, attempts = c("PASS", "PASS", "FAIL")),
+    list(name = "02_clean", verdict = "PASS", flaky = FALSE, attempts = c("PASS", "PASS", "PASS"))))
+  out <- email_with_eval("0000deadbeef", fake,
+    extra = c(paste0("FAKE_EVAL_RUN_JSON=", run_json)))
+  expect_length(run_calls(fake), 1L)
+  expect_true(grepl("QA:reviewer_eval_status=PASS", out, fixed = TRUE))
+  expect_true(grepl("01_real_bug", out, fixed = TRUE))
+  expect_true(grepl("02_clean", out, fixed = TRUE))
+  expect_true(grepl("flaky", out, ignore.case = TRUE))
+  expect_false(grepl("re-run roborev_eval_run.sh", out, fixed = TRUE),
+    info = "the 're-run' advice is replaced by the result")
+})
+
+test_that("llm#816: email, eval FAIL -> regression wording", {
+  skip_if_not_installed("blastula"); skip_if_not_installed("jsonlite")
+  fake <- make_fake_eval_runner()
+  run_json <- eval_json("FAIL", list(
+    list(name = "01_real_bug", verdict = "FAIL", flaky = FALSE, attempts = c("FAIL", "FAIL", "FAIL"))))
+  out <- email_with_eval("0000deadbeef", fake,
+    extra = c(paste0("FAKE_EVAL_RUN_JSON=", run_json), "FAKE_EVAL_RUN_RC=1"))
+  expect_true(grepl("QA:reviewer_eval_status=FAIL", out, fixed = TRUE))
+  expect_true(grepl("regression", out, ignore.case = TRUE))
+  expect_true(grepl("do not trust the new reviewer config", out, fixed = TRUE))
+})
+
+test_that("llm#816: email, eval timeout -> email still built, INDETERMINATE line with the reason", {
+  skip_if_not_installed("blastula"); skip_if_not_installed("jsonlite")
+  fake <- make_fake_eval_runner()
+  out <- email_with_eval("0000deadbeef", fake,
+    extra = c("FAKE_EVAL_SLEEP=30", "ROBOREV_EVAL_TIMEOUT_SECS=2"))
+  expect_true(grepl("dry-run complete", out, fixed = TRUE),
+    info = "the email body must still be produced when the eval hangs")
+  expect_true(grepl("QA:reviewer_eval_status=INDETERMINATE", out, fixed = TRUE))
+  expect_true(grepl("eval could not complete", out, fixed = TRUE))
+  expect_true(grepl("timed out", out, fixed = TRUE))
+})
+
+test_that("llm#816: email dry-run without the seam does not spend review calls; says why", {
+  skip_if_not_installed("blastula"); skip_if_not_installed("jsonlite")
+  fake <- make_fake_eval_runner()
+  out <- email_with_eval("0000deadbeef", fake, extra = "ROBOREV_EVAL_IN_DRYRUN=0")
+  expect_length(run_calls(fake), 0L)
+  expect_true(grepl("QA:reviewer_eval_status=not_run", out, fixed = TRUE))
+  expect_true(grepl("not run", out, ignore.case = TRUE))
+  expect_true(grepl("dry-run", out, fixed = TRUE))
 })

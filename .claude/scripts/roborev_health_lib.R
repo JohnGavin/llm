@@ -156,7 +156,11 @@ rh_config_fingerprint <- function(config_path, repo_roots = character(0)) {
   on.exit(unlink(tmp), add = TRUE)
   writeLines(txt, tmp, sep = "")
   h <- unname(tools::md5sum(tmp))
-  list(status = "ok", hash = h, text = txt)
+  # llm#816: the eval harness keys its stored runs by a sha256 of the same
+  # effective-config text (the hash, never the text). md5 stays the change
+  # detector so existing recorded state files keep working.
+  sha <- unname(tools::sha256sum(tmp))
+  list(status = "ok", hash = h, sha256 = sha, text = txt)
 }
 
 # Compares a fingerprint with the recorded one. Never writes.
@@ -176,6 +180,156 @@ rh_config_record <- function(fp, state_path) {
   dir.create(dirname(state_path), recursive = TRUE, showWarnings = FALSE)
   ok <- tryCatch({ writeLines(fp$hash, state_path); TRUE }, error = function(e) FALSE)
   invisible(ok)
+}
+
+# ── llm#816: run the golden eval when the reviewer config changed ────────────
+# The daily email used to say "Reviewer config changed -- re-run
+# roborev_eval_run.sh". Now it runs the harness itself, once per new config
+# hash, and shows the verdict. The harness stores every attempt in eval_runs
+# (keyed by config sha256), so a hash that already has a COMPLETED run is
+# reported from the store instead of re-run (an INDETERMINATE stored run does
+# not count as evaluated -- it is retried).
+#
+# checks-must-distinguish-unknown: a hung / crashed / unreadable eval is
+# INDETERMINATE with the reason, never PASS and never FAIL.
+RH_EVAL_RUNS <- 3L
+
+# bash <runner> <args>, bounded by timeout_secs. Returns
+# list(rc, timed_out, msg). stdout/stderr go to temp files (not needed by
+# callers: the runner writes its verdicts with --json-out).
+rh_eval_exec <- function(runner, args, timeout_secs) {
+  out <- tempfile("rh_eval_out_")
+  err <- tempfile("rh_eval_err_")
+  on.exit(unlink(c(out, err)), add = TRUE)
+  timed_out <- FALSE
+  rc <- withCallingHandlers(
+    tryCatch(
+      system2("bash", c(shQuote(runner), args), stdout = out, stderr = err,
+              timeout = timeout_secs),
+      error = function(e) structure(NA_integer_, msg = conditionMessage(e))
+    ),
+    warning = function(w) {
+      if (grepl("timed out", conditionMessage(w), fixed = TRUE)) timed_out <<- TRUE
+      invokeRestart("muffleWarning")
+    }
+  )
+  if (identical(as.integer(rc), 124L)) timed_out <- TRUE
+  list(rc = as.integer(rc), timed_out = timed_out,
+       msg = if (is.null(attr(rc, "msg"))) "" else attr(rc, "msg"))
+}
+
+# Parse the runner's --json-out file. NULL = missing/unparseable (a state the
+# caller reports; it is not "no fixtures").
+rh_eval_read_json <- function(path) {
+  if (!file.exists(path) || file.size(path) == 0L) return(NULL)
+  d <- tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(d) || is.null(d$overall)) return(NULL)
+  fx <- lapply(d$fixtures, function(x) list(
+    fixture  = as.character(x$fixture),
+    verdict  = as.character(x$verdict),
+    flaky    = isTRUE(x$flaky),
+    attempts = vapply(x$attempts, as.character, "")))
+  list(overall = as.character(d$overall),
+       reason = if (is.null(d$reason)) "" else as.character(d$reason),
+       n_fixtures = if (is.null(d$n_fixtures)) length(fx) else as.integer(d$n_fixtures),
+       fixtures = fx)
+}
+
+# config_change: rh_config_change() result. config_fp: rh_config_fingerprint().
+# Returns list(status, overall, reason, fixtures):
+#   status "not_needed" -- config not changed; the runner is never touched
+#          "reported"   -- this hash already has a completed stored run
+#          "ran"        -- the harness was run now (overall may be INDETERMINATE)
+#          "not_run"    -- reason says why (disabled / dry-run / no runner / no hash)
+rh_eval_on_config_change <- function(config_change, config_fp, runner,
+                                     timeout_secs = 1200, runs = RH_EVAL_RUNS,
+                                     enabled = TRUE, dry_run = FALSE,
+                                     allow_in_dry_run = FALSE,
+                                     report_timeout_secs = 60) {
+  res <- function(status, overall = NA_character_, reason = "", fixtures = list()) {
+    list(status = status, overall = overall, reason = reason, fixtures = fixtures)
+  }
+  if (!identical(config_change$status, "changed")) return(res("not_needed"))
+  if (!isTRUE(enabled)) {
+    return(res("not_run", reason = "disabled (ROBOREV_EVAL_ON_CHANGE=0); run roborev_eval_run.sh --runs 3 manually"))
+  }
+  sha <- config_fp$sha256
+  if (is.null(sha) || length(sha) != 1L || is.na(sha) || !nzchar(sha)) {
+    return(res("not_run", reason = "config fingerprint unavailable; run roborev_eval_run.sh --runs 3 manually"))
+  }
+  if (is.null(runner) || length(runner) != 1L || !nzchar(runner) || !file.exists(runner)) {
+    return(res("not_run", reason = sprintf("eval runner not found: %s", runner)))
+  }
+
+  # 1. Already evaluated? (read-only; spends nothing)
+  rep_json <- tempfile("rh_eval_report_", fileext = ".json")
+  on.exit(unlink(rep_json), add = TRUE)
+  rh_eval_exec(runner, c("--report", sha, "--json-out", rep_json), report_timeout_secs)
+  d <- rh_eval_read_json(rep_json)
+  if (!is.null(d) && d$n_fixtures > 0L && d$overall %in% c("PASS", "FAIL")) {
+    return(res("reported", d$overall, d$reason, d$fixtures))
+  }
+
+  # 2. A real run spends review calls: not from a dry-run preview.
+  if (isTRUE(dry_run) && !isTRUE(allow_in_dry_run)) {
+    return(res("not_run", reason = "dry-run (the eval spends review calls); run roborev_eval_run.sh --runs 3 manually"))
+  }
+
+  # 3. Run it, bounded, so the email still goes out if the eval hangs.
+  run_json <- tempfile("rh_eval_run_", fileext = ".json")
+  on.exit(unlink(run_json), add = TRUE)
+  ex <- rh_eval_exec(runner, c("--runs", as.character(runs), "--config-hash", sha,
+                               "--json-out", run_json), timeout_secs)
+  if (isTRUE(ex$timed_out)) {
+    return(res("ran", "INDETERMINATE", sprintf("eval timed out after %ds", as.integer(timeout_secs))))
+  }
+  d <- rh_eval_read_json(run_json)
+  if (is.null(d)) {
+    return(res("ran", "INDETERMINATE", sprintf("eval produced no result (exit %s%s)",
+      ifelse(is.na(ex$rc), "NA", ex$rc), if (nzchar(ex$msg)) paste0(": ", ex$msg) else "")))
+  }
+  res("ran", d$overall, d$reason, d$fixtures)
+}
+
+# HTML block for the email. "" when nothing to say (config unchanged).
+# Overall line forms: PASS / FAIL (regression -- do not trust the new reviewer
+# config) / INDETERMINATE (eval could not complete: <reason>) / not run: <reason>.
+rh_eval_alert_html <- function(res, escape = function(x) x) {
+  if (identical(res$status, "not_needed")) return("")
+  if (identical(res$status, "not_run")) {
+    overall_txt <- sprintf("Golden eval not run: %s", escape(res$reason))
+    tag <- "not_run"; border <- "#e0a030"; bg <- "#4a3510"; fg <- "#fff7e6"
+  } else if (identical(res$overall, "PASS")) {
+    overall_txt <- "PASS"
+    tag <- "PASS"; border <- "#4caf50"; bg <- "#14391f"; fg <- "#f0fff4"
+  } else if (identical(res$overall, "FAIL")) {
+    overall_txt <- "FAIL (regression &mdash; do not trust the new reviewer config)"
+    tag <- "FAIL"; border <- "#f08080"; bg <- "#5b1a1a"; fg <- "#fff5f5"
+  } else {
+    overall_txt <- sprintf("INDETERMINATE (eval could not complete: %s)", escape(res$reason))
+    tag <- "INDETERMINATE"; border <- "#e0a030"; bg <- "#4a3510"; fg <- "#fff7e6"
+  }
+  rows <- ""
+  flaky <- character(0)
+  for (x in res$fixtures) {
+    if (isTRUE(x$flaky)) flaky <- c(flaky, x$fixture)
+    rows <- paste0(rows, sprintf("<li>%s: %s (%s)%s</li>", escape(x$fixture), escape(x$verdict),
+      escape(paste(x$attempts, collapse = " ")), if (isTRUE(x$flaky)) " &mdash; flaky" else ""))
+  }
+  src <- if (identical(res$status, "reported")) "stored run for this config" else if (identical(res$status, "ran")) "run just now" else ""
+  sprintf(paste0(
+    '<div style="background-color:%s; color:%s; border:2px solid %s;',
+    ' border-radius:6px; padding:12px 16px; margin:12px 0;">',
+    '<strong>&#9888; Reviewer config changed &mdash; golden eval %s</strong><br>',
+    'Overall: %s%s',
+    '%s%s',
+    '<!-- QA:reviewer_eval_status=%s --></div>'),
+    bg, fg, border, if (identical(tag, "not_run")) "not run" else tag,
+    overall_txt, if (nzchar(src)) sprintf(" <em>(%s)</em>", src) else "",
+    if (nzchar(rows)) paste0("<ul style='margin:6px 0;'>", rows, "</ul>") else "",
+    if (length(flaky)) sprintf("Flaky fixtures (completed attempts disagree): %s<br>",
+                               escape(paste(flaky, collapse = ", "))) else "",
+    tag)
 }
 
 # ── llm#1044 item 3: daily per-agent quality history + jump flag ─────────────
