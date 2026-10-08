@@ -88,7 +88,7 @@ VALUES ('<uuid>', 'my_task', '/path/to/script.sh', current_timestamp, 'ok', 0);
 UPDATE housekeeping_runs
 SET ended_at = current_timestamp,
     rows_written = <N>,
-    status = 'ok'        -- or 'failed' / 'partial'
+    status = 'ok'        -- or 'failed' / 'partial' / 'skipped' (ran, nothing to report; healthy)
 WHERE id = '<uuid>';
 ```
 
@@ -98,6 +98,7 @@ WHERE id = '<uuid>';
 |------|--------|---------------|--------------|---------------|--------------------|
 | Worktree GC | `worktree_gc.sh` | `com.claude.worktree-gc` (00:04) | `worktree_gc_events` | Section 3b (24h footprint) | Phase 7f (agent only) |
 | Stage-1 findings | `self_review_stage1.sh` | `com.claude.self-review-stage1` (02:30) | `self_review_findings_stage1` | Section 1 (new findings) | — |
-| Overnight email | `send_overnight_self_review_email.R` | `com.claude.overnight-self-review-email` (06:30) | — (writer) | — (is the email) | — |
+| Overnight email | `send_overnight_self_review_email.R` | `com.claude.overnight-self-review-email` (08:45) | — (writer) | — (is the email) | — |
 | roborev autoclose | `roborev_autoclose.sh` | `com.claude.roborev-autoclose` (09:15 weekly) | — (roborev DB) | — | Phase 8 (roborev status) |
-| KB digest | `kb_digest_daily_cron.sh` | `com.claude.kb-digest-email` (07:00) | — | — | — |
+| KB digest section | `kb_digest_daily_cron.sh` | `com.claude.kb-digest-email` (08:05) | `kb_events` | Knowledge Base section of the config digest email; sends nothing itself (llm#1340) | — |
+| Config & Knowledge digest | `config_digest_cron.sh` | `com.claude.config-digest-email` (08:20) | `config_events` | — (is the email; no send on a day with no changes, run recorded `skipped`) | — |
