@@ -1332,7 +1332,7 @@ if (nrow(cron_health) > 0L) {
   # determinate ok rather than an unresolved contradiction -- it was
   # previously reported "indeterminate" for every scanner every day.
   hk_latest <- safe_query("
-    SELECT task, status, rows_written, COALESCE(ended_at, started_at) AS hb_at
+    SELECT id AS run_id, task, status, rows_written, COALESCE(ended_at, started_at) AS hb_at
     FROM (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY task ORDER BY started_at DESC) AS rn
       FROM housekeeping_runs
@@ -1351,7 +1351,77 @@ if (nrow(cron_health) > 0L) {
     }
     if (nrow(hit) == 0L) return(NULL)
     list(status = hit$status[[1]], rows_written = hit$rows_written[[1]],
-         at = hit$hb_at[[1]])
+         at = hit$hb_at[[1]], task = hit$task[[1]], run_id = hit$run_id[[1]])
+  }
+
+  # Are the findings behind an exit-1 'ok' scanner run NEW, or standing?
+  # "ok" must not hide a real problem: 65 findings that appeared today and 65
+  # that have been there for a week both read "ok" without this split. There
+  # is no review/accepted-status column anywhere, so "unreviewed" cannot be
+  # observed; "new relative to what earlier runs already reported" is the
+  # observable proxy.
+  #   secret_exposure_scan: per-finding rows exist (secret_scan_findings), so
+  #     a finding is NEW iff its (detector, file, line, name) tuple is absent
+  #     from every other run in the 7 days before this one. Matching is
+  #     tuple-based, not count-based, because the job alternates 33- and
+  #     65-row runs (different scope), so a count delta is meaningless.
+  #   anything else (private_data_history_audit has no per-finding table):
+  #     count-based -- a rise over the previous ok run is at least that many
+  #     new rows; flat/falling is no evidence of new rows.
+  # Returns list(n_new = integer or NA, basis = chr). NA == cannot tell.
+  assess_new_findings <- function(hb) {
+    sq <- function(x) gsub("'", "''", x, fixed = TRUE)
+    task <- sq(hb$task); rid <- sq(hb$run_id)
+    n_latest <- suppressWarnings(as.integer(hb$rows_written))
+    if (length(n_latest) != 1L || is.na(n_latest)) {
+      return(list(n_new = NA_integer_, basis = "finding count not recorded"))
+    }
+    if (identical(hb$task, "secret_exposure_scan")) {
+      started <- sprintf("(SELECT started_at FROM housekeeping_runs WHERE id = '%s')", rid)
+      base <- safe_query(sprintf("
+        SELECT count(*) AS n FROM housekeeping_runs
+        WHERE task = '%s' AND status = 'ok' AND id <> '%s'
+          AND started_at < %s AND started_at >= %s - INTERVAL 7 DAY",
+        task, rid, started, started))
+      in_tbl <- safe_query(sprintf(
+        "SELECT count(*) AS n FROM secret_scan_findings WHERE run_id = '%s'", rid))
+      if (nrow(base) == 0L || nrow(in_tbl) == 0L) {
+        return(list(n_new = NA_integer_, basis = "findings table unreadable"))
+      }
+      if (base$n[[1]] == 0L) {
+        return(list(n_new = NA_integer_, basis = "no earlier run in the last 7 days to compare against"))
+      }
+      if (in_tbl$n[[1]] != n_latest) {
+        return(list(n_new = NA_integer_,
+                    basis = sprintf("heartbeat says %d finding row(s) but the findings table holds %d",
+                                    n_latest, in_tbl$n[[1]])))
+      }
+      nw <- safe_query(sprintf("
+        SELECT count(*) AS n FROM secret_scan_findings f
+        WHERE f.run_id = '%s' AND NOT EXISTS (
+          SELECT 1 FROM secret_scan_findings g
+          JOIN housekeeping_runs r ON r.id = g.run_id
+          WHERE r.task = '%s' AND g.run_id <> '%s'
+            AND r.started_at < %s AND r.started_at >= %s - INTERVAL 7 DAY
+            AND g.detector = f.detector AND g.file_path = f.file_path
+            AND coalesce(g.line_num, '') = coalesce(f.line_num, '') AND g.name = f.name)",
+        rid, task, rid, started, started))
+      if (nrow(nw) == 0L) {
+        return(list(n_new = NA_integer_, basis = "findings table unreadable"))
+      }
+      return(list(n_new = as.integer(nw$n[[1]]), basis = "vs the last 7 days of runs"))
+    }
+    prev <- safe_query(sprintf("
+      SELECT rows_written FROM housekeeping_runs
+      WHERE task = '%s' AND status = 'ok' AND id <> '%s'
+        AND started_at < (SELECT started_at FROM housekeeping_runs WHERE id = '%s')
+      ORDER BY started_at DESC LIMIT 1", task, rid, rid))
+    prev_n <- if (nrow(prev) == 1L) suppressWarnings(as.integer(prev$rows_written[[1]])) else NA_integer_
+    if (is.na(prev_n)) {
+      return(list(n_new = NA_integer_, basis = "no earlier ok run to compare against"))
+    }
+    list(n_new = max(n_latest - prev_n, 0L),
+         basis = sprintf("count-based, previous run %d; no per-finding table", prev_n))
   }
 
   # llm#1145: say which side of a raw-exit-code / heartbeat disagreement is
@@ -1395,9 +1465,14 @@ if (nrow(cron_health) > 0L) {
     }
     hb <- find_heartbeat(r$plist_label)
     if (!is.null(hb)) {
+      # 'skipped' (llm#1340/#1341) is a healthy status: the job ran and had
+      # nothing to do (bin/config_digest_cron.sh: no changes, nothing sent).
+      # Before this it fell through the switch default into "indeterminate".
       hb_bucket <- switch(hb$status,
-        ok = "ok", failed = "failed", partial = "indeterminate", "indeterminate")
-      hb_label  <- if (!is.na(hb$rows_written) && hb$rows_written > 0L) {
+        ok = "ok", skipped = "ok", failed = "failed", partial = "indeterminate", "indeterminate")
+      hb_label  <- if (identical(hb$status, "skipped")) {
+        "ok — skipped (no changes to report)"
+      } else if (!is.na(hb$rows_written) && hb$rows_written > 0L) {
         sprintf("%s — %d row(s)", hb$status, hb$rows_written)
       } else {
         hb$status
@@ -1433,10 +1508,31 @@ if (nrow(cron_health) > 0L) {
       ec_says_fail     <- length(ec) == 1L && !is.na(ec) && ec != 0L && ec != 1L
 
       if (hb_bucket == "ok" && ec_says_findings) {
-        ok_label <- sub("row\\(s\\)$", "finding row(s)", hb_label, perl = TRUE)
+        ok_label <- sprintf("%d finding row(s)",
+                            if (is.na(hb$rows_written)) 0L else as.integer(hb$rows_written))
+        conv <-"exit 1 = findings, per exit-code-conventions"
+        # Ran cleanly, found rows. Whether that is "ok" depends on whether
+        # the rows are new (checks-must-distinguish-unknown: ok / action /
+        # cannot tell).
+        nf <- assess_new_findings(hb)
+        if (is.na(nf$n_new)) {
+          return(list(
+            bucket = "indeterminate", display_state = "loaded (exit 1 = findings)",
+            label  = sprintf("indeterminate — %s; cannot tell new from known: %s (%s)",
+                             ok_label, nf$basis, conv)
+          ))
+        }
+        if (nf$n_new > 0L) {
+          return(list(
+            bucket = "action", display_state = "loaded (exit 1 = findings)",
+            n_new = nf$n_new,
+            label  = sprintf("ok (ran) — %d new finding(s) need triage (of %s; %s; %s)",
+                             nf$n_new, ok_label, nf$basis, conv)
+          ))
+        }
         return(list(
-          bucket = "ok",
-          label  = sprintf("%s (exit 1 = findings, per exit-code-conventions)", ok_label)
+          bucket = "ok", display_state = "loaded (exit 1 = findings)",
+          label  = sprintf("ok (ran) — %s, 0 new, standing (%s; %s)", ok_label, nf$basis, conv)
         ))
       }
 
@@ -1462,16 +1558,25 @@ if (nrow(cron_health) > 0L) {
   .cron_interp <- lapply(seq_len(nrow(cron_health)), interpret_cron_row)
   cron_health$bucket             <- vapply(.cron_interp, function(x) x$bucket, character(1))
   cron_health$interpreted_label  <- vapply(.cron_interp, function(x) x$label, character(1))
+  # Raw state shown next to the Result must not contradict it: a scanner that
+  # exits 1 = "ran, found rows" is launchd state 'loaded_recent_fail', which
+  # sat beside "ok" and read as a contradiction. Only the displayed state is
+  # changed; the raw value stays in cron_health$state.
+  cron_health$display_state      <- mapply(function(st, x) x$display_state %||% st,
+                                           cron_health$state, .cron_interp,
+                                           USE.NAMES = FALSE)
+  cron_health$n_new_findings     <- vapply(.cron_interp, function(x) as.integer(x$n_new %||% 0L), integer(1))
 
   n_fail          <- sum(cron_health$bucket == "failed",        na.rm = TRUE)
   n_ok            <- sum(cron_health$bucket == "ok",            na.rm = TRUE)
   n_indeterminate <- sum(cron_health$bucket == "indeterminate", na.rm = TRUE)
+  n_triage        <- sum(cron_health$bucket == "action",        na.rm = TRUE)
   n_plists        <- nrow(cron_health)
 
   cron_rows_html <- paste(apply(cron_health, 1, function(r) {
     bucket  <- r[["bucket"]]
-    row_bg  <- switch(bucket, failed = "#2a0a0a", indeterminate = "#2a2205", DARK_CARD)
-    st_col  <- switch(bucket, failed = "#ff5252", indeterminate = ACCENT_ORANGE, ACCENT_GREEN)
+    row_bg  <- switch(bucket, failed = "#2a0a0a", action = "#2a0a0a", indeterminate = "#2a2205", DARK_CARD)
+    st_col  <- switch(bucket, failed = "#ff5252", action = "#ff5252", indeterminate = ACCENT_ORANGE, ACCENT_GREEN)
     sprintf(
       '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;font-size:11px;max-width:280px;
@@ -1484,7 +1589,7 @@ if (nrow(cron_health) > 0L) {
 </tr>',
       row_bg,
       r[["plist_label"]],
-      DARK_MUTED, r[["state"]],
+      DARK_MUTED, r[["display_state"]],
       st_col, htmlEscape(r[["interpreted_label"]]),
       DARK_MUTED, r[["last_exit_code"]] %||% "—",
       DARK_MUTED, r[["last_fired_at"]] %||% "—",
@@ -1528,6 +1633,17 @@ if (nrow(cron_health) > 0L) {
   # column (interpreted_label); this paragraph is the loud, summary-level
   # flag so a run of indeterminate results cannot again sit unnoticed behind
   # a header that only distinguishes ok/failed.
+  if (n_triage > 0L) {
+    cron_table_html <- paste0(
+      cron_table_html,
+      sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-top:8px;font-weight:bold;">
+  &#9888; %d scanner job(s) ran fine but reported NEW findings (%d row(s) in
+  total) &mdash; triage them; see the Result column.</p>',
+        EMAIL_FONT_SUBTITLE, n_triage, sum(cron_health$n_new_findings)
+      )
+    )
+  }
   if (n_indeterminate > 0L) {
     cron_table_html <- paste0(
       cron_table_html,
@@ -1543,13 +1659,13 @@ if (nrow(cron_health) > 0L) {
     )
   }
   sec3e_summary <- sprintf(
-    "%d plists · %d ok · %d failed · %d indeterminate",
-    n_plists, n_ok, n_fail, n_indeterminate
+    "%d plists · %d ok · %d failed · %d indeterminate · %d need triage",
+    n_plists, n_ok, n_fail, n_indeterminate, n_triage
   )
   # llm#1145: the summary line itself must not default to green when there
   # is anything to flag -- a hardcoded-green header is exactly what let a
   # 27-run degradation read as reassuring for four weeks.
-  sec3e_summary_color <- if (n_fail > 0L) {
+  sec3e_summary_color <- if (n_fail > 0L || n_triage > 0L) {
     "#ff5252"
   } else if (n_indeterminate > 0L) {
     ACCENT_ORANGE
@@ -1808,6 +1924,16 @@ if (n_major > 0L) {
 if (.cron_n_fail > 0L) {
   action_items <- c(action_items, sprintf("%d cron job(s) failed", .cron_n_fail))
   action_slugs <- c(action_slugs, "cron-failed")
+}
+
+# Scanner jobs that ran cleanly (exit 1 = findings) but found rows not seen in
+# earlier runs: not a cron failure, still needs a human.
+.cron_n_triage <- if (exists("n_triage", inherits = FALSE)) n_triage else 0L
+if (.cron_n_triage > 0L) {
+  action_items <- c(action_items, sprintf(
+    "%d scanner job(s) reported new findings (%d row(s)) needing triage",
+    .cron_n_triage, sum(cron_health$n_new_findings)))
+  action_slugs <- c(action_slugs, "new-scan-findings")
 }
 
 if (n_stale_tables > 0L) {

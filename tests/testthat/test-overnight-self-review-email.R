@@ -470,20 +470,36 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
 #' Build a scratch unified.duckdb fixture: a copy of `.real_db` with
 #' launchd_health_events/housekeeping_runs replaced by exactly the rows in
 #' `hk_row` / `ev_row` (one row each, as named lists).
+#' `prev_hk_row` (optional) adds an earlier ok run of the same task 2 days
+#' before, as the baseline for the new-vs-known finding split. `findings`
+#' (optional) is a list(latest = data.frame(detector,file_path,line_num,name),
+#' prev = same) written to secret_scan_findings for 'fixture-hk' /
+#' 'fixture-hk-prev'.
 #' @return path to the scratch DB, or NULL if prerequisites are unavailable.
-.build_cron_fixture_db <- function(hk_row, ev_row) {
+.build_cron_fixture_db <- function(hk_row, ev_row, prev_hk_row = NULL, findings = NULL) {
   if (!file.exists(.real_db)) return(NULL)
   if (!requireNamespace("DBI", quietly = TRUE)) return(NULL)
   if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
 
   dst <- tempfile(fileext = ".duckdb")
-  if (!file.copy(.real_db, dst, overwrite = TRUE)) return(NULL)
-
-  con <- DBI::dbConnect(duckdb::duckdb(), dst, read_only = FALSE)
+  # The live DB can be mid-write while we copy it, giving a torn copy that
+  # DuckDB refuses to open ("Could not read enough bytes" / "Failed to
+  # deserialize"). A torn copy is not a valid fixture: retry the copy, and only
+  # give up (NULL -> the test skips) if every attempt is torn.
+  con <- NULL
+  for (attempt in 1:5) {
+    if (!file.copy(.real_db, dst, overwrite = TRUE)) return(NULL)
+    con <- tryCatch(DBI::dbConnect(duckdb::duckdb(), dst, read_only = FALSE),
+                    error = function(e) NULL)
+    if (!is.null(con)) break
+    Sys.sleep(2)
+  }
+  if (is.null(con)) return(NULL)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
   DBI::dbExecute(con, "DELETE FROM launchd_health_events")
   DBI::dbExecute(con, "DELETE FROM housekeeping_runs")
+  DBI::dbExecute(con, "DELETE FROM secret_scan_findings")
 
   now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M:%S", tz = "UTC")
 
@@ -495,6 +511,31 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
       DBI::dbQuoteString(con, hk_row$task), now_utc, now_utc,
       DBI::dbQuoteString(con, hk_row$status), hk_row$rows_written
     ))
+  }
+
+  if (!is.null(prev_hk_row)) {
+    prev_utc <- format(Sys.time() - 2 * 86400, "%Y-%m-%d %H:%M:%S", tz = "UTC")
+    DBI::dbExecute(con, sprintf(
+      "INSERT INTO housekeeping_runs
+         (id, task, source_script, started_at, ended_at, status, rows_written)
+       VALUES ('fixture-hk-prev', %s, 'test-fixture', TIMESTAMPTZ '%s', TIMESTAMPTZ '%s', %s, %d)",
+      DBI::dbQuoteString(con, prev_hk_row$task), prev_utc, prev_utc,
+      DBI::dbQuoteString(con, prev_hk_row$status), prev_hk_row$rows_written
+    ))
+  }
+  for (nm in c("latest", "prev")) {
+    f <- findings[[nm]]
+    if (is.null(f) || nrow(f) == 0L) next
+    for (i in seq_len(nrow(f))) {
+      DBI::dbExecute(con, sprintf(
+        "INSERT INTO secret_scan_findings
+           (id, run_id, fired_at, detector, severity, file_path, line_num, name, note)
+         VALUES ('fx-%s-%d', %s, TIMESTAMPTZ '%s', %s, 'high', %s, %s, %s, 'fixture')",
+        nm, i, DBI::dbQuoteString(con, if (nm == "latest") "fixture-hk" else "fixture-hk-prev"),
+        now_utc, DBI::dbQuoteString(con, f$detector[[i]]),
+        DBI::dbQuoteString(con, f$file_path[[i]]), DBI::dbQuoteString(con, f$line_num[[i]]),
+        DBI::dbQuoteString(con, f$name[[i]])))
+    }
   }
 
   DBI::dbExecute(con, sprintf(
@@ -590,7 +631,10 @@ test_that("cron-health: exit 1 alongside heartbeat 'ok' renders as a determinate
   db <- .build_cron_fixture_db(
     hk_row = list(task = "worktree_gc", status = "ok", rows_written = 138L),
     ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_recent_fail",
-                   last_exit_code = 1L, last_fired_at_now = TRUE)
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    # baseline: same count last time => nothing new (see the new-vs-known
+    # tests below for what happens without a baseline or when the count rises)
+    prev_hk_row = list(task = "worktree_gc", status = "ok", rows_written = 138L)
   )
   skip_if(is.null(db), "could not build cron-health fixture DB")
 
@@ -655,6 +699,137 @@ test_that("cron-health: zero indeterminate is rendered explicitly, not omitted (
 
   expect_true(grepl("0 indeterminate", combined, fixed = TRUE),
               info = "zero-indeterminate case did not explicitly print '0 indeterminate'")
+})
+
+
+# ── Status accuracy: skipped / exit-1 consistency / new findings ─────────────
+
+.SECRET_SCAN_PLIST <- file.path(
+  path.expand("~"), "Library", "LaunchAgents", "com.claude.secret-exposure-scan.plist"
+)
+.CONFIG_DIGEST_PLIST <- file.path(
+  path.expand("~"), "Library", "LaunchAgents", "com.claude.config-digest-email.plist"
+)
+
+test_that("cron-health: heartbeat 'skipped' renders as ok, not indeterminate (llm#1340/#1341)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.CONFIG_DIGEST_PLIST), "com.claude.config-digest-email.plist not installed")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "config_digest", status = "skipped", rows_written = 0L),
+    ev_row = list(plist_label = "com.claude.config-digest-email", state = "loaded_ok",
+                   last_exit_code = 0L, last_fired_at_now = TRUE)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("ok — skipped (no changes to report)", combined, fixed = TRUE))
+  expect_true(grepl("plists · 1 ok · 0 failed · 0 indeterminate", combined, fixed = TRUE),
+              info = "skipped was not counted as a clean ok")
+  expect_false(grepl("heartbeat could not confirm", combined, fixed = TRUE))
+})
+
+test_that("cron-health: exit-1 findings job shows a Raw state consistent with its ok Result", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST), "worktree-gc plist not installed")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "ok", rows_written = 7L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    prev_hk_row = list(task = "worktree_gc", status = "ok", rows_written = 7L)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("ok (ran)", combined, fixed = TRUE))
+  expect_true(grepl("loaded (exit 1 = findings)", combined, fixed = TRUE),
+              info = "Raw state column should explain exit 1, not read as a failure")
+  expect_false(grepl("loaded_recent_fail", combined, fixed = TRUE),
+               info = "Raw state still says loaded_recent_fail next to an ok Result")
+})
+
+test_that("cron-health: NEW scanner findings are not plain ok and become an action item", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.SECRET_SCAN_PLIST), "secret-exposure-scan plist not installed")
+
+  known <- data.frame(detector = "1", file_path = "a.R", line_num = "3", name = "cred-shape")
+  new1  <- data.frame(detector = "2", file_path = "b.R", line_num = "9", name = "plaintext")
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 2L),
+    ev_row = list(plist_label = "com.claude.secret-exposure-scan", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    prev_hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 1L),
+    findings = list(latest = rbind(known, new1), prev = known)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("1 new finding(s) need triage", combined, fixed = TRUE))
+  expect_true(grepl("Action required", combined, fixed = TRUE),
+              info = "new findings did not reach the action-required section")
+  expect_true(grepl("1 need triage", combined, fixed = TRUE))
+  expect_false(grepl("plists · 1 ok ·", combined, fixed = TRUE),
+               info = "new findings were counted as a plain ok")
+})
+
+test_that("cron-health: STANDING scanner findings stay ok but say 0 new", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.SECRET_SCAN_PLIST), "secret-exposure-scan plist not installed")
+
+  known <- data.frame(detector = "1", file_path = "a.R", line_num = "3", name = "cred-shape")
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 1L),
+    ev_row = list(plist_label = "com.claude.secret-exposure-scan", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    prev_hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 1L),
+    findings = list(latest = known, prev = known)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("1 finding row(s), 0 new, standing", combined, fixed = TRUE))
+  expect_true(grepl("plists · 1 ok · 0 failed · 0 indeterminate · 0 need triage", combined, fixed = TRUE))
+})
+
+test_that("cron-health: scanner findings with no baseline run are indeterminate, not ok", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.SECRET_SCAN_PLIST), "secret-exposure-scan plist not installed")
+
+  known <- data.frame(detector = "1", file_path = "a.R", line_num = "3", name = "cred-shape")
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 1L),
+    ev_row = list(plist_label = "com.claude.secret-exposure-scan", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    findings = list(latest = known)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("cannot tell new from known", combined, fixed = TRUE))
+  expect_true(grepl("1 indeterminate", combined, fixed = TRUE))
+})
+
+test_that("cron-health: count-based scanner (no findings table) flags a rising count as new", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.WORKTREE_GC_PLIST), "worktree-gc plist not installed")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "worktree_gc", status = "ok", rows_written = 12L),
+    ev_row = list(plist_label = "com.claude.worktree-gc", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    prev_hk_row = list(task = "worktree_gc", status = "ok", rows_written = 10L)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("2 new finding(s) need triage", combined, fixed = TRUE))
 })
 
 # ── Lessons-captured section ─────────────────────────────────────────────────
