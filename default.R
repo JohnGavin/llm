@@ -608,7 +608,11 @@ alias duckdb='duckdb -unsigned'
 alias sg='ast-grep -c $HOME/.config/ast-grep/sgconfig.yml'
 unset CI
 # difftastic: structural diff for R (ignores formatting-only changes)
-git config diff.external 'difft --display inline'
+# Idempotent: only write .git/config when the value differs, because writes to
+# .git/config are always blocked inside a Claude Code sandbox and a
+# per-entry write made nix-shell fail there. (Not a command-substitution test:
+# a paren followed by a double quote would close this R raw string.)
+git config --get diff.external | grep -qxF 'difft --display inline' || git config diff.external 'difft --display inline'
 if [ -t 1 ]; then
 printf '%s\\n' 'Setup complete'
 printf 'Terminal wrapper: %s\\n' $RSTUDIO_TERM_EXEC
