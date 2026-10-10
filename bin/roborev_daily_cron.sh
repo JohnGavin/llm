@@ -193,10 +193,20 @@ else
   STEP1_EXIT=$?
 fi
 
+# A non-zero Step 1 (3 = unified.duckdb stayed locked, NO snapshot written) is
+# recorded as a failed housekeeping_runs row and propagated as this script's
+# final exit status -- never reported as a clean "done". Steps 2-3 still run so
+# the (stale-banner) email goes out, but the run is not stamped as complete.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.claude/scripts/lib/roborev_daily_step1.sh"
+roborev_daily_record_step1 "${STEP1_EXIT}" \
+  "${UNIFIED_DB_PATH:-${HOME}/.claude/logs/unified.duckdb}" \
+  "${SCRIPT_DIR}/roborev_daily_cron.sh" log
 if [ "${STEP1_EXIT}" -ne 0 ]; then
-  log "WARNING: roborev_daily_report.R exited ${STEP1_EXIT} — may be partial; continuing"
+  log "Step 1 FAILED (exit=${STEP1_EXIT}) — continuing to publish/email; final exit will be ${STEP1_EXIT}"
+else
+  log "Step 1 done (exit=${STEP1_EXIT})"
 fi
-log "Step 1 done (exit=${STEP1_EXIT})"
 
 # ── Step 2: Publish to llmtelemetry data branch ───────────────────────────────
 log "Step 2: publishing JSON to llmtelemetry data branch..."
@@ -242,6 +252,11 @@ if [ "${STEP3_EXIT}" -ne 0 ]; then
   exit "${STEP3_EXIT}"
 fi
 log "Step 3 done"
+
+if [ "${STEP1_EXIT}" -ne 0 ]; then
+  log "=== roborev_daily_cron.sh FAILED: Step 1 exit=${STEP1_EXIT} (no catch-up stamp written) ==="
+  exit "${STEP1_EXIT}"
+fi
 
 # Stamp for cron_catchup.sh catch-up detection
 mkdir -p "${HOME}/.claude/logs/stamps"
