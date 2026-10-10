@@ -104,33 +104,47 @@ if (!file.exists(UNIFIED_DUCKDB)) {
 source(file.path(.scripts_dir_daily_report, "lib", "duckdb_secure.R"))
 
 # A concurrent read-write duckdb process (another script, an interactive
-# `duckdb` shell) holds a transient lock that clears within seconds -- but
-# without a retry, one momentary collision skips the whole snapshot and the
-# daily email then reports the PREVIOUS day's file as stale (2026-08-28: PID
-# 84562 held the lock for ~15s at 08:00, this script gave up immediately).
-# Bounded retry (5 attempts, 2s apart, ~10s max) absorbs that without masking
-# a genuinely broken/missing database -- a non-lock error still fails fast.
+# `duckdb` shell) holds DuckDB's single-writer lock. A read_only open does NOT
+# avoid it across processes ("Could not set lock ... Conflicting lock"), so the
+# only options are to wait or to fail. Retry with exponential backoff (capped
+# at 60s) for up to ROBOREV_LOCK_MAX_WAIT_S seconds (default 600 = 10 min). If
+# the lock never clears this is NOT a graceful skip: exit 3 (INDETERMINATE) so
+# the cron wrapper records a failure instead of logging "exit=0" with no
+# snapshot (2026-10-10: 2026-10-10.json never existed; the email showed a stale
+# banner). A non-lock open error still takes the graceful path.
 con <- local({
-  max_attempts <- 5L
-  delay_s <- 2
-  last_err <- NULL
-  for (attempt in seq_len(max_attempts)) {
+  max_wait_s <- suppressWarnings(as.numeric(Sys.getenv("ROBOREV_LOCK_MAX_WAIT_S", "600")))
+  if (is.na(max_wait_s)) max_wait_s <- 600
+  delay_s <- suppressWarnings(as.numeric(Sys.getenv("ROBOREV_LOCK_BACKOFF_START_S", "2")))
+  if (is.na(delay_s) || delay_s <= 0) delay_s <- 2
+  t0 <- Sys.time()
+  attempt <- 0L
+  repeat {
+    attempt <- attempt + 1L
     result <- tryCatch(
       connect_duckdb_secure(dbdir = UNIFIED_DUCKDB, read_only = TRUE),
       error = function(e) e
     )
     if (!inherits(result, "error")) return(result)
-    last_err <- result
-    is_lock_conflict <- grepl("Could not set lock|Conflicting lock",
-                               conditionMessage(result))
-    if (!is_lock_conflict || attempt == max_attempts) break
+    if (!grepl("Could not set lock|Conflicting lock", conditionMessage(result))) {
+      graceful_exit(paste("cannot open unified.duckdb:", conditionMessage(result)))
+    }
+    waited <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+    if (waited + delay_s > max_wait_s) {
+      message(sprintf(
+        paste0("roborev_daily_report.R: INDETERMINATE -- unified.duckdb still locked ",
+               "after %d attempts / %.0fs; NO snapshot written: %s"),
+        attempt, waited, conditionMessage(result)
+      ))
+      quit(status = 3L)
+    }
     message(sprintf(
-      "roborev_daily_report.R: unified.duckdb locked (attempt %d/%d) — retrying in %ds",
-      attempt, max_attempts, delay_s
+      "roborev_daily_report.R: unified.duckdb locked (attempt %d, %.0fs elapsed) -- retrying in %.0fs",
+      attempt, waited, delay_s
     ))
     Sys.sleep(delay_s)
+    delay_s <- min(delay_s * 2, 60)
   }
-  graceful_exit(paste("cannot open unified.duckdb:", conditionMessage(last_err)))
 })
 on.exit(tryCatch(dbDisconnect(con, shutdown = TRUE), error = function(e) NULL),
         add = TRUE)
