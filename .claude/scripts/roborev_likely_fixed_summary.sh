@@ -24,9 +24,64 @@ MAX_AGE="${ROBOREV_LF_MAX_AGE_SECS:-691200}"
 NOW="${ROBOREV_LF_NOW_EPOCH:-$(date +%s)}"
 STATUS="${LF_DIR}/likely_fixed_latest.status"
 
+# fmt_epoch EPOCH FORMAT -- BSD (macOS) `date -r` first, GNU `date -d @` second.
+fmt_epoch() { date -r "$1" "+$2" 2>/dev/null || date -d "@$1" "+$2"; }
+
+# No status file: say WHY, from launchd's own state, instead of guessing.
+# Four distinct situations (checks-must-distinguish-unknown):
+#   job not loaded            -> the report can never run until it is installed
+#   loaded, runs = 0          -> first run still pending; say when it is due
+#   loaded, ran, no status    -> the wrapper ran but wrote nothing (a defect)
+#   launchd state unreadable  -> we do not know
+# Seam for tests: ROBOREV_LF_LAUNCHD_PRINT_FILE names a file holding
+# `launchctl print` output; a path that does not exist means "not loaded".
 if [ ! -f "${STATUS}" ]; then
-  echo "likely-fixed report: not run (no report found; the weekly job may not be loaded)"
-  exit 3
+  LABEL="com.claude.roborev-likely-fixed-report"
+  lp=""; lp_rc=0
+  if [ -n "${ROBOREV_LF_LAUNCHD_PRINT_FILE:-}" ]; then
+    if [ -f "${ROBOREV_LF_LAUNCHD_PRINT_FILE}" ]; then
+      lp="$(cat "${ROBOREV_LF_LAUNCHD_PRINT_FILE}")"
+    else
+      lp_rc=113
+    fi
+  elif command -v launchctl >/dev/null 2>&1; then
+    lp="$(launchctl print "gui/$(id -u)/${LABEL}" 2>/dev/null)"; lp_rc=$?
+  else
+    echo "likely-fixed report: not run (no report found; launchd state could not be read here)"
+    exit 3
+  fi
+
+  if [ "${lp_rc}" -ne 0 ] || [ -z "${lp}" ]; then
+    echo "likely-fixed report: not run (no report found; the weekly job ${LABEL} is NOT loaded in launchd -- install it, see the plist header)"
+    exit 3
+  fi
+
+  runs="$(printf '%s\n' "${lp}" | sed -n 's/^[[:space:]]*runs = \([0-9][0-9]*\)$/\1/p' | head -1)"
+  last_exit="$(printf '%s\n' "${lp}" | sed -n 's/^[[:space:]]*last exit code = //p' | head -1)"
+  case "${runs}" in
+    0)
+      wd="$(printf '%s\n' "${lp}" | sed -n 's/.*"Weekday" => \([0-9][0-9]*\).*/\1/p' | head -1)"
+      hr="$(printf '%s\n' "${lp}" | sed -n 's/.*"Hour" => \([0-9][0-9]*\).*/\1/p' | head -1)"
+      mn="$(printf '%s\n' "${lp}" | sed -n 's/.*"Minute" => \([0-9][0-9]*\).*/\1/p' | head -1)"
+      if [ -n "${wd}" ] && [ -n "${hr}" ] && [ -n "${mn}" ]; then
+        dow="$(fmt_epoch "${NOW}" %w)"; chh="$(fmt_epoch "${NOW}" %H)"; cmm="$(fmt_epoch "${NOW}" %M)"
+        cur=$(( 10#${dow} * 1440 + 10#${chh} * 60 + 10#${cmm} ))
+        tgt=$(( 10#${wd} * 1440 + 10#${hr} * 60 + 10#${mn} ))
+        delta=$(( (tgt - cur + 10080) % 10080 ))
+        [ "${delta}" -eq 0 ] && delta=10080
+        due=$(( NOW - NOW % 60 + delta * 60 ))
+        echo "likely-fixed report: not run yet (job loaded, 0 runs so far; first run due $(fmt_epoch "${due}" '%a %Y-%m-%d %H:%M'))"
+      else
+        echo "likely-fixed report: not run yet (job loaded, 0 runs so far; next due time not readable from launchd)"
+      fi
+      exit 3 ;;
+    ''|*[!0-9]*)
+      echo "likely-fixed report: not run (no report found; job loaded but its run count could not be read from launchd)"
+      exit 3 ;;
+    *)
+      echo "likely-fixed report: not run (no report found although the job loaded and ran ${runs} time(s), last exit ${last_exit:-unknown} -- the wrapper wrote no status file)"
+      exit 3 ;;
+  esac
 fi
 
 kv() { sed -n "s/^$1=//p" "${STATUS}" | head -1; }

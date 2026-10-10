@@ -235,6 +235,24 @@ test_that("dashboard_cta_block() when local file exists and is stale (>2 days): 
   expect_identical(env$effective_dashboard_url(), local_path)
 })
 
+test_that("stale dashboard wording says no job renders it and where to run the command", {
+  skip_if_not(file.exists(email_styles_path), "email_styles.R not found")
+  env <- new.env()
+  local_dir <- tempfile("dashboard_link_stale_msg_")
+  dir.create(local_dir)
+  local_path <- file.path(local_dir, "roborev_summary.html")
+  writeLines("<html><body>fixture</body></html>", local_path)
+  on.exit(unlink(local_dir, recursive = TRUE), add = TRUE)
+  Sys.setFileTime(local_path, Sys.time() - as.difftime(10, units = "days"))
+  withr::local_envvar(c(ROBOREV_DASHBOARD_URL = NA, ROBOREV_DASHBOARD_LOCAL_PATH = local_path))
+  sys.source(email_styles_path, envir = env)
+
+  html <- env$dashboard_cta_block(env$ACCENT_BLUE)
+  expect_true(grepl("Nothing renders this file on a", html, fixed = TRUE),
+    info = "stale is the normal state between manual renders; the email must not imply a failed job")
+  expect_true(grepl("llmtelemetry checkout", html, fixed = TRUE))
+})
+
 # ── Integration tests: send_roborev_email.R dry-run ───────────────────────────
 
 run_daily_email_dry_run <- function(extra_env = character(0)) {

@@ -216,8 +216,14 @@ dashboard_cta_block <- function(accent_colour) {
       format(mtime, "%Y-%m-%d"), age_days, if (age_days == 1) "" else "s"
     )
     if (age_days > 2) {
+      # No scheduled job refreshes this file: llmtelemetry's
+      # scripts/render_roborev_summary_local.sh is manual/on-demand ("not yet
+      # scheduled"), and llmtelemetry's CI render only feeds the deployed site,
+      # not this local copy. So "stale" is the normal state between manual
+      # renders, not a failed job -- say so, and say WHERE the command runs
+      # (the llmtelemetry checkout, which has quarto+plotly+DT).
       sprintf(
-        '%s &mdash; <strong style="color:%s;">stale</strong>. Re-render with:<br>
+        '%s &mdash; <strong style="color:%s;">stale</strong>. Nothing renders this file on a schedule (manual refresh only). From the llmtelemetry checkout, re-render with:<br>
         <code style="background-color:%s; color:%s; padding:2px 6px;
           border-radius:3px; font-size:%s;">%s</code>',
         rendered_line, ACCENT_ORANGE, DARK_CARD, ACCENT_GREEN,
