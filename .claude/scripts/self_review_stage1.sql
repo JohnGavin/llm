@@ -589,24 +589,61 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- The Anthropic panel shows such sessions as disproportionate contributors to
 -- token spend; continuous idle usage adds up.
 --
--- Threshold: ended_at - started_at >= 8 hours.
+-- Threshold: >= 8 hours of ACTIVE time (llm#TBD). Wall-clock span
+-- (ended_at - started_at >= 8h) is only the candidate gate, because a session
+-- left open and resumed days later spans many hours without being worked in.
+-- Evidence (2026-10-06): session 92def7b3-a365-40f7-a4e1-8e0ac2ffae07 flagged
+-- 'major' at 120.85 wall-clock hours but had 3.95 active hours (transcript)
+-- and 2.51 (hook_events); 13 idle gaps >= 30 min, longest 2 days.
+--
+-- Active time = sum of gaps between consecutive DISTINCT hook_events.fired_at
+-- timestamps of the session, counting only gaps < 30 minutes.
+-- Three outcomes (checks-must-distinguish-unknown):
+--   hook data AND active >= 8h  -> flag; 'major' iff active >= 14h, else 'info'
+--   hook data AND active <  8h  -> NOT flagged (idle-resumed, not a marathon)
+--   NO hook data                -> active time INDETERMINATE: flag on
+--                                  wall-clock >= 8h but ALWAYS 'info'; wall
+--                                  clock alone cannot justify a 'major'.
 -- Only sessions with both started_at AND ended_at populated are evaluated.
 -- Sessions with NULL ended_at are potential "stuck running" events and are
 -- handled by DETECTOR 1 (stuck_loop) instead.
 -- Recommendation: verify long/background sessions are intentional.
--- Severity: info (8-13h), major (≥ 14h — extreme, llm#1241)
+-- Severity: see outcomes above (llm#1241 escalation now keyed to active time).
 -- ─────────────────────────────────────────────────────────────────────────────
--- Threshold: 8 hours of elapsed wall-clock time
-WITH marathon_sessions AS (
+WITH hook_ts AS (
+    SELECT DISTINCT session_id, fired_at AS ts
+    FROM hook_events
+    WHERE fired_at IS NOT NULL
+),
+hook_gaps AS (
     SELECT
         session_id,
-        started_at,
-        ended_at,
+        ts - lag(ts) OVER (PARTITION BY session_id ORDER BY ts) AS gap
+    FROM hook_ts
+),
+active_time AS (
+    SELECT
+        session_id,
         ROUND(
-            DATEDIFF('minute', started_at, ended_at) / 60.0,
+            SUM(CASE WHEN gap < INTERVAL '30' MINUTE THEN epoch(gap) ELSE 0 END)
+                / 3600.0,
             2
-        )                               AS duration_hours
-    FROM sessions
+        ) AS active_hours
+    FROM hook_gaps
+    GROUP BY session_id
+),
+marathon_sessions AS (
+    SELECT
+        s.session_id,
+        s.started_at,
+        s.ended_at,
+        ROUND(
+            DATEDIFF('minute', s.started_at, s.ended_at) / 60.0,
+            2
+        )                               AS wall_clock_hours,
+        a.active_hours                  AS active_hours  -- NULL = no hook data
+    FROM sessions s
+    LEFT JOIN active_time a USING (session_id)
     WHERE
         started_at IS NOT NULL
         AND ended_at IS NOT NULL
@@ -628,6 +665,9 @@ WITH marathon_sessions AS (
         -- was subsequently overwritten -- neither case is an observed
         -- marathon session.
         AND (summary IS NULL OR summary NOT LIKE '%reaper: ended_at is an ESTIMATE%')
+        -- Hook data present but < 8h active: an idle-resumed session, not a
+        -- marathon. NULL active_hours (no hook data) stays: indeterminate.
+        AND (a.active_hours IS NULL OR a.active_hours >= 8)
 )
 INSERT INTO self_review_findings_stage1
     BY NAME
@@ -637,13 +677,22 @@ SELECT
     session_id,
     -- llm#1241: escalate to 'major' at ~1.75x the base threshold (14+
     -- hours) instead of capping every instance at 'info'.
-    CASE WHEN duration_hours >= 14 THEN 'major' ELSE 'info' END AS severity,
+    -- Only MEASURED active time can escalate; unmeasured is always 'info'.
+    CASE WHEN active_hours >= 14 THEN 'major' ELSE 'info' END AS severity,
     json_object(
         'started_at',         started_at::VARCHAR,
         'ended_at',           ended_at::VARCHAR,
-        'duration_hours',     duration_hours::VARCHAR,
-        'threshold',          '8 hours',
-        'extreme_threshold',  '14 hours (escalates to major, llm#1241)',
+        -- duration_hours kept = the value severity was decided on (active
+        -- hours when measured, else wall-clock); no other consumer reads it.
+        'duration_hours',     COALESCE(active_hours, wall_clock_hours)::VARCHAR,
+        'wall_clock_hours',   wall_clock_hours,
+        'active_hours',       active_hours,
+        'active_time_source', CASE WHEN active_hours IS NULL
+                                   THEN 'unmeasured: no hook_events rows'
+                                   ELSE 'hook_events' END,
+        'idle_gap_threshold', '30 minutes',
+        'threshold',          '8 hours (active time)',
+        'extreme_threshold',  '14 hours active (escalates to major, llm#1241)',
         'recommendation',     'Verify long/background sessions are intentional — continuous usage adds up'
     )::JSON                                  AS evidence,
     current_timestamp                        AS detected_at
