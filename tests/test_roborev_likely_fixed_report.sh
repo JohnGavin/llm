@@ -176,6 +176,37 @@ line="$(ROBOREV_LF_DIR="${T}/nonexistent" "${SUMMARY}")"; rc=$?
 [ "${rc}" -eq 3 ] && echo "${line}" | grep -q "not run" \
   && pass "(d) no status file -> 'not run' (exit 3)" || fail "(d) missing status" "rc=${rc} ${line}"
 
+# ── (h) no status file: say WHY, from launchd state (not-loaded vs pending) ──
+# ROBOREV_LF_LAUNCHD_PRINT_FILE stands in for `launchctl print`; a path that
+# does not exist stands for "not loaded".
+cat > "${T}/lp_pending.txt" <<'LPEOF'
+gui/501/com.claude.roborev-likely-fixed-report = {
+	runs = 0
+	last exit code = (never exited)
+	event triggers = {
+		x => {
+			descriptor = {
+				"Minute" => 30
+				"Hour" => 8
+				"Weekday" => 0
+			}
+		}
+	}
+}
+LPEOF
+line="$(ROBOREV_LF_DIR="${T}/nonexistent" ROBOREV_LF_LAUNCHD_PRINT_FILE="${T}/lp_pending.txt" "${SUMMARY}")"; rc=$?
+[ "${rc}" -eq 3 ] && echo "${line}" | grep -qE "not run yet \(job loaded, 0 runs so far; first run due Sun [0-9]{4}-[0-9]{2}-[0-9]{2} 08:30\)" \
+  && pass "(h) loaded + 0 runs -> 'not run yet', says when the first run is due" || fail "(h) pending" "rc=${rc} ${line}"
+echo "${line}" | grep -q "NOT loaded" \
+  && fail "(h) a loaded job must not read as not loaded" "${line}" || pass "(h) a loaded job is not reported as not loaded"
+line="$(ROBOREV_LF_DIR="${T}/nonexistent" ROBOREV_LF_LAUNCHD_PRINT_FILE="${T}/no_such_print.txt" "${SUMMARY}")"; rc=$?
+[ "${rc}" -eq 3 ] && echo "${line}" | grep -q "NOT loaded" \
+  && pass "(h) job absent from launchd -> says NOT loaded" || fail "(h) not loaded" "rc=${rc} ${line}"
+sed 's/runs = 0/runs = 3/; s/(never exited)/1/' "${T}/lp_pending.txt" > "${T}/lp_ran.txt"
+line="$(ROBOREV_LF_DIR="${T}/nonexistent" ROBOREV_LF_LAUNCHD_PRINT_FILE="${T}/lp_ran.txt" "${SUMMARY}")"; rc=$?
+[ "${rc}" -eq 3 ] && echo "${line}" | grep -q "ran 3 time(s), last exit 1 -- the wrapper wrote no status file" \
+  && pass "(h) loaded + ran but no status file -> flagged as a defect with run count and exit" || fail "(h) ran-no-status" "rc=${rc} ${line}"
+
 # ── (c) unreadable DB -> exit 3, replaces the earlier good status ────────────
 env ROBOREV_DB="${T}/does_not_exist.db" ROBOREV_LF_DIR="${LF}" ROBOREV_LF_RUNNER="${STUB}" STUB_LOG="${STUB_LOG}" \
   "${WRAPPER}" >/dev/null 2>"${T}/c.err"; rc=$?
