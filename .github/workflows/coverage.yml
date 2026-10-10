@@ -73,6 +73,13 @@ on:
 permissions:
   contents: write
 
+# Only the newest coverage result matters. Several merges in a row used to
+# start parallel runs that each pushed to main and lost the race (runs
+# 38052487578 and 38052508066 on 2026-10-10 were rejected "fetch first").
+concurrency:
+  group: coverage-main
+  cancel-in-progress: true
+
 jobs:
   coverage:
     runs-on: ubuntu-latest
@@ -146,5 +153,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add inst/extdata/coverage.rds
-          git diff --staged --quiet || git commit -m "chore(coverage): update coverage data [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "coverage.rds unchanged; nothing to push"
+            exit 0
+          fi
+          git commit -m "chore(coverage): update coverage data [skip ci]"
+          # main may have moved while coverage ran. This commit touches only
+          # coverage.rds, which nothing else edits, so rebasing onto the new
+          # main is safe. Retry a few times, then fail loudly.
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main; then
+              if git push origin HEAD:main; then
+                exit 0
+              fi
+            else
+              git rebase --abort
+            fi
+            echo "push attempt $attempt failed; retrying"
+            sleep $((attempt * 10))
+          done
+          echo "::error::could not push coverage.rds after 3 attempts"
+          exit 1
