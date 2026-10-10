@@ -279,7 +279,16 @@ transcribe_audio() {
   local base=$(basename "$audio_file")
 
   # Skip if already processed
-  grep -qF "$base" "$PROCESSED_LOG" 2>/dev/null && return 0
+  # rc 0 = processed, 1 = new, >=2 = could not check: skip, never transcribe
+  # on an unknown (checks-must-distinguish-unknown).
+  local _prc=0
+  _whisper_processed_status "$base" "$PROCESSED_LOG" 2>/dev/null || _prc=$?
+  if [ "$_prc" -eq 0 ]; then
+    return 0
+  elif [ "$_prc" -ge 2 ]; then
+    log "INDETERMINATE: processed-log check failed rc=$_prc for $base -- skipping"
+    return 1
+  fi
 
   if [ -z "$WHISPER_BIN" ]; then
     log "Whisper not found, skipping $base"

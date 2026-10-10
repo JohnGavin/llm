@@ -175,7 +175,16 @@ if [ -z "$MESSAGES" ]; then
     for aac in "$ATTACH_DIR"/*.aac "$ATTACH_DIR"/*.ogg "$ATTACH_DIR"/*.opus; do
       [ -f "$aac" ] || continue
       _base=$(basename "$aac")
-      grep -qF "$_base" "$PROCESSED_LOG" 2>/dev/null && continue
+      # rc 0 = processed, 1 = new, >=2 = could not check: skip, never
+      # transcribe on an unknown (checks-must-distinguish-unknown).
+      _prc=0
+      _whisper_processed_status "$_base" "$PROCESSED_LOG" 2>/dev/null || _prc=$?
+      if [ "$_prc" -eq 0 ]; then
+        continue
+      elif [ "$_prc" -ge 2 ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') INDETERMINATE: processed-log check failed rc=$_prc for $_base -- skipping" >> "$LOG"
+        continue
+      fi
 
       echo "$(date '+%Y-%m-%d %H:%M:%S') Transcribing backlog: $_base" >> "$LOG"
       _txt_dir=$(mktemp -d)
