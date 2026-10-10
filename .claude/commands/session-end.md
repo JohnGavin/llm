@@ -175,8 +175,11 @@ After committing and pushing, export local telemetry data to the dashboard:
 ```
 
 This exports predictions, unified.duckdb sessions, and cmonitor-rs data to
-`llmtelemetry/vignettes/data/`, commits, and pushes. CI then deploys the
-updated data to the live dashboard. Only runs if data actually changed.
+`llmtelemetry/vignettes/data/`, commits, and pushes. The script then reads the
+dashboard repo's deploy workflow and reports whether the push triggers a deploy,
+or that no automatic deploy is configured (or that its status is unknown).
+Do not promise a deploy beyond what it prints. Only runs if data actually
+changed.
 
 ## Prompt User
 
