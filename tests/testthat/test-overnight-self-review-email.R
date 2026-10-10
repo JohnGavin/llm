@@ -907,7 +907,13 @@ test_that("the all-clear box states what it did NOT check, and never claims 'not
   if (grepl("QA:n_action_items=0", combined, fixed = TRUE)) {
     expect_true(grepl("No action-level findings", combined, fixed = TRUE),
                 info = "Zero action items did not render the scoped all-clear wording")
-    expect_true(grepl("Not checked: config, rules, code", combined, fixed = TRUE),
+    # llm#235 steps 1-2: conversation signals and roborev findings are now
+    # inspected, so the old "config, rules, code, or anything said in a
+    # conversation" disclaimer would be false. The box must still state what
+    # is NOT checked (rule/config meaning, semantic transcript review).
+    expect_true(grepl("Not checked: the meaning of rules or config", combined, fixed = TRUE),
                 info = "All-clear box omitted the not-checked scope disclaimer")
+    expect_false(grepl("anything said in a conversation", combined, fixed = TRUE),
+                 info = "All-clear box still claims conversations are not inspected")
   }
 })
