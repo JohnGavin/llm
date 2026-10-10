@@ -43,6 +43,12 @@ set -euo pipefail
 
 # ─── launchd-safe PATH ───────────────────────────────────────────────────────
 export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# Test seam: the SELFTEST end-to-end sweeps put a stub `gh` first on PATH via
+# this variable (the PATH line above is deliberately fixed for launchd, so a
+# caller's own PATH cannot reach it). Unset in production.
+if [ -n "${GC_PATH_PREPEND:-}" ]; then
+  PATH="${GC_PATH_PREPEND}:${PATH}"
+fi
 
 # ─── Sentinel sweep + log rotation helpers (JohnGavin/llm#884 steps 2-3) ─────
 # Pure functions, sourced rather than duplicated so tests can exercise them
@@ -500,6 +506,7 @@ WOULD_REMOVE=0
 WOULD_REMOVE_SQUASH=0
 REMOVED=0
 REMOVED_SQUASH=0
+SQUASH_BLOCKED=0
 KEPT=0
 EVENTS_WRITTEN=0
 
@@ -648,61 +655,105 @@ for _pattern_entry in "${SWEEP_PATTERNS[@]}"; do
           _squash_pr=""
         fi
         if [ -n "$_squash_pr" ]; then
+          # Squash-merged on GitHub. From here this worktree is NEVER reported
+          # as "unmerged": every outcome below ends in its own `continue`, so
+          # the git-cherry "unique patches" verdict (true of every squash-merge,
+          # by construction) cannot be logged for it. Before this, a worktree
+          # that failed the clean/age gates fell out of the block and was
+          # logged as would-remove-squash AND keep-unmerged, which hid the real
+          # reason it stayed and made the daily summary look like removal was
+          # broken. Gates are evaluated BEFORE would-remove-squash is claimed,
+          # so that line now means "removable", not merely "PR was merged".
           _squash_size_mb=$(dir_size_mb "$wt_path")
+
+          # Clean check: identical to `git status --porcelain` -- tracked
+          # modifications AND untracked files (gitignored excluded). Nothing is
+          # filtered out: an untracked file is unrecoverable once the worktree
+          # is removed (bash-safety Part 2), so under-delete. Any failure of
+          # git status itself also counts as dirty.
+          _squash_dirty=$(git -C "$wt_path" status --porcelain 2>/dev/null || echo "status-failed")
+          _squash_mtime=$(dir_mtime_epoch "$wt_path")
+          _squash_age=$(( _now - _squash_mtime ))
+
+          if [ "${SQUASH_REMOVE_DISABLE}" = "1" ]; then
+            log "[keep-squash-disabled] $wt_path branch=$wt_branch pr=#${_squash_pr} (SQUASH_REMOVE_DISABLE=1)"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_unmerged" "squash-merged via PR #${_squash_pr}; squash removal disabled" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            KEPT=$(( KEPT + 1 ))
+            SQUASH_BLOCKED=$(( SQUASH_BLOCKED + 1 ))
+            continue
+          fi
+          if [ -n "$_squash_dirty" ]; then
+            _dirty_first=$(printf '%s' "$_squash_dirty" | head -1 | cut -c1-80)
+            log "[keep-squash-dirty] $wt_path branch=$wt_branch pr=#${_squash_pr} (squash-merged but not clean; first entry: $_dirty_first)"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_uncommitted" "squash-merged via PR #${_squash_pr} but working tree is dirty" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            KEPT=$(( KEPT + 1 ))
+            SQUASH_BLOCKED=$(( SQUASH_BLOCKED + 1 ))
+            continue
+          fi
+          if [ "$_squash_age" -lt "$_age_seconds" ]; then
+            log "[keep-squash-too-new] $wt_path branch=$wt_branch pr=#${_squash_pr} (squash-merged but age ${_squash_age}s < ${_age_seconds}s threshold for $_label)"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_age" "squash-merged via PR #${_squash_pr} but age ${_squash_age}s < threshold ${_age_seconds}s" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            KEPT=$(( KEPT + 1 ))
+            SQUASH_BLOCKED=$(( SQUASH_BLOCKED + 1 ))
+            continue
+          fi
+
+          # Squash-confirmed, clean, age-eligible (not locked / not cwd /
+          # not opted out were handled earlier in the loop).
           _squash_reason="squash-merged via PR #${_squash_pr} in $_repo_dir"
           log "[would-remove-squash] $wt_path branch=$wt_branch pr=#${_squash_pr} repo=$_repo_dir size_mb=$_squash_size_mb"
           write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "would_remove_squash" "$_squash_reason" "$_squash_size_mb"
           EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
           WOULD_REMOVE_SQUASH=$(( WOULD_REMOVE_SQUASH + 1 ))
 
-          if [ "${SQUASH_REMOVE_DISABLE}" != "1" ]; then
-            _squash_dirty=$(git -C "$wt_path" status --porcelain 2>/dev/null || echo "status-failed")
-            _squash_mtime=$(dir_mtime_epoch "$wt_path")
-            _squash_age=$(( _now - _squash_mtime ))
+          if [ "$APPLY" != "1" ]; then
+            continue   # dry-run: reported, never removed
+          fi
 
-            if [ -z "$_squash_dirty" ] && [ "$_squash_age" -ge "$_age_seconds" ] && [ "$APPLY" = "1" ]; then
-              # Capture rc rather than swallowing it: this decides whether a
-              # worktree is about to be deleted, so "rev-parse failed" and
-              # "rev-parse printed nothing" both abort the removal AND say
-              # which happened. Behaviour was already fail-safe; llm#1019 adds
-              # the reason to the log line.
-              _tip_rc=0
-              _tip_sha=$(git -C "$_repo_dir" rev-parse "$wt_branch" 2>&1) || _tip_rc=$?
-              if [ "$_tip_rc" -ne 0 ] || [ -z "$_tip_sha" ]; then
-                _tip_err=$(printf '%s' "$_tip_sha" | tr '\n' ' ' | cut -c1-100)
-                log "[skip-squash-remove-failed] $wt_path (could not resolve branch tip sha: rc=$_tip_rc $_tip_err)"
-                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: could not resolve tip sha" "$_squash_size_mb"
-                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
-                KEPT=$(( KEPT + 1 ))
-                continue
-              fi
+          # Capture rc rather than swallowing it: this decides whether a
+          # worktree is about to be deleted, so "rev-parse failed" and
+          # "rev-parse printed nothing" both abort the removal AND say
+          # which happened (llm#1019).
+          _tip_rc=0
+          _tip_sha=$(git -C "$_repo_dir" rev-parse "$wt_branch" 2>&1) || _tip_rc=$?
+          if [ "$_tip_rc" -ne 0 ] || [ -z "$_tip_sha" ]; then
+            _tip_err=$(printf '%s' "$_tip_sha" | tr '\n' ' ' | cut -c1-100)
+            log "[skip-squash-remove-failed] $wt_path (could not resolve branch tip sha: rc=$_tip_rc $_tip_err)"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: could not resolve tip sha" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            KEPT=$(( KEPT + 1 ))
+            continue
+          fi
 
-              _archive_ref="refs/gc-archive/${wt_branch}"
-              if ! git -C "$_repo_dir" update-ref "$_archive_ref" "$_tip_sha" 2>/dev/null; then
-                log "[skip-squash-remove-failed] $wt_path (could not archive tip to $_archive_ref — aborting removal)"
-                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: archive update-ref failed" "$_squash_size_mb"
-                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
-                KEPT=$(( KEPT + 1 ))
-                continue
-              fi
+          _archive_ref="refs/gc-archive/${wt_branch}"
+          if ! git -C "$_repo_dir" update-ref "$_archive_ref" "$_tip_sha" 2>/dev/null; then
+            log "[skip-squash-remove-failed] $wt_path (could not archive tip to $_archive_ref — aborting removal)"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: archive update-ref failed" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            KEPT=$(( KEPT + 1 ))
+            continue
+          fi
 
-              log "[removing-squash] $wt_path branch=$wt_branch sha=$_tip_sha pr=#${_squash_pr} repo=$_repo_dir size_mb=$_squash_size_mb archive=$_archive_ref"
-              if git -C "$_repo_dir" worktree remove "$wt_path" 2>/dev/null; then
-                git -C "$_repo_dir" branch -D "$wt_branch" 2>/dev/null && \
-                  log "[branch-deleted-squash] $wt_branch in $_repo_dir (archived at $_archive_ref)" || \
-                  log "[branch-keep] $wt_branch in $_repo_dir (force-delete failed after worktree removal)"
-                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "removed_squash" "squash-merged via PR #${_squash_pr}; archived at $_archive_ref" "$_squash_size_mb"
-                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
-                REMOVED_SQUASH=$(( REMOVED_SQUASH + 1 ))
-                continue
-              else
-                log "[remove-squash-failed] $wt_path (worktree remove refused)"
-                write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: worktree remove refused" "$_squash_size_mb"
-                EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
-                KEPT=$(( KEPT + 1 ))
-                continue
-              fi
-            fi
+          log "[removing-squash] $wt_path branch=$wt_branch sha=$_tip_sha pr=#${_squash_pr} repo=$_repo_dir size_mb=$_squash_size_mb archive=$_archive_ref"
+          # No --force: `worktree remove` itself refuses a dirty tree (backstop).
+          if git -C "$_repo_dir" worktree remove "$wt_path" 2>/dev/null; then
+            git -C "$_repo_dir" branch -D "$wt_branch" 2>/dev/null && \
+              log "[branch-deleted-squash] $wt_branch in $_repo_dir (archived at $_archive_ref)" || \
+              log "[branch-keep] $wt_branch in $_repo_dir (force-delete failed after worktree removal)"
+            log "[removed-squash] $wt_path branch=$wt_branch pr=#${_squash_pr}"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "removed_squash" "squash-merged via PR #${_squash_pr}; archived at $_archive_ref" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            REMOVED_SQUASH=$(( REMOVED_SQUASH + 1 ))
+            continue
+          else
+            log "[remove-squash-failed] $wt_path (worktree remove refused)"
+            write_gc_event "$_label" "$_project" "$wt_path" "$wt_branch" "skipped_remove_failed" "squash removal: worktree remove refused" "$_squash_size_mb"
+            EVENTS_WRITTEN=$(( EVENTS_WRITTEN + 1 ))
+            KEPT=$(( KEPT + 1 ))
+            continue
           fi
         fi
       fi
@@ -824,7 +875,7 @@ else
   log "[claude-json-tmp-sweep-dryrun] dir=$CLAUDE_JSON_TMP_HOME would_sweep=$CLAUDE_JSON_TMP_SWEPT skipped_live=$CLAUDE_JSON_TMP_SKIPPED_LIVE"
 fi
 
-log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH squash-detect=$SQUASH_DETECT_PREFLIGHT squash-detect-failures=$SQUASH_DETECT_FAILURES removed=$REMOVED removed-squash=$REMOVED_SQUASH kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED claude-json-tmp-swept=$CLAUDE_JSON_TMP_SWEPT"
+log "[done] candidates=$CANDIDATES would-remove=$WOULD_REMOVE would-remove-squash=$WOULD_REMOVE_SQUASH squash-detect=$SQUASH_DETECT_PREFLIGHT squash-detect-failures=$SQUASH_DETECT_FAILURES removed=$REMOVED removed-squash=$REMOVED_SQUASH squash-blocked=$SQUASH_BLOCKED kept=$KEPT events=$EVENTS_WRITTEN apply=$APPLY soak-past=$_past_soak squash-soak-past=$_squash_past_soak sentinels-swept=$SENTINELS_SWEPT logs-rotated=$LOGS_ROTATED claude-json-tmp-swept=$CLAUDE_JSON_TMP_SWEPT"
 
 # One loud line when squash detection could not run. Without it, a sweep that
 # checked nothing looks identical in the log to a sweep that found nothing —
@@ -1251,6 +1302,100 @@ GHEOF
   chmod +x "$_sq_bin/gh"
   _sq_out=$(PATH="$_sq_bin:$PATH" is_squash_merged "$_sq_norem" "some-branch") && _sq_rc=0 || _sq_rc=$?
   _check "squash-detect: repo with no remote is rc=0 (real 'no', not degraded)" "0" "$_sq_rc"
+
+  # --- Tests: squash-merged worktree removal, END TO END (llm worktree-gc bug)
+  #
+  # Unlike the unit checks above, these run the whole script as a subprocess
+  # against a throwaway repo, because the bug lived in the main sweep's control
+  # flow: a squash-confirmed worktree was logged would-remove-squash, then fell
+  # through to the `git cherry` "unmerged" verdict and was kept, every day, for
+  # weeks. A helper-level test could not have seen that.
+  #
+  # Isolation: HOME, DOCS_GH, WORKTREES_BASE*, CLAUDE_RUNTIME_ROOT and
+  # UNIFIED_DB_PATH all point inside $tmpdir, and `gh` is a stub reached via
+  # GC_PATH_PREPEND, so nothing real is read, removed or written.
+  _gc_script="${_gc_script_dir}/$(basename "${BASH_SOURCE[0]}")"
+
+  # _sq_scenario <name> <mutation: none|untracked|modified> <apply: 0|1>
+  # Builds repo + one old squash-merged worktree, runs the script, leaves
+  # results in _sq_out_file / _sq_main / _sq_wt.
+  _sq_scenario() {
+    local _n="$1" _mut="$2" _apply="$3" _age="${4:-40}"
+    local _sc="$tmpdir/sc_$_n"
+    _sq_main="$_sc/repos/proj"
+    _sq_wt="$_sc/wtbase/proj/feat/x"
+    _sq_out_file="$_sc/out.txt"
+    mkdir -p "$_sc/bin" "$_sc/home" "$_sc/docs" "$_sc/nolegacy"
+    git init -q "$_sq_main"
+    git -C "$_sq_main" config user.email "test@test"
+    git -C "$_sq_main" config user.name "test"
+    echo "init" > "$_sq_main/file.txt"
+    git -C "$_sq_main" add file.txt
+    git -C "$_sq_main" commit -q -m "init"
+    git -C "$_sq_main" remote add origin "git@github.com:JohnGavin/fake.git"
+    git -C "$_sq_main" worktree add -q -b "feat/x" "$_sq_wt"
+    # A unique commit: git cherry reports '+', exactly as for a squash-merge.
+    echo "work" > "$_sq_wt/work.txt"
+    git -C "$_sq_wt" add work.txt
+    git -C "$_sq_wt" commit -q -m "branch work"
+    case "$_mut" in
+      untracked) echo "scratch" > "$_sq_wt/verify_out.txt" ;;
+      modified)  echo "changed" >> "$_sq_wt/work.txt" ;;
+    esac
+    # Age the worktree LAST: creating files above bumps the directory mtime.
+    python3 -c "import os,time; t=time.time()-$_age*86400; os.utime('$_sq_wt',(t,t))"
+    cat > "$_sc/bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+if [ "$1" = "auth" ]; then exit 0; fi
+echo '[{"mergedAt":"2026-08-23T07:13:16Z","number":77}]'
+GHEOF
+    chmod +x "$_sc/bin/gh"
+    local _apply_flag=""
+    [ "$_apply" = "1" ] && _apply_flag="--apply"
+    ( cd "$_sc" && env -u SELFTEST HOME="$_sc/home" DOCS_GH="$_sc/docs" \
+        WORKTREES_BASE="$_sc/wtbase" WORKTREES_BASE_LEGACY="$_sc/nolegacy" \
+        CLAUDE_RUNTIME_ROOT="$_sc/home/.claude" CLAUDE_JSON_TMP_HOME="$_sc/home" \
+        UNIFIED_DB_PATH="$_sc/home/none.duckdb" GC_PATH_PREPEND="$_sc/bin" \
+        bash "$_gc_script" $_apply_flag > "$_sq_out_file" 2>&1 ) || true
+  }
+  _sq_has() { grep -Fq -- "$1" "$_sq_out_file" && echo 1 || echo 0; }
+
+  # (A) clean + old + squash-merged + --apply  => removed
+  _sq_scenario "clean" "none" 1
+  _check "squash e2e: clean old worktree is removed under --apply" "0" "$([ -d "$_sq_wt" ] && echo 1 || echo 0)"
+  _check "squash e2e: tip archived to refs/gc-archive/feat/x" "1" \
+    "$(git -C "$_sq_main" show-ref --verify --quiet refs/gc-archive/feat/x && echo 1 || echo 0)"
+  _check "squash e2e: logged [removed-squash]" "1" "$(_sq_has '[removed-squash]')"
+  _check "squash e2e: NOT also logged keep-unmerged" "0" "$(_sq_has '[keep-unmerged]')"
+
+  # (B) same but an UNTRACKED file => kept, as dirty
+  _sq_scenario "untracked" "untracked" 1
+  _check "squash e2e: untracked file => worktree kept" "1" "$([ -d "$_sq_wt" ] && echo 1 || echo 0)"
+  _check "squash e2e: untracked file => logged keep-squash-dirty" "1" "$(_sq_has '[keep-squash-dirty]')"
+  _check "squash e2e: untracked file => no keep-unmerged mislabel" "0" "$(_sq_has '[keep-unmerged]')"
+  _check "squash e2e: untracked file => not reported would-remove-squash" "0" "$(_sq_has '[would-remove-squash]')"
+  _check "squash e2e: untracked file survives" "1" "$([ -f "$_sq_wt/verify_out.txt" ] && echo 1 || echo 0)"
+
+  # (C) same but a MODIFIED TRACKED file => kept, as dirty
+  _sq_scenario "modified" "modified" 1
+  _check "squash e2e: modified tracked file => worktree kept" "1" "$([ -d "$_sq_wt" ] && echo 1 || echo 0)"
+  _check "squash e2e: modified tracked file => logged keep-squash-dirty" "1" "$(_sq_has '[keep-squash-dirty]')"
+  _check "squash e2e: modified tracked file => no keep-unmerged mislabel" "0" "$(_sq_has '[keep-unmerged]')"
+
+  # (D) dry-run never removes, and reports would-remove-squash without a
+  #     contradictory keep-unmerged line for the same path.
+  _sq_scenario "dryrun" "none" 0
+  _check "squash e2e: dry-run keeps the worktree" "1" "$([ -d "$_sq_wt" ] && echo 1 || echo 0)"
+  _check "squash e2e: dry-run reports would-remove-squash" "1" "$(_sq_has '[would-remove-squash]')"
+  _check "squash e2e: dry-run has no keep-unmerged for it" "0" "$(_sq_has '[keep-unmerged]')"
+  _check "squash e2e: dry-run creates no archive ref" "0" \
+    "$(git -C "$_sq_main" show-ref --verify --quiet refs/gc-archive/feat/x && echo 1 || echo 0)"
+
+  # (E) too new => kept for AGE, with its own reason (not 'unmerged').
+  _sq_scenario "young" "none" 1 0
+  _check "squash e2e: too-new worktree is kept" "1" "$([ -d "$_sq_wt" ] && echo 1 || echo 0)"
+  _check "squash e2e: too-new worktree logged keep-squash-too-new" "1" "$(_sq_has '[keep-squash-too-new]')"
+  _check "squash e2e: too-new worktree no keep-unmerged mislabel" "0" "$(_sq_has '[keep-unmerged]')"
 
   echo ""
   echo "$_pass PASS, $_fail FAIL"
