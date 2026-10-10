@@ -141,3 +141,18 @@ _signal_daemon_stdout_log() {
   printf '%s\n' "$fallback"
   return 1
 }
+
+# _whisper_processed_status <basename> <processed_log>
+#
+# Returns grep's own exit code, so callers can tell three outcomes apart
+# (checks-must-distinguish-unknown): 0 = already processed, 1 = new,
+# >=2 = could not check (INDETERMINATE).
+#
+# `--` is load-bearing: Signal attachment IDs are base64url and can start
+# with `-` (e.g. `-ERDD6ss-1admctww_LH.aac`); without it grep parses the name
+# as options and exits 2. Callers previously discarded stderr and treated
+# any non-zero as "not processed", so those notes were re-transcribed on
+# every run.
+_whisper_processed_status() {
+  grep -qF -- "$1" "$2"
+}
