@@ -40,6 +40,8 @@
 )
 
 source(file.path(.scripts_dir, "email_styles.R"))
+# llm#235 steps 1-2: conversation signals (learning digest) + roborev findings.
+source(file.path(.scripts_dir, "lib", "self_review_content_signals.R"))
 
 # ── Null-coalescing operator ───────────────────────────────────────────────────
 # Treats NULL, length-0, NA, AND empty string as "missing" — falls through to b.
@@ -164,6 +166,42 @@ htmlEscape <- function(text) {
 #     `current_timestamp::TIMESTAMP`, `now() AT TIME ZONE 'UTC'`, and bare
 #     `now()` baselines. Left unchanged.
 sql_utc_now <- function() "(now() AT TIME ZONE 'UTC')"
+
+# ── Content inputs (llm#235 steps 1-2) ────────────────────────────────────────
+# Read once, early, because the scope sentence in the verdict box must state
+# which of them were actually available today. Neither reads unified.duckdb.
+#   - Conversation signals: newest digest from codex_overnight_learning.py
+#     (launchd 06:10, ~2.5 h before this 08:45 email) in CODEX_LEARNING_DIR
+#     (default ~/.codex/learning). Reused as-is; no transcript is re-read.
+#   - roborev: open reviews created in the last 24 h from ROBOREV_DB (default
+#     ~/.roborev/reviews.db), read-only.
+# A read failure is an "unavailable: <reason>" rendering, never an empty one.
+conv_res <- tryCatch(
+  scr_read_digest(Sys.getenv("CODEX_LEARNING_DIR") %||%
+                    file.path(Sys.getenv("HOME"), ".codex", "learning")),
+  error = function(e) list(status = "unavailable",
+                           reason = paste("digest reader failed:", conditionMessage(e)),
+                           date = NA_character_)
+)
+roborev_res <- tryCatch(
+  scr_roborev_fetch(Sys.getenv("ROBOREV_DB") %||%
+                      file.path(Sys.getenv("HOME"), ".roborev", "reviews.db")),
+  error = function(e) list(status = "unavailable",
+                           reason = paste("roborev reader failed:", conditionMessage(e)))
+)
+conv_checked <- conv_res$status %in% c("fresh", "empty")
+roborev_checked <- identical(roborev_res$status, "ok") && roborev_res$summary$n_reviews > 0L
+
+conv_render <- scr_render_signals(conv_res)
+sec_conv_block <- collapsible_block(
+  "Conversation signals (learning digest, llm#235)",
+  conv_render$summary, conv_render$body, summary_color = conv_render$color
+)
+roborev_render <- scr_render_roborev(roborev_res)
+sec_roborev_block <- collapsible_block(
+  "Code review: open roborev findings (24h, llm#235)",
+  roborev_render$summary, roborev_render$body, summary_color = roborev_render$color
+)
 
 # ── Section 1: New self-review findings (last 24h) ────────────────────────────
 sec1_data <- safe_query("
@@ -1980,7 +2018,9 @@ sec_meta_green_block <- collapsible_block(
 #      finding. Since 2026-08-26 every finding emitted has been `info`, so the
 #      box has been structurally green for weeks regardless of content.
 #   2. "All clear" is unqualified, but this report reads four telemetry tables.
-#      It cannot see config, rules, code, or anything said in a conversation.
+#      Since llm#235 steps 1-2 it also reads the conversation-signals digest and
+#      roborev findings (when available); it still cannot see rule/config
+#      meaning or the semantics of a conversation.
 # Say what was actually checked and name what was logged-but-not-action-rated.
 # `checks-must-distinguish-unknown`: a green that cannot go red teaches the
 # reader to skip it.
@@ -1992,6 +2032,21 @@ action_digest_html <- if (n_action_items == 0L) {
   } else {
     "No action-level findings, and none logged at any severity."
   }
+  # llm#235: conversation signals (learning digest) and roborev code findings
+  # are now inspected -- but only when they were readable today. A source that
+  # was unavailable is listed as such, never as checked.
+  .scope_checked <- c("session telemetry", "cron health", "source-table freshness",
+                      if (conv_checked) "conversation signals (learning digest, pattern-based)",
+                      if (roborev_checked) "roborev code findings")
+  .scope_unavailable <- c(if (!conv_checked) "conversation signals",
+                          if (!roborev_checked) "roborev code findings")
+  .scope_sentence <- paste0(
+    "Checked: ", paste(.scope_checked, collapse = ", "), ". ",
+    if (length(.scope_unavailable) > 0L) {
+      paste0("Unavailable today: ", paste(.scope_unavailable, collapse = ", "), ". ")
+    } else "",
+    "Not checked: the meaning of rules or config, or semantic review of conversations (planned, #235)."
+  )
   sprintf(
     '<div style="background-color:%s;padding:14px 20px;margin-bottom:12px;
 border-radius:6px;border-left:4px solid %s;">
@@ -1999,12 +2054,11 @@ border-radius:6px;border-left:4px solid %s;">
   &#10003; %s
 </p>
 <p style="color:%s;font-size:%s;margin:4px 0 0 0;">
-  Checked: session telemetry, cron health, source-table freshness.
-  Not checked: config, rules, code, or anything said in a conversation.
+  %s
 </p>
 </div>',
     DARK_CARD, ACCENT_GREEN, ACCENT_GREEN, EMAIL_FONT_SUBTITLE, .verdict_txt,
-    DARK_MUTED, EMAIL_FONT_FOOTER
+    DARK_MUTED, EMAIL_FONT_FOOTER, .scope_sentence
   )
 } else {
   items_html <- paste(sprintf('<li style="margin:2px 0;">%s</li>', action_items), collapse = "\n")
@@ -3084,6 +3138,8 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   lessons_window_block, "\n",
   sec_meta_green_block, "\n",
   sec1_block, "\n",
+  sec_conv_block, "\n",
+  sec_roborev_block, "\n",
   sec_lessons_block, "\n",
   sec2_block, "\n",
   sec_staleness_block, "\n",
