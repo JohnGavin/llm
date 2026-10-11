@@ -1489,9 +1489,27 @@ if (nrow(cron_health) > 0L) {
                     basis = sprintf("heartbeat says %d new but the per-finding ledger shows %d first seen in that run (pre-fingerprint run?)",
                                     n_latest, n_run)))
       }
+      # llm#1367: the audit covers many repos (and gists, keyed gist:<id>);
+      # render per-repo counts. Repo identity only, never a path or a value.
+      per_repo <- safe_query("
+        SELECT repo, count(*) AS n FROM private_data_history_findings
+        GROUP BY repo ORDER BY repo")
+      new_repo <- safe_query(sprintf("
+        SELECT f.repo, count(*) AS n FROM private_data_history_findings f, housekeeping_runs r
+        WHERE r.id = '%s' AND f.first_seen >= r.started_at
+          AND f.first_seen <= COALESCE(r.ended_at, r.started_at + INTERVAL 1 DAY)
+        GROUP BY f.repo ORDER BY f.repo", rid))
+      lbl <- sprintf("%d tracked finding(s)", n_all)
+      if (nrow(per_repo) > 0L) {
+        lbl <- sprintf("%d tracked finding(s) across %d repo(s)", n_all, nrow(per_repo))
+      }
+      if (nrow(new_repo) > 0L) {
+        lbl <- paste0(lbl, "; new: ",
+                      paste(sprintf("%s=%d", new_repo$repo, as.integer(new_repo$n)), collapse = ", "))
+      }
       return(list(n_new = n_run,
                   basis = "per-finding fingerprints; known and acknowledged excluded",
-                  rows_label = sprintf("%d tracked finding(s)", n_all)))
+                  rows_label = lbl))
     }
     prev <- safe_query(sprintf("
       SELECT rows_written FROM housekeeping_runs
