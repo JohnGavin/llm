@@ -30,6 +30,9 @@
     <key>ProgramArguments</key>
     <array>
         <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/private-data-history-audit</string>
+        <!-- llm#1367/#1372: weekly audit of EVERY public repo of the owner,  -->
+        <!-- public forks of them, PR refs and public gists (fresh mirrors).   -->
+        <string>--all-public</string>
     </array>
 
     <!-- launchd's default PATH omits Homebrew/duckdb — same fix as          -->
@@ -42,6 +45,10 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>/Users/johngavin</string>
+        <!-- Byte-level matching, not UTF-8 locale: non-UTF-8 blobs in mirrored -->
+        <!-- history must not abort grep.                                      -->
+        <key>LC_ALL</key>
+        <string>C</string>
     </dict>
 
     <!-- Weekly, Sunday 03:15 -->

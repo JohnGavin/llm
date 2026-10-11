@@ -1007,6 +1007,11 @@ scan_content_stdin() {
 # wrong toward public just means occasional extra scanning. Same
 # fail-toward-safety spirit as the rest of this script.
 repo_visibility() {
+    # llm#1367: the multi-repo history audit scans bare mirrors of repos it
+    # KNOWS are public (it enumerated them as public); a mirror has no gh
+    # context to look the visibility up from. Only the STRICT value is
+    # honoured -- there is deliberately no override toward "private".
+    [ "${PRIVATE_DATA_SCAN_VISIBILITY:-}" = "public" ] && { echo "public"; return; }
     [ -d "$REPO_ROOT" ] || { echo "public"; return; }
     local vis
     vis="$(cd "$REPO_ROOT" && gh repo view --json visibility -q .visibility 2>/dev/null)" || true
@@ -1760,6 +1765,10 @@ run_selftest() {
     _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=fail repo_visibility)" = "public" ] && echo 0 || echo 1)" "llm#1358 item 3: visibility lookup failure is treated as public"
     _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=PRIVATE repo_visibility)" = "private" ] && echo 0 || echo 1)" "llm#1358 item 3: visibility PRIVATE is private"
     _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=PUBLIC repo_visibility)" = "public" ] && echo 0 || echo 1)" "llm#1358 item 3: visibility PUBLIC is public"
+    # llm#1367: the public override wins over a PRIVATE lookup; any other
+    # value (notably "private") is ignored, never a way to weaken the gate.
+    _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=PRIVATE PRIVATE_DATA_SCAN_VISIBILITY=public repo_visibility)" = "public" ] && echo 0 || echo 1)" "llm#1367: PRIVATE_DATA_SCAN_VISIBILITY=public overrides a PRIVATE lookup"
+    _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=PUBLIC PRIVATE_DATA_SCAN_VISIBILITY=private repo_visibility)" = "public" ] && echo 0 || echo 1)" "llm#1367: PRIVATE_DATA_SCAN_VISIBILITY=private is ignored (no override toward private)"
     REPO_ROOT="$saved_root"
 
     # Allow-list: exact path + stated reason; anything else allows nothing.
