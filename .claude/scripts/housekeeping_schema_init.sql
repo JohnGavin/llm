@@ -325,6 +325,38 @@ CREATE TABLE IF NOT EXISTS private_data_scan_findings (
 CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_run_id ON private_data_scan_findings(run_id);
 CREATE INDEX IF NOT EXISTS idx_private_data_scan_findings_fired_at ON private_data_scan_findings(fired_at);
 
+-- private_data_history_findings: per-finding identity ledger for the weekly
+-- full-history audit (private_data_history_audit.sh). One row per DISTINCT
+-- finding, keyed by a stable fingerprint, so "which findings are NEW" is
+-- answered by set membership instead of diffing totals (a +10/-6 week used
+-- to read as "4 new"). The audit upserts last_seen on every run.
+--
+-- NEVER stores the matched value. fingerprint = sha256 over
+-- repo|rule|src|<sha12>:<path>|line -- no matched literal in the input.
+-- `path` CAN itself be sensitive (a filename can identify a person or a
+-- document), which is acceptable ONLY because this table lives in the local
+-- user database, which is never pushed. Never copy paths from it into a
+-- committed file, test fixture, PR body, issue or commit message.
+--
+-- status lifecycle: 'new' (first seen on the last run that reported it) ->
+-- 'known' (seen again on a later run, or marked by --baseline) ->
+-- 'acknowledged' (human triaged it via --ack; never reverts automatically).
+-- Writers: private_data_history_audit.sh only.
+CREATE TABLE IF NOT EXISTS private_data_history_findings (
+  fingerprint TEXT PRIMARY KEY,
+  repo        TEXT NOT NULL,
+  rule        TEXT NOT NULL,
+  src         TEXT NOT NULL,
+  severity    TEXT NOT NULL,
+  commit_sha  TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  line_num    TEXT,
+  first_seen  TIMESTAMPTZ NOT NULL,
+  last_seen   TIMESTAMPTZ NOT NULL,
+  status      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_private_data_history_findings_status ON private_data_history_findings(status);
+
 -- eval_runs: one row per fixture ATTEMPT from an eval harness run (llm#816).
 -- Written by roborev_eval_run.sh (harness='roborev'); a --runs N invocation
 -- writes N rows per fixture sharing one run_id. The per-fixture verdict
@@ -531,6 +563,20 @@ COMMENT ON COLUMN private_data_scan_findings.location IS 'Where the match was fo
 COMMENT ON COLUMN private_data_scan_findings.line_num IS 'Line number of the match as text (not integer).';
 COMMENT ON COLUMN private_data_scan_findings.rule IS 'Finding-class label. Allowed values: "known-value", "e164-phone", "uk-postcode", "iban". Never the matched literal.';
 COMMENT ON COLUMN private_data_scan_findings.note IS 'Fixed generic description for the rule. By contract NEVER contains a PII value.';
+
+-- private_data_history_findings ------------------------------------------------
+COMMENT ON TABLE private_data_history_findings IS 'Per-finding identity ledger for the weekly full-history PII audit (.claude/scripts/private_data_history_audit.sh). One row per distinct finding, keyed by fingerprint, so new findings are told apart from known ones by set membership rather than by diffing totals. Never stores a matched value. Local user database only: path may be sensitive, so never copy it into a committed file, PR body or issue.';
+COMMENT ON COLUMN private_data_history_findings.fingerprint IS 'Primary key: sha256 hex of repo|rule|src|location|line_num, where location is <sha12>:<path>. Contains no matched value. Stable across runs for the same commit, path and line.';
+COMMENT ON COLUMN private_data_history_findings.repo IS 'Repository identity the finding belongs to (owner/name derived from the origin remote, or an override). Part of the fingerprint.';
+COMMENT ON COLUMN private_data_history_findings.rule IS 'Finding-class label. Allowed values: "known-value", "e164-phone", "uk-postcode", "iban". Never the matched literal.';
+COMMENT ON COLUMN private_data_history_findings.src IS 'Which matcher produced the finding. Allowed values: "denylist" (exact-value deny list), "generic" (pattern match).';
+COMMENT ON COLUMN private_data_history_findings.severity IS 'Finding severity. Allowed values: "critical", "high".';
+COMMENT ON COLUMN private_data_history_findings.commit_sha IS 'First 12 hex characters of the commit whose tree contained the match (abbreviated SHA, not the full 40).';
+COMMENT ON COLUMN private_data_history_findings.path IS 'Repository-relative file path of the match. CAN BE SENSITIVE (a filename may identify a person); local database only, never copy into committed content.';
+COMMENT ON COLUMN private_data_history_findings.line_num IS 'Line number of the match inside the blob, as text (not integer).';
+COMMENT ON COLUMN private_data_history_findings.first_seen IS 'UTC instant (TIMESTAMPTZ) of the audit run that first recorded this fingerprint.';
+COMMENT ON COLUMN private_data_history_findings.last_seen IS 'UTC instant (TIMESTAMPTZ) of the most recent audit run in which this fingerprint was still present.';
+COMMENT ON COLUMN private_data_history_findings.status IS 'Triage state. Allowed values: "new" (reported once, not yet seen again), "known" (seen on a later run or marked by --baseline), "acknowledged" (human triaged via --ack; never reverts automatically).';
 
 -- eval_runs ------------------------------------------------------------------
 COMMENT ON TABLE eval_runs IS 'One row per eval-harness fixture ATTEMPT (llm#816), written by .claude/scripts/roborev_eval_classify.py insert_sql() on behalf of .claude/scripts/roborev_eval_run.sh (harness = roborev). A --runs N invocation writes N rows per fixture sharing one run_id. The per-fixture verdict is NOT stored: it is derived at read time by roborev_eval_run.sh --report <config_hash>. Natural key (run_id, fixture, attempt).';
