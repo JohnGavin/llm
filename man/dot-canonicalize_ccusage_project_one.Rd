@@ -4,7 +4,7 @@
 \alias{.canonicalize_ccusage_project_one}
 \title{Canonicalise a raw ccusage project name}
 \usage{
-.canonicalize_ccusage_project_one(name)
+.canonicalize_ccusage_project_one(name, prefixes = character(0))
 }
 \arguments{
 \item{name}{Single character value (raw project/session-path string).}

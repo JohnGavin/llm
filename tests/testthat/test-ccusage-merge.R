@@ -4,6 +4,16 @@
 # Helpers
 # ============================================================================
 
+# Synthetic private root + a test-local config pointing at it (llm#1382).
+# No real private path ever appears in this repo.
+SYNTH_PRIVATE_SLUG <- "-Users-someone-docs--private-root-projx-"
+.synth_cfg <- tempfile("private_paths_", fileext = ".txt")
+writeLines(c("# synthetic", SYNTH_PRIVATE_SLUG), .synth_cfg)
+withr::local_envvar(
+  c(LLM_PRIVATE_PATHS_FILE = .synth_cfg),
+  .local_envir = testthat::teardown_env()
+)
+
 make_daily_row <- function(project, date, totalCost = 1, totalTokens = 100,
                             inputTokens = 10, outputTokens = 5,
                             cacheCreationTokens = 0, cacheReadTokens = 0) {
@@ -50,11 +60,10 @@ test_that("canonicalize_ccusage_project maps the old dash-mangled scheme", {
     ),
     "travel"
   )
+  # A slug under a configured private prefix is aliased, never echoed.
   expect_equal(
-    canonicalize_ccusage_project(
-      "-Users-johngavin-docs--pers-NHS-health-data-antigravity-mycare"
-    ),
-    "mycare"
+    canonicalize_ccusage_project(paste0(SYNTH_PRIVATE_SLUG, "projx")),
+    "private-project"
   )
 })
 
@@ -63,7 +72,6 @@ test_that("canonicalize_ccusage_project maps the new short-form scheme", {
   expect_equal(canonicalize_ccusage_project("llmtelemetry"), "llmtelemetry")
   expect_equal(canonicalize_ccusage_project("historical"), "historical")
   expect_equal(canonicalize_ccusage_project("travel"), "travel")
-  expect_equal(canonicalize_ccusage_project("mycare"), "mycare")
   # slash-form sub-path collapses onto the project, not the sub-path
   expect_equal(canonicalize_ccusage_project("llm/knowledge"), "llm")
 })
@@ -76,11 +84,7 @@ test_that("old and new schemes canonicalise the SAME real project identically", 
     c("-Users-johngavin-docs-gh-llm", "llm"),
     c("-Users-johngavin-docs-gh-llmtelemetry", "llmtelemetry"),
     c("-Users-johngavin-docs-gh-proj-finance-data-historical", "historical"),
-    c("-Users-johngavin-docs-gh-proj-pers-travel", "travel"),
-    c(
-      "-Users-johngavin-docs--pers-NHS-health-data-antigravity-mycare",
-      "mycare"
-    )
+    c("-Users-johngavin-docs-gh-proj-pers-travel", "travel")
   )
   for (p in pairs) {
     expect_equal(
@@ -123,7 +127,7 @@ test_that("ephemeral entries bucket to the sentinel, not NA and not dropped", {
 })
 
 test_that("a real project name is never mistaken for the ephemeral sentinel", {
-  real_raw <- c("llm", "historical", "travel", "mycare", "llmtelemetry")
+  real_raw <- c("llm", "historical", "travel", "llmtelemetry")
   result <- canonicalize_ccusage_project(real_raw)
   expect_false(any(result == CCUSAGE_EPHEMERAL))
 })

@@ -76,7 +76,7 @@
       "projectPath": "Unknown Project"
     },
     {
-      "sessionId": "-Users-johngavin-docs--pers-NHS-health-data-antigravity-mycare",
+      "sessionId": "private-project",
       "inputTokens": 1538,
       "outputTokens": 349604,
       "cacheCreationTokens": 12037050,
@@ -1738,7 +1738,7 @@
           "cost": 1.7042931500000007
         }
       ],
-      "projectPath": "-Users-johngavin-docs--pers-NHS-health-data-antigravity-mycare/859f8ca4-68c6-4e80-b54f-1fa9a7a0e40f"
+      "projectPath": "private-project/859f8ca4-68c6-4e80-b54f-1fa9a7a0e40f"
     },
     {
       "sessionId": "-Users-johngavin-docs-gh-proj-stats-sport-footbet",
@@ -2974,7 +2974,7 @@
           "cost": 0.288748
         }
       ],
-      "projectPath": "-Users-johngavin-docs--pers-NHS-health-data-antigravity-mycare/1f6d60b8-4dfe-4e5b-a926-b25fc706088b"
+      "projectPath": "private-project/1f6d60b8-4dfe-4e5b-a926-b25fc706088b"
     },
     {
       "sessionId": "subagents",
