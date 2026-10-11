@@ -44,7 +44,7 @@ re-do sessions followed before the discipline was added.
 ## Project-level keyword extension — worked example
 
 ```
-branch-harvest-keywords: vetiver|plumber2|mlops|mycare-letters
+branch-harvest-keywords: vetiver|plumber2|mlops|<project>-feature
 ```
 
 ## Step 3 — worked output example

@@ -50,7 +50,7 @@ is CC.
 - Applies to **public** repos only.
 - The local-only `knowledge/` hub is **never published** — CC does not apply;
   exclude it explicitly (it already carries a `PRIVATE` marker + pre-push block).
-- Private/PHI repos (e.g. `mycare`) are out of scope.
+- Private/local-only repos are out of scope.
 - Rollout to existing public repos is phased and confirmed per repo — see #767;
   dead scaffolds are not licensed (subtractive-first).
 

@@ -91,8 +91,8 @@ multiple files. The search term was present in line 144 of a letter.
 
 ## Origin
 
-Incident: 2026-04-21 in mycare project. Agent searched csv/ and DuckDB for a lab
-result field, concluded none existed after March 2026. Missed a source PDF
+Incident: 2026-04-21 in mycare project. Agent searched csv/ and DuckDB for a
+data field, concluded none existed after March 2026. Missed a source PDF
 already sitting in the `pdf/` staging folder — 17 PDFs downloaded but not yet
 converted to CSV. The user had to point out the file by name.
 

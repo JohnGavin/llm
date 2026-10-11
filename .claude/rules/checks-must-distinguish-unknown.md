@@ -62,7 +62,7 @@ The "before writing this / establish this" pairs (credential invalid, file empty
 
 ## Corollary: a "missing" claim needs an exhaustive-search receipt
 
-The same collapse (indeterminate read as negative) happens at session scale: "we don't have X" is a claim that a search was run and came back empty, and later sessions inherit it as established context. Worked case (mycare, 2026-09-18/19, issue #008): a CT report called "missing" for five months was on disk in a dated subfolder nobody searched (companion doc).
+The same collapse (indeterminate read as negative) happens at session scale: "we don't have X" is a claim that a search was run and came back empty, and later sessions inherit it as established context. Worked case (mycare, 2026-09-18/19, issue #008): a source report called "missing" for five months was on disk in a dated subfolder nobody searched (companion doc).
 
 Before treating "we don't have X" as true enough to act on (re-request, re-derive, escalate, work around): name every location it could plausibly exist and actually search each one. A "missing" claim that has survived multiple sessions unchallenged is *more* suspect, not less.
 

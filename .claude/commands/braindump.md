@@ -26,8 +26,8 @@ Read the most recent brain dump from `~/docs_gh/llm/knowledge/raw/braindumps/` a
 
 On 2026-09-02, a braindump pass found that **every one of the four tennis items
 was already tracked** (`ISSUES.md` #31 and #32, in more detail than the notes
-themselves) and the bereavement note was already
-`premortem/issues/0073-farewill-bereavement-contact.md`. In the same session,
+themselves) and a further private note was already
+tracked in a local-only project. In the same session,
 two of five GitHub issues being worked (#1075, #1035) had already been fixed
 weeks earlier and never closed — each burned a full agent dispatch to
 rediscover that.

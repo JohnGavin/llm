@@ -80,8 +80,8 @@ established context and re-asserts it without re-checking, so the false
 negative compounds for as long as nobody happens to search the one place
 that was missed.
 
-Worked case, mycare project (2026-09-18/19): issue #008 said a CT findings
-report was "missing" and escalated it as blocking a clinical decision after
+Worked case, mycare project (2026-09-18/19): issue #008 said a source
+report was "missing" and escalated it as blocking a decision after
 five months open. The report had been sitting on disk the whole time, in a
 dated subfolder nobody had checked — the project's own CLAUDE.md already
 carried this exact lesson from an earlier incident ("A search of only csv/
