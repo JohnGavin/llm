@@ -1414,10 +1414,19 @@ if (nrow(cron_health) > 0L) {
   #     from every other run in the 7 days before this one. Matching is
   #     tuple-based, not count-based, because the job alternates 33- and
   #     65-row runs (different scope), so a count delta is meaningless.
-  #   anything else (private_data_history_audit has no per-finding table):
+  #   private_data_history_audit: per-finding identity lives in
+  #     private_data_history_findings (stable fingerprint per finding, written
+  #     by the audit itself). A finding is NEW iff the ledger first recorded
+  #     it during THIS run's window [started_at, ended_at]; the audit's exit 1
+  #     means exactly "at least one new fingerprint". The heartbeat's
+  #     rows_written (= new count) must agree with the ledger, otherwise it is
+  #     a pre-fingerprint run (rows_written was the TOTAL) or a torn write --
+  #     cannot tell, never guessed. Totals are never diffed.
+  #   anything else (no per-finding table):
   #     count-based -- a rise over the previous ok run is at least that many
   #     new rows; flat/falling is no evidence of new rows.
-  # Returns list(n_new = integer or NA, basis = chr). NA == cannot tell.
+  # Returns list(n_new = integer or NA, basis = chr, rows_label = optional chr).
+  # NA == cannot tell.
   assess_new_findings <- function(hb) {
     sq <- function(x) gsub("'", "''", x, fixed = TRUE)
     task <- sq(hb$task); rid <- sq(hb$run_id)
@@ -1459,6 +1468,30 @@ if (nrow(cron_health) > 0L) {
         return(list(n_new = NA_integer_, basis = "findings table unreadable"))
       }
       return(list(n_new = as.integer(nw$n[[1]]), basis = "vs the last 7 days of runs"))
+    }
+    if (identical(hb$task, "private_data_history_audit")) {
+      win <- safe_query(sprintf("
+        SELECT
+          (SELECT count(*) FROM private_data_history_findings f, housekeeping_runs r
+            WHERE r.id = '%s' AND f.first_seen >= r.started_at
+              AND f.first_seen <= COALESCE(r.ended_at, r.started_at + INTERVAL 1 DAY)) AS n_run,
+          (SELECT count(*) FROM private_data_history_findings) AS n_all", rid))
+      if (nrow(win) == 0L) {
+        return(list(n_new = NA_integer_, basis = "per-finding ledger unreadable"))
+      }
+      n_run <- as.integer(win$n_run[[1]])
+      n_all <- as.integer(win$n_all[[1]])
+      if (is.na(n_run) || is.na(n_all)) {
+        return(list(n_new = NA_integer_, basis = "per-finding ledger unreadable"))
+      }
+      if (n_run != n_latest) {
+        return(list(n_new = NA_integer_,
+                    basis = sprintf("heartbeat says %d new but the per-finding ledger shows %d first seen in that run (pre-fingerprint run?)",
+                                    n_latest, n_run)))
+      }
+      return(list(n_new = n_run,
+                  basis = "per-finding fingerprints; known and acknowledged excluded",
+                  rows_label = sprintf("%d tracked finding(s)", n_all)))
     }
     prev <- safe_query(sprintf("
       SELECT rows_written FROM housekeeping_runs
@@ -1557,13 +1590,13 @@ if (nrow(cron_health) > 0L) {
       ec_says_fail     <- length(ec) == 1L && !is.na(ec) && ec != 0L && ec != 1L
 
       if (hb_bucket == "ok" && ec_says_findings) {
-        ok_label <- sprintf("%d finding row(s)",
-                            if (is.na(hb$rows_written)) 0L else as.integer(hb$rows_written))
         conv <-"exit 1 = findings, per exit-code-conventions"
         # Ran cleanly, found rows. Whether that is "ok" depends on whether
         # the rows are new (checks-must-distinguish-unknown: ok / action /
         # cannot tell).
         nf <- assess_new_findings(hb)
+        ok_label <- nf$rows_label %||% sprintf("%d finding row(s)",
+                            if (is.na(hb$rows_written)) 0L else as.integer(hb$rows_written))
         if (is.na(nf$n_new)) {
           return(list(
             bucket = "indeterminate", display_state = "loaded (exit 1 = findings)",

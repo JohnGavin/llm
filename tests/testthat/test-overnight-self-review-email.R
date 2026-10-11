@@ -476,7 +476,8 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
 #' prev = same) written to secret_scan_findings for 'fixture-hk' /
 #' 'fixture-hk-prev'.
 #' @return path to the scratch DB, or NULL if prerequisites are unavailable.
-.build_cron_fixture_db <- function(hk_row, ev_row, prev_hk_row = NULL, findings = NULL) {
+.build_cron_fixture_db <- function(hk_row, ev_row, prev_hk_row = NULL, findings = NULL,
+                                   hist = NULL) {
   if (!file.exists(.real_db)) return(NULL)
   if (!requireNamespace("DBI", quietly = TRUE)) return(NULL)
   if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
@@ -536,6 +537,30 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
         DBI::dbQuoteString(con, f$file_path[[i]]), DBI::dbQuoteString(con, f$line_num[[i]]),
         DBI::dbQuoteString(con, f$name[[i]])))
     }
+  }
+
+  # hist = list(n_run =, n_old =): synthetic rows in the per-finding ledger
+  # private_data_history_findings -- n_run rows first seen during the latest
+  # run's window, n_old rows first seen 2 days earlier (standing). The table
+  # is created from the REAL schema file so the DDL under test is the shipped
+  # one; paths are invented.
+  if (!is.null(hist)) {
+    schema <- readLines(file.path(pkgload::pkg_path(), ".claude", "scripts",
+                                  "housekeeping_schema_init.sql"))
+    s <- grep("^CREATE TABLE IF NOT EXISTS private_data_history_findings", schema)
+    e <- s + which(grepl("^\\);", schema[s:length(schema)]))[[1]] - 1L
+    DBI::dbExecute(con, paste(schema[s:e], collapse = "\n"))
+    old_utc <- format(Sys.time() - 2 * 86400, "%Y-%m-%d %H:%M:%S", tz = "UTC")
+    ins <- function(i, at) DBI::dbExecute(con, sprintf(
+      "INSERT INTO private_data_history_findings
+         (fingerprint, repo, rule, src, severity, commit_sha, path, line_num, first_seen, last_seen, status)
+       VALUES ('fp-%s-%d', 'synthetic/repo', 'uk-postcode', 'generic', 'high', 'aaaaaaaaaaaa',
+               'synthetic/path-%d.txt', '1', TIMESTAMPTZ '%s', TIMESTAMPTZ '%s', 'known')",
+      at, i, i, if (at == "run") now_utc else old_utc, if (at == "run") now_utc else old_utc))
+    n_run <- if (is.null(hist$n_run)) 0L else hist$n_run
+    n_old <- if (is.null(hist$n_old)) 0L else hist$n_old
+    for (i in seq_len(n_run)) ins(i, "run")
+    for (i in seq_len(n_old)) ins(i, "old")
   }
 
   DBI::dbExecute(con, sprintf(
@@ -830,6 +855,74 @@ test_that("cron-health: count-based scanner (no findings table) flags a rising c
   combined <- paste(run_dry_run(db_path = db), collapse = "\n")
 
   expect_true(grepl("2 new finding(s) need triage", combined, fixed = TRUE))
+})
+
+.HISTORY_AUDIT_PLIST <- file.path(
+  path.expand("~"), "Library", "LaunchAgents", "com.claude.private-data-history-audit.plist"
+)
+
+test_that("cron-health: history audit reads NEW from the per-finding ledger, not from a count diff", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.HISTORY_AUDIT_PLIST), "private-data-history-audit plist not installed")
+
+  # 700 standing + 2 first seen in the latest run; heartbeat rows_written is
+  # the NEW count (2). The previous heartbeat carries a different total (764)
+  # that the old count-based path would have diffed -- it must be irrelevant.
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "ok", rows_written = 2L),
+    ev_row = list(plist_label = "com.claude.private-data-history-audit", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    prev_hk_row = list(task = "private_data_history_audit", status = "ok", rows_written = 764L),
+    hist = list(n_run = 2L, n_old = 30L)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("2 new finding(s) need triage", combined, fixed = TRUE))
+  expect_true(grepl("32 tracked finding(s)", combined, fixed = TRUE))
+  expect_false(grepl("count-based", combined, fixed = TRUE),
+               info = "history audit still fell through to the count-diff path")
+  expect_false(grepl("no per-finding table", combined, fixed = TRUE))
+})
+
+test_that("cron-health: history audit with a heartbeat the ledger contradicts is indeterminate", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.HISTORY_AUDIT_PLIST), "private-data-history-audit plist not installed")
+
+  # Pre-fingerprint run: rows_written was the TOTAL (768); the ledger shows
+  # nothing first seen in that run. Never guessed as "768 new".
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "ok", rows_written = 768L),
+    ev_row = list(plist_label = "com.claude.private-data-history-audit", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    hist = list(n_run = 0L, n_old = 5L)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("cannot tell new from known", combined, fixed = TRUE))
+  expect_false(grepl("768 new finding", combined, fixed = TRUE))
+})
+
+test_that("cron-health: history audit exit 3 with heartbeat 'partial' renders indeterminate, never findings", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.HISTORY_AUDIT_PLIST), "private-data-history-audit plist not installed")
+
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "partial", rows_written = 0L),
+    ev_row = list(plist_label = "com.claude.private-data-history-audit", state = "loaded_recent_fail",
+                   last_exit_code = 3L, last_fired_at_now = TRUE),
+    hist = list(n_run = 0L, n_old = 5L)
+  )
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+
+  expect_true(grepl("1 indeterminate", combined, fixed = TRUE))
+  expect_false(grepl("need triage (of", combined, fixed = TRUE),
+               info = "an INDETERMINATE audit was rendered as findings needing triage")
 })
 
 # ── Lessons-captured section ─────────────────────────────────────────────────
