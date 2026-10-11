@@ -917,3 +917,49 @@ test_that("the all-clear box states what it did NOT check, and never claims 'not
                  info = "All-clear box still claims conversations are not inspected")
   }
 })
+
+# ── Header scope paragraph is derived from what was actually inspected ────────
+# The header used to say the report "does not inspect ... anything said in a
+# conversation" after llm#235 steps 1-2 made that false. It is now derived from
+# the same conv_checked / roborev_checked flags as the verdict box.
+
+test_that("header scope states what was inspected and never the stale 'does not inspect' sentence", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+
+  combined <- paste(run_dry_run(), collapse = "\n")
+
+  expect_false(grepl("anything said in a conversation", combined, fixed = TRUE),
+               info = "Header still carries the stale scope sentence")
+  expect_false(grepl("session-telemetry patterns only", combined, fixed = TRUE),
+               info = "Header still claims telemetry-only scope")
+  expect_true(grepl("Still <b>not</b> inspected: a semantic reading of conversations",
+                    combined, fixed = TRUE),
+              info = "Header omitted the not-inspected disclaimer")
+  expect_true(grepl("llm#235 steps 3-5", combined, fixed = TRUE))
+  # llm#1241 caveat is kept.
+  expect_true(grepl("not evidence that nothing needs changing", combined, fixed = TRUE))
+})
+
+test_that("header does not claim conversation/roborev inspection when those sources are unavailable", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
+
+  nowhere <- file.path(tempdir(), "does-not-exist")
+  combined <- paste(
+    run_dry_run(extra_env = c(paste0("CODEX_LEARNING_DIR=", nowhere),
+                              paste0("ROBOREV_DB=", file.path(nowhere, "reviews.db")))),
+    collapse = "\n"
+  )
+
+  expect_true(grepl("Unavailable today, so not inspected:</b> conversation signals, roborev code findings",
+                    combined, fixed = TRUE),
+              info = "Header did not list the unavailable content sections")
+  expect_false(grepl("repeated user corrections and repeated command failures",
+                     combined, fixed = TRUE),
+               info = "Header claims transcripts were inspected though the digest was unavailable")
+  expect_false(grepl("open roborev code findings from the last 24h", combined, fixed = TRUE),
+               info = "Header claims roborev was inspected though its DB was unavailable")
+})

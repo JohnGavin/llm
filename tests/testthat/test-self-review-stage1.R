@@ -579,3 +579,123 @@ test_that("marathon_session: reaper-estimate sessions stay excluded", {
   rows <- marathon_rows()
   expect_false("m-reaper" %in% names(rows))
 })
+
+# ── Detector 6: parallel_session_sprawl counts ACTIVE, non-synthetic sessions ─
+# 2026-10-11 self-review: day 2026-10-09 was flagged 'major' at peak 7 because 6
+# `cc-sandbox-probe-*` sessions (reaper-estimated 2h) and one 72h idle session
+# were counted as concurrent. Fixtures sit on the 4 / 7 thresholds.
+#   2026-02-01  6 probe sessions + 1 real            -> NOT flagged
+#   2026-02-02  72h idle session + 3 active          -> peak 3, NOT flagged
+#   2026-02-03  7 genuinely active overlapping       -> major, hook_events
+#   2026-02-10  7 sessions with NO hook data         -> info only, wall_clock
+#   2026-02-11  6 genuinely active overlapping       -> info, hook_events
+
+sprawl_setup_sql <- "
+CREATE TABLE agent_runs (id INTEGER, session_id VARCHAR, agent_type VARCHAR, model VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, duration_sec DOUBLE, prompt_preview VARCHAR, status VARCHAR, tool_use_id VARCHAR, backfilled BOOLEAN);
+CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
+CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
+
+-- 02-01: six probes, 1 minute apart, each ended_at = started_at + exactly 2h.
+INSERT INTO sessions
+  SELECT 'probe-' || i, 'cc-sandbox-probe-5e25b699',
+         TIMESTAMP '2026-02-01 10:00:00' + i * INTERVAL '1' MINUTE,
+         TIMESTAMP '2026-02-01 12:00:00' + i * INTERVAL '1' MINUTE,
+         'x', 'reaper: ended_at is an ESTIMATE'
+  FROM range(0, 6) t(i);
+INSERT INTO sessions VALUES
+  ('real-1', 'p', TIMESTAMP '2026-02-01 10:30:00', TIMESTAMP '2026-02-01 11:30:00', 'x', NULL);
+
+-- 02-02: a 72h wall-clock session whose only hook activity is on 02-04, plus
+-- three genuinely active sessions (hook event every 10 min, 10:00-12:00).
+INSERT INTO sessions VALUES
+  ('idle72', 'tennis', TIMESTAMP '2026-02-02 00:00:00', TIMESTAMP '2026-02-05 00:00:00', 'x', NULL);
+INSERT INTO hook_events
+  SELECT 1, 'idle72', 'h', 'e', TIMESTAMP '2026-02-04 09:00:00' + i * INTERVAL '10' MINUTE, 1, '' FROM range(0, 4) t(i);
+INSERT INTO sessions
+  SELECT 'act02-' || i, 'p', TIMESTAMP '2026-02-02 10:00:00', TIMESTAMP '2026-02-02 12:00:00', 'x', NULL
+  FROM range(0, 3) t(i);
+INSERT INTO hook_events
+  SELECT 1, 'act02-' || i, 'h', 'e', TIMESTAMP '2026-02-02 10:00:00' + j * INTERVAL '10' MINUTE, 1, ''
+  FROM range(0, 3) a(i), range(0, 13) b(j);
+
+-- 02-03: seven genuinely active overlapping sessions.
+INSERT INTO sessions
+  SELECT 'act03-' || i, 'p', TIMESTAMP '2026-02-03 10:00:00', TIMESTAMP '2026-02-03 12:00:00', 'x', NULL
+  FROM range(0, 7) t(i);
+INSERT INTO hook_events
+  SELECT 1, 'act03-' || i, 'h', 'e', TIMESTAMP '2026-02-03 10:00:00' + j * INTERVAL '10' MINUTE, 1, ''
+  FROM range(0, 7) a(i), range(0, 13) b(j);
+
+-- 02-10: seven sessions with NO hook data -> wall-clock fallback, indeterminate.
+INSERT INTO sessions
+  SELECT 'nohook-' || i, 'p', TIMESTAMP '2026-02-10 10:00:00', TIMESTAMP '2026-02-10 12:00:00', 'x', NULL
+  FROM range(0, 7) t(i);
+
+-- 02-11: six genuinely active overlapping sessions (one short of major).
+INSERT INTO sessions
+  SELECT 'act11-' || i, 'p', TIMESTAMP '2026-02-11 10:00:00', TIMESTAMP '2026-02-11 12:00:00', 'x', NULL
+  FROM range(0, 6) t(i);
+INSERT INTO hook_events
+  SELECT 1, 'act11-' || i, 'h', 'e', TIMESTAMP '2026-02-11 10:00:00' + j * INTERVAL '10' MINUTE, 1, ''
+  FROM range(0, 6) a(i), range(0, 13) b(j);
+"
+
+sprawl_post_sql <- "
+SELECT 'ROW|' || (evidence->>'$.day') || '|' || severity || '|' ||
+       COALESCE(evidence->>'$.concurrency_source', 'NONE') || '|' ||
+       (evidence->>'$.peak_concurrent') || '|' AS r
+FROM self_review_findings_stage1 WHERE finding_type = 'parallel_session_sprawl';
+"
+
+sprawl_rows <- function() {
+  out <- run_sql(sprawl_setup_sql, sql_file(), sprawl_post_sql)
+  expect_false(is.null(out), label = "duckdb returned NULL")
+  txt <- unlist(regmatches(out, gregexpr("ROW\\|[^│]*\\|", out)))
+  txt <- trimws(txt)
+  parts <- strsplit(txt, "|", fixed = TRUE)
+  stats::setNames(parts, vapply(parts, `[`, "", 2L))
+}
+
+test_that("parallel_session_sprawl: 6 cc-sandbox-probe-* sessions + 1 real is NOT flagged", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- sprawl_rows()
+  expect_false("2026-02-01" %in% names(rows))
+})
+
+test_that("parallel_session_sprawl: a 72h idle session does not count as concurrent (peak 3, not 4)", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- sprawl_rows()
+  expect_false("2026-02-02" %in% names(rows))
+})
+
+test_that("parallel_session_sprawl: 7 genuinely active overlapping sessions -> major, measured from hook_events", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- sprawl_rows()
+  expect_true("2026-02-03" %in% names(rows))
+  expect_equal(rows[["2026-02-03"]][3], "major")
+  expect_equal(rows[["2026-02-03"]][4], "hook_events")
+  expect_equal(rows[["2026-02-03"]][5], "7")
+})
+
+test_that("parallel_session_sprawl: 6 active -> info (one below the major threshold)", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- sprawl_rows()
+  expect_equal(rows[["2026-02-11"]][3], "info")
+  expect_equal(rows[["2026-02-11"]][4], "hook_events")
+})
+
+test_that("parallel_session_sprawl: sessions with no hook data fall back to wall-clock but are capped at info", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- sprawl_rows()
+  expect_true("2026-02-10" %in% names(rows))
+  expect_equal(rows[["2026-02-10"]][3], "info")
+  expect_equal(rows[["2026-02-10"]][4], "wall_clock")
+})
+
+test_that("synthetic-project pattern is defined once in the SQL and used by every detector", {
+  sql <- paste(readLines(sql_file(), warn = FALSE), collapse = "\n")
+  expect_equal(lengths(regmatches(sql, gregexpr("cc-sandbox-probe-%", sql, fixed = TRUE))), 1L)
+  expect_false(grepl("project NOT IN ('ClaudeProbe')", sql, fixed = TRUE))
+  expect_false(grepl("project = 'ClaudeProbe')", sql, fixed = TRUE))
+})
