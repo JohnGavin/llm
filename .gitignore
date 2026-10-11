@@ -93,8 +93,6 @@ proj/finance/data/data symlink
 proj/inst/qmd/pins_download_local_board.qmd symlink
 proj/inst/qmd/rix.qmd symlink
 proj/inst/qmd/usethis_targets.qmd symlink
-proj/medicine/survival symlink
-proj/medicine/survival/survival_time-to-event analysis.md symlink
 proj/stats/ideas/ROC_brierScore symlink
 proj/stats/ideas/ROC_brierScore/PerformanceCurves_db.md symlink
 proj/stats/ideas/ROC_brierScore/survival_time-to-event analysis.md symlink
