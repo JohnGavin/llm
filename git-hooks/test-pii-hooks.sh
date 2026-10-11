@@ -24,6 +24,11 @@ export HOME="$WORK/home"; mkdir -p "$HOME"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export UNIFIED_DB_PATH="$WORK/none.duckdb"
 export PRIVATE_VALUES_FILE="$WORK/pv.env"
+# private-term rule (llm#1388) fails closed in a public repo without a fresh
+# term list; every repo here has unknown visibility (= public), so supply one
+# with synthetic content only. The canary is built from two literals.
+export PRIVATE_TERMS_FILE="$WORK/pt.txt"
+printf '# private_terms v1 generated=%s count=1\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "zzcanary""privterm7q" > "$PRIVATE_TERMS_FILE"
 SENTINEL="SELFTEST_1365_SENTINEL_q9Zr4mXk"
 printf 'MY_SENTINEL=%s\n' "$SENTINEL" > "$PRIVATE_VALUES_FILE"; chmod 600 "$PRIVATE_VALUES_FILE"
 SCAN_LOG="$HOME/.claude/logs/private_data_scan.log"
