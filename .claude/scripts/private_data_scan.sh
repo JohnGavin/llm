@@ -170,6 +170,13 @@
 # in a truncated scan is NOT proof of a clean history/range; re-run without
 # --max-commits (or with a higher value) for a determinate result.
 #
+# NOTE on exit 1: it is OVERLOADED by design. Pre-commit/pre-push/CI treat any
+# non-zero as "block", so a fail-closed internal error (missing deny-list,
+# failed self-check) also exits 1. A caller that must tell "findings" from
+# "scanner broke" (private_data_history_audit.sh) uses --tsv and requires the
+# 'private-data-scan: N finding(s)' summary line: exit 1 WITHOUT it is an
+# error, not a finding.
+#
 # Log: ~/.claude/logs/private_data_scan.log (one line per invocation summary).
 # Housekeeping heartbeat: writes housekeeping_runs (task='private_data_scan')
 # and private_data_scan_findings, same batched-write pattern as
@@ -267,6 +274,7 @@ RE_E164_FICTIONAL='^\+1[0-9]{3}55501[0-9]{2}$|^\+1555[0-9]{7}$|^\+447700900[0-9]
 # ---------------------------------------------------------------------------
 MODE=""
 JSON=0
+TSV=0
 QUIET=0
 REQUIRE_DENYLIST=1
 MAX_COMMITS=2000
@@ -302,7 +310,10 @@ Usage: private_data_scan.sh MODE [options]
                                exit 3/INDETERMINATE rather than 0)
   --content-stdin <label>     Scan stdin content (used by editor-time hooks)
   --selftest                  Run the fixture-based self-test suite
-Options: --require-denylist (default) | --no-denylist, --json, --quiet
+Options: --require-denylist (default) | --no-denylist, --json, --quiet,
+         --tsv (machine-readable: after the summary line, one
+         'FINDING<TAB>src<TAB>sev<TAB>loc<TAB>line<TAB>rule<TAB>note' row per
+         finding; used by private_data_history_audit.sh)
 EOF
 }
 
@@ -321,6 +332,7 @@ while [ $# -gt 0 ]; do
         --require-denylist) REQUIRE_DENYLIST=1; shift ;;
         --no-denylist) REQUIRE_DENYLIST=0; shift ;;
         --json) JSON=1; shift ;;
+        --tsv) TSV=1; shift ;;
         --quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "private_data_scan: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -635,6 +647,27 @@ scan_generic() {
     done
 }
 
+# Binary blobs: skip GENERIC shape rules only (never the deny-list).
+# uk-postcode / e164-phone / iban are regexes over text shapes. Run over
+# compressed or serialised binary (R .rds/.rdb, fonts, images, archives,
+# minified bundles) they fire thousands of times on byte coincidences (a
+# 2026-10 full-history audit had ~2,700 uk-postcode hits in .rds files alone),
+# burying real findings. Extension-based on purpose: a content sniff (NUL
+# byte) would also skip text with a stray NUL, which the llm#1160 selftests
+# require to still be scanned. PDF is deliberately NOT in this list: this
+# scanner cannot extract text from a PDF, but a PDF can carry readable PII in
+# uncompressed text objects, so it stays a scanned type (accepted: some PDF
+# noise remains).
+is_generic_skip_blob() {
+    local lc
+    lc="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    case "$lc" in
+        *.rds|*.rda|*.rdata|*.rdb|*.rdx|*.woff|*.woff2|*.ttf|*.otf|*.eot) return 0 ;;
+        *.png|*.jpg|*.jpeg|*.gif|*.webp|*.ico|*.zip|*.gz|*.min.js) return 0 ;;
+    esac
+    return 1
+}
+
 # scan_blob LOCATION < content-on-stdin
 scan_blob() {
     local loc="$1" content
@@ -649,6 +682,12 @@ scan_blob() {
     # Deny-list is UNCONDITIONAL -- always runs, even for a self-reference
     # exempt file. See "Self-reference exemption" above.
     printf '%s' "$content" | scan_denylist "$loc"
+    # Generic SHAPE rules are meaningless on binary content -- skip them for
+    # known-binary types. The deny-list above has ALREADY run on every blob
+    # regardless of type: an exact real value can sit in a binary.
+    if is_generic_skip_blob "$loc"; then
+        return 0
+    fi
     if is_self_reference_exempt "$loc"; then
         return 0
     fi
@@ -937,6 +976,12 @@ print_report() {
         return 0
     fi
     echo "private-data-scan: $total finding(s)"
+    if [ "$TSV" -eq 1 ]; then
+        # Raw rows for programmatic consumers; same fields as the human
+        # lines (never the matched value).
+        awk -F'\t' 'BEGIN{OFS="\t"} {print "FINDING",$1,$2,$3,$4,$5,$6}' "$FINDINGS_FILE"
+        return 0
+    fi
     while IFS=$'\t' read -r src sev loc lnum rule note; do
         printf '  [%s] src=%s %s:%s %s -- %s\n' "$sev" "$src" "$loc" "$lnum" "$rule" "$note"
     done < "$FINDINGS_FILE"
@@ -1372,6 +1417,66 @@ run_selftest() {
     _check "$([ "$rc" -eq 3 ] && echo 0 || echo 1)" \
         "llm#1204 end-to-end: truncated + clean --range exits 3 (INDETERMINATE), not 0"
     rm -f "$e2e4"
+
+    # ── Binary-blob skip (generic rules only) + --tsv + exact exit codes ───
+    # Same content, two locations: generic shape rules must fire on the text
+    # path and be SKIPPED on a binary-typed path.
+    local bin_text='postcode SW1A 1AA and reach +14155552671 here'
+    local bin_ext
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_bin0.XXXXXX")"
+    printf '%s\n' "$bin_text" | scan_blob "R/notes.txt"
+    _check "$([ "$(awk -F'\t' '$1=="generic"' "$FINDINGS_FILE" | grep -c .)" -ge 2 ] && echo 0 || echo 1)" \
+        "binary skip control: generic rules DO fire on a text path"
+    rm -f "$FINDINGS_FILE"
+    for bin_ext in rds rdb rdx woff woff2 ttf png jpg jpeg gif zip gz min.js; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_bin1.XXXXXX")"
+        printf '%s\n' "$bin_text" | scan_blob "abc123456789:data/blob.$bin_ext"
+        _check "$([ "$(wc -l < "$FINDINGS_FILE" | tr -d ' ')" -eq 0 ] && echo 0 || echo 1)" \
+            "binary skip: generic rules skipped for '.$bin_ext'"
+        rm -f "$FINDINGS_FILE"
+    done
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_bin2.XXXXXX")"
+    printf '%s\n' "$bin_text" | scan_blob "abc123456789:docs/letter.pdf"
+    _check "$([ "$(awk -F'\t' '$1=="generic"' "$FINDINGS_FILE" | grep -c .)" -ge 2 ] && echo 0 || echo 1)" \
+        "binary skip: .pdf is NOT skipped (PDFs can hold readable PII; documented gap)"
+    rm -f "$FINDINGS_FILE"
+    # The deny-list must STILL fire on every binary type.
+    # NB: no EXAMPLE/FAKE/DUMMY/TEST/FIXTURE word in the sentinel -- that
+    # would exempt the whole line from the generic rules and make the
+    # "generic stays skipped" half of the assertion vacuous.
+    local bin_sentinel="BINSENT_w5Lq8z_denyprobe"
+    local saved_denylist_bin=("${DENYLIST_VALUES[@]}")
+    DENYLIST_VALUES=("$bin_sentinel")
+    for bin_ext in rds woff2 png min.js; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_bin3.XXXXXX")"
+        printf 'binaryish %s %s\n' "$bin_sentinel" "$bin_text" | scan_blob "abc123456789:data/blob.$bin_ext"
+        _check "$([ "$(awk -F'\t' '$1=="denylist"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && [ "$(awk -F'\t' '$1=="generic"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" \
+            "binary skip: deny-list still fires on '.$bin_ext' while generic rules stay skipped"
+        rm -f "$FINDINGS_FILE"
+    done
+    DENYLIST_VALUES=("${saved_denylist_bin[@]}")
+
+    # --tsv end-to-end on the temp repo built above (3 commits; "add leak"
+    # holds generic findings). Asserts the machine-readable contract the
+    # history-audit wrapper depends on, and exact exit codes 1 / 2.
+    local tsv_out; tsv_out="$(mktemp "${TMPDIR:-/tmp}/pds_tsv.XXXXXX")"
+    ( REPO_ROOT="$tmp/repo" bash "$0" --full-history --no-denylist --tsv >"$tsv_out" 2>/dev/null )
+    rc=$?
+    _check "$([ "$rc" -eq 1 ] && echo 0 || echo 1)" "--tsv --full-history with findings exits exactly 1 (rc=$rc)"
+    local tsv_n tsv_hdr
+    tsv_hdr="$("$GREP" -oE '^private-data-scan: [0-9]+ finding' "$tsv_out" | "$GREP" -oE '[0-9]+')"
+    tsv_n="$("$GREP" -c "^FINDING$(printf '\t')" "$tsv_out")"
+    _check "$([ -n "$tsv_hdr" ] && [ "$tsv_hdr" -eq "$tsv_n" ] && [ "$tsv_n" -ge 3 ] && echo 0 || echo 1)" \
+        "--tsv: FINDING row count ($tsv_n) equals the summary-line count ($tsv_hdr)"
+    _check "$([ "$("$GREP" -c "^FINDING$(printf '\t')generic$(printf '\t')" "$tsv_out")" -eq "$tsv_n" ] && echo 0 || echo 1)" \
+        "--tsv: rows carry the source column"
+    rm -f "$tsv_out"
+    ( bash "$0" --no-such-flag >/dev/null 2>&1 )
+    rc=$?
+    _check "$([ "$rc" -eq 2 ] && echo 0 || echo 1)" "unknown argument exits exactly 2 (rc=$rc)"
+    ( bash "$0" >/dev/null 2>&1 )
+    rc=$?
+    _check "$([ "$rc" -eq 2 ] && echo 0 || echo 1)" "no mode exits exactly 2 (rc=$rc)"
 
     rm -rf "$tmp"
 

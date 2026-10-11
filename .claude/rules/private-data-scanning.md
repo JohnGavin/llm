@@ -79,6 +79,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude.private-data-
 
 Self-test: `bash .claude/scripts/private_data_history_audit.sh --selftest`. Manual run: `bash .claude/scripts/private_data_history_audit.sh` (requires `~/.config/private_values.env` — fails closed otherwise, same as every other local invocation).
 
+### Per-finding baseline (new vs known)
+
+Full history holds hundreds of long-standing findings, so the audit tracks each one by a value-free fingerprint (`sha256(repo|rule|src|<sha12>:<path>|line)`) in the local-only table `private_data_history_findings` (`unified.duckdb`; apply with `housekeeping_schema_apply.sh`). Only **new** fingerprints alert; known ones are summarised by `(rule, src, count)`.
+
+| Exit | Meaning |
+|---|---|
+| 0 | ran; no NEW finding (known/acknowledged may exist; the log line says how many) |
+| 1 | ran; at least one NEW finding |
+| 2 | usage error (bad flag, `--ack` matching nothing or malformed) |
+| 3 | INDETERMINATE: scanner missing/crashed/truncated, DB or table unusable, or no baseline yet |
+
+One-time seed after deploy: `bash .claude/scripts/private_data_history_audit.sh --baseline` (marks every current finding `known`). Triage a reported finding with `--ack <fingerprint-prefix>` or `--ack-file <file>`. `private_data_scan.sh` itself still exits 1 for both findings and fail-closed errors (hooks block on any non-zero); the audit wrapper tells them apart by requiring the scanner's `N finding(s)` summary line. Generic shape rules are skipped for known-binary blobs (`.rds`, fonts, images, archives, `*.min.js`); the deny-list still runs on every blob, and PDFs stay scanned.
+
 ## Remediation when the audit finds something
 
 `private_data_scan.sh` and `private_data_history_audit.sh` never auto-remediate — there is no safe machine fix for PII already published. Follow [`repo-visibility-gate`](repo-visibility-gate.md)'s "The audit itself" section: read the flagged history, then orphan-squash / `git filter-repo` / accept-and-keep-private, and remember author/committer emails publish regardless of file content.
