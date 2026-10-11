@@ -75,14 +75,14 @@ duckdb_cmd <- function() {
 # Run setup SQL then the detector SQL against a FRESH in-memory DuckDB.
 # Each call gets an independent temp file so CREATE TABLE never conflicts.
 # setup_sql is prepended to the detector SQL file contents.
-run_sql <- function(setup_sql, detector_sql_file) {
+run_sql <- function(setup_sql, detector_sql_file, post_sql = character(0)) {
   dc <- duckdb_cmd()
   if (dc$type == "none") return(NULL)
 
   detector_lines <- readLines(detector_sql_file, warn = FALSE)
   # The detector SQL starts with CREATE TABLE IF NOT EXISTS self_review_findings_stage1.
   # The setup_sql provides the source tables (agent_runs, hook_events, etc.).
-  combined_sql <- paste(c(setup_sql, "", detector_lines), collapse = "\n")
+  combined_sql <- paste(c(setup_sql, "", detector_lines, "", post_sql), collapse = "\n")
 
   tmp_sql <- tempfile("stage1_test_", fileext = ".sql")
   writeLines(combined_sql, tmp_sql)
@@ -470,4 +470,112 @@ test_that("self_review_stage1.sql stuck_loop detector filters on status='running
     grepl("ended_at\\s+IS\\s+NULL", sql_text, ignore.case = TRUE),
     info = "stuck_loop detector does not check ended_at IS NULL — fix (#269) may be missing"
   )
+})
+
+# ── Detector 8: marathon_session measures ACTIVE time, not wall-clock ─────────
+# llm#TBD. A session left open and resumed days later spans >=8h of wall-clock
+# without being a marathon. Three outcomes: hook data + active>=8h -> flag;
+# hook data + active<8h -> no flag; no hook data -> indeterminate, flag at most
+# 'info'. Fixture timestamps sit ON the 8h / 14h boundaries and the 30-minute
+# idle-gap cutoff (fixtures-hide-boundary-drift).
+
+marathon_setup_sql <- "
+CREATE TABLE agent_runs (id INTEGER, session_id VARCHAR, agent_type VARCHAR, model VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, duration_sec DOUBLE, prompt_preview VARCHAR, status VARCHAR, tool_use_id VARCHAR, backfilled BOOLEAN);
+CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
+CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
+
+INSERT INTO sessions VALUES
+  ('m-idle',    'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-06 00:00:00', 'x', NULL),
+  ('m-8h',      'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 20:00:00', 'x', NULL),
+  ('m-1399h',   'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 20:00:00', 'x', NULL),
+  ('m-14h',     'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 20:00:00', 'x', NULL),
+  ('m-nohook',  'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 20:00:00', 'x', NULL),
+  ('m-reaper',  'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 20:00:00', 'x', 'reaper: ended_at is an ESTIMATE'),
+  ('m-gap30',   'p', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 20:00:00', 'x', NULL);
+
+-- m-idle: 120h wall-clock; 4h active (12 gaps x 20 min), then a 2-day
+-- silence, then two events 20 min apart after resuming: active = 4h + 20min
+-- = 4.33h, still < 8h.
+INSERT INTO hook_events
+  SELECT 1, 'm-idle', 'h', 'e', TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '20' MINUTE, 1, '' FROM range(0, 13) t(i);
+INSERT INTO hook_events VALUES (1, 'm-idle', 'h', 'e', TIMESTAMP '2026-01-04 00:00:00', 1, '');
+INSERT INTO hook_events VALUES (1, 'm-idle', 'h', 'e', TIMESTAMP '2026-01-04 00:20:00', 1, '');
+
+-- m-8h: exactly 8h active (24 gaps x 20 min = 480 min).
+INSERT INTO hook_events
+  SELECT 1, 'm-8h', 'h', 'e', TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '20' MINUTE, 1, '' FROM range(0, 25) t(i);
+
+-- m-1399h: 13.99h active = 41 x 20min (49200s) + a last gap of 1164s = 50364s.
+INSERT INTO hook_events
+  SELECT 1, 'm-1399h', 'h', 'e', TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '20' MINUTE, 1, '' FROM range(0, 42) t(i);
+INSERT INTO hook_events VALUES (1, 'm-1399h', 'h', 'e', TIMESTAMP '2026-01-01 00:00:00' + INTERVAL '50364' SECOND, 1, '');
+
+-- m-14h: exactly 14h active = 42 x 20min.
+INSERT INTO hook_events
+  SELECT 1, 'm-14h', 'h', 'e', TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '20' MINUTE, 1, '' FROM range(0, 43) t(i);
+
+-- m-gap30: events every EXACTLY 30 minutes for 20h. A gap of 30 minutes is
+-- NOT < 30 minutes, so none count: active = 0h -> no finding.
+INSERT INTO hook_events
+  SELECT 1, 'm-gap30', 'h', 'e', TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '30' MINUTE, 1, '' FROM range(0, 41) t(i);
+"
+
+marathon_post_sql <- "
+SELECT 'ROW|' || session_id || '|' || severity || '|' ||
+       COALESCE(evidence->>'$.active_time_source', '') || '|' ||
+       COALESCE(evidence->>'$.active_hours', 'NULL') || '|' ||
+       COALESCE(evidence->>'$.wall_clock_hours', 'NULL') || '|' ||
+       COALESCE(evidence->>'$.idle_gap_threshold', 'NULL') || '|' AS r
+FROM self_review_findings_stage1 WHERE finding_type = 'marathon_session';
+"
+
+marathon_rows <- function() {
+  out <- run_sql(marathon_setup_sql, sql_file(), marathon_post_sql)
+  expect_false(is.null(out), label = "duckdb returned NULL")
+  txt <- unlist(regmatches(out, gregexpr("ROW\\|[^│]*\\|", out)))
+  txt <- trimws(txt)
+  parts <- strsplit(txt, "|", fixed = TRUE)
+  stats::setNames(parts, vapply(parts, `[`, "", 2L))
+}
+
+test_that("marathon_session: idle-resumed session (120h wall-clock, ~4h active) is NOT flagged", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- marathon_rows()
+  expect_false("m-idle" %in% names(rows))
+})
+
+test_that("marathon_session: active exactly 8h -> info; 13.99h -> info; exactly 14h -> major", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- marathon_rows()
+  expect_equal(rows[["m-8h"]][3], "info")
+  expect_equal(rows[["m-1399h"]][3], "info")
+  expect_equal(rows[["m-14h"]][3], "major")
+  expect_equal(rows[["m-8h"]][4], "hook_events")
+  expect_equal(as.numeric(rows[["m-8h"]][5]), 8)
+  expect_equal(as.numeric(rows[["m-14h"]][5]), 14)
+  expect_equal(as.numeric(rows[["m-1399h"]][5]), 13.99)
+  expect_equal(as.numeric(rows[["m-8h"]][6]), 20)
+  expect_equal(rows[["m-8h"]][7], "30 minutes")
+})
+
+test_that("marathon_session: no hook_events -> indeterminate, flagged at info with unmeasured source", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- marathon_rows()
+  expect_true("m-nohook" %in% names(rows))
+  expect_equal(rows[["m-nohook"]][3], "info")
+  expect_match(rows[["m-nohook"]][4], "unmeasured")
+  expect_equal(rows[["m-nohook"]][5], "NULL")
+})
+
+test_that("marathon_session: gaps of exactly 30 minutes are idle (boundary), session not flagged", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- marathon_rows()
+  expect_false("m-gap30" %in% names(rows))
+})
+
+test_that("marathon_session: reaper-estimate sessions stay excluded", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- marathon_rows()
+  expect_false("m-reaper" %in% names(rows))
 })
