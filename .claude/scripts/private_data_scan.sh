@@ -345,7 +345,11 @@ if [ -z "$MODE" ]; then
 fi
 
 FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan.XXXXXX")"
-trap 'rm -f "$FINDINGS_FILE"' EXIT
+# INDET_FILE: one line per file whose content could NOT be fully inspected
+# (llm#1358: document text could not be extracted). A file, not a variable,
+# because scan_blob runs as the last element of a pipeline (a subshell).
+INDET_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_indet.XXXXXX")"
+trap 'rm -f "$FINDINGS_FILE" "$INDET_FILE"' EXIT
 
 # append_finding SOURCE SEVERITY LOCATION LINE RULE NOTE
 # NOTE must be fixed/generic -- NEVER the matched value. This is the single
@@ -371,7 +375,7 @@ file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null ||
 # credential-assignment lines) -- see header "beside it, not inside it".
 # ---------------------------------------------------------------------------
 looks_like_fixture_context() {
-    printf '%s' "$1" | "$GREP" -qiE 'EXAMPLE|FAKE|DUMMY|TEST|FIXTURE'
+    printf '%s' "$1" | LC_ALL=C "$GREP" -qiE 'EXAMPLE|FAKE|DUMMY|TEST|FIXTURE'
 }
 
 is_e164_fictional() {
@@ -587,7 +591,15 @@ scan_denylist() {
     # what were NUL-adjacent bytes can only ever CREATE additional matches,
     # never hide a real one -- consistent with this script's documented
     # "prefer the false positive" posture (see RE_E164_FICTIONAL above).
-    content="$(tr -d '\000')"
+    #
+    # LC_ALL=C (JohnGavin/llm#1358): under a UTF-8 locale (the macOS default)
+    # `tr` aborts with "Illegal byte sequence" on any blob that is not valid
+    # UTF-8, so the blob read as EMPTY and was never scanned -- the deny-list
+    # exact-match check included. The same applies to the grep calls below
+    # (BSD grep -F silently fails to match a line containing an invalid
+    # byte). Byte filtering and matching are therefore done in the C locale,
+    # where every byte is a character.
+    content="$(LC_ALL=C tr -d '\000')"
     [ -n "$content" ] || return 0
     [ "${#DENYLIST_VALUES[@]}" -gt 0 ] || return 0
     local v lnum
@@ -596,7 +608,7 @@ scan_denylist() {
             [ -n "${lnum:-}" ] || continue
             append_finding "denylist" "critical" "$loc" "$lnum" "known-value" \
                 "exact match against a ~/.config/private_values.env entry (value redacted)"
-        done < <(printf '%s\n' "$content" | "$GREP" -nF -- "$v" 2>/dev/null)
+        done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -nF -- "$v" 2>/dev/null)
     done
 }
 
@@ -608,8 +620,9 @@ scan_generic() {
     local loc="$1" content
     # See scan_denylist's comment above -- same NUL-truncation fix
     # (JohnGavin/llm#1160), applied here for the same reason: this function
-    # also captures its stdin into a bash variable via $(...).
-    content="$(tr -d '\000')"
+    # also captures its stdin into a bash variable via $(...). LC_ALL=C: see
+    # scan_denylist (JohnGavin/llm#1358).
+    content="$(LC_ALL=C tr -d '\000')"
     [ -n "$content" ] || return 0
     local i name pat sev ci lnum line match
     for i in "${!PII_RULE_NAMES[@]}"; do
@@ -620,7 +633,7 @@ scan_generic() {
             [ -n "${lnum:-}" ] || continue
             looks_like_fixture_context "$line" && continue
             if [ "$name" = "e164-phone" ]; then
-                match="$(printf '%s' "$line" | "$GREP" -oE '\+[1-9][0-9]{7,14}' | head -1)"
+                match="$(printf '%s' "$line" | LC_ALL=C "$GREP" -oE '\+[1-9][0-9]{7,14}' | head -1)"
                 [ -n "$match" ] && is_e164_fictional "$match" && continue
             fi
             if [ "$name" = "uk-postcode" ]; then
@@ -638,12 +651,12 @@ scan_generic() {
                     fi
                     pc_exempt_all=0
                     break
-                done < <(printf '%s' "$line" | "$GREP" -ioE -- "$pat")
+                done < <(printf '%s' "$line" | LC_ALL=C "$GREP" -ioE -- "$pat")
                 [ "$pc_exempt_all" -eq 1 ] && continue
             fi
             append_finding "generic" "$sev" "$loc" "$lnum" "$name" \
                 "PII-shaped value detected (value redacted -- rule: $name)"
-        done < <(printf '%s\n' "$content" | "$GREP" $flags -- "$pat" 2>/dev/null)
+        done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" $flags -- "$pat" 2>/dev/null)
     done
 }
 
@@ -668,9 +681,122 @@ is_generic_skip_blob() {
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# Document-format gate and text extraction (JohnGavin/llm#1358)
+# ---------------------------------------------------------------------------
+# Office/PDF/mail documents hold their text in a compressed or container
+# layer, so the byte-level scan below sees none of it: PII inside one is
+# invisible to every layer (pre-commit, pre-push, CI, history audit), and a
+# hit on one is a coincidence of compressed bytes. Two controls close that:
+#
+#   1. A FILE-TYPE GATE. In a PUBLIC repo, a document-format file is a
+#      critical finding unless its exact repo-relative path is on the
+#      allow-list WITH a stated reason (default-permit is fail-open).
+#      Visibility comes from repo_visibility(), which treats UNKNOWN as
+#      public, so the gate fails closed. In --full-history mode the same
+#      condition is reported as its own rule, document-format-in-public-
+#      history: it is what the generic regexes cannot see.
+#   2. TEXT EXTRACTION (pdf only: pdftotext, poppler). The extracted text is
+#      run through the deny-list and the generic rules. When the extractor is
+#      missing, fails, or finds no text layer, the file's content was NOT
+#      inspected: that is recorded in INDET_FILE and the run exits 3
+#      (INDETERMINATE) if it found nothing else -- never clean.
+#
+# Allow-list: $REPO_ROOT/.claude/private_data_document_allowlist.txt (override
+# for tests: PRIVATE_DATA_DOC_ALLOWLIST). One entry per line,
+# "<exact repo-relative path> | <reason>". A line with no reason, or no path,
+# is ignored with a warning, so a bare path allows nothing. The file is read
+# from the working tree, so adding an entry is a reviewable diff.
+DOC_FORMAT_EXTS="pdf docx xlsx doc xls odt rtf eml msg"
+PDFTOTEXT="${PRIVATE_DATA_SCAN_PDFTOTEXT:-pdftotext}"
+DOC_ALLOWLIST_FILE="${PRIVATE_DATA_DOC_ALLOWLIST:-}"
+DOC_ALLOW_PATHS=()
+VIS="public"   # main() sets the real value BEFORE scanning; unknown stays public
+
+doc_extension() {
+    local lc
+    lc="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    [ "${lc##*.}" != "$lc" ] || return 1
+    printf '%s' "${lc##*.}"
+}
+
+is_document_format_path() {
+    local ext e
+    ext="$(doc_extension "$1")" || return 1
+    for e in $DOC_FORMAT_EXTS; do
+        [ "$ext" = "$e" ] && return 0
+    done
+    return 1
+}
+
+# doc_loc_path LOCATION -> repo-relative path (strips "staged:" / "<sha12>:")
+doc_loc_path() {
+    local p="$1"
+    case "$p" in staged:*) p="${p#staged:}" ;; esac
+    if printf '%s' "$p" | LC_ALL=C "$GREP" -qE '^[0-9a-f]{12}:'; then p="${p:13}"; fi
+    printf '%s' "$p"
+}
+
+load_doc_allowlist() {
+    DOC_ALLOW_PATHS=()
+    local f="${DOC_ALLOWLIST_FILE:-${REPO_ROOT}/.claude/private_data_document_allowlist.txt}"
+    [ -r "$f" ] || return 0
+    local line p r
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in ''|'#'*) continue ;; esac
+        case "$line" in
+            *" | "*) p="${line%% | *}"; r="${line#* | }" ;;
+            *) echo "WARNING: ignoring document allow-list line with no ' | <reason>' (a bare path allows nothing)" >&2; continue ;;
+        esac
+        p="${p%"${p##*[![:space:]]}"}"
+        if [ -z "$p" ] || [ -z "$(printf '%s' "$r" | tr -d '[:space:]')" ]; then
+            echo "WARNING: ignoring document allow-list line with an empty path or reason" >&2
+            continue
+        fi
+        DOC_ALLOW_PATHS+=("$p")
+    done < "$f"
+    return 0
+}
+
+# scan_document_format LOCATION RAW-FILE -- runs in the caller's shell/subshell;
+# findings go to FINDINGS_FILE, unscannable files to INDET_FILE.
+scan_document_format() {
+    local loc="$1" rawf="$2" path ext allowed=0 a rule
+    path="$(doc_loc_path "$loc")"
+    ext="$(doc_extension "$path")"
+    if [ "${#DOC_ALLOW_PATHS[@]}" -gt 0 ]; then
+        for a in "${DOC_ALLOW_PATHS[@]}"; do
+            [ "$a" = "$path" ] && allowed=1
+        done
+    fi
+    if [ "$allowed" -eq 0 ] && [ "${VIS:-public}" != "private" ]; then
+        rule="document-format-blocked"
+        [ "$MODE" = "full-history" ] && rule="document-format-in-public-history"
+        append_finding "gate" "critical" "$loc" "0" "$rule" \
+            "document-format file in a public repo, not on the document allow-list (text not visible to byte-level rules)"
+    fi
+    [ "$ext" = "pdf" ] || return 0   # pdf is the only format with an extractor
+    if ! command -v "$PDFTOTEXT" >/dev/null 2>&1; then
+        printf '%s\t%s\n' "$loc" "text extractor ($PDFTOTEXT) not available" >> "$INDET_FILE"
+        return 0
+    fi
+    local txt; txt="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_txt.XXXXXX")"
+    if "$PDFTOTEXT" -q "$rawf" "$txt" 2>/dev/null; then
+        if [ -n "$(LC_ALL=C tr -d '[:space:]\000' < "$txt" | head -c 1)" ]; then
+            scan_denylist "$loc" < "$txt"
+            scan_generic "$loc" < "$txt"
+        else
+            printf '%s\t%s\n' "$loc" "no text layer extracted (image content not inspected)" >> "$INDET_FILE"
+        fi
+    else
+        printf '%s\t%s\n' "$loc" "text extraction failed" >> "$INDET_FILE"
+    fi
+    rm -f "$txt"
+}
+
 # scan_blob LOCATION < content-on-stdin
 scan_blob() {
-    local loc="$1" content
+    local loc="$1" content rawf=""
     # See scan_denylist's comment above -- same NUL-truncation fix
     # (JohnGavin/llm#1160). This is the entry point every blob (staged
     # content, a historical commit's content, an on-disk file, --content-
@@ -678,7 +804,15 @@ scan_blob() {
     # actually stops the truncation at its source; scan_denylist's and
     # scan_generic's own fixes are defense-in-depth for any caller that
     # invokes them directly with raw content (e.g. the selftest below).
-    content="$(tr -d '\000')"
+    if is_document_format_path "$loc"; then
+        rawf="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_doc.XXXXXX")"
+        cat > "$rawf"
+        scan_document_format "$loc" "$rawf"
+        content="$(LC_ALL=C tr -d '\000' < "$rawf")"
+        rm -f "$rawf"
+    else
+        content="$(LC_ALL=C tr -d '\000')"
+    fi
     # Deny-list is UNCONDITIONAL -- always runs, even for a self-reference
     # exempt file. See "Self-reference exemption" above.
     printf '%s' "$content" | scan_denylist "$loc"
@@ -800,7 +934,7 @@ scan_range() {
         while IFS= read -r path; do
             [ -n "$path" ] || continue
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
-        done < <(git -C "$REPO_ROOT" diff-tree --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
+        done < <(git -C "$REPO_ROOT" diff-tree --root --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
     done < <(git -C "$REPO_ROOT" rev-list "${a}..${b}" 2>/dev/null)
     [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
@@ -810,7 +944,9 @@ scan_paths() {
     for f in "${PATHS_ARGS[@]}"; do
         [ -f "$f" ] || continue
         case "$f" in
-            *.rds|*.rda|*.RData|*.png|*.jpg|*.jpeg|*.gif|*.pdf|*.gz|*.zip|*.duckdb|*.parquet) continue ;;
+            # *.pdf is deliberately NOT skipped: it must reach the
+            # document-format gate in scan_blob (llm#1358).
+            *.rds|*.rda|*.RData|*.png|*.jpg|*.jpeg|*.gif|*.gz|*.zip|*.duckdb|*.parquet) continue ;;
         esac
         cat "$f" 2>/dev/null | scan_blob "$f"
     done
@@ -840,7 +976,7 @@ scan_full_history() {
         while IFS= read -r path; do
             [ -n "$path" ] || continue
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
-        done < <(git -C "$REPO_ROOT" diff-tree --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
+        done < <(git -C "$REPO_ROOT" diff-tree --root --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
     done < <(git -C "$REPO_ROOT" rev-list --all 2>/dev/null)
     [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
@@ -1478,12 +1614,259 @@ run_selftest() {
     rc=$?
     _check "$([ "$rc" -eq 2 ] && echo 0 || echo 1)" "no mode exits exactly 2 (rc=$rc)"
 
+    # ── JohnGavin/llm#1358: three blind spots ──────────────────────────────
+    # Sentinels carry no EXAMPLE/FAKE/DUMMY/TEST/FIXTURE word and are only
+    # ever used as deny-list values, never read from the real deny-list.
+    local selftest_indet=() cnt
+
+    # Item 1: a blob that is NOT valid UTF-8 must still be scanned under a
+    # UTF-8 locale. The precondition (tr really does fail on it there) is
+    # checked, otherwise the test would be vacuous on this machine.
+    # Pick any installed UTF-8 locale (llm#1358): prefer en_GB, en_US, then
+    # C.UTF-8 (always present on glibc Linux, listed as C.utf8), then any
+    # `locale -a` entry matching utf-?8. GNU tr/grep are byte-safe, so on Linux
+    # tr does not fail on \377 there; the locale-independence assertion below
+    # is still meaningful, so existence of the locale is the only requirement.
+    local utf8loc="" cand avail norm
+    avail="$(locale -a 2>/dev/null)"
+    for cand in en_GB.UTF-8 en_US.UTF-8 C.UTF-8; do
+        norm="$(printf '%s' "$cand" | tr -d '-' | tr '[:upper:]' '[:lower:]')"
+        utf8loc="$(printf '%s\n' "$avail" | awk -v n="$norm" '{ l=$0; gsub(/-/,"",l); if (tolower(l)==n) { print $0; exit } }')"
+        [ -n "$utf8loc" ] && break
+    done
+    if [ -z "$utf8loc" ]; then
+        utf8loc="$(printf '%s\n' "$avail" | awk 'tolower($0) ~ /utf-?8/ { print $0; exit }')"
+    fi
+    if [ -n "$utf8loc" ]; then
+        local u_sent="NONUTF8_w4Kp7Zq_denyprobe" saved_dl=("${DENYLIST_VALUES[@]}")
+        DENYLIST_VALUES=("$u_sent")
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_u1.XXXXXX")"
+        ( export LC_ALL="$utf8loc"; printf 'head \377\376 bytes %s tail\nsecond line\n' "$u_sent" | scan_blob "R/blob.bin" )
+        _check "$([ "$(awk -F'\t' '$1=="denylist" && $4=="1"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" \
+            "llm#1358 item 1: deny-list value on a NON-UTF-8 line is detected under a UTF-8 locale ($utf8loc)"
+        rm -f "$FINDINGS_FILE"
+        DENYLIST_VALUES=("${saved_dl[@]}")
+    else
+        selftest_indet+=("no UTF-8 locale available: item 1 (non-UTF-8 blob) could not be exercised")
+    fi
+
+    # Item 1, locale independence: the SAME scanner run, as a subprocess,
+    # must produce the same findings whatever LANG the caller has. The
+    # comparison is between a UTF-8 caller locale and LC_ALL=C.
+    if [ -n "$utf8loc" ]; then
+        local l_sent="LOCALEDEP_b2Hs9Xv_denyprobe" l_blob="$tmp/nonutf8.bin" l_pv="$tmp/l_pv.env"
+        printf 'MY_VALUE=%s\n' "$l_sent" > "$l_pv"; chmod 600 "$l_pv"
+        printf 'pre \377\376 %s post\nplain +14155552671 line\n' "$l_sent" > "$l_blob"
+        mkdir -p "$tmp/home"
+        local l_utf l_c
+        l_utf="$(env -u LC_ALL HOME="$tmp/home" LANG="$utf8loc" UNIFIED_DB_PATH="$tmp/none.duckdb" PRIVATE_VALUES_FILE="$l_pv" bash "$0" --paths "$l_blob" --tsv 2>/dev/null | "$GREP" -c '^FINDING')"
+        l_c="$(env HOME="$tmp/home" LC_ALL=C UNIFIED_DB_PATH="$tmp/none.duckdb" PRIVATE_VALUES_FILE="$l_pv" bash "$0" --paths "$l_blob" --tsv 2>/dev/null | "$GREP" -c '^FINDING')"
+        _check "$([ "$l_utf" = "$l_c" ] && [ "$l_c" -ge 2 ] && echo 0 || echo 1)" \
+            "llm#1358 item 1: findings under LANG=$utf8loc ($l_utf) equal findings under LC_ALL=C ($l_c), both >= 2 (deny-list + e164)"
+    fi
+
+    # Item 2: files added in a ROOT commit are scanned by --full-history and
+    # --range. (diff-tree without --root lists nothing for a root commit.)
+    local rr="$tmp/rootrepo" r_sent="ROOTCOMMIT_n3Vx8Lm_denyprobe" r_sha
+    mkdir -p "$rr"
+    git -C "$rr" init -q
+    git -C "$rr" config user.email t@example.com
+    git -C "$rr" config user.name t
+    printf 'value %s here\n' "$r_sent" > "$rr/rootfile.txt"
+    git -C "$rr" add rootfile.txt
+    git -C "$rr" commit -q -m "root adds a file"
+    r_sha="$(git -C "$rr" rev-parse HEAD)"
+    git -C "$rr" rm -q rootfile.txt
+    git -C "$rr" commit -q -m "remove it again"
+    local saved_root="$REPO_ROOT" saved_dl2=("${DENYLIST_VALUES[@]}")
+    REPO_ROOT="$rr"
+    DENYLIST_VALUES=("$r_sent")
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_r1.XXXXXX")"
+    scan_full_history
+    _check "$([ "$(awk -F'\t' -v s="${r_sha:0:12}:rootfile.txt" '$1=="denylist" && $3==s' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1358 item 2: --full-history scans a file added in the ROOT commit"
+    rm -f "$FINDINGS_FILE"
+    # --range: a root commit is only inside a..b when a is on an unrelated
+    # history, so build one with plumbing (no checkout, no refs).
+    local r_base r_tree r_orph r_blob
+    r_base="$(git -C "$rr" rev-parse HEAD)"
+    r_blob="$(printf 'value %s again\n' "$r_sent" | git -C "$rr" hash-object -w --stdin)"
+    r_tree="$(printf '100644 blob %s\tunrelated.txt\n' "$r_blob" | git -C "$rr" mktree)"
+    r_orph="$(git -C "$rr" commit-tree "$r_tree" -m "unrelated root")"
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_r2.XXXXXX")"
+    scan_range "$r_base" "$r_orph"
+    _check "$([ "$(awk -F'\t' -v s="${r_orph:0:12}:unrelated.txt" '$1=="denylist" && $3==s' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1358 item 2: --range scans a file added in a ROOT commit inside the range"
+    rm -f "$FINDINGS_FILE"
+    REPO_ROOT="$saved_root"
+    DENYLIST_VALUES=("${saved_dl2[@]}")
+
+    # Item 3: document-format gate. VIS is set in-process; INDET_FILE is
+    # reset before each case.
+    local ext vis_saved="$VIS"
+    local -a doc_exts=(pdf docx xlsx doc xls odt rtf eml msg)
+    for ext in "${doc_exts[@]}"; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_d1.XXXXXX")"; : > "$INDET_FILE"
+        VIS=public
+        printf 'opaque\n' | scan_blob "abc123456789:docs/f.$ext"
+        cnt="$(awk -F'\t' '$1=="gate" && $2=="critical" && $5=="document-format-blocked"' "$FINDINGS_FILE" | grep -c .)"
+        _check "$([ "$cnt" -eq 1 ] && echo 0 || echo 1)" "llm#1358 item 3: .$ext in a PUBLIC repo is blocked (document-format-blocked, critical)"
+        rm -f "$FINDINGS_FILE"
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_d2.XXXXXX")"
+        VIS=private
+        printf 'opaque\n' | scan_blob "abc123456789:docs/f.$ext"
+        cnt="$(awk -F'\t' '$1=="gate"' "$FINDINGS_FILE" | grep -c .)"
+        _check "$([ "$cnt" -eq 0 ] && echo 0 || echo 1)" "llm#1358 item 3: .$ext in a PRIVATE repo is not gated"
+        rm -f "$FINDINGS_FILE"
+    done
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_d3.XXXXXX")"
+    VIS=public
+    printf 'opaque\n' | scan_blob "docs/UPPER.PDF"
+    _check "$([ "$(awk -F'\t' '$1=="gate"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" "llm#1358 item 3: extension match is case-insensitive (.PDF)"
+    : > "$FINDINGS_FILE"
+    printf 'opaque\n' | scan_blob "docs/notes.pdf.txt"
+    printf 'opaque\n' | scan_blob "docs/pdf"
+    _check "$([ "$(awk -F'\t' '$1=="gate"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" "llm#1358 item 3: 'notes.pdf.txt' and a bare 'pdf' are not document formats"
+    rm -f "$FINDINGS_FILE"
+
+    # History mode reports its own rule.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_d4.XXXXXX")"
+    local mode_saved="$MODE"
+    MODE="full-history"
+    printf 'opaque\n' | scan_blob "abc123456789:docs/old.docx"
+    MODE="$mode_saved"
+    _check "$([ "$(awk -F'\t' '$1=="gate" && $2=="critical" && $5=="document-format-in-public-history"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1358 item 3: --full-history reports document-format-in-public-history (critical)"
+    rm -f "$FINDINGS_FILE"
+
+    # Visibility: UNKNOWN is public (fail closed). gh is stubbed via PATH.
+    local stubdir="$tmp/stub"; mkdir -p "$stubdir"
+    printf '#!/bin/sh\n[ "$STUB_VIS" = fail ] && exit 1\necho "$STUB_VIS"\n' > "$stubdir/gh"
+    chmod +x "$stubdir/gh"
+    saved_root="$REPO_ROOT"; REPO_ROOT="$tmp/repo"
+    _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=fail repo_visibility)" = "public" ] && echo 0 || echo 1)" "llm#1358 item 3: visibility lookup failure is treated as public"
+    _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=PRIVATE repo_visibility)" = "private" ] && echo 0 || echo 1)" "llm#1358 item 3: visibility PRIVATE is private"
+    _check "$([ "$(PATH="$stubdir:$PATH" STUB_VIS=PUBLIC repo_visibility)" = "public" ] && echo 0 || echo 1)" "llm#1358 item 3: visibility PUBLIC is public"
+    REPO_ROOT="$saved_root"
+
+    # Allow-list: exact path + stated reason; anything else allows nothing.
+    local alf="$tmp/doc_allow.txt"
+    {
+        printf '# comment\n\n'
+        printf 'docs/ok.pdf | published brochure, no personal data\n'
+        printf 'docs/bare.pdf\n'
+        printf 'docs/noreason.pdf | \n'
+        printf ' | reason without a path\n'
+    } > "$alf"
+    DOC_ALLOWLIST_FILE="$alf"
+    load_doc_allowlist 2>/dev/null
+    _check "$([ "${#DOC_ALLOW_PATHS[@]}" -eq 1 ] && [ "${DOC_ALLOW_PATHS[0]}" = "docs/ok.pdf" ] && echo 0 || echo 1)" \
+        "llm#1358 item 3: allow-list keeps only entries with a path AND a reason (1 of 4 non-comment lines)"
+    VIS=public
+    for loc in "docs/ok.pdf" "staged:docs/ok.pdf" "abc123456789:docs/ok.pdf"; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_a1.XXXXXX")"
+        printf 'opaque\n' | scan_blob "$loc"
+        _check "$([ "$(awk -F'\t' '$1=="gate"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" "llm#1358 item 3: allow-listed path is not blocked (location form '$loc')"
+        rm -f "$FINDINGS_FILE"
+    done
+    for loc in "docs/bare.pdf" "docs/noreason.pdf" "other/docs/ok.pdf" "docs/ok.pdf.docx"; do
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_a2.XXXXXX")"
+        printf 'opaque\n' | scan_blob "$loc"
+        _check "$([ "$(awk -F'\t' '$1=="gate"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" "llm#1358 item 3: '$loc' is NOT allow-listed (no reason / not an exact path) and is blocked"
+        rm -f "$FINDINGS_FILE"
+    done
+    DOC_ALLOW_PATHS=(); DOC_ALLOWLIST_FILE=""
+
+    # Text extraction (pdftotext). The PDF stores its text as a hex string, so
+    # the literal value is NOT present in the file's bytes: only extraction can
+    # find it. Control: with the extractor missing, nothing is found and the
+    # file is recorded as not-inspected.
+    _mkpdf() {   # _mkpdf FILE TEXT
+        local hex body
+        hex="$(printf '%s' "$2" | od -An -tx1 | tr -d ' \n')"
+        body="BT /F1 12 Tf 10 50 Td <${hex}> Tj ET"
+        {
+            printf '%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+            printf '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+            printf '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n'
+            printf '4 0 obj<</Length %s>>stream\n%s\nendstream endobj\n' "${#body}" "$body"
+            printf '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n'
+            printf 'trailer<</Root 1 0 R/Size 6>>\n%%%%EOF\n'
+        } > "$1"
+    }
+    local p_sent="PDFTEXT_h6Rw2Qk_denyprobe" pdf1="$tmp/with_value.pdf" pdf2="$tmp/plain.pdf"
+    _mkpdf "$pdf1" "see $p_sent end"
+    _mkpdf "$pdf2" "hello world"
+    _check "$("$GREP" -qF -- "$p_sent" "$pdf1" && echo 1 || echo 0)" "llm#1358 item 3 sanity: the fixture PDF's raw bytes do not contain the value"
+    local saved_dl3=("${DENYLIST_VALUES[@]}"); DENYLIST_VALUES=("$p_sent")
+    VIS=private
+    if command -v "$PDFTOTEXT" >/dev/null 2>&1; then
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_x1.XXXXXX")"; : > "$INDET_FILE"
+        scan_blob "abc123456789:docs/x.pdf" < "$pdf1"
+        _check "$([ "$(awk -F'\t' '$1=="denylist"' "$FINDINGS_FILE" | grep -c .)" -ge 1 ] && echo 0 || echo 1)" "llm#1358 item 3: a deny-list value inside a PDF text layer is found via pdftotext"
+        _check "$([ ! -s "$INDET_FILE" ] && echo 0 || echo 1)" "llm#1358 item 3: a successfully extracted PDF is not marked not-inspected"
+        rm -f "$FINDINGS_FILE"
+    else
+        selftest_indet+=("pdftotext not installed: PDF text-extraction checks could not be exercised")
+    fi
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_x2.XXXXXX")"; : > "$INDET_FILE"
+    ( PDFTOTEXT="no_such_extractor_1358"; scan_blob "abc123456789:docs/x.pdf" < "$pdf1" )
+    _check "$([ "$(awk -F'\t' '$1=="denylist"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && [ "$(grep -c . "$INDET_FILE")" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1358 item 3: missing extractor -> nothing found AND the file is recorded as not-inspected (control)"
+    rm -f "$FINDINGS_FILE"; : > "$INDET_FILE"
+    DENYLIST_VALUES=("${saved_dl3[@]}")
+    VIS="$vis_saved"
+
+    # End to end: exact exit codes. gh is stubbed; the scanner runs as a
+    # subprocess against synthetic repos with HOME redirected.
+    local er="$tmp/e2erepo" e2e_out="$tmp/e2e.out" e2e_err="$tmp/e2e.err" e2e_rc
+    mkdir -p "$er/docs" "$tmp/home"
+    git -C "$er" init -q
+    git -C "$er" config user.email t@example.com
+    git -C "$er" config user.name t
+    cp "$pdf2" "$er/docs/ok.pdf"
+    git -C "$er" add docs/ok.pdf
+    git -C "$er" commit -q -m "add a document"
+    printf 'docs/ok.pdf | published brochure, no personal data\n' > "$tmp/e2e_allow.txt"
+    _e2e() {   # _e2e VIS ALLOWLIST EXTRACTOR ARGS...
+        local v="$1" al="$2" ex="$3"; shift 3
+        env HOME="$tmp/home" UNIFIED_DB_PATH="$tmp/none.duckdb" PATH="$stubdir:$PATH" STUB_VIS="$v" \
+            REPO_ROOT="$er" PRIVATE_DATA_DOC_ALLOWLIST="$al" ${ex:+PRIVATE_DATA_SCAN_PDFTOTEXT="$ex"} \
+            bash "$0" "$@" --no-denylist --tsv >"$e2e_out" 2>"$e2e_err"
+        e2e_rc=$?
+    }
+    _e2e fail "" "" --full-history
+    _check "$([ "$e2e_rc" -eq 1 ] && "$GREP" -q 'document-format-in-public-history' "$e2e_out" && echo 0 || echo 1)" \
+        "llm#1358 e2e: --full-history, unknown visibility, un-allow-listed PDF -> exit exactly 1 with document-format-in-public-history (rc=$e2e_rc)"
+    _e2e PUBLIC "$tmp/e2e_allow.txt" "no_such_extractor_1358" --full-history
+    _check "$([ "$e2e_rc" -eq 3 ] && echo 0 || echo 1)" "llm#1358 e2e: allow-listed PDF, extractor missing -> exit exactly 3 INDETERMINATE (rc=$e2e_rc)"
+    if command -v "$PDFTOTEXT" >/dev/null 2>&1; then
+        _e2e PUBLIC "$tmp/e2e_allow.txt" "" --full-history
+        _check "$([ "$e2e_rc" -eq 0 ] && echo 0 || echo 1)" "llm#1358 e2e: allow-listed PDF, extractor present, no PII -> exit exactly 0 (rc=$e2e_rc)"
+        _e2e PRIVATE "" "" --full-history
+        _check "$([ "$e2e_rc" -eq 0 ] && echo 0 || echo 1)" "llm#1358 e2e: PDF in a PRIVATE repo, extractor present -> exit exactly 0 (rc=$e2e_rc)"
+    fi
+    local e2e_empty e2e_unrel
+    e2e_empty="$(git -C "$er" hash-object -t tree -w /dev/null)"
+    e2e_unrel="$(git -C "$er" commit-tree "$e2e_empty" -m "unrelated empty root")"
+    _e2e PUBLIC "$tmp/e2e_allow.txt" "no_such_extractor_1358" --range "$e2e_unrel" HEAD
+    _check "$([ "$e2e_rc" -eq 3 ] && echo 0 || echo 1)" "llm#1358 e2e: --range reaches a PDF added in a root commit (un-inspectable -> exit exactly 3, not a clean 0) (rc=$e2e_rc)"
+    _e2e fail "" "" --paths "$er/docs/ok.pdf"
+    _check "$([ "$e2e_rc" -eq 1 ] && "$GREP" -q 'document-format-blocked' "$e2e_out" && echo 0 || echo 1)" "llm#1358 e2e: --paths no longer skips a PDF silently; gate fires -> exit exactly 1 (rc=$e2e_rc)"
+
+    if [ "${#selftest_indet[@]}" -gt 0 ]; then
+        local m
+        for m in "${selftest_indet[@]}"; do echo "INDETERMINATE  $m"; done
+    fi
+
     rm -rf "$tmp"
 
     echo ""
     echo "selftest: $pass/$total PASS"
-    [ "$pass" -eq "$total" ] && return 0
-    return 1
+    if [ "$pass" -ne "$total" ]; then return 1; fi
+    # Every check that ran passed, but some could not run: not a clean result.
+    if [ "${#selftest_indet[@]}" -gt 0 ]; then return 3; fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1511,6 +1894,11 @@ assert_can_detect
 
 hk_run_start
 
+# Visibility and the document allow-list are resolved BEFORE scanning: the
+# document-format gate (llm#1358) reads them inside scan_blob.
+VIS="$(repo_visibility)"
+load_doc_allowlist
+
 case "$MODE" in
     staged) scan_staged ;;
     range) scan_range "$RANGE_A" "$RANGE_B" ;;
@@ -1520,7 +1908,11 @@ case "$MODE" in
 esac
 
 TOTAL=$(wc -l < "$FINDINGS_FILE" | tr -d ' ')
-VIS="$(repo_visibility)"
+N_INDET=$(wc -l < "$INDET_FILE" | tr -d ' ')
+if [ "${N_INDET:-0}" -gt 0 ]; then
+    echo "private-data-scan: ${N_INDET} document file(s) could not be text-inspected (content NOT scanned):" >&2
+    awk -F'\t' '{printf "  %s -- %s\n", $1, $2}' "$INDET_FILE" >&2
+fi
 
 print_report
 write_findings_to_db
@@ -1548,6 +1940,12 @@ fi
 # every reachable commit, that is INDETERMINATE, not clean -- see
 # checks-must-distinguish-unknown and this file's header. Findings-present
 # runs above are unaffected: this branch only ever executes when TOTAL is 0.
+if [ "${N_INDET:-0}" -gt 0 ]; then
+    echo "private-data-scan: INDETERMINATE -- ${N_INDET} document file(s) were not text-inspected (see above); absence of findings is NOT proof they are clean. Install poppler (pdftotext) or remove the file." >&2
+    log_line "mode=${MODE} visibility=${VIS} findings=${TOTAL} unextracted=${N_INDET} result=indeterminate"
+    hk_run_end "ok" "$TOTAL"
+    exit 3
+fi
 if [ "${_SCAN_TRUNCATED:-0}" -eq 1 ]; then
     echo "private-data-scan: INDETERMINATE -- scan was truncated (--max-commits) before covering every reachable commit; absence of findings in the scanned subset is NOT proof of a clean history/range. See the WARNING above; re-run without --max-commits (or with a higher value) for a determinate result." >&2
     log_line "mode=${MODE} visibility=${VIS} findings=${TOTAL} truncated=1 result=indeterminate"

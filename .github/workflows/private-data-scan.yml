@@ -46,6 +46,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pdftotext (PDF text extraction; selftest exits 3 without it)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq poppler-utils
+
       - name: Self-check — prove the detector can fail before trusting it
         run: |
           bash .claude/scripts/private_data_scan.sh --selftest
