@@ -82,8 +82,14 @@ CCUSAGE_EPHEMERAL <- "<ephemeral>"
 #' @return Canonical single-token project name, or [CCUSAGE_EPHEMERAL] for
 #'   noise / runtime-ephemeral entries.
 #' @keywords internal
-.canonicalize_ccusage_project_one <- function(name) {
+.canonicalize_ccusage_project_one <- function(name, prefixes = character(0)) {
   if (is.na(name) || !nzchar(name)) return(NA_character_)
+
+  # Slugs under a locally configured private path prefix never leave this
+  # function under their real name (llm#1382).
+  if (!identical(alias_private_slug(name, prefixes), name)) {
+    return(PRIVATE_PROJECT_ALIAS)
+  }
 
   # --- ephemeral checks on the ORIGINAL string, before any normalisation ---
 
@@ -113,7 +119,6 @@ CCUSAGE_EPHEMERAL <- "<ephemeral>"
   # --- normalise separators and known absolute-path prefixes ---
 
   x <- gsub("/", "-", name, fixed = TRUE)
-  x <- sub("^-Users-johngavin-docs--pers-NHS-health-data-antigravity-", "", x)
   x <- sub("^-Users-[^-]+-docs-gh-", "", x)
   x <- sub("^-private-tmp-", "", x)
 
@@ -184,7 +189,11 @@ CCUSAGE_EPHEMERAL <- "<ephemeral>"
 canonicalize_ccusage_project <- function(x) {
   checkmate::assert_character(x, null.ok = TRUE)
   if (is.null(x) || length(x) == 0L) return(character(0))
-  vapply(x, .canonicalize_ccusage_project_one, character(1), USE.NAMES = FALSE)
+  prefixes <- private_path_prefixes()
+  vapply(
+    x, .canonicalize_ccusage_project_one, character(1),
+    prefixes = prefixes, USE.NAMES = FALSE
+  )
 }
 
 #' Locate every available ccusage daily cache file

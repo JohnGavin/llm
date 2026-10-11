@@ -377,9 +377,12 @@ ctx_cleanup <- function(cache_dir = CTX_CACHE, max_age_days = CTX_CLEANUP_DAYS) 
 LOCAL_CTX_PROJECTS <- c(
   file.path(Sys.getenv("HOME"), "docs_gh/proj/finance/data/historical"),
   file.path(Sys.getenv("HOME"), "docs_gh/proj/data/coMMpass"),
-  file.path(Sys.getenv("HOME"), "docs_gh/proj/medicine/mycare"),
   file.path(Sys.getenv("HOME"), "docs_gh/proj/data/irishbuoys")
 )
+# Private project dirs are never listed in this public file (llm#1382).
+# Optionally add them locally via LLM_LOCAL_CTX_EXTRA_DIRS (":"-separated).
+.extra_ctx_dirs <- strsplit(Sys.getenv("LLM_LOCAL_CTX_EXTRA_DIRS", ""), ":", fixed = TRUE)[[1]]
+LOCAL_CTX_PROJECTS <- c(LOCAL_CTX_PROJECTS, .extra_ctx_dirs[nzchar(.extra_ctx_dirs)])
 
 #' Extract package name and version from a multi-doc ctx.yaml file
 #'
