@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- com.claude.repo-visibility-diff.plist (llm#1371, privacy gate 7)
+         Daily diff of every repo's GitHub visibility against the previous
+         run. Catches a repo made public on github.com, or created public by
+         hand, which repo_visibility_guard.sh (Claude-initiated changes only)
+         never sees. A repo that became public or is new and public gets an
+         immediate full-history audit and an alert (notification + a section
+         in the 06:30 overnight email). Exit 0 no change / first-run baseline,
+         1 finding, 3 INDETERMINATE (API failure; never a silent pass).
+
+         Slot: pre-dawn detector window (00:00-04:00), 03:50 - clear gap after
+         03:40 secret-exposure-scan, before the 06:30 digest email reads it.
+         The Sunday 03:15 private-data-history-audit is a different job; this
+         one invokes that script on a fresh mirror clone per finding.
+
+         ONE-TIME PREREQUISITES before the first scheduled run:
+           bash .claude/scripts/housekeeping_schema_apply.sh   (creates the tables)
+           run private_data_history_audit.sh once with its baseline flag
+             (the audit refuses to run, exit 3, until a ledger baseline exists)
+
+         Uses the bin/launchd-recorders/repo-visibility-diff named-launcher
+         wrapper (llm#1121) so macOS Background Task Management shows
+         "repo-visibility-diff" instead of generic "bash".
+
+         THIS PLIST IS DELIVERED, NOT INSTALLED. Install / reload:
+           launchctl bootout gui/$(id -u)/com.claude.repo-visibility-diff 2>/dev/null
+           cp .claude/launchd/com.claude.repo-visibility-diff.plist \
+              ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.claude.repo-visibility-diff.plist
+    -->
+
+    <key>Label</key>
+    <string>com.claude.repo-visibility-diff</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/repo-visibility-diff</string>
+    </array>
+
+    <!-- HOME is set so gh reads ~/.config/gh for auth and the audit reads
+         ~/.config/private_values.env (the deny-list). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Daily 03:50 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/repo_visibility_diff.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/repo_visibility_diff.err</string>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- Do NOT run on load - only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
