@@ -1,3 +1,49 @@
 #!/bin/sh
+# Global pre-push (core.hooksPath), three stages (llm#1365):
+#   1. PII scan of the pushed range (stdin protocol; new branch / root commit
+#      handled with `--not --remotes=<remote>`, never `<root>..<sha>`, which
+#      would exclude the root commit itself).
+#   2. git-lfs pre-push, byte-for-byte the pre-existing behaviour.
+#   3. The repo's own .git/hooks/pre-push, if any.
+# Bypass: git's own --no-verify. See lib/pii_gate.sh.
+_self=$0
+while [ -L "$_self" ]; do
+  _l=$(readlink "$_self")
+  case "$_l" in /*) _self=$_l ;; *) _self="$(dirname "$_self")/$_l" ;; esac
+done
+PII_HOOKS_DIR=$(cd "$(dirname "$_self")" && pwd -P)
+. "$PII_HOOKS_DIR/lib/pii_gate.sh"
+
+# git feeds "<lref> <lsha> <rref> <rsha>" lines on stdin; keep a copy so every
+# stage sees them.
+_stdin=$(mktemp "${TMPDIR:-/tmp}/pii_prepush_stdin.XXXXXX") || { echo >&2 "pre-push BLOCKED (exit 3): mktemp failed"; exit 3; }
+trap 'rm -f "$_stdin"' EXIT
+cat > "$_stdin"
+
+_zero=0000000000000000000000000000000000000000
+_rc=0
+if ! pii_repo_hook_scans pre-push; then
+  while read -r _lref _lsha _rref _rsha; do
+    [ -n "${_lsha:-}" ] || continue
+    [ "$_lsha" != "$_zero" ] || continue          # deleting a ref: nothing to scan
+    if [ -n "${_rsha:-}" ] && [ "$_rsha" != "$_zero" ] \
+       && git cat-file -e "${_rsha}^{commit}" 2>/dev/null; then
+      pii_scan "pre-push" --range "$_rsha" "$_lsha"
+      _r=$?
+    else
+      # New branch, or the remote tip is not known locally: scan every commit
+      # not already on a remote-tracking ref of THIS remote (root commit included).
+      pii_scan "pre-push" --range "--not-remotes=${1:-}" "$_lsha"
+      _r=$?
+    fi
+    [ "$_rc" -ne 0 ] || _rc=$_r
+  done < "$_stdin"
+fi
+[ "$_rc" -eq 0 ] || exit "$_rc"
+
+# --- git-lfs (unchanged behaviour) ---
 command -v git-lfs >/dev/null 2>&1 || { printf >&2 "\n%s\n\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'pre-push' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks')."; exit 2; }
-git lfs pre-push "$@"
+git lfs pre-push "$@" < "$_stdin" || exit $?
+
+pii_chain pre-push "$_stdin" "$@" || exit $?
+exit 0

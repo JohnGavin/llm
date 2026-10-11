@@ -297,6 +297,9 @@ usage() {
 Usage: private_data_scan.sh MODE [options]
   --staged                    Scan git INDEX content of staged files
   --range <rev1> <rev2> [--max-commits N]
+                               (rev1 may be --not-remotes[=<glob>]: every commit
+                               reachable from rev2 on no remote-tracking ref;
+                               used by the global pre-push for new branches)
                                Scan full blob content of every file changed
                                in every commit in rev1..rev2 (default:
                                unlimited; same --max-commits/exit-3 semantics
@@ -911,6 +914,16 @@ scan_range() {
     local a="$1" b="$2"
     [ -n "$a" ] && [ -n "$b" ] || { echo "private_data_scan: --range requires two revisions" >&2; return 2; }
     [ -d "$REPO_ROOT" ] || return 0
+    # llm#1365: "<a>" may be --not-remotes[=<glob>], meaning "every commit
+    # reachable from <b> that is on no remote-tracking ref (of <glob>)". That is
+    # the only correct range for a NEW branch or a first push: "<root>..<b>"
+    # excludes the root commit itself, and there may be no base to name at all.
+    local -a revspec
+    case "$a" in
+        --not-remotes)   revspec=("$b" --not --remotes) ;;
+        --not-remotes=*) revspec=("$b" --not "--remotes=${a#--not-remotes=}") ;;
+        *)               revspec=("${a}..${b}") ;;
+    esac
     _SCAN_TRUNCATED=0
     _SCAN_SCANNED=0
     _SCAN_TOTAL_REACHABLE=""
@@ -919,7 +932,7 @@ scan_range() {
     # (unlimited) path derives the total from the same single pass below
     # (llm#1204) -- see the header's "--max-commits" note.
     if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ]; then
-        _SCAN_TOTAL_REACHABLE="$(git -C "$REPO_ROOT" rev-list "${a}..${b}" 2>/dev/null | wc -l | tr -d ' ')"
+        _SCAN_TOTAL_REACHABLE="$(git -C "$REPO_ROOT" rev-list "${revspec[@]}" 2>/dev/null | wc -l | tr -d ' ')"
     fi
     local sha path count=0
     while IFS= read -r sha; do
@@ -935,7 +948,7 @@ scan_range() {
             [ -n "$path" ] || continue
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
         done < <(git -C "$REPO_ROOT" diff-tree --root --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
-    done < <(git -C "$REPO_ROOT" rev-list "${a}..${b}" 2>/dev/null)
+    done < <(git -C "$REPO_ROOT" rev-list "${revspec[@]}" 2>/dev/null)
     [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
 
