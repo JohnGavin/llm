@@ -1,0 +1,25 @@
+#!/bin/sh
+# Global pre-commit (core.hooksPath): PII gate for EVERY repo (llm#1365).
+# Scans STAGED blobs only (fast on large repos), then chains to the repo's own
+# .git/hooks/pre-commit, which git would otherwise ignore under a global
+# hooksPath. Bypass: git's own --no-verify. See lib/pii_gate.sh.
+_self=$0
+while [ -L "$_self" ]; do
+  _l=$(readlink "$_self")
+  case "$_l" in /*) _self=$_l ;; *) _self="$(dirname "$_self")/$_l" ;; esac
+done
+PII_HOOKS_DIR=$(cd "$(dirname "$_self")" && pwd -P)
+. "$PII_HOOKS_DIR/lib/pii_gate.sh"
+
+# Nothing staged (empty commit, no-op merge): nothing to scan. Only an exit of
+# exactly 0 means "no staged difference"; 1 (differences) or an error scans.
+git diff --cached --quiet --no-ext-diff 2>/dev/null
+if [ $? -ne 0 ]; then
+  # A repo hook carrying the installer marker already runs the scanner.
+  if ! pii_repo_hook_scans pre-commit; then
+    pii_scan "pre-commit" --staged || exit $?
+  fi
+fi
+
+pii_chain pre-commit "" "$@" || exit $?
+exit 0
