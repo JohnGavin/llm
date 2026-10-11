@@ -192,6 +192,14 @@ roborev_res <- tryCatch(
 conv_checked <- conv_res$status %in% c("fresh", "empty")
 roborev_checked <- identical(roborev_res$status, "ok") && roborev_res$summary$n_reviews > 0L
 
+# One derivation of "what was inspected today", shared by the verdict box and the
+# header scope paragraph so neither can claim a source that came back unavailable.
+scope_checked <- c("session telemetry", "cron health", "source-table freshness",
+                   if (conv_checked) "conversation signals (learning digest, pattern-based)",
+                   if (roborev_checked) "roborev code findings")
+scope_unavailable <- c(if (!conv_checked) "conversation signals",
+                       if (!roborev_checked) "roborev code findings")
+
 conv_render <- scr_render_signals(conv_res)
 sec_conv_block <- collapsible_block(
   "Conversation signals (learning digest, llm#235)",
@@ -234,7 +242,8 @@ n_new_findings <- if (nrow(sec1_data) > 0L) sum(sec1_data$n) else 0L
 # staleness_collect.sh), so a quiet day is correct and expected. This counts
 # the window's input so the reader can tell "clean" from "unexamined".
 # ClaudeProbe is excluded here so the coverage DENOMINATOR matches the
-# detectors' NUMERATOR. Every Stage-1 detector filters `project = 'ClaudeProbe'`
+# detectors' NUMERATOR. Every Stage-1 detector filters synthetic probe projects (`ClaudeProbe`,
+# `cc-sandbox-probe-*`; stage1_is_synthetic_project() in self_review_stage1.sql)
 # out (llm#812), and Section 2's own sessions-volume row already applies the
 # same filter — this one call site did not, so the header could credit the
 # detectors with probe sessions they never looked at. Currently latent: the
@@ -247,6 +256,7 @@ n_sessions_in_window <- tryCatch({
     SELECT count(*) AS n FROM sessions
     WHERE started_at >= %s - INTERVAL '24' HOUR
       AND project NOT IN ('ClaudeProbe')
+      AND project NOT LIKE 'cc-sandbox-probe-%%'
   ", sql_utc_now()), fallback = data.frame(n = NA_integer_))
   if (nrow(r) > 0L) suppressWarnings(as.integer(r$n[[1]])) else NA_integer_
 }, error = function(e) NA_integer_)
@@ -505,7 +515,7 @@ sec2_rows <- lapply(source_tables, function(tbl) {
   # Exclude synthetic health-probe rows (project='ClaudeProbe') from the sessions
   # volume so this health readout reflects real sessions, not the probe fleet.
   # Interim email-layer fix pending source-level tagging in llm#812.
-  where_clause <- if (identical(tbl, "sessions")) "WHERE project NOT IN ('ClaudeProbe')" else ""
+  where_clause <- if (identical(tbl, "sessions")) "WHERE project NOT IN ('ClaudeProbe') AND project NOT LIKE 'cc-sandbox-probe-%'" else ""
 
   # sessions.started_at, agent_runs.started_at, hook_events.fired_at are all
   # UTC-valued naive TIMESTAMP columns (see sql_utc_now() doc comment,
@@ -726,7 +736,8 @@ sec2_sessions_by_project <- safe_query(sprintf("
 
 sec2_sessions_drilldown <- if (nrow(sec2_sessions_by_project) > 0L) {
   rows_html <- paste(apply(sec2_sessions_by_project, 1, function(r) {
-    is_synthetic <- identical(r[["project"]], "ClaudeProbe")
+    is_synthetic <- identical(r[["project"]], "ClaudeProbe") ||
+      isTRUE(startsWith(r[["project"]], "cc-sandbox-probe-"))
     note <- if (is_synthetic) {
       sprintf(' <span style="color:%s;font-size:10px;">(synthetic health probe)</span>', DARK_MUTED)
     } else {
@@ -2035,11 +2046,8 @@ action_digest_html <- if (n_action_items == 0L) {
   # llm#235: conversation signals (learning digest) and roborev code findings
   # are now inspected -- but only when they were readable today. A source that
   # was unavailable is listed as such, never as checked.
-  .scope_checked <- c("session telemetry", "cron health", "source-table freshness",
-                      if (conv_checked) "conversation signals (learning digest, pattern-based)",
-                      if (roborev_checked) "roborev code findings")
-  .scope_unavailable <- c(if (!conv_checked) "conversation signals",
-                          if (!roborev_checked) "roborev code findings")
+  .scope_checked     <- scope_checked
+  .scope_unavailable <- scope_unavailable
   .scope_sentence <- paste0(
     "Checked: ", paste(.scope_checked, collapse = ", "), ". ",
     if (length(.scope_unavailable) > 0L) {
@@ -2194,6 +2202,30 @@ email_subject <- if (n_action_items == 0L) {
           n_action_items, paste(action_slugs, collapse = ", "), today_str)
 }
 
+# Header scope paragraph. The "inspected" list is derived from scope_checked /
+# scope_unavailable (computed once from what actually rendered today), so it
+# cannot claim a source that came back unavailable. The telemetry detectors and
+# the lessons-captured commit counts always run, so those parts are static.
+header_scope_html <- paste0(
+  "Scope: session-telemetry patterns (long sessions, agent sprawl, stuck loops, ",
+  "tool-error rate), cron health, source-table freshness, and how many ",
+  "memory/rules/incidents commits were captured across the last 1/2/4/8 weeks",
+  if (conv_checked)
+    "; repeated user corrections and repeated command failures from Claude Code transcripts (pattern-based, via the learning digest)",
+  if (roborev_checked)
+    "; open roborev code findings from the last 24h",
+  ". ",
+  if (length(scope_unavailable) > 0L)
+    paste0("<b>Unavailable today, so not inspected:</b> ",
+           paste(scope_unavailable, collapse = ", "), ". ")
+  else "",
+  "Still <b>not</b> inspected: a semantic reading of conversations, or the ",
+  "meaning and validity of rule and config content (planned, llm#235 steps 3-5). ",
+  "A quiet action-level verdict here is not evidence that nothing needs changing, ",
+  "especially if lessons are visibly being captured elsewhere in the same window ",
+  "(llm#1241)."
+)
+
 header_html <- sprintf(
   '<div style="background-color:%s;padding:16px 20px;margin-bottom:12px;
 border-radius:6px;">
@@ -2204,19 +2236,15 @@ border-radius:6px;">
   %s &nbsp;·&nbsp; %d of %d source tables stale, dead or unreadable
 </p>
 <p style="color:%s;font-size:%s;margin:6px 0 0 0;">
-  Scope: session-telemetry patterns only (long sessions, agent sprawl, stuck loops,
-  tool-error rate), plus how many memory/rules/incidents commits were captured
-  across the last 1/2/4/8 weeks. This report still does <b>not</b> inspect config,
-  rules or code content, or anything said in a conversation &mdash; a quiet
-  action-level verdict here is not evidence that nothing needs changing, especially
-  if lessons are visibly being captured elsewhere in the same window (llm#1241).
+  %s
 </p>
 </div>',
   DARK_CARD, ACCENT_BLUE, EMAIL_FONT_H2,
   today_str,
   DARK_MUTED, EMAIL_FONT_SUBTITLE,
   findings_phrase, n_stale_tables, length(source_tables),
-  DARK_MUTED, EMAIL_FONT_SUBTITLE
+  DARK_MUTED, EMAIL_FONT_SUBTITLE,
+  header_scope_html
 )
 
 footer_html <- sprintf(

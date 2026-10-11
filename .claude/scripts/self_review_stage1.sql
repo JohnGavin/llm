@@ -59,6 +59,20 @@ INSERT INTO stage1_by_design_block_sources VALUES
     ('skill_quality_onwrite'); -- blocks writes failing skill quality checks
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 0c. ONE shared definition of "synthetic probe project"
+--
+-- 'ClaudeProbe' (llm#812) is the health-probe project; `cc-sandbox-probe-*` are
+-- the automated sandbox-pilot probes (one project per probe run, launched ~1
+-- minute apart). Neither is real work, so every detector excludes both. Define
+-- the pattern HERE, once; never copy it into a detector. The email layer
+-- (send_overnight_self_review_email.R) must mirror this pattern in its own
+-- queries so the coverage denominator matches the detectors' numerator.
+-- NULL project -> FALSE (not synthetic).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE TEMP MACRO stage1_is_synthetic_project(p) AS
+    COALESCE(p = 'ClaudeProbe' OR p LIKE 'cc-sandbox-probe-%', FALSE);
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- DETECTOR 1: Stuck loop — agents dispatched multiple times but never completed
 --
 -- Fix (#269): The original query used no status filter and matched status='done'
@@ -99,7 +113,7 @@ WITH stuck_loop_candidates AS (
         -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) — it
         -- dominates session volume (~50% of all sessions) and its dispatch
         -- semantics are not comparable to real work sessions.
-        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
     GROUP BY session_id, agent_type, status
     HAVING COUNT(*) >= 3
 ),
@@ -225,7 +239,7 @@ WITH daily_errors AS (
         -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) from
         -- both the numerator and denominator below so the rate stays internally
         -- consistent — see daily_agent_calls for the matching exclusion.
-        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
     GROUP BY CAST(logged_at AS DATE), source
 ),
 daily_agent_calls AS (
@@ -238,7 +252,7 @@ daily_agent_calls AS (
         -- Rate-window: only consider the last 7 days (#269 fix)
         AND started_at >= current_timestamp - INTERVAL '7' DAY
         -- Exclude ClaudeProbe (llm#812) — matches daily_errors above.
-        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
     GROUP BY CAST(started_at AS DATE)
 ),
 error_rates AS (
@@ -341,7 +355,7 @@ WITH session_error_bursts AS (
         AND source NOT IN (SELECT source FROM stage1_by_design_block_sources)
         -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) —
         -- its error bursts are probe-fleet noise, not real pivot-signal events.
-        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
     GROUP BY session_id, source
     HAVING COUNT(*) >= 3
 ),
@@ -434,33 +448,31 @@ ON CONFLICT (finding_id) DO NOTHING;
 -- so it dominates the concurrency count without representing real concurrent
 -- work. Excluded below; matches the email-layer exclusion already shipped in
 -- send_overnight_self_review_email.R (#821).
+-- 2026-10-11 self-review finding: day 2026-10-09 flagged 'major' at
+-- peak_concurrent=7, but 6 of the 7 were automated `cc-sandbox-probe-*` pilot
+-- probes (each ended_at = started_at + exactly 2h, a reaper estimate) and the
+-- 7th was a 72h wall-clock session (tennis) with 0 hook_events that day --
+-- idle, not concurrent work. Real human concurrency was ~2. Two fixes:
+--   (a) synthetic probe projects are excluded via stage1_is_synthetic_project()
+--       (section 0c), the same shared definition every other detector uses;
+--   (b) concurrency counts ACTIVE sessions, not wall-clock spans. A session
+--       contributes at time t only if t lies inside one of its ACTIVE SEGMENTS:
+--       maximal runs of distinct hook_events.fired_at timestamps whose
+--       consecutive gaps are < 30 minutes (the same idle-gap definition as
+--       DETECTOR 8, marathon_session). Zero-length runs (one lone event)
+--       contribute nothing.
+-- Three outcomes (checks-must-distinguish-unknown):
+--   session has hook data     -> measured: its active segments are counted
+--   session has NO hook data  -> concurrency INDETERMINATE for it: fall back
+--                                to the wall-clock span (as before), but such
+--                                a day can reach at most 'info'
+--   'major' requires peak_measured_concurrent >= 7 (hook_events only).
+-- Evidence: concurrency_source = 'hook_events' when no wall-clock fallback
+-- session raised the day's peak, else 'wall_clock'.
 WITH session_bounds AS (
     SELECT
         session_id,
         started_at,
-        -- Partition key: the session's own start day. Both of its events
-        -- (start, end) are tagged with this key so the running sum below
-        -- resets per day regardless of what the (possibly capped) end
-        -- timestamp happens to be.
-        CAST(started_at AS DATE)                              AS day_bucket,
-        -- NULL ended_at (session-stop hook never fired / crashed session) is
-        -- capped at +1 minute instead of "now" (#804 fix for bug 2).
-        --
-        -- 2026-09-24 self-review finding (llm#803 follow-up): a
-        -- reaper-estimated ended_at (session_reaper.sql writes
-        -- started_at + 2h when no Stop event was observed within 6h --
-        -- see the `summary` marker it stamps) can later be silently
-        -- overwritten by session_events_staging_import.sh with a
-        -- MISATTRIBUTED stop timestamp from an UNRELATED session. Root
-        -- cause: the harness never sets CLAUDE_SESSION_ID (it sets
-        -- CLAUDE_CODE_SESSION_ID instead), so session_stop.sh falls back
-        -- to a stale/reused PPID-anchor file and closes the wrong row.
-        -- One observed instance misattributed a stop 63h after the real
-        -- start. Trusting such an `ended_at` inflates same-day
-        -- concurrency with a phantom long-lived session. Treat a
-        -- mismatched reaper-estimate row the same as a genuinely NULL
-        -- ended_at (bounded +1 minute cap) rather than trusting either
-        -- the reaper's own guess or a possibly-misattributed overwrite.
         COALESCE(
             CASE
                 WHEN summary LIKE '%reaper: ended_at is an ESTIMATE%'
@@ -473,38 +485,77 @@ WITH session_bounds AS (
     FROM sessions
     WHERE
         started_at IS NOT NULL
-        -- Exclude synthetic ClaudeProbe sessions (#812).
-        AND project NOT IN ('ClaudeProbe')
+        -- Exclude synthetic probe sessions (#812; cc-sandbox-probe-*, section 0c).
+        AND project IS NOT NULL AND NOT stage1_is_synthetic_project(project)
+),
+-- Same idle-gap definition as DETECTOR 8: distinct timestamps, 30 min cutoff.
+hook_ts AS (
+    SELECT DISTINCT session_id, fired_at AS ts
+    FROM hook_events
+    WHERE fired_at IS NOT NULL
+        AND session_id IN (SELECT session_id FROM session_bounds)
+),
+hook_marked AS (
+    SELECT
+        session_id,
+        ts,
+        CASE WHEN ts - lag(ts) OVER (PARTITION BY session_id ORDER BY ts)
+                  < INTERVAL '30' MINUTE
+             THEN 0 ELSE 1 END                                 AS new_run
+    FROM hook_ts
+),
+hook_runs AS (
+    SELECT
+        session_id,
+        ts,
+        SUM(new_run) OVER (PARTITION BY session_id ORDER BY ts) AS run_id
+    FROM hook_marked
+),
+active_segments AS (
+    SELECT
+        session_id,
+        MIN(ts)    AS seg_start,
+        MAX(ts)    AS seg_end
+    FROM hook_runs
+    GROUP BY session_id, run_id
+    HAVING MIN(ts) < MAX(ts)
+),
+wall_clock_sessions AS (
+    SELECT session_id, started_at, effective_end
+    FROM session_bounds
+    WHERE session_id NOT IN (SELECT session_id FROM hook_ts)
 ),
 parallel_events AS (
-    -- +1 event when a session starts
-    SELECT day_bucket, started_at    AS ts, 1  AS delta FROM session_bounds
+    -- measured = 1: active segment from hook_events; 0: wall-clock fallback.
+    -- Partition key day_bucket = the segment's (or session's) own start day.
+    SELECT CAST(seg_start AS DATE) AS day_bucket, seg_start AS ts, 1  AS delta, 1 AS measured FROM active_segments
     UNION ALL
-    -- -1 event when a session ends (real ended_at, or the 1-minute cap above)
-    SELECT day_bucket, effective_end AS ts, -1 AS delta FROM session_bounds
+    SELECT CAST(seg_start AS DATE), seg_end,                      -1, 1 FROM active_segments
+    UNION ALL
+    SELECT CAST(started_at AS DATE), started_at,                   1, 0 FROM wall_clock_sessions
+    UNION ALL
+    SELECT CAST(started_at AS DATE), effective_end,               -1, 0 FROM wall_clock_sessions
 ),
 parallel_running AS (
     SELECT
         day_bucket,
-        ts,
-        delta,
-        -- Starts (delta=1) are sorted before ends (delta=-1) at identical
-        -- timestamps so simultaneous starts are all counted before any
-        -- simultaneous end, giving a conservative (higher) peak count.
-        -- PARTITION BY day_bucket resets the running sum at the start of
-        -- each calendar day (#804 fix for bug 1) instead of accumulating
-        -- across the entire history of the table.
-        SUM(delta) OVER (
-            PARTITION BY day_bucket
-            ORDER BY ts, CASE WHEN delta = 1 THEN 0 ELSE 1 END
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        )                                               AS concurrent_count
+        -- Starts (delta=1) sort before ends at identical timestamps so
+        -- simultaneous starts are all counted first (conservative peak).
+        -- PARTITION BY day_bucket resets per calendar day (#804).
+        SUM(delta) OVER w                                       AS concurrent_count,
+        SUM(delta * measured) OVER w                            AS measured_count
     FROM parallel_events
+    WINDOW w AS (
+        PARTITION BY day_bucket
+        ORDER BY ts, CASE WHEN delta = 1 THEN 0 ELSE 1 END
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
 ),
 parallel_daily_peak AS (
     SELECT
         day_bucket,
-        MAX(concurrent_count)   AS peak_concurrent
+        MAX(concurrent_count)   AS peak_concurrent,
+        MAX(measured_count)     AS peak_measured
     FROM parallel_running
     GROUP BY day_bucket
     HAVING MAX(concurrent_count) >= 4
@@ -515,13 +566,17 @@ SELECT
     'parallel_sprawl_' || md5(day_bucket::VARCHAR)  AS finding_id,
     'parallel_session_sprawl'                        AS finding_type,
     NULL                                             AS session_id,
-    -- llm#1241: escalate to 'major' at ~1.75x the base threshold (7+
-    -- concurrent) instead of capping every instance at 'info' regardless of
-    -- magnitude — same ratio as the fixer-share example that motivated this.
-    CASE WHEN peak_concurrent >= 7 THEN 'major' ELSE 'info' END AS severity,
+    -- llm#1241: 'major' at ~1.75x the base threshold (7+), but only on
+    -- MEASURED (hook_events) concurrency; a wall-clock-inflated peak is
+    -- indeterminate and capped at 'info'.
+    CASE WHEN peak_measured >= 7 THEN 'major' ELSE 'info' END AS severity,
     json_object(
         'day',                day_bucket::VARCHAR,
         'peak_concurrent',    peak_concurrent::VARCHAR,
+        'peak_measured_concurrent', peak_measured::VARCHAR,
+        'concurrency_source', CASE WHEN peak_concurrent = peak_measured
+                                   THEN 'hook_events' ELSE 'wall_clock' END,
+        'idle_gap_threshold', '30 minutes',
         'threshold',          '4 concurrent sessions',
         'extreme_threshold',  '7 concurrent sessions (escalates to major, llm#1241)',
         'recommendation',     'All sessions share one rate limit — queue instead of running 4+ at once'
@@ -556,7 +611,7 @@ WITH subagent_heavy_sessions AS (
     FROM agent_runs
     WHERE session_id IS NOT NULL
         -- Exclude the synthetic ClaudeProbe health-probe project (llm#812).
-        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
     GROUP BY session_id
     HAVING COUNT(*) >= 10
 )
@@ -651,7 +706,7 @@ marathon_sessions AS (
         -- Exclude synthetic ClaudeProbe sessions (llm#812) — a probe-fleet
         -- session running long is a probe/infra artifact, not a real
         -- background-work marathon session worth flagging to a human.
-        AND project NOT IN ('ClaudeProbe')
+        AND project IS NOT NULL AND NOT stage1_is_synthetic_project(project)
         -- 2026-09-24 self-review finding (llm#803 follow-up): a reaper
         -- estimate (session_reaper.sql, `summary` carries the marker
         -- below) is not an OBSERVED marathon -- it is either the reaper's
@@ -737,7 +792,7 @@ WITH daily_fixer_share AS (
         -- (2026-05-29, 2026-06-08, 2026-07-03, 2026-07-10) false-positive as
         -- fixer_heavy_day purely from ClaudeProbe's own agent_runs, and
         -- disappear once excluded.
-        AND session_id NOT IN (SELECT session_id FROM sessions WHERE project = 'ClaudeProbe')
+        AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
     GROUP BY CAST(started_at AS DATE)
     HAVING
         COUNT(*) >= 5
