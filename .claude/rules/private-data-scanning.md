@@ -57,6 +57,14 @@ Broad words are everyday code identifiers (`tax.R`, `statement.sql`, `address.py
 
 Both rules have selftests with synthetic repos for fires / does not fire / allow-listed / private, and each was falsified (emptying the word lists, or the image extension list, silences the rule; restoring it brings the finding back).
 
+## Copy-time guard: `public_repo_file_import_guard.sh` ([#1368](https://github.com/JohnGavin/llm/issues/1368))
+
+The scanner layers above fire at commit time. This `PreToolUse` hook (Bash and Write) fires earlier, at the moment a file is put into a public repo's working tree, which is how a private document normally arrives (a copy from Downloads, Desktop, iCloud or a private repo). On Bash it reads the destination of `cp`, `mv`, `rsync`, `ditto`, `install` and `git add` (globs expanded, directories walked, `cd X &&` and `git -C X` followed; `git add .` / `-A` check the untracked files); on Write it reads `file_path`.
+
+It exits 2 (and prints a `permissionDecision: "deny"` body) when the destination is inside a git working tree whose visibility is `public` **or unknown** (a failed lookup is treated as public), and the file is a document format (the scanner's `DOC_FORMAT_EXTS`), an archive, or an image outside the generated-figure folders (`man/figures`, `*_files/figure-html`, `docs/`, `_freeze/`, `pkgdown/`), unless the exact repo-relative path is on that repo's `.claude/private_data_document_allowlist.txt` (`<path> | <reason>`, the same file and parser rules as the scanner). A destination outside any git repo is never blocked, and an already-tracked file passed to `git add` is not re-blocked.
+
+Limits, stated so the gap is not mistaken for coverage: redirections and `tee`, `ditto -x`, archives unpacked by `tar`/`unzip`, and paths built from shell variables are not followed; a rename of a document inside a public repo is blocked like an import. A parser crash (no `python3`) fails open and is logged to `~/.claude/logs/public_repo_file_import_guard.log`; only the visibility lookup fails closed. Test: `bash .claude/hooks/public_repo_file_import_guard.sh --selftest` (synthetic repos, stubbed lookup, falsification cases).
+
 ## Deny-list: a dedicated file, not `secrets.env` directly
 
 The deny-list lives at `~/.config/private_values.env` (`KEY=value`, mode 600) — **not** `~/.config/secrets.env` — because `secrets.env` holds live credentials consumed by many other scripts, and coupling this scanner to it means every future scanner bug exposes everything, not just the handful of PII literals it needs. `.claude/scripts/private_values_sync.sh` extracts named keys (default `SIGNAL_ACCOUNT`, the value [llm#946](https://github.com/JohnGavin/llm/issues/946) flagged) from `secrets.env` into `private_values.env` — run manually, never auto-invoked: `bash .claude/scripts/private_values_sync.sh --dry-run` / `--apply`. Full rationale: companion doc.

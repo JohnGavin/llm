@@ -1056,3 +1056,69 @@ test_that("header does not claim conversation/roborev inspection when those sour
   expect_false(grepl("open roborev code findings from the last 24h", combined, fixed = TRUE),
                info = "Header claims roborev was inspected though its DB was unavailable")
 })
+
+# ── Repo-visibility diff section (llm#1371) ───────────────────────────────────
+# A SMALL scratch DB built by applying the SHIPPED schema file (so the DDL under
+# test is the real one). Deliberately not a copy of the 6 GB live DB: the copy
+# fixtures above each leave a multi-GB file in tempdir() for the whole session
+# and can exhaust the disk. Repo names are invented.
+.build_repo_vis_fixture_db <- function(changes = list(), run_status = "ok") {
+  if (!requireNamespace("DBI", quietly = TRUE)) return(NULL)
+  if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
+  if (!nzchar(Sys.which("duckdb"))) return(NULL)
+  dst <- tempfile(fileext = ".duckdb")
+  schema_file <- file.path(pkgload::pkg_path(), ".claude", "scripts", "housekeeping_schema_init.sql")
+  rc <- system2("duckdb", c("-init", "/dev/null", dst), input = readLines(schema_file),
+                stdout = FALSE, stderr = FALSE)
+  if (!identical(rc, 0L) || !file.exists(dst)) return(NULL)
+  con <- DBI::dbConnect(duckdb::duckdb(), dst, read_only = FALSE)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  DBI::dbExecute(con, sprintf(
+    "INSERT INTO housekeeping_runs (id, task, source_script, started_at, ended_at, status, rows_written)
+     VALUES ('fx-rv', 'repo_visibility_diff', 'test-fixture', TIMESTAMPTZ '%s', TIMESTAMPTZ '%s', '%s', 0)",
+    now_utc, now_utc, run_status))
+  for (i in seq_along(changes)) {
+    ch <- changes[[i]]
+    DBI::dbExecute(con, sprintf(
+      "INSERT INTO repo_visibility_changes
+         (id, detected_at, snapshot_id, repo, repo_created_at, change_type, prev_visibility, audit_status)
+       VALUES ('fx-rv|%d', TIMESTAMPTZ '%s', 'fx-rv', %s, '2024-01-01T00:00:00Z', 'became_public', 'PRIVATE', %s)",
+      i, now_utc, DBI::dbQuoteString(con, ch$repo), DBI::dbQuoteString(con, ch$audit_status)))
+  }
+  dst
+}
+
+test_that("repo-visibility section lists a newly public repo and its pending audit (llm#1371)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  db <- .build_repo_vis_fixture_db(list(list(repo = "synthetic/zz-newly-public", audit_status = "pending")))
+  skip_if(is.null(db), "scratch fixture DB unavailable")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+  expect_true(grepl("Repo visibility diff", combined, fixed = TRUE))
+  expect_true(grepl("synthetic/zz-newly-public", combined, fixed = TRUE),
+              info = "the newly public repo is not named in the email")
+  expect_true(grepl("1 new public (24 h)", combined, fixed = TRUE))
+  expect_true(grepl("Full-history audit still pending", combined, fixed = TRUE))
+})
+
+test_that("repo-visibility section with no events says so, and does not name a repo (llm#1371 falsification)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  db <- .build_repo_vis_fixture_db(list())
+  skip_if(is.null(db), "scratch fixture DB unavailable")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+  expect_true(grepl("0 new public (24 h)", combined, fixed = TRUE))
+  expect_false(grepl("synthetic/zz-newly-public", combined, fixed = TRUE))
+})
+
+test_that("repo-visibility section renders a partial latest run as INDETERMINATE, not as no-change (llm#1371)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  db <- .build_repo_vis_fixture_db(list(), run_status = "partial")
+  skip_if(is.null(db), "scratch fixture DB unavailable")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+  expect_true(grepl("INDETERMINATE: the latest run could not establish repo visibility",
+                    combined, fixed = TRUE))
+})
