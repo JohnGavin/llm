@@ -102,3 +102,4 @@ WHERE id = '<uuid>';
 | roborev autoclose | `roborev_autoclose.sh` | `com.claude.roborev-autoclose` (09:15 weekly) | — (roborev DB) | — | Phase 8 (roborev status) |
 | KB digest section | `kb_digest_daily_cron.sh` | `com.claude.kb-digest-email` (08:05) | `kb_events` | Knowledge Base section of the config digest email; sends nothing itself (llm#1340) | — |
 | Config & Knowledge digest | `config_digest_cron.sh` | `com.claude.config-digest-email` (08:20) | `config_events` | — (is the email; no send on a day with no changes, run recorded `skipped`) | — |
+| Repo visibility diff | `repo_visibility_diff.sh` | `com.claude.repo-visibility-diff` (03:50 daily) | `repo_visibility_snapshots`, `repo_visibility_changes` | "Repo visibility diff" section (24h findings, pending audits, stale/INDETERMINATE heartbeat) | — (skipped: not advisory-only, needs network) |

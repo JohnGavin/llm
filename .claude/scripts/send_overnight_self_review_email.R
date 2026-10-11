@@ -2846,6 +2846,106 @@ sec_secret_scan_block <- collapsible_block(
   secret_scan_section$body
 )
 
+# ── Section: Repo-visibility diff (llm#1371, privacy gate 7) ─────────────────
+# repo_visibility_diff.sh runs daily at 03:50 (com.claude.repo-visibility-
+# diff.plist) and records one housekeeping_runs row per invocation (task=
+# 'repo_visibility_diff') plus one repo_visibility_changes row per repo that
+# became public or is new and public. repo_visibility_guard.sh only sees
+# visibility changes made by Claude; a repo made public on github.com is
+# caught here. Three states are kept apart on purpose
+# (checks-must-distinguish-unknown): no change, a finding, and INDETERMINATE
+# (latest run 'partial' = the API/DB call failed, or the heartbeat is stale).
+# A finding whose full-history audit is still 'pending' stays loud at any age.
+# Query errors are NOT swallowed (no safe_query): a missing table must read as
+# "error", never as "no events".
+repo_vis_section <- tryCatch({
+  rv_runs <- DBI::dbGetQuery(con, "
+    SELECT started_at, status, rows_written
+    FROM housekeeping_runs
+    WHERE task = 'repo_visibility_diff'
+    ORDER BY started_at DESC
+    LIMIT 1")
+  rv_new <- DBI::dbGetQuery(con, "
+    SELECT repo, change_type, prev_visibility, audit_status, detected_at
+    FROM repo_visibility_changes
+    WHERE detected_at >= current_timestamp - INTERVAL 24 HOUR
+    ORDER BY detected_at DESC, repo")
+  rv_pending <- DBI::dbGetQuery(con, "
+    SELECT repo, change_type, detected_at
+    FROM repo_visibility_changes
+    WHERE audit_status = 'pending'
+    ORDER BY detected_at, repo")
+
+  if (nrow(rv_runs) == 0L) {
+    list(
+      body    = sprintf('<p style="color:%s;">No repo_visibility_diff runs recorded yet -- expected daily at 03:50.</p>', DARK_MUTED),
+      summary = "no runs recorded yet",
+      color   = "#ff9800"
+    )
+  } else {
+    rv_started <- rv_runs$started_at[[1]]
+    rv_status  <- rv_runs$status[[1]]
+    rv_hours   <- as.numeric(difftime(Sys.time(), as.POSIXct(rv_started, tz = "UTC"), units = "hours"))
+    rv_stale   <- !is.na(rv_hours) && rv_hours > 36
+    rv_indet   <- identical(rv_status, "partial")
+
+    rv_notes <- paste0(
+      if (rv_stale) sprintf(
+        '<p style="color:#ff5252;font-size:%s;margin-bottom:8px;">&#9888; repo_visibility_diff has not run in %.0fh (last: %s) -- expected daily at 03:50. Check com.claude.repo-visibility-diff via launchd_health_audit.sh.</p>',
+        EMAIL_FONT_SUBTITLE, rv_hours, rv_started) else "",
+      if (rv_indet) sprintf(
+        '<p style="color:#ff9800;font-size:%s;margin-bottom:8px;">&#9888; INDETERMINATE: the latest run could not establish repo visibility (API or database failure). This is NOT a no-change result -- see ~/.claude/logs/repo_visibility_diff.log.</p>',
+        EMAIL_FONT_SUBTITLE) else ""
+    )
+
+    rv_table <- function(df, cols) {
+      rows_html <- paste(apply(df, 1, function(r) {
+        sprintf('<tr style="background-color:%s;">%s</tr>', DARK_CARD,
+                paste(sprintf('<td style="padding:5px 10px;font-family:monospace;">%s</td>',
+                              vapply(cols, function(cn) htmlEscape(as.character(r[[cn]])), character(1))),
+                      collapse = ""))
+      }), collapse = "\n")
+      sprintf('<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;"><thead><tr style="background-color:%s;">%s</tr></thead><tbody>%s</tbody></table>',
+              DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT,
+              paste(sprintf('<th style="padding:5px 10px;text-align:left;">%s</th>', cols), collapse = ""),
+              rows_html)
+    }
+
+    rv_new_html <- if (nrow(rv_new) > 0L) {
+      paste0(sprintf('<p style="color:#ff5252;font-weight:bold;font-size:%s;">Became public, or new and public, in the last 24 h:</p>', EMAIL_FONT_BODY),
+             rv_table(rv_new, c("repo", "change_type", "prev_visibility", "audit_status")))
+    } else {
+      sprintf('<p style="color:%s;font-size:%s;">No events in the last 24 h.</p>', ACCENT_GREEN, EMAIL_FONT_BODY)
+    }
+    rv_pend_html <- if (nrow(rv_pending) > 0L) {
+      paste0(sprintf('<p style="color:#ff5252;font-weight:bold;font-size:%s;">Full-history audit still pending (a public repo that has not been audited is not clean):</p>', EMAIL_FONT_BODY),
+             rv_table(rv_pending, c("repo", "change_type", "detected_at")))
+    } else ""
+
+    rv_bad <- nrow(rv_new) > 0L || nrow(rv_pending) > 0L
+    list(
+      body    = paste0(rv_notes, rv_new_html, rv_pend_html),
+      summary = sprintf("%d new public (24 h) · %d audit(s) pending · last run %.0fh ago%s",
+                        nrow(rv_new), nrow(rv_pending), rv_hours,
+                        if (rv_indet) " · INDETERMINATE" else ""),
+      color   = if (rv_bad || rv_stale) "#ff5252" else if (rv_indet) "#ff9800" else ACCENT_GREEN
+    )
+  }
+}, error = function(e) {
+  list(
+    body    = sprintf('<p style="color:#ff5252;">repo-visibility-diff section failed: %s</p>', htmlEscape(conditionMessage(e))),
+    summary = "error",
+    color   = "#ff9800"
+  )
+})
+
+sec_repo_vis_block <- collapsible_block(
+  "Repo visibility diff (daily, 03:50)",
+  repo_vis_section$summary,
+  repo_vis_section$body,
+  summary_color = repo_vis_section$color
+)
+
 # ── Section: Agent failed with empty stdout — cause unknown (llm#954) ────────
 # roborev's own error message for this failure class is FABRICATED: when an
 # agent process exits non-zero with EMPTY stdout, roborev cannot parse the
@@ -3213,6 +3313,7 @@ padding:20px;max-width:800px;margin:0 auto;">', DARK_BG, DARK_TEXT),
   oversized_block, "\n",
   sec_hooks_block, "\n",
   sec_secret_scan_block, "\n",
+  sec_repo_vis_block, "\n",
   sec_agent_failure_block, "\n",
   sec4_block, "\n",
   footer_html,
