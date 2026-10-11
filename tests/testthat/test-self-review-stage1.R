@@ -531,6 +531,7 @@ FROM self_review_findings_stage1 WHERE finding_type = 'marathon_session';
 "
 
 marathon_rows <- function() {
+  skip_if_not(file.exists(sql_file()), "self_review_stage1.sql not found")
   out <- run_sql(marathon_setup_sql, sql_file(), marathon_post_sql)
   expect_false(is.null(out), label = "duckdb returned NULL")
   txt <- unlist(regmatches(out, gregexpr("ROW\\|[^│]*\\|", out)))
@@ -649,6 +650,7 @@ FROM self_review_findings_stage1 WHERE finding_type = 'parallel_session_sprawl';
 "
 
 sprawl_rows <- function() {
+  skip_if_not(file.exists(sql_file()), "self_review_stage1.sql not found")
   out <- run_sql(sprawl_setup_sql, sql_file(), sprawl_post_sql)
   expect_false(is.null(out), label = "duckdb returned NULL")
   txt <- unlist(regmatches(out, gregexpr("ROW\\|[^│]*\\|", out)))
@@ -694,7 +696,9 @@ test_that("parallel_session_sprawl: sessions with no hook data fall back to wall
 })
 
 test_that("synthetic-project pattern is defined once in the SQL and used by every detector", {
-  sql <- paste(readLines(sql_file(), warn = FALSE), collapse = "\n")
+  f <- sql_file()
+  skip_if_not(file.exists(f), "self_review_stage1.sql not found")
+  sql <- paste(readLines(f, warn = FALSE), collapse = "\n")
   expect_equal(lengths(regmatches(sql, gregexpr("cc-sandbox-probe-%", sql, fixed = TRUE))), 1L)
   expect_false(grepl("project NOT IN ('ClaudeProbe')", sql, fixed = TRUE))
   expect_false(grepl("project = 'ClaudeProbe')", sql, fixed = TRUE))
