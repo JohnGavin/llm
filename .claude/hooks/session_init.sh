@@ -1928,6 +1928,22 @@ phase_targets_own_package() {
 }
 phase_targets_own_package
 
+# ── Phase 15i: Telemetry stranded/aborted runs — FOREGROUND (local tail ≤200 lines) ─
+# llmtelemetry's export_and_deploy_data.sh and exec/refresh_codexbar.sh append
+# to ~/.claude/logs/telemetry_stranded_runs.log on failure; nothing read it, so
+# failures were invisible. The reader prints one line only when there are
+# entries in the last 3 days, an INDETERMINATE line when the log is unreadable
+# or unparseable, and nothing otherwise. No existing phase covers this
+# (etl freshness 15a is DuckDB-based and does not read this log).
+# Skippable: CLAUDE_TELEMETRY_STRANDED_CHECK=0
+phase_telemetry_stranded() {
+  local script="${CLAUDE_DIR}/scripts/telemetry_stranded_banner.sh"
+  [ -x "$script" ] || return 0
+  timeout 3 "$script" 2>/dev/null || true
+  return 0
+}
+phase_telemetry_stranded
+
 # ── Phase 14: Record session-start SHA (for session-end refine) ───────────────
 # Writes HEAD SHA to ~/.claude/.session_start_sha_<project> so that
 # session_end_refine.sh can bound a roborev refine to commits from this session.
