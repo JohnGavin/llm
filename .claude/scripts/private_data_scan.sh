@@ -1622,10 +1622,21 @@ run_selftest() {
     # Item 1: a blob that is NOT valid UTF-8 must still be scanned under a
     # UTF-8 locale. The precondition (tr really does fail on it there) is
     # checked, otherwise the test would be vacuous on this machine.
-    local utf8loc="" cand
-    for cand in en_US.UTF-8 en_GB.UTF-8 C.UTF-8; do
-        if ! ( printf '\377' | LC_ALL="$cand" tr -d '\000' >/dev/null 2>&1 ); then utf8loc="$cand"; break; fi
+    # Pick any installed UTF-8 locale (llm#1358): prefer en_GB, en_US, then
+    # C.UTF-8 (always present on glibc Linux, listed as C.utf8), then any
+    # `locale -a` entry matching utf-?8. GNU tr/grep are byte-safe, so on Linux
+    # tr does not fail on \377 there; the locale-independence assertion below
+    # is still meaningful, so existence of the locale is the only requirement.
+    local utf8loc="" cand avail norm
+    avail="$(locale -a 2>/dev/null)"
+    for cand in en_GB.UTF-8 en_US.UTF-8 C.UTF-8; do
+        norm="$(printf '%s' "$cand" | tr -d '-' | tr '[:upper:]' '[:lower:]')"
+        utf8loc="$(printf '%s\n' "$avail" | awk -v n="$norm" '{ l=$0; gsub(/-/,"",l); if (tolower(l)==n) { print $0; exit } }')"
+        [ -n "$utf8loc" ] && break
     done
+    if [ -z "$utf8loc" ]; then
+        utf8loc="$(printf '%s\n' "$avail" | awk 'tolower($0) ~ /utf-?8/ { print $0; exit }')"
+    fi
     if [ -n "$utf8loc" ]; then
         local u_sent="NONUTF8_w4Kp7Zq_denyprobe" saved_dl=("${DENYLIST_VALUES[@]}")
         DENYLIST_VALUES=("$u_sent")
