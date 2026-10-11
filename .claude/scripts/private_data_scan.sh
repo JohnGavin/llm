@@ -797,6 +797,132 @@ scan_document_format() {
     rm -f "$txt"
 }
 
+# ---------------------------------------------------------------------------
+# Path rules: sensitive filename (JohnGavin/llm#1369) and images outside
+# generated-figure folders (JohnGavin/llm#1370)
+# ---------------------------------------------------------------------------
+# A file's NAME says what it is (a hospital letter, a payslip) and a photo of
+# a letter is invisible to every text rule, so both rules look at the PATH,
+# not the content. Both are PUBLIC-repo gates (VIS != private), both lift on
+# the same exact-path "<path> | <reason>" allow-list as the document gate
+# (DOC_ALLOW_PATHS, #1358), and both are rules in the "gate" source.
+#
+# ---- sensitive-filename (critical, every mode) ----
+# The path is lower-cased and split into tokens on every character that is
+# not a-z0-9, so word boundaries are exact: "ipaddress.pyi" does not contain
+# the token "address", "taxonomy" is not "tax", "clinical" is not "clinic",
+# "nhs_letter" holds "nhs" and "letter". A token also matches with trailing
+# digits stripped ("payslip2024" -> "payslip", "letter1" -> "letter").
+#
+#   STRONG words: a hit on any path segment is a finding, whatever the
+#   extension. They name a document class and have no common code meaning:
+#   nhs hospital clinic payslip payslips p60 p45 p11d passport discharge
+#   prescription.
+#
+#   BROAD words: ordinary English words that are also everyday code
+#   identifiers (tax.R, statement.sql, bank.py, contact.js, signal.py,
+#   address.pyi). They count ONLY when the FILE has a document, image or
+#   plain-data extension (BROAD_EXTS below). Code and markup extensions never
+#   count, so a source file is not flagged for its identifier:
+#   letter letters statement statements invoice invoices tax taxes bank
+#   licence license contact contacts address medical salary payroll mortgage
+#   appointment appointments referral.
+#   Deliberately absent: "signal" (a Python module and a messaging app, and
+#   the single noisiest word on the 2026-10-11 inventory).
+#
+# Tuning evidence (counts only, 2026-10-11 inventory of the owner's public
+# repos): see .claude/rules/private-data-scanning.md. To change a list, run
+# the same count again and record before/after there.
+FILENAME_STRONG_WORDS=" nhs hospital clinic payslip payslips p60 p45 p11d passport discharge prescription "
+FILENAME_BROAD_WORDS=" letter letters statement statements invoice invoices tax taxes bank licence license contact contacts address medical salary payroll mortgage appointment appointments referral "
+FILENAME_BROAD_EXTS=" pdf doc docx xls xlsx odt ods rtf eml msg csv tsv txt png jpg jpeg gif heic heif tif tiff bmp webp "
+IMAGE_EXTS=" png jpg jpeg gif webp heic heif tif tiff bmp "
+
+# path_basename_ext PATH -> lower-case extension of the BASENAME ("" if none)
+path_basename_ext() {
+    local b="${1##*/}"
+    b="$(printf '%s' "$b" | tr 'A-Z' 'a-z')"
+    [ "${b##*.}" != "$b" ] || return 0
+    printf '%s' "${b##*.}"
+}
+
+# sensitive_filename_word PATH -> prints the matched word and returns 0, or
+# returns 1. Pure: no allow-list, no visibility (the caller applies both).
+sensitive_filename_word() {
+    local lc ext tok t
+    lc="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' ' ')"
+    ext="$(path_basename_ext "$1")"
+    local broad_ok=0
+    case "$FILENAME_BROAD_EXTS" in *" $ext "*) [ -n "$ext" ] && broad_ok=1 ;; esac
+    for tok in $lc; do
+        case "$FILENAME_STRONG_WORDS" in *" $tok "*) printf '%s' "$tok"; return 0 ;; esac
+        t="$tok"
+        while [ "${t%[0-9]}" != "$t" ]; do t="${t%[0-9]}"; done
+        [ -n "$t" ] || continue
+        case "$FILENAME_STRONG_WORDS" in *" $t "*) printf '%s' "$t"; return 0 ;; esac
+        if [ "$broad_ok" -eq 1 ]; then
+            case "$FILENAME_BROAD_WORDS" in *" $t "*) printf '%s' "$t"; return 0 ;; esac
+        fi
+    done
+    return 1
+}
+
+# ---- image-outside-figures (critical; image-in-public-history, high, in
+# --full-history) ----
+# A photo or screenshot of a letter cannot be read by any text rule. Images
+# are blocked in a public repo unless they sit in a GENERATED-figure folder
+# or are on the allow-list. Generated folders (anchored where stated; an
+# unanchored "docs/" would let "notes/docs/scan.jpg" through):
+#   man/figures/            (root)   roxygen / README figures
+#   docs/                   (root)   pkgdown / rendered-site output
+#   vignettes/<x>_files/    (root)   knitr / Quarto vignette figure dirs
+#   */<x>_files/figure-*/   (any)    Quarto / knitr figure output
+#   _freeze/  _site/        (any)    Quarto freeze and site output
+is_image_path() {
+    local ext; ext="$(path_basename_ext "$1")"
+    [ -n "$ext" ] || return 1
+    case "$IMAGE_EXTS" in *" $ext "*) return 0 ;; esac
+    return 1
+}
+
+is_generated_figure_path() {
+    case "$1" in
+        man/figures/*|docs/*|vignettes/*_files/*) return 0 ;;
+        *_files/figure-*/*) return 0 ;;
+        _freeze/*|*/_freeze/*|_site/*|*/_site/*) return 0 ;;
+    esac
+    return 1
+}
+
+path_allow_listed() {
+    local a
+    [ "${#DOC_ALLOW_PATHS[@]}" -gt 0 ] || return 1
+    for a in "${DOC_ALLOW_PATHS[@]}"; do
+        [ "$a" = "$1" ] && return 0
+    done
+    return 1
+}
+
+# scan_path_rules LOCATION RAW-FILE-or-"" -- findings to FINDINGS_FILE.
+scan_path_rules() {
+    local loc="$1" rawf="$2" path word rule sev size
+    [ "${VIS:-public}" != "private" ] || return 0
+    path="$(doc_loc_path "$loc")"
+    path_allow_listed "$path" && return 0
+    if word="$(sensitive_filename_word "$path")"; then
+        append_finding "gate" "critical" "$loc" "0" "sensitive-filename" \
+            "path contains a health/money/identity/contact word from the scanner's list, not on the allow-list (content not inspected for meaning)"
+    fi
+    if is_image_path "$path" && ! is_generated_figure_path "$path"; then
+        size="unknown"
+        [ -n "$rawf" ] && size="$(wc -c < "$rawf" | tr -d ' ')"
+        rule="image-outside-figures"; sev="critical"
+        if [ "$MODE" = "full-history" ]; then rule="image-in-public-history"; sev="high"; fi
+        append_finding "gate" "$sev" "$loc" "0" "$rule" \
+            "image file outside generated-figure folders, not on the allow-list (${size} bytes; pixels not inspected)"
+    fi
+}
+
 # scan_blob LOCATION < content-on-stdin
 scan_blob() {
     local loc="$1" content rawf=""
@@ -807,13 +933,15 @@ scan_blob() {
     # actually stops the truncation at its source; scan_denylist's and
     # scan_generic's own fixes are defense-in-depth for any caller that
     # invokes them directly with raw content (e.g. the selftest below).
-    if is_document_format_path "$loc"; then
+    if is_document_format_path "$loc" || is_image_path "$(doc_loc_path "$loc")"; then
         rawf="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_doc.XXXXXX")"
         cat > "$rawf"
-        scan_document_format "$loc" "$rawf"
+        is_document_format_path "$loc" && scan_document_format "$loc" "$rawf"
+        scan_path_rules "$loc" "$rawf"
         content="$(LC_ALL=C tr -d '\000' < "$rawf")"
         rm -f "$rawf"
     else
+        scan_path_rules "$loc" ""
         content="$(LC_ALL=C tr -d '\000')"
     fi
     # Deny-list is UNCONDITIONAL -- always runs, even for a self-reference
@@ -959,7 +1087,9 @@ scan_paths() {
         case "$f" in
             # *.pdf is deliberately NOT skipped: it must reach the
             # document-format gate in scan_blob (llm#1358).
-            *.rds|*.rda|*.RData|*.png|*.jpg|*.jpeg|*.gif|*.gz|*.zip|*.duckdb|*.parquet) continue ;;
+            # Images are likewise NOT skipped: they must reach the
+            # image-outside-figures gate (llm#1370); generic rules skip them.
+            *.rds|*.rda|*.RData|*.gz|*.zip|*.duckdb|*.parquet) continue ;;
         esac
         cat "$f" 2>/dev/null | scan_blob "$f"
     done
@@ -1577,6 +1707,10 @@ run_selftest() {
     # path and be SKIPPED on a binary-typed path.
     local bin_text='postcode SW1A 1AA and reach +14155552671 here'
     local bin_ext
+    # These cases are about the GENERIC rules on binary types; the image gate
+    # (llm#1370) would add a finding for 'data/blob.png' in a public repo, so
+    # visibility is private for this section (the gate has its own cases below).
+    local vis_pre_bin="$VIS"; VIS=private
     FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_bin0.XXXXXX")"
     printf '%s\n' "$bin_text" | scan_blob "R/notes.txt"
     _check "$([ "$(awk -F'\t' '$1=="generic"' "$FINDINGS_FILE" | grep -c .)" -ge 2 ] && echo 0 || echo 1)" \
@@ -1609,6 +1743,7 @@ run_selftest() {
         rm -f "$FINDINGS_FILE"
     done
     DENYLIST_VALUES=("${saved_denylist_bin[@]}")
+    VIS="$vis_pre_bin"
 
     # --tsv end-to-end on the temp repo built above (3 commits; "add leak"
     # holds generic findings). Asserts the machine-readable contract the
@@ -1875,6 +2010,151 @@ run_selftest() {
     _check "$([ "$e2e_rc" -eq 3 ] && echo 0 || echo 1)" "llm#1358 e2e: --range reaches a PDF added in a root commit (un-inspectable -> exit exactly 3, not a clean 0) (rc=$e2e_rc)"
     _e2e fail "" "" --paths "$er/docs/ok.pdf"
     _check "$([ "$e2e_rc" -eq 1 ] && "$GREP" -q 'document-format-blocked' "$e2e_out" && echo 0 || echo 1)" "llm#1358 e2e: --paths no longer skips a PDF silently; gate fires -> exit exactly 1 (rc=$e2e_rc)"
+
+    # ── llm#1369 sensitive-filename and llm#1370 image-outside-figures ─────
+    # _rule_count LOCATION RULE -> number of gate findings of RULE for a blob
+    # (content is irrelevant to both rules, so a one-line stub is used).
+    _rule_count() {
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_pr.XXXXXX")"
+        printf 'opaque\n' | scan_blob "$1"
+        awk -F'\t' -v r="$2" '$1=="gate" && $5==r' "$FINDINGS_FILE" | grep -c .
+        rm -f "$FINDINGS_FILE"
+    }
+    VIS=public
+    DOC_ALLOW_PATHS=()
+    local lp
+    # Fires: strong words in any position/extension; broad words with a
+    # document/image/data extension; word boundaries incl. separators and digits.
+    for lp in "abc123456789:notes/nhs-letter.txt" "abc123456789:x/Hospital/readme.md" \
+              "abc123456789:in/payslip2024.csv" "abc123456789:in/p60.png" \
+              "abc123456789:id/Passport_scan.jpg" "abc123456789:med/discharge.R" \
+              "abc123456789:fin/bank_statement.pdf" "abc123456789:fin/INVOICE-7.xlsx" \
+              "abc123456789:a/tax.csv" "abc123456789:a/contacts.tsv" \
+              "abc123456789:a/licence.docx" "staged:a/letter.txt"; do
+        _check "$([ "$(_rule_count "$lp" sensitive-filename)" -eq 1 ] && echo 0 || echo 1)" \
+            "llm#1369: sensitive-filename (critical gate) fires for '$lp'"
+    done
+    # Does not fire: code identifiers and lookalikes (the false positives the
+    # tuning removed): broad word with a code extension, substring-only hits.
+    for lp in "abc123456789:R/tax.R" "abc123456789:lib/ipaddress.pyi" "abc123456789:R/taxonomy.R" \
+              "abc123456789:src/statement.sql" "abc123456789:bin/signal.py" "abc123456789:R/address.R" \
+              "abc123456789:hooks/clinical_data_guard.sh" "abc123456789:docs/letterhead.css" \
+              "abc123456789:a/dischargeable.txt" "abc123456789:a/bankruptcy.pdf" \
+              "abc123456789:a/contactless.csv" "abc123456789:README.md" "abc123456789:a/p6.png" \
+              "abc123456789:a/nhsx/x"; do
+        _check "$([ "$(_rule_count "$lp" sensitive-filename)" -eq 0 ] && echo 0 || echo 1)" \
+            "llm#1369: sensitive-filename does NOT fire for '$lp' (code identifier / lookalike)"
+    done
+    # Severity and source.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_pr2.XXXXXX")"
+    printf 'opaque\n' | scan_blob "abc123456789:a/payslip.txt"
+    _check "$([ "$(awk -F'\t' '$1=="gate" && $2=="critical" && $5=="sensitive-filename"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && [ "$(grep -c . "$FINDINGS_FILE")" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1369: exactly one critical gate finding for a payslip path"
+    rm -f "$FINDINGS_FILE"
+    # Private repo: not gated. Allow-list: exact path + reason lifts it; a near miss does not.
+    VIS=private
+    _check "$([ "$(_rule_count "abc123456789:a/payslip.txt" sensitive-filename)" -eq 0 ] && echo 0 || echo 1)" "llm#1369: private repo is not gated"
+    VIS=public
+    local af2="$tmp/path_allow.txt"
+    {
+        printf 'a/payslip.txt | synthetic sample for documentation, no real person\n'
+        printf 'a/nhs.txt\n'
+        printf 'img/photo.png | product screenshot, no personal content\n'
+    } > "$af2"
+    DOC_ALLOWLIST_FILE="$af2"; load_doc_allowlist 2>/dev/null
+    _check "$([ "$(_rule_count "abc123456789:a/payslip.txt" sensitive-filename)" -eq 0 ] && echo 0 || echo 1)" "llm#1369: allow-listed path is not flagged"
+    _check "$([ "$(_rule_count "staged:a/payslip.txt" sensitive-filename)" -eq 0 ] && echo 0 || echo 1)" "llm#1369: allow-list applies to the 'staged:' location form"
+    _check "$([ "$(_rule_count "abc123456789:b/payslip.txt" sensitive-filename)" -eq 1 ] && echo 0 || echo 1)" "llm#1369: same name in another directory is still flagged (exact paths only)"
+    _check "$([ "$(_rule_count "abc123456789:a/nhs.txt" sensitive-filename)" -eq 1 ] && echo 0 || echo 1)" "llm#1369: allow-list line with no reason allows nothing"
+    # Falsification: with the word lists emptied the positives must go quiet,
+    # proving the fires above depend on the lists and not on something else.
+    local sw_saved="$FILENAME_STRONG_WORDS" bw_saved="$FILENAME_BROAD_WORDS"
+    FILENAME_STRONG_WORDS=" "; FILENAME_BROAD_WORDS=" "
+    _check "$([ "$(_rule_count "abc123456789:b/payslip.txt" sensitive-filename)" -eq 0 ] && [ "$(_rule_count "abc123456789:fin/bank_statement.pdf" sensitive-filename)" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1369 falsification: with both word lists emptied the rule goes quiet (it was the lists that fired)"
+    FILENAME_STRONG_WORDS="$sw_saved"; FILENAME_BROAD_WORDS="$bw_saved"
+    _check "$([ "$(_rule_count "abc123456789:b/payslip.txt" sensitive-filename)" -eq 1 ] && echo 0 || echo 1)" "llm#1369 falsification: lists restored, rule fires again"
+
+    # Images (#1370). Outside generated-figure folders: blocked.
+    for lp in "abc123456789:img/photo.JPG" "abc123456789:letter.png" "abc123456789:notes/docs/scan.jpg" \
+              "abc123456789:man/figures2/a.png" "abc123456789:vignettes/a.png" "abc123456789:R/pics/x.heic" \
+              "abc123456789:img/photo2.png" "staged:scans/page1.tiff" "abc123456789:x/docs.gif"; do
+        _check "$([ "$(_rule_count "$lp" image-outside-figures)" -eq 1 ] && echo 0 || echo 1)" \
+            "llm#1370: image-outside-figures (critical gate) fires for '$lp'"
+    done
+    # Generated-figure folders and non-images: not blocked.
+    for lp in "abc123456789:man/figures/logo.png" "abc123456789:docs/reference/figures/p.png" \
+              "abc123456789:vignettes/intro_files/figure-html/c.png" "abc123456789:vignettes/intro_files/x.png" \
+              "abc123456789:report_files/figure-html/p-1.png" "abc123456789:_freeze/post/p.png" \
+              "abc123456789:sub/_freeze/post/p.png" "abc123456789:_site/p.png" \
+              "abc123456789:R/plot.R" "abc123456789:img/diagram.svg" "abc123456789:img/photo.png.txt"; do
+        _check "$([ "$(_rule_count "$lp" image-outside-figures)" -eq 0 ] && echo 0 || echo 1)" \
+            "llm#1370: image-outside-figures does NOT fire for '$lp' (generated folder / not an image)"
+    done
+    # Allow-list (img/photo.png has a reason; img/photo2.png does not exist there).
+    _check "$([ "$(_rule_count "abc123456789:img/photo.png" image-outside-figures)" -eq 0 ] && echo 0 || echo 1)" "llm#1370: allow-listed image is not blocked"
+    _check "$([ "$(_rule_count "abc123456789:img/photo2.png" image-outside-figures)" -eq 1 ] && echo 0 || echo 1)" "llm#1370: a neighbouring image is still blocked"
+    VIS=private
+    _check "$([ "$(_rule_count "abc123456789:img/photo2.png" image-outside-figures)" -eq 0 ] && echo 0 || echo 1)" "llm#1370: private repo is not gated"
+    VIS=public
+    # Severity/rule split: critical in range/staged, high + own rule in --full-history. Size, not content.
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_im1.XXXXXX")"
+    printf '12345678901234567890' | scan_blob "abc123456789:img/photo2.png"
+    _check "$([ "$(awk -F'\t' '$2=="critical" && $5=="image-outside-figures" && $6 ~ /20 bytes/' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && echo 0 || echo 1)" "llm#1370: finding is critical and reports the size (20 bytes), not content"
+    rm -f "$FINDINGS_FILE"
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_im2.XXXXXX")"
+    mode_saved="$MODE"; MODE="full-history"
+    printf 'x' | scan_blob "abc123456789:img/photo2.png"
+    MODE="$mode_saved"
+    _check "$([ "$(awk -F'\t' '$2=="high" && $5=="image-in-public-history"' "$FINDINGS_FILE" | grep -c .)" -eq 1 ] && [ "$(awk -F'\t' '$5=="image-outside-figures"' "$FINDINGS_FILE" | grep -c .)" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1370: --full-history reports image-in-public-history at severity high (not critical)"
+    rm -f "$FINDINGS_FILE"
+    # Falsification: IMAGE_EXTS emptied -> nothing fires.
+    local ie_saved="$IMAGE_EXTS"; IMAGE_EXTS=" "
+    _check "$([ "$(_rule_count "abc123456789:img/photo2.png" image-outside-figures)" -eq 0 ] && echo 0 || echo 1)" "llm#1370 falsification: with IMAGE_EXTS emptied the rule goes quiet"
+    IMAGE_EXTS="$ie_saved"
+    _check "$([ "$(_rule_count "abc123456789:img/photo2.png" image-outside-figures)" -eq 1 ] && echo 0 || echo 1)" "llm#1370 falsification: restored, rule fires again"
+    DOC_ALLOW_PATHS=(); DOC_ALLOWLIST_FILE=""
+
+    # End to end on a synthetic repo: exact exit codes in staged / range / history.
+    local pr="$tmp/pathrepo" pr_allow="$tmp/pr_allow.txt"
+    mkdir -p "$pr/img" "$pr/man/figures" "$pr/R"
+    git -C "$pr" init -q
+    git -C "$pr" config user.email t@example.com
+    git -C "$pr" config user.name t
+    printf 'clean\n' > "$pr/README.txt"
+    git -C "$pr" add README.txt
+    git -C "$pr" commit -q -m "base"
+    local pr_base; pr_base="$(git -C "$pr" rev-parse HEAD)"
+    printf 'PNGDATA' > "$pr/img/photo.png"
+    printf 'PNGDATA' > "$pr/man/figures/logo.png"
+    printf 'x <- 1\n' > "$pr/R/tax.R"
+    printf 'a,b\n' > "$pr/payslip.csv"
+    git -C "$pr" add img/photo.png man/figures/logo.png R/tax.R payslip.csv
+    _pe2e() {   # _pe2e VIS ALLOWLIST ARGS...
+        local v="$1" al="$2"; shift 2
+        env HOME="$tmp/home" UNIFIED_DB_PATH="$tmp/none.duckdb" PATH="$stubdir:$PATH" STUB_VIS="$v" \
+            REPO_ROOT="$pr" PRIVATE_DATA_DOC_ALLOWLIST="$al" bash "$0" "$@" --no-denylist --tsv >"$e2e_out" 2>"$e2e_err"
+        e2e_rc=$?
+    }
+    _pe2e PUBLIC "" --staged
+    _check "$([ "$e2e_rc" -eq 1 ] && [ "$("$GREP" -c 'image-outside-figures' "$e2e_out")" -eq 1 ] && [ "$("$GREP" -c 'sensitive-filename' "$e2e_out")" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1369/1370 e2e: --staged, public -> exit exactly 1; ONE image finding (img/, not man/figures/) and ONE filename finding (payslip, not tax.R) (rc=$e2e_rc)"
+    _pe2e PRIVATE "" --staged
+    _check "$([ "$e2e_rc" -eq 0 ] && echo 0 || echo 1)" "llm#1369/1370 e2e: --staged, private repo -> exit exactly 0 (rc=$e2e_rc)"
+    printf 'img/photo.png | product screenshot, no personal content\npayslip.csv | synthetic sample, no real person\n' > "$pr_allow"
+    _pe2e PUBLIC "$pr_allow" --staged
+    _check "$([ "$e2e_rc" -eq 0 ] && echo 0 || echo 1)" "llm#1369/1370 e2e: --staged, both paths allow-listed with reasons -> exit exactly 0 (rc=$e2e_rc)"
+    git -C "$pr" commit -q -m "add images and a payslip"
+    _pe2e PUBLIC "" --range "$pr_base" HEAD
+    _check "$([ "$e2e_rc" -eq 1 ] && "$GREP" -q 'critical.*image-outside-figures\|image-outside-figures' "$e2e_out" && echo 0 || echo 1)" "llm#1370 e2e: --range (pre-push/CI), public -> exit exactly 1, rule image-outside-figures (rc=$e2e_rc)"
+    _pe2e PUBLIC "" --full-history
+    _check "$([ "$e2e_rc" -eq 1 ] && "$GREP" -q 'image-in-public-history' "$e2e_out" && ! "$GREP" -q 'image-outside-figures' "$e2e_out" && echo 0 || echo 1)" "llm#1370 e2e: --full-history, public -> exit 1 with image-in-public-history only (rc=$e2e_rc)"
+    _pe2e PUBLIC "$pr_allow" --full-history
+    _check "$([ "$e2e_rc" -eq 0 ] && echo 0 || echo 1)" "llm#1369/1370 e2e: --full-history with both allow-listed -> exit exactly 0 (rc=$e2e_rc)"
+    _pe2e fail "" --full-history
+    _check "$([ "$e2e_rc" -eq 1 ] && echo 0 || echo 1)" "llm#1369/1370 e2e: unknown visibility is treated as public -> exit exactly 1 (rc=$e2e_rc)"
+    VIS="$vis_saved"
 
     if [ "${#selftest_indet[@]}" -gt 0 ]; then
         local m

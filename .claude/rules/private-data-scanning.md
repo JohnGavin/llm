@@ -40,6 +40,23 @@ Document formats (`pdf`, `docx`, `xlsx`, `doc`, `xls`, `odt`, `rtf`, `eml`, `msg
 
 PDFs are also text-extracted with `pdftotext` (poppler) and the text is run through the deny-list and the generic rules, in public and private repos alike. If the extractor is missing, fails, or finds no text layer, that file was not inspected: the run exits 3 (INDETERMINATE) when it found nothing else, never 0. Other formats have no extractor; for them the allow-list entry is the human acceptance of the file as a whole. CI installs `poppler-utils` before its selftest, which itself exits 3 if the extractor is absent.
 
+## Filename and image gates ([#1369](https://github.com/JohnGavin/llm/issues/1369), [#1370](https://github.com/JohnGavin/llm/issues/1370))
+
+Two path-level rules cover what no text rule can see: a file whose NAME says what it is, and a photo or screenshot of a letter. Both run in `scan_blob`, so they apply in every mode (`--staged` for pre-commit, `--range` for pre-push and CI, `--full-history`, `--paths`), only in a **public** repo (unknown visibility counts as public), and both lift on the same exact-path allow-list as the document gate (`.claude/private_data_document_allowlist.txt`, `<path> | <reason>`; no reason, no allowance). Findings carry the path and, for images, the size in bytes — never content.
+
+**`sensitive-filename` (critical).** The path is lower-cased and split into tokens on every character outside `a-z0-9`, so word boundaries are exact (`ipaddress` is not `address`, `taxonomy` is not `tax`, `clinical` is not `clinic`); trailing digits are stripped (`payslip2024`). Two lists, both in `private_data_scan.sh`:
+
+| List | Words | Counts when |
+|---|---|---|
+| Strong | nhs, hospital, clinic, payslip(s), p60, p45, p11d, passport, discharge, prescription | any path segment, any extension |
+| Broad | letter(s), statement(s), invoice(s), tax(es), bank, licence/license, contact(s), address, medical, salary, payroll, mortgage, appointment(s), referral | only when the file extension is a document, image or plain-data type (pdf doc docx xls xlsx odt ods rtf eml msg csv tsv txt png jpg jpeg gif heic heif tif tiff bmp webp) |
+
+Broad words are everyday code identifiers (`tax.R`, `statement.sql`, `address.pyi`), so a source or markup extension never counts. `signal` is deliberately absent: it is a Python module and a messaging app, and was the noisiest word tried. Tuning evidence on the 2026-10-11 inventory of the owner's public repos (17,949 added-path rows; counts only): a substring match on the words fired on 712 rows, an exact word-boundary match on 212, the shipped rule (strong anywhere, broad on document/image/data extensions) on 17, all of them document-like or strongly named. This repo's own tracked files: 0 hits. Changing a list means repeating that count and recording before/after here.
+
+**`image-outside-figures` (critical in `--staged`, `--range`, `--paths`; reported as `image-in-public-history`, severity high, in `--full-history`).** Image extensions (png jpg jpeg gif webp heic heif tif tiff bmp; `svg` is text and is scanned as text) are blocked unless the path is in a generated-figure folder: `man/figures/`, `docs/` and `vignettes/<x>_files/` (all anchored at the repo root, so `notes/docs/scan.jpg` is still blocked), `<x>_files/figure-*/` and `_freeze/`, `_site/` at any depth. History gets its own lower-severity rule so that historic plots do not flood the alert channel: on the inventory, 1,528 image rows exist, 182 sit in generated folders and 1,346 would fire. The audit's per-finding baseline absorbs them. "New" images in pre-commit are staged additions and modifications; an image that must live outside the folders goes on the allow-list with a reason.
+
+Both rules have selftests with synthetic repos for fires / does not fire / allow-listed / private, and each was falsified (emptying the word lists, or the image extension list, silences the rule; restoring it brings the finding back).
+
 ## Copy-time guard: `public_repo_file_import_guard.sh` ([#1368](https://github.com/JohnGavin/llm/issues/1368))
 
 The scanner layers above fire at commit time. This `PreToolUse` hook (Bash and Write) fires earlier, at the moment a file is put into a public repo's working tree, which is how a private document normally arrives (a copy from Downloads, Desktop, iCloud or a private repo). On Bash it reads the destination of `cp`, `mv`, `rsync`, `ditto`, `install` and `git add` (globs expanded, directories walked, `cd X &&` and `git -C X` followed; `git add .` / `-A` check the untracked files); on Write it reads `file_path`.

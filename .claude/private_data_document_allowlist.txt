@@ -9,3 +9,7 @@
 # PDF is still text-extracted and scanned; the entry only lifts the file-type
 # block. Adding a line is a reviewed diff: say why the file holds no personal
 # data.
+#
+# The same list lifts two more public-repo gates for an exact path: the
+# sensitive-filename rule (llm#1369) and the image-outside-figures rule
+# (llm#1370). Say in the reason why the name or image holds no personal data.
