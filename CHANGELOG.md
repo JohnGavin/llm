@@ -271,7 +271,7 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 ### Completed
 - **ctx_sync silent-failure fix** ([#1112](https://github.com/JohnGavin/llm/pull/1112)) — `ctx_sync()`'s stale/missing loops now wrap `generate_ctx()` in `tryCatch()`, warn instead of aborting the whole sync, and record `status="ERROR"` per-package so one bad package no longer silently drops every package after it.
 - **Signal braindump channel-scoping bug fixed** ([#1114](https://github.com/JohnGavin/llm/pull/1114), [#1113](https://github.com/JohnGavin/llm/issues/1113)) — the handler resolved `group_name` but never filtered on it, so every Signal chat (not just "Notes to llm") was captured. Documented for future sessions as [[reference_signal-braindump-channel]] memory.
-- **7 Signal braindumps triaged end-to-end**, each processed → routed → linked via `braindump_act.sh`: two premortem utility-bill issues (Thames Water, East London energy — both judged not material enough for a bill-reduction investigation), two tennis issues (public/private redesign + reusable artifact template; standardized metrics + bump chart), one mycare issue (personalized dashboard from artifact template), plus the channel-scoping fix itself.
+- **7 Signal braindumps triaged end-to-end**, each processed → routed → linked via `braindump_act.sh`: two issues for a local-only project (both judged out of scope), two tennis issues (public/private redesign + reusable artifact template; standardized metrics + bump chart), one mycare issue (personalized dashboard from artifact template), plus the channel-scoping fix itself.
 - **AgentsView quality-baseline tooling** ([#1116](https://github.com/JohnGavin/llm/pull/1116), [#1118](https://github.com/JohnGavin/llm/pull/1118)) — new rule + `agentsview_quality_baseline.sh` (25 selftest + 18 integration tests) implementing the substantive-session filter from #1115's P1 recommendations. Caught and fixed a private-repo-name leak in a subagent's own commit message before it reached `origin` (amended + force-pushed with explicit user authorization).
 - **llm#1122 fixed and deployed live**: overnight self-review email moved from 06:30 to 08:45 (was reading yesterday's staleness snapshot, 1h45m before the collector's own 08:15 run); `staleness_collect.sh`'s log-freshness picker fixed to use max mtime across stdout/stderr/derived paths instead of a stale-priority pick.
 - **launchd/BTM job-naming issue corrected and partially fixed** ([#1121](https://github.com/JohnGavin/llm/issues/1121), [#1128](https://github.com/JohnGavin/llm/pull/1128), merged) — a fresh whole-machine `sfltool dumpbtm` scan found the issue's original "29 of 32 fixed" audit was wrong (11 jobs actually still show generic "bash"/"sh", not 3): 3 roborev jobs already use the correct wrapper yet still show stale names (BTM-cache issue, not a wrapper-mechanism bug — proven via `branch-gc`/`worktree-gc` as working controls); 2 jobs were invisible to the original `*.plist` glob audit because they're `*.plist.template`; 1 was outside the audited directory. Fixed the 2 templates + added a previously-untracked `codexbar-refresh` plist (subagent found and preserved its real 12h schedule from an older PR rather than inventing a placeholder, per the dispatch's explicit instruction not to fabricate). "Item from unidentified developer" reopened as a separate code-signing sub-problem (previously explicitly scoped out) — not yet attempted.
@@ -764,7 +764,7 @@ separate causes, found in order by fixing each and looking again:
 
 Verified live: a test voice note arrived in `Notes to llm` and transcribed. A
 scanned utility bill was OCR'd (no text layer — `/Font` absent, `DCTDecode`
-JPEGs, so `pdftotext` would return nothing) and filed as premortem issue 0071
+JPEGs, so `pdftotext` would return nothing) and filed as a local-project issue
 with every figure flagged **model-read, not parser-derived**.
 
 **PII: rewrite, then the gates that make it unnecessary.** 1,736 commits
@@ -775,10 +775,9 @@ a file containing the real value — commit **blocked**, both detectors fired,
 both redacted their own output.
 
 **Disclosure audit of the public repo** ([#1006](https://github.com/JohnGavin/llm/pull/1006)).
-Value-scanners cannot see prose. `AGENTS.md` named three banks and referenced
-estate balances; `.claude/settings.json`'s WebFetch allowlist held ~27
-personal-finance domains — *a map of someone's financial life*, disclosive in
-aggregate though no single entry is secret. `canonical_projects.csv` gained a
+Value-scanners cannot see prose. `AGENTS.md` named third-party institutions and referenced
+balances; `.claude/settings.json`'s WebFetch allowlist held ~27
+domains — disclosive in aggregate though no single entry is secret. `canonical_projects.csv` gained a
 `visibility` column defaulting to **private**.
 
 **Also:** roborev reaper + duplicate-daemon check ([#998](https://github.com/JohnGavin/llm/pull/998));
@@ -830,8 +829,8 @@ tier ([#994](https://github.com/JohnGavin/llm/pull/994)); dead ccusage job remov
 - `--full-history` audit tested on fixtures only; CI workflow never run on a real
   runner; `.claude/`-dependent tests skip silently under `R CMD check`.
 - Per-agent `pass_rate` still uncorrected for quota failures (llm#904).
-- The `myeloma` redaction in telemetry JSON is cosmetic — the ccusage pipeline
-  will regenerate it. Needs a source-level fix.
+- A cosmetic redaction in telemetry JSON will be regenerated by the ccusage
+  pipeline; needs a source-level fix.
 
 
 
@@ -1639,7 +1638,7 @@ will look different in the particulars and identical in shape.
 - **Reconciled global-config `.md` counts vs the llmtelemetry dashboard.** `config_pulse.sh` (collector for the Global Config table) had two defects: agents counted from a removed `~/.claude/AGENTS.md` (→ absent from dashboard; real = 12) and skills counted as top-level dirs (74) instead of `SKILL.md` manifests (77, matches the banner). Filed llmtelemetry#318 → implemented + merged llmtelemetry#319 (agents→`agents/*.md`=12, skills→`SKILL.md`=77); #318 auto-closed.
 - **llm#684 (merged):** two clarifying comments in `roborev_bridge_to_unified.sh` (intentional no-`status`-filter post-#677; legitimate 0-`closures`) — #580 follow-up.
 - **roborev gemini cleanup:** `/bye` flagged NOT-CLEAN — 11 failures (9 crash, 2 quota) all attributed to the dead `gemini` agent. Confirmed `~/.roborev/config.toml` has ZERO gemini refs (all stages `claude-code`/`codex`); the 11 were stale earlier-today crashes. `roborev daemon restart` to force clean-config reload; `roborev_agent_health.sh --status` = normal (codex 0 failures). Stale records age out of the summary window.
-- Filed **llm#685** — discussion/ideation issue: leveraged-solo-operator product ideas (Stripe/Shopify/cloud/auto-bookkeeping + AI), grounded in this account's repos (finance/betting, sports analytics, AI agent ops, reproducible data eng, healthcare, dashboards).
+- Filed **llm#685** — discussion/ideation issue: leveraged-solo-operator product ideas (Stripe/Shopify/cloud/auto-bookkeeping + AI), grounded in this account's repos (finance/betting, sports analytics, AI agent ops, reproducible data eng, dashboards).
 - Ran `export_and_deploy_data.sh` (telemetry → dashboard).
 
 ### Failed Approaches
@@ -3087,9 +3086,9 @@ Continued from Session 1 close-out. Massive cross-repo roborev sweep cleared 15 
 ### Completed
 
 - **Group A: rebound re-flags handoff** — crypto_swarms (5 reviews on canonical `_targets.R:20` → already-filed crypto_swarms#12) + llmtelemetry (17 reviews on commit `263e90a738f0` → 6 new project issues filed: llmtelemetry#105 HIGH deploy-dashboard validation, #106 export canonicalization, #107 cost_by_model routing, #108 duplicate rows, #109 pagination fallback, #110 rollup dedup). 22 DB closures.
-- **Group B/C/D sweep** — closure-handoff for 12 remaining repos. 5 new micromort issues (#105 HIGH pkgdown CI regex, #106 unlabeled-chunk false-positive, #107 quiz UTC migration, #108 shinylive streak port, #109 hardcoded cancer row), 1 llmtelemetry (#111 HIGH unified_sessions invalid rows), 2 randomwalk (#201 NA guard, #202 render refactor). 95 reviews wontfix-dormant across 9 repos (football/coMMpass/crypto_solwatch/crypto/my_t_project/repo/content/randomwalk-wiki/t_demos) — projects with stale GH presence (40d+) or no clear GH target. 116 DB closures + 9 new issues.
+- **Group B/C/D sweep** — closure-handoff for 12 remaining repos. 5 new micromort issues (#105 HIGH pkgdown CI regex, #106 unlabeled-chunk false-positive, #107 quiz UTC migration, #108 shinylive streak port, #109 hardcoded row), 1 llmtelemetry (#111 HIGH unified_sessions invalid rows), 2 randomwalk (#201 NA guard, #202 render refactor). 95 reviews wontfix-dormant across 9 repos (football/coMMpass/crypto_solwatch/crypto/my_t_project/repo/content/randomwalk-wiki/t_demos) — projects with stale GH presence (40d+) or no clear GH target. 116 DB closures + 9 new issues.
 - **historical cleanup** — 4 new reviews from today's commits filed as 3 issues: historical#215 (Medium cross_market Date/POSIXct join), #216 (Medium factormax x-axis shift), #217 (Low themed: 3 recent fixes shipped without regression tests). 4 DB closures.
-- **knowledge wiki-health dedup** — 281 open findings on the local-only knowledge subdirectory: 268 daily range-review duplicates of canonical id=2742 closed via rebound-dedup; 13 distinct findings handed off to llm#180 umbrella covering 7 themes (recurring HIGH Faheem Osman→Rahman misattribution flagged 3×, recurring HIGH oncology self-referential sources, vocabulary drift, dead [[...]] links, citation/provenance drift, privacy hook gap, knowledge ingest pipeline issues).
+- **knowledge wiki-health dedup** — 281 open findings on the local-only knowledge subdirectory: 268 daily range-review duplicates of canonical id=2742 closed via rebound-dedup; 13 distinct findings handed off to llm#180 umbrella covering 7 themes (recurring HIGH Faheem Osman→Rahman misattribution flagged 3×, recurring HIGH self-referential sources, vocabulary drift, dead [[...]] links, citation/provenance drift, privacy hook gap, knowledge ingest pipeline issues).
 - **llm self-review backlog** — 92 reviews → llm#181 umbrella covering 7 themes: Theme 1 permission_request security (CRITICAL — 6+ bypass bugs), Theme 2 Bash 3.2 / BSD-grep portability (`mapfile` + `-P`/`\b` across 5 scripts), Theme 3 rule self-contradictions, Theme 4 launchd plist mis-wirings, Theme 5 roborev's own scripts have bugs, Theme 6 QA gate path bugs, Theme 7 docs accuracy + unversioned code. 46 HIGH, 133 Medium, 15 Low total.
 - **Theme 1 (security) rewrite landed** — commit `e456c03` rewrote `.claude/hooks/permission_request.sh`. Moved all extraction + guard + matcher logic into a single Python block; bash wrapper now a thin dispatcher over the verdict. Closes 4 bug classes simultaneously: 120-char `_action` truncation bypass, broken `[\n]` regex (matched literal `n`, not newlines), non-portable `grep -qP`, matchers inheriting the truncation. Self-test extended from 6 to 14 cases — all PASS. Independent manual verification of the two known bypass attempts (120-char padding + newline injection) both now correctly fall through to human approval. **Note: one robustness regression remains unresolved** — malformed or non-dict `tool_input` (e.g. `null`) causes `ti.get(...)` to raise `AttributeError` and, under `set -e`, exit non-zero instead of falling back to human approval. Theme 1 should not be marked fully complete until this is addressed (tracked as part of #181).
 - **Telemetry instrumentation wired** — commit `b7af8cf` adds `.claude/hooks/llmtelemetry_emit.sh` (fire-and-forget session-start/stop emission to `~/.claude/logs/llmtelemetry-staging/`), settings.json hook entries on SessionStart + Stop, and `.llmtelemetry_emit` per-project opt-in marker. Opt-in design — either `~/.claude/.llmtelemetry_emit` (global) or `<project>/.llmtelemetry_emit` (per-project) enables emission. Fail-open if gate check errors.
@@ -3114,7 +3113,7 @@ Continued from Session 1 close-out. Massive cross-repo roborev sweep cleared 15 
 
 ### Known limitations
 
-- **mycare (92 open findings) remains blocked** — PHI rule per CLAUDE.md prohibits GitHub issues. Must be handled in a dedicated mycare local session.
+- **mycare (92 open findings) remains blocked** — local-only project, no GitHub issues. Must be handled in a dedicated local session.
 - **5 active repos have 1-2 trickle-in re-flags from today's commits** — llmtelemetry/micromort/knowledge/historical (1 each) + llmtelemetry (2). These are post-handoff new reviews and will keep arriving daily until the underlying code is actually fixed in each project. Best mitigated by #163 Phase 4 (auto-verifier) when shipped.
 - **llm#181 Themes 2-7 unstarted** — 5 more themes remain in the llm-self umbrella. Theme 2 (Bash 3.2 / BSD-grep portability) is the next-highest-leverage (multiple launchd jobs currently failing silently).
 - **Audit log host-local only** — `~/.roborev/auto_closures.log` (today: ~150+ lines covering 800+ closures) lives only on this machine. Not synced; if this machine is lost, the rationale narrative for every closure is lost too. Worth a follow-up to mirror to llmtelemetry or knowledge.
@@ -3318,14 +3317,13 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 
 ### Completed
 
-- **#156 closed** — estate planning Q-list compiled (`knowledge/wiki/estate-planning-questions.md`, 17.7 KB, 10 sections, 65 questions, 4 AI-inferred markers). YouTube transcript captured via `yt-dlp` from Wade Pfau / Alex Magia "Retire with Style" podcast Ch11. Local-only.
-- **#157 closed** — offshore/expat SIPP provider wiki page (`knowledge/wiki/sipp-offshore.md`, 3 raw docs / 9.6 KB total, 5 independent sources cited, 10 AI-inferred claims tagged, bidirectional cross-link with #156). FCA register lookup hit CSS error — flagged for manual verification.
+- #156, #157 closed — private local-only research notes (detail in the private log).
 - **#158 closed** — Roborev evaluation. Step 1 quantitative: 1,694 reviews, 24.4% approval, **15.5% addressed rate** (`knowledge/wiki/roborev-evaluation.md`). Step 2 stratified 30-finding sample (`knowledge/wiki/roborev-eval-sample.md`). User classification: 30/30 = TP-actioned. **Decision: KEEP roborev.** Signal is excellent; bottleneck is the addressed-rate.
 - **#159 filed** — Close config gaps vs MachineLearningMastery agentic-patterns + LLM-observability articles
 - **#160 filed** — Roborev never uses Critical or Info severity (prompt investigation + add Critical tier)
 - **#161 filed** — Backlog remediation parent tracker; per-project closure passes
 - **#163 filed** — Automate roborev closure loop (8-component, 7-phase design)
-- **Per-project backlog issues filed (5)** — `historical#176`, `crypto_swarms#11`, `JohnGavin.github.io#9`, `llmtelemetry#89`, `micromort#100` (reframed from noise investigation to remediation pass). mycare has no GitHub repo (PHI) — handled locally.
+- **Per-project backlog issues filed (5)** — `historical#176`, `crypto_swarms#11`, `JohnGavin.github.io#9`, `llmtelemetry#89`, `micromort#100` (reframed from noise investigation to remediation pass). mycare has no GitHub repo (local-only) — handled locally.
 - **PR #162 opened** — `fix(kb): vig_kb_stats RDS loader` (top-level `return()` + missing `saveRDS()` — 7 duplicate roborev findings resolved by 2 underlying bug fixes). Worktree-isolated sonnet fixer pattern.
 - **3 security fixes shipped to main** (`eb13711`, `2867655`, `cfd6ad8`) — closes roborev #905, #679, #675. Worktree-isolated sonnet fixer pattern.
 - **1 cross-repo security fix** to llmtelemetry (`ca7f8fd`) — `inst/scripts/config_pulse.sh` (symlink target) — closes roborev #717. Not yet pushed (diverged state).
@@ -3366,8 +3364,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 
 - **#154 closed** — `b85bb59` (worktree-isolated fixer agent). New target `vig_kb_stats` in `R/tar_plans/plan_kb_stats.R`; pre-computed RDS (267 B, aggregates only) at `inst/extdata/vignettes/vig_kb_stats.rds`. knowledge-evolution.qmd now renders in CI with real numbers despite gitignored `knowledge/`.
 - **#153 attempted-closed-then-reopened** — `b9283ab` (Option B: Homebrew bash shebang) merged ff-only; verification showed state-T persisted. Three further fixes attempted same session: plist `ProcessType=Background` + `AbandonProcessGroup=true`, `trap '' SIGTSTP SIGTTIN SIGTTOU`, external wrapper watchdog. All failed. Issue reopened with full findings.
-- **#156 filed** — estate / legacy / incapacity planning Q-list (10 sections from YouTube takeaways, work tracked for fresh session)
-- **#157 filed** — offshore/expat SIPP provider knowledge-base addition
+- #156, #157 filed — private local-only research notes (detail in the private log).
 
 ### Failed Approaches
 
@@ -3858,7 +3855,7 @@ None this session.
   - `JohnGavin/irishbuoys` — `527c7e9` pushed; file moved INTO the package subfolder at `proj/data/weather/irish_buoy_network/irishbuoys/RECOVERY.md` (the parent path is not a git repo; the package is); paths within the file are relative to the package root.
   - `JohnGavin/llmtelemetry` — `3f3a901` rebased over 4 origin auto-refresh commits and pushed; bundled `.claude/CLAUDE.md` (declares `Environment: prod`) + `RECOVERY.md` (predictions/duckdb/dashboard JSON) + the pre-existing `model_daily.json` refresh per user direction.
   - `JohnGavin/JohnGavin.github.io` — `e05f9fc` (`.claude/CLAUDE.md` with `Environment: prod`, deploy notes, dark-mode + `.nojekyll` reminders); pushed by user from a non-nix terminal (nix shell has no `ssh`).
-  - `mycare` — `RECOVERY.md` written at its local project root (path withheld — PHI project, see `public-private-repo-boundary` rule). NOT a git repo (intentional — PHI). File documents PHI-specific encryption-at-rest requirements and a no-cloud-without-DUA constraint.
+  - `mycare` — `RECOVERY.md` written at its local project root (path withheld — private project, see `public-private-repo-boundary` rule). NOT a git repo (intentional). File documents encryption-at-rest requirements and a no-cloud constraint.
 
 ### Failed approaches / sharp edges
 
@@ -3875,9 +3872,9 @@ None this session.
 ### Known limitations / follow-ups
 
 - **Subagent permission scope**: investigate whether subagents have narrower write permissions than the orchestrator. If yes, future briefs need explicit grants for cross-repo work; if no, the agent's "denied" report was a false negative on a different error. (See "Failed approaches" above.)
-- **mycare's not a git repo**: the project contains PHI and is intentionally local-only. No remote backup exists; the RECOVERY.md's "Where backups live" section is all `<TODO>`. This needs the user to set up an encrypted local target (NAS or SSD) before the recovery plan is real.
+- **mycare's not a git repo**: the project is intentionally local-only. No remote backup exists; the RECOVERY.md's "Where backups live" section is all `<TODO>`. This needs the user to set up an encrypted local target (NAS or SSD) before the recovery plan is real.
 - **irish_buoy_network parent dir is not a git repo**: only the `irishbuoys/` R package subfolder is. Things like `_targets/` cache, `docs/` rendered output, `prompt_irishbuoys.md` at the parent level have no version-control safety net. Consider whether to `git init` the parent (and untrack the child) or leave as-is.
-- **Backup destinations universally TODO**: all four RECOVERY.md files have `<TODO: configure>` for backup locations. The plans land but the infrastructure does not yet exist. Setting up an encrypted external SSD (or NAS, or B2/Wasabi for the non-PHI projects) is genuinely the next step.
+- **Backup destinations universally TODO**: all four RECOVERY.md files have `<TODO: configure>` for backup locations. The plans land but the infrastructure does not yet exist. Setting up an encrypted external SSD (or NAS, or B2/Wasabi for the non-private projects) is genuinely the next step.
 
 ## 2026-05-05 (continued — Railway-incident response: 9-issue safety path, session llm1)
 
@@ -3983,7 +3980,7 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
   - Fixed early-exit bug in `r_code_check.sh`: ast-grep empty output no longer `exit 0`, so jarl always runs
   - Added jarl integration block to `r_code_check.sh` with graceful skip if jarl not in PATH
   - Updated `/check` command (step 4, bash block, output format) to reference `r_code_check.sh` and show ast-grep + jarl results
-  - Braindump #32 (health note): processed as informational for mycare project
+  - Braindump #32: processed as informational for a local-only project
 
 ### Failed approaches
 - **Adding `jarl` to `default.nix` directly**: bypassed the rix workflow (`default.R` → `rix::rix()` → `default.nix`). Build failed because nixpkgs only ships jarl 0.3.0 and its `insta-1.43.1` snapshot tests fail (5 of 109): `test_assignment_wrong_value_from_toml`, `test_default_exclude_wrong_values`, `test_exclude_wrong_values`, `test_malformed_toml_syntax`, `test_unknown_toml_field`. Even if it built, 0.3.0 predates the rule set `r_code_check.sh` relies on. Manual edit also violated `feedback_never-edit-default-nix`, `nix-agent-shell-protocol`, `auto-delegation` (should have used `nix-env` agent), and `verification-before-completion` rules. **Resolution:** keep manual install at `/usr/local/bin/jarl` until nixpkgs catches up; tracked in #99.

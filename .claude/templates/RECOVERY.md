@@ -19,7 +19,7 @@ that statement and stop; no backup infrastructure is needed.
 |---|---|---|
 | `data/predictions/*.jsonl` | Inference logs — `llmtelemetry` | Generated at runtime; ~500 KB/day, cannot replay |
 | `inst/extdata/irish_buoys.duckdb` | ERDDAP cache — `irishbuoys` | Provider rolling ~2yr window; old obs expire |
-| `pdf/` | Lab results / letters — `mycare` | GP portal retains ~18 months; retrieval after that is manual |
+| `pdf/` | Downloaded PDFs — `mycare` | Provider portal retains ~18 months; retrieval after that is manual |
 
 ## Where Backups Live
 

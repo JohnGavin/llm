@@ -12,8 +12,8 @@ The `historical` project (`~/docs_gh/proj/finance/data/historical`,
 `github.com/JohnGavin/historical`, public) is **intentionally public by
 policy** — all of its content should be public-only, nothing specifically
 private. Its subject matter is quant/market research and methodology, not
-personal financial data (contrast with `premortem`, which holds real
-estate/expense figures and is correctly private).
+personal financial data (contrast with a private local-only project,
+which is correctly private).
 
 **Why:** [[public-private-repo-boundary]]'s "money" trigger is a
 default-to-private heuristic for content touching the owner's own finances.

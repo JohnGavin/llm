@@ -103,7 +103,7 @@ User, 2026-08-27. A booking email was drafted in assistant register; John rewrot
 his own style and asked what the difference was. In the same exchange he could not
 copy-paste the draft from chat because it had been rendered as a blockquote.
 
-Phone-number clause added 2026-09-22, premortem project: a drafted email to a charity
+Phone-number clause added 2026-09-22, a local-only project: a drafted email to a third party
 signed off with full name, email and mobile number appended by default; John asked for
 the phone number removed and the rule updated so it isn't disclosed by default again.
 

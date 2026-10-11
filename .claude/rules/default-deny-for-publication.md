@@ -35,7 +35,7 @@ not duplicate the repo-boundary decision.
 
 ## CRITICAL: A Filter That Works Correctly Is Not the Same as a Filter With the Right Default
 
-`llmtelemetry` published ~584 rows of `premortem` (estate/personal-finance)
+`llmtelemetry` published ~584 rows of `premortem` (a private project)
 session data to a **public** repo from 26 May onward — session IDs,
 timestamps, durations, token and cost aggregates. `R/privacy_exclusion.R`
 existed the whole time and worked correctly: every project named in it had

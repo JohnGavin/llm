@@ -56,8 +56,8 @@ with the last legacy worktree.
 in `~/docs_gh/worktrees/mycare/feat/cc-20260907-100559` — found via a
 `docs_gh`-scoped search and picked because it had the most recent commit
 timestamp among the worktrees that search surfaced — while the actual live
-checkout was `~/docs_/pers/NHS_health/data/antigravity/mycare/` on `main`,
-kept outside `docs_gh` specifically because it holds real patient data. The
+checkout was a private path outside `docs_gh` on `main`,
+kept outside `docs_gh` deliberately. The
 two had genuinely diverged: `main` already had independent, more current
 work (new issues at numbers the stray branch's new issues collided with,
 a same-day document already captured under a different, correct

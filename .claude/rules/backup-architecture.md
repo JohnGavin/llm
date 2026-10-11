@@ -86,8 +86,8 @@ state and need a `RECOVERY.md` written (per-project work, out of scope here):
   be regenerated from source
 - **`irishbuoys`** — ERDDAP API cache; provider data has a rolling availability
   window, historical observations may become unavailable
-- **`mycare`** — PDF imports (lab results, letters); originals held by
-  healthcare provider but retrieval is manual and lossy
+- **`mycare`** — PDF imports; originals held by
+  the source provider but retrieval is manual and lossy
 
 All other projects surveyed (`llm`, `randomwalk`, `urban_planning`, `footbet`,
 `acd_area_climate_design`, `rix.setup`) are fully reproducible from git +

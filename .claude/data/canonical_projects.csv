@@ -12,8 +12,8 @@ irishbuoys,Irish Buoys,JohnGavin/irishbuoys,r-package,true,,public
 llm,LLM (meta-config),JohnGavin/llm,meta-config,true,this repo,public
 llmtelemetry,LLM Telemetry,JohnGavin/llmtelemetry,r-package,true,,private
 micromort,Micromort,JohnGavin/micromort,analysis,true,,public
-mycare,MyCare,,r-package,true,local-only; not on GitHub (verified 2026-08-22); PHI — see public-private-repo-boundary rule (health trigger),private
-premortem,Premortem,,analysis,true,confirmed by user 2026-06-06; local-only; not on GitHub (verified 2026-08-22) — repo field previously said JohnGavin/premortem but no such repo exists; money/estate-planning trigger,private
+mycare,MyCare,,r-package,true,local-only; not on GitHub (verified 2026-08-22); private,private
+premortem,Premortem,,analysis,true,local-only; not on GitHub (verified 2026-08-22); private,private
 randomwalk,Random Walk,JohnGavin/randomwalk,analysis,true,,public
 rix.setup,rix Setup,JohnGavin/rix.setup,meta-config,true,,public
 urban_planning,Urban Planning,JohnGavin/urban_planning,analysis,true,,public

@@ -14,7 +14,7 @@ so the failure is silent and grows with every new project.
 
 **Why:** two separate leaks in one day, same shape.
 
-- `llmtelemetry` published ~584 rows of `premortem` (estate/personal-finance)
+- `llmtelemetry` published ~584 rows of `premortem` (a private project)
   session data from 26 May. `R/privacy_exclusion.R` existed and *worked*;
   premortem was simply never added to it. The filter was not broken — the
   default was.

@@ -139,7 +139,7 @@ Caps:
 
 **Decision: opt-in per-project + LLM call only on excerpted, redacted segments.**
 
-- Transcripts contain conversation content. Some projects (e.g. `mycare`) carry medical
+- Transcripts contain conversation content. Some projects (e.g. `mycare`) carry private
   context; some sessions deal with credentials. Sending raw transcripts to the Anthropic
   API would breach `credential-management` and `permission-discipline` Part 4.
 - The parser **stays local** — only writes to `unified.duckdb` (local DuckDB file).

@@ -100,7 +100,7 @@ happened to find. A worktree whose last commit is identical to another
 worktree's *older* tip is a strong signal it forked off and was abandoned —
 see `branch-harvest-on-fork`.
 
-**Origin:** 2026-09-18/19, mycare project. An agent worked a whole session in a stale `~/docs_gh/worktrees/mycare/feat/...` worktree, chosen because it had the newest commit among those a `docs_gh`-scoped search surfaced, while the live checkout sat outside `docs_gh` (it holds real patient data) and had genuinely diverged; the work had to be re-applied by hand. Full narrative: companion doc.
+**Origin:** 2026-09-18/19, mycare project. An agent worked a whole session in a stale `~/docs_gh/worktrees/mycare/feat/...` worktree, chosen because it had the newest commit among those a `docs_gh`-scoped search surfaced, while the live checkout sat outside `docs_gh` and had genuinely diverged; the work had to be re-applied by hand. Full narrative: companion doc.
 
 ## Never start a session in the worktree-parent dir
 
