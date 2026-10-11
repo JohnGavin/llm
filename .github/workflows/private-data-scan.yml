@@ -40,6 +40,9 @@ permissions:
 
 jobs:
   scan:
+    # Fixed name: the rollout script (public_repo_pii_ci_rollout.sh, llm#1366)
+    # and its rulesets require the status check context "private-data-scan".
+    name: private-data-scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
