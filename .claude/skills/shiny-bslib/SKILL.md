@@ -282,6 +282,50 @@ See [migration.md](references/migration.md) for a complete mapping of legacy pat
 2. Only use `layout_columns()` and `layout_column_wrap()` for laying out multiple elements. Single children should be passed directly to their container functions.
 3. Never nest `page_*()` functions. Only use one top-level page function per app.
 
+## Testing
+
+A dashboard that only gets checked by clicking through it is untested. The
+reactive wiring is thin; the logic behind it is what breaks. Work in this
+order, and stop at the cheapest layer that can fail for the reason you care
+about (rule: `shiny-server-logic-tested`).
+
+1. **Factor the logic out.** Filtering, aggregation, validation and
+   formatting are plain R functions in `R/`, unit-tested with testthat like
+   any other function (rule: `domain-logic-in-package`). A `reactive()` or
+   `render*()` body should be one call into such a function.
+2. **Write the expected behaviour in plain English first.** One sentence per
+   behaviour, e.g. "Changing the date range narrows the table to that range;
+   an empty range shows zero rows, not an error." Each sentence becomes one
+   `test_that()` block.
+3. **Test the module or server with `shiny::testServer()`.** It runs the
+   server function with no browser. Drive it with `session$setInputs()`,
+   call `session$flushReact()` when a reactive is read outside an output,
+   then assert on `output$...`, on reactives defined in the module, or on
+   `session$returned()` (what the module hands back to its caller).
+4. **Use shinytest2 only when a browser is the point:** JavaScript,
+   `renderUI`/dynamic widgets whose HTML matters, downloads, or layout. It is
+   slow and fragile, so it covers a few journeys and nothing else.
+
+```r
+test_that("a narrower range returns fewer rows", {
+  # Module takes a reactive `data` argument; pass it via `args`.
+  shiny::testServer(filter_server, args = list(data = reactive(sales)), {
+    session$setInputs(range = c(as.Date("2026-01-01"), as.Date("2026-01-31")))
+    expect_lt(nrow(session$returned()), nrow(sales))
+    session$setInputs(range = c(as.Date("2030-01-01"), as.Date("2030-01-02")))
+    expect_equal(nrow(session$returned()), 0)
+  })
+})
+```
+
+In-house reference: randomwalk's `tests/testthat/test-shiny_modules.R`. Its
+live tests cover UI namespacing (`sim_input_ui("a")` vs `"b"`), the pure
+helpers behind the outputs (`format_statistics()`, `run_simulation()`), and
+that `run_dashboard()` builds a `shiny.appobj`. Its `testServer()` blocks are
+currently all `skip()`ped with an undiagnosed "doesn't work well with
+moduleServer" note, so treat it as a model for the factor-out layers, not
+for `testServer`; do not copy a skip without finding the actual error.
+
 ## Reference Files
 
 - **[migration.md](references/migration.md)** -- Legacy Shiny to modern bslib migration guide
