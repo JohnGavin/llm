@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- com.claude.private-terms-sync.plist (llm#1386, privacy layer L0)
+         Daily rebuild of the derived private-term list and alias map
+         (~/.config/private_terms.txt, ~/.config/private_aliases.tsv; both
+         mode 600, never committed) from the owner's private/internal repos,
+         local-only project folders, the hand-kept topic file and the
+         path-slug file. Refuses a thin list or a large drop: exit 3, previous
+         files kept. Exit 0 written, 3 INDETERMINATE (never a silent pass).
+         Term values are never printed; only per-source counts reach the logs.
+
+         Slot: 03:05 local, pre-dawn detector window, before the 03:50
+         repo-visibility-diff and the 06:30 digest email.
+
+         Uses the bin/launchd-recorders/private-terms-sync named-launcher
+         wrapper (llm#1121) so macOS Background Task Management shows
+         "private-terms-sync" instead of generic "bash".
+
+         THIS PLIST IS DELIVERED, NOT INSTALLED. Install / reload:
+           launchctl bootout gui/$(id -u)/com.claude.private-terms-sync 2>/dev/null
+           cp .claude/launchd/com.claude.private-terms-sync.plist \
+              ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.claude.private-terms-sync.plist
+    -->
+
+    <key>Label</key>
+    <string>com.claude.private-terms-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/private-terms-sync</string>
+    </array>
+
+    <!-- HOME is set so gh reads ~/.config/gh for auth and the script reads
+         and writes the ~/.config private-term files. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Daily 03:05 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/private_terms_sync.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/private_terms_sync.err</string>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- Do NOT run on load - only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>

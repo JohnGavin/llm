@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# private_terms_sync.sh - derive the private-term list and alias map (llm#1386,
+# parent llm#1382, privacy layer L0).
+#
+# Builds, from sources that already exist, two local-only files (mode 600,
+# never committed):
+#   ${PRIVATE_TERMS_FILE:-$HOME/.config/private_terms.txt}
+#       one lowercase term per line; '#' lines are comments. First line:
+#       "# private_terms v1 generated=<ISO-8601 UTC> count=<n>". Consumers match
+#       terms whole-word, case-insensitive, and refuse a list that lacks the
+#       canary term (CANARY below).
+#   ${PRIVATE_ALIASES_FILE:-$HOME/.config/private_aliases.tsv}
+#       "term<TAB>alias", alias = private-project-NN, stable across runs
+#       (existing assignments are kept; new terms take the next number).
+#
+# Sources (counts per source are printed; term VALUES are never printed):
+#   a) the owner's private + internal repos: gh repo list <owner> --visibility
+#      private|internal.  gh failure -> exit 3, old files kept.
+#   b) ${PRIVATE_TERMS_EXTRA_DIRS_FILE:-$HOME/.config/private_term_dirs.txt}:
+#      one local-only project root per line; the root's basename and the names
+#      of its immediate subdirectories become terms. Missing file = warning.
+#   c) ${PRIVATE_TOPICS_FILE:-$HOME/.config/private_topics.txt}: hand-kept,
+#      "term<TAB>category", category in phone|home|health|money. Missing =
+#      warning. Lines with another category are skipped (counted, not named).
+#   d) ${PRIVATE_PATHS_FILE:-$HOME/.config/private_paths.txt}: path-slug
+#      fragments, one per line, if present.
+#
+# Filtering: terms are lowercased, deduped, and dropped when shorter than 4
+# characters or on the built-in STOPLIST below (common English words that would
+# match everywhere).
+#
+# Thin-list guard: refuse to write (exit 3, keep old files) when the new term
+# count is below ${PRIVATE_TERMS_MIN:-10}, or below 70% of the previous file's
+# count. --force overrides the drop check only, never the floor.
+#
+# Usage: private_terms_sync.sh [--dry-run] [--force]
+# Exit codes: 0 written (or dry-run ok), 2 usage, 3 INDETERMINATE (refused).
+# No mode ever prints a term value.
+set -euo pipefail
+
+CANARY="zzcanaryprivterm7q"
+STOPLIST=" this that with from have been were will your they them then than \
+what when where which while about after again also because before being \
+between both could does doing down each even every first good great here \
+into just know like made make many more most much must never only other \
+over same should some such take their there these those through under \
+until very want well went work would year years test tests data \
+docs code file files home main temp public private internal local \
+project projects "
+
+OWNER="${PRIVATE_TERMS_OWNER:-JohnGavin}"
+TERMS_FILE="${PRIVATE_TERMS_FILE:-$HOME/.config/private_terms.txt}"
+ALIASES_FILE="${PRIVATE_ALIASES_FILE:-$HOME/.config/private_aliases.tsv}"
+DIRS_FILE="${PRIVATE_TERMS_EXTRA_DIRS_FILE:-$HOME/.config/private_term_dirs.txt}"
+TOPICS_FILE="${PRIVATE_TOPICS_FILE:-$HOME/.config/private_topics.txt}"
+PATHS_FILE="${PRIVATE_PATHS_FILE:-$HOME/.config/private_paths.txt}"
+MIN="${PRIVATE_TERMS_MIN:-10}"
+
+DRY=0
+FORCE=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY=1 ;;
+    --force) FORCE=1 ;;
+    *) echo "usage: private_terms_sync.sh [--dry-run] [--force]" >&2; exit 2 ;;
+  esac
+done
+
+case "$MIN" in
+  ''|*[!0-9]*) echo "usage: PRIVATE_TERMS_MIN must be a non-negative integer" >&2; exit 2 ;;
+esac
+
+TMPD=$(mktemp -d)
+TT=""
+TA=""
+trap 'rm -rf "$TMPD"; [ -z "$TT" ] || rm -f "$TT"; [ -z "$TA" ] || rm -f "$TA"' EXIT
+
+# Normalise stdin: lowercase, strip CR/whitespace, drop short/stoplisted/comment.
+normalise() {
+  tr '[:upper:]' '[:lower:]' | tr -d '\r' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | while IFS= read -r t || [ -n "$t" ]; do
+        if [ -z "$t" ]; then continue; fi
+        case "$t" in '#'*) continue ;; esac
+        if [ "${#t}" -lt 4 ]; then continue; fi
+        case "$STOPLIST" in *" $t "*) continue ;; esac
+        printf '%s\n' "$t"
+      done
+}
+
+count() { wc -l < "$1" | tr -d ' '; }
+
+# a) repos ---------------------------------------------------------------
+: > "$TMPD/a.raw"
+for vis in private internal; do
+  if ! gh repo list "$OWNER" --visibility "$vis" --limit 500 --json name \
+      > "$TMPD/gh.json" 2> "$TMPD/gh.err"; then
+    echo "INDETERMINATE: gh repo list ($vis) failed; keeping previous files" >&2
+    exit 3
+  fi
+  { grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$TMPD/gh.json" || true; } \
+    | sed -e 's/^"name"[[:space:]]*:[[:space:]]*"//' -e 's/"$//' >> "$TMPD/a.raw"
+done
+normalise < "$TMPD/a.raw" | sort -u > "$TMPD/a.terms"
+
+# b) local-only project folders ------------------------------------------
+: > "$TMPD/b.raw"
+if [ -f "$DIRS_FILE" ]; then
+  while IFS= read -r d || [ -n "$d" ]; do
+    d="${d%$'\r'}"
+    if [ -z "$d" ]; then continue; fi
+    case "$d" in '#'*) continue ;; esac
+    case "$d" in "~"*) d="$HOME${d#\~}" ;; esac
+    basename "$d" >> "$TMPD/b.raw"
+    if [ -d "$d" ]; then
+      for sub in "$d"/*/; do
+        if [ -d "$sub" ]; then basename "$sub" >> "$TMPD/b.raw"; fi
+      done
+    fi
+  done < "$DIRS_FILE"
+else
+  echo "warning: extra-dirs file missing (source b skipped)" >&2
+fi
+normalise < "$TMPD/b.raw" | sort -u > "$TMPD/b.terms"
+
+# c) hand-kept topics ----------------------------------------------------
+: > "$TMPD/c.raw"
+BAD_CAT=0
+if [ -f "$TOPICS_FILE" ]; then
+  while IFS=$'\t' read -r term cat || [ -n "${term:-}" ]; do
+    term="${term%$'\r'}"
+    if [ -z "${term// }" ]; then continue; fi
+    case "$term" in '#'*) continue ;; esac
+    cat="${cat:-}"
+    cat="${cat%$'\r'}"
+    case "$cat" in
+      phone|home|health|money) printf '%s\n' "$term" >> "$TMPD/c.raw" ;;
+      *) BAD_CAT=$((BAD_CAT + 1)) ;;
+    esac
+  done < "$TOPICS_FILE"
+  if [ "$BAD_CAT" -gt 0 ]; then
+    echo "warning: $BAD_CAT topic line(s) skipped: category not phone|home|health|money" >&2
+  fi
+else
+  echo "warning: topics file missing (source c skipped)" >&2
+fi
+normalise < "$TMPD/c.raw" | sort -u > "$TMPD/c.terms"
+
+# d) path slugs ----------------------------------------------------------
+: > "$TMPD/d.raw"
+if [ -f "$PATHS_FILE" ]; then
+  cat "$PATHS_FILE" > "$TMPD/d.raw"
+fi
+normalise < "$TMPD/d.raw" | sort -u > "$TMPD/d.terms"
+
+# merge ------------------------------------------------------------------
+{ cat "$TMPD/a.terms" "$TMPD/b.terms" "$TMPD/c.terms" "$TMPD/d.terms"; echo "$CANARY"; } \
+  | sort -u > "$TMPD/all.terms"
+NEW=$(count "$TMPD/all.terms")
+
+PREV=0
+if [ -f "$TERMS_FILE" ]; then
+  PREV=$({ grep -vc '^#' "$TERMS_FILE" || true; } | tr -d ' ')
+fi
+
+echo "source a (repos): $(count "$TMPD/a.terms")"
+echo "source b (dirs): $(count "$TMPD/b.terms")"
+echo "source c (topics): $(count "$TMPD/c.terms")"
+echo "source d (paths): $(count "$TMPD/d.terms")"
+echo "total (incl. canary): $NEW; previous: $PREV"
+
+if [ "$NEW" -lt "$MIN" ]; then
+  echo "INDETERMINATE: thin list ($NEW < floor $MIN); keeping previous files" >&2
+  exit 3
+fi
+if [ "$PREV" -gt 0 ] && [ $((NEW * 100)) -lt $((PREV * 70)) ] && [ "$FORCE" -ne 1 ]; then
+  echo "INDETERMINATE: list shrank from $PREV to $NEW (<70%); keeping previous files (--force to override)" >&2
+  exit 3
+fi
+
+if [ "$DRY" -eq 1 ]; then
+  echo "dry-run: nothing written"
+  exit 0
+fi
+
+# aliases: keep existing assignments, number new terms after the max ----------
+: > "$TMPD/aliases.new"
+MAXN=0
+if [ -f "$ALIASES_FILE" ]; then
+  cp "$ALIASES_FILE" "$TMPD/aliases.prev"
+else
+  : > "$TMPD/aliases.prev"
+fi
+while IFS=$'\t' read -r t a || [ -n "${t:-}" ]; do
+  n="${a:-}"
+  n="${n#private-project-}"
+  case "$n" in ''|*[!0-9]*) continue ;; esac
+  n=$((10#$n))
+  if [ "$n" -gt "$MAXN" ]; then MAXN=$n; fi
+done < "$TMPD/aliases.prev"
+while IFS= read -r t; do
+  if [ "$t" = "$CANARY" ]; then continue; fi
+  old=$(awk -F'\t' -v t="$t" '$1 == t { print $2; exit }' "$TMPD/aliases.prev")
+  if [ -z "$old" ]; then
+    MAXN=$((MAXN + 1))
+    old=$(printf 'private-project-%02d' "$MAXN")
+  fi
+  printf '%s\t%s\n' "$t" "$old" >> "$TMPD/aliases.new"
+done < "$TMPD/all.terms"
+
+# atomic writes (temp in the destination dir, then mv) ------------------------
+mkdir -p "$(dirname "$TERMS_FILE")" "$(dirname "$ALIASES_FILE")"
+TT=$(mktemp "$(dirname "$TERMS_FILE")/.private_terms.XXXXXX")
+TA=$(mktemp "$(dirname "$ALIASES_FILE")/.private_aliases.XXXXXX")
+chmod 600 "$TT" "$TA"
+{
+  printf '# private_terms v1 generated=%s count=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NEW"
+  cat "$TMPD/all.terms"
+} > "$TT"
+cp "$TMPD/aliases.new" "$TA"
+mv "$TT" "$TERMS_FILE"
+mv "$TA" "$ALIASES_FILE"
+TT=""
+TA=""
+echo "written: $NEW terms"
+exit 0
