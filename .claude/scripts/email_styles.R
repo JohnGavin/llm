@@ -27,6 +27,186 @@ DARK_TEXT     <- "#e8e8e8"
 DARK_MUTED    <- "#a0a0a0"
 DARK_BORDER   <- "#2a2a4a"
 
+# ── Column-header hover definitions ───────────────────────────────────────────
+#
+# Every table column header in an email dropdown carries a native HTML `title`
+# attribute, so hovering the header shows what the column means. Email clients
+# run no JavaScript and strip most hover CSS, so the Tippy.js helper used in
+# the R package (R/hover_popup_helper.R) cannot be used here; `title` is the
+# one mechanism that survives. Touch screens have no hover, so the tooltip does
+# not appear on phones. A dotted underline + help cursor (inline style, the
+# only kind email clients keep) marks the header as hoverable.
+#
+# ONE home for the definition text: email_column_definitions.tsv (next to this
+# file; columns `column_label` and `definition`). No sender types a definition
+# inline. Senders keep writing plain `<th>Label</th>` (or, for markdown-built
+# tables, call email_header_cell()); collapsible_block() rewrites every <th>
+# in its body via email_add_tooltips(), so a table inside a dropdown cannot
+# skip the lookup. tests/testthat/test-email-column-definitions.R fails when a
+# label used by a sender has no entry, an entry is empty, or an entry is used
+# by no sender.
+#
+# A label with no definition renders WITHOUT a tooltip and prints a message
+# (never silent). Set EMAIL_COLUMN_DEFS_STRICT=1 to make it an error instead
+# (the test suite does).
+
+EMAIL_HEADER_HINT_STYLE <- "text-decoration: underline dotted; cursor: help;"
+
+# Directory this file was sourced from (NA when it cannot be determined, e.g.
+# pasted into a console). Walks the call stack for source()'s `ofile`.
+.EMAIL_STYLES_DIR <- local({
+  found <- NA_character_
+  for (i in rev(seq_len(sys.nframe()))) {
+    of <- tryCatch(get0("ofile", envir = sys.frame(i), inherits = FALSE),
+                   error = function(e) NULL)
+    if (is.character(of) && length(of) == 1L && !is.na(of) &&
+        basename(of) == "email_styles.R") {
+      found <- dirname(normalizePath(of, mustWork = FALSE))
+      break
+    }
+  }
+  found
+})
+
+.email_col_defs_state <- new.env(parent = emptyenv())
+.email_col_defs_state$cache_key <- NULL
+.email_col_defs_state$defs      <- NULL
+.email_col_defs_state$seen      <- character(0)
+.email_col_defs_state$missing   <- character(0)
+
+# Locate the TSV. Order: explicit env override, the directory this file was
+# sourced from, a sender's `.scripts_dir`, then the default checkout location.
+email_column_defs_path <- function() {
+  override <- Sys.getenv("EMAIL_COLUMN_DEFS_PATH", "")
+  if (nzchar(override)) return(override)
+  dirs <- c(
+    .EMAIL_STYLES_DIR,
+    if (exists(".scripts_dir", envir = globalenv(), inherits = FALSE))
+      get(".scripts_dir", envir = globalenv()) else NA_character_,
+    file.path(Sys.getenv("HOME"), "docs_gh", "llm", ".claude", "scripts")
+  )
+  cands <- file.path(dirs[!is.na(dirs)], "email_column_definitions.tsv")
+  hit <- cands[file.exists(cands)]
+  if (length(hit) > 0L) hit[[1L]] else cands[[length(cands)]]
+}
+
+email_column_defs_strict <- function() {
+  identical(Sys.getenv("EMAIL_COLUMN_DEFS_STRICT", ""), "1")
+}
+
+# Named character vector: names = column labels, values = definitions.
+# Cached per (path, mtime). A missing/unreadable file yields an empty vector
+# (and a message) so a daily email is never lost over a tooltip file.
+email_column_definitions <- function(path = email_column_defs_path()) {
+  info <- file.info(path)
+  key <- paste(path, info$mtime, info$size)
+  if (identical(.email_col_defs_state$cache_key, key) &&
+      !is.null(.email_col_defs_state$defs)) {
+    return(.email_col_defs_state$defs)
+  }
+  defs <- character(0)
+  if (is.na(info$size)) {
+    msg <- sprintf("email_styles.R: column-definition file not found: %s", path)
+    if (email_column_defs_strict()) stop(msg, call. = FALSE)
+    message(msg)
+  } else {
+    df <- utils::read.delim(path, sep = "\t", quote = "", comment.char = "",
+                            header = TRUE, stringsAsFactors = FALSE,
+                            check.names = FALSE, colClasses = "character",
+                            na.strings = character(0))
+    if (!identical(names(df), c("column_label", "definition"))) {
+      stop(sprintf("email_styles.R: %s must have exactly the columns column_label<TAB>definition",
+                   path), call. = FALSE)
+    }
+    defs <- stats::setNames(df$definition, df$column_label)
+  }
+  .email_col_defs_state$cache_key <- key
+  .email_col_defs_state$defs <- defs
+  defs
+}
+
+.email_attr_escape <- function(x) {
+  x <- gsub("&", "&amp;", x, fixed = TRUE)
+  x <- gsub("\"", "&quot;", x, fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  gsub(">", "&gt;", x, fixed = TRUE)
+}
+
+.email_label_key <- function(inner_html) {
+  k <- trimws(inner_html)
+  k <- gsub("&lt;", "<", k, fixed = TRUE)
+  k <- gsub("&gt;", ">", k, fixed = TRUE)
+  k <- gsub("&quot;", "\"", k, fixed = TRUE)
+  gsub("&amp;", "&", k, fixed = TRUE)
+}
+
+# Definition for one label, or NA_character_ (after reporting) when absent or
+# empty. Records the label in the seen/missing registers.
+email_column_definition <- function(label) {
+  key <- .email_label_key(label)
+  .email_col_defs_state$seen <- union(.email_col_defs_state$seen, key)
+  defs <- email_column_definitions()
+  def <- if (key %in% names(defs)) unname(defs[[key]]) else NA_character_
+  if (is.na(def) || !nzchar(trimws(def))) {
+    .email_col_defs_state$missing <- union(.email_col_defs_state$missing, key)
+    msg <- sprintf("email_styles.R: no column definition for header '%s' in email_column_definitions.tsv",
+                   key)
+    if (email_column_defs_strict()) stop(msg, call. = FALSE)
+    message(msg)
+    return(NA_character_)
+  }
+  def
+}
+
+# Labels looked up / found missing since the session started (for tests).
+email_tooltip_registers <- function() {
+  list(seen = .email_col_defs_state$seen, missing = .email_col_defs_state$missing)
+}
+
+# A header cell for senders that build cells themselves (markdown-to-HTML
+# converters). `label_html` is the displayed content, `key` the label to look
+# up, `style` the inline CSS (without the style="" wrapper).
+email_header_cell <- function(label_html, style, key = label_html, tag = "td") {
+  def <- email_column_definition(key)
+  if (is.na(def)) {
+    return(sprintf('<%s style="%s">%s</%s>', tag, style, label_html, tag))
+  }
+  sprintf('<%s style="%s %s" title="%s">%s</%s>',
+          tag, style, EMAIL_HEADER_HINT_STYLE, .email_attr_escape(def),
+          label_html, tag)
+}
+
+# Adds title + hover cue to every <th> in an HTML string. Idempotent: a <th>
+# that already has a title attribute is left alone. Called by
+# collapsible_block() on its body, and directly for the few tables that sit
+# outside a dropdown.
+email_add_tooltips <- function(html) {
+  if (length(html) != 1L || is.na(html) || !nzchar(html)) return(html)
+  pat <- "(?s)<th((?:\\s[^>]*)?)>(.*?)</th>"
+  m <- gregexpr(pat, html, perl = TRUE, ignore.case = TRUE)
+  found <- regmatches(html, m)[[1L]]
+  if (length(found) == 0L) return(html)
+  rewritten <- vapply(found, function(s) {
+    parts <- regmatches(s, regexec(pat, s, perl = TRUE, ignore.case = TRUE))[[1L]]
+    attrs <- parts[[2L]]
+    inner <- parts[[3L]]
+    if (grepl("\\stitle\\s*=", attrs, ignore.case = TRUE)) return(s)
+    def <- email_column_definition(inner)
+    if (is.na(def)) return(s)
+    if (grepl("style\\s*=\\s*\"", attrs, ignore.case = TRUE)) {
+      attrs <- sub("(style\\s*=\\s*\")([^\"]*)\"",
+                   paste0("\\1\\2; ", EMAIL_HEADER_HINT_STYLE, "\""),
+                   attrs, ignore.case = TRUE, perl = TRUE)
+      attrs <- sub(";\\s*;", ";", attrs)
+    } else {
+      attrs <- paste0(attrs, sprintf(' style="%s"', EMAIL_HEADER_HINT_STYLE))
+    }
+    sprintf('<th%s title="%s">%s</th>', attrs, .email_attr_escape(def), inner)
+  }, character(1L), USE.NAMES = FALSE)
+  regmatches(html, m) <- list(rewritten)
+  html
+}
+
 # ── collapsible_block() ────────────────────────────────────────────────────────
 #
 # Wraps an HTML body in a <details> block so the content is collapsed by default.
@@ -52,6 +232,7 @@ DARK_BORDER   <- "#2a2a4a"
 collapsible_block <- function(title, summary_stats, html_body, open = FALSE,
                                summary_color = ACCENT_GREEN) {
   details_attr <- if (open) " open" else ""
+  html_body <- email_add_tooltips(html_body)  # column-header hover definitions
   sprintf(
     '<details%s style="margin: 12px 0;">
 <summary style="cursor: pointer; padding: 8px 12px;

@@ -1,0 +1,123 @@
+column_label	definition
+Metric	Name of the measurement in this row. Where it matters, the name states the period it covers (for example 24h or 7d).
+Value	The measured figure for the metric in the same row, for the period named in that row.
+Change	What changed. In a trends table: the movement over the last 7 days against the 7 days before (arrow and percent). In a file list: added, modified or removed.
+Count	How many findings, events or items this row stands for in the period the section covers.
+Severity	How serious the finding is, on the scale used by the check that produced it (such as critical, high or major, medium or minor, low).
+Status	Freshness verdict: live (10+ rows in 24h), sparse (1-9), FRESH or STALE from the shared staleness view, DEAD, IDLE (sporadic table, no rows), UNKNOWN (could not be read).
+Finding type	Name of the self-review check (detector) that raised the finding, for example long sessions or too many sessions at once.
+Day	Calendar day the finding refers to.
+Peak concurrent	The most Claude Code sessions that were running at the same time on that day.
+Threshold	The limit(s) the check compares against. Going above it is what raised the finding.
+Session	First 8 characters of the Claude Code session ID the finding came from. A dash means no session was recorded.
+Evidence	The key facts the check recorded when it raised the finding (name: value pairs).
+Table	Name of the telemetry database table this row describes.
+Total rows	How many rows the table holds in total, across all time.
+Last 24h	How many rows were added to the table in the last 24 hours.
+Latest row	Timestamp of the newest row in the table. A dash means the table has no rows.
+Observed (llm#893)	How long ago the freshness verdict itself was last checked. A large value means the verdict may be out of date. A dash means the item is not tracked.
+Observed	How long ago the freshness verdict itself was last checked. A large value means the verdict may be out of date. A dash means the item is not tracked.
+Project	The project (code repository) the row's numbers belong to.
+Sessions (24h)	Number of Claude Code sessions that started in this project in the last 24 hours.
+Kind	Type of item in this row, for example a tracked data source, scheduled job or log (staleness table) or a skill or rule (knowledge-base table).
+Asset	Name of the tracked item (data source, scheduled job, collector, log or database).
+Content	Whether the item's growth looks normal: NORMAL, ABNORMAL_GROWTH or BLOAT, PENDING (no earlier reading to compare with). A dash means this item is not size-checked.
+Last seen	When the item last produced output or ran, as recorded by the shared freshness view. A dash or never means it has not been observed.
+Earliest	Timestamp of the oldest row in the table.
+Latest	Timestamp of the newest row in the table.
+Pattern	Which clean-up sweep matched the worktree: siblings, agent or convention (the kinds of worktree location the cleaner looks at).
+Action	What was done to the item, or flagged about it, for example created, modified, removed, kept, skipped or flagged.
+Size	How big the item(s) in this row are: total megabytes for worktrees, or the file size for files.
+File	Name or path of the file this row is about.
+Lines	Number of lines changed in the file: lines added for a new file, lines deleted for a removed file, added plus deleted for an edited file.
+Commit	Short ID of the git commit that made the change, linked to GitHub.
+Layer	Which part of the knowledge base was touched: wiki (compiled pages), raw (source material) or outputs.
+Plist label	Name (label) of the scheduled macOS launchd job.
+Raw state	State launchd reported for the job: loaded and healthy, loaded after a recent failure, unloaded, missing or unknown.
+Result	Our reading of the job's last outcome (ok, failed, needs triage or indeterminate), based on its own run record and its exit code.
+Exit code	Exit code of the job's last run as reported by launchd. 0 usually means success; some scanners use 1 to mean they ran and found something.
+Last fired	When the job last ran.
+Next fire	When the job is next due to run.
+Time	Time of day (UTC, HH:MM) the finding was detected.
+Finding	Name of the self-review check that raised the finding.
+Scope	What the finding applies to: the first 8 characters of a session ID, or the day if it covers a whole day.
+Key evidence	Up to two of the main figures the check recorded for the finding, plus its threshold where there is one.
+Recommendation	The check's own suggestion for what to do about the finding.
+Window	The look-back period compared in this row (last 1, 2, 4 or 8 weeks).
+Action-level days	Calendar days in the window with at least one critical or major self-review finding, out of the days in the window. A question mark means it could not be worked out.
+Lesson commits	Number of git commits in the window that changed the memory, rules or incident notes (lessons written down). A question mark means it could not be worked out.
+Hook	Name of a Claude Code hook script registered in the settings.
+State	Whether the hook can be watched and is working: firing, SILENT (should log every call but has not), on-block (logs only when it blocks something), or uninstrumented.
+Fires 24h	Number of times the hook logged an event in the last 24 hours. A dash means it cannot be observed.
+Fires 7d	Number of times the hook logged an event in the last 7 days. A dash means it cannot be observed.
+Last fired / why not	When the hook last logged an event, or the reason its activity cannot be seen.
+Detector	Number of the secret-scan detector that found the item.
+repo	Name of the GitHub repository.
+change_type	Why the repository was listed: became_public (it was private before) or new_public (it is new and public).
+prev_visibility	The repository's visibility the last time it was checked.
+audit_status	State of the full-history privacy audit of the repository: pending (not finished, so not known to be clean), clean or findings.
+detected_at	When the visibility change was detected.
+Agent	Name of the AI code-review agent that ran the review jobs.
+Failures 24h	Number of review jobs by this agent in the last 24 hours that failed with an empty reply, so the real cause is unknown.
+Max streak 24h (history)	Longest unbroken run of such failures by this agent within the last 24 hours, even if it has since ended.
+Failures 7d	Number of review jobs by this agent in the last 7 days that failed with an empty reply, so the real cause is unknown.
+Max streak 7d (history)	Longest unbroken run of such failures by this agent within the last 7 days, even if it has since ended.
+Current streak	Number of such failures in a row ending at the agent's newest job. 0 means the latest job did not fail this way.
+Last job	Status and start time of the agent's most recent review job.
+Signal	Wording of a correction or command failure that came up repeatedly in recent Claude Code sessions.
+Repetitions	How many times that signal occurred.
+Sessions	How many different Claude Code sessions it occurred in.
+Repo	The code repository the row is about.
+Critical	Open reviews from the last 24 hours in this repository whose most serious finding is Critical.
+High	Number of reviews in this row whose most serious finding is High. The period is stated in the section title.
+Medium	Number of reviews in this row whose most serious finding is Medium. The period is stated in the section title.
+Low	Number of reviews in the last 7 days in this project whose most serious finding is Low.
+Unknown	Number of reviews in the last 7 days in this project that found issues but had no severity recorded.
+Total	All the reviews in the last 7 days in this project that found issues: High, Medium, Low and Unknown added together.
+Job	roborev job number of the review (the number the roborev show and roborev close commands accept).
+Hours to close (h)	Hours from the review being created to it being closed.
+Attempts	How many times the review job was run: 1 means it worked first time, more means it was retried.
+Reason	Why the review was closed (the recorded close reason).
+Model	AI model the review agent used.
+Reviews	Number of completed reviews by this agent and model in the last 7 days.
+Not reviewed	How many of those reviews produced nothing usable (the agent crashed, refused or could not read the code), so no code was actually reviewed.
+Rate	Not reviewed divided by Reviews: the share of this agent and model's reviews that did not really review anything.
+Over timeout	Completed review jobs in the last 7 days that ran longer than the configured time limit. unknown means the run time or limit could not be read.
+Category	Group of Claude Code settings files (skills, agents, rules, memory, hooks, scripts, templates or commands) the row counts changes in.
+Files changed	Number of different files in that group changed by commits in the digest period.
+Lines added	Number of lines added to files in that group in the digest period.
+Lines deleted	Number of lines deleted from files in that group in the digest period.
+Top files	Up to three most-changed files in that group, linked to GitHub, with lines added and deleted.
+SHA	Short ID of the git commit.
+Subject	First line of the commit message.
+Author	Name of the person who made the commit.
+Days old	Whole days since the file was last modified.
+Location (file:line)	Wiki page file and line number where the broken link appears.
+Broken target	The link target [[like this]] that does not match any wiki page.
+Name	Name of the skill (its folder name) or rule (its file name without extension).
+Created	Date the skill or rule was first added to git.
+Wiki ref	y if any wiki page mentions the skill or rule by name, n if none does.
+Label	Name of the scheduled job (its launchd label or housekeeping task name).
+Schedule	When the job runs: a time of day, a weekday and time, every N minutes or hours, or daemon (kept running).
+Runs (7d)	How many times the job ran in the last 7 days according to the run ledger. no data means it never appears in the ledger. unavailable means the ledger could not be read.
+Non-zero exits (7d)	How many of those runs ended with a non-zero exit code in the last 7 days. This is a failure or, for some scanners, a run that found something.
+Program	The command the job runs, shortened to 80 characters.
+Timeout	Time limit in seconds on the job, set in its launchd file or its wrapper script. A dash means none is declared.
+Runs	How many times the task recorded a run in the last 7 days.
+Failures	How many of those runs ended with a status other than ok, deferred or skipped.
+Fail%	Failures as a percentage of runs, rounded to one decimal place.
+Median Duration (s)	Middle value of how long the runs took, in seconds.
+Max Duration (s)	Longest time a run took, in seconds.
+Last Status	Status the task recorded on its most recent run.
+Last Run	When the task's most recent run started.
+Workflow	Name of the GitHub Actions workflow.
+Cron	Cron schedule of the workflow (UTC). A dash means it has no schedule.
+Type	scheduled if the workflow runs on a cron schedule, dispatch-only if it can only be started by hand.
+Link	Link to the workflow on GitHub.
+Opened	Number of reviews that finished in the week, counted for this project.
+Closed (any age)	Number of reviews closed during the week, whenever they were opened.
+Of which opened this week	Of the reviews opened this week, how many are closed now.
+Cohort Close Rate	Of the reviews opened this week, the percentage that are closed now. It cannot go above 100%.
+%	Share of all reviews closed this week that were closed for this reason.
+Age	Days since the review finished. Only open reviews older than 7 days are listed.
+Summary	First 80 characters of the review's most serious finding.

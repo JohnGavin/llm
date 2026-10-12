@@ -140,6 +140,7 @@ md_to_simple_html <- function(md) {
   lines <- strsplit(md, "\n")[[1L]]
   html_parts <- character(length(lines))
   in_table <- FALSE
+  header_pending <- FALSE  # first non-separator row of each table = column headers
 
   for (i in seq_along(lines)) {
     l <- lines[i]
@@ -169,6 +170,7 @@ md_to_simple_html <- function(md) {
           EMAIL_FONT_BODY
         )
         in_table <- TRUE
+        header_pending <- TRUE
       }
       cells <- strsplit(trimws(sub("^\\|", "", sub("\\|$", "", l))), "\\|")[[1L]]
       cells <- trimws(cells)
@@ -180,12 +182,24 @@ md_to_simple_html <- function(md) {
       cell_style <- sprintf('style="padding:5px 8px; border:1px solid %s; color:%s;"',
                              dark_border, dark_text)
       bg <- if ((i %% 2L) == 0L) dark_row_alt else dark_card
-      cells_html <- paste0(
-        vapply(cells, function(c) {
-          sprintf('<td %s>%s</td>', cell_style, c)
-        }, character(1L)),
-        collapse = ""
-      )
+      cells_html <- if (header_pending) {
+        # Column headers: hover definition from email_column_definitions.tsv
+        # (same <td> tag and style as before, plus title + dotted-underline cue).
+        hdr_style <- sprintf("padding:5px 8px; border:1px solid %s; color:%s;",
+                             dark_border, dark_text)
+        paste0(
+          vapply(cells, function(c) email_header_cell(c, hdr_style), character(1L)),
+          collapse = ""
+        )
+      } else {
+        paste0(
+          vapply(cells, function(c) {
+            sprintf('<td %s>%s</td>', cell_style, c)
+          }, character(1L)),
+          collapse = ""
+        )
+      }
+      header_pending <- FALSE
       html_parts[i] <- paste0(
         table_open,
         sprintf('<tr style="background-color:%s;">%s</tr>', bg, cells_html)
