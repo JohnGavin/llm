@@ -107,7 +107,7 @@ email_column_definitions <- function(path = email_column_defs_path()) {
   defs <- character(0)
   if (is.na(info$size)) {
     msg <- sprintf("email_styles.R: column-definition file not found: %s", path)
-    if (email_column_defs_strict()) stop(msg, call. = FALSE)
+    if (email_column_defs_strict()) cli::cli_abort(c("x" = "{msg}"), call = NULL)
     message(msg)
   } else {
     df <- utils::read.delim(path, sep = "\t", quote = "", comment.char = "",
@@ -115,8 +115,9 @@ email_column_definitions <- function(path = email_column_defs_path()) {
                             check.names = FALSE, colClasses = "character",
                             na.strings = character(0))
     if (!identical(names(df), c("column_label", "definition"))) {
-      stop(sprintf("email_styles.R: %s must have exactly the columns column_label<TAB>definition",
-                   path), call. = FALSE)
+      msg <- sprintf("email_styles.R: %s must have exactly the columns column_label<TAB>definition",
+                     path)
+      cli::cli_abort(c("x" = "{msg}"), call = NULL)
     }
     defs <- stats::setNames(df$definition, df$column_label)
   }
@@ -151,7 +152,7 @@ email_column_definition <- function(label) {
     .email_col_defs_state$missing <- union(.email_col_defs_state$missing, key)
     msg <- sprintf("email_styles.R: no column definition for header '%s' in email_column_definitions.tsv",
                    key)
-    if (email_column_defs_strict()) stop(msg, call. = FALSE)
+    if (email_column_defs_strict()) cli::cli_abort(c("x" = "{msg}"), call = NULL)
     message(msg)
     return(NA_character_)
   }

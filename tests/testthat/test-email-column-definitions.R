@@ -59,7 +59,9 @@ ecd_quoted <- function(txt) {
 # Body of a top-level `name <- function` (up to the next top-level assignment).
 ecd_function_lines <- function(lines, name) {
   start <- grep(sprintf("^%s <- function", gsub("([.])", "\\\\\\1", name)), lines)
-  if (length(start) != 1L) stop(sprintf("expected exactly one top-level %s()", name))
+  if (length(start) != 1L) {
+    cli::cli_abort(c("x" = "expected exactly one top-level {name}()"), call = NULL)
+  }
   nxt <- grep("^[A-Za-z_.][A-Za-z0-9_.]* <- ", lines)
   nxt <- nxt[nxt > start]
   end <- if (length(nxt)) nxt[[1L]] - 1L else length(lines)
@@ -102,8 +104,9 @@ ecd_used_labels <- function() {
     static  <- inner[!grepl("%s", inner, fixed = TRUE)]
     expected_dynamic <- if (rel %in% names(ECD_DYNAMIC_TH_SITES)) ECD_DYNAMIC_TH_SITES[[rel]] else 0L
     if (length(dynamic) != expected_dynamic) {
-      stop(sprintf("%s has %d dynamic <th>%%s</th> site(s); expected %d. Register it in ECD_DYNAMIC_TH_SITES and extract its labels.",
-                   rel, length(dynamic), expected_dynamic))
+      msg <- sprintf("%s has %d dynamic <th>%%s</th> site(s); expected %d. Register it in ECD_DYNAMIC_TH_SITES and extract its labels.",
+                     rel, length(dynamic), expected_dynamic)
+      cli::cli_abort(c("x" = "{msg}"), call = NULL)
     }
     out <- c(out, static)
   }
@@ -157,36 +160,67 @@ test_that("definitions file is well-formed: 2 columns, unique labels, non-empty,
   expect_length(todo, 0L)
 })
 
+# TSV entries that no sender uses but are kept on purpose. Name = label, value =
+# the reason. Empty: every entry must be used by a sender.
+ECD_UNUSED_ALLOWED <- character(0)
+
+# The one coverage rule, shared by the real check and the fault-injection test:
+# `df` is a (column_label, definition) data frame; `used` the labels senders emit.
+ecd_gaps <- function(df, used) {
+  list(
+    missing = setdiff(used, df$column_label),
+    empty   = df$column_label[!nzchar(trimws(df$definition))],
+    stale   = setdiff(df$column_label, c(used, names(ECD_UNUSED_ALLOWED)))
+  )
+}
+
 test_that("every column label a sender can emit has a definition", {
   skip_if_stripped()
   used <- ecd_used_labels()
   expect_gt(length(used), 100L)  # guard: a vacuous scan must not pass
-  have <- ecd_read_tsv()$column_label
-  missing <- setdiff(used, have)
+  missing <- ecd_gaps(ecd_read_tsv(), used)$missing
   expect_true(length(missing) == 0L,
               label = paste("labels with no definition:", paste(missing, collapse = " | ")))
 })
 
-test_that("no definition is stale (every entry is used by some sender)", {
+test_that("no definition is empty", {
   skip_if_stripped()
-  used <- ecd_used_labels()
-  have <- ecd_read_tsv()$column_label
-  stale <- setdiff(have, used)
-  expect_true(length(stale) == 0L,
-              label = paste("TSV entries no sender uses:", paste(stale, collapse = " | ")))
+  empty <- ecd_gaps(ecd_read_tsv(), ecd_used_labels())$empty
+  expect_true(length(empty) == 0L,
+              label = paste("TSV entries with an empty definition:", paste(empty, collapse = " | ")))
 })
 
-test_that("fault injection: dropping one TSV row makes the coverage check go red", {
+test_that("no definition is stale (every entry is used by some sender)", {
+  skip_if_stripped()
+  stale <- ecd_gaps(ecd_read_tsv(), ecd_used_labels())$stale
+  expect_true(length(stale) == 0L,
+              label = paste("TSV entries no sender uses:", paste(stale, collapse = " | ")))
+  expect_true(all(nzchar(ECD_UNUSED_ALLOWED)), label = "every allow-list entry states a reason")
+})
+
+test_that("fault injection: each failure mode turns the coverage rule red", {
   skip_if_stripped()
   used <- ecd_used_labels()
   df <- ecd_read_tsv()
   victim <- used[[1L]]
-  broken <- df[df$column_label != victim, , drop = FALSE]
-  expect_true(victim %in% setdiff(used, broken$column_label))
-  # And an emptied definition is caught by the same emptiness rule.
+  # Baseline is green, so a red below is caused by the injected fault.
+  base <- ecd_gaps(df, used)
+  expect_length(c(base$missing, base$empty, base$stale), 0L)
+  # (1) a header with no TSV entry
+  expect_identical(ecd_gaps(df[df$column_label != victim, , drop = FALSE], used)$missing, victim)
+  # (2) an entry with an empty definition
   blanked <- df
-  blanked$definition[blanked$column_label == victim] <- ""
-  expect_true(victim %in% blanked$column_label[!nzchar(trimws(blanked$definition))])
+  blanked$definition[blanked$column_label == victim] <- "  "
+  expect_identical(ecd_gaps(blanked, used)$empty, victim)
+  # (3) an entry no sender uses
+  extra <- rbind(df, data.frame(column_label = "Zzz unused column", definition = "x"))
+  expect_identical(ecd_gaps(extra, used)$stale, "Zzz unused column")
+})
+
+test_that("the config digest also tooltips the knowledge-base fragment it embeds", {
+  skip_if_stripped()
+  src <- paste(ecd_read("send_config_digest_email.R"), collapse = "\n")
+  expect_true(grepl("email_add_tooltips(kb_section$html)", src, fixed = TRUE))
 })
 
 test_that("the scan sees the dynamic header sites (it is not blind to them)", {
@@ -313,27 +347,5 @@ test_that("markdown converters: only the header row gets tooltips; body rows are
   }
 })
 
-# ── End-to-end: the real overnight email, rendered without sending ───────────
-
-test_that("dry run: every <th> in the real overnight email carries a title", {
-  skip_if_stripped()
-  skip_if_not_installed("blastula")
-  skip_if_not_installed("duckdb")
-  db <- normalizePath("~/.claude/logs/unified.duckdb", mustWork = FALSE)
-  skip_if_not(file.exists(db), "unified.duckdb not available in test environment")
-  script <- file.path(.ecd_scripts(), "send_overnight_self_review_email.R")
-  out <- suppressWarnings(system2(
-    "Rscript", args = script, stdout = TRUE, stderr = TRUE,
-    env = c("EMAIL_DRY_RUN=1", "EMAIL_COLUMN_DEFS_STRICT=1",
-            paste0("UNIFIED_DB_PATH=", db),
-            "GMAIL_USERNAME=", "GMAIL_APP_PASSWORD=", "REPORT_RECIPIENT=")
-  ))
-  combined <- paste(out, collapse = "\n")
-  skip_if(!grepl("QA:overnight_self_review_email=true", combined, fixed = TRUE),
-          "dry run did not complete (unified.duckdb locked or unreadable)")
-  expect_false(grepl("no column definition for header", combined, fixed = TRUE))
-  ths <- regmatches(combined, gregexpr("<th[ >][^>]*>?", combined))[[1L]]
-  expect_gt(length(ths), 0L)
-  expect_true(all(grepl("title=\"", ths)),
-              label = paste("headers without title:", sum(!grepl("title=\"", ths))))
-})
+# The real emails are rendered (EMAIL_DRY_RUN=1, never sent) and their header
+# counts checked by hand per release; no test here opens the live telemetry DB.
