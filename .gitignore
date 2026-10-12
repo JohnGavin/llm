@@ -40,6 +40,8 @@ my_new_md_database
 !.claude/state/ci_outages.tsv
 # Committed test->script relevance map for shell-tests.yml (llm#1274) -- small, must be tracked
 !tests/ci_test_map.tsv
+# Committed single home for email column-header hover definitions -- must be tracked
+!.claude/scripts/email_column_definitions.tsv
 
 # Sensitive/personal files
 *.pdf

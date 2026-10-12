@@ -2325,7 +2325,8 @@ border-radius:6px;border-left:4px solid %s;">
   DARK_CARD,
   if (lessons_window_section$indeterminate) ACCENT_ORANGE else ACCENT_BLUE,
   DARK_TEXT, EMAIL_FONT_SUBTITLE,
-  lessons_window_section$body
+  # This table is not inside a dropdown, so collapsible_block() does not see it.
+  email_add_tooltips(lessons_window_section$body)
 )
 
 email_subject <- if (n_action_items == 0L) {

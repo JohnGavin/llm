@@ -491,7 +491,9 @@ commits_link_html <- sprintf(
 
 kb_section_html <- switch(
   kb_section$state,
-  present = kb_section$html,
+  # The fragment was rendered earlier by the KB digest job; add_tooltips() is
+  # idempotent and covers a fragment written before the hover text existed.
+  present = email_add_tooltips(kb_section$html),
   empty = sprintf(
     '<h3 style="color:%s; margin-top:20px; margin-bottom:6px;">Knowledge Base</h3>
 <p style="color:%s; font-style:italic;">No Knowledge Base changes in the last 24 hours.</p>',
