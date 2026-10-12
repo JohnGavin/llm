@@ -11,7 +11,7 @@ Peak concurrent	The most Claude Code sessions active at the same time on that da
 Threshold	The limit the check compares against, as written by the check (here a number of concurrent sessions). Reaching it is what raised the finding.
 Session	First 8 characters of the Claude Code session ID the finding came from. A dash means no session was recorded.
 Evidence	The key facts the check recorded when it raised the finding (name: value pairs).
-Table	Name of the telemetry database table this row describes.
+Table	Name of the database table this row describes.
 Total rows	How many rows the table holds in total, across all time.
 Last 24h	How many rows were added to the table in the last 24 hours.
 Latest row	Timestamp of the newest row in the table. A dash means the table has no rows.
