@@ -71,11 +71,77 @@ library(testthat)
 
 .real_db <- normalizePath("~/.claude/logs/unified.duckdb", mustWork = FALSE)
 
-run_dry_run <- function(db_path = .real_db, extra_env = character(0)) {
+# llm#1405: NO test copies or reads rows from the live DB. The live file is
+# opened READ-ONLY once, only to learn the table/view SCHEMA; every fixture is
+# a small tempfile DB holding empty tables of that shape plus the rows under
+# test. Every per-test copy is removed at the end of its test.
+.fx <- new.env(parent = emptyenv())
+
+#' Schema-only base fixture (cached for the file, removed at teardown).
+#' Empty copies of every base table, then every view, from the live DB.
+#' @return path to the base DB, or NULL if the live schema is unavailable
+#'   (callers skip).
+.schema_base_db <- function() {
+  if (!is.null(.fx$base) && file.exists(.fx$base)) return(.fx$base)
+  if (!file.exists(.real_db)) return(NULL)
+  if (!requireNamespace("DBI", quietly = TRUE)) return(NULL)
+  if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
+  dst <- tempfile("overnight_schema_", fileext = ".duckdb")
+  con <- tryCatch(DBI::dbConnect(duckdb::duckdb(), dst), error = function(e) NULL)
+  if (is.null(con)) return(NULL)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  ok <- FALSE
+  for (attempt in 1:5) {   # live DB may be write-locked for a moment
+    ok <- tryCatch({
+      DBI::dbExecute(con, sprintf("ATTACH '%s' AS live (READ_ONLY)", .real_db))
+      TRUE
+    }, error = function(e) FALSE)
+    if (ok) break
+    Sys.sleep(2)
+  }
+  if (!ok) { unlink(dst); return(NULL) }
+  tbls <- DBI::dbGetQuery(con, "SELECT table_name FROM duckdb_tables()
+                                WHERE database_name = 'live' AND schema_name = 'main'")$table_name
+  for (t in tbls) {
+    DBI::dbExecute(con, sprintf(
+      "CREATE TABLE main.%s AS SELECT * FROM live.main.%s LIMIT 0",
+      DBI::dbQuoteIdentifier(con, t), DBI::dbQuoteIdentifier(con, t)))
+  }
+  views <- DBI::dbGetQuery(con, "SELECT view_name, sql FROM duckdb_views()
+                                 WHERE database_name = 'live' AND NOT internal
+                                   AND schema_name = 'main'")
+  pending <- views$sql
+  for (pass in seq_len(nrow(views) + 1L)) {   # views may reference views
+    pending <- Filter(function(s) !tryCatch({
+      DBI::dbExecute(con, s); TRUE }, error = function(e) FALSE), pending)
+    if (!length(pending)) break
+  }
+  DBI::dbExecute(con, "DETACH live")
+  if (length(pending)) { unlink(dst); return(NULL) }
+  DBI::dbExecute(con, "CHECKPOINT")
+  .fx$base <- dst
+  withr::defer(unlink(dst), envir = testthat::teardown_env())
+  dst
+}
+
+#' A fresh, small, per-test copy of the schema-only base DB. Removed when the
+#' calling test ends. @return path, or NULL if the base is unavailable.
+.new_fixture_db <- function(envir = parent.frame()) {
+  base <- .schema_base_db()
+  if (is.null(base)) return(NULL)
+  dst <- tempfile("overnight_fixture_", fileext = ".duckdb")
+  if (!file.copy(base, dst)) return(NULL)
+  withr::defer(unlink(dst), envir = envir)
+  dst
+}
+
+run_dry_run <- function(db_path = NULL, extra_env = character(0)) {
   skip_if_not(
     nzchar(.email_script) && file.exists(.email_script),
     "send_overnight_self_review_email.R not found"
   )
+  if (is.null(db_path)) db_path <- .schema_base_db()
+  skip_if(is.null(db_path), "live unified.duckdb schema not available in test environment")
   env_vars <- c(
     "EMAIL_DRY_RUN=1",
     paste0("UNIFIED_DB_PATH=", db_path),
@@ -190,13 +256,13 @@ test_that("dry-run output contains at least 4 collapsible <details> blocks", {
   if (length(hit) < 2L) NA_character_ else hit[[2]]
 }
 
-# Copy the real DB to a temp file and apply `mutate_sql` (via DBI, so no CLI
-# DROP is involved). Returns the temp path, or NULL if the copy fails.
-.mutated_db <- function(mutate_sql) {
+# Make a small schema-only fixture DB (llm#1405: never a copy of the live DB)
+# and apply `mutate_sql` (via DBI, so no CLI DROP is involved). The fixture is
+# removed when the calling test ends.
+.mutated_db <- function(mutate_sql, envir = parent.frame()) {
   skip_if_not_installed("duckdb")
-  skip_if_not(file.exists(.real_db), "unified.duckdb not available in test environment")
-  tmp <- tempfile("overnight_fixture_", fileext = ".duckdb")
-  expect_true(file.copy(.real_db, tmp), label = "copy of unified.duckdb")
+  tmp <- .new_fixture_db(envir = envir)
+  skip_if(is.null(tmp), "unified.duckdb schema not available in test environment")
   con <- DBI::dbConnect(duckdb::duckdb(), tmp)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
   for (s in mutate_sql) DBI::dbExecute(con, s)
@@ -224,7 +290,10 @@ test_that("Section 2 table lists all 4 detector-input tables as rows (review F3/
 
 test_that("errors quiet for a long time is IDLE (informational), not stale, and does not raise an action item (review F3)", {
   skip_if_not_installed("blastula")
-  db <- .mutated_db("UPDATE errors SET logged_at = TIMESTAMP '2026-01-01 00:00:00'")
+  # Schema-only fixture has an empty errors table: insert the one old row
+  # under test (a long-quiet but non-empty table is what makes it IDLE).
+  db <- .mutated_db(paste("INSERT INTO errors (id, session_id, source, error_text, context, logged_at)",
+                          "VALUES (1, 'fixture', 'test', 'old error', 'fixture', TIMESTAMP '2026-01-01 00:00:00')"))
   on.exit(unlink(db), add = TRUE)
   combined <- paste(run_dry_run(db), collapse = "\n")
   sec2 <- .section2_html(combined)
@@ -460,15 +529,14 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
 # from failed. `com.claude.launchd_health` sat 'partial' for 27 consecutive
 # runs (~4 weeks) while the report's own summary read "0 unknown".
 #
-# These tests build a scratch COPY of the real unified.duckdb (never the
-# live file itself), clear launchd_health_events/housekeeping_runs in the
-# copy, and insert exactly the rows under test -- isolating the assertion
+# These tests build a scratch SCHEMA-ONLY fixture (llm#1405: empty tables, no
+# live rows), and insert exactly the rows under test -- isolating the assertion
 # from whatever the real, live cron-health state happens to be on the day
 # the suite runs (which, as of llm#1145, already contains a genuine partial
 # row and a genuine contradiction row).
 
-#' Build a scratch unified.duckdb fixture: a copy of `.real_db` with
-#' launchd_health_events/housekeeping_runs replaced by exactly the rows in
+#' Build a scratch unified.duckdb fixture: the schema-only base with
+#' launchd_health_events/housekeeping_runs holding exactly the rows in
 #' `hk_row` / `ev_row` (one row each, as named lists).
 #' `prev_hk_row` (optional) adds an earlier ok run of the same task 2 days
 #' before, as the baseline for the new-vs-known finding split. `findings`
@@ -478,23 +546,11 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
 #' @return path to the scratch DB, or NULL if prerequisites are unavailable.
 .build_cron_fixture_db <- function(hk_row, ev_row, prev_hk_row = NULL, findings = NULL,
                                    hist = NULL) {
-  if (!file.exists(.real_db)) return(NULL)
-  if (!requireNamespace("DBI", quietly = TRUE)) return(NULL)
-  if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
-
-  dst <- tempfile(fileext = ".duckdb")
-  # The live DB can be mid-write while we copy it, giving a torn copy that
-  # DuckDB refuses to open ("Could not read enough bytes" / "Failed to
-  # deserialize"). A torn copy is not a valid fixture: retry the copy, and only
-  # give up (NULL -> the test skips) if every attempt is torn.
-  con <- NULL
-  for (attempt in 1:5) {
-    if (!file.copy(.real_db, dst, overwrite = TRUE)) return(NULL)
-    con <- tryCatch(DBI::dbConnect(duckdb::duckdb(), dst, read_only = FALSE),
-                    error = function(e) NULL)
-    if (!is.null(con)) break
-    Sys.sleep(2)
-  }
+  # llm#1405: schema-only fixture (small), removed when the calling test ends.
+  dst <- .new_fixture_db(envir = parent.frame())
+  if (is.null(dst)) return(NULL)
+  con <- tryCatch(DBI::dbConnect(duckdb::duckdb(), dst, read_only = FALSE),
+                  error = function(e) NULL)
   if (is.null(con)) return(NULL)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
@@ -1067,6 +1123,7 @@ test_that("header does not claim conversation/roborev inspection when those sour
   if (!requireNamespace("duckdb", quietly = TRUE)) return(NULL)
   if (!nzchar(Sys.which("duckdb"))) return(NULL)
   dst <- tempfile(fileext = ".duckdb")
+  withr::defer(unlink(dst), envir = parent.frame())
   schema_file <- file.path(pkgload::pkg_path(), ".claude", "scripts", "housekeeping_schema_init.sql")
   rc <- system2("duckdb", c("-init", "/dev/null", dst), input = readLines(schema_file),
                 stdout = FALSE, stderr = FALSE)
