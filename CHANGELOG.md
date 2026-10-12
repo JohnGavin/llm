@@ -4,6 +4,12 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-10-11 (feat/stranded-runs-banner)
+
+### Completed
+
+- **Session-start banner surfaces recent telemetry stranded/aborted runs.** `~/.claude/logs/telemetry_stranded_runs.log` is written by llmtelemetry's `export_and_deploy_data.sh` (stranded rebase runs, `kind=export_optional_step_error`) and `exec/refresh_codexbar.sh` (`kind=codexbar_refresh_abort`) but nothing read it. New `.claude/scripts/telemetry_stranded_banner.sh` + `session_init.sh` Phase 15i print one `telemetry-stranded: N in last 3d (last: DATE KIND) -- see <log>` line when entries are under 3 days old; silent when none or the file is missing; `INDETERMINATE` when the log is unreadable or has unparseable timestamps and no recent entry. N=3 days because the writers run at session end, so a failure shows within a day and 3d spans a weekend. No existing phase covered this (15a reads DuckDB, not this log), so a small new phase was added. Selftest: `.claude/hooks/telemetry_stranded_banner_selftest.sh` (falsified against a reader with the cutoff disabled). Touches `.claude/hooks/**`: needs an explicit "merge".
+
 ## 2026-09-30 (session: banner warnings, #1294/#1295/#1296, roborev purge and retention, feat/cc-20260930-193506)
 
 ### Completed
