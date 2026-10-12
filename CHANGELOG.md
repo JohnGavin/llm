@@ -4728,3 +4728,41 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - (carried forward, unchanged) `pkgctx`-based `ctx_sync()` remains broken
   end-to-end on the external `zmij@1.0.12` crates.io fetch failure — see
   the 2026-09-05 entry above for the full root-cause.
+
+## 2026-10-11 / 2026-10-12
+
+### Completed
+- Removed a sensitive file from public history (rewrite + force-push);
+  backups kept locally. One external fork still holds it; contacting its
+  owner and GitHub Support awaits review.
+- Privacy gates 1-8 merged (#1373-#1378). History-audit and
+  visibility-diff launchd jobs installed; schema applied.
+- Redacted private-topic prose from 19 files (#1383); replaced hard-coded
+  local paths with an aliasing lookup read from a local config file (#1385).
+- Filed the layered privacy plan as sub-issues #1386-#1393 of #1382.
+  Merged L0 (#1394, private-term sync); L2 (#1395, scanner rule +
+  commit-msg hook) is open and on hold.
+- CI fixes: test skip guard (#1381); a daily report script missing a
+  sourced helper (dashboard repo).
+- Overnight email: collapsed per-finding dropdown under critical/major
+  action items (#1398).
+- First all-public history-audit baseline: 142 units, 0 new findings,
+  5 indeterminate (forks that return 404; #1396).
+
+### Failed Approaches
+- Treating a raw repo-name list as the private-term list: many private
+  repo names are generic words or already appear widely in public files,
+  so a scanner fed the raw list would block ordinary commits. Needs an
+  allow-list with reasons before #1395 can go live.
+- Old session branches that predate the history rewrite must never be
+  pushed; they would reintroduce the removed content.
+
+### Accuracy / Metrics
+- roborev: 18 failed verdicts, 18 addressed; 0 crash, 0 quota.
+- New shell tests: 39/39 (#1394); 49/49, 20/20 and 55/55 (#1395).
+
+### Known Limitations
+- #1395 on hold pending the allow-list and splitting a literal test term.
+- Audit mirror cache is about 12 GB on a 97%-full disk.
+- Repo visibility decision pending; #1397 (orphan raw-file check) planned,
+  not started.
