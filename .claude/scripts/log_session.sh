@@ -139,14 +139,43 @@ case "$ACTION" in
     AGENT_TYPE="${5:-unknown}"
     MODEL="${6:-unknown}"
     TOOL_USE_ID="${7:-}"
+    # llm#1423: optional 8th arg DISPATCH_ID, extracted by log_agent_run.sh
+    # from the dispatch prompt. Empty when the prompt carries none (never invented).
+    DISPATCH_ID="${8:-}"
     _STAGING="${HOME}/.claude/logs/agent_events_staging.jsonl"
     _ts=$(_now_ts)
     _agent_esc=$(_json_escape "$AGENT_TYPE")
     _model_esc=$(_json_escape "$MODEL")
     _preview_esc=$(_json_escape "$(echo "$SUMMARY" | head -c 200)")
     _tuid_esc=$(_json_escape "$TOOL_USE_ID")
-    printf '{"type":"agent_start","ts":"%s","session_id":"%s","agent_type":"%s","model":"%s","prompt_preview":"%s","status":"running","tool_use_id":"%s"}\n' \
-      "$_ts" "$SESSION_ID" "$_agent_esc" "$_model_esc" "$_preview_esc" "$_tuid_esc" \
+    _did_esc=$(_json_escape "$DISPATCH_ID")
+    printf '{"type":"agent_start","ts":"%s","session_id":"%s","agent_type":"%s","model":"%s","prompt_preview":"%s","status":"running","tool_use_id":"%s","dispatch_id":"%s"}\n' \
+      "$_ts" "$SESSION_ID" "$_agent_esc" "$_model_esc" "$_preview_esc" "$_tuid_esc" "$_did_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
+    ;;
+  agent_launch)
+    # llm#1423: PostToolUse(Agent) of a BACKGROUND dispatch fires at LAUNCH
+    # (tool_response.status = "async_launched"), not at completion. Record the
+    # tool_use_id -> agent_id link only; the run stays 'running' until
+    # agent_end (SubagentStop) arrives.
+    TOOL_USE_ID="${5:-}"
+    AGENT_ID="${6:-}"
+    _STAGING="${HOME}/.claude/logs/agent_events_staging.jsonl"
+    _tuid_esc=$(_json_escape "$TOOL_USE_ID")
+    _aid_esc=$(_json_escape "$AGENT_ID")
+    printf '{"type":"agent_launch","ts":"%s","session_id":"%s","tool_use_id":"%s","agent_id":"%s"}\n' \
+      "$(_now_ts)" "$SESSION_ID" "$_tuid_esc" "$_aid_esc" \
+      >> "${_STAGING}" 2>/dev/null || true
+    ;;
+  agent_end)
+    # llm#1423: SubagentStop = the real completion event of a dispatched agent.
+    AGENT_ID="${5:-}"
+    AGENT_TYPE="${6:-unknown}"
+    _STAGING="${HOME}/.claude/logs/agent_events_staging.jsonl"
+    _aid_esc=$(_json_escape "$AGENT_ID")
+    _agent_esc=$(_json_escape "$AGENT_TYPE")
+    printf '{"type":"agent_end","ts":"%s","session_id":"%s","agent_type":"%s","status":"done","agent_id":"%s"}\n' \
+      "$(_now_ts)" "$SESSION_ID" "$_agent_esc" "$_aid_esc" \
       >> "${_STAGING}" 2>/dev/null || true
     ;;
   agent_stop)
@@ -168,7 +197,7 @@ case "$ACTION" in
     # (before the write lands) was itself lock-prone.
     ;;
   *)
-    echo "Usage: log_session.sh start|stop|error|hook|agent_start|agent_stop [session_id] [project] [summary] [extra_args...]" >&2
+    echo "Usage: log_session.sh start|stop|error|hook|agent_start|agent_stop|agent_launch|agent_end [session_id] [project] [summary] [extra_args...]" >&2
     exit 1
     ;;
 esac

@@ -90,8 +90,24 @@ if [ -n "$_input" ] && [ "$_have_jq" -eq 1 ]; then
   _desc=$(_jq '.tool_input.description // empty')
   _tuid=$(_jq '.tool_use_id // empty')
   _is_err=$(_jq '.tool_response.is_error // empty')
+  # llm#1423: a background Agent dispatch returns status "async_launched" from
+  # PostToolUse at LAUNCH (~1s), carrying the agentId; SubagentStop (payload
+  # field agent_id) is the real completion event.
+  _resp_status=$(_jq '.tool_response.status // empty')
+  _agent_id=$(_jq '.tool_response.agentId // .tool_response.agent_id // .agent_id // empty')
+  # dispatch_id is only EXTRACTED from the dispatch prompt (rule
+  # agent-identity-and-task-scopes), never minted: empty when absent.
+  _dispatch_id=$(_jq '.tool_input.prompt // empty' \
+    | grep -oiE 'dispatch[_ -]?id[^0-9a-f]{1,12}(is )?[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' \
+    | head -n 1 | grep -oiE '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' || true)
+  if [ "$_event" = "SubagentStop" ]; then
+    _agent_type=$(_jq '.agent_type // empty')
+  fi
 else
   _event=""
+  _resp_status=""
+  _agent_id=""
+  _dispatch_id=""
   _legacy="${CLAUDE_TOOL_INPUT:-}"
   _agent_type=$(echo "$_legacy" | grep -o '"subagent_type":"[^"]*"' | cut -d'"' -f4)
   _model=$(echo "$_legacy" | grep -o '"model":"[^"]*"' | cut -d'"' -f4)
@@ -106,12 +122,29 @@ _proj="$(basename "$(pwd)")"
 
 case "$_event" in
   PreToolUse)
-    "$_log_script" agent_start "$_sid" "$_proj" "$_desc" "$_agent_type" "$_model" "$_tuid" 2>/dev/null || true
+    "$_log_script" agent_start "$_sid" "$_proj" "$_desc" "$_agent_type" "$_model" "$_tuid" "$_dispatch_id" 2>/dev/null || true
     ;;
   PostToolUse)
-    _status="done"
-    if [ -n "$_is_err" ] && [ "$_is_err" != "false" ]; then _status="failed"; fi
-    "$_log_script" agent_stop "$_sid" "$_proj" "$_desc" "$_agent_type" "$_status" "$_tuid" 2>/dev/null || true
+    if [ "$_resp_status" = "async_launched" ]; then
+      # llm#1423: launch acknowledgement of a background dispatch, NOT its
+      # completion. Writing agent_stop here is what produced ~1 s durations.
+      # Keep the row 'running'; SubagentStop closes it with the real end time.
+      "$_log_script" agent_launch "$_sid" "$_proj" "$_desc" "$_tuid" "$_agent_id" 2>/dev/null || true
+    else
+      _status="done"
+      if [ -n "$_is_err" ] && [ "$_is_err" != "false" ]; then _status="failed"; fi
+      "$_log_script" agent_stop "$_sid" "$_proj" "$_desc" "$_agent_type" "$_status" "$_tuid" 2>/dev/null || true
+    fi
+    ;;
+  SubagentStop)
+    # llm#1423: real completion event (carries agent_id). Without an agent_id
+    # the row cannot be matched, so record nothing rather than guess.
+    if [ -n "$_agent_id" ]; then
+      "$_log_script" agent_end "$_sid" "$_proj" "$_desc" "$_agent_id" "$_agent_type" 2>/dev/null || true
+    else
+      echo "$(date '+%F %T') subagent-stop-no-agent-id payload=$(echo "$_input" | head -c 300)" \
+        >> "$HOME/.claude/logs/agent_hook_debug.log" 2>/dev/null || true
+    fi
     ;;
   *)
     # Event undeterminable (legacy single-wiring or missing field): record the

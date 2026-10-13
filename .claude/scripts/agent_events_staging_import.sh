@@ -57,16 +57,35 @@
 #   caller. Such an event is logged (non-fatal) as an orphan-drop; see
 #   `log()` output. Flagged here for anyone re-auditing this file.
 #
+#   llm#1423 additions (duration_sec / dispatch_id / outcome were wrong or NULL):
+#   Phase 1a/1b also store `dispatch_id` (extracted from the dispatch prompt by
+#     log_agent_run.sh; NULL when the prompt carries none -- never invented).
+#   Phase 1c (agent_launch): a BACKGROUND Agent dispatch returns from
+#     PostToolUse at launch (status "async_launched"), so that event is NOT a
+#     completion. It only links tool_use_id -> agent_id; the row stays 'running'.
+#   Phase 2c (agent_end, from SubagentStop): the REAL completion event. Matches
+#     on agent_id, sets ended_at and duration_sec = end - start, status 'done'.
+#     A run whose end is never observed keeps duration_sec NULL (the reaper
+#     marks it 'unknown'): NULL, never a plausible-looking wrong number.
+#   Phase 3 orphan rows now get duration_sec NULL, not 0 (start is unknown).
+#   Phase 4 (outcome): from the post-verify log (agent-post-verify.sh `check`
+#     lines "CHECK id=<dispatch_id> ..."), three-valued per
+#     checks-must-distinguish-unknown: OK / FAST_FORWARD_TO_REMOTE -> 'pass',
+#     DRIFT -> 'fail', INDETERMINATE -> 'indeterminate'. Matched on dispatch_id;
+#     no CHECK line -> outcome stays NULL. Records the isolation verdict of
+#     the dispatch, not whether the agent's task succeeded.
+#
 # Errors are NOT silenced on the critical write — see
 # session_events_staging_import.sh's header for the rationale (this is the
 # same #956 fix, applied to agent_runs instead of sessions).
 #
 # Usage:
-#   agent_events_staging_import.sh [db_path] [staging_path]
+#   agent_events_staging_import.sh [db_path] [staging_path] [post_verify_log]
 #
 #   db_path        Defaults to ~/.claude/logs/unified.duckdb
 #   staging_path   Defaults to ~/.claude/logs/agent_events_staging.jsonl
 #                  (override for tests against a scratch DB/staging file)
+#   post_verify_log Defaults to ~/.claude/logs/worktree_post_verify.log
 #
 # Tracked in llm#956.
 set -uo pipefail
@@ -75,6 +94,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DB_PATH="${1:-$HOME/.claude/logs/unified.duckdb}"
 STAGING="${2:-$HOME/.claude/logs/agent_events_staging.jsonl}"
+PV_LOG="${3:-$HOME/.claude/logs/worktree_post_verify.log}"
 LOGFILE="${HOME}/.claude/logs/agent_events_staging_import.log"
 
 log() {
@@ -113,9 +133,42 @@ duckdb -init /dev/null "${DB_PATH}" -c "
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS dispatch_id VARCHAR;
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS parent_dispatch_id VARCHAR;
   ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS outcome VARCHAR;
+  -- llm#1423: agent_id links the PostToolUse launch to the SubagentStop end.
+  ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS agent_id VARCHAR;
 " 2>/dev/null || log "WARN schema ensure failed (non-fatal)"
 
+# ── Phase 4 (llm#1423): outcome from the post-verify log ────────────────────
+# Last CHECK line per dispatch id wins. No CHECK line -> outcome untouched.
+sync_outcomes() {
+  [ -f "${PV_LOG}" ] || return 0
+  local tsv
+  tsv="$(mktemp "${TMPDIR:-/tmp}/agent_outcomes.XXXXXX")" || return 0
+  awk '
+    / CHECK id=/ {
+      id = ""; v = ""
+      for (i = 1; i <= NF; i++) if ($i ~ /^id=/) id = substr($i, 4)
+      if ($0 ~ / DRIFT /)                      v = "fail"
+      else if ($0 ~ / INDETERMINATE /)         v = "indeterminate"
+      else if ($0 ~ / FAST_FORWARD_TO_REMOTE /) v = "pass"
+      else if ($0 ~ / OK /)                    v = "pass"
+      if (id != "" && v != "") last[id] = v
+    }
+    END { for (id in last) printf "%s\t%s\n", id, last[id] }
+  ' "${PV_LOG}" > "${tsv}" 2>/dev/null
+  if [ -s "${tsv}" ]; then
+    duckdb -init /dev/null "${DB_PATH}" -c "
+      UPDATE agent_runs SET outcome = o.outcome
+      FROM read_csv('${tsv}', delim = '\t', header = false,
+                    columns = {'dispatch_id': 'VARCHAR', 'outcome': 'VARCHAR'}) o
+      WHERE agent_runs.dispatch_id = o.dispatch_id
+        AND agent_runs.outcome IS DISTINCT FROM o.outcome;
+    " >/dev/null 2>&1 || log "WARN outcome sync failed (non-fatal)"
+  fi
+  rm -f "${tsv}" 2>/dev/null || true
+}
+
 if [ ! -f "${STAGING}" ] || [ ! -s "${STAGING}" ]; then
+  sync_outcomes
   log "SKIP (no pending events in staging: ${STAGING})"
   exit 0
 fi
@@ -123,12 +176,12 @@ fi
 _IMPORT="${STAGING}.import_$(date +%s)_$$"
 mv "${STAGING}" "${_IMPORT}" 2>/dev/null || { log "WARN mv failed (non-fatal)"; exit 0; }
 
-_COLS="{type: 'VARCHAR', ts: 'VARCHAR', session_id: 'VARCHAR', agent_type: 'VARCHAR', model: 'VARCHAR', prompt_preview: 'VARCHAR', status: 'VARCHAR', tool_use_id: 'VARCHAR'}"
+_COLS="{type: 'VARCHAR', ts: 'VARCHAR', session_id: 'VARCHAR', agent_type: 'VARCHAR', model: 'VARCHAR', prompt_preview: 'VARCHAR', status: 'VARCHAR', tool_use_id: 'VARCHAR', dispatch_id: 'VARCHAR', agent_id: 'VARCHAR'}"
 
 _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
   -- Phase 1a: agent_start WITH tool_use_id -> insert if no row has that tool_use_id
-  INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id)
-  SELECT x.session_id, x.agent_type, x.model, CAST(x.ts AS TIMESTAMP), x.prompt_preview, 'running', x.tool_use_id
+  INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id, dispatch_id)
+  SELECT x.session_id, x.agent_type, x.model, CAST(x.ts AS TIMESTAMP), x.prompt_preview, 'running', x.tool_use_id, NULLIF(x.dispatch_id, '')
   FROM (
     SELECT *, row_number() OVER (PARTITION BY tool_use_id ORDER BY ts DESC) AS rn
     FROM read_json('${_IMPORT}', format = 'newline_delimited', columns = ${_COLS}, ignore_errors = true)
@@ -138,8 +191,8 @@ _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
     AND NOT EXISTS (SELECT 1 FROM agent_runs ar WHERE ar.tool_use_id = x.tool_use_id);
 
   -- Phase 1b: agent_start WITHOUT tool_use_id -> content-dedupe insert
-  INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id)
-  SELECT x.session_id, x.agent_type, x.model, CAST(x.ts AS TIMESTAMP), x.prompt_preview, 'running', NULL
+  INSERT INTO agent_runs (session_id, agent_type, model, started_at, prompt_preview, status, tool_use_id, dispatch_id)
+  SELECT x.session_id, x.agent_type, x.model, CAST(x.ts AS TIMESTAMP), x.prompt_preview, 'running', NULL, NULLIF(x.dispatch_id, '')
   FROM (
     SELECT *, row_number() OVER (PARTITION BY session_id, agent_type, ts ORDER BY ts DESC) AS rn
     FROM read_json('${_IMPORT}', format = 'newline_delimited', columns = ${_COLS}, ignore_errors = true)
@@ -152,6 +205,19 @@ _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
         AND ar.tool_use_id IS NULL
         AND date_trunc('second', ar.started_at) = date_trunc('second', CAST(x.ts AS TIMESTAMP))
     );
+
+  -- Phase 1c (llm#1423): agent_launch -> link tool_use_id to agent_id (row stays running)
+  UPDATE agent_runs SET agent_id = s.agent_id
+  FROM (
+    SELECT tool_use_id, agent_id FROM (
+      SELECT tool_use_id, agent_id,
+             row_number() OVER (PARTITION BY tool_use_id ORDER BY ts DESC) AS rn
+      FROM read_json('${_IMPORT}', format = 'newline_delimited', columns = ${_COLS}, ignore_errors = true)
+      WHERE type = 'agent_launch' AND NULLIF(tool_use_id,'') IS NOT NULL AND NULLIF(agent_id,'') IS NOT NULL
+    ) WHERE rn = 1
+  ) s
+  WHERE agent_runs.tool_use_id = s.tool_use_id
+    AND agent_runs.agent_id IS NULL;
 
   -- Phase 2a: agent_stop WITH tool_use_id -> update matching running row
   UPDATE agent_runs SET
@@ -190,9 +256,27 @@ _err_out=$(duckdb -init /dev/null "${DB_PATH}" -c "
   )
   AND agent_runs.status IN ('running', 'unknown');
 
+  -- Phase 2c (llm#1423): agent_end (SubagentStop) = real completion; match on agent_id
+  UPDATE agent_runs SET
+    ended_at = s.stop_ts,
+    duration_sec = CASE WHEN s.stop_ts >= agent_runs.started_at
+                        THEN EXTRACT(EPOCH FROM (s.stop_ts - agent_runs.started_at)) END,
+    status = s.status
+  FROM (
+    SELECT agent_id, status, stop_ts FROM (
+      SELECT agent_id, status, CAST(ts AS TIMESTAMP) AS stop_ts,
+             row_number() OVER (PARTITION BY agent_id ORDER BY ts DESC) AS rn
+      FROM read_json('${_IMPORT}', format = 'newline_delimited', columns = ${_COLS}, ignore_errors = true)
+      WHERE type = 'agent_end' AND NULLIF(agent_id,'') IS NOT NULL
+    ) WHERE rn = 1
+  ) s
+  WHERE agent_runs.agent_id = s.agent_id
+    AND agent_runs.status IN ('running', 'unknown');
+
   -- Phase 3: agent_stop WITH tool_use_id but NO row exists at all with that id -> orphan insert
+  -- (duration_sec NULL, not 0: the start of an orphan is unknown, llm#1423)
   INSERT INTO agent_runs (session_id, agent_type, model, started_at, ended_at, duration_sec, prompt_preview, status, tool_use_id)
-  SELECT x.session_id, x.agent_type, 'inherited', x.stop_ts, x.stop_ts, 0, x.prompt_preview, x.status, x.tool_use_id
+  SELECT x.session_id, x.agent_type, 'inherited', x.stop_ts, x.stop_ts, NULL, x.prompt_preview, x.status, x.tool_use_id
   FROM (
     SELECT *, row_number() OVER (PARTITION BY tool_use_id ORDER BY ts DESC) AS rn
     FROM (
@@ -237,6 +321,7 @@ if [ -n "$_orphan_dropped" ] && [ "$_orphan_dropped" != "0" ]; then
 fi
 
 rm -f "${_IMPORT}" 2>/dev/null || true
+sync_outcomes
 log "import done"
 
 # ── etl_freshness registration (llm#309 Phase 1a): update AFTER the write

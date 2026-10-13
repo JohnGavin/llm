@@ -837,6 +837,15 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log_agent_run.sh",
+            "timeout": 5
+          }
+        ]
       }
     ]
   },
