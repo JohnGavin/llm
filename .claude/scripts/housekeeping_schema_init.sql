@@ -357,6 +357,23 @@ CREATE TABLE IF NOT EXISTS private_data_history_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_private_data_history_findings_status ON private_data_history_findings(status);
 
+-- private_data_history_unit_state: per-unit skip state for the --all-public
+-- audit (llm#1415). One row per repo/gist unit holding the hashes of everything
+-- a clean result depends on (remote refs, deny-list file, scanner + audit
+-- script). A unit is skipped (outcome UNCHANGED) only when ALL three hashes
+-- match, the last outcome was PASS/BASELINED and the last full scan is younger
+-- than PDHA_FULL_RESCAN_DAYS. Holds hashes only, never a matched value.
+-- A row is deleted whenever a unit ends INDETERMINATE, so missing state = scan.
+-- Writers: private_data_history_audit.sh only.
+CREATE TABLE IF NOT EXISTS private_data_history_unit_state (
+  repo                 TEXT PRIMARY KEY,
+  ref_hash             TEXT NOT NULL,
+  denylist_hash        TEXT NOT NULL,
+  scanner_hash         TEXT NOT NULL,
+  last_outcome         TEXT NOT NULL,
+  last_full_scan_epoch BIGINT NOT NULL
+);
+
 -- repo_visibility_snapshots / repo_visibility_changes: daily visibility diff of
 -- every repo the owner (and the orgs the user belongs to) can see (llm#1371,
 -- privacy gate 7). repo_visibility_guard.sh only sees a change made BY Claude;
@@ -611,6 +628,15 @@ COMMENT ON COLUMN private_data_history_findings.line_num IS 'Line number of the 
 COMMENT ON COLUMN private_data_history_findings.first_seen IS 'UTC instant (TIMESTAMPTZ) of the audit run that first recorded this fingerprint.';
 COMMENT ON COLUMN private_data_history_findings.last_seen IS 'UTC instant (TIMESTAMPTZ) of the most recent audit run in which this fingerprint was still present.';
 COMMENT ON COLUMN private_data_history_findings.status IS 'Triage state. Allowed values: "new" (reported once, not yet seen again), "known" (seen on a later run or marked by --baseline), "acknowledged" (human triaged via --ack; never reverts automatically).';
+
+-- private_data_history_unit_state ----------------------------------------------
+COMMENT ON TABLE private_data_history_unit_state IS 'Skip state for the --all-public history audit (llm#1415): per repo/gist unit, hashes of the remote refs, the deny-list file and the scanner scripts at the last full scan. Hashes only, never a matched value. A row is deleted when a unit ends INDETERMINATE, so missing state always means scan.';
+COMMENT ON COLUMN private_data_history_unit_state.repo IS 'Primary key: unit identity as the ledger uses it, owner/name or gist:<id>.';
+COMMENT ON COLUMN private_data_history_unit_state.ref_hash IS 'sha256 hex of the sorted `git ls-remote` output of the unit at its last full scan (includes refs/pull/*).';
+COMMENT ON COLUMN private_data_history_unit_state.denylist_hash IS 'sha256 hex of the deny-list file (PRIVATE_VALUES_FILE) at the last full scan. Never empty: an empty or missing deny-list is never recorded.';
+COMMENT ON COLUMN private_data_history_unit_state.scanner_hash IS 'sha256 hex over the scanner script and the audit script at the last full scan.';
+COMMENT ON COLUMN private_data_history_unit_state.last_outcome IS 'Outcome of the last full scan. Allowed values: PASS, BASELINED, FAIL. Only PASS and BASELINED permit a skip.';
+COMMENT ON COLUMN private_data_history_unit_state.last_full_scan_epoch IS 'Unix epoch seconds (BIGINT, not a TIMESTAMP) of the last full scan. A skip never updates it, so PDHA_FULL_RESCAN_DAYS counts from the last real scan.';
 
 -- repo_visibility_snapshots / repo_visibility_changes ---------------------------
 COMMENT ON TABLE repo_visibility_snapshots IS 'One row per repo per daily run of .claude/scripts/repo_visibility_diff.sh (llm#1371): the visibility GitHub reported for every repo of the owner and of the orgs the user belongs to. A run writes its snapshot only after a complete, validated listing, so a failed API call leaves no partial snapshot. The previous snapshot is the one with the latest observed_at before the current run. Append-only; never edited.';
