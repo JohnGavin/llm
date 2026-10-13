@@ -1,0 +1,26 @@
+# Units excluded from `private_data_history_audit.sh --all-public` (llm#1420).
+#
+# One unit per line, TAB-separated:  unit <TAB> review-date <TAB> reason
+#   unit         owner/repo (repo or fork) or gist:<hex id>. Exact names only:
+#                no wildcards, no patterns.
+#   review-date  YYYY-MM-DD. When this entry must be re-justified.
+#   reason       Non-empty free text (may contain spaces, not tabs).
+# Lines starting with # and blank lines are ignored. A malformed line is a
+# usage error (exit 2) for the whole run, never a silent no-op.
+#
+# An excluded unit is never cloned, never scanned and never counted clean: the
+# summary line reports it as excluded=N and the output lists it as
+# outcome=EXCLUDED. Any existing mirror of it under the cache dir is removed
+# (logged DESTRUCTIVE:). ACCEPTED RISK (owner, 2026-10-13): the owner's own
+# commits on an excluded unit are NOT scanned for private values while it is
+# listed. Remove the entry if the unit is ever reused.
+#
+# Criteria for the entries below (owner, 2026-10-13), all three required:
+#   public fork; GitHub size over 100 MB; last push over 1 year ago.
+# "0 ahead" was measured on the default branch only; other branches and
+# refs/pull/* were NOT compared against upstream.
+JohnGavin/soccer_ha_covid	2027-10-13	public fork, 4.69 GB, last pushed 2023-06-27, 58 commits ahead of upstream on the default branch (owner's own commits, unscanned while excluded); owner decision 2026-10-13 (llm#1420)
+JohnGavin/stancon_talks	2027-10-13	public fork, 703 MB, last pushed 2020-03-04, 3 ahead / 3 behind upstream on the default branch (3 own commits unscanned while excluded; other branches and refs/pull/* not compared); owner decision 2026-10-13 (llm#1420)
+JohnGavin/qmd-subqmds-js-Shiny	2027-10-13	public fork, 386 MB, last pushed 2024-04-19, 0 ahead of upstream (default branch only; other branches and refs/pull/* not compared); owner decision 2026-10-13 (llm#1420)
+JohnGavin/vscode-r	2027-10-13	public fork, 170 MB, last pushed 2024-01-07, 0 ahead / 3 behind upstream (default branch only; other branches and refs/pull/* not compared); owner decision 2026-10-13 (llm#1420)
+JohnGavin/posit-conf-2025-llm	2027-10-13	public fork, 140 MB, last pushed 2025-09-24, 0 ahead of upstream (default branch only; other branches and refs/pull/* not compared); owner decision 2026-10-13 (llm#1420)
