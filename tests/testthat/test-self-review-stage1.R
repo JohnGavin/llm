@@ -703,3 +703,155 @@ test_that("synthetic-project pattern is defined once in the SQL and used by ever
   expect_false(grepl("project NOT IN ('ClaudeProbe')", sql, fixed = TRUE))
   expect_false(grepl("project = 'ClaudeProbe')", sql, fixed = TRUE))
 })
+
+# ── Detector 9: worker-tier dispatch waste (llm#1422) ─────────────────────────
+# Replaces the fixer-SHARE trigger (`fixer_heavy_day`), which penalised following
+# the auto-delegation rule. Schema-only fixtures, never the live DB. Fixture
+# timestamps sit ON the 5-minute and 6-hour window edges
+# (fixtures-hide-boundary-drift). Outcomes: positive (override_up / repeat),
+# negative (ok / distinct), indeterminate (inherited / NULL model).
+
+waste_setup_sql <- "
+CREATE TABLE agent_runs (id INTEGER, session_id VARCHAR, agent_type VARCHAR, model VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, duration_sec DOUBLE, prompt_preview VARCHAR, status VARCHAR, tool_use_id VARCHAR, backfilled BOOLEAN);
+CREATE TABLE hook_events (id INTEGER, session_id VARCHAR, hook_name VARCHAR, event_type VARCHAR, fired_at TIMESTAMP, duration_ms INTEGER, output_preview VARCHAR);
+CREATE TABLE errors (id INTEGER, session_id VARCHAR, source VARCHAR, error_text VARCHAR, context VARCHAR, logged_at TIMESTAMP);
+CREATE TABLE sessions (session_id VARCHAR, project VARCHAR, started_at TIMESTAMP, ended_at TIMESTAMP, model VARCHAR, summary VARCHAR);
+INSERT INTO sessions VALUES
+  ('w1', 'p', TIMESTAMP '2026-03-01 00:00:00', TIMESTAMP '2026-03-01 01:00:00', 'x', NULL),
+  ('wsyn', 'ClaudeProbe', TIMESTAMP '2026-03-01 00:00:00', TIMESTAMP '2026-03-01 01:00:00', 'x', NULL);
+
+-- 92% fixer day: 23 distinct sonnet tasks + 2 other agents (25 total).
+INSERT INTO agent_runs
+  SELECT i, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-10 08:00:00' + i * INTERVAL '10' MINUTE,
+         NULL, NULL, 'Implement distinct feature number ' || i, 'done', 'heavy-' || i, false
+  FROM range(1, 24) t(i);
+INSERT INTO agent_runs VALUES
+  (101, 'w1', 'critic', 'sonnet', TIMESTAMP '2026-03-10 13:00:00', NULL, NULL, 'Review the feature batch now', 'done', 'heavy-c1', false),
+  (102, 'w1', 'reviewer', 'sonnet', TIMESTAMP '2026-03-10 13:10:00', NULL, NULL, 'Review the second batch now', 'done', 'heavy-c2', false);
+
+-- Model verdicts: requested higher tier, cheaper tier, inherited, NULL, unranked.
+INSERT INTO agent_runs VALUES
+  (201, 'w1', 'fixer', 'opus',      TIMESTAMP '2026-03-11 09:00:00', NULL, NULL, 'Opus requested task alpha', 'done', 'm-opus', false),
+  (202, 'w1', 'fixer', 'haiku',     TIMESTAMP '2026-03-11 09:20:00', NULL, NULL, 'Haiku requested task beta', 'done', 'm-haiku', false),
+  (203, 'w1', 'fixer', 'inherited', TIMESTAMP '2026-03-11 09:40:00', NULL, NULL, 'Inherited model task gamma', 'done', 'm-inh', false),
+  (204, 'w1', 'fixer', NULL,        TIMESTAMP '2026-03-11 10:00:00', NULL, NULL, 'Null model task delta here', 'done', 'm-null', false),
+  (205, 'w1', 'fixer', 'sonnet',    TIMESTAMP '2026-03-11 10:20:00', NULL, NULL, 'Sonnet requested task epsilon', 'done', 'm-son', false),
+  (206, 'w1', 'fixer', 'fable',     TIMESTAMP '2026-03-11 10:40:00', NULL, NULL, 'Unranked model task zeta here', 'done', 'm-fab', false),
+  (207, 'wsyn', 'fixer', 'opus',    TIMESTAMP '2026-03-11 11:00:00', NULL, NULL, 'Synthetic probe opus task eta', 'done', 'm-syn', false);
+
+-- Repeat dispatches (all fixer unless noted). Gaps sit on the 5 min / 6 h edges.
+INSERT INTO agent_runs VALUES
+  (301, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-12 09:00:00', NULL, NULL, 'Email table column tooltips', 'done', 'r-a1', false),
+  (302, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-12 10:00:00', NULL, NULL, 'Email table column tooltips', 'done', 'r-a2', false),
+  (303, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-13 09:00:00', NULL, NULL, 'Fix alpha parser bug for #7', 'done', 'r-b1', false),
+  (304, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-13 10:00:00', NULL, NULL, 'Fix beta renderer bug for #7', 'done', 'r-b2', false),
+  (305, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-14 09:00:00', NULL, NULL, 'Parallel fan-out identical title', 'done', 'r-c1', false),
+  (306, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-14 09:00:40', NULL, NULL, 'Parallel fan-out identical title', 'done', 'r-c2', false),
+  (307, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-15 09:00:00', NULL, NULL, 'Edge five minutes exactly', 'done', 'r-d1', false),
+  (308, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-15 09:05:00', NULL, NULL, 'Edge five minutes exactly', 'done', 'r-d2', false),
+  (309, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-16 09:00:00', NULL, NULL, 'Edge just under five minutes', 'done', 'r-e1', false),
+  (310, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-16 09:04:59', NULL, NULL, 'Edge just under five minutes', 'done', 'r-e2', false),
+  (311, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-17 09:00:00', NULL, NULL, 'Edge six hours exactly', 'done', 'r-f1', false),
+  (312, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-17 15:00:00', NULL, NULL, 'Edge six hours exactly', 'done', 'r-f2', false),
+  (313, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-18 09:00:00', NULL, NULL, 'Edge just over six hours', 'done', 'r-g1', false),
+  (314, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-18 15:00:01', NULL, NULL, 'Edge just over six hours', 'done', 'r-g2', false),
+  (315, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-19 09:00:00', NULL, NULL, 'Retry marker task', 'done', 'r-h1', false),
+  (316, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-19 09:30:00', NULL, NULL, 'Retry marker task (retry)', 'done', 'r-h2', false),
+  (317, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-20 09:00:00', NULL, NULL, 'Short', 'done', 'r-i1', false),
+  (318, 'w1', 'fixer', 'sonnet', TIMESTAMP '2026-03-20 10:00:00', NULL, NULL, 'Short', 'done', 'r-i2', false),
+  (319, 'w1', 'critic', 'sonnet', TIMESTAMP '2026-03-21 09:00:00', NULL, NULL, 'Different agent same title', 'done', 'r-j1', false),
+  (320, 'w1', 'fixer',  'sonnet', TIMESTAMP '2026-03-21 10:00:00', NULL, NULL, 'Different agent same title', 'done', 'r-j2', false);
+"
+
+waste_post_sql <- "
+.mode list
+.headers off
+SELECT 'ROW|heavy|' || count(*) FROM self_review_findings_stage1 WHERE finding_type = 'fixer_heavy_day';
+SELECT 'ROW|override|' || (evidence->>'$.task') FROM self_review_findings_stage1 WHERE finding_type = 'agent_model_override';
+SELECT 'ROW|repeat|' || (evidence->>'$.task') || '|' || (evidence->>'$.gap_minutes') FROM self_review_findings_stage1 WHERE finding_type = 'repeat_dispatch';
+SELECT 'ROW|verdict|' || prompt_preview || '|' || verdict FROM stage1_worker_model_verdicts WHERE id BETWEEN 201 AND 207;
+"
+
+# Allow the same fixtures to be pointed at an older SQL file (falsification).
+waste_sql_file <- function() {
+  alt <- Sys.getenv("STAGE1_SQL_FILE_OVERRIDE", "")
+  if (nzchar(alt)) alt else sql_file()
+}
+
+waste_rows <- function() {
+  skip_if_not(file.exists(waste_sql_file()), "self_review_stage1.sql not found")
+  out <- run_sql(waste_setup_sql, waste_sql_file(), waste_post_sql)
+  expect_false(is.null(out), label = "duckdb returned NULL")
+  rows <- grep("^ROW\\|", out, value = TRUE)
+  strsplit(rows, "|", fixed = TRUE)
+}
+
+waste_of <- function(rows, kind) {
+  Filter(function(r) identical(r[2], kind), rows)
+}
+
+test_that("fixer share: a 92%-fixer day of 23 distinct sonnet tasks yields NO finding (#1422)", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- waste_rows()
+  heavy <- waste_of(rows, "heavy")
+  expect_length(heavy, 1L)
+  expect_equal(heavy[[1]][3], "0")
+  # And none of the 23 distinct tasks is a repeat.
+  repeats <- vapply(waste_of(rows, "repeat"), `[`, "", 3L)
+  expect_false(any(grepl("Implement distinct feature", repeats)))
+})
+
+test_that("agent_model_override: explicit higher-tier request is flagged; cheaper/equal/synthetic are not", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  tasks <- vapply(waste_of(waste_rows(), "override"), `[`, "", 3L)
+  expect_equal(tasks, "Opus requested task alpha")
+})
+
+test_that("agent_model_override: inherited, NULL and unranked models are INDETERMINATE, not findings", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  rows <- waste_rows()
+  v <- waste_of(rows, "verdict")
+  verdict <- stats::setNames(vapply(v, `[`, "", 4L), vapply(v, `[`, "", 3L))
+  expect_equal(verdict[["Inherited model task gamma"]], "indeterminate")
+  expect_equal(verdict[["Null model task delta here"]], "indeterminate")
+  expect_equal(verdict[["Unranked model task zeta here"]], "indeterminate")
+  expect_equal(verdict[["Opus requested task alpha"]], "override_up")
+  expect_equal(verdict[["Haiku requested task beta"]], "override_down")
+  expect_equal(verdict[["Sonnet requested task epsilon"]], "ok")
+  # No finding for any indeterminate / ok / cheaper run.
+  tasks <- vapply(waste_of(rows, "override"), `[`, "", 3L)
+  expect_false(any(tasks %in% names(verdict)[verdict != "override_up"]))
+})
+
+test_that("repeat_dispatch: same task twice in the window is flagged; distinct tasks are not", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  tasks <- vapply(waste_of(waste_rows(), "repeat"), `[`, "", 3L)
+  expect_true("Email table column tooltips" %in% tasks)
+  # Same issue number, different tasks: NOT a repeat.
+  expect_false(any(grepl("Fix (alpha|beta) ", tasks)))
+  # Parallel fan-out 40 s apart: NOT a repeat.
+  expect_false("Parallel fan-out identical title" %in% tasks)
+  # Different agent_type, same title: NOT a repeat.
+  expect_false("Different agent same title" %in% tasks)
+  # Too-short title guard.
+  expect_false("Short" %in% tasks)
+})
+
+test_that("repeat_dispatch: window edges (5 min and 6 h inclusive) and (retry) suffix", {
+  skip_if(duckdb_cmd()$type == "none", "duckdb not available")
+  tasks <- vapply(waste_of(waste_rows(), "repeat"), `[`, "", 3L)
+  expect_true("Edge five minutes exactly" %in% tasks)
+  expect_false("Edge just under five minutes" %in% tasks)
+  expect_true("Edge six hours exactly" %in% tasks)
+  expect_false("Edge just over six hours" %in% tasks)
+  expect_true("Retry marker task (retry)" %in% tasks)
+})
+
+test_that("self_review_stage1.sql no longer emits fixer_heavy_day and defers the cost trigger", {
+  f <- sql_file()
+  skip_if_not(file.exists(f), "self_review_stage1.sql not found")
+  sql <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  expect_false(grepl("'fixer_heavy_day'", sql, fixed = TRUE))
+  expect_true(grepl("DEFERRED", sql, fixed = TRUE))
+  expect_true(grepl("llm#1423", sql, fixed = TRUE))
+})

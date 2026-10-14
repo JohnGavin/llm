@@ -756,72 +756,146 @@ ON CONFLICT (finding_id) DO NOTHING;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- DETECTOR 9: Fixer-subagent-heavy day
+-- DETECTOR 9: Worker-tier dispatch waste (llm#1422)
 --
--- Rationale: The 'fixer' agent type runs at the worker tier (sonnet model).
--- A day where the fixer dominates dispatches may indicate:
---   (a) the critic-fixer review loop is cycling too often (prompts too vague),
---   (b) work that a haiku quick-fix could handle is being delegated to sonnet.
--- Tightening fixer prompts or switching simple fixes to quick-fix reduces cost.
+-- REPLACES the former `fixer_heavy_day` share trigger (fixer >= 40% of a day's
+-- dispatches). The `auto-delegation` rule sends ALL code edits to `fixer`, so a
+-- heavy fixer day is the rule being followed; share measured compliance, not
+-- waste (47 firings, 44 of 47 fixer runs already on sonnet). Existing
+-- `fixer_heavy_day` rows in self_review_findings_stage1 are left as they are.
 --
--- Scope: per-calendar-day (more stable than per-session; fixer workloads
--- typically span several sessions within a single day).
--- Threshold: fixer_run_count / total_run_count >= 0.40 AND total_runs >= 5.
--- The minimum total-run guard of 5 prevents noisy small-N days from firing.
--- Recommendation: configure fixer subagents with a cheaper model / tighten prompts.
--- Severity: info (40-69% share), major (>= 70% — extreme, llm#1241). 70% is
--- the worked example from llm#1241 itself (1.75x the 40% base threshold, the
--- same ratio applied to detectors 6-8 above).
+-- Two triggers that indicate waste, both computable from existing columns:
+--
+--   9a. agent_model_override  — a worker-tier run recorded on a HIGHER model
+--       tier than the agent table in ~/.claude/CLAUDE.md names (fixer = sonnet).
+--       `agent_runs.model` is the model REQUESTED on the Agent call, or the
+--       literal 'inherited' when none was passed; the actual model used is NOT
+--       recorded. So: an explicit higher request is a finding; 'inherited',
+--       NULL, 'unknown' or an unranked model name is INDETERMINATE (verdict
+--       'indeterminate' in stage1_worker_model_verdicts, never a finding, never
+--       counted as clean). An explicit CHEAPER request (haiku) is not waste.
+--
+--   9b. repeat_dispatch — a later run of the same agent_type whose normalised
+--       task title (prompt_preview, a ~15-150 char description) equals an
+--       earlier run's, 5 minutes to 6 hours apart. Chosen over "same issue
+--       number" because that rule fires on legitimately distinct tasks sharing
+--       an issue (measured: #132 across five different quiz apps, 937 phases
+--       2A/2B/2C). The 5-minute floor excludes parallel fan-outs, which launch
+--       identical titles 36-44 s apart. A trailing "(retry)" is ignored, since
+--       a retry is a repeat by definition. KNOWN LIMIT: a re-dispatch retitled
+--       by the orchestrator (e.g. "Finish ..." after "Email table column
+--       tooltips") is not caught; that is accepted over loosening to fuzzy
+--       matching, which would flag distinct tasks.
+--
+-- DEFERRED (not implemented, no dead code): a cost / duration trigger. Switch
+-- it on once `agent_runs.duration_sec` is trustworthy (llm#1423, fixed for new
+-- rows by PR #1425): restrict to rows with `dispatch_id IS NOT NULL` (the
+-- marker that the fixed capture wrote the row) and set the duration threshold
+-- from a measured baseline of those rows, not a guess.
 -- ─────────────────────────────────────────────────────────────────────────────
--- Threshold: fixer share >= 40% of daily dispatches, minimum 5 total dispatches
-WITH daily_fixer_share AS (
+-- Expected model per worker-tier agent: the agent table in ~/.claude/CLAUDE.md.
+CREATE OR REPLACE TEMP TABLE stage1_expected_model (agent_type VARCHAR, expected_model VARCHAR);
+INSERT INTO stage1_expected_model VALUES
+    ('fixer', 'sonnet'), ('critic', 'sonnet'), ('r-debugger', 'sonnet'),
+    ('targets-runner', 'sonnet'), ('reviewer', 'sonnet'), ('nix-env', 'sonnet'),
+    ('shiny-async-debugger', 'sonnet'), ('data-quality-guardian', 'sonnet'),
+    ('data-engineer', 'sonnet'), ('shinylive-builder', 'sonnet'),
+    ('wiki-curator', 'sonnet'), ('quick-fix', 'haiku');
+
+-- Cost tier of a requested model name. A name not listed has no known tier, so
+-- its verdict is indeterminate rather than assumed.
+CREATE OR REPLACE TEMP TABLE stage1_model_tier (model VARCHAR, tier INTEGER);
+INSERT INTO stage1_model_tier VALUES ('haiku', 1), ('sonnet', 2), ('opus', 3);
+
+CREATE OR REPLACE TEMP VIEW stage1_worker_model_verdicts AS
+SELECT
+    r.id, r.session_id, r.agent_type, r.model, r.started_at, r.prompt_preview,
+    r.tool_use_id, e.expected_model,
+    CASE
+        WHEN r.model IS NULL OR r.model IN ('inherited', 'unknown')
+            THEN 'indeterminate'
+        WHEN rt.tier IS NULL OR et.tier IS NULL
+            THEN 'indeterminate'
+        WHEN rt.tier > et.tier THEN 'override_up'
+        WHEN rt.tier < et.tier THEN 'override_down'
+        ELSE 'ok'
+    END AS verdict
+FROM agent_runs r
+JOIN stage1_expected_model e ON e.agent_type = r.agent_type
+LEFT JOIN stage1_model_tier rt ON rt.model = r.model
+LEFT JOIN stage1_model_tier et ON et.model = e.expected_model
+WHERE r.session_id IS NOT NULL
+    -- Exclude synthetic probe projects (llm#812); see section 0c.
+    AND r.session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project));
+
+-- 9a: explicit upward model override.
+INSERT INTO self_review_findings_stage1
+    BY NAME
+SELECT
+    'model_override_' || md5(COALESCE(tool_use_id, id::VARCHAR)) AS finding_id,
+    'agent_model_override'                       AS finding_type,
+    session_id,
+    'info'                                       AS severity,
+    json_object(
+        'agent_type',     agent_type,
+        'requested_model', model,
+        'expected_model', expected_model,
+        'started_at',     started_at::VARCHAR,
+        'task',           prompt_preview,
+        'basis',          'agent_runs.model is the REQUESTED model; inherited/NULL is indeterminate, not a finding',
+        'recommendation', 'Confirm the higher tier was deliberate; otherwise dispatch on the model in the agent table'
+    )::JSON                                      AS evidence,
+    current_timestamp                            AS detected_at
+FROM stage1_worker_model_verdicts
+WHERE verdict = 'override_up'
+ON CONFLICT (finding_id) DO NOTHING;
+
+-- 9b: repeat dispatch of the same task. Each later run pairs with its most
+-- recent earlier match only, so a run repeated 3 times yields 2 findings.
+WITH runs AS (
     SELECT
-        CAST(started_at AS DATE)            AS day_bucket,
-        COUNT(*)                            AS total_runs,
-        SUM(CASE WHEN agent_type = 'fixer' THEN 1 ELSE 0 END)
-                                            AS fixer_runs,
-        ROUND(
-            SUM(CASE WHEN agent_type = 'fixer' THEN 1.0 ELSE 0.0 END)
-            / GREATEST(COUNT(*), 1),
-            4
-        )                                   AS fixer_share
+        id, session_id, agent_type, started_at, prompt_preview,
+        COALESCE(tool_use_id, id::VARCHAR) AS rid,
+        trim(regexp_replace(lower(trim(prompt_preview)), '\s*\(?retry\)?\s*$', '')) AS task_key
     FROM agent_runs
     WHERE session_id IS NOT NULL
-        -- Exclude the synthetic ClaudeProbe health-probe project (llm#812) —
-        -- verified against real data: without this filter, 4 calendar days
-        -- (2026-05-29, 2026-06-08, 2026-07-03, 2026-07-10) false-positive as
-        -- fixer_heavy_day purely from ClaudeProbe's own agent_runs, and
-        -- disappear once excluded.
+        AND prompt_preview IS NOT NULL
+        AND agent_type IN (SELECT agent_type FROM stage1_expected_model)
         AND session_id NOT IN (SELECT session_id FROM sessions WHERE stage1_is_synthetic_project(project))
-    GROUP BY CAST(started_at AS DATE)
-    HAVING
-        COUNT(*) >= 5
-        AND ROUND(
-            SUM(CASE WHEN agent_type = 'fixer' THEN 1.0 ELSE 0.0 END)
-            / GREATEST(COUNT(*), 1),
-            4
-        ) >= 0.40
+), repeats AS (
+    SELECT
+        b.rid AS rid, b.session_id AS session_id, b.agent_type AS agent_type,
+        b.started_at AS started_at, b.prompt_preview AS task,
+        a.rid AS first_rid, a.started_at AS first_started_at,
+        date_diff('minute', a.started_at, b.started_at) AS gap_minutes
+    FROM runs a
+    JOIN runs b
+      ON a.agent_type = b.agent_type
+     AND a.task_key = b.task_key
+     AND length(a.task_key) >= 12
+     AND a.rid <> b.rid
+     AND b.started_at >= a.started_at + INTERVAL '5' MINUTE
+     AND b.started_at <= a.started_at + INTERVAL '6' HOUR
+    QUALIFY row_number() OVER (PARTITION BY b.rid ORDER BY a.started_at DESC) = 1
 )
 INSERT INTO self_review_findings_stage1
     BY NAME
 SELECT
-    'fixer_heavy_' || md5(day_bucket::VARCHAR)  AS finding_id,
-    'fixer_heavy_day'                            AS finding_type,
-    NULL                                         AS session_id,
-    -- llm#1241: escalate to 'major' at the 70% "extreme" threshold named in
-    -- the issue itself, instead of capping every instance at 'info'.
-    CASE WHEN fixer_share >= 0.70 THEN 'major' ELSE 'info' END AS severity,
+    'repeat_dispatch_' || md5(rid)               AS finding_id,
+    'repeat_dispatch'                            AS finding_type,
+    session_id,
+    'info'                                       AS severity,
     json_object(
-        'day',                day_bucket::VARCHAR,
-        'total_runs',         total_runs::VARCHAR,
-        'fixer_runs',         fixer_runs::VARCHAR,
-        'fixer_share',        fixer_share::VARCHAR,
-        'threshold',          'fixer share >= 40% AND total dispatches >= 5',
-        'extreme_threshold',  'fixer share >= 70% (escalates to major, llm#1241)',
-        'recommendation',     'Configure fixer subagents with a cheaper model / tighten their prompts'
-    )::JSON                                     AS evidence,
-    current_timestamp                           AS detected_at
-FROM daily_fixer_share
+        'agent_type',       agent_type,
+        'task',             task,
+        'started_at',       started_at::VARCHAR,
+        'first_started_at', first_started_at::VARCHAR,
+        'gap_minutes',      gap_minutes::VARCHAR,
+        'rule',             'same agent_type + same normalised title, 5 min to 6 h apart',
+        'recommendation',   'Same task dispatched twice: tighten the first prompt or check why it did not finish'
+    )::JSON                                      AS evidence,
+    current_timestamp                            AS detected_at
+FROM repeats
 ON CONFLICT (finding_id) DO NOTHING;
 
 

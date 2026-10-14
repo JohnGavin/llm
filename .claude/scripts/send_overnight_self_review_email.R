@@ -232,7 +232,7 @@ n_new_findings <- if (nrow(sec1_data) > 0L) sum(sec1_data$n) else 0L
 # `0 new findings` renders identically whether twelve sessions were analysed
 # and found clean, or zero sessions existed to analyse. Those are different
 # facts and only one of them is reassuring. Stage-1's detectors
-# (marathon_session, parallel_session_sprawl, fixer_heavy_day,
+# (marathon_session, parallel_session_sprawl, repeat_dispatch,
 # subagent_heavy_session, stuck_loop, ...) all read `sessions`; with no rows in
 # the window they cannot emit, and the report said "0 new findings" without
 # ever saying it had nothing to look at.
