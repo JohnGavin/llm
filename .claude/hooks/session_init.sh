@@ -4,6 +4,11 @@
 # Hook: SessionStart
 
 set -euo pipefail
+# llm#1427: an errexit abort must never be silent ("No stderr output"). The ERR
+# trap fires only where errexit would exit (not for `if`/`&&`/`||`-guarded
+# failures) and does not change the exit status. No `set -E`: command-
+# substitution subshells and phase functions keep their lenient behaviour.
+trap 'echo "session_init.sh: aborted at line $LINENO" >&2' ERR
 
 CLAUDE_RUNTIME_ROOT="${CLAUDE_RUNTIME_ROOT:-$HOME/.claude}"
 CLAUDE_CONTROL_PLANE_ROOT="${CLAUDE_CONTROL_PLANE_ROOT:-$CLAUDE_RUNTIME_ROOT}"
@@ -1127,12 +1132,19 @@ fi
 
 # Phase 10: Kill orphan crew workers (no controller running)
 orphan_count=0
-if /bin/ps -eo pid,etime,command 2>/dev/null | grep -q "crew_worker"; then
+# llm#1427: take ONE ps snapshot, then grep the captured text. The old
+# `ps | grep -q crew_worker` matched grep's own argv (always true), and the
+# unguarded `$(... | grep -v grep ...)` then aborted the hook under pipefail
+# with no stderr whenever the second self-match raced away. A snapshot cannot
+# contain the greps that read it.
+_p10_ps=$("${PS_BIN:-/bin/ps}" -eo pid,command 2>/dev/null) || _p10_ps=""
+if printf '%s\n' "$_p10_ps" | grep -q "[c]rew_worker"; then
   # Check if any tar_make controller is running
-  if ! /bin/ps -eo command 2>/dev/null | grep -qE "tar_make|targets::tar_make"; then
+  if ! printf '%s\n' "$_p10_ps" | grep -qE "[t]ar_make"; then
     # No controller — all crew workers are orphans
-    orphan_pids=$(/bin/ps -eo pid,command 2>/dev/null | grep "crew_worker" | grep -v grep | awk '{print $1}')
-    orphan_count=$(echo "$orphan_pids" | grep -c '[0-9]' || echo 0)
+    orphan_pids=$(printf '%s\n' "$_p10_ps" | grep "[c]rew_worker" | awk '{print $1}' || true)
+    orphan_count=$(printf '%s\n' "$orphan_pids" | grep -c '[0-9]' || true)
+    orphan_count="${orphan_count:-0}"
     if [ "$orphan_count" -gt 0 ]; then
       echo "$orphan_pids" | xargs kill 2>/dev/null || true
       WARNINGS="${WARNINGS}Killed ${orphan_count} orphan crew workers "
