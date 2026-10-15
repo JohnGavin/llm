@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- PROPOSED (llm#1421 step 1): hourly read-only disk headroom sample.   -->
+    <!-- Appends one row to ~/.claude/logs/disk_headroom.tsv: Data-volume     -->
+    <!-- free space, local Time Machine snapshot names, and size/mtime of a   -->
+    <!-- fixed list of candidate files (stat only; no sudo, no disk walk,     -->
+    <!-- never opens a database). After ~48 h run:                            -->
+    <!--   .claude/scripts/disk_headroom_check.sh --report                    -->
+    <!--                                                                       -->
+    <!-- NOT loaded by this PR. Loading it is the owner's step:               -->
+    <!--   cp .claude/launchd/com.claude.disk-headroom-sample.plist           -->
+    <!--        ~/Library/LaunchAgents/                                        -->
+    <!--   launchctl bootstrap gui/$(id -u)                                   -->
+    <!--        ~/Library/LaunchAgents/com.claude.disk-headroom-sample.plist  -->
+    <!-- Remove again with:                                                   -->
+    <!--   launchctl bootout gui/$(id -u)/com.claude.disk-headroom-sample     -->
+
+    <key>Label</key>
+    <string>com.claude.disk-headroom-sample</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/.claude/scripts/disk_headroom_check.sh</string>
+        <string>--sample</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Hourly, at minute 20 (observed snapshots land around :01-:45). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/disk_headroom_sample.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/disk_headroom_sample.err</string>
+
+    <key>TimeOut</key>
+    <integer>30</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
