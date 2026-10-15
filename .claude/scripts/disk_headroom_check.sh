@@ -33,7 +33,10 @@
 # first time, or when free space is below 40 GiB and none was sent in the last
 # 24 h (marker: $LOG_DIR/disk_headroom_lowspace.notified). Report and
 # notification errors go to stderr and never change --sample's exit status.
-# Output files: disk_headroom_report.txt, disk_headroom_lowspace.notified.
+# Report-ready notice is retried each sample until osascript succeeds
+# (marker: $LOG_DIR/disk_headroom_report.notified, written only on success).
+# Output files: disk_headroom_report.txt, disk_headroom_report.notified,
+# disk_headroom_lowspace.notified.
 
 set -uo pipefail
 
@@ -135,11 +138,12 @@ notify() {
 # After a successful sample: write the 48h report once enough samples exist
 # (at most every 24 h) and notify on first report or low free space.
 auto_report() {
-    local avail_kb="$1" snaps="$2" at n report existed=0 tmpf free_gib marker
+    local avail_kb="$1" snaps="$2" at n report existed=0 tmpf free_gib marker rmarker
     at="${DISK_HEADROOM_AUTO_REPORT_AT:-48}"
     case "$at" in ''|*[!0-9]*) echo "auto-report: bad DISK_HEADROOM_AUTO_REPORT_AT, using 48" >&2; at=48 ;; esac
     report="$LOG_DIR/disk_headroom_report.txt"
     marker="$LOG_DIR/disk_headroom_lowspace.notified"
+    rmarker="$LOG_DIR/disk_headroom_report.notified"
     free_gib=$((avail_kb / 1048576))
     n="$(awk -F'\t' 'NR>1 && NF>=6' "$TSV" | wc -l | tr -d ' ')"
     if [ "$n" -ge "$at" ]; then
@@ -147,7 +151,7 @@ auto_report() {
         if [ "$existed" -eq 0 ] || [ -n "$(find "$report" -mmin +1440 2>/dev/null)" ]; then
             if tmpf="$(mktemp "$LOG_DIR/.disk_headroom_report.XXXXXX" 2>/dev/null)"; then
                 if do_report > "$tmpf" 2>&1 && mv "$tmpf" "$report"; then
-                    [ "$existed" -eq 0 ] && notify "Report ready: free ${free_gib} GiB, ${snaps} snapshots. See $report"
+                    :
                 else
                     echo "auto-report: report generation failed: $(cat "$tmpf" 2>/dev/null)" >&2
                     rm -f "$tmpf"
@@ -157,9 +161,18 @@ auto_report() {
             fi
         fi
     fi
+    # Report-ready notification: retried every sample until notify succeeds,
+    # then the marker (written only on success) stops it.
+    if [ -s "$report" ] && [ ! -e "$rmarker" ]; then
+        if notify "Report ready: free ${free_gib} GiB, ${snaps} snapshots. See $report"; then
+            : > "$rmarker"
+        fi
+    fi
     if [ "$avail_kb" -lt $((40 * 1048576)) ]; then
         if [ ! -e "$marker" ] || [ -n "$(find "$marker" -mmin +1440 2>/dev/null)" ]; then
-            if notify "Low disk: free ${free_gib} GiB (< 40), ${snaps} snapshots. Report: $report"; then
+            local lowmsg="Low disk: free ${free_gib} GiB (< 40), ${snaps} snapshots."
+            if [ -s "$report" ]; then lowmsg="$lowmsg Report: $report"; else lowmsg="$lowmsg Report not yet available."; fi
+            if notify "$lowmsg"; then
                 : > "$marker"
             fi
         fi
@@ -381,9 +394,29 @@ EOF
     LOGD="$L2" STUB_DF_AVAIL_KB=10000000 run --sample;              expect "auto: low-space after 24h sample ok" 0 'sample:ok'
     check_eq "auto: low space after 24h -> notified again" "$(osa_count)" 3
 
-    # osascript failure never changes exit status
-    rm -f "$rep" "$L2/disk_headroom_lowspace.notified"
+    # low-space message with a report present carries the report path
+    if tail -n 1 "$osa" | grep -q "Report: $rep"; then pass=$((pass + 1)); echo "PASS: low-space message cites existing report"; else fail=$((fail + 1)); echo "FAIL: low-space message lacks report path: $(tail -n 1 "$osa")"; fi
+
+    # osascript failure never changes exit status, and the first-report
+    # notification is retried on later samples until it succeeds (marker).
+    rm -f "$rep" "$L2/disk_headroom_lowspace.notified" "$L2/disk_headroom_report.notified"
+    n_osa="$(osa_count)"
     LOGD="$L2" STUB_OSA_FAIL=1 STUB_DF_AVAIL_KB=100000000 run --sample; expect "auto: failing osascript keeps exit 0" 0 'sample:ok'
+    if [ -s "$rep" ] && [ ! -e "$L2/disk_headroom_report.notified" ]; then pass=$((pass + 1)); echo "PASS: failed notify leaves no report marker"; else fail=$((fail + 1)); echo "FAIL: failed notify must leave no marker"; fi
+    n_osa="$(osa_count)"
+    LOGD="$L2" STUB_DF_AVAIL_KB=100000000 run --sample;             expect "auto: retry sample ok" 0 'sample:ok'
+    check_eq "auto: retry notifies exactly once" "$(( $(osa_count) - n_osa ))" 1
+    if [ -e "$L2/disk_headroom_report.notified" ]; then pass=$((pass + 1)); echo "PASS: report marker written after successful notify"; else fail=$((fail + 1)); echo "FAIL: report marker missing after successful notify"; fi
+    n_osa="$(osa_count)"
+    LOGD="$L2" STUB_DF_AVAIL_KB=100000000 run --sample;             expect "auto: further sample ok" 0 'sample:ok'
+    check_eq "auto: no further report notification" "$(( $(osa_count) - n_osa ))" 0
+
+    # low-space message without a report must not cite a report path
+    local L3="$tmp/l3"
+    mkdir -p "$L3"
+    : > "$osa"
+    LOGD="$L3" STUB_DF_AVAIL_KB=10000000 run --sample;              expect "auto: low space, no report yet, sample ok" 0 'sample:ok'
+    if [ ! -e "$L3/disk_headroom_report.txt" ] && grep -q 'Low disk' "$osa" && ! grep -q 'Report: ' "$osa" && grep -q 'not yet available' "$osa"; then pass=$((pass + 1)); echo "PASS: low-space message without report says not yet available"; else fail=$((fail + 1)); echo "FAIL: low-space message without report: $(cat "$osa")"; fi
 
     rm -rf "$tmp"
     echo "RESULTS: $pass passed, $fail failed"
