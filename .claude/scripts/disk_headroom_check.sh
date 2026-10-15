@@ -22,6 +22,18 @@
 #   DISK_HEADROOM_FILES       colon-separated candidate files (default: unified
 #                             DuckDB, roborev reviews.db, codex state_5.sqlite)
 #   DISK_HEADROOM_MIN_SAMPLES samples required by --report (default 6)
+#   DISK_HEADROOM_AUTO_REPORT_AT  samples after which --sample writes the report
+#                             itself (default 48)
+#
+# Automation (no human needed; the launchd plist only calls --sample): after a
+# successful --sample row, if the TSV holds >= DISK_HEADROOM_AUTO_REPORT_AT
+# samples and the report is missing or older than 24 h, the --report output is
+# written to $LOG_DIR/disk_headroom_report.txt (temp file, then mv). A macOS
+# notification (osascript) is sent only when that report is produced for the
+# first time, or when free space is below 40 GiB and none was sent in the last
+# 24 h (marker: $LOG_DIR/disk_headroom_lowspace.notified). Report and
+# notification errors go to stderr and never change --sample's exit status.
+# Output files: disk_headroom_report.txt, disk_headroom_lowspace.notified.
 
 set -uo pipefail
 
@@ -106,6 +118,52 @@ do_sample() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$ts" "$((used_kb * 1024))" "$((avail_kb * 1024))" \
         "$snap_count" "$snap_names" "$files_col" >> "$TSV" || return 3
     echo "sample:ok $ts avail_gib=$((avail_kb / 1048576)) snapshots=$snap_count"
+    # Automation: never affects the sample's own exit status.
+    auto_report "$avail_kb" "$snap_count" || echo "auto-report: failed (ignored)" >&2
+    return 0
+}
+
+# Best-effort macOS notification; failure is logged, never fatal. Returns
+# osascript's status so callers can decide whether to set a marker.
+notify() {
+    local msg="$1"
+    osascript -e "display notification \"$msg\" with title \"Disk headroom\"" >/dev/null 2>&1 && return 0
+    echo "auto-report: notification failed (ignored)" >&2
+    return 1
+}
+
+# After a successful sample: write the 48h report once enough samples exist
+# (at most every 24 h) and notify on first report or low free space.
+auto_report() {
+    local avail_kb="$1" snaps="$2" at n report existed=0 tmpf free_gib marker
+    at="${DISK_HEADROOM_AUTO_REPORT_AT:-48}"
+    case "$at" in ''|*[!0-9]*) echo "auto-report: bad DISK_HEADROOM_AUTO_REPORT_AT, using 48" >&2; at=48 ;; esac
+    report="$LOG_DIR/disk_headroom_report.txt"
+    marker="$LOG_DIR/disk_headroom_lowspace.notified"
+    free_gib=$((avail_kb / 1048576))
+    n="$(awk -F'\t' 'NR>1 && NF>=6' "$TSV" | wc -l | tr -d ' ')"
+    if [ "$n" -ge "$at" ]; then
+        [ -e "$report" ] && existed=1
+        if [ "$existed" -eq 0 ] || [ -n "$(find "$report" -mmin +1440 2>/dev/null)" ]; then
+            if tmpf="$(mktemp "$LOG_DIR/.disk_headroom_report.XXXXXX" 2>/dev/null)"; then
+                if do_report > "$tmpf" 2>&1 && mv "$tmpf" "$report"; then
+                    [ "$existed" -eq 0 ] && notify "Report ready: free ${free_gib} GiB, ${snaps} snapshots. See $report"
+                else
+                    echo "auto-report: report generation failed: $(cat "$tmpf" 2>/dev/null)" >&2
+                    rm -f "$tmpf"
+                fi
+            else
+                echo "auto-report: cannot create temp file in $LOG_DIR" >&2
+            fi
+        fi
+    fi
+    if [ "$avail_kb" -lt $((40 * 1048576)) ]; then
+        if [ ! -e "$marker" ] || [ -n "$(find "$marker" -mmin +1440 2>/dev/null)" ]; then
+            if notify "Low disk: free ${free_gib} GiB (< 40), ${snaps} snapshots. Report: $report"; then
+                : > "$marker"
+            fi
+        fi
+    fi
     return 0
 }
 
@@ -200,12 +258,17 @@ echo "Snapshots for disk /:"
 echo "com.apple.TimeMachine.2026-10-13-104400.local"
 echo "com.apple.TimeMachine.2026-10-13-114400.local"
 EOF
-    chmod +x "$shim/df" "$shim/tmutil"
+    cat > "$shim/osascript" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$OSA_LOG"
+[ -z "${STUB_OSA_FAIL:-}" ] || exit 1
+EOF
+    chmod +x "$shim/df" "$shim/tmutil" "$shim/osascript"
     printf 'aaaa' > "$tmp/a.db"
     printf 'bbbbbbbb' > "$tmp/b.db"
 
     run() { # run <args...>; sets rc and out; env passed via caller
-        out="$(PATH="$shim:$PATH" DISK_HEADROOM_LOG_DIR="$tmp/logs" \
+        out="$(PATH="$shim:$PATH" DISK_HEADROOM_LOG_DIR="${LOGD:-$tmp/logs}" OSA_LOG="$tmp/osa.log" \
             DISK_HEADROOM_FILES="$tmp/a.db:$tmp/b.db:$tmp/missing.db" \
             bash "$SELF" "$@" 2>&1)"
         rc=$?
@@ -275,6 +338,52 @@ EOF
     else
         fail=$((fail + 1)); echo "FAIL: report content: $out"
     fi
+
+    # --- auto-report + notification (llm#1421), separate log dir, osascript stub
+    local L2="$tmp/l2" osa="$tmp/osa.log" rep n_osa
+    mkdir -p "$L2"
+    rep="$L2/disk_headroom_report.txt"
+    osa_count() { if [ -f "$osa" ]; then wc -l < "$osa" | tr -d ' '; else echo 0; fi; }
+    check_eq() { # check_eq <label> <got> <want>
+        if [ "$2" = "$3" ]; then pass=$((pass + 1)); echo "PASS: $1"; else fail=$((fail + 1)); echo "FAIL: $1 (got '$2' want '$3')"; fi
+    }
+    # 46 synthetic rows, so the next sample is the 47th.
+    printf 'ts\tused_bytes\tavail_bytes\tsnap_count\tsnap_names\tfiles\n' > "$L2/disk_headroom.tsv"
+    for i in $(seq 1 46); do
+        printf '2026-01-01T00:%02d:00Z\t1\t100000000000\t2\tx\t%s|4|%d\n' "$((i % 60))" "$tmp/a.db" "$i" >> "$L2/disk_headroom.tsv"
+    done
+
+    LOGD="$L2" STUB_DF_AVAIL_KB=100000000 run --sample;             expect "auto: 47th sample ok" 0 'sample:ok'
+    if [ -e "$rep" ]; then fail=$((fail + 1)); echo "FAIL: 47 samples must not produce a report"; else pass=$((pass + 1)); echo "PASS: 47 samples -> no report"; fi
+    check_eq "auto: 47 samples -> no notification" "$(osa_count)" 0
+
+    LOGD="$L2" STUB_DF_AVAIL_KB=100000000 run --sample;             expect "auto: 48th sample ok" 0 'sample:ok'
+    if [ -s "$rep" ] && grep -q 'report: 48 samples' "$rep"; then pass=$((pass + 1)); echo "PASS: 48 samples -> report written"; else fail=$((fail + 1)); echo "FAIL: 48th sample must write report; got: $(cat "$rep" 2>/dev/null)"; fi
+    check_eq "auto: first report -> exactly 1 notification" "$(osa_count)" 1
+    if grep -q 'snapshot' "$osa" && grep -q "$rep" "$osa" && grep -q 'GiB' "$osa"; then pass=$((pass + 1)); echo "PASS: notification states GiB, snapshots, report path"; else fail=$((fail + 1)); echo "FAIL: notification text: $(cat "$osa" 2>/dev/null)"; fi
+
+    printf 'SENTINEL\n' > "$rep"
+    LOGD="$L2" STUB_DF_AVAIL_KB=100000000 run --sample;             expect "auto: 49th sample ok" 0 'sample:ok'
+    check_eq "auto: young report not rewritten" "$(cat "$rep")" SENTINEL
+    check_eq "auto: no repeat notification, free space fine" "$(osa_count)" 1
+
+    touch -t 202601010000 "$rep"
+    LOGD="$L2" STUB_DF_AVAIL_KB=100000000 run --sample;             expect "auto: 50th sample ok" 0 'sample:ok'
+    if grep -q 'report: 50 samples' "$rep"; then pass=$((pass + 1)); echo "PASS: stale report rewritten"; else fail=$((fail + 1)); echo "FAIL: stale report not rewritten: $(cat "$rep")"; fi
+    check_eq "auto: rewrite of existing report -> no notification" "$(osa_count)" 1
+
+    LOGD="$L2" STUB_DF_AVAIL_KB=10000000 run --sample;              expect "auto: low-space sample ok" 0 'sample:ok'
+    check_eq "auto: low space -> 1 more notification" "$(osa_count)" 2
+    if [ -e "$L2/disk_headroom_lowspace.notified" ]; then pass=$((pass + 1)); echo "PASS: low-space marker written"; else fail=$((fail + 1)); echo "FAIL: low-space marker missing"; fi
+    LOGD="$L2" STUB_DF_AVAIL_KB=10000000 run --sample;              expect "auto: low-space repeat sample ok" 0 'sample:ok'
+    check_eq "auto: low space within 24h -> no repeat" "$(osa_count)" 2
+    touch -t 202601010000 "$L2/disk_headroom_lowspace.notified"
+    LOGD="$L2" STUB_DF_AVAIL_KB=10000000 run --sample;              expect "auto: low-space after 24h sample ok" 0 'sample:ok'
+    check_eq "auto: low space after 24h -> notified again" "$(osa_count)" 3
+
+    # osascript failure never changes exit status
+    rm -f "$rep" "$L2/disk_headroom_lowspace.notified"
+    LOGD="$L2" STUB_OSA_FAIL=1 STUB_DF_AVAIL_KB=100000000 run --sample; expect "auto: failing osascript keeps exit 0" 0 'sample:ok'
 
     rm -rf "$tmp"
     echo "RESULTS: $pass passed, $fail failed"
