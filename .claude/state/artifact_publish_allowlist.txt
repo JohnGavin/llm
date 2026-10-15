@@ -1,0 +1,21 @@
+# artifact_publish_allowlist.txt -- default-deny allowlist for Artifact data.
+#
+# Rule: .claude/rules/default-deny-for-publication.md (section "Artifact data
+# sources"). Checker: .claude/scripts/check_artifact_sources.sh.
+#
+# DEFAULT-DENY: a file may be embedded in or attached to a claude.ai Artifact
+# ONLY if its source matches an entry below. An empty list (no entries) means
+# nothing may be published. Attached files are readable by anyone who can open
+# the Artifact, so every entry is a disclosure decision: review it first.
+#
+# Entry format, one per line, three TAB-separated fields:
+#   source <TAB> review-date (YYYY-MM-DD) <TAB> reason
+# `source` is a path or shell glob: absolute, ~/-prefixed, or relative to the
+# repo root. Lines starting with # and blank lines are ignored.
+#
+# NEVER allowlist (the checker refuses these even if listed, exit 3): the
+# unified DuckDB or any *.duckdb, anything with "prompt" in its name,
+# reviews.db, .Renviron, secrets.env, anything under ~/.claude/logs. These
+# hold prompt previews, prompt text, review text or credentials.
+#
+# Entries (none yet):

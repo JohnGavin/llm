@@ -7,6 +7,8 @@ paths:
   - "**/.roborev.toml"
   - "**/*publish*.R"
   - "**/*publish*.sh"
+  - "**/*artifact*.sh"
+  - "**/capability_registry_regen*"
 ---
 
 # Rule: Default-Deny for Publication Controls
@@ -23,15 +25,9 @@ omission.
 
 ## Chesterton check
 
-The nearest existing rule is
-[`public-private-repo-boundary`](public-private-repo-boundary.md), which
-answers *which repo* a file/project belongs in. It does not cover the shape
-of an in-repo publication filter once a project has already decided to
-publish something from a shared/public surface (a dashboard, a public
-telemetry export) — that is a different decision, made inside a project that
-is already correctly public, about which *rows* within it are safe to show.
-`default-deny-for-publication` is that complementary, narrower rule; it does
-not duplicate the repo-boundary decision.
+[`public-private-repo-boundary`](public-private-repo-boundary.md) decides
+*which repo* a file belongs in. This rule is narrower: which *rows* a
+publication filter may show inside an already-public project.
 
 ## CRITICAL: A Filter That Works Correctly Is Not the Same as a Filter With the Right Default
 
@@ -42,10 +38,6 @@ existed the whole time and worked correctly: every project named in it had
 zero occurrences in the published output. `premortem` was simply never added.
 
 > The filter was not broken. The default was.
-
-A broken filter is a bug someone eventually notices. A filter with an
-incomplete allowlist-shaped-as-denylist produces no symptom at all — the
-absence of an entry is invisible by construction.
 
 ## Required Pattern
 
@@ -60,13 +52,8 @@ A publication control MUST be expressed as ONE of:
 
 An **exclusion list is acceptable only** where the failure mode of a missed
 entry is noise, never disclosure, and the file must say so in a comment at
-the point of definition:
-
-```r
-# ALLOWED denylist shape: failure mode is dashboard noise (an extra project
-# tile), not data disclosure. See default-deny-for-publication.md.
-excluded_dashboard_projects <- c("ephemeral-tmp", "scratch")
-```
+the point of definition (e.g. `# ALLOWED denylist shape: failure mode is
+dashboard noise, not disclosure. See default-deny-for-publication.md.`).
 
 ## Decision Table
 
@@ -74,8 +61,21 @@ excluded_dashboard_projects <- c("ephemeral-tmp", "scratch")
 |---|---|---|---|
 | `llmtelemetry` dashboard projects | denylist (`excluded_dashboard_projects()`) | disclosure (llmtelemetry#347/#348) | allowlist |
 | `knowledge/` push protection | `PRIVATE` marker + pre-push hook | — | already correct (marker form) |
-| Artifact publication | human judgement per publish | disclosure | allowlist or explicit per-artifact marker |
+| Artifact publication | human judgement per publish; checker `check_artifact_sources.sh` not yet wired | disclosure | source allowlist file, see "Artifact data sources" |
 | roborev `exclude_patterns` | denylist per repo | noise (spurious findings), not disclosure | denylist acceptable, per this rule's exception — see `roborev-exclude-patterns` |
+
+## Artifact data sources
+
+A claude.ai Artifact may only embed or attach data whose SOURCE is listed in
+`.claude/state/artifact_publish_allowlist.txt` (TAB-separated `source`,
+`review-date`, `reason`; empty allows nothing). Attached files are readable by
+anyone who can open the Artifact. Session/usage logs are NEVER allowlisted:
+the unified DuckDB, prompt previews or text, roborev review text. Run
+`.claude/scripts/check_artifact_sources.sh <path>...` first (0 only if every
+path is allowlisted and none hits a hard deny pattern, which wins over the
+allowlist; 1 denied; 2 usage; 3 indeterminate). Wiring it as a PreToolUse
+guard is a follow-up; the Artifact hook matcher is a known gap
+([llm#996](https://github.com/JohnGavin/llm/issues/996)).
 
 ## Forbidden Patterns
 
