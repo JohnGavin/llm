@@ -49,6 +49,16 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 #
 # Tracked in llm#224, llm#1270.
 
+# llm#1445: this script uses associative arrays (`declare -A`), which need
+# bash >= 4. macOS /bin/bash is 3.2 and would die with rc=2 deep in the run.
+# Fail early and clearly instead: exit 3 = INDETERMINATE (cannot answer),
+# never a pass. This guard must itself parse under bash 3.2. (Placed after the
+# header block because --help prints header lines by fixed range, sed 3,16p.)
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  echo "roborev_severity_autoclose.sh: needs bash >= 4 (running bash ${BASH_VERSION:-unknown} at ${BASH:-unknown}); run under Homebrew or nix bash" >&2
+  exit 3
+fi
+
 set -euo pipefail
 
 # llm#1265: dir containing roborev_classify.py's review_output_text() —
