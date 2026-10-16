@@ -91,3 +91,4 @@ tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claud
 tests/test_private_repo_detail_guard_refresh_stoplist.sh	tests/test_private_repo_detail_guard_refresh_stoplist.sh;.claude/hooks/private_repo_detail_guard.sh;.claude/scripts/private_name_stoplist.txt;.claude/scripts/repo_visibility_diff.sh	run
 tests/test_roborev_severity_autoclose_bashver.sh	tests/test_roborev_severity_autoclose_bashver.sh;.claude/scripts/roborev_severity_autoclose.sh	run	
 tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/hooks/lib/private_term_payload.py	run
+tests/test_private_term_hash_scan.sh	tests/test_private_term_hash_scan.sh;.claude/scripts/private_terms_hashes.sh;.claude/scripts/private_term_hash_scan.sh;.claude/scripts/lib/private_term_hash_lib.sh;.claude/hooks/lib/private_terms.sh	run	
