@@ -77,6 +77,7 @@ tests/test_session_init_branch_harvest_cache.sh	tests/test_session_init_branch_h
 tests/test_roborev_retention.sh	tests/test_roborev_retention.sh;.claude/scripts/roborev_retention.sh	run
 tests/test_roborev_merge_gate_severity.sh	tests/test_roborev_merge_gate_severity.sh;.claude/scripts/roborev_merge_gate.sh;.claude/scripts/lib/roborev_classify.py	run
 tests/test_agent_post_verify_ff.sh	tests/test_agent_post_verify_ff.sh;.claude/scripts/agent-post-verify.sh	run
+tests/test_roborev_poll_merges_excluded_check.sh	tests/test_roborev_poll_merges_excluded_check.sh;.claude/scripts/roborev_poll_merges.sh;git-hooks/lib/roborev_repo_allowed.sh	skip-ci	builds real git repos under mktemp; the Linux runner's /tmp root is treated as ephemeral by the poller (same class as test_roborev_poll_merges_ephemeral_skip.sh, JohnGavin/llm#1279); verified locally on macOS (llm#1333)
 tests/test_session_end_refine_waterfall.sh	tests/test_session_end_refine_waterfall.sh;.claude/scripts/session_end_refine.sh;git-hooks/lib/roborev_repo_allowed.sh	run
 tests/test_roborev_likely_fixed_report.sh	tests/test_roborev_likely_fixed_report.sh;bin/roborev_likely_fixed_report.sh;.claude/scripts/roborev_likely_fixed_summary.sh	run	
 tests/test_rule_budget.sh	tests/test_rule_budget.sh;.claude/scripts/check_rule_scoping.sh;.claude/scripts/rule_scoping_precommit.sh	run
@@ -86,3 +87,4 @@ git-hooks/test-pii-hooks.sh	git-hooks/test-pii-hooks.sh;git-hooks/pre-commit;git
 tests/test_private_terms_sync.sh	tests/test_private_terms_sync.sh;.claude/scripts/private_terms_sync.sh	run
 tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claude/scripts/wiki_health_check.sh;.claude/schema/wiki-frontmatter.schema.json	run	
 tests/test_roborev_severity_autoclose_bashver.sh	tests/test_roborev_severity_autoclose_bashver.sh;.claude/scripts/roborev_severity_autoclose.sh	run	
+tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/hooks/lib/private_term_payload.py	run
