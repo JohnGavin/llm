@@ -4,6 +4,29 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-10-15/16 (session: GitHub Actions minutes and storage, docs/changelog-2026-10-16)
+
+### Completed
+
+- **Actions usage tabulated** from the billing API (`/users/JohnGavin/settings/billing/usage`): the free quota counts private repos only. llmtelemetry 1,729 + solwatch 94 = 1,823 of 2,000 minutes by Oct 16 (resets Nov 1; a $0 budget is set). Public repos: 4,889 job-minutes (tlang 1,779, irishbuoys 1,222, llm 639).
+- **llmtelemetry:** [#394](https://github.com/JohnGavin/llmtelemetry/pull/394) (daily report and HF archive run Mondays only) and [#395](https://github.com/JohnGavin/llmtelemetry/pull/395) (restores the R cache that #370 turned off) merged under auto-merge. The 52-minute runs are the `setup-r-dependencies` step: about 55 s with a cache, 35-58 min without. Tracked in [llmtelemetry#393](https://github.com/JohnGavin/llmtelemetry/issues/393) (options A-E).
+- **solwatch:** Weekly Pipeline disabled; [solwatch#27](https://github.com/JohnGavin/solwatch/issues/27) tracks why it runs 45 min and fails.
+- **irishbuoys:** [#107](https://github.com/JohnGavin/irishbuoys/pull/107) merged on the owner's "merge": Data Update cron every 2nd day.
+- **tlang:** CI-trigger review filed as [llm#1437](https://github.com/JohnGavin/llm/issues/1437) (tlang has issues disabled).
+- **premortem (private, local):** issues 0076 (cheapest funds per asset class) and 0077 (find Zurich product charges) written.
+
+### Failed Approaches
+
+- llmtelemetry#370 (`cache: false`) was recorded as neutral on a wrong measurement; it cost about 50 min per run.
+
+### Known Limitations
+
+- Cache storage cap not implemented. Decided: keep one cache by manual `gh cache delete` of any surplus (only one cache existed on Oct 16), then after Nov 1 test a pinned R 4.5 install (no cache) and else build own-cache cleanup. Storage may run out about Oct 20-23; what the $0 budget then blocks is unverified.
+- Monday 2026-10-19: both llmtelemetry workflows are cache misses (~104 of ~177 minutes left); check `gh cache list` afterwards for a second key.
+- Unverified: R 4.6.1 lacking Linux binaries as the cause of the slow install; weekly runs losing no data; whether the $0 budget blocks public repos; vienna_planning_toolkit minute mismatch.
+- `roborev_consistency_check.sh` at /bye: INCONSISTENT(backlog-vs-verdicts), backlog.open=42, verdicts.total=1.
+- After the Nov 1 reset, return llmtelemetry to daily and watch minutes and storage for a week.
+
 ## 2026-10-13/14 (session: disk, audit cache, agent_runs, dashboard gaps, feat/cc-20261012-233050)
 
 ### Completed
