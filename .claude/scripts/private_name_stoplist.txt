@@ -1,0 +1,55 @@
+# Ordinary English words that private_repo_detail_guard.sh must NOT use as a
+# bare scan term for a DISCOVERED private-repo name (llm#1213). One word per
+# line, lowercase; '#' starts a comment.
+#
+# Scope: only the bare-NAME match of discovered candidates. Absolute-path
+# matches and DECLARED (human-listed) names are unaffected, so a private
+# project whose directory is an ordinary word is still caught by its path.
+# Seeded from private_terms_sync.sh's STOPLIST (words of >= 6 characters, the
+# guard's MIN_NAME_LEN) plus generic nouns already common in this public repo.
+because
+between
+through
+should
+before
+public
+private
+internal
+project
+projects
+example
+examples
+general
+release
+releases
+report
+reports
+status
+system
+systems
+service
+services
+process
+policy
+history
+archive
+archives
+backup
+backups
+library
+package
+packages
+config
+settings
+scripts
+knowledge
+research
+analysis
+documents
+notes
+tracking
+dashboard
+workflow
+workflows
+pipeline
+pipelines
