@@ -1,0 +1,27 @@
+#!/bin/sh
+# Global commit-msg (core.hooksPath): scans the commit MESSAGE text as content
+# with private_data_scan.sh (llm#1388), so a private term typed into a message
+# is blocked the same way one typed into a file is. The scanner is the same one
+# pre-commit and pre-push call; it applies the private-term rule only in a
+# public repo. Bypass: git's own --no-verify. See lib/pii_gate.sh.
+#
+# Unlike pre-commit/pre-push this hook does NOT chain to the repo's own
+# .git/hooks/commit-msg: no global commit-msg hook existed before, so a repo's
+# own one never ran under the global hooksPath, and chaining here would start
+# running hooks that have been silently dead.
+_self=$0
+while [ -L "$_self" ]; do
+  _l=$(readlink "$_self")
+  case "$_l" in /*) _self=$_l ;; *) _self="$(dirname "$_self")/$_l" ;; esac
+done
+PII_HOOKS_DIR=$(cd "$(dirname "$_self")" && pwd -P)
+. "$PII_HOOKS_DIR/lib/pii_gate.sh"
+
+_msg=${1:-}
+if [ -z "$_msg" ] || [ ! -r "$_msg" ]; then
+  printf >&2 '%s\n' "commit-msg BLOCKED (usage error, exit 2): no readable commit message file argument."
+  exit 2
+fi
+
+pii_scan "commit-msg" --content-stdin "commit-msg" < "$_msg" || exit $?
+exit 0

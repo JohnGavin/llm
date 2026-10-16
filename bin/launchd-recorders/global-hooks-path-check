@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.global-hooks-path-check" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/global_hooks_path_check.sh"
