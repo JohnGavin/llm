@@ -803,7 +803,10 @@ if [ "$MODE" = "replay" ]; then
 
   REPLAY_ROWS=()
   set +e
-  _replay_py_out="$(
+  # llm#1440: the heredoc lives in a function, not inside `$( ... )` -- macOS
+  # /bin/bash 3.2 cannot parse a heredoc in $(...) whose body has unbalanced
+  # quotes/parens (backticks and apostrophes in the comments below).
+  _replay_py() {
     /usr/bin/python3 - "$ROBOREV_DB" "$MARKER_PATTERN" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
@@ -883,7 +886,8 @@ for row in rows:
     repo_name = (row[4] or '').replace('|', ' ')
     print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}")
 PYEOF
-  )"
+  }
+  _replay_py_out="$(_replay_py)"
   _replay_py_rc=$?
   set -e
   if [ "$_replay_py_rc" -ne 0 ]; then
@@ -976,7 +980,8 @@ fi
 # Fetch all open reviews with repo info (both findings and clean verdicts)
 REVIEW_ROWS=()
 set +e
-_main_py_out="$(
+# llm#1440: heredoc in a function, not inside `$( ... )` (bash 3.2 parse bug).
+_main_py() {
   /usr/bin/python3 - "$ROBOREV_DB" "$FILTER_REPO" "$LIB_DIR" <<'PYEOF'
 import sqlite3, sys
 
@@ -1060,7 +1065,8 @@ for row in rows:
     repo_name = (row[4] or '').replace('|', ' ')
     print(f"{row[0]}|{text}|{sev_str}|{root_path}|{repo_name}|{row[5]}|{row[6]}|{is_clean_str}|{n_findings_str}")
 PYEOF
-)"
+}
+_main_py_out="$(_main_py)"
 _main_py_rc=$?
 set -e
 if [ "$_main_py_rc" -ne 0 ]; then
