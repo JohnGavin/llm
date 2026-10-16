@@ -17,13 +17,21 @@
 # script is still consulted (below) when _targets.R is absent.
 #
 # Exit codes (exit-code-conventions, llm#1140):
-#   0 PASS            tracked (imports=/tar_source), no own-package load, or
+#   0 PASS            tracked (imports=/tar_source of R/), no own-package load, or
 #                     project is not an R package (no DESCRIPTION)
-#   1 FAIL            own package loaded without imports=/tar_source()
+#   1 FAIL            own package loaded without imports= or tar_source() of R/.
+#                     Only ever returned together with a printed
+#                     "FAIL untracked-own-package" verdict line.
 #   2 usage error
 #   3 INDETERMINATE   cannot decide: Rscript missing, a pipeline file does not
-#                     parse, or imports= is a non-literal expression that
-#                     cannot be resolved statically. The reason is printed.
+#                     parse, imports=/tar_source() path is a non-literal
+#                     expression, part of the tree could not be analysed, or R
+#                     crashed. The reason is printed.
+#
+# "Tracks its own package" = targets hashes the package's R/ code: either
+# tar_option_set(imports = "<pkg>") or tar_source() of the R/ directory
+# (no args, or a literal "R" / "R/..." path). tar_source("scripts") sources
+# some other directory and does NOT track the package (llm#1334).
 #
 # Absent _targets.R: delegated verbatim to check_targets_presence.sh (PASS
 # exempt / FAIL undeclared-absence), so the two checkers never disagree.
@@ -66,8 +74,15 @@ args <- commandArgs(trailingOnly = TRUE)
 dir <- args[1]; pkg <- args[2]
 indet <- function(msg) { cat("INDETERMINATE:", msg, "\n"); quit(status = 3) }
 
+# Any uncaught R error is INDETERMINATE (3), never Rscript's default exit 1,
+# which would read as FAIL "own package untracked" (llm#1334 finding 1).
+options(error = function() {
+  cat("INDETERMINATE: R error in analysis: ", geterrmessage(), "\n")
+  quit(status = 3, save = "no")
+})
+
 loads <- character(); tracked <- character(); unresolved <- character()
-sourced <- character()
+sourced <- character(); other_src <- character()
 
 str_of <- function(e) if (is.character(e) && length(e) == 1L) e else if (is.symbol(e)) as.character(e) else NA_character_
 
@@ -77,17 +92,44 @@ collect_str <- function(e) {
   character()
 }
 
+is_empty_arg <- function(x) identical(x, quote(expr = ))
+
+# tar_source() tracks the package iff it sources the package's R/ directory
+# (default files = "R", or a literal "R" / "R/..." path). A literal path
+# elsewhere does not; a non-literal path cannot be resolved (NA).
+tar_source_tracks <- function(e) {
+  nm <- names(e)
+  pos <- seq_along(e)[-1]
+  unnamed <- if (is.null(nm)) pos else pos[nm[pos] == ""]
+  idx <- if (!is.null(nm) && "files" %in% nm) which(nm == "files")[1]
+         else if (length(unnamed)) unnamed[1] else NA_integer_
+  if (is.na(idx)) return(TRUE)
+  arg <- e[[idx]]
+  strs <- collect_str(arg)
+  if (!length(strs)) return(NA)
+  strs <- sub("^\\./", "", sub("/+$", "", strs))
+  any(strs == "R" | startsWith(strs, "R/"))
+}
+
+walkerr <- character()
+
 walk <- function(e, file) {
   if (is.call(e)) {
     f <- e[[1]]
     fn <- if (is.symbol(f)) as.character(f)
-          else if (is.call(f) && length(f) == 3L && as.character(f[[1]]) %in% c("::", ":::"))
-            as.character(f[[3]]) else ""
-    a1 <- if (length(e) > 1L) str_of(e[[2]]) else NA_character_
+          else if (is.call(f) && length(f) == 3L && is.symbol(f[[1]]) &&
+                   as.character(f[[1]]) %in% c("::", ":::"))
+            as.character(f[[3]])[1] else ""
+    a1 <- if (length(e) > 1L && !is_empty_arg(e[[2]])) str_of(e[[2]]) else NA_character_
     if (fn == "load_all") loads <<- c(loads, paste0(file, ": load_all()"))
     if (fn %in% c("library", "require", "requireNamespace") && identical(a1, pkg))
       loads <<- c(loads, paste0(file, ": ", fn, "(", pkg, ")"))
-    if (fn == "tar_source") tracked <<- c(tracked, paste0(file, ": tar_source()"))
+    if (fn == "tar_source") {
+      ts <- tar_source_tracks(e)
+      if (isTRUE(ts)) tracked <<- c(tracked, paste0(file, ": tar_source()"))
+      else if (is.na(ts)) unresolved <<- c(unresolved, paste0(file, ": tar_source() path is non-literal"))
+      else other_src <<- c(other_src, paste0(file, ": tar_source() of a non-R/ path"))
+    }
     if (fn == "tar_option_set") {
       nm <- names(e)
       if (!is.null(nm) && "imports" %in% nm) {
@@ -99,10 +141,17 @@ walk <- function(e, file) {
       }
     }
     if (fn == "source" && !is.na(a1) && is.character(e[[2]])) sourced <<- c(sourced, e[[2]])
-    for (i in seq_along(e)) tryCatch(walk(e[[i]], file), error = function(err) NULL)
+    for (i in seq_along(e)) if (!is_empty_arg(e[[i]])) walk_safe(e[[i]], file)
   } else if (is.pairlist(e) || is.expression(e) || is.list(e)) {
-    for (i in seq_along(e)) tryCatch(walk(e[[i]], file), error = function(err) NULL)
+    for (i in seq_along(e)) if (!is_empty_arg(e[[i]])) walk_safe(e[[i]], file)
   }
+}
+
+# A subtree the walker cannot analyse is RECORDED, never dropped silently: the
+# run ends INDETERMINATE rather than PASS-over-a-hole (llm#1334 finding 5).
+walk_safe <- function(e, file) {
+  tryCatch(walk(e, file), error = function(err)
+    walkerr <<- c(walkerr, paste0(file, ": ", conditionMessage(err))))
 }
 
 queue <- file.path(dir, "_targets.R"); seen <- character()
@@ -113,18 +162,22 @@ while (length(queue)) {
   ex <- tryCatch(parse(f, keep.source = FALSE), error = function(e) e)
   if (inherits(ex, "error")) indet(paste0("cannot parse ", f, ": ", conditionMessage(ex)))
   sourced <- character()
-  for (e in as.list(ex)) walk(e, basename(f))
+  for (e in as.list(ex)) walk_safe(e, basename(f))
   for (s in sourced) {
     p <- file.path(dir, s)
     if (file.exists(p) && grepl("\\.[Rr]$", p)) queue <- c(queue, p)
   }
 }
 
+if (length(walkerr))
+  indet(paste0("could not analyse part of the pipeline: ", paste(unique(walkerr), collapse = "; ")))
+
 if (length(loads) && !length(tracked)) {
   if (length(unresolved)) indet(paste(unresolved, collapse = "; "))
   cat("FAIL untracked-own-package: loads own package '", pkg, "' (",
       paste(unique(loads), collapse = "; "),
-      ") but no tar_option_set(imports = \"", pkg, "\") and no tar_source() -- ",
+      ") but no tar_option_set(imports = \"", pkg, "\") and no tar_source() of R/",
+      if (length(other_src)) paste0(" (saw: ", paste(unique(other_src), collapse = "; "), ")"), " -- ",
       "edits to package code will not invalidate targets (llm#1295)\n", sep = "")
   quit(status = 1)
 }
@@ -166,6 +219,12 @@ check_one() {
     printf '%s\n' "$R_CODE" > "$rfile"
     out="$(Rscript --vanilla "$rfile" "$dir" "$pkg" 2>&1)" || rc=$?
     rm -f "$rfile"
+    # rc 1 is also Rscript's code for ANY uncaught R error, so it only counts as
+    # FAIL when the analysis printed its own FAIL verdict line (llm#1334).
+    if [ "$rc" -eq 1 ] && ! printf '%s\n' "$out" | grep -q '^FAIL untracked-own-package'; then
+        echo "INDETERMINATE: Rscript exited 1 without a FAIL verdict (R crash?): $out"
+        return 3
+    fi
     case "$rc" in
         (0|1|3) echo "$out" ;;
         (*)     echo "INDETERMINATE: Rscript failed unexpectedly (rc=$rc): $out"; rc=3 ;;
@@ -226,7 +285,59 @@ library(mypkg)
 tar_source()
 list()
 EOS
-    expect "library + tar_source()" 0 '^PASS tracked' f5
+    expect "library + tar_source() (default dir R/ = the package code)" 0 '^PASS tracked' f5
+
+    # llm#1334 finding 2: tar_source() only tracks the package when it sources R/.
+    mk f5b <<'EOS'
+library(targets)
+library(mypkg)
+tar_source("scripts")
+list()
+EOS
+    expect "library + tar_source(\"scripts\") does NOT track R/ -> FAIL" 1 '^FAIL untracked-own-package' f5b
+
+    mk f5c <<'EOS'
+library(targets)
+library(mypkg)
+tar_source("R/")
+list()
+EOS
+    expect "library + tar_source(\"R/\") tracks" 0 '^PASS tracked' f5c
+
+    mk f5d <<'EOS'
+library(targets)
+library(mypkg)
+tar_source(files = src_dirs)
+list()
+EOS
+    expect "tar_source(non-literal) -> INDETERMINATE" 3 '^INDETERMINATE.*tar_source' f5d
+
+    # llm#1334 finding 1: a callee shaped h(a)(b, c)(d) made an R `&&` error at
+    # top level; that crash used to leave rc 1 (FAIL). It must not crash at all.
+    mk c1 <<'EOS'
+library(targets)
+h(a)(b, c)(d)
+list()
+EOS
+    expect "odd callee h(a)(b,c)(d) does not crash" 0 '^PASS no-own-package-load' c1
+
+    # An empty argument (x[, 1]) must not crash the walker either.
+    mk c2 <<'EOS'
+library(targets)
+y <- x[, 1]
+f(, 2)
+list()
+EOS
+    expect "empty call arguments do not crash" 0 '^PASS no-own-package-load' c2
+
+    # llm#1334 finding 1 (wrapper): ANY R crash (Rscript rc 1, no verdict line)
+    # is INDETERMINATE (3), never FAIL (1). Stand-in Rscript that dies like R.
+    mkdir -p "$tmp/fakebin"
+    printf '#!/bin/sh\necho "Error in foo(): boom" >&2\necho "Execution halted" >&2\nexit 1\n' > "$tmp/fakebin/Rscript"
+    chmod +x "$tmp/fakebin/Rscript"
+    out="$(PATH="$tmp/fakebin:$PATH" check_one "$tmp/f1")"; rc=$?
+    if [ "$rc" -eq 3 ] && printf '%s' "$out" | grep -q '^INDETERMINATE'; then ok "R crash (rc 1, no verdict) -> INDETERMINATE rc=3"
+    else bad "R crash: want rc=3 INDETERMINATE, got rc=$rc out=$out"; fi
 
     mk f6 <<'EOS'
 library(targets)

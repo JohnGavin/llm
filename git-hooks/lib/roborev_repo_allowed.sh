@@ -177,7 +177,8 @@ roborev_all_files_excluded() {
 
     _rae_pats=""
     for _rae_cfg in "$_rae_top/.roborev.toml" "${ROBOREV_GLOBAL_CONFIG:-$HOME/.roborev/config.toml}"; do
-        _rae_out=$(_rra_read_patterns "$_rae_cfg"); _rae_rc=$?
+        _rae_rc=0
+        _rae_out=$(_rra_read_patterns "$_rae_cfg") || _rae_rc=$?
         if [ "$_rae_rc" -ne 0 ]; then echo "config-unparseable"; return 3; fi
         if [ -n "$_rae_out" ]; then
             _rae_pats="$_rae_pats
@@ -219,7 +220,8 @@ _rra_log_skip() {
 # roborev_skip_if_all_excluded DIR REV : 0 = caller should SKIP enqueue (logged);
 # 1 = enqueue (an indeterminate result is logged as such, and still returns 1).
 roborev_skip_if_all_excluded() {
-    _rsa_msg=$(roborev_all_files_excluded "$1" "$2"); _rsa_rc=$?
+    _rsa_rc=0
+    _rsa_msg=$(roborev_all_files_excluded "$1" "$2") || _rsa_rc=$?
     case "$_rsa_rc" in
         0) _rra_log_skip "skip: all files excluded ($2)"; return 0 ;;
         3) _rra_log_skip "indeterminate: $_rsa_msg ($2) -- reviewing anyway"; return 1 ;;
