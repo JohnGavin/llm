@@ -1057,7 +1057,7 @@ while IFS=$'\x1f' read -r repo_id repo_name root_path commit_id sha subject; do
   [ -n "$repo_id" ] || continue
   candidates=$((candidates + 1))
 
-  # Opt-out guard (llm#1296): never re-queue a review for a marked / no-remote /
+  # Opt-out guard (llm#1296): never re-queue a review for a marked /
   # private-root repo. Counted as unavailable; the repo name is NOT logged.
   roborev_repo_allowed "$root_path" >/dev/null
   _rra_rc=$?

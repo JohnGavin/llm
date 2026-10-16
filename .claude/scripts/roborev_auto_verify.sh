@@ -735,7 +735,7 @@ else
   log "WARN: record_prediction.sh not found or not executable at ${_RECORD_PREDICTION_SCRIPT} — skipping prediction logging"
 fi
 
-# Per-repo opt-out (llm#1296): never queue a re-review for a marked / no-remote /
+# Per-repo opt-out (llm#1296): never queue a re-review for a marked /
 # private-root repo. Fail closed when the shared guard cannot be found.
 _RRA_LIB=""
 for _c in "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \

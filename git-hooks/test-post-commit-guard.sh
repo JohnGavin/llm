@@ -2,8 +2,8 @@
 # Two-sided tests of the roborev hook guards:
 #   * the ephemeral-path guard in post-commit (llm#923)
 #   * the per-repo opt-out guard shared by every enqueue path (llm#1296):
-#     marker file, no remote, locally configured private roots, and the opt-in
-#     allow-list mode.
+#     marker file, locally configured private roots, the opt-in allow-list
+#     mode, and the opt-in no-remote block (ROBOREV_BLOCK_NOREMOTE=1, llm#1442).
 # Every "blocked" case is paired with a falsification: change ONLY the thing
 # that blocked it and assert the stub IS now called. A guard that cannot be seen
 # to let a repo through proves nothing.
@@ -33,7 +33,7 @@ trap 'rm -rf "$WORK" ${REAL:+"$REAL"}' EXIT
 # Pin config so the developer's real local lists never influence the result.
 export ROBOREV_PRIVATE_ROOTS_FILE="$WORK/private-roots"
 export ROBOREV_ALLOWED_ROOTS_FILE="$WORK/allowed-roots"
-unset ROBOREV_ALLOWLIST_MODE
+unset ROBOREV_ALLOWLIST_MODE ROBOREV_BLOCK_NOREMOTE
 
 # Stub roborev: records that it was invoked.
 mkdir -p "$WORK/bin"
@@ -116,13 +116,29 @@ rm -f "$WORK/repo/PRIVATE"
 run_hook "$WORK/repo" "$ALLOW"
 expect_called  "case 5b (falsify): PRIVATE removed -> called"
 
-# ---- llm#1296: no remote ----------------------------------------------------
+# ---- llm#1442: no remote is ALLOWED by default; blocking is opt-in ----------
 mkrepo "$WORK/localonly"
 run_hook "$WORK/localonly" "$ALLOW"
-expect_blocked "case 6: repo with no remote blocked"
-git -C "$WORK/localonly" remote add origin https://example.invalid/y.git
+expect_called  "case 6: repo with no remote is reviewed by default (llm#1442)"
+run_hook "$WORK/localonly" "$ALLOW" ROBOREV_BLOCK_NOREMOTE=1
+expect_blocked "case 6a: ROBOREV_BLOCK_NOREMOTE=1 restores the no-remote block"
+touch "$WORK/localonly/.roborev-disable"
 run_hook "$WORK/localonly" "$ALLOW"
-expect_called  "case 6b (falsify): remote added -> called"
+expect_blocked "case 6b: marker still blocks a no-remote repo"
+rm -f "$WORK/localonly/.roborev-disable"
+run_hook "$WORK/localonly" "$ALLOW"
+expect_called  "case 6c (falsify): marker removed -> no-remote repo called"
+# Guard-lib level: exact exit code and one-word reason.
+out=$(sh -c ". '$LIB'; roborev_repo_allowed '$WORK/localonly'"; echo "rc=$?")
+if [ "$out" = "rc=0" ]; then ok "case 6d: lib default, no remote -> rc=0, no reason"; else bad "case 6d: got: $out"; fi
+out=$(ROBOREV_BLOCK_NOREMOTE=1 sh -c ". '$LIB'; roborev_repo_allowed '$WORK/localonly'"; echo "rc=$?")
+case "$out" in
+  noremote*rc=1) ok "case 6e: opt-in -> 'noremote', rc=1" ;;
+  *) bad "case 6e: got: $out" ;;
+esac
+git -C "$WORK/localonly" remote add origin https://example.invalid/y.git
+run_hook "$WORK/localonly" "$ALLOW" ROBOREV_BLOCK_NOREMOTE=1
+expect_called  "case 6f (falsify): opt-in block, remote added -> called"
 
 # ---- llm#1296: private-roots file ------------------------------------------
 printf '# local list\n%s\n' "$WORK" > "$ROBOREV_PRIVATE_ROOTS_FILE"

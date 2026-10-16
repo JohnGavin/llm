@@ -67,7 +67,7 @@ PROJECT_NAME=$(basename "$PROJECT_ROOT")
 # The default refine agent (gemini) is third-party; the claude-code fallback
 # is not what protects a private repo either. THIS guard is the control: it
 # runs here, before any `roborev refine` call below (both attempts), so a
-# marked / no-remote / private-root repo never reaches any agent. Fail closed
+# marked / private-root repo never reaches any agent. Fail closed
 # if the guard is missing.
 _RRA_LIB=""
 for _c in "$(cd "$(dirname "$0")" 2>/dev/null && pwd)/../../git-hooks/lib/roborev_repo_allowed.sh" \
