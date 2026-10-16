@@ -12,7 +12,7 @@ WORK=$(mktemp -d)
 WORK=$(cd -P "$WORK" && pwd -P)
 trap 'rm -rf "$WORK"' EXIT
 export ROBOREV_PRIVATE_ROOTS_FILE="$WORK/none"
-unset ROBOREV_ALLOWLIST_MODE
+unset ROBOREV_ALLOWLIST_MODE ROBOREV_BLOCK_NOREMOTE
 
 fail=0
 check() { # label expected_rc actual_rc
@@ -46,7 +46,11 @@ check "clean DB (only an allowed repo) -> 0" 0 "$rc"
 sqlite3 "$DB" "INSERT INTO repos(root_path,name) VALUES ('$BASE/marked','m'),('$BASE/noremote','n');"
 out=$("$AUDIT" 2>&1); rc=$?
 check "marker + no-remote repos registered -> 1" 1 "$rc"
-case "$out" in *"blocked=2"*"marker=1 noremote=1"*) echo "PASS counts: blocked=2 marker=1 noremote=1" ;; *) echo "FAIL counts: $out"; fail=1 ;; esac
+# llm#1442: a no-remote repo is allowed by default; only the marker blocks.
+case "$out" in *"blocked=1"*"marker=1 noremote=0"*) echo "PASS counts (default): blocked=1 marker=1 noremote=0" ;; *) echo "FAIL counts (default): $out"; fail=1 ;; esac
+# Opt-in ROBOREV_BLOCK_NOREMOTE=1 restores the no-remote block.
+out=$(ROBOREV_BLOCK_NOREMOTE=1 "$AUDIT" 2>&1); rc=$?
+case "$out" in *"blocked=2"*"marker=1 noremote=1"*) echo "PASS counts (opt-in): blocked=2 marker=1 noremote=1" ;; *) echo "FAIL counts (opt-in): $out"; fail=1 ;; esac
 case "$out" in *"$BASE"*) echo "FAIL default output names a repo path"; fail=1 ;; *) echo "PASS default output is counts only (no paths)" ;; esac
 
 # Read-only: the DB row count is unchanged after the audit.

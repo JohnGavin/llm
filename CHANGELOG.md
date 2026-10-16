@@ -4,6 +4,56 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-10-15/16 (session: GitHub Actions minutes and storage, docs/changelog-2026-10-16)
+
+### Completed
+
+- **Actions usage tabulated** from the billing API (`/users/JohnGavin/settings/billing/usage`): the free quota counts private repos only. llmtelemetry 1,729 + solwatch 94 = 1,823 of 2,000 minutes by Oct 16 (resets Nov 1; a $0 budget is set). Public repos: 4,889 job-minutes (tlang 1,779, irishbuoys 1,222, llm 639).
+- **llmtelemetry:** [#394](https://github.com/JohnGavin/llmtelemetry/pull/394) (daily report and HF archive run Mondays only) and [#395](https://github.com/JohnGavin/llmtelemetry/pull/395) (restores the R cache that #370 turned off) merged under auto-merge. The 52-minute runs are the `setup-r-dependencies` step: about 55 s with a cache, 35-58 min without. Tracked in [llmtelemetry#393](https://github.com/JohnGavin/llmtelemetry/issues/393) (options A-E).
+- **solwatch:** Weekly Pipeline disabled; [solwatch#27](https://github.com/JohnGavin/solwatch/issues/27) tracks why it runs 45 min and fails.
+- **irishbuoys:** [#107](https://github.com/JohnGavin/irishbuoys/pull/107) merged on the owner's "merge": Data Update cron every 2nd day.
+- **tlang:** CI-trigger review filed as [llm#1437](https://github.com/JohnGavin/llm/issues/1437) (tlang has issues disabled).
+- **premortem (private, local):** two issues written (details kept in that project).
+
+### Failed Approaches
+
+- llmtelemetry#370 (`cache: false`) was recorded as neutral on a wrong measurement; it cost about 50 min per run.
+
+### Known Limitations
+
+- Cache storage cap not implemented. Decided: keep one cache by manual `gh cache delete` of any surplus (only one cache existed on Oct 16), then after Nov 1 test a pinned R 4.5 install (no cache) and else build own-cache cleanup. Storage may run out about Oct 20-23; what the $0 budget then blocks is unverified.
+- Monday 2026-10-19: both llmtelemetry workflows are cache misses (~104 of ~177 minutes left); check `gh cache list` afterwards for a second key.
+- Unverified: R 4.6.1 lacking Linux binaries as the cause of the slow install; weekly runs losing no data; whether the $0 budget blocks public repos; vienna_planning_toolkit minute mismatch.
+- `roborev_consistency_check.sh` at /bye: INCONSISTENT(backlog-vs-verdicts), backlog.open=42, verdicts.total=1.
+- After the Nov 1 reset, return llmtelemetry to daily and watch minutes and storage for a week.
+
+## 2026-10-13/14 (session: disk, audit cache, agent_runs, dashboard gaps, feat/cc-20261012-233050)
+
+### Completed
+
+- **Disk:** the Trash held ~247 Chrome `code_sign_clone` dirs (user removed); GPT4All, LM Studio (cache and Application Support), `nomic.ai`, a Chrome on-device model dir and the `soccer_ha_covid` audit mirror were deleted by the user. The real cause of the shortfall was 13 hourly Time Machine local snapshots pinning deleted blocks: `sudo tmutil thinlocalsnapshots / 30000000000 4` took Data from 738 to 702 GiB used (60 to 97 GiB free). They re-accumulated: 22 snapshots and 58 GiB free a day later. [#1421](https://github.com/JohnGavin/llm/issues/1421) tracks measuring which files churn; sampler in [#1428](https://github.com/JohnGavin/llm/pull/1428) (open).
+- **Merged:** [#1416](https://github.com/JohnGavin/llm/pull/1416) (audit mirror cap + skip unchanged refs, [#1415](https://github.com/JohnGavin/llm/issues/1415)), [#1424](https://github.com/JohnGavin/llm/pull/1424) (explicit per-unit exclusion list for `--all-public`, five dormant over-100 MB public forks, [#1420](https://github.com/JohnGavin/llm/issues/1420); selftest 157/157), [#1425](https://github.com/JohnGavin/llm/pull/1425) (`agent_runs` closes on `SubagentStop`, `dispatch_id` from the prompt, `outcome` from post-verify; [#1423](https://github.com/JohnGavin/llm/issues/1423)), [#1426](https://github.com/JohnGavin/llm/pull/1426) (`fixer_heavy_day` share trigger replaced by `agent_model_override` and `repeat_dispatch`; [#1422](https://github.com/JohnGavin/llm/issues/1422); test file 102 pass).
+- **Open, CI green, each needs an explicit "merge":** [#1428](https://github.com/JohnGavin/llm/pull/1428) (disk sampler + proposed launchd plist), [#1429](https://github.com/JohnGavin/llm/pull/1429) (Artifact data-source allowlist in `default-deny-for-publication`, [#1418](https://github.com/JohnGavin/llm/issues/1418) Phase 1), [#1430](https://github.com/JohnGavin/llm/pull/1430) (`session_init.sh` Phase 10 self-match/pipefail abort, [#1427](https://github.com/JohnGavin/llm/issues/1427)).
+- **Dashboard gaps** (Datavist article on Claude Dashboards, read in full from a user paste, ideas only): [#1417](https://github.com/JohnGavin/llm/issues/1417) gap register, [#1418](https://github.com/JohnGavin/llm/issues/1418) phased plan with a pruning phase. Phase 0 verdicts: G1 and G6 confirmed, G4 partly covered (time-series only), G2 absent but low value for a single viewer.
+
+### Findings
+
+- `fixer_heavy_day` penalised obeying the `auto-delegation` rule (44 of 47 fixer runs were on sonnet). Its model column records the requested model or the literal `inherited`, so an inherited run cannot be called an override.
+- `agent_runs.duration_sec` was ~1 s for every background dispatch since August: the hook treated the launch as completion. `dispatch_id` and `outcome` were never populated. Old rows are not backfilled.
+- `session_init.sh` Phase 10: `ps | grep -q crew_worker` matches its own `grep`; the unguarded pipeline then aborts the hook under `pipefail`, producing "SessionStart hook error: No stderr output". Intermittent, not caused by the day's PRs.
+
+### Failed Approaches
+
+- **My dispatch prompt for #1420 contained two garbled dispatch-ID lines**; I sent a correction mid-run. Paste the minted ID once, in the footer and the scope header only.
+- **A `gh issue create` was blocked twice by guards** (the word "telemetry" naming a private repo; a high-entropy-looking title). Reword rather than bypass.
+- **Known limits, not yet verified:** the `agent_id` field name in the `SubagentStop` payload came from docs and was not observed; `--report` in the disk sampler counts mtime changes, not bytes; the Dashboard type's `schedule` field on this account is unconfirmed.
+
+## 2026-10-11 (feat/stranded-runs-banner)
+
+### Completed
+
+- **Session-start banner surfaces recent telemetry stranded/aborted runs.** `~/.claude/logs/telemetry_stranded_runs.log` is written by llmtelemetry's `export_and_deploy_data.sh` (stranded rebase runs, `kind=export_optional_step_error`) and `exec/refresh_codexbar.sh` (`kind=codexbar_refresh_abort`) but nothing read it. New `.claude/scripts/telemetry_stranded_banner.sh` + `session_init.sh` Phase 15i print one `telemetry-stranded: N in last 3d (last: DATE KIND) -- see <log>` line when entries are under 3 days old; silent when none or the file is missing; `INDETERMINATE` when the log is unreadable or has unparseable timestamps and no recent entry. N=3 days because the writers run at session end, so a failure shows within a day and 3d spans a weekend. No existing phase covered this (15a reads DuckDB, not this log), so a small new phase was added. Selftest: `.claude/hooks/telemetry_stranded_banner_selftest.sh` (falsified against a reader with the cutoff disabled). Touches `.claude/hooks/**`: needs an explicit "merge".
+
 ## 2026-09-30 (session: banner warnings, #1294/#1295/#1296, roborev purge and retention, feat/cc-20260930-193506)
 
 ### Completed

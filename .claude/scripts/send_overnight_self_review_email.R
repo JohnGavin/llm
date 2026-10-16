@@ -232,7 +232,7 @@ n_new_findings <- if (nrow(sec1_data) > 0L) sum(sec1_data$n) else 0L
 # `0 new findings` renders identically whether twelve sessions were analysed
 # and found clean, or zero sessions existed to analyse. Those are different
 # facts and only one of them is reassuring. Stage-1's detectors
-# (marathon_session, parallel_session_sprawl, fixer_heavy_day,
+# (marathon_session, parallel_session_sprawl, repeat_dispatch,
 # subagent_heavy_session, stuck_loop, ...) all read `sessions`; with no rows in
 # the window they cannot emit, and the report said "0 new findings" without
 # ever saying it had nothing to look at.
@@ -2005,6 +2005,81 @@ this meta-check has not fired.</p>',
 # housekeeping sections (item 4) and the full section reorder (item 5) are a
 # materially larger change than this bounded dispatch and are left as a
 # follow-up; see the PR description.
+# Per-finding dropdown under the critical/major action items. Reuses
+# collapsible_block(); one row per finding (type, scope, key evidence, the
+# detector's recommendation). Returns "" when there are no rows of that
+# severity. Values are HTML-escaped; evidence is parsed defensively because
+# the keys differ by finding_type.
+action_findings_dropdown <- function(severity) {
+  dd <- safe_query(sprintf("
+    SELECT finding_type, session_id, evidence::VARCHAR AS evidence
+    FROM self_review_findings_stage1
+    WHERE severity = '%s'
+      AND detected_at >= current_timestamp::TIMESTAMP - INTERVAL '24' HOUR
+    ORDER BY finding_type, detected_at DESC
+    LIMIT 50
+  ", severity))
+  if (nrow(dd) == 0L) return("")
+  skip_keys <- c("recommendation", "threshold", "extreme_threshold", "day")
+  rows <- vapply(seq_len(nrow(dd)), function(i) {
+    ev <- tryCatch(jsonlite::fromJSON(dd$evidence[[i]]), error = function(e) list())
+    ev_chr <- function(k) {
+      v <- ev[[k]]
+      if (is.null(v) || length(v) == 0L || is.na(v[[1]])) "" else as.character(v[[1]])
+    }
+    sid <- dd$session_id[[i]]
+    scope <- if (!is.na(sid) && nchar(sid) >= 8L) {
+      substr(sid, 1L, 8L)
+    } else if (nzchar(ev_chr("day"))) {
+      ev_chr("day")
+    } else "—"
+    keys <- setdiff(names(ev), skip_keys)
+    pref <- c("agent_run_count", "fixer_share", "total_runs", "duration_hours",
+              "peak_concurrent")
+    keys <- c(intersect(pref, keys), setdiff(keys, pref))
+    keys <- keys[vapply(keys, function(k) nzchar(ev_chr(k)), logical(1))]
+    keys <- utils::head(keys, 2L)
+    ev_txt <- paste(vapply(keys, function(k) {
+      sprintf("%s: %s", htmlEscape(k), htmlEscape(ev_chr(k)))
+    }, character(1)), collapse = " &nbsp;&middot;&nbsp; ")
+    thr <- ev_chr("threshold")
+    if (nzchar(thr)) {
+      ev_txt <- paste0(ev_txt, if (nzchar(ev_txt)) " &nbsp;&middot;&nbsp; " else "",
+                       "threshold: ", htmlEscape(thr))
+    }
+    sprintf(
+      '<tr style="background-color:%s;">
+<td style="padding:4px 10px;vertical-align:top;">%s</td>
+<td style="padding:4px 10px;vertical-align:top;font-family:monospace;font-size:11px;">%s</td>
+<td style="padding:4px 10px;vertical-align:top;font-size:11px;">%s</td>
+<td style="padding:4px 10px;vertical-align:top;font-size:11px;color:%s;">%s</td>
+</tr>',
+      DARK_CARD, htmlEscape(dd$finding_type[[i]]), htmlEscape(scope), ev_txt,
+      DARK_MUTED, htmlEscape(ev_chr("recommendation"))
+    )
+  }, character(1))
+  table_html <- sprintf(
+    '<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead>
+<tr style="background-color:%s;">
+<th style="padding:4px 10px;text-align:left;">Finding</th>
+<th style="padding:4px 10px;text-align:left;">Scope</th>
+<th style="padding:4px 10px;text-align:left;">Key evidence</th>
+<th style="padding:4px 10px;text-align:left;">Recommendation</th>
+</tr>
+</thead>
+<tbody>%s</tbody>
+</table>',
+    DARK_TEXT, EMAIL_FONT_SUBTITLE, DARK_ROW_ALT, paste(rows, collapse = "\n")
+  )
+  collapsible_block(
+    sprintf("%d %s finding(s)", nrow(dd), severity),
+    htmlEscape(paste(unique(dd$finding_type), collapse = ", ")),
+    table_html,
+    summary_color = if (identical(severity, "critical")) "#ff5252" else ACCENT_ORANGE
+  )
+}
+
 action_items <- character(0)
 action_slugs <- character(0)
 
@@ -2120,7 +2195,14 @@ border-radius:6px;border-left:4px solid %s;">
     DARK_MUTED, EMAIL_FONT_FOOTER, .scope_sentence
   )
 } else {
-  items_html <- paste(sprintf('<li style="margin:2px 0;">%s</li>', action_items), collapse = "\n")
+  items_extra <- vapply(action_slugs, function(sl) {
+    switch(sl,
+      "critical-findings" = action_findings_dropdown("critical"),
+      "major-findings"    = action_findings_dropdown("major"),
+      "")
+  }, character(1))
+  items_html <- paste(sprintf('<li style="margin:2px 0;">%s%s</li>', action_items, items_extra),
+                      collapse = "\n")
   sprintf(
     '<div style="background-color:%s;padding:14px 20px;margin-bottom:12px;
 border-radius:6px;border-left:4px solid #ff5252;">
@@ -2243,7 +2325,8 @@ border-radius:6px;border-left:4px solid %s;">
   DARK_CARD,
   if (lessons_window_section$indeterminate) ACCENT_ORANGE else ACCENT_BLUE,
   DARK_TEXT, EMAIL_FONT_SUBTITLE,
-  lessons_window_section$body
+  # This table is not inside a dropdown, so collapsible_block() does not see it.
+  email_add_tooltips(lessons_window_section$body)
 )
 
 email_subject <- if (n_action_items == 0L) {

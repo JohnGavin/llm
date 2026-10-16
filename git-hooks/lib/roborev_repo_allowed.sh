@@ -17,11 +17,14 @@
 #
 # A repo is BLOCKED when any of these hold:
 #   marker   the repo top level (or its main worktree) has .roborev-disable or PRIVATE
-#   noremote the repo has no git remote at all (local-only repo)
 #   private-root  its real path is under a root listed in the private-roots file
 #   not-allowlisted  (opt-in strict mode only) not under a root in the allow-list
+#   noremote (opt-in only, ROBOREV_BLOCK_NOREMOTE=1) the repo has no git remote
+#            at all. Default OFF since llm#1442: local-only repos ARE reviewed
+#            (owner decision 2026-10-16). Use a marker to exclude one repo.
 #
 # Config (all LOCAL; never commit their contents):
+#   ROBOREV_BLOCK_NOREMOTE=1    opt-in: block repos with no remote (default OFF)
 #   ROBOREV_PRIVATE_ROOTS_FILE  default ~/.config/roborev-private-roots
 #                               one absolute path per line; '#' comments ok
 #   ROBOREV_ALLOWLIST_MODE=1    opt-in fail-closed mode (default OFF)
@@ -70,9 +73,12 @@ roborev_repo_allowed() {
         fi
     done
 
-    # No remote at all -> local-only repo.
+    # Remote check. Always run `git remote` so a git failure stays
+    # indeterminate (exit 3) even when the block is off. A repo with no remote
+    # (local-only) is reviewed by default (llm#1442); blocking it is opt-in via
+    # ROBOREV_BLOCK_NOREMOTE=1.
     _rra_remotes=$(git -C "$_rra_top" remote 2>/dev/null) || return 3
-    if [ -z "$_rra_remotes" ]; then
+    if [ "${ROBOREV_BLOCK_NOREMOTE:-0}" = "1" ] && [ -z "$_rra_remotes" ]; then
         echo noremote
         return 1
     fi
@@ -171,7 +177,8 @@ roborev_all_files_excluded() {
 
     _rae_pats=""
     for _rae_cfg in "$_rae_top/.roborev.toml" "${ROBOREV_GLOBAL_CONFIG:-$HOME/.roborev/config.toml}"; do
-        _rae_out=$(_rra_read_patterns "$_rae_cfg"); _rae_rc=$?
+        _rae_rc=0
+        _rae_out=$(_rra_read_patterns "$_rae_cfg") || _rae_rc=$?
         if [ "$_rae_rc" -ne 0 ]; then echo "config-unparseable"; return 3; fi
         if [ -n "$_rae_out" ]; then
             _rae_pats="$_rae_pats
@@ -213,7 +220,8 @@ _rra_log_skip() {
 # roborev_skip_if_all_excluded DIR REV : 0 = caller should SKIP enqueue (logged);
 # 1 = enqueue (an indeterminate result is logged as such, and still returns 1).
 roborev_skip_if_all_excluded() {
-    _rsa_msg=$(roborev_all_files_excluded "$1" "$2"); _rsa_rc=$?
+    _rsa_rc=0
+    _rsa_msg=$(roborev_all_files_excluded "$1" "$2") || _rsa_rc=$?
     case "$_rsa_rc" in
         0) _rra_log_skip "skip: all files excluded ($2)"; return 0 ;;
         3) _rra_log_skip "indeterminate: $_rsa_msg ($2) -- reviewing anyway"; return 1 ;;

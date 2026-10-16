@@ -83,10 +83,44 @@
 #                                              # and no baseline marker is
 #                                              # INDETERMINATE until a run with
 #                                              # --baseline. Summary line:
-#                                              # repos=N clean=a new_findings=b indeterminate=c
+#                                              # repos=N clean=a new_findings=b indeterminate=c skipped=d excluded=e
+#                                              # llm#1420 exclusions: units listed in
+#                                              # .claude/state/private_data_history_exclusions.txt
+#                                              # (PDHA_EXCLUDE_FILE overrides; unit,
+#                                              # review date, reason per line, exact
+#                                              # names only) are never cloned or
+#                                              # scanned and never counted clean:
+#                                              # outcome=EXCLUDED, in excluded=e (and
+#                                              # in repos=N, not in clean=a). Their
+#                                              # cached mirror is removed. A malformed
+#                                              # entry is a usage error (exit 2); an
+#                                              # entry naming an unenumerated unit is
+#                                              # a NOTE only.
 #                                              # Exit 1 if any NEW finding, else 3 if
 #                                              # any unit INDETERMINATE, else 0.
-#                                              # Env: PDHA_OWNER, PDHA_CACHE_DIR.
+#                                              # Env: PDHA_OWNER, PDHA_CACHE_DIR,
+#                                              # PDHA_MIRROR_MAX_KB, PDHA_FULL_RESCAN_DAYS.
+#                                              # llm#1415 skip: a unit whose `git
+#                                              # ls-remote` hash, deny-list hash
+#                                              # (PRIVATE_VALUES_FILE) and scanner
+#                                              # hash (scanner + this script) all
+#                                              # match the last full scan, whose
+#                                              # outcome was PASS/BASELINED and is
+#                                              # younger than PDHA_FULL_RESCAN_DAYS
+#                                              # (default 30; 0 = never skip), is
+#                                              # reported UNCHANGED: counted clean
+#                                              # AND in skipped=d. Never skipped
+#                                              # under --baseline; a failed ls-remote
+#                                              # is INDETERMINATE; an empty deny-list
+#                                              # or missing state means scan.
+#                                              # llm#1415 size cap: a unit whose
+#                                              # REST `size` (KB) exceeds
+#                                              # PDHA_MIRROR_MAX_KB (default 102400;
+#                                              # gists have no size, always under)
+#                                              # is scanned as normal, then its
+#                                              # mirror dir under the cache is
+#                                              # deleted (regenerable by re-clone).
+#                                              # State table: private_data_history_unit_state.
 #   private_data_history_audit.sh --ack <fingerprint> [--ack <fp> ...]
 #   private_data_history_audit.sh --ack-file <file>   # one fingerprint per line
 #   private_data_history_audit.sh --selftest
@@ -202,6 +236,57 @@ hk_run_end() {
 # sql_quote STRING -> STRING with single quotes doubled (for SQL literals)
 sql_quote() { printf '%s' "$1" | sed "s/'/''/g"; }
 
+# sha256_stdin -> hex digest of stdin (empty output if no hashing tool exists,
+# which callers treat as "unknown": never skip).
+sha256_stdin() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+# safe_remove_mirror CACHE_DIR UDIR -- delete an over-cap mirror (llm#1415).
+# Destructive, so it refuses anything that is not a `*.git` directory sitting
+# DIRECTLY under CACHE_DIR (and never a symlink or CACHE_DIR itself). The
+# deleted state is regenerable by re-clone. rc 0 removed, 1 refused/absent.
+safe_remove_mirror() {
+    local cache="$1" d="$2" label="${3:-over-cap}"
+    [ -n "$cache" ] && [ -n "$d" ] || return 1
+    [ "$d" != "$cache" ] || return 1
+    [ "$(dirname "$d")" = "$cache" ] || return 1
+    case "$(basename "$d")" in *.git) ;; *) return 1 ;; esac
+    [ -d "$d" ] && [ ! -L "$d" ] || return 1
+    log_line "DESTRUCTIVE: removed ${label} mirror ${d} (regenerable by re-clone)"
+    rm -rf "$d"
+}
+
+# validate_exclusions FILE OUT (llm#1420) -- parse the exclusion list. Format
+# per non-comment line: unit<TAB>YYYY-MM-DD<TAB>reason. Valid entries go to OUT
+# (same three columns); every problem is printed to stderr with its line
+# number. rc 0 all valid, 1 at least one malformed entry. Exact names only:
+# the unit regex has no wildcard characters.
+validate_exclusions() {
+    awk -F'\t' -v out="$2" '
+        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+        /^[ \t]*#/ || /^[ \t]*$/ { next }
+        {
+            u = trim($1); d = trim($2); r = trim($3); bad = ""
+            if (NF != 3) bad = "need exactly 3 tab-separated fields (unit, review-date, reason)"
+            else if (u !~ /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/ && u !~ /^gist:[0-9a-fA-F]+$/) bad = "unit must be owner/repo or gist:<hex id> (no wildcards)"
+            else if (d !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ || substr(d,6,2)+0 < 1 || substr(d,6,2)+0 > 12 || substr(d,9,2)+0 < 1 || substr(d,9,2)+0 > 31) bad = "review date must be a valid YYYY-MM-DD"
+            else if (r == "") bad = "reason must not be empty"
+            else if (u in seen) bad = "duplicate entry for " u
+            if (bad != "") { printf "exclusion list line %d: %s\n", NR, bad > "/dev/stderr"; nbad++; next }
+            seen[u] = 1
+            printf "%s\t%s\t%s\n", u, d, r >> out
+        }
+        END { exit (nbad > 0) }
+    ' "$1"
+}
+
+# Committed exclusion list, resolved through symlinks (~/.claude/scripts may
+# itself be a symlink into the repo).
+EXCL_DEFAULT="$(cd "$SCRIPT_DIR" && pwd -P)/../state/private_data_history_exclusions.txt"
+
 # ---------------------------------------------------------------------------
 # --selftest
 # ---------------------------------------------------------------------------
@@ -220,7 +305,7 @@ if [ "$SELFTEST" -eq 1 ]; then
 
     sb="$(mktemp -d "${TMPDIR:-/tmp}/pds_audit_selftest.XXXXXX")"
     trap 'rm -rf "$sb"' EXIT
-    mkdir -p "$sb/home"
+    mkdir -p "$sb/home"; : > "$sb/no_excl.tsv"
     # The selftest commits PII-shaped fixtures into synthetic repos. A global
     # core.hooksPath (the PII pre-commit, llm#1365) would block those commits
     # and silently turn the real-scanner checks into false failures.
@@ -519,6 +604,7 @@ EOF
         env HOME="$sb/home" UNIFIED_DB_PATH="$adb" SCANNER="$SCRIPT_DIR/private_data_scan.sh" \
             PRIVATE_VALUES_FILE="$ap/pv.env" PDHA_EXTRA_PATH="$ap/bin" GH_STUB_DIR="$ap/stub" \
             PDHA_CACHE_DIR="$ap/cache" PDHA_CLONE_BASE="file://$ap/remotes" PDHA_GIST_BASE="file://$ap/gistremotes" \
+            PDHA_FULL_RESCAN_DAYS=0 PDHA_EXCLUDE_FILE="$sb/no_excl.tsv" \
             ${AP_X[@]+"${AP_X[@]}"} bash "$SELF" --all-public "$@" >"$sb/aout" 2>"$sb/aerr"
         arc=$?
     }
@@ -632,6 +718,213 @@ EOF
     _check "$([ "$(aq "SELECT count(*) FROM $TABLE")" -ge 4 ] && echo 0 || echo 1)" "all-public leak check is not vacuous: ledger holds rows for b, a, gist, c"
     _check "$("$GREP" -q 'repo=owner1/b mode=' "$sb/home/.claude/logs/private_data_history_audit.log" && echo 0 || echo 1)" "all-public: per-repo log lines are tagged with the repo"
 
+    # -----------------------------------------------------------------------
+    # 12: unchanged-ref skip + mirror size cap (llm#1415). Own DB, cache and
+    # remotes; the scanner is a wrapper whose file we can edit (scanner hash).
+    # PDHA_MIRROR_MAX_KB=100: owner1/s1 (size 10) is under, owner1/s2 (500) over.
+    # -----------------------------------------------------------------------
+    sk="$sb/sk"
+    mkdir -p "$sk/stub" "$sk/remotes/owner1" "$sk/gists"
+    skdb="$sb/sk.duckdb"
+    duckdb -init /dev/null "$skdb" < "$SCHEMA_SQL" >/dev/null 2>&1
+    mkrepo "$sk/remotes/owner1/s1.git"
+    mkrepo "$sk/remotes/owner1/s2.git"
+    printf '[{"full_name":"owner1/s1","private":false,"size":10},{"full_name":"owner1/s2","private":false,"size":500}]' > "$sk/stub/repos.json"
+    printf '[]' > "$sk/stub/gists.json"
+    printf 'PRIV_PHONE=%s\n' "$SENT2" > "$sk/pv.env"
+    chmod 600 "$sk/pv.env"
+    printf '#!/usr/bin/env bash\n# v1\nexec "$REAL_SCANNER" "$@"\n' > "$sk/scan_wrap.sh"
+    chmod +x "$sk/scan_wrap.sh"
+    SK_X=()
+    run_sk() {   # run_sk ARGS... ; env additions in SK_X ; sets $arc, $sb/sout, $sb/serr
+        env HOME="$sb/home" UNIFIED_DB_PATH="$skdb" SCANNER="$sk/scan_wrap.sh" REAL_SCANNER="$SCRIPT_DIR/private_data_scan.sh" \
+            PRIVATE_VALUES_FILE="$sk/pv.env" PDHA_EXTRA_PATH="$ap/bin" GH_STUB_DIR="$sk/stub" \
+            PDHA_CACHE_DIR="$sk/cache" PDHA_CLONE_BASE="file://$sk/remotes" PDHA_GIST_BASE="file://$sk/gists" \
+            PDHA_MIRROR_MAX_KB=100 PDHA_FULL_RESCAN_DAYS=30 PDHA_EXCLUDE_FILE="$sb/no_excl.tsv" \
+            ${SK_X[@]+"${SK_X[@]}"} bash "$SELF" --all-public "$@" >"$sb/sout" 2>"$sb/serr"
+        arc=$?
+    }
+    sq() { duckdb -init /dev/null -csv -noheader "$skdb" -c "$1" 2>&1; }
+    sk_commit() {   # sk_commit NAME -- a clean (PII-free) commit changes the refs
+        printf 'change %s\n' "$RANDOM$RANDOM" > "$sk/remotes/owner1/$1.git/c.txt"
+        git -C "$sk/remotes/owner1/$1.git" add c.txt
+        git -C "$sk/remotes/owner1/$1.git" commit -q -m "change"
+    }
+    SKLOG="$sb/home/.claude/logs/private_data_history_audit.log"
+    SK_ALL="repos=2 clean=2 new_findings=0 indeterminate=0"
+
+    # safe_remove_mirror: only a *.git directly under the cache dir is removable.
+    mkdir -p "$sk/safe/cache/ok__repo.git" "$sk/safe/other/victim.git" "$sk/safe/cache/notgit"
+    LOG_FILE="$sb/direct.log"
+    safe_remove_mirror "$sk/safe/cache" "$sk/safe/other/victim.git"; r1=$?
+    safe_remove_mirror "$sk/safe/cache" "$sk/safe/cache"; r2=$?
+    safe_remove_mirror "$sk/safe/cache" "$sk/safe/cache/notgit"; r3=$?
+    _check "$([ "$r1" -ne 0 ] && [ "$r2" -ne 0 ] && [ "$r3" -ne 0 ] && [ -d "$sk/safe/other/victim.git" ] && [ -d "$sk/safe/cache/notgit" ] && echo 0 || echo 1)" "safe_remove_mirror refuses a dir outside the cache, the cache itself and a non-*.git dir"
+    safe_remove_mirror "$sk/safe/cache" "$sk/safe/cache/ok__repo.git"; r4=$?
+    _check "$([ "$r4" -eq 0 ] && [ ! -e "$sk/safe/cache/ok__repo.git" ] && "$GREP" -q 'DESTRUCTIVE: removed over-cap mirror' "$sb/direct.log" && echo 0 || echo 1)" "safe_remove_mirror removes a *.git directly under the cache dir and logs a DESTRUCTIVE line"
+
+    run_sk
+    _expect_rc 3 "$arc" "skip: first run with no baseline is INDETERMINATE"
+    _check "$([ "$(sq "SELECT count(*) FROM private_data_history_unit_state")" = "0" ] && echo 0 || echo 1)" "skip: an INDETERMINATE run records no unit state (missing state = scan)"
+
+    run_sk --baseline
+    _expect_rc 0 "$arc" "skip: --baseline exits 0"
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && echo 0 || echo 1)" "skip: baseline summary carries skipped=0"
+    _check "$([ "$(sq "SELECT count(*) FROM private_data_history_unit_state WHERE last_outcome='BASELINED'")" = "2" ] && echo 0 || echo 1)" "skip: baseline recorded unit state for both units"
+    _check "$([ -d "$sk/cache/owner1__s1.git" ] && echo 0 || echo 1)" "size cap: under-cap mirror (10 KB <= 100) is kept"
+    _check "$([ ! -e "$sk/cache/owner1__s2.git" ] && echo 0 || echo 1)" "size cap: over-cap mirror (500 KB > 100) is deleted after its scan"
+    _check "$("$GREP" -q 'DESTRUCTIVE: removed over-cap mirror .*owner1__s2.git (regenerable by re-clone)' "$SKLOG" && echo 0 || echo 1)" "size cap: the deletion wrote a DESTRUCTIVE line to the log"
+
+    run_sk --baseline
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && "$GREP" -q 'repo=owner1/s1 outcome=BASELINED' "$sb/sout" && echo 0 || echo 1)" "skip: --baseline never skips even with identical refs, deny-list and scanner"
+
+    run_sk
+    _expect_rc 0 "$arc" "skip: unchanged refs -> exit 0"
+    _check "$("$GREP" -q "$SK_ALL skipped=2" "$sb/sout" && "$GREP" -q 'repo=owner1/s1 outcome=UNCHANGED' "$sb/sout" && "$GREP" -q 'repo=owner1/s2 outcome=UNCHANGED' "$sb/sout" && echo 0 || echo 1)" "skip: unchanged refs, deny-list and scanner -> both UNCHANGED, counted clean, skipped=2"
+    _check "$([ ! -e "$sk/cache/owner1__s2.git" ] && echo 0 || echo 1)" "skip: a skipped over-cap unit is not re-cloned"
+
+    sk_commit s1
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=1" "$sb/sout" && "$GREP" -q 'repo=owner1/s1 outcome=PASS' "$sb/sout" && "$GREP" -q 'repo=owner1/s2 outcome=UNCHANGED' "$sb/sout" && echo 0 || echo 1)" "skip: changed refs rescan ONLY that unit (s1 PASS, s2 UNCHANGED)"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=2" "$sb/sout" && echo 0 || echo 1)" "skip: after the rescan the new refs are recorded (skipped=2 again)"
+
+    printf 'PRIV_EXTRA=pdhask_other_probe_77\n' >> "$sk/pv.env"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && echo 0 || echo 1)" "skip: a changed deny-list rescans every unit (skipped=0)"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=2" "$sb/sout" && echo 0 || echo 1)" "skip: deny-list control: unchanged again -> skipped=2"
+
+    printf '# v2\n' >> "$sk/scan_wrap.sh"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && echo 0 || echo 1)" "skip: a changed scanner rescans every unit (skipped=0)"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=2" "$sb/sout" && echo 0 || echo 1)" "skip: scanner control: unchanged again -> skipped=2"
+
+    sq "UPDATE private_data_history_unit_state SET last_full_scan_epoch = last_full_scan_epoch - 864000" >/dev/null
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=2" "$sb/sout" && echo 0 || echo 1)" "skip: a 10-day-old scan is inside the 30-day window -> still skipped"
+    sq "UPDATE private_data_history_unit_state SET last_full_scan_epoch = last_full_scan_epoch - 3456000" >/dev/null
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && echo 0 || echo 1)" "skip: a stale (50-day-old, > 30) scan is rescanned (skipped=0)"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=2" "$sb/sout" && echo 0 || echo 1)" "skip: staleness control: the rescan refreshed the timestamp -> skipped=2"
+
+    sq "UPDATE private_data_history_unit_state SET last_outcome='FAIL' WHERE repo='owner1/s1'" >/dev/null
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=1" "$sb/sout" && "$GREP" -q 'repo=owner1/s1 outcome=PASS' "$sb/sout" && echo 0 || echo 1)" "skip: a last outcome other than PASS/BASELINED is never skipped"
+
+    SK_X=(PDHA_FULL_RESCAN_DAYS=0)
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && echo 0 || echo 1)" "skip: PDHA_FULL_RESCAN_DAYS=0 disables skipping"
+    SK_X=()
+
+    cp "$sk/pv.env" "$sk/pv.env.saved"
+    : > "$sk/pv.env"
+    run_sk
+    _check "$([ "$arc" -ne 0 ] && "$GREP" -q 'skipped=0' "$sb/sout" && ! "$GREP" -q 'outcome=UNCHANGED' "$sb/sout" && echo 0 || echo 1)" "skip: an empty deny-list file never skips (rc=$arc, scanned and fails closed)"
+    cp "$sk/pv.env.saved" "$sk/pv.env"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=0" "$sb/sout" && echo 0 || echo 1)" "skip: after a failed (INDETERMINATE) run the unit state is gone -> rescan, not skip"
+
+    mv "$sk/remotes/owner1/s1.git" "$sk/remotes/owner1/s1.git.away"
+    run_sk
+    _expect_rc 3 "$arc" "skip: ls-remote failure on one unit is INDETERMINATE (exit 3)"
+    _check "$("$GREP" -q 'repo=owner1/s1 outcome=INDETERMINATE.*ls-remote failed' "$sb/sout" && "$GREP" -q 'repos=2 clean=1 new_findings=0 indeterminate=1' "$sb/sout" && echo 0 || echo 1)" "skip: ls-remote failure is INDETERMINATE and not counted clean (clean=1)"
+    mv "$sk/remotes/owner1/s1.git.away" "$sk/remotes/owner1/s1.git"
+    run_sk
+    _check "$("$GREP" -q "$SK_ALL skipped=1" "$sb/sout" && echo 0 || echo 1)" "skip: after ls-remote recovers, the unit with cleared state is rescanned (skipped=1)"
+
+    sk_commit s2
+    run_sk
+    _check "$("$GREP" -q 'repo=owner1/s2 outcome=PASS' "$sb/sout" && [ ! -e "$sk/cache/owner1__s2.git" ] && [ "$("$GREP" -c 'DESTRUCTIVE: removed over-cap mirror .*owner1__s2.git' "$SKLOG")" -ge 2 ] && echo 0 || echo 1)" "size cap: an over-cap unit with new refs is re-cloned, scanned, then deleted again"
+    sk_commit s2
+    SK_X=(PDHA_MIRROR_MAX_KB=1000)
+    run_sk
+    _check "$([ -d "$sk/cache/owner1__s2.git" ] && echo 0 || echo 1)" "size cap control: with the cap raised above 500 KB the same unit's mirror is kept"
+    SK_X=()
+
+    # -----------------------------------------------------------------------
+    # 13: per-unit exclusion list (llm#1420). Own DB, cache and remotes.
+    # owner1/x1 is listed nowhere; owner1/x2 carries a deny-listed leak, so if
+    # it were ever scanned it would show up as ledger rows.
+    # -----------------------------------------------------------------------
+    ex="$sb/ex"
+    mkdir -p "$ex/stub" "$ex/remotes/owner1" "$ex/gists"
+    exdb="$sb/ex.duckdb"
+    duckdb -init /dev/null "$exdb" < "$SCHEMA_SQL" >/dev/null 2>&1
+    mkrepo "$ex/remotes/owner1/x1.git"
+    mkrepo "$ex/remotes/owner1/x2.git"
+    leak_commit "$ex/remotes/owner1/x2.git" leak.txt
+    printf '[{"full_name":"owner1/x1","private":false},{"full_name":"owner1/x2","private":false}]' > "$ex/stub/repos.json"
+    printf '[]' > "$ex/stub/gists.json"
+    printf 'PRIV_PHONE=%s\n' "$SENT2" > "$ex/pv.env"
+    chmod 600 "$ex/pv.env"
+    EX_LIST="$ex/excl.tsv"
+    EXLOG="$sb/home/.claude/logs/private_data_history_audit.log"
+    run_ex() {   # run_ex ARGS... ; uses $EX_LIST ; sets $arc, $sb/xout, $sb/xerr
+        env HOME="$sb/home" UNIFIED_DB_PATH="$exdb" SCANNER="$SCRIPT_DIR/private_data_scan.sh" \
+            PRIVATE_VALUES_FILE="$ex/pv.env" PDHA_EXTRA_PATH="$ap/bin" GH_STUB_DIR="$ex/stub" \
+            PDHA_CACHE_DIR="$ex/cache" PDHA_CLONE_BASE="file://$ex/remotes" PDHA_GIST_BASE="file://$ex/gists" \
+            PDHA_FULL_RESCAN_DAYS=0 PDHA_EXCLUDE_FILE="$EX_LIST" \
+            bash "$SELF" --all-public "$@" >"$sb/xout" 2>"$sb/xerr"
+        arc=$?
+    }
+    exq() { duckdb -init /dev/null -csv -noheader "$exdb" -c "$1" 2>&1; }
+    printf '# test list\nowner1/x2\t2027-10-13\tselftest: dormant fork with a leak\n' > "$EX_LIST"
+
+    run_ex --baseline
+    _expect_rc 0 "$arc" "exclusion: baseline run with owner1/x2 excluded exits 0"
+    _check "$([ ! -e "$ex/cache/owner1__x2.git" ] && echo 0 || echo 1)" "exclusion: an excluded unit is never cloned (no mirror under the cache dir)"
+    _check "$("$GREP" -q 'repos=2 clean=1 new_findings=0 indeterminate=0 skipped=0 excluded=1' "$sb/xout" && echo 0 || echo 1)" "exclusion: summary reports excluded=1 and counts only the scanned unit clean (clean=1)"
+    _check "$("$GREP" -q 'repo=owner1/x2 outcome=EXCLUDED' "$sb/xout" && ! "$GREP" -qE 'repo=owner1/x2 outcome=(PASS|BASELINED|UNCHANGED)' "$sb/xout" && echo 0 || echo 1)" "exclusion: the excluded unit is listed as EXCLUDED, never as PASS/BASELINED/UNCHANGED"
+    _check "$([ "$(exq "SELECT count(*) FROM $TABLE WHERE repo='owner1/x2'")" = "0" ] && echo 0 || echo 1)" "exclusion: an excluded unit with a planted leak wrote no ledger rows (not scanned)"
+    _check "$("$GREP" -q 'repo=owner1/x1 outcome=BASELINED' "$sb/xout" && [ -d "$ex/cache/owner1__x1.git" ] && echo 0 || echo 1)" "exclusion: an unlisted unit (owner1/x1) is still cloned and scanned"
+
+    # Control: the same unit with an empty list IS scanned (so the checks above can fail).
+    : > "$EX_LIST"
+    run_ex --baseline
+    _check "$("$GREP" -q 'repos=2 clean=2 new_findings=0 indeterminate=0 skipped=0 excluded=0' "$sb/xout" && [ -d "$ex/cache/owner1__x2.git" ] && [ "$(exq "SELECT count(*) FROM $TABLE WHERE repo='owner1/x2'")" = "1" ] && echo 0 || echo 1)" "exclusion control: with an empty list owner1/x2 is cloned, scanned and counted (excluded=0, ledger row)"
+
+    # Stale mirror of an excluded unit is removed through safe_remove_mirror.
+    printf 'owner1/x2\t2027-10-13\tselftest: dormant fork with a leak\nowner1/ghost\t2027-10-13\tselftest: not enumerated\n' > "$EX_LIST"
+    run_ex
+    _expect_rc 0 "$arc" "exclusion: an entry naming an unenumerated unit does not fail the run"
+    _check "$([ ! -e "$ex/cache/owner1__x2.git" ] && "$GREP" -q 'DESTRUCTIVE: removed excluded mirror .*owner1__x2.git' "$EXLOG" && echo 0 || echo 1)" "exclusion: the stale mirror of an excluded unit is removed and logged DESTRUCTIVE"
+    _check "$("$GREP" -q 'NOTE exclusion entry owner1/ghost is not in the enumerated set' "$sb/xout" && echo 0 || echo 1)" "exclusion: an entry for an unenumerated unit is reported loudly (NOTE)"
+    _check "$([ -d "$ex/cache/owner1__x1.git" ] && "$GREP" -q 'excluded=1' "$sb/xout" && echo 0 || echo 1)" "exclusion: the unlisted unit's mirror is untouched by the removal (and excluded=1 again)"
+
+    # Malformed entries are usage errors (exit 2) before any network call.
+    printf 'owner1/x2\t2027-10-13\t\n' > "$EX_LIST"
+    run_ex
+    _expect_rc 2 "$arc" "exclusion: a reason-less entry is a usage error"
+    _check "$("$GREP" -q 'line 1: reason must not be empty' "$sb/xerr" && echo 0 || echo 1)" "exclusion: the reason-less entry is named in stderr"
+    printf 'owner1/x2\t2027-13-45\tbad date\n' > "$EX_LIST"
+    run_ex
+    _expect_rc 2 "$arc" "exclusion: an invalid review date is a usage error"
+    printf 'owner1/*\t2027-10-13\twildcard\n' > "$EX_LIST"
+    run_ex
+    _expect_rc 2 "$arc" "exclusion: a wildcard unit is a usage error (exact names only)"
+    printf 'owner1/x2 2027-10-13 spaces not tabs\n' > "$EX_LIST"
+    run_ex
+    _expect_rc 2 "$arc" "exclusion: a wrongly-shaped (not tab-separated) entry is a usage error"
+    printf 'owner1/x2\t2027-10-13\tr\nowner1/x2\t2027-10-13\tr2\n' > "$EX_LIST"
+    run_ex
+    _expect_rc 2 "$arc" "exclusion: a duplicate entry is a usage error"
+    PDHA_EXCLUDE_FILE_SAVE="$EX_LIST"; EX_LIST="$ex/does_not_exist.tsv"
+    run_ex
+    _expect_rc 2 "$arc" "exclusion: an unreadable PDHA_EXCLUDE_FILE is a usage error"
+    EX_LIST="$PDHA_EXCLUDE_FILE_SAVE"
+
+    # The committed list itself: every shipped entry is well-formed, and the
+    # parser really did read them (a vacuous 0-entry pass would be wrong).
+    : > "$sb/committed_valid.tsv"
+    validate_exclusions "$EXCL_DEFAULT" "$sb/committed_valid.tsv" 2>"$sb/committed.err"; vrc=$?
+    n_ent="$("$GREP" -cvE '^[[:space:]]*(#|$)' "$EXCL_DEFAULT")"
+    n_ok="$(wc -l < "$sb/committed_valid.tsv" | tr -d ' ')"
+    _check "$([ "$vrc" -eq 0 ] && [ "$n_ent" -eq 5 ] && [ "$n_ok" -eq 5 ] && echo 0 || echo 1)" "exclusion: the committed list is well-formed: 5 entries, 5 valid (rc=$vrc, entries=$n_ent, valid=$n_ok)"
+    _check "$([ "$(awk -F'\t' '$2=="2027-10-13" && length($3) > 20' "$sb/committed_valid.tsv" | wc -l | tr -d ' ')" = "5" ] && echo 0 || echo 1)" "exclusion: every committed entry carries review date 2027-10-13 and a real reason"
+
     echo ""
     echo "private_data_history_audit selftest: $pass/$total PASS"
     [ "$pass" -eq "$total" ] && exit 0
@@ -738,11 +1031,36 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
     GIST_BASE="${PDHA_GIST_BASE:-https://gist.github.com}"
     mkdir -p "$CACHE_DIR" 2>/dev/null || indeterminate "cannot create the mirror cache directory $CACHE_DIR"
     export GIT_TERMINAL_PROMPT=0
+    # llm#1420 exclusion list: validated BEFORE any network call; a malformed
+    # entry is a usage error, never a silent no-op. A missing file named by
+    # PDHA_EXCLUDE_FILE is a usage error; a missing default file means no
+    # exclusions (everything is scanned: the safe direction).
+    EXCL_VALID="$TMPD/excl.tsv"; : > "$EXCL_VALID"
+    EXCL_FILE="${PDHA_EXCLUDE_FILE:-$EXCL_DEFAULT}"
+    if [ -r "$EXCL_FILE" ]; then
+        if ! validate_exclusions "$EXCL_FILE" "$EXCL_VALID" 2>"$TMPD/excl.err"; then
+            cat "$TMPD/excl.err" >&2
+            echo "private_data_history_audit: malformed exclusion list $EXCL_FILE (usage error, exit 2)" >&2
+            log_line "mode=all-public status=usage rc=2 reason=malformed exclusion list"
+            hk_run_end "partial" "0"
+            exit 2
+        fi
+    elif [ -n "${PDHA_EXCLUDE_FILE:-}" ]; then
+        echo "private_data_history_audit: cannot read PDHA_EXCLUDE_FILE $EXCL_FILE (usage error, exit 2)" >&2
+        hk_run_end "partial" "0"
+        exit 2
+    else
+        echo "private_data_history_audit: NOTE no exclusion list at $EXCL_FILE; nothing is excluded"
+    fi
+    # excl_field NAME COL -> that column of NAME's entry (empty if not excluded)
+    excl_field() { awk -F'\t' -v n="$1" -v c="$2" '$1==n{print $c; exit}' "$EXCL_VALID"; }
+    N_EXCLUDED=0
     # Filters over the REST list payloads (also exercised by --selftest).
-    JQ_REPOS='.[] | select(.private == false) | .full_name'
+    # name <TAB> size in KB (REST `.size`; absent/null -> 0, i.e. under the cap).
+    JQ_REPOS='.[] | select(.private == false) | "\(.full_name)\t\(.size // 0)"'
     JQ_GISTS='.[] | select(.public == true) | .id'
     RESULTS="$TMPD/results.tsv"; : > "$RESULTS"
-    UNITS="$TMPD/units.tsv"; : > "$UNITS"          # name <TAB> url
+    UNITS="$TMPD/units.tsv"; : > "$UNITS"          # name <TAB> url <TAB> size_kb
     # add_result NAME OUTCOME FINDINGS NEW DETAIL
     add_result() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$RESULTS"; }
 
@@ -762,7 +1080,7 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
     fi
     [ -s "$TMPD/repos.txt" ] || indeterminate "the repository listing for ${OWNER} was empty -- not trusted as 'no public repositories'"
     : > "$TMPD/forks.txt"
-    while IFS= read -r r <&3 || [ -n "$r" ]; do
+    while IFS=$'\t' read -r r rsz <&3 || [ -n "$r" ]; do
         [ -n "$r" ] || continue
         if printf '%s' "$r" | "$GREP" -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
             if gh_list "repos/${r}/forks?per_page=100" "$JQ_REPOS" "$TMPD/f.one"; then
@@ -772,11 +1090,11 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
             fi
         fi
     done 3< "$TMPD/repos.txt"
-    cat "$TMPD/repos.txt" "$TMPD/forks.txt" | sort -u > "$TMPD/all_repos.txt"
-    while IFS= read -r r; do
+    cat "$TMPD/repos.txt" "$TMPD/forks.txt" | sort -u -t$'\t' -k1,1 > "$TMPD/all_repos.txt"
+    while IFS=$'\t' read -r r rsz; do
         [ -n "$r" ] || continue
         if printf '%s' "$r" | "$GREP" -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
-            printf '%s\t%s/%s.git\n' "$r" "$CLONE_BASE" "$r" >> "$UNITS"
+            printf '%s\t%s/%s.git\t%s\n' "$r" "$CLONE_BASE" "$r" "${rsz:-0}" >> "$UNITS"
         else
             add_result "invalid-repo-name" INDETERMINATE 0 0 "enumerated name is not a plain owner/name; not scanned"
         fi
@@ -787,7 +1105,7 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
         while IFS= read -r g; do
             [ -n "$g" ] || continue
             if printf '%s' "$g" | "$GREP" -qE '^[0-9a-fA-F]+$'; then
-                printf 'gist:%s\t%s/%s.git\n' "$g" "$GIST_BASE" "$g" >> "$UNITS"
+                printf 'gist:%s\t%s/%s.git\t0\n' "$g" "$GIST_BASE" "$g" >> "$UNITS"
             else
                 add_result "invalid-gist-id" INDETERMINATE 0 0 "enumerated gist id is not hex; not scanned"
             fi
@@ -798,21 +1116,97 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
 
     CHILD_FLAGS=()
     [ "$BASELINE" -eq 1 ] && CHILD_FLAGS=(--baseline)
-    echo "private_data_history_audit: --all-public owner=${OWNER} units=$(wc -l < "$UNITS" | tr -d ' ') (mode=${MODE_LABEL})"
 
-    while IFS=$'\t' read -r uname uurl <&3; do
+    # llm#1415 knobs; non-numeric values fall back to the defaults.
+    MIRROR_MAX_KB="${PDHA_MIRROR_MAX_KB:-102400}"
+    printf '%s' "$MIRROR_MAX_KB" | "$GREP" -qE '^[0-9]+$' || MIRROR_MAX_KB=102400
+    RESCAN_DAYS="${PDHA_FULL_RESCAN_DAYS:-30}"
+    printf '%s' "$RESCAN_DAYS" | "$GREP" -qE '^[0-9]+$' || RESCAN_DAYS=30
+    STATE_TABLE="private_data_history_unit_state"
+    # Hashes of everything a clean result depends on besides the refs. An empty
+    # hash (missing/empty deny-list, unreadable script, no hash tool) means
+    # "unknown" and forces a scan.
+    DL_FILE="${PRIVATE_VALUES_FILE:-${HOME_DIR}/.config/private_values.env}"
+    DL_HASH=""
+    [ -s "$DL_FILE" ] && DL_HASH="$(sha256_stdin < "$DL_FILE")"
+    SC_HASH=""
+    if [ -r "$SCANNER" ] && [ -r "$SELF_PATH" ]; then
+        SC_HASH="$({ sha256_stdin < "$SCANNER"; sha256_stdin < "$SELF_PATH"; } | sha256_stdin)"
+    fi
+    N_SKIPPED=0
+    # unit_state_clear NAME / unit_state_put NAME REFHASH OUTCOME -- failures
+    # only mean "no state", which is the safe direction (scan next time).
+    unit_state_clear() {
+        db_query "DELETE FROM ${STATE_TABLE} WHERE repo = '$(sql_quote "$1")'" >/dev/null 2>&1 || true
+    }
+    unit_state_put() {
+        if [ -z "$2" ] || [ -z "$DL_HASH" ] || [ -z "$SC_HASH" ]; then unit_state_clear "$1"; return 0; fi
+        db_query "INSERT OR REPLACE INTO ${STATE_TABLE} VALUES ('$(sql_quote "$1")', '$2', '${DL_HASH}', '${SC_HASH}', '$3', $(date +%s))" >/dev/null 2>&1 \
+            || log_line "unit-state write failed for $1 (unit will be rescanned next run)"
+    }
+    # unit_skippable NAME REFHASH -> 0 iff ALL hashes match, last outcome clean
+    # and the last full scan is younger than RESCAN_DAYS.
+    unit_skippable() {
+        [ "$BASELINE" -eq 0 ] || return 1
+        [ "$RESCAN_DAYS" -gt 0 ] || return 1
+        [ -n "$2" ] && [ -n "$DL_HASH" ] && [ -n "$SC_HASH" ] || return 1
+        local n
+        n="$(db_query "SELECT count(*) FROM ${STATE_TABLE} WHERE repo = '$(sql_quote "$1")' AND ref_hash = '$2' AND denylist_hash = '${DL_HASH}' AND scanner_hash = '${SC_HASH}' AND last_outcome IN ('PASS','BASELINED') AND last_full_scan_epoch > $(date +%s) - ${RESCAN_DAYS} * 86400" 2>/dev/null)" || return 1
+        [ "$n" = "1" ]
+    }
+    echo "private_data_history_audit: --all-public owner=${OWNER} units=$(wc -l < "$UNITS" | tr -d ' ') (mode=${MODE_LABEL})"
+    # An exclusion naming a unit that was not enumerated is reported loudly but
+    # never fails the run (the unit may have been renamed, deleted or hidden).
+    while IFS=$'\t' read -r xu xd xr <&4; do
+        [ -n "$xu" ] || continue
+        awk -F'\t' -v n="$xu" '$1==n{f=1} END{exit !f}' "$UNITS" \
+            || echo "private_data_history_audit: NOTE exclusion entry ${xu} is not in the enumerated set (renamed, deleted or no longer public?); review or remove it"
+    done 4< "$EXCL_VALID"
+
+    while IFS=$'\t' read -r uname uurl usize <&3; do
         [ -n "$uname" ] || continue
         udir="$CACHE_DIR/$(printf '%s' "$uname" | sed 's#[/:]#__#g').git"
+        # Excluded (llm#1420): never cloned, never scanned, never clean. Any
+        # existing mirror goes via safe_remove_mirror (logged DESTRUCTIVE:).
+        xdate="$(excl_field "$uname" 2)"
+        if [ -n "$xdate" ]; then
+            unit_state_clear "$uname"
+            xnote=""
+            if [ -e "$udir" ]; then
+                safe_remove_mirror "$CACHE_DIR" "$udir" excluded || xnote="; WARNING cached mirror could not be removed"
+            fi
+            add_result "$uname" EXCLUDED 0 0 "excluded, not scanned, not clean: $(excl_field "$uname" 3) (review ${xdate})${xnote}"
+            N_EXCLUDED=$((N_EXCLUDED + 1))
+            continue
+        fi
+        overcap=0
+        printf '%s' "${usize:-0}" | "$GREP" -qE '^[0-9]+$' || usize=0
+        [ "${usize:-0}" -gt "$MIRROR_MAX_KB" ] && overcap=1
+        # Remote refs first (cheap): a failed ls-remote is INDETERMINATE, never clean.
+        if ! git ls-remote "$uurl" </dev/null >"$TMPD/lsr.out" 2>"$TMPD/lsr.err"; then
+            unit_state_clear "$uname"
+            add_result "$uname" INDETERMINATE 0 0 "ls-remote failed ($(head -c 150 "$TMPD/lsr.err" | tr '\t\n' '  '))"
+            continue
+        fi
+        refhash=""
+        [ -s "$TMPD/lsr.out" ] && refhash="$(sort "$TMPD/lsr.out" | sha256_stdin)"
+        if unit_skippable "$uname" "$refhash"; then
+            add_result "$uname" UNCHANGED 0 0 "refs, deny-list and scanner unchanged since last full scan (rescan every ${RESCAN_DAYS}d)"
+            N_SKIPPED=$((N_SKIPPED + 1))
+            continue
+        fi
         if [ -d "$udir" ]; then
             # Reuse the mirror: a failed update is NOT scanned (stale != fresh).
             if ! git -C "$udir" remote set-url origin "$uurl" </dev/null >"$TMPD/git.out" 2>&1 \
                || ! git -C "$udir" remote update --prune </dev/null >>"$TMPD/git.out" 2>&1; then
+                unit_state_clear "$uname"
                 add_result "$uname" INDETERMINATE 0 0 "mirror update failed ($(head -c 150 "$TMPD/git.out" | tr '\n' ' '))"
                 continue
             fi
         else
             if ! git clone --quiet --mirror "$uurl" "$udir" </dev/null >"$TMPD/git.out" 2>&1; then
                 rm -rf "$udir"   # our own partial clone, created a moment ago
+                unit_state_clear "$uname"
                 add_result "$uname" INDETERMINATE 0 0 "clone failed ($(head -c 150 "$TMPD/git.out" | tr '\n' ' '))"
                 continue
             fi
@@ -821,31 +1215,42 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
             SCANNER="$SCANNER" UNIFIED_DB_PATH="$UNIFIED_DB" \
             bash "$SELF_PATH" ${CHILD_FLAGS[@]+"${CHILD_FLAGS[@]}"} >"$TMPD/c.out" 2>"$TMPD/c.err" </dev/null
         crc=$?
+        # Over-cap mirrors are not kept (llm#1415): delete after the scan,
+        # whatever its outcome. $udir was built above from this run's unit
+        # name and safe_remove_mirror refuses anything that is not directly
+        # under $CACHE_DIR.
+        if [ "$overcap" -eq 1 ]; then safe_remove_mirror "$CACHE_DIR" "$udir" || true; fi
         cnt="$("$GREP" -oE 'findings=[0-9]+ new=[0-9]+' "$TMPD/c.out" | head -1)"
         cf="${cnt#findings=}"; cf="${cf%% *}"; cn="${cnt##*new=}"
         case "$crc" in
             0)
                 if [ -z "$cnt" ]; then
+                    unit_state_clear "$uname"
                     add_result "$uname" INDETERMINATE 0 0 "scan exited 0 without a findings summary"
                 elif [ "$BASELINE" -eq 1 ]; then
+                    unit_state_put "$uname" "$refhash" BASELINED
                     add_result "$uname" BASELINED "$cf" 0 "baseline recorded"
                 else
+                    unit_state_put "$uname" "$refhash" PASS
                     add_result "$uname" PASS "$cf" 0 ""
                 fi ;;
             1)
                 if [ -z "$cnt" ]; then
+                    unit_state_clear "$uname"
                     add_result "$uname" INDETERMINATE 0 0 "scan exited 1 without a findings summary"
                 else
+                    unit_state_put "$uname" "$refhash" FAIL
                     add_result "$uname" FAIL "$cf" "$cn" ""
                     "$GREP" '^  NEW ' "$TMPD/c.out" | sed "s#^#    [$uname] #" >> "$TMPD/all_new_lines.txt"
                 fi ;;
             *)
+                unit_state_clear "$uname"
                 add_result "$uname" INDETERMINATE 0 0 "$("$GREP" -m1 'INDETERMINATE' "$TMPD/c.err" | head -c 220 | tr '\t\n' '  ')" ;;
         esac
     done 3< "$UNITS"
 
     N_UNITS="$(wc -l < "$RESULTS" | tr -d ' ')"
-    N_CLEAN="$(awk -F'\t' '$2=="PASS"||$2=="BASELINED"' "$RESULTS" | wc -l | tr -d ' ')"
+    N_CLEAN="$(awk -F'\t' '$2=="PASS"||$2=="BASELINED"||$2=="UNCHANGED"' "$RESULTS" | wc -l | tr -d ' ')"
     N_INDET="$(awk -F'\t' '$2=="INDETERMINATE"' "$RESULTS" | wc -l | tr -d ' ')"
     N_NEWSUM="$(awk -F'\t' '$2=="FAIL"{s+=$4} END{print s+0}' "$RESULTS")"
     # Every enumerated unit must have exactly one outcome row (enumeration-level
@@ -862,7 +1267,7 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
         echo "NEW findings -- triage these; acknowledge with: private_data_history_audit.sh --ack <fp>"
         cat "$TMPD/all_new_lines.txt"
     fi
-    SUMMARY="repos=${N_UNITS} clean=${N_CLEAN} new_findings=${N_NEWSUM} indeterminate=${N_INDET}"
+    SUMMARY="repos=${N_UNITS} clean=${N_CLEAN} new_findings=${N_NEWSUM} indeterminate=${N_INDET} skipped=${N_SKIPPED} excluded=${N_EXCLUDED}"
     echo "private_data_history_audit: ${SUMMARY}"
 
     if [ "$N_NEWSUM" -gt 0 ]; then

@@ -47,7 +47,11 @@
 
 set -uo pipefail
 
-PY_CODE=$(cat <<'PYEOF'
+# llm#1440: NOT `PY_CODE=$(cat <<'PYEOF' ... )` -- macOS /bin/bash 3.2 cannot
+# parse a heredoc inside $(...) whose body has unbalanced quotes/parens. A
+# bare `read` heredoc parses everywhere; IFS= keeps leading/trailing space,
+# `|| true` absorbs read's non-zero status at EOF (set -e / pipefail safe).
+IFS= read -r -d '' PY_CODE <<'PYEOF' || true
 import sys, json, os, re, datetime
 
 LOG_DIR = os.environ.get('CLINICAL_GUARD_LOG_DIR') or os.path.expanduser('~/.claude/logs')
@@ -197,7 +201,7 @@ except Exception:
     pass  # fail-open: any unhandled internal error must never affect a publish
 sys.exit(0)
 PYEOF
-)
+PY_CODE=${PY_CODE%$'\n'}   # match the trailing-newline strip $(...) used to do
 
 run_guard() {
   # $1 = raw stdin JSON. A WARN goes to stderr; stdout is always empty

@@ -265,13 +265,10 @@
       "WebSearch",
       "Write",
       "Edit(//Users/johngavin/worktrees/**)",
-      "Write(//Users/johngavin/worktrees/**)",
       "NotebookEdit(//Users/johngavin/worktrees/**)",
       "Edit(//Users/johngavin/docs_gh/worktrees/**)",
-      "Write(//Users/johngavin/docs_gh/worktrees/**)",
       "NotebookEdit(//Users/johngavin/docs_gh/worktrees/**)",
-      "Edit(//tmp/**)",
-      "Write(//tmp/**)"
+      "Edit(//tmp/**)"
     ],
     "deny": [
       "Bash(rm -rf:*)",
@@ -444,6 +441,16 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/public_repo_file_import_guard.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/private_term_write_guard.sh",
             "timeout": 30
           }
         ]
@@ -835,6 +842,15 @@
           {
             "command": "/Users/johngavin/.config/iterm2/cc-status",
             "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log_agent_run.sh",
+            "timeout": 5
           }
         ]
       }

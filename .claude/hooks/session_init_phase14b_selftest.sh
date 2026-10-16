@@ -60,8 +60,8 @@ GHEOF
       if [ -n "$_cifail_url" ]; then
         _cifail_repo=$(echo "$_cifail_url" | /usr/bin/sed -E 's#^https?://[^/]+/##; s#^git@[^:]+:##; s#\.git$##')
         case "$_cifail_repo" in
-          */*) : ;;
-          *) _cifail_repo="" ;;
+          (*/*) : ;;
+          (*) _cifail_repo="" ;;
         esac
       fi
     fi

@@ -34,7 +34,7 @@ if [ ! -x "$SHIM_DIR/codex" ]; then
   exit 1
 fi
 
-# Per-repo opt-out (llm#1296): never queue a review for a marked / no-remote /
+# Per-repo opt-out (llm#1296): never queue a review for a marked /
 # private-root repo. Fail closed when the shared guard cannot be found.
 _RRA_LIB=""
 for _c in "$SCRIPT_DIR/../../git-hooks/lib/roborev_repo_allowed.sh" \

@@ -3,8 +3,9 @@
 #
 # Lists the repos roborev has registered (its `repos` table) whose root_path the
 # shared opt-out guard (git-hooks/lib/roborev_repo_allowed.sh) would now BLOCK:
-# marker file, no remote, a locally configured private root, or (opt-in) not on
-# the allow-list.
+# marker file, a locally configured private root, or (opt-in) not on the
+# allow-list or (opt-in, ROBOREV_BLOCK_NOREMOTE=1) has no remote. No-remote
+# repos are allowed by default since llm#1442.
 #
 # It NEVER writes: the DB is opened with `sqlite3 -readonly`, and nothing is
 # deleted. Purging stored reviews/diffs for a blocked repo is the owner's call.

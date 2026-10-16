@@ -25,6 +25,7 @@
 # glob and are not audited here).
 test	globs	status	reason
 tests/test_agentsview_quality_baseline.sh	tests/test_agentsview_quality_baseline.sh;.claude/scripts/agentsview_quality_baseline.sh	run
+tests/test_bash32_parse.sh	tests/test_bash32_parse.sh;.claude/hooks/*.sh;.claude/scripts/*.sh	run
 tests/test_bws_ground_truth_verify.sh	tests/test_bws_ground_truth_verify.sh;.claude/scripts/lib/secret_ground_truth.sh	run
 tests/test_bye_sentinel_ownership.sh	tests/test_bye_sentinel_ownership.sh;.claude/hooks/llmtelemetry_emit.sh;.claude/hooks/session_stop.sh;.claude/scripts/sentinel_log_sweep.sh	run
 tests/test_signal_dash_filename.sh	tests/test_signal_dash_filename.sh;.claude/scripts/lib_signal_process_guard.sh;.claude/scripts/signal_braindump_handler.sh;.claude/scripts/signal_notes_sync.sh	run
@@ -76,6 +77,7 @@ tests/test_session_init_branch_harvest_cache.sh	tests/test_session_init_branch_h
 tests/test_roborev_retention.sh	tests/test_roborev_retention.sh;.claude/scripts/roborev_retention.sh	run
 tests/test_roborev_merge_gate_severity.sh	tests/test_roborev_merge_gate_severity.sh;.claude/scripts/roborev_merge_gate.sh;.claude/scripts/lib/roborev_classify.py	run
 tests/test_agent_post_verify_ff.sh	tests/test_agent_post_verify_ff.sh;.claude/scripts/agent-post-verify.sh	run
+tests/test_roborev_poll_merges_excluded_check.sh	tests/test_roborev_poll_merges_excluded_check.sh;.claude/scripts/roborev_poll_merges.sh;git-hooks/lib/roborev_repo_allowed.sh	skip-ci	builds real git repos under mktemp; the Linux runner's /tmp root is treated as ephemeral by the poller (same class as test_roborev_poll_merges_ephemeral_skip.sh, JohnGavin/llm#1279); verified locally on macOS (llm#1333)
 tests/test_session_end_refine_waterfall.sh	tests/test_session_end_refine_waterfall.sh;.claude/scripts/session_end_refine.sh;git-hooks/lib/roborev_repo_allowed.sh	run
 tests/test_roborev_likely_fixed_report.sh	tests/test_roborev_likely_fixed_report.sh;bin/roborev_likely_fixed_report.sh;.claude/scripts/roborev_likely_fixed_summary.sh	run	
 tests/test_rule_budget.sh	tests/test_rule_budget.sh;.claude/scripts/check_rule_scoping.sh;.claude/scripts/rule_scoping_precommit.sh	run
@@ -84,3 +86,6 @@ tests/test_housekeeping_schema_comments.sh	tests/test_housekeeping_schema_commen
 git-hooks/test-pii-hooks.sh	git-hooks/test-pii-hooks.sh;git-hooks/pre-commit;git-hooks/pre-push;git-hooks/lib/pii_gate.sh;.claude/scripts/private_data_scan.sh	skip-ci	not yet verified on an ubuntu-latest runner (asserts the git-lfs-missing path with PATH=/usr/bin:/bin and needs a recent system git); passes 55/55 locally on macOS (llm#1365). Promote to run after one green CI run.
 tests/test_private_term_rule.sh	tests/test_private_term_rule.sh;.claude/scripts/private_data_scan.sh;git-hooks/commit-msg;git-hooks/lib/pii_gate.sh	run
 tests/test_global_hooks_path_check.sh	tests/test_global_hooks_path_check.sh;.claude/scripts/global_hooks_path_check.sh	run
+tests/test_private_terms_sync.sh	tests/test_private_terms_sync.sh;.claude/scripts/private_terms_sync.sh	run
+tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claude/scripts/wiki_health_check.sh;.claude/schema/wiki-frontmatter.schema.json	run	
+tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/hooks/lib/private_term_payload.py	run

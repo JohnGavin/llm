@@ -74,8 +74,29 @@ plan_kb_stats <- function() {
         }
 
         # --- Raw sources --------------------------------------------------------
+        # Same exclusions as .claude/scripts/wiki_health_check.sh check 4
+        # (llm#1397): drop sidecars (*.meta.yml, *.provenance), dotfiles, any
+        # path under a "_"-prefixed folder, and raw/.orphan-ignore entries
+        # ("<rel path or dir/>  # reason").
+        count_sources <- function(raw_dir) {
+          rel <- list.files(raw_dir, recursive = TRUE, all.files = TRUE)
+          rel <- rel[!grepl("(^|/)[._][^/]*", rel)]
+          rel <- rel[!grepl("\\.(meta\\.yml|provenance)$", rel)]
+          ign_file <- file.path(raw_dir, ".orphan-ignore")
+          if (file.exists(ign_file)) {
+            ign <- trimws(sub("#.*$", "", readLines(ign_file, warn = FALSE)))
+            for (e in ign[nzchar(ign)]) {
+              rel <- if (endsWith(e, "/")) {
+                rel[!startsWith(rel, e)]
+              } else {
+                rel[rel != e]
+              }
+            }
+          }
+          length(rel)
+        }
         n_sources <- if (!is.null(raw_dir) && dir.exists(raw_dir)) {
-          length(list.files(raw_dir, recursive = TRUE, all.files = FALSE))
+          count_sources(raw_dir)
         } else {
           0L
         }

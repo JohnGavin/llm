@@ -22,8 +22,19 @@
 #
 # Exit codes:
 #   0 = clean
-#   1 = warnings (stale pages, missing optional fields)
+#   1 = warnings (stale pages, orphan raw files, missing optional fields)
 #   2 = errors (missing frontmatter, missing ## Sources, fabricated quotes)
+#       or usage error (bad args, raw/.orphan-ignore entry without a reason)
+#   3 = INDETERMINATE (raw/ or wiki/ unreadable; orphan check could not run)
+#
+# Known mismatch with the 0/1/2/3 convention (checks-must-distinguish-unknown):
+# exit 2 still covers both "content errors" and "usage errors". Callers
+# (cron_catchup.sh, launchd_run_record.sh, wiki_health_onwrite.sh) treat any
+# nonzero as failure/ignore, so only 3 and the allow-list 2 were added (#1397).
+#
+# Orphan check (4): recursive over raw/, all file types; excludes sidecars
+# (*.meta.yml, *.provenance), dotfiles, "_"-prefixed folders, and entries of
+# raw/.orphan-ignore ("<rel path or dir/>  # reason"; reason mandatory).
 
 set -uo pipefail
 
@@ -321,16 +332,70 @@ for f in "$WIKI_DIR"/*.md; do
   done < <(check_wiki_links "$f")
 done
 
-# Check 4: Orphan raw files
+# Check 4: Orphan raw files (llm#1397)
+# Recurses raw/ over every source file type. Excluded: sidecars (*.meta.yml,
+# *.provenance), dotfiles (incl. the allow-list itself), any path under a
+# "_"-prefixed folder, and entries of raw/.orphan-ignore. An orphan is a raw
+# path (relative to raw/) not cited as "raw/<relative path>" in any wiki note.
 orphans=0
-for r in "$RAW_DIR"/*.md; do
-  [ -f "$r" ] || continue
-  base=$(basename "$r")
-  if ! grep -rqF "raw/$base" "$WIKI_DIR" 2>/dev/null; then
+
+# Allow-list: one entry per line, "<rel path or dir/>  # reason". The reason is
+# mandatory; an entry without one is a usage error (exit 2).
+ignore_entries=()
+IGNORE_FILE="$RAW_DIR/.orphan-ignore"
+if [ -f "$IGNORE_FILE" ]; then
+  ignore_lineno=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    ignore_lineno=$((ignore_lineno + 1))
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$trimmed" ] && continue
+    case "$trimmed" in "#"*) continue ;; esac
+    entry="${trimmed%%#*}"
+    reason=""
+    case "$trimmed" in *"#"*) reason="${trimmed#*#}" ;; esac
+    entry="${entry%"${entry##*[![:space:]]}"}"
+    if [ -z "${reason//[[:space:]]/}" ] || [ -z "$entry" ]; then
+      echo "ERROR: $IGNORE_FILE line $ignore_lineno: entry needs a '# reason' (usage error)" >&2
+      exit 2
+    fi
+    ignore_entries+=("$entry")
+  done < "$IGNORE_FILE"
+fi
+
+is_ignored() { # rel path
+  local rel="$1" e
+  for e in "${ignore_entries[@]+"${ignore_entries[@]}"}"; do
+    case "$e" in
+      */) case "$rel" in "$e"*) return 0 ;; esac ;;
+      *)  [ "$rel" = "$e" ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Unreadable raw/ or wiki/ is INDETERMINATE (exit 3), never "0 orphans".
+raw_list=$(mktemp)
+wiki_corpus=$(mktemp)
+trap 'rm -f "$raw_list" "$wiki_corpus"' EXIT
+if ! find "$RAW_DIR" -mindepth 1 -name '_*' -prune -o -type f \
+     ! -name '.*' ! -name '*.meta.yml' ! -name '*.provenance' -print > "$raw_list" 2>/dev/null; then
+  echo "INDETERMINATE: cannot fully read $RAW_DIR; orphan-raw check could not run" >&2
+  exit 3
+fi
+if ! find "$WIKI_DIR" -type f -name '*.md' -exec cat {} + > "$wiki_corpus" 2>/dev/null; then
+  echo "INDETERMINATE: cannot fully read $WIKI_DIR; orphan-raw check could not run" >&2
+  exit 3
+fi
+
+while IFS= read -r r; do
+  [ -n "$r" ] || continue
+  rel="${r#"$RAW_DIR"/}"
+  is_ignored "$rel" && continue
+  if ! grep -qF -- "raw/$rel" "$wiki_corpus"; then
     orphans=$((orphans + 1))
-    log_warn "orphan raw file: $base (not referenced in any wiki)"
+    log_warn "orphan raw file: $rel (not referenced in any wiki)"
   fi
-done
+done < "$raw_list"
 
 # Check 7: INDEX sync
 if [ -f "$WIKI_DIR/INDEX.md" ]; then

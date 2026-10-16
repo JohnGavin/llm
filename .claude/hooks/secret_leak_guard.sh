@@ -55,7 +55,12 @@ export CRED_PATTERNS_LIB_DIR="${BASH_SOURCE[0]%/*}/lib"
 # entry itself (with Rule-4-shaped literals redacted), and exits 2 to BLOCK
 # or 0 to ALLOW. ANY internal error is swallowed and treated as ALLOW
 # (fail-open) — a broken guard must never wedge the session.
-PY_CODE=$(cat <<'PYEOF'
+#
+# llm#1440: NOT `PY_CODE=$(cat <<'PYEOF' ... )` -- macOS /bin/bash 3.2 cannot
+# parse a heredoc inside $(...) whose body has unbalanced quotes/parens. A
+# bare `read` heredoc parses everywhere; IFS= keeps leading/trailing space,
+# `|| true` absorbs read's non-zero status at EOF (set -e / pipefail safe).
+IFS= read -r -d '' PY_CODE <<'PYEOF' || true
 import sys, json, re, os, datetime, subprocess, shlex, math
 
 # CRED_PATTERNS (Rule 4, reused verbatim by Rule 5 against --body-file
@@ -557,7 +562,7 @@ except Exception:
     pass  # fail-open: any unhandled internal error allows the command
 sys.exit(0)
 PYEOF
-)
+PY_CODE=${PY_CODE%$'\n'}   # match the trailing-newline strip $(...) used to do
 
 # ─── run_guard <raw_stdin_json> ──────────────────────────────────────────────
 # Pure-bash substring fast-path first (no subprocess for the common case),
