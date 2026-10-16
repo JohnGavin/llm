@@ -25,6 +25,7 @@
 # glob and are not audited here).
 test	globs	status	reason
 tests/test_agentsview_quality_baseline.sh	tests/test_agentsview_quality_baseline.sh;.claude/scripts/agentsview_quality_baseline.sh	run
+tests/test_bash32_parse.sh	tests/test_bash32_parse.sh;.claude/hooks/*.sh;.claude/scripts/*.sh	run
 tests/test_bws_ground_truth_verify.sh	tests/test_bws_ground_truth_verify.sh;.claude/scripts/lib/secret_ground_truth.sh	run
 tests/test_bye_sentinel_ownership.sh	tests/test_bye_sentinel_ownership.sh;.claude/hooks/llmtelemetry_emit.sh;.claude/hooks/session_stop.sh;.claude/scripts/sentinel_log_sweep.sh	run
 tests/test_signal_dash_filename.sh	tests/test_signal_dash_filename.sh;.claude/scripts/lib_signal_process_guard.sh;.claude/scripts/signal_braindump_handler.sh;.claude/scripts/signal_notes_sync.sh	run
