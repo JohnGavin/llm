@@ -82,6 +82,33 @@ MIN_NAME_LEN="${PRIVATE_DETAIL_MIN_NAME_LEN:-6}"
 LOG_DIR="${PRIVATE_DETAIL_LOG_DIR:-$HOME/.claude/logs}"
 LOG="$LOG_DIR/private_repo_detail_guard.log"
 BODY_FILE_READ_CAP=262144   # 256 KiB, same cap secret_leak_guard.sh uses
+# llm#1213: common English words never used as a BARE discovered-name scan
+# term (paths and declared entries are unaffected). One word per line, '#'
+# comments. A missing file means an empty stoplist, i.e. stricter, not looser.
+STOPLIST_FILE="${PRIVATE_DETAIL_STOPLIST_FILE:-$SCRIPT_DIR/../scripts/private_name_stoplist.txt}"
+# llm#1348: on an INDETERMINATE (stale/unseeded) candidate list, start ONE
+# detached background refresh (at most once per KICK_MIN_SECS) and block with
+# a retry message. The hook itself never waits for the refresh.
+KICK_MARKER="$LOG_DIR/private_repo_detail_guard.refresh_kick.epoch"
+KICK_MIN_SECS="${PRIVATE_DETAIL_REFRESH_KICK_MIN_SECS:-600}"
+
+# Prints "started" if a background refresh was launched, "recent" if one was
+# launched within KICK_MIN_SECS, "disabled" if kicking is switched off.
+_kick_refresh() {
+  [ "${PRIVATE_DETAIL_NO_REFRESH_KICK:-}" != "1" ] || { printf 'disabled'; return; }
+  local now last
+  now="$(date +%s)"
+  last="$(cat "$KICK_MARKER" 2>/dev/null || echo 0)"
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $(( now - last )) -lt "$KICK_MIN_SECS" ]; then
+    printf 'recent'
+    return
+  fi
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  printf '%s' "$now" > "$KICK_MARKER" 2>/dev/null || true
+  ( nohup bash "$REPO_VISIBILITY_SCRIPT" candidates --refresh >/dev/null 2>>"$LOG" </dev/null & ) >/dev/null 2>&1
+  printf 'started'
+}
 
 _log() {
   mkdir -p "$LOG_DIR" 2>/dev/null || true
@@ -189,8 +216,16 @@ print((d.get("tool_input") or {}).get("command") or d.get("command") or "")' 2>/
     # existed to catch (llm#1183 fix 2). An unknown result must never read
     # as safe to publish, so this blocks the publish verb rather than
     # letting it through unscanned.
-    _log "BLOCK target=$target target_vis=$target_vis reason=indeterminate-candidates cmd=${cmd:0:200}"
+    local kick
+    kick="$(_kick_refresh)"
+    _log "BLOCK target=$target target_vis=$target_vis reason=indeterminate-candidates refresh=$kick cmd=${cmd:0:200}"
     {
+      case "$kick" in
+        started) echo "A background refresh of the list has just been started"
+                 echo "(takes a few minutes); retry this command then." ;;
+        recent)  echo "A background refresh was started in the last $KICK_MIN_SECS s;"
+                 echo "retry once it finishes (check: tail $LOG)." ;;
+      esac
       echo "BLOCKED (private_repo_detail_guard): the private-repo candidate"
       echo "list could not be established (never seeded, stale, or"
       echo "unreadable — repo_visibility.sh exited INDETERMINATE). This"
@@ -217,7 +252,10 @@ $body_content"
     fi
   fi
 
-  local name path vis home_form matched_term="" is_declared line rest
+  local name path vis home_form matched_term="" is_declared line rest lname stop_words=" "
+  if [ -f "$STOPLIST_FILE" ]; then
+    stop_words=" $(grep -v '^[[:space:]]*#' "$STOPLIST_FILE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ') "
+  fi
   # Split each TSV row by hand rather than with `IFS=$'\t' read -r name path vis`.
   # TAB is an IFS *whitespace* character, so bash collapses a run of tabs into a
   # single delimiter: on a declared row (`name<TAB><TAB>vis`, empty path) that
@@ -256,7 +294,13 @@ $body_content"
     if [ -z "$path" ] && [ "$vis" = "confidential_by_policy" ]; then
       is_declared=1
     fi
-    if [ "$is_declared" -eq 1 ] || [ "${#name}" -ge "$MIN_NAME_LEN" ]; then
+    # llm#1213: a DISCOVERED bare name that is an ordinary English word (on the
+    # stoplist) is not a scan term; its PATH still is. DECLARED names are never
+    # stoplisted -- a human wrote them down on purpose.
+    lname="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+    if [ "$is_declared" -eq 0 ] && [[ "$stop_words" == *" $lname "* ]]; then
+      _log "SKIP-NAME stoplisted-common-word"
+    elif [ "$is_declared" -eq 1 ] || [ "${#name}" -ge "$MIN_NAME_LEN" ]; then
       # -w (whole-word) alongside -F (fixed-string): a bare -F substring
       # match let a private repo whose name was a short common-word stem
       # false-positive when that stem appeared inside a longer, unrelated
@@ -312,6 +356,7 @@ $body_content"
 if [ "${1:-}" = "--selftest" ]; then
   TMP_DIR="$(mktemp -d /tmp/private_repo_detail_guard_selftest_XXXXXX)"
   export PRIVATE_DETAIL_LOG_DIR="$TMP_DIR/logs"
+  export PRIVATE_DETAIL_NO_REFRESH_KICK=1   # selftest must never start a real refresh
   export REPO_VISIBILITY_CACHE_FILE="$TMP_DIR/rv_cache.tsv"
   export REPO_VISIBILITY_CANDIDATES_FILE="$TMP_DIR/rv_candidates.tsv"
   export REPO_VISIBILITY_CONFIDENTIAL_LIST="$TMP_DIR/rv_confidential.txt"

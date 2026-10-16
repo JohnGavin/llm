@@ -88,5 +88,6 @@ tests/test_private_term_rule.sh	tests/test_private_term_rule.sh;.claude/scripts/
 tests/test_global_hooks_path_check.sh	tests/test_global_hooks_path_check.sh;.claude/scripts/global_hooks_path_check.sh	run
 tests/test_private_terms_sync.sh	tests/test_private_terms_sync.sh;.claude/scripts/private_terms_sync.sh	run
 tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claude/scripts/wiki_health_check.sh;.claude/schema/wiki-frontmatter.schema.json	run	
+tests/test_private_repo_detail_guard_refresh_stoplist.sh	tests/test_private_repo_detail_guard_refresh_stoplist.sh;.claude/hooks/private_repo_detail_guard.sh;.claude/scripts/private_name_stoplist.txt;.claude/scripts/repo_visibility_diff.sh	run
 tests/test_roborev_severity_autoclose_bashver.sh	tests/test_roborev_severity_autoclose_bashver.sh;.claude/scripts/roborev_severity_autoclose.sh	run	
 tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/hooks/lib/private_term_payload.py	run
