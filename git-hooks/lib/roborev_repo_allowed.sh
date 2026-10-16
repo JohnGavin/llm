@@ -17,11 +17,14 @@
 #
 # A repo is BLOCKED when any of these hold:
 #   marker   the repo top level (or its main worktree) has .roborev-disable or PRIVATE
-#   noremote the repo has no git remote at all (local-only repo)
 #   private-root  its real path is under a root listed in the private-roots file
 #   not-allowlisted  (opt-in strict mode only) not under a root in the allow-list
+#   noremote (opt-in only, ROBOREV_BLOCK_NOREMOTE=1) the repo has no git remote
+#            at all. Default OFF since llm#1442: local-only repos ARE reviewed
+#            (owner decision 2026-10-16). Use a marker to exclude one repo.
 #
 # Config (all LOCAL; never commit their contents):
+#   ROBOREV_BLOCK_NOREMOTE=1    opt-in: block repos with no remote (default OFF)
 #   ROBOREV_PRIVATE_ROOTS_FILE  default ~/.config/roborev-private-roots
 #                               one absolute path per line; '#' comments ok
 #   ROBOREV_ALLOWLIST_MODE=1    opt-in fail-closed mode (default OFF)
@@ -70,9 +73,12 @@ roborev_repo_allowed() {
         fi
     done
 
-    # No remote at all -> local-only repo.
+    # Remote check. Always run `git remote` so a git failure stays
+    # indeterminate (exit 3) even when the block is off. A repo with no remote
+    # (local-only) is reviewed by default (llm#1442); blocking it is opt-in via
+    # ROBOREV_BLOCK_NOREMOTE=1.
     _rra_remotes=$(git -C "$_rra_top" remote 2>/dev/null) || return 3
-    if [ -z "$_rra_remotes" ]; then
+    if [ "${ROBOREV_BLOCK_NOREMOTE:-0}" = "1" ] && [ -z "$_rra_remotes" ]; then
         echo noremote
         return 1
     fi

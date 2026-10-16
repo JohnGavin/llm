@@ -200,7 +200,7 @@ for line in "${REPOS[@]}"; do
     continue
   fi
 
-  # Opt-out guard (llm#1296): marker / no-remote / private-root / indeterminate.
+  # Opt-out guard (llm#1296): marker / private-root / indeterminate (no-remote only if opted in).
   # Count only -- never log the repo name of a blocked (possibly private) repo.
   if ! roborev_repo_allowed "$root_path" >/dev/null; then
     skipped=$((skipped + 1))

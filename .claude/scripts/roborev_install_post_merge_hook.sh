@@ -293,7 +293,7 @@ if [ \"\$ORIG_HEAD\" = \"\$CURRENT_HEAD\" ]; then
   exit 0  # merge was a no-op (already up to date)
 fi
 
-# Per-repo opt-out (llm#1296): marker / no-remote / private-root => no review.
+# Per-repo opt-out (llm#1296): marker / private-root => no review.
 # Fail closed if the shared guard is missing.
 RRA_LIB=\"\${HOME}/docs_gh/llm/git-hooks/lib/roborev_repo_allowed.sh\"
 [ -r \"\$RRA_LIB\" ] || exit 0

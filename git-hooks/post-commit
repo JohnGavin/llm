@@ -26,8 +26,8 @@ if [ -z "${ROBOREV_ALLOW_TMP_REPOS:-}" ]; then
             ;;
     esac
 fi
-# Per-repo opt-out (llm#1296): marker file, no remote, or a locally configured
-# private root => never queue a review. Fail CLOSED: if the shared guard is
+# Per-repo opt-out (llm#1296): marker file, or a locally configured
+# private root (no remote only if ROBOREV_BLOCK_NOREMOTE=1, llm#1442) => never queue a review. Fail CLOSED: if the shared guard is
 # missing or cannot decide, do not queue.
 _lib="$(dirname "$0")/lib/roborev_repo_allowed.sh"
 [ -r "$_lib" ] || return 0
