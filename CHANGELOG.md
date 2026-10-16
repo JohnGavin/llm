@@ -13,7 +13,7 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - **solwatch:** Weekly Pipeline disabled; [solwatch#27](https://github.com/JohnGavin/solwatch/issues/27) tracks why it runs 45 min and fails.
 - **irishbuoys:** [#107](https://github.com/JohnGavin/irishbuoys/pull/107) merged on the owner's "merge": Data Update cron every 2nd day.
 - **tlang:** CI-trigger review filed as [llm#1437](https://github.com/JohnGavin/llm/issues/1437) (tlang has issues disabled).
-- **premortem (private, local):** issues 0076 (cheapest funds per asset class) and 0077 (find Zurich product charges) written.
+- **premortem (private, local):** two issues written (details kept in that project).
 
 ### Failed Approaches
 
