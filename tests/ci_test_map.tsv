@@ -84,6 +84,8 @@ tests/test_rule_budget.sh	tests/test_rule_budget.sh;.claude/scripts/check_rule_s
 tests/test_config_banner_symlinks.sh	tests/test_config_banner_symlinks.sh;.claude/scripts/lib/config_wiring_status.sh;.claude/hooks/session_init.sh	run
 tests/test_housekeeping_schema_comments.sh	tests/test_housekeeping_schema_comments.sh;.claude/scripts/housekeeping_schema_init.sql	skip-ci	needs the duckdb CLI (COMMENT ON, duckdb_tables/duckdb_columns), which the ubuntu-latest shell-tests runner does not provide (not verified there); the test exits 3 (INDETERMINATE), not 0, when duckdb is absent. Run locally via nix-shell (7 assertions)
 git-hooks/test-pii-hooks.sh	git-hooks/test-pii-hooks.sh;git-hooks/pre-commit;git-hooks/pre-push;git-hooks/lib/pii_gate.sh;.claude/scripts/private_data_scan.sh	skip-ci	not yet verified on an ubuntu-latest runner (asserts the git-lfs-missing path with PATH=/usr/bin:/bin and needs a recent system git); passes 55/55 locally on macOS (llm#1365). Promote to run after one green CI run.
+tests/test_private_term_rule.sh	tests/test_private_term_rule.sh;.claude/scripts/private_data_scan.sh;git-hooks/commit-msg;git-hooks/lib/pii_gate.sh	run
+tests/test_global_hooks_path_check.sh	tests/test_global_hooks_path_check.sh;.claude/scripts/global_hooks_path_check.sh	run
 tests/test_private_terms_sync.sh	tests/test_private_terms_sync.sh;.claude/scripts/private_terms_sync.sh	run
 tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claude/scripts/wiki_health_check.sh;.claude/schema/wiki-frontmatter.schema.json	run	
 tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/hooks/lib/private_term_payload.py	run

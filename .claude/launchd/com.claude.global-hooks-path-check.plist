@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- com.claude.global-hooks-path-check.plist (llm#1388, privacy gate)
+         Daily read-only check that every local clone of a PUBLIC GitHub repo
+         resolves core.hooksPath to the global git-hooks directory. A clone
+         with its own core.hooksPath (or none) skips the PII gate silently;
+         this reports it. Exit 0 all good, 1 a clone bypasses the global
+         hooks, 3 INDETERMINATE (a visibility lookup failed; never a silent
+         pass). Changes nothing.
+
+         Slot: pre-dawn detector window (00:00-04:00), 03:55 - after the
+         03:50 repo-visibility-diff, before the 06:30 digest email.
+
+         Uses the bin/launchd-recorders/global-hooks-path-check named-launcher
+         wrapper (llm#1121) so macOS Background Task Management shows
+         "global-hooks-path-check" instead of generic "bash".
+
+         THIS PLIST IS DELIVERED, NOT INSTALLED. Install / reload:
+           launchctl bootout gui/$(id -u)/com.claude.global-hooks-path-check 2>/dev/null
+           cp .claude/launchd/com.claude.global-hooks-path-check.plist \
+              ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) \
+              ~/Library/LaunchAgents/com.claude.global-hooks-path-check.plist
+    -->
+
+    <key>Label</key>
+    <string>com.claude.global-hooks-path-check</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/global-hooks-path-check</string>
+    </array>
+
+    <!-- HOME is set so gh reads ~/.config/gh for auth and git finds the
+         global config holding core.hooksPath. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <!-- Daily 03:55 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>55</integer>
+    </dict>
+
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/global_hooks_path_check.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/global_hooks_path_check.err</string>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- Do NOT run on load - only on the schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+</dict>
+</plist>
