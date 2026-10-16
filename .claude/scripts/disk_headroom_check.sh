@@ -11,7 +11,14 @@
 #   disk_headroom_check.sh --sample
 #   disk_headroom_check.sh --check [--min-free-gib N]     (default N=40)
 #   disk_headroom_check.sh --report
+#   disk_headroom_check.sh --clones     (llm#1406: Chrome code-sign clones and
+#                                        nix-shell-*/Rtmp* temp dirs; counts and
+#                                        sizes only, deletes nothing; exit 3 when
+#                                        no temp root can be read)
 #   disk_headroom_check.sh --selftest
+# --check also prints one "clones: N ..." line when clones exist.
+# DISK_HEADROOM_CLONE_ROOTS / DISK_HEADROOM_CHROME_APP override the scanned
+# roots and the installed Chrome app (used by tests/test_chrome_headless_and_clones.sh).
 #
 # Exit codes (exit-code-conventions): 0 ok, 1 problem (low space), 2 usage,
 # 3 INDETERMINATE (df unparseable / volume missing / too few samples).
@@ -50,7 +57,7 @@ SELF="${BASH_SOURCE[0]}"
 
 usage() {
     cat >&2 <<'EOF'
-usage: disk_headroom_check.sh --sample | --check [--min-free-gib N] | --report | --selftest
+usage: disk_headroom_check.sh --sample | --check [--min-free-gib N] | --report | --clones | --selftest
 EOF
 }
 
@@ -200,9 +207,119 @@ do_check() {
     free_gib=$((avail_kb / 1048576))
     if [ "$avail_kb" -lt $((min * 1048576)) ]; then
         echo "disk:LOW free=${free_gib} GiB (< ${min}): thin snapshots with: sudo tmutil thinlocalsnapshots / 30000000000 4"
+        clones_summary_line
         return 1
     fi
     echo "disk:ok free=${free_gib} GiB"
+    clones_summary_line
+    return 0
+}
+
+# --- Chrome code-sign clones and test temp dirs (llm#1406), read-only ---------
+# Prints sizes and counts only; deletes nothing. Roots default to the per-user
+# cache "X" area and temp "T" area under /private/var/folders; override with
+# DISK_HEADROOM_CLONE_ROOTS (colon-separated) for fixtures.
+clone_roots() {
+    local c t
+    if [ -n "${DISK_HEADROOM_CLONE_ROOTS:-}" ]; then
+        printf '%s\n' "$DISK_HEADROOM_CLONE_ROOTS" | tr ':' '\n'
+        return 0
+    fi
+    c="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null)" || c=""
+    t="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)" || t=""
+    [ -n "$c" ] && printf '%s\n' "${c%/}/../X"
+    [ -n "$t" ] && printf '%s\n' "${t%/}"
+    return 0
+}
+
+# Prints the Chrome version directories (names) inside one clone dir.
+clone_versions() {
+    local d="$1" v
+    for v in "$d"/*/Contents/Frameworks/*Framework.framework/Versions/*; do
+        [ -d "$v" ] || continue
+        [ -L "$v" ] && continue
+        basename "$v"
+    done
+}
+
+# Prints the installed Chrome version (or nothing).
+installed_chrome_version() {
+    local app="${DISK_HEADROOM_CHROME_APP:-/Applications/Google Chrome.app}" cur
+    cur="$app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current"
+    [ -L "$cur" ] && readlink "$cur"
+    return 0
+}
+
+# One-line summary for --check: prints only when clones exist.
+clones_summary_line() {
+    local root d n=0
+    while IFS= read -r root; do
+        [ -d "$root/com.google.Chrome.code_sign_clone" ] || continue
+        for d in "$root"/com.google.Chrome.code_sign_clone/code_sign_clone.*; do
+            [ -d "$d" ] && n=$((n + 1))
+        done
+    done <<EOF
+$(clone_roots)
+EOF
+    [ "$n" -gt 0 ] && echo "clones: $n Chrome code-sign clone folders (run --clones for versions; du over-counts, they are APFS clones)"
+    return 0
+}
+
+do_clones() {
+    local root measured=0 n=0 d v vers="" inst stale=0 line cnt ver tag
+    local tmpl="" top="" sz name e
+    inst="$(installed_chrome_version)"
+    while IFS= read -r root; do
+        [ -n "$root" ] || continue
+        [ -d "$root" ] || continue
+        [ -r "$root" ] || continue
+        measured=$((measured + 1))
+        if [ -d "$root/com.google.Chrome.code_sign_clone" ]; then
+            for d in "$root"/com.google.Chrome.code_sign_clone/code_sign_clone.*; do
+                [ -d "$d" ] || continue
+                n=$((n + 1))
+                v="$(clone_versions "$d" | head -n 1)"
+                vers="${vers}${v:-unknown}
+"
+            done
+        fi
+        for e in "$root"/nix-shell-* "$root"/Rtmp*; do
+            [ -d "$e" ] || continue
+            sz="$(du -sk "$e" 2>/dev/null | awk '{print $1}')"
+            name="$(basename "$e")"
+            case "$sz" in ''|*[!0-9]*) continue ;; esac
+            top="${top}${sz} ${name}
+"
+        done
+    done <<EOF
+$(clone_roots)
+EOF
+    if [ "$measured" -eq 0 ]; then
+        echo "clones:INDETERMINATE no readable temp root to measure (not reporting 0 clones)"
+        return 3
+    fi
+    local nver=0
+    if [ "$n" -gt 0 ]; then
+        nver="$(printf '%s' "$vers" | sort -u | grep -c .)"
+    fi
+    echo "clones: $n Chrome code-sign clone folders, $nver versions (installed: ${inst:-unknown})"
+    if [ "$n" -gt 0 ]; then
+        printf '%s' "$vers" | sort | uniq -c | sort -rn | while read -r cnt ver; do
+            if [ -n "$inst" ] && [ "$ver" = "$inst" ]; then tag="installed"
+            elif [ -z "$inst" ] || [ "$ver" = "unknown" ]; then tag="installed version unknown"
+            else tag="stale (not installed; no block sharing, up to ~2 GB each)"
+            fi
+            echo "  $cnt $ver  $tag"
+        done
+        echo "note: du over-counts clones (APFS shares blocks with the installed app); measure real cost as df free space before/after the user removes them. This check deletes nothing."
+        echo "fix (user action, Chrome closed): quit Chrome fully (Cmd-Q); if folders remain, remove com.google.Chrome.code_sign_clone yourself."
+    fi
+    echo "largest nix-shell-*/Rtmp* temp dirs (KiB, du -sk):"
+    if [ -n "$top" ]; then
+        printf '%s' "$top" | sort -rn | head -n 5 | sed 's/^/  /'
+    else
+        echo "  none"
+    fi
     return 0
 }
 
@@ -281,7 +398,7 @@ EOF
     printf 'bbbbbbbb' > "$tmp/b.db"
 
     run() { # run <args...>; sets rc and out; env passed via caller
-        out="$(PATH="$shim:$PATH" DISK_HEADROOM_LOG_DIR="${LOGD:-$tmp/logs}" OSA_LOG="$tmp/osa.log" \
+        out="$(PATH="$shim:$PATH" DISK_HEADROOM_LOG_DIR="${LOGD:-$tmp/logs}" OSA_LOG="$tmp/osa.log" DISK_HEADROOM_CLONE_ROOTS="$tmp/no-clone-roots" \
             DISK_HEADROOM_FILES="$tmp/a.db:$tmp/b.db:$tmp/missing.db" \
             bash "$SELF" "$@" 2>&1)"
         rc=$?
@@ -429,6 +546,7 @@ main() {
         --sample)   shift; [ $# -eq 0 ] || { usage; return 2; }; do_sample ;;
         --check)    shift; do_check "$@" ;;
         --report)   shift; [ $# -eq 0 ] || { usage; return 2; }; do_report ;;
+        --clones)   shift; [ $# -eq 0 ] || { usage; return 2; }; do_clones ;;
         --selftest) shift; [ $# -eq 0 ] || { usage; return 2; }; do_selftest ;;
         *)          usage; return 2 ;;
     esac

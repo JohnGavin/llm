@@ -67,6 +67,24 @@ page.on("pageerror", (err) => consoleErrors.push(err.message));
 await browser.close();
 ```
 
+**One-shot screenshots / DOM dumps: never launch the full Chrome app headlessly.**
+`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new ...`
+makes a ~2 GB APFS code-sign clone per launch that is leaked whenever the
+launch is killed (Bash timeout, hung `--virtual-time-budget`;
+JohnGavin/llm#1414). Use the wrapper, which runs `chrome-headless-shell` with a
+throwaway profile and a TERM-then-KILL timeout, and exits 3 (never falls back to
+the full app) when the shell binary is not installed:
+
+```bash
+.claude/scripts/headless_chrome.sh --timeout 60 --screenshot=/tmp/p.png --window-size=1280,800 https://example.github.io/package/
+```
+
+For `puppeteer-core` scripts, point `executablePath` at the
+`chrome-headless-shell` binary under `~/.cache/puppeteer/chrome-headless-shell/`
+instead of the system Chrome path above when you only need rendering. The
+`clones:` line from `.claude/scripts/disk_headroom_check.sh --clones` shows
+whether clones have already piled up (JohnGavin/llm#1406).
+
 This is the same "load → interact → observe" discipline the rest of this
 skill describes for the Claude-in-Chrome MCP path — the only difference is
 which tool drives the browser. Prefer the MCP path when it is connected
