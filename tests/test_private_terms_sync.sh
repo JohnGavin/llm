@@ -28,7 +28,12 @@ export PRIVATE_TERMS_EXTRA_DIRS_FILE="$WORK/none_dirs"
 export PRIVATE_TOPICS_FILE="$WORK/none_topics"
 export PRIVATE_PATHS_FILE="$WORK/none_paths"
 export STUB_GH_JSON="$WORK/repos.json"
-unset PRIVATE_TERMS_MIN STUB_GH_FAIL
+export CANDS="$WORK/cands.tsv"
+: > "$CANDS"
+export PRIVATE_TERMS_CANDIDATES_CMD='cat "$CANDS"'
+export PRIVATE_DETAIL_STOPLIST_FILE="$WORK/stoplist.txt"
+printf '# synthetic\ncommonwordzz\n' > "$PRIVATE_DETAIL_STOPLIST_FILE"
+unset PRIVATE_TERMS_MIN STUB_GH_FAIL PRIVATE_TERMS_NOISE_REPO
 
 fail=0
 check() { # label expected actual
@@ -177,5 +182,87 @@ jobs_assertions "mutant:" "$WORK/nojobs.sh" > "$WORK/mutant.out"
 mutant_red=$fail
 fail=$saved_fail
 check "falsification: script without jobs in STOPLIST goes red" 1 "$mutant_red"
+
+# 10. source b2: candidates-derived terms (llm#1382) ---------------------------
+export PRIVATE_TERMS_FILE="$WORK/cfg10/private_terms.txt"
+export PRIVATE_ALIASES_FILE="$WORK/cfg10/private_aliases.tsv"
+mkjson "${FULL[@]}"
+TAB=$(printf '\t')
+{
+  printf 'zzfakelocal%s/x/zzfakelocal%slocal_only\n' "$TAB" "$TAB"
+  printf 'ZZFakePolicy%s/x/p%sconfidential_by_policy\n' "$TAB" "$TAB"
+  printf 'zzfakepriv%s/x/q%sprivate\n' "$TAB" "$TAB"
+  printf 'zzabc%s/x/r%slocal_only\n' "$TAB" "$TAB"
+  printf 'commonwordzz%s/x/s%slocal_only\n' "$TAB" "$TAB"
+} > "$CANDS"
+b2_assertions() { # label script
+  local label=$1 script=$2
+  rm -rf "$WORK/cfg10"
+  run "$script"
+  check "$label rc" 0 "$rc"
+  check "$label local_only present" 1 "$(grep -cx 'zzfakelocal' "$PRIVATE_TERMS_FILE")"
+  check "$label confidential_by_policy present (lowercased)" 1 "$(grep -cx 'zzfakepolicy' "$PRIVATE_TERMS_FILE")"
+  check "$label private row not added by b2" 0 "$(grep -cx 'zzfakepriv' "$PRIVATE_TERMS_FILE")"
+  check "$label short name dropped" 0 "$(grep -cx 'zzabc' "$PRIVATE_TERMS_FILE")"
+  check "$label stoplisted name dropped" 0 "$(grep -cx 'commonwordzz' "$PRIVATE_TERMS_FILE")"
+}
+b2_assertions "b2:" "$SCRIPT"
+check "b2 count line" 1 "$(grep -cx 'source b2 (candidates): 2' "$WORK/out")"
+check "b2 no leak in stdout" 0 "$(no_leak "$WORK/out" zzfakelocal zzfakepolicy)"
+check "b2 no leak in stderr" 0 "$(no_leak "$WORK/err" zzfakelocal zzfakepolicy)"
+
+# 10b. the hand-kept dirs file still works alongside b2
+mkdir -p "$WORK/roots/dirroot/subtwo"
+printf '%s\n' "$WORK/roots/dirroot" > "$PRIVATE_TERMS_EXTRA_DIRS_FILE"
+rm -rf "$WORK/cfg10"
+run "$SCRIPT"
+check "dirs+b2 rc" 0 "$rc"
+check "dirs term present" 1 "$(grep -cx 'dirroot' "$PRIVATE_TERMS_FILE")"
+check "b2 term still present" 1 "$(grep -cx 'zzfakelocal' "$PRIVATE_TERMS_FILE")"
+check "no missing-dirs warning when file exists" 0 "$(grep -c 'extra-dirs' "$WORK/err")"
+rm -f "$PRIVATE_TERMS_EXTRA_DIRS_FILE"
+
+# 10c. missing dirs file but candidates yield terms: no warning
+rm -rf "$WORK/cfg10"
+run "$SCRIPT"
+check "missing dirs + candidates: no warning" 0 "$(grep -c 'extra-dirs' "$WORK/err")"
+
+# 10d. missing dirs AND empty candidates: warning, exit stays 0
+: > "$CANDS"
+rm -rf "$WORK/cfg10"
+run "$SCRIPT"
+check "missing dirs + empty candidates rc" 0 "$rc"
+check "missing dirs + empty candidates warns" 1 "$(grep -c 'extra-dirs file missing and candidates yielded no terms' "$WORK/err")"
+
+# 10e. failing candidates call is INDETERMINATE: exit 3, old files kept
+printf 'zzfakelocal%s/x/a%slocal_only\n' "$TAB" "$TAB" > "$CANDS"
+rm -rf "$WORK/cfg10"
+run "$SCRIPT"
+check "pre-fail write rc" 0 "$rc"
+cp "$PRIVATE_TERMS_FILE" "$WORK/terms10.before"
+PRIVATE_TERMS_CANDIDATES_CMD='exit 3' run "$SCRIPT"
+check "failed candidates rc" 3 "$rc"
+check "failed candidates keeps old terms" 0 "$(cmp -s "$WORK/terms10.before" "$PRIVATE_TERMS_FILE"; echo $?)"
+PRIVATE_TERMS_CANDIDATES_CMD='nonexistent_cmd_zz' run "$SCRIPT"
+check "missing candidates command rc" 3 "$rc"
+
+# 10f. noise reporting: warning only, never an exclusion
+mkdir -p "$WORK/nrepo"
+git -C "$WORK/nrepo" init -q
+for i in 1 2 3; do printf 'zzfakelocal and ZZFAKELOCAL_x\n' > "$WORK/nrepo/f$i.txt"; done
+printf 'zzfakelocalish xzzfakelocal\n' > "$WORK/nrepo/g.txt"
+git -C "$WORK/nrepo" add .
+{ printf 'zzfakelocal%s/x/a%slocal_only\n' "$TAB" "$TAB"; printf 'zzfakepolicy%s/x/b%slocal_only\n' "$TAB" "$TAB"; } > "$CANDS"
+run "$SCRIPT" --noise-report "$WORK/nrepo"
+check "noise-report rc" 0 "$rc"
+check "noise-report distribution (boundary-aware)" 1 "$(grep -cx 'match 0 files: 1; 1-5 files: 1; >5 files: 0; max files for one term: 3' "$WORK/out")"
+PRIVATE_TERMS_NOISE_MAX=2 run "$SCRIPT" --noise-report "$WORK/nrepo"
+check "noise threshold counts the noisy term" 1 "$(grep -c 'noise threshold (2 files): 1' "$WORK/out")"
+rm -rf "$WORK/cfg10"
+PRIVATE_TERMS_NOISE_MAX=2 PRIVATE_TERMS_NOISE_REPO="$WORK/nrepo" run "$SCRIPT"
+check "noisy sync still exits 0" 0 "$rc"
+check "noisy count line" 1 "$(grep -cx 'source b noisy: 1' "$WORK/out")"
+check "noisy term kept (warning, not exclusion)" 1 "$(grep -cx 'zzfakelocal' "$PRIVATE_TERMS_FILE")"
+check "noisy warning on stderr" 1 "$(grep -c 'kept, not excluded' "$WORK/err")"
 
 if [ "$fail" = 0 ]; then echo "ALL PASS"; exit 0; else echo "SOME FAILED"; exit 1; fi
