@@ -1497,6 +1497,9 @@ run_selftest() {
     git -C "$tmp/repo" init -q
     git -C "$tmp/repo" config user.email t@example.com
     git -C "$tmp/repo" config user.name t
+    # Isolate from the operator's global core.hooksPath: the live pre-commit
+    # gate would otherwise block the fixtures' deliberate-leak commits.
+    git -C "$tmp/repo" config core.hooksPath /dev/null
     git -C "$tmp/repo" -c diff.external="" config diff.external ""
 
     printf 'initial\n' > "$tmp/repo/README.txt"
@@ -1996,6 +1999,7 @@ run_selftest() {
     git -C "$rr" init -q
     git -C "$rr" config user.email t@example.com
     git -C "$rr" config user.name t
+    git -C "$rr" config core.hooksPath /dev/null
     printf 'value %s here\n' "$r_sent" > "$rr/rootfile.txt"
     git -C "$rr" add rootfile.txt
     git -C "$rr" commit -q -m "root adds a file"
@@ -2152,6 +2156,7 @@ run_selftest() {
     git -C "$er" init -q
     git -C "$er" config user.email t@example.com
     git -C "$er" config user.name t
+    git -C "$er" config core.hooksPath /dev/null
     cp "$pdf2" "$er/docs/ok.pdf"
     git -C "$er" add docs/ok.pdf
     git -C "$er" commit -q -m "add a document"
@@ -2293,6 +2298,7 @@ run_selftest() {
     git -C "$pr" init -q
     git -C "$pr" config user.email t@example.com
     git -C "$pr" config user.name t
+    git -C "$pr" config core.hooksPath /dev/null
     printf 'clean\n' > "$pr/README.txt"
     git -C "$pr" add README.txt
     git -C "$pr" commit -q -m "base"
