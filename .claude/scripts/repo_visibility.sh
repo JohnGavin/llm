@@ -103,6 +103,8 @@ set -uo pipefail
 # checkout's copy even under worktree-isolated testing. Same rationale as
 # CRED_PATTERNS_LIB_DIR in secret_leak_guard.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../hooks/lib/run_bounded.sh
+. "$SCRIPT_DIR/../hooks/lib/run_bounded.sh"
 
 # All config derives from env vars via a function, not one-shot top-level
 # assignment, so that a caller (including the self-test below) can `export`
@@ -265,8 +267,11 @@ _owner_repo_from_remote() {
 _gh_visibility() {
   # $1 = owner/repo. Prints public|private|unknown.
   local ownerrepo="$1" vis rc
-  vis="$(timeout "$GH_TIMEOUT" gh repo view "$ownerrepo" --json visibility -q '.visibility' 2>/dev/null)"
+  vis="$(run_bounded "$GH_TIMEOUT" gh repo view "$ownerrepo" --json visibility -q '.visibility' 2>/dev/null)"
   rc=$?
+  if [ $rc -eq 125 ]; then
+    echo "repo_visibility: no timeout, gtimeout or perl found; gh lookup skipped, result is unknown (INDETERMINATE)" >&2
+  fi
   if [ $rc -ne 0 ] || [ -z "$vis" ]; then
     printf 'unknown'
     return
