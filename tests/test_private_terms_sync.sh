@@ -146,4 +146,36 @@ check "bad-category topic skipped" 0 "$(grep -cx 'badcatterm' "$PRIVATE_TERMS_FI
 check "no leak (sources) in stdout" 0 "$(no_leak "$WORK/out" localroot subone betatopic pathslug badcatterm)"
 check "no leak (sources) in stderr" 0 "$(no_leak "$WORK/err" localroot subone betatopic pathslug badcatterm)"
 
+# 9. a stoplisted ordinary word that is also a private repo name is dropped -----
+# Synthetic: one private repo literally named "jobs" plus 12 fake names.
+rm -f "$PRIVATE_TERMS_EXTRA_DIRS_FILE" "$PRIVATE_TOPICS_FILE" "$PRIVATE_PATHS_FILE"  # section 8 wrote them
+export PRIVATE_TERMS_FILE="$WORK/cfg9/private_terms.txt"
+export PRIVATE_ALIASES_FILE="$WORK/cfg9/private_aliases.tsv"
+mkjson jobs qxzdistinctfake "${FULL[@]}"
+jobs_assertions() { # label script ; runs the section-9 assertions, echoes failures
+  local label=$1 script=$2
+  rm -rf "$WORK/cfg9"
+  run "$script"
+  check "$label rc" 0 "$rc"
+  check "$label jobs absent" 0 "$(grep -cx 'jobs' "$PRIVATE_TERMS_FILE")"
+  check "$label fake name present" 1 "$(grep -cx 'qxzdistinctfake' "$PRIVATE_TERMS_FILE")"
+  check "$label body count" 14 "$(grep -vc '^#' "$PRIVATE_TERMS_FILE")"
+}
+jobs_assertions "stoplisted jobs:" "$SCRIPT"
+mkjson jobs
+run "$SCRIPT"
+check "thin list with jobs still exits 3" 3 "$rc"
+
+# 9b. falsification: the same assertions against a copy with jobs removed from
+# the STOPLIST must go red (fail flag restored afterwards).
+sed 's/ projects jobs "/ projects "/' "$SCRIPT" > "$WORK/nojobs.sh"
+if cmp -s "$WORK/nojobs.sh" "$SCRIPT"; then echo "FAIL falsification mutation did not apply"; fail=1; fi
+mkjson jobs qxzdistinctfake "${FULL[@]}"
+saved_fail=$fail
+fail=0
+jobs_assertions "mutant:" "$WORK/nojobs.sh" > "$WORK/mutant.out"
+mutant_red=$fail
+fail=$saved_fail
+check "falsification: script without jobs in STOPLIST goes red" 1 "$mutant_red"
+
 if [ "$fail" = 0 ]; then echo "ALL PASS"; exit 0; else echo "SOME FAILED"; exit 1; fi

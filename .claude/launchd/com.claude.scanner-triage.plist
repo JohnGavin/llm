@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- com.claude.scanner-triage.plist (llm#1458 part 2)
+         Reads the latest secret_exposure_scan run's NEW findings and applies
+         .claude/state/scanner_policy.tsv: chmod 600 for safe files, one
+         deduplicated GitHub issue per finding type, everything else left to
+         the owner. Writes ~/.claude/logs/scanner_triage/DATE.json, which the
+         08:45 overnight email reads ("fixed N, filed M, needs you K").
+
+         NOT LOADED by the change that added it. The wrapper
+         bin/launchd-recorders/scanner-triage runs with the dry-run flag (it
+         changes nothing). Only the owner switches the wrapper to the apply
+         flag, and only the owner loads this job:
+           cp .claude/launchd/com.claude.scanner-triage.plist ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude.scanner-triage.plist
+
+         Scheduled 04:10: after the 03:40 scan and the 03:00 backup, well
+         before the 08:45 email. -->
+
+    <key>Label</key>
+    <string>com.claude.scanner-triage</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/scanner-triage</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/scanner_triage.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/scanner_triage.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

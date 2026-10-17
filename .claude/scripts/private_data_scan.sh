@@ -177,6 +177,12 @@
 # 'private-data-scan: N finding(s)' summary line: exit 1 WITHOUT it is an
 # error, not a finding.
 #
+# private-term rule (llm#1388): in a PUBLIC repo, with the deny-list in force
+# (i.e. not --no-denylist), every term of $PRIVATE_TERMS_FILE (default
+# ~/.config/private_terms.txt) is matched whole-word, case-insensitively, as a
+# literal. A missing, empty, canary-less or stale (> PRIVATE_TERMS_MAX_AGE_DAYS,
+# default 7) list is exit 3 INDETERMINATE. Findings never show term or line.
+#
 # Log: ~/.claude/logs/private_data_scan.log (one line per invocation summary).
 # Housekeeping heartbeat: writes housekeeping_runs (task='private_data_scan')
 # and private_data_scan_findings, same batched-write pattern as
@@ -212,6 +218,24 @@ fi
 
 DENYLIST_FILE="${PRIVATE_VALUES_FILE:-${HOME_DIR}/.config/private_values.env}"
 UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME_DIR}/.claude/logs/unified.duckdb}"
+
+# private-term rule (llm#1388, parent #1382): whole-word, case-insensitive
+# match of every term in a machine-local list. Contract with the generator
+# (llm#1386): one term per line, '#' lines are comments, first line
+# '# private_terms v1 generated=<ISO-8601 UTC> count=<n>', and the list must
+# contain the canary term below. The rule runs only for a PUBLIC repo and only
+# when the deny-list is in force (--no-denylist, i.e. CI, never holds the list).
+# The canary is assembled from two literals so this file never contains it.
+PRIVATE_TERMS_FILE="${PRIVATE_TERMS_FILE:-${HOME_DIR}/.config/private_terms.txt}"
+PRIVATE_TERMS_MAX_AGE_DAYS="${PRIVATE_TERMS_MAX_AGE_DAYS:-7}"
+PT_CANARY="zzcanary""privterm7q"
+PT_FILE=""      # temp file of normalised terms, set by private_terms_prepare
+PT_ACTIVE=0     # 1 once the rule is armed for this run
+# llm#1456: --staged and --range apply the private-term rule to ADDED lines
+# only. PT_ADDED_ONLY=1 restricts findings to the line ranges in PT_RANGES
+# (space-separated "lo-hi" new-file line numbers); 0 = whole file (default).
+PT_ADDED_ONLY=0
+PT_RANGES=""
 
 # ---------------------------------------------------------------------------
 # Generic PII pattern set. Deliberately disjoint from CRED_PATTERNS
@@ -352,7 +376,7 @@ FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan.XXXXXX")"
 # (llm#1358: document text could not be extracted). A file, not a variable,
 # because scan_blob runs as the last element of a pipeline (a subshell).
 INDET_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_indet.XXXXXX")"
-trap 'rm -f "$FINDINGS_FILE" "$INDET_FILE"' EXIT
+trap 'rm -f "$FINDINGS_FILE" "$INDET_FILE" "$PT_FILE"' EXIT
 
 # append_finding SOURCE SEVERITY LOCATION LINE RULE NOTE
 # NOTE must be fixed/generic -- NEVER the matched value. This is the single
@@ -613,6 +637,134 @@ scan_denylist() {
                 "exact match against a ~/.config/private_values.env entry (value redacted)"
         done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -nF -- "$v" 2>/dev/null)
     done
+}
+
+# ---------------------------------------------------------------------------
+# private-term rule (llm#1388)
+# ---------------------------------------------------------------------------
+# Matching: grep -F (terms are literal, regex metacharacters are inert) -w
+# (whole word) -i, over content in which '_' is turned into a space, because
+# grep -w treats '_' as a word character and "foo_term_bar" must match "term".
+# '-' and every other non-alphanumeric already count as a boundary for -w.
+# The same '_' -> ' ' mapping is applied to the terms. Empty lines are removed
+# from the term file: an empty pattern in -f matches every line.
+# NEVER print the term or the line: findings carry location, line number and
+# the rule name only (append_finding's NOTE is a fixed string).
+
+# iso_to_epoch "2026-01-02T03:04:05Z" -> epoch seconds (BSD date, else GNU date)
+iso_to_epoch() {
+    local e
+    e="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null)" || e=""
+    if [ -z "$e" ]; then e="$(date -u -d "$1" +%s 2>/dev/null)" || e=""; fi
+    case "$e" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s' "$e"
+}
+
+# scan_privateterms LOCATION < content-on-stdin
+scan_privateterms() {
+    local loc="$1" content lnum
+    [ "$PT_ACTIVE" = "1" ] && [ -s "$PT_FILE" ] || return 0
+    content="$(LC_ALL=C tr -d '\000' | LC_ALL=C tr '_' ' ')"
+    [ -n "$content" ] || return 0
+    while IFS=: read -r lnum _; do
+        [ -n "${lnum:-}" ] || continue
+        append_finding "denylist" "critical" "$loc" "$lnum" "private-term" \
+            "whole-word match against a private_terms list entry (term and line redacted)"
+    done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -n -a -i -w -F -f "$PT_FILE" 2>/dev/null | pt_filter_added)
+}
+
+# pt_filter_added: stdin = "lnum:..." grep -n lines. Pass-through unless
+# PT_ADDED_ONLY=1, then keep only lines inside a PT_RANGES "lo-hi" range.
+pt_filter_added() {
+    if [ "$PT_ADDED_ONLY" != "1" ]; then cat; return 0; fi
+    awk -F: -v r="$PT_RANGES" 'BEGIN { n = split(r, a, " "); for (i = 1; i <= n; i++) { split(a[i], b, "-"); lo[i] = b[1] + 0; hi[i] = b[2] + 0 } }
+        { for (i = 1; i <= n; i++) if ($1 + 0 >= lo[i] && $1 + 0 <= hi[i]) { print; next } }'
+}
+
+# added_ranges_from_diff: stdin = a `git diff -U0` text for ONE file. Prints
+# the new-file line ranges the diff adds ("lo-hi ..."), or the single word ALL
+# when the diff is binary (cannot tell which lines were added: stay
+# conservative and scan the whole blob).
+added_ranges_from_diff() {
+    awk '
+        /^Binary files / || /^GIT binary patch/ { bin = 1 }
+        /^@@ / {
+            p = $3; sub(/^\+/, "", p)
+            c = 1; s = p
+            if (index(p, ",") > 0) { split(p, q, ","); s = q[1]; c = q[2] }
+            if (c + 0 > 0) out = out (out == "" ? "" : " ") s "-" (s + c - 1)
+        }
+        END { if (bin) print "ALL"; else print out }'
+}
+
+# pt_set_scope DIFF-TEXT-FILE: sets PT_ADDED_ONLY/PT_RANGES for the next blob.
+pt_set_scope() {
+    local ranges
+    ranges="$(added_ranges_from_diff < "$1")"
+    # An empty range set is only trustworthy when the diff itself succeeded
+    # (caller passes its rc as $2); a failed diff falls back to the whole blob.
+    if [ "${2:-0}" -ne 0 ]; then ranges="ALL"; fi
+    if [ "$ranges" = "ALL" ]; then PT_ADDED_ONLY=0; PT_RANGES=""; else PT_ADDED_ONLY=1; PT_RANGES="$ranges"; fi
+}
+
+# private_terms_prepare -> 0 armed; 3 INDETERMINATE (reason on stderr).
+# The caller invokes it only for a public repo with the deny-list required.
+private_terms_prepare() {
+    local f="$PRIVATE_TERMS_FILE" first gen gen_epoch now age_days
+    if [ ! -f "$f" ] || [ ! -r "$f" ]; then
+        echo "private-data-scan: INDETERMINATE -- private-term list missing or unreadable: $f" >&2
+        return 3
+    fi
+    if [ ! -s "$f" ]; then
+        echo "private-data-scan: INDETERMINATE -- private-term list is empty: $f" >&2
+        return 3
+    fi
+    first="$(head -n 1 "$f" | tr -d '\r')"
+    case "$first" in
+        "# private_terms v1 "*generated=*) : ;;
+        *) echo "private-data-scan: INDETERMINATE -- private-term list has no '# private_terms v1 generated=...' header line: $f" >&2; return 3 ;;
+    esac
+    gen="${first#*generated=}"; gen="${gen%% *}"
+    if ! gen_epoch="$(iso_to_epoch "$gen")"; then
+        echo "private-data-scan: INDETERMINATE -- private-term list header has an unparseable generated= timestamp: $f" >&2
+        return 3
+    fi
+    now="$(date -u +%s)"
+    if [ "$gen_epoch" -gt $((now + 86400)) ]; then
+        echo "private-data-scan: INDETERMINATE -- private-term list header generated= is in the future: $f" >&2
+        return 3
+    fi
+    age_days=$(( (now - gen_epoch) / 86400 ))
+    if [ "$age_days" -gt "$PRIVATE_TERMS_MAX_AGE_DAYS" ]; then
+        echo "private-data-scan: INDETERMINATE -- private-term list is stale (${age_days} days old, max ${PRIVATE_TERMS_MAX_AGE_DAYS}): $f" >&2
+        return 3
+    fi
+    PT_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_terms.XXXXXX")"
+    LC_ALL=C tr -d '\r' < "$f" | LC_ALL=C tr '_' ' ' \
+        | awk '/^[ \t]*#/ {next} {sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); if (length($0) > 0) print}' > "$PT_FILE"
+    if [ ! -s "$PT_FILE" ]; then
+        echo "private-data-scan: INDETERMINATE -- private-term list has a header but no terms: $f" >&2
+        return 3
+    fi
+    if ! LC_ALL=C "$GREP" -q -i -x -F -- "$PT_CANARY" "$PT_FILE"; then
+        echo "private-data-scan: INDETERMINATE -- private-term list does not contain the canary term (truncated or wrong file?): $f" >&2
+        return 3
+    fi
+    # Liveness: the matcher itself must flag the canary inside a hyphenated,
+    # underscored sentence, or it cannot be trusted to say "clean".
+    local real_findings_file="$FINDINGS_FILE" hits
+    PT_ACTIVE=1
+    FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_ptprobe.XXXXXX")"
+    printf 'probe line a-%s_b\n' "$PT_CANARY" | scan_privateterms "SELFCHECK" >/dev/null 2>&1
+    hits="$(wc -l < "$FINDINGS_FILE" | tr -d ' ')"
+    rm -f "$FINDINGS_FILE"
+    FINDINGS_FILE="$real_findings_file"
+    if [ "${hits:-0}" -lt 1 ]; then
+        PT_ACTIVE=0
+        echo "private-data-scan: INDETERMINATE -- the private-term matcher did not flag its own canary on this grep ($GREP); it cannot be trusted to report clean" >&2
+        return 3
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -947,6 +1099,9 @@ scan_blob() {
     # Deny-list is UNCONDITIONAL -- always runs, even for a self-reference
     # exempt file. See "Self-reference exemption" above.
     printf '%s' "$content" | scan_denylist "$loc"
+    # private-term rule: unconditional like the deny-list (even self-reference
+    # exempt files and binaries), armed only in a public repo (llm#1388).
+    if [ "$PT_ACTIVE" = "1" ]; then printf '%s' "$content" | scan_privateterms "$loc"; fi
     # Generic SHAPE rules are meaningless on binary content -- skip them for
     # known-binary types. The deny-list above has ALREADY run on every blob
     # regardless of type: an exact real value can sit in a binary.
@@ -1031,11 +1186,17 @@ assert_can_detect() {
 
 scan_staged() {
     [ -d "$REPO_ROOT" ] || return 0
-    local path
+    local path dtmp drc
+    dtmp="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_diff.XXXXXX")"
     while IFS= read -r path; do
         [ -n "$path" ] || continue
+        # llm#1456: the private-term rule sees ADDED lines only.
+        git -C "$REPO_ROOT" diff --cached --no-ext-diff --no-renames -U0 -- "$path" > "$dtmp" 2>/dev/null; drc=$?
+        pt_set_scope "$dtmp" "$drc"
         git -C "$REPO_ROOT" cat-file -p ":${path}" 2>/dev/null | scan_blob "staged:${path}"
     done < <(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=ACM --no-ext-diff 2>/dev/null)
+    PT_ADDED_ONLY=0; PT_RANGES=""
+    rm -f "$dtmp"
 }
 
 scan_range() {
@@ -1062,7 +1223,8 @@ scan_range() {
     if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ]; then
         _SCAN_TOTAL_REACHABLE="$(git -C "$REPO_ROOT" rev-list "${revspec[@]}" 2>/dev/null | wc -l | tr -d ' ')"
     fi
-    local sha path count=0
+    local sha path count=0 dtmp drc
+    dtmp="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_diff.XXXXXX")"
     while IFS= read -r sha; do
         [ -n "$sha" ] || continue
         count=$((count + 1))
@@ -1074,9 +1236,14 @@ scan_range() {
         _SCAN_SCANNED=$((_SCAN_SCANNED + 1))
         while IFS= read -r path; do
             [ -n "$path" ] || continue
+            # llm#1456: the private-term rule sees lines ADDED by this commit only.
+            git -C "$REPO_ROOT" diff-tree --root --no-commit-id --no-ext-diff --no-renames -U0 -p -r "$sha" -- "$path" > "$dtmp" 2>/dev/null; drc=$?
+            pt_set_scope "$dtmp" "$drc"
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
         done < <(git -C "$REPO_ROOT" diff-tree --root --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
     done < <(git -C "$REPO_ROOT" rev-list "${revspec[@]}" 2>/dev/null)
+    PT_ADDED_ONLY=0; PT_RANGES=""
+    rm -f "$dtmp"
     [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
 
@@ -1811,9 +1978,13 @@ run_selftest() {
         printf 'MY_VALUE=%s\n' "$l_sent" > "$l_pv"; chmod 600 "$l_pv"
         printf 'pre \377\376 %s post\nplain +14155552671 line\n' "$l_sent" > "$l_blob"
         mkdir -p "$tmp/home"
+        # llm#1388: this subprocess runs with the deny-list required, so the
+        # private-term rule needs a fresh synthetic list (canary only).
+        local l_pt="$tmp/l_pt.txt"
+        printf '# private_terms v1 generated=%s count=1\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PT_CANARY" > "$l_pt"
         local l_utf l_c
-        l_utf="$(env -u LC_ALL HOME="$tmp/home" LANG="$utf8loc" UNIFIED_DB_PATH="$tmp/none.duckdb" PRIVATE_VALUES_FILE="$l_pv" bash "$0" --paths "$l_blob" --tsv 2>/dev/null | "$GREP" -c '^FINDING')"
-        l_c="$(env HOME="$tmp/home" LC_ALL=C UNIFIED_DB_PATH="$tmp/none.duckdb" PRIVATE_VALUES_FILE="$l_pv" bash "$0" --paths "$l_blob" --tsv 2>/dev/null | "$GREP" -c '^FINDING')"
+        l_utf="$(env -u LC_ALL PRIVATE_TERMS_FILE="$l_pt" HOME="$tmp/home" LANG="$utf8loc" UNIFIED_DB_PATH="$tmp/none.duckdb" PRIVATE_VALUES_FILE="$l_pv" bash "$0" --paths "$l_blob" --tsv 2>/dev/null | "$GREP" -c '^FINDING')"
+        l_c="$(env PRIVATE_TERMS_FILE="$l_pt" HOME="$tmp/home" LC_ALL=C UNIFIED_DB_PATH="$tmp/none.duckdb" PRIVATE_VALUES_FILE="$l_pv" bash "$0" --paths "$l_blob" --tsv 2>/dev/null | "$GREP" -c '^FINDING')"
         _check "$([ "$l_utf" = "$l_c" ] && [ "$l_c" -ge 2 ] && echo 0 || echo 1)" \
             "llm#1358 item 1: findings under LANG=$utf8loc ($l_utf) equal findings under LC_ALL=C ($l_c), both >= 2 (deny-list + e164)"
     fi
@@ -2200,6 +2371,16 @@ hk_run_start
 # document-format gate (llm#1358) reads them inside scan_blob.
 VIS="$(repo_visibility)"
 load_doc_allowlist
+
+# private-term rule (llm#1388): public repo + deny-list in force only. Private
+# repos skip it silently; --no-denylist (CI) skips it by design.
+if [ "$REQUIRE_DENYLIST" -eq 1 ] && [ "$VIS" != "private" ]; then
+    if ! private_terms_prepare; then
+        log_line "mode=${MODE} visibility=${VIS} result=indeterminate reason=private-terms"
+        hk_run_end "ok" 0
+        exit 3
+    fi
+fi
 
 case "$MODE" in
     staged) scan_staged ;;

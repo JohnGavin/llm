@@ -73,6 +73,7 @@ SCHEMA_SQL="${SCRIPT_DIR}/housekeeping_schema_init.sql"
 GH="${GH_BIN:-gh}"
 AUDIT="${VD_AUDIT_CMD:-${SCRIPT_DIR}/private_data_history_audit.sh}"
 OSA="${OSASCRIPT_BIN:-osascript}"
+REFRESH_CMD="${VD_REFRESH_CMD:-${SCRIPT_DIR}/repo_visibility.sh}"
 LIST_LIMIT=1000
 
 HK_TASK="repo_visibility_diff"
@@ -232,11 +233,25 @@ SQL
     duckdb -init /dev/null -bail "$UNIFIED_DB" < "$TMPD/apply.sql" >"$TMPD/db.out" 2>"$TMPD/db.err" \
         || indeterminate "could not record the snapshot ($(head -c 200 "$TMPD/db.err" | tr '\n' ' '))"
 
+    # ── 2b. Keep the pre-publish guard's candidate list fresh (llm#1348) ─────
+    # private_repo_detail_guard.sh blocks publishing once the list is older
+    # than its 1-day TTL and a hook cannot rebuild it inline. This daily job is
+    # the refresher. A failed refresh must not hide a visibility finding, so it
+    # is recorded here and only turns an otherwise-clean exit 0 into exit 3.
+    CAND_RC=0
+    bash "$REFRESH_CMD" candidates --refresh >"$TMPD/refresh.out" 2>"$TMPD/refresh.err" || CAND_RC=$?
+    if [ "$CAND_RC" -ne 0 ]; then
+        log_line "candidates refresh FAILED rc=${CAND_RC}: $(head -c 200 "$TMPD/refresh.err" | tr '\t\n' '  ')"
+    else
+        log_line "candidates refresh ok"
+    fi
+
     if [ -z "$PREV" ]; then
         echo "repo_visibility_diff: BASELINE -- no previous snapshot existed, so there is nothing to diff."
         echo "repo_visibility_diff: recorded ${N_REPOS} repo(s) (${N_PUBLIC} public) across ${LOGIN} + ${N_ORGS} org(s). Future runs alert on changes from this snapshot."
         echo "repo_visibility_diff: repos already public at baseline are NOT audited here (full-history audit of existing public repos is a separate job, llm#1367)."
         log_line "mode=baseline repos=${N_REPOS} public=${N_PUBLIC} owners=$((N_ORGS + 1)) findings=0 status=baseline rc=0"
+        [ "$CAND_RC" -eq 0 ] || indeterminate "private-repo candidate list refresh failed (rc=${CAND_RC}); the pre-publish guard will block once its list goes stale"
         hk_run_end "ok" "0"
         exit 0
     fi
@@ -301,6 +316,7 @@ SQL
         exit 1
     fi
     log_line "repos=${N_REPOS} public=${N_PUBLIC} new_findings=0 audit_findings=0 audit_pending=0 status=no_change rc=0"
+    [ "$CAND_RC" -eq 0 ] || indeterminate "private-repo candidate list refresh failed (rc=${CAND_RC}); the pre-publish guard will block once its list goes stale"
     hk_run_end "ok" "0"
     exit 0
 }
@@ -362,7 +378,13 @@ EOF
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_DIR/osa_calls"
 EOF
-    chmod +x "$sb/gh_stub.sh" "$sb/audit_stub.sh" "$sb/osa_stub.sh"
+    cat > "$sb/refresh_stub.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/refresh_calls"
+if [ -f "$STUB_DIR/refresh_fail" ]; then echo "refresh stub: failed" >&2; exit 3; fi
+exit 0
+EOF
+    chmod +x "$sb/gh_stub.sh" "$sb/audit_stub.sh" "$sb/osa_stub.sh" "$sb/refresh_stub.sh"
     local st="$sb/stub"
     echo "tester" > "$st/login"
 
@@ -381,7 +403,7 @@ EOF
         local script="$SELF"
         if [ "${1:-}" = "--script" ]; then script="$2"; shift 2; fi
         env HOME="$sb/home" SKIP_CRON_PULL=1 GH_BIN="$sb/gh_stub.sh" VD_AUDIT_CMD="$sb/audit_stub.sh" \
-            OSASCRIPT_BIN="$sb/osa_stub.sh" UNIFIED_DB_PATH="$DB" STUB_DIR="$st" \
+            OSASCRIPT_BIN="$sb/osa_stub.sh" UNIFIED_DB_PATH="$DB" STUB_DIR="$st" VD_REFRESH_CMD="$sb/refresh_stub.sh" \
             bash "$script" "$@" >"$sb/out" 2>"$sb/err"
         vrc=$?
     }
@@ -427,6 +449,16 @@ EOF
     _expect_rc 0 "$vrc" "next run with the repo still public and audited exits 0"
     _expect_eq 1 "$(cnt "$st/audit_calls")" "no repeat audit"
     _expect_eq 1 "$(q "SELECT count(*) FROM repo_visibility_changes")" "no duplicate change row"
+
+    # 4b: candidate-list refresh (llm#1348): every run refreshes; a failed
+    # refresh turns an otherwise-clean exit 0 into INDETERMINATE (3)
+    _check "$(grep -q 'candidates --refresh' "$st/refresh_calls" && echo 0 || echo 1)" "each run refreshes the guard's candidate list"
+    : > "$st/refresh_fail"
+    run_vd
+    _expect_rc 3 "$vrc" "a failed candidate-list refresh on an otherwise clean run is INDETERMINATE (3), not 0"
+    rm -f "$st/refresh_fail"
+    run_vd
+    _expect_rc 0 "$vrc" "refresh recovers -> clean exit 0 again"
 
     # 5: new public repo (user + org), new private repo, public -> private
     set_rows tester "tester/alpha|PRIVATE|$A" "tester/beta|PUBLIC|$B" "tester/delta|PUBLIC|2024-04-01T00:00:00Z" "tester/eps|PRIVATE|2024-05-01T00:00:00Z"

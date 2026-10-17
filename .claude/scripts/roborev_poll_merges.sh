@@ -262,7 +262,11 @@ for line in "${REPOS[@]}"; do
 
   # Every changed file excluded by exclude_patterns => empty-diff review; skip.
   # Indeterminate (rc 3) falls through and enqueues.
-  excl_msg=$(roborev_all_files_excluded "$root_path" "$last_sha..$head_sha"); excl_rc=$?
+  # The helper returns 1 for the NORMAL case (some file not excluded), so under
+  # `set -e` the rc must be captured with `|| excl_rc=$?` -- a bare
+  # `x=$(f); rc=$?` aborts the whole poller here (llm#1333).
+  excl_rc=0
+  excl_msg=$(roborev_all_files_excluded "$root_path" "$last_sha..$head_sha") || excl_rc=$?
   if [ "$excl_rc" -eq 0 ]; then
     log "skip: all files excluded: $name ($last_sha..$head_sha)"
     skipped=$((skipped + 1))

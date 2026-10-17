@@ -44,298 +44,6 @@
 set -e
 
 # ---------------------------------------------------------------------------
-# Self-test mode: CC_SH_SELFTEST=1 bash cc.sh
-# Runs minimal state-detection and flag-parsing tests then exits 0/1.
-# ---------------------------------------------------------------------------
-if [ "${CC_SH_SELFTEST:-0}" = "1" ]; then
-  PASS=0
-  FAIL=0
-
-  check() {
-    local desc="$1" expected="$2" actual="$3"
-    if [ "$actual" = "$expected" ]; then
-      echo "PASS: $desc"
-      PASS=$((PASS + 1))
-    else
-      echo "FAIL: $desc — expected '$expected' got '$actual'"
-      FAIL=$((FAIL + 1))
-    fi
-  }
-
-  # Test 1: is_worktree detects non-worktree (run from /tmp)
-  result=$(git -C /tmp rev-parse --git-dir 2>/dev/null || echo "not-a-repo")
-  check "non-repo returns not-a-repo" "not-a-repo" "$result"
-
-  # Test 2: --no-worktree flag detection
-  NO_WORKTREE=false
-  for _arg in --no-worktree --model opus; do
-    case "$_arg" in --no-worktree) NO_WORKTREE=true ;; esac
-  done
-  check "--no-worktree detected in arg list" "true" "$NO_WORKTREE"
-
-  # Test 3: --no-worktree stripping from args
-  # Input: 4 tokens (--no-worktree --model opus foo), expect 3 after stripping
-  set -- --no-worktree --model opus foo
-  CLEAN_ARGS=()
-  for _arg in "$@"; do
-    case "$_arg" in --no-worktree) ;; *) CLEAN_ARGS+=("$_arg") ;; esac
-  done
-  check "--no-worktree stripped, 4 args remain as 3" "3" "${#CLEAN_ARGS[@]}"
-
-  # Test 4: branch name sanitisation (/ → -)
-  raw="feat/my-task"
-  sanitised="${raw//\//-}"
-  check "branch / replaced with -" "feat-my-task" "$sanitised"
-
-  # Test 5: default branch name format
-  branch_ts="feat/cc-$(date +%Y%m%d-%H%M%S)"
-  # Just check it starts with feat/cc-
-  prefix="${branch_ts:0:8}"
-  check "default branch starts with feat/cc-" "feat/cc-" "$prefix"
-
-  # Test 6: worktree path construction from repo root + branch suffix
-  _repo_root="/Users/johngavin/docs_gh/llm"
-  _repo_name="$(basename "$_repo_root")"
-  _branch="feat/my-feature"
-  _suffix="${_branch//\//-}"
-  _wt="${_repo_root}/../${_repo_name}-${_suffix}"
-  check "worktree path constructed" "/Users/johngavin/docs_gh/llm/../llm-feat-my-feature" "$_wt"
-
-  # ── Session rename / colour tests (#147) ──────────────────────────────
-
-  # Test 7: colour_to_rgb — known colour names produce non-empty RGB
-  # Source colour_to_rgb and emit_terminal_title_and_tab_colour into this subshell
-  colour_to_rgb() {
-    local c="${1:-}"
-    case "$c" in
-      red)     /usr/bin/printf '220 50 47' ;;
-      blue)    /usr/bin/printf '38 139 210' ;;
-      green)   /usr/bin/printf '133 153 0' ;;
-      yellow)  /usr/bin/printf '181 137 0' ;;
-      orange)  /usr/bin/printf '203 75 22' ;;
-      magenta) /usr/bin/printf '211 54 130' ;;
-      cyan)    /usr/bin/printf '42 161 152' ;;
-      white)   /usr/bin/printf '253 246 227' ;;
-      gray|grey) /usr/bin/printf '147 161 161' ;;
-      purple)  /usr/bin/printf '108 113 196' ;;
-      '#'??[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|??[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
-        local hex="${c#\#}"
-        local r g b
-        r=$((16#${hex:0:2})); g=$((16#${hex:2:2})); b=$((16#${hex:4:2}))
-        /usr/bin/printf '%d %d %d' "$r" "$g" "$b" ;;
-      *) /usr/bin/printf '' ;;
-    esac
-  }
-  _rgb_red=$(colour_to_rgb "red")
-  _rgb_unknown=$(colour_to_rgb "notacolour")
-  [ -n "$_rgb_red" ] && check "colour_to_rgb: red → non-empty" "220 50 47" "$_rgb_red" || check "colour_to_rgb: red → non-empty" "non-empty" ""
-  check "colour_to_rgb: unknown → empty" "" "$_rgb_unknown"
-
-  # Test 8: colour_to_rgb — hex passthrough
-  _rgb_hex=$(colour_to_rgb "#ff8800")
-  check "colour_to_rgb: #ff8800 → 255 136 0" "255 136 0" "$_rgb_hex"
-
-  # Test 9: OSC title sequence contains project name
-  _captured=$( CC_NO_AUTORENAME=0 TERM_PROGRAM="" emit_terminal_title_and_tab_colour "myproject" "" 2>/dev/null || true )
-  # Check the captured output contains the OSC 0 sequence with the project name.
-  # The sequence is \033]0;myproject\007 — match by checking if "myproject" appears.
-  if echo "$_captured" | grep -q "myproject" 2>/dev/null; then
-    check "OSC title contains project name" "yes" "yes"
-  else
-    # emit writes to stdout; re-capture via subshell with printf redirect
-    _title_out=$(CC_NO_AUTORENAME=0 TERM_PROGRAM="" /usr/bin/printf '\033]0;%s\007' "myproject" 2>/dev/null)
-    if echo "$_title_out" | grep -q "myproject" 2>/dev/null; then
-      check "OSC title sequence format (printf)" "yes" "yes"
-    else
-      # Directly verify the sequence is correct by checking the string contains the name
-      _seq='\033]0;myproject\007'
-      check "OSC sequence pattern defined" "\\\\033]0;myproject\\\\007" "$_seq"
-    fi
-  fi
-
-  emit_terminal_title_and_tab_colour() {
-    [ "${CC_NO_AUTORENAME:-0}" = "1" ] && return 0
-    local name="${1:-}" colour="${2:-}"
-    [ -z "$name" ] && return 0
-    /usr/bin/printf '\033]0;%s\007' "$name"
-    if [ "${TERM_PROGRAM:-}" = "iTerm.app" ] && [ -n "$colour" ]; then
-      local rgb; rgb=$(colour_to_rgb "$colour")
-      if [ -n "$rgb" ]; then
-        local r g b; read -r r g b <<< "$rgb"
-        /usr/bin/printf '\033]6;1;bg;red;brightness;%d\007' "$r"
-        /usr/bin/printf '\033]6;1;bg;green;brightness;%d\007' "$g"
-        /usr/bin/printf '\033]6;1;bg;blue;brightness;%d\007' "$b"
-      fi
-    fi
-  }
-
-  # Test 9a: CC_NO_AUTORENAME=1 suppresses ALL output
-  _out_suppressed=$(CC_NO_AUTORENAME=1 emit_terminal_title_and_tab_colour "myproject" "red" 2>/dev/null)
-  check "CC_NO_AUTORENAME=1 suppresses output" "" "$_out_suppressed"
-
-  # Test 9b: without CC_NO_AUTORENAME, output is non-empty (contains ESC)
-  _out_present=$(CC_NO_AUTORENAME=0 TERM_PROGRAM="" emit_terminal_title_and_tab_colour "myproject" "" 2>/dev/null)
-  if [ -n "$_out_present" ]; then
-    check "CC_NO_AUTORENAME=0 emits non-empty output" "yes" "yes"
-  else
-    check "CC_NO_AUTORENAME=0 emits non-empty output" "yes" "no"
-  fi
-
-  # Test 10: DESCRIPTION Package: lookup in resolve_project_name_and_color
-  _tmpdir=$(mktemp -d)
-  /usr/bin/printf 'Package: mypkg\nVersion: 0.1.0\n' > "$_tmpdir/DESCRIPTION"
-
-  resolve_project_name_and_color() {
-    local dir="${1:-$PWD}"
-    local desc_file="$dir/DESCRIPTION"
-    if [ -f "$desc_file" ]; then
-      local pkg_name
-      pkg_name=$(awk '/^Package:/ { print $2; exit }' "$desc_file" 2>/dev/null)
-      PROJECT_NAME="${pkg_name:-$(basename "$dir")}"
-    else
-      PROJECT_NAME="$(basename "$dir")"
-    fi
-    PROJECT_COLOR=""
-  }
-
-  resolve_project_name_and_color "$_tmpdir"
-  check "DESCRIPTION Package: used as session name" "mypkg" "$PROJECT_NAME"
-
-  # Test 10b: no DESCRIPTION → basename of dir
-  _tmpdir2=$(mktemp -d)
-  resolve_project_name_and_color "$_tmpdir2"
-  _expected_basename=$(basename "$_tmpdir2")
-  check "no DESCRIPTION → basename used" "$_expected_basename" "$PROJECT_NAME"
-
-  # Test 10c: determinism — same project → same colour across two calls
-  # (PROJECT_COLOR is looked up from yaml; here we just verify name is stable)
-  resolve_project_name_and_color "$_tmpdir"
-  _name1="$PROJECT_NAME"
-  resolve_project_name_and_color "$_tmpdir"
-  _name2="$PROJECT_NAME"
-  check "project name is deterministic" "$_name1" "$_name2"
-
-  rm -rf "$_tmpdir" "$_tmpdir2" 2>/dev/null || true
-
-  # ── select_mode() / permission-mode detection tests (#493) ────────────────
-
-  # Inline is_worktree and select_mode for selftest (identical logic to the
-  # production definitions below; kept here so the test is self-contained and
-  # runs before the function definitions that appear later in the file).
-  _is_worktree() {
-    local _common _gitdir
-    _common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
-    _gitdir=$(git rev-parse --git-dir 2>/dev/null) || return 1
-    _common=$(cd "$_common" 2>/dev/null && pwd) || return 1
-    _gitdir=$(cd "$_gitdir" 2>/dev/null && pwd) || return 1
-    [ "$_common" != "$_gitdir" ]
-  }
-
-  _select_mode() {
-    local _pwd="${1:-$PWD}"
-    case "$_pwd" in
-      /tmp|/tmp/*|/private/tmp|/private/tmp/*) echo "bypassPermissions"; return ;;
-    esac
-    # Run is_worktree from the current directory
-    if (cd "$_pwd" 2>/dev/null && _is_worktree); then
-      echo "bypassPermissions"
-    else
-      echo "default"
-    fi
-  }
-
-  # Test 11: /tmp path → bypassPermissions
-  _m11=$(_select_mode /tmp/some-scratch)
-  check "select_mode: /tmp/* → bypassPermissions" "bypassPermissions" "$_m11"
-
-  # Test 12: /private/tmp path → bypassPermissions
-  _m12=$(_select_mode /private/tmp/scratch-xyz)
-  check "select_mode: /private/tmp/* → bypassPermissions" "bypassPermissions" "$_m12"
-
-  # Test 13: main checkout (this repo's root) → default
-  # We detect the main checkout as the git common dir from the current worktree.
-  _main_checkout=$(git rev-parse --git-common-dir 2>/dev/null)
-  if [ -n "$_main_checkout" ]; then
-    _main_abs=$(cd "$_main_checkout" 2>/dev/null && pwd)
-    # The main checkout is the parent of the .git dir — go up one level from .git
-    _main_root=$(dirname "$_main_abs" 2>/dev/null || echo "")
-    if [ -n "$_main_root" ] && [ -d "$_main_root" ]; then
-      _m13=$(_select_mode "$_main_root")
-      check "select_mode: main checkout → default" "default" "$_m13"
-    else
-      check "select_mode: main checkout → default (skipped — dir not found)" "default" "default"
-    fi
-  else
-    check "select_mode: main checkout → default (skipped — not in a git repo)" "default" "default"
-  fi
-
-  # Test 14: current path is a worktree → bypassPermissions
-  # (The selftest runs from the actual file path, which may be a worktree; detect.)
-  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
-  if [ -n "$_script_dir" ]; then
-    _m14=$(_select_mode "$_script_dir")
-    if (cd "$_script_dir" 2>/dev/null && _is_worktree) 2>/dev/null; then
-      check "select_mode: script dir (worktree) → bypassPermissions" "bypassPermissions" "$_m14"
-    else
-      check "select_mode: script dir (main/other) → default" "default" "$_m14"
-    fi
-  else
-    check "select_mode: script dir detection (skipped)" "skip" "skip"
-  fi
-
-  # ── is_ephemeral_cwd() tests (llm#647) ────────────────────────────────────
-  # Inline mirror of the production is_ephemeral_cwd() defined later in this
-  # file — kept self-contained here so selftest doesn't depend on load order,
-  # matching the existing _is_worktree/_select_mode selftest convention above.
-  _is_ephemeral_cwd() {
-    local dir="${1:-$PWD}"
-    case "$dir" in
-      /tmp|/tmp/*|/private/tmp|/private/tmp/*) return 0 ;;
-      "$HOME/docs_gh"/*-*) return 0 ;;
-      "$HOME/docs_gh"/*/.claude/worktrees/agent-*) return 0 ;;
-      "$HOME/docs_gh/worktrees"/*/*/*) return 0 ;;
-      "$HOME/worktrees"/*/*/*) return 0 ;;
-      *) return 1 ;;
-    esac
-  }
-
-  # Test 15: /tmp path → ephemeral
-  if _is_ephemeral_cwd "/tmp/some-scratch"; then
-    check "is_ephemeral_cwd: /tmp/* → ephemeral" "ephemeral" "ephemeral"
-  else
-    check "is_ephemeral_cwd: /tmp/* → ephemeral" "ephemeral" "not-ephemeral"
-  fi
-
-  # Test 16: agent worktree path → ephemeral (this is llm#647's actual trigger:
-  # worktree_gc.sh sweeps "${DOCS_GH}/*/.claude/worktrees/agent-*")
-  if _is_ephemeral_cwd "$HOME/docs_gh/llm/.claude/worktrees/agent-abc123"; then
-    check "is_ephemeral_cwd: agent worktree → ephemeral" "ephemeral" "ephemeral"
-  else
-    check "is_ephemeral_cwd: agent worktree → ephemeral" "ephemeral" "not-ephemeral"
-  fi
-
-  # Test 17: canonical worktree path (~/docs_gh/worktrees/<proj>/<branch>) → ephemeral
-  if _is_ephemeral_cwd "$HOME/docs_gh/worktrees/llm/feat/fix-foo"; then
-    check "is_ephemeral_cwd: canonical worktree → ephemeral" "ephemeral" "ephemeral"
-  else
-    check "is_ephemeral_cwd: canonical worktree → ephemeral" "ephemeral" "not-ephemeral"
-  fi
-
-  # Test 18: normal main checkout (~/docs_gh/<project>) → NOT ephemeral
-  # (no false positive on the common case)
-  if _is_ephemeral_cwd "$HOME/docs_gh/llm"; then
-    check "is_ephemeral_cwd: main checkout → not ephemeral" "not-ephemeral" "ephemeral"
-  else
-    check "is_ephemeral_cwd: main checkout → not ephemeral" "not-ephemeral" "not-ephemeral"
-  fi
-
-  echo ""
-  echo "Results: $PASS passed, $FAIL failed"
-  [ "$FAIL" -eq 0 ]
-  exit $?
-fi
-
-# ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 
@@ -593,9 +301,413 @@ offer_worktree() {
   WORKTREE_DIR="$wt_path"
 }
 
+# has_resume_arg [args...]: true if any arg is a resume/continue flag
+# (-c, --continue, -r, --resume, --resume=ID). Conversations are stored per
+# directory, so moving into a fresh worktree would leave nothing to continue.
+has_resume_arg() {
+  local a
+  for a in "$@"; do
+    case "$a" in
+      -c|--continue|-r|--resume|--resume=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# print_wrapper_help: wrapper-specific help, printed before claude's own help.
+print_wrapper_help() {
+  cat <<'EOF'
+Resume a conversation:
+  claude -c            Continue the most recent conversation in the current directory
+  claude -r [term]     Pick from past conversations (optional search word, e.g. claude -r myproj)
+  /resume              The same list, from inside a running session
+Conversations are stored per directory: start claude in the folder where the conversation ran.
+
+Wrapper (cc.sh) options:
+  --no-worktree        Do not offer to create a worktree
+  --print-mode         Print the detected permission mode and burn rate, then exit
+  CC_NO_AUTORENAME=1   Suppress terminal title, tab colour and paste-tip output
+  CC_NO_REDIRECT=1     Do not redirect from a worktree-parent directory to the main checkout
+Starting in a project's main checkout offers to create a worktree (skipped by -c / -r).
+
+EOF
+}
+
+# resolve_main_checkout <project>: print the main checkout path, or return 1.
+# Order: (1) projects.conf (name=/abs/path, # comments; same format cc-worktree.sh
+# reads; override the file with CC_PROJECTS_CONF), (2) the git common dir of any
+# real worktree under ~/docs_gh/worktrees/<project>/, (3) ~/docs_gh/<project>.
+resolve_main_checkout() {
+  local proj="${1:-}" conf="${CC_PROJECTS_CONF:-$HOME/.config/cc-worktree/projects.conf}"
+  [ -n "$proj" ] || return 1
+  local n p
+  if [ -r "$conf" ]; then
+    while IFS='=' read -r n p || [ -n "$n" ]; do
+      case "$n" in ''|\#*) continue ;; esac
+      n="${n## }"; n="${n%% }"; p="${p## }"; p="${p%% }"
+      p="${p#\"}"; p="${p%\"}"; p="${p#\'}"; p="${p%\'}"
+      if [ "$n" = "$proj" ]; then
+        if [ -e "$p/.git" ]; then echo "$p"; return 0; fi
+        break
+      fi
+    done < "$conf"
+  fi
+  local wt common
+  for wt in "$HOME/docs_gh/worktrees/$proj"/*/ "$HOME/docs_gh/worktrees/$proj"/*/*/; do
+    [ -e "${wt}.git" ] || continue
+    common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
+    common="${common%/}"
+    common="${common%/.git}"
+    if [ -e "$common/.git" ]; then echo "$common"; return 0; fi
+  done
+  if [ -e "$HOME/docs_gh/$proj/.git" ]; then echo "$HOME/docs_gh/$proj"; return 0; fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Self-test mode: CC_SH_SELFTEST=1 bash cc.sh
+# Runs minimal state-detection and flag-parsing tests then exits 0/1.
+# ---------------------------------------------------------------------------
+if [ "${CC_SH_SELFTEST:-0}" = "1" ]; then
+  PASS=0
+  FAIL=0
+
+  check() {
+    local desc="$1" expected="$2" actual="$3"
+    if [ "$actual" = "$expected" ]; then
+      echo "PASS: $desc"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: $desc — expected '$expected' got '$actual'"
+      FAIL=$((FAIL + 1))
+    fi
+  }
+
+  # Test 1: is_worktree detects non-worktree (run from /tmp)
+  result=$(git -C /tmp rev-parse --git-dir 2>/dev/null || echo "not-a-repo")
+  check "non-repo returns not-a-repo" "not-a-repo" "$result"
+
+  # Test 2: --no-worktree flag detection
+  NO_WORKTREE=false
+  for _arg in --no-worktree --model opus; do
+    case "$_arg" in --no-worktree) NO_WORKTREE=true ;; esac
+  done
+  check "--no-worktree detected in arg list" "true" "$NO_WORKTREE"
+
+  # Test 3: --no-worktree stripping from args
+  # Input: 4 tokens (--no-worktree --model opus foo), expect 3 after stripping
+  set -- --no-worktree --model opus foo
+  CLEAN_ARGS=()
+  for _arg in "$@"; do
+    case "$_arg" in --no-worktree) ;; *) CLEAN_ARGS+=("$_arg") ;; esac
+  done
+  check "--no-worktree stripped, 4 args remain as 3" "3" "${#CLEAN_ARGS[@]}"
+
+  # Test 4: branch name sanitisation (/ → -)
+  raw="feat/my-task"
+  sanitised="${raw//\//-}"
+  check "branch / replaced with -" "feat-my-task" "$sanitised"
+
+  # Test 5: default branch name format
+  branch_ts="feat/cc-$(date +%Y%m%d-%H%M%S)"
+  # Just check it starts with feat/cc-
+  prefix="${branch_ts:0:8}"
+  check "default branch starts with feat/cc-" "feat/cc-" "$prefix"
+
+  # Test 6: worktree path construction from repo root + branch suffix
+  _repo_root="/Users/johngavin/docs_gh/llm"
+  _repo_name="$(basename "$_repo_root")"
+  _branch="feat/my-feature"
+  _suffix="${_branch//\//-}"
+  _wt="${_repo_root}/../${_repo_name}-${_suffix}"
+  check "worktree path constructed" "/Users/johngavin/docs_gh/llm/../llm-feat-my-feature" "$_wt"
+
+  # ── Session rename / colour tests (#147) ──────────────────────────────
+
+  # Test 7: colour_to_rgb — known colour names produce non-empty RGB
+  # Source colour_to_rgb and emit_terminal_title_and_tab_colour into this subshell
+  colour_to_rgb() {
+    local c="${1:-}"
+    case "$c" in
+      red)     /usr/bin/printf '220 50 47' ;;
+      blue)    /usr/bin/printf '38 139 210' ;;
+      green)   /usr/bin/printf '133 153 0' ;;
+      yellow)  /usr/bin/printf '181 137 0' ;;
+      orange)  /usr/bin/printf '203 75 22' ;;
+      magenta) /usr/bin/printf '211 54 130' ;;
+      cyan)    /usr/bin/printf '42 161 152' ;;
+      white)   /usr/bin/printf '253 246 227' ;;
+      gray|grey) /usr/bin/printf '147 161 161' ;;
+      purple)  /usr/bin/printf '108 113 196' ;;
+      '#'??[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|??[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+        local hex="${c#\#}"
+        local r g b
+        r=$((16#${hex:0:2})); g=$((16#${hex:2:2})); b=$((16#${hex:4:2}))
+        /usr/bin/printf '%d %d %d' "$r" "$g" "$b" ;;
+      *) /usr/bin/printf '' ;;
+    esac
+  }
+  _rgb_red=$(colour_to_rgb "red")
+  _rgb_unknown=$(colour_to_rgb "notacolour")
+  [ -n "$_rgb_red" ] && check "colour_to_rgb: red → non-empty" "220 50 47" "$_rgb_red" || check "colour_to_rgb: red → non-empty" "non-empty" ""
+  check "colour_to_rgb: unknown → empty" "" "$_rgb_unknown"
+
+  # Test 8: colour_to_rgb — hex passthrough
+  _rgb_hex=$(colour_to_rgb "#ff8800")
+  check "colour_to_rgb: #ff8800 → 255 136 0" "255 136 0" "$_rgb_hex"
+
+  # Test 9: OSC title sequence contains project name
+  _captured=$( CC_NO_AUTORENAME=0 TERM_PROGRAM="" emit_terminal_title_and_tab_colour "myproject" "" 2>/dev/null || true )
+  # Check the captured output contains the OSC 0 sequence with the project name.
+  # The sequence is \033]0;myproject\007 — match by checking if "myproject" appears.
+  if echo "$_captured" | grep -q "myproject" 2>/dev/null; then
+    check "OSC title contains project name" "yes" "yes"
+  else
+    # emit writes to stdout; re-capture via subshell with printf redirect
+    _title_out=$(CC_NO_AUTORENAME=0 TERM_PROGRAM="" /usr/bin/printf '\033]0;%s\007' "myproject" 2>/dev/null)
+    if echo "$_title_out" | grep -q "myproject" 2>/dev/null; then
+      check "OSC title sequence format (printf)" "yes" "yes"
+    else
+      # Directly verify the sequence is correct by checking the string contains the name
+      _seq='\033]0;myproject\007'
+      check "OSC sequence pattern defined" "\\\\033]0;myproject\\\\007" "$_seq"
+    fi
+  fi
+
+  emit_terminal_title_and_tab_colour() {
+    [ "${CC_NO_AUTORENAME:-0}" = "1" ] && return 0
+    local name="${1:-}" colour="${2:-}"
+    [ -z "$name" ] && return 0
+    /usr/bin/printf '\033]0;%s\007' "$name"
+    if [ "${TERM_PROGRAM:-}" = "iTerm.app" ] && [ -n "$colour" ]; then
+      local rgb; rgb=$(colour_to_rgb "$colour")
+      if [ -n "$rgb" ]; then
+        local r g b; read -r r g b <<< "$rgb"
+        /usr/bin/printf '\033]6;1;bg;red;brightness;%d\007' "$r"
+        /usr/bin/printf '\033]6;1;bg;green;brightness;%d\007' "$g"
+        /usr/bin/printf '\033]6;1;bg;blue;brightness;%d\007' "$b"
+      fi
+    fi
+  }
+
+  # Test 9a: CC_NO_AUTORENAME=1 suppresses ALL output
+  _out_suppressed=$(CC_NO_AUTORENAME=1 emit_terminal_title_and_tab_colour "myproject" "red" 2>/dev/null)
+  check "CC_NO_AUTORENAME=1 suppresses output" "" "$_out_suppressed"
+
+  # Test 9b: without CC_NO_AUTORENAME, output is non-empty (contains ESC)
+  _out_present=$(CC_NO_AUTORENAME=0 TERM_PROGRAM="" emit_terminal_title_and_tab_colour "myproject" "" 2>/dev/null)
+  if [ -n "$_out_present" ]; then
+    check "CC_NO_AUTORENAME=0 emits non-empty output" "yes" "yes"
+  else
+    check "CC_NO_AUTORENAME=0 emits non-empty output" "yes" "no"
+  fi
+
+  # Test 10: DESCRIPTION Package: lookup in resolve_project_name_and_color
+  _tmpdir=$(mktemp -d)
+  /usr/bin/printf 'Package: mypkg\nVersion: 0.1.0\n' > "$_tmpdir/DESCRIPTION"
+
+  resolve_project_name_and_color() {
+    local dir="${1:-$PWD}"
+    local desc_file="$dir/DESCRIPTION"
+    if [ -f "$desc_file" ]; then
+      local pkg_name
+      pkg_name=$(awk '/^Package:/ { print $2; exit }' "$desc_file" 2>/dev/null)
+      PROJECT_NAME="${pkg_name:-$(basename "$dir")}"
+    else
+      PROJECT_NAME="$(basename "$dir")"
+    fi
+    PROJECT_COLOR=""
+  }
+
+  resolve_project_name_and_color "$_tmpdir"
+  check "DESCRIPTION Package: used as session name" "mypkg" "$PROJECT_NAME"
+
+  # Test 10b: no DESCRIPTION → basename of dir
+  _tmpdir2=$(mktemp -d)
+  resolve_project_name_and_color "$_tmpdir2"
+  _expected_basename=$(basename "$_tmpdir2")
+  check "no DESCRIPTION → basename used" "$_expected_basename" "$PROJECT_NAME"
+
+  # Test 10c: determinism — same project → same colour across two calls
+  # (PROJECT_COLOR is looked up from yaml; here we just verify name is stable)
+  resolve_project_name_and_color "$_tmpdir"
+  _name1="$PROJECT_NAME"
+  resolve_project_name_and_color "$_tmpdir"
+  _name2="$PROJECT_NAME"
+  check "project name is deterministic" "$_name1" "$_name2"
+
+  rm -rf "$_tmpdir" "$_tmpdir2" 2>/dev/null || true
+
+  # ── select_mode() / permission-mode detection tests (#493) ────────────────
+
+  # Inline is_worktree and select_mode for selftest (identical logic to the
+  # production definitions below; kept here so the test is self-contained and
+  # runs before the function definitions that appear later in the file).
+  _is_worktree() {
+    local _common _gitdir
+    _common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+    _gitdir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+    _common=$(cd "$_common" 2>/dev/null && pwd) || return 1
+    _gitdir=$(cd "$_gitdir" 2>/dev/null && pwd) || return 1
+    [ "$_common" != "$_gitdir" ]
+  }
+
+  _select_mode() {
+    local _pwd="${1:-$PWD}"
+    case "$_pwd" in
+      /tmp|/tmp/*|/private/tmp|/private/tmp/*) echo "bypassPermissions"; return ;;
+    esac
+    # Run is_worktree from the current directory
+    if (cd "$_pwd" 2>/dev/null && _is_worktree); then
+      echo "bypassPermissions"
+    else
+      echo "default"
+    fi
+  }
+
+  # Test 11: /tmp path → bypassPermissions
+  _m11=$(_select_mode /tmp/some-scratch)
+  check "select_mode: /tmp/* → bypassPermissions" "bypassPermissions" "$_m11"
+
+  # Test 12: /private/tmp path → bypassPermissions
+  _m12=$(_select_mode /private/tmp/scratch-xyz)
+  check "select_mode: /private/tmp/* → bypassPermissions" "bypassPermissions" "$_m12"
+
+  # Test 13: main checkout (this repo's root) → default
+  # We detect the main checkout as the git common dir from the current worktree.
+  _main_checkout=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$_main_checkout" ]; then
+    _main_abs=$(cd "$_main_checkout" 2>/dev/null && pwd)
+    # The main checkout is the parent of the .git dir — go up one level from .git
+    _main_root=$(dirname "$_main_abs" 2>/dev/null || echo "")
+    if [ -n "$_main_root" ] && [ -d "$_main_root" ]; then
+      _m13=$(_select_mode "$_main_root")
+      check "select_mode: main checkout → default" "default" "$_m13"
+    else
+      check "select_mode: main checkout → default (skipped — dir not found)" "default" "default"
+    fi
+  else
+    check "select_mode: main checkout → default (skipped — not in a git repo)" "default" "default"
+  fi
+
+  # Test 14: current path is a worktree → bypassPermissions
+  # (The selftest runs from the actual file path, which may be a worktree; detect.)
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+  if [ -n "$_script_dir" ]; then
+    _m14=$(_select_mode "$_script_dir")
+    if (cd "$_script_dir" 2>/dev/null && _is_worktree) 2>/dev/null; then
+      check "select_mode: script dir (worktree) → bypassPermissions" "bypassPermissions" "$_m14"
+    else
+      check "select_mode: script dir (main/other) → default" "default" "$_m14"
+    fi
+  else
+    check "select_mode: script dir detection (skipped)" "skip" "skip"
+  fi
+
+  # ── is_ephemeral_cwd() tests (llm#647) ────────────────────────────────────
+  # Inline mirror of the production is_ephemeral_cwd() defined later in this
+  # file — kept self-contained here so selftest doesn't depend on load order,
+  # matching the existing _is_worktree/_select_mode selftest convention above.
+  _is_ephemeral_cwd() {
+    local dir="${1:-$PWD}"
+    case "$dir" in
+      /tmp|/tmp/*|/private/tmp|/private/tmp/*) return 0 ;;
+      "$HOME/docs_gh"/*-*) return 0 ;;
+      "$HOME/docs_gh"/*/.claude/worktrees/agent-*) return 0 ;;
+      "$HOME/docs_gh/worktrees"/*/*/*) return 0 ;;
+      "$HOME/worktrees"/*/*/*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  # Test 15: /tmp path → ephemeral
+  if _is_ephemeral_cwd "/tmp/some-scratch"; then
+    check "is_ephemeral_cwd: /tmp/* → ephemeral" "ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: /tmp/* → ephemeral" "ephemeral" "not-ephemeral"
+  fi
+
+  # Test 16: agent worktree path → ephemeral (this is llm#647's actual trigger:
+  # worktree_gc.sh sweeps "${DOCS_GH}/*/.claude/worktrees/agent-*")
+  if _is_ephemeral_cwd "$HOME/docs_gh/llm/.claude/worktrees/agent-abc123"; then
+    check "is_ephemeral_cwd: agent worktree → ephemeral" "ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: agent worktree → ephemeral" "ephemeral" "not-ephemeral"
+  fi
+
+  # Test 17: canonical worktree path (~/docs_gh/worktrees/<proj>/<branch>) → ephemeral
+  if _is_ephemeral_cwd "$HOME/docs_gh/worktrees/llm/feat/fix-foo"; then
+    check "is_ephemeral_cwd: canonical worktree → ephemeral" "ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: canonical worktree → ephemeral" "ephemeral" "not-ephemeral"
+  fi
+
+  # Test 18: normal main checkout (~/docs_gh/<project>) → NOT ephemeral
+  # (no false positive on the common case)
+  if _is_ephemeral_cwd "$HOME/docs_gh/llm"; then
+    check "is_ephemeral_cwd: main checkout → not ephemeral" "not-ephemeral" "ephemeral"
+  else
+    check "is_ephemeral_cwd: main checkout → not ephemeral" "not-ephemeral" "not-ephemeral"
+  fi
+
+  # ── resume flags / help / projects.conf resolution (real functions) ───────
+
+  for _rf in -c --continue -r --resume --resume=abc123; do
+    if has_resume_arg --model opus "$_rf"; then _r=skip; else _r=offer; fi
+    check "has_resume_arg: $_rf → skip worktree offer" "skip" "$_r"
+  done
+  if has_resume_arg --model opus foo --no-worktree; then _r=skip; else _r=offer; fi
+  check "has_resume_arg: non-resume args → offer kept" "offer" "$_r"
+  if has_resume_arg; then _r=skip; else _r=offer; fi
+  check "has_resume_arg: no args → offer kept" "offer" "$_r"
+
+  _help_txt=$(print_wrapper_help)
+  for _needle in "claude -c" "claude -r" "/resume" "--no-worktree" "--print-mode" "CC_NO_AUTORENAME=1" "CC_NO_REDIRECT=1"; do
+    case "$_help_txt" in
+      *"$_needle"*) _r=yes ;;
+      *) _r=no ;;
+    esac
+    check "wrapper help mentions '$_needle'" "yes" "$_r"
+  done
+
+  _rt=$(mktemp -d)
+  mkdir -p "$_rt/elsewhere/projx/.git" "$_rt/home/docs_gh/projy/.git"
+  /usr/bin/printf '# comment\nprojx=%s\n' "$_rt/elsewhere/projx" > "$_rt/test.conf"
+  _r=$(HOME="$_rt/home" CC_PROJECTS_CONF="$_rt/test.conf" resolve_main_checkout projx || echo "unresolved")
+  check "resolve_main_checkout: conf entry used" "$_rt/elsewhere/projx" "$_r"
+  _r=$(HOME="$_rt/home" CC_PROJECTS_CONF="$_rt/test.conf" resolve_main_checkout projy || echo "unresolved")
+  check "resolve_main_checkout: no entry → ~/docs_gh/<proj>" "$_rt/home/docs_gh/projy" "$_r"
+  _r=$(HOME="$_rt/home" CC_PROJECTS_CONF="$_rt/test.conf" resolve_main_checkout nosuch || echo "unresolved")
+  check "resolve_main_checkout: nothing resolves → unresolved" "unresolved" "$_r"
+  # git common dir of a real worktree under ~/docs_gh/worktrees/<proj>/
+  mkdir -p "$_rt/real/projz"
+  git -C "$_rt/real/projz" init -q 2>/dev/null
+  git -C "$_rt/real/projz" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init 2>/dev/null
+  mkdir -p "$_rt/home/docs_gh/worktrees/projz"
+  git -C "$_rt/real/projz" worktree add -q -b wtb "$_rt/home/docs_gh/worktrees/projz/wtb" 2>/dev/null
+  _expect=$(cd "$_rt/real/projz" && pwd -P)
+  _r=$(HOME="$_rt/home" CC_PROJECTS_CONF="$_rt/none.conf" resolve_main_checkout projz || echo "unresolved")
+  [ "$_r" != "unresolved" ] && _r=$(cd "$_r" && pwd -P)
+  check "resolve_main_checkout: worktree common dir fallback" "$_expect" "$_r"
+  rm -rf "$_rt" 2>/dev/null || true
+
+  echo ""
+  echo "Results: $PASS passed, $FAIL failed"
+  [ "$FAIL" -eq 0 ]
+  exit $?
+fi
+
 # ---------------------------------------------------------------------------
 # Flag parsing
 # ---------------------------------------------------------------------------
+
+# Help: early exit, before redirect / offer / name output / burn-rate checks.
+case "${1:-}" in
+  -h|--help)
+    print_wrapper_help
+    exec ~/.local/bin/claude --help
+    ;;
+esac
 
 # Check for explicit overrides and --no-worktree
 HAS_MODEL_OVERRIDE=false
@@ -611,6 +723,8 @@ for arg in "$@"; do
     --no-worktree) NO_WORKTREE=true ;;
   esac
 done
+# Resume/continue: conversations are per directory, so never move into a new worktree.
+if has_resume_arg "$@"; then NO_WORKTREE=true; fi
 
 # Strip --no-worktree from the args that will be forwarded to claude
 PASSTHROUGH_ARGS=()
@@ -638,13 +752,14 @@ if [ "${CC_NO_REDIRECT:-0}" != "1" ]; then
         _wp_rel="${PWD#$HOME/docs_gh/worktrees/}"
         [ "$_wp_rel" = "$PWD" ] && _wp_rel="${PWD#$HOME/worktrees/}"
         _wp_proj="${_wp_rel%%/*}"
-        _wp_target="$HOME/docs_gh/$_wp_proj"
-        if [ -d "$_wp_target/.git" ]; then
+        _wp_target=$(resolve_main_checkout "$_wp_proj" || true)
+        if [ -n "$_wp_target" ] && [ -e "$_wp_target/.git" ]; then
           echo "cc: cwd was $PWD (under a worktree-parent dir but not a worktree)"
           echo "cc: redirecting to $_wp_target  (set CC_NO_REDIRECT=1 to skip)"
           cd "$_wp_target"
         else
-          echo "cc: cwd is $PWD but $_wp_target does not exist."
+          echo "cc: cwd is $PWD but no main checkout for '$_wp_proj' was found"
+          echo "cc: (checked projects.conf, real worktrees, ~/docs_gh/$_wp_proj)."
           echo "cc: cd into the canonical main checkout or a real worktree, then re-run."
           exit 2
         fi
