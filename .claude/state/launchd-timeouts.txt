@@ -124,3 +124,4 @@ com.claude.cron-catchup                   3600  # method B — see rationale abo
 # purpose; a follow-up with more data (or a different derivation, e.g.
 # regressing duration against worktree count) should set these properly
 # rather than have this file guess.
+com.claude.scanner-triage                 300   # ESTIMATE, no runs yet (llm#1458): one DB read, <=10 chmod, a few gh calls; revisit once n>=10

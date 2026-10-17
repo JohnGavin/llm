@@ -96,3 +96,4 @@ tests/test_private_term_stoplisted_word.sh	tests/test_private_term_stoplisted_wo
 tests/test_private_term_added_lines_only.sh	tests/test_private_term_added_lines_only.sh;.claude/scripts/private_data_scan.sh;git-hooks/pre-push	run
 tests/test_timeout_resolution.sh	tests/test_timeout_resolution.sh;.claude/hooks/lib/run_bounded.sh;.claude/hooks/private_term_write_guard.sh;.claude/scripts/repo_visibility.sh	run
 tests/test_secret_scan_false_positives.sh	tests/test_secret_scan_false_positives.sh;.claude/scripts/secret_exposure_scan.sh	run
+tests/test_scanner_triage.sh	tests/test_scanner_triage.sh;.claude/scripts/scanner_triage.sh;.claude/scripts/lib/scanner_triage_lib.R;.claude/scripts/lib/secret_scan_new_findings.sql;.claude/state/scanner_policy.tsv;.claude/scripts/housekeeping_schema_init.sql	run

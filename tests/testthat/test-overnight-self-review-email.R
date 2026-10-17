@@ -857,6 +857,84 @@ test_that("cron-health: NEW scanner findings are not plain ok and become an acti
                info = "new findings were counted as a plain ok")
 })
 
+# llm#1458 part 2: new scanner rows are classified by .claude/state/scanner_policy.tsv.
+# Only rows that need the owner reach "Action required"; a handled row needs
+# an outcome file for THAT run (scratch dir via SCANNER_TRIAGE_DIR), and a
+# missing outcome is indeterminate, never ok.
+.triage_fixture_args <- function(new_name) {
+  known <- data.frame(detector = "1", file_path = "a.R", line_num = "3", name = "cred-shape")
+  new1  <- data.frame(detector = "2", file_path = "b.R", line_num = "9", name = new_name)
+  list(
+    hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 2L),
+    ev_row = list(plist_label = "com.claude.secret-exposure-scan", state = "loaded_recent_fail",
+                   last_exit_code = 1L, last_fired_at_now = TRUE),
+    prev_hk_row = list(task = "secret_exposure_scan", status = "ok", rows_written = 1L),
+    findings = list(latest = rbind(known, new1), prev = known)
+  )
+}
+# Scratch outcome dir (removed when the CALLING test ends); outcome = JSON text or NULL.
+.triage_outcome_dir <- function(outcome = NULL, envir = parent.frame()) {
+  dir <- tempfile("triage_outcome_")
+  dir.create(dir)
+  withr::defer(unlink(dir, recursive = TRUE), envir = envir)
+  if (!is.null(outcome)) writeLines(outcome, file.path(dir, "2000-01-01.json"))
+  dir
+}
+.triage_outcome_json <- function(filed = 1L, status = "done") {
+  sprintf('{"date":"2000-01-01","run_id":"fixture-hk","scanner":"secret_exposure_scan","mode":"apply","status":"%s","why":"",
+"fixed":0,"filed":%d,"tracked":0,"already_ok":0,"needs_you":0,
+"types":{"fixed":{},"filed":{"cred-shape":%d},"tracked":{},"already_ok":{},"needs_you":{}},"reverts":[]}',
+          status, filed, filed)
+}
+
+test_that("cron-health: a NEW auto-file scanner row with a triage outcome is handled, not an action item (llm#1458)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("jsonlite")
+  skip_if_not(file.exists(.SECRET_SCAN_PLIST), "secret-exposure-scan plist not installed")
+  db <- do.call(.build_cron_fixture_db, .triage_fixture_args("cred-shape"))
+  odir <- .triage_outcome_dir(.triage_outcome_json(1L))
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db, extra_env = paste0("SCANNER_TRIAGE_DIR=", odir)), collapse = "\n")
+
+  expect_true(grepl("handled by scanner triage", combined, fixed = TRUE))
+  expect_true(grepl("Scanner triage", combined, fixed = TRUE))
+  expect_true(grepl("fixed 0, filed 1, tracked 0, needs you 0", combined, fixed = TRUE))
+  expect_true(grepl("plists · 1 ok · 0 failed · 0 indeterminate · 0 need triage", combined, fixed = TRUE))
+  expect_false(grepl("need triage (fixed", combined, fixed = TRUE),
+               info = "a handled row still reached the triage bucket")
+})
+
+test_that("cron-health: a NEW auto-file scanner row with NO triage outcome is indeterminate (llm#1458)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("jsonlite")
+  skip_if_not(file.exists(.SECRET_SCAN_PLIST), "secret-exposure-scan plist not installed")
+  db <- do.call(.build_cron_fixture_db, .triage_fixture_args("cred-shape"))
+  odir <- .triage_outcome_dir(NULL)
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db, extra_env = paste0("SCANNER_TRIAGE_DIR=", odir)), collapse = "\n")
+
+  expect_true(grepl("plists · 0 ok · 0 failed · 1 indeterminate · 0 need triage", combined, fixed = TRUE),
+              info = "missing outcome was counted ok or action instead of indeterminate")
+  expect_true(grepl("scanner triage has no outcome for this run", combined, fixed = TRUE))
+})
+
+test_that("cron-health: a NEW human/unlisted scanner row still needs the owner even when triage ran (llm#1458)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("jsonlite")
+  skip_if_not(file.exists(.SECRET_SCAN_PLIST), "secret-exposure-scan plist not installed")
+  db <- do.call(.build_cron_fixture_db, .triage_fixture_args("brand-new-type"))
+  odir <- .triage_outcome_dir(.triage_outcome_json(0L))
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db, extra_env = paste0("SCANNER_TRIAGE_DIR=", odir)), collapse = "\n")
+
+  expect_true(grepl("1 new finding(s) need triage", combined, fixed = TRUE))
+  expect_true(grepl("needs you 1", combined, fixed = TRUE))
+  expect_true(grepl("Action required", combined, fixed = TRUE))
+})
+
 test_that("cron-health: STANDING scanner findings stay ok but say 0 new", {
   skip_if_not_installed("blastula")
   skip_if_not_installed("duckdb")

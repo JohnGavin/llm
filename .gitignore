@@ -42,6 +42,8 @@ my_new_md_database
 !tests/ci_test_map.tsv
 # Committed single home for email column-header hover definitions -- must be tracked
 !.claude/scripts/email_column_definitions.tsv
+# Committed scanner triage policy table (llm#1458) -- the one home for fix/file/human classes
+!.claude/state/scanner_policy.tsv
 
 # Sensitive/personal files
 *.pdf
