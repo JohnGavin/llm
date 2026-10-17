@@ -86,6 +86,18 @@ run_hook "an ordinary note about knowledge in prose" PRIVATE_DETAIL_NO_REFRESH_K
 expect BLOCK "$(verdict)" "DECLARED name is never stoplisted"
 cp "$TMP/cands.keep" "$STUB/cands.tsv"
 
+# A discovered 4-character name ("jobs") is not a bare scan term (MIN_NAME_LEN),
+# but its absolute path still blocks; a DECLARED one matches at any length.
+printf 'jobs\t%s/fake/jobs\tprivate\n' "$TMP" > "$STUB/cands.tsv"
+run_hook "the jobs key of a workflow, in prose" PRIVATE_DETAIL_NO_REFRESH_KICK=1
+expect ALLOW "$(verdict)" "discovered 4-char name 'jobs' is allowed as a bare word"
+run_hook "files live under $TMP/fake/jobs/notes" PRIVATE_DETAIL_NO_REFRESH_KICK=1
+expect BLOCK "$(verdict)" "absolute path of the 'jobs' candidate still blocks"
+printf 'jobs\t\tconfidential_by_policy\n' > "$STUB/cands.tsv"
+run_hook "the jobs key of a workflow, in prose" PRIVATE_DETAIL_NO_REFRESH_KICK=1
+expect BLOCK "$(verdict)" "falsification: DECLARED 'jobs' blocks the same text"
+cp "$TMP/cands.keep" "$STUB/cands.tsv"
+
 if grep -q '^knowledge$' "$STOPLIST"; then ok "stoplist file carries the word used above"; else bad "stoplist file missing the fixture word"; fi
 
 echo "== #1348: stale list triggers one bounded background refresh =="

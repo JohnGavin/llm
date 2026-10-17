@@ -27,7 +27,11 @@
 #
 # Filtering: terms are lowercased, deduped, and dropped when shorter than 4
 # characters or on the built-in STOPLIST below (common English words that would
-# match everywhere).
+# match everywhere). "jobs" is stoplisted on purpose: it is the mandatory
+# top-level key of every GitHub Actions workflow, so a bare-word entry blocked
+# ordinary workflow files and prose. Trade-off: a private repo of that exact
+# name is no longer matched as a bare term; its absolute path is still caught
+# by private_repo_detail_guard.sh.
 #
 # Thin-list guard: refuse to write (exit 3, keep old files) when the new term
 # count is below ${PRIVATE_TERMS_MIN:-10}, or below 70% of the previous file's
@@ -46,7 +50,7 @@ into just know like made make many more most much must never only other \
 over same should some such take their there these those through under \
 until very want well went work would year years test tests data \
 docs code file files home main temp public private internal local \
-project projects "
+project projects jobs "
 
 OWNER="${PRIVATE_TERMS_OWNER:-JohnGavin}"
 TERMS_FILE="${PRIVATE_TERMS_FILE:-$HOME/.config/private_terms.txt}"
