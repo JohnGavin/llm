@@ -231,6 +231,11 @@ PRIVATE_TERMS_MAX_AGE_DAYS="${PRIVATE_TERMS_MAX_AGE_DAYS:-7}"
 PT_CANARY="zzcanary""privterm7q"
 PT_FILE=""      # temp file of normalised terms, set by private_terms_prepare
 PT_ACTIVE=0     # 1 once the rule is armed for this run
+# llm#1456: --staged and --range apply the private-term rule to ADDED lines
+# only. PT_ADDED_ONLY=1 restricts findings to the line ranges in PT_RANGES
+# (space-separated "lo-hi" new-file line numbers); 0 = whole file (default).
+PT_ADDED_ONLY=0
+PT_RANGES=""
 
 # ---------------------------------------------------------------------------
 # Generic PII pattern set. Deliberately disjoint from CRED_PATTERNS
@@ -665,7 +670,41 @@ scan_privateterms() {
         [ -n "${lnum:-}" ] || continue
         append_finding "denylist" "critical" "$loc" "$lnum" "private-term" \
             "whole-word match against a private_terms list entry (term and line redacted)"
-    done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -n -a -i -w -F -f "$PT_FILE" 2>/dev/null)
+    done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -n -a -i -w -F -f "$PT_FILE" 2>/dev/null | pt_filter_added)
+}
+
+# pt_filter_added: stdin = "lnum:..." grep -n lines. Pass-through unless
+# PT_ADDED_ONLY=1, then keep only lines inside a PT_RANGES "lo-hi" range.
+pt_filter_added() {
+    if [ "$PT_ADDED_ONLY" != "1" ]; then cat; return 0; fi
+    awk -F: -v r="$PT_RANGES" 'BEGIN { n = split(r, a, " "); for (i = 1; i <= n; i++) { split(a[i], b, "-"); lo[i] = b[1] + 0; hi[i] = b[2] + 0 } }
+        { for (i = 1; i <= n; i++) if ($1 + 0 >= lo[i] && $1 + 0 <= hi[i]) { print; next } }'
+}
+
+# added_ranges_from_diff: stdin = a `git diff -U0` text for ONE file. Prints
+# the new-file line ranges the diff adds ("lo-hi ..."), or the single word ALL
+# when the diff is binary (cannot tell which lines were added: stay
+# conservative and scan the whole blob).
+added_ranges_from_diff() {
+    awk '
+        /^Binary files / || /^GIT binary patch/ { bin = 1 }
+        /^@@ / {
+            p = $3; sub(/^\+/, "", p)
+            c = 1; s = p
+            if (index(p, ",") > 0) { split(p, q, ","); s = q[1]; c = q[2] }
+            if (c + 0 > 0) out = out (out == "" ? "" : " ") s "-" (s + c - 1)
+        }
+        END { if (bin) print "ALL"; else print out }'
+}
+
+# pt_set_scope DIFF-TEXT-FILE: sets PT_ADDED_ONLY/PT_RANGES for the next blob.
+pt_set_scope() {
+    local ranges
+    ranges="$(added_ranges_from_diff < "$1")"
+    # An empty range set is only trustworthy when the diff itself succeeded
+    # (caller passes its rc as $2); a failed diff falls back to the whole blob.
+    if [ "${2:-0}" -ne 0 ]; then ranges="ALL"; fi
+    if [ "$ranges" = "ALL" ]; then PT_ADDED_ONLY=0; PT_RANGES=""; else PT_ADDED_ONLY=1; PT_RANGES="$ranges"; fi
 }
 
 # private_terms_prepare -> 0 armed; 3 INDETERMINATE (reason on stderr).
@@ -1147,11 +1186,17 @@ assert_can_detect() {
 
 scan_staged() {
     [ -d "$REPO_ROOT" ] || return 0
-    local path
+    local path dtmp drc
+    dtmp="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_diff.XXXXXX")"
     while IFS= read -r path; do
         [ -n "$path" ] || continue
+        # llm#1456: the private-term rule sees ADDED lines only.
+        git -C "$REPO_ROOT" diff --cached --no-ext-diff --no-renames -U0 -- "$path" > "$dtmp" 2>/dev/null; drc=$?
+        pt_set_scope "$dtmp" "$drc"
         git -C "$REPO_ROOT" cat-file -p ":${path}" 2>/dev/null | scan_blob "staged:${path}"
     done < <(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=ACM --no-ext-diff 2>/dev/null)
+    PT_ADDED_ONLY=0; PT_RANGES=""
+    rm -f "$dtmp"
 }
 
 scan_range() {
@@ -1178,7 +1223,8 @@ scan_range() {
     if [ "$MAX_COMMITS_EXPLICIT" -eq 1 ]; then
         _SCAN_TOTAL_REACHABLE="$(git -C "$REPO_ROOT" rev-list "${revspec[@]}" 2>/dev/null | wc -l | tr -d ' ')"
     fi
-    local sha path count=0
+    local sha path count=0 dtmp drc
+    dtmp="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_diff.XXXXXX")"
     while IFS= read -r sha; do
         [ -n "$sha" ] || continue
         count=$((count + 1))
@@ -1190,9 +1236,14 @@ scan_range() {
         _SCAN_SCANNED=$((_SCAN_SCANNED + 1))
         while IFS= read -r path; do
             [ -n "$path" ] || continue
+            # llm#1456: the private-term rule sees lines ADDED by this commit only.
+            git -C "$REPO_ROOT" diff-tree --root --no-commit-id --no-ext-diff --no-renames -U0 -p -r "$sha" -- "$path" > "$dtmp" 2>/dev/null; drc=$?
+            pt_set_scope "$dtmp" "$drc"
             git -C "$REPO_ROOT" cat-file -p "${sha}:${path}" 2>/dev/null | scan_blob "${sha:0:12}:${path}"
         done < <(git -C "$REPO_ROOT" diff-tree --root --no-commit-id --name-only --no-ext-diff -r "$sha" 2>/dev/null)
     done < <(git -C "$REPO_ROOT" rev-list "${revspec[@]}" 2>/dev/null)
+    PT_ADDED_ONLY=0; PT_RANGES=""
+    rm -f "$dtmp"
     [ -n "$_SCAN_TOTAL_REACHABLE" ] || _SCAN_TOTAL_REACHABLE="$_SCAN_SCANNED"
 }
 
