@@ -246,6 +246,22 @@ check "failed candidates keeps old terms" 0 "$(cmp -s "$WORK/terms10.before" "$P
 PRIVATE_TERMS_CANDIDATES_CMD='nonexistent_cmd_zz' run "$SCRIPT"
 check "missing candidates command rc" 3 "$rc"
 
+# 10e2. a stale/unseeded cache (call fails) is rebuilt once with --refresh and
+# the sync then succeeds; the rebuilt rows never reach stdout/stderr.
+cat > "$WORK/cands_stale.sh" <<'EOS'
+case "$*" in
+  *--refresh*) cat "$CANDS" ;;
+  *) exit 3 ;;
+esac
+EOS
+export CANDS
+rm -rf "$WORK/cfg10"
+PRIVATE_TERMS_CANDIDATES_CMD="bash \"$WORK/cands_stale.sh\"" run "$SCRIPT"
+check "stale cache refreshed once: rc" 0 "$rc"
+check "stale cache refreshed once: term present" 1 "$(grep -cx 'zzfakelocal' "$PRIVATE_TERMS_FILE")"
+check "stale cache refresh: no leak in stdout" 0 "$(no_leak "$WORK/out" zzfakelocal)"
+check "stale cache refresh: no leak in stderr" 0 "$(no_leak "$WORK/err" zzfakelocal)"
+
 # 10f. noise reporting: warning only, never an exclusion
 mkdir -p "$WORK/nrepo"
 git -C "$WORK/nrepo" init -q

@@ -133,8 +133,12 @@ derive_candidates() {
   local stop="" name
   : > "$TMPD/b2.raw"
   if ! bash -c "$CAND_CMD" > "$TMPD/cands.tsv" 2> "$TMPD/cands.err"; then
-    echo "INDETERMINATE: candidates call failed (cache unseeded, stale or unreadable); keeping previous files" >&2
-    exit 3
+    # Cache never seeded or older than its TTL: rebuild once. The rebuilt rows
+    # stay in $TMPD (never in a log); only a failed rebuild is INDETERMINATE.
+    if ! bash -c "$CAND_CMD --refresh" > "$TMPD/cands.tsv" 2> "$TMPD/cands.err"; then
+      echo "INDETERMINATE: candidates call failed even after a refresh; keeping previous files" >&2
+      exit 3
+    fi
   fi
   if [ -f "$CAND_STOPLIST_FILE" ]; then
     stop=" $(grep -v '^[[:space:]]*#' "$CAND_STOPLIST_FILE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ') "
