@@ -39,6 +39,8 @@ set -uo pipefail
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/private_terms.sh
 . "$HOOK_DIR/lib/private_terms.sh"
+# shellcheck source=lib/run_bounded.sh
+. "$HOOK_DIR/lib/run_bounded.sh"
 
 MSG=""
 TMPC=""
@@ -46,13 +48,17 @@ TMPE=""
 trap 'rm -f "$TMPC" "$TMPE"; pt_cleanup' EXIT
 
 _visibility() {
-  # $1 = repo root. Prints the classification; any failure prints "unknown".
-  local out
+  # $1 = repo root. Prints the classification; a lookup failure prints
+  # "unknown", and "indeterminate" when no time-limit mechanism exists at all
+  # (run_bounded exit 125), so the block message can say why.
+  local out rc
   if [ -n "${PTWG_VISIBILITY_CMD:-}" ]; then
-    out="$(timeout 12 "$PTWG_VISIBILITY_CMD" "$1" 2>/dev/null)" || out=""
+    out="$(run_bounded 12 "$PTWG_VISIBILITY_CMD" "$1" 2>/dev/null)"; rc=$?
   else
-    out="$(timeout 12 bash "$HOOK_DIR/../scripts/repo_visibility.sh" classify "$1" 2>/dev/null)" || out=""
+    out="$(run_bounded 12 bash "$HOOK_DIR/../scripts/repo_visibility.sh" classify "$1" 2>/dev/null)"; rc=$?
   fi
+  if [ "$rc" -eq 125 ]; then printf 'indeterminate'; return 0; fi
+  if [ "$rc" -ne 0 ]; then out=""; fi
   out="${out%%$'\n'*}"
   case "$out" in
     public|private|local_only|confidential_by_policy|unknown) printf '%s' "$out" ;;
@@ -114,6 +120,9 @@ check_payload() {
   hits="$(pt_match < "$TMPC")" || hits=""
   [ -n "$hits" ] || return 0
   lines="$(printf '%s' "$hits" | tr '\n' ',' | sed 's/,$//')"
+  if [ "$vis" = "indeterminate" ]; then
+    vis="unknown: no timeout, gtimeout or perl on PATH, so the visibility lookup could not be bounded and was not run"
+  fi
   MSG="BLOCKED (rule private-term, llm#1387): the new content contains a private term and the target is inside the PUBLIC repo $(basename "$top") (visibility: $vis). Matching line(s) of the new text: $lines. The term is deliberately not shown. Rewrite with a neutral name, move the work to a private repo, or use the alias map (private_aliases.tsv)."
   return 1
 }
