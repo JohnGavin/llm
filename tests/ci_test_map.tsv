@@ -94,3 +94,4 @@ tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.c
 tests/test_private_term_hash_scan.sh	tests/test_private_term_hash_scan.sh;.claude/scripts/private_terms_hashes.sh;.claude/scripts/private_term_hash_scan.sh;.claude/scripts/lib/private_term_hash_lib.sh;.claude/hooks/lib/private_terms.sh	run	
 tests/test_private_term_stoplisted_word.sh	tests/test_private_term_stoplisted_word.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/scripts/private_terms_sync.sh	run
 tests/test_private_term_added_lines_only.sh	tests/test_private_term_added_lines_only.sh;.claude/scripts/private_data_scan.sh;git-hooks/pre-push	run
+tests/test_secret_scan_false_positives.sh	tests/test_secret_scan_false_positives.sh;.claude/scripts/secret_exposure_scan.sh	run

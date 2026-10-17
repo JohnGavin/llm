@@ -387,7 +387,20 @@ looks_like_fixture_value() {
     if printf '%s' "$1" | grep -qiE 'EXAMPLE|FAKE|DUMMY|TEST|xxxx|AAAA|0000'; then
         return 0
     fi
-    printf '%s' "$1" | grep -qE '(.)\1{7,}'
+    if printf '%s' "$1" | grep -qE '(.)\1{7,}'; then
+        return 0
+    fi
+    # A run of 16+ consecutive characters in alphabet order
+    # (ABCDEFGHIJKLMNOP...) is a placeholder, never random. 16 rather than
+    # 10 so the selftest's ABCDEFGHIJ0123... values stay real-looking (llm#1458).
+    printf '%s' "$1" | awk '{
+        a = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; b = "abcdefghijklmnopqrstuvwxyz"; d = "0123456789"
+        n = length($0)
+        for (i = 1; i + 15 <= n; i++) {
+            s = substr($0, i, 16)
+            if (index(a, s) || index(b, s) || index(d, s)) exit 0
+        }
+        exit 1 }'
 }
 
 # ---------------------------------------------------------------------------
@@ -640,6 +653,14 @@ scan_source_patterns() {
         [ -n "${file:-}" ] || continue
         # Candidate only if the line ALSO routes somewhere (pipe/redirect).
         if ! printf '%s' "$rest" | grep -qE '(\||>)'; then
+            continue
+        fi
+        # `env NAME=value ... COMMAND` is a command prefix setting variables
+        # for ONE command (llm#1458), not a whole-environment dump: elide it
+        # and re-test the trigger. A bare `env`, `env -i`, `env A=b > f` (no
+        # command word), `printenv`, `export -p` etc. survive the elision.
+        probe="$(printf '%s' "$rest" | sed -E "s/(^|[^A-Za-z0-9_])env([[:space:]]+-i)?([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|[^[:space:]]*))+[[:space:]]+[A-Za-z_./\"\$'~]/\1ENV_PREFIX_ELIDED/g")"
+        if ! printf '%s' "$probe" | grep -qE "$ENV_CAPTURE_RE"; then
             continue
         fi
         if printf '%s' "$rest" | grep -qE 'grep[^|]*-[a-zA-Z]*v[a-zA-Z]*'; then
