@@ -88,6 +88,7 @@ tests/test_private_term_rule.sh	tests/test_private_term_rule.sh;.claude/scripts/
 tests/test_global_hooks_path_check.sh	tests/test_global_hooks_path_check.sh;.claude/scripts/global_hooks_path_check.sh	run
 tests/test_private_terms_sync.sh	tests/test_private_terms_sync.sh;.claude/scripts/private_terms_sync.sh	run
 tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claude/scripts/wiki_health_check.sh;.claude/schema/wiki-frontmatter.schema.json	run	
+tests/test_chrome_headless_and_clones.sh	tests/test_chrome_headless_and_clones.sh;.claude/scripts/headless_chrome.sh;.claude/scripts/disk_headroom_check.sh	run
 tests/test_private_repo_detail_guard_refresh_stoplist.sh	tests/test_private_repo_detail_guard_refresh_stoplist.sh;.claude/hooks/private_repo_detail_guard.sh;.claude/scripts/private_name_stoplist.txt;.claude/scripts/repo_visibility_diff.sh	run
 tests/test_roborev_severity_autoclose_bashver.sh	tests/test_roborev_severity_autoclose_bashver.sh;.claude/scripts/roborev_severity_autoclose.sh	run	
 tests/test_private_term_write_guard.sh	tests/test_private_term_write_guard.sh;.claude/hooks/private_term_write_guard.sh;.claude/hooks/lib/private_terms.sh;.claude/hooks/lib/private_term_payload.py	run
@@ -98,3 +99,4 @@ tests/test_timeout_resolution.sh	tests/test_timeout_resolution.sh;.claude/hooks/
 tests/test_secret_scan_false_positives.sh	tests/test_secret_scan_false_positives.sh;.claude/scripts/secret_exposure_scan.sh	run
 tests/test_scanner_triage.sh	tests/test_scanner_triage.sh;.claude/scripts/scanner_triage.sh;.claude/scripts/lib/scanner_triage_lib.R;.claude/scripts/lib/secret_scan_new_findings.sql;.claude/state/scanner_policy.tsv;.claude/scripts/housekeeping_schema_init.sql	run
 .claude/scripts/private_data_scan.sh	.claude/scripts/private_data_scan.sh	skip-ci	its --selftest already runs in .github/workflows/private-data-scan.yml; fixture repos now set core.hooksPath=/dev/null so a global hooksPath cannot block their deliberate-leak commits locally (199/199)
+tests/test_ci_test_map_wellformed.sh	tests/test_ci_test_map_wellformed.sh;tests/ci_test_map.tsv;.gitattributes	run
