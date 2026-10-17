@@ -42,6 +42,8 @@
 source(file.path(.scripts_dir, "email_styles.R"))
 # llm#235 steps 1-2: conversation signals (learning digest) + roborev findings.
 source(file.path(.scripts_dir, "lib", "self_review_content_signals.R"))
+# llm#1458 part 2: scanner triage policy (fix / file / needs the owner).
+source(file.path(.scripts_dir, "lib", "scanner_triage_lib.R"))
 
 # ── Null-coalescing operator ───────────────────────────────────────────────────
 # Treats NULL, length-0, NA, AND empty string as "missing" — falls through to b.
@@ -1454,20 +1456,23 @@ if (nrow(cron_health) > 0L) {
                     basis = sprintf("heartbeat says %d finding row(s) but the findings table holds %d",
                                     n_latest, in_tbl$n[[1]])))
       }
-      nw <- safe_query(sprintf("
-        SELECT count(*) AS n FROM secret_scan_findings f
-        WHERE f.run_id = '%s' AND NOT EXISTS (
-          SELECT 1 FROM secret_scan_findings g
-          JOIN housekeeping_runs r ON r.id = g.run_id
-          WHERE r.task = '%s' AND g.run_id <> '%s'
-            AND r.started_at < %s AND r.started_at >= %s - INTERVAL 7 DAY
-            AND g.detector = f.detector AND g.file_path = f.file_path
-            AND coalesce(g.line_num, '') = coalesce(f.line_num, '') AND g.name = f.name)",
-        rid, task, rid, started, started))
-      if (nrow(nw) == 0L) {
+      # llm#1458: the definition of "new" lives in ONE file, shared with
+      # scanner_triage.sh, so the two can never disagree.
+      new_sql <- tryCatch(
+        paste(readLines(file.path(.scripts_dir, "lib", "secret_scan_new_findings.sql"),
+                        warn = FALSE), collapse = "\n"),
+        error = function(e) NA_character_)
+      if (is.na(new_sql) || !grepl("^[A-Za-z0-9._:-]+$", hb$run_id)) {
+        return(list(n_new = NA_integer_, basis = "shared new-findings query unreadable"))
+      }
+      nw <- tryCatch(
+        DBI::dbGetQuery(con, gsub("@RUN_ID@", hb$run_id, new_sql, fixed = TRUE)),
+        error = function(e) NULL)
+      if (is.null(nw)) {
         return(list(n_new = NA_integer_, basis = "findings table unreadable"))
       }
-      return(list(n_new = as.integer(nw$n[[1]]), basis = "vs the last 7 days of runs"))
+      return(list(n_new = nrow(nw), new_types = as.character(nw$name),
+                  basis = "vs the last 7 days of runs"))
     }
     if (identical(hb$task, "private_data_history_audit")) {
       win <- safe_query(sprintf("
@@ -1622,6 +1627,37 @@ if (nrow(cron_health) > 0L) {
                              ok_label, nf$basis, conv)
           ))
         }
+        if (nf$n_new > 0L && !is.null(nf$new_types)) {
+          # llm#1458 part 2: classify the new rows by the policy table. Only
+          # rows that need the owner put the job in the action bucket.
+          ta <- scanner_triage_assess(
+            nf$new_types, hb$task,
+            scanner_policy_read(.scanner_policy_path),
+            scanner_triage_outcome_read(.scanner_triage_dir, hb$run_id, hb$task))
+          assign(hb$task, ta, envir = .triage_env)
+          tri <- sprintf("fixed %d, filed %d, tracked %d, needs you %d",
+                         ta$fixed, ta$filed, ta$tracked, ta$needs_you)
+          if (ta$needs_you > 0L) {
+            return(list(
+              bucket = "action", display_state = "loaded (exit 1 = findings)",
+              n_new = ta$needs_you,
+              label  = sprintf("ok (ran) — %d new finding(s) need triage (%s; of %s; %s; %s)",
+                               ta$needs_you, tri, ok_label, nf$basis, conv)
+            ))
+          }
+          if (ta$indeterminate) {
+            return(list(
+              bucket = "indeterminate", display_state = "loaded (exit 1 = findings)",
+              label  = sprintf("indeterminate — %d new finding(s) the policy would handle, but %s (%s; %s)",
+                               ta$unresolved, ta$why, ok_label, conv)
+            ))
+          }
+          return(list(
+            bucket = "ok", display_state = "loaded (exit 1 = findings)",
+            label  = sprintf("ok (ran) — %d new finding(s) handled by scanner triage (%s; of %s; %s; %s)",
+                             nf$n_new, tri, ok_label, nf$basis, conv)
+          ))
+        }
         if (nf$n_new > 0L) {
           return(list(
             bucket = "action", display_state = "loaded (exit 1 = findings)",
@@ -1654,6 +1690,15 @@ if (nrow(cron_health) > 0L) {
     if (r$state == "loaded_ok") return(list(bucket = "ok", label = "ok"))
     return(list(bucket = "failed", label = r$state))
   }
+
+  # llm#1458 part 2: where the policy table and the triage outcome live
+  # (overridable so tests point at scratch fixtures), and where each scanner's
+  # assessment is collected for the "Scanner triage" block.
+  .scanner_policy_path <- Sys.getenv("SCANNER_POLICY_FILE") %||%
+    file.path(.scripts_dir, "..", "state", "scanner_policy.tsv")
+  .scanner_triage_dir  <- Sys.getenv("SCANNER_TRIAGE_DIR") %||%
+    file.path(Sys.getenv("HOME"), ".claude", "logs", "scanner_triage")
+  .triage_env <- new.env(parent = emptyenv())
 
   .cron_interp <- lapply(seq_len(nrow(cron_health)), interpret_cron_row)
   cron_health$bucket             <- vapply(.cron_interp, function(x) x$bucket, character(1))
@@ -1741,6 +1786,38 @@ if (nrow(cron_health) > 0L) {
   &#9888; %d scanner job(s) ran fine but reported NEW findings (%d row(s) in
   total) &mdash; triage them; see the Result column.</p>',
         EMAIL_FONT_SUBTITLE, n_triage, sum(cron_health$n_new_findings)
+      )
+    )
+  }
+  # llm#1458 part 2: "Scanner triage" -- what the scheduled triage did with
+  # each scanner's NEW findings. Metric | Value table; the revert command for
+  # every fix is listed so a wrong fix is one paste away from undone.
+  for (.tk in sort(ls(.triage_env))) {
+    .ta <- get(.tk, envir = .triage_env)
+    .revert_html <- if (length(.ta$reverts) > 0L) {
+      sprintf('<p style="font-size:%s;margin:4px 0;">Revert a fix: %s</p>',
+              EMAIL_FONT_SUBTITLE,
+              paste(sprintf("<code>%s</code>", htmlEscape(.ta$reverts)), collapse = "<br>"))
+    } else ""
+    .why_html <- if (isTRUE(.ta$indeterminate)) {
+      sprintf('<p style="color:%s;font-size:%s;margin:4px 0;">%d new finding(s) not accounted for: %s.</p>',
+              ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, .ta$unresolved, htmlEscape(.ta$why))
+    } else ""
+    .tri_color <- if (.ta$needs_you > 0L) "#ff5252" else DARK_TEXT
+    .tri_rows <- paste(sprintf(
+      '<tr><td style="padding:3px 10px;">%s</td><td style="padding:3px 10px;text-align:right;color:%s;">%d</td></tr>',
+      c("Fixed", "Filed (new issue)", "Tracked (open issue)", "Needs you"),
+      c(DARK_TEXT, DARK_TEXT, DARK_TEXT, .tri_color),
+      c(.ta$fixed, .ta$filed, .ta$tracked, .ta$needs_you)), collapse = "\n")
+    cron_table_html <- paste0(
+      cron_table_html,
+      sprintf(
+        '<p style="font-size:%s;margin:12px 0 4px 0;font-weight:bold;">Scanner triage &mdash; %s: fixed %d, filed %d, tracked %d, needs you %d</p>
+<table style="width:auto;border-collapse:collapse;color:%s;font-size:%s;">
+<thead><tr style="background-color:%s;"><th style="padding:3px 10px;text-align:left;">Metric</th><th style="padding:3px 10px;text-align:right;">Value</th></tr></thead>
+<tbody>%s</tbody></table>%s%s',
+        EMAIL_FONT_BODY, .tk, .ta$fixed, .ta$filed, .ta$tracked, .ta$needs_you,
+        DARK_TEXT, EMAIL_FONT_BODY, DARK_ROW_ALT, .tri_rows, .revert_html, .why_html
       )
     )
   }

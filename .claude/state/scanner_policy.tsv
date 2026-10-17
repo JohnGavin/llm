@@ -1,0 +1,13 @@
+scanner	finding_type	class	reason
+secret_exposure_scan	bad-permissions	auto-fix	chmod 600 only for a non-executable regular file outside any git work tree and outside .claude/hooks/ and .claude/scripts/ (conditions live in scanner_triage.sh); revert command is logged
+secret_exposure_scan	known-store-bad-mode	auto-fix	same safety conditions as bad-permissions; the known credential stores are plain env files that must be mode 600
+secret_exposure_scan	unfiltered-capture	auto-file	pattern-level false positives recur; one deduplicated issue per type, detector tuning is a code change
+secret_exposure_scan	denylist-capture	auto-file	pattern-level false positives recur; one deduplicated issue per type, detector tuning is a code change
+secret_exposure_scan	cred-shape	auto-file	fixture tokens in guard scripts recur; one deduplicated issue per type
+secret_exposure_scan	credential-assignment	auto-file	needs a judgement call on each match; tracked by one issue per type
+secret_exposure_scan	commented-credential-assignment	auto-file	needs a judgement call on each match; tracked by one issue per type
+secret_exposure_scan	known-store-key-delta	auto-file	a key added or removed in a credential store is usually deliberate; tracked by one issue
+secret_exposure_scan	known-store-in-worktree	human	a credential store inside a git work tree can be committed publicly; only the owner can move it
+secret_exposure_scan	known-store-sibling-copy	human	a second copy of a credential store; the owner decides which copy is canonical
+secret_exposure_scan	known-store-empty-value	human	an empty credential value; the owner must supply the value
+secret_exposure_scan	known-store-placeholder-value	human	an unfilled placeholder credential; the owner must supply the value
