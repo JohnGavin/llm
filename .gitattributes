@@ -1,0 +1,7 @@
+# tests/ci_test_map.tsv is an append-mostly file: nearly every PR that adds a
+# shell test appends one row at the end, so parallel PRs conflicted on the
+# same trailing lines. The union driver keeps both sides' added lines and
+# never writes conflict markers. Its one failure mode (two branches editing
+# the SAME existing row differently keeps both versions) is caught by
+# tests/test_ci_test_map_wellformed.sh (duplicate-key check).
+tests/ci_test_map.tsv merge=union
