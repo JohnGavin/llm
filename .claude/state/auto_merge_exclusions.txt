@@ -1,0 +1,61 @@
+# .claude/state/auto_merge_exclusions.txt -- llm#1471
+#
+# ONE home for the Auto-Merge Exclusion List, read by bin/auto_merge_sweep.sh.
+# Rule: .claude/rules/human-in-the-loop-decision-points.md § Conditional
+# Auto-Merge. A PR whose diff touches ANY path matching ANY line below is never
+# eligible for automatic merge (it stays Class C: explicit "merge" verb).
+#
+# Format: POSIX extended regexes (grep -E), one per line, matched against the
+# repo-relative path of each changed file. Blank lines and lines starting with
+# '#' are ignored. Put a '#' reason line directly above every regex.
+# Do not use grep -P constructs. A regex that does not compile, or a file with
+# zero regexes, makes the sweep answer INDETERMINATE (fail closed).
+#
+# Scheduled scripts are NOT listed here: the sweep derives them at run time from
+# .claude/launchd/*.plist and bin/launchd-recorders/* (reason scheduled-script).
+#
+# Not mechanically expressible, so NOT covered (left to the human): content
+# published to a live surface outside docs/ (e.g. vignette sources).
+
+# Hooks run on every tool call with no human in the loop (rule list).
+^\.claude/hooks/
+
+# Rules are loaded into every session; editing them changes agent behaviour (rule list).
+^\.claude/rules/
+
+# launchd plists go live on a schedule with no human in the loop (rule list, #1274).
+^\.claude/launchd/
+
+# launchd recorder wrappers are the scheduled entry points (rule list, #1274).
+^bin/launchd-recorders/
+
+# AGENTS.md and CLAUDE.md hold the toggle and a copy of this list (rule list, #1285). Any depth.
+(^|/)AGENTS\.md$
+(^|/)CLAUDE\.md$
+
+# Environment definition files (rule list).
+(^|/)default\.nix$
+(^|/)default\.R$
+
+# Harness permissions and hooks wiring (rule list).
+(^|/)\.claude/settings(\.local)?\.json$
+
+# DB schema and migration files (rule list).
+_schema\.sql$
+_schema_apply\.sh$
+
+# Credential and secret files (rule list).
+(^|/)secrets\.env$
+(^|/)\.Renviron
+
+# STRICTER THAN THE RULE: a workflow edit is a code-execution change on CI with
+# repository secrets in scope, so any file under .github/workflows/ is excluded.
+^\.github/workflows/
+
+# Pre-rendered GH Pages output is public-facing published content (rule list).
+^docs/
+
+# Scripts that close, delete, reap, garbage-collect or reload things, and
+# credential or rotation scripts, matched by file name at any depth (rule list;
+# stricter in that it also catches tests and docs with these words in the name).
+(^|/)[^/]*(autoclose|auto_close|revalidate|reaper|worktree_gc|branch_gc|[Cc]redential|[Ss]ecret|rotate)[^/]*$
