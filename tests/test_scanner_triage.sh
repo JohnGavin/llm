@@ -85,15 +85,15 @@ seed_db() {
         if [ -z "$prev" ]; then prev="$CASE/prev.tsv"; printf 'cred-shape\t/prev/only/file\tprev\n' > "$prev"; fi
         n_prev=$(awk 'END{print NR}' "$prev")
         echo "INSERT INTO housekeeping_runs (id,task,source_script,started_at,ended_at,status,rows_written) VALUES ('prev-run','secret_exposure_scan','t', now() - INTERVAL 2 DAY, now() - INTERVAL 2 DAY,'ok',$n_prev);" >> "$sqlf"
-        awk -F'\t' '{printf "INSERT INTO secret_scan_findings VALUES (md5(\x27prev-run:%d\x27),\x27prev-run\x27, now() - INTERVAL 2 DAY,\x273\x27,\x27high\x27,\x27%s\x27,\x27-\x27,\x27%s\x27,\x27%s\x27);\n", NR, $2, $1, $3}' "$prev" >> "$sqlf"
+        awk -F'\t' -v q="'" '{printf "INSERT INTO secret_scan_findings VALUES (md5(" q "prev-run:%d" q ")," q "prev-run" q ", now() - INTERVAL 2 DAY," q "3" q "," q "high" q "," q "%s" q "," q "-" q "," q "%s" q "," q "%s" q ");\n", NR, $2, $1, $3}' "$prev" >> "$sqlf"
     fi
     echo "INSERT INTO housekeeping_runs (id,task,source_script,started_at,ended_at,status,rows_written) VALUES ('cur-run','secret_exposure_scan','t', now(), now(),'ok',$n_cur);" >> "$sqlf"
-    awk -F'\t' '{printf "INSERT INTO secret_scan_findings VALUES (md5(\x27cur-run:%d\x27),\x27cur-run\x27, now(),\x273\x27,\x27high\x27,\x27%s\x27,\x27-\x27,\x27%s\x27,\x27%s\x27);\n", NR, $2, $1, $3}' "$cur" >> "$sqlf"
+    awk -F'\t' -v q="'" '{printf "INSERT INTO secret_scan_findings VALUES (md5(" q "cur-run:%d" q ")," q "cur-run" q ", now()," q "3" q "," q "high" q "," q "%s" q "," q "-" q "," q "%s" q "," q "%s" q ");\n", NR, $2, $1, $3}' "$cur" >> "$sqlf"
     duckdb -init /dev/null "$DB" -c ".read $sqlf" >/dev/null 2>&1
 }
 run_triage() { # run_triage ARGS...  -> RC, OUT
     OUT="$(env HOME="$H" UNIFIED_DB_PATH="$DB" SCANNER_TRIAGE_DIR="$OUTD" \
-        SCANNER_POLICY_FILE="$POLICY" GH_STUB_DIR="$GH_STUB_DIR" PATH="$STUB:$PATH" \
+        SCANNER_POLICY_FILE="$POLICY" GH_STUB_DIR="$GH_STUB_DIR" PATH="${PRE_PATH:+$PRE_PATH:}$STUB:$PATH" \
         bash "$TRIAGE" "$@" 2>&1)"
     RC=$?
 }
@@ -158,7 +158,48 @@ while [ $i -le 12 ]; do [ "$(mode_of "$CASE/files/f$i.env")" = 600 ] && n600=$((
 check "(b) apply stops at the cap: exactly 10 of 12 chmod'd (got $n600)" $(( n600 == 10 ? 0 : 1 ))
 check "(b) the 2 over the cap are counted as needing the owner" $(outcome | grep -q '"fixed":10,.*"needs_you":2,'; echo $?)
 
-# --- (c) unlisted type is human; standing rows are not new -----------------------
+# --- (b2) same cap/log checks under the SYSTEM chmod and a BSD-like chmod ----------
+# Regression: `chmod 600 -- FILE` is a FILE operand `--` on macOS /bin/chmod (the
+# chmod happens, then it exits 1), which made apply mode report "chmod-failed",
+# count no mutation (cap bypassed), and write no DESTRUCTIVE line. GNU chmod
+# accepts `--`, so the stub below mimics BSD to catch it on Linux/CI too.
+BSDSTUB="$WORK/bsdchmod"; mkdir -p "$BSDSTUB"
+cat > "$BSDSTUB/chmod" <<'EOF'
+#!/bin/sh
+# BSD-like: every operand after the mode is a file, including a literal "--".
+mode="$1"; shift; rc=0
+for f in "$@"; do
+    if [ "$f" = "--" ]; then echo "chmod: --: No such file or directory" >&2; rc=1
+    else /bin/chmod "$mode" "$f" || rc=1; fi
+done
+exit $rc
+EOF
+/bin/chmod +x "$BSDSTUB/chmod"
+apply_cap_case() { # apply_cap_case LABEL PRE_PATH
+    local lab="$1" i n600 nlog
+    new_case "b2_$lab"
+    : > "$CASE/cur.tsv"; i=1
+    while [ $i -le 12 ]; do
+        printf 'x\n' > "$CASE/files/f$i.env"; /bin/chmod 644 "$CASE/files/f$i.env"
+        printf 'bad-permissions\t%s\tn\n' "$CASE/files/f$i.env" >> "$CASE/cur.tsv"
+        i=$((i + 1))
+    done
+    seed_db "$CASE/cur.tsv"
+    PRE_PATH="$2" run_triage --apply
+    n600=0; i=1
+    while [ $i -le 12 ]; do [ "$(mode_of "$CASE/files/f$i.env")" = 600 ] && n600=$((n600 + 1)); i=$((i + 1)); done
+    nlog=$(grep -c "^DESTRUCTIVE: .* path-hash=[0-9a-f]\{16\} old-mode=644 " "$H/.claude/logs/scanner_triage.log" 2>/dev/null)
+    check "(b2/$lab) exactly 10 of 12 chmod'd (got $n600)" $(( n600 == 10 ? 0 : 1 ))
+    check "(b2/$lab) 10 fixed, 2 left for the owner (cap holds)" $(outcome | grep -q '"fixed":10,.*"needs_you":2,'; echo $?)
+    check "(b2/$lab) 10 DESTRUCTIVE lines with path-hash and old-mode (got ${nlog:-0})" $(( ${nlog:-0} == 10 ? 0 : 1 ))
+    check "(b2/$lab) no chmod-failed note" $(outcome | grep -q 'chmod-failed'; echo $(( $? == 0 ? 1 : 0 )))
+    check "(b2/$lab) outcome carries revert commands" $(outcome | grep -q "chmod 644 '$CASE/files/f"; echo $?)
+}
+apply_cap_case sys /bin
+apply_cap_case bsdstub "$BSDSTUB"
+PRE_PATH=""
+
+# --- (c) unlisted type is human;standing rows are not new -----------------------
 new_case c
 printf 'x\n' > "$CASE/files/c.env"; chmod 644 "$CASE/files/c.env"
 {

@@ -142,6 +142,7 @@ jobs:
           NEED_GS_TESSERACT=0
           grep -qx "tests/test_etl_freshness_upsert.sh" /tmp/selected_tests.txt && NEED_DUCKDB=1
           grep -qx "tests/test_launchd_run_record_timeout.sh" /tmp/selected_tests.txt && NEED_DUCKDB=1
+          grep -qx "tests/test_scanner_triage.sh" /tmp/selected_tests.txt && NEED_DUCKDB=1
           grep -qx "tests/test_signal_attachment_ingest.sh" /tmp/selected_tests.txt && NEED_GS_TESSERACT=1
           {
             echo "need_duckdb=${NEED_DUCKDB}"
