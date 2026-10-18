@@ -232,7 +232,10 @@ while IFS="$(printf '\t')" read -r type file; do
                 printf '%s\n' "$type" >> "$T/needs.txt"
                 echo "cap-reached" >> "$T/notes.txt"
             elif [ "$MODE" = "apply" ]; then
-                if chmod 600 -- "$file" 2>/dev/null && [ "$(file_mode "$file")" = "600" ]; then
+                # No `--` after the mode: BSD/macOS chmod reads it as a FILE operand,
+                # does the chmod, then prints an error and exits 1. $file is already
+                # absolute (safe_reason), so it cannot be read as an option.
+                if chmod 600 "$file" 2>/dev/null &&[ "$(file_mode "$file")" = "600" ]; then
                     mutations=$((mutations + 1))
                     printf '%s\n' "$file" >> "$T/done_files.txt"
                     printf '%s\n' "$type" >> "$T/fixed.txt"
