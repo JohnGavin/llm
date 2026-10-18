@@ -18,7 +18,8 @@
 # bin/roborev_merge_gate.sh — worth fixing or retiring, since a dry-run gate
 # that always exits 0 cannot gate anything either way.
 #
-# The SHRINK rule stands. This file is now 35 and should head back down.
+# The SHRINK rule stands. This file is now 34 and should head back down.
+# (phi_scan.sh pipefail-abort fixed, entry removed.)
 .claude/hooks/agent_push_guard.sh	swallowed-status
 .claude/hooks/compound_command_guard.sh	swallowed-status
 .claude/hooks/destructive_api_guard.sh	pipefail-abort
@@ -37,7 +38,6 @@
 .claude/scripts/check_indeterminate_handling.sh	swallowed-status
 .claude/scripts/clean-stale-worktrees.sh	swallowed-status
 .claude/scripts/hook_event_emit.sh	swallowed-status
-.claude/scripts/phi_scan.sh	pipefail-abort
 .claude/scripts/pr_status_pulse.sh	swallowed-status
 .claude/scripts/process_pending_skillify.sh	pipefail-abort
 .claude/scripts/roborev_agent_health.sh	pipefail-abort
