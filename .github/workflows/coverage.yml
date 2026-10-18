@@ -14,9 +14,12 @@
 #
 # No third-party coverage service (codecov.io etc.) is wired up here -- no new
 # secret/token is required. Coverage is written to inst/extdata/coverage.rds
-# and committed back to the repo, matching the existing pattern used for other
-# generated telemetry data in this project (readable via readRDS() from a
-# vignette/dashboard later, same as the documented template's intent).
+# and committed to the separate branch `coverage-data` (a commit whose tree is
+# only that file), NOT to main: main is protected by a ruleset requiring the
+# private-term-hash-check status check, and GitHub does not let the Actions
+# app bypass a ruleset on a personal repo. The copy of coverage.rds already on
+# main is frozen at its last value; nothing in this repo reads it. Read the
+# current one from the coverage-data branch.
 #
 # Diagnostic note (2026-08-30): on failure, covr::package_coverage() raises
 # an error via covr:::show_failures(), whose message is the *tail* of the
@@ -74,7 +77,7 @@ permissions:
   contents: write
 
 # Only the newest coverage result matters. Several merges in a row used to
-# start parallel runs that each pushed to main and lost the race (runs
+# start parallel runs that each pushed to the same branch and lost the race (runs
 # 38052487578 and 38052508066 on 2026-10-10 were rejected "fetch first").
 concurrency:
   group: coverage-main
@@ -148,29 +151,11 @@ jobs:
             saveRDS(cov, "inst/extdata/coverage.rds")
           '
 
+      # Pushes to the data-only branch coverage-data, never to main (main is
+      # protected by a ruleset the Actions bot cannot bypass). Logic and tests:
+      # .claude/scripts/push_coverage_branch.sh, tests/test_coverage_push_branch.sh
       - name: Commit coverage data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add inst/extdata/coverage.rds
-          if git diff --staged --quiet; then
-            echo "coverage.rds unchanged; nothing to push"
-            exit 0
-          fi
-          git commit -m "chore(coverage): update coverage data [skip ci]"
-          # main may have moved while coverage ran. This commit touches only
-          # coverage.rds, which nothing else edits, so rebasing onto the new
-          # main is safe. Retry a few times, then fail loudly.
-          for attempt in 1 2 3; do
-            if git pull --rebase origin main; then
-              if git push origin HEAD:main; then
-                exit 0
-              fi
-            else
-              git rebase --abort
-            fi
-            echo "push attempt $attempt failed; retrying"
-            sleep $((attempt * 10))
-          done
-          echo "::error::could not push coverage.rds after 3 attempts"
-          exit 1
+          bash .claude/scripts/push_coverage_branch.sh inst/extdata/coverage.rds coverage-data origin
