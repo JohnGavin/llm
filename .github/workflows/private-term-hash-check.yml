@@ -1,0 +1,71 @@
+# private-term-hash-check -- privacy layer L3 (llm#1389, parent llm#1382).
+#
+# Catches private terms in a PR's ADDED lines without publishing them: the
+# terms live only as salted HMAC-SHA256 digests in two Actions secrets,
+# produced by .claude/scripts/private_terms_hashes.sh (owner-run):
+#   PRIVATE_TERMS_SALT, PRIVATE_TERM_HASHES
+# The scanner (.claude/scripts/private_term_hash_scan.sh) hashes the tokens
+# and n-grams of the added lines and compares.
+#
+# Fails the job on exit 1 (finding) AND exit 3 (INDETERMINATE: secret missing
+# or empty, payload lacks the canary digest, PR from a fork where secrets are
+# withheld). A check that could not run is never a pass. Until the owner sets
+# the two secrets this check FAILS as INDETERMINATE -- that is intended.
+#
+# OWNER STEP (not done by this repo's agents): add the status check
+# "private-term-hash-check" as a REQUIRED check on main.
+
+name: private-term-hash-check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: private-term-hash-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan added lines against the salted digests
+        env:
+          PRIVATE_TERMS_SALT: ${{ secrets.PRIVATE_TERMS_SALT }}
+          PRIVATE_TERM_HASHES: ${{ secrets.PRIVATE_TERM_HASHES }}
+          PR_FROM_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE_SHA"
+            HEAD="$PR_HEAD_SHA"
+          else
+            BASE="$PUSH_BEFORE_SHA"
+            HEAD="$PUSH_AFTER_SHA"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="$(git rev-parse "$HEAD^" 2>/dev/null || true)"
+          fi
+          if [ -z "$BASE" ]; then
+            echo "::error::cannot determine a base commit; INDETERMINATE"
+            exit 3
+          fi
+          bash .claude/scripts/private_term_hash_scan.sh --base "$BASE" --head "$HEAD"
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::private-term-hash-check exit $rc (1 = finding, 3 = INDETERMINATE); see log for rule and file:line"
+          fi
+          exit "$rc"
