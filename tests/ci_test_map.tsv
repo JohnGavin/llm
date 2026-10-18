@@ -101,3 +101,4 @@ tests/test_scanner_triage.sh	tests/test_scanner_triage.sh;.claude/scripts/scanne
 .claude/scripts/private_data_scan.sh	.claude/scripts/private_data_scan.sh	skip-ci	its --selftest already runs in .github/workflows/private-data-scan.yml; fixture repos now set core.hooksPath=/dev/null so a global hooksPath cannot block their deliberate-leak commits locally (199/199)
 tests/test_ci_test_map_wellformed.sh	tests/test_ci_test_map_wellformed.sh;tests/ci_test_map.tsv;.gitattributes	run
 tests/test_phi_scan.sh	tests/test_phi_scan.sh;.claude/scripts/phi_scan.sh	run
+tests/test_coverage_push_branch.sh	tests/test_coverage_push_branch.sh;.claude/scripts/push_coverage_branch.sh;.github/workflows/coverage.yml	run
