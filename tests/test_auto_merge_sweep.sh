@@ -19,10 +19,17 @@ mkdir -p "$STUB" "$BIN"
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 d="$STUB_DIR"
+echo "$*" >> "$d/calls.log"
 case "$1 $2" in
+  "pr edit") if [ -f "$d/edit_fail_$3" ] && printf '%s' "$*" | grep -q -e '--add-label'; then exit 1; fi
+             if [ -f "$d/unlabel_fail" ] && printf '%s' "$*" | grep -q -e '--remove-label'; then exit 1; fi
+             exit 0 ;;
+  "pr merge") if [ -f "$d/merge_fail_$3" ]; then echo "SECRET-TITLE-ERR" >&2; exit 1; fi; exit 0 ;;
+  "label list") if [ -f "$d/no_label" ]; then exit 0; fi; echo "auto-merged"; exit 0 ;;
   "auth status") exit "$(cat "$d/auth_rc" 2>/dev/null || echo 0)" ;;
   "pr list") cat "$d/list.json" || exit 1 ;;
-  "pr view") cat "$d/view_$3.json" 2>/dev/null || exit 1 ;;
+  "pr view") c=$(cat "$d/vc_$3" 2>/dev/null || echo 0); c=$((c + 1)); echo "$c" > "$d/vc_$3"
+             if [ "$c" -ge 2 ] && [ -f "$d/view2_$3.json" ]; then cat "$d/view2_$3.json"; else cat "$d/view_$3.json" 2>/dev/null || exit 1; fi ;;
   "repo view") echo "O/R" ;;
   "api repos/O/R/pulls/"*) : ;;
 esac
@@ -41,6 +48,7 @@ cat > "$W/gate.sh" <<'EOF'
 #!/usr/bin/env bash
 exit "${GATE_RC:-0}"
 EOF
+export AUTO_MERGE_LOG="$W/am.log"
 export STUB_DIR="$STUB" GATE_RC=0 AUTO_MERGE_REPO_DIR="$FAKE" AUTO_MERGE_GATE="$W/gate.sh"
 export PATH="$BIN:$PATH"
 
@@ -54,7 +62,7 @@ setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.m
   fi
   printf '<string>/x/.claude/scripts/zzz_nightly.sh</string>\n' > "$FAKE/.claude/launchd/com.t.plist"
   printf '#!/bin/sh\nexec other_job.sh\n' > "$FAKE/bin/launchd-recorders/rec"
-  rm -f "$STUB"/*
+  rm -f "$STUB"/*; rm -f "$AUTO_MERGE_LOG"
   GATE_RC=0; export GATE_RC
   unset AUTO_MERGE_EXCLUSIONS
 }
@@ -97,8 +105,8 @@ mkpr() {
   done
   if [ -z "$changed" ]; then changed="$nf"; fi
   printf '%s' "$assoc" > "$STUB/assoc_$n"
-  printf '{"number":%s,"state":"%s","isDraft":%s,"mergeStateStatus":"%s","labels":[%s],"statusCheckRollup":%s,"changedFiles":%s}\n' \
-    "$n" "$state" "$draft" "$merge" "$lj" "$(checks_json "$checks")" "$changed" > "$STUB/view_$n.json"
+  printf '{"number":%s,"state":"%s","isDraft":%s,"mergeStateStatus":"%s","headRefOid":"%s","labels":[%s],"statusCheckRollup":%s,"changedFiles":%s}\n' \
+    "$n" "$state" "$draft" "$merge" "${HEAD:-aaaaaaa$n}" "$lj" "$(checks_json "$checks")" "$changed" > "$STUB/view_$n.json"
 }
 
 # A fully eligible PR; individual tests override one argument.
@@ -120,7 +128,7 @@ expect() {  # label pr verdict reason expected_rc
 # ---- 1. baseline eligible + toggle -------------------------------------------
 setup_repo ON; good; run 1
 expect "eligible baseline" 1 ELIGIBLE all-conditions-met
-if printf '%s\n' "$OUT" | grep -qx 'prs=1 eligible=1 not_eligible=0 indeterminate=0'; then ok; else bad "summary line: $OUT"; fi
+if printf '%s\n' "$OUT" | grep -qx 'prs=1 eligible=1 not_eligible=0 indeterminate=0 merged=0 failed=0'; then ok; else bad "summary line: $OUT"; fi
 
 setup_repo OFF; good; run 1
 expect "toggle OFF" 1 NOT-ELIGIBLE toggle-off
@@ -238,11 +246,11 @@ mkpr 3 OWNER OPEN false UNKNOWN "" "S" "R/c.R"
 mkpr 9 OWNER OPEN true CLEAN "" "S" "R/d.R"
 printf '[{"number":1,"isDraft":false},{"number":2,"isDraft":false},{"number":3,"isDraft":false},{"number":9,"isDraft":true}]\n' > "$STUB/list.json"
 run
-if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qx 'prs=3 eligible=1 not_eligible=1 indeterminate=1'; then ok; else bad "listing summary rc=$RC: $OUT"; fi
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qx 'prs=3 eligible=1 not_eligible=1 indeterminate=1 merged=0 failed=0'; then ok; else bad "listing summary rc=$RC: $OUT"; fi
 if printf '%s\n' "$OUT" | grep -q '^9	'; then bad "draft PR listed"; else ok; fi
 
 setup_repo ON; printf '[]\n' > "$STUB/list.json"; run
-if [ "$RC" -eq 0 ] && [ "$OUT" = "prs=0 eligible=0 not_eligible=0 indeterminate=0" ]; then ok; else bad "no open PRs rc=$RC: $OUT"; fi
+if [ "$RC" -eq 0 ] && [ "$OUT" = "prs=0 eligible=0 not_eligible=0 indeterminate=0 merged=0 failed=0" ]; then ok; else bad "no open PRs rc=$RC: $OUT"; fi
 
 setup_repo ON; good; printf '1' > "$STUB/auth_rc"; run 1
 if [ "$RC" -eq 3 ]; then ok; else bad "gh unauthenticated: exit $RC, wanted 3"; fi
@@ -256,13 +264,93 @@ if [ "$rc" -eq 2 ]; then ok; else bad "non-numeric PR: exit $rc, wanted 2"; fi
 bash "$SWEEP" --repo >/dev/null 2>&1; rc=$?
 if [ "$rc" -eq 2 ]; then ok; else bad "--repo without value: exit $rc, wanted 2"; fi
 
-# ---- 7. report-only guard ----------------------------------------------------
-if grep -Eq 'pr[[:space:]]+(merge|edit|close|comment|review)' "$SWEEP"; then
-  bad "script contains a merge/edit/close/comment/review subcommand"
-else ok; fi
+# ---- 7. report mode never mutates; apply-mode safety flags -------------------
+mutations() { grep -E '^(pr (edit|merge|close|comment|review)|label (create|delete)|api .*(-X|--method))' "$STUB/calls.log" 2>/dev/null | grep -c . ; }
+
+setup_repo ON; good; run 1
+expect "report mode on eligible PR" 1 ELIGIBLE all-conditions-met
+if [ "$(mutations)" = "0" ] && [ -s "$STUB/calls.log" ]; then ok; else bad "report mode made mutating gh calls: $(cat "$STUB/calls.log")"; fi
+if [ ! -e "$AUTO_MERGE_LOG" ]; then ok; else bad "report mode wrote the action log"; fi
+
+for flag in '--admin' '--delete-branch'; do
+  if grep -Fq -e "$flag" "$SWEEP"; then bad "script contains forbidden flag $flag"; else ok; fi
+done
+if grep -Eq -e '--auto([^a-z-]|$)' "$SWEEP"; then bad "script contains forbidden flag --auto"; else ok; fi
 if grep -Eq -e '--method|-X[[:space:]]+(POST|PUT|PATCH|DELETE)' "$SWEEP"; then
   bad "script contains a mutating gh api call"
 else ok; fi
+
+# ---- 8. --apply ----------------------------------------------------------------
+runa() { OUT="$(bash "$SWEEP" --repo O/R --apply "$@" 2>"$W/err")"; RC=$?; }
+callidx() { grep -n -e "$1" "$STUB/calls.log" | head -1 | cut -d: -f1; }
+
+setup_repo ON; HEAD=abc1234deadbeef; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R"; unset HEAD
+runa 1
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qx 'prs=1 eligible=1 not_eligible=0 indeterminate=0 merged=1 failed=0'; then ok; else bad "apply summary rc=$RC: $OUT"; fi
+li="$(callidx 'pr edit 1 .*--add-label auto-merged')"; mi="$(callidx 'pr merge 1 ')"
+if [ -n "$li" ] && [ -n "$mi" ] && [ "$li" -lt "$mi" ]; then ok; else bad "label must precede merge (label=$li merge=$mi)"; fi
+if grep -q -e 'pr merge 1 .*--squash' "$STUB/calls.log" && grep -q -e '--match-head-commit abc1234deadbeef' "$STUB/calls.log"; then ok; else bad "merge must be squash with --match-head-commit <sha>: $(cat "$STUB/calls.log")"; fi
+if grep -q -e '--admin' -e '--delete-branch' "$STUB/calls.log" || grep -Eq -e '--auto([^a-z-]|$)' "$STUB/calls.log"; then bad "forbidden merge flag used"; else ok; fi
+
+# log line: fields present, no title text
+if grep -q "	1	abc1234	labelled	" "$AUTO_MERGE_LOG" && grep -q "	1	abc1234	merged	" "$AUTO_MERGE_LOG"; then ok; else bad "log lines missing: $(cat "$AUTO_MERGE_LOG" 2>&1)"; fi
+if grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z	' "$AUTO_MERGE_LOG"; then ok; else bad "log timestamp format"; fi
+
+# head changed between evaluation and action
+setup_repo ON; HEAD=aaaaaaa1111111; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R"
+HEAD=bbbbbbb2222222; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R"; mv "$STUB/view_1.json" "$STUB/view2_1.json"; unset HEAD
+HEAD=aaaaaaa1111111; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R"; unset HEAD
+runa 1
+if [ "$(mutations)" = "0" ] && grep -q "skipped	head-changed" "$AUTO_MERGE_LOG" && [ "$RC" -eq 0 ]; then ok; else bad "head-changed must skip with no mutation (rc=$RC): $(cat "$STUB/calls.log")"; fi
+
+# merge failure removes the label and exits 1
+setup_repo ON; good; : > "$STUB/merge_fail_1"
+runa 1
+if [ "$RC" -eq 1 ]; then ok; else bad "merge failure exit $RC, wanted 1"; fi
+ai="$(callidx 'pr edit 1 .*--add-label')"; ri="$(callidx 'pr edit 1 .*--remove-label auto-merged')"
+if [ -n "$ai" ] && [ -n "$ri" ] && [ "$ai" -lt "$ri" ]; then ok; else bad "label not removed after failed merge (add=$ai remove=$ri)"; fi
+if printf '%s\n' "$OUT" | grep -qx 'prs=1 eligible=1 not_eligible=0 indeterminate=0 merged=0 failed=1'; then ok; else bad "failure summary: $OUT"; fi
+if grep -q "merge-failed" "$AUTO_MERGE_LOG" && grep -q "unlabelled" "$AUTO_MERGE_LOG"; then ok; else bad "failure log lines"; fi
+if grep -q SECRET-TITLE-ERR "$AUTO_MERGE_LOG"; then bad "gh error text leaked into the log"; else ok; fi
+
+# cap: --max 1 with two eligible PRs merges only one
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R"; mkpr 2 OWNER OPEN false CLEAN "" "S" "R/b.R"
+runa --max 1 1 2
+if [ "$RC" -eq 0 ] && [ "$(grep -c '^pr merge' "$STUB/calls.log")" = "1" ] && grep -q "skipped	cap-reached" "$AUTO_MERGE_LOG"; then ok; else bad "cap --max 1 (rc=$RC): $(cat "$STUB/calls.log")"; fi
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R"; mkpr 2 OWNER OPEN false CLEAN "" "S" "R/b.R"
+runa 1 2
+if [ "$(grep -c '^pr merge' "$STUB/calls.log")" = "2" ]; then ok; else bad "default cap should allow 2 merges"; fi
+bash "$SWEEP" --repo O/R --apply --max 0 >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then ok; else bad "--max 0: exit $rc, wanted 2"; fi
+bash "$SWEEP" --repo O/R --max x >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then ok; else bad "--max x: exit $rc, wanted 2"; fi
+
+# NOT-ELIGIBLE and INDETERMINATE PRs are never mutated
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,F" "R/a.R"; mkpr 2 OWNER OPEN false UNKNOWN "" "S" "R/b.R"
+mkpr 3 OWNER OPEN false CLEAN "" "S" "scripts/x.sh:.claude/hooks/x.sh"
+runa 1 2 3
+if [ "$RC" -eq 0 ] && [ "$(mutations)" = "0" ] && printf '%s\n' "$OUT" | grep -qx 'prs=3 eligible=0 not_eligible=2 indeterminate=1 merged=0 failed=0'; then ok; else bad "ineligible PRs must not be mutated (rc=$RC): $OUT"; fi
+
+# label does not exist: INDETERMINATE, nothing created or merged
+setup_repo ON; good; : > "$STUB/no_label"
+runa 1
+if [ "$(mutations)" = "0" ] && printf '%s\n' "$OUT" | grep -qx 'prs=1 eligible=0 not_eligible=0 indeterminate=1 merged=0 failed=0'; then ok; else bad "missing label handling: $OUT / $(cat "$STUB/calls.log")"; fi
+
+# label add fails: no merge attempted
+setup_repo ON; good; : > "$STUB/edit_fail_1"
+runa 1
+if ! grep -q '^pr merge' "$STUB/calls.log" && [ "$RC" -eq 0 ]; then ok; else bad "merge attempted although label add failed"; fi
+
+# merge fails and unlabel also fails: still exit 1, warning on stderr
+setup_repo ON; good; : > "$STUB/merge_fail_1"; : > "$STUB/unlabel_fail"
+runa 1
+if [ "$RC" -eq 1 ] && grep -q 'could not be removed' "$W/err"; then ok; else bad "unlabel failure not reported (rc=$RC): $(cat "$W/err")"; fi
+
+# log write failure: reported on stderr, does not abort
+setup_repo ON; good
+mkdir -p "$W/blocker"; : > "$W/blocker/file"
+AUTO_MERGE_LOG="$W/blocker/file/sub/log" runa 1
+if [ "$RC" -eq 0 ] && grep -q 'could not write the action log' "$W/err" && printf '%s\n' "$OUT" | grep -q 'merged=1'; then ok; else bad "log failure handling rc=$RC: $(cat "$W/err")"; fi
 
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

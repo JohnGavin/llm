@@ -1,21 +1,36 @@
 #!/usr/bin/env bash
 # bin/auto_merge_sweep.sh -- Auto-Merge Policy eligibility evaluator (llm#1471).
 #
-# REPORT-ONLY. This script reads GitHub and prints a verdict per PR. It does
-# not merge, label, comment or edit anything. tests/test_auto_merge_sweep.sh
-# fails if the script ever contains a merge or edit subcommand, so adding an
-# apply mode later is a visible, reviewed change.
+# REPORT-ONLY BY DEFAULT. Without --apply it reads GitHub and prints a verdict
+# per PR and mutates nothing (tests/test_auto_merge_sweep.sh proves this with a
+# stub gh call log). With --apply it merges each ELIGIBLE PR, see below.
 #
 # Usage:
-#   bin/auto_merge_sweep.sh [--repo OWNER/NAME] [PR...]
+#   bin/auto_merge_sweep.sh [--repo OWNER/NAME] [--apply] [--max N] [PR...]
 # With no PR numbers, every open non-draft PR is evaluated.
 #
+# --apply, per ELIGIBLE PR, in order:
+#   a. re-evaluate immediately before acting; if the head commit moved since the
+#      first evaluation, skip (head-changed);
+#   b. add the label auto-merged (it must already exist, else the PR is
+#      INDETERMINATE label-missing and nothing is created or merged);
+#   c. squash-merge with --match-head-commit <sha> so GitHub refuses if the head
+#      moved. No admin override, no auto-merge queue, branch is kept;
+#   d. at most --max N merge attempts per run (default 3);
+#   e. if the merge fails, remove the label again and report it;
+#   f. one line per action goes to $AUTO_MERGE_LOG (default
+#      ~/.claude/logs/auto_merge_sweep.log): UTC time, PR, short sha, action,
+#      reason. Never titles, bodies or secrets. A log write failure is reported
+#      on stderr and does not abort.
+#
 # Output: one line per PR, "<pr><TAB><verdict><TAB><reason>", then
-#   prs=N eligible=a not_eligible=b indeterminate=c
+#   prs=N eligible=a not_eligible=b indeterminate=c merged=m failed=f
+# With --apply each action also prints "<pr><TAB>ACTION<TAB><action> <reason>".
 # Paths are printed; file contents and secrets never are.
 #
 # Exit codes (.claude/rules/exit-code-conventions.md):
 #   0  ran; verdicts printed (even when none is eligible)
+#   1  --apply only: at least one attempted merge FAILED
 #   2  usage error
 #   3  could not run at all (gh missing or not authenticated, PR list failed)
 #
@@ -41,7 +56,7 @@
 # with more files than were returned (files-truncated) is INDETERMINATE.
 #
 # Env overrides (used by the tests): AUTO_MERGE_REPO_DIR, AUTO_MERGE_GATE,
-# AUTO_MERGE_EXCLUSIONS.
+# AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG.
 
 set -u
 export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
@@ -54,17 +69,29 @@ REPO_DIR="${AUTO_MERGE_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 GATE="${AUTO_MERGE_GATE:-$REPO_DIR/bin/roborev_merge_gate.sh}"
 EXCL_FILE="${AUTO_MERGE_EXCLUSIONS:-$REPO_DIR/.claude/state/auto_merge_exclusions.txt}"
 
+LOG="${AUTO_MERGE_LOG:-$HOME/.claude/logs/auto_merge_sweep.log}"
+MERGE_LABEL="auto-merged"
+
 usage() {
-  echo "usage: auto_merge_sweep.sh [--repo OWNER/NAME] [PR...]" >&2
+  echo "usage: auto_merge_sweep.sh [--repo OWNER/NAME] [--apply] [--max N] [PR...]" >&2
 }
 
 REPO=""
 PRS=""
+APPLY=0
+MAXM=3
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)
       if [ $# -lt 2 ]; then usage; exit 2; fi
       REPO="$2"; shift 2 ;;
+    --apply) APPLY=1; shift ;;
+    --max)
+      if [ $# -lt 2 ]; then usage; exit 2; fi
+      case "$2" in
+        ""|*[!0-9]*|0) echo "USAGE-ERROR: --max needs a positive integer" >&2; usage; exit 2 ;;
+      esac
+      MAXM="$2"; shift 2 ;;
     -h|--help) usage; exit 2 ;;
     *[!0-9]*|"") echo "USAGE-ERROR: not a PR number or known flag: $1" >&2; usage; exit 2 ;;
     *) PRS="$PRS $1"; shift ;;
@@ -102,6 +129,7 @@ d = json.load(open(sys.argv[1]))
 print("STATE\t%s" % d.get("state", ""))
 print("DRAFT\t%s" % ("true" if d.get("isDraft") else "false"))
 print("MERGE\t%s" % d.get("mergeStateStatus", ""))
+print("HEAD\t%s" % d.get("headRefOid", ""))
 print("CHANGED\t%s" % d.get("changedFiles", ""))
 for l in d.get("labels") or []:
     print("LABEL\t%s" % l.get("name", ""))
@@ -179,19 +207,20 @@ fi
 VERDICT=""
 REASON=""
 IND=""
+HEADSHA=""
 note_ind() { if [ -z "$IND" ]; then IND="$1"; fi; }
 not_elig() { VERDICT="NOT-ELIGIBLE"; REASON="$1"; }
 
 evaluate() {
   local n="$1" assoc view fields
-  VERDICT=""; REASON=""; IND=""
+  VERDICT=""; REASON=""; IND=""; HEADSHA=""
 
   assoc="$(gh api "repos/$REPO/pulls/$n" --jq .author_association 2>/dev/null)"
   if [ -z "$assoc" ]; then VERDICT="INDETERMINATE"; REASON="author-lookup-failed"; return; fi
   if [ "$assoc" != "OWNER" ]; then not_elig "untrusted-author"; return; fi
 
   view="$TMP/view_$n.json"
-  if ! gh pr view "$n" --repo "$REPO" --json number,state,isDraft,labels,mergeStateStatus,statusCheckRollup,changedFiles > "$view" 2>/dev/null; then
+  if ! gh pr view "$n" --repo "$REPO" --json number,state,isDraft,labels,mergeStateStatus,statusCheckRollup,changedFiles,headRefOid > "$view" 2>/dev/null; then
     VERDICT="INDETERMINATE"; REASON="view-failed"; return
   fi
   fields="$TMP/fields_$n"
@@ -205,6 +234,7 @@ evaluate() {
   merge="$(awk -F'\t' '$1=="MERGE"{print $2}' "$fields")"
   changed="$(awk -F'\t' '$1=="CHANGED"{print $2}' "$fields")"
 
+  HEADSHA="$(awk -F'\t' '$1=="HEAD"{print $2}' "$fields")"
   if [ "$state" != "OPEN" ]; then not_elig "not-open"; return; fi
   if [ "$draft" = "true" ]; then not_elig "draft"; return; fi
 
@@ -274,6 +304,7 @@ evaluate() {
     esac
   fi
 
+  if [ -z "$HEADSHA" ]; then note_ind "head-sha-missing"; fi
   if [ -n "$IND" ]; then VERDICT="INDETERMINATE"; REASON="$IND"; return; fi
   VERDICT="ELIGIBLE"; REASON="all-conditions-met"
 }
@@ -297,16 +328,87 @@ PYEOF
   fi
 fi
 
+# ---- Apply helpers --------------------------------------------------------------
+LOGWARNED=0
+log_action() {  # pr sha action reason
+  local d
+  d="$(dirname "$LOG")"
+  if mkdir -p "$d" 2>/dev/null && printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$(printf '%s' "$2" | cut -c1-7)" "$3" "$4" >> "$LOG" 2>/dev/null; then
+    :
+  else
+    echo "WARNING: could not write the action log $LOG" >&2
+  fi
+  printf '%s\tACTION\t%s %s\n' "$1" "$3" "$4"
+}
+
+LABEL_STATE=""   # "", "ok" or "missing" (checked once, only under --apply)
+label_check() {
+  if [ -z "$LABEL_STATE" ]; then
+    if gh label list --repo "$REPO" --search "$MERGE_LABEL" --limit 100 --json name --jq '.[].name' 2>/dev/null | grep -qx "$MERGE_LABEL"; then
+      LABEL_STATE="ok"
+    else
+      LABEL_STATE="missing"
+    fi
+  fi
+}
+
+ATTEMPTS=0; merged=0; failed=0
+apply_one() {  # pr  (first evaluation was ELIGIBLE; HEADSHA is the evaluated head)
+  local n="$1" sha1="$HEADSHA"
+  if [ "$ATTEMPTS" -ge "$MAXM" ]; then log_action "$n" "$sha1" skipped "cap-reached"; return; fi
+  label_check
+  if [ "$LABEL_STATE" != "ok" ]; then
+    VERDICT="INDETERMINATE"; REASON="label-missing"
+    log_action "$n" "$sha1" skipped "label-missing"; return
+  fi
+  evaluate "$n"
+  if [ "$VERDICT" != "ELIGIBLE" ]; then
+    log_action "$n" "$sha1" skipped "reevaluated-$VERDICT-$REASON"; return
+  fi
+  if [ "$HEADSHA" != "$sha1" ]; then log_action "$n" "$sha1" skipped "head-changed"; return; fi
+  if ! gh pr edit "$n" --repo "$REPO" --add-label "$MERGE_LABEL" >/dev/null 2>&1; then
+    log_action "$n" "$sha1" skipped "label-add-failed"; return
+  fi
+  log_action "$n" "$sha1" labelled "ok"
+  ATTEMPTS=$((ATTEMPTS + 1))
+  if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha1" >/dev/null 2>&1; then
+    merged=$((merged + 1))
+    log_action "$n" "$sha1" merged "squash"
+  else
+    failed=$((failed + 1))
+    log_action "$n" "$sha1" merge-failed "gh-merge-nonzero"
+    if gh pr edit "$n" --repo "$REPO" --remove-label "$MERGE_LABEL" >/dev/null 2>&1; then
+      log_action "$n" "$sha1" unlabelled "after-merge-failure"
+    else
+      echo "WARNING: PR $n merge failed AND the $MERGE_LABEL label could not be removed" >&2
+      log_action "$n" "$sha1" merge-failed "unlabel-failed"
+    fi
+  fi
+}
+
 total=0; el=0; ne=0; ind=0
 for n in $PRS; do
   evaluate "$n"
+  if [ "$VERDICT" = "ELIGIBLE" ]; then el=$((el + 1)); fi
+  first_verdict="$VERDICT"; first_reason="$REASON"
+  if [ "$APPLY" -eq 1 ] && [ "$first_verdict" = "ELIGIBLE" ]; then
+    printf '%s\t%s\t%s\n' "$n" "$first_verdict" "$first_reason"
+    apply_one "$n"
+    # a label-missing downgrade is reported in the counts
+    if [ "$VERDICT" = "INDETERMINATE" ] && [ "$REASON" = "label-missing" ]; then
+      el=$((el - 1)); ind=$((ind + 1))
+    fi
+    total=$((total + 1))
+    continue
+  fi
   printf '%s\t%s\t%s\n' "$n" "$VERDICT" "$REASON"
   total=$((total + 1))
   case "$VERDICT" in
-    ELIGIBLE) el=$((el + 1)) ;;
+    ELIGIBLE) ;;
     NOT-ELIGIBLE) ne=$((ne + 1)) ;;
     *) ind=$((ind + 1)) ;;
   esac
 done
-echo "prs=$total eligible=$el not_eligible=$ne indeterminate=$ind"
+echo "prs=$total eligible=$el not_eligible=$ne indeterminate=$ind merged=$merged failed=$failed"
+if [ "$failed" -gt 0 ]; then exit 1; fi
 exit 0
