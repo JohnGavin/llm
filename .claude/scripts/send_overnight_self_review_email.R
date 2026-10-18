@@ -44,6 +44,8 @@ source(file.path(.scripts_dir, "email_styles.R"))
 source(file.path(.scripts_dir, "lib", "self_review_content_signals.R"))
 # llm#1458 part 2: scanner triage policy (fix / file / needs the owner).
 source(file.path(.scripts_dir, "lib", "scanner_triage_lib.R"))
+# llm#1389 follow-up: the daily digest-publish job's outcome line.
+source(file.path(.scripts_dir, "lib", "digest_publish_lib.R"))
 
 # ── Null-coalescing operator ───────────────────────────────────────────────────
 # Treats NULL, length-0, NA, AND empty string as "missing" — falls through to b.
@@ -1569,6 +1571,17 @@ if (nrow(cron_health) > 0L) {
       return(list(bucket = "indeterminate", label = "indeterminate — state unreadable"))
     }
     hb <- find_heartbeat(r$plist_label)
+    if (!is.null(hb) && identical(hb$task, "private_terms_publish")) {
+      # llm#1389 follow-up: one failure is quiet (retries tomorrow); only two
+      # consecutive failed or missing daily slots put it in the owner's list.
+      pr <- safe_query(sprintf("
+        SELECT status, rows_written, COALESCE(ended_at, started_at) AS at
+        FROM housekeeping_runs WHERE task = 'private_terms_publish'
+        ORDER BY started_at DESC LIMIT 10"))
+      if (nrow(pr) > 0L) pr$at <- as.POSIXct(pr$at, tz = "UTC")
+      da <- digest_publish_assess(pr, Sys.time())
+      return(list(bucket = da$bucket, label = da$label))
+    }
     if (!is.null(hb)) {
       # 'skipped' (llm#1340/#1341) is a healthy status: the job ran and had
       # nothing to do (bin/config_digest_cron.sh: no changes, nothing sent).
