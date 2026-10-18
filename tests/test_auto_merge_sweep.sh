@@ -27,6 +27,10 @@ case "$1 $2" in
   "api repos/O/R/pulls/"*) : ;;
 esac
 if [ "$1" = "api" ]; then
+  case "$2" in
+    */files) p="${2%/files}"; n="${p##*/}"
+             if [ -f "$d/files_$n" ]; then cat "$d/files_$n"; exit 0; else exit 1; fi ;;
+  esac
   n="${2##*/}"
   if [ -f "$d/assoc_$n" ]; then cat "$d/assoc_$n"; else exit 1; fi
 fi
@@ -79,20 +83,22 @@ checks_json() {  # spec: comma list of S P K F N X(status-context ok) Y(status-c
 # mkpr N assoc state draft merge "labels" "checks" "files" [changed]
 mkpr() {
   local n="$1" assoc="$2" state="$3" draft="$4" merge="$5" labels="$6" checks="$7" files="$8" changed="${9:-}"
-  local lj="" fj="" l f nf=0
+  local lj="" l f nf=0 new old
   for l in $labels; do
     if [ -n "$lj" ]; then lj="$lj,"; fi
     lj="$lj{\"name\":\"$l\"}"
   done
-  for f in $files; do
-    if [ -n "$fj" ]; then fj="$fj,"; fi
-    fj="$fj{\"path\":\"$f\"}"
+  : > "$STUB/files_$n"
+  for f in $files; do   # token "new:old" is a rename from old to new
+    new="${f%%:*}"; old=""
+    case "$f" in *:*) old="${f#*:}" ;; esac
+    printf '%s\t%s\n' "$new" "$old" >> "$STUB/files_$n"
     nf=$((nf + 1))
   done
   if [ -z "$changed" ]; then changed="$nf"; fi
   printf '%s' "$assoc" > "$STUB/assoc_$n"
-  printf '{"number":%s,"state":"%s","isDraft":%s,"mergeStateStatus":"%s","labels":[%s],"statusCheckRollup":%s,"files":[%s],"changedFiles":%s}\n' \
-    "$n" "$state" "$draft" "$merge" "$lj" "$(checks_json "$checks")" "$fj" "$changed" > "$STUB/view_$n.json"
+  printf '{"number":%s,"state":"%s","isDraft":%s,"mergeStateStatus":"%s","labels":[%s],"statusCheckRollup":%s,"changedFiles":%s}\n' \
+    "$n" "$state" "$draft" "$merge" "$lj" "$(checks_json "$checks")" "$changed" > "$STUB/view_$n.json"
 }
 
 # A fully eligible PR; individual tests override one argument.
@@ -195,6 +201,16 @@ setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/a.R R/b.R" 5; run 1
 expect "files truncated" 1 INDETERMINATE files-truncated
 setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" ""; run 1
 expect "no files listed" 1 INDETERMINATE no-files-listed
+setup_repo ON; good; rm -f "$STUB/files_1"; run 1
+expect "files API fails" 1 INDETERMINATE files-api-failed
+
+# renames: the PREVIOUS path counts too (llm#1471 rename gap)
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" "scripts/x.sh:.claude/hooks/x.sh"; run 1
+expect "rename out of hooks" 1 NOT-ELIGIBLE "excluded-path:.claude/hooks/x.sh"
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" "scripts/y.sh:scripts/x.sh"; run 1
+expect "rename between ordinary paths" 1 ELIGIBLE all-conditions-met
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" ".claude/rules/new.md:R/old.R"; run 1
+expect "rename INTO excluded path" 1 NOT-ELIGIBLE "excluded-path:.claude/rules/new.md"
 
 # ---- 5. merge gate exit codes ------------------------------------------------
 setup_repo ON; good; GATE_RC=0; export GATE_RC; run 1

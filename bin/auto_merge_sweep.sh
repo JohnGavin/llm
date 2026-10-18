@@ -36,8 +36,9 @@
 # Limits (stated, not hidden): AGENTS.md, the exclusion file and the scheduled
 # set are read from the checkout this script lives in (override with
 # AUTO_MERGE_REPO_DIR), so run it from an up-to-date base checkout. The file
-# list comes from gh and a rename OUT of an excluded path lists only the new
-# path. A PR with more files than gh returned is INDETERMINATE (files-truncated).
+# list comes from the paginated REST files endpoint; renames contribute both
+# the new and the previous path. A failed fetch (files-api-failed) or a PR
+# with more files than were returned (files-truncated) is INDETERMINATE.
 #
 # Env overrides (used by the tests): AUTO_MERGE_REPO_DIR, AUTO_MERGE_GATE,
 # AUTO_MERGE_EXCLUSIONS.
@@ -98,11 +99,9 @@ parse_view() {
   python3 - "$1" <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
-files = d.get("files") or []
 print("STATE\t%s" % d.get("state", ""))
 print("DRAFT\t%s" % ("true" if d.get("isDraft") else "false"))
 print("MERGE\t%s" % d.get("mergeStateStatus", ""))
-print("NFILES\t%d" % len(files))
 print("CHANGED\t%s" % d.get("changedFiles", ""))
 for l in d.get("labels") or []:
     print("LABEL\t%s" % l.get("name", ""))
@@ -122,8 +121,6 @@ for c in rollup:
         else:
             bad += 1
 print("CHECKS\t%d\t%d\t%d" % (len(rollup), pending, bad))
-for f in files:
-    print("FILE\t%s" % f.get("path", ""))
 PYEOF
 }
 
@@ -194,7 +191,7 @@ evaluate() {
   if [ "$assoc" != "OWNER" ]; then not_elig "untrusted-author"; return; fi
 
   view="$TMP/view_$n.json"
-  if ! gh pr view "$n" --repo "$REPO" --json number,state,isDraft,labels,mergeStateStatus,statusCheckRollup,files,changedFiles > "$view" 2>/dev/null; then
+  if ! gh pr view "$n" --repo "$REPO" --json number,state,isDraft,labels,mergeStateStatus,statusCheckRollup,changedFiles > "$view" 2>/dev/null; then
     VERDICT="INDETERMINATE"; REASON="view-failed"; return
   fi
   fields="$TMP/fields_$n"
@@ -202,11 +199,10 @@ evaluate() {
     VERDICT="INDETERMINATE"; REASON="view-unparsable"; return
   fi
 
-  local state draft merge nfiles changed
+  local state draft merge changed
   state="$(awk -F'\t' '$1=="STATE"{print $2}' "$fields")"
   draft="$(awk -F'\t' '$1=="DRAFT"{print $2}' "$fields")"
   merge="$(awk -F'\t' '$1=="MERGE"{print $2}' "$fields")"
-  nfiles="$(awk -F'\t' '$1=="NFILES"{print $2}' "$fields")"
   changed="$(awk -F'\t' '$1=="CHANGED"{print $2}' "$fields")"
 
   if [ "$state" != "OPEN" ]; then not_elig "not-open"; return; fi
@@ -241,10 +237,18 @@ evaluate() {
   # Diff paths.
   if [ -n "$EXCL_ERR" ]; then note_ind "$EXCL_ERR"; fi
   if [ -n "$SCHED_ERR" ]; then note_ind "$SCHED_ERR"; fi
-  if [ -n "$changed" ] && [ "$changed" -gt "$nfiles" ]; then note_ind "files-truncated"; fi
-  local ff="$TMP/files_$n" hit rc
-  awk -F'\t' '$1=="FILE"{print $2}' "$fields" > "$ff"
-  if [ ! -s "$ff" ]; then note_ind "no-files-listed"; fi
+  # File list from the REST endpoint: a rename contributes BOTH its new path
+  # (filename) and its old path (previous_filename); both are tested below.
+  local ff="$TMP/files_$n" fr="$TMP/filesraw_$n" hit rc nlisted
+  if ! gh api "repos/$REPO/pulls/$n/files" --paginate --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$fr" 2>/dev/null; then
+    note_ind "files-api-failed"
+    : > "$ff"
+  else
+    awk -F'\t' 'NF>=1 && $1!=""{print $1} NF>=2 && $2!=""{print $2}' "$fr" > "$ff"
+    nlisted="$(awk -F'\t' 'NF>=1 && $1!=""{c++} END{print c+0}' "$fr")"
+    if [ -n "$changed" ] && [ "$changed" -gt "$nlisted" ]; then note_ind "files-truncated"; fi
+    if [ ! -s "$ff" ]; then note_ind "no-files-listed"; fi
+  fi
   if [ -z "$EXCL_ERR" ] && [ -s "$ff" ]; then
     hit="$(grep -E -f "$PATFILE" "$ff" | head -1)"
     if [ -n "$hit" ]; then not_elig "excluded-path:$hit"; return; fi
