@@ -125,3 +125,4 @@ com.claude.cron-catchup                   3600  # method B — see rationale abo
 # regressing duration against worktree count) should set these properly
 # rather than have this file guess.
 com.claude.scanner-triage                 300   # ESTIMATE, no runs yet (llm#1458): one DB read, <=10 chmod, a few gh calls; revisit once n>=10
+com.claude.private-terms-publish          300   # ESTIMATE, no runs yet (llm#1389): HMAC of a few hundred terms plus ~4 gh calls; revisit once n>=10
