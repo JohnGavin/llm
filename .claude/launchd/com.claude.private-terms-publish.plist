@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- com.claude.private-terms-publish.plist (llm#1389, privacy layer L3)
+         Re-publishes the two Actions secrets PRIVATE_TERMS_SALT and
+         PRIVATE_TERM_HASHES on JohnGavin/llm, but only when the private-term
+         list's content fingerprint changed (the generated= header is
+         ignored). Never prints a term, hash or salt.
+
+         NOT LOADED by the change that added it. Only the owner loads it:
+           cp .claude/launchd/com.claude.private-terms-publish.plist ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude.private-terms-publish.plist
+
+         Scheduled 03:20: after the 03:05 private-terms-sync has refreshed
+         the list. -->
+
+    <key>Label</key>
+    <string>com.claude.private-terms-publish</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/johngavin/docs_gh/llm/bin/launchd-recorders/private-terms-publish</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/johngavin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/johngavin/.claude/logs/private_terms_publish.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/johngavin/.claude/logs/private_terms_publish.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>
