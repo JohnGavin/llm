@@ -176,6 +176,35 @@ scenarios() {
 
 scenarios "$REAL_SCRIPT" real
 
+# --- Heartbeat rows (housekeeping_runs) read by the overnight email.
+if command -v duckdb >/dev/null 2>&1; then
+  HKDB="$WORK/hk.duckdb"
+  duckdb -init /dev/null "$HKDB" < "$ROOT/.claude/scripts/housekeeping_schema_init.sql" >/dev/null 2>&1
+  hkq() { duckdb -init /dev/null -csv -noheader "$HKDB" -c "$1" 2>&1; }
+  export UNIFIED_DB_PATH="$HKDB"
+
+  fresh hk.dry; mklist "$(now_iso)" alphaonezz "beta twozz"
+  run "$REAL_SCRIPT"
+  check "hk dry-run writes no heartbeat" 0 "$(hkq "SELECT count(*) FROM housekeeping_runs WHERE task='private_terms_publish'")"
+
+  fresh hk.apply; mklist "$(now_iso)" alphaonezz "beta twozz"
+  run "$REAL_SCRIPT" --apply
+  check "hk refresh: status ok" ok "$(hkq "SELECT status FROM housekeeping_runs WHERE task='private_terms_publish' ORDER BY started_at DESC, id LIMIT 1")"
+  check "hk refresh: rows_written = term count (2 + canary)" 3 "$(hkq "SELECT rows_written FROM housekeeping_runs WHERE task='private_terms_publish' AND status='ok'")"
+
+  run "$REAL_SCRIPT" --apply
+  check "hk unchanged: status skipped" 1 "$(hkq "SELECT count(*) FROM housekeeping_runs WHERE task='private_terms_publish' AND status='skipped'")"
+
+  fresh hk.fail; mklist "$(now_iso)" alphaonezz
+  export STUB_SET_FAIL=1
+  run "$REAL_SCRIPT" --apply
+  check "hk failure: exit 3" 3 "$RC"
+  check "hk failure: status failed" 1 "$(hkq "SELECT count(*) FROM housekeeping_runs WHERE task='private_terms_publish' AND status='failed'")"
+  unset STUB_SET_FAIL UNIFIED_DB_PATH
+else
+  echo "SKIP: duckdb not on PATH -- heartbeat rows NOT exercised"
+fi
+
 # --- Falsification: mutants live in a copied tree so relative sourcing works.
 MUT="$WORK/mut"
 mkdir -p "$MUT/.claude/scripts/lib" "$MUT/.claude/hooks/lib"

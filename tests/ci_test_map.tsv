@@ -103,3 +103,4 @@ tests/test_ci_test_map_wellformed.sh	tests/test_ci_test_map_wellformed.sh;tests/
 tests/test_phi_scan.sh	tests/test_phi_scan.sh;.claude/scripts/phi_scan.sh	run
 tests/test_coverage_push_branch.sh	tests/test_coverage_push_branch.sh;.claude/scripts/push_coverage_branch.sh;.github/workflows/coverage.yml	run
 tests/test_private_terms_publish.sh	tests/test_private_terms_publish.sh;.claude/scripts/private_terms_publish.sh;.claude/scripts/private_terms_hashes.sh;.claude/scripts/lib/private_term_hash_lib.sh;.claude/hooks/lib/private_terms.sh	run
+tests/test_digest_publish_email.sh	tests/test_digest_publish_email.sh;.claude/scripts/lib/digest_publish_lib.R;.claude/scripts/send_overnight_self_review_email.R	run	

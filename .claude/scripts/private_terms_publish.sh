@@ -54,10 +54,39 @@ STATE="${PRIVATE_TERMS_PUBLISH_STATE:-$HOME/.claude/state/private_terms_publishe
 LOG="${PRIVATE_TERMS_PUBLISH_LOG:-$HOME/.claude/logs/private_terms_publish.log}"
 LIST="${PRIVATE_TERMS_FILE:-$HOME/.config/private_terms.txt}"
 
+# Heartbeat: one housekeeping_runs row per --apply run, so the overnight email
+# can say "refreshed to N terms" / "current" / "needs you after two failures"
+# without the owner looking. Counts and a status word only, never a value.
+# Written only when this really is the scheduled job (default state path, i.e.
+# not under a test that overrides it) or UNIFIED_DB_PATH is given explicitly.
+# A heartbeat failure never changes the job's own exit code.
+HK_STATUS="failed"
+HK_ROWS=0
+HK_DB="${UNIFIED_DB_PATH:-}"
+if [ -z "$HK_DB" ] && [ -z "${PRIVATE_TERMS_PUBLISH_STATE:-}" ]; then
+  HK_DB="$HOME/.claude/logs/unified.duckdb"
+fi
+hk_record() {
+  [ "$APPLY" -eq 1 ] || return 0
+  [ -n "$HK_DB" ] && [ -f "$HK_DB" ] || return 0
+  command -v duckdb >/dev/null 2>&1 || return 0
+  local id now
+  id="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  [ -n "$id" ] || return 0
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  duckdb -init /dev/null "$HK_DB" -c "
+    INSERT OR IGNORE INTO housekeeping_runs
+      (id, task, source_script, started_at, ended_at, status, rows_written)
+    VALUES ('$id', 'private_terms_publish', '$SCRIPT_DIR/private_terms_publish.sh',
+            TIMESTAMPTZ '$now', TIMESTAMPTZ '$now', '$HK_STATUS', $HK_ROWS);
+  " >/dev/null 2>&1 || true
+}
+
 WORK=""
 cleanup() {
   if [ -n "$WORK" ]; then rm -rf "$WORK"; fi
   pt_cleanup
+  hk_record
 }
 trap cleanup EXIT
 trap 'exit 3' INT TERM
@@ -84,6 +113,7 @@ OLD=""
 if [ -r "$STATE" ]; then OLD="$(head -n 1 "$STATE" 2>/dev/null)"; fi
 if [ "$OLD" = "$FP" ]; then
   echo "current (fingerprint $FP8)"
+  HK_STATUS="skipped"
   exit 0
 fi
 
@@ -146,5 +176,7 @@ mkdir -p "$(dirname "$STATE")" || indeterminate "cannot create the state dir"
 printf '%s\n' "$FP" > "$STATE.tmp.$$" && mv "$STATE.tmp.$$" "$STATE" \
   || indeterminate "cannot write the state file"
 
+HK_STATUS="ok"
+HK_ROWS="$NTERMS"
 echo "digests refreshed to $NTERMS terms (fingerprint $FP8)"
 exit 0
