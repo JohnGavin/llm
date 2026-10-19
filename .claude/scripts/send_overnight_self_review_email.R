@@ -1612,6 +1612,18 @@ if (nrow(cron_health) > 0L) {
       # 'skipped' (llm#1340/#1341) is a healthy status: the job ran and had
       # nothing to do (bin/config_digest_cron.sh: no changes, nothing sent).
       # Before this it fell through the switch default into "indeterminate".
+      # llm#1435 (generic): a start row left at 'running' past any job's
+      # timeout bound means the run was killed (SIGKILL / launchd timeout) or
+      # crashed before it could finalise -- it is FAILED, not unknown. A
+      # younger 'running' row may be a live run and stays indeterminate.
+      hb_age_h <- suppressWarnings(as.numeric(difftime(
+        Sys.time(), as.POSIXct(hb$at, tz = "UTC"), units = "hours")))
+      if (identical(hb$status, "running") && length(hb_age_h) == 1L &&
+          !is.na(hb_age_h) && hb_age_h > 2) {
+        return(list(bucket = "failed",
+                    label = sprintf("failed — still 'running' %.0fh after it started (killed or crashed; raw exit %s)",
+                                    hb_age_h, r$last_exit_code %||% "—")))
+      }
       hb_bucket <- switch(hb$status,
         ok = "ok", skipped = "ok", failed = "failed", partial = "indeterminate", "indeterminate")
       hb_label  <- if (identical(hb$status, "skipped")) {

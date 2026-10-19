@@ -561,11 +561,17 @@ test_that("overnight email is scheduled before the 09:00 job peak (llm#1122, llm
   now_utc <- format(Sys.time(), "%Y-%m-%d %H:%M:%S", tz = "UTC")
 
   if (!is.null(hk_row)) {
+    # hk_row$age_h (optional): the row started that many hours ago, and a
+    # 'running' row then has no ended_at (a run killed before it finalised).
+    hk_start <- if (is.null(hk_row$age_h)) now_utc else
+      format(Sys.time() - hk_row$age_h * 3600, "%Y-%m-%d %H:%M:%S", tz = "UTC")
+    hk_end <- if (identical(hk_row$status, "running")) "NULL" else
+      sprintf("TIMESTAMPTZ '%s'", hk_start)
     DBI::dbExecute(con, sprintf(
       "INSERT INTO housekeeping_runs
          (id, task, source_script, started_at, ended_at, status, rows_written)
-       VALUES ('fixture-hk', %s, 'test-fixture', TIMESTAMPTZ '%s', TIMESTAMPTZ '%s', %s, %d)",
-      DBI::dbQuoteString(con, hk_row$task), now_utc, now_utc,
+       VALUES ('fixture-hk', %s, 'test-fixture', TIMESTAMPTZ '%s', %s, %s, %d)",
+      DBI::dbQuoteString(con, hk_row$task), hk_start, hk_end,
       DBI::dbQuoteString(con, hk_row$status), hk_row$rows_written
     ))
   }
@@ -1057,6 +1063,34 @@ test_that("cron-health: history audit exit 3 with heartbeat 'partial' renders in
   expect_true(grepl("1 indeterminate", combined, fixed = TRUE))
   expect_false(grepl("need triage (of", combined, fixed = TRUE),
                info = "an INDETERMINATE audit was rendered as findings needing triage")
+})
+
+test_that("cron-health: a stale 'running' heartbeat is failed (killed or crashed), a fresh one is not (llm#1435)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.HISTORY_AUDIT_PLIST), "private-data-history-audit plist not installed")
+
+  # (built inline, not via a helper closure: the fixture DB is deleted when
+  # the frame that called .build_cron_fixture_db() exits)
+  ev <- list(plist_label = "com.claude.private-data-history-audit", state = "loaded_recent_fail",
+             last_exit_code = 124L, last_fired_at_now = TRUE)
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "running",
+                  rows_written = 0L, age_h = 20),
+    ev_row = ev)
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+  expect_true(grepl("killed or crashed", combined, fixed = TRUE),
+              info = "a 20h-old 'running' row was not reported as killed or crashed")
+  expect_false(grepl("1 indeterminate", combined, fixed = TRUE))
+
+  db2 <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "running",
+                  rows_written = 0L, age_h = 0.1),
+    ev_row = ev)
+  combined2 <- paste(run_dry_run(db_path = db2), collapse = "\n")
+  expect_false(grepl("killed or crashed", combined2, fixed = TRUE),
+               info = "a fresh 'running' row (possibly a live run) was reported as killed")
 })
 
 # ── Lessons-captured section ─────────────────────────────────────────────────

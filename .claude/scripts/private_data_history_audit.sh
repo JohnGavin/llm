@@ -163,7 +163,9 @@ set -uo pipefail
 
 # PDHA_EXTRA_PATH: prepended (selftest puts a stub `gh` first). /opt/homebrew/bin
 # stays on the PATH for pdftotext (document-format gate) under launchd.
-export PATH="${PDHA_EXTRA_PATH:+${PDHA_EXTRA_PATH}:}/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# The caller's own PATH is kept LAST (llm#1435): a CI runner installs duckdb
+# under ~/.duckdb/cli/latest, which the fixed list below does not contain.
+export PATH="${PDHA_EXTRA_PATH:+${PDHA_EXTRA_PATH}:}/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:${PATH}}"
 
 HOME_DIR="${HOME:-/Users/johngavin}"
 LOG_DIR="${HOME_DIR}/.claude/logs"
@@ -236,13 +238,19 @@ hk_run_start() {
         INSERT OR IGNORE INTO housekeeping_runs
           (id, task, source_script, started_at, status, rows_written)
         VALUES ('${_run_id}', '${HK_TASK}', '${SCRIPT_DIR}/private_data_history_audit.sh',
-                current_timestamp, 'ok', 0);
+                current_timestamp, 'running', 0);
     " >/dev/null 2>&1 || true
 }
 
+# The start row says 'running' (llm#1435): a run killed before it finalises must
+# not read as success. _hk_final=1 once a terminal status is written; the EXIT
+# trap marks any run that exits without one as 'failed'. A SIGKILL cannot be
+# trapped: the cron-health reader treats a stale 'running' row as failed.
+_hk_final=0
 hk_run_end() {
     [ "$_duckdb_ok" = "1" ] || return 0
     [ -n "$_run_id" ] || return 0
+    _hk_final=1
     duckdb -init /dev/null "$UNIFIED_DB" -c "
         UPDATE housekeeping_runs SET ended_at = current_timestamp, status = '$1', rows_written = ${2:-0}
         WHERE id = '${_run_id}';
@@ -376,6 +384,11 @@ case "${FAKE_MODE:-findings}" in
     printf 'FINDING\tgeneric\thigh\taaaaaaaaaaaa:x.txt\t1\tuk-postcode\tn\n'
     exit 1 ;;
   silent0) exit 0 ;;   # exit 0 but never says clean -- not trusted
+  term_parent)   # a TERM (what `timeout` sends) arrives mid-run, then the scan ends
+    kill -TERM "$PPID"; sleep 1
+    echo "private-data-scan: clean -- 0 findings"; exit 0 ;;
+  kill_parent)   # SIGKILL cannot be trapped: the start row must stay non-ok
+    kill -KILL "$PPID"; sleep 1; exit 0 ;;
 esac
 EOF
     chmod +x "$sb/fake_scan.sh"
@@ -436,6 +449,21 @@ EOF
     run_audit findings "$R4"
     _expect_rc 0 "$arc" "run 4: previously-reported finding is now known, exits 0"
     _check "$("$GREP" -q 'findings=4 new=0 known=4 acknowledged=0' "$sb/out" && echo 0 || echo 1)" "run 4 output: findings=4 new=0 known=4"
+
+    # 5b: the heartbeat can report failure (llm#1435). Own DB copy so the
+    # killed-run rows below cannot disturb later checks.
+    DB_MAIN="$DB"; cp "$DB" "$sb/hb.duckdb"; DB="$sb/hb.duckdb"
+    hb() { q "SELECT status || '|' || (ended_at IS NOT NULL) || '|' || rows_written FROM housekeeping_runs WHERE task='private_data_history_audit' ORDER BY started_at DESC LIMIT 1"; }
+    run_audit findings "$R4"
+    _check "$([ "$(hb)" = "ok|true|0" ] && echo 0 || echo 1)" "heartbeat: a normal run ends 'ok' with ended_at set (got $(hb))"
+    run_audit trunc "$R4"
+    _check "$([ "$(hb)" = "partial|true|0" ] && echo 0 || echo 1)" "heartbeat: an INDETERMINATE run ends 'partial' with ended_at set (got $(hb))"
+    run_audit term_parent "$R4"
+    _expect_rc 143 "$arc" "heartbeat: TERM mid-run exits 143"
+    _check "$([ "$(hb)" = "failed|true|0" ] && echo 0 || echo 1)" "heartbeat: a TERM-killed run is 'failed', never left 'ok' (got $(hb))"
+    run_audit kill_parent "$R4"
+    _check "$([ "$(hb)" = "running|false|0" ] && echo 0 || echo 1)" "heartbeat: a SIGKILLed run stays 'running' with no ended_at, never 'ok' (got $(hb))"
+    DB="$DB_MAIN"
 
     # 6: --ack by prefix; acknowledged is counted separately
     run_audit findings "$R4" --ack "$NEWFP"
@@ -1043,7 +1071,22 @@ fi
 # helpers shared by the real modes
 # ---------------------------------------------------------------------------
 TMPD="$(mktemp -d "${TMPDIR:-/tmp}/pds_audit.XXXXXX")"
-trap 'rm -rf "$TMPD"' EXIT
+_on_exit() {
+    local rc=$?
+    trap - EXIT
+    if [ "$_hk_final" -eq 0 ] && [ -n "$_run_id" ]; then
+        log_line "status=failed rc=${rc} reason=exited before the heartbeat was finalised (killed or crashed)"
+        hk_run_end "failed" "0"
+    fi
+    rm -rf "$TMPD"
+    exit "$rc"
+}
+trap _on_exit EXIT
+# TERM (GNU timeout, launchd) / INT / HUP: exit so the EXIT trap runs. bash runs
+# the trap once the current foreground child returns.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 if [ "$BASELINE" -eq 1 ]; then MODE_LABEL="baseline"
 elif [ "${#ACK_ARGS[@]}" -gt 0 ] || [ -n "$ACK_FILE" ]; then MODE_LABEL="ack"
