@@ -281,4 +281,109 @@ check "noisy count line" 1 "$(grep -cx 'source b noisy: 1' "$WORK/out")"
 check "noisy term kept (warning, not exclusion)" 1 "$(grep -cx 'zzfakelocal' "$PRIVATE_TERMS_FILE")"
 check "noisy warning on stderr" 1 "$(grep -c 'kept, not excluded' "$WORK/err")"
 
+# 11. owner-cleared names (llm#1382): FAKE names only -----------------------------
+CAN=$(grep -o 'CANARY="[^"]*"' "$SCRIPT" | sed -e 's/^CANARY="//' -e 's/"$//')
+check "canary read from the script" 1 "$([ -n "$CAN" ] && echo 1 || echo 0)"
+export PRIVATE_TERMS_FILE="$WORK/cfg11/private_terms.txt"
+export PRIVATE_ALIASES_FILE="$WORK/cfg11/private_aliases.tsv"
+export OKF="$WORK/public_ok.txt"
+export PRIVATE_NAMES_PUBLIC_OK_FILE="$OKF"
+mkdir -p "$WORK/roots11/rootdir/subdirokx"
+printf '%s\n' "$WORK/roots11/rootdir" > "$PRIVATE_TERMS_EXTRA_DIRS_FILE"
+printf 'topicokx\thealth\ntopickeep\tmoney\n' > "$PRIVATE_TOPICS_FILE"
+printf 'zzfakeb2ok%s/x/a%slocal_only\n' "$TAB" "$TAB" > "$CANDS"
+mkjson alpha-private-x "${FULL[@]}"
+rm -f "$OKF"
+
+# 11a. absent file: clean no-op
+rm -rf "$WORK/cfg11"
+run "$SCRIPT"
+check "ok absent rc" 0 "$rc"
+check "ok absent line" 1 "$(grep -cx 'public-ok file: absent' "$WORK/out")"
+check "ok absent dropped 0" 1 "$(grep -cx 'public-ok dropped: 0' "$WORK/out")"
+check "ok absent keeps source a" 1 "$(grep -cx 'alpha-private-x' "$PRIVATE_TERMS_FILE")"
+check "ok absent alias row exists" 1 "$(grep -c '^alpha-private-x	' "$PRIVATE_ALIASES_FILE")"
+
+# 11b. drop from sources a, b, b2, c; comments/blank lines ignored; case-normalised
+{
+  printf '# owner decision\n\n'
+  printf 'Alpha-Private-X\n'
+  printf '   subdirokx  \n'
+  printf 'topicokx\n'
+  printf 'zzfakeb2ok\n'
+  printf '# commented-out topickeep\n'
+} > "$OKF"
+run "$SCRIPT"
+check "ok drop rc" 0 "$rc"
+check "ok present line" 1 "$(grep -cx 'public-ok file: present' "$WORK/out")"
+check "ok dropped count" 1 "$(grep -cx 'public-ok dropped: 4' "$WORK/out")"
+check "ok source a dropped" 0 "$(grep -cx 'alpha-private-x' "$PRIVATE_TERMS_FILE")"
+check "ok source b dropped" 0 "$(grep -cx 'subdirokx' "$PRIVATE_TERMS_FILE")"
+check "ok source b2 dropped" 0 "$(grep -cx 'zzfakeb2ok' "$PRIVATE_TERMS_FILE")"
+check "ok source c dropped" 0 "$(grep -cx 'topicokx' "$PRIVATE_TERMS_FILE")"
+check "ok unlisted b term stays" 1 "$(grep -cx 'rootdir' "$PRIVATE_TERMS_FILE")"
+check "ok unlisted c term stays (comment ignored)" 1 "$(grep -cx 'topickeep' "$PRIVATE_TERMS_FILE")"
+check "ok unlisted repo stays" 1 "$(grep -cx 'betaproj' "$PRIVATE_TERMS_FILE")"
+check "ok alias row of dropped term removed" 0 "$(grep -c '^alpha-private-x	' "$PRIVATE_ALIASES_FILE")"
+check "ok header count matches body" "$(grep -vc '^#' "$PRIVATE_TERMS_FILE")" "$(head -1 "$PRIVATE_TERMS_FILE" | sed 's/.*count=//')"
+check "ok no leak in stdout" 0 "$(no_leak "$WORK/out" alpha-private-x subdirokx topicokx zzfakeb2ok topickeep rootdir)"
+check "ok no leak in stderr" 0 "$(no_leak "$WORK/err" alpha-private-x subdirokx topicokx zzfakeb2ok)"
+
+# 11c. canary listed: entry ignored, warning, canary kept
+printf '%s\nalpha-private-x\n' "$CAN" > "$OKF"
+run "$SCRIPT"
+check "ok canary rc" 0 "$rc"
+check "ok canary kept" 1 "$(grep -cx -- "$CAN" "$PRIVATE_TERMS_FILE")"
+check "ok canary warning" 1 "$(grep -c 'lists the canary term' "$WORK/err")"
+check "ok canary other entry still applied" 1 "$(grep -cx 'public-ok dropped: 1' "$WORK/out")"
+check "ok canary warning does not print the name" 0 "$(no_leak "$WORK/err" "$CAN")"
+
+# 11d. unreadable file: exit 3, old files untouched
+if [ "$(id -u)" = 0 ]; then
+  echo "SKIP unreadable public-ok file (running as root)"
+else
+  cp "$PRIVATE_TERMS_FILE" "$WORK/terms11.before"
+  cp "$PRIVATE_ALIASES_FILE" "$WORK/aliases11.before"
+  printf 'alpha-private-x\n' > "$OKF"
+  chmod 000 "$OKF"
+  run "$SCRIPT"
+  check "ok unreadable rc" 3 "$rc"
+  check "ok unreadable terms untouched" 0 "$(cmp -s "$WORK/terms11.before" "$PRIVATE_TERMS_FILE"; echo $?)"
+  check "ok unreadable aliases untouched" 0 "$(cmp -s "$WORK/aliases11.before" "$PRIVATE_ALIASES_FILE"; echo $?)"
+  check "ok unreadable message" 1 "$(grep -c 'public-ok names file exists but cannot be read' "$WORK/err")"
+  chmod 600 "$OKF"
+fi
+
+# 11e. falsification 1: a mutant that never applies the drop must go red
+printf 'alpha-private-x\n' > "$OKF"
+sed 's|^    grep -vxFf "\$TMPD/ok.names".*|    cp "$TMPD/all.terms" "$TMPD/all.kept"|' "$SCRIPT" > "$WORK/nodrop.sh"
+if cmp -s "$WORK/nodrop.sh" "$SCRIPT"; then echo "FAIL falsification mutation 1 did not apply"; fail=1; fi
+drop_assert() { # label script
+  rm -rf "$WORK/cfg11"
+  run "$2"
+  check "$1 rc" 0 "$rc"
+  check "$1 source a dropped" 0 "$(grep -cx 'alpha-private-x' "$PRIVATE_TERMS_FILE")"
+}
+drop_assert "unmutated:" "$SCRIPT"
+saved_fail=$fail; fail=0
+drop_assert "mutant1:" "$WORK/nodrop.sh" > "$WORK/mutant1.out"
+m1=$fail; fail=$saved_fail
+check "falsification: no-drop mutant goes red" 1 "$m1"
+
+# 11f. falsification 2: a mutant that lets the canary be dropped must go red
+printf '%s\n' "$CAN" > "$OKF"
+sed 's|^    grep -vxF -- "\$CANARY" "\$TMPD/ok.names" > .*|    cp "$TMPD/ok.names" "$TMPD/ok.names2"|' "$SCRIPT" > "$WORK/canarydrop.sh"
+if cmp -s "$WORK/canarydrop.sh" "$SCRIPT"; then echo "FAIL falsification mutation 2 did not apply"; fail=1; fi
+canary_assert() { # label script
+  rm -rf "$WORK/cfg11"
+  run "$2"
+  check "$1 canary kept" 1 "$(grep -cx -- "$CAN" "$PRIVATE_TERMS_FILE")"
+}
+canary_assert "unmutated:" "$SCRIPT"
+saved_fail=$fail; fail=0
+canary_assert "mutant2:" "$WORK/canarydrop.sh" > "$WORK/mutant2.out"
+m2=$fail; fail=$saved_fail
+check "falsification: canary-drop mutant goes red" 1 "$m2"
+unset PRIVATE_NAMES_PUBLIC_OK_FILE
+
 if [ "$fail" = 0 ]; then echo "ALL PASS"; exit 0; else echo "SOME FAILED"; exit 1; fi
