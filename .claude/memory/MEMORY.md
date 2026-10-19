@@ -65,5 +65,8 @@ One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 - [`historical` Repo Is Intentionally Public](feedback_historical-repo-is-intentionally-public.md) — quant/market research, not personal data; public-private-boundary's "money" trigger doesn't apply
 - [roborev: Job Id vs Review Id](reference_roborev-job-id-vs-review-id.md) — `roborev show/close/comment` take review_jobs.id, not reviews.id; resolve via sqlite before acting (llm#1225/#1230)
 - [Verify Inherited Conclusions](feedback_verify-inherited-conclusions.md) — an audit/subagent conclusion is a claim; fixer_heavy_day "at its floor" was 2 of 47; tell dispatches to verify the premise first (2026-09-20)
+- [DATED FOLLOW-UPS: scanner triage rollout](project_scanner-triage-followups.md) — RAISE FIRST Sun 2026-10-18 (first scheduled runs), ~10-22 ask about `--apply`; owner said "you track all of this" (llm#1458)
+- [One PR Per Feature](feedback_one-pr-per-feature.md) — batch fix/follow-up/tests/scheduling/docs into ONE PR; one "merge" ask per feature (owner, 2026-10-19; llm#1471)
 - [`--help` May Execute the Script](feedback_help-flag-may-execute.md) — a script without arg parsing just runs; read its header instead (an accidental live-DB seed apply, 2026-09-20)
 - [GitHub Actions Storage Alert](reference_github-actions-storage-billing.md) — billing usage API works, budgets 404; setup-r-dependencies writes a 384 MB cache per dependency release, `cache: false` measured neutral (llmtelemetry#370)
+- [DATED FOLLOW-UPS: llmtelemetry Actions](project_llmtelemetry-actions-followups.md) — RAISE FIRST on/after Mon 2026-10-19 (cache check) and 2026-11-01 (back to daily, R 4.5 pin test); the user expects the agent to remember
