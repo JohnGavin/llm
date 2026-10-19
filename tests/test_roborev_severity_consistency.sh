@@ -197,7 +197,7 @@ if [ -x "${SQLITE3}" ] || command -v sqlite3 >/dev/null 2>&1; then
     "${SQLITE3}" "${FIXTURE_DB}" <<'SQL'
 CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER, finished_at TEXT);
-CREATE TABLE reviews (id INTEGER PRIMARY KEY, job_id INTEGER, closed INTEGER, output TEXT, created_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, job_id INTEGER, closed INTEGER, output TEXT, structured_output TEXT, created_at TEXT DEFAULT (datetime('now')));
 CREATE TABLE closures (id INTEGER PRIMARY KEY AUTOINCREMENT, finding_id INTEGER, closure_type TEXT, created_at TEXT DEFAULT (datetime('now')));
 INSERT INTO repos VALUES (1, 'llm');
 INSERT INTO review_jobs VALUES (1, 1, datetime('now'));
