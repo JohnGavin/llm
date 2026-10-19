@@ -372,26 +372,24 @@ if [ "$_bye_detected" -eq 1 ] && [ -x "$_SLUG_SCRIPT" ]; then
   printf '%s\t%s\t%s\n' "$_INDEX_TS" "$_INDEX_BRANCH" "$_INDEX_SLUG" >> "$_SESSION_INDEX_LOG"
 fi
 
-# #770: Batch pending memory/rule prose edits into a PR ───────────────────
-# Root cause (llm#510): orchestrator sessions leave .claude/memory/*.md,
-# .claude/rules/*.md, and CHANGELOG.md edits uncommitted in the main
-# checkout, keeping it chronically dirty and jamming the cron deploy pull
-# (cron_deploy_pull.sh has to autostash/retry instead of a clean
-# fast-forward every run). Route any pending prose edits into a branch + PR
-# here so the checkout returns to clean between sessions. Never blocks
-# session end (non-fatal, bounded by timeout); never pushes to main
-# directly — always opens a PR (pr-shipping-discipline rule).
-# IMPORTANT: The Stop hook fires after EVERY Claude response, not only /bye.
-# mem_pr.sh creates a branch, commits, and opens a PR — a per-response PR
-# storm if left ungated. Gated on the same one-shot `_bye_detected` sentinel
-# used elsewhere in this file (see llm#910).
-# Opt-out: SKIP_MEM_PR=1.
+# #770/#1446: Batch pending memory/rule prose edits into ONE rolling PR ──────
+# Root cause (llm#510): sessions leave .claude/memory/*.md, .claude/rules/*.md
+# and CHANGELOG.md edits uncommitted in the MAIN checkout (.claude/memory is a
+# symlink target shared by every session, llm#144), jamming the ff-only deploy
+# pull. This block used to be gated on the one-shot /bye sentinel, so a session
+# that never ran /bye left the tree dirty (llm#1446: 2375 "nothing to route"
+# log lines, 0 PRs ever opened; it also ran against CLAUDE_PROJECT_DIR instead
+# of the main checkout, and `timeout` is absent from macOS PATH). mem_pr.sh is
+# now safe to run on EVERY Stop: it never touches the checkout's HEAD/index,
+# is a one-command no-op when nothing is dirty, rate-limits itself, takes a
+# lock, and opens/updates ONE rolling PR (never merges). Run detached so the
+# Stop hook is never delayed by fetch/push. Opt-out: SKIP_MEM_PR=1.
 _MEM_PR_SCRIPT="$CLAUDE_DIR/scripts/mem_pr.sh"
-_MEM_PR_REPO="${CLAUDE_PROJECT_DIR:-$HOME/docs_gh/llm}"
+_MEM_PR_REPO="${LLM_MAIN_CHECKOUT:-$HOME/docs_gh/llm}"
 _MEM_PR_LOG="$CLAUDE_RUNTIME_ROOT/logs/mem_pr.log"
-if [ "$_bye_detected" -eq 1 ] && [ -x "$_MEM_PR_SCRIPT" ]; then
+if [ -x "$_MEM_PR_SCRIPT" ]; then
   mkdir -p "$(dirname "$_MEM_PR_LOG")"
-  timeout 60 "$_MEM_PR_SCRIPT" "$_MEM_PR_REPO" >> "$_MEM_PR_LOG" 2>&1 || true
+  ( "$_MEM_PR_SCRIPT" "$_MEM_PR_REPO" >> "$_MEM_PR_LOG" 2>&1 & ) || true
 fi
 
 exit 0
