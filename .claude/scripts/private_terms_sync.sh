@@ -52,9 +52,22 @@
 # name is no longer matched as a bare term; its absolute path is still caught
 # by private_repo_detail_guard.sh.
 #
+# Owner-cleared names (llm#1382): the optional hand-kept file
+# ${PRIVATE_NAMES_PUBLIC_OK_FILE:-$HOME/.config/private_names_public_ok.txt}
+# (one lowercase name per line, '#' comments, blank lines ignored; never written
+# here) lists names the owner decided may appear in public text. A term from ANY
+# source (a, b, b2, c, d) equal to a listed name is dropped before the list and
+# alias map are written, so it also loses its alias row. The canary can never be
+# dropped (an entry for it is ignored, with a warning). Output gives counts only:
+# "public-ok file: present|absent|unreadable" and "public-ok dropped: N". A file
+# that exists but cannot be read is INDETERMINATE (exit 3, old files kept): an
+# ignored file would silently re-add cleared names. Absent = normal no-op.
+#
 # Thin-list guard: refuse to write (exit 3, keep old files) when the new term
 # count is below ${PRIVATE_TERMS_MIN:-10}, or below 70% of the previous file's
-# count. --force overrides the drop check only, never the floor.
+# count. --force overrides the drop check only, never the floor. Public-ok drops
+# count as removals like any other; a drop of 1-3 names only trips the 70% check
+# on a list of roughly 10 terms or fewer (the floor MIN already governs that).
 #
 # Usage: private_terms_sync.sh [--dry-run] [--force] | --noise-report <repo>
 # Exit codes: 0 written (or dry-run ok), 2 usage, 3 INDETERMINATE (refused).
@@ -77,6 +90,7 @@ ALIASES_FILE="${PRIVATE_ALIASES_FILE:-$HOME/.config/private_aliases.tsv}"
 DIRS_FILE="${PRIVATE_TERMS_EXTRA_DIRS_FILE:-$HOME/.config/private_term_dirs.txt}"
 TOPICS_FILE="${PRIVATE_TOPICS_FILE:-$HOME/.config/private_topics.txt}"
 PATHS_FILE="${PRIVATE_PATHS_FILE:-$HOME/.config/private_paths.txt}"
+OK_FILE="${PRIVATE_NAMES_PUBLIC_OK_FILE:-$HOME/.config/private_names_public_ok.txt}"
 MIN="${PRIVATE_TERMS_MIN:-10}"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CAND_MIN_LEN="${PRIVATE_DETAIL_MIN_NAME_LEN:-6}"
@@ -254,6 +268,34 @@ normalise < "$TMPD/d.raw" | sort -u > "$TMPD/d.terms"
 # merge ------------------------------------------------------------------
 { cat "$TMPD/a.terms" "$TMPD/b.terms" "$TMPD/b2.terms" "$TMPD/c.terms" "$TMPD/d.terms"; echo "$CANARY"; } \
   | sort -u > "$TMPD/all.terms"
+
+# owner-cleared names: drop whole-term matches from every source ---------------
+OK_STATE=absent
+OK_DROPPED=0
+OK_CANARY_WARN=0
+if [ -e "$OK_FILE" ]; then
+  if [ -f "$OK_FILE" ] && [ -r "$OK_FILE" ] && cat "$OK_FILE" > "$TMPD/ok.raw" 2>/dev/null; then
+    OK_STATE=present
+  else
+    echo "INDETERMINATE: public-ok names file exists but cannot be read; keeping previous files" >&2
+    exit 3
+  fi
+fi
+if [ "$OK_STATE" = present ]; then
+  normalise < "$TMPD/ok.raw" | sort -u > "$TMPD/ok.names"
+  if grep -qxF -- "$CANARY" "$TMPD/ok.names"; then
+    OK_CANARY_WARN=1
+    echo "warning: public-ok file lists the canary term; entry ignored, canary kept" >&2
+    grep -vxF -- "$CANARY" "$TMPD/ok.names" > "$TMPD/ok.names2" || true
+    mv "$TMPD/ok.names2" "$TMPD/ok.names"
+  fi
+  if [ -s "$TMPD/ok.names" ]; then
+    BEFORE_OK=$(count "$TMPD/all.terms")
+    grep -vxFf "$TMPD/ok.names" "$TMPD/all.terms" > "$TMPD/all.kept" || true
+    mv "$TMPD/all.kept" "$TMPD/all.terms"
+    OK_DROPPED=$((BEFORE_OK - $(count "$TMPD/all.terms")))
+  fi
+fi
 NEW=$(count "$TMPD/all.terms")
 
 PREV=0
@@ -276,6 +318,8 @@ if [ -n "${PRIVATE_TERMS_NOISE_REPO:-}" ]; then
 fi
 echo "source c (topics): $(count "$TMPD/c.terms")"
 echo "source d (paths): $(count "$TMPD/d.terms")"
+echo "public-ok file: $OK_STATE"
+echo "public-ok dropped: $OK_DROPPED"
 echo "total (incl. canary): $NEW; previous: $PREV"
 
 if [ "$NEW" -lt "$MIN" ]; then
