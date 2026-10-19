@@ -54,6 +54,32 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 - **Session-start banner surfaces recent telemetry stranded/aborted runs.** `~/.claude/logs/telemetry_stranded_runs.log` is written by llmtelemetry's `export_and_deploy_data.sh` (stranded rebase runs, `kind=export_optional_step_error`) and `exec/refresh_codexbar.sh` (`kind=codexbar_refresh_abort`) but nothing read it. New `.claude/scripts/telemetry_stranded_banner.sh` + `session_init.sh` Phase 15i print one `telemetry-stranded: N in last 3d (last: DATE KIND) -- see <log>` line when entries are under 3 days old; silent when none or the file is missing; `INDETERMINATE` when the log is unreadable or has unparseable timestamps and no recent entry. N=3 days because the writers run at session end, so a failure shows within a day and 3d spans a weekend. No existing phase covered this (15a reads DuckDB, not this log), so a small new phase was added. Selftest: `.claude/hooks/telemetry_stranded_banner_selftest.sh` (falsified against a reader with the cutoff disabled). Touches `.claude/hooks/**`: needs an explicit "merge".
 
+## 2026-10-04 (session continued from 2026-09-30: instruction-size cut, settings drift, roborev privacy prompts, feat/cc-20260930-193506)
+
+### Completed
+- **Startup instruction size** (Claude Code warned 31 files / 223.6k chars over the 150k limit). Phase 0 #1327 (`claudeMdExcludes` for worktree rule copies), Phase 1 #1329 (AGENTS.md 30.5k → 14.0k; always-loaded baseline 131.5k → 74.3k; `worktree-location`, `nix-agent-shell-protocol`, `btw-timeouts`, `systematic-debugging` path-scoped; `pivot-signal` folded into `systematic-debugging`; five new companions), Phase 2 historical#930 (project files ~88k → ~7k), Phase 3 #1328 (`check_rule_scoping.sh --budget`). Final measurement: `32 session types, 0 over warn (>120000), 0 over limit (>150000)`, global 74.1k.
+- **Settings drift** #1332: `~/.claude/settings.json` had been a regular file since ~23 Sep. Repo copy is now the union (10 `cc-status` hook groups, CLI-gated sound hooks, clinical guard, `claudeMdExcludes`); user file backed up to `~/.claude/settings.json.pre-symlink-20261004.bak` and re-symlinked. The banner's `config:ok` was a hard-coded literal; it is now `config_wiring_status` (ok / DRIFT(names) / ?), 12-case test, falsified (`fails=4` with the comparison disabled). Live: `config:DRIFT(settings.json)` before the swap, `config:ok` after.
+- **roborev macOS privacy prompts.** TCC log: the daemon itself (`/usr/local/bin/roborev`, pid 14960) requested Documents, Desktop, Downloads, network volumes, ~/Library, iCloud/Dropbox/Proton File Provider domains and Full Disk Access in a 2-minute burst at the start of gemini job 13904 (cancelled; it never got past startup). Microphone requests were the user `afplay` Stop/Notification hooks inherited by `claude -p` review agents; those hooks are now gated on `CLAUDE_CODE_ENTRYPOINT=cli` (interactive `cli`, `-p` runs `sdk-cli`, both measured). The "self-update" was our own `com.claude.roborev-weekly-update` job (Thu 23:30, 1 Oct), which also explains the unexplained 23:30 upgrade in #1265; unloaded, then reloaded on request. Upstream: kenn-io/roborev#1314 (job_timeout_minutes not enforced), kenn-io/roborev#1315 (privacy prompts).
+- **Outbound writing:** emails hard-wrapped at 80 columns with lines filled, replacing one clause per line (#1330).
+- **Snapshot-errors article** (etiennebacher.com, 2026-09-22) analysed for gaps → #1331 (bare `expect_error` common and unflagged; our `testthat-patterns` skill shows one; no codemod; no message-quality review).
+- historical's local checkout: seven `docs/` files identical to `origin/main` (empty `git diff origin/main -- docs/`) discarded on request, then fast-forwarded.
+- Merged: #1320–#1324, #1326–#1330, #1332, historical#930. Filed: #1331, #1333, #1334.
+
+### Failed Approaches
+- Editing `~/.claude/settings.json` with Edit was blocked by `file_protection.sh` (canonical `.claude/`). Handed the user a backed-up Python script to run instead of working around the hook.
+- Searching the roborev config for an auto-update key: there is none; the updater is our own launchd job. Grep `bin/`, `.claude/scripts/` and `~/Library/LaunchAgents` for the command before assuming a tool updates itself.
+- First `--budget` run showed historical at 168k: its checkout had not pulled #930 because of local `docs/` edits. Measure against a pulled checkout before concluding a phase failed.
+
+### Accuracy / Metrics
+- Always-loaded baseline 131.5k → 74.1k chars; worst session type 233.7k → under 120k.
+- `check_rule_scoping.sh`: OK; selftest 26/26 on the Phase 1 branch.
+
+### Known Limitations
+- **#1333 (High, latent):** `roborev_poll_merges.sh` aborts under `set -e` at the #1316 all-files-excluded check (reproduced). Has not fired yet: the 2 Oct run skipped all 26 repos before that line. Will abort the first weekday run where a repo has advanced.
+- **#1334:** `check_targets_tracks_own_package.sh` reports an R crash as FAIL and gives a false PASS on any `tar_source()` (review 13854, merged in #1299).
+- Exact trigger of the roborev home-folder access is unconfirmed (no symlinks from the worktree into those folders; release notes silent). Weekly auto-update is back on, so v0.70.0+ stays installed.
+- Phase 1 leftovers: `check_rule_scoping.sh` `FALLBACK_ALLOW` still names the four re-tiered rules; two SQL seed files still say `pivot-signal`; `RULES.md` count stale. historical has dead globs on already-scoped rules.
+
 ## 2026-09-30 (session: banner warnings, #1294/#1295/#1296, roborev purge and retention, feat/cc-20260930-193506)
 
 ### Completed
@@ -4772,3 +4798,41 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - (carried forward, unchanged) `pkgctx`-based `ctx_sync()` remains broken
   end-to-end on the external `zmij@1.0.12` crates.io fetch failure — see
   the 2026-09-05 entry above for the full root-cause.
+
+## 2026-10-11 / 2026-10-12
+
+### Completed
+- Removed a sensitive file from public history (rewrite + force-push);
+  backups kept locally. One external fork still holds it; contacting its
+  owner and GitHub Support awaits review.
+- Privacy gates 1-8 merged (#1373-#1378). History-audit and
+  visibility-diff launchd jobs installed; schema applied.
+- Redacted private-topic prose from 19 files (#1383); replaced hard-coded
+  local paths with an aliasing lookup read from a local config file (#1385).
+- Filed the layered privacy plan as sub-issues #1386-#1393 of #1382.
+  Merged L0 (#1394, private-term sync); L2 (#1395, scanner rule +
+  commit-msg hook) is open and on hold.
+- CI fixes: test skip guard (#1381); a daily report script missing a
+  sourced helper (dashboard repo).
+- Overnight email: collapsed per-finding dropdown under critical/major
+  action items (#1398).
+- First all-public history-audit baseline: 142 units, 0 new findings,
+  5 indeterminate (forks that return 404; #1396).
+
+### Failed Approaches
+- Treating a raw repo-name list as the private-term list: many private
+  repo names are generic words or already appear widely in public files,
+  so a scanner fed the raw list would block ordinary commits. Needs an
+  allow-list with reasons before #1395 can go live.
+- Old session branches that predate the history rewrite must never be
+  pushed; they would reintroduce the removed content.
+
+### Accuracy / Metrics
+- roborev: 18 failed verdicts, 18 addressed; 0 crash, 0 quota.
+- New shell tests: 39/39 (#1394); 49/49, 20/20 and 55/55 (#1395).
+
+### Known Limitations
+- #1395 on hold pending the allow-list and splitting a literal test term.
+- Audit mirror cache is about 12 GB on a 97%-full disk.
+- Repo visibility decision pending; #1397 (orphan raw-file check) planned,
+  not started.
