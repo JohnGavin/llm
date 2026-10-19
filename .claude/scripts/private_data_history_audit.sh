@@ -163,7 +163,9 @@ set -uo pipefail
 
 # PDHA_EXTRA_PATH: prepended (selftest puts a stub `gh` first). /opt/homebrew/bin
 # stays on the PATH for pdftotext (document-format gate) under launchd.
-export PATH="${PDHA_EXTRA_PATH:+${PDHA_EXTRA_PATH}:}/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# The caller's own PATH is kept LAST (llm#1435): a CI runner installs duckdb
+# under ~/.duckdb/cli/latest, which the fixed list below does not contain.
+export PATH="${PDHA_EXTRA_PATH:+${PDHA_EXTRA_PATH}:}/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:${PATH}}"
 
 HOME_DIR="${HOME:-/Users/johngavin}"
 LOG_DIR="${HOME_DIR}/.claude/logs"
