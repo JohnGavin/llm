@@ -1589,7 +1589,23 @@ if (nrow(cron_health) > 0L) {
         FROM housekeeping_runs WHERE task = 'auto_merge_sweep'
         ORDER BY started_at DESC LIMIT 100")
       if (nrow(ar) > 0L) ar$at <- as.POSIXct(ar$at, tz = "UTC")
-      aa <- auto_merge_assess(ar, Sys.time())
+      # merge history (llm#1471): read-only check script + the sync heartbeat
+      mh <- NULL
+      chk <- file.path(.scripts_dir, "merge_history_check.sh")
+      if (file.exists(chk)) {
+        co <- suppressWarnings(system2(chk, c("--db", db_path, "--days", "7"), stdout = TRUE, stderr = FALSE))
+        sm <- grep("^summary: ", co, value = TRUE)[1L]
+        num <- function(k) {
+          g <- if (is.na(sm)) character(0) else regmatches(sm, regexec(sprintf(" %s=([0-9]+)", k), sm))[[1L]]
+          if (length(g) < 2L) NA_integer_ else as.integer(g[[2L]])
+        }
+        sf <- safe_query("SELECT status FROM housekeeping_runs WHERE task = 'merge_history_sync'
+                          ORDER BY started_at DESC LIMIT 1")
+        mh <- list(owner_verb = num("owner_verb"), auto = num("auto"), tier2 = num("tier2"),
+                   alerts = num("alerts"), sync_failed = nrow(sf) > 0L && identical(sf$status[[1L]], "failed"),
+                   check_rc = as.integer(attr(co, "status") %||% 0L))
+      }
+      aa <- auto_merge_assess(ar, Sys.time(), mh)
       return(list(bucket = aa$bucket, label = aa$label))
     }
     if (!is.null(hb)) {

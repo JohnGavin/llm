@@ -7,6 +7,8 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWEEP="$ROOT/bin/auto_merge_sweep.sh"
 REAL_EXCL="$ROOT/.claude/state/auto_merge_exclusions.txt"
+REAL_T2="$ROOT/.claude/state/auto_merge_tier2.tsv"
+REAL_HN="$ROOT/.claude/state/auto_merge_tier2_hardnever.txt"
 W="$(mktemp -d "${TMPDIR:-/tmp}/ams_test.XXXXXX")"
 trap 'rm -rf "$W"' EXIT
 
@@ -25,7 +27,8 @@ case "$1 $2" in
              if [ -f "$d/unlabel_fail" ] && printf '%s' "$*" | grep -q -e '--remove-label'; then exit 1; fi
              exit 0 ;;
   "pr merge") if [ -f "$d/merge_fail_$3" ]; then echo "SECRET-TITLE-ERR" >&2; exit 1; fi; exit 0 ;;
-  "label list") if [ -f "$d/no_label" ]; then exit 0; fi; echo "auto-merged"; exit 0 ;;
+  "label list") if [ -f "$d/no_label" ]; then exit 0; fi; echo "auto-merged"
+                if [ ! -f "$d/no_tier2_label" ]; then echo "tier2"; fi; exit 0 ;;
   "auth status") exit "$(cat "$d/auth_rc" 2>/dev/null || echo 0)" ;;
   "pr list") cat "$d/list.json" || exit 1 ;;
   "pr view") c=$(cat "$d/vc_$3" 2>/dev/null || echo 0); c=$((c + 1)); echo "$c" > "$d/vc_$3"
@@ -38,6 +41,15 @@ if [ "$1" = "api" ]; then
   case "$2" in
     */files) p="${2%/files}"; n="${p##*/}"
              if [ -f "$d/files_$n" ]; then cat "$d/files_$n"; exit 0; else exit 1; fi ;;
+    */issues/*/comments) p="${2%/comments}"; n="${p##*/}"
+             if [ -f "$d/comments_fail_$n" ]; then exit 1; fi
+             if [ -f "$d/comments_$n" ]; then
+               # apply the caller's real --jq filter, as gh does, so the author_association filter is exercised
+               f=""; prev=""
+               for a in "$@"; do if [ "$prev" = "--jq" ]; then f="$a"; fi; prev="$a"; done
+               jq -r "$f" "$d/comments_$n"; exit $?
+             fi
+             exit 0 ;;
   esac
   n="${2##*/}"
   if [ -f "$d/assoc_$n" ]; then cat "$d/assoc_$n"; else exit 1; fi
@@ -49,6 +61,16 @@ cat > "$W/gate.sh" <<'EOF'
 #!/usr/bin/env bash
 exit "${GATE_RC:-0}"
 EOF
+cat > "$W/sync_stub.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/sync_calls.log"
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--facts" ]; then cp "$2" "$STUB_DIR/facts_seen.tsv"; fi
+  shift
+done
+exit "${SYNC_RC:-0}"
+EOF
+export AUTO_MERGE_SYNC="$W/sync_stub.sh"
 export AUTO_MERGE_LOG="$W/am.log"
 export STUB_DIR="$STUB" GATE_RC=0 AUTO_MERGE_REPO_DIR="$FAKE" AUTO_MERGE_GATE="$W/gate.sh"
 export PATH="$BIN:$PATH"
@@ -59,6 +81,8 @@ setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.m
   rm -rf "$FAKE"
   mkdir -p "$FAKE/.claude/state" "$FAKE/.claude/launchd" "$FAKE/bin/launchd-recorders"
   cp "$REAL_EXCL" "$FAKE/.claude/state/auto_merge_exclusions.txt"
+  cp "$REAL_T2" "$FAKE/.claude/state/auto_merge_tier2.tsv"
+  cp "$REAL_HN" "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"
   if [ "$1" != "-" ]; then
     printf '# x\n**Auto-Merge Policy:** %s (global)\n' "$1" > "$FAKE/AGENTS.md"
   fi
@@ -73,7 +97,7 @@ checks_json() {  # spec: comma list of S P K F N X(status-context ok) Y(status-c
   local out="" c item
   for c in $(printf '%s' "$1" | tr ',' ' '); do
     case "$c" in
-      S) item='{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}' ;;
+      S) item="{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"completedAt\":\"${CHECK_AT:-2020-01-01T00:00:00Z}\"}" ;;
       P) item='{"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":""}' ;;
       K) item='{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SKIPPED"}' ;;
       N) item='{"__typename":"CheckRun","status":"COMPLETED","conclusion":"NEUTRAL"}' ;;
@@ -99,16 +123,24 @@ mkpr() {
     lj="$lj{\"name\":\"$l\"}"
   done
   : > "$STUB/files_$n"
-  for f in $files; do   # token "new:old" is a rename from old to new
-    new="${f%%:*}"; old=""
-    case "$f" in *:*) old="${f#*:}" ;; esac
-    printf '%s\t%s\n' "$new" "$old" >> "$STUB/files_$n"
+  for f in $files; do   # token "new:old:adds:dels"; old, adds, dels optional ("new::20:5" = 20 added, 5 deleted)
+    new="${f%%:*}"; old=""; rest=""; adds=""; dels=""
+    case "$f" in *:*) rest="${f#*:}" ;; esac
+    old="${rest%%:*}"
+    case "$rest" in
+      *:*) rest="${rest#*:}"; adds="${rest%%:*}"
+           case "$rest" in *:*) dels="${rest#*:}" ;; esac ;;
+    esac
+    printf '%s\t%s\t%s\t%s\n' "$new" "$old" "${adds:-0}" "${dels:-0}" >> "$STUB/files_$n"
     nf=$((nf + 1))
   done
   if [ -z "$changed" ]; then changed="$nf"; fi
   printf '%s' "$assoc" > "$STUB/assoc_$n"
-  printf '{"number":%s,"state":"%s","isDraft":%s,"mergeStateStatus":"%s","headRefOid":"%s","labels":[%s],"statusCheckRollup":%s,"changedFiles":%s}\n' \
-    "$n" "$state" "$draft" "$merge" "${HEAD:-aaaaaaa$n}" "$lj" "$(checks_json "$checks")" "$changed" > "$STUB/view_$n.json"
+  local cj='[]'
+  # COMMIT_AT unset = a commit in 2020 (long past any window); COMMIT_AT="" = no commit data
+  if [ "${COMMIT_AT-x}" != "" ]; then cj="[{\"committedDate\":\"${COMMIT_AT:-2020-01-01T00:00:00Z}\"}]"; fi
+  printf '{"number":%s,"state":"%s","isDraft":%s,"mergeStateStatus":"%s","headRefOid":"%s","labels":[%s],"statusCheckRollup":%s,"changedFiles":%s,"body":"%s","commits":%s}\n' \
+    "$n" "$state" "$draft" "$merge" "${HEAD:-aaaaaaa$n}" "$lj" "$(checks_json "$checks")" "$changed" "${BODY:-}" "$cj" > "$STUB/view_$n.json"
 }
 
 # A fully eligible PR; individual tests override one argument.
@@ -430,6 +462,175 @@ if command -v duckdb >/dev/null 2>&1; then
 else
   echo "SKIP: duckdb not on PATH -- heartbeat rows NOT exercised"
 fi
+
+# ---- 11. Tier 2 (llm#1471) --------------------------------------------------------------
+iso_ago() { python3 -c 'import sys,time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - float(sys.argv[1]) * 3600)))' "$1"; }
+T2FILES='.claude/scripts/zzz_nightly.sh::20:5 tests/test_zzz.sh::10:0'   # a scheduled script (via the fake plist) + a test
+t2() {  # PR files [labels] [class]  -- a Tier 2 PR, owner-authored, green, head commit in 2020
+  BODY="Fixes a timeout.\\nTier-2-Class: ${4:-robustness}" mkpr "$1" OWNER OPEN false CLEAN "${3:-}" "S,S" "$2"
+}
+
+# the class is not declared: today's behaviour is kept
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,S" "$T2FILES"; run 1
+expect "scheduled script without a trailer" 1 NOT-ELIGIBLE "scheduled-script:zzz_nightly.sh"
+# a malformed trailer is not a declaration
+setup_repo ON; BODY='Tier-2-Class: robustness and more words' mkpr 1 OWNER OPEN false CLEAN "" "S,S" "$T2FILES"; run 1
+expect "malformed trailer is ignored" 1 NOT-ELIGIBLE "scheduled-script:zzz_nightly.sh"
+
+# each of the three starting classes, window long past
+for c in robustness detector-false-positive-fix output-redaction; do
+  setup_repo ON; t2 1 "$T2FILES" "" "$c"; run 1
+  expect "tier2 class $c past the window" 1 ELIGIBLE all-conditions-met
+done
+
+# inside the veto window: WAITING (exit 0), then a later check completion also restarts the clock
+setup_repo ON; COMMIT_AT="$(iso_ago 1)" t2 1 "$T2FILES"; run 1
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Eq '^1	TIER2-WAITING	[23]\.[0-9]h-left$' && printf '%s\n' "$OUT" | grep -q 'tier2_waiting=1$'; then ok; else bad "tier2 inside the window (rc=$RC): $OUT"; fi
+setup_repo ON; CHECK_AT="$(iso_ago 1)" t2 1 "$T2FILES"; run 1
+if printf '%s\n' "$OUT" | grep -Eq '^1	TIER2-WAITING	'; then ok; else bad "a recent check completion must restart the window: $OUT"; fi
+setup_repo ON; COMMIT_AT="$(iso_ago 5)" CHECK_AT="$(iso_ago 4.5)" t2 1 "$T2FILES"; run 1
+expect "tier2 5 h after the commit, 4.5 h after the checks" 1 ELIGIBLE all-conditions-met
+setup_repo ON; COMMIT_AT="$(iso_ago 1)" t2 1 "$T2FILES"; AUTO_MERGE_TIER2_WINDOW_HOURS=0 run 1
+expect "window override 0 (tests)" 1 ELIGIBLE all-conditions-met
+setup_repo ON; COMMIT_AT="" t2 1 "$T2FILES"; run 1
+expect "no commit date: indeterminate" 1 INDETERMINATE tier2-green-time-unknown
+# a WAITING PR is never mutated under --apply
+setup_repo ON; COMMIT_AT="$(iso_ago 1)" t2 1 "$T2FILES"; runa 1
+if [ "$(mutations)" = "0" ] && ! grep -q 'squash-tier2' "$AUTO_MERGE_LOG" 2>/dev/null; then ok; else bad "TIER2-WAITING PR was mutated"; fi
+
+# mechanical conditions
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::20:5'; run 1
+expect "tier2 without a test file" 1 NOT-ELIGIBLE tier2-no-tests
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::20:5 tests/ci_test_map.tsv::1:0'; run 1
+expect "tier2 with only the test map changed" 1 NOT-ELIGIBLE tier2-no-tests
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::295:0 tests/test_zzz.sh::5:0'; run 1
+expect "tier2 at exactly 300 changed lines" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::296:0 tests/test_zzz.sh::5:0'; run 1
+expect "tier2 at 301 changed lines" 1 NOT-ELIGIBLE "tier2-too-large:301>300"
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::0:301 tests/test_zzz.sh::0:0'; run 1
+expect "tier2: deletions count too" 1 NOT-ELIGIBLE "tier2-too-large:301>300"
+setup_repo ON; t2 1 'R/foo.R::1:0 tests/test_zzz.sh::1:0'; run 1
+expect "tier2 outside the class paths" 1 NOT-ELIGIBLE "tier2-path-not-allowed:R/foo.R"
+setup_repo ON; t2 1 '.claude/scripts/y.sh:R/old.R:1:1 tests/test_zzz.sh::1:0'; run 1
+expect "tier2 rename from outside the class paths" 1 NOT-ELIGIBLE "tier2-path-not-allowed:R/old.R"
+# list files: additions pass, removals are hard-never
+setup_repo ON; t2 1 'tests/fixtures/deny_terms.txt::3:0 .claude/scripts/zzz_nightly.sh::1:0'; run 1
+expect "tier2: adding to a deny list" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 'tests/fixtures/deny_terms.txt::3:1 .claude/scripts/zzz_nightly.sh::1:0'; run 1
+expect "tier2: removing a line from a deny list" 1 NOT-ELIGIBLE "tier2-list-removal:tests/fixtures/deny_terms.txt"
+
+# the HARD-NEVER list: owner-verb always (reasons come from the exclusion file or the hard-never file)
+for p in .claude/hooks/x.sh .claude/rules/a.md .claude/launchd/x.plist bin/launchd-recorders/foo .github/workflows/ci.yml \
+         AGENTS.md sub/CLAUDE.md .claude/settings.json default.nix default.R db/x_schema.sql bin/x_schema_apply.sh \
+         .claude/scripts/housekeeping_schema_init.sql .claude/scripts/rotate_keys.sh .claude/scripts/x_credential_check.sh \
+         .claude/state/foo.tsv .claude/state/scanner_policy.tsv bin/auto_merge_sweep.sh tests/test_auto_merge_sweep.sh \
+         .claude/scripts/merge_history_sync.sh .claude/scripts/lib/merge_classify.sh \
+         .claude/scripts/private_terms_publish.sh .claude/scripts/scanner_triage.sh; do
+  setup_repo ON; t2 1 "$p::1:0 tests/test_zzz.sh::1:0"; run 1
+  line="$(printf '%s\n' "$OUT" | grep -E '^1	' | head -1)"
+  case "$line" in
+    "1	NOT-ELIGIBLE	excluded-path:$p"|"1	NOT-ELIGIBLE	tier2-hard-never:$p") ok ;;
+    *) bad "tier2 hard-never $p: got '$line'" ;;
+  esac
+done
+# the ones the exclusion file does NOT cover must come from the hard-never list itself
+for p in .claude/state/foo.tsv bin/auto_merge_sweep.sh tests/test_auto_merge_sweep.sh .claude/scripts/merge_history_sync.sh \
+         .claude/scripts/private_terms_publish.sh .claude/scripts/scanner_triage.sh .claude/scripts/housekeeping_schema_init.sql; do
+  setup_repo ON; t2 1 "$p::1:0 tests/test_zzz.sh::1:0"; run 1
+  expect "tier2 hard-never list itself: $p" 1 NOT-ELIGIBLE "tier2-hard-never:$p"
+done
+# rename OUT of a hard-never path (previous_filename counts)
+setup_repo ON; t2 1 '.claude/scripts/y.sh:.claude/state/x.tsv:5:5 tests/test_zzz.sh::1:0'; run 1
+expect "tier2 rename out of a hard-never path" 1 NOT-ELIGIBLE "tier2-hard-never:.claude/state/x.tsv"
+setup_repo ON; t2 1 '.claude/scripts/y.sh:.claude/hooks/x.sh:5:5 tests/test_zzz.sh::1:0'; run 1
+expect "tier2 rename out of hooks" 1 NOT-ELIGIBLE "excluded-path:.claude/hooks/x.sh"
+
+# unknown, disabled, unreadable
+setup_repo ON; t2 1 "$T2FILES" "" "no-such-class"; run 1
+expect "tier2 unknown class" 1 NOT-ELIGIBLE "tier2-unknown-class:no-such-class"
+setup_repo ON; t2 1 "$T2FILES"
+awk -F'\t' -v OFS='\t' '$1=="robustness"{$6=0} {print}' "$FAKE/.claude/state/auto_merge_tier2.tsv" > "$W/t2.tsv"; cp "$W/t2.tsv" "$FAKE/.claude/state/auto_merge_tier2.tsv"
+run 1
+expect "tier2 class disabled (enabled=0)" 1 NOT-ELIGIBLE "tier2-class-disabled:robustness"
+setup_repo ON; t2 1 "$T2FILES"; rm -f "$FAKE/.claude/state/auto_merge_tier2.tsv"; run 1
+expect "tier2 table unreadable" 1 INDETERMINATE tier2-table-unreadable
+setup_repo ON; t2 1 "$T2FILES"; rm -f "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"; run 1
+expect "tier2 hard-never list unreadable" 1 INDETERMINATE tier2-hardnever-unreadable
+
+# veto: label, owner comment, third-party comment
+setup_repo ON; t2 1 "$T2FILES" "hold"; run 1
+expect "tier2 veto label hold" 1 NOT-ELIGIBLE "hold-label:hold"
+setup_repo ON; t2 1 "$T2FILES" "do-not-merge"; run 1
+expect "tier2 veto label do-not-merge" 1 NOT-ELIGIBLE "hold-label:do-not-merge"
+if command -v jq >/dev/null 2>&1; then
+  setup_repo ON; t2 1 "$T2FILES"; printf '[{"author_association":"OWNER","body":"I veto this one"}]' > "$STUB/comments_1"; run 1
+  expect "tier2 owner comment with veto" 1 NOT-ELIGIBLE tier2-vetoed
+  setup_repo ON; t2 1 "$T2FILES"; printf '[{"author_association":"OWNER","body":"please HOLD until monday"}]' > "$STUB/comments_1"; run 1
+  expect "tier2 owner comment with hold" 1 NOT-ELIGIBLE tier2-vetoed
+  setup_repo ON; t2 1 "$T2FILES"; printf '[{"author_association":"NONE","body":"veto veto hold"},{"author_association":"CONTRIBUTOR","body":"veto"}]' > "$STUB/comments_1"; run 1
+  expect "tier2: a NON-owner veto comment is ignored" 1 ELIGIBLE all-conditions-met
+  setup_repo ON; t2 1 "$T2FILES"; printf '[{"author_association":"OWNER","body":"LGTM, vetoed nothing"},{"author_association":"OWNER","body":"household stuff"}]' > "$STUB/comments_1"; run 1
+  expect "tier2: owner comments without the whole word veto/hold" 1 ELIGIBLE all-conditions-met
+else
+  echo "SKIP: jq not on PATH -- the owner-veto-comment tests are NOT exercised"
+fi
+setup_repo ON; t2 1 "$T2FILES"; : > "$STUB/comments_fail_1"; run 1
+expect "tier2 comments cannot be read" 1 INDETERMINATE tier2-comments-failed
+
+# apply: label both, cap 2 per UTC day, label must exist, normal PRs unaffected by the Tier 2 cap
+setup_repo ON; t2 1 "$T2FILES"; runa 1
+if [ "$RC" -eq 0 ] && grep -q -e 'pr edit 1 .*--add-label auto-merged --add-label tier2' "$STUB/calls.log" && grep -q "	1	aaaaaaa	merged	squash-tier2" "$AUTO_MERGE_LOG"; then ok; else bad "tier2 apply must add both labels and log squash-tier2 (rc=$RC): $(cat "$STUB/calls.log")"; fi
+setup_repo ON; t2 1 "$T2FILES"; t2 2 "$T2FILES"; t2 3 "$T2FILES"
+runa --max 5 1 2 3
+if [ "$(grep -c '^pr merge' "$STUB/calls.log")" = "2" ] && grep -q "	3	aaaaaaa	skipped	tier2-cap-reached" "$AUTO_MERGE_LOG" && printf '%s\n' "$OUT" | grep -q 'merged=2 failed=0'; then ok; else bad "tier2 cap of 2 per day: $(cat "$STUB/calls.log") / $(cat "$AUTO_MERGE_LOG")"; fi
+setup_repo ON; t2 1 "$T2FILES"
+for i in 1 2; do printf '%s\t%s\taaaaaaa\tmerged\tsquash-tier2\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "9$i" >> "$AUTO_MERGE_LOG"; done
+runa 1
+if ! grep -q '^pr merge' "$STUB/calls.log" && [ "$(mutations)" = "0" ] && grep -q "	1	aaaaaaa	skipped	tier2-cap-reached" "$AUTO_MERGE_LOG"; then ok; else bad "two Tier 2 merges already today: must skip with no mutation"; fi
+setup_repo ON; t2 1 "$T2FILES"
+printf '2020-01-01T00:00:00Z\t91\taaaaaaa\tmerged\tsquash-tier2\n2020-01-01T00:00:01Z\t92\taaaaaaa\tmerged\tsquash-tier2\n' >> "$AUTO_MERGE_LOG"
+runa 1
+if grep -q '^pr merge 1 ' "$STUB/calls.log"; then ok; else bad "Tier 2 merges on an earlier UTC day must not count against today"; fi
+setup_repo ON; good
+for i in 1 2; do printf '%s\t%s\taaaaaaa\tmerged\tsquash-tier2\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "9$i" >> "$AUTO_MERGE_LOG"; done
+runa 1
+if grep -q '^pr merge 1 ' "$STUB/calls.log"; then ok; else bad "a non-Tier-2 PR must not be stopped by the Tier 2 cap"; fi
+setup_repo ON; t2 1 "$T2FILES"; : > "$STUB/no_tier2_label"; runa 1
+if [ "$(mutations)" = "0" ] && grep -q "skipped	tier2-label-missing" "$AUTO_MERGE_LOG"; then ok; else bad "missing tier2 label: skip with no mutation"; fi
+setup_repo ON; t2 1 "$T2FILES"; : > "$STUB/merge_fail_1"; runa 1
+if grep -q -e 'pr edit 1 .*--remove-label auto-merged --remove-label tier2' "$STUB/calls.log" && [ "$RC" -eq 1 ]; then ok; else bad "failed tier2 merge must remove both labels (rc=$RC)"; fi
+
+# falsification: break the mechanical gate and the veto check; the matching test must go red
+sed 's/if \[ -z "\$hit" \]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-no-tests"/if false; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-no-tests"/' "$ROOT/.claude/scripts/lib/merge_classify.sh" > "$W/mut_lib.sh"
+if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_lib.sh"; then bad "tests-required mutant did not change the lib"; else
+  setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::20:5'; AUTO_MERGE_LIB="$W/mut_lib.sh" run 1
+  if printf '%s\n' "$OUT" | grep -q '^1	ELIGIBLE'; then ok; else bad "MUTANT (tests not required) must make the no-tests PR eligible, proving the test can go red: $OUT"; fi
+fi
+sed 's/(veto|hold)/(zzzzzz)/' "$SWEEP" > "$W/mut_sweep.sh"
+if cmp -s "$SWEEP" "$W/mut_sweep.sh"; then bad "veto mutant did not change the sweep"; elif command -v jq >/dev/null 2>&1; then
+  setup_repo ON; t2 1 "$T2FILES"; printf '[{"author_association":"OWNER","body":"I veto this one"}]' > "$STUB/comments_1"
+  OUT="$(AUTO_MERGE_LIB="$ROOT/.claude/scripts/lib/merge_classify.sh" bash "$W/mut_sweep.sh" --repo O/R 1 2>/dev/null)"
+  if printf '%s\n' "$OUT" | grep -q '^1	ELIGIBLE'; then ok; else bad "MUTANT (veto word removed) must be eligible, proving the veto test can go red: $OUT"; fi
+fi
+
+# ---- 10. merge history sync after --apply (llm#1471) -----------------------------------
+setup_repo ON; good
+runa 1
+if [ "$(wc -l < "$STUB/sync_calls.log" 2>/dev/null | tr -d ' ')" = "1" ] && grep -q -e '--repo O/R --limit 50 --facts ' "$STUB/sync_calls.log"; then ok; else bad "--apply must call the sync once with --limit 50 and --facts: $(cat "$STUB/sync_calls.log" 2>&1)"; fi
+if [ "$(cat "$STUB/facts_seen.tsv" 2>/dev/null)" = "$(printf '1\tsuccess\tPASS')" ]; then ok; else bad "facts for the merged PR: $(cat "$STUB/facts_seen.tsv" 2>&1)"; fi
+setup_repo ON; good; run 1
+if [ ! -e "$STUB/sync_calls.log" ]; then ok; else bad "report mode must not call the sync"; fi
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,F" "R/a.R"
+runa 1
+if [ -e "$STUB/sync_calls.log" ] && [ ! -s "$STUB/facts_seen.tsv" ]; then ok; else bad "apply with no merge still records owner merges (sync called, empty facts)"; fi
+setup_repo ON; good; SYNC_RC=3; export SYNC_RC
+runa 1
+if [ "$RC" -eq 0 ] && grep -q 'merge history sync failed (exit 3)' "$W/err" && printf '%s\n' "$OUT" | grep -q 'merged=1'; then ok; else bad "sync failure must warn and not fail the sweep (rc=$RC): $(cat "$W/err")"; fi
+SYNC_RC=0; export SYNC_RC
+AUTO_MERGE_SYNC="$W/no-such-sync.sh" runa 1
+if [ "$RC" -eq 0 ] && grep -q 'merge history sync script not readable' "$W/err"; then ok; else bad "missing sync script must warn (rc=$RC)"; fi
+setup_repo ON; good; AUTO_MERGE_LIB="$W/no-such-lib.sh" run 1
+if [ "$RC" -eq 3 ]; then ok; else bad "missing classification library must exit 3, got $RC"; fi
 
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

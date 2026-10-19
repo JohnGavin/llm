@@ -66,8 +66,12 @@ digest_publish_assess <- function(runs, now) {
 # sweep (bin/auto_merge_sweep.sh --apply). Heartbeat: status ok/failed,
 # rows_written = PRs merged that run. ONE failure is quiet; "needs you" needs
 # two consecutive failed runs, or no run at all for 2 h.
+# Optional `mh` (merge history, merge_history_check.sh + the sync heartbeat):
+# list(owner_verb, auto, tier2, alerts, sync_failed, check_rc). When given, the
+# line gains "merges 7d: owner-verb N, auto M, tier2 K, alerts A", an alerting
+# check or a failed sync is "needs you", and check_rc 3 is indeterminate.
 # Returns list(state, bucket, label, merged_24h, failures).
-auto_merge_assess <- function(runs, now) {
+auto_merge_assess <- function(runs, now, mh = NULL) {
   ind <- function(why) list(state = "indeterminate", bucket = "indeterminate",
                             label = sprintf("indeterminate — %s", why),
                             merged_24h = NA_integer_, failures = NA_integer_)
@@ -84,11 +88,23 @@ auto_merge_assess <- function(runs, now) {
   for (g in runs$status == "ok") { if (g) break; lead <- lead + 1L }
   last <- if (identical(runs$status[[1L]], "ok")) "ok" else "failed"
   line <- sprintf("auto-merge: %d merged in 24 h, last run %s", m, last)
-  if (age_h > 2 || lead >= 2L) {
-    why <- if (age_h > 2) "no run in the last 2 h" else sprintf("%d consecutive failed runs", lead)
+  mh_why <- character(0)
+  if (!is.null(mh)) {
+    line <- sprintf("%s; merges 7d: owner-verb %d, auto %d, tier2 %d, alerts %d", line,
+                    as.integer(mh$owner_verb), as.integer(mh$auto), as.integer(mh$tier2), as.integer(mh$alerts))
+    if (isTRUE(mh$alerts > 0)) mh_why <- c(mh_why, "merge-history check alerting")
+    if (isTRUE(mh$sync_failed)) mh_why <- c(mh_why, "merge-history sync failed")
+  }
+  if (age_h > 2 || lead >= 2L || length(mh_why) > 0L) {
+    why <- if (age_h > 2) "no run in the last 2 h" else if (lead >= 2L) sprintf("%d consecutive failed runs", lead) else paste(mh_why, collapse = "; ")
     return(list(state = "needs_you", bucket = "failed",
                 label = sprintf("needs you — %s (%s)", line, why),
                 merged_24h = m, failures = max(lead, 2L)))
+  }
+  if (!is.null(mh) && isTRUE(mh$check_rc == 3L)) {
+    return(list(state = "indeterminate", bucket = "indeterminate",
+                label = sprintf("indeterminate — %s (merge history could not be checked)", line),
+                merged_24h = m, failures = lead))
   }
   list(state = if (lead == 1L) "one_failure" else "ok", bucket = "ok",
        label = line, merged_24h = m, failures = lead)

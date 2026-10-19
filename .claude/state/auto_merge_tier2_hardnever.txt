@@ -1,0 +1,49 @@
+# .claude/state/auto_merge_tier2_hardnever.txt -- llm#1471
+#
+# The Tier 2 HARD-NEVER list, read by bin/auto_merge_sweep.sh via
+# .claude/scripts/lib/merge_classify.sh. A Tier 2 PR whose diff touches ANY path
+# matching ANY line (new path or, for a rename, the previous path) is never
+# eligible: it stays owner-verb ("merge"), always.
+#
+# Format: POSIX extended regexes (grep -E), one per line, matched against the
+# repo-relative path. '#' lines and blank lines are ignored. A file with zero
+# regexes or one that does not compile makes the sweep answer INDETERMINATE.
+#
+# One rule is not a path and lives in merge_classify.sh (MC_LIST_FILE_RE): a PR
+# that REMOVES a line from a term / allow / deny list file is hard-never too.
+
+# Hooks, rules, launchd plists and their recorder wrappers (auto-merge exclusion list).
+^\.claude/hooks/
+^\.claude/rules/
+^\.claude/launchd/
+^bin/launchd-recorders/
+
+# CI workflows run with repository secrets in scope.
+^\.github/workflows/
+
+# The toggle, its list, the harness wiring and the environment definitions.
+(^|/)AGENTS\.md$
+(^|/)CLAUDE\.md$
+(^|/)\.claude/settings(\.local)?\.json$
+(^|/)default\.nix$
+(^|/)default\.R$
+
+# Schema and migration files.
+(^|/)[^/]*schema[^/]*\.(sql|sh)$
+(^|/)migrations?/
+
+# Credential, secret and rotation scripts and files.
+(^|/)[^/]*([Cc]redential|[Ss]ecret|rotate)[^/]*$
+(^|/)\.Renviron
+
+# Every state file (tables, policies, lists), except that tests/ci_test_map.tsv
+# is under tests/ and therefore not matched here.
+^\.claude/state/
+
+# The merge automation itself: the sweep, its data, its tests, the merge history.
+(^|/)[^/]*(auto_merge|merge_history|merge_classify)[^/]*$
+
+# The scheduled publishers and triage jobs the owner named.
+(^|/)private_terms_publish\.sh$
+(^|/)scanner_triage[^/]*$
+(^|/)scanner_policy\.tsv$
