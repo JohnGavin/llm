@@ -272,6 +272,59 @@ if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_lib.sh"; then ok
   if [ "$(q "$DB3" "SELECT coalesce(excluded_reasons, '') = '' FROM merge_events WHERE pr_number=2;")" = "true" ]; then ok; else bad "lib mutant should lose the excluded reason (got: $(q "$DB3" "SELECT excluded_reasons FROM merge_events WHERE pr_number=2;"))"; fi
 fi
 
+# ---- 9b. read-only checker list (llm#1471): R1 must not fire on a listed script ------------------------
+# A second fake repo holds the owner-signed list (.claude/scripts/zzz_nightly.sh is listed;
+# other_job.sh is scheduled via the recorder but NOT listed). Its own gh stub dir and DBs.
+FAKE2="$W/repo2"; STUB2="$W/stub2"
+mkdir -p "$FAKE2" "$STUB2"
+cp -R "$FAKE/.claude" "$FAKE2/.claude"; cp -R "$FAKE/bin" "$FAKE2/bin"
+printf '# fake owner-signed list\n.claude/scripts/zzz_nightly.sh\n' > "$FAKE2/.claude/state/readonly_checkers.txt"
+SAVE_STUB="$STUB"; STUB="$STUB2"; ITEMS=""
+RO_BODY='Summary\nTier-2-Class: readonly-checker'
+lpr 21 "auto-merged"       ""       '.claude/scripts/zzz_nightly.sh\t\t2\t2'                                              "$ROLL_OK"
+lpr 22 "auto-merged"       ""       '.claude/scripts/other_job.sh\t\t2\t2'                                                "$ROLL_OK"
+lpr 23 "auto-merged tier2" "$RO_BODY" '.claude/scripts/zzz_nightly.sh\t\t2\t2@tests/test_z.sh\t\t5\t0'                  "$ROLL_OK"
+lpr 24 "auto-merged tier2" "$RO_BODY" '.claude/scripts/zzz_nightly.sh\t\t2\t2@.claude/scripts/other_job.sh\t\t1\t0@tests/test_z.sh\t\t5\t0' "$ROLL_OK"
+lpr 25 ""                  ""       '.claude/scripts/zzz_nightly.sh\t\t2\t2'                                              "$ROLL_OK"
+lpr 26 "auto-merged"       ""       '.claude/scripts/zzz_nightly.sh\t\t1\t0@.claude/scripts/other_job.sh\t\t1\t0'         "$ROLL_OK"
+finish_list
+STUB="$SAVE_STUB"
+printf '#!/bin/sh\nexec other_job.sh\n' > "$FAKE2/bin/launchd-recorders/rec"
+
+DB4="$W/ro.duckdb"; newdb "$DB4"
+STUB_DIR="$STUB2" AUTO_MERGE_REPO_DIR="$FAKE2" UNIFIED_DB_PATH="$DB4" bash "$SYNC" --repo O/R --db "$DB4" >/dev/null 2>"$W/err"; RC=$?
+runchk_long() { OUT="$(bash "$CHECK" --db "$1" --days 3650 2>"$W/err")"; RC=$?; }   # the synced rows carry fixed 2026-10 dates
+c4() { q "$DB4" "SELECT merge_path || '|' || approval || '|' || class || '|' || excluded_reasons FROM merge_events WHERE pr_number=$1;"; }
+if [ "$RC" -eq 0 ]; then ok; else bad "readonly sync rc=$RC err=$(cat "$W/err")"; fi
+[ "$(c4 21)" = "sweep|none|readonly-checker|readonly-checker" ] && ok || bad "listed script, sweep merge: '$(c4 21)'"
+[ "$(c4 22)" = "sweep|none|excluded:scheduled-script|scheduled-script" ] && ok || bad "unlisted scheduled script, sweep merge: '$(c4 22)'"
+[ "$(c4 23)" = "sweep|veto-lapsed|tier2:readonly-checker|readonly-checker" ] && ok || bad "tier2 readonly-checker, listed only: '$(c4 23)'"
+[ "$(c4 24)" = "sweep|none|excluded:scheduled-script|scheduled-script" ] && ok || bad "tier2 readonly-checker with an unlisted script: '$(c4 24)'"
+[ "$(c4 25)" = "owner-verb|owner-verb|excluded:scheduled-script|scheduled-script" ] && ok || bad "owner-verb merge of a listed script keeps its class: '$(c4 25)'"
+[ "$(c4 26)" = "sweep|none|excluded:scheduled-script|scheduled-script" ] && ok || bad "listed + unlisted mixed: '$(c4 26)'"
+# R1: unlisted scheduled scripts in a sweep merge alert (22, 24, 26); listed ones do not
+runchk_long "$DB4"
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *ALERT (n=3'; then ok; else bad "R1 must alert on exactly 3 unlisted sweep merges (rc=$RC): $OUT"; fi
+DB5="$W/ro_listed_only.duckdb"; cp "$DB4" "$DB5"
+q "$DB5" "DELETE FROM merge_events WHERE pr_number IN (22, 24, 26);" >/dev/null
+runchk_long "$DB5"
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *OK (n=0'; then ok; else bad "R1 must be quiet for listed read-only checkers (rc=$RC): $OUT"; fi
+# a list that cannot be read relaxes nothing: the listed script is excluded again
+DB6="$W/ro_nolist.duckdb"; newdb "$DB6"
+mv "$FAKE2/.claude/state/readonly_checkers.txt" "$W/ro_list.bak"
+STUB_DIR="$STUB2" AUTO_MERGE_REPO_DIR="$FAKE2" UNIFIED_DB_PATH="$DB6" bash "$SYNC" --repo O/R --db "$DB6" >/dev/null 2>&1
+mv "$W/ro_list.bak" "$FAKE2/.claude/state/readonly_checkers.txt"
+if [ "$(q "$DB6" "SELECT class FROM merge_events WHERE pr_number=21;")" = "excluded:scheduled-script" ]; then ok; else bad "without the list a listed script must be excluded again (falsification)"; fi
+# falsification of the lib: a list lookup that never matches must turn R1 red on the listed-only data
+sed 's/grep -F -x -q -- "\$1" "\$MC_RO_FILE"/false/' "$ROOT/.claude/scripts/lib/merge_classify.sh" > "$W/mut_ro_lib.sh"
+DB7="$W/ro_mut.duckdb"; newdb "$DB7"
+if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_ro_lib.sh"; then bad "read-only lookup mutant did not change the lib"; else
+  STUB_DIR="$STUB2" AUTO_MERGE_REPO_DIR="$FAKE2" UNIFIED_DB_PATH="$DB7" MERGE_HISTORY_LIB="$W/mut_ro_lib.sh" bash "$SYNC" --repo O/R --db "$DB7" >/dev/null 2>&1
+  q "$DB7" "DELETE FROM merge_events WHERE pr_number IN (22, 24, 26);" >/dev/null
+  runchk_long "$DB7"
+  if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *ALERT'; then ok; else bad "MUTANT (list never matches) must make R1 alert, proving the R1 listed-only test can go red (rc=$RC): $OUT"; fi
+fi
+
 # ---- 10. DB lock: bounded retry ------------------------------------------------------------------------
 cat > "$W/ddwrap" <<'EOF'
 #!/usr/bin/env bash

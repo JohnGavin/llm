@@ -43,6 +43,10 @@
 # The merge automation itself: the sweep, its data, its tests, the merge history.
 (^|/)[^/]*(auto_merge|merge_history|merge_classify)[^/]*$
 
+# The owner-signed read-only checker list (also covered by ^\.claude/state/ above)
+# and its guard test: editing either widens what the readonly-checker class may merge.
+(^|/)[^/]*readonly_checkers[^/]*$
+
 # The scheduled publishers and triage jobs the owner named.
 (^|/)private_terms_publish\.sh$
 (^|/)scanner_triage[^/]*$

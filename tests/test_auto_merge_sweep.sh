@@ -50,6 +50,11 @@ if [ "$1" = "api" ]; then
                jq -r "$f" "$d/comments_$n"; exit $?
              fi
              exit 0 ;;
+    repos/*/contents/*) b="${2%%\?*}"; b="${b##*/}"
+             echo "contents $b" >> "$d/content_calls.log"
+             if [ -f "$d/content_fail" ]; then exit 1; fi
+             if [ -f "$d/content_$b" ]; then cat "$d/content_$b"; else printf '#!/usr/bin/env bash\necho ok\n'; fi
+             exit 0 ;;
   esac
   n="${2##*/}"
   if [ -f "$d/assoc_$n" ]; then cat "$d/assoc_$n"; else exit 1; fi
@@ -83,6 +88,7 @@ setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.m
   cp "$REAL_EXCL" "$FAKE/.claude/state/auto_merge_exclusions.txt"
   cp "$REAL_T2" "$FAKE/.claude/state/auto_merge_tier2.tsv"
   cp "$REAL_HN" "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"
+  printf '# fake owner-signed list\n.claude/scripts/zzz_nightly.sh\n' > "$FAKE/.claude/state/readonly_checkers.txt"
   if [ "$1" != "-" ]; then
     printf '# x\n**Auto-Merge Policy:** %s (global)\n' "$1" > "$FAKE/AGENTS.md"
   fi
@@ -90,7 +96,7 @@ setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.m
   printf '#!/bin/sh\nexec other_job.sh\n' > "$FAKE/bin/launchd-recorders/rec"
   rm -f "$STUB"/*; rm -f "$AUTO_MERGE_LOG"
   GATE_RC=0; export GATE_RC
-  unset AUTO_MERGE_EXCLUSIONS
+  unset AUTO_MERGE_EXCLUSIONS AUTO_MERGE_READONLY AUTO_MERGE_READONLY_GUARD
 }
 
 checks_json() {  # spec: comma list of S P K F N X(status-context ok) Y(status-context fail)
@@ -612,6 +618,105 @@ if cmp -s "$SWEEP" "$W/mut_sweep.sh"; then bad "veto mutant did not change the s
   OUT="$(AUTO_MERGE_LIB="$ROOT/.claude/scripts/lib/merge_classify.sh" bash "$W/mut_sweep.sh" --repo O/R 1 2>/dev/null)"
   if printf '%s\n' "$OUT" | grep -q '^1	ELIGIBLE'; then ok; else bad "MUTANT (veto word removed) must be eligible, proving the veto test can go red: $OUT"; fi
 fi
+
+# ---- 12. Tier 2 class readonly-checker (llm#1471) ------------------------------------------
+# The fake owner-signed list holds .claude/scripts/zzz_nightly.sh (also a scheduled script via the
+# fake plist). The real guard test runs on content served by the stubbed contents endpoint.
+RO='readonly-checker'
+ROFILES='.claude/scripts/zzz_nightly.sh::20:5 tests/test_zzz.sh::10:0'
+DIRTY='#!/usr/bin/env bash\nrm -rf /etc/x\n'
+
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; run 1
+expect "readonly-checker: listed scheduled script + trailer" 1 ELIGIBLE all-conditions-met
+if grep -q '^contents zzz_nightly.sh' "$STUB/content_calls.log" 2>/dev/null; then ok; else bad "the guard must be fed the PR-head content of the changed script"; fi
+if grep -q -e 'contents/.claude/scripts/zzz_nightly.sh?ref=aaaaaaa1' "$STUB/calls.log"; then ok; else bad "content must be fetched at the evaluated head commit: $(cat "$STUB/calls.log")"; fi
+# listed script WITHOUT the trailer: the scheduled-script reason stands
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,S" "$ROFILES"; run 1
+expect "readonly-checker: listed script, no trailer" 1 NOT-ELIGIBLE "scheduled-script:zzz_nightly.sh"
+# the trailer for another class does not read the list
+setup_repo ON; t2 1 "$ROFILES" "" robustness; run 1
+expect "other class on a listed script keeps its own rules" 1 ELIGIBLE all-conditions-met
+# unlisted scheduled script + trailer: still excluded
+setup_repo ON; printf '<string>x/other_job.sh</string>\n' > "$FAKE/.claude/launchd/com.t2.plist"
+t2 1 '.claude/scripts/other_job.sh::5:0 tests/test_zzz.sh::1:0' "" "$RO"; run 1
+expect "readonly-checker: UNLISTED scheduled script" 1 NOT-ELIGIBLE "tier2-readonly-not-listed:.claude/scripts/other_job.sh"
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::5:0 .claude/scripts/other_job.sh::5:0 tests/test_zzz.sh::1:0' "" "$RO"; run 1
+expect "readonly-checker: listed + unlisted mixed" 1 NOT-ELIGIBLE "tier2-readonly-not-listed:.claude/scripts/other_job.sh"
+setup_repo ON; t2 1 '.claude/scripts/not_scheduled.sh::5:0 tests/test_zzz.sh::1:0' "" "$RO"; run 1
+expect "readonly-checker: unlisted NON-scheduled script" 1 NOT-ELIGIBLE "tier2-readonly-not-listed:.claude/scripts/not_scheduled.sh"
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh:.claude/scripts/old_name.sh:5:5 tests/test_zzz.sh::1:0' "" "$RO"; run 1
+expect "readonly-checker: rename from an unlisted path" 1 NOT-ELIGIBLE "tier2-readonly-not-listed:.claude/scripts/old_name.sh"
+# the other mechanical conditions still apply
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::20:5' "" "$RO"; run 1
+expect "readonly-checker: no test changed" 1 NOT-ELIGIBLE tier2-no-tests
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::296:0 tests/test_zzz.sh::5:0' "" "$RO"; run 1
+expect "readonly-checker: 301 changed lines" 1 NOT-ELIGIBLE "tier2-too-large:301>300"
+setup_repo ON; COMMIT_AT="$(iso_ago 1)" t2 1 "$ROFILES" "" "$RO"; run 1
+if printf '%s\n' "$OUT" | grep -Eq '^1	TIER2-WAITING	[23]\.[0-9]h-left$'; then ok; else bad "readonly-checker inside the 4 h window: $OUT"; fi
+setup_repo ON; t2 1 "$ROFILES" "hold" "$RO"; run 1
+expect "readonly-checker: hold label" 1 NOT-ELIGIBLE "hold-label:hold"
+# the list and the guard test are never merged automatically (exclusion file, with or without the trailer)
+for p in .claude/state/readonly_checkers.txt tests/test_readonly_checkers_guard.sh; do
+  setup_repo ON; t2 1 "$p::1:0 $ROFILES" "" "$RO"; run 1
+  expect "editing $p" 1 NOT-ELIGIBLE "excluded-path:$p"
+  setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,S" "$p::1:0"; run 1
+  expect "editing $p, no trailer" 1 NOT-ELIGIBLE "excluded-path:$p"
+done
+# ... and, if the exclusion file did not catch them, the Tier 2 hard-never list still does
+grep -v 'readonly_checkers' "$REAL_EXCL" > "$W/excl_no_ro"
+for p in .claude/state/readonly_checkers.txt tests/test_readonly_checkers_guard.sh; do
+  setup_repo ON; t2 1 "$p::1:0 $ROFILES" "" "$RO"; AUTO_MERGE_EXCLUSIONS="$W/excl_no_ro" run 1
+  expect "hard-never list alone blocks $p" 1 NOT-ELIGIBLE "tier2-hard-never:$p"
+done
+# falsification: without the hard-never regex AND the exclusion regex the guard test edit is eligible
+setup_repo ON; grep -v 'readonly_checkers' "$REAL_HN" > "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"
+t2 1 'tests/test_readonly_checkers_guard.sh::1:0 .claude/scripts/zzz_nightly.sh::1:0' "" robustness; AUTO_MERGE_EXCLUSIONS="$W/excl_no_ro" run 1
+expect "FALSIFICATION: both regexes removed -> the guard test edit is eligible" 1 ELIGIBLE all-conditions-met
+
+# the list itself unusable: the class cannot be evaluated
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; rm -f "$FAKE/.claude/state/readonly_checkers.txt"; run 1
+expect "readonly-checker: list missing" 1 INDETERMINATE readonly-list-unreadable
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; printf '# nothing\n' > "$FAKE/.claude/state/readonly_checkers.txt"; run 1
+expect "readonly-checker: list empty" 1 INDETERMINATE readonly-list-empty
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; printf '../x.sh\n' > "$FAKE/.claude/state/readonly_checkers.txt"; run 1
+expect "readonly-checker: list invalid" 1 INDETERMINATE readonly-list-invalid
+# an unusable list never relaxes anything for other classes (no hole): robustness still needs no list
+setup_repo ON; t2 1 "$ROFILES" "" robustness; rm -f "$FAKE/.claude/state/readonly_checkers.txt"; run 1
+expect "list missing does not affect other classes" 1 ELIGIBLE all-conditions-met
+
+# the guard: a mutating script at the PR head makes the PR not eligible
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; printf "$DIRTY" > "$STUB/content_zzz_nightly.sh"; run 1
+expect "readonly-checker: guard fails on a mutating script" 1 NOT-ELIGIBLE readonly-guard-failed
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; printf '#!/usr/bin/env bash\ngh pr merge 1\n' > "$STUB/content_zzz_nightly.sh"; run 1
+expect "readonly-checker: guard fails on gh pr merge" 1 NOT-ELIGIBLE readonly-guard-failed
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; : > "$STUB/content_fail"; run 1
+expect "readonly-checker: content cannot be fetched" 1 INDETERMINATE readonly-content-failed
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; AUTO_MERGE_READONLY_GUARD="$W/no-such-guard.sh" run 1
+expect "readonly-checker: guard missing" 1 INDETERMINATE readonly-guard-unavailable
+# the sweep follows the guard's exit code: stub guards prove 0 / 1 / 3 are each honoured
+printf '#!/usr/bin/env bash\nexit 0\n' > "$W/guard0.sh"; printf '#!/usr/bin/env bash\nexit 1\n' > "$W/guard1.sh"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$W/guard3.sh"; printf '#!/usr/bin/env bash\nexit 2\n' > "$W/guard2.sh"
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; printf "$DIRTY" > "$STUB/content_zzz_nightly.sh"; AUTO_MERGE_READONLY_GUARD="$W/guard0.sh" run 1
+expect "FALSIFICATION: guard exit 0 -> eligible even for dirty content (the verdict is the guard's)" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; AUTO_MERGE_READONLY_GUARD="$W/guard1.sh" run 1
+expect "readonly-checker: guard exit 1" 1 NOT-ELIGIBLE readonly-guard-failed
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; AUTO_MERGE_READONLY_GUARD="$W/guard3.sh" run 1
+expect "readonly-checker: guard exit 3" 1 INDETERMINATE readonly-guard-indeterminate
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; AUTO_MERGE_READONLY_GUARD="$W/guard2.sh" run 1
+expect "readonly-checker: guard exit 2 (other)" 1 INDETERMINATE readonly-guard-indeterminate
+# a PR that changes only tests needs no script content
+setup_repo ON; t2 1 'tests/test_zzz.sh::10:0' "" "$RO"; run 1
+expect "readonly-checker: tests only" 1 ELIGIBLE all-conditions-met
+if [ ! -s "$STUB/content_calls.log" ]; then ok; else bad "tests-only PR fetched script content"; fi
+
+# apply: a clean listed script merges as Tier 2; a failing guard mutates nothing
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; runa 1
+if [ "$RC" -eq 0 ] && grep -q "	1	aaaaaaa	merged	squash-tier2" "$AUTO_MERGE_LOG" && grep -q -e 'pr edit 1 .*--add-label auto-merged --add-label tier2' "$STUB/calls.log"; then ok; else bad "readonly-checker apply (rc=$RC): $(cat "$STUB/calls.log")"; fi
+setup_repo ON; t2 1 "$ROFILES" "" "$RO"; printf "$DIRTY" > "$STUB/content_zzz_nightly.sh"; runa 1
+if [ "$(mutations)" = "0" ] && ! grep -q '^pr merge' "$STUB/calls.log"; then ok; else bad "guard failure must not mutate: $(cat "$STUB/calls.log")"; fi
+
+# the real shipped list passes the real guard and every entry exists
+if bash "$ROOT/tests/test_readonly_checkers_guard.sh" --no-selftest >/dev/null 2>&1; then ok; else bad "the shipped readonly_checkers.txt fails its guard"; fi
 
 # ---- 10. merge history sync after --apply (llm#1471) -----------------------------------
 setup_repo ON; good

@@ -70,6 +70,16 @@
 # the labels auto-merged and tier2 (tier2 must exist: else skipped
 # tier2-label-missing) and logs "merged squash-tier2".
 #
+# Tier 2 class readonly-checker (llm#1471): the one class that relaxes the
+# scheduled-script reason, and only for scripts on the owner-signed list
+# .claude/state/readonly_checkers.txt. On top of the mechanical Tier 2 conditions,
+# every changed path that is not a test file must be on that list (else NOT-ELIGIBLE
+# tier2-readonly-not-listed:<path>; an unusable list is INDETERMINATE), and
+# tests/test_readonly_checkers_guard.sh --scan must pass on the PR-HEAD content of
+# each changed script (fetched through the contents API, never executed): exit 1 is
+# NOT-ELIGIBLE readonly-guard-failed, exit 3 / a fetch failure is INDETERMINATE.
+# Editing the list or the guard test is itself excluded (auto_merge_exclusions.txt).
+#
 # Limits (stated, not hidden): AGENTS.md, the exclusion file and the scheduled
 # set are read from the checkout this script lives in (override with
 # AUTO_MERGE_REPO_DIR), so run it from an up-to-date base checkout. The file
@@ -92,7 +102,7 @@
 # Env overrides (used by the tests): AUTO_MERGE_REPO_DIR, AUTO_MERGE_GATE,
 # AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG, AUTO_MERGE_RETRY_SLEEP, AUTO_MERGE_LIB,
 # AUTO_MERGE_SYNC, AUTO_MERGE_TIER2, AUTO_MERGE_TIER2_HARDNEVER,
-# AUTO_MERGE_TIER2_WINDOW_HOURS.
+# AUTO_MERGE_TIER2_WINDOW_HOURS, AUTO_MERGE_READONLY, AUTO_MERGE_READONLY_GUARD.
 
 set -u
 export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
@@ -114,6 +124,11 @@ TIER2_TABLE="${AUTO_MERGE_TIER2:-$REPO_DIR/.claude/state/auto_merge_tier2.tsv}"
 TIER2_HARDNEVER="${AUTO_MERGE_TIER2_HARDNEVER:-$REPO_DIR/.claude/state/auto_merge_tier2_hardnever.txt}"
 TIER2_WINDOW_HOURS="${AUTO_MERGE_TIER2_WINDOW_HOURS:-4}"
 TIER2_DAILY_CAP=2
+# Read-only checker allowlist (class readonly-checker) and its guard test. The
+# guard runs from this script's own checkout (trusted); only the scanned content
+# comes from the PR.
+READONLY_LIST="${AUTO_MERGE_READONLY:-$REPO_DIR/.claude/state/readonly_checkers.txt}"
+GUARD="${AUTO_MERGE_READONLY_GUARD:-$SCRIPT_DIR/../tests/test_readonly_checkers_guard.sh}"
 case "$TIER2_WINDOW_HOURS" in ""|*[!0-9.]*) TIER2_WINDOW_HOURS=4 ;; esac
 
 LOG="${AUTO_MERGE_LOG:-$HOME/.claude/logs/auto_merge_sweep.log}"
@@ -270,7 +285,7 @@ if [ ! -r "$MC_LIB" ]; then
   exit 3
 fi
 . "$MC_LIB"
-mc_load "$REPO_DIR" "$EXCL_FILE"
+mc_load "$REPO_DIR" "$EXCL_FILE" "$READONLY_LIST"
 EXCL_ERR="$MC_EXCL_ERR"; SCHED_ERR="$MC_SCHED_ERR"
 
 # ---- Per-PR evaluation --------------------------------------------------------
@@ -283,6 +298,35 @@ IND=""
 HEADSHA=""
 note_ind() { if [ -z "$IND" ]; then IND="$1"; fi; }
 not_elig() { VERDICT="NOT-ELIGIBLE"; REASON="$1"; }
+
+# Class readonly-checker: run the guard test over the PR-HEAD content of every
+# changed non-test script (all of them are on the owner-signed list by now). The
+# content is fetched, never executed. Sets VERDICT (NOT-ELIGIBLE) or note_ind; leaves
+# both untouched when the guard passes.
+readonly_guard() {  # pr raw-files-tsv
+  local n="$1" fr="$2" d="$TMP/ro_$n" p c cnt=0 rc args=""
+  rm -rf "$d"; mkdir -p "$d"
+  if [ ! -r "$GUARD" ]; then note_ind "readonly-guard-unavailable"; return; fi
+  awk -F'\t' 'NF>=1 && $1!=""{print $1}' "$fr" > "$d/paths"
+  while IFS= read -r p; do
+    case "$p" in tests/*|.claude/tests/*|"") continue ;; esac
+    cnt=$((cnt + 1))
+    c="$d/c_$cnt.sh"
+    if ! gh api "repos/$REPO/contents/$p?ref=$HEADSHA" -H "Accept: application/vnd.github.raw" > "$c" 2>/dev/null || [ ! -s "$c" ]; then
+      note_ind "readonly-content-failed"; return
+    fi
+    args="$args $c"
+  done < "$d/paths"
+  if [ "$cnt" -eq 0 ]; then return; fi
+  # shellcheck disable=SC2086
+  bash "$GUARD" --scan $args >/dev/null 2>&1
+  rc=$?
+  case "$rc" in
+    0) ;;
+    1) not_elig "readonly-guard-failed" ;;
+    *) note_ind "readonly-guard-indeterminate" ;;
+  esac
+}
 
 evaluate() {
   local n="$1" assoc view fields
@@ -384,6 +428,11 @@ evaluate() {
       case "$MC_T2_VERDICT" in
         ne) not_elig "$MC_T2_REASON"; return ;;
         ind) note_ind "$MC_T2_REASON" ;;
+        *)
+          if [ "$declared" = "readonly-checker" ]; then
+            readonly_guard "$n" "$fr"
+            if [ -n "$VERDICT" ]; then return; fi
+          fi ;;
       esac
     fi
   elif [ -n "$MC_SCHED_HIT" ]; then

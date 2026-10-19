@@ -55,6 +55,11 @@ _schema_apply\.sh$
 # Pre-rendered GH Pages output is public-facing published content (rule list).
 ^docs/
 
+# The owner-signed read-only checker list and its guard test: they decide which
+# scheduled scripts the readonly-checker Tier 2 class may merge, so a PR touching
+# either is never automatic (llm#1471). Matched by file name at any depth.
+(^|/)[^/]*readonly_checkers[^/]*$
+
 # Scripts that close, delete, reap, garbage-collect or reload things, and
 # credential or rotation scripts, matched by file name at any depth (rule list;
 # stricter in that it also catches tests and docs with these words in the name).

@@ -23,8 +23,15 @@
 #                         (a lone edit of tests/ci_test_map.tsv does not count)
 #   enabled               1 = usable, 0 = switched off (the rollback: set it to 0)
 #
+# Class readonly-checker is special: besides the columns below, the code requires
+# every changed path that is not a test file to be listed in
+# .claude/state/readonly_checkers.txt (owner-signed; see that file) and the sweep
+# runs tests/test_readonly_checkers_guard.sh --scan on the PR-head content of each
+# changed script. Any other scheduled script keeps the scheduled-script reason.
+#
 # Widening is Class C (explicit "merge"): editing this table, the hard-never list
 # or the AGENTS.md paragraph that describes them.
 robustness	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
 detector-false-positive-fix	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
 output-redaction	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
+readonly-checker	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
