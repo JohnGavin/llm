@@ -45,6 +45,7 @@ esac
 if [ "$1" = "api" ]; then
   case "$2" in
     repos/O/R/pulls/*/files) p="${2%/files}"; n="${p##*/}"
+             if [ -f "$d/flaky_$n" ] && [ ! -f "$d/flaky_seen_$n" ]; then : > "$d/flaky_seen_$n"; exit 1; fi
              if [ -f "$d/files_$n" ]; then cat "$d/files_$n"; exit 0; else exit 1; fi ;;
   esac
 fi
@@ -53,7 +54,7 @@ EOF
 chmod +x "$BIN/gh"
 export STUB_DIR="$STUB" PATH="$BIN:$PATH"
 export AUTO_MERGE_REPO_DIR="$FAKE"
-export MERGE_HISTORY_LOCK_SLEEP=1
+export MERGE_HISTORY_LOCK_SLEEP=1 MERGE_HISTORY_API_SLEEP=0
 unset UNIFIED_DB_PATH
 
 q() { duckdb -init /dev/null -csv -noheader "$1" -c "$2" 2>&1; }          # q DB SQL
@@ -92,6 +93,8 @@ lpr 7 "auto-merged"       ""                          '.claude/rules/a.md\t\t1\t
 lpr 8 ""                  ""                          '-'                                               "$ROLL_OK"
 lpr 9 ""                  ""                          'R/c.R\t\t1\t1'                                  "$ROLL_BAD"
 lpr 10 ""                 ""                          'R/d.R\t\t1\t1'                                  '[]'
+lpr 11 ""                 ""                          'R/e.R\t\t1\t1'                                  "$ROLL_OK"
+: > "$STUB/flaky_11"   # PR 11: the files call fails once, then answers (a transient GitHub error)
 finish_list
 
 DB="$W/t.duckdb"; newdb "$DB"
@@ -100,8 +103,8 @@ cell() { q "$DB" "SELECT $2 FROM merge_events WHERE repo='O/R' AND pr_number=$1;
 n_rows() { q "$DB" "SELECT count(*) FROM merge_events;"; }
 
 OUT="$(bash "$SYNC" --repo O/R 2>"$W/err")"; RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'listed=10 upserted=10 unknown=1'; then ok; else bad "first sync rc=$RC out=$OUT err=$(cat "$W/err")"; fi
-[ "$(n_rows)" = "10" ] && ok || bad "expected 10 rows, got $(n_rows)"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'listed=11 upserted=11 unknown=1'; then ok; else bad "first sync rc=$RC out=$OUT err=$(cat "$W/err")"; fi
+[ "$(n_rows)" = "11" ] && ok || bad "expected 11 rows, got $(n_rows)"
 
 # ---- 1. classification ---------------------------------------------------------
 chk_row() {  # label pr "path|approval|class"
@@ -116,6 +119,7 @@ chk_row "auto-merged label -> sweep" 5 "sweep|none|auto-unlisted"
 chk_row "tier2 label + trailer"      6 "sweep|veto-lapsed|tier2:robustness"
 chk_row "sweep merge of excluded"    7 "sweep|none|excluded:path"
 chk_row "files unreadable"           8 "owner-verb|owner-verb|unknown"
+chk_row "transient files error is retried" 11 "owner-verb|owner-verb|auto-unlisted"
 [ "$(cell 5 auto_merged_label)" = "true" ] && [ "$(cell 1 auto_merged_label)" = "false" ] && ok || bad "auto_merged_label wrong"
 [ "$(cell 6 excluded_reasons)" = "scheduled-script" ] && ok || bad "tier2 PR reasons: '$(cell 6 excluded_reasons)'"
 [ "$(cell 2 excluded_reasons)" = "path" ] && ok || bad "excluded PR reasons: '$(cell 2 excluded_reasons)'"
@@ -131,10 +135,15 @@ if q "$DB" "SELECT * FROM merge_events;" | grep -qE 'hooks/x.sh|zzz_nightly|Tier
 # ---- 2. idempotent re-run ------------------------------------------------------------
 : > "$STUB/calls.log"
 bash "$SYNC" --repo O/R >/dev/null 2>&1; RC=$?
-if [ "$RC" -eq 0 ] && [ "$(n_rows)" = "10" ]; then ok; else bad "re-run changed the row count: $(n_rows) rc=$RC"; fi
+if [ "$RC" -eq 0 ] && [ "$(n_rows)" = "11" ]; then ok; else bad "re-run changed the row count: $(n_rows) rc=$RC"; fi
 if grep -q '^api .*pulls/.*/files' "$STUB/calls.log"; then bad "re-run re-fetched files of recorded PRs"; else ok; fi
 bash "$SYNC" --repo O/R --refresh >/dev/null 2>&1; RC=$?
-if [ "$RC" -eq 0 ] && [ "$(n_rows)" = "10" ] && [ "$(q "$DB" "SELECT count(*) FROM (SELECT repo, pr_number FROM merge_events GROUP BY ALL HAVING count(*) > 1);")" = "0" ]; then ok; else bad "--refresh duplicated rows: $(n_rows)"; fi
+if [ "$RC" -eq 0 ] && [ "$(n_rows)" = "11" ] && [ "$(q "$DB" "SELECT count(*) FROM (SELECT repo, pr_number FROM merge_events GROUP BY ALL HAVING count(*) > 1);")" = "0" ]; then ok; else bad "--refresh duplicated rows: $(n_rows)"; fi
+
+# falsification of the retry: with a single attempt the flaky PR must come out 'unknown'
+rm -f "$STUB/flaky_seen_11"; DBR="$W/retry.duckdb"; newdb "$DBR"
+MERGE_HISTORY_API_TRIES=1 bash "$SYNC" --repo O/R --db "$DBR" >/dev/null 2>&1
+if [ "$(q "$DBR" "SELECT class FROM merge_events WHERE pr_number=11;")" = "unknown" ]; then ok; else bad "with API_TRIES=1 the flaky PR should be unknown (the retry test could not go red)"; fi
 
 # ---- 3. facts from the sweep are kept -------------------------------------------------
 printf '5\tsuccess\tPASS\n' > "$W/facts.tsv"
@@ -154,7 +163,7 @@ if [ "$(q "$DB2" "SELECT count(*) FROM merge_events WHERE merged_at < TIMESTAMPT
 # ---- 5. heartbeat -----------------------------------------------------------------------------
 hb() { q "$DB" "SELECT count(*) FROM housekeeping_runs WHERE task='merge_history_sync' $1;"; }
 if [ "$(hb "AND status='ok' AND ended_at IS NOT NULL")" -ge 4 ] && [ "$(hb "AND status='running'")" = "0" ]; then ok; else bad "heartbeat rows: ok=$(hb "AND status='ok'") running=$(hb "AND status='running'")"; fi
-[ "$(hb "AND status='ok' AND rows_written=10")" -ge 1 ] && ok || bad "first run heartbeat rows_written should be 10"
+[ "$(hb "AND status='ok' AND rows_written=11")" -ge 1 ] && ok || bad "first run heartbeat rows_written should be 11"
 mv "$STUB/list.json" "$STUB/list.json.off"
 bash "$SYNC" --repo O/R >/dev/null 2>"$W/err"; RC=$?
 if [ "$RC" -eq 3 ] && [ "$(hb "AND status='failed'")" = "1" ] && grep -q 'gh pr list failed' "$W/err"; then ok; else bad "gh failure: rc=$RC failed rows=$(hb "AND status='failed'") err=$(cat "$W/err")"; fi
@@ -287,7 +296,7 @@ wait
 newdb "$LDB"; : > "$DD_LOG"; hold 3; sleep 1
 UNIFIED_DB_PATH="$LDB" MERGE_HISTORY_DUCKDB="$W/ddwrap" MERGE_HISTORY_LOCK_TRIES=8 MERGE_HISTORY_LOCK_SLEEP=1 bash "$SYNC" --repo O/R --db "$LDB" >/dev/null 2>"$W/err"; RC=$?
 wait
-if [ "$RC" -eq 0 ] && [ "$(q "$LDB" "SELECT count(*) FROM merge_events;")" = "10" ]; then ok; else bad "sync should retry through a short lock (rc=$RC err=$(cat "$W/err"))"; fi
+if [ "$RC" -eq 0 ] && [ "$(q "$LDB" "SELECT count(*) FROM merge_events;")" = "11" ]; then ok; else bad "sync should retry through a short lock (rc=$RC err=$(cat "$W/err"))"; fi
 
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

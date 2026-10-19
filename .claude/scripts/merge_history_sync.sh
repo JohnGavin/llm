@@ -49,6 +49,10 @@ LOCK_TRIES="${MERGE_HISTORY_LOCK_TRIES:-5}"
 LOCK_SLEEP="${MERGE_HISTORY_LOCK_SLEEP:-2}"
 case "$LOCK_TRIES" in ""|*[!0-9]*) LOCK_TRIES=5 ;; esac
 case "$LOCK_SLEEP" in ""|*[!0-9]*) LOCK_SLEEP=2 ;; esac
+API_TRIES="${MERGE_HISTORY_API_TRIES:-3}"
+API_SLEEP="${MERGE_HISTORY_API_SLEEP:-1}"
+case "$API_TRIES" in ""|*[!0-9]*|0) API_TRIES=3 ;; esac
+case "$API_SLEEP" in ""|*[!0-9]*) API_SLEEP=1 ;; esac
 HK_TASK="merge_history_sync"
 
 usage() {
@@ -181,7 +185,7 @@ fi
 if ! gh pr list --repo "$REPO" --state merged --limit "$LIMIT" \
      --json number,mergedAt,labels,body,headRefOid,additions,deletions,changedFiles,statusCheckRollup \
      > "$TMP/list.json" 2>"$TMP/ghlist.err"; then
-  fail3 "gh pr list failed for $REPO"
+  fail3 "gh pr list failed for $REPO: $(head -c 200 "$TMP/ghlist.err" | tr '\n\t\047\042\\' '     ')"
 fi
 
 : > "$TMP/prs.tsv"
@@ -245,11 +249,17 @@ UNKNOWN=0
 while IFS="$(printf '\t')" read -r n merged labels head adds dels changed ci gate source t2; do
   [ -n "$n" ] || continue
   ff="$TMP/files_$n"; fr="$TMP/filesraw_$n"
-  fetched=1
-  if ! gh api "repos/$REPO/pulls/$n/files" --paginate \
-       --jq '.[] | [.filename, (.previous_filename // ""), .additions, .deletions] | @tsv' > "$fr" 2>/dev/null; then
-    fetched=0
-  fi
+  # GitHub answers an occasional file-list call with a transient error (seen on the
+  # real repo: about 1 in 100 calls); retry before recording the PR as unknown.
+  fetched=0; atry=1
+  while [ "$atry" -le "$API_TRIES" ]; do
+    if gh api "repos/$REPO/pulls/$n/files" --paginate \
+         --jq '.[] | [.filename, (.previous_filename // ""), .additions, .deletions] | @tsv' > "$fr" 2>/dev/null; then
+      fetched=1; break
+    fi
+    atry=$((atry + 1))
+    if [ "$atry" -le "$API_TRIES" ]; then sleep "$API_SLEEP"; fi
+  done
   awk -F'\t' 'NF>=1 && $1!=""{print $1} NF>=2 && $2!=""{print $2}' "$fr" > "$ff" 2>/dev/null
   nlisted="$(awk -F'\t' 'NF>=1 && $1!=""{c++} END{print c+0}' "$fr" 2>/dev/null)"
   mc_classify_merged "$ff" "$labels" "$t2"
