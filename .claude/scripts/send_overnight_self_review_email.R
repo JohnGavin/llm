@@ -1582,6 +1582,16 @@ if (nrow(cron_health) > 0L) {
       da <- digest_publish_assess(pr, Sys.time())
       return(list(bucket = da$bucket, label = da$label))
     }
+    if (!is.null(hb) && identical(hb$task, "auto_merge_sweep")) {
+      # llm#1471: one line; needs you only after two failed runs or 2 h silent.
+      ar <- safe_query("
+        SELECT status, rows_written, COALESCE(ended_at, started_at) AS at
+        FROM housekeeping_runs WHERE task = 'auto_merge_sweep'
+        ORDER BY started_at DESC LIMIT 100")
+      if (nrow(ar) > 0L) ar$at <- as.POSIXct(ar$at, tz = "UTC")
+      aa <- auto_merge_assess(ar, Sys.time())
+      return(list(bucket = aa$bucket, label = aa$label))
+    }
     if (!is.null(hb)) {
       # 'skipped' (llm#1340/#1341) is a healthy status: the job ran and had
       # nothing to do (bin/config_digest_cron.sh: no changes, nothing sent).

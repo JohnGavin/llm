@@ -23,6 +23,9 @@
 #      reason. Never titles, bodies or secrets. A log write failure is reported
 #      on stderr and does not abort.
 #
+#   g. heartbeat: one housekeeping_runs row per --apply run (see hk_record below);
+#      never in report mode.
+#
 # Output: one line per PR, "<pr><TAB><verdict><TAB><reason>", then
 #   prs=N eligible=a not_eligible=b indeterminate=c merged=m failed=f
 # With --apply each action also prints "<pr><TAB>ACTION<TAB><action> <reason>".
@@ -113,6 +116,40 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Heartbeat (--apply only, never in report mode): one housekeeping_runs row per
+# run so the overnight email can report the job. task auto_merge_sweep, status
+# ok on exit 0, failed on exit 1/3, rows_written = merged count. Counts and a
+# status word only. Written to UNIFIED_DB_PATH if set; else to the default DB
+# unless AUTO_MERGE_LOG is overridden (a test run). Fail-open: no duckdb, no DB
+# file or an insert error never changes the job's own exit code.
+HK_DB="${UNIFIED_DB_PATH:-}"
+if [ -z "$HK_DB" ] && [ -z "${AUTO_MERGE_LOG:-}" ]; then
+  HK_DB="$HOME/.claude/logs/unified.duckdb"
+fi
+hk_record() {  # $1 = exit code
+  [ "$APPLY" -eq 1 ] || return 0
+  [ -n "$HK_DB" ] && [ -f "$HK_DB" ] || return 0
+  command -v duckdb >/dev/null 2>&1 || return 0
+  local id now st
+  id="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  [ -n "$id" ] || return 0
+  case "$1" in 0) st="ok" ;; *) st="failed" ;; esac
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  duckdb -init /dev/null "$HK_DB" -c "
+    INSERT OR IGNORE INTO housekeeping_runs
+      (id, task, source_script, started_at, ended_at, status, rows_written)
+    VALUES ('$id', 'auto_merge_sweep', 'bin/auto_merge_sweep.sh',
+            TIMESTAMPTZ '$now', TIMESTAMPTZ '$now', '$st', ${merged:-0});
+  " >/dev/null 2>&1 || true
+}
+TMP=""
+on_exit() {
+  local rc=$?
+  if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
+  hk_record "$rc"
+}
+trap on_exit EXIT
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "INDETERMINATE: gh is not on PATH; cannot evaluate any PR" >&2
   exit 3
@@ -134,7 +171,6 @@ if [ -z "$REPO" ]; then
 fi
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/auto_merge_sweep.XXXXXX")" || { echo "INDETERMINATE: mktemp failed" >&2; exit 3; }
-trap 'rm -rf "$TMP"' EXIT
 
 # ---- JSON field extraction (python3 reads the file named in argv) -----------
 parse_view() {

@@ -50,6 +50,12 @@ emit("recovered", digest_publish_assess(rbind(mk("ok", 3, 9L), mk("failed", 27),
 emit("no_rows", digest_publish_assess(mk("ok", 3)[0, ], now))
 emit("null_runs", digest_publish_assess(NULL, now))
 emit("no_count", digest_publish_assess(mk("ok", 3, NA_integer_), now))
+# auto-merge sweep (llm#1471): 30-minute cadence, hours_ago in fractions of an hour
+emit("am_ok", auto_merge_assess(rbind(mk("ok", 0.5, 1L), mk("ok", 1, 2L), mk("ok", 30, 5L)), now))
+emit("am_one_fail", auto_merge_assess(rbind(mk("failed", 0.5), mk("ok", 1, 0L)), now))
+emit("am_two_fail", auto_merge_assess(rbind(mk("failed", 0.5), mk("failed", 1), mk("ok", 1.5, 3L)), now))
+emit("am_silent", auto_merge_assess(mk("ok", 2.5, 1L), now))
+emit("am_none", auto_merge_assess(mk("ok", 1)[0, ], now))
 EOF
 
 run_with() { "$RSCRIPT" "$WORK/drive.R" "$1" 2>&1; }
@@ -70,6 +76,14 @@ check "no rows at all: indeterminate, never ok" $(got no_rows 'indeterminate|ind
 check "NULL runs: indeterminate" $(got null_runs 'indeterminate|indeterminate|')
 check "refresh without a term count: indeterminate" $(got no_count 'indeterminate|indeterminate|')
 
+check "auto-merge ok: one line, 3 merged in 24 h (30 h old run excluded)" $(got am_ok 'ok|ok|auto-merge: 3 merged in 24 h, last run ok$')
+check "auto-merge one failure: quiet, ok bucket" $(got am_one_fail 'one_failure|ok|auto-merge: 0 merged in 24 h, last run failed$')
+check "auto-merge two failures: needs you" $(got am_two_fail 'needs_you|failed|needs you')
+check "auto-merge silent 2.5 h: needs you" $(got am_silent 'needs_you|failed|needs you — .*no run in the last 2 h')
+check "auto-merge no rows: indeterminate" $(got am_none 'indeterminate|indeterminate|')
+check "email script routes task auto_merge_sweep to auto_merge_assess" \
+    $(grep -q 'identical(hb\$task, "auto_merge_sweep")' "$EMAIL"; echo $?)
+
 # --- wiring: the email script uses the lib and the heartbeat task name ----------
 check "email script sources the lib" $(grep -q 'lib", "digest_publish_lib.R"' "$EMAIL"; echo $?)
 check "email script routes task private_terms_publish to digest_publish_assess" \
@@ -87,6 +101,15 @@ else
     check "MUTANT (one failure = needs you) turns the one-failure test red" $(( mrc == 0 ? 1 : 0 ))
     mrc="$(mgot no_run_36h 'one_failure|ok|')"
     check "MUTANT turns the single-missed-slot test red" $(( mrc == 0 ? 1 : 0 ))
+fi
+# Falsification for the sweep: a mutant that needs-you on ONE failed run
+sed 's/lead >= 2L/lead >= 1L/' "$LIB" > "$WORK/mutant_lib2.R"
+if cmp -s "$LIB" "$WORK/mutant_lib2.R"; then
+    check "auto-merge mutant changed the lib (falsification not vacuous)" 1
+else
+    M2="$(run_with "$WORK/mutant_lib2.R")"
+    mrc="$(printf '%s\n' "$M2" | grep -q '^am_one_fail=one_failure|ok|'; echo $?)"
+    check "MUTANT (one failed sweep = needs you) turns the auto-merge one-failure test red" $(( mrc == 0 ? 1 : 0 ))
 fi
 
 echo "digest_publish_email: ${pass}/${total} PASS"

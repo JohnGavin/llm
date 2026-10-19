@@ -1,0 +1,3 @@
+#!/bin/bash
+# Owner switches back to report mode by deleting --apply (llm#1471).
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.auto-merge-sweep" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/bin/auto_merge_sweep.sh" "--repo" "JohnGavin/llm" "--apply" "--max" "3"
