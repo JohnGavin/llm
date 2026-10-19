@@ -56,6 +56,12 @@ emit("am_one_fail", auto_merge_assess(rbind(mk("failed", 0.5), mk("ok", 1, 0L)),
 emit("am_two_fail", auto_merge_assess(rbind(mk("failed", 0.5), mk("failed", 1), mk("ok", 1.5, 3L)), now))
 emit("am_silent", auto_merge_assess(mk("ok", 2.5, 1L), now))
 emit("am_none", auto_merge_assess(mk("ok", 1)[0, ], now))
+# merge history (llm#1471): the optional third argument
+mhx <- function(...) { d <- list(owner_verb = 4L, auto = 2L, tier2 = 1L, alerts = 0L, sync_failed = FALSE, check_rc = 0L); utils::modifyList(d, list(...)) }
+emit("mh_ok", auto_merge_assess(mk("ok", 0.5, 1L), now, mhx()))
+emit("mh_alert", auto_merge_assess(mk("ok", 0.5, 1L), now, mhx(alerts = 1L, check_rc = 1L)))
+emit("mh_syncfail", auto_merge_assess(mk("ok", 0.5, 1L), now, mhx(sync_failed = TRUE)))
+emit("mh_indet", auto_merge_assess(mk("ok", 0.5, 1L), now, mhx(owner_verb = NA_integer_, auto = NA_integer_, tier2 = NA_integer_, alerts = NA_integer_, check_rc = 3L)))
 EOF
 
 run_with() { "$RSCRIPT" "$WORK/drive.R" "$1" 2>&1; }
@@ -81,6 +87,13 @@ check "auto-merge one failure: quiet, ok bucket" $(got am_one_fail 'one_failure|
 check "auto-merge two failures: needs you" $(got am_two_fail 'needs_you|failed|needs you')
 check "auto-merge silent 2.5 h: needs you" $(got am_silent 'needs_you|failed|needs you — .*no run in the last 2 h')
 check "auto-merge no rows: indeterminate" $(got am_none 'indeterminate|indeterminate|')
+check "merge history ok: line carries 'merges 7d: owner-verb 4, auto 2, tier2 1, alerts 0'" \
+    $(got mh_ok 'ok|ok|auto-merge: 1 merged in 24 h, last run ok; merges 7d: owner-verb 4, auto 2, tier2 1, alerts 0$')
+check "merge history alert: needs you, names the check" $(got mh_alert 'needs_you|failed|needs you — .*alerts 1.*merge-history check alerting')
+check "merge history sync failed: needs you" $(got mh_syncfail 'needs_you|failed|needs you — .*merge-history sync failed')
+check "merge history check exit 3: indeterminate, never ok" $(got mh_indet 'indeterminate|indeterminate|indeterminate — .*merge history could not be checked')
+check "email script feeds the merge history check into the line" \
+    $(grep -q 'merge_history_check.sh' "$EMAIL"; echo $?)
 check "email script routes task auto_merge_sweep to auto_merge_assess" \
     $(grep -q 'identical(hb\$task, "auto_merge_sweep")' "$EMAIL"; echo $?)
 
@@ -110,6 +123,16 @@ else
     M2="$(run_with "$WORK/mutant_lib2.R")"
     mrc="$(printf '%s\n' "$M2" | grep -q '^am_one_fail=one_failure|ok|'; echo $?)"
     check "MUTANT (one failed sweep = needs you) turns the auto-merge one-failure test red" $(( mrc == 0 ? 1 : 0 ))
+fi
+
+# Falsification for merge history: a mutant that ignores an alerting check
+sed 's/isTRUE(mh\$alerts > 0)/FALSE/' "$LIB" > "$WORK/mutant_lib3.R"
+if cmp -s "$LIB" "$WORK/mutant_lib3.R"; then
+    check "merge-history mutant changed the lib (falsification not vacuous)" 1
+else
+    M3="$(run_with "$WORK/mutant_lib3.R")"
+    mrc="$(printf '%s\n' "$M3" | grep -q '^mh_alert=needs_you|failed|'; echo $?)"
+    check "MUTANT (alerting check ignored) turns the merge-history alert test red" $(( mrc == 0 ? 1 : 0 ))
 fi
 
 echo "digest_publish_email: ${pass}/${total} PASS"

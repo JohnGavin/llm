@@ -437,6 +437,50 @@ CREATE TABLE IF NOT EXISTS eval_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_eval_runs_config_hash ON eval_runs(config_hash, run_at);
 
+-- merge_events: one row per MERGED pull request, so "how much merging is
+-- automated" is a query, not an anecdote (llm#1471). Written ONLY by
+-- .claude/scripts/merge_history_sync.sh (the auto-merge sweep calls it after
+-- every --apply run). Primary key (repo, pr_number): a re-run is an upsert, never
+-- a duplicate. Never stores a title, body, file content or path -- only
+-- classes, reasons and counts. Read by merge_history_check.sh and the
+-- merge_events_weekly view. 5-dim mapping (unified-observability-schema):
+-- WHERE repo/pr_number, WHEN merged_at/recorded_at, WHAT merge_path/approval/
+-- class, HOW ci_state/gate_result, WHO is always the repo owner (merges are
+-- recorded under one account, which is why merge_path/auto_merged_label exist).
+-- The DDL between the BEGIN/END markers is extracted by merge_history_sync.sh
+-- (ensure step, as roborev_eval_run.sh does for eval_runs): keep it self-contained.
+-- BEGIN merge_events DDL
+CREATE TABLE IF NOT EXISTS merge_events (
+  repo               TEXT NOT NULL,
+  pr_number          INTEGER NOT NULL,
+  merged_at          TIMESTAMPTZ NOT NULL,
+  merge_path         TEXT NOT NULL,          -- 'sweep' | 'owner-verb'
+  approval           TEXT NOT NULL,          -- 'none' | 'veto-lapsed' | 'owner-verb'
+  class              TEXT NOT NULL,          -- 'auto-unlisted' | 'tier2:<name>' | 'excluded:<reason>' | 'unknown'
+  excluded_reasons   TEXT,
+  files_changed      INTEGER,
+  additions          INTEGER,
+  deletions          INTEGER,
+  ci_state           TEXT,                   -- 'success' | 'failure' | 'NA'
+  gate_result        TEXT,                   -- 'PASS' | 'BLOCK' | 'INDETERMINATE' | 'NA'
+  auto_merged_label  BOOLEAN,
+  head_sha           TEXT,
+  source             TEXT NOT NULL,          -- 'sweep' | 'sync' | 'backfill'
+  recorded_at        TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (repo, pr_number)
+);
+CREATE OR REPLACE VIEW merge_events_weekly AS
+  SELECT date_trunc('week', merged_at AT TIME ZONE 'UTC') AS week,
+         merge_path,
+         approval,
+         CASE WHEN class LIKE 'tier2:%' THEN 'tier2'
+              WHEN class LIKE 'excluded:%' THEN 'excluded'
+              ELSE class END AS class_family,
+         count(*) AS n
+  FROM merge_events
+  GROUP BY ALL;
+-- END merge_events DDL
+
 CREATE INDEX IF NOT EXISTS idx_worktree_gc_events_fired_at ON worktree_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_fired_at ON branch_gc_events(fired_at);
 CREATE INDEX IF NOT EXISTS idx_branch_gc_events_project_branch ON branch_gc_events(project, branch_name);
@@ -671,3 +715,23 @@ COMMENT ON COLUMN eval_runs.config_hash IS 'sha256 of the effective reviewer con
 COMMENT ON COLUMN eval_runs.result IS 'Attempt outcome (no CHECK constraint). Allowed values: PASS, FAIL, ERROR. ERROR is INDETERMINATE: never a pass and never a fail; it includes timeouts (reason starts with "TIMEOUT:"), diff apply failures and review errors.';
 COMMENT ON COLUMN eval_runs.reason IS 'Free-text explanation of the result (classifier reason, or error/timeout text). Tabs and newlines are replaced by spaces. NULL is possible.';
 COMMENT ON COLUMN eval_runs.latency_ms IS 'Wall-clock time of the attempt in milliseconds (BIGINT, ms). NULL if non-numeric; 0 for attempts that failed before the review ran (for example a diff that did not apply), so 0 means not measured.';
+
+-- merge_events ---------------------------------------------------------------
+COMMENT ON TABLE merge_events IS 'One row per MERGED pull request (llm#1471), written only by .claude/scripts/merge_history_sync.sh (the auto-merge sweep runs it after every --apply run; --since backfills). Answers how much merging is automated. Primary key (repo, pr_number): re-running upserts, never duplicates. Stores classes, reasons and counts only: never a title, body, file content or path. Read by merge_history_check.sh and the merge_events_weekly view.';
+COMMENT ON COLUMN merge_events.repo IS 'Repository as owner/name (GitHub nameWithOwner). Part of the primary key.';
+COMMENT ON COLUMN merge_events.pr_number IS 'Pull request number within the repo (integer). Part of the primary key.';
+COMMENT ON COLUMN merge_events.merged_at IS 'UTC instant GitHub recorded the merge (TIMESTAMPTZ, GitHub mergedAt), not the time this row was written.';
+COMMENT ON COLUMN merge_events.merge_path IS 'How the merge happened. Allowed values: sweep (the PR carried the auto-merged label, which only bin/auto_merge_sweep.sh --apply adds at merge time), owner-verb (no such label: merged by the owner on an explicit instruction). GitHub records every merge as the owner, so the label is the only evidence; a label added or removed by hand misclassifies.';
+COMMENT ON COLUMN merge_events.approval IS 'What authorised the merge. Allowed values: none (sweep merge of a PR on no list, no human step by design), veto-lapsed (a Tier 2 sweep merge: the owner had the veto window and did not use it), owner-verb (the owner explicitly asked for the merge).';
+COMMENT ON COLUMN merge_events.class IS 'Class of the diff, computed with the same logic as the sweep (.claude/scripts/lib/merge_classify.sh). Allowed values: auto-unlisted (touches no exclusion-list path), tier2:<name> (Tier 2 class from the PR body trailer, label tier2 present), excluded:path or excluded:scheduled-script (touches an exclusion-list path or a script run by launchd), unknown (the file list or the exclusion data could not be read: INDETERMINATE, never counted as clean). A sweep merge with an excluded:* class is a violation (rule R1 of merge_history_check.sh).';
+COMMENT ON COLUMN merge_events.excluded_reasons IS 'Comma list of the exclusion reason kinds the diff matched: path, scheduled-script. NULL or empty when none. Kinds only, never a path.';
+COMMENT ON COLUMN merge_events.files_changed IS 'Number of files the PR changed (integer count, GitHub changedFiles).';
+COMMENT ON COLUMN merge_events.additions IS 'Lines added by the PR (integer count, GitHub additions).';
+COMMENT ON COLUMN merge_events.deletions IS 'Lines deleted by the PR (integer count, GitHub deletions).';
+COMMENT ON COLUMN merge_events.ci_state IS 'State of the PR check rollup at merge. Allowed values: success (every check SUCCESS), failure (any check not SUCCESS), NA (not known). For a sweep merge the sweep supplies success; a historical merge records NA unless the rollup was cheap to read. NA means unknown, not clean.';
+COMMENT ON COLUMN merge_events.gate_result IS 'Result of bin/roborev_merge_gate.sh for the PR. Allowed values: PASS, BLOCK, INDETERMINATE, NA. Only a sweep merge recorded by the sweep itself carries PASS; every historical row is NA (the gate is deliberately not re-run on old PRs). NA means not known, not clean.';
+COMMENT ON COLUMN merge_events.auto_merged_label IS 'TRUE when the PR carries the auto-merged label (the same evidence merge_path uses). BOOLEAN.';
+COMMENT ON COLUMN merge_events.head_sha IS 'Full SHA of the PR head commit that was merged (headRefOid).';
+COMMENT ON COLUMN merge_events.source IS 'Which writer path produced the row. Allowed values: sweep (the sweep passed facts for this merge), sync (routine run of merge_history_sync.sh), backfill (a run with --since). An existing sweep row is never downgraded.';
+COMMENT ON COLUMN merge_events.recorded_at IS 'UTC instant (TIMESTAMPTZ) this row was last written by the sync.';
+COMMENT ON VIEW merge_events_weekly IS 'Frequency of each kind of merge per UTC week (llm#1471): n merges by merge_path, approval and class_family (auto-unlisted, tier2, excluded, unknown). Derived from merge_events at read time.';

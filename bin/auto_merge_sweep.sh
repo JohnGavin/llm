@@ -25,6 +25,9 @@
 #
 #   g. heartbeat: one housekeeping_runs row per --apply run (see hk_record below);
 #      never in report mode.
+#   h. merge history: after the PR loop, merge_history_sync.sh records the last
+#      50 merged PRs in merge_events (fail-open: a failure prints a warning and
+#      shows in the sync's own heartbeat; it never changes this exit code).
 #
 # Output: one line per PR, "<pr><TAB><verdict><TAB><reason>", then
 #   prs=N eligible=a not_eligible=b indeterminate=c merged=m failed=f
@@ -71,7 +74,8 @@
 #   BEHIND, CLEAN, HAS_HOOKS   no objection from this field
 #
 # Env overrides (used by the tests): AUTO_MERGE_REPO_DIR, AUTO_MERGE_GATE,
-# AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG, AUTO_MERGE_RETRY_SLEEP.
+# AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG, AUTO_MERGE_RETRY_SLEEP, AUTO_MERGE_LIB,
+# AUTO_MERGE_SYNC.
 
 set -u
 export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
@@ -83,6 +87,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${AUTO_MERGE_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 GATE="${AUTO_MERGE_GATE:-$REPO_DIR/bin/roborev_merge_gate.sh}"
 EXCL_FILE="${AUTO_MERGE_EXCLUSIONS:-$REPO_DIR/.claude/state/auto_merge_exclusions.txt}"
+# Library and merge-history sync live next to this script's checkout, never in
+# AUTO_MERGE_REPO_DIR (which only supplies the data files).
+MC_LIB="${AUTO_MERGE_LIB:-$SCRIPT_DIR/../.claude/scripts/lib/merge_classify.sh}"
+SYNC="${AUTO_MERGE_SYNC:-$SCRIPT_DIR/../.claude/scripts/merge_history_sync.sh}"
 
 LOG="${AUTO_MERGE_LOG:-$HOME/.claude/logs/auto_merge_sweep.log}"
 MERGE_LABEL="auto-merged"
@@ -215,41 +223,17 @@ if [ -r "$REPO_DIR/AGENTS.md" ]; then
   esac
 fi
 
-# ---- Exclusion data (fail closed) ---------------------------------------------
-EXCL_ERR=""
-PATFILE="$TMP/patterns"
-: > "$PATFILE"
-if [ ! -r "$EXCL_FILE" ]; then
-  EXCL_ERR="exclusions-unreadable"
-else
-  grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$EXCL_FILE" > "$PATFILE" 2>/dev/null
-  if [ ! -s "$PATFILE" ]; then
-    EXCL_ERR="exclusions-empty"
-  else
-    grep -E -f "$PATFILE" /dev/null >/dev/null 2>&1
-    if [ $? -eq 2 ]; then EXCL_ERR="exclusions-invalid-regex"; fi
-  fi
+# ---- Exclusion and scheduled-script data (fail closed) -------------------------
+# Logic lives in .claude/scripts/lib/merge_classify.sh, shared with
+# merge_history_sync.sh so both classify a diff identically.
+MC_TMP="$TMP"
+if [ ! -r "$MC_LIB" ]; then
+  echo "INDETERMINATE: classification library not readable: $MC_LIB" >&2
+  exit 3
 fi
-
-# ---- Scheduled-script set, derived from launchd plists and recorders ----------
-SCHEDFILE="$TMP/scheduled"
-: > "$SCHEDFILE"
-SCHED_ERR=""
-sched_srcs=""
-for f in "$REPO_DIR"/.claude/launchd/*.plist "$REPO_DIR"/bin/launchd-recorders/*; do
-  if [ -f "$f" ]; then sched_srcs="$sched_srcs
-$f"; fi
-done
-if [ -z "$sched_srcs" ]; then
-  SCHED_ERR="scheduled-set-unreadable"
-else
-  printf '%s\n' "$sched_srcs" | while IFS= read -r f; do
-    if [ -n "$f" ]; then
-      grep -o -E '[A-Za-z0-9_.-]+\.(sh|R|py)' "$f" 2>/dev/null
-    fi
-  done | sort -u > "$SCHEDFILE"
-  if [ ! -s "$SCHEDFILE" ]; then SCHED_ERR="scheduled-set-empty"; fi
-fi
+. "$MC_LIB"
+mc_load "$REPO_DIR" "$EXCL_FILE"
+EXCL_ERR="$MC_EXCL_ERR"; SCHED_ERR="$MC_SCHED_ERR"
 
 # ---- Per-PR evaluation --------------------------------------------------------
 # Sets VERDICT and REASON. NOT-ELIGIBLE returns at once; INDETERMINATE is
@@ -337,7 +321,7 @@ evaluate() {
   if [ -n "$SCHED_ERR" ]; then note_ind "$SCHED_ERR"; fi
   # File list from the REST endpoint: a rename contributes BOTH its new path
   # (filename) and its old path (previous_filename); both are tested below.
-  local ff="$TMP/files_$n" fr="$TMP/filesraw_$n" hit rc nlisted
+  local ff="$TMP/files_$n" fr="$TMP/filesraw_$n" rc nlisted
   if ! gh api "repos/$REPO/pulls/$n/files" --paginate --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$fr" 2>/dev/null; then
     note_ind "files-api-failed"
     : > "$ff"
@@ -347,16 +331,9 @@ evaluate() {
     if [ -n "$changed" ] && [ "$changed" -gt "$nlisted" ]; then note_ind "files-truncated"; fi
     if [ ! -s "$ff" ]; then note_ind "no-files-listed"; fi
   fi
-  if [ -z "$EXCL_ERR" ] && [ -s "$ff" ]; then
-    hit="$(grep -E -f "$PATFILE" "$ff" | head -1)"
-    if [ -n "$hit" ]; then not_elig "excluded-path:$hit"; return; fi
-  fi
-  if [ -z "$SCHED_ERR" ] && [ -s "$ff" ]; then
-    local bf="$TMP/base_$n"
-    awk -F/ '{print $NF}' "$ff" > "$bf"
-    hit="$(grep -F -x -f "$SCHEDFILE" "$bf" | head -1)"
-    if [ -n "$hit" ]; then not_elig "scheduled-script:$hit"; return; fi
-  fi
+  mc_check_paths "$ff"
+  if [ -n "$MC_PATH_HIT" ]; then not_elig "excluded-path:$MC_PATH_HIT"; return; fi
+  if [ -n "$MC_SCHED_HIT" ]; then not_elig "scheduled-script:$MC_SCHED_HIT"; return; fi
 
   # Merge gate (last: it is the slowest). Its 1 is a definite block.
   if [ ! -r "$GATE" ]; then
@@ -442,6 +419,9 @@ apply_one() {  # pr  (first evaluation was ELIGIBLE; HEADSHA is the evaluated he
   if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha1" >/dev/null 2>&1; then
     merged=$((merged + 1))
     log_action "$n" "$sha1" merged "squash"
+    # facts the sync cannot learn from GitHub later: an ELIGIBLE verdict means CI
+    # was all SUCCESS and the merge gate exited 0 at this head commit
+    printf '%s\t%s\t%s\n' "$n" "success" "PASS" >> "$TMP/facts.tsv"
   else
     failed=$((failed + 1))
     log_action "$n" "$sha1" merge-failed "gh-merge-nonzero"
@@ -452,6 +432,23 @@ apply_one() {  # pr  (first evaluation was ELIGIBLE; HEADSHA is the evaluated he
       log_action "$n" "$sha1" merge-failed "unlabel-failed"
     fi
   fi
+}
+
+# Merge history (--apply only): record the last merged PRs in merge_events.
+# Fail-open: a sync failure never changes this script's exit code, but it is
+# never silent (warning here; the sync writes its own failed heartbeat row).
+run_sync() {
+  if [ ! -r "$SYNC" ]; then
+    echo "WARNING: merge history sync script not readable: $SYNC" >&2
+    return 0
+  fi
+  : >> "$TMP/facts.tsv"
+  bash "$SYNC" --repo "$REPO" --limit 50 --facts "$TMP/facts.tsv" >/dev/null
+  local src=$?
+  if [ "$src" -ne 0 ]; then
+    echo "WARNING: merge history sync failed (exit $src); merge_events may be stale" >&2
+  fi
+  return 0
 }
 
 total=0; el=0; ne=0; ind=0
@@ -477,6 +474,7 @@ for n in $PRS; do
     *) ind=$((ind + 1)) ;;
   esac
 done
+if [ "$APPLY" -eq 1 ]; then run_sync; fi
 echo "prs=$total eligible=$el not_eligible=$ne indeterminate=$ind merged=$merged failed=$failed"
 if [ "$failed" -gt 0 ]; then exit 1; fi
 exit 0

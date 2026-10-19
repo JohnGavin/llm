@@ -49,6 +49,16 @@ cat > "$W/gate.sh" <<'EOF'
 #!/usr/bin/env bash
 exit "${GATE_RC:-0}"
 EOF
+cat > "$W/sync_stub.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/sync_calls.log"
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--facts" ]; then cp "$2" "$STUB_DIR/facts_seen.tsv"; fi
+  shift
+done
+exit "${SYNC_RC:-0}"
+EOF
+export AUTO_MERGE_SYNC="$W/sync_stub.sh"
 export AUTO_MERGE_LOG="$W/am.log"
 export STUB_DIR="$STUB" GATE_RC=0 AUTO_MERGE_REPO_DIR="$FAKE" AUTO_MERGE_GATE="$W/gate.sh"
 export PATH="$BIN:$PATH"
@@ -430,6 +440,25 @@ if command -v duckdb >/dev/null 2>&1; then
 else
   echo "SKIP: duckdb not on PATH -- heartbeat rows NOT exercised"
 fi
+
+# ---- 10. merge history sync after --apply (llm#1471) -----------------------------------
+setup_repo ON; good
+runa 1
+if [ "$(wc -l < "$STUB/sync_calls.log" 2>/dev/null | tr -d ' ')" = "1" ] && grep -q -e '--repo O/R --limit 50 --facts ' "$STUB/sync_calls.log"; then ok; else bad "--apply must call the sync once with --limit 50 and --facts: $(cat "$STUB/sync_calls.log" 2>&1)"; fi
+if [ "$(cat "$STUB/facts_seen.tsv" 2>/dev/null)" = "$(printf '1\tsuccess\tPASS')" ]; then ok; else bad "facts for the merged PR: $(cat "$STUB/facts_seen.tsv" 2>&1)"; fi
+setup_repo ON; good; run 1
+if [ ! -e "$STUB/sync_calls.log" ]; then ok; else bad "report mode must not call the sync"; fi
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,F" "R/a.R"
+runa 1
+if [ -e "$STUB/sync_calls.log" ] && [ ! -s "$STUB/facts_seen.tsv" ]; then ok; else bad "apply with no merge still records owner merges (sync called, empty facts)"; fi
+setup_repo ON; good; SYNC_RC=3; export SYNC_RC
+runa 1
+if [ "$RC" -eq 0 ] && grep -q 'merge history sync failed (exit 3)' "$W/err" && printf '%s\n' "$OUT" | grep -q 'merged=1'; then ok; else bad "sync failure must warn and not fail the sweep (rc=$RC): $(cat "$W/err")"; fi
+SYNC_RC=0; export SYNC_RC
+AUTO_MERGE_SYNC="$W/no-such-sync.sh" runa 1
+if [ "$RC" -eq 0 ] && grep -q 'merge history sync script not readable' "$W/err"; then ok; else bad "missing sync script must warn (rc=$RC)"; fi
+setup_repo ON; good; AUTO_MERGE_LIB="$W/no-such-lib.sh" run 1
+if [ "$RC" -eq 3 ]; then ok; else bad "missing classification library must exit 3, got $RC"; fi
 
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
