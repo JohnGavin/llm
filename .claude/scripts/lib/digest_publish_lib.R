@@ -61,3 +61,35 @@ digest_publish_assess <- function(runs, now) {
   list(state = "current", bucket = "ok", label = "digests current",
        n_terms = NA_integer_, failures = 0L)
 }
+
+# auto_merge_assess (llm#1471): the same idea for the 30-minute auto-merge
+# sweep (bin/auto_merge_sweep.sh --apply). Heartbeat: status ok/failed,
+# rows_written = PRs merged that run. ONE failure is quiet; "needs you" needs
+# two consecutive failed runs, or no run at all for 2 h.
+# Returns list(state, bucket, label, merged_24h, failures).
+auto_merge_assess <- function(runs, now) {
+  ind <- function(why) list(state = "indeterminate", bucket = "indeterminate",
+                            label = sprintf("indeterminate — %s", why),
+                            merged_24h = NA_integer_, failures = NA_integer_)
+  if (is.null(runs) || !is.data.frame(runs) || nrow(runs) == 0L ||
+      !all(c("status", "rows_written", "at") %in% names(runs))) {
+    return(ind("no run recorded for the auto-merge sweep"))
+  }
+  runs <- runs[order(runs$at, decreasing = TRUE), , drop = FALSE]
+  if (is.na(runs$at[[1L]]) || is.na(now)) return(ind("run time unreadable"))
+  age_h <- as.numeric(difftime(now, runs$at[[1L]], units = "hours"))
+  in24 <- as.numeric(difftime(now, runs$at, units = "hours")) <= 24
+  m <- as.integer(sum(runs$rows_written[in24 & runs$status == "ok"], na.rm = TRUE))
+  lead <- 0L
+  for (g in runs$status == "ok") { if (g) break; lead <- lead + 1L }
+  last <- if (identical(runs$status[[1L]], "ok")) "ok" else "failed"
+  line <- sprintf("auto-merge: %d merged in 24 h, last run %s", m, last)
+  if (age_h > 2 || lead >= 2L) {
+    why <- if (age_h > 2) "no run in the last 2 h" else sprintf("%d consecutive failed runs", lead)
+    return(list(state = "needs_you", bucket = "failed",
+                label = sprintf("needs you — %s (%s)", line, why),
+                merged_24h = m, failures = max(lead, 2L)))
+  }
+  list(state = if (lead == 1L) "one_failure" else "ok", bucket = "ok",
+       label = line, merged_24h = m, failures = lead)
+}

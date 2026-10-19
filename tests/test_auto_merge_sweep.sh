@@ -384,6 +384,53 @@ mkdir -p "$W/blocker"; : > "$W/blocker/file"
 AUTO_MERGE_LOG="$W/blocker/file/sub/log" runa 1
 if [ "$RC" -eq 0 ] && grep -q 'could not write the action log' "$W/err" && printf '%s\n' "$OUT" | grep -q 'merged=1'; then ok; else bad "log failure handling rc=$RC: $(cat "$W/err")"; fi
 
+# ---- 9. scheduling pieces and heartbeat (llm#1471) ---------------------------------
+REC="$ROOT/bin/launchd-recorders/auto-merge-sweep"
+PLIST="$ROOT/.claude/launchd/com.claude.auto-merge-sweep.plist"
+if grep -v '^#' "$REC" | grep -q -e '"--apply"' && grep -v '^#' "$REC" | grep -q -e '"--max" "3"'; then ok; else bad "recorder must carry --apply and --max 3"; fi
+if [ -x "$REC" ]; then ok; else bad "recorder not executable"; fi
+if grep -q 'auto_merge_sweep.sh' "$REC"; then ok; else bad "recorder does not call the sweep"; fi
+if command -v plutil >/dev/null 2>&1; then
+  if plutil -lint "$PLIST" >/dev/null 2>&1; then ok; else bad "plist invalid (plutil)"; fi
+elif command -v python3 >/dev/null 2>&1; then
+  if python3 -c 'import plistlib,sys; plistlib.load(open(sys.argv[1],"rb"))' "$PLIST" 2>/dev/null; then ok; else bad "plist invalid (python)"; fi
+else
+  echo "SKIP: neither plutil nor python3 -- plist validity NOT exercised"
+fi
+if grep -q '<integer>1800</integer>' "$PLIST" && grep -q 'RunAtLoad</key>' "$PLIST"; then ok; else bad "plist: StartInterval 1800 / RunAtLoad"; fi
+if grep -q '^com.claude.auto-merge-sweep[[:space:]]' "$ROOT/.claude/state/launchd-timeouts.txt"; then ok; else bad "timeout entry missing"; fi
+
+if command -v duckdb >/dev/null 2>&1; then
+  HKDB="$W/hk.duckdb"
+  rm -f "$HKDB"
+  duckdb -init /dev/null "$HKDB" < "$ROOT/.claude/scripts/housekeeping_schema_init.sql" >/dev/null 2>&1
+  hkn() { duckdb -init /dev/null -csv -noheader "$HKDB" -c "SELECT count(*) FROM housekeeping_runs WHERE task='auto_merge_sweep' ${1:-}" 2>&1; }
+  export UNIFIED_DB_PATH="$HKDB"
+
+  setup_repo ON; good
+  run 1
+  if [ "$(hkn)" = "0" ]; then ok; else bad "report mode wrote a heartbeat"; fi
+
+  setup_repo ON; good
+  runa 1
+  if [ "$(hkn "AND status='ok' AND rows_written=1")" = "1" ]; then ok; else bad "apply: expected one ok row with rows_written=1, got $(hkn)"; fi
+
+  setup_repo ON; good; : > "$STUB/merge_fail_1"
+  runa 1
+  if [ "$(hkn "AND status='failed'")" = "1" ]; then ok; else bad "merge failure (exit 1): expected one failed row"; fi
+
+  setup_repo ON; good; printf '1' > "$STUB/auth_rc"
+  runa 1
+  if [ "$RC" -eq 3 ] && [ "$(hkn "AND status='failed'")" = "2" ]; then ok; else bad "exit 3 must record failed (rc=$RC, failed rows=$(hkn "AND status='failed'"))"; fi
+
+  setup_repo ON; printf '[]\n' > "$STUB/list.json"
+  runa
+  if [ "$(hkn "AND status='ok' AND rows_written=0")" = "1" ]; then ok; else bad "no open PRs: expected an ok row with 0 merged"; fi
+  unset UNIFIED_DB_PATH
+else
+  echo "SKIP: duckdb not on PATH -- heartbeat rows NOT exercised"
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
 exit 0
