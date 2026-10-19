@@ -97,3 +97,76 @@ mc_classify_merged() {
     case "$MC_CLASS" in tier2:*) MC_APPROVAL="veto-lapsed" ;; *) MC_APPROVAL="none" ;; esac
   fi
 }
+
+# Basenames of term / allow / deny list files. A Tier 2 PR whose diff REMOVES a
+# line from one stays owner-verb (removing an entry widens what is let through).
+MC_LIST_FILE_RE='(^|/)[^/]*(term|allow|deny|block)[^/]*[.](txt|tsv|list|lst|csv)$'
+
+# mc_tier2_check CLASS RAW_FILES_TSV TABLE HARDNEVER
+# RAW_FILES_TSV columns: filename, previous_filename, additions, deletions.
+# Applies the MECHANICAL Tier 2 conditions (the PR-body trailer is only a claim).
+# Sets MC_T2_VERDICT = ok | ne (definitely not Tier 2 eligible) | ind (could not
+# decide) and MC_T2_REASON. Table columns (TAB separated, '#' lines ignored):
+#   class  max_changed_lines  required_path_globs(;)  forbidden_extra(ERE or -)  requires_tests(0|1)  enabled(0|1)
+mc_tier2_check() {
+  local cls="$1" raw="$2" table="$3" hn="$4"
+  local row max globs forb rt en hit lines g p ok_any
+  MC_T2_VERDICT="ok"; MC_T2_REASON=""
+  if [ ! -r "$table" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-table-unreadable"; return; fi
+  if [ ! -r "$hn" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-hardnever-unreadable"; return; fi
+  grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$hn" > "$MC_TMP/t2_hn" 2>/dev/null
+  if [ ! -s "$MC_TMP/t2_hn" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-hardnever-empty"; return; fi
+  grep -E -f "$MC_TMP/t2_hn" /dev/null >/dev/null 2>&1
+  if [ $? -eq 2 ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-hardnever-invalid-regex"; return; fi
+
+  row="$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$table" | awk -F'\t' -v c="$cls" '$1==c{print; exit}')"
+  if [ -z "$row" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-unknown-class:$cls"; return; fi
+  max="$(printf '%s\n' "$row" | awk -F'\t' '{print $2}')"
+  globs="$(printf '%s\n' "$row" | awk -F'\t' '{print $3}')"
+  forb="$(printf '%s\n' "$row" | awk -F'\t' '{print $4}')"
+  rt="$(printf '%s\n' "$row" | awk -F'\t' '{print $5}')"
+  en="$(printf '%s\n' "$row" | awk -F'\t' '{print $6}')"
+  case "$max" in ""|*[!0-9]*) MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-table-malformed:$cls"; return ;; esac
+  if [ "$en" != "1" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-class-disabled:$cls"; return; fi
+  if [ -z "$globs" ] || [ "$globs" = "-" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-table-malformed:$cls"; return; fi
+
+  # every path (new and previous), one per line
+  awk -F'\t' 'NF>=1 && $1!=""{print $1} NF>=2 && $2!=""{print $2}' "$raw" > "$MC_TMP/t2_paths"
+
+  # 1. hard-never (always owner-verb)
+  hit="$(grep -E -f "$MC_TMP/t2_hn" "$MC_TMP/t2_paths" | head -1)"
+  if [ -n "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-hard-never:$hit"; return; fi
+  hit="$(awk -F'\t' -v re="$MC_LIST_FILE_RE" '($4+0)>0 && $1 ~ re {print $1; exit}' "$raw")"
+  if [ -n "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-list-removal:$hit"; return; fi
+
+  # 2. every path must match one of the class's globs
+  printf '%s\n' "$globs" | tr ';' '\n' > "$MC_TMP/t2_globs"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    ok_any=0
+    while IFS= read -r g; do
+      [ -n "$g" ] || continue
+      case "$p" in $g) ok_any=1; break ;; esac
+    done < "$MC_TMP/t2_globs"
+    if [ "$ok_any" -eq 0 ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-path-not-allowed:$p"; return; fi
+  done < "$MC_TMP/t2_paths"
+
+  # 3. extra per-class forbidden pattern
+  if [ -n "$forb" ] && [ "$forb" != "-" ]; then
+    printf '%s\n' "$forb" > "$MC_TMP/t2_forb"
+    hit="$(grep -E -f "$MC_TMP/t2_forb" "$MC_TMP/t2_paths" 2>/dev/null | head -1)"
+    if [ -n "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-forbidden-extra:$hit"; return; fi
+  fi
+
+  # 4. size
+  lines="$(awk -F'\t' '{s += $3 + $4} END{print s + 0}' "$raw")"
+  if [ "$lines" -gt "$max" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-too-large:$lines>$max"; return; fi
+
+  # 5. tests: at least one changed file under tests/ or .claude/tests/ (a bare
+  # edit of the test map does not count)
+  if [ "$rt" = "1" ]; then
+    hit="$(awk -F'\t' '$1 ~ /^(\.claude\/)?tests\// && $1 !~ /(^|\/)ci_test_map[.]tsv$/ {print $1; exit}' "$raw")"
+    if [ -z "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-no-tests"; return; fi
+  fi
+}
+

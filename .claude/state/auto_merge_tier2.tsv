@@ -1,0 +1,30 @@
+# .claude/state/auto_merge_tier2.tsv -- llm#1471
+#
+# ONE home for the Auto-Merge Tier 2 classes, read by bin/auto_merge_sweep.sh.
+# Tier 2 is a bounded, conservative window of automation for low-risk, testable
+# script changes that the exclusion list would otherwise keep owner-verb only
+# (it relaxes ONLY the scheduled-script reason; every path in
+# auto_merge_exclusions.txt stays excluded, and every path in
+# auto_merge_tier2_hardnever.txt stays owner-verb).
+#
+# A PR opts in with a trailer line in its body:  Tier-2-Class: <class>
+# The trailer is only a claim. The mechanical conditions below are the real
+# gate: all of them, plus every normal auto-merge condition, plus a 4 h veto
+# window (head commit and checks green for >= 4 h, no owner veto) and a cap of
+# 2 Tier 2 merges per UTC day.
+#
+# Columns (TAB separated; '#' lines and blank lines are ignored):
+#   class                 name used in the Tier-2-Class trailer and in merge_events (tier2:<class>)
+#   max_changed_lines     additions + deletions of the whole PR must not exceed this
+#   required_path_globs   ';'-separated shell globs; EVERY changed path (and every
+#                         previous path of a rename) must match one of them
+#   forbidden_extra       extra ERE no changed path may match, or '-' for none
+#   requires_tests        1 = at least one changed file under tests/ or .claude/tests/
+#                         (a lone edit of tests/ci_test_map.tsv does not count)
+#   enabled               1 = usable, 0 = switched off (the rollback: set it to 0)
+#
+# Widening is Class C (explicit "merge"): editing this table, the hard-never list
+# or the AGENTS.md paragraph that describes them.
+robustness	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
+detector-false-positive-fix	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
+output-redaction	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
