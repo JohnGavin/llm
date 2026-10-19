@@ -8,12 +8,12 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 ### Completed
 
-- **Actions usage tabulated** from the billing API (`/users/JohnGavin/settings/billing/usage`): the free quota counts private repos only. llmtelemetry 1,729 + solwatch 94 = 1,823 of 2,000 minutes by Oct 16 (resets Nov 1; a $0 budget is set). Public repos: 4,889 job-minutes (tlang 1,779, irishbuoys 1,222, llm 639).
+- **Actions usage tabulated** from the billing API (`/users/JohnGavin/settings/billing/usage`): the free quota counts private repos only. llmtelemetry 1,729 + [private] 94 = 1,823 of 2,000 minutes by Oct 16 (resets Nov 1; a $0 budget is set). Public repos: 4,889 job-minutes (tlang 1,779, irishbuoys 1,222, llm 639).
 - **llmtelemetry:** [#394](https://github.com/JohnGavin/llmtelemetry/pull/394) (daily report and HF archive run Mondays only) and [#395](https://github.com/JohnGavin/llmtelemetry/pull/395) (restores the R cache that #370 turned off) merged under auto-merge. The 52-minute runs are the `setup-r-dependencies` step: about 55 s with a cache, 35-58 min without. Tracked in [llmtelemetry#393](https://github.com/JohnGavin/llmtelemetry/issues/393) (options A-E).
-- **solwatch:** Weekly Pipeline disabled; [solwatch#27](https://github.com/JohnGavin/solwatch/issues/27) tracks why it runs 45 min and fails.
+- **[private]:** Weekly Pipeline disabled; a private-repo issue tracks why it runs 45 min and fails.
 - **irishbuoys:** [#107](https://github.com/JohnGavin/irishbuoys/pull/107) merged on the owner's "merge": Data Update cron every 2nd day.
 - **tlang:** CI-trigger review filed as [llm#1437](https://github.com/JohnGavin/llm/issues/1437) (tlang has issues disabled).
-- **premortem (private, local):** two issues written (details kept in that project).
+- **[private] (private, local):** two issues written (details kept in that project).
 
 ### Failed Approaches
 
@@ -141,7 +141,7 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 
 ### Completed
 
-- **Generalised `dynamic-prose-values` into a global "one home per value" rule** and added a short core paragraph to `AGENTS.md`. Merged as [#1271](https://github.com/JohnGavin/llm/pull/1271) (squash `7b557f6`). Originated in the `travel` project: a trip dashboard's Build page showed a hand-typed "Version 2026-08-29" and "Facts 16" after both had changed, because an earlier duplication check had deliberately excluded clock times, dates and counts as "noise" — exactly where the drift then happened (89 restated values measured on that project). Rather than a one-off fix, the user asked for it made structural and global. Extended the existing rule (no new rule file, per subtractive-first) to cover every generated artifact and values *about* the artifact itself; requires enforcement in the generator (build fails on a restated literal, no exempt category, a reasoned allow-list as the only escape hatch, a ratchet for legacy artifacts) and a propagation test that exercises the renderer, not just the validator. `paths:` widened to `**/*.yml`/`**/*.yaml`/`**/template/**`/`**/dashboard/**`/`**/render*.R`.
+- **Generalised `dynamic-prose-values` into a global "one home per value" rule** and added a short core paragraph to `AGENTS.md`. Merged as [#1271](https://github.com/JohnGavin/llm/pull/1271) (squash `7b557f6`). Originated in the `[private]` project: a trip dashboard's Build page showed a hand-typed "Version 2026-08-29" and "Facts 16" after both had changed, because an earlier duplication check had deliberately excluded clock times, dates and counts as "noise" — exactly where the drift then happened (89 restated values measured on that project). Rather than a one-off fix, the user asked for it made structural and global. Extended the existing rule (no new rule file, per subtractive-first) to cover every generated artifact and values *about* the artifact itself; requires enforcement in the generator (build fails on a restated literal, no exempt category, a reasoned allow-list as the only escape hatch, a ratchet for legacy artifacts) and a propagation test that exercises the renderer, not just the validator. `paths:` widened to `**/*.yml`/`**/*.yaml`/`**/template/**`/`**/dashboard/**`/`**/render*.R`.
 - Checks before merge: `check_rule_scoping.sh` clean; roborev merge-gate PASS; pre-commit and pre-push `private_data_scan` clean, 0 findings; 4/4 CI checks green (`gh pr checks --watch`).
 
 ### Known Limitations
@@ -223,7 +223,7 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - **`main` was red and is now green** ([#1194](https://github.com/JohnGavin/llm/pull/1194), merged, [#1192](https://github.com/JohnGavin/llm/issues/1192)). Two assertions pinned the overnight email to 06:30 while the plist says 08:45 — `26c7514` had moved it deliberately so it runs after `staleness-collect`. Replaced the constant with the invariant it defended (after staleness-collect, before the 09:00 peak), parsed from the real plists. Also fixed two tests that had no assertion at all.
 - **Timeouts enforced for 26 scheduled jobs** ([#1195](https://github.com/JohnGavin/llm/pull/1195), merged, [#1190](https://github.com/JohnGavin/llm/issues/1190)). The bound lives in `bin/launchd_run_record.sh`, which already wraps every recorded job, so no plist was edited. Bounds are p95 × 5 with a 60s floor, annotated per line with sample size and evidence. A missing GNU `timeout` records `unenforced`, never a silent pass.
 - **Scanner findings 168 → 67.** Six stale `secrets.env.bak-*` files deleted after a pre-flight check showed three keys existed only in the backups — fingerprint comparison proved they were the same secrets under older names (`HF_TOKEN`, `OPENAI_API_KEY`). Triage and measured effect on [#1188](https://github.com/JohnGavin/llm/issues/1188).
-- **Braindumps processed** (ids 50–56): [llmtelemetry#368](https://github.com/JohnGavin/llmtelemetry/issues/368) (idea-to-live lead time), tennis `ISSUES.md` #64/#65, travel `issues/0004`, and an addendum on [#1123](https://github.com/JohnGavin/llm/issues/1123).
+- **Braindumps processed** (ids 50–56): [llmtelemetry#368](https://github.com/JohnGavin/llmtelemetry/issues/368) (idea-to-live lead time), [private] `ISSUES.md` #64/#65, [private] `issues/0004`, and an addendum on [#1123](https://github.com/JohnGavin/llm/issues/1123).
 - **Containment decisions recorded**: `llm` stays public ([#1185](https://github.com/JohnGavin/llm/issues/1185) closed, with the costs of going private measured — Pages offline on the free plan, metered CI minutes, stars lost); gating every publish channel instead ([#1186](https://github.com/JohnGavin/llm/issues/1186)). #190, #1183, #1179 and PR #1182's description redacted.
 
 ### Failed Approaches
@@ -274,12 +274,12 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 - ctx.yaml cache audit: 1 OK, 9 other-version, 24 stale (>30 days) — `ctx_sync("DESCRIPTION")` not run this session; flagged to the user at session end rather than run unprompted.
 - `com.roborev.auto-refine`'s new `refusing to refine on main branch` startup message is unconfirmed as benign — plausible roborev-internal safety behavior now that cwd resolves correctly, but not traced further.
 
-## 2026-09-05 (session: travel-repo dashboard fixes, feat/cc-20260903-185554)
+## 2026-09-05 (session: [private]-repo dashboard fixes, feat/cc-20260903-185554)
 
 ### Completed
 - **`accessibility.md`**: added Clause 6 (dark-mode default text must be white/near-white, never a tinted grey), a new "Tooltips" subsection under Part 1 (prefer a CSS hover/focus popover over the native `title=` attribute, which is unreliable for content a user needs to actually read), and a "Font A−/A+ implementation note" under Part 3 (`html { font-size: var(--fs-base) }` is required or `rem`-based rules never scale) — plus matching Forbidden Patterns rows and a `**/*.css.html` paths-glob addition. Commit `b7dc154`.
 - **`verification-before-completion.md`** + companion doc: documented a worked incident where a resting-state headless-Chrome screenshot "verified" a `:hover`-triggered tooltip fix that was still broken — a named instance of Trap B (wrong object), not previously called out by name. Cross-referenced from the Five Traps table. Commit `e3a62ca`.
-- All four lessons trace to one real bug-fixing session on a private travel-planning dashboard in a sibling repo (`~/docs_gh/proj/pers/travel`, not tracked here): font-size scaling not actually reaching `rem`-based CSS, grey-on-black dark-mode text, a broken hover tooltip, and — the meta-lesson — a screenshot that verified the wrong DOM state.
+- All four lessons trace to one real bug-fixing session on a private [private]-planning dashboard in a sibling repo (`~/docs_gh/proj/pers/[private]`, not tracked here): font-size scaling not actually reaching `rem`-based CSS, grey-on-black dark-mode text, a broken hover tooltip, and — the meta-lesson — a screenshot that verified the wrong DOM state.
 
 ### Failed Approaches
 - N/A — documentation-only session, no code changes.
@@ -321,7 +321,7 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
 ### Completed
 - **ctx_sync silent-failure fix** ([#1112](https://github.com/JohnGavin/llm/pull/1112)) — `ctx_sync()`'s stale/missing loops now wrap `generate_ctx()` in `tryCatch()`, warn instead of aborting the whole sync, and record `status="ERROR"` per-package so one bad package no longer silently drops every package after it.
 - **Signal braindump channel-scoping bug fixed** ([#1114](https://github.com/JohnGavin/llm/pull/1114), [#1113](https://github.com/JohnGavin/llm/issues/1113)) — the handler resolved `group_name` but never filtered on it, so every Signal chat (not just "Notes to llm") was captured. Documented for future sessions as [[reference_signal-braindump-channel]] memory.
-- **7 Signal braindumps triaged end-to-end**, each processed → routed → linked via `braindump_act.sh`: two issues for a local-only project (both judged out of scope), two tennis issues (public/private redesign + reusable artifact template; standardized metrics + bump chart), one mycare issue (personalized dashboard from artifact template), plus the channel-scoping fix itself.
+- **7 Signal braindumps triaged end-to-end**, each processed → routed → linked via `braindump_act.sh`: two issues for a local-only project (both judged out of scope), two [private] issues (public/private redesign + reusable artifact template; standardized metrics + bump chart), one [private] issue (personalized dashboard from artifact template), plus the channel-scoping fix itself.
 - **AgentsView quality-baseline tooling** ([#1116](https://github.com/JohnGavin/llm/pull/1116), [#1118](https://github.com/JohnGavin/llm/pull/1118)) — new rule + `agentsview_quality_baseline.sh` (25 selftest + 18 integration tests) implementing the substantive-session filter from #1115's P1 recommendations. Caught and fixed a private-repo-name leak in a subagent's own commit message before it reached `origin` (amended + force-pushed with explicit user authorization).
 - **llm#1122 fixed and deployed live**: overnight self-review email moved from 06:30 to 08:45 (was reading yesterday's staleness snapshot, 1h45m before the collector's own 08:15 run); `staleness_collect.sh`'s log-freshness picker fixed to use max mtime across stdout/stderr/derived paths instead of a stale-priority pick.
 - **launchd/BTM job-naming issue corrected and partially fixed** ([#1121](https://github.com/JohnGavin/llm/issues/1121), [#1128](https://github.com/JohnGavin/llm/pull/1128), merged) — a fresh whole-machine `sfltool dumpbtm` scan found the issue's original "29 of 32 fixed" audit was wrong (11 jobs actually still show generic "bash"/"sh", not 3): 3 roborev jobs already use the correct wrapper yet still show stale names (BTM-cache issue, not a wrapper-mechanism bug — proven via `branch-gc`/`worktree-gc` as working controls); 2 jobs were invisible to the original `*.plist` glob audit because they're `*.plist.template`; 1 was outside the audited directory. Fixed the 2 templates + added a previously-untracked `codexbar-refresh` plist (subagent found and preserved its real 12h schedule from an older PR rather than inventing a placeholder, per the dispatch's explicit instruction not to fabricate). "Item from unidentified developer" reopened as a separate code-signing sub-problem (previously explicitly scoped out) — not yet attempted.
@@ -536,8 +536,8 @@ Convention: newest entries at top. Each entry has a date, what was done, and why
   during unrelated work), [#1045](https://github.com/JohnGavin/llm/issues/1045)
   (`agent_runs` has no dispatch_id despite the rule mandating one in four places; 49 rows
   have claimed "running" since 2026-08-09).
-- **Eight repos pinned** to claude-code: llmtelemetry, historical, mycare, premortem, eis6,
-  travel, knowledge, tennis — four of them local-only (no remote at all) yet sending every
+- **Eight repos pinned** to claude-code: llmtelemetry, historical, [private], [private], eis6,
+  [private], knowledge, [private] — four of them local-only (no remote at all) yet sending every
   commit diff to a free-tier model.
 
 ### Failed Approaches
@@ -598,7 +598,7 @@ finding it is, hiding the precise condition it was built to catch.
 Three claims of mine were wrong and were retracted publicly rather than quietly dropped:
 the gemini routing was a deliberate 2026-07-05 decision, not "drift" (which is why the fix
 became per-repo pins rather than reverting the global); the model pins are belt-and-braces,
-not mandatory (`crypto_solwatch` pins the agent alone, 15/15 clean); and #1037's issue text
+not mandatory (`[private]` pins the agent alone, 15/15 clean); and #1037's issue text
 criticised a 72h cadence I had not read the derivation for.
 
 ## 2026-08-26/27 — six checks that reported success about something they had not established, and a fix scoped from a 12-hour sample
@@ -659,12 +659,12 @@ fourteen failures, two of which were produced by the code written to prevent the
 **Root cause behind three repos' CI.** `CACHIX_AUTH_TOKEN` was revoked in the
 2026-08-11 rotation and a replacement created **nowhere** — not in BWS, not in the
 cache, not in any repo. `tlang` failed nightly for 11 days, `irishbuoys` and
-`solwatch` weekly. Verified by transition (last success 08-13, first failure 08-14),
+`[private]` weekly. Verified by transition (last success 08-13, first failure 08-14),
 not by adjacency to the incident date.
 
 **Enumeration beats recall.** A hand-written list of affected repos came to three
 and guessed a repo name that does not exist. The command found the fourth,
-`solwatch`, failing weekly and in nobody's list. Now Step 0 of the runbook.
+`[private]`, failing weekly and in nobody's list. Now Step 0 of the runbook.
 
 **tlang CI green again** ([tlang#9](https://github.com/JohnGavin/tlang/pull/9)).
 Eight workflows were dying at `cachix use` on a PUBLIC cache, because a job-level
@@ -1092,7 +1092,7 @@ while broken" ([#932](https://github.com/JohnGavin/llm/issues/932)).
   explanation inherits the credibility of the fact it rides on without earning it.
 - **Planned "delete non-canonical rows from the metrics mirror" — abandoned, and
   the abandonment was the finding.** The safety check first: nine repos in the
-  mirror were *live* (`knowledge` 526 jobs, `travel` 42 and active that day) but
+  mirror were *live* (`knowledge` 526 jobs, `[private]` 42 and active that day) but
   missing from `canonical_projects`, so the #536 guard had been silently dropping
   them — 591 jobs invisible to every metric. The planned delete would have
   destroyed their real history. Fixed instead in #934.
@@ -1688,7 +1688,7 @@ will look different in the particulars and identical in shape.
 - **Reconciled global-config `.md` counts vs the llmtelemetry dashboard.** `config_pulse.sh` (collector for the Global Config table) had two defects: agents counted from a removed `~/.claude/AGENTS.md` (→ absent from dashboard; real = 12) and skills counted as top-level dirs (74) instead of `SKILL.md` manifests (77, matches the banner). Filed llmtelemetry#318 → implemented + merged llmtelemetry#319 (agents→`agents/*.md`=12, skills→`SKILL.md`=77); #318 auto-closed.
 - **llm#684 (merged):** two clarifying comments in `roborev_bridge_to_unified.sh` (intentional no-`status`-filter post-#677; legitimate 0-`closures`) — #580 follow-up.
 - **roborev gemini cleanup:** `/bye` flagged NOT-CLEAN — 11 failures (9 crash, 2 quota) all attributed to the dead `gemini` agent. Confirmed `~/.roborev/config.toml` has ZERO gemini refs (all stages `claude-code`/`codex`); the 11 were stale earlier-today crashes. `roborev daemon restart` to force clean-config reload; `roborev_agent_health.sh --status` = normal (codex 0 failures). Stale records age out of the summary window.
-- Filed **llm#685** — discussion/ideation issue: leveraged-solo-operator product ideas (Stripe/Shopify/cloud/auto-bookkeeping + AI), grounded in this account's repos (finance/betting, sports analytics, AI agent ops, reproducible data eng, dashboards).
+- Filed **llm#685** — discussion/ideation issue: leveraged-solo-operator product ideas (Stripe/Shopify/cloud/auto-bookkeeping + AI), grounded in this account's repos (finance/betting, [private] analytics, AI agent ops, reproducible data eng, dashboards).
 - Ran `export_and_deploy_data.sh` (telemetry → dashboard).
 
 ### Failed Approaches
@@ -1703,7 +1703,7 @@ will look different in the particulars and identical in shape.
 ### Completed
 - **#680 (merged) — r-btw MCP boot ~6.4s → ~1.7s warm.** "Still slow" after #673: the GC-rooted drv removed nix *eval*, but `nix-shell <drv> --run` still paid ~4s for its per-launch environment build + shellHook. Diagnostic: `source <(nix print-dev-env <drv>); Rscript` = **0.6s** vs `nix-shell <drv> --run Rscript` = **6.4s**. Fix: `r_btw_mcp_launch.sh` now caches `nix print-dev-env <drv>` (keyed to resolved drv store path since mtimes are 1970 per #596), sources it, execs Rscript directly; fallback chain cached-env → `nix-shell <drv>` → `default.nix`. Verified MCP `initialize` + `tools/list` (22 tools), cache invalidation, live warm boot ~1.4–1.9s. #674 reopened → closed by #680. Memory `startup-cost-is-mcp-not-hook.md` updated (layer 2).
 - **tlang CI fully green (cross-project).** PR #6: gate Cachix push on `env.CACHIX_AUTH_TOKEN` + `fail-fast:false` + push to own cache (`johngavin`, not the unwritable community `rstats-on-nix`); root cause was a custom `run:` step not inheriting `cachix-action` auth + no secret. PR #7: enable GitHub Pages (`enablement:true` + API) for Deploy Documentation, add `--fallback` + `johngavin` substituter to NYC Taxi (transient cache.nixos.org failures), add `johngavin` + public key to `flake.nix` nixConfig. All three workflows verified success; Pages published (HTTP 200), then **Deploy Documentation disabled** via `gh workflow disable` per user request (workflow left intact, instantly re-enablable).
-- **Premortem auto-memory (#659):** confirmed the `file_protection.sh` patch already merged (#660, `6399a4c`) and live — runtime `~/.claude/projects/<proj>/memory/*.md` writes now allowed (verified exit 0). The lost "drop the regex rules" feedback still needs its content to be re-saved.
+- **[private] auto-memory (#659):** confirmed the `file_protection.sh` patch already merged (#660, `6399a4c`) and live — runtime `~/.claude/projects/<proj>/memory/*.md` writes now allowed (verified exit 0). The lost "drop the regex rules" feedback still needs its content to be re-saved.
 - **Gap issues filed:** #681 (testthat-patterns vs Sobolewski "snapshot testing beyond screenshots" — vdiffr/SVG, binary ban, platform variants, naming), #682 (InfoWorld "10 tips" — eval Posit skills repo, plan-mode habit; we already do 8/10), #683 (webR 0.6.0 obsoletes stale shinylive/webr guidance — async `eval_js(await=TRUE)`, httr2/curl, ggplot2/munsell + dplyr/rlang workarounds need re-test).
 
 ### Failed Approaches
@@ -1713,7 +1713,7 @@ will look different in the particulars and identical in shape.
 ### Known Limitations
 - #683 items 3–6 (ggplot2/munsell, dplyr/rlang workarounds, exclusion list) gated on browser re-test against webR 0.6.0; not yet done.
 - Recurring **Node 20 deprecation** warnings across tlang actions (checkout@v4, configure-pages@v5, deploy-pages@v4, cachix-action) — warning only, not failing; no issue filed yet.
-- Premortem "drop the regex rules" memory content still unknown / unrestored.
+- [private] "drop the regex rules" memory content still unknown / unrestored.
 
 ## 2026-06-25 — roborev silently failing on EVERYTHING (gemini free-tier dead)
 
@@ -1756,7 +1756,7 @@ will look different in the particulars and identical in shape.
 ### Completed
 - **#657 — SessionStart hook startup time cut 17.6s → ~3.4s (merged).** `session_init.sh` was running ~30 phases synchronously before the prompt. Backgrounded ~13 advisory phases (nix-shell ctx audit, r-universe fetch, ETL freshness, roborev, DuckDB writes) with a show-cached/refresh-behind pattern; dropped the redundant legacy-ccusage burn-rate cross-check (`CLAUDE_BURN_RATE_COMPARE=0` default). **Phase 2 (mappings) kept SYNCHRONOUS** per user — mapping mismatches must surface same-session.
 - **Diagnosed startup slowness root cause:** heavy hook × loaded machine (load avg 5.3; bare `Rscript` showed 1.8s sys time). Cleared 2 stale non-current Claude sessions. Note: long-running sessions pin their launch binary version (this session ran v2.1.183 while v2.1.187 was on disk).
-- **#656 — scheduled-workflow 60-day-disable keepalive (done).** Phase 0 audit script `audit_scheduled_workflows.sh` (PR #658). Corrected the audit's per-workflow "11 at-risk" to **2 genuinely dormant repos** (disable is repo-level; one self-committing workflow keeps the whole repo alive). Added self-keepalive `keepalive.yml` (≥50d empty-commit, repo-local GITHUB_TOKEN, no cross-repo PAT per #194/#644) to stratford-events, solwatch, tlang, llmtelemetry — 4 PRs merged. Re-enabled stratford-events' disabled `weekly_report`.
+- **#656 — scheduled-workflow 60-day-disable keepalive (done).** Phase 0 audit script `audit_scheduled_workflows.sh` (PR #658). Corrected the audit's per-workflow "11 at-risk" to **2 genuinely dormant repos** (disable is repo-level; one self-committing workflow keeps the whole repo alive). Added self-keepalive `keepalive.yml` (≥50d empty-commit, repo-local GITHUB_TOKEN, no cross-repo PAT per #194/#644) to stratford-events, [private], tlang, llmtelemetry — 4 PRs merged. Re-enabled stratford-events' disabled `weekly_report`.
 - **#659/#660 — file_protection.sh false-block fixed (merged).** Added `projects/*/memory/*.md` to the exemption so runtime per-project memory writes pass; scripts/hooks stay blocked. 12/12 self-tests. (Confirmed live: this session's memory writes succeeded.)
 - **#653 — qmd adopt-vs-build spike (closed).** Sandboxed pinned install of `@tobilu/qmd@2.5.3` (integrity MATCH + SLSA attestation; MCP surface = 4 read-only tools). Empirical embed test on knowledge/ (14 docs): **hybrid beat BM25 on only 1/5 queries** → verdict DEFER, keep DuckDB `kb_search`. Re-test trigger (50+ docs) tracked in #661.
 - **Gap-analysis issues filed** from 4 external sources: #662–#664 (snapshot testing), #665–#666 (R dots/`check_dots_*`), #667–#668 (viz principles + coaching lint), #672 (Gmisc data-driven flowcharts vs mermaid). #669 (local-LLM policy) closed as deliberate out-of-scope.
@@ -1882,7 +1882,7 @@ will look different in the particulars and identical in shape.
   1. `strip_heredoc_bodies()` — awk function strips heredoc content before `is_destructive()` check; prevents `rm -rf` inside a script body from blocking the write
   2. `is_own_worktree_path()` — exempts `.claude/worktrees/agent-*` from PROTECTED_PATHS; agent harness worktrees are sandboxed by `isolation:"worktree"` and should not be blocked
   Added `CLAUDE_HOOK_SELFTEST=1` mode: 6 tests pass
-- **#546 — roborev cadence restored**: installed `roborev install-hook` in all 4 missing repos (llmtelemetry, micromort, mycare, premortem); queued review of llmtelemetry HEAD (job 6849) to restart cycle; deleted stale mycare duplicate entry (id=7, space-in-path, 22 orphaned reviews)
+- **#546 — roborev cadence restored**: installed `roborev install-hook` in all 4 missing repos (llmtelemetry, micromort, [private], [private]); queued review of llmtelemetry HEAD (job 6849) to restart cycle; deleted stale [private] duplicate entry (id=7, space-in-path, 22 orphaned reviews)
 - **#590 — fixer overflow verified resolved**: dispatched fixer smoke-test from worktree session — received prompt at 64k tokens (vs ~182k+ before #613); closed as resolved by #613
 
 ### Previous entry continues below
@@ -1934,7 +1934,7 @@ will look different in the particulars and identical in shape.
 - **#609 / #595** — roborev ETL starvation (06-06→06-12) root-caused SHARPER than the issue: #536's canonical-guard read-only connection + top-level `on.exit()` (never fires) left duckdb's per-path cached instance read-only; the apply-phase connect silently joined it → every CREATE failed. Fixed: deterministic `finally` disconnect with `shutdown=TRUE`, `connect_unified_rw()` verifying `duckdb_databases().readonly` with evict+retry, skippable schema-init, housekeeping_runs heartbeat (running/ok/failed + CLI fallback). Live `--apply` backfilled all 5 days (22 daily / 75 lifecycle / 75 lineage / 18 threshold rows); threshold_changes RED was starvation, not event-quiet.
 - **#610 / #597** — burn guard resurrected: week window computed in bash, `ccusage daily --since` + `totals.totalCost` (no ccusage week-bucketing dependence), stderr → `burn_rate_check.err`, ≥2-consecutive-failure "BURN GUARD DEAD" canary. First working run found real signal: **CRITICAL $582/$500 (116%), proj 204%**.
 - **#611 / #582** — user decided `~/docs_gh/worktrees/<project>/<branch>/` as canonical. Migrated: cc-worktree.sh, cc.sh (create + parent-redirect), worktree_gc.sh (sweeps both bases), session-init Phase 1e, #599 allowlist, rule + memory. Legacy `~/worktrees/` transitional read-only; no mass migration.
-- **#612 / #584** — Chrome auto-dark enforcement: accessibility rule Clause 0 (`color-scheme: dark` meta + CSS, supersedes all dark-mode clauses), mermaid-dashboard-pattern Step 0, new `check_dashboard_color_scheme.sh` (8/8 selftest). Lesson: Chrome's Auto Dark Mode (default since v96) inverts dark pages it mis-reads as light — premortem 0027 burned 5 iterations on the wrong layer.
+- **#612 / #584** — Chrome auto-dark enforcement: accessibility rule Clause 0 (`color-scheme: dark` meta + CSS, supersedes all dark-mode clauses), mermaid-dashboard-pattern Step 0, new `check_dashboard_color_scheme.sh` (8/8 selftest). Lesson: Chrome's Auto Dark Mode (default since v96) inverts dark pages it mis-reads as light — [private] 0027 burned 5 iterations on the wrong layer.
 - **#591 closed, verified** — launchctl kickstart (228 rows, scan 1.5 min) AND natural 06-12 09:08 fire (ok, 225 rows, 37 min, no wedge) both wrote heartbeat + events under launchd.
 - **Blog-gap issues filed** (5 parallel Explore agents): #604 jarl (rule groups/autofix/--statistics), #605 test smells (3 uncovered + TDD-skill contradiction), #606 BLAS (we already link OpenBLAS; Accelerate benchmark + thread-control gaps), #607 goodpractice (referenced-never-executed; vehicle for #470), #608 config-usage telemetry (NO table tracks skill/command/rule usage; hook_events only ever logs context_monitor; proposal: `config_usage_events` + retirement loop).
 - **#419 neo4j** extended to unified semantic knowledge graph scope (glossary as ontology, typed edges, markdown-as-source ETL) — **Aura ruled out** (knowledge/ is local-only; cloud load would exfiltrate).
@@ -1953,7 +1953,7 @@ will look different in the particulars and identical in shape.
 
 - #590 open — subagent dispatch unusable from worktree sessions until rule-dedup/load-trim lands; main-checkout sessions unaffected.
 - #596 (cron nix network) untouched — kb/config digests still failing.
-- #582 follow-ups: Phase 1f tidiness hook; legacy-base removal when `~/worktrees/` empties. #584 follow-ups: premortem wires the global script; optional Phase 2 hook.
+- #582 follow-ups: Phase 1f tidiness hook; legacy-base removal when `~/worktrees/` empties. #584 follow-ups: [private] wires the global script; optional Phase 2 hook.
 - worktree_gc.sh header comments still name the legacy base (cosmetic).
 
 ## 2026-06-11 — branch_gc production fixes, launcher changeset, permission unblock, install-channel cleanup
@@ -2120,7 +2120,7 @@ Unblocks #585 (`branch_gc` automation, which reuses the same housekeeping plumbi
 
 **canonical_projects architecture (umbrella #528 closed)**:
 - #533 → PR #540: foundation — `canonical_projects` + `canonical_project_aliases` tables, 18-project CSV seed, idempotent migration. Required orchestrator takeover after 2 fixer stalls (#541). 5/5 selftest.
-- #534 → PR #542: roborev daily Severity by Project filtered. 14 → **4** distinct repos (`historical`, `llm`, `mycare`, `premortem`).
+- #534 → PR #542: roborev daily Severity by Project filtered. 14 → **4** distinct repos (`historical`, `llm`, `[private]`, `[private]`).
 - #535 → PR #543: `canonical_projects_audit.sh` + session_init Phase 15b nag. 6/6 selftest. Live: `UNKNOWN=367 CANONICAL=30 FIXTURE=302`.
 - #536 → PR #544: bash + R `canonical_check` helpers wired into `roborev_metrics_etl.R`. 91/day `roborev_pmhook_test_*` accumulation stops at source.
 - #537 → PR #545: `roborev_weekly_rollup.R` filter applied. KB digest + vignettes audited and confirmed no-op (no project dimension).
@@ -3136,7 +3136,7 @@ Continued from Session 1 close-out. Massive cross-repo roborev sweep cleared 15 
 ### Completed
 
 - **Group A: rebound re-flags handoff** — crypto_swarms (5 reviews on canonical `_targets.R:20` → already-filed crypto_swarms#12) + llmtelemetry (17 reviews on commit `263e90a738f0` → 6 new project issues filed: llmtelemetry#105 HIGH deploy-dashboard validation, #106 export canonicalization, #107 cost_by_model routing, #108 duplicate rows, #109 pagination fallback, #110 rollup dedup). 22 DB closures.
-- **Group B/C/D sweep** — closure-handoff for 12 remaining repos. 5 new micromort issues (#105 HIGH pkgdown CI regex, #106 unlabeled-chunk false-positive, #107 quiz UTC migration, #108 shinylive streak port, #109 hardcoded row), 1 llmtelemetry (#111 HIGH unified_sessions invalid rows), 2 randomwalk (#201 NA guard, #202 render refactor). 95 reviews wontfix-dormant across 9 repos (football/coMMpass/crypto_solwatch/crypto/my_t_project/repo/content/randomwalk-wiki/t_demos) — projects with stale GH presence (40d+) or no clear GH target. 116 DB closures + 9 new issues.
+- **Group B/C/D sweep** — closure-handoff for 12 remaining repos. 5 new micromort issues (#105 HIGH pkgdown CI regex, #106 unlabeled-chunk false-positive, #107 quiz UTC migration, #108 shinylive streak port, #109 hardcoded row), 1 llmtelemetry (#111 HIGH unified_sessions invalid rows), 2 randomwalk (#201 NA guard, #202 render refactor). 95 reviews wontfix-dormant across 9 repos (football/coMMpass/[private]/crypto/my_t_project/repo/content/randomwalk-wiki/t_demos) — projects with stale GH presence (40d+) or no clear GH target. 116 DB closures + 9 new issues.
 - **historical cleanup** — 4 new reviews from today's commits filed as 3 issues: historical#215 (Medium cross_market Date/POSIXct join), #216 (Medium factormax x-axis shift), #217 (Low themed: 3 recent fixes shipped without regression tests). 4 DB closures.
 - **knowledge wiki-health dedup** — 281 open findings on the local-only knowledge subdirectory: 268 daily range-review duplicates of canonical id=2742 closed via rebound-dedup; 13 distinct findings handed off to llm#180 umbrella covering 7 themes (recurring HIGH Faheem Osman→Rahman misattribution flagged 3×, recurring HIGH self-referential sources, vocabulary drift, dead [[...]] links, citation/provenance drift, privacy hook gap, knowledge ingest pipeline issues).
 - **llm self-review backlog** — 92 reviews → llm#181 umbrella covering 7 themes: Theme 1 permission_request security (CRITICAL — 6+ bypass bugs), Theme 2 Bash 3.2 / BSD-grep portability (`mapfile` + `-P`/`\b` across 5 scripts), Theme 3 rule self-contradictions, Theme 4 launchd plist mis-wirings, Theme 5 roborev's own scripts have bugs, Theme 6 QA gate path bugs, Theme 7 docs accuracy + unversioned code. 46 HIGH, 133 Medium, 15 Low total.
@@ -3163,7 +3163,7 @@ Continued from Session 1 close-out. Massive cross-repo roborev sweep cleared 15 
 
 ### Known limitations
 
-- **mycare (92 open findings) remains blocked** — local-only project, no GitHub issues. Must be handled in a dedicated local session.
+- **[private] (92 open findings) remains blocked** — local-only project, no GitHub issues. Must be handled in a dedicated local session.
 - **5 active repos have 1-2 trickle-in re-flags from today's commits** — llmtelemetry/micromort/knowledge/historical (1 each) + llmtelemetry (2). These are post-handoff new reviews and will keep arriving daily until the underlying code is actually fixed in each project. Best mitigated by #163 Phase 4 (auto-verifier) when shipped.
 - **llm#181 Themes 2-7 unstarted** — 5 more themes remain in the llm-self umbrella. Theme 2 (Bash 3.2 / BSD-grep portability) is the next-highest-leverage (multiple launchd jobs currently failing silently).
 - **Audit log host-local only** — `~/.roborev/auto_closures.log` (today: ~150+ lines covering 800+ closures) lives only on this machine. Not synced; if this machine is lost, the rationale narrative for every closure is lost too. Worth a follow-up to mirror to llmtelemetry or knowledge.
@@ -3224,7 +3224,7 @@ Continued from Session 4 close-out (2026-05-17). Cleared the entire `#161` per-p
 
 ### Known limitations
 
-- **3 active repos still have open findings**: llm self (92 open, 56.6% addressed), mycare (73 open, 74.7%), llmtelemetry (2 new since closure). These were not in this session's #161 scope.
+- **3 active repos still have open findings**: llm self (92 open, 56.6% addressed), [private] (73 open, 74.7%), llmtelemetry (2 new since closure). These were not in this session's #161 scope.
 - **knowledge repo has 264 open findings at 0% addressed rate** — local-only, needs `/wiki-health` workflow per spec, not the standard remediation pass.
 - **Residual handoffs are bulk-deferred, not per-finding triaged.** The 249 residual closures bulk-transferred to existing project trackers. If any individual residual represents a real outstanding bug, project owners need to re-query the DB (`updated_at >= '2026-05-18'` + `closed = 1`) to surface candidates.
 - **`commit-msg` validator pilot is llm-only.** Other repos haven't received the hook. Per the #163 plan, fan out after a week of clean observation on llm.
@@ -3266,7 +3266,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 - **Roborev backlog: 776 → 600 High-severity findings** (−176 net, −22.7%)
   - −173 JohnGavin.github.io (single render fix)
   - −7 crypto/crypto_swarms (wontfix triage)
-  - +4 rebound (mycare/micromort/llmtelemetry re-reviews of yesterday's merges)
+  - +4 rebound ([private]/micromort/llmtelemetry re-reviews of yesterday's merges)
 - **PRs merged this session:** 2 (#175 prompt-caching scaffolding, #177 compound-guard spike)
 - **Issues filed:** 4 (#176 approval-prompt reduction, #178 compound_guard tracking, #179 tidyfinance audit, plus the #174 SDK caching follow-up implicit in #175's partial-scope merge)
 - **Cross-repo commits:** 2 (JohnGavin.github.io `4778cfb` re-render, llm `9c3d133` settings flip)
@@ -3320,7 +3320,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 
 ### Completed
 
-- **Backlog analysis** — categorized 1,174 High-severity open-non-approved roborev findings across 16 projects via SQLite + tightened regex. Top groups: `micromort × data-correctness` (291), `mycare × security` (158), `historical × security` (8 of 11). llm = 44 findings, ranked into 12 fix-clusters.
+- **Backlog analysis** — categorized 1,174 High-severity open-non-approved roborev findings across 16 projects via SQLite + tightened regex. Top groups: `micromort × data-correctness` (291), `[private] × security` (158), `historical × security` (8 of 11). llm = 44 findings, ranked into 12 fix-clusters.
 - **PR 1 (`default.nix:146 inherit ()`)** — investigated; `nix-instantiate --parse` accepts empty inherit; mori DESCRIPTION has no `Imports:`; closed roborev review 773/job 975 as false positive with justification comment.
 - **PR 7 (cross-modal-eval cluster)** — sonnet fixer dispatched to import the missing external scripts + finish. Merged as **PR #164** (9 findings addressed: `jq -n --arg`-safe JSON, exit-1-on-FAIL test script, in-repo paths, accurate docs).
 - **PR 13 (config_pulse symlink)** — closed roborev review 783/job 986 as **wontfix; laptop-local by design**.
@@ -3373,7 +3373,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 - **#160 filed** — Roborev never uses Critical or Info severity (prompt investigation + add Critical tier)
 - **#161 filed** — Backlog remediation parent tracker; per-project closure passes
 - **#163 filed** — Automate roborev closure loop (8-component, 7-phase design)
-- **Per-project backlog issues filed (5)** — `historical#176`, `crypto_swarms#11`, `JohnGavin.github.io#9`, `llmtelemetry#89`, `micromort#100` (reframed from noise investigation to remediation pass). mycare has no GitHub repo (local-only) — handled locally.
+- **Per-project backlog issues filed (5)** — `historical#176`, `crypto_swarms#11`, `JohnGavin.github.io#9`, `llmtelemetry#89`, `micromort#100` (reframed from noise investigation to remediation pass). [private] has no GitHub repo (local-only) — handled locally.
 - **PR #162 opened** — `fix(kb): vig_kb_stats RDS loader` (top-level `return()` + missing `saveRDS()` — 7 duplicate roborev findings resolved by 2 underlying bug fixes). Worktree-isolated sonnet fixer pattern.
 - **3 security fixes shipped to main** (`eb13711`, `2867655`, `cfd6ad8`) — closes roborev #905, #679, #675. Worktree-isolated sonnet fixer pattern.
 - **1 cross-repo security fix** to llmtelemetry (`ca7f8fd`) — `inst/scripts/config_pulse.sh` (symlink target) — closes roborev #717. Not yet pushed (diverged state).
@@ -3393,7 +3393,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 - 5 issues filed (#158, #159, #160, #161, #163) + 5 per-project tracker issues across 4 repos
 - 4 issues closed (#156, #157, #158, parts of #161 via batch 1)
 - Open llm issues: **9** (#147, #149, #150, #152, #153, #159, #160, #161, #163) + #162 PR
-- Roborev backlog snapshot: ~1,101 open across 21 projects (micromort 167, historical 148, mycare 135, knowledge 130, crypto_swarms 124, JohnGavin.github.io 123, llmtelemetry 85, llm 78, …, hello_t 0)
+- Roborev backlog snapshot: ~1,101 open across 21 projects (micromort 167, historical 148, [private] 135, knowledge 130, crypto_swarms 124, JohnGavin.github.io 123, llmtelemetry 85, llm 78, …, hello_t 0)
 - Burn rate **102%+ at session end** (over weekly cap; 2 days to reset)
 
 ### Known Limitations
@@ -3402,7 +3402,7 @@ Session began after Session 3 close. Started with roborev backlog query (776 Hig
 - **#158 sample classification was assumed by user** ("assume all 30 ticked TP no exceptions") rather than manually triaged finding-by-finding. The KEEP decision is correct in spirit but the percentages should not be cited as observed data; they're user-stipulated.
 - **Prioritizer still over-weights shell/bash + git/CI** in `llm` output — security only has 4 findings so doesn't surface to top 10 despite weight 5.0. Acceptable for v1; revisit if needed.
 - **#163 Phase 2+ blocked on #160** — Critical severity tier needed for prioritizer to differentiate true-critical from "just High"
-- **5 projects (crypto, football, mycare, randomwalk-wiki, repo) backlog landed in /tmp** — root_path in DB doesn't match local checkout. Either repo not cloned locally, or DB has stale path.
+- **5 projects (crypto, football, [private], randomwalk-wiki, repo) backlog landed in /tmp** — root_path in DB doesn't match local checkout. Either repo not cloned locally, or DB has stale path.
 
 ### Architecture insight
 
@@ -3823,7 +3823,7 @@ None this session.
   - Medium: AGENTS.md rule count corrected (75→45)
   - Medium: huggingface-upload.md credential leak fixed (no token in URL)
   - Medium: roborev docs/templates fixed for bash-safety compliance
-- **default.post.sh pattern documented** in `nix-agent-shell-protocol.md` for projects with hand-crafted nixpkgs overlays (mycare uses this for twisted/pdfplumber fix)
+- **default.post.sh pattern documented** in `nix-agent-shell-protocol.md` for projects with hand-crafted nixpkgs overlays ([private] uses this for twisted/pdfplumber fix)
 - **Budget-aware cc.sh wrapper**: Auto-selects model based on burn rate (≥90% spawns sonnet worktree, ≥70% uses sonnet, <70% uses opus)
 
 ### Metrics
@@ -3905,7 +3905,7 @@ None this session.
   - `JohnGavin/irishbuoys` — `527c7e9` pushed; file moved INTO the package subfolder at `proj/data/weather/irish_buoy_network/irishbuoys/RECOVERY.md` (the parent path is not a git repo; the package is); paths within the file are relative to the package root.
   - `JohnGavin/llmtelemetry` — `3f3a901` rebased over 4 origin auto-refresh commits and pushed; bundled `.claude/CLAUDE.md` (declares `Environment: prod`) + `RECOVERY.md` (predictions/duckdb/dashboard JSON) + the pre-existing `model_daily.json` refresh per user direction.
   - `JohnGavin/JohnGavin.github.io` — `e05f9fc` (`.claude/CLAUDE.md` with `Environment: prod`, deploy notes, dark-mode + `.nojekyll` reminders); pushed by user from a non-nix terminal (nix shell has no `ssh`).
-  - `mycare` — `RECOVERY.md` written at its local project root (path withheld — private project, see `public-private-repo-boundary` rule). NOT a git repo (intentional). File documents encryption-at-rest requirements and a no-cloud constraint.
+  - `[private]` — `RECOVERY.md` written at its local project root (path withheld — private project, see `public-private-repo-boundary` rule). NOT a git repo (intentional). File documents encryption-at-rest requirements and a no-cloud constraint.
 
 ### Failed approaches / sharp edges
 
@@ -3922,7 +3922,7 @@ None this session.
 ### Known limitations / follow-ups
 
 - **Subagent permission scope**: investigate whether subagents have narrower write permissions than the orchestrator. If yes, future briefs need explicit grants for cross-repo work; if no, the agent's "denied" report was a false negative on a different error. (See "Failed approaches" above.)
-- **mycare's not a git repo**: the project is intentionally local-only. No remote backup exists; the RECOVERY.md's "Where backups live" section is all `<TODO>`. This needs the user to set up an encrypted local target (NAS or SSD) before the recovery plan is real.
+- **[private]'s not a git repo**: the project is intentionally local-only. No remote backup exists; the RECOVERY.md's "Where backups live" section is all `<TODO>`. This needs the user to set up an encrypted local target (NAS or SSD) before the recovery plan is real.
 - **irish_buoy_network parent dir is not a git repo**: only the `irishbuoys/` R package subfolder is. Things like `_targets/` cache, `docs/` rendered output, `prompt_irishbuoys.md` at the parent level have no version-control safety net. Consider whether to `git init` the parent (and untrack the child) or leave as-is.
 - **Backup destinations universally TODO**: all four RECOVERY.md files have `<TODO: configure>` for backup locations. The plans land but the infrastructure does not yet exist. Setting up an encrypted external SSD (or NAS, or B2/Wasabi for the non-private projects) is genuinely the next step.
 
@@ -3942,9 +3942,9 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - **#105 destructive-scripts audit + rule** (`fc47387`): inventoried `~/.claude/hooks/`, `.claude/scripts/`, `bin/`. **0 MISSING** — all 7 destructive ops have either a recovery trail (the #100 stash-create+store pattern) or a reproducibility justification. New rule `script-destructive-ops.md` codifies the pattern.
 - **#106 systematic-debugging extended to ops** (`ae1bcc3`): added a credential-mismatch worked example contrasting "fix by deletion" vs "investigate first". Cross-linked `pivot-signal`, `safe-deletion`, `resulting-prohibition`, `search-all-pipeline-stages`.
 - **#107 MCP destructive-scope inventory** (`894e88f`): new rule classifying MCP tools `read | write | destructive`. Current posture documented: r-btw active (covered by `btw-timeouts`); Gmail/Cal/Drive auth stubs only (zero attack surface). Pre-install checklist for new MCPs.
-- **#108 backup architecture rule + RECOVERY.md template** (`09908d6`): new rule covers failure-domain principle (same-volume snapshots are NOT backups). Template at `.claude/templates/RECOVERY.md` with RPO/RTO/restore steps + failure-domain column. Audit candidates (need a per-project RECOVERY.md): `llmtelemetry`, `irishbuoys`, `mycare`. Most projects fully reproducible from git + pipeline.
+- **#108 backup architecture rule + RECOVERY.md template** (`09908d6`): new rule covers failure-domain principle (same-volume snapshots are NOT backups). Template at `.claude/templates/RECOVERY.md` with RPO/RTO/restore steps + failure-domain column. Audit candidates (need a per-project RECOVERY.md): `llmtelemetry`, `irishbuoys`, `[private]`. Most projects fully reproducible from git + pipeline.
 - **Token audit across `~/docs_gh/*`** (informational, no commit): scanned 80+ projects. 19 with `.Renviron` / `.env`; 30+ env-var names referenced; top usage hotspots `blogs`/`proj`/`datageeek.com`. Found ONE tracked `.env` in a public repo (`codespaces_rstudio_n_tidy`) with `PASSWORD=1rstudio` for a local RStudio container. Resolved via C2 split: created `.env.example` template + gitignored `.env` (commit `f8ee70e` on `JohnGavin/codespaces_rstudio_n_tidy`). Historical password remains in git history; rotate locally to retire.
-- **`.gitignore` drift fixes**: edited `.env`/`.Renviron` patterns into `nasa_app`, `quarto_blog`, `shiny-python` `.gitignore` files. `shiny-python` has no `.git/` so the edit is text-only. `nasa_app` and `quarto_blog` left edit-only (not committed) because of substantial in-flight work; bundle on next commit there.
+- **`.gitignore` drift fixes**: edited `.env`/`.Renviron` patterns into `nasa_app`, `[private]`, `shiny-python` `.gitignore` files. `shiny-python` has no `.git/` so the edit is text-only. `nasa_app` and `[private]` left edit-only (not committed) because of substantial in-flight work; bundle on next commit there.
 
 ### Failed approaches / sharp edges
 
@@ -3971,7 +3971,7 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - **Behavioural override mechanism for prod destructive ops** not implemented — current escalation is informational only (block message mentions PROD; behaviour unchanged). v2 needs an env var or flag to allow legitimate prod work.
 - **#103 hook enforcement** of two-key target-name match is not wired into `destructive_api_guard.sh`; rule documents the principle only.
 - **Per-project Environment declarations**: only llm itself declares. `llmtelemetry` and `JohnGavin.github.io` should declare `Environment: prod` but currently have no `.claude/CLAUDE.md` file. Per-project work, deferred.
-- **Per-project RECOVERY.md** not created for the three audit candidates (`llmtelemetry`, `irishbuoys`, `mycare`); rule + template land here, files are per-project.
+- **Per-project RECOVERY.md** not created for the three audit candidates (`llmtelemetry`, `irishbuoys`, `[private]`); rule + template land here, files are per-project.
 - **launchd plists not audited** in #105 — only `~/.claude/hooks/`, `.claude/scripts/`, `llm/bin/`. `~/Library/LaunchAgents/` is a separate audit.
 - **`codespaces_rstudio_n_tidy` historical password (`1rstudio`)** still in git history. Rotate locally to retire (force-push history rewrite not advised).
 - **`gh api ... -X DELETE`** (and any other flag-at-end destructive form) not caught by deny patterns or by `destructive_api_guard.sh` regex. Use #103 follow-up two-key handshake or just rely on the human eyeballing the call.
@@ -4498,7 +4498,7 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - roborev triage: closed #10012 (`roborev_autoclose.sh` discovery-failure swallowing)
   and #10052 (`credential_single_source_check.sh` not executable) — both already
   fixed on `main` by prior commits (`e0fa2d4`/PR #1134, `ef439f6`/PR #1152); reran
-  their test coverage fresh before closing rather than re-doing the work. Tennis-repo
+  their test coverage fresh before closing rather than re-doing the work. [private]-repo
   findings (#10025, #10047) left for that project per user instruction.
 - Gap analysis vs "Why AWS bought DuckLabs" (DuckDB-for-agents article): filed #1156,
   added to the evaluate/gap-analysis register #953. Investigated all 3 candidate
@@ -4624,12 +4624,12 @@ PocketOS / Cursor / Railway incident 2026-04-25 (https://x.com/lifeof_jer/status
 - `richard/procedural-scenes` `main` is locally 2 ahead / 2 behind
   `origin/main` — noticed but not investigated or touched; unrelated to this
   session's work on the `publish` branch.
-- `proj/pers/tennis` has uncommitted local changes (`README.md`,
+- `proj/pers/[private]` has uncommitted local changes (`README.md`,
   `artifact/tennis_trends.html`) observed at session end — not made by this
   session (the earlier dashboard-data-separation investigation explicitly
-  left tennis untouched), left alone as presumed concurrent/other-session
+  left [private] untouched), left alone as presumed concurrent/other-session
   work, not this session's to commit or stash.
-- travel/tennis remain fully private, no-remote repos by design — the user
+- [private]/[private] remain fully private, no-remote repos by design — the user
   confirmed this is intentional (Claude Artifact links are the preferred
   distribution mechanism for those, for controllable/revocable sharing with
   specific people rather than public GH Pages).
