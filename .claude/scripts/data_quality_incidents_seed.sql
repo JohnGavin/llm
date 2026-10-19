@@ -199,7 +199,7 @@ WHERE id = 'llm913-sessions-ended_at-20260724';
 -- NOT fully closed: `richard` and `coMMpass` still inherit the global
 -- `gemini` default for review jobs (no per-repo agent pin) and remain
 -- exposed to the same failure going forward -- see llm#1035 follow-up.
--- `premortem` already pins `agent = 'claude-code'`; its one historical
+-- `private-project-78` already pins `agent = 'claude-code'`; its one historical
 -- not-reviewed row predates that pin. Also NOT closed by this window: the
 -- underlying schema ambiguity itself (verdict_bool=0 meaning two different
 -- things) is a property of the third-party DB and persists for ANY future

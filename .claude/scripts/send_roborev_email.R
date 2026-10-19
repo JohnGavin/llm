@@ -181,7 +181,7 @@ fmt_int  <- function(x) if (is.null(x) || is.na(x)) "0" else formatC(as.integer(
 # ── Project slug → GitHub URL resolution ───────────────────────────────────────
 # Previously every project slug was hardcoded to
 # https://github.com/JohnGavin/<slug> — this 404s for slugs that are not
-# public GitHub repos (e.g. "premortem", a local-only planning folder). Only
+# public GitHub repos (e.g. "private-project-78", a local-only planning folder). Only
 # render a hyperlink when the slug resolves to a KNOWN public repo.
 #
 # To extend: add a line to KNOWN_PUBLIC_REPOS below. resolve_repo_url() also
