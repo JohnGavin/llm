@@ -1,0 +1,24 @@
+# .claude/state/readonly_checkers.txt -- llm#1471
+#
+# The OWNER-SIGNED list of read-only checker scripts, read by
+# bin/auto_merge_sweep.sh and .claude/scripts/lib/merge_classify.sh.
+#
+# Why it exists: the sweep keeps every script that a launchd job runs
+# (the derived scheduled-script set) owner-verb only. A checker that merely
+# reads things and deletes its own temp files does not need that protection,
+# and a sweep merge of one was being reported by merge_history_check.sh R1 as a
+# violation. A PR that declares "Tier-2-Class: readonly-checker" may relax the
+# scheduled-script reason ONLY for the paths listed here.
+#
+# Format: one repo-relative script path per line (exact match, no globs, no
+# '..', no leading '/'); lines starting with '#' and blank lines are ignored.
+# Entries must live under .claude/scripts/ or bin/ and end in .sh.
+#
+# THE CONTROL IS THIS FILE'S OWNER SIGNATURE. Adding or removing an entry is
+# Class C: it needs an explicit owner "merge" (this file, the guard test and
+# the Tier 2 table are all outside every automatic path). Each entry must pass
+# tests/test_readonly_checkers_guard.sh, which is a heuristic backstop that
+# looks for mutating commands; it cannot prove a script read-only, so do not
+# list a script you have not read.
+
+.claude/scripts/wiki_health_check.sh
