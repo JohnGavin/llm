@@ -55,8 +55,20 @@
 # the new and the previous path. A failed fetch (files-api-failed) or a PR
 # with more files than were returned (files-truncated) is INDETERMINATE.
 #
+# mergeStateStatus handling (from gh pr view):
+#   UNKNOWN or empty  GitHub computes it lazily. The PR view is retried (3 views
+#                     in all, AUTO_MERGE_RETRY_SLEEP seconds apart, default 3);
+#                     still unknown -> INDETERMINATE merge-state-unknown. A
+#                     failed gh call is never retried (INDETERMINATE view-failed).
+#   DIRTY             NOT-ELIGIBLE merge-conflict
+#   DRAFT             NOT-ELIGIBLE draft
+#   BLOCKED           NOT-ELIGIBLE blocked-by-rules (a required check or review
+#                     is missing; gh pr merge would be refused)
+#   UNSTABLE          NOT-ELIGIBLE unstable (a non-required check failed)
+#   BEHIND, CLEAN, HAS_HOOKS   no objection from this field
+#
 # Env overrides (used by the tests): AUTO_MERGE_REPO_DIR, AUTO_MERGE_GATE,
-# AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG.
+# AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG, AUTO_MERGE_RETRY_SLEEP.
 
 set -u
 export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
@@ -71,6 +83,9 @@ EXCL_FILE="${AUTO_MERGE_EXCLUSIONS:-$REPO_DIR/.claude/state/auto_merge_exclusion
 
 LOG="${AUTO_MERGE_LOG:-$HOME/.claude/logs/auto_merge_sweep.log}"
 MERGE_LABEL="auto-merged"
+VIEW_TRIES=3
+RETRY_SLEEP="${AUTO_MERGE_RETRY_SLEEP:-3}"
+case "$RETRY_SLEEP" in ""|*[!0-9]*) RETRY_SLEEP=3 ;; esac
 
 usage() {
   echo "usage: auto_merge_sweep.sh [--repo OWNER/NAME] [--apply] [--max N] [PR...]" >&2
@@ -220,18 +235,27 @@ evaluate() {
   if [ "$assoc" != "OWNER" ]; then not_elig "untrusted-author"; return; fi
 
   view="$TMP/view_$n.json"
-  if ! gh pr view "$n" --repo "$REPO" --json number,state,isDraft,labels,mergeStateStatus,statusCheckRollup,changedFiles,headRefOid > "$view" 2>/dev/null; then
-    VERDICT="INDETERMINATE"; REASON="view-failed"; return
-  fi
   fields="$TMP/fields_$n"
-  if ! parse_view "$view" > "$fields" 2>/dev/null; then
-    VERDICT="INDETERMINATE"; REASON="view-unparsable"; return
-  fi
+  # mergeStateStatus is computed lazily by GitHub: UNKNOWN/empty is transient.
+  # Up to VIEW_TRIES views, pausing between them; a gh or parse failure is
+  # never retried or hidden (it stays INDETERMINATE at once).
+  local state draft merge changed try=1
+  while :; do
+    if ! gh pr view "$n" --repo "$REPO" --json number,state,isDraft,labels,mergeStateStatus,statusCheckRollup,changedFiles,headRefOid > "$view" 2>/dev/null; then
+      VERDICT="INDETERMINATE"; REASON="view-failed"; return
+    fi
+    if ! parse_view "$view" > "$fields" 2>/dev/null; then
+      VERDICT="INDETERMINATE"; REASON="view-unparsable"; return
+    fi
+    merge="$(awk -F'\t' '$1=="MERGE"{print $2}' "$fields")"
+    case "$merge" in UNKNOWN|"") ;; *) break ;; esac
+    if [ "$try" -ge "$VIEW_TRIES" ]; then break; fi
+    try=$((try + 1))
+    sleep "$RETRY_SLEEP"
+  done
 
-  local state draft merge changed
   state="$(awk -F'\t' '$1=="STATE"{print $2}' "$fields")"
   draft="$(awk -F'\t' '$1=="DRAFT"{print $2}' "$fields")"
-  merge="$(awk -F'\t' '$1=="MERGE"{print $2}' "$fields")"
   changed="$(awk -F'\t' '$1=="CHANGED"{print $2}' "$fields")"
 
   HEADSHA="$(awk -F'\t' '$1=="HEAD"{print $2}' "$fields")"
@@ -253,6 +277,7 @@ evaluate() {
 
   case "$merge" in
     DIRTY) not_elig "merge-conflict"; return ;;
+    DRAFT) not_elig "draft"; return ;;
     UNKNOWN|"") note_ind "merge-state-unknown" ;;
   esac
 
@@ -263,6 +288,13 @@ evaluate() {
   if [ "${total:-0}" -eq 0 ]; then not_elig "no-checks"; return; fi
   if [ "${bad:-0}" -gt 0 ]; then not_elig "checks-not-success"; return; fi
   if [ "${pending:-0}" -gt 0 ]; then not_elig "checks-pending"; return; fi
+  # Rulesets: BLOCKED = a required check or review is missing (gh pr merge
+  # would be refused even though every check that ran passed); UNSTABLE = a
+  # non-required check failed.
+  case "$merge" in
+    BLOCKED) not_elig "blocked-by-rules"; return ;;
+    UNSTABLE) not_elig "unstable"; return ;;
+  esac
 
   # Diff paths.
   if [ -n "$EXCL_ERR" ]; then note_ind "$EXCL_ERR"; fi

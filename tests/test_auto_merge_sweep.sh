@@ -29,7 +29,8 @@ case "$1 $2" in
   "auth status") exit "$(cat "$d/auth_rc" 2>/dev/null || echo 0)" ;;
   "pr list") cat "$d/list.json" || exit 1 ;;
   "pr view") c=$(cat "$d/vc_$3" 2>/dev/null || echo 0); c=$((c + 1)); echo "$c" > "$d/vc_$3"
-             if [ "$c" -ge 2 ] && [ -f "$d/view2_$3.json" ]; then cat "$d/view2_$3.json"; else cat "$d/view_$3.json" 2>/dev/null || exit 1; fi ;;
+             if [ -f "$d/unk_until_$3" ] && [ "$c" -le "$(cat "$d/unk_until_$3")" ]; then cat "$d/view_unk_$3.json"
+             elif [ "$c" -ge 2 ] && [ -f "$d/view2_$3.json" ]; then cat "$d/view2_$3.json"; else cat "$d/view_$3.json" 2>/dev/null || exit 1; fi ;;
   "repo view") echo "O/R" ;;
   "api repos/O/R/pulls/"*) : ;;
 esac
@@ -51,6 +52,7 @@ EOF
 export AUTO_MERGE_LOG="$W/am.log"
 export STUB_DIR="$STUB" GATE_RC=0 AUTO_MERGE_REPO_DIR="$FAKE" AUTO_MERGE_GATE="$W/gate.sh"
 export PATH="$BIN:$PATH"
+export AUTO_MERGE_RETRY_SLEEP=0
 
 # ---- fixtures ---------------------------------------------------------------
 setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.md
@@ -158,6 +160,31 @@ setup_repo ON; mkpr 1 OWNER OPEN false DIRTY "" "S" "R/a.R"; run 1
 expect "DIRTY" 1 NOT-ELIGIBLE merge-conflict
 setup_repo ON; mkpr 1 OWNER OPEN false UNKNOWN "" "S" "R/a.R"; run 1
 expect "merge state UNKNOWN" 1 INDETERMINATE merge-state-unknown
+setup_repo ON; mkpr 1 OWNER OPEN false BLOCKED "" "S,S" "R/a.R"; run 1
+expect "BLOCKED (required check missing)" 1 NOT-ELIGIBLE blocked-by-rules
+setup_repo ON; mkpr 1 OWNER OPEN false UNSTABLE "" "S" "R/a.R"; run 1
+expect "UNSTABLE" 1 NOT-ELIGIBLE unstable
+setup_repo ON; mkpr 1 OWNER OPEN false DRAFT "" "S" "R/a.R"; run 1
+expect "mergeStateStatus DRAFT" 1 NOT-ELIGIBLE draft
+setup_repo ON; mkpr 1 OWNER OPEN false HAS_HOOKS "" "S" "R/a.R"; run 1
+expect "HAS_HOOKS" 1 ELIGIBLE all-conditions-met
+# UNKNOWN is transient: retried, then resolved (stub serves UNKNOWN for the first N views)
+mkunk() {  # $1 = number of leading UNKNOWN views for PR 1
+  sed 's/"mergeStateStatus":"[A-Z_]*"/"mergeStateStatus":"UNKNOWN"/' "$STUB/view_1.json" > "$STUB/view_unk_1.json"
+  printf '%s' "$1" > "$STUB/unk_until_1"
+}
+setup_repo ON; good; mkunk 2; run 1
+expect "UNKNOWN twice then CLEAN" 1 ELIGIBLE all-conditions-met
+if [ "$(grep -c '^pr view 1 ' "$STUB/calls.log")" = "3" ]; then ok; else bad "expected 3 pr view calls: $(cat "$STUB/calls.log")"; fi
+setup_repo ON; mkpr 1 OWNER OPEN false BLOCKED "" "S" "R/a.R"; mkunk 1; run 1
+expect "UNKNOWN then BLOCKED" 1 NOT-ELIGIBLE blocked-by-rules
+setup_repo ON; good; mkunk 3; run 1
+expect "UNKNOWN three times" 1 INDETERMINATE merge-state-unknown
+if [ "$(grep -c '^pr view 1 ' "$STUB/calls.log")" = "3" ]; then ok; else bad "retries must stop at 3 views: $(cat "$STUB/calls.log")"; fi
+# a gh failure is not retried or hidden
+setup_repo ON; rm -f "$STUB/view_1.json"; printf 'OWNER' > "$STUB/assoc_1"; run 1
+expect "view failure not retried" 1 INDETERMINATE view-failed
+if [ "$(grep -c '^pr view 1 ' "$STUB/calls.log")" = "1" ]; then ok; else bad "failed view was retried"; fi
 setup_repo ON; mkpr 1 OWNER OPEN false BEHIND "" "S" "R/a.R"; run 1
 expect "BEHIND alone is not a conflict" 1 ELIGIBLE all-conditions-met
 setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,P" "R/a.R"; run 1
@@ -330,6 +357,11 @@ setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,F" "R/a.R"; mkpr 2 OWNER OPEN
 mkpr 3 OWNER OPEN false CLEAN "" "S" "scripts/x.sh:.claude/hooks/x.sh"
 runa 1 2 3
 if [ "$RC" -eq 0 ] && [ "$(mutations)" = "0" ] && printf '%s\n' "$OUT" | grep -qx 'prs=3 eligible=0 not_eligible=2 indeterminate=1 merged=0 failed=0'; then ok; else bad "ineligible PRs must not be mutated (rc=$RC): $OUT"; fi
+
+# BLOCKED PR (required check missing): never labelled or merged under --apply
+setup_repo ON; mkpr 1 OWNER OPEN false BLOCKED "" "S,S" "R/a.R"
+runa 1
+if [ "$RC" -eq 0 ] && [ "$(mutations)" = "0" ] && ! grep -q '^pr merge' "$STUB/calls.log" && printf '%s\n' "$OUT" | grep -qx 'prs=1 eligible=0 not_eligible=1 indeterminate=0 merged=0 failed=0'; then ok; else bad "BLOCKED PR must not be mutated (rc=$RC): $OUT / $(cat "$STUB/calls.log")"; fi
 
 # label does not exist: INDETERMINATE, nothing created or merged
 setup_repo ON; good; : > "$STUB/no_label"
