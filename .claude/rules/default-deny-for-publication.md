@@ -31,11 +31,11 @@ publication filter may show inside an already-public project.
 
 ## CRITICAL: A Filter That Works Correctly Is Not the Same as a Filter With the Right Default
 
-`llmtelemetry` published ~584 rows of `premortem` (a private project)
+`llmtelemetry` published ~584 rows of `private-project-78` (a private project)
 session data to a **public** repo from 26 May onward — session IDs,
 timestamps, durations, token and cost aggregates. `R/privacy_exclusion.R`
 existed the whole time and worked correctly: every project named in it had
-zero occurrences in the published output. `premortem` was simply never added.
+zero occurrences in the published output. `private-project-78` was simply never added.
 
 > The filter was not broken. The default was.
 

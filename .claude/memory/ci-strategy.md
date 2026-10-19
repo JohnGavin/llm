@@ -34,7 +34,7 @@ Session-start hook (Phase 6) checks R-universe build status automatically.
 | **micromort** | leaderboard-refresh (weekly), pkgdown (paths: docs/) | Cron + paths |
 | **irishbuoys** | data-update (daily), deploy-dashboard (paths: docs/), storm-alert, data-freshness, api-drift, seed-cachix | Cron + paths |
 | **footbet** | (none — R-universe handles everything) | — |
-| **solwatch** | CI (paths-ignore docs), deploy-dashboard (push+workflow_run), batch-convert, health-check, portfolio-refresh | Paths + cron |
+| **private-project-34** | CI (paths-ignore docs), deploy-dashboard (push+workflow_run), batch-convert, health-check, portfolio-refresh | Paths + cron |
 | **coMMpass** | 01-env, 02-data, 03-analysis, 04-website (release+paths), 05-check (paths), 06-push-cachix | Release + paths |
 
 ## Deleted Workflows (2026-03-23)
