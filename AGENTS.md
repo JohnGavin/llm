@@ -33,7 +33,9 @@ Single trailing `\| head -N` / `\| tail -N` / `\| wc -l` / `\| sort -u` / `\| un
 
 **Auto-merge Tier 2 (llm#1471, conservative):** a PR body line `Tier-2-Class: <class>` (classes: `.claude/state/auto_merge_tier2.tsv`) lets a script-only PR (at most 300 changed lines, a real test changed) merge after all normal conditions plus a 4 h veto window (owner label `hold`/`do-not-merge`, or an OWNER comment saying veto/hold), at most 2 per UTC day.
 Hard-never, always an explicit "merge": hooks, rules, launchd and recorders, workflows, AGENTS.md/CLAUDE.md, settings, `default.nix`/`default.R`, schema, credential/secret/rotate scripts, `.claude/state/**`, the sweep and merge-history files, `private_terms_publish.sh`, scanner triage, and any removal from a term/allow/deny list (`.claude/state/auto_merge_tier2_hardnever.txt`).
-Merge history is queryable in `unified.duckdb` (`merge_events`) and `.claude/scripts/merge_history_check.sh`. Widening (editing the Tier 2 table, the hard-never list or this paragraph) stays Class C.
+Tier 2 class `readonly-checker` (llm#1471): a PR declaring `Tier-2-Class: readonly-checker` may relax the scheduled-script reason ONLY for scripts on the owner-signed list `.claude/state/readonly_checkers.txt` (every changed non-test script must be listed; any other scheduled script stays excluded).
+The sweep also runs `tests/test_readonly_checkers_guard.sh --scan` on the PR-head content of each changed script (a heuristic backstop for mutating commands; the owner's signature on the list is the control), and `merge_history_check.sh` R1 uses the same list. The list, the guard test and its table row are excluded and hard-never.
+Merge history is queryable in `unified.duckdb` (`merge_events`) and `.claude/scripts/merge_history_check.sh`. Widening (editing the Tier 2 table, the hard-never list, the read-only checker list or this paragraph) stays Class C.
 
 **Worktrees:** new worktrees go under `~/docs_gh/worktrees/<project>/<branch>/` (preferably `~/.claude/scripts/cc-worktree.sh <project> <branch>`), never as sibling directories (`worktree-location` rule; `git worktree add` is a Bash call, so this pointer stays here).
 

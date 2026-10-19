@@ -13,16 +13,30 @@
 #
 # Callers must set MC_TMP (a writable scratch dir) before mc_load.
 
-# mc_load REPO_DIR EXCL_FILE
+# mc_load REPO_DIR EXCL_FILE [READONLY_FILE]
 # Sets MC_PATFILE, MC_EXCL_ERR, MC_SCHEDFILE, MC_SCHED_ERR (fail closed: an
 # unreadable, empty or invalid data source is reported, never treated as "no
-# exclusions").
+# exclusions"). Also MC_RO_FILE / MC_RO_ERR for the owner-signed read-only
+# checker list (.claude/state/readonly_checkers.txt unless READONLY_FILE is
+# given). The list only ever RELAXES the scheduled-script reason, so an
+# unreadable, empty or invalid list is simply "no relaxation" (never a hole).
 mc_load() {
-  local repo_dir="$1" excl_file="$2" f sched_srcs=""
-  MC_EXCL_ERR=""; MC_SCHED_ERR=""
+  local repo_dir="$1" excl_file="$2" ro_file="${3:-$1/.claude/state/readonly_checkers.txt}" f sched_srcs=""
+  MC_EXCL_ERR=""; MC_SCHED_ERR=""; MC_RO_ERR=""
   MC_PATFILE="$MC_TMP/patterns"
   MC_SCHEDFILE="$MC_TMP/scheduled"
-  : > "$MC_PATFILE"; : > "$MC_SCHEDFILE"
+  MC_RO_FILE="$MC_TMP/readonly"
+  : > "$MC_PATFILE"; : > "$MC_SCHEDFILE"; : > "$MC_RO_FILE"
+  if [ ! -r "$ro_file" ]; then
+    MC_RO_ERR="readonly-list-unreadable"
+  else
+    grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$ro_file" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' > "$MC_RO_FILE"
+    if [ ! -s "$MC_RO_FILE" ]; then
+      MC_RO_ERR="readonly-list-empty"
+    elif grep -q -e '\.\.' -e '^/' -e '[^A-Za-z0-9_./-]' "$MC_RO_FILE"; then
+      MC_RO_ERR="readonly-list-invalid"
+    fi
+  fi
   if [ ! -r "$excl_file" ]; then
     MC_EXCL_ERR="exclusions-unreadable"
   else
@@ -66,26 +80,68 @@ mc_check_paths() {
   fi
 }
 
+# mc_ro_listed PATH   true when PATH (repo-relative, exact) is on the owner-signed
+# read-only checker list and the list loaded cleanly.
+mc_ro_listed() {
+  [ -z "$MC_RO_ERR" ] || return 1
+  grep -F -x -q -- "$1" "$MC_RO_FILE"
+}
+
+# mc_sched_unlisted FILE_LIST
+# Sets MC_SCHED_UNLISTED to the first path in FILE_LIST whose basename is a
+# scheduled script and which is NOT on the read-only checker list ("" when every
+# scheduled-script path is listed, or none is scheduled). With an unusable list
+# nothing is listed, so every scheduled path counts.
+mc_sched_unlisted() {
+  local p b
+  MC_SCHED_UNLISTED=""
+  [ -s "$1" ] || return 0
+  [ -z "$MC_SCHED_ERR" ] || return 0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    b="${p##*/}"
+    if grep -F -x -q -- "$b" "$MC_SCHEDFILE" && ! mc_ro_listed "$p"; then
+      MC_SCHED_UNLISTED="$p"; return 0
+    fi
+  done < "$1"
+}
+
 # mc_classify_merged FILE_LIST LABELS TIER2_CLASS
 # For a MERGED PR. LABELS is space separated; TIER2_CLASS is the declared class
 # from the PR body trailer or "-". Sets MC_CLASS, MC_REASONS (comma list of
 # reason kinds, never paths), MC_MERGE_PATH, MC_APPROVAL.
+# Read-only checkers: a SWEEP merge (auto-merged label) whose only scheduled-script
+# paths are on .claude/state/readonly_checkers.txt is not an excluded class (reason
+# readonly-checker, class readonly-checker); an UNLISTED scheduled script still is,
+# also for a PR declaring Tier-2-Class: readonly-checker.
 mc_classify_merged() {
-  local ff="$1" labels="$2" t2="$3" l has_auto=0 has_t2=0
+  local ff="$1" labels="$2" t2="$3" l has_auto=0 has_t2=0 ro_relax=0
   mc_check_paths "$ff"
-  MC_REASONS=""
-  if [ -n "$MC_PATH_HIT" ]; then MC_REASONS="path"; fi
-  if [ -n "$MC_SCHED_HIT" ]; then MC_REASONS="${MC_REASONS:+$MC_REASONS,}scheduled-script"; fi
+  mc_sched_unlisted "$ff"
   for l in $labels; do
     case "$l" in auto-merged) has_auto=1 ;; tier2) has_t2=1 ;; esac
   done
+  if [ "$has_auto" -eq 1 ] && [ -n "$MC_SCHED_HIT" ] && [ -z "$MC_SCHED_UNLISTED" ] && [ -z "$MC_RO_ERR" ]; then ro_relax=1; fi
+  MC_REASONS=""
+  if [ -n "$MC_PATH_HIT" ]; then MC_REASONS="path"; fi
+  if [ -n "$MC_SCHED_HIT" ]; then
+    if [ "$ro_relax" -eq 1 ]; then
+      MC_REASONS="${MC_REASONS:+$MC_REASONS,}readonly-checker"
+    else
+      MC_REASONS="${MC_REASONS:+$MC_REASONS,}scheduled-script"
+    fi
+  fi
   if [ "$has_auto" -eq 1 ]; then MC_MERGE_PATH="sweep"; else MC_MERGE_PATH="owner-verb"; fi
   if [ -n "$MC_EXCL_ERR$MC_SCHED_ERR" ]; then
     MC_CLASS="unknown"
   elif [ -n "$MC_PATH_HIT" ]; then
     MC_CLASS="excluded:path"
+  elif [ "$has_auto" -eq 1 ] && [ "$has_t2" -eq 1 ] && [ "$t2" = "readonly-checker" ] && [ -n "$MC_SCHED_UNLISTED" ]; then
+    MC_CLASS="excluded:scheduled-script"
   elif [ "$has_auto" -eq 1 ] && [ "$has_t2" -eq 1 ]; then
     case "$t2" in ""|"-") MC_CLASS="tier2:unknown" ;; *) MC_CLASS="tier2:$t2" ;; esac
+  elif [ "$ro_relax" -eq 1 ]; then
+    MC_CLASS="readonly-checker"
   elif [ -n "$MC_SCHED_HIT" ]; then
     MC_CLASS="excluded:scheduled-script"
   else
@@ -150,6 +206,19 @@ mc_tier2_check() {
     done < "$MC_TMP/t2_globs"
     if [ "$ok_any" -eq 0 ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-path-not-allowed:$p"; return; fi
   done < "$MC_TMP/t2_paths"
+
+  # 2b. readonly-checker: every changed path that is not a test file (new path and,
+  # for a rename, previous path) must be on the owner-signed list, so the class can
+  # only ever relax the scheduled-script reason for listed scripts. An unusable list
+  # means the sweep cannot tell: indeterminate, never "all listed".
+  if [ "$cls" = "readonly-checker" ]; then
+    if [ -n "$MC_RO_ERR" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="$MC_RO_ERR"; return; fi
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      case "$p" in tests/*|.claude/tests/*) continue ;; esac
+      if ! mc_ro_listed "$p"; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-readonly-not-listed:$p"; return; fi
+    done < "$MC_TMP/t2_paths"
+  fi
 
   # 3. extra per-class forbidden pattern
   if [ -n "$forb" ] && [ "$forb" != "-" ]; then
