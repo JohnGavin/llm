@@ -1,5 +1,6 @@
 #!/bin/bash
-# Runs scanner_triage.sh in --dry-run (changes nothing). To let it chmod 600
-# safe files and file/comment GitHub issues, the OWNER edits "--dry-run" to
-# "--apply" below (llm#1458). Nothing else switches it to --apply.
-exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.scanner-triage" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/scanner_triage.sh" "--dry-run"
+# Runs scanner_triage.sh --apply: chmod 600 on safe credential-flagged files and
+# file/comment ONE GitHub issue per (scanner, type), within the classes in
+# AGENTS.md "Scanner triage" (llm#1458). Switched on 2026-10-18 at the owner's
+# instruction. To go back to a dry run, change "--apply" to "--dry-run" below.
+exec /Users/johngavin/docs_gh/llm/bin/launchd_run_record.sh "com.claude.scanner-triage" -- "/bin/bash" "/Users/johngavin/docs_gh/llm/.claude/scripts/scanner_triage.sh" "--apply"
