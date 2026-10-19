@@ -4,7 +4,7 @@
 <dict>
     <!-- com.claude.auto-merge-sweep.plist (llm#1471)
          Runs the Auto-Merge Policy every 30 minutes: bin/auto_merge_sweep.sh
-         --apply labels auto-merged and squash-merges PRs that meet ALL the
+         in apply mode labels auto-merged and squash-merges PRs that meet ALL the
          policy's conditions, at most 3 per run. Each action is logged to
          ~/.claude/logs/auto_merge_sweep.log.
 
@@ -17,7 +17,7 @@
            tail ~/.claude/logs/auto_merge_sweep.log
          Rollback:
            launchctl bootout gui/501/com.claude.auto-merge-sweep
-         or, to keep the job but stop merging, delete --apply from
+         or, to keep the job but stop merging, delete the apply flag from
          bin/launchd-recorders/auto-merge-sweep (report mode mutates nothing). -->
 
     <key>Label</key>
