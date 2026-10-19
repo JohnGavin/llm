@@ -79,6 +79,10 @@ HASHES_B="$(cat "$OUT_B/hashes.txt")"
 R="$TMP/repo"
 mkdir -p "$R"
 git -C "$R" init -q
+# Hermetic: a global core.hooksPath (the owner's PII pre-commit gate) would
+# block the fixture commits that carry the synthetic canary, leaving HEAD==BASE
+# and every "expect exit 1" scan vacuously clean. A repo-local value wins.
+git -C "$R" config core.hooksPath "$TMP/no_hooks"
 GC="git -C $R -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false"
 printf 'hello\n' > "$R/a.txt"
 git -C "$R" add a.txt
