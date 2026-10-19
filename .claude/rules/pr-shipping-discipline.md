@@ -49,10 +49,21 @@ If GitHub Actions is not running (the session banner shows `ci:UNAVAILABLE` or `
 
 Gate-by-gate local commands, the `ci_outages.tsv` ledger, and how to attribute stale scheduled data to an outage: [`_companions/ci-outage-local-gates.md`](_companions/ci-outage-local-gates.md) ([#1234](https://github.com/JohnGavin/llm/issues/1234)).
 
+## One PR per feature (owner instruction 2026-10-19, all projects)
+
+Every merge costs the owner a decision, so the unit of review is the feature, not the step. On 2026-10-19 one feature (the auto-merge sweep) shipped as four PRs (#1477, #1478, #1479, #1480: report-only sweep, `--apply`, a fix, scheduling), each needing its own "merge", when one or two would have done.
+
+- Related changes share one branch and one PR, in separate commits: the fix, the follow-up found while testing it, its tests and CI wiring, its scheduling, its docs.
+- Dispatching a subagent for the next step of a feature that already has an open PR: pre-create the worktree on that PR's branch (`feedback_agent-worktree-pinning`, llm#1190) and tell the agent to commit and push there, or run the steps in one dispatch. Do not let each step open its own PR.
+- Open a separate PR only when: the changes are unrelated; one must be merged and observed before the next is safe (for example a scheduled job that must run once before it is widened); or a reviewer would need to revert them independently.
+- Ask for the owner's verb once, when the whole PR is green. Say what the PR contains, and list each class (exclusion-list path, scheduled script, AGENTS.md) that makes it a Class C merge.
+- Measure it: `merge_history_check.sh` (llm#1471) records every merge by kind, so a spike in owner-verb merges per feature is visible.
+
 ## Forbidden patterns
 
 | Pattern | Why wrong | Fix |
 |---|---|---|
+| One PR per step of the same feature (fix, then follow-up, then tests, then scheduling) | Each step costs the owner a separate "merge" for one review decision | One branch, one PR, separate commits; chain dispatches onto the open PR |
 | Subagent reads "ship it" in its prompt and calls `gh pr merge` | Bypasses the PR review surface | Subagent calls `gh pr create` only; orchestrator merges |
 | `git push origin <feature>:main` interpreted from "ship it" | Same as direct merge; worse — bypasses the PR API | Push to feature branch, `gh pr create` |
 | Orchestrator merges on its own initiative after an agent reports "ship it" | The agent's report is not user authorisation | Wait for explicit user direction to merge |

@@ -55,6 +55,9 @@ C exactly as documented above — nothing else in this rule changes.
 
 This is advisory, not hook-enforced (no mechanism blocks a merge call); the rationale is in the companion doc.
 
+**Tier 2 (conservative, llm#1471).** A PR declaring `Tier-2-Class: <class>` in its body may auto-merge although it only touches scheduled scripts, when the class is enabled in `.claude/state/auto_merge_tier2.tsv`, every other condition above holds, the mechanical limits hold (at most 300 changed lines, only `.claude/scripts/**`, `bin/*.sh`, `tests/**`, a real test changed) and a 4 h veto window passed with no `hold`/`do-not-merge` label and no OWNER comment saying veto or hold; at most 2 per UTC day. The hard-never list (`.claude/state/auto_merge_tier2_hardnever.txt`: hooks, rules, launchd, workflows, AGENTS.md/CLAUDE.md, settings, schema, credential scripts, state files, the sweep itself) always stays Class C, and so does widening Tier 2.
+Merge history is queryable (`merge_events`, `merge_events_weekly` in unified.duckdb; `.claude/scripts/merge_history_check.sh`, rules R1..R5, alerts in the 06:30 email).
+
 ### Auto-Merge Exclusion List (always Class C, regardless of the toggle)
 
 Paths (reasons in the companion doc):

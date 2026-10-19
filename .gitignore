@@ -44,6 +44,8 @@ my_new_md_database
 !.claude/scripts/email_column_definitions.tsv
 # Committed scanner triage policy table (llm#1458) -- the one home for fix/file/human classes
 !.claude/state/scanner_policy.tsv
+# Committed Auto-Merge Tier 2 class table (llm#1471) -- the one home for Tier 2 classes
+!.claude/state/auto_merge_tier2.tsv
 
 # Sensitive/personal files
 *.pdf
