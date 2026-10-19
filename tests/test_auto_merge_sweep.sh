@@ -252,6 +252,19 @@ for p in .claude/hooks/x.sh .claude/rules/a.md .claude/launchd/x.plist \
   expect "excluded $p" 1 NOT-ELIGIBLE "excluded-path:$p"
 done
 
+# the state tables and the merge machinery are never automatic, with no Tier 2 trailer at all
+# (a plain PR editing the Tier 2 table must not widen what merges without the owner)
+for p in .claude/state/auto_merge_tier2.tsv .claude/state/foo.tsv .claude/state/auto_merge_exclusions.txt \
+         bin/auto_merge_sweep.sh .claude/scripts/lib/merge_classify.sh \
+         .claude/scripts/merge_history_sync.sh .claude/scripts/merge_history_check.sh; do
+  setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" "R/ok.R $p"; run 1
+  expect "excluded (state/machinery) $p" 1 NOT-ELIGIBLE "excluded-path:$p"
+done
+# falsification: with a one-regex exclusion file the Tier 2 table edit is NOT excluded (the check can go green)
+printf '^\\.claude/hooks/\n' > "$W/excl_hooks_only"
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" ".claude/state/auto_merge_tier2.tsv"; AUTO_MERGE_EXCLUSIONS="$W/excl_hooks_only" run 1
+expect "state edit with state regex absent is eligible (falsification)" 1 ELIGIBLE all-conditions-met
+
 # scheduled script found only through a plist reference; falsify by removing it
 setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S" ".claude/scripts/zzz_nightly.sh"; run 1
 expect "scheduled via plist" 1 NOT-ELIGIBLE scheduled-script:zzz_nightly.sh
@@ -540,14 +553,14 @@ for p in .claude/hooks/x.sh .claude/rules/a.md .claude/launchd/x.plist bin/launc
   esac
 done
 # the ones the exclusion file does NOT cover must come from the hard-never list itself
-for p in .claude/state/foo.tsv bin/auto_merge_sweep.sh tests/test_auto_merge_sweep.sh .claude/scripts/merge_history_sync.sh \
+for p in tests/test_auto_merge_sweep.sh \
          .claude/scripts/private_terms_publish.sh .claude/scripts/scanner_triage.sh .claude/scripts/housekeeping_schema_init.sql; do
   setup_repo ON; t2 1 "$p::1:0 tests/test_zzz.sh::1:0"; run 1
   expect "tier2 hard-never list itself: $p" 1 NOT-ELIGIBLE "tier2-hard-never:$p"
 done
 # rename OUT of a hard-never path (previous_filename counts)
 setup_repo ON; t2 1 '.claude/scripts/y.sh:.claude/state/x.tsv:5:5 tests/test_zzz.sh::1:0'; run 1
-expect "tier2 rename out of a hard-never path" 1 NOT-ELIGIBLE "tier2-hard-never:.claude/state/x.tsv"
+expect "tier2 rename out of a hard-never path" 1 NOT-ELIGIBLE "excluded-path:.claude/state/x.tsv"
 setup_repo ON; t2 1 '.claude/scripts/y.sh:.claude/hooks/x.sh:5:5 tests/test_zzz.sh::1:0'; run 1
 expect "tier2 rename out of hooks" 1 NOT-ELIGIBLE "excluded-path:.claude/hooks/x.sh"
 
@@ -663,7 +676,7 @@ for p in .claude/state/readonly_checkers.txt tests/test_readonly_checkers_guard.
   expect "editing $p, no trailer" 1 NOT-ELIGIBLE "excluded-path:$p"
 done
 # ... and, if the exclusion file did not catch them, the Tier 2 hard-never list still does
-grep -v 'readonly_checkers' "$REAL_EXCL" > "$W/excl_no_ro"
+grep -v -e 'readonly_checkers' -e '\^\\.claude/state/' "$REAL_EXCL" > "$W/excl_no_ro"
 for p in .claude/state/readonly_checkers.txt tests/test_readonly_checkers_guard.sh; do
   setup_repo ON; t2 1 "$p::1:0 $ROFILES" "" "$RO"; AUTO_MERGE_EXCLUSIONS="$W/excl_no_ro" run 1
   expect "hard-never list alone blocks $p" 1 NOT-ELIGIBLE "tier2-hard-never:$p"

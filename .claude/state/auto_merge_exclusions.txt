@@ -60,6 +60,17 @@ _schema_apply\.sh$
 # either is never automatic (llm#1471). Matched by file name at any depth.
 (^|/)[^/]*readonly_checkers[^/]*$
 
+# Every state/policy table, including the Tier 2 table, the hard-never list and
+# this file: a PR editing them widens or narrows what merges without the owner,
+# so it is never automatic (hard-never list in AGENTS.md; llm#1471).
+^\.claude/state/
+
+# The merge machinery itself: the sweep, the shared classifier and the merge
+# history scripts decide what merges automatically (hard-never list; llm#1471).
+^bin/auto_merge_sweep\.sh$
+^\.claude/scripts/lib/merge_classify\.sh$
+^\.claude/scripts/merge_history_(sync|check)\.sh$
+
 # Scripts that close, delete, reap, garbage-collect or reload things, and
 # credential or rotation scripts, matched by file name at any depth (rule list;
 # stricter in that it also catches tests and docs with these words in the name).
