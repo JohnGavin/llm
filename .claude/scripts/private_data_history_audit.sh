@@ -83,7 +83,22 @@
 #                                              # and no baseline marker is
 #                                              # INDETERMINATE until a run with
 #                                              # --baseline. Summary line:
-#                                              # repos=N clean=a new_findings=b indeterminate=c skipped=d excluded=e
+#                                              # repos=N clean=a new_findings=b indeterminate=c skipped=d excluded=e gone=g
+#                                              # llm#1396 GONE: when a unit's ls-remote/
+#                                              # clone fails, `gh api repos/<owner>/<name>`
+#                                              # is asked. HTTP 404 (deleted/suspended
+#                                              # fork: nobody can read it, ever) is the
+#                                              # per-unit outcome GONE: listed with
+#                                              # `outcome=GONE`, logged `repo=<unit>
+#                                              # status=gone`, counted in gone=g (in
+#                                              # repos=N, NOT in clean=a), never scanned.
+#                                              # Any OTHER failure (network, 5xx, 403/429
+#                                              # rate limit, auth, gh missing, gists)
+#                                              # stays INDETERMINATE. No state is stored
+#                                              # for GONE: it is re-asked every run, so a
+#                                              # unit that returns 200 is audited
+#                                              # normally. GONE never raises the exit
+#                                              # code by itself.
 #                                              # llm#1420 exclusions: units listed in
 #                                              # .claude/state/private_data_history_exclusions.txt
 #                                              # (PDHA_EXCLUDE_FILE overrides; unit,
@@ -97,7 +112,8 @@
 #                                              # entry naming an unenumerated unit is
 #                                              # a NOTE only.
 #                                              # Exit 1 if any NEW finding, else 3 if
-#                                              # any unit INDETERMINATE, else 0.
+#                                              # any unit INDETERMINATE, else 0
+#                                              # (precedence 1 > 3 > 0; GONE-only is 0).
 #                                              # Env: PDHA_OWNER, PDHA_CACHE_DIR,
 #                                              # PDHA_MIRROR_MAX_KB, PDHA_FULL_RESCAN_DAYS.
 #                                              # llm#1415 skip: a unit whose `git
@@ -310,6 +326,11 @@ if [ "$SELFTEST" -eq 1 ]; then
     # core.hooksPath (the PII pre-commit, llm#1365) would block those commits
     # and silently turn the real-scanner checks into false failures.
     export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    # The real scanner (llm#1388) fails closed (INDETERMINATE) without a fresh
+    # private-term list under $HOME/.config, and the selftest sandboxes HOME.
+    # Give it a synthetic list: header + canary only, matching no fixture.
+    mkdir -p "$sb/home/.config"
+    printf '# private_terms v1 generated=%s count=1\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "zzcanary""privterm7q" > "$sb/home/.config/private_terms.txt"
     SELF="$0"
     DB="$sb/unified.duckdb"
     # The REAL schema file builds the sandbox DB: this also exercises the DDL.
@@ -567,6 +588,19 @@ case "$ep" in
     n="${ep#repos/}"; n="${n%%/forks*}"
     f="$GH_STUB_DIR/forks_$(printf '%s' "$n" | tr / _).json"
     if [ -f "$f" ]; then jq -r "$jqf" < "$f"; else echo '[]' | jq -r "$jqf"; fi ;;
+  repos/*)   # llm#1396 liveness probe: GH_STUB_REPO_STATUS="owner/name=CODE ..."
+    n="${ep#repos/}"
+    for kv in ${GH_STUB_REPO_STATUS:-}; do
+      if [ "${kv%%=*}" = "$n" ]; then
+        code="${kv#*=}"
+        case "$code" in
+          200) echo '{}'; exit 0 ;;
+          127) echo "stub gh: command not found" >&2; exit 127 ;;
+          *) echo "gh: stub error (HTTP $code)" >&2; exit 1 ;;
+        esac
+      fi
+    done
+    echo "stub gh: unexpected call: $ep" >&2; exit 1 ;;
   *) echo "stub gh: unexpected call: $ep" >&2; exit 1 ;;
 esac
 EOF
@@ -925,6 +959,80 @@ EOF
     _check "$([ "$vrc" -eq 0 ] && [ "$n_ent" -eq 5 ] && [ "$n_ok" -eq 5 ] && echo 0 || echo 1)" "exclusion: the committed list is well-formed: 5 entries, 5 valid (rc=$vrc, entries=$n_ent, valid=$n_ok)"
     _check "$([ "$(awk -F'\t' '$2=="2027-10-13" && length($3) > 20' "$sb/committed_valid.tsv" | wc -l | tr -d ' ')" = "5" ] && echo 0 || echo 1)" "exclusion: every committed entry carries review date 2027-10-13 and a real reason"
 
+    # -----------------------------------------------------------------------
+    # 14: GONE units (llm#1396). owner1/g2 is enumerated but has no remote, so
+    # ls-remote fails; the stub gh answers the repos/<unit> probe from
+    # GN_STATUS ("owner1/g2=404"). Own DB, cache and remotes.
+    # -----------------------------------------------------------------------
+    gn="$sb/gn"
+    mkdir -p "$gn/stub" "$gn/remotes/owner1" "$gn/gists"
+    gndb="$sb/gn.duckdb"
+    duckdb -init /dev/null "$gndb" < "$SCHEMA_SQL" >/dev/null 2>&1
+    mkrepo "$gn/remotes/owner1/g1.git"
+    printf '[{"full_name":"owner1/g1","private":false},{"full_name":"owner1/g2","private":false}]' > "$gn/stub/repos.json"
+    printf '[]' > "$gn/stub/gists.json"
+    printf 'PRIV_PHONE=%s\n' "$SENT2" > "$gn/pv.env"
+    chmod 600 "$gn/pv.env"
+    GN_STATUS=""
+    run_gn() {   # run_gn ARGS... ; probe answers in GN_STATUS ; sets $arc, $sb/gout, $sb/gerr
+        env HOME="$sb/home" UNIFIED_DB_PATH="$gndb" SCANNER="$SCRIPT_DIR/private_data_scan.sh" \
+            PRIVATE_VALUES_FILE="$gn/pv.env" PDHA_EXTRA_PATH="$ap/bin" GH_STUB_DIR="$gn/stub" \
+            GH_STUB_REPO_STATUS="$GN_STATUS" \
+            PDHA_CACHE_DIR="$gn/cache" PDHA_CLONE_BASE="file://$gn/remotes" PDHA_GIST_BASE="file://$gn/gists" \
+            PDHA_FULL_RESCAN_DAYS=0 PDHA_EXCLUDE_FILE="$sb/no_excl.tsv" \
+            bash "$SELF" --all-public "$@" >"$sb/gout" 2>"$sb/gerr"
+        arc=$?
+    }
+    gq() { duckdb -init /dev/null -csv -noheader "$gndb" -c "$1" 2>&1; }
+    GNLOG="$sb/home/.claude/logs/private_data_history_audit.log"
+
+    GN_STATUS="owner1/g2=404"
+    run_gn --baseline
+    _expect_rc 0 "$arc" "gone: baseline with one 404 unit and one clean unit exits 0"
+    _check "$("$GREP" -q 'repo=owner1/g2 outcome=GONE' "$sb/gout" && "$GREP" -q 'repos=2 clean=1 new_findings=0 indeterminate=0 skipped=0 excluded=0 gone=1' "$sb/gout" && echo 0 || echo 1)" "gone: 404 unit listed outcome=GONE, counted in gone=1 and NOT in clean (clean=1)"
+    run_gn
+    _expect_rc 0 "$arc" "gone: a normal run with a 404 unit exits 0 (GONE alone never raises the exit code)"
+    _check "$("$GREP" -q 'repo=owner1/g2 mode=all-public status=gone' "$GNLOG" && "$GREP" -q 'gone=1 status=clean rc=0' "$GNLOG" && echo 0 || echo 1)" "gone: the log carries a per-unit status=gone line and the summary gone=1"
+    _check "$([ "$(gq "SELECT count(*) FROM private_data_history_unit_state WHERE repo='owner1/g2'")" = "0" ] && [ "$(gq "SELECT count(*) FROM $TABLE WHERE repo='owner1/g2'")" = "0" ] && [ ! -e "$gn/cache/owner1__g2.git" ] && echo 0 || echo 1)" "gone: no unit state, ledger row or mirror is stored for a GONE unit (nothing sticky)"
+
+    GN_STATUS="owner1/g2=503"
+    run_gn
+    _expect_rc 3 "$arc" "gone: a 503 on the probe is INDETERMINATE (exit 3), not GONE"
+    _check "$("$GREP" -q 'repo=owner1/g2 outcome=INDETERMINATE' "$sb/gout" && "$GREP" -q 'indeterminate=1 skipped=0 excluded=0 gone=0' "$sb/gout" && echo 0 || echo 1)" "gone: 503 unit reported INDETERMINATE with gone=0"
+    GN_STATUS="owner1/g2=403"
+    run_gn
+    _expect_rc 3 "$arc" "gone: a 403 (rate limit/auth) on the probe is INDETERMINATE"
+    GN_STATUS="owner1/g2=127"
+    run_gn
+    _expect_rc 3 "$arc" "gone: gh failing to run during the probe is INDETERMINATE"
+    GN_STATUS=""
+    run_gn
+    _expect_rc 3 "$arc" "gone: an unanswerable probe (no result at all) is INDETERMINATE"
+
+    # Positive control: a reachable unit with a planted finding still exits 1
+    # even though a GONE unit is present (findings beat GONE).
+    leak_commit "$gn/remotes/owner1/g1.git" leak.txt
+    GN_STATUS="owner1/g2=404"
+    run_gn
+    _expect_rc 1 "$arc" "gone: a planted finding in a reachable unit exits 1 with a GONE unit present"
+    _check "$("$GREP" -q 'repo=owner1/g1 outcome=FAIL' "$sb/gout" && "$GREP" -q 'new_findings=1 indeterminate=0 skipped=0 excluded=0 gone=1' "$sb/gout" && echo 0 || echo 1)" "gone: positive control reports g1 FAIL, new_findings=1 and gone=1 together"
+    # Findings beat INDETERMINATE (existing precedence 1 > 3, unchanged): a new
+    # leak plus a 503 unit still exits 1.
+    leak_commit "$gn/remotes/owner1/g1.git" leak2.txt
+    GN_STATUS="owner1/g2=503"
+    run_gn
+    _expect_rc 1 "$arc" "gone: precedence control: a new finding plus an INDETERMINATE (503) unit exits 1 (findings beat 3)"
+
+    # A GONE unit that comes back (200) is audited normally, not skipped.
+    mkrepo "$gn/remotes/owner1/g2.git"
+    GN_STATUS="owner1/g2=200"
+    run_gn --baseline
+    _expect_rc 0 "$arc" "gone: a formerly-404 unit that is readable again is baselined (exit 0)"
+    _check "$("$GREP" -q 'repo=owner1/g2 outcome=BASELINED' "$sb/gout" && "$GREP" -q 'gone=0' "$sb/gout" && [ -d "$gn/cache/owner1__g2.git" ] && echo 0 || echo 1)" "gone: the recovered unit is cloned and scanned (BASELINED, gone=0, mirror cached)"
+    run_gn
+    _expect_rc 0 "$arc" "gone: after recovery a normal run audits it as PASS"
+    _check "$("$GREP" -q 'repo=owner1/g2 outcome=PASS' "$sb/gout" && echo 0 || echo 1)" "gone: recovered unit reported PASS"
+
     echo ""
     echo "private_data_history_audit selftest: $pass/$total PASS"
     [ "$pass" -eq "$total" ] && exit 0
@@ -1154,6 +1262,24 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
         n="$(db_query "SELECT count(*) FROM ${STATE_TABLE} WHERE repo = '$(sql_quote "$1")' AND ref_hash = '$2' AND denylist_hash = '${DL_HASH}' AND scanner_hash = '${SC_HASH}' AND last_outcome IN ('PASS','BASELINED') AND last_full_scan_epoch > $(date +%s) - ${RESCAN_DAYS} * 86400" 2>/dev/null)" || return 1
         [ "$n" = "1" ]
     }
+    # llm#1396: unit_gone NAME -> rc 0 iff the GitHub API says repos/NAME is HTTP
+    # 404 (deleted/suspended: nobody can ever read it). Anything else -- network
+    # error, 5xx, 403/429 rate limit, auth failure, gh missing, a name that is
+    # not owner/name (gists) -- is rc 1 = "cannot tell", which the caller keeps
+    # INDETERMINATE. Asked fresh on every failure: no state is stored, so a unit
+    # that comes back (200) is audited normally on the next run.
+    unit_gone() {
+        case "$1" in gist:*) return 1 ;; esac
+        command -v gh >/dev/null 2>&1 || return 1
+        gh api "repos/$1" --silent >"$TMPD/gone.out" 2>"$TMPD/gone.err" </dev/null && return 1
+        "$GREP" -qE '\(HTTP 404\)|HTTP 404' "$TMPD/gone.err" "$TMPD/gone.out"
+    }
+    N_GONE=0
+    mark_gone() {
+        add_result "$1" GONE 0 0 "not publicly readable (API HTTP 404: deleted or suspended); not scanned, not clean"
+        N_GONE=$((N_GONE + 1))
+        log_line "repo=$1 mode=all-public status=gone rc=0"
+    }
     echo "private_data_history_audit: --all-public owner=${OWNER} units=$(wc -l < "$UNITS" | tr -d ' ') (mode=${MODE_LABEL})"
     # An exclusion naming a unit that was not enumerated is reported loudly but
     # never fails the run (the unit may have been renamed, deleted or hidden).
@@ -1185,6 +1311,10 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
         # Remote refs first (cheap): a failed ls-remote is INDETERMINATE, never clean.
         if ! git ls-remote "$uurl" </dev/null >"$TMPD/lsr.out" 2>"$TMPD/lsr.err"; then
             unit_state_clear "$uname"
+            if unit_gone "$uname"; then
+                mark_gone "$uname"
+                continue
+            fi
             add_result "$uname" INDETERMINATE 0 0 "ls-remote failed ($(head -c 150 "$TMPD/lsr.err" | tr '\t\n' '  '))"
             continue
         fi
@@ -1207,6 +1337,10 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
             if ! git clone --quiet --mirror "$uurl" "$udir" </dev/null >"$TMPD/git.out" 2>&1; then
                 rm -rf "$udir"   # our own partial clone, created a moment ago
                 unit_state_clear "$uname"
+                if unit_gone "$uname"; then
+                    mark_gone "$uname"
+                    continue
+                fi
                 add_result "$uname" INDETERMINATE 0 0 "clone failed ($(head -c 150 "$TMPD/git.out" | tr '\n' ' '))"
                 continue
             fi
@@ -1267,7 +1401,7 @@ if [ "$ALL_PUBLIC" -eq 1 ] && [ -z "$CHILD" ]; then
         echo "NEW findings -- triage these; acknowledge with: private_data_history_audit.sh --ack <fp>"
         cat "$TMPD/all_new_lines.txt"
     fi
-    SUMMARY="repos=${N_UNITS} clean=${N_CLEAN} new_findings=${N_NEWSUM} indeterminate=${N_INDET} skipped=${N_SKIPPED} excluded=${N_EXCLUDED}"
+    SUMMARY="repos=${N_UNITS} clean=${N_CLEAN} new_findings=${N_NEWSUM} indeterminate=${N_INDET} skipped=${N_SKIPPED} excluded=${N_EXCLUDED} gone=${N_GONE}"
     echo "private_data_history_audit: ${SUMMARY}"
 
     if [ "$N_NEWSUM" -gt 0 ]; then
