@@ -12,8 +12,8 @@
 # 'claude-code' so private repos never route to gemini — public-only opt-in".
 # The global was deliberately changed to gemini on 2026-07-05; the comment was
 # not. For seven weeks it read as an assurance and nothing re-asked the
-# question, while four LOCAL-ONLY repos — mycare, premortem and eis6,
-# travel — sent every commit diff to a free-tier model.
+# question, while four LOCAL-ONLY repos — private-project-77, private-project-78 and eis6,
+# private-project-86 — sent every commit diff to a free-tier model.
 #
 # public-private-repo-boundary.md says of itself: "This rule is documentation.
 # It is not a control ... If you find yourself relying on this file to prevent

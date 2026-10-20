@@ -55,7 +55,7 @@ A regex tally over those 175 distinct values:
 | `testrepo_*` | regex `^testrepo_` | 13 |
 | Throwaway / placeholder | `repo`, `repo[0-9]+`, `repo_*`, `test_repo`, `tmp.*`, `tmprepo*`, `tlang-clone`, `my_t_project`, `myproject`, `hello_t`, `t_demos`, `main`, `content`, `knowledge`, `llmtelemetry-hook-sync`, `randomwalk-wiki` | 19 |
 | **Fixture-like total** | | **162** |
-| Plausibly real | `JohnGavin.github.io`, `coMMpass`, `crypto`, `crypto_solwatch`, `crypto_swarms`, `football`, `historical`, `llm`, `llmtelemetry`, `micromort`, `mycare`, `premortem`, `randomwalk` | **13** |
+| Plausibly real | `JohnGavin.github.io`, `coMMpass`, `crypto`, `crypto_private-project-34`, `crypto_swarms`, `football`, `historical`, `llm`, `llmtelemetry`, `micromort`, `private-project-77`, `private-project-78`, `randomwalk` | **13** |
 | **Total distinct** | | **175** |
 
 **93% of distinct `repo` values are noise**. Of the 13 plausibly-real values,
@@ -92,13 +92,13 @@ the DB's plausibly-real values, and the user's mental model from #528:
 | `llm` | LLM meta-config | `JohnGavin/llm` | `r-package` | `true` | This repo; cross-project authority |
 | `llmtelemetry` | LLM Telemetry | `JohnGavin/llmtelemetry` | `r-package` | `true` | Live dashboard; production |
 | `historical` | Historical (finance) | `JohnGavin/historical` | `r-package` | `true` | T-lang project; under `~/docs_gh/proj/finance/data/historical/` |
-| `mycare` | MyCare | private/local | `analysis` | `true` | Local-only repo; not on GitHub (private-repo boundary — see `public-private-repo-boundary` rule) |
-| `premortem` | Premortem (planning) | `JohnGavin/premortem` ? | `analysis` | `true` | Local at `~/docs_gh/proj/pers/premortem/`, no remote origin set — verify in sub-issue 1 |
+| `private-project-77` | private-project-77 | private/local | `analysis` | `true` | Local-only repo; not on GitHub (private-repo boundary — see `public-private-repo-boundary` rule) |
+| `private-project-78` | private-project-78 (planning) | `JohnGavin/private-project-78` ? | `analysis` | `true` | Local at `~/docs_gh/proj/pers/private-project-78/`, no remote origin set — verify in sub-issue 1 |
 | `randomwalk` | Random Walk | `JohnGavin/randomwalk` | `analysis` | `true` | Stats simulation; under `~/docs_gh/proj/stats/simulations/randomwalk/` |
 | `urban_planning` | Urban Planning | `JohnGavin/urban_planning` | `quarto-website` | `true` | Under `~/docs_gh/proj/data/urban_planning/` |
 | `footbet` | Footbet | `JohnGavin/footbet` | `analysis` | `true` | Under `~/docs_gh/proj/stats/sport/footbet/` |
 | `acd_area_climate_design` | ACD area climate design | `JohnGavin/acd_area_climate_design` | `analysis` | `true` | Under `~/docs_gh/proj/finance/data/acd_area_climate_design/` |
-| `crypto_solwatch` | Crypto Solwatch | `JohnGavin/solwatch` | `analysis` | `true` | Under `~/docs_gh/proj/finance/data/crypto_solwatch/`; GH repo is `solwatch` (rename note) |
+| `crypto_private-project-34` | Crypto private-project-34 | `JohnGavin/private-project-34` | `analysis` | `true` | Under `~/docs_gh/proj/finance/data/crypto_private-project-34/`; GH repo is `private-project-34` (rename note) |
 | `crypto_swarms` | Crypto Swarms | `JohnGavin/crypto_swarms` | `analysis` | `true` | Under `~/docs_gh/proj/finance/data/crypto_swarms/` |
 | `irishbuoys` | Irish Buoys | `JohnGavin/irishbuoys` | `r-package` | `true` | Under `~/docs_gh/proj/data/weather/irish_buoy_network/irishbuoys/` |
 | `rix.setup` | rix.setup | `JohnGavin/rix.setup` | `r-package` | `true` | Nix env helper |
@@ -121,12 +121,12 @@ that emerged during investigation.
 CREATE TABLE IF NOT EXISTS canonical_projects (
   slug              VARCHAR PRIMARY KEY,
   display_name      VARCHAR NOT NULL,
-  repo              VARCHAR,                    -- 'JohnGavin/foo'; NULL for local-only (e.g. premortem)
+  repo              VARCHAR,                    -- 'JohnGavin/foo'; NULL for local-only (e.g. private-project-78)
   kind              VARCHAR NOT NULL,           -- 'r-package' | 'quarto-website' | 'dashboard' | 'analysis'
   is_active         BOOLEAN NOT NULL DEFAULT TRUE,
   created_at        TIMESTAMP NOT NULL DEFAULT current_timestamp,
   updated_at        TIMESTAMP NOT NULL DEFAULT current_timestamp,
-  aliases           VARCHAR,                    -- comma-separated alternative repo strings the consumer might see (e.g. 'crypto_solwatch' for slug=solwatch)
+  aliases           VARCHAR,                    -- comma-separated alternative repo strings the consumer might see (e.g. 'crypto_private-project-34' for slug=private-project-34)
   notes             VARCHAR
 );
 
@@ -256,7 +256,7 @@ Selftest cases (minimum):
 
 | Sub-issue | Title | Acceptance summary |
 |---|---|---|
-| #528-1 | foundation | Schema deployed; CSV present with verified seed; migration script idempotent; CSV columns documented in README in `.claude/data/`; `crypto`/`football`/`coMMpass`/`micromort`/`premortem` ambiguities resolved before merge |
+| #528-1 | foundation | Schema deployed; CSV present with verified seed; migration script idempotent; CSV columns documented in README in `.claude/data/`; `crypto`/`football`/`coMMpass`/`micromort`/`private-project-78` ambiguities resolved before merge |
 | #528-2 | first consumer migration | `compute_severity_by_project()` joined against canonical; new JSON field `severity_by_project_7d_unfiltered` preserved for debugging; email shows ~13 projects max; integration test added |
 | #528-3 | audit script + session_init Phase 15b | Selftest passes 4/4 cases; Phase 15b wired with timeout + fail-open; rule file updated; quiet-mode output ≤2 lines |
 | #528-4 | producer-side skip-and-warn | Helper `is_canonical_project()` in shared R lib; wired into 2–3 producer hooks; opt-in CLI flag preserves legacy behaviour for tests |
