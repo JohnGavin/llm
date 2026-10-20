@@ -80,6 +80,14 @@
 # NOT-ELIGIBLE readonly-guard-failed, exit 3 / a fetch failure is INDETERMINATE.
 # Editing the list or the guard test is itself excluded (auto_merge_exclusions.txt).
 #
+# Tier 2 class scheduled-script (llm#1471): scheduled scripts may merge except those
+# whose name says close/delete/reap/gc/reload/unload/purge/prune/kill or credential/
+# secret/rotate (forbidden_extra in the table) and the hard-never list; destructive
+# scheduled scripts stay owner-verb. Tier 2 class state-table: a PR that only ADDS
+# lines to the state tables on .claude/state/auto_merge_state_tables.txt (a deleted
+# line is NOT-ELIGIBLE tier2-state-table-removal; an unusable list is INDETERMINATE;
+# any other .claude/state file stays excluded-path).
+#
 # Limits (stated, not hidden): AGENTS.md, the exclusion file and the scheduled
 # set are read from the checkout this script lives in (override with
 # AUTO_MERGE_REPO_DIR), so run it from an up-to-date base checkout. The file
@@ -102,7 +110,8 @@
 # Env overrides (used by the tests): AUTO_MERGE_REPO_DIR, AUTO_MERGE_GATE,
 # AUTO_MERGE_EXCLUSIONS, AUTO_MERGE_LOG, AUTO_MERGE_RETRY_SLEEP, AUTO_MERGE_LIB,
 # AUTO_MERGE_SYNC, AUTO_MERGE_TIER2, AUTO_MERGE_TIER2_HARDNEVER,
-# AUTO_MERGE_TIER2_WINDOW_HOURS, AUTO_MERGE_READONLY, AUTO_MERGE_READONLY_GUARD.
+# AUTO_MERGE_TIER2_WINDOW_HOURS, AUTO_MERGE_READONLY, AUTO_MERGE_READONLY_GUARD,
+# AUTO_MERGE_STATE_TABLES.
 
 set -u
 export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
@@ -129,6 +138,8 @@ TIER2_DAILY_CAP=2
 # comes from the PR.
 READONLY_LIST="${AUTO_MERGE_READONLY:-$REPO_DIR/.claude/state/readonly_checkers.txt}"
 GUARD="${AUTO_MERGE_READONLY_GUARD:-$SCRIPT_DIR/../tests/test_readonly_checkers_guard.sh}"
+# State-table allow-list (class state-table), owner-signed.
+STATE_LIST="${AUTO_MERGE_STATE_TABLES:-$REPO_DIR/.claude/state/auto_merge_state_tables.txt}"
 case "$TIER2_WINDOW_HOURS" in ""|*[!0-9.]*) TIER2_WINDOW_HOURS=4 ;; esac
 
 LOG="${AUTO_MERGE_LOG:-$HOME/.claude/logs/auto_merge_sweep.log}"
@@ -285,7 +296,7 @@ if [ ! -r "$MC_LIB" ]; then
   exit 3
 fi
 . "$MC_LIB"
-mc_load "$REPO_DIR" "$EXCL_FILE" "$READONLY_LIST"
+mc_load "$REPO_DIR" "$EXCL_FILE" "$READONLY_LIST" "$STATE_LIST"
 EXCL_ERR="$MC_EXCL_ERR"; SCHED_ERR="$MC_SCHED_ERR"
 
 # ---- Per-PR evaluation --------------------------------------------------------
@@ -415,12 +426,14 @@ evaluate() {
     if [ -n "$changed" ] && [ "$changed" -gt "$nlisted" ]; then note_ind "files-truncated"; files_ok=0; fi
     if [ ! -s "$ff" ]; then note_ind "no-files-listed"; files_ok=0; fi
   fi
-  mc_check_paths "$ff"
+  declared="$(awk -F'\t' '$1=="TIER2"{print $2}' "$fields")"
+  # Class state-table: the paths on the owner-signed allow-list are the only paths
+  # not tested against the exclusion file (mc_check_paths); everything else is.
+  mc_check_paths "$ff" "$declared"
   if [ -n "$MC_PATH_HIT" ]; then not_elig "excluded-path:$MC_PATH_HIT"; return; fi
   # Tier 2: a PR that declares a class (trailer) is judged by the class's
   # MECHANICAL conditions instead of the scheduled-script reason alone. The
   # exclusion-file paths above still apply to it in full.
-  declared="$(awk -F'\t' '$1=="TIER2"{print $2}' "$fields")"
   if [ -n "$declared" ]; then
     T2_CLASS="$declared"
     if [ "$files_ok" -eq 1 ]; then

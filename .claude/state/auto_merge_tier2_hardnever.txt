@@ -47,6 +47,10 @@
 # and its guard test: editing either widens what the readonly-checker class may merge.
 (^|/)[^/]*readonly_checkers[^/]*$
 
+# The owner-signed state-table allow-list (also covered by ^\.claude/state/ above) and
+# the guard test names: editing the list widens what the state-table class may merge.
+(^|/)[^/]*auto_merge_state_tables[^/]*$
+
 # The scheduled publishers and triage jobs the owner named.
 (^|/)private_terms_publish\.sh$
 (^|/)scanner_triage[^/]*$

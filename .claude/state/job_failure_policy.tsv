@@ -11,7 +11,8 @@
 # note         one line: why this happens
 # A job or cause that is not listed is human. An empty, missing or unparseable table is
 # INDETERMINATE in the email; it never makes anything known.
-# Editing this table is Class C (explicit "merge"): it decides what the owner is NOT told about.
+# Adding a row may merge automatically (Tier 2 class state-table, auto_merge_state_tables.txt);
+# deleting or editing a row, and any other change, stays Class C: it decides what the owner is NOT told about.
 job	cause_regex	class	issue	note
 com.claude.private-data-history-audit	exit:124	known	1435	killed at the 1200 s limit
 com.claude.self-review-stage1	Could not set lock on file	known	1495	DuckDB lock held by another process
