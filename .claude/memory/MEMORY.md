@@ -70,3 +70,4 @@ One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 - [`--help` May Execute the Script](feedback_help-flag-may-execute.md) — a script without arg parsing just runs; read its header instead (an accidental live-DB seed apply, 2026-09-20)
 - [GitHub Actions Storage Alert](reference_github-actions-storage-billing.md) — billing usage API works, budgets 404; setup-r-dependencies writes a 384 MB cache per dependency release, `cache: false` measured neutral (llmtelemetry#370)
 - [DATED FOLLOW-UPS: llmtelemetry Actions](project_llmtelemetry-actions-followups.md) — RAISE FIRST on/after Mon 2026-10-19 (cache check) and 2026-11-01 (back to daily, R 4.5 pin test); the user expects the agent to remember
+- [Tier 2 widening follow-ups](project_tier2-widening-followups.md) — widened 2026-10-20 (llm#1497); verify first Tier 2 merge by ~2026-10-27; owner says stop asking for merges, list Class C PRs once a day; roborev finding-delivery gap still open
