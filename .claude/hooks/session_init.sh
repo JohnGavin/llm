@@ -1522,6 +1522,25 @@ if [ -f "$_rbb_cache" ]; then
     echo "$(rbb_format_cache_line "$_rbb_cached" "$_rbb_age")"
   fi
 fi
+# Above-threshold open reviews (a verdict that landed after the previous
+# session ended must be seen before work starts). Runs the shared checker
+# synchronously: one read-only sqlite query, ~0.5s, bounded by sqlite's own 5s
+# lock timeout, so it needs no cache. Prints ids only, nothing when none, and
+# can never fail the hook (exit 1 = found, 3 = indeterminate -> silent here;
+# /bye reports indeterminate). `|| true` guards every substitution
+# (hook-pipefail memory).
+_oat_script="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" 2>/dev/null && pwd)/roborev_open_above_threshold.sh" || true
+if [ "$_rbb_name" != "unknown" ] && [ -x "$_oat_script" ]; then
+  _oat_rc=0
+  _oat_out=$("$_oat_script" --repo "$_rbb_name" 2>/dev/null) || _oat_rc=$?
+  if [ "$_oat_rc" -eq 1 ]; then
+    _oat_n=$(printf '%s\n' "$_oat_out" | sed -n 's/^count=//p') || true
+    _oat_ids=$(printf '%s\n' "$_oat_out" | sed -n 's/^job_id=\([0-9][0-9]*\) .*/\1/p' | paste -sd, -) || true
+    if [ -n "$_oat_n" ]; then
+      echo "roborev-above-threshold: ${_oat_n} open (job ids: ${_oat_ids:-?})"
+    fi
+  fi
+fi
 _rbb_db="${HOME}/.roborev/reviews.db"
 # llm#1035: shared classifier lives beside this hook at ../scripts/lib —
 # resolved here (where BASH_SOURCE still points at session_init.sh) and
