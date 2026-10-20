@@ -329,6 +329,56 @@ if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_ro_lib.sh"; then
   if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *ALERT'; then ok; else bad "MUTANT (list never matches) must make R1 alert, proving the R1 listed-only test can go red (rc=$RC): $OUT"; fi
 fi
 
+# ---- 9c. state-table allow-list (llm#1471): R1 must not fire on an allow-listed table ----------------------
+# A third fake repo holds the owner-signed allow-list (job_failure_policy.tsv). PR 31 is a sweep Tier 2
+# state-table merge of the listed table; 32 adds another state file; 33 and 34 carry no class.
+FAKE3="$W/repo3"; STUB3="$W/stub3"
+mkdir -p "$FAKE3" "$STUB3"
+cp -R "$FAKE/.claude" "$FAKE3/.claude"; cp -R "$FAKE/bin" "$FAKE3/bin"
+printf '# fake owner-signed list\n.claude/state/job_failure_policy.tsv\n' > "$FAKE3/.claude/state/auto_merge_state_tables.txt"
+SAVE_STUB="$STUB"; STUB="$STUB3"; ITEMS=""
+ST_BODY='Summary\nTier-2-Class: state-table'
+JF='.claude/state/job_failure_policy.tsv'
+lpr 31 "auto-merged tier2" "$ST_BODY" "$JF\\t\\t3\\t0@tests/test_z.sh\\t\\t5\\t0"                       "$ROLL_OK"
+lpr 32 "auto-merged tier2" "$ST_BODY" "$JF\\t\\t3\\t0@.claude/state/foo.tsv\\t\\t1\\t0@tests/test_z.sh\\t\\t5\\t0" "$ROLL_OK"
+lpr 33 "auto-merged"       ""         "$JF\\t\\t3\\t0"                                                  "$ROLL_OK"
+lpr 34 ""                  ""         "$JF\\t\\t3\\t0"                                                  "$ROLL_OK"
+lpr 35 "auto-merged tier2" "$ST_BODY" ".claude/state/auto_merge_state_tables.txt\\t\\t1\\t0@tests/test_z.sh\\t\\t5\\t0" "$ROLL_OK"
+finish_list
+STUB="$SAVE_STUB"
+
+DB8="$W/st.duckdb"; newdb "$DB8"
+STUB_DIR="$STUB3" AUTO_MERGE_REPO_DIR="$FAKE3" UNIFIED_DB_PATH="$DB8" bash "$SYNC" --repo O/R --db "$DB8" >/dev/null 2>"$W/err"; RC=$?
+c8() { q "$DB8" "SELECT merge_path || '|' || approval || '|' || class || '|' || excluded_reasons FROM merge_events WHERE pr_number=$1;" | tr -d '"'; }
+if [ "$RC" -eq 0 ]; then ok; else bad "state-table sync rc=$RC err=$(cat "$W/err")"; fi
+[ "$(c8 31)" = "sweep|veto-lapsed|tier2:state-table|state-table" ] && ok || bad "listed table, sweep tier2 merge: '$(c8 31)'"
+[ "$(c8 32)" = "sweep|none|excluded:path|path,state-table" ] && ok || bad "listed table + another state file: '$(c8 32)'"
+[ "$(c8 33)" = "sweep|none|excluded:path|path" ] && ok || bad "listed table, sweep merge without the class: '$(c8 33)'"
+[ "$(c8 34)" = "owner-verb|owner-verb|excluded:path|path" ] && ok || bad "listed table, owner-verb merge keeps its class: '$(c8 34)'"
+[ "$(c8 35)" = "sweep|none|excluded:path|path" ] && ok || bad "the allow-list itself is never relaxed: '$(c8 35)'"
+# R1: the sweep merges of 32, 33, 35 alert; 31 does not
+runchk_long "$DB8"
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *ALERT (n=3'; then ok; else bad "R1 must alert on exactly 3 sweep merges of excluded state paths (rc=$RC): $OUT"; fi
+DB9="$W/st_listed_only.duckdb"; cp "$DB8" "$DB9"
+q "$DB9" "DELETE FROM merge_events WHERE pr_number IN (32, 33, 35);" >/dev/null
+runchk_long "$DB9"
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *OK (n=0'; then ok; else bad "R1 must be quiet for a state-table sweep merge (rc=$RC): $OUT"; fi
+# a list that cannot be read relaxes nothing: PR 31 is excluded again (falsification)
+DB10="$W/st_nolist.duckdb"; newdb "$DB10"
+mv "$FAKE3/.claude/state/auto_merge_state_tables.txt" "$W/st_list.bak"
+STUB_DIR="$STUB3" AUTO_MERGE_REPO_DIR="$FAKE3" UNIFIED_DB_PATH="$DB10" bash "$SYNC" --repo O/R --db "$DB10" >/dev/null 2>&1
+mv "$W/st_list.bak" "$FAKE3/.claude/state/auto_merge_state_tables.txt"
+if [ "$(q "$DB10" "SELECT class FROM merge_events WHERE pr_number=31;")" = "excluded:path" ]; then ok; else bad "without the list a state-table merge must be excluded again (falsification)"; fi
+# falsification of the lib: a filter that removes nothing must turn R1 red on the listed-only data
+sed 's/grep -v -F -x -f "\$MC_ST_FILE" "\$1" > "\$2" 2>\/dev\/null/cp "$1" "$2"/' "$ROOT/.claude/scripts/lib/merge_classify.sh" > "$W/mut_st_hist_lib.sh"
+DB11="$W/st_mut.duckdb"; newdb "$DB11"
+if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_st_hist_lib.sh"; then bad "state-table filter mutant did not change the lib"; else
+  STUB_DIR="$STUB3" AUTO_MERGE_REPO_DIR="$FAKE3" UNIFIED_DB_PATH="$DB11" MERGE_HISTORY_LIB="$W/mut_st_hist_lib.sh" bash "$SYNC" --repo O/R --db "$DB11" >/dev/null 2>&1
+  q "$DB11" "DELETE FROM merge_events WHERE pr_number IN (32, 33, 35);" >/dev/null
+  runchk_long "$DB11"
+  if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *ALERT'; then ok; else bad "MUTANT (filter removes nothing) must make R1 alert, proving the state-table test can go red (rc=$RC): $OUT"; fi
+fi
+
 # ---- 10. DB lock: bounded retry ------------------------------------------------------------------------
 cat > "$W/ddwrap" <<'EOF'
 #!/usr/bin/env bash
