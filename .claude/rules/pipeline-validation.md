@@ -23,7 +23,7 @@ never called, so nothing can fail. The rule's own heading ("ALL PROJECTS")
 implied a usage mandate that the wording never actually enforced.
 
 Discovered [JohnGavin/llm#539](https://github.com/JohnGavin/llm/issues/539),
-2026-06-06: a premortem session asked to "tabulate targets grouped by plan"
+2026-06-06: a private-project-78 session asked to "tabulate targets grouped by plan"
 in a project with no `_targets.R`. The literal rule was satisfied; the user's
 expectation was not. Per `checks-must-distinguish-unknown`, a check whose
 output does not vary with the thing it claims to check is not a check.

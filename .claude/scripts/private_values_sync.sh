@@ -37,7 +37,7 @@
 # (`public`/`private`). private_data_scan.sh's deny-list is an EXACT-MATCH,
 # UNCONDITIONAL BLOCK on any public repo (see its main(): any finding + a
 # public repo's `gh repo view` visibility = exit 1, no severity carve-out).
-# Seeding every `visibility=private` project slug (e.g. `premortem`,
+# Seeding every `visibility=private` project slug (e.g. `private-project-78`,
 # `mycare`) into that same deny-list would therefore block EVERY future
 # commit touching any of the dozens of files across this repo that
 # legitimately name those projects as engineering-pattern examples (nix

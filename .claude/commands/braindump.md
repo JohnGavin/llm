@@ -68,7 +68,7 @@ Read the target repo's existing convention before writing; do not invent one:
 
 - `tennis` — single `ISSUES.md`, numbered `## N. Title (OPEN\|DONE, date)`
   sections, append-only, IDs never reused (it has no GitHub remote at all)
-- `premortem` — `issues/NNNN-kebab-title.md`, one file per issue, plus
+- `private-project-78` — `issues/NNNN-kebab-title.md`, one file per issue, plus
   `issues/INDEX.md`
 - Otherwise — look for `ISSUES.md`, `TODO.md`, or an `issues/` directory and
   match what is there; only create a new convention if none exists

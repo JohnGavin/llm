@@ -24,7 +24,7 @@ done
 2026-08-11 leak and **a replacement was never created anywhere** — not in the
 Bitwarden source of truth, not in the generated `secrets.env` cache, not in any
 of the four repos still presenting it to GitHub Actions. `tlang` failed nightly
-for 11 consecutive days; `irishbuoys` and `solwatch` weekly; nobody noticed
+for 11 consecutive days; `irishbuoys` and `private-project-34` weekly; nobody noticed
 until the notification emails were read.
 
 **Two checks that could not have caught it, for different reasons:**
@@ -47,7 +47,7 @@ hidden stdin and verifies consumers actually restarted.
 **The enumeration is not optional, and this is the proof.** A hand-written list
 of affected repos — written immediately after reading the failure logs — came to
 *three*. It guessed a repo name (`crypto_solwatch`) that does not exist; the real
-one is `solwatch`, and it had been failing weekly since 2026-08-16. Running the
+one is `private-project-34`, and it had been failing weekly since 2026-08-16. Running the
 command found it. Curated lists of "the places that use X" are wrong in exactly
 the cases that matter, because the ones you forget are the ones you never see
 fail.

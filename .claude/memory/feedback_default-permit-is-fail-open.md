@@ -14,9 +14,9 @@ so the failure is silent and grows with every new project.
 
 **Why:** two separate leaks in one day, same shape.
 
-- `llmtelemetry` published ~584 rows of `premortem` (a private project)
+- `llmtelemetry` published ~584 rows of `private-project-78` (a private project)
   session data from 26 May. `R/privacy_exclusion.R` existed and *worked*;
-  premortem was simply never added to it. The filter was not broken — the
+  private-project-78 was simply never added to it. The filter was not broken — the
   default was.
 - A personal phone number sat in the public `llm` repo for four months. The
   controls were advisory rules and issues; nothing denied by default.
