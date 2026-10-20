@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 13c7d939-24e5-42f3-876c-c659b8212a8f
-  modified: 2026-10-16T10:24:18.025Z
+  modified: 2026-10-20T17:33:06.850Z
 ---
 
 **Diagnose with data, not the dashboard.** With a token that has the `user` scope:
@@ -29,6 +29,7 @@ is settable, so workflows cannot be made to share a key. **CORRECTION 2026-10-16
 (2026-09-10) took 55 min. The earlier "48-61 s on miss days" compared hit days only. Cost: ~52 min
 per run, 1,560 min in Oct 1-16, so the account hit 90% of 2,000 free minutes. Correlation with the
 merge date is exact; the cause is not yet confirmed by a hit-vs-miss experiment (llmtelemetry#393).
+**2026-10-20 "100% of 0.5 GB storage" alert, measured:** October storage GB-hours by repo: irishbuoys 1,077 (about 3x the whole 360 allowance), llmtelemetry 372, crypto_swarms 27, everything else under 1. `grossAmount == discountAmount` and `netAmount` 0 for every repo, so it is a quota banner, not a charge (the repos are public). irishbuoys held 10.9 GB in 6,807 caches: 8.08 GB of `DeterminateSystems/magic-nix-cache-action` entries (6,806 tiny `.narinfo`/`.nar.zstd` keys; used by data-update, api-drift, seed-cachix), 2.69 GB of per-run `targets-<run_id>` caches (5 x ~540 MB), plus two 568 MB `pipeline-failure` artifacts with no `retention-days`. Failed runs had stopped: none in irishbuoys after 2026-10-10, none in llmtelemetry after 2026-10-11, so the emails were the storage banner, not failures. The local clone is `~/docs_gh/proj/data/weather/irish_buoy_network/irishbuoys` (`cc-worktree.sh irishbuoys` does not resolve it). Fix PR in irishbuoys removes magic-nix-cache and bounds the failure artifact; the `targets-` cache policy is a separate decision. `gh search code` returned [] for a string that exists, so scan workflow files directly.
 **Billing facts (verified 2026-10-16):** the minutes quota counts PRIVATE repos only; public repos
 show raw minutes with a 100% discount (net $0). `usageItems[].quantity` for `Actions Linux` is raw
 minutes; reconstructing per-job `ceil(minutes)` from `actions/runs/<id>/jobs` matched the billing
