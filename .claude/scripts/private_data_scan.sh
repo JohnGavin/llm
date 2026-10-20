@@ -183,6 +183,13 @@
 # literal. A missing, empty, canary-less or stale (> PRIVATE_TERMS_MAX_AGE_DAYS,
 # default 7) list is exit 3 INDETERMINATE. Findings never show term or line.
 #
+# Per-repo allow-list: $REPO_ROOT/.claude/private_terms_allow.txt ("<term> |
+# <reason>" lines) suppresses exactly those terms in exactly that repo, and ONLY
+# when the repo is provably local-only (`git remote` empty). A repo with a
+# remote, an unestablishable repo, a no-reason line or the canary: ignored with a
+# warning (fail closed). Suppressed hits are counted in one summary line, never
+# named. The file lives in the scanned (private) repo, never in this public one.
+#
 # Log: ~/.claude/logs/private_data_scan.log (one line per invocation summary).
 # Housekeeping heartbeat: writes housekeeping_runs (task='private_data_scan')
 # and private_data_scan_findings, same batched-write pattern as
@@ -231,6 +238,13 @@ PRIVATE_TERMS_MAX_AGE_DAYS="${PRIVATE_TERMS_MAX_AGE_DAYS:-7}"
 PT_CANARY="zzcanary""privterm7q"
 PT_FILE=""      # temp file of normalised terms, set by private_terms_prepare
 PT_ACTIVE=0     # 1 once the rule is armed for this run
+# Per-repo allow-list (llm private-terms repo allow): PT_ALLOW_FILE holds the
+# normalised terms removed from PT_FILE for THIS repo; PT_SUPPRESS_FILE gets one
+# line per source line that only an allowed term matched (a file, not a
+# variable, because scan_blob runs in pipeline subshells).
+PT_ALLOW_FILE=""
+PT_SUPPRESS_FILE=""
+PT_ALLOW_N=0
 # llm#1456: --staged and --range apply the private-term rule to ADDED lines
 # only. PT_ADDED_ONLY=1 restricts findings to the line ranges in PT_RANGES
 # (space-separated "lo-hi" new-file line numbers); 0 = whole file (default).
@@ -376,7 +390,8 @@ FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan.XXXXXX")"
 # (llm#1358: document text could not be extracted). A file, not a variable,
 # because scan_blob runs as the last element of a pipeline (a subshell).
 INDET_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_indet.XXXXXX")"
-trap 'rm -f "$FINDINGS_FILE" "$INDET_FILE" "$PT_FILE"' EXIT
+PT_SUPPRESS_FILE="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_ptsupp.XXXXXX")"
+trap 'rm -f "$FINDINGS_FILE" "$INDET_FILE" "$PT_FILE" "$PT_ALLOW_FILE" "$PT_SUPPRESS_FILE"' EXIT
 
 # append_finding SOURCE SEVERITY LOCATION LINE RULE NOTE
 # NOTE must be fixed/generic -- NEVER the matched value. This is the single
@@ -662,15 +677,26 @@ iso_to_epoch() {
 
 # scan_privateterms LOCATION < content-on-stdin
 scan_privateterms() {
-    local loc="$1" content lnum
+    local loc="$1" content lnum hits_main hits_allow
     [ "$PT_ACTIVE" = "1" ] && [ -s "$PT_FILE" ] || return 0
     content="$(LC_ALL=C tr -d '\000' | LC_ALL=C tr '_' ' ')"
     [ -n "$content" ] || return 0
+    hits_main="$(printf '%s\n' "$content" | LC_ALL=C "$GREP" -n -a -i -w -F -f "$PT_FILE" 2>/dev/null | pt_filter_added)"
     while IFS=: read -r lnum _; do
         [ -n "${lnum:-}" ] || continue
         append_finding "denylist" "critical" "$loc" "$lnum" "private-term" \
             "whole-word match against a private_terms list entry (term and line redacted)"
-    done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -n -a -i -w -F -f "$PT_FILE" 2>/dev/null | pt_filter_added)
+    done <<< "$hits_main"
+    # Per-repo allow-list (see pt_load_repo_allow): count the lines that ONLY an
+    # allowed term matched, so the suppression is visible. Never prints a term.
+    if [ -n "$PT_ALLOW_FILE" ] && [ -s "$PT_ALLOW_FILE" ]; then
+        hits_allow="$(printf '%s\n' "$content" | LC_ALL=C "$GREP" -n -a -i -w -F -f "$PT_ALLOW_FILE" 2>/dev/null | pt_filter_added)"
+        while IFS=: read -r lnum _; do
+            [ -n "${lnum:-}" ] || continue
+            printf '%s\n' "$hits_main" | LC_ALL=C "$GREP" -q -- "^${lnum}:" && continue
+            printf '1\n' >> "$PT_SUPPRESS_FILE"
+        done <<< "$hits_allow"
+    fi
 }
 
 # pt_filter_added: stdin = "lnum:..." grep -n lines. Pass-through unless
@@ -705,6 +731,76 @@ pt_set_scope() {
     # (caller passes its rc as $2); a failed diff falls back to the whole blob.
     if [ "${2:-0}" -ne 0 ]; then ranges="ALL"; fi
     if [ "$ranges" = "ALL" ]; then PT_ADDED_ONLY=0; PT_RANGES=""; else PT_ADDED_ONLY=1; PT_RANGES="$ranges"; fi
+}
+
+# pt_repo_local_only -> 0 only when the scanned repo is PROVABLY local-only:
+# `git remote` succeeds and lists nothing. 1 = has a remote (looks public, or
+# private-but-published); 2 = could not be established (INDETERMINATE). A repo
+# with no remote cannot be public, so a term allowed there cannot reach a
+# public surface. PRIVATE_DATA_SCAN_VISIBILITY=public (public mirrors) forces 1.
+pt_repo_local_only() {
+    local remotes
+    [ "${PRIVATE_DATA_SCAN_VISIBILITY:-}" = "public" ] && return 1
+    [ -d "$REPO_ROOT" ] || return 2
+    remotes="$(git -C "$REPO_ROOT" remote 2>/dev/null)" || return 2
+    git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 || return 2
+    [ -z "$remotes" ] || return 1
+    return 0
+}
+
+# pt_load_repo_allow: per-repo allow entries (llm private-terms repo allow).
+# File: $REPO_ROOT/.claude/private_terms_allow.txt (test override:
+# PRIVATE_TERMS_REPO_ALLOW), one "<term> | <reason>" per line, '#' comments.
+# It lives in the scanned repo, never in the (public) llm repo, so plaintext
+# terms are never published here. Honoured ONLY when pt_repo_local_only is true;
+# otherwise ignored with a one-line warning (fail closed). An entry with no
+# reason, or naming the canary, is ignored with a warning. An entry suppresses
+# exactly that term (whole line, case-insensitive, '_' -> ' ' as for the list),
+# and only if it is actually in the list. Runs after the liveness probe.
+pt_load_repo_allow() {
+    local f="${PRIVATE_TERMS_REPO_ALLOW:-${REPO_ROOT}/.claude/private_terms_allow.txt}"
+    local line t r lrc cand
+    [ -r "$f" ] || return 0
+    pt_repo_local_only; lrc=$?
+    if [ "$lrc" -ne 0 ]; then
+        if [ "$lrc" -eq 2 ]; then
+            echo "private-data-scan: WARNING -- repo allow-list present but repo visibility could not be established; NOT applied" >&2
+        else
+            echo "private-data-scan: WARNING -- repo allow-list present but this repo has a remote (not provably local-only); NOT applied" >&2
+        fi
+        return 0
+    fi
+    cand="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_ptcand.XXXXXX")"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in ''|'#'*) continue ;; esac
+        case "$line" in
+            *" | "*) t="${line%% | *}"; r="${line#* | }" ;;
+            *) echo "private-data-scan: WARNING -- ignoring repo allow-list line with no ' | <reason>' (a bare term allows nothing)" >&2; continue ;;
+        esac
+        t="$(printf '%s' "$t" | LC_ALL=C tr '_' ' ' | awk '{sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print}')"
+        if [ -z "$t" ] || [ -z "$(printf '%s' "$r" | tr -d '[:space:]')" ]; then
+            echo "private-data-scan: WARNING -- ignoring repo allow-list line with an empty term or reason" >&2
+            continue
+        fi
+        if [ "$(printf '%s' "$t" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$PT_CANARY" | tr 'A-Z' 'a-z')" ]; then
+            echo "private-data-scan: WARNING -- ignoring repo allow-list entry for the canary term" >&2
+            continue
+        fi
+        # only terms really in the list count (keeps the summary honest)
+        LC_ALL=C "$GREP" -q -i -x -F -- "$t" "$PT_FILE" || continue
+        printf '%s\n' "$t" >> "$cand"
+    done < "$f"
+    if [ -s "$cand" ]; then
+        PT_ALLOW_FILE="$cand"
+        PT_ALLOW_N="$(sort -fu "$cand" | wc -l | tr -d ' ')"
+        local nf; nf="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_terms.XXXXXX")"
+        LC_ALL=C "$GREP" -v -i -x -F -f "$cand" "$PT_FILE" > "$nf"
+        mv "$nf" "$PT_FILE"
+    else
+        rm -f "$cand"
+    fi
+    return 0
 }
 
 # private_terms_prepare -> 0 armed; 3 INDETERMINATE (reason on stderr).
@@ -764,6 +860,7 @@ private_terms_prepare() {
         echo "private-data-scan: INDETERMINATE -- the private-term matcher did not flag its own canary on this grep ($GREP); it cannot be trusted to report clean" >&2
         return 3
     fi
+    pt_load_repo_allow
     return 0
 }
 
@@ -2404,6 +2501,12 @@ if [ "${N_INDET:-0}" -gt 0 ]; then
 fi
 
 print_report
+# Make a repo allow-list suppression visible (count only, never the term).
+PT_SUPP_N="$(wc -l < "$PT_SUPPRESS_FILE" | tr -d ' ')"
+if [ "${PT_SUPP_N:-0}" -gt 0 ]; then
+    echo "private-term: ${PT_SUPP_N} hit(s) suppressed by repo allow-list (${PT_ALLOW_N} term)" >&2
+    log_line "mode=${MODE} private-term-suppressed=${PT_SUPP_N} allow-terms=${PT_ALLOW_N}"
+fi
 write_findings_to_db
 log_line "mode=${MODE} visibility=${VIS} findings=${TOTAL}"
 
