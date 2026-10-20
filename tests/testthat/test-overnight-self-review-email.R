@@ -1079,16 +1079,33 @@ test_that("cron-health: a stale 'running' heartbeat is failed (killed or crashed
                   rows_written = 0L, age_h = 20),
     ev_row = ev)
   skip_if(is.null(db), "could not build cron-health fixture DB")
-  combined <- paste(run_dry_run(db_path = db), collapse = "\n")
+  # The shipped job_failure_policy.tsv explains exit 124 for this job (known),
+  # so the failed-vs-fresh behaviour is checked against a scratch policy that
+  # does not mention it; the shipped table is checked just below.
+  pol <- tempfile(fileext = ".tsv")
+  writeLines(c("job\tcause_regex\tclass\tissue\tnote",
+               "com.claude.some-other-job\texit:124\tknown\t1\tunrelated"), pol)
+  withr::defer(unlink(pol))
+  combined <- paste(run_dry_run(db_path = db, extra_env = paste0("JOB_FAILURE_POLICY_FILE=", pol)),
+                    collapse = "\n")
   expect_true(grepl("killed or crashed", combined, fixed = TRUE),
               info = "a 20h-old 'running' row was not reported as killed or crashed")
   expect_false(grepl("1 indeterminate", combined, fixed = TRUE))
+
+  # With the shipped table the same failure is the KNOWN exit-124 timeout:
+  # one line with the issue link, not counted as failed.
+  combined_known <- paste(run_dry_run(db_path = db), collapse = "\n")
+  expect_true(grepl("killed at the 1200 s limit", combined_known, fixed = TRUE))
+  expect_true(grepl("issues/1435", combined_known, fixed = TRUE))
+  expect_true(grepl("0 failed", combined_known, fixed = TRUE))
+  expect_true(grepl("1 known", combined_known, fixed = TRUE))
 
   db2 <- .build_cron_fixture_db(
     hk_row = list(task = "private_data_history_audit", status = "running",
                   rows_written = 0L, age_h = 0.1),
     ev_row = ev)
-  combined2 <- paste(run_dry_run(db_path = db2), collapse = "\n")
+  combined2 <- paste(run_dry_run(db_path = db2, extra_env = paste0("JOB_FAILURE_POLICY_FILE=", pol)),
+                     collapse = "\n")
   expect_false(grepl("killed or crashed", combined2, fixed = TRUE),
                info = "a fresh 'running' row (possibly a live run) was reported as killed")
 })

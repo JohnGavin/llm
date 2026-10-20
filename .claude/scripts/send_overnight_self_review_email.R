@@ -46,6 +46,8 @@ source(file.path(.scripts_dir, "lib", "self_review_content_signals.R"))
 source(file.path(.scripts_dir, "lib", "scanner_triage_lib.R"))
 # llm#1389 follow-up: the daily digest-publish job's outcome line.
 source(file.path(.scripts_dir, "lib", "digest_publish_lib.R"))
+# Failing scheduled jobs: cause line + known/unknown class from the policy table.
+source(file.path(.scripts_dir, "lib", "job_failure_lib.R"))
 
 # ── Null-coalescing operator ───────────────────────────────────────────────────
 # Treats NULL, length-0, NA, AND empty string as "missing" — falls through to b.
@@ -1561,7 +1563,7 @@ if (nrow(cron_health) > 0L) {
   # no visible flag. Both hid a real signal: launchd_health sat 'partial' for
   # 27 consecutive runs (~4 weeks) with nothing in the summary counters
   # distinguishing it from a hard failure or a clean pass.
-  interpret_cron_row <- function(i) {
+  interpret_cron_row_base <- function(i) {
     r <- cron_health[i, ]
     if (isTRUE(r$is_stale_row)) {
       return(list(bucket = "indeterminate",
@@ -1727,7 +1729,7 @@ if (nrow(cron_health) > 0L) {
                       (hb_bucket == "failed" && ec_says_ok)
       if (contradicts) {
         return(list(
-          bucket = "indeterminate",
+          bucket = "indeterminate", raw_vs_hb = TRUE,
           label  = sprintf(
             "indeterminate — raw exit %s vs heartbeat '%s' disagree (%s)",
             r$last_exit_code %||% "—", hb_label,
@@ -1740,6 +1742,32 @@ if (nrow(cron_health) > 0L) {
     }
     if (r$state == "loaded_ok") return(list(bucket = "ok", label = "ok"))
     return(list(bucket = "failed", label = r$state))
+  }
+
+  # Failing-job triage: where the policy table lives (overridable so tests use
+  # fixtures) and where plists are looked up (the repo copy first).
+  .job_failure_policy_path <- Sys.getenv("JOB_FAILURE_POLICY_FILE") %||%
+    file.path(.scripts_dir, "..", "state", "job_failure_policy.tsv")
+  .job_failure_plist_dirs <- c(
+    file.path(.scripts_dir, "..", "launchd"),
+    path.expand("~/Library/LaunchAgents"))
+  if (nzchar(Sys.getenv("JOB_FAILURE_PLIST_DIRS"))) {
+    .job_failure_plist_dirs <- strsplit(Sys.getenv("JOB_FAILURE_PLIST_DIRS"), ":", fixed = TRUE)[[1L]]
+  }
+  .job_failure_policy <- job_failure_policy_read(.job_failure_policy_path)
+
+  # A job that FAILED (or whose raw exit contradicts its heartbeat) arrives
+  # with its cause and a known/unknown classification:
+  #   known | self-heal  -> bucket "known": one line + issue link, NOT counted
+  #                         as failed and does not turn the summary red.
+  #   human | INDETERMINATE -> stays failed, with the cause and the decision.
+  # A raw-exit vs heartbeat disagreement is resolved ONLY when a policy row
+  # matches; otherwise it stays "indeterminate" exactly as before.
+  interpret_cron_row <- function(i) {
+    res <- interpret_cron_row_base(i)
+    r   <- cron_health[i, ]
+    job_failure_apply(res, r$plist_label, r$last_exit_code,
+                      .job_failure_policy, .job_failure_plist_dirs)
   }
 
   # llm#1458 part 2: where the policy table and the triage outcome live
@@ -1763,7 +1791,12 @@ if (nrow(cron_health) > 0L) {
                                            USE.NAMES = FALSE)
   cron_health$n_new_findings     <- vapply(.cron_interp, function(x) as.integer(x$n_new %||% 0L), integer(1))
 
-  n_fail          <- sum(cron_health$bucket == "failed",        na.rm = TRUE)
+  cron_health$issue_url          <- vapply(.cron_interp, function(x) x$issue_url %||% "", character(1))
+  cron_health$issue_text         <- vapply(.cron_interp, function(x) x$issue_text %||% "", character(1))
+
+  .tally          <- job_failure_tally(cron_health$bucket)
+  n_known         <- .tally$n_known
+  n_fail          <- .tally$n_fail
   n_ok            <- sum(cron_health$bucket == "ok",            na.rm = TRUE)
   n_indeterminate <- sum(cron_health$bucket == "indeterminate", na.rm = TRUE)
   n_triage        <- sum(cron_health$bucket == "action",        na.rm = TRUE)
@@ -1772,13 +1805,19 @@ if (nrow(cron_health) > 0L) {
   cron_rows_html <- paste(apply(cron_health, 1, function(r) {
     bucket  <- r[["bucket"]]
     row_bg  <- switch(bucket, failed = "#2a0a0a", action = "#2a0a0a", indeterminate = "#2a2205", DARK_CARD)
-    st_col  <- switch(bucket, failed = "#ff5252", action = "#ff5252", indeterminate = ACCENT_ORANGE, ACCENT_GREEN)
+    st_col  <- switch(bucket, failed = "#ff5252", action = "#ff5252", indeterminate = ACCENT_ORANGE,
+                      known = DARK_MUTED, ACCENT_GREEN)
+    # Known / tracked failure: link the issue next to the cause.
+    issue_html <- if (nzchar(r[["issue_url"]])) {
+      sprintf(' <a href="%s" style="color:%s;">%s</a>', r[["issue_url"]], DARK_MUTED,
+              htmlEscape(r[["issue_text"]]))
+    } else ""
     sprintf(
       '<tr style="background-color:%s;">
 <td style="padding:5px 10px;font-family:monospace;font-size:11px;max-width:280px;
    word-break:break-all;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
-<td style="padding:5px 10px;font-size:12px;color:%s;font-weight:bold;">%s</td>
+<td style="padding:5px 10px;font-size:12px;color:%s;font-weight:bold;">%s%s</td>
 <td style="padding:5px 10px;text-align:right;font-size:12px;color:%s;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
 <td style="padding:5px 10px;font-size:11px;color:%s;">%s</td>
@@ -1786,7 +1825,7 @@ if (nrow(cron_health) > 0L) {
       row_bg,
       r[["plist_label"]],
       DARK_MUTED, r[["display_state"]],
-      st_col, htmlEscape(r[["interpreted_label"]]),
+      st_col, htmlEscape(r[["interpreted_label"]]), issue_html,
       DARK_MUTED, r[["last_exit_code"]] %||% "—",
       DARK_MUTED, r[["last_fired_at"]] %||% "—",
       DARK_MUTED, r[["next_fire_at"]]  %||% "—"
@@ -1872,6 +1911,16 @@ if (nrow(cron_health) > 0L) {
       )
     )
   }
+  if (n_known > 0L) {
+    cron_table_html <- paste0(
+      cron_table_html,
+      sprintf(
+        '<p style="color:%s;font-size:%s;margin-top:8px;">
+  %d job(s) failed with a known, tracked cause &mdash; not counted above; see the Result column for the cause and issue.</p>',
+        DARK_MUTED, EMAIL_FONT_SUBTITLE, n_known
+      )
+    )
+  }
   if (n_indeterminate > 0L) {
     cron_table_html <- paste0(
       cron_table_html,
@@ -1887,8 +1936,8 @@ if (nrow(cron_health) > 0L) {
     )
   }
   sec3e_summary <- sprintf(
-    "%d plists · %d ok · %d failed · %d indeterminate · %d need triage",
-    n_plists, n_ok, n_fail, n_indeterminate, n_triage
+    "%d plists · %d ok · %d failed · %d indeterminate · %d need triage · %d known",
+    n_plists, n_ok, n_fail, n_indeterminate, n_triage, n_known
   )
   # llm#1145: the summary line itself must not default to green when there
   # is anything to flag -- a hardcoded-green header is exactly what let a
