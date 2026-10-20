@@ -221,10 +221,14 @@ runchk "$D"; rule_is "R2 fires on CI not success" R2 ALERT
 D="$(scenario r2c)"; fill "$D" 10; ins "$D" 1 sweep none auto-unlisted NA NA
 runchk "$D"; rule_is "R2 quiet when unknown (NA)" R2 OK; [ "$RC" -eq 0 ] && ok || bad "unknown values must not alert R2, got $RC"
 
-D="$(scenario r3a)"; fill "$D" 30; i=1; while [ "$i" -le 6 ]; do ins "$D" "$i" sweep none auto-unlisted success PASS; i=$((i + 1)); done
-runchk "$D"; rule_is "R3 fires at 6 sweep merges in a UTC day" R3 ALERT; [ "$RC" -eq 1 ] && ok || bad "R3 should exit 1, got $RC"
-D="$(scenario r3b)"; fill "$D" 30; i=1; while [ "$i" -le 5 ]; do ins "$D" "$i" sweep none auto-unlisted success PASS; i=$((i + 1)); done
-runchk "$D"; rule_is "R3 quiet at exactly 5 (the cap)" R3 OK; [ "$RC" -eq 0 ] && ok || bad "5 sweep merges must not alert, got $RC (out: $OUT)"
+# The cap has ONE home, DAILY_CAP in the script under test; the fixtures derive from it.
+CAP="$(sed -n 's/^DAILY_CAP=\([0-9][0-9]*\).*/\1/p' "$CHECK")"
+case "$CAP" in ""|*[!0-9]*) bad "cannot read DAILY_CAP from $CHECK"; CAP=10 ;; esac
+CAP1=$((CAP + 1))
+D="$(scenario r3a)"; fill "$D" $((CAP * 6)); i=1; while [ "$i" -le "$CAP1" ]; do ins "$D" "$i" sweep none auto-unlisted success PASS; i=$((i + 1)); done
+runchk "$D"; rule_is "R3 fires at $CAP1 sweep merges in a UTC day" R3 ALERT; [ "$RC" -eq 1 ] && ok || bad "R3 should exit 1, got $RC"
+D="$(scenario r3b)"; fill "$D" $((CAP * 6)); i=1; while [ "$i" -le "$CAP" ]; do ins "$D" "$i" sweep none auto-unlisted success PASS; i=$((i + 1)); done
+runchk "$D"; rule_is "R3 quiet at exactly $CAP (the cap)" R3 OK; [ "$RC" -eq 0 ] && ok || bad "$CAP sweep merges must not alert, got $RC (out: $OUT)"
 
 D="$(scenario r4a)"; fill "$D" 10; ins "$D" 1 sweep none tier2:robustness success PASS
 runchk "$D"; rule_is "R4 fires: tier2 without veto-lapsed" R4 ALERT; [ "$RC" -eq 1 ] && ok || bad "R4 should exit 1, got $RC"
@@ -251,7 +255,7 @@ if [ "$RC" -eq 3 ]; then ok; else bad "missing DB: rc=$RC"; fi
 
 # ---- 9. falsification: break the SQL, the matching test must go red ----------------------------------
 D="$(scenario fals)"; fill "$D" 30; ins "$D" 1 sweep none excluded:path success PASS
-i=10; while [ "$i" -le 15 ]; do ins "$D" "$i" sweep none auto-unlisted success PASS; i=$((i + 1)); done
+i=10; while [ "$i" -le $((10 + CAP)) ]; do ins "$D" "$i" sweep none auto-unlisted success PASS; i=$((i + 1)); done
 runchk "$D"
 if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q '^R1 .*: *ALERT' && printf '%s\n' "$OUT" | grep -q '^R3 .*: *ALERT'; then ok; else bad "falsification fixture should alert R1 and R3 (rc=$RC): $OUT"; fi
 sed "s/class LIKE 'excluded:%'/class LIKE 'zzz:%'/" "$CHECK" > "$W/mut_r1.sh"
