@@ -9,20 +9,41 @@
 #   .claude/launchd/*.plist + bin/launchd-recorders/*  derived scheduled-script set
 #   .claude/state/auto_merge_tier2.tsv                Tier 2 classes
 #   .claude/state/auto_merge_tier2_hardnever.txt      Tier 2 hard-never regexes
+#   .claude/state/auto_merge_state_tables.txt         owner-signed state-table allow-list
 # This file holds logic only. Portable: bash 3.2, BSD and GNU userland.
 #
 # Callers must set MC_TMP (a writable scratch dir) before mc_load.
 
-# mc_load REPO_DIR EXCL_FILE [READONLY_FILE]
+# mc_load REPO_DIR EXCL_FILE [READONLY_FILE [STATE_TABLES_FILE]]
 # Sets MC_PATFILE, MC_EXCL_ERR, MC_SCHEDFILE, MC_SCHED_ERR (fail closed: an
 # unreadable, empty or invalid data source is reported, never treated as "no
 # exclusions"). Also MC_RO_FILE / MC_RO_ERR for the owner-signed read-only
 # checker list (.claude/state/readonly_checkers.txt unless READONLY_FILE is
 # given). The list only ever RELAXES the scheduled-script reason, so an
 # unreadable, empty or invalid list is simply "no relaxation" (never a hole).
+# MC_ST_FILE / MC_ST_ERR: the owner-signed state-table allow-list
+# (.claude/state/auto_merge_state_tables.txt unless STATE_TABLES_FILE is given),
+# which relaxes ONLY the .claude/state/ exclusion for the exact paths it names, and
+# only for a PR of Tier 2 class state-table. Entries must be .claude/state/<name>.tsv|txt
+# and must not name any merge-machinery table; a bad entry makes the list invalid.
 mc_load() {
   local repo_dir="$1" excl_file="$2" ro_file="${3:-$1/.claude/state/readonly_checkers.txt}" f sched_srcs=""
-  MC_EXCL_ERR=""; MC_SCHED_ERR=""; MC_RO_ERR=""
+  local st_file="${4:-$1/.claude/state/auto_merge_state_tables.txt}"
+  MC_EXCL_ERR=""; MC_SCHED_ERR=""; MC_RO_ERR=""; MC_ST_ERR=""
+  MC_ST_FILE="$MC_TMP/statetables"
+  : > "$MC_ST_FILE"
+  if [ ! -r "$st_file" ]; then
+    MC_ST_ERR="state-list-unreadable"
+  else
+    grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$st_file" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' > "$MC_ST_FILE"
+    if [ ! -s "$MC_ST_FILE" ]; then
+      MC_ST_ERR="state-list-empty"
+    elif grep -v -E '^\.claude/state/[A-Za-z0-9_.-]+\.(tsv|txt)$' "$MC_ST_FILE" | grep -q . ; then
+      MC_ST_ERR="state-list-invalid"
+    elif grep -q -E -e '\.\.' -e 'auto_merge|readonly_checkers|scanner_policy|merge_history|merge_classify|tier2|exclusions' "$MC_ST_FILE"; then
+      MC_ST_ERR="state-list-invalid"
+    fi
+  fi
   MC_PATFILE="$MC_TMP/patterns"
   MC_SCHEDFILE="$MC_TMP/scheduled"
   MC_RO_FILE="$MC_TMP/readonly"
@@ -64,18 +85,40 @@ $f"; fi
   fi
 }
 
-# mc_check_paths FILE_LIST   (one path per line; renames list both paths)
+# mc_st_filter IN OUT
+# Writes IN minus the paths on the state-table allow-list to OUT. With an unusable
+# list it drops every .claude/state/ path instead, so the caller can answer
+# INDETERMINATE for that class without a state path producing a verdict first.
+mc_st_filter() {
+  if [ -z "$MC_ST_ERR" ]; then
+    grep -v -F -x -f "$MC_ST_FILE" "$1" > "$2" 2>/dev/null
+  else
+    grep -v -E '^\.claude/state/' "$1" > "$2" 2>/dev/null
+  fi
+  return 0
+}
+
+# mc_check_paths FILE_LIST [TIER2_CLASS]   (one path per line; renames list both paths)
 # Sets MC_PATH_HIT (first path matching an exclusion regex) and MC_SCHED_HIT
 # (first basename that is a scheduled script); both empty when nothing matches
-# or the corresponding data source is in error.
+# or the corresponding data source is in error. With TIER2_CLASS=state-table the
+# paths on the owner-signed allow-list are not tested (MC_ST_RELAXED=1 when any was
+# skipped); every other path, including any other .claude/state/ file, still is.
 mc_check_paths() {
-  MC_PATH_HIT=""; MC_SCHED_HIT=""
-  [ -s "$1" ] || return 0
+  local list="$1"
+  MC_PATH_HIT=""; MC_SCHED_HIT=""; MC_ST_RELAXED=0
+  [ -s "$list" ] || return 0
+  if [ "${2:-}" = "state-table" ]; then
+    mc_st_filter "$list" "$MC_TMP/paths.st"
+    if [ -z "$MC_ST_ERR" ] && [ "$(wc -l < "$MC_TMP/paths.st")" -lt "$(wc -l < "$list")" ]; then MC_ST_RELAXED=1; fi
+    list="$MC_TMP/paths.st"
+    [ -s "$list" ] || return 0
+  fi
   if [ -z "$MC_EXCL_ERR" ]; then
-    MC_PATH_HIT="$(grep -E -f "$MC_PATFILE" "$1" | head -1)"
+    MC_PATH_HIT="$(grep -E -f "$MC_PATFILE" "$list" | head -1)"
   fi
   if [ -z "$MC_SCHED_ERR" ]; then
-    awk -F/ '{print $NF}' "$1" > "$MC_TMP/base.list"
+    awk -F/ '{print $NF}' "$list" > "$MC_TMP/base.list"
     MC_SCHED_HIT="$(grep -F -x -f "$MC_SCHEDFILE" "$MC_TMP/base.list" | head -1)"
   fi
 }
@@ -115,15 +158,19 @@ mc_sched_unlisted() {
 # readonly-checker, class readonly-checker); an UNLISTED scheduled script still is,
 # also for a PR declaring Tier-2-Class: readonly-checker.
 mc_classify_merged() {
-  local ff="$1" labels="$2" t2="$3" l has_auto=0 has_t2=0 ro_relax=0
-  mc_check_paths "$ff"
-  mc_sched_unlisted "$ff"
+  local ff="$1" labels="$2" t2="$3" l has_auto=0 has_t2=0 ro_relax=0 cc=""
   for l in $labels; do
     case "$l" in auto-merged) has_auto=1 ;; tier2) has_t2=1 ;; esac
   done
+  # state-table: the allow-listed state paths are not an excluded class for a sweep
+  # Tier 2 merge (same rule as the sweep); an unusable list relaxes nothing.
+  if [ "$has_auto" -eq 1 ] && [ "$has_t2" -eq 1 ] && [ "$t2" = "state-table" ] && [ -z "$MC_ST_ERR" ]; then cc="state-table"; fi
+  mc_check_paths "$ff" "$cc"
+  mc_sched_unlisted "$ff"
   if [ "$has_auto" -eq 1 ] && [ -n "$MC_SCHED_HIT" ] && [ -z "$MC_SCHED_UNLISTED" ] && [ -z "$MC_RO_ERR" ]; then ro_relax=1; fi
   MC_REASONS=""
   if [ -n "$MC_PATH_HIT" ]; then MC_REASONS="path"; fi
+  if [ "$MC_ST_RELAXED" -eq 1 ]; then MC_REASONS="${MC_REASONS:+$MC_REASONS,}state-table"; fi
   if [ -n "$MC_SCHED_HIT" ]; then
     if [ "$ro_relax" -eq 1 ]; then
       MC_REASONS="${MC_REASONS:+$MC_REASONS,}readonly-checker"
@@ -185,12 +232,18 @@ mc_tier2_check() {
   case "$max" in ""|*[!0-9]*) MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-table-malformed:$cls"; return ;; esac
   if [ "$en" != "1" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-class-disabled:$cls"; return; fi
   if [ -z "$globs" ] || [ "$globs" = "-" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="tier2-table-malformed:$cls"; return; fi
+  # state-table needs its owner-signed allow-list: unusable means the sweep cannot tell
+  if [ "$cls" = "state-table" ] && [ -n "$MC_ST_ERR" ]; then MC_T2_VERDICT="ind"; MC_T2_REASON="$MC_ST_ERR"; return; fi
 
   # every path (new and previous), one per line
   awk -F'\t' 'NF>=1 && $1!=""{print $1} NF>=2 && $2!=""{print $2}' "$raw" > "$MC_TMP/t2_paths"
 
-  # 1. hard-never (always owner-verb)
-  hit="$(grep -E -f "$MC_TMP/t2_hn" "$MC_TMP/t2_paths" | head -1)"
+  # 1. hard-never (always owner-verb). For state-table the paths on the allow-list
+  # are the one thing exempt from the .claude/state/ hard-never regex; every other
+  # path (including every other state file) is tested in full.
+  cp "$MC_TMP/t2_paths" "$MC_TMP/t2_paths_hn"
+  if [ "$cls" = "state-table" ]; then mc_st_filter "$MC_TMP/t2_paths" "$MC_TMP/t2_paths_hn"; fi
+  hit="$(grep -E -f "$MC_TMP/t2_hn" "$MC_TMP/t2_paths_hn" | head -1)"
   if [ -n "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-hard-never:$hit"; return; fi
   hit="$(awk -F'\t' -v re="$MC_LIST_FILE_RE" '($4+0)>0 && $1 ~ re {print $1; exit}' "$raw")"
   if [ -n "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-list-removal:$hit"; return; fi
@@ -218,6 +271,20 @@ mc_tier2_check() {
       case "$p" in tests/*|.claude/tests/*) continue ;; esac
       if ! mc_ro_listed "$p"; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-readonly-not-listed:$p"; return; fi
     done < "$MC_TMP/t2_paths"
+  fi
+
+  # 2c. state-table: every changed path that is not a test file must be on the
+  # allow-list, and an allow-listed table may only GROW: a deleted line (an edit counts
+  # as one), a rename of it or a deletion of it is owner-verb (removing a row from an
+  # allow/deny/term-style table widens what is let through).
+  if [ "$cls" = "state-table" ]; then
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      case "$p" in tests/*|.claude/tests/*) continue ;; esac
+      if ! grep -F -x -q -- "$p" "$MC_ST_FILE"; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-state-not-listed:$p"; return; fi
+    done < "$MC_TMP/t2_paths"
+    hit="$(awk -F'\t' 'NR==FNR{l[$0]=1; next} ($1 in l || $2 in l) && (($4+0)>0 || $2!="") {print $1; exit}' "$MC_ST_FILE" "$raw")"
+    if [ -n "$hit" ]; then MC_T2_VERDICT="ne"; MC_T2_REASON="tier2-state-table-removal:$hit"; return; fi
   fi
 
   # 3. extra per-class forbidden pattern

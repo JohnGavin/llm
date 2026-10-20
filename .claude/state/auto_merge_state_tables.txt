@@ -1,0 +1,26 @@
+# .claude/state/auto_merge_state_tables.txt -- llm#1471
+#
+# The OWNER-SIGNED allow-list of state tables that the Tier 2 class state-table may
+# change, read by bin/auto_merge_sweep.sh and .claude/scripts/lib/merge_classify.sh.
+#
+# Every .claude/state/ file is excluded from automatic merge and hard-never for
+# Tier 2 (auto_merge_exclusions.txt, auto_merge_tier2_hardnever.txt). A PR that
+# declares "Tier-2-Class: state-table" is exempt from that ONLY for the exact paths
+# listed here, and only when it adds lines: a deleted line (an edit counts as one),
+# a rename or a deletion of a listed file is owner-verb, and so is any other file.
+#
+# Format: one repo-relative path per line (exact match, no globs, no '..', no
+# leading '/'), '#' lines and blank lines ignored. Entries must be
+# .claude/state/<name>.tsv or .txt and must not name a merge-machinery table
+# (auto_merge*, readonly_checkers*, scanner_policy*, merge_history*, *tier2*,
+# *exclusions*): such an entry makes the list invalid and the class INDETERMINATE.
+# An unreadable, empty or invalid list is INDETERMINATE, never "all allowed".
+#
+# THE CONTROL IS THIS FILE'S OWNER SIGNATURE. Editing it is Class C (explicit
+# "merge"): this file, the Tier 2 table and the hard-never list are all outside
+# every automatic path. Put a '#' reason line directly above every entry.
+
+# Read-only data for the overnight email that says which scheduled-job failures are
+# already explained; no script writes it, and a row can only change what the email
+# says, never what a job does. An unlisted job or cause stays "human".
+.claude/state/job_failure_policy.tsv

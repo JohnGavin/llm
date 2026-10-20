@@ -9,6 +9,7 @@ SWEEP="$ROOT/bin/auto_merge_sweep.sh"
 REAL_EXCL="$ROOT/.claude/state/auto_merge_exclusions.txt"
 REAL_T2="$ROOT/.claude/state/auto_merge_tier2.tsv"
 REAL_HN="$ROOT/.claude/state/auto_merge_tier2_hardnever.txt"
+REAL_ST="$ROOT/.claude/state/auto_merge_state_tables.txt"
 W="$(mktemp -d "${TMPDIR:-/tmp}/ams_test.XXXXXX")"
 trap 'rm -rf "$W"' EXIT
 
@@ -89,6 +90,7 @@ setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.m
   cp "$REAL_T2" "$FAKE/.claude/state/auto_merge_tier2.tsv"
   cp "$REAL_HN" "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"
   printf '# fake owner-signed list\n.claude/scripts/zzz_nightly.sh\n' > "$FAKE/.claude/state/readonly_checkers.txt"
+  cp "$REAL_ST" "$FAKE/.claude/state/auto_merge_state_tables.txt"
   if [ "$1" != "-" ]; then
     printf '# x\n**Auto-Merge Policy:** %s (global)\n' "$1" > "$FAKE/AGENTS.md"
   fi
@@ -96,7 +98,7 @@ setup_repo() {  # $1 = toggle line text after the marker, or "-" for no AGENTS.m
   printf '#!/bin/sh\nexec other_job.sh\n' > "$FAKE/bin/launchd-recorders/rec"
   rm -f "$STUB"/*; rm -f "$AUTO_MERGE_LOG"
   GATE_RC=0; export GATE_RC
-  unset AUTO_MERGE_EXCLUSIONS AUTO_MERGE_READONLY AUTO_MERGE_READONLY_GUARD
+  unset AUTO_MERGE_EXCLUSIONS AUTO_MERGE_READONLY AUTO_MERGE_READONLY_GUARD AUTO_MERGE_STATE_TABLES
 }
 
 checks_json() {  # spec: comma list of S P K F N X(status-context ok) Y(status-context fail)
@@ -730,6 +732,163 @@ if [ "$(mutations)" = "0" ] && ! grep -q '^pr merge' "$STUB/calls.log"; then ok;
 
 # the real shipped list passes the real guard and every entry exists
 if bash "$ROOT/tests/test_readonly_checkers_guard.sh" --no-selftest >/dev/null 2>&1; then ok; else bad "the shipped readonly_checkers.txt fails its guard"; fi
+
+# ---- 13. Tier 2 classes scheduled-script and state-table (llm#1471, owner-approved 2026-10-20) ----------------
+SS='scheduled-script'
+ST='state-table'
+JFP='.claude/state/job_failure_policy.tsv'
+STF="$JFP::3:0 tests/test_jfp.sh::5:0"
+
+# -- scheduled-script: an ordinary scheduled script + a test is eligible; without the class it is not
+setup_repo ON; t2 1 "$T2FILES" "" "$SS"; run 1
+expect "scheduled-script: ordinary scheduled script + test" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::20:5' "" "$SS"; run 1
+expect "scheduled-script: needs a test" 1 NOT-ELIGIBLE tier2-no-tests
+setup_repo ON; t2 1 '.claude/scripts/zzz_nightly.sh::296:0 tests/test_zzz.sh::5:0' "" "$SS"; run 1
+expect "scheduled-script: 301 changed lines" 1 NOT-ELIGIBLE "tier2-too-large:301>300"
+setup_repo ON; t2 1 'R/foo.R::1:0 tests/test_zzz.sh::1:0' "" "$SS"; run 1
+expect "scheduled-script: outside the class paths" 1 NOT-ELIGIBLE "tier2-path-not-allowed:R/foo.R"
+# destructive / credential names stay the owner's verb (the original reason for the exclusion, #1274)
+for p in .claude/scripts/zzz_close_stuff.sh .claude/scripts/zzz_delete_old.sh .claude/scripts/zzz_reap_x.sh \
+         .claude/scripts/zzz_gc_x.sh .claude/scripts/zzz_reload.sh .claude/scripts/zzz_unload.sh \
+         .claude/scripts/zzz_purge.sh .claude/scripts/zzz_prune.sh .claude/scripts/zzz_kill.sh \
+         bin/zzz_Close_all.sh .claude/scripts/zzz_Delete_x.sh; do
+  setup_repo ON; printf '<string>x/%s</string>\n' "${p##*/}" > "$FAKE/.claude/launchd/com.t3.plist"
+  t2 1 "$p::5:0 tests/test_zzz.sh::1:0" "" "$SS"; run 1
+  expect "scheduled-script rejects destructive name $p" 1 NOT-ELIGIBLE "tier2-forbidden-extra:$p"
+done
+# the existing exclusion names and the credential names also stay out
+for p in .claude/scripts/x_autoclose.sh .claude/scripts/job_reaper.sh .claude/scripts/worktree_gc.sh .claude/scripts/branch_gc.sh \
+         .claude/scripts/job_revalidate.R .claude/scripts/rotate_keys.sh .claude/scripts/x_credential_check.sh .claude/scripts/x_secret_tool.sh; do
+  setup_repo ON; t2 1 "$p::5:0 tests/test_zzz.sh::1:0" "" "$SS"; run 1
+  line="$(printf '%s\n' "$OUT" | grep -E '^1	' | head -1)"
+  case "$line" in
+    "1	NOT-ELIGIBLE	excluded-path:$p"|"1	NOT-ELIGIBLE	tier2-forbidden-extra:$p") ok ;;
+    *) bad "scheduled-script reserved name $p: got '$line'" ;;
+  esac
+done
+# each hard-never script, a launchd plist and a recorder
+for p in .claude/scripts/private_terms_publish.sh .claude/scripts/scanner_triage.sh .claude/scripts/housekeeping_schema_init.sql \
+         bin/auto_merge_sweep.sh .claude/scripts/lib/merge_classify.sh .claude/scripts/merge_history_sync.sh \
+         .claude/scripts/merge_history_check.sh .claude/launchd/com.claude.x.plist bin/launchd-recorders/rec2 bin/launchd-recorders/rec2.sh \
+         .claude/hooks/x.sh .claude/state/auto_merge_state_tables.txt; do
+  setup_repo ON; t2 1 "$p::1:0 $T2FILES" "" "$SS"; run 1
+  line="$(printf '%s\n' "$OUT" | grep -E '^1	' | head -1)"
+  case "$line" in
+    "1	NOT-ELIGIBLE	excluded-path:$p"|"1	NOT-ELIGIBLE	tier2-hard-never:$p") ok ;;
+    *) bad "scheduled-script hard-never $p: got '$line'" ;;
+  esac
+done
+# POSITIVE CONTROLS: take one entry out and the matching case must flip
+setup_repo ON; grep -v 'private_terms_publish' "$REAL_HN" > "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"
+t2 1 ".claude/scripts/private_terms_publish.sh::5:0 tests/test_zzz.sh::1:0" "" "$SS"; run 1
+expect "CONTROL: hard-never entry removed -> private_terms_publish.sh becomes eligible" 1 ELIGIBLE all-conditions-met
+setup_repo ON; awk -F'\t' -v OFS='\t' '$1=="scheduled-script"{$4="-"} {print}' "$FAKE/.claude/state/auto_merge_tier2.tsv" > "$W/t2.tsv"; cp "$W/t2.tsv" "$FAKE/.claude/state/auto_merge_tier2.tsv"
+t2 1 ".claude/scripts/zzz_delete_old.sh::5:0 tests/test_zzz.sh::1:0" "" "$SS"; run 1
+expect "CONTROL: forbidden_extra removed -> a destructive name becomes eligible" 1 ELIGIBLE all-conditions-met
+# a list-file removal is still hard-never
+setup_repo ON; t2 1 'tests/fixtures/deny_terms.txt::3:1 .claude/scripts/zzz_nightly.sh::1:0' "" "$SS"; run 1
+expect "scheduled-script: removing a line from a deny list" 1 NOT-ELIGIBLE "tier2-list-removal:tests/fixtures/deny_terms.txt"
+
+# -- state-table: an added row to the allow-listed table is eligible
+setup_repo ON; t2 1 "$STF" "" "$ST"; run 1
+expect "state-table: added row to job_failure_policy.tsv" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 "$JFP::3:0" "" "$ST"; run 1
+expect "state-table: needs a test" 1 NOT-ELIGIBLE tier2-no-tests
+# a deleted line, an edit (one added + one deleted line), a pure deletion
+setup_repo ON; t2 1 "$JFP::0:1 tests/test_jfp.sh::5:0" "" "$ST"; run 1
+expect "state-table: deleted row" 1 NOT-ELIGIBLE "tier2-state-table-removal:$JFP"
+setup_repo ON; t2 1 "$JFP::3:1 tests/test_jfp.sh::5:0" "" "$ST"; run 1
+expect "state-table: added row AND deleted line" 1 NOT-ELIGIBLE "tier2-state-table-removal:$JFP"
+setup_repo ON; t2 1 "$JFP:.claude/state/old_policy.tsv:3:0 tests/test_jfp.sh::5:0" "" "$ST"; run 1
+expect "state-table: rename onto the table" 1 NOT-ELIGIBLE "excluded-path:.claude/state/old_policy.tsv"
+setup_repo ON; printf '# l\n.claude/state/job_failure_policy.tsv\n.claude/state/other_policy.tsv\n' > "$FAKE/.claude/state/auto_merge_state_tables.txt"
+t2 1 ".claude/state/other_policy.tsv:$JFP:3:0 tests/test_jfp.sh::5:0" "" "$ST"; run 1
+expect "state-table: rename AWAY from a listed table onto another listed one" 1 NOT-ELIGIBLE "tier2-state-table-removal:.claude/state/other_policy.tsv"
+# POSITIVE CONTROL: with the removal detection mutated away the deleted-row case goes green
+sed 's/(\$4+0)>0 || \$2!=""/0/' "$ROOT/.claude/scripts/lib/merge_classify.sh" > "$W/mut_st_lib.sh"
+if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_st_lib.sh"; then bad "state-table removal mutant did not change the lib"; else
+  setup_repo ON; t2 1 "$JFP::0:1 tests/test_jfp.sh::5:0" "" "$ST"; AUTO_MERGE_LIB="$W/mut_st_lib.sh" run 1
+  expect "CONTROL: removal detection mutated away -> the deleted-row PR becomes eligible" 1 ELIGIBLE all-conditions-met
+fi
+# every other .claude/state file, the allow-list itself, the Tier 2 files, the policy tables
+for p in .claude/state/foo.tsv .claude/state/scanner_policy.tsv .claude/state/auto_merge_state_tables.txt \
+         .claude/state/auto_merge_tier2.tsv .claude/state/auto_merge_tier2_hardnever.txt .claude/state/auto_merge_exclusions.txt \
+         .claude/state/readonly_checkers.txt .claude/state/launchd-timeouts.txt; do
+  setup_repo ON; t2 1 "$p::1:0 $STF" "" "$ST"; run 1
+  expect "state-table rejects other state file $p" 1 NOT-ELIGIBLE "excluded-path:$p"
+  setup_repo ON; t2 1 "$p::1:0 tests/test_jfp.sh::5:0" "" "$ST"; run 1
+  expect "state-table rejects $p on its own" 1 NOT-ELIGIBLE "excluded-path:$p"
+done
+# ... and if the exclusion file did not catch them, the hard-never list and the class's own allow-list check still do
+for p in .claude/state/foo.tsv .claude/state/auto_merge_state_tables.txt .claude/state/auto_merge_tier2.tsv; do
+  setup_repo ON; t2 1 "$p::1:0 $STF" "" "$ST"; AUTO_MERGE_EXCLUSIONS="$W/excl_hooks_only" run 1
+  expect "state-table, exclusion file removed: hard-never still blocks $p" 1 NOT-ELIGIBLE "tier2-hard-never:$p"
+done
+setup_repo ON; grep -v -e 'auto_merge_state_tables' -e '\^\\.claude/state/' "$REAL_HN" > "$FAKE/.claude/state/auto_merge_tier2_hardnever.txt"
+t2 1 ".claude/state/foo.tsv::1:0 $STF" "" "$ST"; AUTO_MERGE_EXCLUSIONS="$W/excl_hooks_only" run 1
+expect "state-table, exclusion + hard-never removed: the allow-list check still blocks" 1 NOT-ELIGIBLE "tier2-state-not-listed:.claude/state/foo.tsv"
+# the allow-listed table WITHOUT the class (no trailer, or another class) is still excluded
+setup_repo ON; mkpr 1 OWNER OPEN false CLEAN "" "S,S" "$STF"; run 1
+expect "job_failure_policy.tsv edit, no trailer" 1 NOT-ELIGIBLE "excluded-path:$JFP"
+setup_repo ON; t2 1 "$STF" "" robustness; run 1
+expect "job_failure_policy.tsv edit, other class" 1 NOT-ELIGIBLE "excluded-path:$JFP"
+setup_repo ON; t2 1 ".claude/scripts/zzz_nightly.sh::5:0 $STF" "" "$ST"; run 1
+expect "state-table cannot carry a script" 1 NOT-ELIGIBLE "tier2-path-not-allowed:.claude/scripts/zzz_nightly.sh"
+# a table that is not on the list is excluded even with the trailer
+setup_repo ON; printf '# l\n.claude/state/other_policy.tsv\n' > "$FAKE/.claude/state/auto_merge_state_tables.txt"; t2 1 "$STF" "" "$ST"; run 1
+expect "state-table: table not on the allow-list" 1 NOT-ELIGIBLE "excluded-path:$JFP"
+
+# -- state-table: an unusable allow-list is INDETERMINATE (never eligible, never "all allowed")
+setup_repo ON; t2 1 "$STF" "" "$ST"; rm -f "$FAKE/.claude/state/auto_merge_state_tables.txt"; run 1
+expect "state-table: allow-list missing" 1 INDETERMINATE state-list-unreadable
+setup_repo ON; t2 1 "$STF" "" "$ST"; printf '# nothing\n' > "$FAKE/.claude/state/auto_merge_state_tables.txt"; run 1
+expect "state-table: allow-list empty" 1 INDETERMINATE state-list-empty
+for bad_entry in '../x.tsv' '/abs/x.tsv' 'R/foo.tsv' '.claude/state/*.tsv' '.claude/state/auto_merge_tier2.tsv' \
+                 '.claude/state/readonly_checkers.txt' '.claude/state/scanner_policy.tsv' '.claude/state/a b.tsv'; do
+  setup_repo ON; t2 1 "$STF" "" "$ST"; printf '%s\n%s\n' "$JFP" "$bad_entry" > "$FAKE/.claude/state/auto_merge_state_tables.txt"; run 1
+  expect "state-table: invalid allow-list entry '$bad_entry'" 1 INDETERMINATE state-list-invalid
+done
+# a broken list never hides a definite NOT-ELIGIBLE reason on a non-state path, and never relaxes other classes
+setup_repo ON; t2 1 ".claude/hooks/x.sh::1:0 $STF" "" "$ST"; rm -f "$FAKE/.claude/state/auto_merge_state_tables.txt"; run 1
+expect "state-table: broken list, hooks path still excluded" 1 NOT-ELIGIBLE "excluded-path:.claude/hooks/x.sh"
+setup_repo ON; t2 1 "$T2FILES" "" robustness; rm -f "$FAKE/.claude/state/auto_merge_state_tables.txt"; run 1
+expect "allow-list missing does not affect other classes" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 "$STF" "" "$ST"; AUTO_MERGE_STATE_TABLES="$W/no-such-list" run 1
+expect "state-table: AUTO_MERGE_STATE_TABLES override, missing" 1 INDETERMINATE state-list-unreadable
+# class disabled
+setup_repo ON; t2 1 "$STF" "" "$ST"; awk -F'\t' -v OFS='\t' '$1=="state-table"{$6=0} {print}' "$FAKE/.claude/state/auto_merge_tier2.tsv" > "$W/t2.tsv"; cp "$W/t2.tsv" "$FAKE/.claude/state/auto_merge_tier2.tsv"; run 1
+expect "state-table: class disabled" 1 NOT-ELIGIBLE "tier2-class-disabled:state-table"
+
+# -- (f) the veto window, the veto and the 2-per-day cap apply to both new classes
+for c in "$SS" "$ST"; do
+  if [ "$c" = "$ST" ]; then F="$STF"; else F="$T2FILES"; fi
+  setup_repo ON; COMMIT_AT="$(iso_ago 1)" t2 1 "$F" "" "$c"; run 1
+  if printf '%s\n' "$OUT" | grep -Eq '^1	TIER2-WAITING	[23]\.[0-9]h-left$'; then ok; else bad "$c inside the 4 h window: $OUT"; fi
+  setup_repo ON; COMMIT_AT="$(iso_ago 1)" t2 1 "$F" "" "$c"; runa 1
+  if [ "$(mutations)" = "0" ]; then ok; else bad "$c: a WAITING PR was mutated"; fi
+  setup_repo ON; t2 1 "$F" "hold" "$c"; run 1
+  expect "$c: hold label" 1 NOT-ELIGIBLE "hold-label:hold"
+  if command -v jq >/dev/null 2>&1; then
+    setup_repo ON; t2 1 "$F" "" "$c"; printf '[{"author_association":"OWNER","body":"veto"}]' > "$STUB/comments_1"; run 1
+    expect "$c: owner veto comment" 1 NOT-ELIGIBLE tier2-vetoed
+  fi
+  setup_repo ON; t2 1 "$F" "" "$c"; runa 1
+  if [ "$RC" -eq 0 ] && grep -q "	1	aaaaaaa	merged	squash-tier2" "$AUTO_MERGE_LOG" && grep -q -e 'pr edit 1 .*--add-label auto-merged --add-label tier2' "$STUB/calls.log"; then ok; else bad "$c apply: tier2 merge with both labels (rc=$RC): $(cat "$STUB/calls.log")"; fi
+done
+# cap of 2 per UTC day across the classes
+setup_repo ON; t2 1 "$T2FILES" "" "$SS"; t2 2 "$STF" "" "$ST"; t2 3 "$STF" "" "$ST"
+runa --max 5 1 2 3
+if [ "$(grep -c '^pr merge' "$STUB/calls.log")" = "2" ] && grep -q "	3	aaaaaaa	skipped	tier2-cap-reached" "$AUTO_MERGE_LOG"; then ok; else bad "tier2 cap across the new classes: $(cat "$STUB/calls.log") / $(cat "$AUTO_MERGE_LOG")"; fi
+setup_repo ON; t2 1 "$STF" "" "$ST"
+for i in 1 2; do printf '%s\t%s\taaaaaaa\tmerged\tsquash-tier2\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "9$i" >> "$AUTO_MERGE_LOG"; done
+runa 1
+if [ "$(mutations)" = "0" ] && grep -q "	1	aaaaaaa	skipped	tier2-cap-reached" "$AUTO_MERGE_LOG"; then ok; else bad "state-table: two Tier 2 merges already today must skip"; fi
+
+# the real shipped files: both classes exist and are enabled, the real list parses and names an existing file
+if awk -F'\t' '$1=="scheduled-script" && $6==1 {f=1} END{exit f?0:1}' "$REAL_T2" && awk -F'\t' '$1=="state-table" && $6==1 {f=1} END{exit f?0:1}' "$REAL_T2"; then ok; else bad "shipped Tier 2 table lacks an enabled scheduled-script or state-table row"; fi
+if grep -v -e '^#' -e '^$' "$REAL_ST" | grep -qx '.claude/state/job_failure_policy.tsv' && [ -f "$ROOT/.claude/state/job_failure_policy.tsv" ]; then ok; else bad "shipped allow-list must name .claude/state/job_failure_policy.tsv, which must exist"; fi
+if [ "$(grep -v -e '^#' -e '^$' "$REAL_ST" | wc -l | tr -d ' ')" = "1" ]; then ok; else bad "shipped allow-list must hold exactly job_failure_policy.tsv"; fi
 
 # ---- 10. merge history sync after --apply (llm#1471) -----------------------------------
 setup_repo ON; good

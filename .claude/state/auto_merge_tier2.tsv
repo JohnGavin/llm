@@ -29,9 +29,27 @@
 # runs tests/test_readonly_checkers_guard.sh --scan on the PR-head content of each
 # changed script. Any other scheduled script keeps the scheduled-script reason.
 #
+# Class scheduled-script (llm#1471, owner-approved 2026-10-20): scripts run by a
+# launchd job may merge under Tier 2 EXCEPT those whose file name says they close,
+# delete, reap, garbage-collect, reload, purge, prune or kill things, or touch
+# credentials, secrets or rotation (the forbidden_extra regex below: a name
+# deny-list, so a destructive scheduled script stays the owner's verb, the reason
+# the scheduled-script exclusion exists, #1274), plus everything on the hard-never
+# list (private_terms_publish.sh, scanner triage, the schema, the sweep, the
+# classifier, the merge history). Launchd plists and recorders are hard-never.
+#
+# Class state-table (llm#1471, owner-approved 2026-10-20): a PR whose only
+# .claude/state/ changes are to files on the owner-signed allow-list
+# .claude/state/auto_merge_state_tables.txt, and that ONLY ADDS lines to them (a
+# deleted line, an edit, a rename or a delete is owner-verb). The code requires
+# every changed path that is not a test file to be on that list. Any other state
+# file, and the list itself, stay excluded and hard-never.
+#
 # Widening is Class C (explicit "merge"): editing this table, the hard-never list
 # or the AGENTS.md paragraph that describes them.
 robustness	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
 detector-false-positive-fix	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
 output-redaction	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
 readonly-checker	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	-	1	1
+scheduled-script	300	.claude/scripts/*;bin/*.sh;tests/*;.claude/tests/*	(^|/)[^/]*([Cc]redential|[Ss]ecret|rotate|autoclose|auto_close|revalidate|reaper|worktree_gc|branch_gc|[Cc]lose|[Dd]elete|[Rr]eap|[Gg][Cc]|[Rr]eload|[Uu]nload|[Pp]urge|[Pp]rune|[Kk]ill)[^/]*$	1	1
+state-table	300	.claude/state/*;tests/*;.claude/tests/*	-	1	1

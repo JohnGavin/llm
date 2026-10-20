@@ -60,6 +60,11 @@ _schema_apply\.sh$
 # either is never automatic (llm#1471). Matched by file name at any depth.
 (^|/)[^/]*readonly_checkers[^/]*$
 
+# The owner-signed state-table allow-list: it decides which state tables the
+# state-table Tier 2 class may add rows to, so a PR touching it is never automatic
+# (llm#1471). Matched by file name at any depth.
+(^|/)[^/]*auto_merge_state_tables[^/]*$
+
 # Every state/policy table, including the Tier 2 table, the hard-never list and
 # this file: a PR editing them widens or narrows what merges without the owner,
 # so it is never automatic (hard-never list in AGENTS.md; llm#1471).
