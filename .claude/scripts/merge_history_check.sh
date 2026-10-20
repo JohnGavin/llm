@@ -34,7 +34,7 @@ export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 # ---- thresholds: the ONE place they live ----------------------------------------
 SHARE_THRESHOLD="0.80"   # R5: alert when sweep merges / all merges exceeds this
 MIN_MERGES=5             # R5: fewer merges than this in the window = insufficient data
-DAILY_CAP=5              # R3: sweep merges allowed per UTC day
+DAILY_CAP=10             # R3: sweep merges allowed per UTC day (owner raised 5 -> 10, 2026-10-20)
 
 DUCKDB="${MERGE_HISTORY_DUCKDB:-duckdb}"
 LOCK_TRIES="${MERGE_HISTORY_LOCK_TRIES:-5}"

@@ -46,6 +46,8 @@ my_new_md_database
 !.claude/state/scanner_policy.tsv
 # Committed Auto-Merge Tier 2 class table (llm#1471) -- the one home for Tier 2 classes
 !.claude/state/auto_merge_tier2.tsv
+# Committed job-failure policy table: the one home for known/human job failure causes
+!.claude/state/job_failure_policy.tsv
 
 # Sensitive/personal files
 *.pdf

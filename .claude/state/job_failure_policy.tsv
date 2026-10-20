@@ -1,0 +1,18 @@
+# job_failure_policy.tsv -- the ONE table that says which scheduled-job failures are already explained.
+# Read-only data for the overnight email (send_overnight_self_review_email.R via
+# .claude/scripts/lib/job_failure_lib.R); no script writes it. Pattern: scanner_policy.tsv.
+#
+# job          plist label of the failing job
+# cause_regex  POSIX ERE matched against the cause line taken from the job's logs,
+#              or exit:<n> to match the job's raw exit code
+# class        known | self-heal | human. known and self-heal are shown as one line with the
+#              issue link and are NOT counted as failed. human stays in the email headline.
+# issue        issue number (digits) or empty
+# note         one line: why this happens
+# A job or cause that is not listed is human. An empty, missing or unparseable table is
+# INDETERMINATE in the email; it never makes anything known.
+# Editing this table is Class C (explicit "merge"): it decides what the owner is NOT told about.
+job	cause_regex	class	issue	note
+com.claude.private-data-history-audit	exit:124	known	1435	killed at the 1200 s limit
+com.claude.self-review-stage1	Could not set lock on file	known	1495	DuckDB lock held by another process
+com.claude.roborev-daily-email	publish_roborev_data\.sh failed	human	1494	no logged reason yet; stays in the headline until a fix logs one
