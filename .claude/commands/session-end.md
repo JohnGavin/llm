@@ -105,11 +105,12 @@ Before committing, verify no unresolved roborev findings remain.
 ```
 
 Report NOT-CLEAN and ask the user if ANY of:
+- `~/.claude/scripts/roborev_open_above_threshold.sh` exits 1: an open review in this repo is above the repo's autoclose threshold, whatever the backlog count. List the `job_id=... max=...` lines only, never review text. Exit 3 is INDETERMINATE: say why (stderr), do not report it as clean.
 - `unaddressed = verdicts.failed - verdicts.addressed` is above the ceiling of **50**, whatever the session volume (llm#1126)
 - `overview.failed > 0` AND `crash > 0` (from the reclassified counters above) — genuine crash-class job failures
 - any `.agents[] | .errors > 0` **AND** `crash > 0` — an agent is failing for a reason other than quota (if `crash == 0`, the agent's `errors` are quota-only; see below, not an agent-health signal)
 
-If `0 < unaddressed <= 50` and `crash == 0`, report INFORMATIONAL, not NOT-CLEAN, and do not ask Y/N: "`N` verdict failures unaddressed (`failed` failed, `addressed` addressed), 0 genuine crashes." A session that merges many PRs grows this backlog as a matter of course, so a non-zero count alone is not a fault (llm#1126). Commit/push may proceed. The ceiling is the only volume-independent signal; change it here, in one place.
+If `0 < unaddressed <= 50`, `crash == 0` and the checker above exited 0, report INFORMATIONAL, not NOT-CLEAN, and do not ask Y/N: "`N` verdict failures unaddressed (`failed` failed, `addressed` addressed), 0 genuine crashes." A session that merges many PRs grows this backlog as a matter of course, so a non-zero count alone is not a fault (llm#1126). Commit/push may proceed. The ceiling is the only volume-independent signal; change it here, in one place.
 
 If `crash > 0`:
 - Report NOT-CLEAN, category = crash.
