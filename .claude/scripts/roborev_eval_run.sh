@@ -31,6 +31,11 @@
 #   --report HASH       run nothing: print the verdicts of the most recent
 #                       stored run for config hash HASH (exit 0/1/3 as below;
 #                       3 with n_fixtures=0 means no stored run).
+#   --first-seen HASH   run nothing: print the UTC date (YYYY-MM-DD) of the EARLIEST
+#                       stored run for config hash HASH; nothing printed and exit 0
+#                       if there is none, exit 3 if eval_runs cannot be read. Read
+#                       only. The daily email uses it to show the red golden-eval
+#                       alert on the first day only.
 #
 # Persistence (llm#816): one eval_runs row per fixture attempt is written to
 # the DuckDB at $UNIFIED_DB_PATH (default ~/.claude/logs/unified.duckdb; the
@@ -92,6 +97,7 @@ RUNS=1
 CONFIG_HASH="unspecified"
 JSON_OUT=""
 REPORT_HASH=""
+FIRST_SEEN_HASH=""
 UNIFIED_DB="${UNIFIED_DB_PATH:-$HOME/.claude/logs/unified.duckdb}"
 DUCKDB="${DUCKDB_BIN:-duckdb}"
 SCHEMA_SQL="$SCRIPT_DIR/housekeeping_schema_init.sql"
@@ -110,6 +116,7 @@ while [ $# -gt 0 ]; do
     --config-hash) CONFIG_HASH="$2"; shift 2 ;;
     --json-out)    JSON_OUT="$2"; shift 2 ;;
     --report)      REPORT_HASH="$2"; shift 2 ;;
+    --first-seen)  FIRST_SEEN_HASH="$2"; shift 2 ;;
     --selftest)    SELFTEST=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -155,6 +162,20 @@ ensure_eval_table() {
     return 1
   }
 }
+
+# --first-seen HASH: read-only; the UTC date of the earliest stored run for HASH.
+if [ -n "$FIRST_SEEN_HASH" ]; then
+  db_available || { echo "roborev_eval_run.sh: eval_runs not readable" >&2; exit 3; }
+  safe_hash="${FIRST_SEEN_HASH//\'/\'\'}"
+  fs_out="$("$DUCKDB" -init /dev/null -readonly "$UNIFIED_DB" -noheader -list "
+    SELECT coalesce(strftime(min(run_at AT TIME ZONE 'UTC'), '%Y-%m-%d'), '')
+    FROM eval_runs WHERE harness = 'roborev' AND config_hash = '$safe_hash';" 2>/dev/null)" || {
+      echo "roborev_eval_run.sh: could not read eval_runs from $UNIFIED_DB" >&2
+      exit 3
+    }
+  printf '%s\n' "$fs_out"
+  exit 0
+fi
 
 # --report HASH: no review calls; grade the stored attempts of the latest run.
 if [ -n "$REPORT_HASH" ]; then

@@ -1897,9 +1897,15 @@ make_fake_eval_runner <- function() {
     '  case "$1" in',
     '    --json-out) json_out="$2"; shift 2 ;;',
     '    --report) report="$2"; shift 2 ;;',
+    '    --first-seen) fs="$2"; shift 2 ;;',
     '    *) shift ;;',
     '  esac',
     'done',
+    'if [ -n "${fs:-}" ]; then',
+    '  [ "${FAKE_EVAL_FIRST_SEEN_RC:-0}" = "0" ] || exit "$FAKE_EVAL_FIRST_SEEN_RC"',
+    '  [ -n "${FAKE_EVAL_FIRST_SEEN:-}" ] && echo "$FAKE_EVAL_FIRST_SEEN"',
+    '  exit 0',
+    'fi',
     'if [ -n "$report" ]; then',
     '  if [ -n "${FAKE_EVAL_REPORT_JSON:-}" ]; then',
     '    cp "$FAKE_EVAL_REPORT_JSON" "$json_out"; exit "${FAKE_EVAL_REPORT_RC:-0}"',
@@ -1930,7 +1936,7 @@ eval_json <- function(overall, fixtures, reason = "") {
 eval_calls <- function(fake) {
   if (!file.exists(fake$log)) character(0) else readLines(fake$log)
 }
-run_calls <- function(fake) Filter(function(l) !grepl("--report", l, fixed = TRUE), eval_calls(fake))
+run_calls <- function(fake) Filter(function(l) !grepl("--report|--first-seen", l), eval_calls(fake))
 
 load_health_lib <- function() {
   e <- new.env(); sys.source(health_lib_path(), envir = e); e
@@ -2111,4 +2117,159 @@ test_that("llm#816: email dry-run without the seam does not spend review calls; 
   expect_true(grepl("QA:reviewer_eval_status=not_run", out, fixed = TRUE))
   expect_true(grepl("not run", out, ignore.case = TRUE))
   expect_true(grepl("dry-run", out, fixed = TRUE))
+})
+
+# ── Tests: golden-eval alert once per config hash (llm failure self-heal) ─────
+# The red alert is for the FIRST day a hash is evaluated; later days show one muted
+# line naming the tracking issue, which is opened once per hash (never for PASS or
+# INDETERMINATE). Every case uses a FAKE runner and a FAKE gh: nothing real is called.
+
+fail_json <- function() eval_json("FAIL", list(
+  list(name = "01_real_bug", verdict = "FAIL", flaky = FALSE, attempts = c("FAIL", "FAIL", "FAIL")),
+  list(name = "02_clean", verdict = "PASS", flaky = FALSE, attempts = c("PASS", "PASS", "PASS"))))
+
+make_fake_gh <- function() {
+  dir <- tempfile("fake_gh_"); dir.create(dir)
+  gh <- file.path(dir, "gh")
+  writeLines(c(
+    "#!/usr/bin/env bash",
+    'D="$(dirname "$0")"',
+    'echo "$*" >> "$D/calls.log"',
+    'case "$1 $2" in',
+    '  "issue list") [ -f "$D/list_fail" ] && exit 1; [ -f "$D/list.tsv" ] && cat "$D/list.tsv"; exit 0 ;;',
+    '  "issue create") [ -f "$D/create_fail" ] && exit 1',
+    '     prev=""; for a in "$@"; do [ "$prev" = "--body-file" ] && cp "$a" "$D/body.md"; prev="$a"; done',
+    '     printf "%s\\t%s\\n" 4242 "$(echo "$*" | sed -n "s/.*--title \\(.*\\) --body-file.*/\\1/p")" >> "$D/list.tsv"',
+    '     echo "https://github.com/JohnGavin/llm/issues/4242"; exit 0 ;;',
+    'esac',
+    'exit 64'), gh)
+  Sys.chmod(gh, "0755")
+  list(gh = gh, dir = dir, calls = file.path(dir, "calls.log"))
+}
+gh_calls <- function(g) if (file.exists(g$calls)) readLines(g$calls) else character(0)
+
+test_that("first-seen: a date is parsed; bad output or a bad exit is NA (fail towards showing the alert)", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_FIRST_SEEN = "2026-10-14")
+  expect_identical(e$rh_eval_first_seen(fake$runner, "abc"), "2026-10-14")
+  withr::local_envvar(FAKE_EVAL_FIRST_SEEN = "not a date")
+  expect_true(is.na(e$rh_eval_first_seen(fake$runner, "abc")))
+  withr::local_envvar(FAKE_EVAL_FIRST_SEEN = "2026-13-45")
+  expect_true(is.na(e$rh_eval_first_seen(fake$runner, "abc")))
+  withr::local_envvar(FAKE_EVAL_FIRST_SEEN = "")
+  expect_true(is.na(e$rh_eval_first_seen(fake$runner, "abc")))
+  withr::local_envvar(FAKE_EVAL_FIRST_SEEN = "2026-10-14", FAKE_EVAL_FIRST_SEEN_RC = "3")
+  expect_true(is.na(e$rh_eval_first_seen(fake$runner, "abc")))
+})
+
+test_that("reported FAIL carries first_seen; reported PASS never asks for it", {
+  e <- load_health_lib(); fake <- make_fake_eval_runner()
+  withr::local_envvar(FAKE_EVAL_LOG = fake$log, FAKE_EVAL_FIRST_SEEN = "2026-10-14",
+                      FAKE_EVAL_REPORT_JSON = fail_json(), FAKE_EVAL_REPORT_RC = "1")
+  res <- e$rh_eval_on_config_change(changed_state, ok_fp, fake$runner, timeout_secs = 10)
+  expect_identical(res$status, "reported"); expect_identical(res$overall, "FAIL")
+  expect_identical(res$first_seen, "2026-10-14"); expect_identical(res$sha, strrep("a", 64))
+  fake2 <- make_fake_eval_runner()
+  pass <- eval_json("PASS", list(list(name = "01", verdict = "PASS", flaky = FALSE, attempts = c("PASS", "PASS", "PASS"))))
+  withr::local_envvar(FAKE_EVAL_LOG = fake2$log, FAKE_EVAL_REPORT_JSON = pass, FAKE_EVAL_REPORT_RC = "0")
+  res2 <- e$rh_eval_on_config_change(changed_state, ok_fp, fake2$runner, timeout_secs = 10)
+  expect_true(is.na(res2$first_seen))
+  expect_false(any(grepl("--first-seen", eval_calls(fake2), fixed = TRUE)))
+})
+
+test_that("repeat: only a stored FAIL whose hash was first evaluated BEFORE today is muted", {
+  e <- load_health_lib()
+  mk <- function(status = "reported", overall = "FAIL", fs = "2026-10-14")
+    list(status = status, overall = overall, first_seen = fs, sha = strrep("a", 64), reason = "",
+         fixtures = list(list(fixture = "01_real_bug", verdict = "FAIL", flaky = FALSE, attempts = "FAIL"),
+                         list(fixture = "02_clean", verdict = "PASS", flaky = FALSE, attempts = "PASS")))
+  today <- as.Date("2026-10-21")
+  expect_true(e$rh_eval_is_repeat(mk(), today))
+  expect_false(e$rh_eval_is_repeat(mk(fs = "2026-10-21"), today), info = "first day: red")
+  expect_false(e$rh_eval_is_repeat(mk(fs = "2026-10-22"), today), info = "a future date is not 'later'")
+  expect_false(e$rh_eval_is_repeat(mk(fs = NA_character_), today), info = "unknown first day: red")
+  expect_false(e$rh_eval_is_repeat(mk(status = "ran"), today), info = "ran now: first day")
+  expect_false(e$rh_eval_is_repeat(mk(overall = "PASS"), today), info = "PASS is never muted")
+  expect_false(e$rh_eval_is_repeat(mk(overall = "INDETERMINATE"), today), info = "INDETERMINATE is never muted")
+  # the muted line names hash prefix, failed fixtures only, the date and the issue
+  html <- e$rh_eval_repeat_html(mk(), list(status = "exists", number = 1500L))
+  expect_true(grepl("Reviewer config aaaaaaaa failed golden eval (fixtures: 01_real_bug) since 2026-10-14; tracked in #1500", html, fixed = TRUE))
+  expect_false(grepl("02_clean", html, fixed = TRUE))
+  expect_false(grepl("#5b1a1a|f08080|do not trust", html), info = "the muted line must not be red")
+  expect_true(grepl("no issue yet", e$rh_eval_repeat_html(mk(), list(status = "dry-run", number = NA_integer_)), fixed = TRUE))
+  expect_true(grepl("no issue yet", e$rh_eval_repeat_html(mk(), NULL), fixed = TRUE))
+  expect_true(grepl("issue lookup failed", e$rh_eval_repeat_html(mk(), list(status = "lookup-failed", number = NA_integer_)), fixed = TRUE))
+})
+
+test_that("issue: opened once per FAIL hash, body holds only prefix/fixtures/verdicts/date, never for PASS or INDETERMINATE", {
+  e <- load_health_lib()
+  res <- list(status = "ran", overall = "FAIL", sha = paste0("1a2b3c4d", strrep("e", 56)), reason = "SECRETREASON",
+              fixtures = list(list(fixture = "01_real_bug", verdict = "FAIL"), list(fixture = "02_clean", verdict = "PASS")))
+  g <- make_fake_gh()
+  first <- e$rh_eval_issue_ensure(res, "2026-10-21", gh = g$gh)
+  expect_identical(first$status, "created"); expect_identical(first$number, 4242L)
+  body <- paste(readLines(file.path(g$dir, "body.md")), collapse = "\n")
+  expect_match(body, "1a2b3c4d", fixed = TRUE); expect_match(body, "2026-10-21", fixed = TRUE)
+  expect_match(body, "- 01_real_bug: FAIL", fixed = TRUE); expect_match(body, "- 02_clean: PASS", fixed = TRUE)
+  expect_false(grepl(res$sha, body, fixed = TRUE), info = "only the 8-character prefix, never the full hash")
+  expect_false(grepl("SECRETREASON", body, fixed = TRUE))
+  # FALSIFICATION: the second day must find the issue and NOT open another
+  second <- e$rh_eval_issue_ensure(res, "2026-10-22", gh = g$gh)
+  expect_identical(second$status, "exists"); expect_identical(second$number, 4242L)
+  expect_equal(sum(grepl("^issue create", gh_calls(g))), 1L)
+  # an existing issue (open or closed: --state all) is found by the prefix in its title
+  g2 <- make_fake_gh()
+  writeLines("1500\tReviewer config 1a2b3c4d failed golden eval", file.path(g2$dir, "list.tsv"))
+  r <- e$rh_eval_issue_ensure(res, "2026-10-21", gh = g2$gh)
+  expect_identical(r$status, "exists"); expect_identical(r$number, 1500L)
+  expect_true(any(grepl("--state all", gh_calls(g2), fixed = TRUE)))
+  expect_equal(sum(grepl("^issue create", gh_calls(g2))), 0L)
+  # an issue for a DIFFERENT hash does not count
+  g3 <- make_fake_gh()
+  writeLines("1501\tReviewer config ffffffff failed golden eval", file.path(g3$dir, "list.tsv"))
+  expect_identical(e$rh_eval_issue_ensure(res, "2026-10-21", gh = g3$gh)$status, "created")
+  # never for PASS / INDETERMINATE / not_needed, and gh is never even called
+  g4 <- make_fake_gh()
+  for (o in c("PASS", "INDETERMINATE", NA_character_)) {
+    rr <- res; rr$overall <- o
+    expect_identical(e$rh_eval_issue_ensure(rr, "2026-10-21", gh = g4$gh)$status, "skipped", info = as.character(o))
+  }
+  expect_length(gh_calls(g4), 0L)
+  # dry run: no gh call at all
+  expect_identical(e$rh_eval_issue_ensure(res, "2026-10-21", dry_run = TRUE, gh = g4$gh)$status, "dry-run")
+  expect_length(gh_call <- gh_calls(g4), 0L)
+  # search failure: no create (a duplicate is worse than a delayed issue); create failure is stated
+  g5 <- make_fake_gh(); file.create(file.path(g5$dir, "list_fail"))
+  expect_identical(e$rh_eval_issue_ensure(res, "2026-10-21", gh = g5$gh)$status, "lookup-failed")
+  expect_equal(sum(grepl("^issue create", gh_calls(g5))), 0L)
+  g6 <- make_fake_gh(); file.create(file.path(g6$dir, "create_fail"))
+  expect_identical(e$rh_eval_issue_ensure(res, "2026-10-21", gh = g6$gh)$status, "create-failed")
+  expect_identical(e$rh_eval_issue_ensure(res, "2026-10-21", gh = file.path(g6$dir, "nope"))$status, "lookup-failed")
+})
+
+test_that("email: FAIL on the FIRST day is red; the same FAIL on a LATER day is one muted line, not red", {
+  skip_if_not_installed("blastula"); skip_if_not_installed("jsonlite")
+  fake <- make_fake_eval_runner()
+  stored <- fail_json()
+  today <- format(Sys.time(), "%Y-%m-%d", tz = "UTC")
+  older <- format(Sys.time() - 5 * 86400, "%Y-%m-%d", tz = "UTC")
+  first <- email_with_eval("0000deadbeef", fake, extra = c(
+    paste0("FAKE_EVAL_REPORT_JSON=", stored), "FAKE_EVAL_REPORT_RC=1", paste0("FAKE_EVAL_FIRST_SEEN=", today)))
+  expect_true(grepl("do not trust the new reviewer config", first, fixed = TRUE), info = "first day must be red")
+  expect_true(grepl("QA:reviewer_eval_status=FAIL", first, fixed = TRUE))
+  expect_false(grepl("FAIL_repeat", first, fixed = TRUE))
+  later <- email_with_eval("0000deadbeef", fake, extra = c(
+    paste0("FAKE_EVAL_REPORT_JSON=", stored), "FAKE_EVAL_REPORT_RC=1", paste0("FAKE_EVAL_FIRST_SEEN=", older)))
+  expect_false(grepl("do not trust the new reviewer config", later, fixed = TRUE), info = "a later day must NOT be red")
+  expect_false(grepl("Reviewer config changed", later, fixed = TRUE))
+  expect_true(grepl("failed golden eval (fixtures: 01_real_bug) since", later, fixed = TRUE))
+  expect_true(grepl(paste0("since ", older, "; no issue yet"), later, fixed = TRUE), info = "dry run opens no issue")
+  expect_true(grepl("QA:reviewer_eval_status=FAIL_repeat", later, fixed = TRUE))
+  unknown <- email_with_eval("0000deadbeef", fake, extra = c(
+    paste0("FAKE_EVAL_REPORT_JSON=", stored), "FAKE_EVAL_REPORT_RC=1", "FAKE_EVAL_FIRST_SEEN_RC=3"))
+  expect_true(grepl("do not trust the new reviewer config", unknown, fixed = TRUE),
+              info = "an unknown first day keeps the red alert")
+  ran <- email_with_eval("0000deadbeef", fake, extra = c(
+    paste0("FAKE_EVAL_RUN_JSON=", stored), "FAKE_EVAL_RUN_RC=1", paste0("FAKE_EVAL_FIRST_SEEN=", older)))
+  expect_true(grepl("do not trust the new reviewer config", ran, fixed = TRUE), info = "a run just now is the first day")
 })
