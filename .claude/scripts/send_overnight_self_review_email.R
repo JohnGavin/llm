@@ -1283,6 +1283,20 @@ sec3d_block <- collapsible_block(
 )
 
 # ── Section 3e: Cron health (last fire) — llm#554 Phase C, llm#962 Part 1 ────
+# Retry transient failures BEFORE they are reported: job_failure_retry.sh kicks each
+# `self-heal` job at most once per UTC day (max 3 per run) and waits for it to
+# finish; a job that recovers is not reported, one that still fails says "retried
+# once". A dry run only reports what it would retry (no --apply, nothing kicked).
+# If the step cannot run or cannot be confirmed, the section SAYS so on one line.
+.job_failure_retry_script <- Sys.getenv("JOB_FAILURE_RETRY_SCRIPT") %||%
+  file.path(.scripts_dir, "job_failure_retry.sh")
+.job_failure_retry <- job_failure_retry_run(.job_failure_retry_script, apply = !dry_run)
+.job_failure_retry_note <- job_failure_retry_note(.job_failure_retry)
+.job_failure_retry_note_html <- if (nzchar(.job_failure_retry_note)) {
+  sprintf('<p style="color:%s;font-size:%s;margin-top:8px;font-weight:bold;">&#9888; %s</p>',
+          ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, htmlEscape(.job_failure_retry_note))
+} else ""
+
 cron_health <- safe_query("
   SELECT plist_label, state, last_exit_code, last_fired_at, next_fire_at, fired_at
   FROM (
@@ -1766,8 +1780,9 @@ if (nrow(cron_health) > 0L) {
   interpret_cron_row <- function(i) {
     res <- interpret_cron_row_base(i)
     r   <- cron_health[i, ]
-    job_failure_apply(res, r$plist_label, r$last_exit_code,
-                      .job_failure_policy, .job_failure_plist_dirs)
+    res <- job_failure_apply(res, r$plist_label, r$last_exit_code,
+                             .job_failure_policy, .job_failure_plist_dirs)
+    job_failure_retry_overlay(res, r$plist_label, .job_failure_retry)
   }
 
   # llm#1458 part 2: where the policy table and the triage outcome live
@@ -1935,6 +1950,7 @@ if (nrow(cron_health) > 0L) {
       )
     )
   }
+  cron_table_html <- paste0(cron_table_html, .job_failure_retry_note_html)
   sec3e_summary <- sprintf(
     "%d plists · %d ok · %d failed · %d indeterminate · %d need triage · %d known",
     n_plists, n_ok, n_fail, n_indeterminate, n_triage, n_known
@@ -1944,7 +1960,7 @@ if (nrow(cron_health) > 0L) {
   # 27-run degradation read as reassuring for four weeks.
   sec3e_summary_color <- if (n_fail > 0L || n_triage > 0L) {
     "#ff5252"
-  } else if (n_indeterminate > 0L) {
+  } else if (n_indeterminate > 0L || nzchar(.job_failure_retry_note_html)) {
     ACCENT_ORANGE
   } else {
     ACCENT_GREEN
@@ -1955,7 +1971,8 @@ if (nrow(cron_health) > 0L) {
     sprintf(
       '<p style="color:%s;font-size:%s;">No launchd_health_events recorded yet.</p>',
       DARK_MUTED, EMAIL_FONT_BODY
-    )
+    ),
+    .job_failure_retry_note_html
   )
   sec3e_summary       <- "no data yet"
   sec3e_summary_color <- ACCENT_GREEN

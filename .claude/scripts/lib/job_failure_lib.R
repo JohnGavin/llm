@@ -24,7 +24,8 @@ if (!exists("%||%", mode = "function")) {
 
 .JF_CLASSES <- c("known", "self-heal", "human")
 .JF_COLS    <- c("job", "cause_regex", "class", "issue", "note")
-.JF_CAUSE_PATTERN <- "error|ERROR|Error|FAILED|failed|exit=|lock|timed out"
+.JF_CAUSE_PATTERN <- paste0("error|ERROR|Error|FAILED|failed|exit=|lock|timed out|",
+                            "unable to download|Failed to open archive|DNS not up")
 
 # Read the policy. Returns list(status = "ok", policy = <data.frame>) or
 # list(status = "missing" | "empty" | "unparseable", why = <chr>).
@@ -256,4 +257,90 @@ job_failure_apply <- function(res, label, exit_code, policy_res, plist_dirs) {
 job_failure_tally <- function(buckets) {
   list(n_known = sum(buckets == "known", na.rm = TRUE),
        n_fail  = sum(buckets == "failed", na.rm = TRUE))
+}
+
+# ---- Automatic retry of self-heal jobs (job_failure_retry.sh) ----------------------
+# The email runs job_failure_retry.sh before it reads the failure state. These
+# helpers parse its stdout and fold the outcome into the row the email shows. Pure
+# apart from the one system2() call in job_failure_retry_run (replaceable in tests).
+#
+#   outcome        row shown
+#   recovered      ok (the job failed earlier and a single retry fixed it)
+#   still-failing / already-retried / kickstart-failed
+#                  failed, "retried once, still failing" (counted in the headline)
+#   anything else  (would-retry, deferred, timeout) the row is left as it was
+# If the retry could not run or could not be confirmed, job_failure_retry_note()
+# returns ONE line saying so (checks-must-distinguish-unknown); it is never omitted.
+
+.jf_retry_empty <- function() data.frame(label = character(0), outcome = character(0),
+                                         stringsAsFactors = FALSE)
+
+# "RETRY<TAB>label<TAB>outcome" lines -> data.frame(label, outcome). Other lines ignored.
+job_failure_retry_parse <- function(lines) {
+  lines <- as.character(lines)
+  lines <- lines[!is.na(lines) & startsWith(lines, "RETRY\t")]
+  if (length(lines) == 0L) return(.jf_retry_empty())
+  f <- strsplit(lines, "\t", fixed = TRUE)
+  f <- f[vapply(f, length, integer(1)) >= 3L]
+  if (length(f) == 0L) return(.jf_retry_empty())
+  data.frame(label = vapply(f, function(x) x[[2L]], character(1)),
+             outcome = vapply(f, function(x) x[[3L]], character(1)),
+             stringsAsFactors = FALSE)
+}
+
+# Run the retry script. apply = FALSE is report-only (changes nothing).
+# Returns list(status = "ok" | "indeterminate", outcomes = <data.frame>, note = <chr>).
+# `runner` (tests) takes the bash argument vector and returns the stdout lines with
+# a "status" attribute, as system2(stdout = TRUE) does.
+job_failure_retry_run <- function(script, apply = FALSE, wait = 300L, runner = NULL) {
+  bad <- function(why) list(status = "indeterminate", outcomes = .jf_retry_empty(), note = why)
+  if (is.null(script) || length(script) != 1L || is.na(script) || !nzchar(script) ||
+      !file.exists(script)) {
+    return(bad("retry script not found"))
+  }
+  args <- c(script, if (isTRUE(apply)) c("--apply", "--wait", as.character(wait)))
+  out <- tryCatch(
+    if (is.null(runner)) {
+      withCallingHandlers(system2("bash", args, stdout = TRUE, stderr = FALSE),
+                          warning = function(w) invokeRestart("muffleWarning"))
+    } else runner(args),
+    error = function(e) NULL)
+  if (is.null(out)) return(bad("retry script could not be run"))
+  rc <- attr(out, "status") %||% 0L
+  outcomes <- job_failure_retry_parse(out)
+  if (rc %in% c(0L, 1L)) return(list(status = "ok", outcomes = outcomes, note = ""))
+  why <- if (rc == 3L) {
+    ind <- out[startsWith(as.character(out), "INDETERMINATE:")]
+    if (length(ind) > 0L) trimws(sub("^INDETERMINATE:", "", substr(ind[[1L]], 1L, 160L)))
+    else "retry could not be confirmed"
+  } else sprintf("retry script failed (exit %s)", rc)
+  list(status = "indeterminate", outcomes = outcomes, note = why)
+}
+
+# One line for the email when the retry did not run cleanly; "" when it did.
+job_failure_retry_note <- function(retry) {
+  if (is.null(retry)) {
+    return("Automatic retry of failed jobs: INDETERMINATE (the retry step did not run), so a failed job below may not have been retried.")
+  }
+  if (identical(retry$status, "ok")) return("")
+  sprintf("Automatic retry of failed jobs: INDETERMINATE (%s), so a failed job below may not have been retried.",
+          retry$note %||% "no reason given")
+}
+
+# Fold a retry outcome into one interpreted row (see the table above).
+job_failure_retry_overlay <- function(res, label, retry) {
+  if (is.null(retry) || is.null(retry$outcomes) || nrow(retry$outcomes) == 0L) return(res)
+  if (!(res$bucket %in% c("known", "failed"))) return(res)
+  o <- retry$outcomes$outcome[retry$outcomes$label == label]
+  if (length(o) == 0L) return(res)
+  o <- o[[length(o)]]
+  if (identical(o, "recovered")) {
+    return(list(bucket = "ok", label = "ok — failed earlier, recovered after one automatic retry"))
+  }
+  if (o %in% c("still-failing", "already-retried", "kickstart-failed")) {
+    res$bucket <- "failed"
+    res$label  <- sprintf("retried once, still failing — %s", res$label)
+    return(res)
+  }
+  res
 }

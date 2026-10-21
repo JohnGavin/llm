@@ -17,3 +17,5 @@ job	cause_regex	class	issue	note
 com.claude.private-data-history-audit	exit:124	known	1435	killed at the 1200 s limit
 com.claude.self-review-stage1	Could not set lock on file	known	1495	DuckDB lock held by another process
 com.claude.roborev-daily-email	publish_roborev_data\.sh failed	human	1494	no logged reason yet; stays in the headline until a fix logs one
+com.claude.config-pulse	unable to download|Failed to open archive|DNS not up	self-heal		transient network or nix download failure (config_pulse.err showed "network: DNS not up after 146s"); retried once before the email
+com.claude.knowledge-pulse	unable to download|Failed to open archive|DNS not up	self-heal		transient network or nix download failure (same wrapper as config-pulse); retried once before the email

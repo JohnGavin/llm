@@ -202,6 +202,75 @@ chk("K: email routes rows through job_failure_apply and counts via job_failure_t
     any(grepl("job_failure_apply(", src, fixed = TRUE)) && any(grepl("job_failure_tally(", src, fixed = TRUE)))
 chk("K: summary line carries the known count", any(grepl("%d need triage · %d known", src, fixed = TRUE)))
 
+# ---- L. self-heal rows: cause lines the old pattern could not see ------------------
+# config-pulse logs "network: DNS not up after 146s" (no error-like word at all), and a
+# capitalised "Failed to open archive" was missed by the lowercase/uppercase variants.
+if (identical(sp$status, "ok")) {
+  p <- sp$policy
+  for (j in c("com.claude.config-pulse", "com.claude.knowledge-pulse")) {
+    r <- p[p$job == j, , drop = FALSE]
+    chk(sprintf("L: shipped table has exactly one self-heal row for %s with no issue", j),
+        nrow(r) == 1L && r$class == "self-heal" && !nzchar(r$issue) && nzchar(r$note))
+    for (line in c("network: DNS not up after 146s", "error: unable to download 'https://cache.nixos.org/x.narinfo'",
+                   "error: Failed to open archive (Unrecognized archive format)")) {
+      make_job(j, out = c("INFO: start", line), err = character(0))
+      a <- apply_job(j, 1L, shipped)
+      chk(sprintf("L: %s '%s' -> self-heal (known bucket, not failed)", j, substr(line, 1, 30)),
+          identical(a$bucket, "known") && grepl("^self-heal", a$label))
+    }
+    make_job(j, out = c("INFO: start", "network: DNS is fine"), err = character(0))
+    chk(sprintf("L: %s a different line is NOT self-heal (falsification)", j),
+        !identical(apply_job(j, 1L, shipped)$bucket, "known"))
+  }
+}
+tblL <- make_table("l.tsv", "com.test.heal\tDNS not up\tself-heal\t\ttransient network")
+make_job("com.test.heal", out = c("network: DNS not up after 146s"), err = character(0))
+chk("L: a self-heal row with an EMPTY issue is accepted by the reader", identical(job_failure_policy_read(tblL)$status, "ok"))
+chk("L: the cause pattern finds 'DNS not up' (and reports it)", identical(job_failure_cause("com.test.heal", pdir)$cause, "network: DNS not up after 146s"))
+
+# ---- M. retry outcomes: parse, run, overlay, note -------------------------------------
+ln <- c("RETRY\tcom.test.a\trecovered", "RETRY\tcom.test.b\tstill-failing", "noise", "RETRY\tcom.test.c\twould-retry")
+pr <- job_failure_retry_parse(ln)
+chk("M: parse keeps RETRY lines only, label and outcome", nrow(pr) == 3L && identical(pr$label, c("com.test.a", "com.test.b", "com.test.c")))
+chk("M: parse of nothing is an empty frame, not an error", nrow(job_failure_retry_parse(character(0))) == 0L)
+runner <- function(lines, status = 0L) function(args) structure(lines, status = status)
+tmp_script <- file.path(w, "fake_retry.sh"); writeLines("exit 0", tmp_script)
+r0 <- job_failure_retry_run(tmp_script, apply = TRUE, runner = runner(ln[1:2], 1L))
+chk("M: exit 1 (a retried job still fails) is a determinate result with its outcomes", identical(r0$status, "ok") && nrow(r0$outcomes) == 2L)
+r3 <- job_failure_retry_run(tmp_script, apply = TRUE, runner = runner("INDETERMINATE: policy table not usable (empty)", 3L))
+chk("M: exit 3 is INDETERMINATE and carries the reason", identical(r3$status, "indeterminate") && grepl("policy table not usable", r3$note, fixed = TRUE))
+r2 <- job_failure_retry_run(tmp_script, apply = TRUE, runner = runner(character(0), 2L))
+chk("M: any other exit code is INDETERMINATE, never ok", identical(r2$status, "indeterminate") && nzchar(r2$note))
+rmiss <- job_failure_retry_run(file.path(w, "no_such_script.sh"), apply = TRUE, runner = runner(character(0), 0L))
+chk("M: a missing retry script is INDETERMINATE, never ok", identical(rmiss$status, "indeterminate") && grepl("not found", rmiss$note, fixed = TRUE))
+rn <- job_failure_retry_run(tmp_script, apply = TRUE, runner = function(args) stop("boom"))
+chk("M: a runner that errors is INDETERMINATE, never ok", identical(rn$status, "indeterminate"))
+chk("M: the note is empty when the retry ran fine and non-empty when INDETERMINATE",
+    identical(job_failure_retry_note(r0), "") && nzchar(job_failure_retry_note(r3)) && grepl("INDETERMINATE", job_failure_retry_note(r3), fixed = TRUE))
+chk("M: no retry result at all also produces a note (cannot be silently omitted)", nzchar(job_failure_retry_note(NULL)))
+kn  <- list(bucket = "known", label = "self-heal — transient (log: DNS not up)", issue_url = "", issue_text = "")
+r0 <- list(status = "ok", outcomes = pr, note = "")
+ov1 <- job_failure_retry_overlay(kn, "com.test.a", r0)
+chk("M: a recovered job becomes ok, so it is not reported", identical(ov1$bucket, "ok") && grepl("recovered", ov1$label, fixed = TRUE))
+ov2 <- job_failure_retry_overlay(kn, "com.test.b", r0)
+chk("M: a job that still fails after its retry is FAILED and says 'retried once'",
+    identical(ov2$bucket, "failed") && grepl("retried once", ov2$label, fixed = TRUE) && grepl("DNS not up", ov2$label, fixed = TRUE))
+chk("M: falsification: a job with no retry outcome is left exactly as it was", identical(job_failure_retry_overlay(kn, "com.test.z", r0), kn))
+chk("M: falsification: would-retry (report-only) changes nothing", identical(job_failure_retry_overlay(kn, "com.test.c", r0), kn))
+chk("M: falsification: an ok job is never touched", identical(job_failure_retry_overlay(list(bucket = "ok", label = "ok"), "com.test.a", r0), list(bucket = "ok", label = "ok")))
+chk("M: no retry state leaves the row alone", identical(job_failure_retry_overlay(kn, "com.test.a", NULL), kn))
+tl <- job_failure_tally(c(ov1$bucket, ov2$bucket, "ok"))
+chk("M: tally counts the still-failing job as failed and the recovered one as ok", tl$n_fail == 1L && tl$n_known == 0L)
+
+# ---- N. the email runs the retry BEFORE it builds the table and says so when it cannot ---
+chk("N: email calls job_failure_retry_run and the overlay", any(grepl("job_failure_retry_run(", src, fixed = TRUE)) && any(grepl("job_failure_retry_overlay(", src, fixed = TRUE)))
+chk("N: email only passes --apply outside dry-run (apply = !dry_run)", any(grepl("apply = !dry_run", src, fixed = TRUE)))
+chk("N: email prints the retry note via job_failure_retry_note", any(grepl("job_failure_retry_note(", src, fixed = TRUE)))
+i_run <- grep("job_failure_retry_run(", src, fixed = TRUE)[[1L]]
+i_q   <- grep("cron_health <- safe_query(", src, fixed = TRUE)[[1L]]
+i_int <- grep("interpret_cron_row <- function", src, fixed = TRUE)[[1L]]
+chk("N: the retry runs before the cron rows are read and interpreted", i_run < i_int && i_run < i_q)
+
 cat(sprintf("RESULT: %d passed, %d failed\n", n_ok, n_bad))
 quit(status = if (n_bad == 0L) 0L else 1L)
 EOF

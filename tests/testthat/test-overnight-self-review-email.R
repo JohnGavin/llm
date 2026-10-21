@@ -1110,6 +1110,56 @@ test_that("cron-health: a stale 'running' heartbeat is failed (killed or crashed
                info = "a fresh 'running' row (possibly a live run) was reported as killed")
 })
 
+# Retry before reporting: the email runs job_failure_retry.sh first. A fake
+# script (JOB_FAILURE_RETRY_SCRIPT) stands in so nothing is kicked; EMAIL_DRY_RUN=1
+# means the real call would be report-only anyway.
+.fake_retry_script <- function(lines, status = 0L) {
+  f <- withr::local_tempfile(fileext = ".sh", .local_envir = parent.frame())
+  writeLines(c("#!/bin/bash", vapply(lines, function(l) sprintf("printf '%%s\\n' '%s'", l), ""),
+               sprintf("exit %d", status)), f)
+  f
+}
+
+test_that("cron-health: a job that recovered after the retry is not reported; one still failing says 'retried once'; an INDETERMINATE retry is stated (llm failure self-heal)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  skip_if_not(file.exists(.HISTORY_AUDIT_PLIST), "private-data-history-audit plist not installed")
+  ev <- list(plist_label = "com.claude.private-data-history-audit", state = "loaded_recent_fail",
+             last_exit_code = 124L, last_fired_at_now = TRUE)
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "running",
+                  rows_written = 0L, age_h = 20),
+    ev_row = ev)
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  lbl <- "com.claude.private-data-history-audit"
+
+  base <- paste(run_dry_run(db_path = db, extra_env = paste0("JOB_FAILURE_RETRY_SCRIPT=",
+                .fake_retry_script(character(0)))), collapse = "\n")
+  expect_true(grepl("1 known", base, fixed = TRUE), info = "baseline: the shipped table shows it as known")
+  expect_false(grepl("Automatic retry of failed jobs", base, fixed = TRUE),
+               info = "a retry that ran cleanly must not add a warning line")
+
+  rec <- paste(run_dry_run(db_path = db, extra_env = paste0("JOB_FAILURE_RETRY_SCRIPT=",
+               .fake_retry_script(sprintf("RETRY\t%s\trecovered", lbl)))), collapse = "\n")
+  expect_true(grepl("recovered after one automatic retry", rec, fixed = TRUE))
+  expect_false(grepl("1 known", rec, fixed = TRUE), info = "a recovered job was still reported as failed/known")
+  expect_true(grepl("0 failed", rec, fixed = TRUE))
+
+  still <- paste(run_dry_run(db_path = db, extra_env = paste0("JOB_FAILURE_RETRY_SCRIPT=",
+                 .fake_retry_script(sprintf("RETRY\t%s\tstill-failing", lbl), status = 1L))), collapse = "\n")
+  expect_true(grepl("retried once, still failing", still, fixed = TRUE))
+  expect_true(grepl("1 failed", still, fixed = TRUE), info = "a job still failing after its retry must count as failed")
+
+  ind <- paste(run_dry_run(db_path = db, extra_env = paste0("JOB_FAILURE_RETRY_SCRIPT=",
+               .fake_retry_script("INDETERMINATE: policy table not usable (empty)", status = 3L))), collapse = "\n")
+  expect_true(grepl("Automatic retry of failed jobs: INDETERMINATE (policy table not usable (empty))", ind, fixed = TRUE),
+              info = "an INDETERMINATE retry must be said on one line, never silently omitted")
+
+  gone <- paste(run_dry_run(db_path = db, extra_env = "JOB_FAILURE_RETRY_SCRIPT=/nonexistent/retry.sh"), collapse = "\n")
+  expect_true(grepl("Automatic retry of failed jobs: INDETERMINATE (retry script not found)", gone, fixed = TRUE),
+              info = "a retry script that cannot be run must be said, never silently omitted")
+})
+
 # ── Lessons-captured section ─────────────────────────────────────────────────
 # Every Stage-1 detector reads telemetry only, so a lesson written to
 # .claude/memory/ or .claude/rules/ was invisible to the whole report. These
