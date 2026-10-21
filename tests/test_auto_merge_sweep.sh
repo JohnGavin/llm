@@ -41,6 +41,12 @@ esac
 if [ "$1" = "api" ]; then
   case "$2" in
     */files) p="${2%/files}"; n="${p##*/}"
+             case "$*" in
+               *'.patch'*)   # state-table content check: patch_<n> if the case set one, else a harmless known row
+                 [ -f "$d/patch_fail_$n" ] && exit 1
+                 if [ -f "$d/patch_$n" ]; then cat "$d/patch_$n"; else printf '@@ -1 +1,2 @@\n+com.claude.x\tfoo\tknown\t5\tnote\n'; fi
+                 exit 0 ;;
+             esac
              if [ -f "$d/files_$n" ]; then cat "$d/files_$n"; exit 0; else exit 1; fi ;;
     */issues/*/comments) p="${2%/comments}"; n="${p##*/}"
              if [ -f "$d/comments_fail_$n" ]; then exit 1; fi
@@ -795,6 +801,43 @@ setup_repo ON; t2 1 "$STF" "" "$ST"; run 1
 expect "state-table: added row to job_failure_policy.tsv" 1 ELIGIBLE all-conditions-met
 setup_repo ON; t2 1 "$JFP::3:0" "" "$ST"; run 1
 expect "state-table: needs a test" 1 NOT-ELIGIBLE tier2-no-tests
+# a row that grants kick authority (class self-heal) stays Class C; known and human rows stay eligible
+TAB="$(printf '\t')"
+st_patch() {  # $1 = the added line (printf format, may contain \t \r); sets patch_1 after t2
+  printf '@@ -10,0 +11,1 @@\n+' > "$STUB/patch_1"; printf "$1" >> "$STUB/patch_1"; printf '\n' >> "$STUB/patch_1"
+}
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\tself-heal\t\tnote'; run 1
+expect "state-table: added self-heal row" 1 NOT-ELIGIBLE "state-table-self-heal-row:$JFP"
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\tknown\t5\tnote'; run 1
+expect "state-table: added known row" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\thuman\t6\tnote'; run 1
+expect "state-table: added human row" 1 ELIGIBLE all-conditions-met
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch '# a comment\n\ncom.claude.y\tfoo\tknown\t5\tnote'; run 1
+expect "state-table: comment and blank lines plus a known row" 1 ELIGIBLE all-conditions-met
+for v in 'self-heal ' ' self-heal' 'SELF-HEAL' 'Self-Heal\r' 'self-heal\r' '\tself-heal'; do
+  setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch "com.claude.y\\tfoo\\t${v}\\t\\tnote"; run 1
+  expect "state-table: self-heal variant [$v] rejected" 1 NOT-ELIGIBLE "state-table-self-heal-row:$JFP"
+done
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\tknown\r\t\tnote\tself-heal'; run 1
+expect "state-table: self-heal in a shifted column rejected" 1 NOT-ELIGIBLE "state-table-self-heal-row:$JFP"
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y foo self-heal 1 note'; run 1
+expect "state-table: space-separated (unparseable) self-heal row rejected" 1 NOT-ELIGIBLE "state-table-self-heal-row:$JFP"
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\tmaybe\t5\tnote'; run 1
+expect "state-table: unrecognised class column rejected (fail closed)" 1 NOT-ELIGIBLE "state-table-self-heal-row:$JFP"
+setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\tknown\t5\tnote\n+com.claude.z\tbar\tself-heal\t\tnote'; run 1
+expect "state-table: known row then a self-heal row in the same patch" 1 NOT-ELIGIBLE "state-table-self-heal-row:$JFP"
+setup_repo ON; t2 1 "$STF" "" "$ST"; : > "$STUB/patch_1"; run 1
+expect "state-table: patch omitted by GitHub is INDETERMINATE" 1 INDETERMINATE state-table-patch-missing
+setup_repo ON; t2 1 "$STF" "" "$ST"; : > "$STUB/patch_fail_1"; run 1
+expect "state-table: patch fetch failed is INDETERMINATE" 1 INDETERMINATE state-table-patch-failed
+# FALSIFICATION: with the content check mutated to "never unsafe" the self-heal PR becomes eligible
+printf '%s\n' '#!/bin/bash' 'mc_st_added_row_unsafe() { return 1; }' > "$W/mut_nounsafe.sh"
+sed 's/^mc_st_added_row_unsafe() {$/mc_st_added_row_unsafe_orig() {/' "$ROOT/.claude/scripts/lib/merge_classify.sh" > "$W/mut_selfheal_lib.sh"
+cat "$W/mut_nounsafe.sh" | sed 1d >> "$W/mut_selfheal_lib.sh"
+if cmp -s "$ROOT/.claude/scripts/lib/merge_classify.sh" "$W/mut_selfheal_lib.sh" || ! grep -q 'mc_st_added_row_unsafe_orig' "$W/mut_selfheal_lib.sh"; then bad "self-heal mutant did not change the lib"; else
+  setup_repo ON; t2 1 "$STF" "" "$ST"; st_patch 'com.claude.y\tfoo\tself-heal\t\tnote'; AUTO_MERGE_LIB="$W/mut_selfheal_lib.sh" run 1
+  expect "CONTROL: content check mutated away -> the self-heal PR becomes eligible" 1 ELIGIBLE all-conditions-met
+fi
 # a deleted line, an edit (one added + one deleted line), a pure deletion
 setup_repo ON; t2 1 "$JFP::0:1 tests/test_jfp.sh::5:0" "" "$ST"; run 1
 expect "state-table: deleted row" 1 NOT-ELIGIBLE "tier2-state-table-removal:$JFP"

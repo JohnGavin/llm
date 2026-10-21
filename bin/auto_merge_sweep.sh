@@ -86,7 +86,10 @@
 # scheduled scripts stay owner-verb. Tier 2 class state-table: a PR that only ADDS
 # lines to the state tables on .claude/state/auto_merge_state_tables.txt (a deleted
 # line is NOT-ELIGIBLE tier2-state-table-removal; an unusable list is INDETERMINATE;
-# any other .claude/state file stays excluded-path).
+# any other .claude/state file stays excluded-path). An added row that is not provably
+# `known`/`human` (a `self-heal` class row grants retry authority, in any CR/padding/case
+# variant, or an unparseable class column) is NOT-ELIGIBLE state-table-self-heal-row;
+# an unreadable or omitted patch is INDETERMINATE state-table-patch-failed/-missing.
 #
 # Limits (stated, not hidden): AGENTS.md, the exclusion file and the scheduled
 # set are read from the checkout this script lives in (override with
@@ -339,6 +342,29 @@ readonly_guard() {  # pr raw-files-tsv
   esac
 }
 
+# Class state-table, content check: the added lines of every changed allow-listed table
+# must be provably `known`/`human` rows (mc_st_added_row_unsafe). A row of class
+# self-heal grants job_failure_retry.sh kick authority, so the PR stays owner-verb
+# (NOT-ELIGIBLE state-table-self-heal-row). The patch is read from the files endpoint;
+# a failed fetch, or a patch GitHub omitted for a table with added lines, is
+# INDETERMINATE (never "no self-heal row"). Sets VERDICT or note_ind.
+state_row_guard() {  # pr raw-files-tsv
+  local n="$1" fr="$2" d="$TMP/st_$n" p cnt=0
+  rm -rf "$d"; mkdir -p "$d"
+  # awk, not `read`: a tab IFS collapses the empty previous_filename column
+  awk -F'\t' '$1 != "" && ($3 + 0) > 0 { print $1 }' "$fr" > "$d/changed"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    grep -F -x -q -- "$p" "$MC_ST_FILE" 2>/dev/null || continue
+    cnt=$((cnt + 1))
+    if ! gh api "repos/$REPO/pulls/$n/files" --paginate --jq ".[] | select(.filename == \"$p\") | (.patch // \"\")" > "$d/p_$cnt" 2>/dev/null; then
+      note_ind "state-table-patch-failed"; return
+    fi
+    if [ ! -s "$d/p_$cnt" ]; then note_ind "state-table-patch-missing"; return; fi
+    if mc_st_added_row_unsafe "$d/p_$cnt"; then not_elig "state-table-self-heal-row:$p"; return; fi
+  done < "$d/changed"
+}
+
 evaluate() {
   local n="$1" assoc view fields
   VERDICT=""; REASON=""; IND=""; HEADSHA=""; T2_CLASS=""
@@ -444,6 +470,10 @@ evaluate() {
         *)
           if [ "$declared" = "readonly-checker" ]; then
             readonly_guard "$n" "$fr"
+            if [ -n "$VERDICT" ]; then return; fi
+          fi
+          if [ "$declared" = "state-table" ]; then
+            state_row_guard "$n" "$fr"
             if [ -n "$VERDICT" ]; then return; fi
           fi ;;
       esac

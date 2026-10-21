@@ -201,6 +201,31 @@ mc_classify_merged() {
   fi
 }
 
+# mc_st_added_row_unsafe PATCH_FILE
+# Class state-table, content check (the path check cannot see WHAT a row grants). Reads
+# the unified patch of one allow-listed table; returns 0 when an ADDED line is not
+# provably a harmless `known` or `human` row, 1 when every added line is. A row whose
+# class column is `self-heal` grants job_failure_retry.sh kick authority (AGENTS.md,
+# "Failed-job retry"), so it stays Class C. Fail closed: CR / padding / case variants of
+# self-heal are caught, any tab field equal to self-heal is caught (a shifted column),
+# and a non-comment row with fewer than 3 columns or an unrecognised class column counts
+# as unsafe. Comment and blank lines are ignored.
+mc_st_added_row_unsafe() {
+  tr -d '\r' < "$1" | awk '
+    /^\+\+\+/ { next }
+    /^\+/ {
+      line = substr($0, 2)
+      t = line; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "" || t ~ /^#/) next
+      n = split(line, f, "\t")
+      for (i = 1; i <= n; i++) { v = f[i]; gsub(/^[ \t]+|[ \t]+$/, "", v); if (tolower(v) == "self-heal") bad = 1 }
+      if (n < 3) { bad = 1; next }
+      c = f[3]; gsub(/^[ \t]+|[ \t]+$/, "", c); c = tolower(c)
+      if (c != "known" && c != "human") bad = 1
+    }
+    END { exit bad ? 0 : 1 }'
+}
+
 # Basenames of term / allow / deny list files. A Tier 2 PR whose diff REMOVES a
 # line from one stays owner-verb (removing an entry widens what is let through).
 MC_LIST_FILE_RE='(^|/)[^/]*(term|allow|deny|block)[^/]*[.](txt|tsv|list|lst|csv)$'
