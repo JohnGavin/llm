@@ -40,7 +40,7 @@ DB="${HOME}/.claude/logs/unified.duckdb"
 SQL_FILE="${SCRIPT_DIR}/self_review_stage1.sql"
 LOG_DIR="${HOME}/.claude/logs"
 LOG_FILE="${LOG_DIR}/self_review_stage1.log"
-LOCK_FILE="/tmp/self_review_stage1.lock"
+LOCK_FILE="${SELF_REVIEW_LOCK_FILE:-/tmp/self_review_stage1.lock}"
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 log() {
@@ -75,13 +75,49 @@ fi
 # re-quotes each arg so the inner `bash -c` reconstructs them exactly (handles
 # the `-c "SELECT … (*)…"` case with spaces and parens).
 duck_run() {
-    if command -v nix-shell >/dev/null 2>&1 && [[ -f "${NIX_DEFAULT}" ]]; then
+    if [[ -n "${SELF_REVIEW_DUCK_CMD:-}" ]]; then
+        # test hook (tests/test_self_review_stage1_lock_retry.sh): a fake duckdb
+        "${SELF_REVIEW_DUCK_CMD}" "$@"
+    elif command -v nix-shell >/dev/null 2>&1 && [[ -f "${NIX_DEFAULT}" ]]; then
         local q="" a
         for a in "$@"; do q+=" $(printf '%q' "$a")"; done
         nix-shell "${NIX_TARGET}" --run "duckdb${q}"
     else
         duckdb "$@"
     fi
+}
+
+# ─── Bounded retry on a held write lock (llm#1495) ───────────────────────────
+# Another process can hold unified.duckdb's write lock when this job starts; the
+# first attempt used to be the only one. Retry a few times with short sleeps (14 s
+# of sleep in total, always under 30 s), then exit 3 (INDETERMINATE) with ONE
+# stderr line naming the cause. Any other duckdb failure is NOT retried.
+LOCK_SLEEPS=(2 4 8)
+lock_conflict() { grep -q "Could not set lock on file" "$1"; }
+
+# duck_sql_with_retry DB SQLFILE: feed SQLFILE to duckdb on stdin, echo and log its
+# output, retry on a lock conflict. Returns duckdb's status, or 3 once the retries
+# are used up.
+duck_sql_with_retry() {
+    local db_path="$1" sql="$2" attempt=0 status out
+    out="$(mktemp "${TMPDIR:-/tmp}/self_review_stage1.out.XXXXXX")"
+    while :; do
+        attempt=$(( attempt + 1 ))
+        status=0
+        duck_run "${db_path}" < "${sql}" > "${out}" 2>&1 || status=$?
+        tee -a "${LOG_FILE}" < "${out}"
+        if (( status == 0 )) || ! lock_conflict "${out}"; then
+            rm -f "${out}"
+            return "${status}"
+        fi
+        if (( attempt > ${#LOCK_SLEEPS[@]} )); then
+            rm -f "${out}"
+            echo "self_review_stage1: ERROR: unified.duckdb write lock still held after ${attempt} attempts (Could not set lock on file); exit 3" >&2
+            return 3
+        fi
+        log "WARN: unified.duckdb write lock held (attempt ${attempt}); retrying in ${LOCK_SLEEPS[$(( attempt - 1 ))]}s"
+        "${SELF_REVIEW_SLEEP_CMD:-sleep}" "${LOCK_SLEEPS[$(( attempt - 1 ))]}"
+    done
 }
 
 # ─── Core functions (called directly; no bash "$0" re-invocation) ─────────────
@@ -99,11 +135,17 @@ run_dry() {
         return 1
     fi
     log "INFO: --dry-run mode. DB = ${db_path}"
+    local dry_sql
+    dry_sql="$(mktemp "${TMPDIR:-/tmp}/self_review_stage1.dry.XXXXXX")"
     {
         printf 'BEGIN TRANSACTION;\n'
         cat "${SQL_FILE}"
         printf '\nROLLBACK;\n'
-    } | duck_run "${db_path}" 2>&1 | tee -a "${LOG_FILE}"
+    } > "${dry_sql}"
+    local dry_status=0
+    duck_sql_with_retry "${db_path}" "${dry_sql}" || dry_status=$?
+    rm -f "${dry_sql}"
+    return "${dry_status}"
 }
 
 # run_write: execute SQL and persist findings to DB.
@@ -118,9 +160,11 @@ run_write() {
         return 1
     fi
     log "INFO: --write mode. DB = ${db_path}"
-    duck_run "${db_path}" < "${SQL_FILE}" 2>&1 | tee -a "${LOG_FILE}"
-    local status="${PIPESTATUS[0]}"
-    if (( status == 0 )); then
+    local status=0
+    duck_sql_with_retry "${db_path}" "${SQL_FILE}" || status=$?
+    if (( status == 3 )); then
+        return 3   # lock still held after the bounded retries; one stderr line already written
+    elif (( status == 0 )); then
         local count
         count="$(duck_run "${db_path}" -init /dev/null -noheader -list -c \
             "SELECT COUNT(*) FROM self_review_findings_stage1" \
