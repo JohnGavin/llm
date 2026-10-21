@@ -235,8 +235,26 @@ rh_eval_read_json <- function(path) {
        fixtures = fx)
 }
 
+# UTC date (YYYY-MM-DD) of the earliest stored run for this config hash, via the
+# runner's read-only --first-seen mode. NA when it cannot be told (no runner output,
+# bad exit, unparseable): the caller then keeps the full alert (fail towards showing it).
+rh_eval_first_seen <- function(runner, sha, timeout_secs = 60) {
+  out <- tempfile("rh_eval_fs_"); err <- tempfile("rh_eval_fserr_")
+  on.exit(unlink(c(out, err)), add = TRUE)
+  rc <- withCallingHandlers(
+    tryCatch(system2("bash", c(shQuote(runner), "--first-seen", shQuote(sha)),
+                     stdout = out, stderr = err, timeout = timeout_secs),
+             error = function(e) NA_integer_),
+    warning = function(w) invokeRestart("muffleWarning"))
+  if (is.na(rc) || !identical(as.integer(rc), 0L) || !file.exists(out)) return(NA_character_)
+  ln <- trimws(readLines(out, n = 1L, warn = FALSE))
+  if (length(ln) != 1L || !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", ln) ||
+      is.na(as.Date(ln, optional = TRUE))) return(NA_character_)
+  ln
+}
+
 # config_change: rh_config_change() result. config_fp: rh_config_fingerprint().
-# Returns list(status, overall, reason, fixtures):
+# Returns list(status, overall, reason, fixtures, first_seen, sha):
 #   status "not_needed" -- config not changed; the runner is never touched
 #          "reported"   -- this hash already has a completed stored run
 #          "ran"        -- the harness was run now (overall may be INDETERMINATE)
@@ -246,8 +264,11 @@ rh_eval_on_config_change <- function(config_change, config_fp, runner,
                                      enabled = TRUE, dry_run = FALSE,
                                      allow_in_dry_run = FALSE,
                                      report_timeout_secs = 60) {
-  res <- function(status, overall = NA_character_, reason = "", fixtures = list()) {
-    list(status = status, overall = overall, reason = reason, fixtures = fixtures)
+  res <- function(status, overall = NA_character_, reason = "", fixtures = list(),
+                  first_seen = NA_character_) {
+    list(status = status, overall = overall, reason = reason, fixtures = fixtures,
+         first_seen = first_seen,
+         sha = if (is.null(config_fp$sha256)) NA_character_ else as.character(config_fp$sha256))
   }
   if (!identical(config_change$status, "changed")) return(res("not_needed"))
   if (!isTRUE(enabled)) {
@@ -267,7 +288,10 @@ rh_eval_on_config_change <- function(config_change, config_fp, runner,
   rh_eval_exec(runner, c("--report", sha, "--json-out", rep_json), report_timeout_secs)
   d <- rh_eval_read_json(rep_json)
   if (!is.null(d) && d$n_fixtures > 0L && d$overall %in% c("PASS", "FAIL")) {
-    return(res("reported", d$overall, d$reason, d$fixtures))
+    # Only a FAIL needs to know which day the hash was first evaluated (the red alert
+    # is for that day only); a PASS never asks, so no extra runner call.
+    fs <- if (identical(d$overall, "FAIL")) rh_eval_first_seen(runner, sha, report_timeout_secs) else NA_character_
+    return(res("reported", d$overall, d$reason, d$fixtures, first_seen = fs))
   }
 
   # 2. A real run spends review calls: not from a dry-run preview.
@@ -294,6 +318,77 @@ rh_eval_on_config_change <- function(config_change, config_fp, runner,
 # HTML block for the email. "" when nothing to say (config unchanged).
 # Overall line forms: PASS / FAIL (regression -- do not trust the new reviewer
 # config) / INDETERMINATE (eval could not complete: <reason>) / not run: <reason>.
+#
+# One alert per config hash: the red box is for the FIRST day a hash is evaluated
+# (status "ran" now, or the earliest eval_runs row for the hash is today). On a later
+# day a stored FAIL for the same hash is ONE muted line naming the issue that tracks it
+# (rh_eval_is_repeat / rh_eval_repeat_html). Only a FAIL is ever muted: PASS,
+# INDETERMINATE and not-run keep their existing blocks, and an unknown first day
+# (first_seen NA) keeps the red box.
+rh_eval_is_repeat <- function(res, today = Sys.Date()) {
+  identical(res$status, "reported") && identical(res$overall, "FAIL") &&
+    !is.null(res$first_seen) && length(res$first_seen) == 1L && !is.na(res$first_seen) &&
+    !is.na(as.Date(res$first_seen, optional = TRUE)) &&
+    as.Date(res$first_seen) < as.Date(today)
+}
+
+# `issue`: result of rh_eval_issue_ensure() (NULL = none known).
+rh_eval_repeat_html <- function(res, issue = NULL, escape = function(x) x) {
+  failed <- vapply(Filter(function(x) identical(x$verdict, "FAIL"), res$fixtures),
+                   function(x) as.character(x$fixture), "")
+  tracked <- if (!is.null(issue) && !is.na(issue$number)) sprintf("tracked in #%d", as.integer(issue$number))
+             else if (!is.null(issue) && identical(issue$status, "lookup-failed")) "issue lookup failed"
+             else "no issue yet"
+  sprintf(paste0('<p style="color:#8a8f98; font-size:12px;">Reviewer config %s failed golden eval ',
+                 '(fixtures: %s) since %s; %s<!-- QA:reviewer_eval_status=FAIL_repeat --></p>'),
+          escape(substr(res$sha, 1L, 8L)),
+          escape(if (length(failed)) paste(failed, collapse = ", ") else "none recorded"),
+          escape(res$first_seen), escape(tracked))
+}
+
+# Open ONE issue per FAIL config hash on JohnGavin/llm, deduplicated by searching open
+# AND closed issues for the 8-character hash prefix in the title. Never for PASS or
+# INDETERMINATE, never in a dry run, never when the search failed (a duplicate is worse
+# than a delayed issue). The body holds ONLY the hash prefix, fixture names, per-fixture
+# verdicts and the run date. Returns list(status, number): status is one of skipped,
+# dry-run, exists, created, lookup-failed, create-failed; number is NA unless known.
+rh_eval_issue_ensure <- function(res, run_date, dry_run = FALSE,
+                                 gh = Sys.getenv("ROBOREV_EVAL_GH", "gh"),
+                                 repo = "JohnGavin/llm") {
+  out <- function(status, number = NA_integer_) list(status = status, number = number)
+  if (!identical(res$overall, "FAIL") || is.null(res$sha) || is.na(res$sha) || !nzchar(res$sha)) {
+    return(out("skipped"))
+  }
+  if (isTRUE(dry_run)) return(out("dry-run"))
+  prefix <- substr(res$sha, 1L, 8L)
+  title  <- sprintf("Reviewer config %s failed golden eval", prefix)
+  run_gh <- function(args) {
+    withCallingHandlers(
+      tryCatch(system2(gh, shQuote(args), stdout = TRUE, stderr = FALSE), error = function(e) NULL),
+      warning = function(w) invokeRestart("muffleWarning"))
+  }
+  found <- run_gh(c("issue", "list", "--repo", repo, "--state", "all", "--search",
+                    paste(prefix, "in:title"), "--limit", "30", "--json", "number,title",
+                    "--jq", ".[] | [.number, .title] | @tsv"))
+  if (is.null(found) || !is.null(attr(found, "status"))) return(out("lookup-failed"))
+  rows <- strsplit(found, "\t", fixed = TRUE)
+  nums <- vapply(rows, function(r) if (length(r) >= 2L && grepl(prefix, r[[2L]], fixed = TRUE) &&
+                                         grepl("^[0-9]+$", r[[1L]])) as.integer(r[[1L]]) else NA_integer_,
+                 integer(1))
+  nums <- nums[!is.na(nums)]
+  if (length(nums) > 0L) return(out("exists", min(nums)))
+  fx <- vapply(res$fixtures, function(x) sprintf("- %s: %s", x$fixture, x$verdict), "")
+  body <- tempfile("rh_eval_issue_", fileext = ".md"); on.exit(unlink(body), add = TRUE)
+  writeLines(c(sprintf("Reviewer config hash prefix: %s", prefix),
+               sprintf("Golden eval run date (UTC): %s", run_date),
+               "Overall: FAIL", "Fixture verdicts:", fx), body)
+  made <- run_gh(c("issue", "create", "--repo", repo, "--title", title, "--body-file", body))
+  if (is.null(made) || !is.null(attr(made, "status"))) return(out("create-failed"))
+  m <- regmatches(made, regexpr("/issues/[0-9]+", made))
+  if (length(m) == 0L) return(out("create-failed"))
+  out("created", as.integer(sub("/issues/", "", m[[length(m)]], fixed = TRUE)))
+}
+
 rh_eval_alert_html <- function(res, escape = function(x) x) {
   if (identical(res$status, "not_needed")) return("")
   if (identical(res$status, "not_run")) {

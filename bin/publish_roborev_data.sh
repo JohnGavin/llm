@@ -32,7 +32,7 @@ export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/usr/local/bin:
 TELEMETRY_REPO="${HOME}/docs_gh/llmtelemetry"
 ROBOREV_DAILY_DIR="${ROBOREV_DAILY_DIR:-${HOME}/.claude/logs/roborev_daily_report}"
 LOG_FILE="${HOME}/.claude/logs/publish_roborev_data.log"
-LOCK_FILE="/tmp/publish_roborev_data.lock"
+LOCK_FILE="${PUBLISH_ROBOREV_LOCK_FILE:-/tmp/publish_roborev_data.lock}"
 WORKTREE_DIR="/tmp/publish_roborev_data_worktree_$$"
 DRYRUN="${DRYRUN:-0}"
 
@@ -41,6 +41,15 @@ mkdir -p "$(dirname "${LOG_FILE}")"
 
 log() {
   printf '%s: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "${LOG_FILE}"
+}
+
+# fail_step STEP EXITCODE -- every failure exit goes through here (llm#1494): ONE
+# stderr line (also appended to our own log) naming the failing step and the exit
+# code, capped at 160 chars. Never review text or snapshot content. Exits 1.
+fail_step() {
+  local msg="publish_roborev_data.sh: FAILED step=$1 exit=$2"
+  printf '%s\n' "${msg:0:160}" | tee -a "${LOG_FILE}" >&2
+  exit 1
 }
 
 log "=== publish_roborev_data.sh starting (DRYRUN=${DRYRUN}) ==="
@@ -70,7 +79,7 @@ trap 'rm -f "${LOCK_FILE}"; if [ -d "${WORKTREE_DIR}" ]; then git -C "${TELEMETR
 # ── Verify repos ────────────────────────────────────────────────────────────────
 if [ ! -d "${TELEMETRY_REPO}/.git" ]; then
   log "ERROR: llmtelemetry repo not found at ${TELEMETRY_REPO}"
-  exit 1
+  fail_step verify-repo 1
 fi
 
 # ── Dry-run: report what would happen and exit early (before file checks) ─────
@@ -89,14 +98,14 @@ fi
 # ── Find latest snapshot ───────────────────────────────────────────────────────
 if [ ! -d "${ROBOREV_DAILY_DIR}" ]; then
   log "ERROR: source directory not found: ${ROBOREV_DAILY_DIR}"
-  exit 1
+  fail_step source-dir 1
 fi
 
 # Most recently modified .json file in the daily dir
 LATEST_JSON="$(ls -t "${ROBOREV_DAILY_DIR}"/*.json 2>/dev/null | head -1)"
 if [ -z "${LATEST_JSON}" ]; then
   log "ERROR: no JSON snapshots found in ${ROBOREV_DAILY_DIR}"
-  exit 1
+  fail_step find-snapshot 1
 fi
 
 REPORT_DATE="$(basename "${LATEST_JSON}" .json)"
@@ -104,10 +113,10 @@ log "Source snapshot: ${LATEST_JSON} (date=${REPORT_DATE})"
 
 # ── Create throwaway worktree (data branch) ────────────────────────────────────
 log "Fetching origin/data..."
-git -C "${TELEMETRY_REPO}" fetch origin data >> "${LOG_FILE}" 2>&1
+git -C "${TELEMETRY_REPO}" fetch origin data >> "${LOG_FILE}" 2>&1 || fail_step git-fetch $?
 
 log "Creating worktree at ${WORKTREE_DIR}..."
-git -C "${TELEMETRY_REPO}" worktree add "${WORKTREE_DIR}" origin/data >> "${LOG_FILE}" 2>&1
+git -C "${TELEMETRY_REPO}" worktree add "${WORKTREE_DIR}" origin/data >> "${LOG_FILE}" 2>&1 || fail_step git-worktree-add $?
 git -C "${WORKTREE_DIR}" checkout -b "publish-roborev-${REPORT_DATE}-$$" 2>/dev/null || true
 
 # ── Write files ────────────────────────────────────────────────────────────────
@@ -130,7 +139,7 @@ if [ -n "${LEAK_PATHS}" ] || [ -n "${UNTRACKED_OUTSIDE}" ]; then
   log "  diff: ${LEAK_PATHS}"
   log "  untracked: ${UNTRACKED_OUTSIDE}"
   log "Aborting without commit/push."
-  exit 1
+  fail_step leak-guard 1
 fi
 log "Leak guard: PASS (only data/ paths modified)"
 
@@ -144,11 +153,13 @@ if git -C "${WORKTREE_DIR}" diff --cached --quiet; then
 fi
 
 COMMIT_MSG="data: roborev daily report ${REPORT_DATE} [skip review] [skip ci]"
-if git -C "${WORKTREE_DIR}" commit -m "${COMMIT_MSG}" >> "${LOG_FILE}" 2>&1; then
+git -C "${WORKTREE_DIR}" commit -m "${COMMIT_MSG}" >> "${LOG_FILE}" 2>&1
+COMMIT_RC=$?
+if [ "${COMMIT_RC}" -eq 0 ]; then
   log "Committed: ${COMMIT_MSG}"
 else
   log "ERROR: git commit failed"
-  exit 1
+  fail_step git-commit "${COMMIT_RC}"
 fi
 
 # ── Push to origin/data ────────────────────────────────────────────────────────
@@ -156,12 +167,14 @@ log "Pushing to origin/data..."
 # AGENT_PUSH_OK=1 bypasses the agent_push_guard.sh hook for this legitimate
 # orchestrator push to the data branch. The data branch is not a protected main/master
 # branch but the hook pattern triggers on all worktrees — use the escape hatch.
-if AGENT_PUSH_OK=1 git -C "${WORKTREE_DIR}" push origin "HEAD:data" >> "${LOG_FILE}" 2>&1; then
+AGENT_PUSH_OK=1 git -C "${WORKTREE_DIR}" push origin "HEAD:data" >> "${LOG_FILE}" 2>&1
+PUSH_RC=$?
+if [ "${PUSH_RC}" -eq 0 ]; then
   log "Push successful → origin/data"
 else
   log "WARNING: push failed — data committed in worktree; will be cleaned up"
   log "  Manual recovery: git -C ${TELEMETRY_REPO} fetch origin; git cherry-pick ..."
-  exit 1
+  fail_step git-push "${PUSH_RC}"
 fi
 
 log "=== publish_roborev_data.sh done ==="

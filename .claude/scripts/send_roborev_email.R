@@ -1241,6 +1241,15 @@ if (!identical(eval_res$status, "not_needed")) {
   message("send_roborev_email.R: golden eval status=", eval_res$status,
           " overall=", eval_res$overall, if (nzchar(eval_res$reason)) paste0(" (", eval_res$reason, ")") else "")
 }
+# One issue per FAIL config hash (never for PASS / INDETERMINATE, never in a dry run):
+# the red alert is for the first day only, later days show one muted line naming it.
+eval_issue <- rh_eval_issue_ensure(eval_res, format(Sys.time(), "%Y-%m-%d", tz = "UTC"),
+                                   dry_run = dry_run)
+eval_is_repeat <- rh_eval_is_repeat(eval_res, as.Date(format(Sys.time(), "%Y-%m-%d", tz = "UTC")))
+if (!identical(eval_issue$status, "skipped")) {
+  message("send_roborev_email.R: golden eval issue status=", eval_issue$status,
+          if (!is.na(eval_issue$number)) paste0(" #", eval_issue$number) else "")
+}
 
 # ── Extract window slices ──────────────────────────────────────────────────────
 
@@ -2019,7 +2028,9 @@ agent_rate_summary_colour <- if (is.null(agent_rate_agg)) accent_orange else acc
 # (llm#1044 item 2) and day-over-day quality jumps (item 3). On a config change
 # the golden eval result (llm#816) replaces the old "re-run" advice; the eval
 # itself was run above, before the body is built.
-config_alert_html <- if (identical(config_change$status, "changed")) {
+config_alert_html <- if (identical(config_change$status, "changed") && isTRUE(eval_is_repeat)) {
+  rh_eval_repeat_html(eval_res, eval_issue, htmlEscape_rr)
+} else if (identical(config_change$status, "changed")) {
   paste0(
     '<p style="font-size:12px;">The effective review agent/model config ',
     '(review_agent, review_model, default_agent and per-repo overrides) differs ',
