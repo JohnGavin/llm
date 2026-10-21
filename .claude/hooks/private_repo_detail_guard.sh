@@ -58,6 +58,14 @@
 #     false-positived when that stem appeared as a substring inside a
 #     longer, unrelated word in a public repo's PR text (micromort project,
 #     2026-09-28). PATH matching stays substring-based on purpose.
+#   * Owner-cleared names (llm#1382): a DISCOVERED candidate whose name is listed
+#     in ${PRIVATE_NAMES_PUBLIC_OK_FILE:-$HOME/.config/private_names_public_ok.txt}
+#     (same file and format as private_terms_sync.sh: one name per line, '#'
+#     comments, blank lines ignored, case-insensitive) is not a bare scan term.
+#     Its absolute PATH still blocks; DECLARED (confidential-repos) names are
+#     never cleared by this file; the canary entry is ignored; an existing but
+#     unreadable file exempts nothing (fail closed). The skip is logged as
+#     "SKIP-NAME owner-cleared" with no name. One file governs both tools.
 #   * Bypassable via a command-string PREFIX
 #     (PRIVATE_DETAIL_GUARD_BYPASS=1 <command>) — the same interface
 #     convention secret_leak_guard.sh uses for SECRET_GUARD_BYPASS. An
@@ -86,6 +94,11 @@ BODY_FILE_READ_CAP=262144   # 256 KiB, same cap secret_leak_guard.sh uses
 # term (paths and declared entries are unaffected). One word per line, '#'
 # comments. A missing file means an empty stoplist, i.e. stricter, not looser.
 STOPLIST_FILE="${PRIVATE_DETAIL_STOPLIST_FILE:-$SCRIPT_DIR/../scripts/private_name_stoplist.txt}"
+# llm#1382: owner-cleared names, the ONE home for "this name may appear in public
+# text" (also read by private_terms_sync.sh). Built from fragments: the canary
+# can never be cleared.
+PUBLIC_OK_FILE="${PRIVATE_NAMES_PUBLIC_OK_FILE:-$HOME/.config/private_names_public_ok.txt}"
+CANARY="zzcanary""privterm7q"
 # llm#1348: on an INDETERMINATE (stale/unseeded) candidate list, start ONE
 # detached background refresh (at most once per KICK_MIN_SECS) and block with
 # a retry message. The hook itself never waits for the refresh.
@@ -256,6 +269,22 @@ $body_content"
   if [ -f "$STOPLIST_FILE" ]; then
     stop_words=" $(grep -v '^[[:space:]]*#' "$STOPLIST_FILE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ') "
   fi
+  # Owner-cleared names (llm#1382): the same file private_terms_sync.sh honours.
+  # One lowercase name per line, '#' comments, blank lines ignored. A listed
+  # DISCOVERED name is not a bare scan term (its absolute path still is). Never
+  # applies to DECLARED names; the canary entry is ignored. An existing file
+  # that cannot be read exempts nothing (fail closed: the sync script calls this
+  # INDETERMINATE). Absent file = empty list.
+  local ok_words=" "
+  if [ -e "$PUBLIC_OK_FILE" ]; then
+    if [ -r "$PUBLIC_OK_FILE" ] && [ -f "$PUBLIC_OK_FILE" ]; then
+      ok_words=" $(tr '[:upper:]' '[:lower:]' < "$PUBLIC_OK_FILE" 2>/dev/null | tr -d '\r' \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+        | grep -v -e '^#' -e '^$' | grep -vxF -- "$CANARY" | tr '\n' ' ') "
+    else
+      _log "WARN public-ok file unreadable: no names exempted"
+    fi
+  fi
   # Split each TSV row by hand rather than with `IFS=$'\t' read -r name path vis`.
   # TAB is an IFS *whitespace* character, so bash collapses a run of tabs into a
   # single delimiter: on a declared row (`name<TAB><TAB>vis`, empty path) that
@@ -300,6 +329,8 @@ $body_content"
     lname="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
     if [ "$is_declared" -eq 0 ] && [[ "$stop_words" == *" $lname "* ]]; then
       _log "SKIP-NAME stoplisted-common-word"
+    elif [ "$is_declared" -eq 0 ] && [[ "$ok_words" == *" $lname "* ]]; then
+      _log "SKIP-NAME owner-cleared"
     elif [ "$is_declared" -eq 1 ] || [ "${#name}" -ge "$MIN_NAME_LEN" ]; then
       # -w (whole-word) alongside -F (fixed-string): a bare -F substring
       # match let a private repo whose name was a short common-word stem

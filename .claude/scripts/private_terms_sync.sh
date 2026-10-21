@@ -61,7 +61,9 @@
 # dropped (an entry for it is ignored, with a warning). Output gives counts only:
 # "public-ok file: present|absent|unreadable" and "public-ok dropped: N". A file
 # that exists but cannot be read is INDETERMINATE (exit 3, old files kept): an
-# ignored file would silently re-add cleared names. Absent = normal no-op.
+# ignored file would silently re-add cleared names. Absent = normal no-op. The
+# same file also governs private_repo_detail_guard.sh (a listed discovered name
+# is not a bare scan term there; its path still blocks): one home for the decision.
 #
 # Thin-list guard: refuse to write (exit 3, keep old files) when the new term
 # count is below ${PRIVATE_TERMS_MIN:-10}, or below 70% of the previous file's
