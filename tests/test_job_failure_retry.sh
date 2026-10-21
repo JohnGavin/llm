@@ -250,5 +250,10 @@ grep -q 'job_failure_assess' "$SCRIPT"; chk "M: classification goes through job_
 awk -F'\t' '$1 ~ /^com\.claude\.(config|knowledge)-pulse$/ && $3=="self-heal"{n++} END{exit !(n==2)}' "$SHIPPED"
 chk "M: shipped table has self-heal rows for config-pulse and knowledge-pulse" "$?"
 
+AGENTS_MD="$ROOT/AGENTS.md"
+grep -q 'Failed-job retry — standing authorisation' "$AGENTS_MD" && grep -q 'job_failure_retry.sh --apply' "$AGENTS_MD"
+chk "M: AGENTS.md carries the standing-authorisation paragraph for this script" "$?"
+grep -q 'Widening is NOT covered' <(grep 'Failed-job retry' "$AGENTS_MD"); chk "M: and says widening stays Class C" "$?"
+
 echo "RESULT: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
