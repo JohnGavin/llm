@@ -1,0 +1,10 @@
+# gh_transient_patterns.tsv -- owner-signed: failed-job log patterns that mean a scheduled GitHub run failed for a transient reason.
+# gh_run_retry.sh --apply may `gh run rerun --failed` a scheduled run of an owner PUBLIC repo whose failed-job log matches a row
+# (AGENTS.md, "Failed-job retry"). Adding, editing or removing a row widens or narrows that authority: Class C (explicit "merge").
+# Columns (TAB separated): pattern_regex (grep -E), note.
+pattern_regex	note
+Error in the HTTP2 framing layer	cache.nixos.org transient download error
+unable to download	nix could not fetch a path; network or cache blip
+Could not resolve host	DNS failure on the runner
+The hosted runner lost communication	GitHub runner lost contact with the service
+The runner has received a shutdown signal	runner preempted or recycled

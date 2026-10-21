@@ -344,3 +344,108 @@ job_failure_retry_overlay <- function(res, label, retry) {
   }
   res
 }
+
+# ---- Automatic retry of failed GitHub Actions runs (gh_run_retry.sh) -----------------
+# The email runs gh_run_retry.sh --apply before the body is built. It prints one line per
+# re-run, `<owner/repo> <workflow> run <id> retried (a|b)`; these helpers parse them, read
+# each run's state at send time and word the email lines. Pure apart from the system2()
+# calls (replaceable in tests through `runner`).
+#   pending     the re-run has not finished: NOT a failure
+#   succeeded   the re-run passed
+#   failed      the re-run finished and did not pass
+#   unknown     the state could not be read (said so, never guessed)
+
+.gh_retry_empty <- function() data.frame(repo = character(0), workflow = character(0),
+                                         run = character(0), class = character(0),
+                                         stringsAsFactors = FALSE)
+
+# "<owner/repo> <workflow> run <id> retried (a|b)" lines -> data.frame. Other lines ignored.
+gh_run_retry_parse <- function(lines) {
+  lines <- as.character(lines)
+  lines <- lines[!is.na(lines)]
+  re <- "^([^ /]+/[^ ]+) (.+) run ([0-9]+) retried \\(([ab])\\)$"
+  hit <- grepl(re, lines, perl = TRUE)
+  if (!any(hit)) return(.gh_retry_empty())
+  lines <- lines[hit]
+  data.frame(repo     = sub(re, "\\1", lines, perl = TRUE),
+             workflow = sub(re, "\\2", lines, perl = TRUE),
+             run      = sub(re, "\\3", lines, perl = TRUE),
+             class    = sub(re, "\\4", lines, perl = TRUE),
+             stringsAsFactors = FALSE)
+}
+
+# Run the script. apply = FALSE passes no --apply (report only, nothing re-run).
+# Returns list(status = "ok" | "indeterminate", runs = <data.frame>, note = <chr>).
+gh_run_retry_run <- function(script, apply = FALSE, runner = NULL) {
+  bad <- function(why) list(status = "indeterminate", runs = .gh_retry_empty(), note = why)
+  if (is.null(script) || length(script) != 1L || is.na(script) || !nzchar(script) ||
+      !file.exists(script)) {
+    return(bad("retry script not found"))
+  }
+  args <- c(script, if (isTRUE(apply)) "--apply")
+  out <- tryCatch(
+    if (is.null(runner)) {
+      withCallingHandlers(system2("bash", args, stdout = TRUE, stderr = FALSE),
+                          warning = function(w) invokeRestart("muffleWarning"))
+    } else runner(args),
+    error = function(e) NULL)
+  if (is.null(out)) return(bad("retry script could not be run"))
+  rc <- attr(out, "status") %||% 0L
+  runs <- gh_run_retry_parse(out)
+  if (rc %in% c(0L, 1L)) return(list(status = "ok", runs = runs, note = ""))
+  why <- if (rc == 3L) {
+    ind <- out[startsWith(as.character(out), "INDETERMINATE:")]
+    if (length(ind) > 0L) trimws(sub("^INDETERMINATE:", "", substr(ind[[1L]], 1L, 160L)))
+    else "retry could not be confirmed"
+  } else sprintf("retry script failed (exit %s)", rc)
+  list(status = "indeterminate", runs = runs, note = why)
+}
+
+# State of one run NOW: "pending" | "succeeded" | "failed" | "unknown".
+# `runner` (tests) takes the gh argument vector and returns the stdout lines.
+gh_run_retry_state <- function(repo, run, runner = NULL, gh = Sys.getenv("GH_RUN_RETRY_GH", "gh")) {
+  args <- c("run", "view", run, "--repo", repo, "--json", "status,conclusion",
+            "--jq", "[.status, .conclusion] | @tsv")
+  out <- tryCatch(
+    if (is.null(runner)) {
+      withCallingHandlers(system2(gh, shQuote(args), stdout = TRUE, stderr = FALSE),
+                          warning = function(w) invokeRestart("muffleWarning"))
+    } else runner(args),
+    error = function(e) NULL)
+  if (is.null(out) || length(out) == 0L || !is.null(attr(out, "status"))) return("unknown")
+  f <- strsplit(out[[1L]], "\t", fixed = TRUE)[[1L]]
+  st <- if (length(f) >= 1L) f[[1L]] else ""
+  co <- if (length(f) >= 2L) f[[2L]] else ""
+  if (!nzchar(st)) return("unknown")
+  if (!identical(st, "completed")) return("pending")
+  if (identical(co, "success")) return("succeeded")
+  if (nzchar(co)) "failed" else "unknown"
+}
+
+# One line for the email when the retry did not run cleanly; "" when it did.
+gh_run_retry_note <- function(retry) {
+  if (is.null(retry)) {
+    return("Automatic retry of failed GitHub runs: INDETERMINATE (the retry step did not run), so a failed run may not have been retried.")
+  }
+  if (identical(retry$status, "ok")) return("")
+  sprintf("Automatic retry of failed GitHub runs: INDETERMINATE (%s), so a failed run may not have been retried.",
+          retry$note %||% "no reason given")
+}
+
+# One line per re-run, state read now: data.frame(line, state). `state_fn(repo, run)`.
+gh_run_retry_lines <- function(retry, state_fn = gh_run_retry_state) {
+  if (is.null(retry) || is.null(retry$runs) || nrow(retry$runs) == 0L) {
+    return(data.frame(line = character(0), state = character(0), stringsAsFactors = FALSE))
+  }
+  st <- vapply(seq_len(nrow(retry$runs)),
+               function(i) state_fn(retry$runs$repo[[i]], retry$runs$run[[i]]), character(1))
+  txt <- vapply(st, function(s) switch(s, pending = "re-run still pending",
+                                       succeeded = "re-run succeeded",
+                                       failed = "re-run FAILED",
+                                       "re-run state unknown"), character(1))
+  data.frame(line = sprintf("Retried a failed scheduled run: %s %s run %s (%s) - %s",
+                            retry$runs$repo, retry$runs$workflow, retry$runs$run,
+                            ifelse(retry$runs$class == "a", "transient log pattern", "runner never started"),
+                            txt),
+             state = unname(st), stringsAsFactors = FALSE)
+}

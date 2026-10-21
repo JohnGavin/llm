@@ -150,6 +150,14 @@ run_dry_run <- function(db_path = NULL, extra_env = character(0)) {
     "REPORT_RECIPIENT=",
     extra_env
   )
+  # The GitHub-run retry step must never reach the real gh from a test: unless a case
+  # supplies its own fake, use a no-op script.
+  if (!any(startsWith(extra_env, "GH_RUN_RETRY_SCRIPT="))) {
+    noop <- tempfile("gh_run_retry_noop_", fileext = ".sh")
+    writeLines(c("#!/bin/bash", "exit 0"), noop)
+    on.exit(unlink(noop), add = TRUE)
+    env_vars <- c(env_vars, paste0("GH_RUN_RETRY_SCRIPT=", noop))
+  }
   # env = env_vars, NOT c(Sys.getenv(), env_vars) — same defect #848/#851 fixed
   # in test-kb-digest.R. system2() renders `env` as `env NAME=VAL ... cmd`, and
   # `env` already inherits the parent environment, so splicing all of
@@ -1158,6 +1166,89 @@ test_that("cron-health: a job that recovered after the retry is not reported; on
   gone <- paste(run_dry_run(db_path = db, extra_env = "JOB_FAILURE_RETRY_SCRIPT=/nonexistent/retry.sh"), collapse = "\n")
   expect_true(grepl("Automatic retry of failed jobs: INDETERMINATE (retry script not found)", gone, fixed = TRUE),
               info = "a retry script that cannot be run must be said, never silently omitted")
+})
+
+# Retry of failed scheduled GitHub runs: the email runs gh_run_retry.sh first and shows
+# each re-run on one line with its state read at send time (pending is NOT failed).
+.jf_lib <- file.path(dirname(.email_script), "lib", "job_failure_lib.R")
+
+test_that("gh_run_retry lib: parse, state mapping, script exit codes, INDETERMINATE note", {
+  skip_if_not(file.exists(.jf_lib), "job_failure_lib.R not found")
+  e <- new.env()
+  sys.source(.jf_lib, envir = e)
+  p <- e$gh_run_retry_parse(c("owner/pub-a Nightly build run 11 retried (a)",
+                              "owner/pub-b Docs run 12 retried (b)",
+                              "owner/pub-a Nightly run 13 would retry (a)",
+                              "owner/pub-a Nightly run 14 retry failed (a)",
+                              "INDETERMINATE: x", "garbage", NA))
+  expect_equal(p$run, c("11", "12"))
+  expect_equal(p$workflow, c("Nightly build", "Docs"))
+  expect_equal(p$class, c("a", "b"))
+  expect_equal(nrow(e$gh_run_retry_parse(character(0))), 0L)
+  st <- function(out) e$gh_run_retry_state("o/r", "1", runner = function(a) out)
+  expect_equal(st("in_progress\t"), "pending")
+  expect_equal(st("queued\t"), "pending")
+  expect_equal(st("completed\tsuccess"), "succeeded")
+  expect_equal(st("completed\tfailure"), "failed")
+  expect_equal(st("completed\tcancelled"), "failed")
+  expect_equal(st(character(0)), "unknown")
+  expect_equal(st(structure("x", status = 1L)), "unknown")
+  expect_equal(st("completed\t"), "unknown")
+  scr <- withr::local_tempfile(fileext = ".sh"); writeLines("#!/bin/bash", scr)
+  rn <- function(out, rc) function(a) structure(out, status = rc)
+  ok <- e$gh_run_retry_run(scr, apply = TRUE, runner = rn("owner/pub-a W run 5 retried (a)", 1L))
+  expect_equal(ok$status, "ok"); expect_equal(ok$runs$run, "5")
+  expect_equal(e$gh_run_retry_note(ok), "")
+  ind <- e$gh_run_retry_run(scr, apply = TRUE, runner = rn("INDETERMINATE: gh not authenticated", 3L))
+  expect_equal(ind$status, "indeterminate")
+  expect_match(e$gh_run_retry_note(ind), "INDETERMINATE (gh not authenticated)", fixed = TRUE)
+  expect_equal(e$gh_run_retry_run(scr, runner = rn(character(0), 2L))$status, "indeterminate")
+  expect_match(e$gh_run_retry_run("/nonexistent.sh")$note, "not found")
+  expect_equal(e$gh_run_retry_run(scr, runner = function(a) stop("boom"))$status, "indeterminate")
+  expect_match(e$gh_run_retry_note(NULL), "INDETERMINATE", fixed = TRUE)
+  # apply = FALSE must pass no --apply
+  seen <- NULL
+  e$gh_run_retry_run(scr, apply = FALSE, runner = function(a) { seen <<- a; character(0) })
+  expect_false("--apply" %in% seen)
+  e$gh_run_retry_run(scr, apply = TRUE, runner = function(a) { seen <<- a; character(0) })
+  expect_true("--apply" %in% seen)
+})
+
+test_that("email: re-run GitHub runs are one line each with their state; pending is not failed; INDETERMINATE is stated (llm failure self-heal)", {
+  skip_if_not_installed("blastula")
+  skip_if_not_installed("duckdb")
+  db <- .build_cron_fixture_db(
+    hk_row = list(task = "private_data_history_audit", status = "ok", rows_written = 1L, age_h = 2),
+    ev_row = list(plist_label = "com.claude.private-data-history-audit", state = "loaded_ok",
+                  last_exit_code = 0L, last_fired_at_now = TRUE))
+  skip_if(is.null(db), "could not build cron-health fixture DB")
+  state_gh <- withr::local_tempfile(fileext = ".sh")
+  writeLines(c("#!/bin/bash",
+               'case "$3" in',
+               "11) printf 'in_progress\\t\\n' ;;",
+               "12) printf 'completed\\tsuccess\\n' ;;",
+               "13) printf 'completed\\tfailure\\n' ;;",
+               "esac"), state_gh)
+  Sys.chmod(state_gh, "755")   # it is run directly, as gh is
+  env <- function(...) c(paste0("GH_RUN_RETRY_GH=", state_gh), ...)
+  runs <- c("owner/pub-a Nightly run 11 retried (a)", "owner/pub-b Docs run 12 retried (b)")
+  out <- paste(run_dry_run(db_path = db, extra_env = env(paste0("GH_RUN_RETRY_SCRIPT=",
+               .fake_retry_script(runs)))), collapse = "\n")
+  expect_true(grepl("owner/pub-a Nightly run 11 (transient log pattern) - re-run still pending", out, fixed = TRUE))
+  expect_true(grepl("owner/pub-b Docs run 12 (runner never started) - re-run succeeded", out, fixed = TRUE))
+  expect_false(grepl("re-run FAILED", out, fixed = TRUE), info = "pending / succeeded runs must not be called failed")
+  expect_false(grepl("Automatic retry of failed GitHub runs", out, fixed = TRUE))
+  bad <- paste(run_dry_run(db_path = db, extra_env = env(paste0("GH_RUN_RETRY_SCRIPT=",
+               .fake_retry_script("owner/pub-a Nightly run 13 retried (a)", status = 1L)))), collapse = "\n")
+  expect_true(grepl("owner/pub-a Nightly run 13 (transient log pattern) - re-run FAILED", bad, fixed = TRUE))
+  ind <- paste(run_dry_run(db_path = db, extra_env = env(paste0("GH_RUN_RETRY_SCRIPT=",
+               .fake_retry_script("INDETERMINATE: gh not authenticated", status = 3L)))), collapse = "\n")
+  expect_true(grepl("Automatic retry of failed GitHub runs: INDETERMINATE (gh not authenticated)", ind, fixed = TRUE),
+              info = "an INDETERMINATE retry must be said on one line, never silently omitted")
+  gone <- paste(run_dry_run(db_path = db, extra_env = env("GH_RUN_RETRY_SCRIPT=/nonexistent/gh_retry.sh")), collapse = "\n")
+  expect_true(grepl("Automatic retry of failed GitHub runs: INDETERMINATE (retry script not found)", gone, fixed = TRUE))
+  none <- paste(run_dry_run(db_path = db), collapse = "\n")
+  expect_false(grepl("Retried a failed scheduled run", none, fixed = TRUE), info = "nothing retried: no line")
 })
 
 # ── Lessons-captured section ─────────────────────────────────────────────────

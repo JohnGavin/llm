@@ -48,6 +48,8 @@ my_new_md_database
 !.claude/state/auto_merge_tier2.tsv
 # Committed job-failure policy table: the one home for known/human job failure causes
 !.claude/state/job_failure_policy.tsv
+# Committed owner-signed table of transient GitHub Actions failure patterns (gh_run_retry.sh)
+!.claude/state/gh_transient_patterns.tsv
 
 # Sensitive/personal files
 *.pdf

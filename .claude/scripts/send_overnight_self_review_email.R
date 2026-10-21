@@ -1297,6 +1297,28 @@ sec3d_block <- collapsible_block(
           ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, htmlEscape(.job_failure_retry_note))
 } else ""
 
+# The same for failed SCHEDULED GitHub Actions runs of the owner's public repos:
+# gh_run_retry.sh --apply re-runs a transient failure (at most 3, each run once) before
+# the body is built. Each re-run is one line, its state read now (pending is NOT failed);
+# if the step cannot run or cannot be confirmed, ONE INDETERMINATE line says so.
+.gh_run_retry_script <- Sys.getenv("GH_RUN_RETRY_SCRIPT") %||%
+  file.path(.scripts_dir, "gh_run_retry.sh")
+.gh_run_retry <- gh_run_retry_run(.gh_run_retry_script, apply = !dry_run)
+.gh_run_retry_note  <- gh_run_retry_note(.gh_run_retry)
+.gh_run_retry_rows  <- gh_run_retry_lines(.gh_run_retry)
+.gh_run_retry_warn  <- nzchar(.gh_run_retry_note) || any(.gh_run_retry_rows$state %in% c("failed", "unknown"))
+.gh_run_retry_html <- paste0(
+  if (nzchar(.gh_run_retry_note)) {
+    sprintf('<p style="color:%s;font-size:%s;margin-top:8px;font-weight:bold;">&#9888; %s</p>',
+            ACCENT_ORANGE, EMAIL_FONT_SUBTITLE, htmlEscape(.gh_run_retry_note))
+  } else "",
+  paste0(vapply(seq_len(nrow(.gh_run_retry_rows)), function(i) {
+    sprintf('<p style="color:%s;font-size:%s;margin-top:4px;">%s</p>',
+            if (.gh_run_retry_rows$state[[i]] %in% c("failed", "unknown")) ACCENT_ORANGE else DARK_MUTED,
+            EMAIL_FONT_BODY, htmlEscape(.gh_run_retry_rows$line[[i]]))
+  }, character(1)), collapse = "")
+)
+
 cron_health <- safe_query("
   SELECT plist_label, state, last_exit_code, last_fired_at, next_fire_at, fired_at
   FROM (
@@ -1950,7 +1972,7 @@ if (nrow(cron_health) > 0L) {
       )
     )
   }
-  cron_table_html <- paste0(cron_table_html, .job_failure_retry_note_html)
+  cron_table_html <- paste0(cron_table_html, .job_failure_retry_note_html, .gh_run_retry_html)
   sec3e_summary <- sprintf(
     "%d plists · %d ok · %d failed · %d indeterminate · %d need triage · %d known",
     n_plists, n_ok, n_fail, n_indeterminate, n_triage, n_known
@@ -1960,7 +1982,7 @@ if (nrow(cron_health) > 0L) {
   # 27-run degradation read as reassuring for four weeks.
   sec3e_summary_color <- if (n_fail > 0L || n_triage > 0L) {
     "#ff5252"
-  } else if (n_indeterminate > 0L || nzchar(.job_failure_retry_note_html)) {
+  } else if (n_indeterminate > 0L || nzchar(.job_failure_retry_note_html) || .gh_run_retry_warn) {
     ACCENT_ORANGE
   } else {
     ACCENT_GREEN
@@ -1972,7 +1994,8 @@ if (nrow(cron_health) > 0L) {
       '<p style="color:%s;font-size:%s;">No launchd_health_events recorded yet.</p>',
       DARK_MUTED, EMAIL_FONT_BODY
     ),
-    .job_failure_retry_note_html
+    .job_failure_retry_note_html,
+    .gh_run_retry_html
   )
   sec3e_summary       <- "no data yet"
   sec3e_summary_color <- ACCENT_GREEN
