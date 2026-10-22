@@ -86,6 +86,8 @@ Merge history is queryable in `unified.duckdb` (`merge_events`) and `.claude/scr
 
 **Outbound writing — John's voice (ALL PROJECTS):** anything John will *send* is drafted in **his** style: greeting `Hi,`; **body hard-wrapped at 80 columns, each line filled** (no newline after every comma); sign-off a bare `John.`; no questions that pre-empt a reply. Anything meant to be copied is plain text saved as a `.txt`, NEVER a markdown blockquote. See `outbound-writing-style`.
 
+**Define jargon on first use (ALL PROJECTS, every surface):** every acronym and specialist term (medical, statistical, tooling) in a reply, issue, PR, commit, CHANGELOG, Artifact or drafted message gets a brief plain-English definition in the same sentence or an embedded link to an authoritative one, on first use. See `acronym-expansion` (llm#1507).
+
 **Follow the reference fully (ALL PROJECTS):** a file named as the model is a **component library, not a stylesheet**: **audit every component BEFORE writing**, give each a verdict (*use* / *not applicable*), and **report which you skipped**. See `follow-the-reference-fully`.
 
 **Shiny UI:** NEVER `value_box()` or large KPI boxes — compact two-column tables (Metric | Value). Time series MUST have a range slider, default last 3 months. **NEVER pie charts** — dotcharts first, horizontal bars as fallback. Compact filters: `bslib::toolbar()`. See `dashboard-filter-placement`, `visualization-standards`. **Shinylive/WebR:** long computations MUST use JS round-trip batching (NOT `invalidateLater()`); see `shinylive-webr-nonblocking`. **DuckDB:** use `duckplyr` over raw SQL where possible.
