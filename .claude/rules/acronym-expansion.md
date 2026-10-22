@@ -12,7 +12,29 @@ paths:
 
 Every vignette, README, caption, table header, diagram label, and issue/PR description that contains an acronym.
 
-## MANDATORY: Three Requirements Per Acronym
+## MANDATORY: Every Surface, Every Specialist Term (llm#1507)
+
+The owner's instruction (2026-10-21): "if you use buzzwords or acronyms
+include a brief definition or an embedded link to a detailed definition."
+
+On first use in a chat reply, issue or PR body, commit message, CHANGELOG
+entry, Artifact, drafted email or message, vignette or README, every acronym
+and every specialist term (medical, statistical, legal, financial, tooling)
+gets either a brief plain-English definition in the same sentence or an
+embedded link to an authoritative definition (NHS, NICE, WHO, package docs;
+Wikipedia as a last resort). Later uses in the same reply need nothing more.
+
+- Example: "possible diverticulitis" becomes "possible diverticulitis
+  (inflammation of small pouches in the bowel wall;
+  [NHS](https://www.nhs.uk/conditions/diverticular-disease-and-diverticulitis/))".
+- Exempt: terms the owner introduced in the same conversation; everyday
+  words; code identifiers in backticks (names, not jargon).
+- This rule's `paths:` only covers the vignette specifics below; the
+  every-surface part is carried by its always-loaded pointer in `AGENTS.md`.
+
+The three vignette requirements below still apply on top of this.
+
+## MANDATORY: Three Requirements Per Acronym (vignettes)
 
 1. **First use**: full expansion with external link — `[cardiovascular disease (CVD)](https://www.who.int/...)`
 2. **Subsequent uses**: linked `<abbr>` tag with BOTH hover tooltip AND embedded link — `<a href="https://www.who.int/health-topics/cardiovascular-diseases"><abbr title="Cardiovascular disease: diseases of the heart and blood vessels">CVD</abbr></a>`. The `<abbr>` alone (no link) is NOT sufficient.
