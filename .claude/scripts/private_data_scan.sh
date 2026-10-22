@@ -948,6 +948,9 @@ is_generic_skip_blob() {
 #      public, so the gate fails closed. In --full-history mode the same
 #      condition is reported as its own rule, document-format-in-public-
 #      history: it is what the generic regexes cannot see.
+#      eps and ps (PostScript) are gated for the same reason (llm#1436): they
+#      can carry Flate/DCT/ASCII85 streams and embedded rasters. Text
+#      extraction for them (ghostscript ps2ascii) is a follow-up.
 #   2. TEXT EXTRACTION (pdf only: pdftotext, poppler). The extracted text is
 #      run through the deny-list and the generic rules. When the extractor is
 #      missing, fails, or finds no text layer, the file's content was NOT
@@ -959,7 +962,7 @@ is_generic_skip_blob() {
 # "<exact repo-relative path> | <reason>". A line with no reason, or no path,
 # is ignored with a warning, so a bare path allows nothing. The file is read
 # from the working tree, so adding an entry is a reviewable diff.
-DOC_FORMAT_EXTS="pdf docx xlsx doc xls odt rtf eml msg"
+DOC_FORMAT_EXTS="pdf docx xlsx doc xls odt rtf eml msg eps ps"
 PDFTOTEXT="${PRIVATE_DATA_SCAN_PDFTOTEXT:-pdftotext}"
 DOC_ALLOWLIST_FILE="${PRIVATE_DATA_DOC_ALLOWLIST:-}"
 DOC_ALLOW_PATHS=()
@@ -1134,6 +1137,31 @@ is_image_path() {
     return 1
 }
 
+# ---- raster-embedding SVG (llm#1436) ----
+# A pure-vector SVG (ggplot / svglite) is XML and is scanned as text, so it is
+# not an image. An SVG that embeds a raster is a PNG in disguise: the pixels
+# are invisible to every rule. It is treated exactly like a PNG (same
+# generated-folder exemptions, same allow-list, same rule names).
+is_svg_path() {
+    [ "$(path_basename_ext "$1")" = "svg" ]
+}
+
+# svg_has_raster RAW-FILE -> 0 when the SVG embeds raster data, 1 when it does
+# not, 2 when the file cannot be read (caller records INDETERMINATE).
+# Newlines are folded to spaces first so an <image ...> element split across
+# lines still matches; matching is case-insensitive (tag, attribute and the
+# data: scheme); href and xlink:href are both covered, single or double quotes.
+#   (a) any "data:image/" URI -- including data:image/svg+xml, which may wrap a
+#       base64 raster, so it is not trusted.
+#   (b) an <image> (or <ns:image>) element whose href points at a raster file.
+svg_has_raster() {
+    local f="$1" folded
+    [ -r "$f" ] || return 2
+    folded="$(LC_ALL=C tr '\n\r\000' '   ' < "$f")" || return 2
+    printf '%s' "$folded" | LC_ALL=C "$GREP" -qiE \
+        "data:[[:space:]]*image/|<([a-z0-9_.-]+:)?image[^>]*href[[:space:]]*=[[:space:]]*[\"']?[^\"'>[:space:]]*\.(png|jpe?g|gif|webp|bmp|tiff?|heic|heif)([?#\"'[:space:]>]|\$)"
+}
+
 is_generated_figure_path() {
     case "$1" in
         man/figures/*|docs/*|vignettes/*_files/*) return 0 ;;
@@ -1162,7 +1190,19 @@ scan_path_rules() {
         append_finding "gate" "critical" "$loc" "0" "sensitive-filename" \
             "path contains a health/money/identity/contact word from the scanner's list, not on the allow-list (content not inspected for meaning)"
     fi
-    if is_image_path "$path" && ! is_generated_figure_path "$path"; then
+    local is_img=0 src_rc=0
+    if is_image_path "$path"; then
+        is_img=1
+    elif is_svg_path "$path" && ! is_generated_figure_path "$path"; then
+        # Content decides (llm#1436). Not readable => not inspected => INDETERMINATE.
+        svg_has_raster "$rawf" && src_rc=0 || src_rc=$?
+        case "$src_rc" in
+            0) is_img=1 ;;
+            1) : ;;
+            *) printf '%s\t%s\n' "$loc" "SVG unreadable or raster check failed (embedded raster not inspected)" >> "$INDET_FILE" ;;
+        esac
+    fi
+    if [ "$is_img" -eq 1 ] && ! is_generated_figure_path "$path"; then
         size="unknown"
         [ -n "$rawf" ] && size="$(wc -c < "$rawf" | tr -d ' ')"
         rule="image-outside-figures"; sev="critical"
@@ -1182,7 +1222,7 @@ scan_blob() {
     # actually stops the truncation at its source; scan_denylist's and
     # scan_generic's own fixes are defense-in-depth for any caller that
     # invokes them directly with raw content (e.g. the selftest below).
-    if is_document_format_path "$loc" || is_image_path "$(doc_loc_path "$loc")"; then
+    if is_document_format_path "$loc" || is_image_path "$(doc_loc_path "$loc")" || is_svg_path "$(doc_loc_path "$loc")"; then
         rawf="$(mktemp "${TMPDIR:-/tmp}/private_data_scan_doc.XXXXXX")"
         cat > "$rawf"
         is_document_format_path "$loc" && scan_document_format "$loc" "$rawf"
@@ -1355,6 +1395,12 @@ scan_paths() {
             # image-outside-figures gate (llm#1370); generic rules skip them.
             *.rds|*.rda|*.RData|*.gz|*.zip|*.duckdb|*.parquet) continue ;;
         esac
+        # llm#1436: an SVG's raster check needs its content; a file we cannot
+        # read was not inspected, which is INDETERMINATE (exit 3), never clean.
+        if is_svg_path "$f" && [ ! -r "$f" ]; then
+            printf '%s\t%s\n' "$f" "SVG unreadable (embedded raster not inspected)" >> "$INDET_FILE"
+            continue
+        fi
         cat "$f" 2>/dev/null | scan_blob "$f"
     done
 }
@@ -2129,7 +2175,7 @@ run_selftest() {
     # Item 3: document-format gate. VIS is set in-process; INDET_FILE is
     # reset before each case.
     local ext vis_saved="$VIS"
-    local -a doc_exts=(pdf docx xlsx doc xls odt rtf eml msg)
+    local -a doc_exts=(pdf docx xlsx doc xls odt rtf eml msg eps ps)   # eps/ps: llm#1436
     for ext in "${doc_exts[@]}"; do
         FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_d1.XXXXXX")"; : > "$INDET_FILE"
         VIS=public
@@ -2388,6 +2434,79 @@ run_selftest() {
     IMAGE_EXTS="$ie_saved"
     _check "$([ "$(_rule_count "abc123456789:img/photo2.png" image-outside-figures)" -eq 1 ] && echo 0 || echo 1)" "llm#1370 falsification: restored, rule fires again"
     DOC_ALLOW_PATHS=(); DOC_ALLOWLIST_FILE=""
+
+    # ── llm#1436: EPS/PS are document formats; raster-embedding SVG is an image ──
+    # _rule_count_c LOCATION RULE CONTENT -> gate findings of RULE for a blob
+    # with the given content (the SVG rule reads content, unlike the path rules).
+    _rule_count_c() {
+        FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_pc.XXXXXX")"
+        printf '%s\n' "$3" | scan_blob "$1"
+        awk -F'\t' -v r="$2" '$1=="gate" && $5==r' "$FINDINGS_FILE" | grep -c .
+        rm -f "$FINDINGS_FILE"
+    }
+    local svg_vec='<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/></svg>'
+    local svg_dq='<svg><image href="data:image/png;base64,iVBORw0KGgo="/></svg>'
+    local svg_sq="<svg><image href='data:image/png;base64,iVBORw0KGgo='/></svg>"
+    local svg_xl='<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="data:image/jpeg;base64,/9j/4AAQ"/></svg>'
+    local svg_up='<SVG><IMAGE HREF="DATA:IMAGE/PNG;BASE64,iVBOR"/></SVG>'
+    local svg_ml=$'<svg>\n  <image\n     width="10"\n     xlink:href="data:image/png;base64,iVBOR"\n  />\n</svg>'
+    local svg_ext='<svg><image href="photos/me.JPG" width="5"/></svg>'
+    local svg_ext_vec='<svg><image href="logo.svg" width="5"/></svg>'
+    local svg_loc="abc123456789:img/diagram.svg"
+    VIS=public
+    _check "$([ "$(_rule_count "abc123456789:fig/plot.eps" document-format-blocked)" -eq 1 ] && [ "$(_rule_count "abc123456789:fig/plot.PS" document-format-blocked)" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1436: .eps and .ps (any case) in a PUBLIC repo give document-format-blocked"
+    VIS=private
+    _check "$([ "$(_rule_count "abc123456789:fig/plot.eps" document-format-blocked)" -eq 0 ] && [ "$(_rule_count "abc123456789:fig/plot.ps" document-format-blocked)" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1436: .eps and .ps in a PRIVATE repo are not gated"
+    VIS=public
+    local af3="$tmp/path_allow_1436.txt"
+    printf 'fig/ok.eps | third-party figure, reviewed, no personal content\nfig/ok.ps | reviewed, no personal content\nimg/ok.svg | reviewed raster logo, no personal content\n' > "$af3"
+    DOC_ALLOWLIST_FILE="$af3"; load_doc_allowlist 2>/dev/null
+    _check "$([ "$(_rule_count "abc123456789:fig/ok.eps" document-format-blocked)" -eq 0 ] && [ "$(_rule_count "abc123456789:fig/ok.ps" document-format-blocked)" -eq 0 ] && [ "$(_rule_count "abc123456789:fig/other.eps" document-format-blocked)" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1436: allow-listed .eps/.ps are not blocked; a neighbouring .eps still is"
+    _check "$([ "$(_rule_count_c "abc123456789:img/ok.svg" image-outside-figures "$svg_dq")" -eq 0 ] && [ "$(_rule_count_c "abc123456789:img/other.svg" image-outside-figures "$svg_dq")" -eq 1 ] && echo 0 || echo 1)" \
+        "llm#1436: allow-listed raster SVG is not blocked; a neighbouring one still is"
+    DOC_ALLOW_PATHS=(); DOC_ALLOWLIST_FILE=""
+    _check "$([ "$(_rule_count_c "$svg_loc" image-outside-figures "$svg_vec")" -eq 0 ] && [ "$(_rule_count_c "$svg_loc" image-outside-figures "$svg_ext_vec")" -eq 0 ] && echo 0 || echo 1)" \
+        "llm#1436: vector-only SVG (and an <image> pointing at another SVG) gives no finding"
+    local sv
+    for sv in "$svg_dq" "$svg_sq" "$svg_xl" "$svg_up" "$svg_ml" "$svg_ext"; do
+        _check "$([ "$(_rule_count_c "$svg_loc" image-outside-figures "$sv")" -eq 1 ] && echo 0 || echo 1)" \
+            "llm#1436: SVG with embedded raster fires image-outside-figures [$(printf '%s' "$sv" | tr '\n' ' ' | cut -c1-60)]"
+    done
+    for lp in "abc123456789:vignettes/intro_files/figure-html/p.svg" "abc123456789:report_files/figure-html/p-1.svg" \
+              "abc123456789:_freeze/post/p.svg" "abc123456789:man/figures/logo.svg"; do
+        _check "$([ "$(_rule_count_c "$lp" image-outside-figures "$svg_dq")" -eq 0 ] && echo 0 || echo 1)" \
+            "llm#1436: raster SVG under generated-figure folder '$lp' is not blocked"
+    done
+    VIS=private
+    _check "$([ "$(_rule_count_c "$svg_loc" image-outside-figures "$svg_dq")" -eq 0 ] && echo 0 || echo 1)" "llm#1436: raster SVG in a PRIVATE repo is not gated"
+    VIS=public
+    mode_saved="$MODE"; MODE="full-history"
+    _check "$([ "$(_rule_count_c "$svg_loc" image-in-public-history "$svg_dq")" -eq 1 ] && echo 0 || echo 1)" "llm#1436: --full-history reports a raster SVG as image-in-public-history"
+    MODE="$mode_saved"
+    # Falsification 1: eps removed from DOC_FORMAT_EXTS -> .eps goes quiet; restored -> fires.
+    local de_saved="$DOC_FORMAT_EXTS"; DOC_FORMAT_EXTS="${DOC_FORMAT_EXTS//eps/}"
+    _check "$([ "$(_rule_count "abc123456789:fig/plot.eps" document-format-blocked)" -eq 0 ] && echo 0 || echo 1)" "llm#1436 falsification: with eps removed from DOC_FORMAT_EXTS .eps goes quiet"
+    DOC_FORMAT_EXTS="$de_saved"
+    _check "$([ "$(_rule_count "abc123456789:fig/plot.eps" document-format-blocked)" -eq 1 ] && echo 0 || echo 1)" "llm#1436 falsification: restored, .eps fires again"
+    # Falsification 2: SVG raster check neutralised -> raster SVG goes quiet; restored -> fires.
+    eval "$(declare -f svg_has_raster | sed '1s/svg_has_raster/svg_has_raster_real/')"
+    svg_has_raster() { return 1; }
+    _check "$([ "$(_rule_count_c "$svg_loc" image-outside-figures "$svg_dq")" -eq 0 ] && echo 0 || echo 1)" "llm#1436 falsification: with the SVG raster check disabled the raster SVG goes quiet"
+    eval "$(declare -f svg_has_raster_real | sed '1s/svg_has_raster_real/svg_has_raster/')"
+    _check "$([ "$(_rule_count_c "$svg_loc" image-outside-figures "$svg_dq")" -eq 1 ] && echo 0 || echo 1)" "llm#1436 falsification: restored, raster SVG fires again"
+    # Unreadable SVG on --paths is INDETERMINATE, never clean.
+    local svg_unread="$tmp/unreadable.svg"
+    printf '<svg/>' > "$svg_unread"; chmod 000 "$svg_unread"
+    if [ -r "$svg_unread" ]; then
+        _check 0 "llm#1436: unreadable-SVG case skipped (running as a user who can read mode 000 files)"
+    else
+        : > "$INDET_FILE"; PATHS_ARGS=("$svg_unread"); scan_paths
+        _check "$([ "$(grep -c 'unreadable' "$INDET_FILE")" -eq 1 ] && echo 0 || echo 1)" "llm#1436: unreadable SVG is recorded INDETERMINATE (exit 3 path), not clean"
+    fi
+    chmod 600 "$svg_unread" 2>/dev/null; rm -f "$svg_unread"; : > "$INDET_FILE"; PATHS_ARGS=()
 
     # End to end on a synthetic repo: exact exit codes in staged / range / history.
     local pr="$tmp/pathrepo" pr_allow="$tmp/pr_allow.txt"

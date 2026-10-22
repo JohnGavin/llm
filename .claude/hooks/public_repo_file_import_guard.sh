@@ -50,7 +50,7 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCANNER="$HOOK_DIR/../scripts/private_data_scan.sh"
 # Fallback if the scanner cannot be read; a selftest case asserts it equals the
 # scanner's DOC_FORMAT_EXTS so the two cannot drift silently.
-DOC_EXTS_FALLBACK="pdf docx xlsx doc xls odt rtf eml msg"
+DOC_EXTS_FALLBACK="pdf docx xlsx doc xls odt rtf eml msg eps ps"
 
 _log() {
   local d="${PIG_LOG_DIR:-$HOME/.claude/logs}"
@@ -408,7 +408,7 @@ main() {
       saved="$(shopt -p nocasematch)"
       shopt -s nocasematch
       case "$fp" in
-        *.pdf|*.docx|*.xlsx|*.doc|*.xls|*.odt|*.rtf|*.eml|*.msg|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.heic|*.heif|*.bmp|*.tif|*.tiff|*.zip|*.tar|*.gz|*.tgz|*.bz2|*.tbz2|*.xz|*.txz|*.zst|*.7z|*.rar) trigger=1 ;;
+        *.pdf|*.docx|*.xlsx|*.doc|*.xls|*.odt|*.rtf|*.eml|*.msg|*.eps|*.ps|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.heic|*.heif|*.bmp|*.tif|*.tiff|*.zip|*.tar|*.gz|*.tgz|*.bz2|*.tbz2|*.xz|*.txz|*.zst|*.7z|*.rar) trigger=1 ;;
       esac
       eval "$saved"
     fi
@@ -578,7 +578,9 @@ STUB
   # --- Write tool -------------------------------------------------------------
   _write "Write pdf into public repo blocks"      2 "$P/out.pdf"
   _write "Write uppercase extension blocks"       2 "$P/OUT.PDF"
-  _write "Write pdf into private repo allows"     0 "$V/out.pdf"
+  _write "Write eps into public repo blocks (llm#1436)" 2 "$P/out.eps"
+  _write "Write ps into public repo blocks (llm#1436)"  2 "$P/out.ps"
+  _write "Write pdf into private repo allows"    0 "$V/out.pdf"
   _write "Write pdf outside any repo allows"      0 "$T/plain/out.pdf"
   _write "Write txt into public repo allows"      0 "$P/out.txt"
   _write "Write png into man/figures allows"      0 "$P/man/figures/x.png"
