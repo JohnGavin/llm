@@ -28,6 +28,37 @@
 #   private_data_git_hooks_install.sh [--repo <path>] --install [--hook pre-commit|pre-push|both]
 #   private_data_git_hooks_install.sh [--repo <path>] --uninstall [--hook pre-commit|pre-push|both]
 #   private_data_git_hooks_install.sh --selftest
+#   private_data_git_hooks_install.sh --audit [--root DIR]
+#
+# --audit (llm#1434 Gap 1) -- REPORT-ONLY coverage audit; changes no repo.
+#   A repo that sets a LOCAL core.hooksPath replaces the global hooks dir
+#   (git-hooks/, llm#1365), so the global PII gate never runs there. For every
+#   clone under DIR (default $PDHI_AUDIT_ROOT or ~/docs_gh; depth
+#   $PDHI_AUDIT_DEPTH, default 4) the audit resolves the EFFECTIVE hooks dir
+#   (`git config --type=path core.hooksPath`: local beats global; ~ expanded;
+#   a relative value is relative to the clone's top; unset everywhere means the
+#   default <common-git-dir>/hooks) and applies ONE rule:
+#     COVERED  <=> <effective hooks dir>/pre-commit is an executable regular
+#                  file (git ignores non-executable hooks) whose text contains
+#                  `pii_gate.sh` (the global hook), `private_data_scan.sh` or
+#                  the installer marker `private-data-scan pre-commit gate`
+#                  (a repo hook written by --install).
+#   Otherwise UNCOVERED. A local override whose directory holds no such hook is
+#   therefore uncovered even if .git/hooks/pre-commit has one (git ignores it).
+#   The test is textual: a hook that merely MENTIONS the scanner in a comment
+#   counts as covered (heuristic; the owner reads the list, it does not gate).
+#   Enumeration is the same as global_hooks_path_check.sh (llm#1388): a `.git`
+#   DIRECTORY (linked worktrees share their clone's config and are skipped),
+#   de-duplicated by git-common-dir, nothing under a worktrees/ path component.
+#   Unlike that script it covers public AND private clones, so it needs no gh
+#   call. Output never prints a repo name or path: one line per problem,
+#   `UNCOVERED <label> reason=<...>` or `UNINSPECTABLE <label> reason=<...>`,
+#   label `repo-<8 hex of sha256 of the physical git-common-dir>` (stable,
+#   not reversible without the clone list), then
+#   `repos=N covered=N uncovered=N indeterminate=N`.
+#   Exit: 0 all covered; 1 any uncovered (wins over 3); 2 usage; 3 at least one
+#   repo could not be inspected (broken config, unreadable hook) or the root is
+#   missing, and none is uncovered. 3 is never reported as 0.
 #
 # Bypass: git's own `--no-verify` (no custom kill-switch env var is added --
 # see private-data-scanning.md's "Why no custom bypass" section: a second,
@@ -42,12 +73,14 @@ set -euo pipefail
 PRECOMMIT_MARKER="private-data-scan pre-commit gate — installed by private_data_git_hooks_install.sh"
 PREPUSH_MARKER="private-data-scan pre-push gate — installed by private_data_git_hooks_install.sh"
 
-usage() { grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \{0,1\}//' | head -30; }
+usage() { grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \{0,1\}//' | head -34; }
 
 REPO_PATH=""
 ACTION=""
 HOOK="both"
 SELFTEST=0
+AUDIT=0
+AUDIT_ROOT=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -57,6 +90,8 @@ while [ $# -gt 0 ]; do
         --uninstall) ACTION="uninstall"; shift ;;
         --hook) shift; HOOK="${1:-both}"; shift ;;
         --selftest) SELFTEST=1; shift ;;
+        --audit) AUDIT=1; shift ;;
+        --root) shift; AUDIT_ROOT="${1:-}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "ERROR: unknown argument '$1'" >&2; exit 1 ;;
     esac
@@ -434,6 +469,93 @@ run_selftest() {
     echo "private_data_git_hooks_install selftest: $pass/$total PASS"
     [ "$pass" -eq "$total" ]
 }
+
+# ---------------------------------------------------------------------------
+# --audit (llm#1434 Gap 1): report-only coverage audit. See the header.
+# ---------------------------------------------------------------------------
+_audit_phys() { local d; d="$(cd "$1" 2>/dev/null && pwd -P)" || return 1; printf '%s' "$d"; }
+
+_audit_label() { # physical-dir -> repo-<8 hex>; never the name or path
+    local h
+    if command -v shasum >/dev/null 2>&1; then h="$(printf '%s' "$1" | shasum -a 256 | cut -c1-8)"
+    elif command -v sha256sum >/dev/null 2>&1; then h="$(printf '%s' "$1" | sha256sum | cut -c1-8)"
+    else h="$(printf '%s' "$1" | cksum | cut -d' ' -f1)"; fi
+    printf 'repo-%s' "$h"
+}
+
+# _audit_one CLONE -> prints "COVERED" | "UNCOVERED reason" | "INDETERMINATE reason"
+_audit_one() {
+    local clone="$1" raw rc common hp hook
+    # Effective hooksPath. rc 1 = key unset everywhere (default hooks dir);
+    # any other non-zero rc (e.g. 128 broken config) = cannot inspect.
+    raw="$(git -C "$clone" config --type=path --get core.hooksPath 2>/dev/null)" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then echo "INDETERMINATE config-unreadable"; return 0; fi
+    if [ "$rc" -eq 1 ] || [ -z "$raw" ]; then
+        common="$(git -C "$clone" rev-parse --git-common-dir 2>/dev/null)" || { echo "INDETERMINATE git-dir-unresolved"; return 0; }
+        case "$common" in /*) : ;; *) common="$clone/$common" ;; esac
+        hp="$common/hooks"
+    else
+        case "$raw" in /*) hp="$raw" ;; *) hp="$clone/$raw" ;; esac
+    fi
+    hook="$hp/pre-commit"
+    if [ ! -e "$hook" ]; then echo "UNCOVERED no-pre-commit-in-effective-hooks-dir"; return 0; fi
+    if [ ! -f "$hook" ] || [ ! -x "$hook" ]; then echo "UNCOVERED pre-commit-not-executable-file"; return 0; fi
+    if [ ! -r "$hook" ]; then echo "INDETERMINATE hook-unreadable"; return 0; fi
+    if grep -qE 'pii_gate\.sh|private_data_scan\.sh|private-data-scan pre-commit gate' "$hook" 2>/dev/null; then
+        echo "COVERED"
+    else
+        echo "UNCOVERED pre-commit-does-not-run-scanner"
+    fi
+}
+
+run_audit() {
+    local root="${AUDIT_ROOT:-${PDHI_AUDIT_ROOT:-${HOME:-/Users/johngavin}/docs_gh}}"
+    local depth="${PDHI_AUDIT_DEPTH:-4}"
+    local repos=0 covered=0 uncovered=0 indet=0
+    if [ ! -d "$root" ]; then
+        echo "private_data_git_hooks_install --audit: INDETERMINATE -- scan root does not exist" >&2
+        echo "repos=0 covered=0 uncovered=0 indeterminate=1"
+        return 3
+    fi
+    local seen; seen="$(mktemp "${TMPDIR:-/tmp}/pdhi_audit_seen.XXXXXX")"
+    local gitdir clone common common_phys label res verdict reason
+    while IFS= read -r gitdir; do
+        [ -n "$gitdir" ] || continue
+        [ -d "$gitdir" ] || continue            # a .git FILE is a linked worktree
+        clone="${gitdir%/.git}"
+        case "$clone" in */worktrees/*|*/worktrees) continue ;; esac
+        common="$(git -C "$clone" rev-parse --git-common-dir 2>/dev/null)" || common=""
+        common_phys=""
+        if [ -n "$common" ]; then
+            case "$common" in /*) common_phys="$(_audit_phys "$common")" || true ;; *) common_phys="$(_audit_phys "$clone/$common")" || true ;; esac
+        fi
+        [ -n "$common_phys" ] || common_phys="$(_audit_phys "$gitdir")" || common_phys="$gitdir"
+        if grep -qxF -- "$common_phys" "$seen"; then continue; fi
+        printf '%s\n' "$common_phys" >> "$seen"
+        repos=$((repos + 1))
+        label="$(_audit_label "$common_phys")"
+        res="$(_audit_one "$clone")"
+        verdict="${res%% *}"; reason="${res#* }"
+        case "$verdict" in
+            COVERED) covered=$((covered + 1)) ;;
+            UNCOVERED) uncovered=$((uncovered + 1)); echo "UNCOVERED $label reason=$reason" ;;
+            *) indet=$((indet + 1)); echo "UNINSPECTABLE $label reason=$reason" ;;
+        esac
+    done < <(find "$root" -mindepth 1 -maxdepth "$depth" -name .git -prune -print 2>/dev/null | sort)
+    rm -f "$seen"
+    echo "repos=${repos} covered=${covered} uncovered=${uncovered} indeterminate=${indet}"
+    if [ "$uncovered" -gt 0 ]; then return 1; fi
+    if [ "$indet" -gt 0 ]; then return 3; fi
+    return 0
+}
+
+if [ "$AUDIT" -eq 1 ]; then
+    if [ -n "$ACTION" ] || [ "$SELFTEST" -eq 1 ] || [ -n "$REPO_PATH" ]; then
+        echo "ERROR: --audit takes no other action (only --root DIR)" >&2; exit 2
+    fi
+    run_audit
+    exit $?
+fi
 
 if [ "$SELFTEST" -eq 1 ]; then
     run_selftest
