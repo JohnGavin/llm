@@ -281,7 +281,12 @@ SQL
         arc=125
         if "$GH" repo clone "$crepo" "$mdir" -- --mirror >"$TMPD/clone.out" 2>&1; then
             if [ -f "$AUDIT" ]; then
+                # PRIVATE_DATA_SCAN_VISIBILITY=public (llm#1392): the repo just
+                # became public, so the scan must run as a public repo (private-term
+                # rule, document and image gates armed) whatever a lookup from the
+                # bare mirror would say.
                 env REPO_ROOT="$mdir" PDHA_REPO_NAME="$crepo" UNIFIED_DB_PATH="$UNIFIED_DB" \
+                    PRIVATE_DATA_SCAN_VISIBILITY=public \
                     bash "$AUDIT" >"$TMPD/audit.out" 2>"$TMPD/audit.err"
                 arc=$?
             else
@@ -371,6 +376,7 @@ EOF
 d="$STUB_DIR"
 [ -d "$REPO_ROOT" ] && dirstate=dir || dirstate=nodir
 echo "$PDHA_REPO_NAME $dirstate" >> "$d/audit_calls"
+echo "${PRIVATE_DATA_SCAN_VISIBILITY:-unset}" > "$d/audit_vis"
 [ -f "$d/audit_rc" ] && exit "$(cat "$d/audit_rc")"
 exit 0
 EOF
@@ -441,6 +447,7 @@ EOF
     _check "$(grep -q 'FINDING became_public tester/beta' "$sb/out" && echo 0 || echo 1)" "the finding names the repo and change type"
     _expect_eq "became_public|PRIVATE|clean|0" "$(q "SELECT change_type||'|'||prev_visibility||'|'||audit_status||'|'||audit_rc FROM repo_visibility_changes WHERE repo='tester/beta'")" "change row: became_public, prev PRIVATE, audit clean rc 0"
     _expect_eq "tester/beta dir" "$(cat "$st/audit_calls")" "audit invoked once, for that repo, on an existing mirror directory"
+    _expect_eq "public" "$(cat "$st/audit_vis")" "llm#1392: the audit runs as a public repo (PRIVATE_DATA_SCAN_VISIBILITY=public: private-term rule armed)"
     _expect_eq 1 "$(cnt "$st/osa_calls")" "a macOS notification was raised"
     _expect_eq 1 "$(q "SELECT rows_written FROM housekeeping_runs WHERE task='repo_visibility_diff' ORDER BY started_at DESC LIMIT 1")" "heartbeat rows_written = findings (1)"
 
