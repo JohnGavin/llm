@@ -1,6 +1,7 @@
 # Document-format allow-list for private_data_scan.sh (JohnGavin/llm#1358).
 #
-# In a PUBLIC repo, pdf/docx/xlsx/doc/xls/odt/rtf/eml/msg files are blocked
+# In a PUBLIC repo, files of the document formats named by DOC_FORMAT_EXTS in
+# .claude/scripts/private_data_scan.sh (the one home of that list) are blocked
 # unless listed here. Format, one entry per line:
 #
 #   <exact repo-relative path> | <reason this file is safe to publish>
