@@ -47,10 +47,15 @@
 set -uo pipefail
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCANNER="$HOOK_DIR/../scripts/private_data_scan.sh"
-# Fallback if the scanner cannot be read; a selftest case asserts it equals the
-# scanner's DOC_FORMAT_EXTS so the two cannot drift silently.
-DOC_EXTS_FALLBACK="pdf docx xlsx doc xls odt rtf eml msg eps ps"
+# PIG_SCANNER is a test seam (a fake scanner file for the selftest).
+SCANNER="${PIG_SCANNER:-$HOOK_DIR/../scripts/private_data_scan.sh}"
+# One home per value: the document list (DOC_FORMAT_EXTS) and the image list
+# (IMAGE_EXTS) are owned by private_data_scan.sh and read from it at run time.
+# There is deliberately NO fallback copy: an unreadable scanner makes this hook
+# block with an INDETERMINATE reason (fail closed) instead of using a list that
+# may be stale. The scanner has no archive list, so the archive list below is
+# owned HERE, once, and is the only place it is typed.
+ARCHIVE_EXTS="zip tar gz tgz bz2 tbz2 xz txz zst 7z rar"
 
 _log() {
   local d="${PIG_LOG_DIR:-$HOME/.claude/logs}"
@@ -58,13 +63,19 @@ _log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$d/public_repo_file_import_guard.log" 2>/dev/null || true
 }
 
-_doc_exts() {
+# _scanner_list NAME -> the value of NAME="..." in the scanner, whitespace
+# collapsed to single spaces and trimmed; empty when unreadable or absent.
+_scanner_list() {
   local line
-  line="$(grep -m1 '^DOC_FORMAT_EXTS=' "$SCANNER" 2>/dev/null || true)"
-  line="${line#DOC_FORMAT_EXTS=\"}"
+  line="$(grep -m1 "^$1=" "$SCANNER" 2>/dev/null || true)"
+  line="${line#"$1"=\"}"
   line="${line%\"*}"
-  if [ -n "$line" ]; then printf '%s' "$line"; else printf '%s' "$DOC_EXTS_FALLBACK"; fi
+  # shellcheck disable=SC2086  # word splitting is the point: collapse blanks
+  set -f; set -- $line; set +f
+  printf '%s' "$*"
 }
+_doc_exts() { _scanner_list DOC_FORMAT_EXTS; }
+_img_exts() { _scanner_list IMAGE_EXTS; }
 
 # The parser. Reads the hook payload on stdin; prints
 #   HIT<TAB>repo-root<TAB>repo-relative-path<TAB>kind
@@ -74,8 +85,8 @@ _parse_py() {
 import sys, os, json, re, glob, shlex, subprocess
 
 DOC = set(os.environ.get('PIG_DOC_EXTS', '').split())
-IMG = set('png jpg jpeg gif webp heic heif bmp tif tiff'.split())
-ARC = set('zip tar gz tgz bz2 tbz2 xz txz zst 7z rar'.split())
+IMG = set(os.environ.get('PIG_IMG_EXTS', '').split())
+ARC = set(os.environ.get('PIG_ARC_EXTS', '').split())
 MAXF = 500
 IMG_EXEMPT = re.compile(r'(^|/)(docs|_freeze|pkgdown)/|(^|/)man/figures/|_files/figure-html/')
 
@@ -395,22 +406,40 @@ _visibility() {
   esac
 }
 
+# _deny REASON -> reason on stderr, permissionDecision:deny JSON on stdout, exit 2.
+_deny() {
+  printf '%s\n' "$1" >&2
+  python3 -c 'import json,sys
+print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":sys.argv[1]}}))' "$1" 2>/dev/null || true
+  exit 2
+}
+
 main() {
   local payload
   payload="$(cat 2>/dev/null || true)"
   [ -n "$payload" ] || exit 0
 
+  # The extension lists: documents and images from the scanner (read at run
+  # time), archives from ARCHIVE_EXTS above. Read via grep/printf only (cheap).
+  local DOC_EXTS IMG_EXTS lists_ok=1
+  DOC_EXTS="$(_doc_exts)"; IMG_EXTS="$(_img_exts)"
+  { [ -n "$DOC_EXTS" ] && [ -n "$IMG_EXTS" ]; } || lists_ok=0
+
   # ── fast path: pure bash, no subprocess ───────────────────────────────────
   local trigger=0
   if [[ "$payload" =~ \"tool_name\"[[:space:]]*:[[:space:]]*\"Write\" ]]; then
     if [[ "$payload" =~ \"file_path\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
-      local fp="${BASH_REMATCH[1]}" saved
-      saved="$(shopt -p nocasematch)"
-      shopt -s nocasematch
-      case "$fp" in
-        *.pdf|*.docx|*.xlsx|*.doc|*.xls|*.odt|*.rtf|*.eml|*.msg|*.eps|*.ps|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.heic|*.heif|*.bmp|*.tif|*.tiff|*.zip|*.tar|*.gz|*.tgz|*.bz2|*.tbz2|*.xz|*.txz|*.zst|*.7z|*.rar) trigger=1 ;;
-      esac
-      eval "$saved"
+      local fp="${BASH_REMATCH[1]}" saved base ext
+      base="${fp##*/}"
+      if [ "$lists_ok" = 0 ]; then
+        trigger=1   # cannot classify the extension: take the slow path, which fails closed
+      elif [[ "$base" == *.* ]]; then
+        ext="${base##*.}"
+        saved="$(shopt -p nocasematch)"
+        shopt -s nocasematch   # also makes the [[ == ]] membership test case-insensitive
+        if [ -n "$ext" ] && [[ " $DOC_EXTS $IMG_EXTS $ARCHIVE_EXTS " == *" $ext "* ]]; then trigger=1; fi
+        eval "$saved"
+      fi
     fi
   else
     case "$payload" in
@@ -420,9 +449,21 @@ main() {
   fi
   [ "$trigger" = 1 ] || exit 0
 
+  # INDETERMINATE (checks-must-distinguish-unknown): without the scanner's lists
+  # the hook cannot tell a document from a text file. It must not guess, and must
+  # not use a stale copy, so it blocks and says why.
+  if [ "$lists_ok" = 0 ]; then
+    _log "BLOCK INDETERMINATE: cannot read DOC_FORMAT_EXTS/IMAGE_EXTS from $SCANNER"
+    _deny "BLOCKED (INDETERMINATE, not a finding): the extension lists (DOC_FORMAT_EXTS, IMAGE_EXTS) could not be read from
+${SCANNER}
+so this hook cannot tell whether the file is a document, image or archive. It fails closed
+rather than using a possibly stale copy. Restore that script (git checkout) and retry.
+Rule: .claude/rules/private-data-scanning.md"
+  fi
+
   # ── slow path: parse, then resolve repo + visibility ──────────────────────
   local hits
-  hits="$(printf '%s' "$payload" | PIG_DOC_EXTS="$(_doc_exts)" python3 -c "$(_parse_py)" 2>/dev/null)" || {
+  hits="$(printf '%s' "$payload" | PIG_DOC_EXTS="$DOC_EXTS" PIG_IMG_EXTS="$IMG_EXTS" PIG_ARC_EXTS="$ARCHIVE_EXTS" python3 -c "$(_parse_py)" 2>/dev/null)" || {
     _log "INTERNAL python3 failed; allowing"
     exit 0
   }
@@ -458,10 +499,7 @@ genuinely meant to be published, add its exact repo-relative path to that
 repo's .claude/private_data_document_allowlist.txt as '<path> | <reason>' and
 retry. Otherwise keep it outside the repo or in a private one.
 Rule: .claude/rules/private-data-scanning.md"
-  printf '%s\n' "$reason" >&2
-  python3 -c 'import json,sys
-print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":sys.argv[1]}}))' "$reason" 2>/dev/null || true
-  exit 2
+  _deny "$reason"
 }
 
 # ─── self-test ───────────────────────────────────────────────────────────────
@@ -596,11 +634,36 @@ STUB
   _run "empty payload allows"                     0 ''
   _run "malformed payload allows"                 0 'not json'
   _run "empty JSON object allows"                 0 '{}'
-  # --- drift: document list equals the scanner's ----------------------------------
-  scanner_exts="$(grep -m1 '^DOC_FORMAT_EXTS=' "$SCANNER" 2>/dev/null | sed 's/^DOC_FORMAT_EXTS="//; s/"$//')"
-  if [ -n "$scanner_exts" ] && [ "$scanner_exts" = "$DOC_EXTS_FALLBACK" ] && [ "$(_doc_exts)" = "$scanner_exts" ]
-  then pass=$((pass+1)); echo "  PASS document list matches private_data_scan.sh DOC_FORMAT_EXTS"
-  else fail=$((fail+1)); echo "  FAIL document list drifted: scanner='$scanner_exts' fallback='$DOC_EXTS_FALLBACK'"; fi
+  # --- one home: the lists follow the scanner, with no second edit (llm#1436) -------
+  # The guard reads DOC_FORMAT_EXTS and IMAGE_EXTS from the scanner at run time.
+  # A fake scanner proves the guard's behaviour follows the file it reads.
+  _fake() { printf 'DOC_FORMAT_EXTS="%s"\nIMAGE_EXTS=" %s "\n' "$1" "$2" > "$T/fake_scanner.sh"; }
+  real_docs="$(_doc_exts)"
+  _fake "${real_docs//eps/}" "png jpg"                                 # eps removed (derived, not retyped)
+  PIG_SCANNER="$T/fake_scanner.sh" _write "falsify: eps removed from the scanner list -> Write .eps allows" 0 "$P/out.eps"
+  PIG_SCANNER="$T/fake_scanner.sh" _write "falsify: other members still block (.pdf)" 2 "$P/out.pdf"
+  PIG_SCANNER="$T/fake_scanner.sh" _write "falsify: image removed from the scanner list (.gif) allows" 0 "$P/out.gif"
+  PIG_SCANNER="$T/fake_scanner.sh" _write "image still in the scanner list (.png) blocks" 2 "$P/out.png"
+  _write "restored real scanner: .eps blocks again" 2 "$P/out.eps"
+  _fake "$real_docs zzzdoc" "png"                                      # new member added
+  PIG_SCANNER="$T/fake_scanner.sh" _write "new member added to the scanner list blocks with no guard edit" 2 "$P/out.zzzdoc"
+  PIG_SCANNER="$T/fake_scanner.sh" _write "new member matched case-insensitively" 2 "$P/OUT.ZZZDOC"
+  PIG_SCANNER="$T/fake_scanner.sh" _bash "cp of a new member blocks (slow-path parser follows the list)" 2 "$T" "cp $O/a.pdf $P/q.zzzdoc"
+  PIG_SCANNER="$T/fake_scanner.sh" _write "archive list is the guard's own (.zip) and still blocks" 2 "$P/out.zip"
+  # Unreadable / empty lists: INDETERMINATE block, never a stale copy and never a silent allow.
+  PIG_SCANNER="$T/no-such-scanner.sh" _write "unreadable scanner: Write of a txt fails closed" 2 "$P/out.txt"
+  PIG_SCANNER="$T/no-such-scanner.sh" _bash "unreadable scanner: cp fails closed" 2 "$T" "cp $O/n.txt $P/"
+  PIG_SCANNER="$T/no-such-scanner.sh" _bash "unreadable scanner: an unrelated command still allows" 0 "$P" "ls -la $P"
+  PIG_SCANNER="$T/no-such-scanner.sh" _write "unreadable scanner: even outside any repo it is INDETERMINATE (blocks)" 2 "$T/plain/out.txt"
+  printf 'unrelated=1\n' > "$T/empty_scanner.sh"
+  PIG_SCANNER="$T/empty_scanner.sh" _write "scanner without the lists (empty): fails closed" 2 "$P/out.txt"
+  printf '{"tool_name":"Write","cwd":"/tmp","tool_input":{"file_path":"%s/out.txt","content":"x"}}' "$P" | PIG_SCANNER="$T/no-such-scanner.sh" bash "$SELF" >"$T/out.txt" 2>"$T/err.txt"
+  if grep -q 'INDETERMINATE' "$T/err.txt" && grep -q 'INDETERMINATE' "$T/out.txt"
+  then pass=$((pass+1)); echo "  PASS unreadable scanner says INDETERMINATE (stderr and deny JSON)"
+  else fail=$((fail+1)); echo "  FAIL INDETERMINATE wording missing"; fi
+  if [ -n "$(_doc_exts)" ] && [ -n "$(_img_exts)" ] && ! grep -q 'DOC_EXTS_FALL''BACK' "$SELF"
+  then pass=$((pass+1)); echo "  PASS real scanner lists readable and no fallback copy exists"
+  else fail=$((fail+1)); echo "  FAIL real scanner lists unreadable or a fallback copy is back"; fi
 
   rm -rf "$T"
   echo "  ---"

@@ -962,6 +962,9 @@ is_generic_skip_blob() {
 # "<exact repo-relative path> | <reason>". A line with no reason, or no path,
 # is ignored with a warning, so a bare path allows nothing. The file is read
 # from the working tree, so adding an entry is a reviewable diff.
+# DOC_FORMAT_EXTS is the ONE home of the document-format list: the import guard
+# (.claude/hooks/public_repo_file_import_guard.sh) reads this line at run time.
+# Keep it a single double-quoted, space-separated assignment on one line.
 DOC_FORMAT_EXTS="pdf docx xlsx doc xls odt rtf eml msg eps ps"
 PDFTOTEXT="${PRIVATE_DATA_SCAN_PDFTOTEXT:-pdftotext}"
 DOC_ALLOWLIST_FILE="${PRIVATE_DATA_DOC_ALLOWLIST:-}"
@@ -1087,8 +1090,10 @@ scan_document_format() {
 # the same count again and record before/after there.
 FILENAME_STRONG_WORDS=" nhs hospital clinic payslip payslips p60 p45 p11d passport discharge prescription "
 FILENAME_BROAD_WORDS=" letter letters statement statements invoice invoices tax taxes bank licence license contact contacts address medical salary payroll mortgage appointment appointments referral "
-FILENAME_BROAD_EXTS=" pdf doc docx xls xlsx odt ods rtf eml msg csv tsv txt png jpg jpeg gif heic heif tif tiff bmp webp "
+# IMAGE_EXTS is the ONE home of the raster-image list: public_repo_file_import_guard.sh
+# reads it from here at run time, and FILENAME_BROAD_EXTS below is built from it.
 IMAGE_EXTS=" png jpg jpeg gif webp heic heif tif tiff bmp "
+FILENAME_BROAD_EXTS=" pdf doc docx xls xlsx odt ods rtf eml msg csv tsv txt${IMAGE_EXTS}"
 
 # path_basename_ext PATH -> lower-case extension of the BASENAME ("" if none)
 path_basename_ext() {
@@ -2175,7 +2180,7 @@ run_selftest() {
     # Item 3: document-format gate. VIS is set in-process; INDET_FILE is
     # reset before each case.
     local ext vis_saved="$VIS"
-    local -a doc_exts=(pdf docx xlsx doc xls odt rtf eml msg eps ps)   # eps/ps: llm#1436
+    local -a doc_exts; read -r -a doc_exts <<< "$DOC_FORMAT_EXTS"   # derived from the one home (llm#1436)
     for ext in "${doc_exts[@]}"; do
         FINDINGS_FILE="$(mktemp "${TMPDIR:-/tmp}/pds_d1.XXXXXX")"; : > "$INDET_FILE"
         VIS=public
