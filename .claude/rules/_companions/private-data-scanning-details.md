@@ -174,7 +174,7 @@ covered once opted in.
 ## Why no custom bypass env var — full rationale
 
 Every other guard in this repo ships a documented kill-switch
-(`SECRET_GUARD_BYPASS=1`, `REPO_PUBLIC_OK=1`, `SKIP_RULE_SCOPING=1`, …).
+(`SECRET_GUARD_BYPASS=1`, `SKIP_RULE_SCOPING=1`, …; the visibility guard's former `REPO_PUBLIC_OK=1` was replaced by an owner-created acknowledgement file, llm#1392).
 This chain deliberately does not add one. `git commit --no-verify` and `git
 push --no-verify` are git's own, universally-known escape hatches and
 cannot be prevented by any hook regardless — inventing a second,
