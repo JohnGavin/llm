@@ -1,0 +1,15 @@
+# Allow-list for .claude/scripts/one_home_ext_lists_check.sh (llm#1436).
+#
+# The lint fails when a file other than a list's home spells out every member of
+# the document (DOC), raster-image (IMAGE) or archive (ARCHIVE) extension list.
+# Homes: DOC and IMAGE in .claude/scripts/private_data_scan.sh (DOC_FORMAT_EXTS,
+# IMAGE_EXTS); ARCHIVE in .claude/hooks/public_repo_file_import_guard.sh.
+#
+# One entry per line:   <repo-relative path> | <DOC|IMAGE|ARCHIVE> | <reason>
+# A line with no path, list or reason allows nothing. The entry covers the whole
+# file for that list. An entry that no longer matches a copy is STALE and fails
+# the lint, so remove it when the mention goes away. Adding a line is a reviewed
+# diff: say why the mention cannot be derived from the home.
+
+.claude/rules/private-data-scanning.md | DOC | Rule prose for human readers (the gate description names the document formats); a markdown rule cannot read a shell variable, so the list is typed once more here and a reviewer updates it with the home.
+.claude/rules/private-data-scanning.md | IMAGE | Rule prose for human readers: the broad-filename rule and the image-outside-figures rule each name the image formats; markdown cannot derive them from the scanner, so a reviewer updates them with the home.
