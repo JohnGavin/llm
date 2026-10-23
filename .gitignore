@@ -171,6 +171,10 @@ explorations/*
 # data-raw/export_vignette_snapshots.R.
 _targets/
 
+# Per-project private-data deny-list (llm#1434 Gap 2a): holds personal values,
+# never committed. The name is defined in .claude/scripts/private_data_scan.sh.
+.private_values.local
+
 # tlang Quarto extension install marker: an absolute /nix/store path written
 # by `t` when it installs the extension -- machine-specific, never committed.
 _extensions/tlang/.tlang-store-path

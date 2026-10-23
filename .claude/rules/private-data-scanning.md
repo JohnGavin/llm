@@ -69,6 +69,17 @@ Limits, stated so the gap is not mistaken for coverage: redirections and `tee`, 
 
 The deny-list lives at `~/.config/private_values.env` (`KEY=value`, mode 600) — **not** `~/.config/secrets.env` — because `secrets.env` holds live credentials consumed by many other scripts, and coupling this scanner to it means every future scanner bug exposes everything, not just the handful of PII literals it needs. `.claude/scripts/private_values_sync.sh` extracts named keys (default `SIGNAL_ACCOUNT`, the value [llm#946](https://github.com/JohnGavin/llm/issues/946) flagged) from `secrets.env` into `private_values.env` — run manually, never auto-invoked: `bash .claude/scripts/private_values_sync.sh --dry-run` / `--apply`. Full rationale: companion doc.
 
+## Per-project deny-list ([#1434](https://github.com/JohnGavin/llm/issues/1434) Gap 2a)
+
+A repo can hold its own exact-value list beside the global one. The two file names are defined once, as `PROJECT_DENYLIST_NAME` and `PROJECT_DECLARE_NAME` in `.claude/scripts/private_data_scan.sh`; read them there rather than copying them.
+
+- **List** (`.private_values.local`, repo root): same `KEY=value` format and rules as `private_values.env` (values of at least 6 characters, `#` comments, optional quotes, mode 600/400 warning). Its values are merged with the global ones. It is **gitignored and never committed**; if git tracks it the scan exits 3 (a deny-list committed to a repo is itself a leak). If `.gitignore` does not cover it, the scan warns on stderr and carries on.
+- **Marker** (`.private_values.declare`, repo root, tracked): says "this project holds personal data, a project list is REQUIRED". An optional line `path=<file>` (absolute or `~/`-prefixed; never run through a shell) points at a list kept elsewhere; otherwise the required list is the local one above.
+- **Exit 3 contract** (INDETERMINATE, not 1 and not 0): a marker is present and the required list is missing, unreadable, or yields zero usable values. The message names the reason (missing / unreadable / thin) and never a value.
+- **Without a marker**: a local list is merged if present; its absence fails nothing.
+- **`--no-denylist`** (CI) skips project lists, exactly as it skips the global one, so a required-but-absent list does not fail a CI run.
+- Findings from this list read "exact match against a project deny-list entry (value redacted)". Test: `tests/test_private_data_project_denylist.sh`. Not covered here: copying identity values into the global file (Gap 2b) and the issue/PR-body guard (Gap 3).
+
 ## Relationship to `secret_exposure_scan.sh` (beside it, not inside it)
 
 `secret_exposure_scan.sh` detects **credentials** via shape+entropy (high-entropy, `KEY`/`TOKEN`/`SECRET`-named). PII is the opposite shape — structured and **low-entropy** (phone numbers, postcodes, IBANs) — so the entropy heuristic never fires on it and there's no naming convention to anchor on; there's also no safe automatic `--fix` for PII baked into history, so remediation is always human judgement. Nothing is duplicated: `private_data_scan.sh` defines zero credential-shaped patterns. The two scanners share directory, the `housekeeping_runs` heartbeat convention, and CLI flag conventions — disjoint pattern sets. Full rationale: companion doc.

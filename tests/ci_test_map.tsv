@@ -87,6 +87,7 @@ git-hooks/test-pii-hooks.sh	git-hooks/test-pii-hooks.sh;git-hooks/pre-commit;git
 tests/test_private_term_rule.sh	tests/test_private_term_rule.sh;.claude/scripts/private_data_scan.sh;git-hooks/commit-msg;git-hooks/lib/pii_gate.sh	run
 tests/test_global_hooks_path_check.sh	tests/test_global_hooks_path_check.sh;.claude/scripts/global_hooks_path_check.sh	run
 tests/test_private_data_git_hooks_audit.sh	tests/test_private_data_git_hooks_audit.sh;.claude/scripts/private_data_git_hooks_install.sh	skip-ci	not yet verified on an ubuntu-latest runner (uses git init -b, BSD/GNU cksum and xargs -0 pipelines); passes 28/28 locally on macOS (llm#1434 Gap 1). Promote to run after one green CI run.
+tests/test_private_data_project_denylist.sh	tests/test_private_data_project_denylist.sh;.claude/scripts/private_data_scan.sh	skip-ci	not yet verified on an ubuntu-latest runner (uses git init -b and BSD/GNU stat mode differences); passes locally on macOS (llm#1434 Gap 2a). Promote to run after one green CI run.
 tests/test_private_terms_sync.sh	tests/test_private_terms_sync.sh;.claude/scripts/private_terms_sync.sh	run
 tests/test_wiki_health_orphan_raw.sh	tests/test_wiki_health_orphan_raw.sh;.claude/scripts/wiki_health_check.sh;.claude/schema/wiki-frontmatter.schema.json	run	
 tests/test_chrome_headless_and_clones.sh	tests/test_chrome_headless_and_clones.sh;.claude/scripts/headless_chrome.sh;.claude/scripts/disk_headroom_check.sh	run
