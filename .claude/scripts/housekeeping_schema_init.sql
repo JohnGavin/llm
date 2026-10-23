@@ -675,7 +675,7 @@ COMMENT ON COLUMN private_data_history_findings.status IS 'Triage state. Allowed
 
 -- private_data_history_unit_state ----------------------------------------------
 COMMENT ON TABLE private_data_history_unit_state IS 'Skip state for the --all-public history audit (llm#1415): per repo/gist unit, hashes of the remote refs, the deny-list file and the scanner scripts at the last full scan. Hashes only, never a matched value. A row is deleted when a unit ends INDETERMINATE, so missing state always means scan.';
-COMMENT ON COLUMN private_data_history_unit_state.repo IS 'Primary key: unit identity as the ledger uses it, owner/name or gist:<id>.';
+COMMENT ON COLUMN private_data_history_unit_state.repo IS 'Primary key: unit identity as the ledger uses it, owner/name or gist:<id>; or publish:<owner/name> for the record of a pre-publication audit written by repo_publish_audit.sh (llm#1392), read by repo_visibility_guard.sh.';
 COMMENT ON COLUMN private_data_history_unit_state.ref_hash IS 'sha256 hex of the sorted `git ls-remote` output of the unit at its last full scan (includes refs/pull/*).';
 COMMENT ON COLUMN private_data_history_unit_state.denylist_hash IS 'sha256 hex of the deny-list file (PRIVATE_VALUES_FILE) at the last full scan. Never empty: an empty or missing deny-list is never recorded.';
 COMMENT ON COLUMN private_data_history_unit_state.scanner_hash IS 'sha256 hex over the scanner script and the audit script at the last full scan.';
