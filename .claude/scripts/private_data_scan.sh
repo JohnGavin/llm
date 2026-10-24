@@ -190,6 +190,20 @@
 # warning (fail closed). Suppressed hits are counted in one summary line, never
 # named. The file lives in the scanned (private) repo, never in this public one.
 #
+# Per-project deny-list (llm#1434 Gap 2a): a repo can hold its own exact-value
+# list in a file named by PROJECT_DENYLIST_NAME (".private_values.local" at
+# the repo root; same KEY=value format and rules as private_values.env; MUST be
+# gitignored and is never committed). Its values are merged with the global
+# ones. A tracked marker named by PROJECT_DECLARE_NAME (".private_values.declare")
+# says "this project holds personal data, a project list is REQUIRED"; an
+# optional single line "path=<file>" (absolute or ~/-prefixed, never expanded
+# by a shell) points at a list kept elsewhere. With a marker present, a
+# missing / unreadable / thin (zero usable values) list is exit 3
+# INDETERMINATE, with the reason named and no value printed. If the list file
+# is tracked by git, that is also exit 3 (a deny-list committed to a repo is
+# itself a leak). Not covered by .gitignore: a warning only. --no-denylist
+# (CI) skips project lists, exactly as it skips the global one.
+#
 # Log: ~/.claude/logs/private_data_scan.log (one line per invocation summary).
 # Housekeeping heartbeat: writes housekeeping_runs (task='private_data_scan')
 # and private_data_scan_findings, same batched-write pattern as
@@ -225,6 +239,12 @@ fi
 
 DENYLIST_FILE="${PRIVATE_VALUES_FILE:-${HOME_DIR}/.config/private_values.env}"
 UNIFIED_DB="${UNIFIED_DB_PATH:-${HOME_DIR}/.claude/logs/unified.duckdb}"
+
+# Per-project deny-list (llm#1434 Gap 2a). The ONE home for these two file
+# names; every other mention in this repo reads them from here. Both live at
+# the scanned repo's root. See "Per-project deny-list" in the header.
+PROJECT_DENYLIST_NAME=".private_values.local"
+PROJECT_DECLARE_NAME=".private_values.declare"
 
 # private-term rule (llm#1388, parent #1382): whole-word, case-insensitive
 # match of every term in a machine-local list. Contract with the generator
@@ -591,16 +611,19 @@ is_self_reference_exempt() {
 # Deny-list (exact-value) detection
 # ---------------------------------------------------------------------------
 DENYLIST_VALUES=()
+DENYLIST_SOURCES=()   # parallel to DENYLIST_VALUES: "global" or "project"
 
-load_denylist() {
-    DENYLIST_VALUES=()
-    [ -r "$DENYLIST_FILE" ] || return 1
-    local mode
-    mode="$(file_mode "$DENYLIST_FILE")"
+# _parse_denylist_file FILE SOURCE: append usable values of FILE to
+# DENYLIST_VALUES (SOURCE recorded in DENYLIST_SOURCES). Returns 1 if FILE is
+# unreadable. Warns (stderr) on a mode other than 600/400.
+_parse_denylist_file() {
+    local file="$1" src="$2" mode line
+    [ -r "$file" ] || return 1
+    mode="$(file_mode "$file")"
     case "$mode" in
         600|400) : ;;
         "") : ;;  # couldn't stat -- don't block on a phantom permission finding
-        *) echo "WARNING: $DENYLIST_FILE has mode $mode (expected 600/400) -- tighten with: chmod 600 $DENYLIST_FILE" >&2 ;;
+        *) echo "WARNING: $file has mode $mode (expected 600/400) -- tighten with: chmod 600 $file" >&2 ;;
     esac
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*) continue ;; esac
@@ -613,8 +636,77 @@ load_denylist() {
         esac
         [ "${#val}" -ge 6 ] || continue
         DENYLIST_VALUES+=("$val")
-    done < "$DENYLIST_FILE"
+        DENYLIST_SOURCES+=("$src")
+    done < "$file"
+    return 0
+}
+
+load_denylist() {
+    DENYLIST_VALUES=()
+    DENYLIST_SOURCES=()
+    _parse_denylist_file "$DENYLIST_FILE" global || return 1
     [ "${#DENYLIST_VALUES[@]}" -gt 0 ]
+}
+
+# load_project_denylist: merge the per-project list (llm#1434 Gap 2a) into
+# DENYLIST_VALUES. Returns 0 = ok (merged, or nothing required and nothing
+# there), 3 = INDETERMINATE (reason printed to stderr, never a value).
+load_project_denylist() {
+    local local_list="$REPO_ROOT/$PROJECT_DENYLIST_NAME"
+    local declare_file="$REPO_ROOT/$PROJECT_DECLARE_NAME"
+    local required=0 list="$local_list" line p before after
+
+    # A deny-list tracked by git (index or HEAD) is itself a leak.
+    if git -C "$REPO_ROOT" ls-files --error-unmatch -- "$PROJECT_DENYLIST_NAME" >/dev/null 2>&1; then
+        echo "INDETERMINATE: $PROJECT_DENYLIST_NAME is tracked by git; a deny-list committed to a repo is itself a leak. Run: git rm --cached $PROJECT_DENYLIST_NAME and add it to .gitignore." >&2
+        return 3
+    fi
+
+    if [ -e "$declare_file" ]; then
+        required=1
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                path=*)
+                    p="${line#path=}"
+                    case "$p" in
+                        "~/"*) p="${HOME_DIR}/${p#\~/}" ;;
+                        /*) : ;;
+                        *) echo "INDETERMINATE: $PROJECT_DECLARE_NAME path= must be absolute or ~/-prefixed (project list invalid)." >&2
+                           return 3 ;;
+                    esac
+                    list="$p"
+                    break ;;
+            esac
+        done < "$declare_file"
+    fi
+
+    if [ ! -e "$list" ]; then
+        if [ "$required" -eq 1 ]; then
+            echo "INDETERMINATE: project deny-list required by $PROJECT_DECLARE_NAME is missing." >&2
+            return 3
+        fi
+        return 0
+    fi
+
+    if [ "$list" = "$local_list" ] && ! git -C "$REPO_ROOT" check-ignore -q -- "$PROJECT_DENYLIST_NAME" 2>/dev/null; then
+        echo "WARNING: $PROJECT_DENYLIST_NAME is not covered by .gitignore -- add it so it is never committed." >&2
+    fi
+
+    before="${#DENYLIST_VALUES[@]}"
+    if ! _parse_denylist_file "$list" project; then
+        if [ "$required" -eq 1 ]; then
+            echo "INDETERMINATE: project deny-list required by $PROJECT_DECLARE_NAME is unreadable." >&2
+            return 3
+        fi
+        echo "WARNING: $PROJECT_DENYLIST_NAME is unreadable; skipped." >&2
+        return 0
+    fi
+    after="${#DENYLIST_VALUES[@]}"
+    if [ "$required" -eq 1 ] && [ "$after" -le "$before" ]; then
+        echo "INDETERMINATE: project deny-list required by $PROJECT_DECLARE_NAME is thin (no usable values)." >&2
+        return 3
+    fi
+    return 0
 }
 
 # scan_denylist LOCATION < content-on-stdin
@@ -644,12 +736,15 @@ scan_denylist() {
     content="$(LC_ALL=C tr -d '\000')"
     [ -n "$content" ] || return 0
     [ "${#DENYLIST_VALUES[@]}" -gt 0 ] || return 0
-    local v lnum
+    local v lnum i=-1 note
     for v in "${DENYLIST_VALUES[@]}"; do
+        i=$((i + 1))
+        note="exact match against a ~/.config/private_values.env entry (value redacted)"
+        [ "${DENYLIST_SOURCES[$i]:-global}" = "project" ] && \
+            note="exact match against a project deny-list entry (value redacted)"
         while IFS=: read -r lnum _; do
             [ -n "${lnum:-}" ] || continue
-            append_finding "denylist" "critical" "$loc" "$lnum" "known-value" \
-                "exact match against a ~/.config/private_values.env entry (value redacted)"
+            append_finding "denylist" "critical" "$loc" "$lnum" "known-value" "$note"
         done < <(printf '%s\n' "$content" | LC_ALL=C "$GREP" -nF -- "$v" 2>/dev/null)
     done
 }
@@ -2586,6 +2681,14 @@ if [ "$REQUIRE_DENYLIST" -eq 1 ] && [ "$MODE" != "content-stdin" ]; then
         echo "To run generic-pattern-only (no deny-list, e.g. CI on a public runner): --no-denylist" >&2
         log_line "BLOCKED_MISSING_DENYLIST"
         exit 1
+    fi
+    # Per-project list (llm#1434 Gap 2a): exit 3 INDETERMINATE when required
+    # but unusable, or when it is tracked by git.
+    load_project_denylist
+    pd_rc=$?
+    if [ "$pd_rc" -ne 0 ]; then
+        log_line "BLOCKED_PROJECT_DENYLIST_INDETERMINATE"
+        exit 3
     fi
 else
     load_denylist || true   # best-effort; --no-denylist tolerates absence
