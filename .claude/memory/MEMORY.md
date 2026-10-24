@@ -72,3 +72,4 @@ One line per topic; full detail lives in the linked file. Keep under ~140 lines.
 - [DATED FOLLOW-UPS: llmtelemetry Actions](project_llmtelemetry-actions-followups.md) — RAISE FIRST on/after Mon 2026-10-19 (cache check) and 2026-11-01 (back to daily, R 4.5 pin test); the user expects the agent to remember
 - [Tier 2 widening follow-ups](project_tier2-widening-followups.md) — widened 2026-10-20 (llm#1497); verify first Tier 2 merge by ~2026-10-27; owner says stop asking for merges, list Class C PRs once a day; roborev finding-delivery gap still open
 - [Private Names in Chat: OK](feedback_private-names-in-chat-ok.md) — name private repos to the owner in the terminal; the ban is on tracked files, issues, PRs, commits, Artifacts (owner, 2026-10-23)
+- [Merge share monitoring](project_merge-share-monitoring.md) — owner wants approved merges falling, automatic rising; review 2026-10-28 and 10-31; widening the sweep is Class C
