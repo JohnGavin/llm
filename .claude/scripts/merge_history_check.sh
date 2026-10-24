@@ -16,6 +16,13 @@
 # "unclassified", i.e. nothing on the exclusion lists, so the owner was asked
 # although the sweep could have merged it). The window is the last --days
 # (default 7) COMPLETE UTC days, ending yesterday. Exit 0, or 3 INDETERMINATE.
+# It also prints a week-over-week trend (the window against the same number of
+# days before it), a direction word for owner-approved and for automatic
+# (improving / flat / worse / INSUFFICIENT-DATA when either window has fewer
+# than MIN_MERGES merges), the share against the target in
+# .claude/state/merge_share_target.tsv (override: MERGE_SHARE_TARGET_FILE; a
+# missing or unparseable file is exit 3), and the repos with owner-approved
+# merges but no sweep merge ever recorded.
 #
 # Rules:
 #   R1 sweep-excluded   a sweep merge whose class is excluded:* (must be 0: a violation)
@@ -96,6 +103,13 @@ db_run() {  # SQL ; csv on stdout ; retries only on a lock conflict
 }
 
 if [ "$DAILY" -eq 1 ]; then
+  # Share target and tolerance: ONE home, .claude/state/merge_share_target.tsv.
+  TARGET_FILE="${MERGE_SHARE_TARGET_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../state" 2>/dev/null && pwd)/merge_share_target.tsv}"
+  [ -f "$TARGET_FILE" ] || indeterminate "share target file not found: $TARGET_FILE (no target is not the same as target 0)"
+  TGT="$(awk -F'\t' '$1=="target_auto_share_pct"{print $2}' "$TARGET_FILE")"
+  TOL="$(awk -F'\t' '$1=="tolerance_pct"{print $2}' "$TARGET_FILE")"
+  case "$TGT" in ""|*[!0-9]*) indeterminate "target_auto_share_pct missing or not a whole number in $TARGET_FILE" ;; esac
+  case "$TOL" in ""|*[!0-9]*) indeterminate "tolerance_pct missing or not a whole number in $TARGET_FILE" ;; esac
   TODAY="CAST((current_timestamp AT TIME ZONE 'UTC') AS DATE)"
   MD="CAST((merged_at AT TIME ZONE 'UTC') AS DATE)"
   INWIN="$MD >= $TODAY - $DAYS AND $MD < $TODAY"
@@ -114,6 +128,13 @@ FROM (SELECT class, excluded_reasons, unnest(CASE WHEN COALESCE(excluded_reasons
                                                   ELSE string_split(excluded_reasons, ',') END) AS reason
       FROM merge_events WHERE $INWIN AND merge_path = 'owner-verb')
 GROUP BY ALL ORDER BY 3 DESC, 2;
+SELECT 'win', 'cur', count(*) FILTER (WHERE merge_path = 'owner-verb'), count(*) FILTER (WHERE merge_path = 'sweep')
+FROM merge_events WHERE $INWIN;
+SELECT 'win', 'prev', count(*) FILTER (WHERE merge_path = 'owner-verb'), count(*) FILTER (WHERE merge_path = 'sweep')
+FROM merge_events WHERE $MD >= $TODAY - $((2 * DAYS)) AND $MD < $TODAY - $DAYS;
+SELECT 'nosweep', repo, 0, 0 FROM merge_events GROUP BY repo
+HAVING count(*) FILTER (WHERE merge_path = 'owner-verb' AND $INWIN) > 0
+   AND count(*) FILTER (WHERE merge_path = 'sweep') = 0 ORDER BY repo;
 SELECT 'ever', count(*), 0, 0 FROM merge_events;" > "$TMP/daily.csv"; then
     if grep -qi 'merge_events' "$TMP/dberr" 2>/dev/null; then
       indeterminate "merge_events is not in $DB; nothing was reported"
@@ -150,7 +171,41 @@ SELECT 'ever', count(*), 0, 0 FROM merge_events;" > "$TMP/daily.csv"; then
     WL="${WL:+$WL, }$r $n"
   done < "$TMP/daily.csv"
   echo "why you were asked (owner-approved by reason, last $DAYS days): ${WL:-none}"
-  echo "daily-summary: days=$DAYS owner_approved=$TO automatic=$TA"
+  # ---- week over week: last $DAYS days versus the $DAYS before ------------------------
+  CO=0; CA=0; PO=0; PA=0
+  while IFS=, read -r k w o a; do
+    [ "$k" = "win" ] || continue
+    if [ "$w" = "cur" ]; then CO="$o"; CA="$a"; else PO="$o"; PA="$a"; fi
+  done < "$TMP/daily.csv"
+  for v in "$CO" "$CA" "$PO" "$PA"; do
+    case "$v" in ""|*[!0-9]*) indeterminate "unreadable window counts from $DB" ;; esac
+  done
+  # direction KIND CUR PREV : improving / flat / worse, relative change vs tolerance.
+  # Fewer than MIN_MERGES merges (owner + automatic) in either window = INSUFFICIENT-DATA.
+  direction() {
+    awk -v kind="$1" -v c="$2" -v p="$3" -v tc="$((CO + CA))" -v tp="$((PO + PA))" -v tol="$TOL" -v min="$MIN_MERGES" 'BEGIN{
+      if (tc < min || tp < min) { print "INSUFFICIENT-DATA"; exit }
+      if (p == 0) pct = (c > 0) ? 1000000 : 0; else pct = (c - p) * 100 / p
+      if (kind == "owner") pct = -pct
+      if (pct >= tol) print "improving"; else if (pct <= -tol) print "worse"; else print "flat" }'
+  }
+  signed() { printf '%+d' "$(($1 - $2))"; }
+  DIR_O="$(direction owner "$CO" "$PO")"; DIR_A="$(direction auto "$CA" "$PA")"
+  echo "aim: fewer owner decisions at constant safety (a rising automatic share only counts if nothing unsafe auto-merges)"
+  echo "week over week (last $DAYS days vs the $DAYS before): owner-approved $CO vs $PO ($(signed "$CO" "$PO")) | automatic $CA vs $PA ($(signed "$CA" "$PA")) | share auto $(pct "$CO" "$CA") vs $(pct "$PO" "$PA")"
+  SHARE_NOW="$(awk -v o="$CO" -v a="$CA" 'BEGIN{ if (o + a == 0) print -1; else printf "%d", (a * 100) / (o + a) + 0.5 }')"
+  if [ "$SHARE_NOW" -lt 0 ]; then TGT_TXT="no merges in the window"
+  elif [ "$SHARE_NOW" -ge "$TGT" ]; then TGT_TXT="at or above target"
+  else TGT_TXT="below target by $((TGT - SHARE_NOW)) points"; fi
+  echo "direction: owner-approved $DIR_O | automatic $DIR_A | share vs target ${TGT}% (tolerance ${TOL}%): $TGT_TXT"
+  NS=""
+  while IFS=, read -r k r o a; do
+    [ "$k" = "nosweep" ] || continue
+    NS="${NS:+$NS, }$r"
+  done < "$TMP/daily.csv"
+  if [ -n "$NS" ]; then echo "no sweep covers this repo (owner-approved merges, no sweep merge ever recorded): $NS"; fi
+  echo "reverts: not tracked (merge_events has no reverted column)"
+  echo "daily-summary: days=$DAYS owner_approved=$TO automatic=$TA dir_owner=$DIR_O dir_auto=$DIR_A"
   exit 0
 fi
 

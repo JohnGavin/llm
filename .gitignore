@@ -50,6 +50,8 @@ my_new_md_database
 !.claude/state/job_failure_policy.tsv
 # Committed owner-signed table of transient GitHub Actions failure patterns (gh_run_retry.sh)
 !.claude/state/gh_transient_patterns.tsv
+# Committed automatic-merge share target (merge_history_check.sh --daily)
+!.claude/state/merge_share_target.tsv
 
 # Sensitive/personal files
 *.pdf
