@@ -4,6 +4,16 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-10-24 (feat/merge-tracking-all-repos)
+
+### Completed
+- Merge history now covers every owner repo, not just llm (llm#1471). New `.claude/scripts/merge_history_sync_all.sh` lists the owner's repos (`gh repo list`, not archived, not a fork) and runs `merge_history_sync.sh --repo X --since <14 days>` for each; one failing repo is recorded and the loop continues, and the run exits 3 if any repo failed, the list was empty or may be truncated. Wired into `bin/auto_merge_sweep.sh --apply`, at most once per 6 h (stamp file), no new launchd job.
+- `merge_history_check.sh --daily` and a "Merge approvals" block in the 06:30 email: per UTC day, owner-approved (you typed a merge verb) vs automatic (the sweep merged it), share automatic, per-repo split, and why you were asked (counts by stored `excluded_reasons`; empty = "unclassified"). Informational, no new alert rule.
+- Test `tests/test_merge_history_all_repos.sh` (25 checks, skip-ci: needs the duckdb CLI).
+
+### Known Limitations
+- Other repos are classified against llm's exclusion lists, so their "reason" counts show which llm-style path class a merge touched, not that repo's own policy. Only llm is swept, so elsewhere "automatic" needs the `auto-merged` label.
+
 ## 2026-10-15/16 (session: GitHub Actions minutes and storage, docs/changelog-2026-10-16)
 
 ### Completed

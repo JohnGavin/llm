@@ -4,7 +4,18 @@
 # Reads merge_events (written by merge_history_sync.sh) and applies named rules
 # over the last --days days (merged_at, UTC). Read-only.
 #
-# Usage: merge_history_check.sh [--db PATH] [--days N] [--json]
+# Usage: merge_history_check.sh [--db PATH] [--days N] [--json | --daily]
+#
+# --daily (informational, no rules, no alert): the "merge approvals" report in
+# the 06:30 email. Per UTC day, over ALL repos in merge_events (written by
+# merge_history_sync_all.sh): owner-approved (merge_path 'owner-verb': the
+# owner typed a merge verb) versus automatic (merge_path 'sweep': the
+# auto-merge sweep merged it), the automatic share, yesterday's line, a per-repo
+# split, and why the owner was asked: owner-approved merges counted by the
+# stored excluded_reasons (class 'unknown' = diff unreadable; an empty reason =
+# "unclassified", i.e. nothing on the exclusion lists, so the owner was asked
+# although the sweep could have merged it). The window is the last --days
+# (default 7) COMPLETE UTC days, ending yesterday. Exit 0, or 3 INDETERMINATE.
 #
 # Rules:
 #   R1 sweep-excluded   a sweep merge whose class is excluded:* (must be 0: a violation)
@@ -42,14 +53,15 @@ LOCK_SLEEP="${MERGE_HISTORY_LOCK_SLEEP:-2}"
 case "$LOCK_TRIES" in ""|*[!0-9]*) LOCK_TRIES=5 ;; esac
 case "$LOCK_SLEEP" in ""|*[!0-9]*) LOCK_SLEEP=2 ;; esac
 
-usage() { echo "usage: merge_history_check.sh [--db PATH] [--days N] [--json]" >&2; }
+usage() { echo "usage: merge_history_check.sh [--db PATH] [--days N] [--json | --daily]" >&2; }
 
-DB=""; DAYS=7; JSON=0
+DB=""; DAYS=7; JSON=0; DAILY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --db)   if [ $# -lt 2 ]; then usage; exit 2; fi; DB="$2"; shift 2 ;;
     --days) if [ $# -lt 2 ]; then usage; exit 2; fi; DAYS="$2"; shift 2 ;;
     --json) JSON=1; shift ;;
+    --daily) DAILY=1; shift ;;
     -h|--help) usage; exit 2 ;;
     *) echo "USAGE-ERROR: unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -82,6 +94,65 @@ db_run() {  # SQL ; csv on stdout ; retries only on a lock conflict
     return "$rc"
   done
 }
+
+if [ "$DAILY" -eq 1 ]; then
+  TODAY="CAST((current_timestamp AT TIME ZONE 'UTC') AS DATE)"
+  MD="CAST((merged_at AT TIME ZONE 'UTC') AS DATE)"
+  INWIN="$MD >= $TODAY - $DAYS AND $MD < $TODAY"
+  if ! db_run "SET TimeZone = 'UTC';
+SELECT 'day', strftime(g.d, '%Y-%m-%d'), count(e.pr_number) FILTER (WHERE e.merge_path = 'owner-verb'),
+       count(e.pr_number) FILTER (WHERE e.merge_path = 'sweep')
+FROM (SELECT CAST(x AS DATE) AS d FROM generate_series($TODAY - $DAYS, $TODAY - 1, INTERVAL 1 DAY) t(x)) g
+LEFT JOIN merge_events e ON CAST((e.merged_at AT TIME ZONE 'UTC') AS DATE) = g.d
+GROUP BY g.d ORDER BY g.d DESC;
+SELECT 'repo', repo, count(*) FILTER (WHERE merge_path = 'owner-verb'), count(*) FILTER (WHERE merge_path = 'sweep')
+FROM merge_events WHERE $INWIN GROUP BY repo ORDER BY count(*) DESC, repo;
+SELECT 'why', CASE WHEN class = 'unknown' THEN 'unknown-diff'
+                   WHEN COALESCE(excluded_reasons, '') = '' THEN 'unclassified'
+                   ELSE reason END, count(*)
+FROM (SELECT class, excluded_reasons, unnest(CASE WHEN COALESCE(excluded_reasons, '') = '' THEN ['']
+                                                  ELSE string_split(excluded_reasons, ',') END) AS reason
+      FROM merge_events WHERE $INWIN AND merge_path = 'owner-verb')
+GROUP BY ALL ORDER BY 3 DESC, 2;
+SELECT 'ever', count(*), 0, 0 FROM merge_events;" > "$TMP/daily.csv"; then
+    if grep -qi 'merge_events' "$TMP/dberr" 2>/dev/null; then
+      indeterminate "merge_events is not in $DB; nothing was reported"
+    fi
+    indeterminate "could not read $DB: $(head -c 200 "$TMP/dberr" | tr '\n' ' ')"
+  fi
+  EVER="$(awk -F, '$1=="ever"{print $2}' "$TMP/daily.csv")"
+  case "$EVER" in ""|*[!0-9]*) indeterminate "unreadable counts from $DB" ;; esac
+  if [ "$EVER" -eq 0 ]; then indeterminate "merge_events holds no rows at all; run merge_history_sync_all.sh"; fi
+  pct() { awk -v o="$1" -v a="$2" 'BEGIN{ if (o + a == 0) printf "n/a"; else printf "%d%%", (a * 100) / (o + a) + 0.5 }'; }
+  echo "Merge approvals per UTC day, all repos (owner-approved = you typed a merge verb; automatic = the sweep merged it)"
+  TO=0; TA=0; YLINE=""
+  while IFS=, read -r k d o a; do
+    [ "$k" = "day" ] || continue
+    TO=$((TO + o)); TA=$((TA + a))
+    if [ -z "$YLINE" ]; then YLINE="yesterday ($d): owner-approved $o | automatic $a | share auto $(pct "$o" "$a")"; fi
+  done < "$TMP/daily.csv"
+  echo "$YLINE"
+  echo "last $DAYS days: owner-approved $TO | automatic $TA | share auto $(pct "$TO" "$TA")"
+  echo "day         owner-approved  automatic  share-auto"
+  while IFS=, read -r k d o a; do
+    [ "$k" = "day" ] || continue
+    printf '%s  %14s  %9s  %10s\n' "$d" "$o" "$a" "$(pct "$o" "$a")"
+  done < "$TMP/daily.csv"
+  RL=""
+  while IFS=, read -r k r o a; do
+    [ "$k" = "repo" ] || continue
+    RL="${RL:+$RL; }$r owner $o auto $a"
+  done < "$TMP/daily.csv"
+  echo "by repo (last $DAYS days): ${RL:-no merges}"
+  WL=""
+  while IFS=, read -r k r n; do
+    [ "$k" = "why" ] || continue
+    WL="${WL:+$WL, }$r $n"
+  done < "$TMP/daily.csv"
+  echo "why you were asked (owner-approved by reason, last $DAYS days): ${WL:-none}"
+  echo "daily-summary: days=$DAYS owner_approved=$TO automatic=$TA"
+  exit 0
+fi
 
 WIN="merged_at >= current_timestamp - INTERVAL ($DAYS) DAY"
 if ! db_run "
