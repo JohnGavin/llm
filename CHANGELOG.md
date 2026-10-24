@@ -4,6 +4,13 @@ Cumulative lab notes. Track completed work, **failed approaches**, accuracy chec
 
 Convention: newest entries at top. Each entry has a date, what was done, and why.
 
+## 2026-10-24 (feat/merge-share-trend)
+
+### Completed
+- `merge_history_check.sh --daily` now shows a week-over-week trend: owner-approved and automatic merges for the last 7 days against the 7 before (signed deltas), a direction word for each (improving / flat / worse, INSUFFICIENT-DATA when either window has fewer than 5 merges), the automatic share against a target, the repos with owner-approved merges but no sweep merge ever recorded, and `reverts: not tracked`. The email block shows these lines unchanged. Informational only.
+- Target in `.claude/state/merge_share_target.tsv` (`target_auto_share_pct`, `tolerance_pct`); a missing or unparseable file exits 3. The 40% target is a PLACEHOLDER (the owner set no number); edit the file.
+- Test `tests/test_merge_share_trend.sh` (22 checks, skip-ci: needs the duckdb CLI), including a swapped-window falsification.
+
 ## 2026-10-24 (feat/merge-tracking-all-repos)
 
 ### Completed
