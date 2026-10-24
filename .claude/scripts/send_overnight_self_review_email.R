@@ -1948,6 +1948,26 @@ if (nrow(cron_health) > 0L) {
       )
     )
   }
+  # Merge approvals (informational, no alert): owner-approved versus automatic
+  # merges per UTC day across all owner repos, from merge_history_check.sh
+  # --daily. An unreadable report is shown as such, never as zero merges.
+  .md_script <- file.path(.scripts_dir, "merge_history_check.sh")
+  if (file.exists(.md_script)) {
+    .md_out <- suppressWarnings(system2(.md_script, c("--db", db_path, "--daily"), stdout = TRUE, stderr = TRUE))
+    .md_rc  <- as.integer(attr(.md_out, "status") %||% 0L)
+    .md_txt <- if (identical(.md_rc, 0L) && length(.md_out) > 0L) {
+      paste(grep("^daily-summary: ", .md_out, value = TRUE, invert = TRUE), collapse = "\n")
+    } else {
+      sprintf("INDETERMINATE: the merge approvals report could not be produced (exit %d). %s",
+              .md_rc, paste(utils::head(.md_out, 3L), collapse = " "))
+    }
+    cron_table_html <- paste0(
+      cron_table_html,
+      sprintf('<p style="font-size:%s;margin:12px 0 4px 0;font-weight:bold;">Merge approvals</p>
+<pre style="font-size:11px;color:%s;white-space:pre-wrap;margin:0;">%s</pre>',
+              EMAIL_FONT_BODY, DARK_TEXT, htmlEscape(.md_txt))
+    )
+  }
   if (n_known > 0L) {
     cron_table_html <- paste0(
       cron_table_html,

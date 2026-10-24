@@ -28,6 +28,9 @@
 #   h. merge history: after the PR loop, merge_history_sync.sh records the last
 #      50 merged PRs in merge_events (fail-open: a failure prints a warning and
 #      shows in the sync's own heartbeat; it never changes this exit code).
+#      Then, at most once per 6 h (stamp file), merge_history_sync_all.sh does
+#      the same for every owner repo (same fail-open contract; the stamp is
+#      written only on success, so a failure retries on the next run).
 #
 # Output: one line per PR, "<pr><TAB><verdict><TAB><reason>", then
 #   prs=N eligible=a not_eligible=b indeterminate=c merged=m failed=f
@@ -130,6 +133,15 @@ EXCL_FILE="${AUTO_MERGE_EXCLUSIONS:-$REPO_DIR/.claude/state/auto_merge_exclusion
 # AUTO_MERGE_REPO_DIR (which only supplies the data files).
 MC_LIB="${AUTO_MERGE_LIB:-$SCRIPT_DIR/../.claude/scripts/lib/merge_classify.sh}"
 SYNC="${AUTO_MERGE_SYNC:-$SCRIPT_DIR/../.claude/scripts/merge_history_sync.sh}"
+# All-repos merge history (merge_history_sync_all.sh): at most once per 6 h
+# (stamp file). When a test overrides AUTO_MERGE_SYNC it is off unless
+# AUTO_MERGE_SYNC_ALL is also given, so a test never reaches the real GitHub.
+if [ -n "${AUTO_MERGE_SYNC:-}" ]; then
+  SYNC_ALL="${AUTO_MERGE_SYNC_ALL:-}"
+else
+  SYNC_ALL="${AUTO_MERGE_SYNC_ALL:-$SCRIPT_DIR/../.claude/scripts/merge_history_sync_all.sh}"
+fi
+SYNC_ALL_STAMP="${AUTO_MERGE_SYNC_ALL_STAMP:-$HOME/.claude/logs/merge_history_sync_all.stamp}"
 # Tier 2 (see the header): data files, veto window, daily cap. Rolling any of
 # these back is a one-line change: enabled=0 in the table.
 TIER2_TABLE="${AUTO_MERGE_TIER2:-$REPO_DIR/.claude/state/auto_merge_tier2.tsv}"
@@ -651,6 +663,25 @@ run_sync() {
   local src=$?
   if [ "$src" -ne 0 ]; then
     echo "WARNING: merge history sync failed (exit $src); merge_events may be stale" >&2
+  fi
+  run_sync_all
+  return 0
+}
+
+# All owner repos, at most once per 6 h; same fail-open contract as run_sync.
+run_sync_all() {
+  [ -n "$SYNC_ALL" ] || return 0
+  if [ ! -r "$SYNC_ALL" ]; then
+    echo "WARNING: all-repos merge history sync script not readable: $SYNC_ALL" >&2
+    return 0
+  fi
+  if [ -n "$(find "$SYNC_ALL_STAMP" -mmin -360 2>/dev/null)" ]; then return 0; fi
+  bash "$SYNC_ALL" >/dev/null
+  local arc=$?
+  if [ "$arc" -eq 0 ]; then
+    : > "$SYNC_ALL_STAMP" 2>/dev/null || echo "WARNING: could not write $SYNC_ALL_STAMP" >&2
+  else
+    echo "WARNING: all-repos merge history sync failed (exit $arc); merge_events may miss repos" >&2
   fi
   return 0
 }
